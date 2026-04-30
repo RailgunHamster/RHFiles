@@ -153,7 +153,9 @@ function renderBreadcrumb(path) {
 
 async function showBreadcrumbDropdown(parentPath, sepEl) {
   const dropdown = document.getElementById("bc-dropdown");
-  if (dropdown.classList.contains("show")) { hideDropdown(); return; }
+  const wasOpen = dropdown.classList.contains("show");
+  hideDropdown();
+  if (wasOpen && dropdown._lastPath === parentPath) return;
   try {
     const entries = await call("list_dir", { path: parentPath, filter: "" });
     const dirs = entries.filter(e => e.is_dir);
@@ -165,7 +167,8 @@ async function showBreadcrumbDropdown(parentPath, sepEl) {
       el.addEventListener("click", () => { hideDropdown(); navigateTo(el.dataset.path); });
     });
     dropdown.classList.add("show");
-    document.addEventListener("click", hideDropdown, { once: true });
+    dropdown._lastPath = parentPath;
+    setTimeout(() => document.addEventListener("click", hideDropdown, { once: true }), 50);
   } catch(e) {}
 }
 
