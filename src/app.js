@@ -134,7 +134,9 @@ function renderBreadcrumb(path) {
     accumulated += (i === 0 ? "" : "/") + part;
     const fullPath = i === 0 ? part + "\\" : accumulated.replace(/\//g, "\\");
     html += `<span class="bc-item" data-path="${esc(fullPath)}">${esc(part)}</span>`;
-    if (i < parts.length - 1) html += `<span class="bc-sep">\u203a</span>`;
+    if (i < parts.length - 1) {
+      html += `<span class="bc-sep" data-path="${esc(fullPath)}">\u203a</span>`;
+    }
   });
   html += `<span class="breadcrumb-spacer"></span>`;
   bc.innerHTML = html;
@@ -142,8 +144,34 @@ function renderBreadcrumb(path) {
   bc.querySelectorAll(".bc-item").forEach(el => {
     el.addEventListener("click", () => navigateTo(el.dataset.path));
   });
+  bc.querySelectorAll(".bc-sep").forEach(el => {
+    el.addEventListener("click", e => { e.stopPropagation(); showBreadcrumbDropdown(el.dataset.path, el); });
+  });
   const spacer = bc.querySelector(".breadcrumb-spacer");
   if (spacer) spacer.addEventListener("click", () => enterEditMode());
+}
+
+async function showBreadcrumbDropdown(parentPath, sepEl) {
+  const dropdown = document.getElementById("bc-dropdown");
+  if (dropdown.classList.contains("show")) { hideDropdown(); return; }
+  try {
+    const entries = await call("list_dir", { path: parentPath, filter: "" });
+    const dirs = entries.filter(e => e.is_dir);
+    if (!dirs.length) return;
+    dropdown.innerHTML = dirs.map(d => `
+      <div class="bc-dropdown-item" data-path="${esc(d.path)}">${esc(d.name)}</div>
+    `).join("");
+    dropdown.querySelectorAll(".bc-dropdown-item").forEach(el => {
+      el.addEventListener("click", () => { hideDropdown(); navigateTo(el.dataset.path); });
+    });
+    dropdown.classList.add("show");
+    document.addEventListener("click", hideDropdown, { once: true });
+  } catch(e) {}
+}
+
+function hideDropdown() {
+  const dropdown = document.getElementById("bc-dropdown");
+  if (dropdown) dropdown.classList.remove("show");
 }
 
 function enterEditMode() {
@@ -151,13 +179,17 @@ function enterEditMode() {
   const input = document.getElementById("path-input");
   bar.classList.add("editing");
   input.value = getTab().path;
+  input.style.display = "block";
   input.focus();
   input.select();
 }
 
 function exitEditMode() {
   const bar = document.getElementById("address-bar");
+  const input = document.getElementById("path-input");
   bar.classList.remove("editing");
+  input.style.display = "none";
+  input.blur();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
