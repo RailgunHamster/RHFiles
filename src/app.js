@@ -13,13 +13,10 @@ let sortAsc = true;
 let showHidden = false;
 let clipboard = null;
 
-function homeDir(name) {
-  const home = process_env("USERPROFILE") || "C:\\Users\\User";
-  return home + "\\" + name;
-}
+let homeDirPath = "C:\\";
 
-function process_env(key) {
-  try { return invoke("get_env", { key }); } catch(e) { return null; }
+function homeDir(name) {
+  return homeDirPath + "\\" + name;
 }
 
 async function call(cmd, args = {}) {
@@ -136,11 +133,17 @@ function renderBreadcrumb(path) {
   parts.forEach((part, i) => {
     accumulated += (i === 0 ? "" : "/") + part;
     const fullPath = i === 0 ? part + "\\" : accumulated.replace(/\//g, "\\");
-    html += `<span class="bc-item" onclick="navigateTo('${esc(fullPath)}')">${esc(part)}</span>`;
+    html += `<span class="bc-item" data-path="${esc(fullPath)}">${esc(part)}</span>`;
     if (i < parts.length - 1) html += `<span class="bc-sep">\u203a</span>`;
   });
-  html += `<span class="breadcrumb-spacer" onclick="enterEditMode()"></span>`;
+  html += `<span class="breadcrumb-spacer"></span>`;
   bc.innerHTML = html;
+
+  bc.querySelectorAll(".bc-item").forEach(el => {
+    el.addEventListener("click", () => navigateTo(el.dataset.path));
+  });
+  const spacer = bc.querySelector(".breadcrumb-spacer");
+  if (spacer) spacer.addEventListener("click", () => enterEditMode());
 }
 
 function enterEditMode() {
@@ -583,8 +586,12 @@ function esc(s) {
 }
 
 async function init() {
-  const home = await call("get_env", { key: "USERPROFILE" }).catch(() => null);
-  const startPath = home || "C:\\";
+  try {
+    homeDirPath = await call("get_env", { key: "USERPROFILE" });
+  } catch(e) {
+    homeDirPath = "C:\\";
+  }
+  const startPath = homeDirPath || "C:\\";
   tabs[0].path = startPath;
   tabs[0].history = [startPath];
   tabs[0].historyIdx = 0;
