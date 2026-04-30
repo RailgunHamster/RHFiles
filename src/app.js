@@ -139,8 +139,42 @@ function renderBreadcrumb(path) {
     html += `<span class="bc-item" onclick="navigateTo('${esc(fullPath)}')">${esc(part)}</span>`;
     if (i < parts.length - 1) html += `<span class="bc-sep">\u203a</span>`;
   });
+  html += `<span class="breadcrumb-spacer" onclick="enterEditMode()"></span>`;
   bc.innerHTML = html;
 }
+
+function enterEditMode() {
+  const bar = document.getElementById("address-bar");
+  const input = document.getElementById("path-input");
+  bar.classList.add("editing");
+  input.value = getTab().path;
+  input.focus();
+  input.select();
+}
+
+function exitEditMode() {
+  const bar = document.getElementById("address-bar");
+  bar.classList.remove("editing");
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const input = document.getElementById("path-input");
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      navigateTo(input.value);
+      exitEditMode();
+      input.blur();
+    }
+    if (e.key === "Escape") {
+      exitEditMode();
+      input.blur();
+    }
+  });
+  input.addEventListener("blur", () => {
+    exitEditMode();
+  });
+});
 
 function sortEntries(entries) {
   const dir = sortAsc ? 1 : -1;

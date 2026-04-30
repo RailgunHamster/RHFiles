@@ -68,19 +68,21 @@ input { font-family:var(--font); }
   flex:1; height:30px; display:flex; align-items:center;
   background:var(--bg-input); border:1px solid var(--border);
   border-radius:var(--r); padding:0 10px; position:relative; transition:border-color .15s;
+  cursor:default;
 }
-.address-bar:focus-within { border-color:var(--accent); }
+.address-bar.editing { border-color:var(--accent); }
 .address-bar input {
-  position:absolute; left:0; right:0; top:0; bottom:0; padding:0 10px;
-  border:none; outline:none; background:transparent; color:var(--text);
-  font-size:12px; opacity:0; z-index:1;
+  flex:1; border:none; outline:none; background:transparent; color:var(--text);
+  font-size:12px; display:none;
 }
-.address-bar input:focus { opacity:1; background:var(--bg-input); }
+.address-bar.editing input { display:block; }
+.address-bar.editing .breadcrumb { display:none; }
 .breadcrumb {
   display:flex; align-items:center; gap:2px; font-size:12px; color:var(--text-3);
   white-space:nowrap; overflow:hidden; min-height:30px; padding-right:4px;
+  flex:1;
 }
-.address-bar input:focus ~ .breadcrumb { visibility:hidden; }
+.breadcrumb-spacer { flex:1; cursor:text; min-width:20px; }
 .bc-item { padding:2px 5px; border-radius:3px; cursor:pointer; color:var(--text-2); transition:background .08s; }
 .bc-item:hover { background:var(--hover); color:var(--text); }
 .bc-sep { color:var(--text-4); font-size:10px; margin:0 1px; }
