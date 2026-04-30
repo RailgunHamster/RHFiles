@@ -1,0 +1,503 @@
+import { StandardListView, StandardButton } from "std-widgets.slint";
+
+export struct FileRow {
+    name: string,
+    size: string,
+    modified: string,
+    type_: string,
+    is_dir: bool,
+    is_selected: bool,
+    path: string,
+}
+
+export struct DriveRow {
+    letter: string,
+    label: string,
+    free: string,
+    icon: string,
+    path: string,
+}
+
+export component MainWindow inherits Window {
+    title: "RHFiles";
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    min-width: 700px;
+    min-height: 450px;
+
+    background: #f3f3f3;
+
+    in-out property <[FileRow]> file-rows: [];
+    in-out property <[DriveRow]> drive-rows: [];
+    in-out property <string> current-path: "C:\\";
+    in-out property <string> status-text: "";
+    in-out property <string> filter-text: "";
+    in-out property <int> selected-index: -1;
+
+    callback open-path(string);
+    callback go-back();
+    callback go-forward();
+    callback go-up();
+    callback refresh();
+    callback select-file(string);
+    callback delete-selected();
+    callback new-folder();
+    callback rename-selected();
+    callback copy-selected();
+    callback cut-selected();
+    callback paste();
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == "up" || event.text == "down" {
+                return accept;
+            }
+            if event.text == "return" {
+                if root.selected-index >= 0 && root.selected-index < root.file-rows.length {
+                    let row = root.file-rows[root.selected-index];
+                    if row.is_dir {
+                        root.open-path(row.path);
+                    }
+                }
+                return accept;
+            }
+            if event.text == "backspace" {
+                root.go-up();
+                return accept;
+            }
+            if event.text == "delete" {
+                root.delete-selected();
+                return accept;
+            }
+            if event.text == "f5" {
+                root.refresh();
+                return accept;
+            }
+            if event.text == "f2" {
+                root.rename-selected();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            spacing: 0px;
+
+            // ── Tab bar ──
+            Rectangle {
+                height: 36px;
+                background: #f3f3f3;
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-top: 6px;
+                    spacing: 0px;
+
+                    Rectangle {
+                        height: 30px;
+                        background: #fbfbfb;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: #e5e5e5;
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 6px;
+
+                            Text {
+                                text: "Files";
+                                font-size: 12px;
+                                color: #1a1a1a;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 26px;
+                        height: 26px;
+                        border-radius: 4px;
+                        background: transparent;
+
+                        TouchArea { clicked => { root.open-path(root.current-path); } }
+
+                        Text {
+                            text: "+";
+                            font-size: 14px;
+                            color: #888;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+
+            // ── Toolbar ──
+            Rectangle {
+                height: 40px;
+                background: #fbfbfb;
+                border-width: 1px;
+                border-color: #e5e5e5;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 4px;
+
+                    // Back
+                    Rectangle {
+                        width: 30px; height: 30px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.go-back(); } }
+                        Text { text: "\u{25c0}"; font-size: 12px; color: #444; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    // Forward
+                    Rectangle {
+                        width: 30px; height: 30px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.go-forward(); } }
+                        Text { text: "\u{25b6}"; font-size: 12px; color: #444; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    // Up
+                    Rectangle {
+                        width: 30px; height: 30px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.go-up(); } }
+                        Text { text: "\u{25b2}"; font-size: 12px; color: #444; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    // Refresh
+                    Rectangle {
+                        width: 30px; height: 30px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.refresh(); } }
+                        Text { text: "\u{21bb}"; font-size: 14px; color: #444; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+
+                    // Address bar
+                    Rectangle {
+                        border-radius: 4px;
+                        background: #ffffff;
+                        border-width: 1px;
+                        border-color: #e5e5e5;
+                        horizontal-stretch: 1;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+
+                            TextInput {
+                                text <=> root.current-path;
+                                font-size: 12px;
+                                color: #1a1a1a;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                accepted => { root.open-path(root.current-path); }
+                            }
+                        }
+                    }
+
+                    // Search box
+                    Rectangle {
+                        width: 200px;
+                        border-radius: 4px;
+                        background: #ffffff;
+                        border-width: 1px;
+                        border-color: #e5e5e5;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+
+                            TextInput {
+                                text <=> root.filter-text;
+                                font-size: 12px;
+                                color: #1a1a1a;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Command bar ──
+            Rectangle {
+                height: 36px;
+                background: #fbfbfb;
+                border-width: 1px;
+                border-color: #e5e5e5;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 2px;
+
+                    // New
+                    Rectangle {
+                        height: 28px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.new-folder(); } }
+                        HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px;
+                            Text { text: "New"; font-size: 12px; color: #444; vertical-alignment: center; }
+                        }
+                    }
+                    // separator
+                    Rectangle { width: 1px; height: 16px; background: #e0e0e0; y: (parent.height - 16px) / 2; }
+                    // Cut
+                    Rectangle {
+                        height: 28px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.cut-selected(); } }
+                        HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px;
+                            Text { text: "Cut"; font-size: 12px; color: #444; vertical-alignment: center; }
+                        }
+                    }
+                    // Copy
+                    Rectangle {
+                        height: 28px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.copy-selected(); } }
+                        HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px;
+                            Text { text: "Copy"; font-size: 12px; color: #444; vertical-alignment: center; }
+                        }
+                    }
+                    // Paste
+                    Rectangle {
+                        height: 28px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.paste(); } }
+                        HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px;
+                            Text { text: "Paste"; font-size: 12px; color: #444; vertical-alignment: center; }
+                        }
+                    }
+                    // Rename
+                    Rectangle {
+                        height: 28px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.rename-selected(); } }
+                        HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px;
+                            Text { text: "Rename"; font-size: 12px; color: #444; vertical-alignment: center; }
+                        }
+                    }
+                    // Delete
+                    Rectangle {
+                        height: 28px; border-radius: 4px; background: transparent;
+                        TouchArea { clicked => { root.delete-selected(); } }
+                        HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px;
+                            Text { text: "Delete"; font-size: 12px; color: #c42b1c; vertical-alignment: center; }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+
+            // ── Main: Sidebar + File area ──
+            HorizontalLayout {
+                spacing: 0px;
+
+                // Sidebar
+                Rectangle {
+                    width: 200px;
+                    background: #f9f9f9;
+                    border-width: 1px;
+                    border-color: #e5e5e5;
+
+                    VerticalLayout {
+                        padding: 4px;
+                        spacing: 0px;
+
+                        Text {
+                            text: "Quick access";
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: #888;
+                            padding-top: 8px;
+                            padding-left: 10px;
+                            padding-bottom: 4px;
+                        }
+
+                        for fav in ["Desktop", "Downloads", "Documents", "Pictures", "Music", "Videos"]: Rectangle {
+                            height: 26px;
+                            border-radius: 4px;
+                            background: transparent;
+
+                            TouchArea {
+                                clicked => {
+                                    root.current-path = fav;
+                                    root.open-path(fav);
+                                }
+                            }
+
+                            Text {
+                                text: "  " + fav;
+                                font-size: 12px;
+                                color: #444;
+                                vertical-alignment: center;
+                                padding-left: 10px;
+                            }
+                        }
+
+                        Rectangle { height: 8px; }
+
+                        Text {
+                            text: "This PC";
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: #888;
+                            padding-top: 8px;
+                            padding-left: 10px;
+                            padding-bottom: 4px;
+                        }
+
+                        for drive-row in root.drive-rows: Rectangle {
+                            height: 44px;
+                            border-radius: 4px;
+                            background: transparent;
+
+                            TouchArea {
+                                clicked => {
+                                    root.current-path = drive-row.path;
+                                    root.open-path(drive-row.path);
+                                }
+                            }
+
+                            VerticalLayout {
+                                padding-left: 10px;
+                                padding-top: 4px;
+
+                                Text {
+                                    text: drive-row.label + " (" + drive-row.letter + ")";
+                                    font-size: 12px;
+                                    color: #444;
+                                }
+                                Text {
+                                    text: drive-row.free;
+                                    font-size: 11px;
+                                    color: #888;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // File area
+                Rectangle {
+                    background: #fbfbfb;
+                    horizontal-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 0px;
+
+                        // Column headers
+                        Rectangle {
+                            height: 26px;
+                            background: #fbfbfb;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+
+                                Text { text: "Name"; font-size: 12px; color: #888; vertical-alignment: center; padding-left: 6px; padding-right: 6px; horizontal-stretch: 3; min-width: 180px; }
+                                Text { text: "Date modified"; font-size: 12px; color: #888; vertical-alignment: center; padding-left: 6px; padding-right: 6px; width: 140px; }
+                                Text { text: "Type"; font-size: 12px; color: #888; vertical-alignment: center; padding-left: 6px; padding-right: 6px; width: 100px; }
+                                Text { text: "Size"; font-size: 12px; color: #888; vertical-alignment: center; padding-left: 6px; padding-right: 6px; width: 80px; horizontal-alignment: right; }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: #e0e0e0; }
+
+                        // File rows — use ScrollView for virtualization
+                        VerticalLayout {
+                            vertical-stretch: 1;
+
+                            for file-row in root.file-rows: Rectangle {
+                                height: 24px;
+                                background: file-row.is_selected ? #cce8ff : transparent;
+
+                                TouchArea {
+                                    clicked => { root.select-file(file-row.path); }
+                                    double-clicked => {
+                                        if file-row.is_dir {
+                                            root.open-path(file-row.path);
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+
+                                    HorizontalLayout {
+                                        horizontal-stretch: 3;
+                                        min-width: 180px;
+                                        spacing: 6px;
+
+                                        Text {
+                                            text: file-row.is_dir ? "\u{25b8}" : "";
+                                            font-size: 11px;
+                                            color: #dcb67a;
+                                            vertical-alignment: center;
+                                            width: 16px;
+                                        }
+
+                                        Text {
+                                            text: file-row.name;
+                                            font-size: 12px;
+                                            color: #1a1a1a;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: file-row.modified;
+                                        width: 140px;
+                                        font-size: 12px;
+                                        color: #666;
+                                        vertical-alignment: center;
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                    }
+                                    Text {
+                                        text: file-row.type_;
+                                        width: 100px;
+                                        font-size: 12px;
+                                        color: #666;
+                                        vertical-alignment: center;
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                    }
+                                    Text {
+                                        text: file-row.size;
+                                        width: 80px;
+                                        font-size: 12px;
+                                        color: #666;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: right;
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Status bar
+                        Rectangle {
+                            height: 24px;
+                            background: #f3f3f3;
+                            border-width: 1px;
+                            border-color: #e5e5e5;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+
+                                Text {
+                                    text <=> root.status-text;
+                                    font-size: 12px;
+                                    color: #888;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
