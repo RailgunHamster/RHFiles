@@ -460,6 +460,15 @@ function showHomePage() {
     </div>
   `).join("");
   renderHomeDrives();
+
+  const recentData = JSON.parse(localStorage.getItem('rhfiles-recent') || '[]');
+  const homeRecent = document.getElementById("home-recent");
+  homeRecent.innerHTML = recentData.slice(0, 20).map(r =>
+    `<div class="home-recent-item" onclick="navigateTo('${esc(r.path.replace(/\\[^\\]+$/, ''))}')">
+        <span>${esc(r.name)}</span>
+        <span style="color:var(--text-4);font-size:11px">${esc(r.path)}</span>
+    </div>`
+  ).join("") || '<div style="color:var(--text-4);padding:8px">No recent files</div>';
 }
 
 async function renderHomeDrives() {

@@ -56,6 +56,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadTagList();
   renderNetwork();
   renderMtpDevices();
+  try { detectWSLDistros(); } catch(e) {}
+  try { detectWindowsLibraries(); } catch(e) {}
   startFileWatch();
   setupProgressListener();
   initBoxSelection(document.getElementById("file-list"));
@@ -97,7 +99,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const file = getTab().entries[idx];
     if (!file) return;
     if (file.archive_entry) {
-      if (file.is_dir) {} // can't navigate inside archive dirs
+      if (file.is_dir) { showNotice("Cannot navigate into archive subdirectories"); }
       else extractArchiveEntry(idx);
     } else if (file.is_dir) {
       navigateTo(file.path);
@@ -106,7 +108,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (ext === "zip") {
         await openArchive(file.path);
       } else {
-        try { await call("open_file", { path: file.path }); } catch (ex) {}
+        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name); } catch (ex) {}
       }
     }
   });
@@ -125,7 +127,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (ext === "zip") {
         await openArchive(file.path);
       } else {
-        try { await call("open_file", { path: file.path }); } catch (ex) {}
+        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name); } catch (ex) {}
       }
     }
   });

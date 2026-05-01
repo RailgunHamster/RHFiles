@@ -146,6 +146,9 @@ document.addEventListener("keydown", async e => {
     return;
   }
 
+  const anyDialogOpen = document.querySelector('.overlay[style*="display: flex"], .overlay[style*="display:flex"]');
+  if (anyDialogOpen) return;
+
   const bindings = getShortcutBindings();
   const combo = normalizeKey(e);
 
@@ -232,21 +235,6 @@ document.addEventListener("keydown", async e => {
     renderFiles(pane, listId, countId, null, isRight);
     scrollToVisible(pane.lastIdx);
     updatePreviewForSelection();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    const isRight = G.lastActivePane === 'right';
-    const pane = isRight ? G.rp : getTab();
-    const entries = pane.entries || [];
-    const sel = pane.sel || new Set();
-    const indices = [...sel];
-    const fi = indices.length ? indices[indices.length - 1] : -1;
-    if (indices.length === 1 && entries[fi]) {
-      if (entries[fi].is_dir) {
-        if (isRight) rpNavigateTo(entries[fi].path);
-        else await navigateTo(entries[fi].path);
-      }
-      else openFileHandler(entries[fi].path);
-    }
   }
 });
 

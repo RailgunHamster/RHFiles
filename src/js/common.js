@@ -238,3 +238,11 @@ function stopFileWatch() {
   if (G._watchTimer) { clearInterval(G._watchTimer); G._watchTimer = null; }
   if (G._watchTauriUnlisten) { G._watchTauriUnlisten(); G._watchTauriUnlisten = null; }
 }
+
+function addRecentFile(path, name) {
+  let recent = JSON.parse(localStorage.getItem('rhfiles-recent') || '[]');
+  recent = recent.filter(r => r.path !== path);
+  recent.unshift({ path, name, time: Date.now() });
+  recent = recent.slice(0, 50);
+  localStorage.setItem('rhfiles-recent', JSON.stringify(recent));
+}
