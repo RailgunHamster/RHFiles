@@ -1,16 +1,28 @@
 // filelist.js — virtual list, layouts, sorting, rendering
 
+function naturalCompare(a, b) {
+  const ax = [], bx = [];
+  a.replace(/(\d+)|(\D+)/g, (_, $1, $2) => { ax.push([$1 || Infinity, $2 || '']); });
+  b.replace(/(\d+)|(\D+)/g, (_, $1, $2) => { bx.push([$1 || Infinity, $2 || '']); });
+  while (ax.length && bx.length) {
+    const an = ax.shift(), bn = bx.shift();
+    const nn = (an[0] - bn[0]) || an[1].localeCompare(bn[1]);
+    if (nn) return nn;
+  }
+  return ax.length - bx.length;
+}
+
 function sortEntriesList(entries, field, asc) {
   const dir = asc ? 1 : -1;
   return [...entries].sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    if (field === "name") return dir * naturalCompare(a.name.toLowerCase(), b.name.toLowerCase());
     let va, vb;
     switch (field) {
-      case "name": va = a.name.toLowerCase(); vb = b.name.toLowerCase(); break;
       case "modified": va = a.modified; vb = b.modified; break;
       case "type": va = a.is_dir ? "0" : "1" + a.extension.toLowerCase(); vb = b.is_dir ? "0" : "1" + b.extension.toLowerCase(); break;
       case "size": va = a.size; vb = b.size; break;
-      default: va = a.name.toLowerCase(); vb = b.name.toLowerCase();
+      default: return dir * naturalCompare(a.name.toLowerCase(), b.name.toLowerCase());
     }
     if (va < vb) return -1 * dir;
     if (va > vb) return 1 * dir;

@@ -123,6 +123,13 @@ function fallbackCall(cmd, args) {
     case "set_window_effect": return null;
     case "quicklook": return null;
     case "check_updates": return null;
+    case "db_save_tags": return null;
+    case "db_load_tags": return [];
+    case "db_load_all_tags": return {};
+    case "db_save_layout": return null;
+    case "db_load_layout": return null;
+    case "db_save_pinned": return null;
+    case "db_load_pinned": return [];
     default: return null;
   }
 }

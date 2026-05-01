@@ -23,3 +23,5 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
 ] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tauri-plugin-deep-link = "2"

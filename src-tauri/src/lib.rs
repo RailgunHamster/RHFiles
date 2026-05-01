@@ -466,6 +466,92 @@ fn load_all_tags_inner(path: &Path) -> Result<HashMap<String, Vec<String>>, Stri
     serde_json::from_str(&content).map_err(|e| e.to_string())
 }
 
+// === SQLite persistence ===
+
+fn get_db() -> Result<rusqlite::Connection, String> {
+    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    let dir = PathBuf::from(app_data).join("RHFiles");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let db_path = dir.join("rhfiles.db");
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS tags (path TEXT PRIMARY KEY, tags TEXT);
+         CREATE TABLE IF NOT EXISTS folder_layouts (path TEXT PRIMARY KEY, layout TEXT);
+         CREATE TABLE IF NOT EXISTS folder_prefs (path TEXT PRIMARY KEY, prefs TEXT);
+         CREATE TABLE IF NOT EXISTS pinned (path TEXT PRIMARY KEY, name TEXT, ord INTEGER);"
+    ).map_err(|e| e.to_string())?;
+    Ok(conn)
+}
+
+#[tauri::command]
+fn db_save_tags(path: String, tags: Vec<String>) -> Result<(), String> {
+    let conn = get_db()?;
+    let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+    conn.execute("INSERT OR REPLACE INTO tags (path, tags) VALUES (?1, ?2)", rusqlite::params![path, tags_json]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn db_load_tags(path: String) -> Result<Vec<String>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT tags FROM tags WHERE path = ?1").map_err(|e| e.to_string())?;
+    let result = stmt.query_row(rusqlite::params![path], |row| row.get::<_, String>(0)).ok();
+    match result {
+        Some(json) => serde_json::from_str(&json).map_err(|e| e.to_string()),
+        None => Ok(Vec::new()),
+    }
+}
+
+#[tauri::command]
+fn db_load_all_tags() -> Result<HashMap<String, Vec<String>>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT path, tags FROM tags").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    let mut map = HashMap::new();
+    for row in rows {
+        let (path, tags_json) = row.map_err(|e| e.to_string())?;
+        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        map.insert(path, tags);
+    }
+    Ok(map)
+}
+
+#[tauri::command]
+fn db_save_layout(path: String, layout: String) -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute("INSERT OR REPLACE INTO folder_layouts (path, layout) VALUES (?1, ?2)", rusqlite::params![path, layout]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn db_load_layout(path: String) -> Result<Option<String>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT layout FROM folder_layouts WHERE path = ?1").map_err(|e| e.to_string())?;
+    Ok(stmt.query_row(rusqlite::params![path], |row| row.get::<_, String>(0)).ok())
+}
+
+#[tauri::command]
+fn db_save_pinned(paths: Vec<(String, String)>) -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM pinned", []).map_err(|e| e.to_string())?;
+    for (i, (path, name)) in paths.iter().enumerate() {
+        conn.execute("INSERT INTO pinned (path, name, ord) VALUES (?1, ?2, ?3)", rusqlite::params![path, name, i]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn db_load_pinned() -> Result<Vec<(String, String)>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT path, name FROM pinned ORDER BY ord").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 fn get_file_info(path: String) -> Result<FileDetailInfo, String> {
     let p = PathBuf::from(&path);
@@ -752,6 +838,7 @@ async fn check_updates() -> Result<Option<String>, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -760,7 +847,10 @@ pub fn run() {
                 let _ = window.show();
             }
             if args.len() > 1 {
-                let path = args[1].clone();
+                let mut path = args[1].clone();
+                if let Some(stripped) = path.strip_prefix("rhfiles://") {
+                    path = stripped.replace('/', "\\");
+                }
                 let _ = app.emit("navigate-to-path", path);
             }
         }))
@@ -803,6 +893,9 @@ pub fn run() {
             open_new_window,
             set_window_effect, quicklook,
             check_updates,
+            db_save_tags, db_load_tags, db_load_all_tags,
+            db_save_layout, db_load_layout,
+            db_save_pinned, db_load_pinned,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

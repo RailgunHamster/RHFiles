@@ -50,6 +50,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       listen("navigate-to-path", (event) => {
         if (event.payload) navigateTo(event.payload);
       }).catch(() => {});
+      listen("deep-link://request", (event) => {
+        try {
+          const urls = event.payload && event.payload.urls ? event.payload.urls : [];
+          if (urls.length > 0) {
+            let path = urls[0].replace(/^rhfiles:\/\//, '').replace(/\//g, '\\');
+            if (path) navigateTo(path);
+          }
+        } catch (e) {}
+      }).catch(() => {});
     }
   }
 
