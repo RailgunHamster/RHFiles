@@ -30,6 +30,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   loadTree(getTab().path, true);
   await loadTagList();
   renderNetwork();
+  renderMtpDevices();
   startFileWatch();
   setupProgressListener();
   initBoxSelection(document.getElementById("file-list"));

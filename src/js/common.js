@@ -152,6 +152,13 @@ function fallbackCall(cmd, args) {
     case "get_cloud_status": return "none";
     case "browse_network": return [];
     case "list_shares": return [];
+    case "ftp_list": return [];
+    case "ftp_download": return null;
+    case "get_permissions": return [];
+    case "set_permission": return null;
+    case "remove_permission": return null;
+    case "inherit_permissions": return null;
+    case "list_mtp_devices": return [];
     default: return null;
   }
 }

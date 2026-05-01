@@ -270,6 +270,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.batchRename'), action: () => openBatchRename(isRight), disabled: !hasSelection },
     { label: t('ctx.addTag'), action: () => openTagDialog(isRight), disabled: !hasSelection },
     { label: t('ctx.properties'), shortcut:"Alt+Enter", action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
+    { label: "Permissions...", action: () => { if (singleSelection) showPermissionsDialog(sel[0].path); }, disabled: !singleSelection },
     { label: "-", action: null },
     { label: "Unblock File", action: async () => { try { await call("unblock_file", { path: sel[0].path }); showNotice("File unblocked"); refresh(); } catch(e) { alert("Unblock failed: " + e); } }, disabled: !singleFile, hidden: !singleFile },
     { label: "View Streams...", action: async () => { try { const ads = await call("list_ads", { path: sel[0].path }); showStreamsDialog(sel[0].path, ads); } catch(e) { showStreamsDialog(sel[0].path, []); } }, disabled: !singleFile, hidden: !singleFile },
@@ -458,4 +459,84 @@ function showCompatDialog(path) {
   }).catch(() => {});
   dlg.showModal();
   dlg.onclose = () => dlg.remove();
+}
+
+// --- NTFS permissions dialog ---
+async function showPermissionsDialog(path) {
+  try {
+    const perms = await call("get_permissions", { path });
+    const dlg = document.createElement("dialog");
+    dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:420px;";
+    let rows = perms.map(p => `
+      <tr>
+        <td style="padding:4px 8px;font-size:12px;color:var(--text-2)">${esc(p.account)}</td>
+        <td style="padding:4px 8px;font-size:12px;color:var(--text-3)">${esc(p.display)}</td>
+        <td style="padding:4px 8px;"><button class="dialog-btn" style="font-size:11px;padding:2px 8px;" data-remove-account="${esc(p.account)}">Remove</button></td>
+      </tr>
+    `).join("");
+
+    dlg.innerHTML = `
+      <h3 style="margin:0 0 8px;font-size:14px">Permissions: ${esc(path.split(/[\\/]/).pop())}</h3>
+      <div style="font-size:11px;color:var(--text-4);margin-bottom:8px;word-break:break-all;">${esc(path)}</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--text-4);">Account</th>
+          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--text-4);">Access</th>
+          <th style="width:80px;"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;">
+        <input type="text" id="perm-account" placeholder="DOMAIN\\User" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
+        <select id="perm-level" style="padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
+          <option value="F">Full Control</option>
+          <option value="M">Modify</option>
+          <option value="RX">Read & Execute</option>
+          <option value="R">Read</option>
+          <option value="W">Write</option>
+        </select>
+        <button class="dialog-btn primary" id="perm-add" style="font-size:12px;">Add</button>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+        <button class="dialog-btn" id="perm-close">Close</button>
+        <button class="dialog-btn" id="perm-inherit-toggle">Disable Inheritance</button>
+      </div>`;
+    document.body.appendChild(dlg);
+
+    dlg.querySelector("#perm-close").onclick = () => { dlg.close(); dlg.remove(); };
+    dlg.querySelector("#perm-add").onclick = async () => {
+      const account = dlg.querySelector("#perm-account").value.trim();
+      const level = dlg.querySelector("#perm-level").value;
+      if (!account) return;
+      try {
+        await call("set_permission", { path, account, permission: level });
+        showNotice("Permission added");
+        dlg.close(); dlg.remove();
+        showPermissionsDialog(path);
+      } catch (e) { alert("Failed to set permission: " + e); }
+    };
+    dlg.querySelectorAll("[data-remove-account]").forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          await call("remove_permission", { path, account: btn.dataset.removeAccount });
+          showNotice("Permission removed");
+          dlg.close(); dlg.remove();
+          showPermissionsDialog(path);
+        } catch (e) { alert("Failed to remove permission: " + e); }
+      };
+    });
+    dlg.querySelector("#perm-inherit-toggle").onclick = async () => {
+      try {
+        await call("inherit_permissions", { path, enable: false });
+        showNotice("Inheritance disabled");
+        dlg.close(); dlg.remove();
+        showPermissionsDialog(path);
+      } catch (e) { alert("Failed to toggle inheritance: " + e); }
+    };
+
+    dlg.showModal();
+    dlg.onclose = () => dlg.remove();
+  } catch (e) {
+    alert("Failed to get permissions: " + e);
+  }
 }

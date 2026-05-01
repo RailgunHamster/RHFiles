@@ -385,3 +385,77 @@ function showNetworkMenu(e, server, shares) {
     if (rect.bottom > window.innerHeight) menu.style.top = (e.clientY - rect.height) + 'px';
   });
 }
+
+// --- FTP ---
+function showFtpDialog() {
+  const dlg = document.createElement('dialog');
+  dlg.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:340px;';
+  dlg.innerHTML = `
+    <h3 style="margin:0 0 12px;font-size:14px">Connect to FTP Server</h3>
+    <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+      <div class="dialog-row"><label>Host:</label><input type="text" id="ftp-host" placeholder="ftp.example.com" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+      <div class="dialog-row"><label>Path:</label><input type="text" id="ftp-path" value="/" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+      <div class="dialog-row"><label>User:</label><input type="text" id="ftp-user" placeholder="anonymous" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+      <div class="dialog-row"><label>Password:</label><input type="password" id="ftp-pass" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+      <button class="dialog-btn" id="ftp-cancel">Cancel</button>
+      <button class="dialog-btn primary" id="ftp-connect">Connect</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector('#ftp-cancel').onclick = () => { dlg.close(); dlg.remove(); };
+  dlg.querySelector('#ftp-connect').onclick = async () => {
+    const host = dlg.querySelector('#ftp-host').value.trim();
+    const path = dlg.querySelector('#ftp-path').value || '/';
+    const user = dlg.querySelector('#ftp-user').value || 'anonymous';
+    const pass = dlg.querySelector('#ftp-pass').value;
+    if (!host) { alert('Please enter a host'); return; }
+    try {
+      const entries = await call('ftp_list', { host, path, user, pass });
+      dlg.close();
+      dlg.remove();
+      showFtpEntries(host, path, user, pass, entries);
+    } catch (e) {
+      alert('FTP connection failed: ' + e);
+    }
+  };
+  dlg.showModal();
+  dlg.onclose = () => dlg.remove();
+}
+
+async function showFtpEntries(host, path, user, pass, entries) {
+  G.ftpConnection = { host, path, user, pass };
+  const tab = getTab();
+  tab.entries = entries;
+  tab.sel.clear();
+  tab.lastIdx = -1;
+  tab.path = 'ftp://' + host + path;
+  document.getElementById('path-input').value = tab.path;
+  renderBreadcrumb(tab.path);
+  renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+  updateStatus(tab, 'status-count', 'status-selection');
+}
+
+// --- MTP Devices ---
+async function renderMtpDevices() {
+  const section = document.getElementById('mtp-section');
+  if (!section) return;
+  section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">Scanning...</div>';
+  try {
+    const devices = await call('list_mtp_devices', {});
+    section.innerHTML = '';
+    for (const d of devices) {
+      const div = document.createElement('div');
+      div.className = 'sidebar-item';
+      div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3" y="1" width="10" height="14" rx="1.5" stroke="currentColor" stroke-width=".8"/><circle cx="8" cy="12" r="1" fill="currentColor" opacity=".4"/></svg> ' + esc(d.name);
+      div.dataset.path = d.path;
+      div.onclick = () => navigateTo(d.path);
+      section.appendChild(div);
+    }
+    if (devices.length === 0) {
+      section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No devices found</div>';
+    }
+  } catch (e) {
+    section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No devices found</div>';
+  }
+}

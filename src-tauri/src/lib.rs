@@ -1186,6 +1186,257 @@ fn get_cloud_status(path: String) -> Result<String, String> {
     }
 }
 
+// === FTP Connection ===
+
+#[tauri::command]
+async fn ftp_list(host: String, path: String, user: String, pass: String) -> Result<Vec<FileInfo>, String> {
+    let ps = format!(
+        r#"$uri = "ftp://{host}{path}";
+        $creds = New-Object System.Net.NetworkCredential('{user}', '{pass}');
+        $request = [System.Net.FtpWebRequest]::Create($uri);
+        $request.Credentials = $creds;
+        $request.Method = [System.Net.WebRequestMethods+Ftp]::ListDirectoryDetails;
+        $request.UsePassive = $true;
+        try {{
+            $response = $request.GetResponse();
+            $reader = New-Object System.IO.StreamReader($response.GetResponseStream());
+            $listing = $reader.ReadToEnd();
+            $reader.Close();
+            $response.Close();
+            $results = @();
+            foreach ($line in $listing -split "`n") {{
+                if ($line.Trim() -eq '') continue;
+                $parts = $line -split '\s+';
+                if ($parts.Length -ge 9) {{
+                    $perms = $parts[0];
+                    $isDir = $perms.StartsWith('d');
+                    $name = ($parts[8..($parts.Length-1)] -join ' ').Trim();
+                    if ($name -eq '.' -or $name -eq '..') continue;
+                    $results += @{{
+                        name = $name;
+                        is_dir = $isDir;
+                        size = if ($parts[4] -match '^\d+$') {{ [long]$parts[4] }} else {{ 0 }};
+                        modified = $parts[5] + ' ' + $parts[6] + ' ' + $parts[7];
+                    }}
+                }}
+            }}
+            $results | ConvertTo-Json -Compress
+        }} catch {{
+            Write-Error $_.Exception.Message
+        }}"#,
+        host = host, path = path, user = user, pass = pass
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() || stdout == "null" {
+        return Ok(Vec::new());
+    }
+
+    let raw: Vec<serde_json::Value> = if stdout.starts_with('[') {
+        serde_json::from_str(&stdout).unwrap_or_default()
+    } else {
+        serde_json::from_str(&format!("[{}]", stdout)).unwrap_or_default()
+    };
+
+    let mut entries = Vec::new();
+    for item in raw {
+        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let is_dir = item.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+        let size = item.get("size").and_then(|v| v.as_i64()).unwrap_or(0) as u64;
+        let ftp_path = format!("ftp://{}/{}{}", host, path.trim_end_matches('/'), if path.ends_with('/') { "" } else { "/" });
+
+        entries.push(FileInfo {
+            name: name.clone(),
+            path: ftp_path + &name,
+            extension: if is_dir { String::new() } else {
+                name.rsplit('.').next().unwrap_or("").to_string()
+            },
+            is_dir,
+            is_hidden: false,
+            size,
+            size_display: if size > 0 { format_size(size) } else { String::new() },
+            modified: item.get("modified").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            created: String::new(),
+            folder_size: None,
+        });
+    }
+
+    Ok(entries)
+}
+
+#[tauri::command]
+async fn ftp_download(host: String, remote_path: String, local_path: String, user: String, pass: String) -> Result<(), String> {
+    let ps = format!(
+        r#"$uri = "ftp://{host}{remote_path}";
+        $creds = New-Object System.Net.NetworkCredential('{user}', '{pass}');
+        $client = New-Object System.Net.WebClient;
+        $client.Credentials = $creds;
+        $client.DownloadFile($uri, '{local_path}')"#,
+        host = host, remote_path = remote_path, local_path = local_path.replace("'", "''"), user = user, pass = pass
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+// === NTFS Permissions ===
+
+#[tauri::command]
+fn get_permissions(path: String) -> Result<Vec<serde_json::Value>, String> {
+    let output = std::process::Command::new("icacls")
+        .arg(&path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut perms = Vec::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.ends_with(':') {
+            continue;
+        }
+        if line.contains(":(") {
+            let parts: Vec<&str> = line.splitn(2, ":(").collect();
+            if parts.len() == 2 {
+                let account = parts[0].trim().to_string();
+                let access = format!("({}", parts[1].trim_end_matches(','));
+                let access_display = access.replace("(F)", " Full Control")
+                    .replace("(M)", " Modify")
+                    .replace("(RX)", " Read & Execute")
+                    .replace("(R)", " Read")
+                    .replace("(W)", " Write")
+                    .replace("(X)", " Execute")
+                    .replace("(OI)", " [Files]")
+                    .replace("(CI)", " [Subfolders]")
+                    .replace("(IO)", " [Inherit Only]")
+                    .replace("(NP)", " [No Inherit]");
+
+                perms.push(serde_json::json!({
+                    "account": account,
+                    "access": access,
+                    "display": access_display
+                }));
+            }
+        }
+    }
+
+    Ok(perms)
+}
+
+#[tauri::command]
+fn set_permission(path: String, account: String, permission: String) -> Result<(), String> {
+    let perm_arg = format!("{}:{}", account, permission);
+    let output = std::process::Command::new("icacls")
+        .args([&path, "/grant", &perm_arg])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_permission(path: String, account: String) -> Result<(), String> {
+    let output = std::process::Command::new("icacls")
+        .args([&path, "/remove", &account])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn inherit_permissions(path: String, enable: bool) -> Result<(), String> {
+    let arg = if enable { "/inheritance:e" } else { "/inheritance:d" };
+    let output = std::process::Command::new("icacls")
+        .args([&path, arg])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+// === MTP Device Browsing ===
+
+#[tauri::command]
+fn list_mtp_devices() -> Result<Vec<FileInfo>, String> {
+    let ps = r#"
+        try {
+            $shell = New-Object -ComObject Shell.Application
+            $devices = $shell.NameSpace(17)
+            $results = @()
+            foreach ($item in $devices.Items()) {
+                $path = $item.Path
+                if ($path -match '^::\{') {
+                    $name = $item.Name
+                    if ($name -and $name -notmatch '^[A-Z]:$') {
+                        $results += @{
+                            name = $name
+                            path = $path
+                            is_dir = $true
+                        }
+                    }
+                }
+            }
+            $results | ConvertTo-Json -Compress
+        } catch {
+            '[]'
+        }
+    "#;
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-STA", "-Command", ps])
+        .output().map_err(|e| e.to_string())?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let raw: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap_or_default();
+
+    let mut devices = Vec::new();
+    for item in raw {
+        devices.push(FileInfo {
+            name: item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            path: item.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            extension: String::new(),
+            is_dir: true,
+            is_hidden: false,
+            size: 0,
+            size_display: String::new(),
+            modified: String::new(),
+            created: String::new(),
+            folder_size: None,
+        });
+    }
+
+    Ok(devices)
+}
+
 // === SMB/Network Browsing ===
 
 #[tauri::command]
@@ -1354,6 +1605,9 @@ pub fn run() {
             git_clone,
             get_cloud_status,
             browse_network, list_shares,
+            ftp_list, ftp_download,
+            get_permissions, set_permission, remove_permission, inherit_permissions,
+            list_mtp_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
