@@ -1,0 +1,24 @@
+.file-list.layout-icons .file-row { display:inline-flex; flex-direction:column; width:var(--icon-grid-size); height:auto; padding:8px 4px; text-align:center; vertical-align:top; border-radius:6px; }
+.file-list.layout-icons .row-name { flex:unset; min-width:unset; flex-direction:column; gap:2px; }
+.file-list.layout-icons .row-icon { width:48px; height:48px; }
+.file-list.layout-icons .row-icon svg { width:48px; height:48px; }
+.file-list.layout-icons .row-fname { font-size:11px; text-align:center; word-break:break-all; max-height:2.4em; overflow:hidden; }
+.file-list.layout-icons .row-date, .file-list.layout-icons .row-type, .file-list.layout-icons .row-size,
+.file-list.layout-icons .row-git, .file-list.layout-icons .row-tags { display:none; }
+
+.file-list.layout-cards .file-row { display:inline-flex; flex-direction:column; width:var(--card-width); height:var(--card-height); padding:8px; border:1px solid var(--border); border-radius:6px; margin:4px; vertical-align:top; transition:border-color .15s,background .06s; }
+.file-list.layout-cards .file-row:hover { border-color:var(--accent); }
+.file-list.layout-cards .file-row.selected { border-color:var(--accent); background:var(--select-bg); }
+.file-list.layout-cards .row-name { flex:unset; min-width:unset; flex-direction:column; gap:4px; align-items:center; flex:1; }
+.file-list.layout-cards .row-icon { width:48px; height:48px; flex-shrink:1; }
+.file-list.layout-cards .row-icon svg { width:48px; height:48px; }
+.file-list.layout-cards .row-fname { font-size:11px; text-align:center; max-width:100%; }
+.file-list.layout-cards .row-date, .file-list.layout-cards .row-type, .file-list.layout-cards .row-size,
+.file-list.layout-cards .row-git, .file-list.layout-cards .row-tags { display:none; }
+
+.column-browser { display:flex; flex:1; overflow-x:auto; overflow-y:hidden; }
+.column-col { min-width:200px; max-width:300px; border-right:1px solid var(--divider); overflow-y:auto; flex-shrink:0; }
+.column-item { display:flex; align-items:center; gap:6px; padding:4px 12px; cursor:default; transition:background .06s; font-size:12px; }
+.column-item:hover { background:var(--hover); }
+.column-item.selected { background:var(--select-bg); }
+.column-item .ci-arrow { margin-left:auto; color:var(--text-4); font-size:10px; }

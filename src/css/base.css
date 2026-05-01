@@ -1,0 +1,14 @@
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body,#app { height:100%; font-family:"Segoe UI Variable Small","Segoe UI",system-ui,-apple-system,sans-serif; font-size:12px; color:var(--text); -webkit-font-smoothing:antialiased; }
+body { background:var(--bg); overflow:hidden; user-select:none; }
+#app { display:flex; flex-direction:column; height:100vh; }
+input { font-family:inherit; font-size:12px; color:var(--text); background:var(--bg-input); }
+input::placeholder { color:var(--text-4); }
+::selection { background:var(--accent); color:#fff; }
+input::selection { background:var(--accent); color:#fff; }
+input:focus { outline:none; }
+
+.file-list::-webkit-scrollbar, .sidebar::-webkit-scrollbar, .dir-tree::-webkit-scrollbar, .column-col::-webkit-scrollbar { width:8px; }
+.file-list::-webkit-scrollbar-track, .sidebar::-webkit-scrollbar-track, .dir-tree::-webkit-scrollbar-track, .column-col::-webkit-scrollbar-track { background:transparent; }
+.file-list::-webkit-scrollbar-thumb, .sidebar::-webkit-scrollbar-thumb, .dir-tree::-webkit-scrollbar-thumb, .column-col::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:4px; }
+.file-list::-webkit-scrollbar-thumb:hover, .sidebar::-webkit-scrollbar-thumb:hover, .dir-tree::-webkit-scrollbar-thumb:hover { background:var(--scrollbar-hover); }

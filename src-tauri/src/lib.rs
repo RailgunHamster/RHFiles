@@ -1,6 +1,7 @@
 use rhfiles_core::enumerator;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Clone)]
 struct FileInfo {
@@ -12,45 +13,51 @@ struct FileInfo {
     size: u64,
     size_display: String,
     modified: String,
+    created: String,
+    folder_size: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
-struct DriveInfo {
+struct DriveInfoSer {
     letter: String,
     label: String,
     free: String,
     path: String,
 }
 
-fn format_modified(modified: std::time::SystemTime) -> String {
-    let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH) else {
-        return String::new();
-    };
-    let secs = dur.as_secs();
-    let days = secs / 86400;
-    let time = secs % 86400;
-    let hours = time / 3600;
-    let mins = (time % 3600) / 60;
+#[derive(Serialize, Clone)]
+struct TreeEntry {
+    name: String,
+    path: String,
+    has_children: bool,
+    is_hidden: bool,
+}
 
-    let now = std::time::SystemTime::now();
-    let Ok(now_dur) = now.duration_since(std::time::UNIX_EPOCH) else {
-        return format!("{:02}:{:02}", hours, mins);
-    };
-    let now_days = now_dur.as_secs() / 86400;
-    let diff_days = now_days.saturating_sub(days);
+#[derive(Serialize, Clone)]
+struct ArchiveEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: u64,
+    modified: String,
+}
 
-    if diff_days == 0 {
-        format!("Today {:02}:{:02}", hours, mins)
-    } else if diff_days == 1 {
-        format!("Yesterday {:02}:{:02}", hours, mins)
-    } else if diff_days < 7 {
-        format!("{} days ago", diff_days)
-    } else {
-        let year = 1970 + (secs / (365 * 86400)) as u32;
-        let day_of_year = (secs % (365 * 86400)) / 86400;
-        let month = (day_of_year / 31) + 1;
-        let day = (day_of_year % 31) + 1;
-        format!("{}/{:02}/{:02} {:02}:{:02}", year, month, day, hours, mins)
+fn format_time(t: std::time::SystemTime) -> String {
+    enumerator::format_time_proper(t)
+}
+
+fn file_info_from_entry(e: &rhfiles_core::FileEntry) -> FileInfo {
+    FileInfo {
+        name: e.name.clone(),
+        path: e.path.to_string_lossy().into_owned(),
+        extension: e.extension.clone(),
+        is_dir: e.is_dir,
+        is_hidden: e.is_hidden,
+        size: e.size,
+        size_display: e.display_size(),
+        modified: format_time(e.modified),
+        created: format_time(e.created),
+        folder_size: None,
     }
 }
 
@@ -58,56 +65,31 @@ fn format_modified(modified: std::time::SystemTime) -> String {
 fn list_dir(path: String) -> Result<Vec<FileInfo>, String> {
     let p = PathBuf::from(&path);
     let entries = enumerator::list_dir(&p).map_err(|e| e.to_string())?;
-
-    Ok(entries
-        .iter()
-        .map(|e| FileInfo {
-            name: e.name.clone(),
-            path: e.path.to_string_lossy().into_owned(),
-            extension: e.extension.clone(),
-            is_dir: e.is_dir,
-            is_hidden: e.is_hidden,
-            size: e.size,
-            size_display: e.display_size(),
-            modified: format_modified(e.modified),
-        })
-        .collect())
+    Ok(entries.iter().map(file_info_from_entry).collect())
 }
 
 #[tauri::command]
-fn get_drives() -> Result<Vec<DriveInfo>, String> {
+fn get_drives() -> Result<Vec<DriveInfoSer>, String> {
     let drives = enumerator::get_drives().map_err(|e| e.to_string())?;
-    Ok(drives
-        .iter()
-        .map(|d| DriveInfo {
-            letter: d.letter.clone(),
-            label: if d.label.is_empty() {
-                "Local Disk".to_string()
-            } else {
-                d.label.clone()
-            },
-            free: format!(
-                "{:.1} GB free / {:.1} GB",
-                d.free_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
-                d.total_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
-            ),
-            path: format!("{}\\", d.letter),
-        })
-        .collect())
+    Ok(drives.iter().map(|d| DriveInfoSer {
+        letter: d.letter.clone(),
+        label: if d.label.is_empty() { "Local Disk".to_string() } else { d.label.clone() },
+        free: format!("{:.1} GB free / {:.1} GB",
+            d.free_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+            d.total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)),
+        path: format!("{}\\", d.letter),
+    }).collect())
 }
 
 #[tauri::command]
 fn parent_path(path: String) -> Result<String, String> {
     let p = PathBuf::from(&path);
-    p.parent()
-        .map(|p| p.to_string_lossy().into_owned())
-        .ok_or_else(|| "No parent".to_string())
+    p.parent().map(|p| p.to_string_lossy().into_owned()).ok_or_else(|| "No parent".to_string())
 }
 
 #[tauri::command]
 fn delete_file(path: String) -> Result<(), String> {
-    let p = PathBuf::from(&path);
-    enumerator::delete_to_recycle_bin(&p)
+    enumerator::delete_to_recycle_bin(&PathBuf::from(&path))
 }
 
 #[tauri::command]
@@ -120,28 +102,17 @@ fn rename_file(path: String, new_name: String) -> Result<(), String> {
 
 #[tauri::command]
 fn new_folder(parent: String) -> Result<(), String> {
-    let p = PathBuf::from(&parent);
-    let mut new_path = p.join("New Folder");
-    let mut counter = 1;
-    while new_path.exists() {
-        new_path = p.join(format!("New Folder ({})", counter));
-        counter += 1;
-    }
-    std::fs::create_dir(&new_path).map_err(|e| e.to_string())
+    enumerator::create_new_file(&PathBuf::from(&parent), "folder", "")
 }
 
 #[tauri::command]
 fn copy_path(src: String, dest: String) -> Result<(), String> {
-    let src_path = PathBuf::from(&src);
-    let dest_path = PathBuf::from(&dest);
-    enumerator::copy_path(&src_path, &dest_path)
+    enumerator::copy_path(&PathBuf::from(&src), &PathBuf::from(&dest))
 }
 
 #[tauri::command]
-fn move_path(src: String, dest: String) -> Result<(), String> {
-    let src_path = PathBuf::from(&src);
-    let dest_path = PathBuf::from(&dest);
-    enumerator::move_path(&src_path, &dest_path)
+fn move_path_cmd(src: String, dest: String) -> Result<(), String> {
+    enumerator::move_path(&PathBuf::from(&src), &PathBuf::from(&dest))
 }
 
 #[tauri::command]
@@ -149,20 +120,426 @@ fn get_env(key: String) -> Option<String> {
     std::env::var(key).ok()
 }
 
+#[tauri::command]
+fn get_dir_tree(path: String) -> Result<Vec<TreeEntry>, String> {
+    let p = PathBuf::from(&path);
+    let entries = enumerator::get_dir_tree(&p).map_err(|e| e.to_string())?;
+    Ok(entries.iter().map(|e| TreeEntry {
+        name: e.name.clone(),
+        path: e.path.to_string_lossy().into_owned(),
+        has_children: enumerator::has_subdirs(&e.path),
+        is_hidden: e.is_hidden,
+    }).collect())
+}
+
+#[tauri::command]
+fn get_thumbnail(path: String, size: u32) -> Result<String, String> {
+    enumerator::generate_thumbnail(&PathBuf::from(&path), size)
+}
+
+#[tauri::command]
+fn open_file(path: String) -> Result<(), String> {
+    enumerator::open_file(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn show_properties(path: String) -> Result<(), String> {
+    enumerator::show_properties(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn read_file_preview(path: String) -> Result<FilePreview, String> {
+    let p = PathBuf::from(&path);
+    let metadata = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+    let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default().to_lowercase();
+    let is_image = matches!(ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif");
+    let is_text = matches!(ext.as_str(),
+        "txt" | "md" | "rs" | "js" | "ts" | "json" | "toml" | "yaml" | "yml" | "xml"
+            | "html" | "css" | "scss" | "py" | "c" | "cpp" | "h" | "hpp" | "java" | "go"
+            | "sh" | "bat" | "ps1" | "ini" | "cfg" | "log" | "csv" | "sql" | "rb" | "php"
+            | "swift" | "kt" | "lua" | "vim" | "dockerfile" | "makefile" | "gitignore"
+            | "env" | "lock" | "svg");
+    if is_image {
+        let thumb_b64 = enumerator::generate_thumbnail(&p, 400).ok();
+        Ok(FilePreview { preview_type: "image".to_string(), text_content: None, image_data: thumb_b64, size: metadata.len() })
+    } else if is_text || metadata.len() < 500_000 {
+        let text = enumerator::read_file_text(&p, 100_000)?;
+        Ok(FilePreview { preview_type: "text".to_string(), text_content: Some(text), image_data: None, size: metadata.len() })
+    } else {
+        Ok(FilePreview { preview_type: "binary".to_string(), text_content: None, image_data: None, size: metadata.len() })
+    }
+}
+
+#[derive(Serialize)]
+struct FilePreview {
+    preview_type: String,
+    text_content: Option<String>,
+    image_data: Option<String>,
+    size: u64,
+}
+
+#[tauri::command]
+fn git_status(path: String) -> Result<HashMap<String, String>, String> {
+    enumerator::get_git_status(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn git_branches(path: String) -> Result<Vec<enumerator::GitBranch>, String> {
+    enumerator::git_branches(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn git_checkout(path: String, branch: String) -> Result<(), String> {
+    enumerator::git_checkout(&PathBuf::from(&path), &branch)
+}
+
+#[tauri::command]
+fn git_create_branch(path: String, name: String) -> Result<(), String> {
+    enumerator::git_create_branch(&PathBuf::from(&path), &name)
+}
+
+#[tauri::command]
+fn git_init(path: String) -> Result<(), String> {
+    enumerator::git_init(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn list_archive(path: String) -> Result<Vec<ArchiveEntry>, String> {
+    let p = PathBuf::from(&path);
+    let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default().to_lowercase();
+    match ext.as_str() {
+        "zip" => list_zip(&p),
+        _ => Err("Unsupported archive format".to_string()),
+    }
+}
+
+fn list_zip(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    for i in 0..archive.len() {
+        let f = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = f.name().to_string();
+        entries.push(ArchiveEntry {
+            name: name.split('/').last().unwrap_or(&name).to_string(),
+            path: name.clone(),
+            is_dir: name.ends_with('/'),
+            size: f.size(),
+            modified: String::new(),
+        });
+    }
+    Ok(entries)
+}
+
+#[tauri::command]
+fn extract_archive(path: String, dest: String, entry_path: Option<String>) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    let d = PathBuf::from(&dest);
+    let file = std::fs::File::open(&p).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    if let Some(ep) = entry_path {
+        for i in 0..archive.len() {
+            let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
+            if f.name() == ep {
+                let out_path = d.join(f.name().replace('/', "\\"));
+                if f.is_dir() {
+                    std::fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
+                } else {
+                    if let Some(parent) = out_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                    let mut out_file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut f, &mut out_file).map_err(|e| e.to_string())?;
+                }
+                break;
+            }
+        }
+    } else {
+        archive.extract(&d).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn create_archive(sources: Vec<String>, dest: String) -> Result<(), String> {
+    let dest_path = PathBuf::from(&dest);
+    let file = std::fs::File::create(&dest_path).map_err(|e| e.to_string())?;
+    let mut zip_writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for src in &sources {
+        let src_path = PathBuf::from(src);
+        if src_path.is_dir() {
+            add_dir_to_zip(&mut zip_writer, &src_path, &src_path, &options)?;
+        } else {
+            let name = src_path.file_name().ok_or("no filename")?.to_string_lossy();
+            zip_writer.start_file(name.as_ref(), options).map_err(|e| e.to_string())?;
+            let mut f = std::fs::File::open(&src_path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut f, &mut zip_writer).map_err(|e| e.to_string())?;
+        }
+    }
+    zip_writer.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn add_dir_to_zip(zip_writer: &mut zip::ZipWriter<std::fs::File>, base: &Path, dir: &Path, options: &zip::write::SimpleFileOptions) -> Result<(), String> {
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let relative = path.strip_prefix(base).map_err(|e| e.to_string())?;
+        let name = relative.to_string_lossy().replace("\\", "/");
+        if path.is_dir() {
+            zip_writer.add_directory(format!("{}/", name), *options).map_err(|e| e.to_string())?;
+            add_dir_to_zip(zip_writer, base, &path, options)?;
+        } else {
+            zip_writer.start_file(&name, *options).map_err(|e| e.to_string())?;
+            let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut f, zip_writer).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn batch_rename(renames: Vec<(String, String)>) -> Result<Vec<String>, String> {
+    let mut errors = Vec::new();
+    for (old_path, new_name) in &renames {
+        let p = PathBuf::from(old_path);
+        let parent = p.parent().unwrap_or(&p);
+        let new_path = parent.join(new_name);
+        if let Err(e) = std::fs::rename(&p, &new_path) {
+            errors.push(format!("{}: {}", old_path, e));
+        }
+    }
+    if errors.is_empty() { Ok(errors) } else { Err(errors.join("\n")) }
+}
+
+#[tauri::command]
+fn save_file_tags(path: String, tags: Vec<String>) -> Result<(), String> {
+    let tag_file = get_tag_file()?;
+    let mut all_tags = load_all_tags_inner(&tag_file)?;
+    if tags.is_empty() { all_tags.remove(&path); }
+    else { all_tags.insert(path, tags); }
+    let json = serde_json::to_string_pretty(&all_tags).map_err(|e| e.to_string())?;
+    std::fs::write(&tag_file, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_file_tags(path: String) -> Result<Vec<String>, String> {
+    let tag_file = get_tag_file()?;
+    let all_tags = load_all_tags_inner(&tag_file)?;
+    Ok(all_tags.get(&path).cloned().unwrap_or_default())
+}
+
+#[tauri::command]
+fn load_all_tags() -> Result<HashMap<String, Vec<String>>, String> {
+    let tag_file = get_tag_file()?;
+    load_all_tags_inner(&tag_file)
+}
+
+fn get_tag_file() -> Result<PathBuf, String> {
+    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    let dir = PathBuf::from(app_data).join("RHFiles");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("tags.json"))
+}
+
+fn load_all_tags_inner(path: &Path) -> Result<HashMap<String, Vec<String>>, String> {
+    if !path.exists() { return Ok(HashMap::new()); }
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_file_info(path: String) -> Result<FileDetailInfo, String> {
+    let p = PathBuf::from(&path);
+    let metadata = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let extension = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    let is_dir = metadata.is_dir();
+    let size = metadata.len();
+    let folder_size_val = if is_dir {
+        enumerator::folder_size(&p).ok()
+    } else { None };
+    Ok(FileDetailInfo {
+        name, path: p.to_string_lossy().into_owned(), extension, is_dir,
+        size, size_display: format_size(size),
+        folder_size: folder_size_val,
+        folder_size_display: folder_size_val.map(|s| format_size(s)),
+        modified: format_time(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)),
+        created: format_time(metadata.created().unwrap_or(std::time::SystemTime::UNIX_EPOCH)),
+        readonly: metadata.permissions().readonly(),
+        attributes: if is_dir { "Directory".to_string() } else { "File".to_string() },
+    })
+}
+
+#[derive(Serialize)]
+struct FileDetailInfo {
+    name: String, path: String, extension: String, is_dir: bool,
+    size: u64, size_display: String,
+    folder_size: Option<u64>, folder_size_display: Option<String>,
+    modified: String, created: String, readonly: bool, attributes: String,
+}
+
+fn format_size(bytes: u64) -> String {
+    let b = bytes as f64;
+    if b < 1024.0 { format!("{} B", bytes) }
+    else if b < 1024.0 * 1024.0 { format!("{:.1} KB", b / 1024.0) }
+    else if b < 1024.0 * 1024.0 * 1024.0 { format!("{:.1} MB", b / (1024.0 * 1024.0)) }
+    else { format!("{:.1} GB", b / (1024.0 * 1024.0 * 1024.0)) }
+}
+
+#[tauri::command]
+fn create_shortcut(target: String, name: String, dest: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let dest_path = PathBuf::from(&dest);
+        let lnk_path = dest_path.join(format!("{}.lnk", name));
+        let target_str = target.replace("'", "''");
+        let script = format!(
+            "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('{}'); $sc.TargetPath = '{}'; $sc.Save()",
+            lnk_path.to_string_lossy(), target_str
+        );
+        std::process::Command::new("powershell").args(["-NoProfile", "-Command", &script])
+            .output().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = (target, name, dest); Err("Not supported".to_string()) }
+}
+
+#[tauri::command]
+fn search_recursive(path: String, query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
+    let query_lower = query.to_lowercase();
+    let p = PathBuf::from(&path);
+    let mut results = Vec::new();
+    search_dir(&p, &query_lower, &mut results, max_results);
+    Ok(results)
+}
+
+fn search_dir(dir: &Path, query: &str, results: &mut Vec<FileInfo>, max: usize) {
+    if results.len() >= max { return; }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        if results.len() >= max { return; }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.to_lowercase().contains(query) {
+            if let Ok(metadata) = entry.metadata() {
+                let extension = if metadata.is_dir() { String::new() }
+                    else { Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default() };
+                results.push(FileInfo {
+                    name, path: entry.path().to_string_lossy().into_owned(), extension,
+                    is_dir: metadata.is_dir(), is_hidden: false, size: metadata.len(),
+                    size_display: format_size(metadata.len()),
+                    modified: format_time(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)),
+                    created: String::new(), folder_size: None,
+                });
+            }
+        }
+        if let Ok(file_type) = entry.file_type() {
+            if file_type.is_dir() { search_dir(&entry.path(), query, results, max); }
+        }
+    }
+}
+
+// === NEW COMMANDS ===
+
+#[tauri::command]
+fn folder_size(path: String) -> Result<u64, String> {
+    enumerator::folder_size(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn compute_hash(path: String, algorithm: String) -> Result<String, String> {
+    enumerator::file_hash(&PathBuf::from(&path), &algorithm)
+}
+
+#[tauri::command]
+fn open_terminal(path: String, terminal: String) -> Result<(), String> {
+    enumerator::open_terminal(&PathBuf::from(&path), &terminal)
+}
+
+#[tauri::command]
+fn get_file_icon(path: String, size: u32) -> Result<String, String> {
+    enumerator::extract_file_icon(&PathBuf::from(&path), size)
+}
+
+#[tauri::command]
+fn get_new_file_templates() -> Result<Vec<enumerator::NewFileTemplate>, String> {
+    enumerator::get_new_file_templates()
+}
+
+#[tauri::command]
+fn create_new_file(parent: String, template: String, name: String) -> Result<(), String> {
+    enumerator::create_new_file(&PathBuf::from(&parent), &template, &name)
+}
+
+#[tauri::command]
+fn get_file_association(extension: String) -> Result<String, String> {
+    enumerator::get_file_association(&extension)
+}
+
+#[tauri::command]
+fn run_as_admin(path: String) -> Result<(), String> {
+    enumerator::run_as_admin(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn empty_recycle_bin() -> Result<(), String> {
+    enumerator::empty_recycle_bin()
+}
+
+#[tauri::command]
+fn rotate_image(path: String, degrees: i32) -> Result<(), String> {
+    enumerator::rotate_image(&PathBuf::from(&path), degrees)
+}
+
+#[tauri::command]
+fn read_shortcut(path: String) -> Result<enumerator::ShortcutInfo, String> {
+    enumerator::read_shortcut_target(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn detect_ides() -> Vec<enumerator::IDEInfo> {
+    enumerator::detect_ides()
+}
+
+#[tauri::command]
+fn open_in_ide(ide_cmd: String, path: String) -> Result<(), String> {
+    enumerator::open_in_ide(&ide_cmd, &PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn install_font(path: String) -> Result<(), String> {
+    enumerator::install_font(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn set_wallpaper(path: String) -> Result<(), String> {
+    enumerator::set_wallpaper(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn set_file_readonly(path: String, readonly: bool) -> Result<(), String> {
+    enumerator::set_file_readonly(&PathBuf::from(&path), readonly)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
-            list_dir,
-            get_drives,
-            parent_path,
-            delete_file,
-            rename_file,
-            new_folder,
-            copy_path,
-            move_path,
-            get_env,
+            list_dir, get_drives, parent_path, delete_file, rename_file, new_folder,
+            copy_path, move_path_cmd, get_env, get_dir_tree, get_thumbnail, open_file,
+            show_properties, read_file_preview, git_status, git_branches, git_checkout,
+            git_create_branch, git_init, list_archive, extract_archive, create_archive,
+            batch_rename, save_file_tags, load_file_tags, load_all_tags, get_file_info,
+            create_shortcut, search_recursive,
+            folder_size, compute_hash, open_terminal, get_file_icon,
+            get_new_file_templates, create_new_file, get_file_association,
+            run_as_admin, empty_recycle_bin, rotate_image, read_shortcut,
+            detect_ides, open_in_ide, install_font, set_wallpaper, set_file_readonly,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

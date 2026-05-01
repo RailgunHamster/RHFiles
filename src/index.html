@@ -1,15 +1,21 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RHFiles</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/header.css">
+<link rel="stylesheet" href="css/sidebar.css">
+<link rel="stylesheet" href="css/filelist.css">
+<link rel="stylesheet" href="css/layouts.css">
+<link rel="stylesheet" href="css/panes.css">
+<link rel="stylesheet" href="css/overlays.css">
 </head>
 <body>
 
 <div id="app">
-
   <div class="tab-bar" id="tab-bar"></div>
 
   <div class="toolbar">
@@ -34,54 +40,95 @@
     <div class="search-box">
       <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="3.5" stroke="currentColor" stroke-width="1.3"/><path d="M8.5 8.5L12.5 12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
       <input type="text" id="filter-input" placeholder="Search" spellcheck="false" oninput="applyFilter()">
+      <button class="tb" style="width:22px;height:22px" id="btn-deep-search" onclick="toggleDeepSearch()" title="Deep Search">
+        <svg width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M7 1v5M4 3.5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="7" cy="8" r="3" stroke="currentColor" stroke-width="1"/></svg>
+      </button>
     </div>
   </div>
 
   <div class="command-bar">
-    <button class="cmd" id="btn-new" onclick="newFolder()">
+    <button class="cmd" onclick="newFolder()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.5 4h5l1.5 1.5h6.5v8H1.5V4z" stroke="currentColor" stroke-width="1.1"/><path d="M8 7.5v4M5.5 9.5h5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
-      <span>New</span>
+      <span data-i18n="cmd.new">New</span>
     </button>
     <div class="cmd-sep"></div>
     <button class="cmd" onclick="cutSelected()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="4.5" cy="10.5" r="2" stroke="currentColor" stroke-width="1"/><circle cx="11.5" cy="10.5" r="2" stroke="currentColor" stroke-width="1"/><path d="M6 9l5-6M10 9L5 3" stroke="currentColor" stroke-width="1"/></svg>
-      <span>Cut</span>
+      <span data-i18n="cmd.cut">Cut</span>
     </button>
     <button class="cmd" onclick="copySelected()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="4" y="5" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1"/><path d="M5 5V3.5A1.5 1.5 0 0 1 6.5 2H10" stroke="currentColor" stroke-width="1"/></svg>
-      <span>Copy</span>
+      <span data-i18n="cmd.copy">Copy</span>
     </button>
     <button class="cmd" onclick="paste()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="3" y="4" width="10" height="11" rx="1" stroke="currentColor" stroke-width="1"/><path d="M6 2h4v3H6z" stroke="currentColor" stroke-width=".9"/><path d="M6 8.5h4M6 10.5h2.5" stroke="currentColor" stroke-width=".9" stroke-linecap="round"/></svg>
-      <span>Paste</span>
+      <span data-i18n="cmd.paste">Paste</span>
     </button>
     <button class="cmd" onclick="renamePrompt()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 2l4 4L6 14H2v-4L10 2z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></svg>
-      <span>Rename</span>
+      <span data-i18n="cmd.rename">Rename</span>
     </button>
     <button class="cmd" onclick="deleteSelected()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 5h10M5.5 5V3.5h5V5" stroke="currentColor" stroke-width="1"/><path d="M4.5 5l.5 8.5h6l.5-8.5" stroke="currentColor" stroke-width="1"/></svg>
-      <span>Delete</span>
+      <span data-i18n="cmd.delete">Delete</span>
     </button>
     <div class="cmd-sep"></div>
-    <button class="cmd" id="btn-sort" onclick="toggleSort()">
+    <button class="cmd" onclick="toggleSort()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h8M2 12h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
-      <span>Sort</span>
+      <span data-i18n="cmd.sort">Sort</span>
     </button>
     <button class="cmd" id="btn-hidden" onclick="toggleHidden()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1"/></svg>
-      <span>Hidden</span>
+      <span data-i18n="cmd.hidden">Hidden</span>
+    </button>
+    <button class="cmd" onclick="toggleGrouping('type')" title="Group by Type">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z" stroke="currentColor" stroke-width=".9" rx="1"/></svg>
+      <span>Group</span>
     </button>
     <span class="cmd-stretch"></span>
-    <button class="cmd" onclick="refresh()" title="Refresh (F5)">
+
+    <div class="layout-switcher">
+      <button class="tb layout-btn active" data-layout="details" onclick="setLayout('details')" title="Details">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 7h12M2 10h12M2 13h12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
+      </button>
+      <button class="tb layout-btn" data-layout="icons" onclick="setLayout('icons')" title="Icons">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
+      </button>
+      <button class="tb layout-btn" data-layout="cards" onclick="setLayout('cards')" title="Cards">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
+      </button>
+      <button class="tb layout-btn" data-layout="columns" onclick="setLayout('columns')" title="Columns">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h3v10H2zM7 3h3v10H7zM12 3h3v10h-3z" stroke="currentColor" stroke-width=".9" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="cmd-sep"></div>
+
+    <button class="tb" id="btn-preview" onclick="togglePreviewPane()" title="Preview Pane">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="1" stroke="currentColor" stroke-width="1"/><path d="M10 2v12" stroke="currentColor" stroke-width=".8" opacity=".4"/><circle cx="5.5" cy="6.5" r="1.5" stroke="currentColor" stroke-width=".8"/><path d="M1 12l3-3 2 2 2-2.5 3 3" stroke="currentColor" stroke-width=".8" stroke-linejoin="round" fill="none"/></svg>
+    </button>
+    <button class="tb" id="btn-dual" onclick="toggleDualPane()" title="Dual Pane">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="1" stroke="currentColor" stroke-width="1"/><path d="M8 2v12" stroke="currentColor" stroke-width=".8"/></svg>
+    </button>
+    <button class="tb" onclick="toggleTheme()" id="btn-theme" title="Toggle Theme">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" stroke="currentColor" stroke-width=".9" stroke-linecap="round"/></svg>
+    </button>
+    <button class="tb" onclick="refresh()" title="Refresh (F5)">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/><path d="M8 0l2.5 3-2.5 3" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
     </button>
   </div>
 
   <div class="body">
-    <div class="sidebar">
+    <div class="sidebar" id="sidebar">
       <div class="sidebar-section">
-        <div class="sidebar-heading">Quick access</div>
+        <div class="sidebar-heading" data-i18n="sidebar.tree">Directory Tree</div>
+        <div id="dir-tree" class="dir-tree"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Pinned</div>
+        <div id="pinned-list" class="pinned-list"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading" data-i18n="sidebar.quickAccess">Quick access</div>
         <div class="sidebar-item" onclick="navigateTo(homeDir('Desktop'))">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="1.5" stroke="currentColor" stroke-width="1"/><path d="M5 14h6" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
           <span>Desktop</span>
@@ -108,27 +155,181 @@
         </div>
       </div>
       <div class="sidebar-section">
-        <div class="sidebar-heading">This PC</div>
+        <div class="sidebar-heading" data-i18n="sidebar.tags">Tags</div>
+        <div id="tag-list" class="tag-list"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading" data-i18n="sidebar.thisPC">This PC</div>
         <div id="drives-list"></div>
       </div>
     </div>
 
-    <div class="content">
-      <div class="file-header" id="file-header">
-        <div class="col col-name" data-sort="name" onclick="sortBy('name')">Name <span class="sort-arrow"></span></div>
-        <div class="col col-date" data-sort="modified" onclick="sortBy('modified')">Date modified <span class="sort-arrow"></span></div>
-        <div class="col col-type" data-sort="type" onclick="sortBy('type')">Type <span class="sort-arrow"></span></div>
-        <div class="col col-size" data-sort="size" onclick="sortBy('size')">Size <span class="sort-arrow"></span></div>
+    <div class="main-area" id="main-area">
+      <div class="pane-container" id="pane-container">
+        <div class="pane" id="pane-left">
+          <div class="content">
+            <div class="file-header" id="file-header">
+              <div class="col col-name" data-sort="name" onclick="sortBy('name')">Name <span class="sort-arrow"></span></div>
+              <div class="col col-date" data-sort="modified" onclick="sortBy('modified')">Date modified <span class="sort-arrow"></span></div>
+              <div class="col col-type" data-sort="type" onclick="sortBy('type')">Type <span class="sort-arrow"></span></div>
+              <div class="col col-size" data-sort="size" onclick="sortBy('size')">Size <span class="sort-arrow"></span></div>
+            </div>
+            <div id="file-list" class="file-list"></div>
+            <div class="status-bar" id="status-bar">
+              <span id="status-count">0 items</span>
+              <span id="status-git"></span>
+              <select id="git-branch-select" style="display:none;font-size:11px;margin-left:8px;background:var(--bg-2);color:var(--text-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;" onchange="gitCheckout(this.value)"></select>
+              <span id="status-selection"></span>
+            </div>
+          </div>
+        </div>
+        <div class="pane-divider" id="pane-divider" style="display:none"></div>
+        <div class="pane" id="pane-right" style="display:none">
+          <div class="pane-right-toolbar">
+            <div class="toolbar-nav">
+              <button class="tb" onclick="paneGoBack('right')"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M8 2L3.5 6 8 10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
+              <button class="tb" onclick="paneGoForward('right')"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M4 2l4.5 4L4 10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
+              <button class="tb" onclick="paneGoUp('right')"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 7.5L6 4l3.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
+            </div>
+            <div class="address-bar pane-address" id="right-address-bar">
+              <div id="right-breadcrumb" class="breadcrumb"></div>
+              <input type="text" id="right-path-input" spellcheck="false">
+            </div>
+          </div>
+          <div class="content">
+            <div class="file-header">
+              <div class="col col-name" data-sort="name" onclick="paneSortBy('right','name')">Name <span class="sort-arrow"></span></div>
+              <div class="col col-date" data-sort="modified" onclick="paneSortBy('right','modified')">Date modified <span class="sort-arrow"></span></div>
+              <div class="col col-type" data-sort="type" onclick="paneSortBy('right','type')">Type <span class="sort-arrow"></span></div>
+              <div class="col col-size" data-sort="size" onclick="paneSortBy('right','size')">Size <span class="sort-arrow"></span></div>
+            </div>
+            <div id="right-file-list" class="file-list"></div>
+            <div class="status-bar"><span id="right-status-count"></span></div>
+          </div>
+        </div>
       </div>
-      <div id="file-list" class="file-list"></div>
-      <div class="status-bar" id="status-bar">
-        <span id="status-count">0 items</span>
-        <span id="status-selection"></span>
+      <div class="preview-divider" id="preview-divider" style="display:none"></div>
+      <div class="preview-pane" id="preview-pane" style="display:none">
+        <div class="preview-header">
+          <span class="preview-title" data-i18n="preview.title">Preview</span>
+          <button class="tb" onclick="togglePreviewPane()" style="width:20px;height:20px"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+        </div>
+        <div class="preview-content" id="preview-content">
+          <div class="preview-empty" data-i18n="preview.selectFile">Select a file to preview</div>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
-<script src="app.js"></script>
+<div class="overlay" id="command-palette" style="display:none">
+  <div class="palette-backdrop" onclick="closeCommandPalette()"></div>
+  <div class="palette-box">
+    <input type="text" id="palette-input" placeholder="Type a command..." spellcheck="false" oninput="filterPalette()">
+    <div class="palette-list" id="palette-list"></div>
+  </div>
+</div>
+
+<div class="overlay" id="batch-rename-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeBatchRename()"></div>
+  <div class="dialog-box">
+    <div class="dialog-title" data-i18n="batchRename.title">Batch Rename</div>
+    <div class="dialog-row">
+      <label data-i18n="batchRename.find">Find:</label>
+      <input type="text" id="br-find" oninput="previewBatchRename()">
+    </div>
+    <div class="dialog-row">
+      <label data-i18n="batchRename.replace">Replace:</label>
+      <input type="text" id="br-replace" oninput="previewBatchRename()">
+    </div>
+    <div class="dialog-row">
+      <label><input type="checkbox" id="br-regex"> Regex</label>
+      <label><input type="checkbox" id="br-case"> Case sensitive</label>
+    </div>
+    <div class="dialog-scroll" id="br-preview"></div>
+    <div class="dialog-actions">
+      <button class="dialog-btn" onclick="closeBatchRename()" data-i18n="btn.cancel">Cancel</button>
+      <button class="dialog-btn primary" onclick="executeBatchRename()" data-i18n="btn.rename">Rename</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="properties-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeProperties()"></div>
+  <div class="dialog-box dialog-wide">
+    <div class="dialog-title" data-i18n="properties.title">Properties</div>
+    <div class="dialog-scroll" id="props-content"></div>
+    <div class="dialog-actions">
+      <button class="dialog-btn primary" onclick="closeProperties()" data-i18n="btn.ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="settings-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeSettings()"></div>
+  <div class="dialog-box dialog-wide">
+    <div class="dialog-title" data-i18n="settings.title">Settings</div>
+    <div class="dialog-scroll" id="settings-content"></div>
+    <div class="dialog-actions">
+      <button class="dialog-btn primary" onclick="closeSettings()" data-i18n="btn.ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="tag-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeTagDialog()"></div>
+  <div class="dialog-box">
+    <div class="dialog-title" data-i18n="tag.manage">Manage Tags</div>
+    <div class="dialog-row">
+      <input type="text" id="tag-input" placeholder="Tag name...">
+      <button class="dialog-btn" onclick="addTagToSelected()">Add</button>
+    </div>
+    <div id="tag-current" class="tag-current"></div>
+    <div class="dialog-actions">
+      <button class="dialog-btn primary" onclick="closeTagDialog()" data-i18n="btn.ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="conflict-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeConflict()"></div>
+  <div class="dialog-box">
+    <div class="dialog-title">File Conflict</div>
+    <div class="dialog-scroll" id="conflict-content"></div>
+  </div>
+</div>
+
+<div class="overlay" id="newfile-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeNewFile()"></div>
+  <div class="dialog-box">
+    <div class="dialog-title">New File</div>
+    <div class="dialog-row">
+      <label>Name:</label>
+      <input type="text" id="newfile-name" placeholder="file.txt">
+    </div>
+    <div class="dialog-scroll" id="newfile-templates"></div>
+    <div class="dialog-actions">
+      <button class="dialog-btn" onclick="closeNewFile()">Cancel</button>
+      <button class="dialog-btn primary" onclick="createNewFileFromDialog()">Create</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/common.js"></script>
+<script src="js/theme.js"></script>
+<script src="js/tabs.js"></script>
+<script src="js/sidebar.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/filelist.js"></script>
+<script src="js/ops.js"></script>
+<script src="js/keyboard.js"></script>
+<script src="js/pane.js"></script>
+<script src="js/dialogs.js"></script>
+<script src="js/git.js"></script>
+<script src="js/undoredo.js"></script>
+<script src="js/grouping.js"></script>
+<script src="js/selection.js"></script>
+<script src="js/conflict.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>
