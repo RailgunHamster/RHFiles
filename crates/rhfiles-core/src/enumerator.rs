@@ -274,31 +274,49 @@ pub fn folder_size(path: &Path) -> Result<u64, String> {
 
 pub fn file_hash(path: &Path, algorithm: &str) -> Result<String, String> {
     use digest::Digest;
-    let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let hash = match algorithm {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut buf = [0u8; 8192];
+    match algorithm {
         "md5" => {
             let mut h = md5::Md5::new();
-            h.update(&data);
-            format!("{:x}", h.finalize())
+            loop {
+                let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 { break; }
+                h.update(&buf[..n]);
+            }
+            Ok(format!("{:x}", h.finalize()))
         }
         "sha1" => {
             let mut h = sha1::Sha1::new();
-            h.update(&data);
-            format!("{:x}", h.finalize())
+            loop {
+                let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 { break; }
+                h.update(&buf[..n]);
+            }
+            Ok(format!("{:x}", h.finalize()))
         }
         "sha256" => {
             let mut h = sha2::Sha256::new();
-            h.update(&data);
-            format!("{:x}", h.finalize())
+            loop {
+                let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 { break; }
+                h.update(&buf[..n]);
+            }
+            Ok(format!("{:x}", h.finalize()))
         }
         "sha512" => {
             let mut h = sha2::Sha512::new();
-            h.update(&data);
-            format!("{:x}", h.finalize())
+            loop {
+                let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 { break; }
+                h.update(&buf[..n]);
+            }
+            Ok(format!("{:x}", h.finalize()))
         }
-        _ => return Err(format!("Unknown algorithm: {algorithm}")),
-    };
-    Ok(hash)
+        _ => Err(format!("Unknown algorithm: {algorithm}")),
+    }
 }
 
 pub fn open_terminal(path: &Path, terminal: &str) -> Result<(), String> {

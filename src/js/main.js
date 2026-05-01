@@ -100,11 +100,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (file.is_dir) {} // can't navigate inside archive dirs
       else extractArchiveEntry(idx);
     } else if (file.is_dir) {
-      if (file.name.toLowerCase().endsWith(".zip")) {
-        await openArchive(file.path);
-      } else {
-        navigateTo(file.path);
-      }
+      navigateTo(file.path);
     } else {
       const ext = (file.extension || "").toLowerCase();
       if (ext === "zip") {
@@ -122,8 +118,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     const idx = parseInt(row.dataset.index);
     const file = G.rp.entries[idx];
     if (!file) return;
-    if (file.is_dir) rpNavigateTo(file.path);
-    else try { await call("open_file", { path: file.path }); } catch (ex) {}
+    if (file.is_dir) {
+      rpNavigateTo(file.path);
+    } else {
+      const ext = (file.extension || "").toLowerCase();
+      if (ext === "zip") {
+        await openArchive(file.path);
+      } else {
+        try { await call("open_file", { path: file.path }); } catch (ex) {}
+      }
+    }
   });
 
   // Close overlays on backdrop click

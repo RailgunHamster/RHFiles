@@ -192,8 +192,30 @@ async function loadTagList() {
       }
     }
     list.innerHTML = Object.keys(tagMap).map((tag, idx) =>
-      `<span class="tag-pill" style="background:${tagColor(idx)}22;color:${tagColor(idx)}" onclick="navigateTo('${esc(tagMap[tag][0].split('\\').slice(0,-1).join('\\') || tagMap[tag][0])}')" title="${tagMap[tag].length} files">${esc(tag)}</span>`
+      `<span class="tag-pill" style="background:${tagColor(idx)}22;color:${tagColor(idx)}" onclick="navigateToTagFiles('${esc(tag)}')" title="${tagMap[tag].length} files">${esc(tag)}</span>`
     ).join("");
+  } catch (e) {}
+}
+
+async function navigateToTagFiles(tag) {
+  try {
+    const allTags = await call("load_all_tags", {});
+    if (!allTags) return;
+    const paths = allTags[tag];
+    if (!paths || paths.length === 0) return;
+    const firstPath = paths[0];
+    const parentDir = firstPath.split("\\").slice(0, -1).join("\\") || firstPath;
+    const fileName = firstPath.split("\\").pop();
+    await navigateTo(parentDir);
+    const tab = getTab();
+    const idx = tab.entries.findIndex(e => e.name === fileName);
+    if (idx >= 0) {
+      tab.sel.clear();
+      tab.sel.add(idx);
+      tab.lastIdx = idx;
+      renderFiles(tab, "file-list", "status-count", "status-selection");
+      updatePreviewForSelection();
+    }
   } catch (e) {}
 }
 

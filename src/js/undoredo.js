@@ -57,7 +57,9 @@ function trackRename(oldPath, newPath) {
 function trackDelete(paths) {
   pushUndo({
     label: "Delete " + paths.length + " items",
-    undo: async () => { /* recycle bin restore not easily available */ },
+    undo: async () => {
+      showNotice("Deleted items can be restored from the Recycle Bin");
+    },
     redo: async () => { for (const p of paths) await call("delete_file", { path: p }); }
   });
 }
@@ -65,7 +67,7 @@ function trackDelete(paths) {
 function trackNewFolder(path) {
   pushUndo({
     label: "New folder " + path,
-    undo: async () => { /* remove the folder */ },
+    undo: async () => { await call("delete_file", { path }); },
     redo: async () => { await call("new_folder", { parent: path.split("\\").slice(0, -1).join("\\") }); }
   });
 }
