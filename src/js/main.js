@@ -124,6 +124,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   setTimeout(() => checkForUpdates(), 5000);
+  applyToolbarConfig();
 });
 
 document.addEventListener("contextmenu", e => e.preventDefault());

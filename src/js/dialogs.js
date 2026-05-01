@@ -140,8 +140,12 @@ function openSettings() {
     '<div class="settings-row"><label>Default Terminal</label>' +
     '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>Windows Terminal</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>PowerShell</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>Command Prompt</option></select></div>' +
     '<div class="settings-row"><label>Adaptive Layout</label>' +
-    '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>';
+    '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
+    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>Customize Toolbar</label>' +
+    '<div id="toolbar-config-list" style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto"></div>' +
+    '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">Reset to Default</button></div>';
   dlg.style.display = "flex";
+  renderToolbarConfig();
 }
 
 function closeSettings() {
@@ -172,4 +176,80 @@ async function showNewFileDialog(isRight) {
     await call("create_new_file", { path: destPath + "\\" + fileName, content: tmpl ? tmpl.content : "" });
     await refresh();
   } catch (e) { alert("Create file failed: " + e); }
+}
+
+// --- toolbar customization ---
+const TOOLBAR_BUTTONS = [
+  { id: "btn-new", label: "New Folder/File" },
+  { id: "btn-cut", label: "Cut" },
+  { id: "btn-copy", label: "Copy" },
+  { id: "btn-paste", label: "Paste" },
+  { id: "btn-rename", label: "Rename" },
+  { id: "btn-delete", label: "Delete" },
+  { id: "btn-sort", label: "Sort" },
+  { id: "btn-hidden", label: "Hidden Files" },
+  { id: "btn-group", label: "Group" },
+  { id: "btn-layout-details", label: "Details Layout" },
+  { id: "btn-layout-icons", label: "Icons Layout" },
+  { id: "btn-layout-cards", label: "Cards Layout" },
+  { id: "btn-layout-columns", label: "Columns Layout" },
+  { id: "btn-preview", label: "Preview Pane" },
+  { id: "btn-dual", label: "Dual Pane" },
+  { id: "btn-theme", label: "Toggle Theme" },
+  { id: "btn-refresh", label: "Refresh" },
+];
+
+function loadToolbarConfig() {
+  try {
+    const saved = localStorage.getItem("rhfiles-toolbar");
+    if (saved) return JSON.parse(saved);
+  } catch(e) {}
+  return { visible: TOOLBAR_BUTTONS.map(b => b.id) };
+}
+
+function applyToolbarConfig() {
+  const config = loadToolbarConfig();
+  const toolbar = document.querySelector(".command-bar");
+  if (!toolbar) return;
+  const allBtns = toolbar.querySelectorAll(".cmd, .tb[id], .layout-btn");
+  const visibleSet = new Set(config.visible);
+  allBtns.forEach(btn => {
+    const id = btn.id || btn.dataset.layout && ("btn-layout-" + btn.dataset.layout);
+    if (!id) return;
+    if (visibleSet.has(id)) {
+      btn.style.display = "";
+    } else {
+      btn.style.display = "none";
+    }
+  });
+}
+
+function renderToolbarConfig() {
+  const container = document.getElementById("toolbar-config-list");
+  if (!container) return;
+  const config = loadToolbarConfig();
+  const visibleSet = new Set(config.visible);
+  container.innerHTML = TOOLBAR_BUTTONS.map(b =>
+    `<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:2px 0">
+      <input type="checkbox" ${visibleSet.has(b.id) ? "checked" : ""} onchange="toggleToolbarBtn('${b.id}', this.checked)">
+      ${esc(b.label)}
+    </label>`
+  ).join("");
+}
+
+function toggleToolbarBtn(id, visible) {
+  const config = loadToolbarConfig();
+  if (visible) {
+    if (!config.visible.includes(id)) config.visible.push(id);
+  } else {
+    config.visible = config.visible.filter(v => v !== id);
+  }
+  localStorage.setItem("rhfiles-toolbar", JSON.stringify(config));
+  applyToolbarConfig();
+}
+
+function resetToolbarConfig() {
+  localStorage.removeItem("rhfiles-toolbar");
+  applyToolbarConfig();
+  renderToolbarConfig();
 }

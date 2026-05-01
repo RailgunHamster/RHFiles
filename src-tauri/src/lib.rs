@@ -644,6 +644,139 @@ fn search_dir(dir: &Path, query: &str, results: &mut Vec<FileInfo>, max: usize) 
     }
 }
 
+// === ADS (NTFS Alternate Data Streams) ===
+
+#[tauri::command]
+fn list_ads(path: String) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &format!(
+            "Get-Item -LiteralPath '{}' -Stream * | Where-Object {{ $_.Stream -ne ':$DATA' }} | Select-Object -ExpandProperty Stream",
+            path.replace("'", "''")
+        )])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+}
+
+#[tauri::command]
+fn delete_ads(path: String, stream: String) -> Result<(), String> {
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &format!(
+            "Remove-Item -LiteralPath \"{}:{}\" -Force -ErrorAction Stop",
+            path.replace('"', "\"\""), stream.replace('"', "\"\"")
+        )])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(err.to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn read_ads(path: String, stream: String) -> Result<String, String> {
+    let full_path = format!("{}:{}", path, stream);
+    std::fs::read_to_string(&full_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn unblock_file(path: String) -> Result<(), String> {
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &format!(
+            "Unblock-File -LiteralPath '{}'",
+            path.replace("'", "''")
+        )])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(err.to_string());
+    }
+    Ok(())
+}
+
+// === PiP Mode ===
+
+#[tauri::command]
+async fn toggle_pip(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        let is_top = win.is_always_on_top().map_err(|e| e.to_string())?;
+        if is_top {
+            win.set_always_on_top(false).map_err(|e| e.to_string())?;
+            win.set_decorations(true).map_err(|e| e.to_string())?;
+            win.set_size(tauri::LogicalSize::new(1200.0, 800.0)).map_err(|e| e.to_string())?;
+            Ok(false)
+        } else {
+            win.set_always_on_top(true).map_err(|e| e.to_string())?;
+            win.set_decorations(false).map_err(|e| e.to_string())?;
+            win.set_size(tauri::LogicalSize::new(500.0, 400.0)).map_err(|e| e.to_string())?;
+            Ok(true)
+        }
+    } else {
+        Err("No main window".to_string())
+    }
+}
+
+// === 7z Compression ===
+
+fn find_7z() -> Option<String> {
+    let candidates = [
+        r"C:\Program Files\7-Zip\7z.exe",
+        r"C:\Program Files (x86)\7-Zip\7z.exe",
+    ];
+    for c in &candidates {
+        if Path::new(c).exists() {
+            return Some(c.to_string());
+        }
+    }
+    std::process::Command::new("where")
+        .arg("7z.exe")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+#[tauri::command]
+fn extract_7z(archive: String, dest: String) -> Result<(), String> {
+    let exe = find_7z().ok_or("7-Zip not installed. Download from 7-zip.org")?;
+    let output = std::process::Command::new(&exe)
+        .args(["x", &archive, &format!("-o{}", dest), "-y"])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn create_7z(sources: Vec<String>, archive: String) -> Result<(), String> {
+    let exe = find_7z().ok_or("7-Zip not installed. Download from 7-zip.org")?;
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(["a", &archive, "-mx=5"]);
+    for s in &sources {
+        cmd.arg(s);
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn is_7z_available() -> bool {
+    find_7z().is_some()
+}
+
 // === WINDOW EFFECT ===
 
 #[tauri::command]
@@ -896,6 +1029,9 @@ pub fn run() {
             db_save_tags, db_load_tags, db_load_all_tags,
             db_save_layout, db_load_layout,
             db_save_pinned, db_load_pinned,
+            list_ads, delete_ads, read_ads, unblock_file,
+            toggle_pip,
+            extract_7z, create_7z, is_7z_available,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

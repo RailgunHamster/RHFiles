@@ -253,11 +253,12 @@ function showContextMenu(x, y, isRight) {
     { label: "Rotate Left", action: () => { call("rotate_image", { path: sel[0].path, degrees: -90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: "Rotate Right", action: () => { call("rotate_image", { path: sel[0].path, degrees: 90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: "-", action: null, hidden: !singleFile || !isImage },
-    { label: "Extract Here", action: () => { call("extract_archive", { path: sel[0].path, dest: getTab().path, entryPath: null }); refresh(); }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
-    { label: "Extract to Subfolder...", action: () => { const sub = sel[0].name.replace(/\.[^.]+$/, ""); call("extract_archive", { path: sel[0].path, dest: getTab().path + "\\" + sub, entryPath: null }); refresh(); }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: "Extract Here", action: async () => { const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path }); await refresh(); } catch(e) { alert("7z extract failed: " + e); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: "Extract to Subfolder...", action: async () => { const sub = sel[0].name.replace(/\.[^.]+$/, ""); const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path + "\\" + sub }); await refresh(); } catch(e) { alert("7z extract failed: " + e); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path + "\\" + sub, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
     { label: "-", action: null, hidden: !singleFile || !isArchive },
     { label: "Compress to ZIP", action: async () => { const paths = sel.map(f => f.path); try { await call("create_archive", { paths, dest: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip" }); await refresh(); } catch(e) { alert("Compress failed: " + e); } }, disabled: !hasSelection },
-    { label: "-", action: null },
+    { label: "Compress to 7z", action: async () => { const paths = sel.map(f => f.path); try { await call("create_7z", { sources: paths, archive: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".7z" }); await refresh(); } catch(e) { alert("7z compress failed: " + e); } }, disabled: !hasSelection, hidden: !G._7zAvailable },
+    { label: "-", action: null, hidden: !G._7zAvailable },
     { label: "Install Font", action: () => { call("install_font", { path: sel[0].path }); }, disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },
     { label: "-", action: null, hidden: !singleFile || !isFont },
     { label: t('ctx.selectAll'), shortcut:"Ctrl+A", action: () => selectAll(isRight) },
@@ -266,6 +267,9 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.batchRename'), action: () => openBatchRename(isRight), disabled: !hasSelection },
     { label: t('ctx.addTag'), action: () => openTagDialog(isRight), disabled: !hasSelection },
     { label: t('ctx.properties'), shortcut:"Alt+Enter", action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
+    { label: "-", action: null },
+    { label: "Unblock File", action: async () => { try { await call("unblock_file", { path: sel[0].path }); showNotice("File unblocked"); refresh(); } catch(e) { alert("Unblock failed: " + e); } }, disabled: !singleFile, hidden: !singleFile },
+    { label: "View Streams...", action: async () => { try { const ads = await call("list_ads", { path: sel[0].path }); showStreamsDialog(sel[0].path, ads); } catch(e) { showStreamsDialog(sel[0].path, []); } }, disabled: !singleFile, hidden: !singleFile },
     { label: "-", action: null },
     { label: "Empty Recycle Bin", action: () => { if (confirm("Empty Recycle Bin?")) call("empty_recycle_bin", {}); } },
     { label: G.showHidden ? t('ctx.hideHidden') : t('ctx.showHidden'), action: toggleHidden },
@@ -339,3 +343,71 @@ document.addEventListener("drop", async e => {
     }
   } catch (ex) {}
 });
+
+// --- ADS streams dialog ---
+function showStreamsDialog(path, streams) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "ads-dialog";
+  dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);max-width:500px;";
+  let listHtml = streams.length
+    ? streams.map(s => `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span style="cursor:pointer;text-decoration:underline" data-stream="${esc(s)}">${esc(s)}</span>
+        <button class="dialog-btn danger" data-del="${esc(s)}" style="font-size:11px">Delete</button>
+      </div>`).join("")
+    : "<div style='color:var(--text-3);padding:8px'>No alternate data streams found.</div>";
+  dlg.innerHTML = `<h3 style="margin:0 0 8px;font-size:14px">Alternate Data Streams</h3>
+    <div style="font-size:11px;color:var(--text-3);margin-bottom:8px">${esc(path)}</div>
+    <div style="max-height:300px;overflow:auto">${listHtml}</div>
+    <div style="margin-top:12px;text-align:right">
+      <button class="dialog-btn" id="ads-close">Close</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#ads-close").onclick = () => { dlg.close(); dlg.remove(); };
+  dlg.querySelectorAll("[data-del]").forEach(btn => {
+    btn.onclick = async () => {
+      const stream = btn.dataset.del;
+      try {
+        await call("delete_ads", { path, stream });
+        btn.closest("div[style]").remove();
+        showNotice("Stream deleted");
+      } catch(e) { alert("Delete stream failed: " + e); }
+    };
+  });
+  dlg.querySelectorAll("[data-stream]").forEach(el => {
+    el.onclick = async () => {
+      const stream = el.dataset.stream;
+      try {
+        const content = await call("read_ads", { path, stream });
+        const pre = document.createElement("pre");
+        pre.style.cssText = "margin-top:8px;padding:8px;background:var(--bg-2);border-radius:4px;max-height:200px;overflow:auto;white-space:pre-wrap;font-size:12px";
+        pre.textContent = content;
+        const existing = dlg.querySelector("pre");
+        if (existing) existing.remove();
+        el.closest("div[style]").after(pre);
+      } catch(e) { alert("Read stream failed: " + e); }
+    };
+  });
+  dlg.showModal();
+  dlg.onclose = () => dlg.remove();
+}
+
+// --- notice toast ---
+function showNotice(msg) {
+  let toast = document.getElementById("rhfiles-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "rhfiles-toast";
+    toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:6px;background:var(--bg-2);color:var(--text-1);border:1px solid var(--border);font-size:12px;z-index:99999;transition:opacity 0.3s";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = "1";
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.opacity = "0"; }, 2000);
+}
+
+// --- 7z availability ---
+async function check7zAvailable() {
+  try { G._7zAvailable = await call("is_7z_available", {}); } catch(e) { G._7zAvailable = false; }
+}
+check7zAvailable();

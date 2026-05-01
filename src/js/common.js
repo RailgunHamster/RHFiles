@@ -30,6 +30,8 @@ G.tagCache = {};
 G.settings = loadSettings();
 G.groupBy = localStorage.getItem('rhfiles-groupBy') || 'none';
 G.showExtensions = true;
+G.pipMode = false;
+G._7zAvailable = false;
 
 G.lastActivePane = 'left';
 
@@ -130,6 +132,14 @@ function fallbackCall(cmd, args) {
     case "db_load_layout": return null;
     case "db_save_pinned": return null;
     case "db_load_pinned": return [];
+    case "list_ads": return [];
+    case "delete_ads": return null;
+    case "read_ads": return "";
+    case "unblock_file": return null;
+    case "toggle_pip": return true;
+    case "extract_7z": return null;
+    case "create_7z": return null;
+    case "is_7z_available": return false;
     default: return null;
   }
 }

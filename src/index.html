@@ -50,33 +50,33 @@
   </div>
 
   <div class="command-bar">
-    <button class="cmd" onclick="newFolder()">
+    <button class="cmd" id="btn-new" onclick="newFolder()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.5 4h5l1.5 1.5h6.5v8H1.5V4z" stroke="currentColor" stroke-width="1.1"/><path d="M8 7.5v4M5.5 9.5h5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
       <span data-i18n="cmd.new">New</span>
     </button>
     <div class="cmd-sep"></div>
-    <button class="cmd" onclick="cutSelected()">
+    <button class="cmd" id="btn-cut" onclick="cutSelected()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="4.5" cy="10.5" r="2" stroke="currentColor" stroke-width="1"/><circle cx="11.5" cy="10.5" r="2" stroke="currentColor" stroke-width="1"/><path d="M6 9l5-6M10 9L5 3" stroke="currentColor" stroke-width="1"/></svg>
       <span data-i18n="cmd.cut">Cut</span>
     </button>
-    <button class="cmd" onclick="copySelected()">
+    <button class="cmd" id="btn-copy" onclick="copySelected()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="4" y="5" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1"/><path d="M5 5V3.5A1.5 1.5 0 0 1 6.5 2H10" stroke="currentColor" stroke-width="1"/></svg>
       <span data-i18n="cmd.copy">Copy</span>
     </button>
-    <button class="cmd" onclick="paste()">
+    <button class="cmd" id="btn-paste" onclick="paste()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="3" y="4" width="10" height="11" rx="1" stroke="currentColor" stroke-width="1"/><path d="M6 2h4v3H6z" stroke="currentColor" stroke-width=".9"/><path d="M6 8.5h4M6 10.5h2.5" stroke="currentColor" stroke-width=".9" stroke-linecap="round"/></svg>
       <span data-i18n="cmd.paste">Paste</span>
     </button>
-    <button class="cmd" onclick="renamePrompt()">
+    <button class="cmd" id="btn-rename" onclick="renamePrompt()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 2l4 4L6 14H2v-4L10 2z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></svg>
       <span data-i18n="cmd.rename">Rename</span>
     </button>
-    <button class="cmd" onclick="deleteSelected()">
+    <button class="cmd" id="btn-delete" onclick="deleteSelected()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 5h10M5.5 5V3.5h5V5" stroke="currentColor" stroke-width="1"/><path d="M4.5 5l.5 8.5h6l.5-8.5" stroke="currentColor" stroke-width="1"/></svg>
       <span data-i18n="cmd.delete">Delete</span>
     </button>
     <div class="cmd-sep"></div>
-    <button class="cmd" onclick="toggleSort()">
+    <button class="cmd" id="btn-sort" onclick="toggleSort()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h8M2 12h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
       <span data-i18n="cmd.sort">Sort</span>
     </button>
@@ -84,23 +84,23 @@
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1"/></svg>
       <span data-i18n="cmd.hidden">Hidden</span>
     </button>
-    <button class="cmd" onclick="toggleGrouping('type')" title="Group by Type">
+    <button class="cmd" id="btn-group" onclick="toggleGrouping('type')" title="Group by Type">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z" stroke="currentColor" stroke-width=".9" rx="1"/></svg>
       <span>Group</span>
     </button>
     <span class="cmd-stretch"></span>
 
     <div class="layout-switcher">
-      <button class="tb layout-btn active" data-layout="details" onclick="setLayout('details')" title="Details">
+      <button class="tb layout-btn active" id="btn-layout-details" data-layout="details" onclick="setLayout('details')" title="Details">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 7h12M2 10h12M2 13h12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
       </button>
-      <button class="tb layout-btn" data-layout="icons" onclick="setLayout('icons')" title="Icons">
+      <button class="tb layout-btn" id="btn-layout-icons" data-layout="icons" onclick="setLayout('icons')" title="Icons">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
       </button>
-      <button class="tb layout-btn" data-layout="cards" onclick="setLayout('cards')" title="Cards">
+      <button class="tb layout-btn" id="btn-layout-cards" data-layout="cards" onclick="setLayout('cards')" title="Cards">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
       </button>
-      <button class="tb layout-btn" data-layout="columns" onclick="setLayout('columns')" title="Columns">
+      <button class="tb layout-btn" id="btn-layout-columns" data-layout="columns" onclick="setLayout('columns')" title="Columns">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h3v10H2zM7 3h3v10H7zM12 3h3v10h-3z" stroke="currentColor" stroke-width=".9" stroke-linejoin="round"/></svg>
       </button>
     </div>

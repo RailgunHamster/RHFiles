@@ -87,6 +87,7 @@ document.addEventListener("keydown", async e => {
       if (e.ctrlKey && e.key === "y") { e.preventDefault(); await redo(); }
       if (e.ctrlKey && e.shiftKey && e.key === "N") { e.preventDefault(); showNewFileDialog(); }
       if (e.ctrlKey && e.shiftKey && e.key === "H") { e.preventDefault(); toggleGroupingMenu(); }
+      if (e.ctrlKey && e.shiftKey && e.key === "P") { e.preventDefault(); try { const isPip = await call("toggle_pip", {}); G.pipMode = isPip; showNotice(isPip ? "PiP Mode ON" : "PiP Mode OFF"); } catch(e) { alert("PiP failed: " + e); } }
       break;
   }
 });
@@ -137,6 +138,7 @@ const COMMANDS = [
   { id:"view.grouping", label:"Toggle Grouping Menu", action: toggleGroupingMenu, keys:"Ctrl+Shift+H" },
   { id:"file.quicklook", label:"QuickLook Preview", action: quicklookSelected, keys:"Space" },
   { id:"window.new", label:"New Window", action: () => call("open_new_window", {}), keys:"Ctrl+N" },
+  { id:"window.pip", label:"Toggle PiP Mode", action: async () => { try { const isPip = await call("toggle_pip", {}); G.pipMode = isPip; showNotice(isPip ? "PiP Mode ON" : "PiP Mode OFF"); } catch(e) {} }, keys:"Ctrl+Shift+P" },
   { id:"settings", label:"Settings", action: openSettings, keys:"Ctrl+," },
 ];
 
