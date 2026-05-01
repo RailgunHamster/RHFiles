@@ -76,14 +76,17 @@ async function loadGitBranches(path) {
     const data = await call("git_branches", { path });
     const el = document.getElementById("git-branch-selector");
     if (!el) return data;
-    const branches = data.branches || [];
-    const current = data.current || "";
-    el.innerHTML = branches.map(b =>
-      '<option value="' + esc(b) + '"' + (b === current ? ' selected' : '') + '>' + esc(b) + (b === current ? ' *' : '') + '</option>'
-    ).join("");
+    const branches = Array.isArray(data) ? data : (data.branches || []);
+    const current = Array.isArray(data)
+      ? (branches.find(b => b.is_current)?.name || "")
+      : (data.current || "");
+    el.innerHTML = branches.map(b => {
+      const name = typeof b === 'string' ? b : b.name;
+      return '<option value="' + esc(name) + '"' + (name === current ? ' selected' : '') + '>' + esc(name) + (name === current ? ' *' : '') + '</option>';
+    }).join("");
     el.style.display = branches.length ? "inline-block" : "none";
     return data;
-  } catch (e) { return { branches: [], current: "" }; }
+  } catch (e) { return []; }
 }
 
 async function gitCheckout(branch) {

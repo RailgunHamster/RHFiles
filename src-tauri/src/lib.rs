@@ -2,10 +2,13 @@ use rhfiles_core::enumerator;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::Emitter;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+
+struct CancelFlag(Mutex<bool>);
 
 #[derive(Serialize, Clone)]
 struct FileInfo {
@@ -124,7 +127,8 @@ fn move_path_cmd(src: String, dest: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn copy_with_progress(src: String, dest: String, app: tauri::AppHandle) -> Result<(), String> {
+async fn copy_with_progress(src: String, dest: String, app: tauri::AppHandle, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    *cancel.0.lock().unwrap() = false;
     let src_path = PathBuf::from(&src);
     let dest_path = PathBuf::from(&dest);
     let src_name = src_path.file_name().ok_or("no filename")?;
@@ -149,6 +153,10 @@ async fn copy_with_progress(src: String, dest: String, app: tauri::AppHandle) ->
         let start = std::time::Instant::now();
 
         loop {
+            if *cancel.0.lock().unwrap() {
+                let _ = std::fs::remove_file(&target);
+                return Err("Cancelled".to_string());
+            }
             let n = source_file.read(&mut buf).map_err(|e| e.to_string())?;
             if n == 0 { break; }
             dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
@@ -175,7 +183,8 @@ async fn copy_with_progress(src: String, dest: String, app: tauri::AppHandle) ->
 }
 
 #[tauri::command]
-async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle) -> Result<(), String> {
+async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    *cancel.0.lock().unwrap() = false;
     let src_path = PathBuf::from(&src);
     let dest_path = PathBuf::from(&dest);
     let src_name = src_path.file_name().ok_or("no filename")?;
@@ -194,6 +203,7 @@ async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle) ->
             "bytesTransferred": 0, "totalBytes": total_size,
             "percentage": 10, "speed": 0, "status": "progress"
         }));
+        if *cancel.0.lock().unwrap() { return Err("Cancelled".to_string()); }
         enumerator::copy_path(&src_path, &dest_path)?;
         std::fs::remove_dir_all(&src_path).map_err(|e| e.to_string())?;
     } else {
@@ -207,6 +217,10 @@ async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle) ->
         let start = std::time::Instant::now();
 
         loop {
+            if *cancel.0.lock().unwrap() {
+                let _ = std::fs::remove_file(&target);
+                return Err("Cancelled".to_string());
+            }
             let n = source_file.read(&mut buf).map_err(|e| e.to_string())?;
             if n == 0 { break; }
             dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
@@ -236,6 +250,11 @@ async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle) ->
 #[tauri::command]
 fn get_env(key: String) -> Option<String> {
     std::env::var(key).ok()
+}
+
+#[tauri::command]
+fn cancel_operation(cancel: tauri::State<'_, CancelFlag>) {
+    *cancel.0.lock().unwrap() = true;
 }
 
 #[tauri::command]
@@ -1637,6 +1656,7 @@ fn invoke_shell_verb(path: String, verb: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(CancelFlag(Mutex::new(false)))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -1681,6 +1701,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_dir, get_drives, parent_path, delete_file, rename_file, new_folder,
             copy_path, move_path_cmd, copy_with_progress, move_with_progress,
+            cancel_operation,
             get_env, get_dir_tree, get_thumbnail, open_file,
             show_properties, read_file_preview, git_status, git_branches, git_checkout,
             git_create_branch, git_init, list_archive, extract_archive, create_archive,

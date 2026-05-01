@@ -116,7 +116,7 @@ function fallbackCall(cmd, args) {
     case "install_font": return null;
     case "set_wallpaper": return null;
     case "set_file_readonly": return null;
-    case "git_branches": return { branches:["main","develop"], current:"main" };
+    case "git_branches": return [{ name:"main", is_current:true }, { name:"develop", is_current:false }];
     case "git_checkout": return null;
     case "git_create_branch": return null;
     case "git_init": return null;
@@ -162,6 +162,7 @@ function fallbackCall(cmd, args) {
     case "list_mtp_devices": return [];
     case "get_shell_verbs": return [];
     case "invoke_shell_verb": return null;
+    case "cancel_operation": return null;
     default: return null;
   }
 }

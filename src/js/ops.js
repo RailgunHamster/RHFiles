@@ -41,6 +41,7 @@ function hideProgress() {
 
 function cancelOperation() {
   currentOperationCancelled = true;
+  call("cancel_operation", {});
   hideProgress();
 }
 
@@ -94,19 +95,43 @@ async function cutSelected(isRight) {
 
 async function paste(isRight) {
   if (!G.clipboard) return;
-  const destPath = isRight ? G.rp.path : getTab().path;
+  const destTab = isRight ? G.rp : getTab();
+  const destPath = destTab.path;
+  const destEntries = destTab.entries || [];
+  let applyAllAction = null;
   try {
     for (const srcPath of G.clipboard.paths) {
+      const srcName = srcPath.split("\\").pop();
+      const destFullPath = destPath + "\\" + srcName;
+      const conflict = destEntries.find(e => e.name === srcName);
+      let action = 'replace';
+      if (conflict) {
+        if (applyAllAction) {
+          action = applyAllAction;
+        } else {
+          action = await new Promise((resolve) => {
+            showConflictDialog(srcName, srcName, srcPath, destFullPath, (a, applyAll) => {
+              if (applyAll) applyAllAction = a;
+              resolve(a);
+            });
+          });
+        }
+      }
+      if (action === 'cancel') break;
+      if (action === 'skip') continue;
+      if (action === 'rename') {
+        await call("rename_file", { path: destFullPath, newName: generateUniqueName(destPath, srcName) });
+      }
       if (G.clipboard.op === "cut") {
         showProgress("Moving...");
         await call("move_with_progress", { src: srcPath, dest: destPath });
         hideProgress();
-        trackMove(srcPath, destPath + "\\" + srcPath.split("\\").pop());
+        trackMove(srcPath, destFullPath);
       } else {
         showProgress("Copying...");
         await call("copy_with_progress", { src: srcPath, dest: destPath });
         hideProgress();
-        trackCopy(srcPath, destPath + "\\" + srcPath.split("\\").pop());
+        trackCopy(srcPath, destFullPath);
       }
     }
     if (G.clipboard.op === "cut") G.clipboard = null;
@@ -342,7 +367,9 @@ document.addEventListener("drop", async e => {
     const data = e.dataTransfer.getData("text/plain");
     if (data) {
       const paths = JSON.parse(data);
-      const dest = getTab().path;
+      const dropTarget = e.target.closest('.file-list');
+      const isRightDrop = dropTarget && dropTarget.id === 'right-file-list';
+      const dest = isRightDrop ? G.rp.path : getTab().path;
       for (const src of paths) {
         try { await call("move_path_cmd", { src, dest }); } catch (ex) {}
       }

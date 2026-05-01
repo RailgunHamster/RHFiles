@@ -345,10 +345,12 @@ async function navigateTo(path, pushHistory) {
   showFileContent();
   const tab = getTab();
   const filterEl = document.getElementById("filter-input");
-  if (filterEl) filterEl.value = "";
+  if (filterEl && path !== tab.path) filterEl.value = "";
   try {
     let entries = await call("list_dir", { path, filter: "" });
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
+    const filter = filterEl ? filterEl.value.toLowerCase() : "";
+    if (filter) entries = entries.filter(e => e.name.toLowerCase().includes(filter));
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
     tab.entries = entries;
     if (pushHistory && path !== tab.path) {
