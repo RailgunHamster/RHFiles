@@ -237,12 +237,14 @@ document.addEventListener("mousedown", e => {
 function startResize(e, containerId, leftId, rightId) {
   e.preventDefault();
   const container = document.getElementById(containerId);
+  const rightEl = document.getElementById(rightId);
   const startX = e.clientX;
-  const startW = container.clientWidth;
+  const startRightW = rightEl.getBoundingClientRect().width;
+  const containerW = container.clientWidth;
   const onMove = (ev) => {
     const dx = ev.clientX - startX;
-    const newW = Math.max(200, Math.min(startW + dx, window.innerWidth - 200));
-    document.getElementById(rightId).style.width = (newW) + "px";
+    const newRightW = Math.max(200, Math.min(startRightW - dx, containerW - 200));
+    rightEl.style.width = newRightW + "px";
   };
   const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
   document.addEventListener("mousemove", onMove);

@@ -154,7 +154,45 @@ document.addEventListener("DOMContentLoaded", async () => {
   applyToolbarConfig();
 });
 
-document.addEventListener("contextmenu", e => e.preventDefault());
+document.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  removeContextMenu();
+  const isRight = G.lastActivePane === 'right';
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
+  const items = [
+    { label: "New Folder", shortcut: "F7", action: newFolder },
+    { label: "New File...", shortcut: "Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
+    { label: "-", action: null },
+    { label: "Paste", shortcut: "Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
+    { label: "-", action: null },
+    { label: "Refresh", shortcut: "F5", action: refresh },
+    { label: "Select All", shortcut: "Ctrl+A", action: () => selectAll(isRight) },
+    { label: "-", action: null },
+    { label: G.showHidden ? "Hide Hidden Items" : "Show Hidden Items", action: toggleHidden },
+    { label: "Open in Terminal", action: () => { const path = isRight ? G.rp.path : getTab().path; call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
+    { label: "Properties", action: () => showPropertiesDialog(isRight ? G.rp.path : getTab().path) },
+  ];
+  items.forEach(item => {
+    if (item.label === "-") {
+      const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
+    } else {
+      const mi = document.createElement("div");
+      mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
+      mi.innerHTML = `<span>${esc(item.label)}</span>${item.shortcut ? `<span class="ctx-shortcut">${item.shortcut}</span>` : ""}`;
+      mi.addEventListener("click", () => { removeContextMenu(); if (item.action && !item.disabled) item.action(); });
+      menu.appendChild(mi);
+    }
+  });
+  document.body.appendChild(menu);
+  contextMenu = menu;
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (e.clientX - rect.width) + "px";
+    if (rect.bottom > window.innerHeight) menu.style.top = (e.clientY - rect.height) + "px";
+  });
+});
 
 window.addEventListener('error', (e) => {
     call("log_error", {

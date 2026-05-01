@@ -42,8 +42,8 @@ const ACTION_HANDLERS = {
   "nav.forward":         async () => await goForward(),
   "nav.refresh":         async () => await refresh(),
   "nav.open":            async () => {},
-  "nav.home":            async () => { const tab = getTab(); const sel = tab.sel || new Set(); sel.clear(); sel.add(0); tab.lastIdx = 0; renderFiles(tab, "file-list", "status-count", "status-selection"); scrollToVisible(0); updatePreviewForSelection(); },
-  "nav.end":             async () => { const tab = getTab(); const entries = tab.entries || []; const sel = tab.sel || new Set(); sel.clear(); sel.add(entries.length - 1); tab.lastIdx = entries.length - 1; renderFiles(tab, "file-list", "status-count", "status-selection"); scrollToVisible(entries.length - 1); updatePreviewForSelection(); },
+  "nav.home":            async () => { const isRight = G.lastActivePane === 'right'; const pane = isRight ? G.rp : getTab(); const sel = pane.sel || new Set(); sel.clear(); sel.add(0); pane.lastIdx = 0; const listId = isRight ? "right-file-list" : "file-list"; const countId = isRight ? "right-status-count" : "status-count"; renderFiles(pane, listId, countId, null, isRight); scrollToVisible(0); updatePreviewForSelection(); },
+  "nav.end":             async () => { const isRight = G.lastActivePane === 'right'; const pane = isRight ? G.rp : getTab(); const entries = pane.entries || []; const sel = pane.sel || new Set(); sel.clear(); sel.add(entries.length - 1); pane.lastIdx = entries.length - 1; const listId = isRight ? "right-file-list" : "file-list"; const countId = isRight ? "right-status-count" : "status-count"; renderFiles(pane, listId, countId, null, isRight); scrollToVisible(entries.length - 1); updatePreviewForSelection(); },
   "file.copy":           async () => await copySelected(),
   "file.cut":            async () => await cutSelected(),
   "file.paste":          async () => await paste(),
@@ -157,36 +157,45 @@ document.addEventListener("keydown", async e => {
     if (actionId === "settings") { openSettings(); return; }
 
     if (actionId === "nav.open") {
-      const entries = getTab().entries || [];
-      const sel = getTab().sel || new Set();
+      const isRight = G.lastActivePane === 'right';
+      const pane = isRight ? G.rp : getTab();
+      const entries = pane.entries || [];
+      const sel = pane.sel || new Set();
       const indices = [...sel];
       const focusedIndex = indices.length ? indices[indices.length - 1] : -1;
       if (indices.length === 1 && entries[focusedIndex]) {
-        if (entries[focusedIndex].is_dir) await navigateTo(entries[focusedIndex].path);
+        if (entries[focusedIndex].is_dir) {
+          if (isRight) rpNavigateTo(entries[focusedIndex].path);
+          else await navigateTo(entries[focusedIndex].path);
+        }
         else openFileHandler(entries[focusedIndex].path);
       }
       return;
     }
 
     if (actionId === "nav.up" || actionId === "nav.down") {
-      const entries = getTab().entries || [];
-      const sel = getTab().sel || new Set();
+      const isRight = G.lastActivePane === 'right';
+      const pane = isRight ? G.rp : getTab();
+      const entries = pane.entries || [];
+      const sel = pane.sel || new Set();
       const indices = [...sel];
       const focusedIndex = indices.length ? indices[indices.length - 1] : -1;
 
       if (actionId === "nav.up") {
         if (focusedIndex > 0) {
           sel.clear(); sel.add(focusedIndex - 1);
-          getTab().lastIdx = focusedIndex - 1;
+          pane.lastIdx = focusedIndex - 1;
         }
       } else {
         if (focusedIndex < entries.length - 1) {
           sel.clear(); sel.add(focusedIndex < 0 ? 0 : focusedIndex + 1);
-          getTab().lastIdx = focusedIndex < 0 ? 0 : focusedIndex + 1;
+          pane.lastIdx = focusedIndex < 0 ? 0 : focusedIndex + 1;
         }
       }
-      renderFiles(getTab(), "file-list", "status-count", "status-selection");
-      scrollToVisible(getTab().lastIdx);
+      const listId = isRight ? "right-file-list" : "file-list";
+      const countId = isRight ? "right-status-count" : "status-count";
+      renderFiles(pane, listId, countId, null, isRight);
+      scrollToVisible(pane.lastIdx);
       updatePreviewForSelection();
       return;
     }
@@ -198,31 +207,44 @@ document.addEventListener("keydown", async e => {
 
   if (e.key === "ArrowDown") {
     e.preventDefault();
-    const entries = getTab().entries || [];
-    const sel = getTab().sel || new Set();
+    const isRight = G.lastActivePane === 'right';
+    const pane = isRight ? G.rp : getTab();
+    const entries = pane.entries || [];
+    const sel = pane.sel || new Set();
     const indices = [...sel];
     const fi = indices.length ? indices[indices.length - 1] : -1;
-    if (fi < entries.length - 1) { sel.clear(); sel.add(fi < 0 ? 0 : fi + 1); getTab().lastIdx = fi < 0 ? 0 : fi + 1; }
-    renderFiles(getTab(), "file-list", "status-count", "status-selection");
-    scrollToVisible(getTab().lastIdx);
+    if (fi < entries.length - 1) { sel.clear(); sel.add(fi < 0 ? 0 : fi + 1); pane.lastIdx = fi < 0 ? 0 : fi + 1; }
+    const listId = isRight ? "right-file-list" : "file-list";
+    const countId = isRight ? "right-status-count" : "status-count";
+    renderFiles(pane, listId, countId, null, isRight);
+    scrollToVisible(pane.lastIdx);
     updatePreviewForSelection();
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
-    const sel = getTab().sel || new Set();
+    const isRight = G.lastActivePane === 'right';
+    const pane = isRight ? G.rp : getTab();
+    const sel = pane.sel || new Set();
     const indices = [...sel];
     const fi = indices.length ? indices[indices.length - 1] : -1;
-    if (fi > 0) { sel.clear(); sel.add(fi - 1); getTab().lastIdx = fi - 1; }
-    renderFiles(getTab(), "file-list", "status-count", "status-selection");
-    scrollToVisible(getTab().lastIdx);
+    if (fi > 0) { sel.clear(); sel.add(fi - 1); pane.lastIdx = fi - 1; }
+    const listId = isRight ? "right-file-list" : "file-list";
+    const countId = isRight ? "right-status-count" : "status-count";
+    renderFiles(pane, listId, countId, null, isRight);
+    scrollToVisible(pane.lastIdx);
     updatePreviewForSelection();
   } else if (e.key === "Enter") {
     e.preventDefault();
-    const entries = getTab().entries || [];
-    const sel = getTab().sel || new Set();
+    const isRight = G.lastActivePane === 'right';
+    const pane = isRight ? G.rp : getTab();
+    const entries = pane.entries || [];
+    const sel = pane.sel || new Set();
     const indices = [...sel];
     const fi = indices.length ? indices[indices.length - 1] : -1;
     if (indices.length === 1 && entries[fi]) {
-      if (entries[fi].is_dir) await navigateTo(entries[fi].path);
+      if (entries[fi].is_dir) {
+        if (isRight) rpNavigateTo(entries[fi].path);
+        else await navigateTo(entries[fi].path);
+      }
       else openFileHandler(entries[fi].path);
     }
   }

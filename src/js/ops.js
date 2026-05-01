@@ -334,33 +334,6 @@ function showContextMenu(x, y, isRight) {
 function removeContextMenu() { if (contextMenu) { contextMenu.remove(); contextMenu = null; } }
 document.addEventListener("click", e => { if (contextMenu && !contextMenu.contains(e.target)) removeContextMenu(); });
 
-async function showNewFileDialog(isRight) {
-  let templates = [];
-  try {
-    templates = await call("get_new_file_templates", {});
-  } catch (e) {
-    templates = [
-      { name: "Text File", ext: ".txt", content: "" },
-      { name: "HTML File", ext: ".html", content: "<!DOCTYPE html>\n<html>\n<head><title></title></head>\n<body>\n\n</body>\n</html>" },
-      { name: "JSON File", ext: ".json", content: "{\n  \n}" },
-      { name: "Markdown File", ext: ".md", content: "# Title\n\n" },
-      { name: "JavaScript File", ext: ".js", content: "// \n" },
-      { name: "CSS File", ext: ".css", content: "/* */\n" },
-      { name: "Python File", ext: ".py", content: "# -*- coding: utf-8 -*-\n\n" },
-      { name: "Batch File", ext: ".bat", content: "@echo off\n\n" },
-    ];
-  }
-  const destPath = isRight ? G.rp.path : getTab().path;
-  const fileName = prompt("File name:", "New File" + (templates.length ? templates[0].ext : ".txt"));
-  if (!fileName) return;
-  const tmpl = templates.find(t => fileName.endsWith(t.ext)) || templates[0];
-  try {
-    const templateExt = tmpl ? (tmpl.extension || (tmpl.ext || "").replace(/^\./, '')) : "";
-    await call("create_new_file", { parent: destPath, template: templateExt, name: fileName });
-    await refresh();
-  } catch (e) { alert("Create file failed: " + e); }
-}
-
 // --- drag & drop ---
 document.addEventListener("dragover", e => e.preventDefault());
 document.addEventListener("drop", async e => {

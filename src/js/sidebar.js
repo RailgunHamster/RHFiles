@@ -10,14 +10,14 @@ async function loadTree(path, expand) {
 }
 
 function renderTreeNode(container, children, parentPath, expand) {
-  const existing = container.querySelector(`[data-tpath="${esc(parentPath)}"]`);
+  const existing = Array.from(container.querySelectorAll("[data-tpath]")).find(el => el.dataset.tpath === parentPath) || null;
   let node;
   if (existing) {
     node = existing;
     const childContainer = node.querySelector(".tree-children");
     if (childContainer) {
       childContainer.innerHTML = "";
-      children.forEach(c => renderTreeItem(childContainer, c));
+      children.forEach(c => renderTreeItem(childContainer, c, (parseInt(node.dataset.depth) || 0) + 1));
       childContainer.classList.add("open");
     }
     node.querySelector(".tree-arrow").classList.add("expanded");
@@ -26,14 +26,15 @@ function renderTreeNode(container, children, parentPath, expand) {
     node = document.createElement("div");
     node.className = "tree-node";
     node.dataset.tpath = parentPath;
-    node.innerHTML = `<div class="tree-row">
+    node.dataset.depth = "0";
+    node.innerHTML = `<div class="tree-row" style="padding-left:0px">
       <span class="tree-arrow ${expand?'expanded':''}">\u25b6</span>
       <svg class="tree-icon" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.5L7.5 6h7v7h-13V4.5z" stroke="#dcb67a" stroke-width="1"/></svg>
       <span class="tree-name">${esc(parentPath.split('\\').filter(Boolean).pop() || parentPath)}</span>
     </div>
     <div class="tree-children ${expand?'open':''}"></div>`;
     const childContainer = node.querySelector(".tree-children");
-    children.forEach(c => renderTreeItem(childContainer, c));
+    children.forEach(c => renderTreeItem(childContainer, c, 1));
     const row = node.querySelector(".tree-row");
     row.addEventListener("click", e => {
       e.stopPropagation();
@@ -53,10 +54,12 @@ function renderTreeNode(container, children, parentPath, expand) {
   }
 }
 
-function renderTreeItem(container, entry) {
+function renderTreeItem(container, entry, depth) {
+  depth = depth || 0;
   const div = document.createElement("div");
   div.className = "tree-row";
-  div.style.paddingLeft = (parseInt(container.parentElement?.querySelector(".tree-row")?.style.paddingLeft || 0) + 16) + "px";
+  div.style.paddingLeft = (depth * 16) + "px";
+  div.dataset.depth = depth;
   div.innerHTML = `
     <span class="tree-arrow ${entry.has_children ? '' : 'empty'}">\u25b6</span>
     <svg class="tree-icon" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.5L7.5 6h7v7h-13V4.5z" stroke="#dcb67a" stroke-width="1"/></svg>
@@ -78,7 +81,7 @@ function renderTreeItem(container, entry) {
         try {
           const kids = await call("get_dir_tree", { path: entry.path });
           childrenDiv.innerHTML = "";
-          kids.forEach(k => renderTreeItem(childrenDiv, k));
+          kids.forEach(k => renderTreeItem(childrenDiv, k, depth + 1));
         } catch (ex) {}
       }
       childrenDiv.classList.add("open");

@@ -219,14 +219,29 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
     if (spacer) spacer.addEventListener("click", () => enterEditMode(isRight));
     return;
   }
-  const parts = path.replace(/\\/g,"/").split("/").filter(Boolean);
+  let parts, isUnc = false;
+  if (path.startsWith("\\\\")) {
+    isUnc = true;
+    const withoutPrefix = path.substring(2);
+    const slashIdx = withoutPrefix.indexOf("\\");
+    if (slashIdx >= 0) {
+      parts = ["\\\\" + withoutPrefix.substring(0, slashIdx), ...withoutPrefix.substring(slashIdx + 1).replace(/\\/g, "/").split("/").filter(Boolean)];
+    } else {
+      parts = ["\\\\" + withoutPrefix];
+    }
+  } else {
+    parts = path.replace(/\\/g,"/").split("/").filter(Boolean);
+  }
   let html = "", accumulated = "";
   parts.forEach((part, i) => {
-    accumulated += (i === 0 ? "" : "/") + part;
-    const fullPath = i === 0 ? part + "\\" : accumulated.replace(/\//g, "\\");
-    html += `<span class="bc-item" data-path="${esc(fullPath)}">${esc(part)}</span>`;
+    if (isUnc && i === 0) {
+      accumulated = part;
+    } else {
+      accumulated += (accumulated ? "\\" : "") + part;
+    }
+    html += `<span class="bc-item" data-path="${esc(accumulated)}">${esc(part)}</span>`;
     if (i < parts.length - 1) {
-      html += `<span class="bc-sep" data-path="${esc(fullPath)}">\u203a</span>`;
+      html += `<span class="bc-sep" data-path="${esc(accumulated)}">\u203a</span>`;
     }
   });
   html += `<span class="breadcrumb-spacer"></span>`;
@@ -329,14 +344,11 @@ async function navigateTo(path, pushHistory) {
   hideHomePage();
   showFileContent();
   const tab = getTab();
-  const filter = document.getElementById("filter-input").value;
+  const filterEl = document.getElementById("filter-input");
+  if (filterEl) filterEl.value = "";
   try {
     let entries = await call("list_dir", { path, filter: "" });
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
-    if (filter) {
-      const lower = filter.toLowerCase();
-      entries = entries.filter(e => e.name.toLowerCase().includes(lower));
-    }
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
     tab.entries = entries;
     if (pushHistory && path !== tab.path) {
