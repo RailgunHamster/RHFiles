@@ -155,9 +155,26 @@ function openSettings() {
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
     '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>Customize Toolbar</label>' +
     '<div id="toolbar-config-list" style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto"></div>' +
-    '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">Reset to Default</button></div>';
+    '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">Reset to Default</button></div>' +
+    '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">' +
+    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.shortcuts') + '</label>' +
+    '<div id="shortcut-config-list" style="display:flex;flex-direction:column;gap:6px;max-height:350px;overflow:auto;padding:4px 0"></div>' +
+    '<div style="display:flex;gap:8px;align-items:center">' +
+      '<button class="dialog-btn" onclick="resetShortcuts()" style="align-self:flex-start">Reset Shortcuts</button>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">Click a key binding to re-record. Multiple keys per action allowed.</span>' +
+    '</div></div>' +
+    '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">' +
+    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>Data Management</label>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="dialog-btn" onclick="exportAllData()">Export All Data</button>' +
+      '<button class="dialog-btn" onclick="importAllData()">Import Data...</button>' +
+      '<button class="dialog-btn" onclick="clearAllData()" style="color:#e74c3c">Clear All Data</button>' +
+    '</div>' +
+    '<span style="font-size:11px;color:var(--text-secondary)">Export includes: shortcuts, tabs, tags, pinned folders, layouts, themes, settings, browsing history.</span>' +
+    '</div>';
   dlg.style.display = "flex";
   renderToolbarConfig();
+  renderShortcutConfig();
 }
 
 function onThemeSelectChange(val) {
@@ -308,4 +325,170 @@ function resetToolbarConfig() {
   localStorage.removeItem("rhfiles-toolbar");
   applyToolbarConfig();
   renderToolbarConfig();
+}
+
+// --- shortcut customization ---
+const SHORTCUT_LABELS = {
+  "nav.up": "Go Up",
+  "nav.down": "Open / Go Into Folder",
+  "nav.back": "Go Back",
+  "nav.forward": "Go Forward",
+  "nav.refresh": "Refresh",
+  "nav.open": "Open Selected",
+  "nav.home": "Jump to First",
+  "nav.end": "Jump to Last",
+  "file.copy": "Copy",
+  "file.cut": "Cut",
+  "file.paste": "Paste",
+  "file.delete": "Delete",
+  "file.rename": "Rename",
+  "file.newFolder": "New Folder",
+  "file.newFile": "New File",
+  "file.selectAll": "Select All",
+  "file.invertSelection": "Invert Selection",
+  "file.properties": "Properties",
+  "file.quicklook": "QuickLook Preview",
+  "file.undo": "Undo",
+  "file.redo": "Redo",
+  "view.fullscreen": "Toggle Fullscreen",
+  "view.dualPane": "Toggle Dual Pane",
+  "view.hidden": "Toggle Hidden Files",
+  "view.switchPane": "Switch Pane",
+  "view.grouping": "Toggle Grouping",
+  "window.new": "New Window",
+  "window.pip": "Toggle PiP",
+  "tab.new": "New Tab",
+  "tab.close": "Close Tab",
+};
+
+function renderShortcutConfig() {
+  const container = document.getElementById("shortcut-config-list");
+  if (!container) return;
+  const bindings = getShortcutBindings();
+  const entries = Object.entries(SHORTCUT_LABELS);
+  container.innerHTML = entries.map(([actionId, label]) => {
+    const keys = bindings[actionId] || [];
+    const keyInputs = keys.map((k, i) =>
+      `<input type="text" class="shortcut-key-input" readonly value="${esc(k)}" data-action="${actionId}" data-index="${i}" data-original="${esc(k)}" style="width:140px;font-size:12px;padding:3px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:3px;cursor:pointer;text-align:center" onclick="recordShortcut(this)">`
+    ).join("");
+    return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0">
+      <span style="width:160px;font-size:12px;flex-shrink:0">${esc(label)}</span>
+      <div style="display:flex;gap:4px;align-items:center">${keyInputs}</div>
+      <button class="dialog-btn" style="font-size:10px;padding:2px 6px" onclick="addShortcutBinding('${actionId}')">+</button>
+      <button class="dialog-btn" style="font-size:10px;padding:2px 6px;color:#e74c3c" onclick="removeShortcutBinding('${actionId}')">-</button>
+    </div>`;
+  }).join("");
+}
+
+function recordShortcut(input) {
+  input.classList.add("shortcut-recorder");
+  input.value = "Press keys...";
+  input.focus();
+}
+
+function addShortcutBinding(actionId) {
+  const bindings = getShortcutBindings();
+  if (!bindings[actionId]) bindings[actionId] = [];
+  if (bindings[actionId].length < 4) {
+    bindings[actionId].push("");
+    saveShortcutBindings(bindings);
+    _shortcutBindings = bindings;
+    renderShortcutConfig();
+    const inputs = document.querySelectorAll(`.shortcut-key-input[data-action="${actionId}"]`);
+    const last = inputs[inputs.length - 1];
+    if (last) recordShortcut(last);
+  }
+}
+
+function removeShortcutBinding(actionId) {
+  const bindings = getShortcutBindings();
+  if (bindings[actionId] && bindings[actionId].length > 0) {
+    bindings[actionId].pop();
+    saveShortcutBindings(bindings);
+    _shortcutBindings = bindings;
+    renderShortcutConfig();
+  }
+}
+
+function resetShortcuts() {
+  localStorage.removeItem("rhfiles-shortcuts");
+  _shortcutBindings = null;
+  renderShortcutConfig();
+  showNotice("Shortcuts reset to defaults");
+}
+
+// --- import/export ---
+function collectAllLocalData() {
+  const data = { _version: 1, _exportDate: new Date().toISOString() };
+  const keys = [
+    "rhfiles-settings", "rhfiles-lang", "rhfiles-layout", "rhfiles-tabs",
+    "rhfiles-shortcuts", "rhfiles-toolbar", "rhfiles-custom-theme",
+    "rhfiles-groupBy", "rhfiles-theme", "rhfiles-folder-layouts",
+    "rhfiles-tags", "rhfiles-pinned",
+  ];
+  for (const k of keys) {
+    const v = localStorage.getItem(k);
+    if (v !== null) data[k] = v;
+  }
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k.startsWith("rhfiles-") && !data.hasOwnProperty(k)) {
+      data[k] = localStorage.getItem(k);
+    }
+  }
+  return data;
+}
+
+function exportAllData() {
+  const data = collectAllLocalData();
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `rhfiles-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showNotice("Data exported successfully");
+}
+
+function importAllData() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json";
+  input.onchange = () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data._version) { alert("Invalid RHFiles backup file"); return; }
+        for (const k in data) {
+          if (k.startsWith("_")) continue;
+          localStorage.setItem(k, data[k]);
+        }
+        _shortcutBindings = null;
+        showNotice("Data imported successfully. Reloading...");
+        setTimeout(() => location.reload(), 1500);
+      } catch (e) {
+        alert("Failed to parse backup: " + e.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function clearAllData() {
+  if (!confirm("This will clear ALL local data (shortcuts, tags, tabs, layouts, history, settings). Continue?")) return;
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k.startsWith("rhfiles-")) keysToRemove.push(k);
+  }
+  for (const k of keysToRemove) localStorage.removeItem(k);
+  _shortcutBindings = null;
+  showNotice("All data cleared. Reloading...");
+  setTimeout(() => location.reload(), 1500);
 }
