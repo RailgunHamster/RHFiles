@@ -1,5 +1,49 @@
 // ops.js — file operations + context menu
 
+// --- progress tracking ---
+let currentOperationCancelled = false;
+
+function setupProgressListener() {
+  if (window.__TAURI_INTERNALS__) {
+    const { listen } = window.__TAURI_INTERNALS__.event || {};
+    if (listen) {
+      listen("op-progress", (event) => {
+        if (event.payload && event.payload.status === "progress") {
+          updateProgress(event.payload);
+        } else if (event.payload && event.payload.status === "complete") {
+          hideProgress();
+        }
+      });
+    }
+  }
+}
+
+function showProgress(title) {
+  document.getElementById("progress-overlay").style.display = "block";
+  document.getElementById("progress-title").textContent = title;
+  document.getElementById("progress-bar").style.width = "0%";
+  document.getElementById("progress-percent").textContent = "0%";
+  document.getElementById("progress-speed").textContent = "";
+  document.getElementById("progress-bytes").textContent = "";
+  currentOperationCancelled = false;
+}
+
+function updateProgress(data) {
+  document.getElementById("progress-bar").style.width = data.percentage + "%";
+  document.getElementById("progress-percent").textContent = data.percentage + "%";
+  document.getElementById("progress-speed").textContent = fmtSize(data.speed) + "/s";
+  document.getElementById("progress-bytes").textContent = fmtSize(data.bytesTransferred) + " / " + fmtSize(data.totalBytes);
+}
+
+function hideProgress() {
+  document.getElementById("progress-overlay").style.display = "none";
+}
+
+function cancelOperation() {
+  currentOperationCancelled = true;
+  hideProgress();
+}
+
 // --- file ops ---
 async function deleteSelected(isRight) {
   const sel = getSelectedPaths(isRight);
@@ -54,20 +98,31 @@ async function paste(isRight) {
   try {
     for (const srcPath of G.clipboard.paths) {
       if (G.clipboard.op === "cut") {
-        await call("move_path_cmd", { src: srcPath, dest: destPath });
+        showProgress("Moving...");
+        await call("move_with_progress", { src: srcPath, dest: destPath });
+        hideProgress();
         trackMove(srcPath, destPath + "\\" + srcPath.split("\\").pop());
       } else {
-        await call("copy_path", { src: srcPath, dest: destPath });
+        showProgress("Copying...");
+        await call("copy_with_progress", { src: srcPath, dest: destPath });
+        hideProgress();
         trackCopy(srcPath, destPath + "\\" + srcPath.split("\\").pop());
       }
     }
     if (G.clipboard.op === "cut") G.clipboard = null;
     await refresh();
-  } catch (e) { alert("Paste failed: " + e); }
+  } catch (e) { hideProgress(); alert("Paste failed: " + e); }
 }
 
 async function openFileHandler(path) {
   try { await call("open_file", { path }); } catch (e) {}
+}
+
+async function quicklookSelected(isRight) {
+  const sel = getSelectedPaths(isRight);
+  if (sel.length === 1) {
+    try { await call("quicklook", { path: sel[0].path }); } catch (e) {}
+  }
 }
 
 async function showPropertiesDialog(path) {

@@ -2,6 +2,7 @@ use rhfiles_core::enumerator;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tauri::Emitter;
 
 #[derive(Serialize, Clone)]
 struct FileInfo {
@@ -23,6 +24,8 @@ struct DriveInfoSer {
     label: String,
     free: String,
     path: String,
+    free_bytes: u64,
+    total_bytes: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -78,6 +81,8 @@ fn get_drives() -> Result<Vec<DriveInfoSer>, String> {
             d.free_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
             d.total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)),
         path: format!("{}\\", d.letter),
+        free_bytes: d.free_bytes,
+        total_bytes: d.total_bytes,
     }).collect())
 }
 
@@ -113,6 +118,116 @@ fn copy_path(src: String, dest: String) -> Result<(), String> {
 #[tauri::command]
 fn move_path_cmd(src: String, dest: String) -> Result<(), String> {
     enumerator::move_path(&PathBuf::from(&src), &PathBuf::from(&dest))
+}
+
+#[tauri::command]
+async fn copy_with_progress(src: String, dest: String, app: tauri::AppHandle) -> Result<(), String> {
+    let src_path = PathBuf::from(&src);
+    let dest_path = PathBuf::from(&dest);
+    let src_name = src_path.file_name().ok_or("no filename")?;
+    let target = dest_path.join(src_name);
+
+    if src_path.is_dir() {
+        let total_size = enumerator::folder_size(&src_path).unwrap_or(0);
+        let _ = app.emit("op-progress", serde_json::json!({
+            "operation": "copy", "src": src, "dest": dest,
+            "bytesTransferred": 0, "totalBytes": total_size,
+            "percentage": 0, "speed": 0, "status": "calculating"
+        }));
+        enumerator::copy_path(&src_path, &dest_path)?;
+    } else {
+        let total = std::fs::metadata(&src_path).map_err(|e| e.to_string())?.len();
+        let mut source_file = std::fs::File::open(&src_path).map_err(|e| e.to_string())?;
+        let mut dest_file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
+
+        use std::io::{Read, Write};
+        let mut buf = vec![0u8; 8192];
+        let mut transferred: u64 = 0;
+        let start = std::time::Instant::now();
+
+        loop {
+            let n = source_file.read(&mut buf).map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+            transferred += n as u64;
+
+            let elapsed = start.elapsed().as_secs_f64();
+            let speed = if elapsed > 0.0 { transferred as f64 / elapsed } else { 0.0 };
+            let pct = if total > 0 { (transferred as f64 / total as f64 * 100.0) as u32 } else { 100 };
+
+            let _ = app.emit("op-progress", serde_json::json!({
+                "operation": "copy", "src": src, "dest": dest,
+                "bytesTransferred": transferred, "totalBytes": total,
+                "percentage": pct, "speed": speed as u64, "status": "progress"
+            }));
+        }
+    }
+
+    let _ = app.emit("op-progress", serde_json::json!({
+        "operation": "copy", "src": src, "dest": dest,
+        "bytesTransferred": 0, "totalBytes": 0,
+        "percentage": 100, "speed": 0, "status": "complete"
+    }));
+    Ok(())
+}
+
+#[tauri::command]
+async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle) -> Result<(), String> {
+    let src_path = PathBuf::from(&src);
+    let dest_path = PathBuf::from(&dest);
+    let src_name = src_path.file_name().ok_or("no filename")?;
+    let target = dest_path.join(src_name);
+
+    let _ = app.emit("op-progress", serde_json::json!({
+        "operation": "move", "src": src, "dest": dest,
+        "bytesTransferred": 0, "totalBytes": 0,
+        "percentage": 0, "speed": 0, "status": "preparing"
+    }));
+
+    if src_path.is_dir() {
+        let total_size = enumerator::folder_size(&src_path).unwrap_or(0);
+        let _ = app.emit("op-progress", serde_json::json!({
+            "operation": "move", "src": src, "dest": dest,
+            "bytesTransferred": 0, "totalBytes": total_size,
+            "percentage": 10, "speed": 0, "status": "progress"
+        }));
+        enumerator::copy_path(&src_path, &dest_path)?;
+        std::fs::remove_dir_all(&src_path).map_err(|e| e.to_string())?;
+    } else {
+        let total = std::fs::metadata(&src_path).map_err(|e| e.to_string())?.len();
+        let mut source_file = std::fs::File::open(&src_path).map_err(|e| e.to_string())?;
+        let mut dest_file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
+
+        use std::io::{Read, Write};
+        let mut buf = vec![0u8; 8192];
+        let mut transferred: u64 = 0;
+        let start = std::time::Instant::now();
+
+        loop {
+            let n = source_file.read(&mut buf).map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+            transferred += n as u64;
+
+            let elapsed = start.elapsed().as_secs_f64();
+            let speed = if elapsed > 0.0 { transferred as f64 / elapsed } else { 0.0 };
+            let pct = if total > 0 { ((transferred as f64 / total as f64 * 90.0) + 5.0) as u32 } else { 90 };
+
+            let _ = app.emit("op-progress", serde_json::json!({
+                "operation": "move", "src": src, "dest": dest,
+                "bytesTransferred": transferred, "totalBytes": total,
+                "percentage": pct, "speed": speed as u64, "status": "progress"
+            }));
+        }
+        std::fs::remove_file(&src_path).map_err(|e| e.to_string())?;
+    }
+
+    let _ = app.emit("op-progress", serde_json::json!({
+        "operation": "move", "src": src, "dest": dest,
+        "bytesTransferred": 0, "totalBytes": 0,
+        "percentage": 100, "speed": 0, "status": "complete"
+    }));
+    Ok(())
 }
 
 #[tauri::command]
@@ -443,6 +558,76 @@ fn search_dir(dir: &Path, query: &str, results: &mut Vec<FileInfo>, max: usize) 
     }
 }
 
+// === WINDOW EFFECT ===
+
+#[tauri::command]
+async fn set_window_effect(effect: String, window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
+
+        let tauri_hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let hwnd = windows::Win32::Foundation::HWND(tauri_hwnd.0);
+        let backdrop: u32 = match effect.as_str() {
+            "mica" => 2,
+            "acrylic" => 3,
+            "mica-alt" => 4,
+            _ => 0,
+        };
+        unsafe {
+            let dark_mode: u32 = 1;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWINDOWATTRIBUTE(20),
+                &dark_mode as *const u32 as *const core::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWINDOWATTRIBUTE(38),
+                &backdrop as *const u32 as *const core::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = (effect, window); Err("Not supported on this platform".to_string()) }
+}
+
+// === QUICKLOOK ===
+
+#[tauri::command]
+fn quicklook(path: String) -> Result<(), String> {
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "where", "QuickLook.exe"])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let exe = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !exe.is_empty() {
+                let _ = std::process::Command::new(&exe).arg(&path).spawn();
+            }
+            Ok(())
+        }
+        _ => {
+            let seer = std::process::Command::new("cmd")
+                .args(["/C", "where", "Seer.exe"])
+                .output();
+            match seer {
+                Ok(s) if s.status.success() => {
+                    let exe = String::from_utf8_lossy(&s.stdout).trim().to_string();
+                    if !exe.is_empty() {
+                        let _ = std::process::Command::new(&exe).arg(&path).spawn();
+                    }
+                    Ok(())
+                }
+                _ => Err("QuickLook or Seer Pro not found. Install QuickLook for file previews.".to_string()),
+            }
+        }
+    }
+}
+
 // === NEW COMMANDS ===
 
 #[tauri::command]
@@ -525,13 +710,44 @@ fn set_file_readonly(path: String, readonly: bool) -> Result<(), String> {
     enumerator::set_file_readonly(&PathBuf::from(&path), readonly)
 }
 
+#[tauri::command]
+async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
+    let id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let _window = tauri::WebviewWindowBuilder::new(
+        &app,
+        format!("window-{}", id),
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("RHFiles")
+    .inner_size(1200.0, 800.0)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+                let _ = window.unminimize();
+                let _ = window.show();
+            }
+            if args.len() > 1 {
+                let path = args[1].clone();
+                let _ = app.emit("navigate-to-path", path);
+            }
+        }))
         .invoke_handler(tauri::generate_handler![
             list_dir, get_drives, parent_path, delete_file, rename_file, new_folder,
-            copy_path, move_path_cmd, get_env, get_dir_tree, get_thumbnail, open_file,
+            copy_path, move_path_cmd, copy_with_progress, move_with_progress,
+            get_env, get_dir_tree, get_thumbnail, open_file,
             show_properties, read_file_preview, git_status, git_branches, git_checkout,
             git_create_branch, git_init, list_archive, extract_archive, create_archive,
             batch_rename, save_file_tags, load_file_tags, load_all_tags, get_file_info,
@@ -540,6 +756,8 @@ pub fn run() {
             get_new_file_templates, create_new_file, get_file_association,
             run_as_admin, empty_recycle_bin, rotate_image, read_shortcut,
             detect_ides, open_in_ide, install_font, set_wallpaper, set_file_readonly,
+            open_new_window,
+            set_window_effect, quicklook,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

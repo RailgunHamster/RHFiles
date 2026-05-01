@@ -129,6 +129,8 @@ function openSettings() {
     '<select onchange="setLang(this.value)"><option value="en"' + (_lang==="en"?" selected":"") + '>English</option><option value="zh"' + (_lang==="zh"?" selected":"") + '>' + esc('\u4e2d\u6587') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.theme') + '</label>' +
     '<select onchange="applyTheme(this.value)"><option value="light"' + (G.theme==="light"?" selected":"") + '>Light</option><option value="dark"' + (G.theme==="dark"?" selected":"") + '>Dark</option></select></div>' +
+    '<div class="settings-row"><label>Background Effect</label>' +
+    '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>None</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>Mica</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>Acrylic</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>Mica Alt</option></select></div>' +
     '<div class="settings-row"><label>Layout</label>' +
     '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>Details</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>Icons</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>Cards</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>Columns</option></select></div>' +
     '<div class="settings-row"><label>Show File Extensions</label>' +

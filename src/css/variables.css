@@ -50,3 +50,6 @@
   --scrollbar-hover: rgba(255,255,255,.25);
   --preview-bg: #252525;
 }
+
+body.mica-active { background: rgba(255,255,255,0.85) !important; }
+body.mica-active[data-theme="dark"] { background: rgba(31,31,31,0.85) !important; }

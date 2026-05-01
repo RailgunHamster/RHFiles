@@ -50,6 +50,10 @@ document.addEventListener("keydown", async e => {
     case "F2": e.preventDefault(); await renamePrompt(); break;
     case "F5": e.preventDefault(); await refresh(); break;
     case "F7": e.preventDefault(); await newFolder(); break;
+    case " ":
+      e.preventDefault();
+      await quicklookSelected();
+      break;
     case "Home": e.preventDefault(); sel.clear(); sel.add(0); getTab().lastIdx = 0; renderFiles(getTab(), "file-list", "status-count", "status-selection"); scrollToVisible(0); updatePreviewForSelection(); break;
     case "End": e.preventDefault(); sel.clear(); sel.add(entries.length-1); getTab().lastIdx = entries.length-1; renderFiles(getTab(), "file-list", "status-count", "status-selection"); scrollToVisible(entries.length-1); updatePreviewForSelection(); break;
     case "F11":
@@ -75,6 +79,7 @@ document.addEventListener("keydown", async e => {
       if (e.ctrlKey && e.key === "a" && !e.shiftKey) { e.preventDefault(); selectAll(); }
       if (e.ctrlKey && e.key === "t") { e.preventDefault(); addTab(); }
       if (e.ctrlKey && e.key === "w") { e.preventDefault(); closeTab(G.activeTab); }
+      if (e.ctrlKey && e.key === "n" && !e.shiftKey) { e.preventDefault(); call("open_new_window", {}); }
       if (e.ctrlKey && e.key === "h") { e.preventDefault(); toggleHidden(); }
       if (e.ctrlKey && e.key === "b") { e.preventDefault(); toggleDualPane(); }
       if (e.ctrlKey && e.key === "i") { e.preventDefault(); invertSelection(); }
@@ -130,6 +135,8 @@ const COMMANDS = [
   { id:"view.fullscreen", label:"Toggle Fullscreen", action: () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(()=>{}); }, keys:"F11" },
   { id:"view.switchPane", label:"Switch Pane Focus", action: () => { if (G.dualOn) { G.lastActivePane = G.lastActivePane === 'right' ? 'left' : 'right'; } }, keys:"Tab" },
   { id:"view.grouping", label:"Toggle Grouping Menu", action: toggleGroupingMenu, keys:"Ctrl+Shift+H" },
+  { id:"file.quicklook", label:"QuickLook Preview", action: quicklookSelected, keys:"Space" },
+  { id:"window.new", label:"New Window", action: () => call("open_new_window", {}), keys:"Ctrl+N" },
   { id:"settings", label:"Settings", action: openSettings, keys:"Ctrl+," },
 ];
 

@@ -119,6 +119,9 @@ function fallbackCall(cmd, args) {
     case "git_init": return null;
     case "create_archive": return null;
     case "create_shortcut": return null;
+    case "open_new_window": window.open(location.href, '_blank'); return null;
+    case "set_window_effect": return null;
+    case "quicklook": return null;
     default: return null;
   }
 }
@@ -155,8 +158,18 @@ function loadTabState() {
 // --- file watching ---
 G._watchSnapshot = null;
 G._watchTimer = null;
+G._watchTauriUnlisten = null;
 function startFileWatch() {
   stopFileWatch();
+  if (window.__TAURI_INTERNALS__) {
+    const { listen } = window.__TAURI_INTERNALS__.event || {};
+    if (listen) {
+      listen("fs-change", () => {
+        const tab = getTab();
+        if (tab && tab.path) navigateTo(tab.path, false);
+      }).then(unlisten => { G._watchTauriUnlisten = unlisten; }).catch(() => {});
+    }
+  }
   G._watchTimer = setInterval(async () => {
     const tab = getTab();
     if (!tab || !tab.entries) return;
@@ -170,8 +183,9 @@ function startFileWatch() {
         G._watchSnapshot = snap;
       }
     } catch (e) {}
-  }, 3000);
+  }, 1000);
 }
 function stopFileWatch() {
   if (G._watchTimer) { clearInterval(G._watchTimer); G._watchTimer = null; }
+  if (G._watchTauriUnlisten) { G._watchTauriUnlisten(); G._watchTauriUnlisten = null; }
 }

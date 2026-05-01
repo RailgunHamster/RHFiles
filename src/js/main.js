@@ -30,6 +30,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   loadTree(getTab().path, true);
   await loadTagList();
   startFileWatch();
+  setupProgressListener();
   initBoxSelection(document.getElementById("file-list"));
   initBoxSelection(document.getElementById("right-file-list"));
 
@@ -41,6 +42,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // render pinned folders
   try { renderPinnedFolders(); } catch (e) {}
+
+  // single instance: listen for navigate-to-path from second instance
+  if (window.__TAURI_INTERNALS__) {
+    const { listen } = window.__TAURI_INTERNALS__.event || {};
+    if (listen) {
+      listen("navigate-to-path", (event) => {
+        if (event.payload) navigateTo(event.payload);
+      }).catch(() => {});
+    }
+  }
 
   // double-click handling for left pane
   document.getElementById("file-list").addEventListener("dblclick", async e => {

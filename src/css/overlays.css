@@ -76,3 +76,32 @@
 
 /* pinned folders */
 .pinned-list .sidebar-item { cursor: pointer; }
+
+/* progress bar overlay */
+.progress-overlay { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
+.progress-box { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 280px; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+.progress-title { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 8px; }
+.progress-bar-container { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
+.progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+.progress-info { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-top: 6px; }
+.progress-cancel { margin-top: 8px; }
+
+.home-page { padding: 16px 24px; overflow-y: auto; height: 100%; }
+.home-section { margin-bottom: 24px; }
+.home-heading { font-size: 14px; font-weight: 600; color: var(--text-2); margin-bottom: 12px; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.home-card { display: flex; flex-direction: column; align-items: center; padding: 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: border-color .15s, background .1s; }
+.home-card:hover { border-color: var(--accent); background: var(--hover-bg); }
+.home-card-icon { width: 32px; height: 32px; margin-bottom: 8px; color: var(--text-3); }
+.home-card-name { font-size: 13px; color: var(--text-1); text-align: center; }
+.home-card-info { font-size: 11px; color: var(--text-4); margin-top: 4px; }
+.home-list { display: flex; flex-direction: column; gap: 4px; }
+.home-list-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--text-2); }
+.home-list-item:hover { background: var(--hover-bg); }
+.home-list-item .hli-icon { width: 16px; height: 16px; }
+.home-drive-card { display: flex; flex-direction: column; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.home-drive-card:hover { border-color: var(--accent); }
+.home-drive-letter { font-size: 18px; font-weight: 700; color: var(--text-1); }
+.home-drive-label { font-size: 12px; color: var(--text-3); }
+.home-drive-bar { height: 4px; background: var(--bg-3); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.home-drive-bar-fill { height: 100%; border-radius: 2px; }

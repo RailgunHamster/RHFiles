@@ -1,6 +1,7 @@
 // tabs.js — tab management + breadcrumb navigation
 
 function tabName(path) {
+  if (path === "home://") return "Home";
   const parts = path.replace(/\\/g,"/").split("/").filter(Boolean);
   return parts.length ? parts[parts.length-1] : path;
 }
@@ -61,6 +62,12 @@ function closeTab(id) {
 // --- breadcrumb ---
 function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   const bc = document.getElementById(bcId || "breadcrumb");
+  if (path === "home://") {
+    bc.innerHTML = `<span class="bc-item" data-path="home://">Home</span><span class="breadcrumb-spacer"></span>`;
+    const spacer = bc.querySelector(".breadcrumb-spacer");
+    if (spacer) spacer.addEventListener("click", () => enterEditMode(isRight));
+    return;
+  }
   const parts = path.replace(/\\/g,"/").split("/").filter(Boolean);
   let html = "", accumulated = "";
   parts.forEach((part, i) => {
@@ -137,6 +144,27 @@ function exitEditMode(isRight) {
 // --- navigation ---
 async function navigateTo(path, pushHistory) {
   if (pushHistory === undefined) pushHistory = true;
+  if (path === "home://") {
+    const tab = getTab();
+    if (pushHistory && path !== tab.path) {
+      tab.history = tab.history.slice(0, tab.historyIdx + 1);
+      tab.history.push(path);
+      tab.historyIdx = tab.history.length - 1;
+    }
+    tab.path = path;
+    tab.entries = [];
+    tab.sel.clear();
+    tab.lastIdx = -1;
+    document.getElementById("path-input").value = path;
+    renderBreadcrumb(path);
+    hideFileContent();
+    showHomePage();
+    renderTabs();
+    saveTabState();
+    return;
+  }
+  hideHomePage();
+  showFileContent();
   const tab = getTab();
   const filter = document.getElementById("filter-input").value;
   try {
@@ -211,6 +239,59 @@ async function runDeepSearch() {
 
 function homeDir(name) {
   return (G.homeDirPath || "C:\\") + "\\" + name;
+}
+
+function hideFileContent() {
+  const el = document.querySelector("#pane-left > .content");
+  if (el) el.style.display = "none";
+}
+
+function showFileContent() {
+  const el = document.querySelector("#pane-left > .content");
+  if (el) el.style.display = "";
+}
+
+function showHomePage() {
+  document.getElementById("home-page").style.display = "block";
+  hideFileContent();
+  const quickAccess = document.getElementById("home-quick-access");
+  const folders = [
+    { name: "Desktop", path: homeDir("Desktop"), icon: "M1.5 3h13v10H1.5z M5 14h6" },
+    { name: "Downloads", path: homeDir("Downloads"), icon: "M8 2v7M5 6l3 3 3-3M2.5 10v3h11v-3" },
+    { name: "Documents", path: homeDir("Documents"), icon: "M3 2h5l4 4v8H3z M8 2v4h4" },
+    { name: "Pictures", path: homeDir("Pictures"), icon: "M1 2h14v12H1z" },
+    { name: "Music", path: homeDir("Music"), icon: "M4 12a2 2 0 11-0-4M12 10a2 2 0 11-0-4M6 12V3l8-2v9" },
+    { name: "Videos", path: homeDir("Videos"), icon: "M1 3h14v10H1z" },
+  ];
+  quickAccess.innerHTML = folders.map(f => `
+    <div class="home-card" onclick="navigateTo('${esc(f.path)}')">
+      <svg class="home-card-icon" viewBox="0 0 16 16" fill="none"><path d="${f.icon}" stroke="currentColor" stroke-width="1"/></svg>
+      <div class="home-card-name">${esc(f.name)}</div>
+    </div>
+  `).join("");
+  renderHomeDrives();
+}
+
+async function renderHomeDrives() {
+  const container = document.getElementById("home-drives");
+  try {
+    const drives = await call("get_drives");
+    container.innerHTML = drives.map(d => {
+      const pct = d.total_bytes ? (d.free_bytes / d.total_bytes * 100) : 0;
+      const usedPct = 100 - pct;
+      const color = usedPct > 90 ? '#d32f2f' : usedPct > 70 ? '#ff9800' : '#0078d4';
+      return `<div class="home-drive-card" onclick="navigateTo('${esc(d.path)}')">
+        <div class="home-drive-letter">${esc(d.letter)}</div>
+        <div class="home-drive-label">${esc(d.label)}</div>
+        <div class="home-drive-bar"><div class="home-drive-bar-fill" style="width:${usedPct}%;background:${color}"></div></div>
+        <div style="font-size:11px;color:var(--text-4);margin-top:4px">${esc(d.free)}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {}
+}
+
+function hideHomePage() {
+  document.getElementById("home-page").style.display = "none";
 }
 
 async function goUp() {
