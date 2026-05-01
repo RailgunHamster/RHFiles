@@ -187,9 +187,9 @@ function showCustomProperties(info) {
       if (el) el.textContent = "Unable to read";
     });
   }
-  call("get_file_association", { path: info.path }).then(data => {
+  call("get_file_association", { extension: info.extension }).then(data => {
     const el = document.getElementById("props-association");
-    if (el) el.textContent = data && data.name ? data.name : "Unknown";
+    if (el) el.textContent = data || "Unknown";
   }).catch(() => {
     const el = document.getElementById("props-association");
     if (el) el.textContent = "Unknown";
@@ -234,7 +234,7 @@ function showContextMenu(x, y, isRight) {
 
   const items = [
     { label: t('ctx.open'), shortcut:"Enter", action: () => { if (singleSelection) { if (sel[0].is_dir) { if (isRight) rpNavigateTo(sel[0].path); else navigateTo(sel[0].path); } else openFileHandler(sel[0].path); } }, disabled: !singleSelection },
-    { label: "Open in IDE", action: async () => { try { const ides = await call("detect_ides", {}); if (ides && ides.length) { await call("open_in_ide", { path: sel[0].path, ide: ides[0] }); } } catch(e) { alert("No IDE detected"); } }, disabled: !singleSelection },
+    { label: "Open in IDE", action: async () => { try { const ides = await call("detect_ides", {}); if (ides && ides.length) { await call("open_in_ide", { ide_cmd: ides[0].command, path: sel[0].path }); } } catch(e) { alert("No IDE detected"); } }, disabled: !singleSelection },
     { label: "Open in Terminal", action: () => { const path = singleFile ? sel[0].path.split("\\").slice(0,-1).join("\\") : (singleSelection ? sel[0].path : getTab().path); call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
     { label: "-", action: null },
     { label: "Run as Administrator", action: () => { call("run_as_admin", { path: sel[0].path }); }, disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
@@ -244,7 +244,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.cut'), shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
     { label: t('ctx.copy'), shortcut:"Ctrl+C", action: () => copySelected(isRight), disabled: !hasSelection },
     { label: t('ctx.paste'), shortcut:"Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
-    { label: "Paste Shortcut", action: async () => { if (!G.clipboard) return; const dest = isRight ? G.rp.path : getTab().path; try { for (const src of G.clipboard.paths) { const name = src.split("\\").pop().replace(/\.[^.]+$/, "") + ".lnk"; await call("create_shortcut", { target: src, dest: dest + "\\" + name }); } await refresh(); } catch(e) { alert("Create shortcut failed: " + e); } }, disabled: !G.clipboard },
+    { label: "Paste Shortcut", action: async () => { if (!G.clipboard) return; const dest = isRight ? G.rp.path : getTab().path; try { for (const src of G.clipboard.paths) { const linkName = src.split("\\").pop().replace(/\.[^.]+$/, ""); await call("create_shortcut", { target: src, name: linkName, dest: dest }); } await refresh(); } catch(e) { alert("Create shortcut failed: " + e); } }, disabled: !G.clipboard },
     { label: "-", action: null },
     { label: t('ctx.rename'), shortcut:"F2", action: () => renamePrompt(isRight), disabled: !singleSelection },
     { label: t('ctx.delete'), shortcut:"Del", action: () => deleteSelected(isRight), disabled: !hasSelection },
@@ -355,7 +355,8 @@ async function showNewFileDialog(isRight) {
   if (!fileName) return;
   const tmpl = templates.find(t => fileName.endsWith(t.ext)) || templates[0];
   try {
-    await call("create_new_file", { path: destPath + "\\" + fileName, content: tmpl ? tmpl.content : "" });
+    const templateExt = tmpl ? (tmpl.extension || (tmpl.ext || "").replace(/^\./, '')) : "";
+    await call("create_new_file", { parent: destPath, template: templateExt, name: fileName });
     await refresh();
   } catch (e) { alert("Create file failed: " + e); }
 }

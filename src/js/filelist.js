@@ -93,7 +93,31 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
 }
 
 function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
-  const totalH = entries.length * ROW_H;
+  const groups = (typeof groupEntries === 'function') ? groupEntries(entries) : null;
+  const GROUP_HEADER_H = 28;
+
+  let items = [];
+  if (groups) {
+    const sortedKeys = sortGroupKeys([...groups.keys()]);
+    for (const key of sortedKeys) {
+      items.push({ type: 'group', label: key, count: groups.get(key).length });
+      for (const idx of groups.get(key)) {
+        items.push({ type: 'file', fileIdx: idx });
+      }
+    }
+  } else {
+    for (let i = 0; i < entries.length; i++) {
+      items.push({ type: 'file', fileIdx: i });
+    }
+  }
+
+  let positions = new Array(items.length);
+  let totalH = 0;
+  for (let i = 0; i < items.length; i++) {
+    positions[i] = totalH;
+    totalH += items[i].type === 'group' ? GROUP_HEADER_H : ROW_H;
+  }
+
   const spacer = document.createElement("div");
   spacer.className = "virtual-list-spacer";
   spacer.style.height = totalH + "px";
@@ -103,36 +127,51 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
   content.className = "virtual-list-content";
   list.appendChild(content);
 
-  const rowH = ROW_H;
   const viewH = list.clientHeight || 600;
-  const bufferRows = 10;
+  const bufferPx = 10 * ROW_H;
 
   function renderVisible() {
     const scrollTop = list.scrollTop;
-    const start = Math.max(0, Math.floor(scrollTop / rowH) - bufferRows);
-    const end = Math.min(entries.length, Math.ceil((scrollTop + viewH) / rowH) + bufferRows);
-    content.innerHTML = "";
-    content.style.top = (start * rowH) + "px";
+    let start = 0;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (positions[i] <= scrollTop - bufferPx) { start = i; break; }
+    }
+    let end = items.length - 1;
+    for (let i = 0; i < items.length; i++) {
+      if (positions[i] > scrollTop + viewH + bufferPx) { end = i; break; }
+    }
 
-    for (let i = start; i < end; i++) {
-      const file = entries[i];
-      const isSelected = sel.has(i);
+    content.innerHTML = "";
+    content.style.top = (positions[start] || 0) + "px";
+
+    for (let i = start; i <= end; i++) {
+      const item = items[i];
+      if (item.type === 'group') {
+        const header = document.createElement('div');
+        header.className = 'group-header';
+        header.innerHTML = '<span class="group-label">' + esc(item.label) + '</span><span class="group-count">' + item.count + ' items</span>';
+        content.appendChild(header);
+        continue;
+      }
+      const fileIdx = item.fileIdx;
+      const file = entries[fileIdx];
+      const isSelected = sel.has(fileIdx);
       const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
       const row = document.createElement("div");
       row.className = "file-row" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
-      row.dataset.index = i;
+      row.dataset.index = fileIdx;
       row.dataset.path = file.path;
       row.style.position = "relative";
 
-      row.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
+      row.addEventListener("click", e => handleRowClick(e, fileIdx, sel, tabOrPane, isRight));
       row.addEventListener("contextmenu", e => {
         e.preventDefault();
-        if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); }
+        if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); tabOrPane.lastIdx = fileIdx; renderFiles(tabOrPane, listId, null, null, isRight); }
         showContextMenu(e.clientX, e.clientY, isRight);
       });
       row.draggable = true;
       row.addEventListener("dragstart", e => {
-        if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
+        if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); renderFiles(tabOrPane, listId, null, null, isRight); }
         e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
       });
 

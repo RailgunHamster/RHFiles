@@ -89,20 +89,13 @@ pub fn generate_thumbnail(path: &Path, max_size: u32) -> Result<String, String> 
 }
 
 pub fn read_file_text(path: &Path, max_bytes: u64) -> Result<String, String> {
-    let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    let bytes_to_read = metadata.len().min(max_bytes) as usize;
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     use std::io::Read;
-    if bytes_to_read > 3 {
-        let mut bom = [0u8; 3];
-        let bom_len = if file.read(&mut bom).map_err(|e| e.to_string())? >= 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF { 3 } else { 0 };
-        let remaining = bytes_to_read - bom_len;
-        let mut buf = vec![0u8; remaining];
-        file.read_exact(&mut buf).map_err(|e| e.to_string())?;
-        Ok(String::from_utf8_lossy(&buf).into_owned())
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    file.take(max_bytes).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    if buf.len() > 3 && buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF {
+        Ok(String::from_utf8_lossy(&buf[3..]).into_owned())
     } else {
-        let mut buf = vec![0u8; bytes_to_read];
-        file.read_exact(&mut buf).map_err(|e| e.to_string())?;
         Ok(String::from_utf8_lossy(&buf).into_owned())
     }
 }

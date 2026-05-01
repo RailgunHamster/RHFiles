@@ -1,10 +1,10 @@
 // selection.js - rectangle (rubber band) selection
 
-let selectionRect = null;
-let selStartX = 0, selStartY = 0;
-let isSelecting = false;
-
 function initBoxSelection(listEl) {
+  let isSelecting = false;
+  let selStartX = 0, selStartY = 0;
+  let selectionRect = null;
+
   listEl.addEventListener('mousedown', e => {
     if (e.target.closest('.file-row') || e.button !== 0) return;
     isSelecting = true;

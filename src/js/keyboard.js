@@ -29,7 +29,7 @@ const DEFAULT_SHORTCUTS = {
   "view.grouping":       ["Ctrl+Shift+H"],
   "window.new":          ["Ctrl+N"],
   "window.pip":          ["Ctrl+Shift+P"],
-  "palette":             ["Ctrl+Shift+P"],
+  "palette":             [],
   "settings":            ["Ctrl+,"],
   "tab.new":             ["Ctrl+T"],
   "tab.close":           ["Ctrl+W"],

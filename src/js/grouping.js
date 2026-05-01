@@ -1,14 +1,13 @@
 // grouping.js - file grouping by date/size/type
 
-let groupBy = 'none';
-
 function toggleGrouping(field) {
-  groupBy = (groupBy === field) ? 'none' : field;
+  G.groupBy = (G.groupBy === field) ? 'none' : field;
+  localStorage.setItem('rhfiles-groupBy', G.groupBy);
   renderFiles(getTab(), "file-list", "status-count", "status-selection");
 }
 
 function getGroupKey(file) {
-  switch (groupBy) {
+  switch (G.groupBy) {
     case 'date':
       if (!file.modified) return 'Unknown';
       if (file.modified.startsWith('Today')) return 'Today';
@@ -50,7 +49,7 @@ function getGroupKey(file) {
 }
 
 function groupEntries(entries) {
-  if (groupBy === 'none') return null;
+  if (G.groupBy === 'none') return null;
   const groups = new Map();
   for (let i = 0; i < entries.length; i++) {
     const key = getGroupKey(entries[i]);

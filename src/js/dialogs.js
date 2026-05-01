@@ -246,7 +246,8 @@ async function showNewFileDialog(isRight) {
   if (!fileName) return;
   const tmpl = templates.find(t => fileName.endsWith(t.ext)) || templates[0];
   try {
-    await call("create_new_file", { path: destPath + "\\" + fileName, content: tmpl ? tmpl.content : "" });
+    const templateExt = tmpl ? (tmpl.extension || (tmpl.ext || "").replace(/^\./, '')) : "";
+    await call("create_new_file", { parent: destPath, template: templateExt, name: fileName });
     await refresh();
   } catch (e) { alert("Create file failed: " + e); }
 }
