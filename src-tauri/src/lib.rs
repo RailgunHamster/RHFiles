@@ -744,6 +744,30 @@ pub fn run() {
                 let _ = app.emit("navigate-to-path", path);
             }
         }))
+        .setup(|app| {
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+            use tauri::Manager;
+            if let Some(icon) = app.default_window_icon() {
+                let _tray = TrayIconBuilder::new()
+                    .icon(icon.clone())
+                    .tooltip("RHFiles")
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            if let Some(w) = tray.app_handle().get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_dir, get_drives, parent_path, delete_file, rename_file, new_folder,
             copy_path, move_path_cmd, copy_with_progress, move_with_progress,

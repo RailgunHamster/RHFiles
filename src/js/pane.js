@@ -1,5 +1,13 @@
 // pane.js — preview pane + dual pane
 
+function convertFileSrc(filePath) {
+  if (window.__TAURI_INTERNALS__) {
+    const path = filePath.replace(/\\/g, '/');
+    return 'https://asset.localhost/' + encodeURIComponent(path).replace(/%3A/g, ':').replace(/%2F/g, '/');
+  }
+  return filePath;
+}
+
 // --- preview pane ---
 function togglePreviewPane() {
   G.previewOn = !G.previewOn;
@@ -67,6 +75,38 @@ async function updatePreviewForSelection() {
     } catch (e) {
       document.getElementById("preview-content").innerHTML = `<div class="preview-empty">${t('preview.noPreview')}</div>`;
     }
+    return;
+  }
+  let is_pdf = ext === "pdf";
+  let is_audio = ['mp3','wav','flac','ogg','aac','wma','m4a'].includes(ext);
+  let is_video = ['mp4','mkv','avi','webm','mov','wmv','m4v'].includes(ext);
+  if (is_pdf) {
+    const src = convertFileSrc(file.path);
+    document.getElementById("preview-content").innerHTML = `<div style="text-align:center;padding:12px;">
+      <div style="font-size:36px;color:#d32f2f">&#128196;</div>
+      <div style="margin-top:4px;font-size:14px;color:var(--text-2)">${esc(file.name)}</div>
+      <div style="margin-top:2px;color:var(--text-4)">${fmtSize(file.size)}</div>
+      <button class="dialog-btn" style="margin-top:8px" onclick="call('open_file',{path:'${esc(file.path)}'})">Open PDF</button>
+      <iframe src="${esc(src)}" style="width:100%;height:280px;border:1px solid var(--border);margin-top:8px;border-radius:4px;"></iframe>
+    </div>`;
+    return;
+  }
+  if (is_audio) {
+    const src = convertFileSrc(file.path);
+    document.getElementById("preview-content").innerHTML = `<div style="text-align:center;padding:20px;">
+      <div style="font-size:48px">&#127925;</div>
+      <div style="margin-top:8px;font-size:14px;color:var(--text-2)">${esc(file.name)}</div>
+      <div style="margin-top:4px;color:var(--text-4)">${fmtSize(file.size)}</div>
+      <audio controls style="width:100%;margin-top:12px" src="${esc(src)}"></audio>
+    </div>`;
+    return;
+  }
+  if (is_video) {
+    const src = convertFileSrc(file.path);
+    document.getElementById("preview-content").innerHTML = `<div style="text-align:center;padding:12px;">
+      <video controls style="width:100%;max-height:300px" src="${esc(src)}"></video>
+      <div style="margin-top:4px;font-size:12px;color:var(--text-3)">${esc(file.name)}</div>
+    </div>`;
     return;
   }
   try {

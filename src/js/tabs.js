@@ -6,6 +6,21 @@ function tabName(path) {
   return parts.length ? parts[parts.length-1] : path;
 }
 
+function saveFolderLayout(path, layout) {
+  try {
+    const data = JSON.parse(localStorage.getItem('rhfiles-folder-layouts') || '{}');
+    data[path] = layout;
+    localStorage.setItem('rhfiles-folder-layouts', JSON.stringify(data));
+  } catch (e) {}
+}
+
+function loadFolderLayout(path) {
+  try {
+    const data = JSON.parse(localStorage.getItem('rhfiles-folder-layouts') || '{}');
+    return data[path] || null;
+  } catch (e) { return null; }
+}
+
 function renderTabs() {
   const bar = document.getElementById("tab-bar");
   bar.innerHTML = G.tabs.map(t =>
@@ -182,6 +197,12 @@ async function navigateTo(path, pushHistory) {
       tab.historyIdx = tab.history.length - 1;
     }
     tab.path = path;
+    const savedLayout = loadFolderLayout(path);
+    if (savedLayout && savedLayout !== G.layout) {
+      G.layout = savedLayout;
+      localStorage.setItem('rhfiles-layout', savedLayout);
+      document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === savedLayout));
+    }
     tab.sel.clear();
     tab.lastIdx = -1;
     G.sortField = tab.sortF;
@@ -327,6 +348,7 @@ async function refresh() {
 function setLayout(layout) {
   G.layout = layout;
   localStorage.setItem('rhfiles-layout', layout);
+  saveFolderLayout(getTab().path, layout);
   document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === layout));
   renderFiles(getTab(), "file-list", "status-count", "status-selection");
   if (G.dualOn) renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
