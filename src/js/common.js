@@ -159,6 +159,8 @@ function fallbackCall(cmd, args) {
     case "remove_permission": return null;
     case "inherit_permissions": return null;
     case "list_mtp_devices": return [];
+    case "get_shell_verbs": return [];
+    case "invoke_shell_verb": return null;
     default: return null;
   }
 }

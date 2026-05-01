@@ -1533,6 +1533,107 @@ fn list_shares(server: String) -> Result<Vec<FileInfo>, String> {
     Ok(shares)
 }
 
+// === Shell Native Context Menu ===
+
+#[tauri::command]
+fn get_shell_verbs(path: String) -> Result<Vec<serde_json::Value>, String> {
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if ext.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let ps = format!(
+        r#"$ext = '.{}';
+        $verbs = @();
+        try {{
+            $progId = (Get-ItemProperty "HKLM:\Software\Classes\$ext" -ErrorAction Stop).'(default)'
+            if ($progId) {{
+                $shellPath = "HKLM:\Software\Classes\$progId\shell"
+                if (Test-Path $shellPath) {{
+                    Get-ChildItem $shellPath | ForEach-Object {{
+                        $verb = $_.PSChildName
+                        $label = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'(default)'
+                        if (-not $label) {{ $label = $verb }}
+                        $command = (Get-ItemProperty "$($_.PSPath)\command" -ErrorAction SilentlyContinue).'(default)'
+                        if ($command) {{
+                            $verbs += @{{
+                                verb = $verb
+                                label = $label
+                                command = $command
+                            }}
+                        }}
+                    }}
+                }}
+            }}
+        }} catch {{}}
+        try {{
+            $progId = (Get-ItemProperty "HKCU:\Software\Classes\$ext" -ErrorAction SilentlyContinue).'(default)'
+            if ($progId) {{
+                $shellPath = "HKCU:\Software\Classes\$progId\shell"
+                if (Test-Path $shellPath) {{
+                    Get-ChildItem $shellPath | ForEach-Object {{
+                        $verb = $_.PSChildName
+                        $label = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'(default)'
+                        if (-not $label) {{ $label = $verb }}
+                        $command = (Get-ItemProperty "$($_.PSPath)\command" -ErrorAction SilentlyContinue).'(default)'
+                        if ($command) {{
+                            $verbs += @{{
+                                verb = $verb
+                                label = $label
+                                command = $command
+                            }}
+                        }}
+                    }}
+                }}
+            }}
+        }} catch {{}}
+        $verbs | ConvertTo-Json -Compress"#,
+        ext
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() || stdout == "null" {
+        return Ok(Vec::new());
+    }
+
+    let verbs: Vec<serde_json::Value> = if stdout.starts_with('[') {
+        serde_json::from_str(&stdout).unwrap_or_default()
+    } else {
+        serde_json::from_str(&format!("[{}]", stdout)).unwrap_or_default()
+    };
+
+    Ok(verbs)
+}
+
+#[tauri::command]
+fn invoke_shell_verb(path: String, verb: String) -> Result<(), String> {
+    let ps = format!(
+        r#"$shell = New-Object -ComObject Shell.Application;
+        $folder = $shell.Namespace((Split-Path '{}'));
+        $item = $folder.ParseName((Split-Path '{}' -Leaf));
+        $item.InvokeVerb('{}')"#,
+        path.replace("'", "''"), path.replace("'", "''"), verb
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1608,6 +1709,7 @@ pub fn run() {
             ftp_list, ftp_download,
             get_permissions, set_permission, remove_permission, inherit_permissions,
             list_mtp_devices,
+            get_shell_verbs, invoke_shell_verb,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

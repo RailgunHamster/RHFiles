@@ -296,6 +296,34 @@ function showContextMenu(x, y, isRight) {
 
   document.body.appendChild(menu);
   contextMenu = menu;
+
+  if (singleFile) {
+    (async () => {
+      try {
+        const verbs = await call("get_shell_verbs", { path: sel[0].path });
+        if (verbs && verbs.length > 0 && contextMenu === menu) {
+          const skip = ['open', 'edit', 'print', 'explore', 'find', 'runas'];
+          const extra = verbs.filter(v => !skip.includes(String(v.verb).toLowerCase()));
+          if (extra.length > 0) {
+            const sep = document.createElement("div");
+            sep.className = "ctx-sep";
+            menu.appendChild(sep);
+            for (const v of extra) {
+              const mi = document.createElement("div");
+              mi.className = "ctx-item";
+              mi.innerHTML = `<span>${esc(v.label)}</span>`;
+              mi.addEventListener("click", () => {
+                removeContextMenu();
+                call("invoke_shell_verb", { path: sel[0].path, verb: v.verb });
+              });
+              menu.appendChild(mi);
+            }
+          }
+        }
+      } catch (e) {}
+    })();
+  }
+
   requestAnimationFrame(() => {
     const rect = menu.getBoundingClientRect();
     if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + "px";
