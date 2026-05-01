@@ -156,6 +156,18 @@ function exitEditMode(isRight) {
   input.blur();
 }
 
+function detectAdaptiveLayout(entries) {
+    if (entries.length === 0) return null;
+    let images = 0, dirs = 0;
+    for (const e of entries) {
+        if (e.is_dir) dirs++;
+        else if (['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff'].includes((e.extension||'').toLowerCase())) images++;
+    }
+    const total = entries.length;
+    if (images / total > 0.8) return 'icons';
+    return null;
+}
+
 // --- navigation ---
 async function navigateTo(path, pushHistory) {
   if (pushHistory === undefined) pushHistory = true;
@@ -202,6 +214,13 @@ async function navigateTo(path, pushHistory) {
       G.layout = savedLayout;
       localStorage.setItem('rhfiles-layout', savedLayout);
       document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === savedLayout));
+    } else if (G.settings.adaptiveLayout !== false) {
+      const detected = detectAdaptiveLayout(entries);
+      if (detected && detected !== G.layout) {
+        G.layout = detected;
+        localStorage.setItem('rhfiles-layout', detected);
+        document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === detected));
+      }
     }
     tab.sel.clear();
     tab.lastIdx = -1;

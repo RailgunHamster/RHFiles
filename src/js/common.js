@@ -122,6 +122,7 @@ function fallbackCall(cmd, args) {
     case "open_new_window": window.open(location.href, '_blank'); return null;
     case "set_window_effect": return null;
     case "quicklook": return null;
+    case "check_updates": return null;
     default: return null;
   }
 }

@@ -138,7 +138,9 @@ function openSettings() {
     '<div class="settings-row"><label>Grouping</label>' +
     '<select onchange="toggleGrouping(this.value)"><option value="none"' + (G.groupBy==='none'||!G.groupBy?" selected":"") + '>None</option><option value="type"' + (G.groupBy==='type'?" selected":"") + '>By Type</option><option value="date"' + (G.groupBy==='date'?" selected":"") + '>By Date</option><option value="size"' + (G.groupBy==='size'?" selected":"") + '>By Size</option><option value="extension"' + (G.groupBy==='extension'?" selected":"") + '>By Extension</option></select></div>' +
     '<div class="settings-row"><label>Default Terminal</label>' +
-    '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>Windows Terminal</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>PowerShell</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>Command Prompt</option></select></div>';
+    '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>Windows Terminal</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>PowerShell</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>Command Prompt</option></select></div>' +
+    '<div class="settings-row"><label>Adaptive Layout</label>' +
+    '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>';
   dlg.style.display = "flex";
 }
 

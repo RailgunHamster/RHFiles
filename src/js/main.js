@@ -113,6 +113,21 @@ document.addEventListener("DOMContentLoaded", async () => {
       closeConflict();
     }
   });
+
+  setTimeout(() => checkForUpdates(), 5000);
 });
 
 document.addEventListener("contextmenu", e => e.preventDefault());
+
+async function checkForUpdates() {
+    try {
+        const result = await call("check_updates", {});
+        if (result) {
+            const [version, url] = result.split("|");
+            const msg = `RHFiles ${version} is available. Open download page?`;
+            if (confirm(msg)) {
+                window.open(url, "_blank");
+            }
+        }
+    } catch (e) {}
+}

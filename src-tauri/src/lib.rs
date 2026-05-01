@@ -728,6 +728,26 @@ async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn check_updates() -> Result<Option<String>, String> {
+    let client = reqwest::Client::new();
+    let resp = client.get("https://api.github.com/repos/RailgunHamster/RHFiles/releases/latest")
+        .header("User-Agent", "RHFiles")
+        .send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let latest = body.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
+    let current = env!("CARGO_PKG_VERSION");
+    if !latest.is_empty() && latest != current {
+        let url = body.get("html_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        Ok(Some(format!("{}|{}", latest, url)))
+    } else {
+        Ok(None)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -782,6 +802,7 @@ pub fn run() {
             detect_ides, open_in_ide, install_font, set_wallpaper, set_file_readonly,
             open_new_window,
             set_window_effect, quicklook,
+            check_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
