@@ -226,6 +226,7 @@ function showContextMenu(x, y, isRight) {
   const isExe = ext === "exe" || ext === "msi";
   const isFont = ["ttf","otf","fon"].includes(ext);
   const isShortcut = ext === "lnk";
+  const isCert = ["cer","crt","p7b","pfx","p12"].includes(ext);
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
@@ -237,7 +238,9 @@ function showContextMenu(x, y, isRight) {
     { label: "Open in Terminal", action: () => { const path = singleFile ? sel[0].path.split("\\").slice(0,-1).join("\\") : (singleSelection ? sel[0].path : getTab().path); call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
     { label: "-", action: null },
     { label: "Run as Administrator", action: () => { call("run_as_admin", { path: sel[0].path }); }, disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
-    { label: "-", action: null, hidden: !singleFile || !isExe },
+    { label: "Compatibility Settings...", action: () => showCompatDialog(sel[0].path), disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
+    { label: "Install Certificate", action: async () => { try { await call("install_certificate", { path: sel[0].path }); showNotice("Certificate installed"); } catch(e) { alert("Install failed: " + e); } }, disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
+    { label: "-", action: null, hidden: (!singleFile || !isExe) && (!singleFile || !isCert) },
     { label: t('ctx.cut'), shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
     { label: t('ctx.copy'), shortcut:"Ctrl+C", action: () => copySelected(isRight), disabled: !hasSelection },
     { label: t('ctx.paste'), shortcut:"Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
@@ -411,3 +414,47 @@ async function check7zAvailable() {
   try { G._7zAvailable = await call("is_7z_available", {}); } catch(e) { G._7zAvailable = false; }
 }
 check7zAvailable();
+
+// --- compatibility settings dialog ---
+function showCompatDialog(path) {
+  const modes = [
+    { value: "", label: "None (Default)" },
+    { value: "WIN95", label: "Windows 95" },
+    { value: "WIN98", label: "Windows 98" },
+    { value: "WINXPSP2", label: "Windows XP (SP2)" },
+    { value: "WINXPSP3", label: "Windows XP (SP3)" },
+    { value: "VISTARTM", label: "Windows Vista" },
+    { value: "WIN7RTM", label: "Windows 7" },
+    { value: "WIN8RTM", label: "Windows 8" },
+  ];
+  const dlg = document.createElement("dialog");
+  dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:320px;";
+  dlg.innerHTML = `
+    <h3 style="margin:0 0 12px;font-size:14px">Compatibility Settings</h3>
+    <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;word-break:break-all;">${esc(path)}</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;">Compatibility Mode:
+      <select id="compat-mode" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+        ${modes.map(m => `<option value="${m.value}">${esc(m.label)}</option>`).join("")}
+      </select>
+    </label>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+      <button class="dialog-btn" id="compat-cancel">Cancel</button>
+      <button class="dialog-btn primary" id="compat-ok">Apply</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#compat-cancel").onclick = () => { dlg.close(); dlg.remove(); };
+  dlg.querySelector("#compat-ok").onclick = async () => {
+    const mode = dlg.querySelector("#compat-mode").value;
+    try {
+      await call("set_compat_mode", { path, mode });
+      showNotice(mode ? "Compatibility mode set" : "Compatibility mode cleared");
+    } catch (e) { alert("Failed: " + e); }
+    dlg.close(); dlg.remove();
+  };
+  call("get_compat_mode", { path }).then(current => {
+    const sel = dlg.querySelector("#compat-mode");
+    if (sel && current) sel.value = current;
+  }).catch(() => {});
+  dlg.showModal();
+  dlg.onclose = () => dlg.remove();
+}

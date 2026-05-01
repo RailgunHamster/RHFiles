@@ -94,7 +94,7 @@ async function loadDrives() {
     const drives = await call("get_drives");
     const list = document.getElementById("drives-list");
     list.innerHTML = drives.map(d =>
-      `<div class="drive-item" onclick="navigateTo('${esc(d.path)}')">
+      `<div class="drive-item" onclick="navigateTo('${esc(d.path)}')" oncontextmenu="showDriveContextMenu(event,'${esc(d.path)}','${esc(d.label)}','${esc(d.letter)}')">
         <div class="drive-name">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="4" width="14" height="8" rx="1.5" stroke="currentColor" stroke-width=".9"/><circle cx="11.5" cy="8" r="1" fill="currentColor" opacity=".4"/></svg>
           ${esc(d.label)} (${esc(d.letter)})
@@ -103,6 +103,73 @@ async function loadDrives() {
       </div>`
     ).join("");
   } catch (e) {}
+}
+
+function showDriveContextMenu(e, path, label, letter) {
+  e.preventDefault();
+  e.stopPropagation();
+  removeContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
+  const items = [
+    { label: "Open", action: () => navigateTo(path) },
+    { label: "Properties", action: () => showPropertiesDialog(path) },
+    { label: "-", action: null },
+    { label: "Format...", action: () => showFormatDialog(letter, label) },
+  ];
+  items.forEach(item => {
+    if (item.label === "-") {
+      const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
+    } else {
+      const mi = document.createElement("div");
+      mi.className = "ctx-item";
+      mi.innerHTML = `<span>${esc(item.label)}</span>`;
+      mi.addEventListener("click", () => { removeContextMenu(); if (item.action) item.action(); });
+      menu.appendChild(mi);
+    }
+  });
+  document.body.appendChild(menu);
+  contextMenu = menu;
+}
+
+function showFormatDialog(letter, label) {
+  const dlg = document.createElement("dialog");
+  dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:320px;";
+  dlg.innerHTML = `
+    <h3 style="margin:0 0 12px;font-size:14px">Format Drive ${esc(letter)}</h3>
+    <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+      <label style="display:flex;align-items:center;gap:8px;">Volume Label: <input id="fmt-label" type="text" value="${esc(label)}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></label>
+      <label style="display:flex;align-items:center;gap:8px;">File System:
+        <select id="fmt-fs" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+          <option value="NTFS" selected>NTFS</option>
+          <option value="FAT32">FAT32</option>
+          <option value="exFAT">exFAT</option>
+        </select>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="fmt-quick" checked> Quick Format</label>
+    </div>
+    <div style="margin-top:12px;color:var(--git-deleted);font-size:11px;">Warning: This will erase all data on the drive!</div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+      <button class="dialog-btn" id="fmt-cancel">Cancel</button>
+      <button class="dialog-btn" style="background:var(--git-deleted);color:#fff;" id="fmt-ok">Format</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#fmt-cancel").onclick = () => { dlg.close(); dlg.remove(); };
+  dlg.querySelector("#fmt-ok").onclick = async () => {
+    const label = dlg.querySelector("#fmt-label").value;
+    const fs = dlg.querySelector("#fmt-fs").value;
+    const quick = dlg.querySelector("#fmt-quick").checked;
+    if (!confirm(`Format drive ${letter}: as ${fs}? All data will be lost!`)) return;
+    try {
+      await call("format_drive", { drive: letter, label, fs, quick });
+      showNotice("Drive formatted successfully");
+      await loadDrives();
+    } catch (e) { alert("Format failed: " + e); }
+    dlg.close(); dlg.remove();
+  };
+  dlg.showModal();
+  dlg.onclose = () => dlg.remove();
 }
 
 // --- tags list in sidebar ---

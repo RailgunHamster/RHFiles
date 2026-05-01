@@ -109,6 +109,34 @@ async function updatePreviewForSelection() {
     </div>`;
     return;
   }
+  if (ext === "rtf") {
+    try {
+      const html = await call("rtf_to_html", { path: file.path });
+      document.getElementById("preview-content").innerHTML =
+        '<div style="text-align:center;padding:8px;">' +
+        '<div style="font-size:36px;color:#2b579a">&#128196;</div>' +
+        '<div style="margin-top:4px;font-size:14px;color:var(--text-2)">' + esc(file.name) + '</div>' +
+        '</div>' +
+        '<div class="rtf-preview" style="padding:8px;font-size:12px;line-height:1.5;border-top:1px solid var(--border);">' + html + '</div>';
+    } catch (e) {
+      document.getElementById("preview-content").innerHTML = `<div class="preview-empty">RTF preview failed</div>`;
+    }
+    return;
+  }
+  if (ext === "docx") {
+    try {
+      const html = await call("docx_to_text", { path: file.path });
+      document.getElementById("preview-content").innerHTML =
+        '<div style="text-align:center;padding:8px;">' +
+        '<div style="font-size:36px;color:#2b579a">&#128196;</div>' +
+        '<div style="margin-top:4px;font-size:14px;color:var(--text-2)">' + esc(file.name) + '</div>' +
+        '</div>' +
+        '<div class="docx-preview" style="padding:8px;font-size:12px;line-height:1.5;border-top:1px solid var(--border);">' + html + '</div>';
+    } catch (e) {
+      document.getElementById("preview-content").innerHTML = `<div class="preview-empty">DOCX preview failed</div>`;
+    }
+    return;
+  }
   try {
     const preview = await call("read_file_preview", { path: file.path });
     const content = document.getElementById("preview-content");

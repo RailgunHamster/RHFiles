@@ -140,6 +140,12 @@ function fallbackCall(cmd, args) {
     case "extract_7z": return null;
     case "create_7z": return null;
     case "is_7z_available": return false;
+    case "rtf_to_html": return "<pre style='white-space:pre-wrap'>RTF preview (mock)</pre>";
+    case "docx_to_text": return "<pre style='white-space:pre-wrap'>DOCX preview (mock)</pre>";
+    case "format_drive": return null;
+    case "install_certificate": return null;
+    case "set_compat_mode": return null;
+    case "get_compat_mode": return "";
     default: return null;
   }
 }

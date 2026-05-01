@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 #[derive(Serialize, Clone)]
 struct FileInfo {
     name: String,
@@ -967,6 +970,136 @@ async fn check_updates() -> Result<Option<String>, String> {
     }
 }
 
+#[tauri::command]
+fn rtf_to_html(path: String) -> Result<String, String> {
+    let ps = format!(
+        r#"$rtb = New-Object System.Windows.Forms.RichTextBox;
+        $rtb.Rtf = [System.IO.File]::ReadAllText('{}');
+        $rtb.Text"#,
+        path.replace("'", "''")
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-STA", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    Ok(format!("<pre style='white-space:pre-wrap'>{}</pre>", escaped))
+}
+
+#[tauri::command]
+fn docx_to_text(path: String) -> Result<String, String> {
+    let ps = format!(
+        r#"Add-Type -AssemblyName 'System.IO.Compression.FileSystem';
+        $zip = [System.IO.Compression.ZipFile]::OpenRead('{}');
+        $entry = $zip.GetEntry('word/document.xml');
+        if ($entry) {{
+            $stream = $entry.Open();
+            $reader = New-Object System.IO.StreamReader($stream);
+            $xml = [xml]$reader.ReadToEnd();
+            $reader.Close();
+            $zip.Dispose();
+            $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable);
+            $ns.AddNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+            $paragraphs = $xml.SelectNodes('//w:p', $ns);
+            ($paragraphs | ForEach-Object {{ 
+                $_.SelectNodes('.//w:t', $ns) | ForEach-Object {{ $_.'#text' }}
+            }}) -join ' '
+        }} else {{
+            $zip.Dispose();
+            'No document content found'
+        }}"#,
+        path.replace("'", "''")
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    Ok(format!("<pre style='white-space:pre-wrap'>{}</pre>", escaped))
+}
+
+#[tauri::command]
+async fn format_drive(drive: String, label: String, fs: String, quick: bool) -> Result<(), String> {
+    let drive_letter = drive.chars().next().unwrap_or('C');
+    let mut args: Vec<String> = vec![
+        format!("{}:", drive_letter),
+        format!("/fs:{}", fs),
+        format!("/v:{}", label),
+    ];
+    if quick {
+        args.push("/q".to_string());
+    }
+    args.push("/y".to_string());
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("format.com")
+        .args(&args)
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new("format.com")
+        .args(&args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn install_certificate(path: String) -> Result<(), String> {
+    let output = std::process::Command::new("certutil")
+        .args(["-addstore", "TrustedPublisher", &path])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_compat_mode(path: String, mode: String) -> Result<(), String> {
+    let ps = if mode.is_empty() {
+        format!(
+            "Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers' -Name '{}' -ErrorAction SilentlyContinue",
+            path.replace("'", "''")
+        )
+    } else {
+        format!(
+            "if (-not (Test-Path 'HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers')) {{ New-Item -Path 'HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers' -Force | Out-Null }}; Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers' -Name '{}' -Value '~ {}' -Force",
+            path.replace("'", "''"), mode
+        )
+    };
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_compat_mode(path: String) -> Result<String, String> {
+    let escaped = path.replace("'", "''");
+    let ps = format!(
+        "try {{ (Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers' -Name '{}' -ErrorAction Stop).'{}' }} catch {{ '' }}",
+        escaped, escaped
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .output().map_err(|e| e.to_string())?;
+    let val = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(val.strip_prefix("~ ").unwrap_or(&val).to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1032,6 +1165,9 @@ pub fn run() {
             list_ads, delete_ads, read_ads, unblock_file,
             toggle_pip,
             extract_7z, create_7z, is_7z_available,
+            rtf_to_html, docx_to_text,
+            format_drive,
+            install_certificate, set_compat_mode, get_compat_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

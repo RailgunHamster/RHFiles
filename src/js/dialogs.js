@@ -124,11 +124,23 @@ function removeTag(tag) {
 function openSettings() {
   const dlg = document.getElementById("settings-dialog");
   const content = document.getElementById("settings-content");
+  const themeVal = G.theme || 'light';
   content.innerHTML =
     '<div class="settings-row"><label>' + t('settings.language') + '</label>' +
     '<select onchange="setLang(this.value)"><option value="en"' + (_lang==="en"?" selected":"") + '>English</option><option value="zh"' + (_lang==="zh"?" selected":"") + '>' + esc('\u4e2d\u6587') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.theme') + '</label>' +
-    '<select onchange="applyTheme(this.value)"><option value="light"' + (G.theme==="light"?" selected":"") + '>Light</option><option value="dark"' + (G.theme==="dark"?" selected":"") + '>Dark</option></select></div>' +
+    '<select id="settings-theme-select" onchange="onThemeSelectChange(this.value)"><option value="light"' + (themeVal==="light"?" selected":"") + '>Light</option><option value="dark"' + (themeVal==="dark"?" selected":"") + '>Dark</option><option value="custom"' + (themeVal==="custom"?" selected":"") + '>Custom</option></select></div>' +
+    '<div id="custom-theme-section" style="display:' + (themeVal==="custom"?"block":"none") + ';margin-top:8px">' +
+      '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:4px">' +
+        '<label>Custom CSS</label>' +
+        '<textarea id="custom-theme-css" rows="8" style="width:100%;font-family:monospace;font-size:12px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px;resize:vertical">' + esc(localStorage.getItem('rhfiles-custom-theme') || '') + '</textarea>' +
+      '</div>' +
+      '<div class="settings-row" style="gap:8px">' +
+        '<button class="dialog-btn" onclick="uploadThemeFile()">Upload .css</button>' +
+        '<button class="dialog-btn primary" onclick="applyCustomThemeFromSettings()">Apply</button>' +
+        '<button class="dialog-btn" onclick="resetCustomTheme()">Reset</button>' +
+      '</div>' +
+    '</div>' +
     '<div class="settings-row"><label>Background Effect</label>' +
     '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>None</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>Mica</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>Acrylic</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>Mica Alt</option></select></div>' +
     '<div class="settings-row"><label>Layout</label>' +
@@ -146,6 +158,50 @@ function openSettings() {
     '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">Reset to Default</button></div>';
   dlg.style.display = "flex";
   renderToolbarConfig();
+}
+
+function onThemeSelectChange(val) {
+  const section = document.getElementById("custom-theme-section");
+  if (section) section.style.display = val === "custom" ? "block" : "none";
+  if (val !== "custom") {
+    applyTheme(val);
+  } else {
+    applyTheme("custom");
+  }
+}
+
+function applyCustomThemeFromSettings() {
+  const textarea = document.getElementById("custom-theme-css");
+  if (textarea) {
+    localStorage.setItem("rhfiles-custom-theme", textarea.value);
+    applyCustomTheme();
+  }
+}
+
+function resetCustomTheme() {
+  localStorage.removeItem("rhfiles-custom-theme");
+  const textarea = document.getElementById("custom-theme-css");
+  if (textarea) textarea.value = "";
+  applyCustomTheme();
+}
+
+function uploadThemeFile() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".css";
+  input.onchange = () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const textarea = document.getElementById("custom-theme-css");
+      if (textarea) textarea.value = reader.result;
+      localStorage.setItem("rhfiles-custom-theme", reader.result);
+      applyCustomTheme();
+    };
+    reader.readAsText(file);
+  };
+  input.click();
 }
 
 function closeSettings() {
