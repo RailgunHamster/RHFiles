@@ -2,8 +2,12 @@
 
 function tabName(path) {
   if (path === "home://") return "Home";
-  const parts = path.replace(/\\/g,"/").split("/").filter(Boolean);
-  return parts.length ? parts[parts.length-1] : path;
+  return path;
+}
+
+function tabTooltip(path) {
+  if (path === "home://") return "Home";
+  return path;
 }
 
 function saveFolderLayout(path, layout) {
@@ -24,7 +28,7 @@ function loadFolderLayout(path) {
 function renderTabs() {
   const bar = document.getElementById("tab-bar");
   bar.innerHTML = G.tabs.map(t =>
-    `<div class="tab ${t.id===G.activeTab?'active':''}" onclick="switchTab(${t.id})" onauxclick="if(event.button===1)closeTab(${t.id})">
+    `<div class="tab ${t.id===G.activeTab?'active':''}" onclick="switchTab(${t.id})" onauxclick="if(event.button===1)closeTab(${t.id})" title="${esc(tabTooltip(t.path))}">
       <span class="tab-label">${esc(tabName(t.path))}</span>
       <button class="tab-close" onclick="event.stopPropagation();closeTab(${t.id})">&times;</button>
     </div>`
