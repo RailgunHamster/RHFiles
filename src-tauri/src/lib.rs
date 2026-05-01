@@ -1100,6 +1100,188 @@ fn get_compat_mode(path: String) -> Result<String, String> {
     Ok(val.strip_prefix("~ ").unwrap_or(&val).to_string())
 }
 
+// === Error Reporting ===
+
+#[tauri::command]
+fn log_error(message: String, source: Option<String>, stack: Option<String>) -> Result<(), String> {
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let entry = format!("[{}] {} (source: {})\n{}",
+        timestamp,
+        message,
+        source.unwrap_or_default(),
+        stack.unwrap_or_default()
+    );
+    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    let log_dir = std::path::PathBuf::from(app_data).join("RHFiles").join("logs");
+    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    let log_path = log_dir.join(format!("error-{}.log", chrono::Local::now().format("%Y-%m-%d")));
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .and_then(|mut f| writeln!(f, "{}", entry))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_error_logs() -> Result<Vec<String>, String> {
+    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    let log_dir = std::path::PathBuf::from(app_data).join("RHFiles").join("logs");
+    if !log_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut logs = Vec::new();
+    for entry in std::fs::read_dir(&log_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if let Some(name) = path.to_str() {
+            if name.ends_with(".log") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    logs.push(content);
+                }
+            }
+        }
+    }
+    Ok(logs)
+}
+
+// === Git Clone ===
+
+#[tauri::command]
+async fn git_clone(url: String, dest: String) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(["clone", &url, &dest])
+        .output()
+        .map_err(|e| format!("git not found: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr.to_string());
+    }
+    Ok(dest)
+}
+
+// === Cloud Storage Sync Status ===
+
+#[tauri::command]
+fn get_cloud_status(path: String) -> Result<String, String> {
+    use std::os::windows::fs::MetadataExt;
+    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let attrs = metadata.file_attributes();
+    let path_lower = path.to_lowercase();
+    let is_onedrive = path_lower.contains("onedrive");
+    let is_gdrive = path_lower.contains("google drive") || path_lower.contains("my drive");
+    if !is_onedrive && !is_gdrive {
+        return Ok("none".to_string());
+    }
+    const FILE_ATTRIBUTE_OFFLINE: u32 = 0x00001000;
+    const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x00400000;
+    if attrs & FILE_ATTRIBUTE_OFFLINE != 0 {
+        Ok("online_only".to_string())
+    } else if attrs & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
+        Ok("syncing".to_string())
+    } else {
+        Ok("synced".to_string())
+    }
+}
+
+// === SMB/Network Browsing ===
+
+#[tauri::command]
+fn browse_network() -> Result<Vec<FileInfo>, String> {
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("net")
+        .args(["view"])
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new("net")
+        .args(["view"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut servers = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("\\\\") {
+            let name = line.split_whitespace().next().unwrap_or("").trim_start_matches('\\');
+            if !name.is_empty() {
+                servers.push(FileInfo {
+                    name: name.to_string(),
+                    path: format!("\\\\{}", name),
+                    extension: String::new(),
+                    is_dir: true,
+                    is_hidden: false,
+                    size: 0,
+                    size_display: String::new(),
+                    modified: String::new(),
+                    created: String::new(),
+                    folder_size: None,
+                });
+            }
+        }
+    }
+    Ok(servers)
+}
+
+#[tauri::command]
+fn list_shares(server: String) -> Result<Vec<FileInfo>, String> {
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("net")
+        .args(["view", &server])
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new("net")
+        .args(["view", &server])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut shares = Vec::new();
+    let mut in_share_section = false;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("Share") {
+            in_share_section = true;
+            continue;
+        }
+        if line.starts_with("---") {
+            continue;
+        }
+        if !in_share_section {
+            continue;
+        }
+        if line.is_empty() || line.starts_with("The command") {
+            break;
+        }
+        let share_name = line.split_whitespace().next().unwrap_or("");
+        if !share_name.is_empty() && share_name != "The" {
+            shares.push(FileInfo {
+                name: share_name.to_string(),
+                path: format!("{}\\{}", server, share_name),
+                extension: String::new(),
+                is_dir: true,
+                is_hidden: false,
+                size: 0,
+                size_display: String::new(),
+                modified: String::new(),
+                created: String::new(),
+                folder_size: None,
+            });
+        }
+    }
+    Ok(shares)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1168,6 +1350,10 @@ pub fn run() {
             rtf_to_html, docx_to_text,
             format_drive,
             install_certificate, set_compat_mode, get_compat_mode,
+            log_error, get_error_logs,
+            git_clone,
+            get_cloud_status,
+            browse_network, list_shares,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

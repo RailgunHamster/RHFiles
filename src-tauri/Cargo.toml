@@ -25,3 +25,4 @@ windows = { version = "0.62", features = [
 ] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 tauri-plugin-deep-link = "2"
+chrono = "0.4"

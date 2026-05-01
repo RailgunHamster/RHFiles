@@ -132,3 +132,49 @@ function gitCreateBranchPrompt() {
   const name = prompt("New branch name:");
   if (name) gitCreateBranch(name);
 }
+
+// --- git clone ---
+function showGitCloneDialog() {
+  const dlg = document.createElement("dialog");
+  dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:400px;";
+  dlg.innerHTML = `
+    <h3 style="margin:0 0 12px;font-size:14px">Clone Repository</h3>
+    <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+      <label style="display:flex;align-items:center;gap:8px;">Repository URL:
+        <input id="git-clone-url" type="text" placeholder="https://github.com/user/repo.git" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;">Destination:
+        <input id="git-clone-dest" type="text" value="${esc(getTab().path)}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+      </label>
+    </div>
+    <div id="git-clone-status" style="margin-top:8px;font-size:11px;color:var(--text-4);"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+      <button class="dialog-btn" id="git-clone-cancel">Cancel</button>
+      <button class="dialog-btn primary" id="git-clone-ok">Clone</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#git-clone-cancel").onclick = () => { dlg.close(); dlg.remove(); };
+  dlg.querySelector("#git-clone-ok").onclick = async () => {
+    const url = dlg.querySelector("#git-clone-url").value.trim();
+    const dest = dlg.querySelector("#git-clone-dest").value.trim();
+    if (!url) { alert("Please enter a repository URL"); return; }
+    if (!dest) { alert("Please enter a destination path"); return; }
+    const statusEl = dlg.querySelector("#git-clone-status");
+    statusEl.textContent = "Cloning...";
+    statusEl.style.color = "var(--text-3)";
+    try {
+      const repoName = url.split('/').pop().replace('.git', '') || "repo";
+      const fullDest = dest + "\\" + repoName;
+      await call("git_clone", { url, dest: fullDest });
+      statusEl.textContent = "Clone successful!";
+      statusEl.style.color = "var(--accent)";
+      dlg.close(); dlg.remove();
+      navigateTo(fullDest);
+    } catch (e) {
+      statusEl.textContent = "Clone failed: " + e;
+      statusEl.style.color = "var(--git-deleted)";
+    }
+  };
+  dlg.showModal();
+  dlg.onclose = () => dlg.remove();
+}

@@ -146,6 +146,12 @@ function fallbackCall(cmd, args) {
     case "install_certificate": return null;
     case "set_compat_mode": return null;
     case "get_compat_mode": return "";
+    case "log_error": return null;
+    case "get_error_logs": return [];
+    case "git_clone": return "C:\\repo";
+    case "get_cloud_status": return "none";
+    case "browse_network": return [];
+    case "list_shares": return [];
     default: return null;
   }
 }

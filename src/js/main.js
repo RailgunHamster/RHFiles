@@ -29,6 +29,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadDrives();
   loadTree(getTab().path, true);
   await loadTagList();
+  renderNetwork();
   startFileWatch();
   setupProgressListener();
   initBoxSelection(document.getElementById("file-list"));
@@ -128,6 +129,22 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 document.addEventListener("contextmenu", e => e.preventDefault());
+
+window.addEventListener('error', (e) => {
+    call("log_error", {
+        message: e.message || String(e.error),
+        source: e.filename || "",
+        stack: e.error?.stack || ""
+    }).catch(() => {});
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+    call("log_error", {
+        message: String(e.reason),
+        source: "promise",
+        stack: e.reason?.stack || ""
+    }).catch(() => {});
+});
 
 async function checkForUpdates() {
     try {

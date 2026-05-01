@@ -320,3 +320,68 @@ async function detectWindowsLibraries() {
     ).join("");
   } catch (e) {}
 }
+
+// --- network browsing ---
+async function renderNetwork() {
+  const section = document.getElementById('network-section');
+  if (!section) return;
+  section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">Scanning...</div>';
+  try {
+    const servers = await call("browse_network", {});
+    section.innerHTML = '';
+    for (const s of servers) {
+      const div = document.createElement('div');
+      div.className = 'sidebar-item';
+      div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="1" stroke="currentColor" stroke-width=".8"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width=".6"/></svg> ' + esc(s.name);
+      div.dataset.path = s.path;
+      div.onclick = () => navigateTo(s.path);
+      div.oncontextmenu = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          const shares = await call("list_shares", { server: s.path });
+          showNetworkMenu(e, s, shares);
+        } catch (ex) {
+          showNetworkMenu(e, s, []);
+        }
+      };
+      section.appendChild(div);
+    }
+    if (servers.length === 0) {
+      section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No servers found</div>';
+    }
+  } catch (e) {
+    section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">Network unavailable</div>';
+  }
+}
+
+function showNetworkMenu(e, server, shares) {
+  removeContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.style.cssText = 'left:' + e.clientX + 'px;top:' + e.clientY + 'px;';
+  const openItem = document.createElement('div');
+  openItem.className = 'ctx-item';
+  openItem.innerHTML = '<span>Open \\\\' + esc(server.name) + '</span>';
+  openItem.onclick = () => { removeContextMenu(); navigateTo(server.path); };
+  menu.appendChild(openItem);
+  if (shares.length > 0) {
+    const sep = document.createElement('div');
+    sep.className = 'ctx-sep';
+    menu.appendChild(sep);
+    for (const sh of shares) {
+      const item = document.createElement('div');
+      item.className = 'ctx-item';
+      item.innerHTML = '<span>' + esc(sh.name) + '</span>';
+      item.onclick = () => { removeContextMenu(); navigateTo(sh.path); };
+      menu.appendChild(item);
+    }
+  }
+  document.body.appendChild(menu);
+  contextMenu = menu;
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (e.clientX - rect.width) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (e.clientY - rect.height) + 'px';
+  });
+}

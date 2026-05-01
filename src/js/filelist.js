@@ -87,6 +87,9 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   }
 
   if (countId) updateStatus(tabOrPane, countId, selId);
+
+  const currentEntries = entries;
+  setTimeout(() => updateCloudStatus(list, currentEntries), 50);
 }
 
 function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
@@ -343,4 +346,32 @@ function selectAll(isRight) {
   entries.forEach((_, i) => sel.add(i));
   if (isRight) renderFiles(tabOrPane, "right-file-list", "right-status-count", null, true);
   else { renderFiles(tabOrPane, "file-list", "status-count", "status-selection"); updatePreviewForSelection(); }
+}
+
+async function updateCloudStatus(listEl, entries) {
+  const cloudEntries = entries.filter(e =>
+    e.path.toLowerCase().includes("onedrive") ||
+    e.path.toLowerCase().includes("google drive")
+  );
+  for (const ent of cloudEntries.slice(0, 50)) {
+    try {
+      const status = await call("get_cloud_status", { path: ent.path });
+      if (status && status !== "none") {
+        const row = listEl.querySelector('[data-path="' + CSS.escape(ent.path) + '"]');
+        if (row) {
+          const nameEl = row.querySelector('.row-fname') || row.querySelector('.row-name');
+          if (nameEl && !nameEl.querySelector('.cloud-icon')) {
+            const icon = status === "synced" ? "\u2601" :
+                         status === "online_only" ? "\u26C5" : "\u{1F504}";
+            const span = document.createElement('span');
+            span.className = 'cloud-icon';
+            span.textContent = ' ' + icon;
+            span.title = status;
+            span.style.cssText = 'font-size:10px;margin-left:4px;opacity:0.7;';
+            nameEl.appendChild(span);
+          }
+        }
+      }
+    } catch (e) {}
+  }
 }
