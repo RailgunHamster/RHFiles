@@ -28,24 +28,26 @@ function loadFolderLayout(path) {
 function renderTabs() {
   const bar = document.getElementById("tab-bar");
   bar.innerHTML = G.tabs.map(t =>
-    `<div class="tab ${t.id===G.activeTab?'active':''}" onclick="switchTab(${t.id})" onauxclick="if(event.button===1)closeTab(${t.id})" title="${esc(tabTooltip(t.path))}">
+    `<div class="tab ${t.id===G.activeTab?'active':''}" data-tab-id="${t.id}" onclick="switchTab(${t.id})" onauxclick="if(event.button===1)closeTab(${t.id})" title="${esc(tabTooltip(t.path))}" draggable="true">
       <span class="tab-label">${esc(tabName(t.path))}</span>
       <button class="tab-close" onclick="event.stopPropagation();closeTab(${t.id})">&times;</button>
     </div>`
   ).join("") + `<button class="tab-new" onclick="addTab()" title="New tab">
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
   </button>`;
+  initTabDragDrop();
+  initTabPreview();
 }
 
 function switchTab(id) {
+  saveCurrentTabState();
   G.activeTab = id;
   const tab = getTab();
-  tab.sel.clear();
-  tab.lastIdx = -1;
   G.sortField = tab.sortF;
   G.sortAsc = tab.sortAsc;
   renderTabs();
   navigateTo(tab.path, false);
+  restoreTabState(tab);
   updateSortArrows();
 }
 
@@ -63,6 +65,7 @@ function addTab(path) {
 
 function closeTab(id) {
   if (G.tabs.length <= 1) return;
+  saveCurrentTabState();
   const idx = G.tabs.findIndex(t => t.id === id);
   G.tabs.splice(idx, 1);
   if (G.activeTab === id) {
@@ -72,10 +75,139 @@ function closeTab(id) {
     G.sortAsc = tab.sortAsc;
     renderTabs();
     navigateTo(tab.path, false);
+    restoreTabState(tab);
     updateSortArrows();
   } else {
     renderTabs();
   }
+}
+
+// --- tab state save/restore ---
+function saveCurrentTabState() {
+  const tab = getTab();
+  if (!tab) return;
+  const listEl = document.getElementById("file-list");
+  tab._savedState = {
+    selPaths: [...(tab.sel || [])].map(i => tab.entries[i]?.path).filter(Boolean),
+    scrollTop: listEl ? listEl.scrollTop : 0,
+  };
+}
+
+function restoreTabState(tab) {
+  if (!tab._savedState) return;
+  const state = tab._savedState;
+  delete tab._savedState;
+  if (state.selPaths && state.selPaths.length > 0) {
+    tab.sel = new Set();
+    state.selPaths.forEach(p => {
+      const idx = tab.entries.findIndex(e => e.path === p);
+      if (idx >= 0) tab.sel.add(idx);
+    });
+    if (tab.sel.size > 0) {
+      tab.lastIdx = [...tab.sel].pop();
+    }
+    const listEl = document.getElementById("file-list");
+    if (listEl && state.scrollTop) {
+      requestAnimationFrame(() => { listEl.scrollTop = state.scrollTop; });
+    }
+    renderFiles(tab, "file-list", "status-count", "status-selection");
+    updatePreviewForSelection();
+  }
+}
+
+// --- tab drag-and-drop ---
+let _dragTabId = null;
+function initTabDragDrop() {
+  const bar = document.getElementById("tab-bar");
+  bar.querySelectorAll(".tab").forEach(tabEl => {
+    tabEl.addEventListener("dragstart", e => {
+      _dragTabId = parseInt(tabEl.dataset.tabId);
+      tabEl.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", _dragTabId);
+    });
+    tabEl.addEventListener("dragend", () => {
+      _dragTabId = null;
+      tabEl.classList.remove("dragging");
+      bar.querySelectorAll(".tab").forEach(t => t.classList.remove("drag-over"));
+    });
+    tabEl.addEventListener("dragover", e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      bar.querySelectorAll(".tab").forEach(t => t.classList.remove("drag-over"));
+      tabEl.classList.add("drag-over");
+    });
+    tabEl.addEventListener("dragleave", () => {
+      tabEl.classList.remove("drag-over");
+    });
+    tabEl.addEventListener("drop", e => {
+      e.preventDefault();
+      tabEl.classList.remove("drag-over");
+      const fromId = parseInt(e.dataTransfer.getData("text/plain"));
+      const toId = parseInt(tabEl.dataset.tabId);
+      if (fromId === toId) return;
+      const fromIdx = G.tabs.findIndex(t => t.id === fromId);
+      const toIdx = G.tabs.findIndex(t => t.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return;
+      const [moved] = G.tabs.splice(fromIdx, 1);
+      G.tabs.splice(toIdx, 0, moved);
+      renderTabs();
+      saveTabState();
+    });
+  });
+}
+
+// --- tab hover preview ---
+let _previewTimer = null;
+let _previewEl = null;
+function initTabPreview() {
+  const bar = document.getElementById("tab-bar");
+  bar.querySelectorAll(".tab").forEach(tabEl => {
+    tabEl.addEventListener("mouseenter", () => {
+      if (_previewTimer) clearTimeout(_previewTimer);
+      _previewTimer = setTimeout(() => showTabPreview(tabEl), 600);
+    });
+    tabEl.addEventListener("mouseleave", () => {
+      if (_previewTimer) clearTimeout(_previewTimer);
+      hideTabPreview();
+    });
+  });
+}
+
+function showTabPreview(tabEl) {
+  const tabId = parseInt(tabEl.dataset.tabId);
+  const tab = G.tabs.find(t => t.id === tabId);
+  if (!tab) return;
+
+  if (!_previewEl) {
+    _previewEl = document.createElement("div");
+    _previewEl.className = "tab-preview";
+    _previewEl.addEventListener("mouseenter", () => { if (_previewTimer) clearTimeout(_previewTimer); });
+    _previewEl.addEventListener("mouseleave", hideTabPreview);
+    document.body.appendChild(_previewEl);
+  }
+
+  const entries = tab.entries || [];
+  const dirCount = entries.filter(e => e.is_dir).length;
+  const fileCount = entries.length - dirCount;
+  const maxShow = 10;
+  const shown = entries.slice(0, maxShow);
+
+  _previewEl.innerHTML =
+    `<div class="tab-preview-path">${esc(tab.path)}</div>` +
+    `<div class="tab-preview-meta">${dirCount} folders, ${fileCount} files</div>` +
+    `<div class="tab-preview-list">${shown.map(e =>
+      `<div class="tab-preview-item${e.is_dir ? ' dir' : ''}">${e.is_dir ? '📁 ' : ''}${esc(e.name)}</div>`
+    ).join("")}${entries.length > maxShow ? `<div class="tab-preview-more">...and ${entries.length - maxShow} more</div>` : ''}</div>`;
+
+  const rect = tabEl.getBoundingClientRect();
+  _previewEl.style.top = (rect.bottom + 4) + "px";
+  _previewEl.style.left = Math.min(rect.left, window.innerWidth - 296) + "px";
+  _previewEl.classList.add("visible");
+}
+
+function hideTabPreview() {
+  if (_previewEl) _previewEl.classList.remove("visible");
 }
 
 // --- breadcrumb ---

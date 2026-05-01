@@ -179,9 +179,17 @@ function saveSettings() {
 // --- tab persistence ---
 function saveTabState() {
   try {
+    const listEl = document.getElementById("file-list");
     const state = {
       activeTab: G.activeTab,
-      tabs: G.tabs.map(t => ({ id: t.id, path: t.path })),
+      tabs: G.tabs.map(t => ({
+        id: t.id,
+        path: t.path,
+        selPaths: [...(t.sel || [])].map(i => t.entries[i]?.path).filter(Boolean),
+        scrollTop: listEl && t.id === G.activeTab ? listEl.scrollTop : (t._savedState?.scrollTop || 0),
+        sortF: t.sortF,
+        sortAsc: t.sortAsc,
+      })),
     };
     localStorage.setItem('rhfiles-tabs', JSON.stringify(state));
   } catch (e) {}

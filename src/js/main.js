@@ -15,7 +15,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     G.tabs = saved.tabs.map((st, i) => ({
       id: st.id || i, path: st.path || startPath,
       history: [st.path || startPath], historyIdx: 0,
-      entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true
+      entries: [], sel: new Set(), lastIdx: -1,
+      sortF: st.sortF || "name", sortAsc: st.sortAsc !== undefined ? st.sortAsc : true,
+      _restoredSelPaths: st.selPaths || [],
+      _restoredScrollTop: st.scrollTop || 0,
     }));
     G.activeTab = saved.activeTab || G.tabs[0].id;
     G.nextTabId = Math.max(...G.tabs.map(t => t.id)) + 1;
@@ -26,6 +29,28 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   await navigateTo(getTab().path, false);
+
+  // restore selection and scroll position after navigation
+  const activeTab = getTab();
+  if (activeTab._restoredSelPaths && activeTab._restoredSelPaths.length > 0) {
+    activeTab.sel = new Set();
+    activeTab._restoredSelPaths.forEach(p => {
+      const idx = activeTab.entries.findIndex(e => e.path === p);
+      if (idx >= 0) activeTab.sel.add(idx);
+    });
+    if (activeTab.sel.size > 0) {
+      activeTab.lastIdx = [...activeTab.sel].pop();
+    }
+    delete activeTab._restoredSelPaths;
+    renderFiles(activeTab, "file-list", "status-count", "status-selection");
+    updatePreviewForSelection();
+  }
+  if (activeTab._restoredScrollTop) {
+    const listEl = document.getElementById("file-list");
+    const scrollTarget = activeTab._restoredScrollTop;
+    delete activeTab._restoredScrollTop;
+    requestAnimationFrame(() => { if (listEl) listEl.scrollTop = scrollTarget; });
+  }
   await loadDrives();
   loadTree(getTab().path, true);
   await loadTagList();
