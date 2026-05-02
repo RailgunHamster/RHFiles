@@ -664,62 +664,74 @@ fn find_es_exe() -> Option<String> {
 
 #[tauri::command]
 fn is_everything_available() -> bool {
-    find_es_exe().is_some()
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+        let class_name: Vec<u16> = "EVERYTHING_TASKBAR_NOTIFICATION\0".encode_utf16().collect();
+        let hwnd = unsafe { FindWindowW(windows::core::PCWSTR(class_name.as_ptr()), None) };
+        if hwnd.is_ok() { return true; }
+        find_es_exe().is_some()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        find_es_exe().is_some()
+    }
 }
 
 #[tauri::command]
-fn quick_search(query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
-    if let Some(es) = find_es_exe() {
-        let output = std::process::Command::new(&es)
-            .args(["-n", &max_results.to_string(), &query])
-            .output()
-            .map_err(|e| e.to_string())?;
+fn quick_search(query: String, max_results: usize, engine: String) -> Result<Vec<FileInfo>, String> {
+    // engine: "auto" | "everything" | "builtin"
+    let use_everything = engine == "everything" || (engine == "auto" && is_everything_available());
 
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut results = Vec::new();
-            for line in stdout.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
+    if use_everything {
+        if let Some(es) = find_es_exe() {
+            let output = std::process::Command::new(&es)
+                .args(["-n", &max_results.to_string(), &query])
+                .creation_flags(0x08000000)
+                .output()
+                .map_err(|e| e.to_string())?;
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut results = Vec::new();
+                for line in stdout.lines() {
+                    let line = line.trim();
+                    if line.is_empty() { continue; }
+                    let path = PathBuf::from(line);
+                    if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+                        let metadata = std::fs::metadata(&path).ok();
+                        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                        let extension = if is_dir { String::new() }
+                            else { path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default() };
+                        results.push(FileInfo {
+                            name, path: line.to_string(), extension,
+                            is_dir, is_hidden: false, size,
+                            size_display: format_size(size),
+                            modified: metadata.and_then(|m| m.modified().ok()).map(|t| format_time(t)).unwrap_or_default(),
+                            created: String::new(), folder_size: None,
+                        });
+                    }
+                    if results.len() >= max_results { break; }
                 }
-                let path = PathBuf::from(line);
-                if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
-                    let metadata = std::fs::metadata(&path).ok();
-                    let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-                    let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                    let extension = if is_dir {
-                        String::new()
-                    } else {
-                        path.extension()
-                            .map(|e| e.to_string_lossy().into_owned())
-                            .unwrap_or_default()
-                    };
-                    results.push(FileInfo {
-                        name,
-                        path: line.to_string(),
-                        extension,
-                        is_dir,
-                        is_hidden: false,
-                        size,
-                        size_display: format_size(size),
-                        modified: metadata
-                            .and_then(|m| m.modified().ok())
-                            .map(|t| format_time(t))
-                            .unwrap_or_default(),
-                        created: String::new(),
-                        folder_size: None,
-                    });
-                }
-                if results.len() >= max_results {
-                    break;
-                }
+                return Ok(results);
             }
-            return Ok(results);
+        }
+        if engine == "everything" {
+            return Err("Everything is not installed. Download from voidtools.com".to_string());
         }
     }
 
-    Err("Everything not found. Install Everything from voidtools.com for instant search, or use Deep Search mode.".to_string())
+    // Builtin: recursive search on all drives
+    let query_lower = query.to_lowercase();
+    let mut results = Vec::new();
+    for drive in ['C', 'D', 'E', 'F', 'G', 'H'] {
+        let root = format!("{}:\\", drive);
+        if !Path::new(&root).exists() { continue; }
+        search_dir(&PathBuf::from(&root), &query_lower, &mut results, max_results);
+        if results.len() >= max_results { break; }
+    }
+    Ok(results)
 }
 
 #[tauri::command]

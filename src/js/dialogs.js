@@ -153,6 +153,12 @@ function openSettings() {
     '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>Windows Terminal</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>PowerShell</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>Command Prompt</option></select></div>' +
     '<div class="settings-row"><label>Adaptive Layout</label>' +
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label>Search Engine</label>' +
+    '<select onchange="G.settings.searchEngine=this.value;saveSettings();initQuickSearch()">' +
+      '<option value="auto"' + ((G.settings.searchEngine||'auto')==='auto'?" selected":"") + '>Auto (Everything if available)</option>' +
+      '<option value="everything"' + (G.settings.searchEngine==='everything'?" selected":"") + '>Everything only</option>' +
+      '<option value="builtin"' + (G.settings.searchEngine==='builtin'?" selected":"") + '>Builtin (recursive scan)</option>' +
+    '</select></div>' +
     '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>Customize Toolbar</label>' +
     '<div id="toolbar-config-list" style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto"></div>' +
     '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">Reset to Default</button></div>' +

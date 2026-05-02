@@ -407,42 +407,73 @@ function applyFilter() {
 let _quickSearchTimer = null;
 let _everythingAvailable = false;
 
+function getSearchEngine() {
+    return G.settings.searchEngine || 'auto';
+}
+
 async function initQuickSearch() {
-  try {
-    _everythingAvailable = await call("is_everything_available", {});
-    const input = document.getElementById("filter-input");
-    if (input) input.placeholder = _everythingAvailable ? "Quick Search..." : "Search";
-  } catch (e) {}
+    try {
+        _everythingAvailable = await call("is_everything_available", {});
+        const input = document.getElementById("filter-input");
+        const engine = getSearchEngine();
+        if (input) {
+            if (engine === 'everything' || (engine === 'auto' && _everythingAvailable)) {
+                input.placeholder = "Quick Search...";
+            } else {
+                input.placeholder = "Search...";
+            }
+        }
+    } catch (e) {}
 }
 
 async function runQuickSearch(query) {
-  try {
-    const results = await call("quick_search", { query, maxResults: 50 });
-    showQuickSearchResults(results);
-  } catch (e) {
-    hideQuickSearch();
-  }
+    const engine = getSearchEngine();
+    try {
+        const results = await call("quick_search", { query, maxResults: 50, engine });
+        showQuickSearchResults(results, engine);
+    } catch (e) {
+        if (engine === 'everything') {
+            showQuickSearchError("Everything not running. Install from voidtools.com");
+        } else {
+            hideQuickSearch();
+        }
+    }
 }
 
-function showQuickSearchResults(results) {
-  const dropdown = document.getElementById("quick-search-dropdown");
-  if (!dropdown || results.length === 0) { hideQuickSearch(); return; }
+function showQuickSearchError(msg) {
+    const dropdown = document.getElementById("quick-search-dropdown");
+    if (!dropdown) return;
+    dropdown.innerHTML =
+        `<div class="quick-search-header"><span style="color:var(--text-4)">Quick Search</span></div>` +
+        `<div style="padding:12px;text-align:center;color:var(--text-3);font-size:12px">
+            <div style="margin-bottom:8px">${esc(msg)}</div>
+            <a href="https://www.voidtools.com" target="_blank" style="color:var(--accent);text-decoration:underline">Download Everything (free)</a>
+            <div style="margin-top:8px;color:var(--text-4)">Or change search engine in Settings</div>
+        </div>`;
+    dropdown.style.display = "block";
+    setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
+}
 
-  const engineLabel = _everythingAvailable ?
-    '<span class="fast">⚡ Everything</span>' :
-    '<span>Deep Search</span>';
+function showQuickSearchResults(results, engine) {
+    const dropdown = document.getElementById("quick-search-dropdown");
+    if (!dropdown || results.length === 0) { hideQuickSearch(); return; }
 
-  dropdown.innerHTML =
-    `<div class="quick-search-header"><span>${results.length} results</span><span class="quick-search-engine">${engineLabel}</span></div>` +
-    results.map(r =>
-      `<div class="quick-search-item${r.is_dir ? ' dir' : ''}" data-path="${esc(r.path)}" onclick="quickSearchNavigate('${esc(r.path)}')">
-        <span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
-        <span class="quick-search-item-path">${esc(r.path)}</span>
-      </div>`
-    ).join("");
-  dropdown.style.display = "block";
+    const isEv = engine !== 'builtin' && _everythingAvailable;
+    const engineLabel = isEv
+        ? '<span class="fast">⚡ Everything</span>'
+        : '<span>Builtin Search</span>';
 
-  setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
+    dropdown.innerHTML =
+        `<div class="quick-search-header"><span>${results.length} results</span><span class="quick-search-engine">${engineLabel}</span></div>` +
+        results.map(r =>
+            `<div class="quick-search-item${r.is_dir ? ' dir' : ''}" data-path="${esc(r.path)}" onclick="quickSearchNavigate('${esc(r.path)}')">
+                <span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
+                <span class="quick-search-item-path">${esc(r.path)}</span>
+            </div>`
+        ).join("");
+    dropdown.style.display = "block";
+
+    setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
 }
 
 function hideQuickSearch() {
