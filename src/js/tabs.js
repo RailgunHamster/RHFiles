@@ -391,24 +391,147 @@ async function navigateTo(path, pushHistory) {
   }
 }
 
+let _quickSearchTimer = null;
+let _everythingAvailable = false;
+let _searchDropdownIdx = -1;
+let _searchMode = 'normal';
+let _doubleCtrlTime = 0;
+
+function getSearchEngine() {
+    return G.settings.searchEngine || 'auto';
+}
+
 function applyFilter() {
   if (G.deepSearch) runDeepSearch();
   else navigateTo(getTab().path, false);
 
   const query = document.getElementById("filter-input").value.trim();
   if (query.length < 2) {
-    hideQuickSearch();
+    if (query.length === 0) showSearchHistory();
+    else hideQuickSearch();
     return;
   }
   if (_quickSearchTimer) clearTimeout(_quickSearchTimer);
   _quickSearchTimer = setTimeout(() => runQuickSearch(query), 300);
 }
 
-let _quickSearchTimer = null;
-let _everythingAvailable = false;
+function toggleSearchMode() {
+  const modes = ['normal', 'regex', 'wildcard'];
+  const labels = ['Normal', 'Regex', 'Wildcard'];
+  const idx = (modes.indexOf(_searchMode) + 1) % modes.length;
+  _searchMode = modes[idx];
+  const btn = document.getElementById("btn-search-mode");
+  if (btn) {
+    btn.textContent = _searchMode === 'regex' ? '.*' : _searchMode === 'wildcard' ? '*?' : 'Ab';
+    btn.title = `Search mode: ${labels[idx]}`;
+  }
+  const input = document.getElementById("filter-input");
+  if (input && input.value.trim().length >= 2) {
+    runQuickSearch(input.value.trim());
+  }
+}
 
-function getSearchEngine() {
-    return G.settings.searchEngine || 'auto';
+function toggleSearchHelp() {
+  const help = document.getElementById("search-help-popover");
+  if (!help) return;
+  help.style.display = help.style.display === 'block' ? 'none' : 'block';
+}
+
+function hideSearchHelp() {
+  const help = document.getElementById("search-help-popover");
+  if (help) help.style.display = 'none';
+}
+
+function saveSearchHistory(query) {
+  if (!query || query.length < 2) return;
+  let history = JSON.parse(localStorage.getItem('rhfiles-search-history') || '[]');
+  history = history.filter(h => h !== query);
+  history.unshift(query);
+  history = history.slice(0, 30);
+  localStorage.setItem('rhfiles-search-history', JSON.stringify(history));
+}
+
+function loadSearchHistory() {
+  try { return JSON.parse(localStorage.getItem('rhfiles-search-history') || '[]'); } catch (e) { return []; }
+}
+
+function clearSearchHistory() {
+  localStorage.removeItem('rhfiles-search-history');
+  hideQuickSearch();
+  showNotice("Search history cleared");
+}
+
+function showSearchHistory() {
+  const history = loadSearchHistory();
+  if (history.length === 0) { hideQuickSearch(); return; }
+  const dropdown = document.getElementById("quick-search-dropdown");
+  if (!dropdown) return;
+  dropdown.innerHTML =
+    `<div class="quick-search-header"><span>Recent Searches</span><button class="quick-search-clear" onclick="event.stopPropagation();clearSearchHistory()">Clear</button></div>` +
+    history.map(h =>
+      `<div class="quick-search-item history-item" onclick="document.getElementById('filter-input').value='${esc(h).replace(/'/g, "\\'")}';applyFilter();">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;color:var(--text-4)"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M4.5 8a3.5 3.5 0 016.5-1.5" stroke="currentColor" stroke-width="1" fill="none" stroke-linecap="round"/></svg>
+        <span class="quick-search-item-name">${esc(h)}</span>
+      </div>`
+    ).join("");
+  _searchDropdownIdx = -1;
+  dropdown.style.display = "block";
+  setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
+}
+
+function handleSearchKeydown(e) {
+  const dropdown = document.getElementById("quick-search-dropdown");
+  if (!dropdown || dropdown.style.display === 'none') return;
+  const items = dropdown.querySelectorAll('.quick-search-item:not(.quick-search-header)');
+  if (!items.length) return;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    e.stopPropagation();
+    _searchDropdownIdx = Math.min(_searchDropdownIdx + 1, items.length - 1);
+    updateDropdownHighlight(items);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    e.stopPropagation();
+    _searchDropdownIdx = Math.max(_searchDropdownIdx - 1, 0);
+    updateDropdownHighlight(items);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (_searchDropdownIdx >= 0 && items[_searchDropdownIdx]) {
+      items[_searchDropdownIdx].click();
+    }
+  } else if (e.key === 'Escape') {
+    hideQuickSearch();
+    hideSearchHelp();
+    e.preventDefault();
+  }
+}
+
+function updateDropdownHighlight(items) {
+  items.forEach((item, i) => {
+    item.classList.toggle('active', i === _searchDropdownIdx);
+    if (i === _searchDropdownIdx) item.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function initDoubleCtrlSearch() {
+  let lastCtrlTime = 0;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Control' && !e.shiftKey && !e.altKey) {
+      const now = Date.now();
+      if (now - lastCtrlTime < 350) {
+        const input = document.getElementById("filter-input");
+        if (input && document.activeElement !== input) {
+          input.focus();
+          input.select();
+        }
+        lastCtrlTime = 0;
+      } else {
+        lastCtrlTime = now;
+      }
+    }
+  });
 }
 
 async function initQuickSearch() {
@@ -417,19 +540,30 @@ async function initQuickSearch() {
         const input = document.getElementById("filter-input");
         const engine = getSearchEngine();
         if (input) {
+            const modeHint = _searchMode === 'regex' ? ' [Regex]' : _searchMode === 'wildcard' ? ' [Wildcard]' : '';
             if (engine === 'everything' || (engine === 'auto' && _everythingAvailable)) {
-                input.placeholder = "Quick Search...";
+                input.placeholder = "Quick Search..." + modeHint;
             } else {
-                input.placeholder = "Search...";
+                input.placeholder = "Search..." + modeHint;
             }
+            input.addEventListener('focus', () => {
+              if (!input.value.trim()) showSearchHistory();
+            });
+            input.addEventListener('keydown', e => {
+              handleSearchKeydown(e);
+            });
         }
+        initDoubleCtrlSearch();
     } catch (e) {}
 }
 
 async function runQuickSearch(query) {
     const engine = getSearchEngine();
+    const modePrefix = _searchMode === 'regex' ? 'regex:' : _searchMode === 'wildcard' ? 'wildcards:' : '';
+    const fullQuery = modePrefix + query;
     try {
-        const results = await call("quick_search", { query, maxResults: 50, engine });
+        const results = await call("quick_search", { query: fullQuery, maxResults: 50, engine });
+        if (query.trim().length >= 2) saveSearchHistory(query);
         showQuickSearchResults(results, engine);
     } catch (e) {
         if (engine === 'everything') {
@@ -450,6 +584,7 @@ function showQuickSearchError(msg) {
             <a href="https://www.voidtools.com" target="_blank" style="color:var(--accent);text-decoration:underline">Download Everything (free)</a>
             <div style="margin-top:8px;color:var(--text-4)">Or change search engine in Settings</div>
         </div>`;
+    _searchDropdownIdx = -1;
     dropdown.style.display = "block";
     setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
 }
@@ -461,16 +596,19 @@ function showQuickSearchResults(results, engine) {
     const isEv = engine !== 'builtin' && _everythingAvailable;
     const engineLabel = isEv
         ? '<span class="fast">⚡ Everything</span>'
-        : '<span>Builtin Search</span>';
+        : '<span>Builtin</span>';
+    const modeLabel = _searchMode !== 'normal' ? ` <span style="color:var(--accent)">${_searchMode}</span>` : '';
 
     dropdown.innerHTML =
-        `<div class="quick-search-header"><span>${results.length} results</span><span class="quick-search-engine">${engineLabel}</span></div>` +
-        results.map(r =>
-            `<div class="quick-search-item${r.is_dir ? ' dir' : ''}" data-path="${esc(r.path)}" onclick="quickSearchNavigate('${esc(r.path)}')">
+        `<div class="quick-search-header"><span>${results.length} results${modeLabel}</span><span class="quick-search-engine">${engineLabel}</span></div>` +
+        results.map((r, i) =>
+            `<div class="quick-search-item${r.is_dir ? ' dir' : ''}${r.size !== undefined ? '' : ''}" data-path="${esc(r.path)}" data-index="${i}" onclick="quickSearchNavigate('${esc(r.path)}')">
                 <span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
+                <span class="quick-search-item-meta">${r.size ? fmtSize(r.size) : ''}${r.modified ? ' · ' + r.modified.split(' ')[0] : ''}</span>
                 <span class="quick-search-item-path">${esc(r.path)}</span>
             </div>`
         ).join("");
+    _searchDropdownIdx = -1;
     dropdown.style.display = "block";
 
     setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
@@ -479,11 +617,16 @@ function showQuickSearchResults(results, engine) {
 function hideQuickSearch() {
   const dropdown = document.getElementById("quick-search-dropdown");
   if (dropdown) dropdown.style.display = "none";
+  _searchDropdownIdx = -1;
 }
 
 function quickSearchNavigate(path) {
   hideQuickSearch();
-  document.getElementById("filter-input").value = "";
+  const input = document.getElementById("filter-input");
+  if (input) {
+    saveSearchHistory(input.value.trim());
+    input.value = "";
+  }
   const parentPath = path.replace(/\\[^\\]+$/, '');
   navigateTo(parentPath);
   setTimeout(() => {
