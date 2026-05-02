@@ -636,6 +636,185 @@ pub fn git_init(path: &Path) -> Result<(), String> {
     } else { Ok(()) }
 }
 
+// === SVN ===
+
+pub fn get_svn_status(path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
+    let output = std::process::Command::new("svn")
+        .args(["status", "--non-interactive"])
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() { return Ok(std::collections::HashMap::new()); }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut status_map = std::collections::HashMap::new();
+    for line in stdout.lines() {
+        if line.len() < 8 { continue; }
+        let status_char = line.chars().next().unwrap_or(' ');
+        let filepath = &line[7..];
+        let status_str = match status_char {
+            'M' => "modified",
+            'A' => "added",
+            'D' => "deleted",
+            '?' => "untracked",
+            '!' => "missing",
+            'R' => "replaced",
+            'C' => "conflicted",
+            '~' => "obstructed",
+            'I' => "ignored",
+            'X' => "external",
+            _ => "modified",
+        };
+        status_map.insert(filepath.to_string(), status_str.to_string());
+    }
+    Ok(status_map)
+}
+
+#[derive(serde::Serialize)]
+pub struct SvnInfo {
+    pub url: String,
+    pub revision: String,
+    pub author: String,
+    pub date: String,
+}
+
+pub fn get_svn_info(path: &Path) -> Result<SvnInfo, String> {
+    let output = std::process::Command::new("svn")
+        .args(["info", "--non-interactive", "--show-item", "url", "--show-item", "revision", "--show-item", "last-changed-author", "--show-item", "last-changed-date"])
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    Ok(SvnInfo {
+        url: lines.first().unwrap_or(&"").to_string(),
+        revision: lines.get(1).unwrap_or(&"").to_string(),
+        author: lines.get(2).unwrap_or(&"").to_string(),
+        date: lines.get(3).unwrap_or(&"").to_string(),
+    })
+}
+
+pub fn svn_update(path: &Path) -> Result<String, String> {
+    let output = std::process::Command::new("svn")
+        .args(["update", "--non-interactive"])
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    } else {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
+pub fn svn_commit(path: &Path, message: &str) -> Result<String, String> {
+    let output = std::process::Command::new("svn")
+        .args(["commit", "-m", message, "--non-interactive"])
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    } else {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
+pub fn svn_revert(path: &Path, targets: Vec<String>) -> Result<(), String> {
+    let mut args = vec!["revert".to_string()];
+    for t in &targets { args.push(t.clone()); }
+    let output = std::process::Command::new("svn")
+        .args(&args)
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    } else { Ok(()) }
+}
+
+pub fn svn_add(path: &Path, targets: Vec<String>) -> Result<(), String> {
+    let mut args = vec!["add".to_string(), "--non-interactive".to_string()];
+    for t in &targets { args.push(t.clone()); }
+    let output = std::process::Command::new("svn")
+        .args(&args)
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    } else { Ok(()) }
+}
+
+#[derive(serde::Serialize)]
+pub struct SvnLogEntry {
+    pub revision: String,
+    pub author: String,
+    pub date: String,
+    pub message: String,
+}
+
+pub fn get_svn_log(path: &Path, limit: u32) -> Result<Vec<SvnLogEntry>, String> {
+    let output = std::process::Command::new("svn")
+        .args(["log", "--non-interactive", "-l", &limit.to_string()])
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() { return Ok(Vec::new()); }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+    let mut current: Option<SvnLogEntry> = None;
+    let mut in_msg = false;
+    let mut msg_lines: Vec<String> = Vec::new();
+    for line in stdout.lines() {
+        if line.starts_with('-') {
+            if let Some(entry) = current.take() {
+                entries.push(SvnLogEntry { message: msg_lines.join("\n"), ..entry });
+            }
+            msg_lines.clear();
+            in_msg = false;
+            continue;
+        }
+        if line.starts_with('r') && line.contains('|') {
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            if parts.len() >= 3 {
+                current = Some(SvnLogEntry {
+                    revision: parts[0].trim().to_string(),
+                    author: parts[1].trim().to_string(),
+                    date: parts[2].split('.').next().unwrap_or("").trim().to_string(),
+                    message: String::new(),
+                });
+                in_msg = true;
+            }
+        } else if in_msg && !line.is_empty() {
+            msg_lines.push(line.to_string());
+        }
+    }
+    if let Some(entry) = current.take() {
+        entries.push(SvnLogEntry { message: msg_lines.join("\n"), ..entry });
+    }
+    Ok(entries)
+}
+
+pub fn svn_checkout(url: &str, dest: &str) -> Result<String, String> {
+    let output = std::process::Command::new("svn")
+        .args(["checkout", url, dest, "--non-interactive"])
+        .output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    } else {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
+pub fn svn_cleanup(path: &Path) -> Result<(), String> {
+    let output = std::process::Command::new("svn")
+        .args(["cleanup"])
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    } else { Ok(()) }
+}
+
+pub fn svn_resolve(path: &Path, targets: Vec<String>) -> Result<(), String> {
+    let mut args = vec!["resolve".to_string(), "--accept".to_string(), "working".to_string()];
+    for t in &targets { args.push(t.clone()); }
+    let output = std::process::Command::new("svn")
+        .args(&args)
+        .current_dir(path).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    } else { Ok(()) }
+}
+
 pub fn detect_ides() -> Vec<IDEInfo> {
     let mut ides = Vec::new();
     let candidates = [

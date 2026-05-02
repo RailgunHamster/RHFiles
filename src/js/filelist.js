@@ -69,6 +69,7 @@ function toggleHidden() {
 const ROW_H = 24;
 const ICON_ROW_H = 80;
 const CARD_ROW_H = 168;
+const THUMB_ROW_H = 140;
 
 function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   const list = document.getElementById(listId);
@@ -80,6 +81,8 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
     renderIconLayout(list, entries, sel, isRight, tabOrPane, listId);
   } else if (G.layout === "cards") {
     renderCardLayout(list, entries, sel, isRight, tabOrPane, listId);
+  } else if (G.layout === "thumbnails") {
+    renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId);
   } else if (G.layout === "columns") {
     renderColumnLayout(list, entries, sel, isRight, tabOrPane.path || getTab().path);
   } else {
@@ -189,12 +192,18 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
         gitHtml = `<div class="row-git ${gitClass}" title="${gitStatus}">${gitIcons[gitStatus] || ''}</div>`;
       }
 
+      let svnHtml = "";
+      if (typeof renderSvnStatusIcon === 'function') {
+        svnHtml = renderSvnStatusIcon(file.name);
+      }
+
       row.innerHTML = `
         <div class="row-name">
           <span class="row-icon">${fileIcon(file)}</span>
           <span class="row-fname">${esc(file.name)}</span>${tagsHtml}
         </div>
         ${gitHtml ? gitHtml : '<div class="row-git"></div>'}
+        ${svnHtml || '<div class="row-svn"></div>'}
         <div class="row-date">${esc(file.modified)}</div>
         <div class="row-type">${esc(fileTypeLabel(file))}</div>
         <div class="row-size">${esc(file.size_display)}</div>
@@ -327,6 +336,76 @@ function renderColumnLayout(list, entries, sel, isRight, currentPath) {
 
   parents.forEach((p, i) => renderColumn(i, p));
   renderColumn(parents.length, currentPath);
+}
+
+const _THUMB_IMAGE_EXT = new Set(['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff','tif','heic','avif']);
+const _thumbCache = new Map();
+
+function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
+  const grid = document.createElement("div");
+  grid.className = "thumbnail-grid";
+  list.appendChild(grid);
+
+  entries.forEach((file, i) => {
+    const isSelected = sel.has(i);
+    const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
+    const item = document.createElement("div");
+    item.className = "file-row thumb-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
+    item.dataset.index = i;
+    item.dataset.path = file.path;
+
+    item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
+    item.addEventListener("contextmenu", e => { e.preventDefault(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
+    item.addEventListener("dragstart", e => {
+      if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
+      e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
+    });
+    item.draggable = true;
+
+    const ext = (file.extension || '').toLowerCase();
+    const isImage = !file.is_dir && _THUMB_IMAGE_EXT.has(ext);
+
+    const thumbBox = document.createElement("div");
+    thumbBox.className = "thumb-img-box";
+
+    if (isImage) {
+      const cached = _thumbCache.get(file.path);
+      if (cached) {
+        thumbBox.innerHTML = `<img src="data:image/png;base64,${cached}" class="thumb-img" alt="">`;
+      } else {
+        thumbBox.innerHTML = `<div class="thumb-loading">${bigFileIcon(file)}</div>`;
+        loadThumbnail(file.path, thumbBox, file);
+      }
+    } else {
+      thumbBox.innerHTML = bigFileIcon(file);
+    }
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "thumb-name";
+    nameEl.textContent = file.name;
+
+    const metaEl = document.createElement("div");
+    metaEl.className = "thumb-meta";
+    metaEl.textContent = file.is_dir ? '' : (file.size_display || '');
+
+    item.appendChild(thumbBox);
+    item.appendChild(nameEl);
+    item.appendChild(metaEl);
+    grid.appendChild(item);
+  });
+}
+
+function loadThumbnail(path, container, file) {
+  call("get_thumbnail", { path, size: 128 }).then(b64 => {
+    if (b64) {
+      _thumbCache.set(path, b64);
+      container.innerHTML = `<img src="data:image/png;base64,${b64}" class="thumb-img" alt="">`;
+    } else {
+      container.innerHTML = bigFileIcon(file);
+    }
+  }).catch(() => {
+    container.innerHTML = bigFileIcon(file);
+  });
 }
 
 function handleRowClick(e, index, sel, tabOrPane, isRight) {

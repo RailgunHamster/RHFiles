@@ -137,6 +137,9 @@
       <button class="tb layout-btn" id="btn-layout-icons" data-layout="icons" onclick="setLayout('icons')" title="Icons">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
       </button>
+      <button class="tb layout-btn" id="btn-layout-thumbnails" data-layout="thumbnails" onclick="setLayout('thumbnails')" title="Thumbnails">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="3.5" cy="3" r=".8" fill="currentColor"/><path d="M1.5 5.5l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/><rect x="9.5" y="1" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="12" cy="3" r=".8" fill="currentColor"/><path d="M10 5.5l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/><rect x="1" y="9.5" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="3.5" cy="11.5" r=".8" fill="currentColor"/><path d="M1.5 14l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/><rect x="9.5" y="9.5" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="12" cy="11.5" r=".8" fill="currentColor"/><path d="M10 14l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/></svg>
+      </button>
       <button class="tb layout-btn" id="btn-layout-cards" data-layout="cards" onclick="setLayout('cards')" title="Cards">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
       </button>
@@ -241,11 +244,13 @@
               <div class="col col-date" data-sort="modified" onclick="sortBy('modified')">Date modified <span class="sort-arrow"></span></div>
               <div class="col col-type" data-sort="type" onclick="sortBy('type')">Type <span class="sort-arrow"></span></div>
               <div class="col col-size" data-sort="size" onclick="sortBy('size')">Size <span class="sort-arrow"></span></div>
+              <div class="col col-svn">SVN</div>
             </div>
             <div id="file-list" class="file-list"></div>
             <div class="status-bar" id="status-bar">
               <span id="status-count">0 items</span>
               <span id="status-git"></span>
+              <span id="status-svn"></span>
               <select id="git-branch-select" style="display:none;font-size:11px;margin-left:8px;background:var(--bg-2);color:var(--text-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;" onchange="gitCheckout(this.value)"></select>
               <span id="status-selection"></span>
             </div>
@@ -423,6 +428,7 @@
 <script src="js/pane.js"></script>
 <script src="js/dialogs.js"></script>
 <script src="js/git.js"></script>
+<script src="js/svn.js"></script>
 <script src="js/undoredo.js"></script>
 <script src="js/grouping.js"></script>
 <script src="js/selection.js"></script>

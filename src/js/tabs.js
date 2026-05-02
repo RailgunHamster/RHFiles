@@ -384,6 +384,7 @@ async function navigateTo(path, pushHistory) {
     updateSidebarSelection();
     loadTree(path, true);
     loadGitStatus(path);
+    if (typeof loadSvnStatus === 'function') loadSvnStatus(path);
     saveTabState();
     updatePreviewForSelection();
   } catch (e) {

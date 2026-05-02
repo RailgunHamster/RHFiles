@@ -302,6 +302,13 @@ function showContextMenu(x, y, isRight) {
     { label: "-", action: null },
     { label: "Empty Recycle Bin", action: () => { if (confirm("Empty Recycle Bin?")) call("empty_recycle_bin", {}); } },
     { label: "Git Clone...", action: () => showGitCloneDialog() },
+    { label: "SVN Checkout...", action: () => showSvnCheckoutDialog() },
+    { label: "SVN Update", action: svnUpdate, hidden: typeof svnUpdate !== 'function' },
+    { label: "SVN Commit...", action: svnCommit, hidden: typeof svnCommit !== 'function' },
+    { label: "SVN Revert", action: svnRevert, hidden: typeof svnRevert !== 'function' },
+    { label: "SVN Add", action: svnAdd, hidden: typeof svnAdd !== 'function' },
+    { label: "SVN Log...", action: showSvnLog, hidden: typeof showSvnLog !== 'function' },
+    { label: "SVN Cleanup", action: svnCleanup, hidden: typeof svnCleanup !== 'function' },
     { label: G.showHidden ? t('ctx.hideHidden') : t('ctx.showHidden'), action: toggleHidden },
   ];
 

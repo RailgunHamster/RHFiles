@@ -144,7 +144,7 @@ function openSettings() {
     '<div class="settings-row"><label>Background Effect</label>' +
     '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>None</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>Mica</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>Acrylic</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>Mica Alt</option></select></div>' +
     '<div class="settings-row"><label>Layout</label>' +
-    '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>Details</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>Icons</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>Cards</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>Columns</option></select></div>' +
+    '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>Details</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>Icons</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>Thumbnails</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>Cards</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>Columns</option></select></div>' +
     '<div class="settings-row"><label>Show File Extensions</label>' +
     '<input type="checkbox" onchange="G.showExtensions=this.checked;renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')"' + (G.showExtensions!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label>Grouping</label>' +
@@ -158,6 +158,13 @@ function openSettings() {
       '<option value="auto"' + ((G.settings.searchEngine||'auto')==='auto'?" selected":"") + '>Auto (Everything if available)</option>' +
       '<option value="everything"' + (G.settings.searchEngine==='everything'?" selected":"") + '>Everything only</option>' +
       '<option value="builtin"' + (G.settings.searchEngine==='builtin'?" selected":"") + '>Builtin (recursive scan)</option>' +
+    '</select></div>' +
+    '<div class="settings-row"><label>Icon Style</label>' +
+    '<select onchange="G.settings.iconMode=this.value;saveSettings();clearIconCache();renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')">' +
+      '<option value="builtin"' + ((G.settings.iconMode||'builtin')==='builtin'?" selected":"") + '>Builtin (Rich SVG)</option>' +
+      '<option value="fluent"' + (G.settings.iconMode==='fluent'?" selected":"") + '>Fluent UI Style</option>' +
+      '<option value="system"' + (G.settings.iconMode==='system'?" selected":"") + '>System Icons (Real)</option>' +
+      '<option value="mixed"' + (G.settings.iconMode==='mixed'?" selected":"") + '>Mixed (SVG + System)</option>' +
     '</select></div>' +
     '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>Customize Toolbar</label>' +
     '<div id="toolbar-config-list" style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto"></div>' +
@@ -425,13 +432,13 @@ function resetShortcuts() {
 }
 
 // --- import/export ---
-function collectAllLocalData() {
-  const data = { _version: 1, _exportDate: new Date().toISOString() };
+async function collectAllLocalData() {
+  const data = { _version: 2, _exportDate: new Date().toISOString() };
   const keys = [
     "rhfiles-settings", "rhfiles-lang", "rhfiles-layout", "rhfiles-tabs",
     "rhfiles-shortcuts", "rhfiles-toolbar", "rhfiles-custom-theme",
     "rhfiles-groupBy", "rhfiles-theme", "rhfiles-folder-layouts",
-    "rhfiles-tags", "rhfiles-pinned",
+    "rhfiles-tags", "rhfiles-pinned", "rhfiles-recent", "rhfiles-search-history",
   ];
   for (const k of keys) {
     const v = localStorage.getItem(k);
@@ -443,20 +450,29 @@ function collectAllLocalData() {
       data[k] = localStorage.getItem(k);
     }
   }
+  try {
+    const dbData = await call("db_export_all", {});
+    if (dbData) {
+      if (dbData.db_tags) data._db_tags = dbData.db_tags;
+      if (dbData.db_layouts) data._db_layouts = dbData.db_layouts;
+      if (dbData.db_pinned) data._db_pinned = dbData.db_pinned;
+    }
+  } catch (e) {}
   return data;
 }
 
 function exportAllData() {
-  const data = collectAllLocalData();
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `rhfiles-backup-${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showNotice("Data exported successfully");
+  collectAllLocalData().then(data => {
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rhfiles-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showNotice("Data exported successfully (localStorage + SQLite)");
+  });
 }
 
 function importAllData() {
@@ -476,8 +492,21 @@ function importAllData() {
           localStorage.setItem(k, data[k]);
         }
         _shortcutBindings = null;
-        showNotice("Data imported successfully. Reloading...");
-        setTimeout(() => location.reload(), 1500);
+        const dbTags = data._db_tags || "";
+        const dbLayouts = data._db_layouts || "";
+        const dbPinned = data._db_pinned || "";
+        if (dbTags || dbLayouts || dbPinned) {
+          call("db_import_all", { tagsJson: dbTags, layoutsJson: dbLayouts, pinnedJson: dbPinned }).then(() => {
+            showNotice("Data imported successfully (localStorage + SQLite). Reloading...");
+            setTimeout(() => location.reload(), 1500);
+          }).catch(e => {
+            showNotice("localStorage imported, SQLite failed: " + e);
+            setTimeout(() => location.reload(), 1500);
+          });
+        } else {
+          showNotice("Data imported successfully. Reloading...");
+          setTimeout(() => location.reload(), 1500);
+        }
       } catch (e) {
         alert("Failed to parse backup: " + e.message);
       }
@@ -488,7 +517,7 @@ function importAllData() {
 }
 
 function clearAllData() {
-  if (!confirm("This will clear ALL local data (shortcuts, tags, tabs, layouts, history, settings). Continue?")) return;
+  if (!confirm("This will clear ALL local data (shortcuts, tags, tabs, layouts, history, settings, SQLite database). Continue?")) return;
   const keysToRemove = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
@@ -496,6 +525,7 @@ function clearAllData() {
   }
   for (const k of keysToRemove) localStorage.removeItem(k);
   _shortcutBindings = null;
-  showNotice("All data cleared. Reloading...");
+  call("db_clear_all", {}).catch(() => {});
+  showNotice("All data cleared (localStorage + SQLite). Reloading...");
   setTimeout(() => location.reload(), 1500);
 }

@@ -16,6 +16,18 @@
 .file-list.layout-cards .row-date, .file-list.layout-cards .row-type, .file-list.layout-cards .row-size,
 .file-list.layout-cards .row-git, .file-list.layout-cards .row-tags { display:none; }
 
+.thumbnail-grid { display:flex; flex-wrap:wrap; gap:6px; padding:8px; }
+.thumb-item { display:inline-flex; flex-direction:column; width:120px; padding:6px; border-radius:8px; border:1px solid transparent; cursor:default; transition:border-color .15s,background .08s; align-items:center; }
+.thumb-item:hover { border-color:var(--border); background:var(--hover); }
+.thumb-item.selected { border-color:var(--accent); background:var(--select-bg); }
+.thumb-item.dir .thumb-img-box { background:transparent; }
+.thumb-img-box { width:96px; height:96px; display:flex; align-items:center; justify-content:center; border-radius:6px; overflow:hidden; background:var(--bg-2); flex-shrink:0; margin-bottom:4px; }
+.thumb-img-box svg { width:48px; height:48px; }
+.thumb-img { max-width:96px; max-height:96px; object-fit:contain; border-radius:3px; }
+.thumb-loading { width:48px; height:48px; display:flex; align-items:center; justify-content:center; opacity:.3; }
+.thumb-name { font-size:11px; color:var(--text-2); text-align:center; word-break:break-word; max-height:2.6em; overflow:hidden; line-height:1.3; width:100%; margin-top:2px; }
+.thumb-meta { font-size:10px; color:var(--text-4); text-align:center; margin-top:1px; }
+
 .column-browser { display:flex; flex:1; overflow-x:auto; overflow-y:hidden; }
 .column-col { min-width:200px; max-width:300px; border-right:1px solid var(--divider); overflow-y:auto; flex-shrink:0; }
 .column-item { display:flex; align-items:center; gap:6px; padding:4px 12px; cursor:default; transition:background .06s; font-size:12px; }

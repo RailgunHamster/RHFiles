@@ -274,6 +274,7 @@ const COMMANDS = [
   { id:"view.hidden", label:"Toggle Hidden Files", action: toggleHidden, keys:"Ctrl+H" },
   { id:"view.layout.details", label:"Details Layout", action: () => setLayout("details") },
   { id:"view.layout.icons", label:"Icons Layout", action: () => setLayout("icons") },
+  { id:"view.layout.thumbnails", label:"Thumbnails Layout", action: () => setLayout("thumbnails") },
   { id:"view.layout.cards", label:"Cards Layout", action: () => setLayout("cards") },
   { id:"view.layout.columns", label:"Columns Layout", action: () => setLayout("columns") },
   { id:"file.invertSelection", label:"Invert Selection", action: invertSelection, keys:"Ctrl+I" },

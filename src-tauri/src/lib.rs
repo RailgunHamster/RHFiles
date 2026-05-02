@@ -342,6 +342,56 @@ fn git_init(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn svn_status(path: String) -> Result<HashMap<String, String>, String> {
+    enumerator::get_svn_status(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn svn_info(path: String) -> Result<enumerator::SvnInfo, String> {
+    enumerator::get_svn_info(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn svn_update(path: String) -> Result<String, String> {
+    enumerator::svn_update(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn svn_commit(path: String, message: String) -> Result<String, String> {
+    enumerator::svn_commit(&PathBuf::from(&path), &message)
+}
+
+#[tauri::command]
+fn svn_revert(path: String, targets: Vec<String>) -> Result<(), String> {
+    enumerator::svn_revert(&PathBuf::from(&path), targets)
+}
+
+#[tauri::command]
+fn svn_add(path: String, targets: Vec<String>) -> Result<(), String> {
+    enumerator::svn_add(&PathBuf::from(&path), targets)
+}
+
+#[tauri::command]
+fn svn_log(path: String, limit: u32) -> Result<Vec<enumerator::SvnLogEntry>, String> {
+    enumerator::get_svn_log(&PathBuf::from(&path), limit)
+}
+
+#[tauri::command]
+fn svn_checkout(url: String, dest: String) -> Result<String, String> {
+    enumerator::svn_checkout(&url, &dest)
+}
+
+#[tauri::command]
+fn svn_cleanup(path: String) -> Result<(), String> {
+    enumerator::svn_cleanup(&PathBuf::from(&path))
+}
+
+#[tauri::command]
+fn svn_resolve(path: String, targets: Vec<String>) -> Result<(), String> {
+    enumerator::svn_resolve(&PathBuf::from(&path), targets)
+}
+
+#[tauri::command]
 fn list_archive(path: String) -> Result<Vec<ArchiveEntry>, String> {
     let p = PathBuf::from(&path);
     let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default().to_lowercase();
@@ -572,6 +622,80 @@ fn db_load_pinned() -> Result<Vec<(String, String)>, String> {
         result.push(row.map_err(|e| e.to_string())?);
     }
     Ok(result)
+}
+
+#[tauri::command]
+fn db_export_all() -> Result<HashMap<String, String>, String> {
+    let conn = get_db()?;
+    let mut data = HashMap::new();
+    let mut stmt = conn.prepare("SELECT path, tags FROM tags").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    let mut tags_map = HashMap::new();
+    for row in rows {
+        let (path, tags_json) = row.map_err(|e| e.to_string())?;
+        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        tags_map.insert(path, tags);
+    }
+    data.insert("db_tags".into(), serde_json::to_string(&tags_map).map_err(|e| e.to_string())?);
+
+    let mut stmt = conn.prepare("SELECT path, layout FROM folder_layouts").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    let mut layouts_map = HashMap::new();
+    for row in rows {
+        let (path, layout) = row.map_err(|e| e.to_string())?;
+        layouts_map.insert(path, layout);
+    }
+    data.insert("db_layouts".into(), serde_json::to_string(&layouts_map).map_err(|e| e.to_string())?);
+
+    let mut stmt = conn.prepare("SELECT path, name FROM pinned ORDER BY ord").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    let mut pinned_list = Vec::new();
+    for row in rows {
+        pinned_list.push(row.map_err(|e| e.to_string())?);
+    }
+    data.insert("db_pinned".into(), serde_json::to_string(&pinned_list).map_err(|e| e.to_string())?);
+
+    Ok(data)
+}
+
+#[tauri::command]
+fn db_import_all(tags_json: String, layouts_json: String, pinned_json: String) -> Result<(), String> {
+    let conn = get_db()?;
+
+    if !tags_json.is_empty() {
+        let tags_map: HashMap<String, Vec<String>> = serde_json::from_str(&tags_json).map_err(|e| e.to_string())?;
+        for (path, tags) in &tags_map {
+            let tj = serde_json::to_string(tags).map_err(|e| e.to_string())?;
+            conn.execute("INSERT OR REPLACE INTO tags (path, tags) VALUES (?1, ?2)", rusqlite::params![path, tj]).map_err(|e| e.to_string())?;
+        }
+    }
+
+    if !layouts_json.is_empty() {
+        let layouts_map: HashMap<String, String> = serde_json::from_str(&layouts_json).map_err(|e| e.to_string())?;
+        for (path, layout) in &layouts_map {
+            conn.execute("INSERT OR REPLACE INTO folder_layouts (path, layout) VALUES (?1, ?2)", rusqlite::params![path, layout]).map_err(|e| e.to_string())?;
+        }
+    }
+
+    if !pinned_json.is_empty() {
+        let pinned_list: Vec<(String, String)> = serde_json::from_str(&pinned_json).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM pinned", []).map_err(|e| e.to_string())?;
+        for (i, (path, name)) in pinned_list.iter().enumerate() {
+            conn.execute("INSERT INTO pinned (path, name, ord) VALUES (?1, ?2, ?3)", rusqlite::params![path, name, i]).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn db_clear_all() -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM tags", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM folder_layouts", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM folder_prefs", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM pinned", []).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1958,7 +2082,9 @@ pub fn run() {
             cancel_operation,
             get_env, get_dir_tree, get_thumbnail, open_file,
             show_properties, read_file_preview, git_status, git_branches, git_checkout,
-            git_create_branch, git_init, list_archive, extract_archive, create_archive,
+            git_create_branch, git_init,
+            svn_status, svn_info, svn_update, svn_commit, svn_revert, svn_add, svn_log, svn_checkout, svn_cleanup, svn_resolve,
+            list_archive, extract_archive, create_archive,
             batch_rename, save_file_tags, load_file_tags, load_all_tags, get_file_info,
             create_shortcut, search_recursive, quick_search, is_everything_available,
             folder_size, compute_hash, open_terminal, get_file_icon,
@@ -1971,6 +2097,7 @@ pub fn run() {
             db_save_tags, db_load_tags, db_load_all_tags,
             db_save_layout, db_load_layout,
             db_save_pinned, db_load_pinned,
+            db_export_all, db_import_all, db_clear_all,
             list_ads, delete_ads, read_ads, unblock_file,
             toggle_pip,
             extract_7z, create_7z, is_7z_available,

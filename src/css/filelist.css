@@ -16,6 +16,7 @@
 .col-type { width:100px; }
 .col-size { width:80px; text-align:right; }
 .col-git { width:20px; text-align:center; }
+.col-svn { width:20px; text-align:center; font-size:11px; }
 .sort-arrow { font-size:10px; margin-left:2px; }
 
 .file-list { flex:1; overflow-y:auto; overflow-x:hidden; position:relative; }
@@ -39,6 +40,7 @@
 .file-row .row-type { width:100px; }
 .file-row .row-size { width:80px; text-align:right; }
 .file-row .row-git { width:20px; text-align:center; font-size:10px; }
+.file-row .row-svn { width:20px; text-align:center; font-size:10px; }
 .git-modified { color:var(--git-modified); }
 .git-added { color:var(--git-added); }
 .git-deleted { color:var(--git-deleted); }
