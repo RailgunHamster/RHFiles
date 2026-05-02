@@ -54,6 +54,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadDrives();
   loadTree(getTab().path, true);
   await loadTagList();
+  initQuickSearch();
   renderNetwork();
   renderMtpDevices();
   try { detectWSLDistros(); } catch(e) {}

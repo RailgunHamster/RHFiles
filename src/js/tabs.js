@@ -394,6 +394,78 @@ async function navigateTo(path, pushHistory) {
 function applyFilter() {
   if (G.deepSearch) runDeepSearch();
   else navigateTo(getTab().path, false);
+
+  const query = document.getElementById("filter-input").value.trim();
+  if (query.length < 2) {
+    hideQuickSearch();
+    return;
+  }
+  if (_quickSearchTimer) clearTimeout(_quickSearchTimer);
+  _quickSearchTimer = setTimeout(() => runQuickSearch(query), 300);
+}
+
+let _quickSearchTimer = null;
+let _everythingAvailable = false;
+
+async function initQuickSearch() {
+  try {
+    _everythingAvailable = await call("is_everything_available", {});
+    const input = document.getElementById("filter-input");
+    if (input) input.placeholder = _everythingAvailable ? "Quick Search..." : "Search";
+  } catch (e) {}
+}
+
+async function runQuickSearch(query) {
+  try {
+    const results = await call("quick_search", { query, maxResults: 50 });
+    showQuickSearchResults(results);
+  } catch (e) {
+    hideQuickSearch();
+  }
+}
+
+function showQuickSearchResults(results) {
+  const dropdown = document.getElementById("quick-search-dropdown");
+  if (!dropdown || results.length === 0) { hideQuickSearch(); return; }
+
+  const engineLabel = _everythingAvailable ?
+    '<span class="fast">⚡ Everything</span>' :
+    '<span>Deep Search</span>';
+
+  dropdown.innerHTML =
+    `<div class="quick-search-header"><span>${results.length} results</span><span class="quick-search-engine">${engineLabel}</span></div>` +
+    results.map(r =>
+      `<div class="quick-search-item${r.is_dir ? ' dir' : ''}" data-path="${esc(r.path)}" onclick="quickSearchNavigate('${esc(r.path)}')">
+        <span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
+        <span class="quick-search-item-path">${esc(r.path)}</span>
+      </div>`
+    ).join("");
+  dropdown.style.display = "block";
+
+  setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
+}
+
+function hideQuickSearch() {
+  const dropdown = document.getElementById("quick-search-dropdown");
+  if (dropdown) dropdown.style.display = "none";
+}
+
+function quickSearchNavigate(path) {
+  hideQuickSearch();
+  document.getElementById("filter-input").value = "";
+  const parentPath = path.replace(/\\[^\\]+$/, '');
+  navigateTo(parentPath);
+  setTimeout(() => {
+    const tab = getTab();
+    const idx = tab.entries.findIndex(e => e.path === path);
+    if (idx >= 0) {
+      tab.sel.clear();
+      tab.sel.add(idx);
+      tab.lastIdx = idx;
+      renderFiles(tab, "file-list", "status-count", "status-selection");
+      scrollToVisible(idx);
+    }
+  }, 200);
 }
 
 // --- deep search ---

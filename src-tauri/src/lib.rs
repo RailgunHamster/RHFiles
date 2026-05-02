@@ -632,6 +632,96 @@ fn create_shortcut(target: String, name: String, dest: String) -> Result<(), Str
     { let _ = (target, name, dest); Err("Not supported".to_string()) }
 }
 
+fn find_es_exe() -> Option<String> {
+    let candidates = [
+        r"C:\Program Files\Everything\es.exe",
+        r"C:\Program Files (x86)\Everything\es.exe",
+    ];
+    for c in &candidates {
+        if Path::new(c).exists() {
+            return Some(c.to_string());
+        }
+    }
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("where")
+        .arg("es.exe")
+        .creation_flags(0x08000000)
+        .output()
+        .ok();
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new("which")
+        .arg("es.exe")
+        .output()
+        .ok();
+    output.and_then(|o| {
+        if o.status.success() {
+            String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+        } else {
+            None
+        }
+    })
+}
+
+#[tauri::command]
+fn is_everything_available() -> bool {
+    find_es_exe().is_some()
+}
+
+#[tauri::command]
+fn quick_search(query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
+    if let Some(es) = find_es_exe() {
+        let output = std::process::Command::new(&es)
+            .args(["-n", &max_results.to_string(), &query])
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut results = Vec::new();
+            for line in stdout.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let path = PathBuf::from(line);
+                if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+                    let metadata = std::fs::metadata(&path).ok();
+                    let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                    let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                    let extension = if is_dir {
+                        String::new()
+                    } else {
+                        path.extension()
+                            .map(|e| e.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                    };
+                    results.push(FileInfo {
+                        name,
+                        path: line.to_string(),
+                        extension,
+                        is_dir,
+                        is_hidden: false,
+                        size,
+                        size_display: format_size(size),
+                        modified: metadata
+                            .and_then(|m| m.modified().ok())
+                            .map(|t| format_time(t))
+                            .unwrap_or_default(),
+                        created: String::new(),
+                        folder_size: None,
+                    });
+                }
+                if results.len() >= max_results {
+                    break;
+                }
+            }
+            return Ok(results);
+        }
+    }
+
+    Err("Everything not found. Install Everything from voidtools.com for instant search, or use Deep Search mode.".to_string())
+}
+
 #[tauri::command]
 fn search_recursive(path: String, query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
     let query_lower = query.to_lowercase();
@@ -1706,7 +1796,7 @@ pub fn run() {
             show_properties, read_file_preview, git_status, git_branches, git_checkout,
             git_create_branch, git_init, list_archive, extract_archive, create_archive,
             batch_rename, save_file_tags, load_file_tags, load_all_tags, get_file_info,
-            create_shortcut, search_recursive,
+            create_shortcut, search_recursive, quick_search, is_everything_available,
             folder_size, compute_hash, open_terminal, get_file_icon,
             get_new_file_templates, create_new_file, get_file_association,
             run_as_admin, empty_recycle_bin, rotate_image, read_shortcut,
