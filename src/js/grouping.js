@@ -9,40 +9,40 @@ function toggleGrouping(field) {
 function getGroupKey(file) {
   switch (G.groupBy) {
     case 'date':
-      if (!file.modified) return 'Unknown';
-      if (file.modified.startsWith('Today')) return 'Today';
-      if (file.modified.startsWith('Yesterday')) return 'Yesterday';
-      if (file.modified.includes('days ago')) return 'This Week';
+      if (!file.modified) return 'group.unknown';
+      if (file.modified.startsWith('Today')) return 'group.today';
+      if (file.modified.startsWith('Yesterday')) return 'group.yesterday';
+      if (file.modified.includes('days ago')) return 'group.thisWeek';
       if (file.modified.match(/^\d{4}\//)) {
         const year = file.modified.substring(0, 4);
         const currentYear = new Date().getFullYear();
-        if (parseInt(year) === currentYear) return 'This Year (' + year + ')';
-        return 'Older (' + year + ')';
+        if (parseInt(year) === currentYear) return 'group.thisYear:' + year;
+        return 'group.older:' + year;
       }
-      return 'Unknown';
+      return 'group.unknown';
     case 'size':
-      if (file.is_dir) return 'Folders';
-      if (file.size === 0) return 'Empty (0 B)';
-      if (file.size < 1024) return 'Tiny (< 1 KB)';
-      if (file.size < 1048576) return 'Small (< 1 MB)';
-      if (file.size < 104857600) return 'Medium (< 100 MB)';
-      return 'Large (>= 100 MB)';
+      if (file.is_dir) return 'group.folders';
+      if (file.size === 0) return 'group.sizeEmpty';
+      if (file.size < 1024) return 'group.sizeTiny';
+      if (file.size < 1048576) return 'group.sizeSmall';
+      if (file.size < 104857600) return 'group.sizeMedium';
+      return 'group.sizeLarge';
     case 'type':
-      if (file.is_dir) return 'Folders';
+      if (file.is_dir) return 'group.folders';
       const ext = (file.extension || '').toLowerCase();
-      if (['jpg','jpeg','png','gif','bmp','webp','svg','ico','tiff'].includes(ext)) return 'Images';
-      if (['mp3','wav','flac','ogg','aac','wma'].includes(ext)) return 'Audio';
-      if (['mp4','mkv','avi','webm','mov','wmv'].includes(ext)) return 'Video';
-      if (['pdf'].includes(ext)) return 'Documents';
-      if (['doc','docx','xls','xlsx','ppt','pptx'].includes(ext)) return 'Office Documents';
-      if (['txt','md','rtf'].includes(ext)) return 'Text Files';
-      if (['zip','rar','7z','tar','gz'].includes(ext)) return 'Archives';
-      if (['exe','msi','dll'].includes(ext)) return 'Applications';
-      if (['rs','js','ts','py','c','cpp','java','go','rb','php','html','css','sh','bat'].includes(ext)) return 'Source Code';
-      return 'Other';
+      if (['jpg','jpeg','png','gif','bmp','webp','svg','ico','tiff'].includes(ext)) return 'group.images';
+      if (['mp3','wav','flac','ogg','aac','wma'].includes(ext)) return 'group.audio';
+      if (['mp4','mkv','avi','webm','mov','wmv'].includes(ext)) return 'group.video';
+      if (['pdf'].includes(ext)) return 'group.documents';
+      if (['doc','docx','xls','xlsx','ppt','pptx'].includes(ext)) return 'group.officeDocs';
+      if (['txt','md','rtf'].includes(ext)) return 'group.textFiles';
+      if (['zip','rar','7z','tar','gz'].includes(ext)) return 'group.archives';
+      if (['exe','msi','dll'].includes(ext)) return 'group.applications';
+      if (['rs','js','ts','py','c','cpp','java','go','rb','php','html','css','sh','bat'].includes(ext)) return 'group.sourceCode';
+      return 'group.other';
     case 'extension':
-      if (file.is_dir) return 'Folders';
-      return '.' + (file.extension || 'no extension').toUpperCase();
+      if (file.is_dir) return 'group.folders';
+      return 'ext:' + (file.extension || 'NO_EXT');
     default:
       return null;
   }
@@ -60,25 +60,36 @@ function groupEntries(entries) {
 }
 
 const GROUP_ORDER = {
-  'Folders': 0, 'Today': 1, 'Yesterday': 2, 'This Week': 3,
-  'This Year': 4, 'Older': 5, 'Unknown': 6,
-  'Empty (0 B)': 0, 'Tiny (< 1 KB)': 1, 'Small (< 1 MB)': 2, 'Medium (< 100 MB)': 3, 'Large (>= 100 MB)': 4,
-  'Images': 0, 'Audio': 1, 'Video': 2, 'Documents': 3, 'Office Documents': 4,
-  'Text Files': 5, 'Archives': 6, 'Applications': 7, 'Source Code': 8, 'Other': 9,
+  'group.folders': 0, 'group.today': 1, 'group.yesterday': 2, 'group.thisWeek': 3,
+  'group.thisYear': 4, 'group.older': 5, 'group.unknown': 6,
+  'group.sizeEmpty': 0, 'group.sizeTiny': 1, 'group.sizeSmall': 2, 'group.sizeMedium': 3, 'group.sizeLarge': 4,
+  'group.images': 0, 'group.audio': 1, 'group.video': 2, 'group.documents': 3, 'group.officeDocs': 4,
+  'group.textFiles': 5, 'group.archives': 6, 'group.applications': 7, 'group.sourceCode': 8, 'group.other': 9,
 };
 
 function sortGroupKeys(keys) {
   return [...keys].sort((a, b) => {
-    const oa = GROUP_ORDER[a] !== undefined ? GROUP_ORDER[a] : 99;
-    const ob = GROUP_ORDER[b] !== undefined ? GROUP_ORDER[b] : 99;
+    const ka = a.split(':')[0], kb = b.split(':')[0];
+    const oa = GROUP_ORDER[ka] !== undefined ? GROUP_ORDER[ka] : 99;
+    const ob = GROUP_ORDER[kb] !== undefined ? GROUP_ORDER[kb] : 99;
     return oa - ob || a.localeCompare(b);
   });
+}
+
+function translateGroupKey(key) {
+  if (key.startsWith('group.thisYear:')) return t('group.thisYear', {year: key.split(':')[1]});
+  if (key.startsWith('group.older:')) return t('group.older', {year: key.split(':')[1]});
+  if (key.startsWith('ext:')) {
+    const ext = key.substring(4);
+    return ext === 'NO_EXT' ? t('group.noExtension') : '.' + ext.toUpperCase();
+  }
+  return t(key);
 }
 
 function renderGroupHeader(label, count, list) {
   const header = document.createElement('div');
   header.className = 'group-header';
-  header.innerHTML = `<span class="group-label">${esc(label)}</span><span class="group-count">${count} items</span>`;
+  header.innerHTML = `<span class="group-label">${esc(translateGroupKey(label))}</span><span class="group-count">${t('group.items', {count: count})}</span>`;
   list.appendChild(header);
 }
 
@@ -87,11 +98,11 @@ function toggleGroupingMenu() {
   const menu = document.createElement("div");
   menu.className = "context-menu";
   const modes = [
-    { label: "None", field: "none" },
-    { label: "Type", field: "type" },
-    { label: "Date", field: "date" },
-    { label: "Size", field: "size" },
-    { label: "Extension", field: "extension" },
+    { label: t('group.menuNone'), field: "none" },
+    { label: t('group.menuType'), field: "type" },
+    { label: t('group.menuDate'), field: "date" },
+    { label: t('group.menuSize'), field: "size" },
+    { label: t('group.menuExt'), field: "extension" },
   ];
   modes.forEach(m => {
     const mi = document.createElement("div");

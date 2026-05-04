@@ -7,26 +7,26 @@ function showConflictDialog(sourceName, destName, sourcePath, destPath, onResolv
   const dlg = document.getElementById("conflict-dialog");
   const content = document.getElementById("conflict-content");
   content.innerHTML = `
-    <div class="conflict-message">A file with the same name already exists:</div>
+    <div class="conflict-message">${t('dialog.conflictMsg')}</div>
     <div class="conflict-files">
       <div class="conflict-file">
-        <div class="conflict-label">Source</div>
+        <div class="conflict-label">${t('dialog.conflictSource')}</div>
         <div class="conflict-name">${esc(sourceName)}</div>
         <div class="conflict-path">${esc(sourcePath)}</div>
       </div>
       <div class="conflict-file">
-        <div class="conflict-label">Destination</div>
+        <div class="conflict-label">${t('dialog.conflictDest')}</div>
         <div class="conflict-name">${esc(destName)}</div>
         <div class="conflict-path">${esc(destPath)}</div>
       </div>
     </div>
     <div class="conflict-options">
-      <button class="dialog-btn" onclick="resolveConflict('replace')">Replace</button>
-      <button class="dialog-btn" onclick="resolveConflict('skip')">Skip</button>
-      <button class="dialog-btn" onclick="resolveConflict('rename')">Keep Both</button>
-      <button class="dialog-btn" onclick="resolveConflict('cancel')">Cancel</button>
+      <button class="dialog-btn" onclick="resolveConflict('replace')">${t('dialog.conflictReplace')}</button>
+      <button class="dialog-btn" onclick="resolveConflict('skip')">${t('dialog.conflictSkip')}</button>
+      <button class="dialog-btn" onclick="resolveConflict('rename')">${t('dialog.conflictKeepBoth')}</button>
+      <button class="dialog-btn" onclick="resolveConflict('cancel')">${t('btn.cancel')}</button>
     </div>
-    <label class="conflict-apply-all"><input type="checkbox" id="conflict-apply-all"> Apply to all conflicts</label>
+    <label class="conflict-apply-all"><input type="checkbox" id="conflict-apply-all"> ${t('dialog.conflictApplyAll')}</label>
   `;
   dlg.style.display = "flex";
 }

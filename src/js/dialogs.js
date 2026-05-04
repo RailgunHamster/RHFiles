@@ -142,61 +142,61 @@ function openSettings() {
     '<div class="settings-row"><label>' + t('settings.language') + '</label>' +
     '<select onchange="setLang(this.value)">' + langOptions + '</select></div>' +
     '<div class="settings-row"><label>' + t('settings.theme') + '</label>' +
-    '<select id="settings-theme-select" onchange="onThemeSelectChange(this.value)"><option value="light"' + (themeVal==="light"?" selected":"") + '>Light</option><option value="dark"' + (themeVal==="dark"?" selected":"") + '>Dark</option><option value="custom"' + (themeVal==="custom"?" selected":"") + '>Custom</option></select></div>' +
+    '<select id="settings-theme-select" onchange="onThemeSelectChange(this.value)"><option value="light"' + (themeVal==="light"?" selected":"") + '>' + t('settings.themeLight') + '</option><option value="dark"' + (themeVal==="dark"?" selected":"") + '>' + t('settings.themeDark') + '</option><option value="custom"' + (themeVal==="custom"?" selected":"") + '>' + t('settings.themeCustom') + '</option></select></div>' +
     '<div id="custom-theme-section" style="display:' + (themeVal==="custom"?"block":"none") + ';margin-top:8px">' +
       '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:4px">' +
-        '<label>Custom CSS</label>' +
+        '<label>' + t('settings.customCss') + '</label>' +
         '<textarea id="custom-theme-css" rows="8" style="width:100%;font-family:monospace;font-size:12px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px;resize:vertical">' + esc(localStorage.getItem('rhfiles-custom-theme') || '') + '</textarea>' +
       '</div>' +
       '<div class="settings-row" style="gap:8px">' +
-        '<button class="dialog-btn" onclick="uploadThemeFile()">Upload .css</button>' +
-        '<button class="dialog-btn primary" onclick="applyCustomThemeFromSettings()">Apply</button>' +
-        '<button class="dialog-btn" onclick="resetCustomTheme()">Reset</button>' +
+        '<button class="dialog-btn" onclick="uploadThemeFile()">' + t('btn.uploadCss') + '</button>' +
+        '<button class="dialog-btn primary" onclick="applyCustomThemeFromSettings()">' + t('btn.apply') + '</button>' +
+        '<button class="dialog-btn" onclick="resetCustomTheme()">' + t('btn.reset') + '</button>' +
       '</div>' +
     '</div>' +
-    '<div class="settings-row"><label>Background Effect</label>' +
-    '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>None</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>Mica</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>Acrylic</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>Mica Alt</option></select></div>' +
-    '<div class="settings-row"><label>Layout</label>' +
-    '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>Details</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>Icons</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>Thumbnails</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>Cards</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>Columns</option></select></div>' +
-    '<div class="settings-row"><label>Show File Extensions</label>' +
+    '<div class="settings-row"><label>' + t('settings.bgEffect') + '</label>' +
+    '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>' + t('settings.effectNone') + '</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>' + t('settings.effectMica') + '</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>' + t('settings.effectAcrylic') + '</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>' + t('settings.effectMicaAlt') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.layout') + '</label>' +
+    '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>' + t('settings.layoutDetails') + '</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>' + t('settings.layoutIcons') + '</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>' + t('settings.layoutThumbnails') + '</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>' + t('settings.layoutCards') + '</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>' + t('settings.layoutColumns') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.showExtensions') + '</label>' +
     '<input type="checkbox" onchange="G.showExtensions=this.checked;renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')"' + (G.showExtensions!==false?' checked':'') + '></div>' +
-    '<div class="settings-row"><label>Grouping</label>' +
-    '<select onchange="toggleGrouping(this.value)"><option value="none"' + (G.groupBy==='none'||!G.groupBy?" selected":"") + '>None</option><option value="type"' + (G.groupBy==='type'?" selected":"") + '>By Type</option><option value="date"' + (G.groupBy==='date'?" selected":"") + '>By Date</option><option value="size"' + (G.groupBy==='size'?" selected":"") + '>By Size</option><option value="extension"' + (G.groupBy==='extension'?" selected":"") + '>By Extension</option></select></div>' +
-    '<div class="settings-row"><label>Default Terminal</label>' +
-    '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>Windows Terminal</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>PowerShell</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>Command Prompt</option></select></div>' +
-    '<div class="settings-row"><label>Adaptive Layout</label>' +
+    '<div class="settings-row"><label>' + t('settings.grouping') + '</label>' +
+    '<select onchange="toggleGrouping(this.value)"><option value="none"' + (G.groupBy==='none'||!G.groupBy?" selected":"") + '>' + t('settings.groupNone') + '</option><option value="type"' + (G.groupBy==='type'?" selected":"") + '>' + t('settings.groupType') + '</option><option value="date"' + (G.groupBy==='date'?" selected":"") + '>' + t('settings.groupDate') + '</option><option value="size"' + (G.groupBy==='size'?" selected":"") + '>' + t('settings.groupSize') + '</option><option value="extension"' + (G.groupBy==='extension'?" selected":"") + '>' + t('settings.groupExt') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.defaultTerminal') + '</label>' +
+    '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>' + t('settings.termWt') + '</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>' + t('settings.termPs') + '</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>' + t('settings.termCmd') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
-    '<div class="settings-row"><label>Search Engine</label>' +
+    '<div class="settings-row"><label>' + t('settings.searchEngine') + '</label>' +
     '<select onchange="G.settings.searchEngine=this.value;saveSettings();initQuickSearch()">' +
-      '<option value="auto"' + ((G.settings.searchEngine||'auto')==='auto'?" selected":"") + '>Auto (Everything if available)</option>' +
-      '<option value="everything"' + (G.settings.searchEngine==='everything'?" selected":"") + '>Everything only</option>' +
-      '<option value="builtin"' + (G.settings.searchEngine==='builtin'?" selected":"") + '>Builtin (recursive scan)</option>' +
+      '<option value="auto"' + ((G.settings.searchEngine||'auto')==='auto'?" selected":"") + '>' + t('settings.searchAuto') + '</option>' +
+      '<option value="everything"' + (G.settings.searchEngine==='everything'?" selected":"") + '>' + t('settings.searchEverything') + '</option>' +
+      '<option value="builtin"' + (G.settings.searchEngine==='builtin'?" selected":"") + '>' + t('settings.searchBuiltin') + '</option>' +
     '</select></div>' +
-    '<div class="settings-row"><label>Icon Style</label>' +
+    '<div class="settings-row"><label>' + t('settings.iconStyle') + '</label>' +
     '<select onchange="G.settings.iconMode=this.value;saveSettings();clearIconCache();renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')">' +
-      '<option value="builtin"' + ((G.settings.iconMode||'builtin')==='builtin'?" selected":"") + '>Builtin (Rich SVG)</option>' +
-      '<option value="fluent"' + (G.settings.iconMode==='fluent'?" selected":"") + '>Fluent UI Style</option>' +
-      '<option value="system"' + (G.settings.iconMode==='system'?" selected":"") + '>System Icons (Real)</option>' +
-      '<option value="mixed"' + (G.settings.iconMode==='mixed'?" selected":"") + '>Mixed (SVG + System)</option>' +
+      '<option value="builtin"' + ((G.settings.iconMode||'builtin')==='builtin'?" selected":"") + '>' + t('settings.iconBuiltin') + '</option>' +
+      '<option value="fluent"' + (G.settings.iconMode==='fluent'?" selected":"") + '>' + t('settings.iconFluent') + '</option>' +
+      '<option value="system"' + (G.settings.iconMode==='system'?" selected":"") + '>' + t('settings.iconSystem') + '</option>' +
+      '<option value="mixed"' + (G.settings.iconMode==='mixed'?" selected":"") + '>' + t('settings.iconMixed') + '</option>' +
     '</select></div>' +
-    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>Customize Toolbar</label>' +
+    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.customizeToolbar') + '</label>' +
     '<div id="toolbar-config-list" style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto"></div>' +
-    '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">Reset to Default</button></div>' +
+    '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">' + t('btn.resetDefault') + '</button></div>' +
     '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">' +
     '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.shortcuts') + '</label>' +
     '<div id="shortcut-config-list" style="display:flex;flex-direction:column;gap:6px;max-height:350px;overflow:auto;padding:4px 0"></div>' +
     '<div style="display:flex;gap:8px;align-items:center">' +
-      '<button class="dialog-btn" onclick="resetShortcuts()" style="align-self:flex-start">Reset Shortcuts</button>' +
-      '<span style="font-size:11px;color:var(--text-secondary)">Click a key binding to re-record. Multiple keys per action allowed.</span>' +
+      '<button class="dialog-btn" onclick="resetShortcuts()" style="align-self:flex-start">' + t('btn.resetShortcuts') + '</button>' +
+      '<span style="font-size:11px;color:var(--text-secondary)">' + t('settings.shortcutHelp') + '</span>' +
     '</div></div>' +
     '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">' +
-    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>Data Management</label>' +
+    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.dataManagement') + '</label>' +
     '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<button class="dialog-btn" onclick="exportAllData()">Export All Data</button>' +
-      '<button class="dialog-btn" onclick="importAllData()">Import Data...</button>' +
-      '<button class="dialog-btn" onclick="clearAllData()" style="color:#e74c3c">Clear All Data</button>' +
+      '<button class="dialog-btn" onclick="exportAllData()">' + t('btn.export') + '</button>' +
+      '<button class="dialog-btn" onclick="importAllData()">' + t('btn.import') + '</button>' +
+      '<button class="dialog-btn" onclick="clearAllData()" style="color:#e74c3c">' + t('btn.clearAll') + '</button>' +
     '</div>' +
-    '<span style="font-size:11px;color:var(--text-secondary)">Export includes: shortcuts, tabs, tags, pinned folders, layouts, themes, settings, browsing history.</span>' +
+    '<span style="font-size:11px;color:var(--text-secondary)">' + t('settings.dataHelp') + '</span>' +
     '</div>';
   dlg.style.display = "flex";
   renderToolbarConfig();
@@ -257,46 +257,46 @@ async function showNewFileDialog(isRight) {
     templates = await call("get_new_file_templates", {});
   } catch (e) {
     templates = [
-      { name: "Text File", ext: ".txt", content: "" },
-      { name: "HTML File", ext: ".html", content: "<!DOCTYPE html>\n<html>\n<head><title></title></head>\n<body>\n\n</body>\n</html>" },
-      { name: "JSON File", ext: ".json", content: "{\n  \n}" },
-      { name: "Markdown File", ext: ".md", content: "# Title\n\n" },
-      { name: "JavaScript File", ext: ".js", content: "// \n" },
-      { name: "CSS File", ext: ".css", content: "/* */\n" },
-      { name: "Python File", ext: ".py", content: "# -*- coding: utf-8 -*-\n\n" },
-      { name: "Batch File", ext: ".bat", content: "@echo off\n\n" },
+      { name: t('template.textFile'), ext: ".txt", content: "" },
+      { name: t('template.htmlFile'), ext: ".html", content: "<!DOCTYPE html>\n<html>\n<head><title></title></head>\n<body>\n\n</body>\n</html>" },
+      { name: t('template.jsonFile'), ext: ".json", content: "{\n  \n}" },
+      { name: t('template.markdownFile'), ext: ".md", content: "# Title\n\n" },
+      { name: t('template.jsFile'), ext: ".js", content: "// \n" },
+      { name: t('template.cssFile'), ext: ".css", content: "/* */\n" },
+      { name: t('template.pythonFile'), ext: ".py", content: "# -*- coding: utf-8 -*-\n\n" },
+      { name: t('template.batchFile'), ext: ".bat", content: "@echo off\n\n" },
     ];
   }
   const destPath = isRight ? G.rp.path : getTab().path;
-  const fileName = prompt("File name:", "New File" + (templates.length ? templates[0].ext : ".txt"));
+  const fileName = prompt(t('dialog.newFileName'), t('dialog.newFileDefault') + (templates.length ? templates[0].ext : ".txt"));
   if (!fileName) return;
   const tmpl = templates.find(t => fileName.endsWith(t.ext)) || templates[0];
   try {
     const templateExt = tmpl ? (tmpl.extension || (tmpl.ext || "").replace(/^\./, '')) : "";
     await call("create_new_file", { parent: destPath, template: templateExt, name: fileName });
     await refresh();
-  } catch (e) { alert("Create file failed: " + e); }
+  } catch (e) { alert(t('alert.createFileFailed', {error: e})); }
 }
 
 // --- toolbar customization ---
 const TOOLBAR_BUTTONS = [
-  { id: "btn-new", label: "New Folder/File" },
-  { id: "btn-cut", label: "Cut" },
-  { id: "btn-copy", label: "Copy" },
-  { id: "btn-paste", label: "Paste" },
-  { id: "btn-rename", label: "Rename" },
-  { id: "btn-delete", label: "Delete" },
-  { id: "btn-sort", label: "Sort" },
-  { id: "btn-hidden", label: "Hidden Files" },
-  { id: "btn-group", label: "Group" },
-  { id: "btn-layout-details", label: "Details Layout" },
-  { id: "btn-layout-icons", label: "Icons Layout" },
-  { id: "btn-layout-cards", label: "Cards Layout" },
-  { id: "btn-layout-columns", label: "Columns Layout" },
-  { id: "btn-preview", label: "Preview Pane" },
-  { id: "btn-dual", label: "Dual Pane" },
-  { id: "btn-theme", label: "Toggle Theme" },
-  { id: "btn-refresh", label: "Refresh" },
+  { id: "btn-new", label: t('tb.newFolder') },
+  { id: "btn-cut", label: t('tb.cut') },
+  { id: "btn-copy", label: t('tb.copy') },
+  { id: "btn-paste", label: t('tb.paste') },
+  { id: "btn-rename", label: t('tb.rename') },
+  { id: "btn-delete", label: t('tb.delete') },
+  { id: "btn-sort", label: t('tb.sort') },
+  { id: "btn-hidden", label: t('tb.hidden') },
+  { id: "btn-group", label: t('tb.group') },
+  { id: "btn-layout-details", label: t('tb.details') },
+  { id: "btn-layout-icons", label: t('tb.icons') },
+  { id: "btn-layout-cards", label: t('tb.cards') },
+  { id: "btn-layout-columns", label: t('tb.columns') },
+  { id: "btn-preview", label: t('tb.preview') },
+  { id: "btn-dual", label: t('tb.dualPane') },
+  { id: "btn-theme", label: t('tb.theme') },
+  { id: "btn-refresh", label: t('tb.refresh') },
 ];
 
 function loadToolbarConfig() {
@@ -356,34 +356,34 @@ function resetToolbarConfig() {
 
 // --- shortcut customization ---
 const SHORTCUT_LABELS = {
-  "nav.up": "Go Up",
-  "nav.down": "Open / Go Into Folder",
-  "nav.back": "Go Back",
-  "nav.forward": "Go Forward",
-  "nav.refresh": "Refresh",
-  "nav.open": "Open Selected",
+  "nav.up": t('cmd.goUp'),
+  "nav.down": t('cmd.openInto'),
+  "nav.back": t('cmd.goBack'),
+  "nav.forward": t('cmd.goForward'),
+  "nav.refresh": t('cmd.refresh'),
+  "nav.open": t('cmd.openInto'),
   "nav.home": "Jump to First",
   "nav.end": "Jump to Last",
-  "file.copy": "Copy",
-  "file.cut": "Cut",
-  "file.paste": "Paste",
-  "file.delete": "Delete",
-  "file.rename": "Rename",
-  "file.newFolder": "New Folder",
-  "file.newFile": "New File",
-  "file.selectAll": "Select All",
-  "file.invertSelection": "Invert Selection",
-  "file.properties": "Properties",
-  "file.quicklook": "QuickLook Preview",
-  "file.undo": "Undo",
-  "file.redo": "Redo",
-  "view.fullscreen": "Toggle Fullscreen",
-  "view.dualPane": "Toggle Dual Pane",
-  "view.hidden": "Toggle Hidden Files",
-  "view.switchPane": "Switch Pane",
-  "view.grouping": "Toggle Grouping",
-  "window.new": "New Window",
-  "window.pip": "Toggle PiP",
+  "file.copy": t('cmd.copy'),
+  "file.cut": t('cmd.cut'),
+  "file.paste": t('cmd.paste'),
+  "file.delete": t('cmd.delete'),
+  "file.rename": t('cmd.rename'),
+  "file.newFolder": t('cmd.newFolder'),
+  "file.newFile": t('cmd.newFile'),
+  "file.selectAll": t('cmd.selectAll'),
+  "file.invertSelection": t('cmd.invertSelection'),
+  "file.properties": t('cmd.properties'),
+  "file.quicklook": t('cmd.quickLook'),
+  "file.undo": t('cmd.undo'),
+  "file.redo": t('cmd.redo'),
+  "view.fullscreen": t('cmd.fullscreen'),
+  "view.dualPane": t('cmd.toggleDualPane'),
+  "view.hidden": t('cmd.toggleHidden'),
+  "view.switchPane": t('cmd.switchPane'),
+  "view.grouping": t('cmd.toggleGrouping'),
+  "window.new": t('cmd.newWindow'),
+  "window.pip": t('cmd.togglePip'),
   "tab.new": "New Tab",
   "tab.close": "Close Tab",
 };
@@ -441,7 +441,7 @@ function resetShortcuts() {
   localStorage.removeItem("rhfiles-shortcuts");
   _shortcutBindings = null;
   renderShortcutConfig();
-  showNotice("Shortcuts reset to defaults");
+  showNotice(t('notice.shortcutsReset'));
 }
 
 // --- import/export ---
@@ -485,7 +485,7 @@ function exportAllData() {
     a.download = `rhfiles-backup-${new Date().toISOString().slice(0,10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showNotice("Data exported successfully (localStorage + SQLite)");
+    showNotice(t('notice.dataExported'));
   });
 }
 
@@ -500,7 +500,7 @@ function importAllData() {
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
-        if (!data._version) { alert("Invalid RHFiles backup file"); return; }
+        if (!data._version) { alert(t('alert.invalidBackup')); return; }
         for (const k in data) {
           if (k.startsWith("_")) continue;
           localStorage.setItem(k, data[k]);
@@ -512,18 +512,18 @@ function importAllData() {
         const dbNetFavs = data._db_network_favorites || "";
         if (dbTags || dbLayouts || dbPinned || dbNetFavs) {
           call("db_import_all", { tagsJson: dbTags, layoutsJson: dbLayouts, pinnedJson: dbPinned, networkFavoritesJson: dbNetFavs }).then(() => {
-            showNotice("Data imported successfully (localStorage + SQLite). Reloading...");
+            showNotice(t('notice.dataImported'));
             setTimeout(() => location.reload(), 1500);
           }).catch(e => {
-            showNotice("localStorage imported, SQLite failed: " + e);
+            showNotice(t('alert.importSqliteFailed', {error: e}));
             setTimeout(() => location.reload(), 1500);
           });
         } else {
-          showNotice("Data imported successfully. Reloading...");
+          showNotice(t('notice.dataImportedLsOnly'));
           setTimeout(() => location.reload(), 1500);
         }
       } catch (e) {
-        alert("Failed to parse backup: " + e.message);
+        alert(t('alert.parseBackupFailed', {error: e.message}));
       }
     };
     reader.readAsText(file);
@@ -532,7 +532,7 @@ function importAllData() {
 }
 
 function clearAllData() {
-  if (!confirm("This will clear ALL local data (shortcuts, tags, tabs, layouts, history, settings, SQLite database). Continue?")) return;
+  if (!confirm(t('confirm.clearAllData'))) return;
   const keysToRemove = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
@@ -541,6 +541,6 @@ function clearAllData() {
   for (const k of keysToRemove) localStorage.removeItem(k);
   _shortcutBindings = null;
   call("db_clear_all", {}).catch(() => {});
-  showNotice("All data cleared (localStorage + SQLite). Reloading...");
+  showNotice(t('notice.dataCleared'));
   setTimeout(() => location.reload(), 1500);
 }

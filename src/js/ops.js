@@ -55,18 +55,18 @@ function cancelOperation() {
 async function deleteSelected(isRight) {
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
-  const msg = sel.length === 1 ? 'Delete "' + sel[0].name + '"?' : 'Delete ' + sel.length + ' items?';
+  const msg = sel.length === 1 ? t('confirm.deleteItem', {name: sel[0].name}) : t('confirm.deleteItems', {count: sel.length});
   if (!confirm(msg)) return;
   try {
     await call("delete_files", { paths: sel.map(f => f.path) });
     await refresh();
-  } catch (e) { alert("Delete failed: " + e); }
+  } catch (e) { alert(t('alert.deleteFailed', {error: e})); }
 }
 
 async function renamePrompt(isRight) {
   const sel = getSelectedPaths(isRight);
   if (sel.length !== 1) return;
-  const newName = prompt("Rename:", sel[0].name);
+  const newName = prompt(t('prompt.rename'), sel[0].name);
   if (!newName || newName === sel[0].name) return;
   try {
     const oldPath = sel[0].path;
@@ -75,12 +75,12 @@ async function renamePrompt(isRight) {
     trackRename(oldPath, newPath);
     await refresh();
   }
-  catch (e) { alert("Rename failed: " + e); }
+  catch (e) { alert(t('alert.renameFailed')); }
 }
 
 async function newFolder() {
   try { await call("new_folder", { parent: getTab().path }); await refresh(); }
-  catch (e) { alert("New folder failed: " + e); }
+  catch (e) { alert(t('alert.newFolderFailed')); }
 }
 
 async function copySelected(isRight) {
@@ -129,12 +129,12 @@ async function paste(isRight) {
         await call("rename_file", { path: destFullPath, newName: generateUniqueName(destPath, srcName) });
       }
       if (G.clipboard.op === "cut") {
-        showProgress("Moving...");
+        showProgress(t('status.moving'));
         await call("move_with_progress", { src: srcPath, dest: destPath });
         hideProgress();
         trackMove(srcPath, destFullPath);
       } else {
-        showProgress("Copying...");
+        showProgress(t('status.copying'));
         await call("copy_with_progress", { src: srcPath, dest: destPath });
         hideProgress();
         trackCopy(srcPath, destFullPath);
@@ -142,7 +142,7 @@ async function paste(isRight) {
     }
     if (G.clipboard.op === "cut") G.clipboard = null;
     await refresh();
-  } catch (e) { hideProgress(); alert("Paste failed: " + e); }
+  } catch (e) { hideProgress(); alert(t('alert.pasteFailed')); }
 }
 
 async function openFileHandler(path) {
@@ -171,31 +171,31 @@ function showCustomProperties(info) {
   const isDir = info.is_dir;
 
   let html = `
-    <div class="props-row"><span class="props-label">Name:</span><span class="props-value">${esc(info.name)}</span></div>
-    <div class="props-row"><span class="props-label">Path:</span><span class="props-value">${esc(info.path)}</span></div>
-    <div class="props-row"><span class="props-label">Type:</span><span class="props-value">${esc(isDir?'File folder':ext.toUpperCase()+' File')}</span></div>
-    <div class="props-row"><span class="props-label">Size:</span><span class="props-value">${esc(info.size_display)}</span></div>`;
+    <div class="props-row"><span class="props-label">${t('properties.name')}</span><span class="props-value">${esc(info.name)}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.path')}</span><span class="props-value">${esc(info.path)}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.type')}</span><span class="props-value">${esc(isDir ? t('properties.fileFolder') : ext.toUpperCase() + ' ' + t('properties.file'))}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.size')}</span><span class="props-value">${esc(info.size_display)}</span></div>`;
 
   if (isDir) {
-    html += `<div class="props-row"><span class="props-label">Folder Size:</span><span class="props-value" id="props-folder-size">Calculating...</span></div>`;
+    html += `<div class="props-row"><span class="props-label">${t('properties.folderSize')}</span><span class="props-value" id="props-folder-size">${t('properties.calculating')}</span></div>`;
   }
 
   html += `
-    <div class="props-row"><span class="props-label">Modified:</span><span class="props-value">${esc(info.modified)}</span></div>
-    <div class="props-row"><span class="props-label">Created:</span><span class="props-value">${esc(info.created)}</span></div>
-    <div class="props-row"><span class="props-label">Read-only:</span><span class="props-value">${info.readonly?'Yes':'No'}</span></div>`;
+    <div class="props-row"><span class="props-label">${t('properties.modified')}</span><span class="props-value">${esc(info.modified)}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.created')}</span><span class="props-value">${esc(info.created)}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.readonly')}</span><span class="props-value">${info.readonly ? t('properties.yes') : t('properties.no')}</span></div>`;
 
   if (isShortcut) {
-    html += `<div class="props-row"><span class="props-label">Shortcut Target:</span><span class="props-value" id="props-shortcut-target">Loading...</span></div>`;
+    html += `<div class="props-row"><span class="props-label">${t('properties.shortcutTarget')}</span><span class="props-value" id="props-shortcut-target">${t('properties.loading')}</span></div>`;
   }
 
-  html += `<div class="props-row"><span class="props-label">File Hash:</span><span class="props-value">
+  html += `<div class="props-row"><span class="props-label">${t('properties.fileHash')}</span><span class="props-value">
     <button class="dialog-btn" id="hash-md5-btn">MD5</button>
     <button class="dialog-btn" id="hash-sha256-btn">SHA256</button>
     <span id="props-hash-result" style="margin-left:8px;font-size:11px;color:var(--text-3);word-break:break-all;"></span>
   </span></div>`;
 
-  html += `<div class="props-row"><span class="props-label">Opens with:</span><span class="props-value" id="props-association">Loading...</span></div>`;
+  html += `<div class="props-row"><span class="props-label">${t('properties.opensWith')}</span><span class="props-value" id="props-association">${t('properties.loading')}</span></div>`;
 
   content.innerHTML = html;
   const md5Btn = content.querySelector("#hash-md5-btn");
@@ -210,35 +210,35 @@ function showCustomProperties(info) {
       if (el) el.textContent = fmtSize(size);
     }).catch(() => {
       const el = document.getElementById("props-folder-size");
-      if (el) el.textContent = "Unable to calculate";
+      if (el) el.textContent = t('properties.unableToCalc');
     });
   }
   if (isShortcut) {
     call("read_shortcut", { path: info.path }).then(data => {
       const el = document.getElementById("props-shortcut-target");
-      if (el) el.textContent = data && data.target ? data.target : "Unknown";
+      if (el) el.textContent = data && data.target ? data.target : t('properties.unknown');
     }).catch(() => {
       const el = document.getElementById("props-shortcut-target");
-      if (el) el.textContent = "Unable to read";
+      if (el) el.textContent = t('properties.unableToRead');
     });
   }
   call("get_file_association", { extension: info.extension }).then(data => {
     const el = document.getElementById("props-association");
-    if (el) el.textContent = data || "Unknown";
+    if (el) el.textContent = data || t('properties.unknown');
   }).catch(() => {
     const el = document.getElementById("props-association");
-    if (el) el.textContent = "Unknown";
+    if (el) el.textContent = t('properties.unknown');
   });
 }
 
 async function computeAndShowHash(algo, path) {
   const el = document.getElementById("props-hash-result");
-  if (el) el.textContent = "Computing...";
+  if (el) el.textContent = t('properties.computing');
   try {
     const result = await call("compute_hash", { path, algo });
     if (el) el.textContent = algo.toUpperCase() + ": " + result;
   } catch (e) {
-    if (el) el.textContent = "Error: " + e;
+    if (el) el.textContent = t('status.error', {error: e});
   }
 }
 
@@ -269,59 +269,59 @@ function showContextMenu(x, y, isRight) {
 
   const items = [
     { label: t('ctx.open'), shortcut:"Enter", action: () => { if (singleSelection) { if (sel[0].is_dir) { if (isRight) rpNavigateTo(sel[0].path); else navigateTo(sel[0].path); } else openFileHandler(sel[0].path); } }, disabled: !singleSelection },
-    { label: "Open in IDE", action: async () => { try { const ides = await call("detect_ides", {}); if (ides && ides.length) { await call("open_in_ide", { ide_cmd: ides[0].command, path: sel[0].path }); } } catch(e) { alert("No IDE detected"); } }, disabled: !singleSelection },
-    { label: "Open in Terminal", action: () => { const path = singleFile ? sel[0].path.split("\\").slice(0,-1).join("\\") : (singleSelection ? sel[0].path : getTab().path); call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
+    { label: t('ctx.openInIde'), action: async () => { try { const ides = await call("detect_ides", {}); if (ides && ides.length) { await call("open_in_ide", { ide_cmd: ides[0].command, path: sel[0].path }); } } catch(e) { alert(t('alert.noIde')); } }, disabled: !singleSelection },
+    { label: t('ctx.openInTerminal'), action: () => { const path = singleFile ? sel[0].path.split("\\").slice(0,-1).join("\\") : (singleSelection ? sel[0].path : getTab().path); call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
     { label: "-", action: null },
-    { label: "Run as Administrator", action: () => { call("run_as_admin", { path: sel[0].path }); }, disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
-    { label: "Compatibility Settings...", action: () => showCompatDialog(sel[0].path), disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
-    { label: "Install Certificate", action: async () => { try { await call("install_certificate", { path: sel[0].path }); showNotice("Certificate installed"); } catch(e) { alert("Install failed: " + e); } }, disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
+    { label: t('ctx.runAsAdmin'), action: () => { call("run_as_admin", { path: sel[0].path }); }, disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
+    { label: t('ctx.compatSettings'), action: () => showCompatDialog(sel[0].path), disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
+    { label: t('ctx.installCert'), action: async () => { try { await call("install_certificate", { path: sel[0].path }); showNotice(t('notice.certInstalled')); } catch(e) { alert(t('alert.installCertFailed')); } }, disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
     { label: "-", action: null, hidden: (!singleFile || !isExe) && (!singleFile || !isCert) },
     { label: t('ctx.cut'), shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
     { label: t('ctx.copy'), shortcut:"Ctrl+C", action: () => copySelected(isRight), disabled: !hasSelection },
     { label: t('ctx.paste'), shortcut:"Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
-    { label: "Paste Shortcut", action: async () => { if (!G.clipboard) return; const dest = isRight ? G.rp.path : getTab().path; try { for (const src of G.clipboard.paths) { const linkName = src.split("\\").pop().replace(/\.[^.]+$/, ""); await call("create_shortcut", { target: src, name: linkName, dest: dest }); } await refresh(); } catch(e) { alert("Create shortcut failed: " + e); } }, disabled: !G.clipboard },
+    { label: t('ctx.pasteShortcut'), action: async () => { if (!G.clipboard) return; const dest = isRight ? G.rp.path : getTab().path; try { for (const src of G.clipboard.paths) { const linkName = src.split("\\").pop().replace(/\.[^.]+$/, ""); await call("create_shortcut", { target: src, name: linkName, dest: dest }); } await refresh(); } catch(e) { alert(t('alert.shortcutFailed')); } }, disabled: !G.clipboard },
     { label: "-", action: null },
     { label: t('ctx.rename'), shortcut:"F2", action: () => renamePrompt(isRight), disabled: !singleSelection },
     { label: t('ctx.delete'), shortcut:"Del", action: () => deleteSelected(isRight), disabled: !hasSelection },
     { label: "-", action: null },
-    { label: "New File...", shortcut:"Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
+    { label: t('ctx.newFile'), shortcut:"Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
     { label: t('ctx.newFolder'), shortcut:"F7", action: newFolder },
     { label: "-", action: null },
-    { label: "Set as Wallpaper", action: () => { call("set_wallpaper", { path: sel[0].path }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
-    { label: "Rotate Left", action: () => { call("rotate_image", { path: sel[0].path, degrees: -90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
-    { label: "Rotate Right", action: () => { call("rotate_image", { path: sel[0].path, degrees: 90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
+    { label: t('ctx.setWallpaper'), action: () => { call("set_wallpaper", { path: sel[0].path }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
+    { label: t('ctx.rotateLeft'), action: () => { call("rotate_image", { path: sel[0].path, degrees: -90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
+    { label: t('ctx.rotateRight'), action: () => { call("rotate_image", { path: sel[0].path, degrees: 90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: "-", action: null, hidden: !singleFile || !isImage },
-    { label: "Extract Here", action: async () => { const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path }); await refresh(); } catch(e) { alert("7z extract failed: " + e); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
-    { label: "Extract to Subfolder...", action: async () => { const sub = sel[0].name.replace(/\.[^.]+$/, ""); const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path + "\\" + sub }); await refresh(); } catch(e) { alert("7z extract failed: " + e); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path + "\\" + sub, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: t('ctx.extractHere'), action: async () => { const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: t('ctx.extractTo'), action: async () => { const sub = sel[0].name.replace(/\.[^.]+$/, ""); const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path + "\\" + sub }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path + "\\" + sub, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
     { label: "-", action: null, hidden: !singleFile || !isArchive },
-    { label: "Compress to ZIP", action: async () => { const paths = sel.map(f => f.path); try { await call("create_archive", { paths, dest: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip" }); await refresh(); } catch(e) { alert("Compress failed: " + e); } }, disabled: !hasSelection },
-    { label: "Compress to 7z", action: async () => { const paths = sel.map(f => f.path); try { await call("create_7z", { sources: paths, archive: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".7z" }); await refresh(); } catch(e) { alert("7z compress failed: " + e); } }, disabled: !hasSelection, hidden: !G._7zAvailable },
+    { label: t('ctx.compressZip'), action: async () => { const paths = sel.map(f => f.path); try { await call("create_archive", { paths, dest: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } }, disabled: !hasSelection },
+    { label: t('ctx.compress7z'), action: async () => { const paths = sel.map(f => f.path); try { await call("create_7z", { sources: paths, archive: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".7z" }); await refresh(); } catch(e) { alert(t('alert.compress7zFailed')); } }, disabled: !hasSelection, hidden: !G._7zAvailable },
     { label: "-", action: null, hidden: !G._7zAvailable },
-    { label: "Install Font", action: () => { call("install_font", { path: sel[0].path }); }, disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },
+    { label: t('ctx.installFont'), action: () => { call("install_font", { path: sel[0].path }); }, disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },
     { label: "-", action: null, hidden: !singleFile || !isFont },
     { label: t('ctx.selectAll'), shortcut:"Ctrl+A", action: () => selectAll(isRight) },
-    { label: "Invert Selection", shortcut:"Ctrl+I", action: () => invertSelection(isRight) },
+    { label: t('ctx.invertSelection'), shortcut:"Ctrl+I", action: () => invertSelection(isRight) },
     { label: "-", action: null },
     { label: t('ctx.batchRename'), action: () => openBatchRename(isRight), disabled: !hasSelection },
     { label: t('ctx.addTag'), action: () => openTagDialog(isRight), disabled: !hasSelection },
     { label: t('ctx.properties'), shortcut:"Alt+Enter", action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
-    { label: "Permissions...", action: () => { if (singleSelection) showPermissionsDialog(sel[0].path); }, disabled: !singleSelection },
+    { label: t('ctx.permissions'), action: () => { if (singleSelection) showPermissionsDialog(sel[0].path); }, disabled: !singleSelection },
     { label: "-", action: null },
-    { label: "Unblock File", action: async () => { try { await call("unblock_file", { path: sel[0].path }); showNotice("File unblocked"); refresh(); } catch(e) { alert("Unblock failed: " + e); } }, disabled: !singleFile, hidden: !singleFile },
-    { label: "View Streams...", action: async () => { try { const ads = await call("list_ads", { path: sel[0].path }); showStreamsDialog(sel[0].path, ads); } catch(e) { showStreamsDialog(sel[0].path, []); } }, disabled: !singleFile, hidden: !singleFile },
+    { label: t('ctx.unblockFile'), action: async () => { try { await call("unblock_file", { path: sel[0].path }); showNotice(t('notice.fileUnblocked')); refresh(); } catch(e) { alert(t('alert.unblockFailed')); } }, disabled: !singleFile, hidden: !singleFile },
+    { label: t('ctx.viewStreams'), action: async () => { try { const ads = await call("list_ads", { path: sel[0].path }); showStreamsDialog(sel[0].path, ads); } catch(e) { showStreamsDialog(sel[0].path, []); } }, disabled: !singleFile, hidden: !singleFile },
     { label: "-", action: null },
-    { label: "\u2601 Always keep on this device", action: async () => { try { for (const f of sel) await call("cloud_pin_file", { path: f.path }); showNotice("Files pinned"); await refresh(); } catch(e) { alert("Pin failed: " + e); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
-    { label: "\u2601 Free up space", action: async () => { try { for (const f of sel) await call("cloud_unpin_file", { path: f.path }); showNotice("Space freed up"); await refresh(); } catch(e) { alert("Unpin failed: " + e); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
+    { label: "\u2601 " + t('ctx.alwaysKeep'), action: async () => { try { for (const f of sel) await call("cloud_pin_file", { path: f.path }); showNotice(t('notice.filesPinned')); await refresh(); } catch(e) { alert(t('alert.pinFailed')); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
+    { label: "\u2601 " + t('ctx.freeUpSpace'), action: async () => { try { for (const f of sel) await call("cloud_unpin_file", { path: f.path }); showNotice(t('notice.spaceFreed')); await refresh(); } catch(e) { alert(t('alert.unpinFailed')); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
     { label: "-", action: null },
-    { label: "Empty Recycle Bin", action: () => { if (confirm("Empty Recycle Bin?")) call("empty_recycle_bin", {}); } },
-    { label: "Git Clone...", action: () => showGitCloneDialog() },
-    { label: "SVN Checkout...", action: () => showSvnCheckoutDialog() },
-    { label: "SVN Update", action: svnUpdate, hidden: typeof svnUpdate !== 'function' },
-    { label: "SVN Commit...", action: svnCommit, hidden: typeof svnCommit !== 'function' },
-    { label: "SVN Revert", action: svnRevert, hidden: typeof svnRevert !== 'function' },
-    { label: "SVN Add", action: svnAdd, hidden: typeof svnAdd !== 'function' },
-    { label: "SVN Log...", action: showSvnLog, hidden: typeof showSvnLog !== 'function' },
-    { label: "SVN Cleanup", action: svnCleanup, hidden: typeof svnCleanup !== 'function' },
+    { label: t('ctx.emptyRecycleBin'), action: () => { if (confirm(t('confirm.emptyRecycleBin'))) call("empty_recycle_bin", {}); } },
+    { label: t('ctx.gitClone'), action: () => showGitCloneDialog() },
+    { label: t('ctx.svnCheckout'), action: () => showSvnCheckoutDialog() },
+    { label: t('ctx.svnUpdate'), action: svnUpdate, hidden: typeof svnUpdate !== 'function' },
+    { label: t('ctx.svnCommit'), action: svnCommit, hidden: typeof svnCommit !== 'function' },
+    { label: t('ctx.svnRevert'), action: svnRevert, hidden: typeof svnRevert !== 'function' },
+    { label: t('ctx.svnAdd'), action: svnAdd, hidden: typeof svnAdd !== 'function' },
+    { label: t('ctx.svnLog'), action: showSvnLog, hidden: typeof showSvnLog !== 'function' },
+    { label: t('ctx.svnCleanup'), action: svnCleanup, hidden: typeof svnCleanup !== 'function' },
     { label: G.showHidden ? t('ctx.hideHidden') : t('ctx.showHidden'), action: toggleHidden },
   ];
 
@@ -406,14 +406,14 @@ function showStreamsDialog(path, streams) {
   let listHtml = streams.length
     ? streams.map(s => `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
         <span style="cursor:pointer;text-decoration:underline" data-stream="${esc(s)}">${esc(s)}</span>
-        <button class="dialog-btn danger" data-del="${esc(s)}" style="font-size:11px">Delete</button>
+        <button class="dialog-btn danger" data-del="${esc(s)}" style="font-size:11px">${t('btn.delete')}</button>
       </div>`).join("")
-    : "<div style='color:var(--text-3);padding:8px'>No alternate data streams found.</div>";
-  dlg.innerHTML = `<h3 style="margin:0 0 8px;font-size:14px">Alternate Data Streams</h3>
+    : `<div style='color:var(--text-3);padding:8px'>${t('dialog.streamsEmpty')}</div>`;
+  dlg.innerHTML = `<h3 style="margin:0 0 8px;font-size:14px">${t('dialog.streamsTitle')}</h3>
     <div style="font-size:11px;color:var(--text-3);margin-bottom:8px">${esc(path)}</div>
     <div style="max-height:300px;overflow:auto">${listHtml}</div>
     <div style="margin-top:12px;text-align:right">
-      <button class="dialog-btn" id="ads-close">Close</button>
+      <button class="dialog-btn" id="ads-close">${t('btn.close')}</button>
     </div>`;
   document.body.appendChild(dlg);
   dlg.querySelector("#ads-close").onclick = () => { dlg.close(); dlg.remove(); };
@@ -423,8 +423,8 @@ function showStreamsDialog(path, streams) {
       try {
         await call("delete_ads", { path, stream });
         btn.closest("div[style]").remove();
-        showNotice("Stream deleted");
-      } catch(e) { alert("Delete stream failed: " + e); }
+        showNotice(t('notice.streamDeleted'));
+      } catch(e) { alert(t('alert.streamDeleteFailed')); }
     };
   });
   dlg.querySelectorAll("[data-stream]").forEach(el => {
@@ -438,7 +438,7 @@ function showStreamsDialog(path, streams) {
         const existing = dlg.querySelector("pre");
         if (existing) existing.remove();
         el.closest("div[style]").after(pre);
-      } catch(e) { alert("Read stream failed: " + e); }
+      } catch(e) { alert(t('alert.streamReadFailed')); }
     };
   });
   dlg.showModal();
@@ -469,7 +469,7 @@ check7zAvailable();
 // --- compatibility settings dialog ---
 function showCompatDialog(path) {
   const modes = [
-    { value: "", label: "None (Default)" },
+    { value: "", label: t('dialog.compatNone') },
     { value: "WIN95", label: "Windows 95" },
     { value: "WIN98", label: "Windows 98" },
     { value: "WINXPSP2", label: "Windows XP (SP2)" },
@@ -481,16 +481,16 @@ function showCompatDialog(path) {
   const dlg = document.createElement("dialog");
   dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:320px;";
   dlg.innerHTML = `
-    <h3 style="margin:0 0 12px;font-size:14px">Compatibility Settings</h3>
+    <h3 style="margin:0 0 12px;font-size:14px">${t('dialog.compatTitle')}</h3>
     <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;word-break:break-all;">${esc(path)}</div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;">Compatibility Mode:
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;">${t('dialog.compatMode')}
       <select id="compat-mode" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
         ${modes.map(m => `<option value="${m.value}">${esc(m.label)}</option>`).join("")}
       </select>
     </label>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-      <button class="dialog-btn" id="compat-cancel">Cancel</button>
-      <button class="dialog-btn primary" id="compat-ok">Apply</button>
+      <button class="dialog-btn" id="compat-cancel">${t('btn.cancel')}</button>
+      <button class="dialog-btn primary" id="compat-ok">${t('btn.apply')}</button>
     </div>`;
   document.body.appendChild(dlg);
   dlg.querySelector("#compat-cancel").onclick = () => { dlg.close(); dlg.remove(); };
@@ -498,8 +498,8 @@ function showCompatDialog(path) {
     const mode = dlg.querySelector("#compat-mode").value;
     try {
       await call("set_compat_mode", { path, mode });
-      showNotice(mode ? "Compatibility mode set" : "Compatibility mode cleared");
-    } catch (e) { alert("Failed: " + e); }
+      showNotice(mode ? t('notice.compatSet') : t('notice.compatCleared'));
+    } catch (e) { alert(t('alert.compatFailed')); }
     dlg.close(); dlg.remove();
   };
   call("get_compat_mode", { path }).then(current => {
@@ -520,35 +520,35 @@ async function showPermissionsDialog(path) {
       <tr>
         <td style="padding:4px 8px;font-size:12px;color:var(--text-2)">${esc(p.account)}</td>
         <td style="padding:4px 8px;font-size:12px;color:var(--text-3)">${esc(p.display)}</td>
-        <td style="padding:4px 8px;"><button class="dialog-btn" style="font-size:11px;padding:2px 8px;" data-remove-account="${esc(p.account)}">Remove</button></td>
+        <td style="padding:4px 8px;"><button class="dialog-btn" style="font-size:11px;padding:2px 8px;" data-remove-account="${esc(p.account)}">${t('btn.remove')}</button></td>
       </tr>
     `).join("");
 
     dlg.innerHTML = `
-      <h3 style="margin:0 0 8px;font-size:14px">Permissions: ${esc(path.split(/[\\/]/).pop())}</h3>
+      <h3 style="margin:0 0 8px;font-size:14px">${t('dialog.permTitle', {path: esc(path.split(/[\\/]/).pop())})}</h3>
       <div style="font-size:11px;color:var(--text-4);margin-bottom:8px;word-break:break-all;">${esc(path)}</div>
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr style="border-bottom:1px solid var(--border);">
-          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--text-4);">Account</th>
-          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--text-4);">Access</th>
+          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--text-4);">${t('dialog.permAccount')}</th>
+          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--text-4);">${t('dialog.permAccess')}</th>
           <th style="width:80px;"></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;">
-        <input type="text" id="perm-account" placeholder="DOMAIN\\User" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
+        <input type="text" id="perm-account" placeholder="${t('dialog.permPlaceholder')}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
         <select id="perm-level" style="padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
-          <option value="F">Full Control</option>
-          <option value="M">Modify</option>
-          <option value="RX">Read & Execute</option>
-          <option value="R">Read</option>
-          <option value="W">Write</option>
+          <option value="F">${t('dialog.permFullControl')}</option>
+          <option value="M">${t('dialog.permModify')}</option>
+          <option value="RX">${t('dialog.permReadExec')}</option>
+          <option value="R">${t('dialog.permRead')}</option>
+          <option value="W">${t('dialog.permWrite')}</option>
         </select>
-        <button class="dialog-btn primary" id="perm-add" style="font-size:12px;">Add</button>
+        <button class="dialog-btn primary" id="perm-add" style="font-size:12px;">${t('btn.add')}</button>
       </div>
       <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-        <button class="dialog-btn" id="perm-close">Close</button>
-        <button class="dialog-btn" id="perm-inherit-toggle">Disable Inheritance</button>
+        <button class="dialog-btn" id="perm-close">${t('btn.close')}</button>
+        <button class="dialog-btn" id="perm-inherit-toggle">${t('dialog.permDisableInherit')}</button>
       </div>`;
     document.body.appendChild(dlg);
 
@@ -559,33 +559,33 @@ async function showPermissionsDialog(path) {
       if (!account) return;
       try {
         await call("set_permission", { path, account, permission: level });
-        showNotice("Permission added");
+        showNotice(t('notice.permAdded'));
         dlg.close(); dlg.remove();
         showPermissionsDialog(path);
-      } catch (e) { alert("Failed to set permission: " + e); }
+      } catch (e) { alert(t('alert.permFailed')); }
     };
     dlg.querySelectorAll("[data-remove-account]").forEach(btn => {
       btn.onclick = async () => {
         try {
           await call("remove_permission", { path, account: btn.dataset.removeAccount });
-          showNotice("Permission removed");
+          showNotice(t('notice.permRemoved'));
           dlg.close(); dlg.remove();
           showPermissionsDialog(path);
-        } catch (e) { alert("Failed to remove permission: " + e); }
+        } catch (e) { alert(t('alert.permRemoveFailed')); }
       };
     });
     dlg.querySelector("#perm-inherit-toggle").onclick = async () => {
       try {
         await call("inherit_permissions", { path, enable: false });
-        showNotice("Inheritance disabled");
+        showNotice(t('notice.inheritDisabled'));
         dlg.close(); dlg.remove();
         showPermissionsDialog(path);
-      } catch (e) { alert("Failed to toggle inheritance: " + e); }
+      } catch (e) { alert(t('alert.inheritFailed')); }
     };
 
     dlg.showModal();
     dlg.onclose = () => dlg.remove();
   } catch (e) {
-    alert("Failed to get permissions: " + e);
+    alert(t('alert.permGetFailed'));
   }
 }

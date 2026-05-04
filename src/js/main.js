@@ -127,7 +127,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const file = getTab().entries[idx];
     if (!file) return;
     if (file.archive_entry) {
-      if (file.is_dir) { showNotice("Cannot navigate into archive subdirectories"); }
+      if (file.is_dir) { showNotice(t('alert.cannotNavArchive')); }
       else extractArchiveEntry(idx);
     } else if (file.is_dir) {
       navigateTo(file.path);
@@ -231,17 +231,17 @@ document.addEventListener("contextmenu", e => {
   menu.className = "context-menu";
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
-    { label: "New Folder", shortcut: "F7", action: newFolder },
-    { label: "New File...", shortcut: "Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
+    { label: t('ctx.newFolder'), shortcut: "F7", action: newFolder },
+    { label: t('ctx.newFile'), shortcut: "Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
     { label: "-", action: null },
-    { label: "Paste", shortcut: "Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
+    { label: t('ctx.paste'), shortcut: "Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
     { label: "-", action: null },
-    { label: "Refresh", shortcut: "F5", action: refresh },
-    { label: "Select All", shortcut: "Ctrl+A", action: () => selectAll(isRight) },
+    { label: t('cmd.refresh'), shortcut: "F5", action: refresh },
+    { label: t('ctx.selectAll'), shortcut: "Ctrl+A", action: () => selectAll(isRight) },
     { label: "-", action: null },
-    { label: G.showHidden ? "Hide Hidden Items" : "Show Hidden Items", action: toggleHidden },
-    { label: "Open in Terminal", action: () => { const path = isRight ? G.rp.path : getTab().path; call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
-    { label: "Properties", action: () => showPropertiesDialog(isRight ? G.rp.path : getTab().path) },
+    { label: G.showHidden ? t('ctx.hideHidden') : t('ctx.showHidden'), action: toggleHidden },
+    { label: t('ctx.openInTerminal'), action: () => { const path = isRight ? G.rp.path : getTab().path; call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(isRight ? G.rp.path : getTab().path) },
   ];
   items.forEach(item => {
     if (item.label === "-") {
@@ -284,8 +284,7 @@ async function checkForUpdates() {
         const result = await call("check_updates", {});
         if (result) {
             const [version, url] = result.split("|");
-            const msg = `RHFiles ${version} is available. Open download page?`;
-            if (confirm(msg)) {
+            if (confirm(t('confirm.updateAvailable', {version: version}))) {
                 window.open(url, "_blank");
             }
         }

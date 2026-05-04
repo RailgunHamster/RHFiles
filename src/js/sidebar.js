@@ -123,10 +123,10 @@ function showDriveContextMenu(e, path, label, letter) {
   menu.className = "context-menu";
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
-    { label: "Open", action: () => navigateTo(path) },
-    { label: "Properties", action: () => showPropertiesDialog(path) },
+    { label: t('sidebar.open'), action: () => navigateTo(path) },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
     { label: "-", action: null },
-    { label: "Format...", action: () => showFormatDialog(letter, label) },
+    { label: t('btn.format') + '...', action: () => showFormatDialog(letter, label) },
   ];
   items.forEach(item => {
     if (item.label === "-") {
@@ -147,22 +147,22 @@ function showFormatDialog(letter, label) {
   const dlg = document.createElement("dialog");
   dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:320px;";
   dlg.innerHTML = `
-    <h3 style="margin:0 0 12px;font-size:14px">Format Drive ${esc(letter)}</h3>
+    <h3 style="margin:0 0 12px;font-size:14px">${t('dialog.formatDrive', {letter: esc(letter)})}</h3>
     <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
-      <label style="display:flex;align-items:center;gap:8px;">Volume Label: <input id="fmt-label" type="text" value="${esc(label)}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></label>
-      <label style="display:flex;align-items:center;gap:8px;">File System:
+      <label style="display:flex;align-items:center;gap:8px;">${t('dialog.volumeLabel')}: <input id="fmt-label" type="text" value="${esc(label)}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></label>
+      <label style="display:flex;align-items:center;gap:8px;">${t('dialog.fileSystem')}:
         <select id="fmt-fs" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
           <option value="NTFS" selected>NTFS</option>
           <option value="FAT32">FAT32</option>
           <option value="exFAT">exFAT</option>
         </select>
       </label>
-      <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="fmt-quick" checked> Quick Format</label>
+      <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="fmt-quick" checked> ${t('dialog.quickFormat')}</label>
     </div>
-    <div style="margin-top:12px;color:var(--git-deleted);font-size:11px;">Warning: This will erase all data on the drive!</div>
+    <div style="margin-top:12px;color:var(--git-deleted);font-size:11px;">${t('dialog.formatWarning')}</div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-      <button class="dialog-btn" id="fmt-cancel">Cancel</button>
-      <button class="dialog-btn" style="background:var(--git-deleted);color:#fff;" id="fmt-ok">Format</button>
+      <button class="dialog-btn" id="fmt-cancel">${t('btn.cancel')}</button>
+      <button class="dialog-btn" style="background:var(--git-deleted);color:#fff;" id="fmt-ok">${t('btn.format')}</button>
     </div>`;
   document.body.appendChild(dlg);
   dlg.querySelector("#fmt-cancel").onclick = () => { dlg.close(); dlg.remove(); };
@@ -170,12 +170,12 @@ function showFormatDialog(letter, label) {
     const label = dlg.querySelector("#fmt-label").value;
     const fs = dlg.querySelector("#fmt-fs").value;
     const quick = dlg.querySelector("#fmt-quick").checked;
-    if (!confirm(`Format drive ${letter}: as ${fs}? All data will be lost!`)) return;
+    if (!confirm(t('confirm.formatDrive', {letter, fs}))) return;
     try {
       await call("format_drive", { drive: letter, label, fs, quick });
-      showNotice("Drive formatted successfully");
+      showNotice(t('notice.driveFormatted'));
       await loadDrives();
-    } catch (e) { alert("Format failed: " + e); }
+    } catch (e) { alert(t('alert.formatFailed', {error: e})); }
     dlg.close(); dlg.remove();
   };
   dlg.showModal();
@@ -189,7 +189,7 @@ async function loadTagList() {
     if (allTags) G.tagCache = allTags;
     const list = document.getElementById("tag-list");
     if (!allTags || !Object.keys(allTags).length) {
-      list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No tags</div>';
+      list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noTags') + '</div>';
       return;
     }
     const tagMap = {};
@@ -240,7 +240,7 @@ async function loadRecentList() {
   try {
     const items = await call("db_load_recent", { mode: "recent", limit: 15 });
     if (!items || !items.length) {
-      list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No recent items</div>';
+      list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noRecent') + '</div>';
       return;
     }
     list.innerHTML = "";
@@ -276,7 +276,7 @@ async function loadRecentList() {
       list.appendChild(div);
     }
   } catch (e) {
-    list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No recent items</div>';
+    list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noRecent') + '</div>';
   }
 }
 
@@ -287,13 +287,13 @@ function formatTimeAgo(isoStr) {
     const now = Date.now();
     const diff = now - d.getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "Just now";
-    if (mins < 60) return mins + " min ago";
+    if (mins < 1) return t('time.justNow');
+    if (mins < 60) return t('time.minAgo', {count: mins});
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return hrs + "h ago";
+    if (hrs < 24) return t('time.hAgo', {count: hrs});
     const days = Math.floor(hrs / 24);
-    if (days === 1) return "Yesterday";
-    if (days < 7) return days + " days ago";
+    if (days === 1) return t('time.yesterday');
+    if (days < 7) return t('time.daysAgo', {count: days});
     return d.toLocaleDateString();
   } catch (e) { return ""; }
 }
@@ -306,11 +306,11 @@ function showRecentContextMenu(e, item) {
   menu.className = "context-menu";
   menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
   const items = [
-    { label: item.is_dir ? "Open" : "Open File", action: () => { if (item.is_dir) navigateTo(item.path); else call("open_file", { path: item.path }); } },
-    { label: "Open Location", action: () => { const dir = item.is_dir ? item.path : item.path.split("\\").slice(0, -1).join("\\"); navigateTo(dir); } },
+    { label: item.is_dir ? t('sidebar.open') : t('sidebar.openFile'), action: () => { if (item.is_dir) navigateTo(item.path); else call("open_file", { path: item.path }); } },
+    { label: t('sidebar.openLocation'), action: () => { const dir = item.is_dir ? item.path : item.path.split("\\").slice(0, -1).join("\\"); navigateTo(dir); } },
     { label: "-", action: null },
-    { label: "Remove from Recent", action: () => { call("db_remove_recent", { path: item.path }).then(() => loadRecentList()); } },
-    { label: "Clear All Recent", action: () => { if (confirm("Clear all recent items?")) { call("db_clear_recent", {}).then(() => loadRecentList()); } } },
+    { label: t('sidebar.removeFromRecent'), action: () => { call("db_remove_recent", { path: item.path }).then(() => loadRecentList()); } },
+    { label: t('sidebar.clearAllRecent'), action: () => { if (confirm(t('confirm.clearRecent'))) { call("db_clear_recent", {}).then(() => loadRecentList()); } } },
   ];
   items.forEach(it => {
     if (it.label === "-") {
@@ -408,9 +408,9 @@ function showSidebarContextMenu(e, path, name) {
   menu.className = "context-menu";
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
-    { label: "Open", action: () => navigateTo(path) },
-    { label: "Unpin from Quick Access", action: () => unpinFolder(path) },
-    { label: "Properties", action: () => showPropertiesDialog(path) },
+    { label: t('sidebar.open'), action: () => navigateTo(path) },
+    { label: t('sidebar.unpin'), action: () => unpinFolder(path) },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
   ];
   items.forEach(item => {
     const mi = document.createElement("div");
@@ -475,9 +475,9 @@ function showCloudContextMenu(e, provider) {
   menu.className = "context-menu";
   menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
   const items = [
-    { label: "Open", action: () => navigateTo(provider.path) },
-    { label: "Pin to Quick Access", action: () => pinFolder(provider.path, provider.name) },
-    { label: "Properties", action: () => showPropertiesDialog(provider.path) },
+    { label: t('sidebar.open'), action: () => navigateTo(provider.path) },
+    { label: t('sidebar.pin'), action: () => pinFolder(provider.path, provider.name) },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(provider.path) },
   ];
   items.forEach(item => {
     const mi = document.createElement("div");
@@ -549,7 +549,7 @@ async function detectWindowsLibraries() {
 async function renderNetwork() {
   const section = document.getElementById('network-section');
   if (!section) return;
-  section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">Scanning...</div>';
+  section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('status.scanning') + '...</div>';
   try {
     const servers = await call("browse_network", {});
     section.innerHTML = '';
@@ -572,10 +572,10 @@ async function renderNetwork() {
       section.appendChild(div);
     }
     if (servers.length === 0) {
-      section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No servers found</div>';
+      section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noServers') + '</div>';
     }
   } catch (e) {
-    section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">Network unavailable</div>';
+    section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.networkUnavailable') + '</div>';
   }
 }
 
@@ -586,7 +586,7 @@ function showNetworkMenu(e, server, shares) {
   menu.style.cssText = 'left:' + e.clientX + 'px;top:' + e.clientY + 'px;';
   const openItem = document.createElement('div');
   openItem.className = 'ctx-item';
-  openItem.innerHTML = '<span>Open \\\\' + esc(server.name) + '</span>';
+  openItem.innerHTML = '<span>' + t('sidebar.open') + ' \\\\' + esc(server.name) + '</span>';
   openItem.onclick = () => { removeContextMenu(); navigateTo(server.path); };
   menu.appendChild(openItem);
   if (shares.length > 0) {
@@ -615,16 +615,16 @@ function showFtpDialog() {
   const dlg = document.createElement('dialog');
   dlg.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:340px;';
   dlg.innerHTML = `
-    <h3 style="margin:0 0 12px;font-size:14px">Connect to FTP Server</h3>
+    <h3 style="margin:0 0 12px;font-size:14px">${t('dialog.ftpTitle')}</h3>
     <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
-      <div class="dialog-row"><label>Host:</label><input type="text" id="ftp-host" placeholder="ftp.example.com" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
-      <div class="dialog-row"><label>Path:</label><input type="text" id="ftp-path" value="/" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
-      <div class="dialog-row"><label>User:</label><input type="text" id="ftp-user" placeholder="anonymous" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
-      <div class="dialog-row"><label>Password:</label><input type="password" id="ftp-pass" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+      <div class="dialog-row"><label>${t('dialog.ftpHost')}:</label><input type="text" id="ftp-host" placeholder="${t('dialog.ftpHostPlaceholder')}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+      <div class="dialog-row"><label>${t('dialog.ftpPath')}:</label><input type="text" id="ftp-path" value="/" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+      <div class="dialog-row"><label>${t('dialog.ftpUser')}:</label><input type="text" id="ftp-user" placeholder="${t('dialog.ftpUserPlaceholder')}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
+      <div class="dialog-row"><label>${t('dialog.ftpPassword')}:</label><input type="password" id="ftp-pass" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;"></div>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-      <button class="dialog-btn" id="ftp-cancel">Cancel</button>
-      <button class="dialog-btn primary" id="ftp-connect">Connect</button>
+      <button class="dialog-btn" id="ftp-cancel">${t('btn.cancel')}</button>
+      <button class="dialog-btn primary" id="ftp-connect">${t('btn.connect')}</button>
     </div>`;
   document.body.appendChild(dlg);
   dlg.querySelector('#ftp-cancel').onclick = () => { dlg.close(); dlg.remove(); };
@@ -633,14 +633,14 @@ function showFtpDialog() {
     const path = dlg.querySelector('#ftp-path').value || '/';
     const user = dlg.querySelector('#ftp-user').value || 'anonymous';
     const pass = dlg.querySelector('#ftp-pass').value;
-    if (!host) { alert('Please enter a host'); return; }
+    if (!host) { alert(t('alert.enterHost')); return; }
     try {
       const entries = await call('ftp_list', { host, path, user, pass });
       dlg.close();
       dlg.remove();
       showFtpEntries(host, path, user, pass, entries);
     } catch (e) {
-      alert('FTP connection failed: ' + e);
+      alert(t('alert.ftpFailed', {error: e}));
     }
   };
   dlg.showModal();
@@ -664,7 +664,7 @@ async function showFtpEntries(host, path, user, pass, entries) {
 async function renderMtpDevices() {
   const section = document.getElementById('mtp-section');
   if (!section) return;
-  section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">Scanning...</div>';
+  section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('status.scanning') + '...</div>';
   try {
     const devices = await call('list_mtp_devices', {});
     section.innerHTML = '';
@@ -677,9 +677,9 @@ async function renderMtpDevices() {
       section.appendChild(div);
     }
     if (devices.length === 0) {
-      section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No devices found</div>';
+      section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noDevices') + '</div>';
     }
   } catch (e) {
-    section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No devices found</div>';
+    section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noDevices') + '</div>';
   }
 }

@@ -46,11 +46,11 @@ async function updatePreviewForSelection() {
         '<div style="text-align:center;padding:12px;">' +
         '<div style="font-size:36px;">' + bigFileIcon(file) + '</div>' +
         '<div style="font-size:14px;color:var(--text-2);margin:4px 0;">' + esc(file.name) + '</div>' +
-        '<div style="font-size:11px;color:var(--text-4);margin-bottom:8px;">' + dirEntries.length + ' items</div>' +
+        '<div style="font-size:11px;color:var(--text-4);margin-bottom:8px;">' + t('group.items', {count: dirEntries.length}) + '</div>' +
         '<div style="text-align:left;font-size:11px;color:var(--text-3);">' +
         preview.map(e => '<div style="padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
           (e.is_dir ? '&#128193; ' : '&#128196; ') + esc(e.name) + '</div>').join("") +
-        (dirEntries.length > 20 ? '<div style="color:var(--text-4);">...and ' + (dirEntries.length - 20) + ' more</div>' : '') +
+        (dirEntries.length > 20 ? '<div style="color:var(--text-4);">' + t('nav.moreTabs', {count: dirEntries.length - 20}) + '</div>' : '') +
         '</div></div>';
     } catch (e) {
       document.getElementById("preview-content").innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-3);">
@@ -68,9 +68,9 @@ async function updatePreviewForSelection() {
         '<div style="font-size:36px;text-align:center;">' + bigFileIcon(file) + '</div>' +
         '<div style="text-align:center;font-size:14px;color:var(--text-2);margin:4px 0;">' + esc(file.name) + '</div>' +
         '<div style="margin-top:12px;font-size:11px;">' +
-        '<div class="props-row"><span class="props-label">Target:</span><span class="props-value">' + esc(scData && scData.target ? scData.target : "Unknown") + '</span></div>' +
-        '<div class="props-row"><span class="props-label">Args:</span><span class="props-value">' + esc(scData && scData.args ? scData.args : "") + '</span></div>' +
-        '<div class="props-row"><span class="props-label">Work Dir:</span><span class="props-value">' + esc(scData && scData.work_dir ? scData.work_dir : "") + '</span></div>' +
+        '<div class="props-row"><span class="props-label">' + t('preview.target') + '</span><span class="props-value">' + esc(scData && scData.target ? scData.target : t('properties.unknown')) + '</span></div>' +
+        '<div class="props-row"><span class="props-label">' + t('preview.args') + '</span><span class="props-value">' + esc(scData && scData.args ? scData.args : "") + '</span></div>' +
+        '<div class="props-row"><span class="props-label">' + t('preview.workDir') + '</span><span class="props-value">' + esc(scData && scData.work_dir ? scData.work_dir : "") + '</span></div>' +
         '</div></div>';
     } catch (e) {
       document.getElementById("preview-content").innerHTML = `<div class="preview-empty">${t('preview.noPreview')}</div>`;
@@ -86,7 +86,7 @@ async function updatePreviewForSelection() {
     const openBtn = document.createElement("button");
     openBtn.className = "dialog-btn";
     openBtn.style.marginTop = "8px";
-    openBtn.textContent = "Open PDF";
+    openBtn.textContent = t('btn.openPdf');
     openBtn.addEventListener("click", () => call('open_file', { path: file.path }));
     const container = document.createElement("div");
     container.style.cssText = "text-align:center;padding:12px;";
@@ -127,7 +127,7 @@ async function updatePreviewForSelection() {
         '</div>' +
         '<div class="rtf-preview" style="padding:8px;font-size:12px;line-height:1.5;border-top:1px solid var(--border);">' + html + '</div>';
     } catch (e) {
-      document.getElementById("preview-content").innerHTML = `<div class="preview-empty">RTF preview failed</div>`;
+      document.getElementById("preview-content").innerHTML = `<div class="preview-empty">${t('alert.rtfPreviewFailed')}</div>`;
     }
     return;
   }
@@ -141,7 +141,7 @@ async function updatePreviewForSelection() {
         '</div>' +
         '<div class="docx-preview" style="padding:8px;font-size:12px;line-height:1.5;border-top:1px solid var(--border);">' + html + '</div>';
     } catch (e) {
-      document.getElementById("preview-content").innerHTML = `<div class="preview-empty">DOCX preview failed</div>`;
+      document.getElementById("preview-content").innerHTML = `<div class="preview-empty">${t('alert.docxPreviewFailed')}</div>`;
     }
     return;
   }
@@ -214,7 +214,7 @@ async function rpNavigateTo(path, pushHistory) {
     document.getElementById("right-path-input").value = path;
     renderBreadcrumb(path, "right-breadcrumb", null, "right-path-input", true);
     renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
-  } catch (e) { document.getElementById("right-status-count").textContent = "Error: " + e; }
+  } catch (e) { document.getElementById("right-status-count").textContent = t('status.error', {error: e}); }
 }
 
 function paneGoBack(pane) {

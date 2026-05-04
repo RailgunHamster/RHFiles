@@ -37,23 +37,23 @@ async function svnUpdate() {
   try {
     showNotice("SVN update in progress...");
     const result = await call("svn_update", { path });
-    showNotice("SVN update complete: " + result.split('\n').filter(l => l.trim()).slice(-3).join(', '));
+    showNotice(t('notice.svnUpdateComplete', {output: result.split('\n').filter(l => l.trim()).slice(-3).join(', ')}));
     await refresh();
     await loadSvnStatus(path);
-  } catch (e) { alert("SVN update failed: " + e); }
+  } catch (e) { alert(t('alert.svnUpdateFailed', {error: e})); }
 }
 
 async function svnCommit() {
   const path = getTab().path;
-  const message = prompt("SVN commit message:");
+  const message = prompt(t('prompt.svnCommitMessage'));
   if (!message) return;
   try {
     showNotice("SVN commit in progress...");
     const result = await call("svn_commit", { path, message });
-    showNotice("SVN committed: " + result.split('\n').filter(l => l.trim()).slice(-3).join(', '));
+    showNotice(t('notice.svnCommitComplete', {output: result.split('\n').filter(l => l.trim()).slice(-3).join(', ')}));
     await refresh();
     await loadSvnStatus(path);
-  } catch (e) { alert("SVN commit failed: " + e); }
+  } catch (e) { alert(t('alert.svnCommitFailed', {error: e})); }
 }
 
 async function svnRevert() {
@@ -63,13 +63,13 @@ async function svnRevert() {
   const entries = pane.entries || [];
   const targets = [...sel].map(i => entries[i]?.name).filter(Boolean);
   if (!targets.length) { alert("Select files to revert"); return; }
-  if (!confirm(`Revert ${targets.length} file(s)? Uncommitted changes will be lost.`)) return;
+  if (!confirm(t('confirm.svnRevert', {count: targets.length}))) return;
   try {
     await call("svn_revert", { path: pane.path, targets });
-    showNotice("SVN revert complete");
+    showNotice(t('notice.svnRevertComplete'));
     await refresh();
     await loadSvnStatus(pane.path);
-  } catch (e) { alert("SVN revert failed: " + e); }
+  } catch (e) { alert(t('alert.svnRevertFailed', {error: e})); }
 }
 
 async function svnAdd() {
@@ -81,18 +81,18 @@ async function svnAdd() {
   if (!targets.length) { alert("Select files to add"); return; }
   try {
     await call("svn_add", { path: pane.path, targets });
-    showNotice("SVN add complete");
+    showNotice(t('notice.svnAddComplete'));
     await refresh();
     await loadSvnStatus(pane.path);
-  } catch (e) { alert("SVN add failed: " + e); }
+  } catch (e) { alert(t('alert.svnAddFailed', {error: e})); }
 }
 
 async function svnCleanup() {
   const path = getTab().path;
   try {
     await call("svn_cleanup", { path });
-    showNotice("SVN cleanup complete");
-  } catch (e) { alert("SVN cleanup failed: " + e); }
+    showNotice(t('notice.svnCleanupComplete'));
+  } catch (e) { alert(t('alert.svnCleanupFailed', {error: e})); }
 }
 
 function showSvnLog() {
@@ -102,10 +102,10 @@ function showSvnLog() {
   dlg.innerHTML = `
     <div class="dialog-backdrop" onclick="this.parentElement.remove()"></div>
     <div class="dialog-box dialog-wide">
-      <div class="dialog-title">SVN Log</div>
-      <div class="dialog-scroll" id="svn-log-content" style="max-height:500px"><div style="color:var(--text-4);padding:8px">Loading...</div></div>
+      <div class="dialog-title">${t('dialog.svnLogTitle')}</div>
+      <div class="dialog-scroll" id="svn-log-content" style="max-height:500px"><div style="color:var(--text-4);padding:8px">${t('properties.loading')}</div></div>
       <div class="dialog-actions">
-        <button class="dialog-btn primary" onclick="this.closest('.overlay').remove()">Close</button>
+        <button class="dialog-btn primary" onclick="this.closest('.overlay').remove()">${t('btn.close')}</button>
       </div>
     </div>`;
   document.body.appendChild(dlg);
@@ -113,7 +113,7 @@ function showSvnLog() {
   call("svn_log", { path: getTab().path, limit: 25 }).then(entries => {
     const el = dlg.querySelector("#svn-log-content");
     if (!entries || entries.length === 0) {
-      el.innerHTML = '<div style="color:var(--text-4);padding:8px">No log entries</div>';
+      el.innerHTML = '<div style="color:var(--text-4);padding:8px">' + t('dialog.svnLogEmpty') + '</div>';
       return;
     }
     el.innerHTML = entries.map(e => `
@@ -126,7 +126,7 @@ function showSvnLog() {
       </div>`).join("");
   }).catch(e => {
     const el = dlg.querySelector("#svn-log-content");
-    el.innerHTML = `<div style="color:var(--text-4);padding:8px">Failed: ${esc(String(e))}</div>`;
+    el.innerHTML = `<div style="color:var(--text-4);padding:8px">${t('alert.svnLogFailed', {error: esc(String(e))})}</div>`;
   });
 }
 
@@ -137,19 +137,19 @@ function showSvnCheckoutDialog() {
   dlg.innerHTML = `
     <div class="dialog-backdrop" onclick="this.parentElement.remove()"></div>
     <div class="dialog-box">
-      <div class="dialog-title">SVN Checkout</div>
+      <div class="dialog-title">${t('dialog.svnCheckoutTitle')}</div>
       <div class="dialog-row">
-        <label>Repository URL:</label>
-        <input type="text" id="svn-checkout-url" placeholder="https://svn.example.com/repo/trunk" style="flex:1">
+        <label>${t('dialog.repoUrl')}</label>
+        <input type="text" id="svn-checkout-url" placeholder="${t('dialog.svnUrlPlaceholder')}" style="flex:1">
       </div>
       <div class="dialog-row">
-        <label>Destination:</label>
+        <label>${t('dialog.destination')}</label>
         <input type="text" id="svn-checkout-dest" value="${esc(getTab().path)}" style="flex:1">
       </div>
       <div id="svn-checkout-status" style="font-size:11px;color:var(--text-4);margin-top:4px"></div>
       <div class="dialog-actions">
-        <button class="dialog-btn" onclick="this.closest('.overlay').remove()">Cancel</button>
-        <button class="dialog-btn primary" onclick="doSvnCheckout()">Checkout</button>
+        <button class="dialog-btn" onclick="this.closest('.overlay').remove()">${t('btn.cancel')}</button>
+        <button class="dialog-btn primary" onclick="doSvnCheckout()">${t('btn.checkout')}</button>
       </div>
     </div>`;
   document.body.appendChild(dlg);
@@ -159,12 +159,12 @@ async function doSvnCheckout() {
   const url = document.getElementById("svn-checkout-url")?.value?.trim();
   const dest = document.getElementById("svn-checkout-dest")?.value?.trim();
   const status = document.getElementById("svn-checkout-status");
-  if (!url) { alert("Please enter a URL"); return; }
-  if (!dest) { alert("Please enter a destination"); return; }
-  if (status) { status.textContent = "Checking out..."; status.style.color = "var(--text-3)"; }
+  if (!url) { alert(t('alert.enterUrl')); return; }
+  if (!dest) { alert(t('alert.enterDest')); return; }
+  if (status) { status.textContent = t('status.checkingOut'); status.style.color = "var(--text-3)"; }
   try {
     await call("svn_checkout", { url, dest });
-    if (status) { status.textContent = "Checkout complete!"; status.style.color = "var(--accent)"; }
+    if (status) { status.textContent = t('notice.checkoutComplete'); status.style.color = "var(--accent)"; }
     document.querySelector('.overlay[style*="flex"]')?.remove();
     navigateTo(dest);
   } catch (e) {

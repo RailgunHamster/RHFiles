@@ -46,7 +46,7 @@ async function openArchive(path) {
         '<button class="dialog-btn" style="margin-left:8px" onclick="extractArchiveAll()">' + t("ctx.extractAll") + '</button></div>');
     }
     renderFiles(tab, listId, "status-count", "status-selection");
-  } catch (e) { alert("Cannot open archive: " + e); }
+  } catch (e) { alert(t('alert.openArchiveFailed', {error: e})); }
 }
 
 function closeArchive() {
@@ -61,7 +61,7 @@ async function extractArchiveAll() {
   try {
     await call("extract_archive", { path: archiveBrowsingPath, dest: getTab().path, entryPath: null });
     closeArchive();
-  } catch (e) { alert("Extract failed: " + e); }
+  } catch (e) { alert(t('alert.extractFailed', {error: e})); }
 }
 
 async function extractArchiveEntry(idx) {
@@ -71,7 +71,7 @@ async function extractArchiveEntry(idx) {
   try {
     await call("extract_archive", { path: archiveBrowsingPath, dest: getTab().path, entryPath: entries[idx].path });
     refresh();
-  } catch (e) { alert("Extract failed: " + e); }
+  } catch (e) { alert(t('alert.extractFailed', {error: e})); }
 }
 
 // --- git branch management ---
@@ -99,7 +99,7 @@ async function gitCheckout(branch) {
     await refresh();
     await loadGitStatus(getTab().path);
     await loadGitBranches(getTab().path);
-  } catch (e) { alert("Checkout failed: " + e); }
+  } catch (e) { alert(t('alert.checkoutFailed', {error: e})); }
 }
 
 async function gitCreateBranch(name) {
@@ -107,7 +107,7 @@ async function gitCreateBranch(name) {
   try {
     await call("git_create_branch", { path: getTab().path, branch: name });
     await gitCheckout(name);
-  } catch (e) { alert("Create branch failed: " + e); }
+  } catch (e) { alert(t('alert.branchFailed', {error: e})); }
 }
 
 async function gitInit() {
@@ -116,7 +116,7 @@ async function gitInit() {
     await refresh();
     await loadGitStatus(getTab().path);
     await loadGitBranches(getTab().path);
-  } catch (e) { alert("Git init failed: " + e); }
+  } catch (e) { alert(t('alert.gitInitFailed', {error: e})); }
 }
 
 function renderGitBranchSelector() {
@@ -136,7 +136,7 @@ function renderGitBranchSelector() {
 }
 
 function gitCreateBranchPrompt() {
-  const name = prompt("New branch name:");
+  const name = prompt(t('prompt.newBranchName'));
   if (name) gitCreateBranch(name);
 }
 
@@ -145,40 +145,40 @@ function showGitCloneDialog() {
   const dlg = document.createElement("dialog");
   dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:400px;";
   dlg.innerHTML = `
-    <h3 style="margin:0 0 12px;font-size:14px">Clone Repository</h3>
+    <h3 style="margin:0 0 12px;font-size:14px">${t('dialog.gitCloneTitle')}</h3>
     <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
-      <label style="display:flex;align-items:center;gap:8px;">Repository URL:
-        <input id="git-clone-url" type="text" placeholder="https://github.com/user/repo.git" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+      <label style="display:flex;align-items:center;gap:8px;">${t('dialog.repoUrl')}
+        <input id="git-clone-url" type="text" placeholder="${t('dialog.repoUrlPlaceholder')}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
       </label>
-      <label style="display:flex;align-items:center;gap:8px;">Destination:
+      <label style="display:flex;align-items:center;gap:8px;">${t('dialog.destination')}
         <input id="git-clone-dest" type="text" value="${esc(getTab().path)}" style="flex:1;padding:4px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
       </label>
     </div>
     <div id="git-clone-status" style="margin-top:8px;font-size:11px;color:var(--text-4);"></div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-      <button class="dialog-btn" id="git-clone-cancel">Cancel</button>
-      <button class="dialog-btn primary" id="git-clone-ok">Clone</button>
+      <button class="dialog-btn" id="git-clone-cancel">${t('btn.cancel')}</button>
+      <button class="dialog-btn primary" id="git-clone-ok">${t('btn.clone')}</button>
     </div>`;
   document.body.appendChild(dlg);
   dlg.querySelector("#git-clone-cancel").onclick = () => { dlg.close(); dlg.remove(); };
   dlg.querySelector("#git-clone-ok").onclick = async () => {
     const url = dlg.querySelector("#git-clone-url").value.trim();
     const dest = dlg.querySelector("#git-clone-dest").value.trim();
-    if (!url) { alert("Please enter a repository URL"); return; }
-    if (!dest) { alert("Please enter a destination path"); return; }
+    if (!url) { alert(t('alert.enterUrl')); return; }
+    if (!dest) { alert(t('alert.enterDest')); return; }
     const statusEl = dlg.querySelector("#git-clone-status");
-    statusEl.textContent = "Cloning...";
+    statusEl.textContent = t('status.cloning');
     statusEl.style.color = "var(--text-3)";
     try {
       const repoName = url.split('/').pop().replace('.git', '') || "repo";
       const fullDest = dest + "\\" + repoName;
       await call("git_clone", { url, dest: fullDest });
-      statusEl.textContent = "Clone successful!";
+      statusEl.textContent = t('notice.cloneSuccess');
       statusEl.style.color = "var(--accent)";
       dlg.close(); dlg.remove();
       navigateTo(fullDest);
     } catch (e) {
-      statusEl.textContent = "Clone failed: " + e;
+      statusEl.textContent = t('alert.cloneFailed', {error: e});
       statusEl.style.color = "var(--git-deleted)";
     }
   };

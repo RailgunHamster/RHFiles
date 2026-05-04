@@ -498,5 +498,15 @@
   "template.jsFile": "JavaScript File",
   "template.cssFile": "CSS File",
   "template.pythonFile": "Python File",
-  "template.batchFile": "Batch File"
+  "template.batchFile": "Batch File",
+  "prompt.rename": "Rename:",
+  "prompt.svnCommitMessage": "SVN commit message:",
+  "prompt.newBranchName": "New branch name:",
+  "properties.type": "Type:",
+  "properties.unknown": "Unknown",
+  "preview.target": "Target:",
+  "preview.args": "Args:",
+  "preview.workDir": "Work Dir:",
+  "alert.rtfPreviewFailed": "RTF preview failed",
+  "alert.docxPreviewFailed": "DOCX preview failed"
 }

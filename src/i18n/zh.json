@@ -498,5 +498,15 @@
   "template.jsFile": "JavaScript \u6587\u4ef6",
   "template.cssFile": "CSS \u6587\u4ef6",
   "template.pythonFile": "Python \u6587\u4ef6",
-  "template.batchFile": "\u6279\u5904\u7406\u6587\u4ef6"
+  "template.batchFile": "\u6279\u5904\u7406\u6587\u4ef6",
+  "prompt.rename": "\u91cd\u547d\u540d\uff1a",
+  "prompt.svnCommitMessage": "SVN \u63d0\u4ea4\u6d88\u606f\uff1a",
+  "prompt.newBranchName": "\u65b0\u5206\u652f\u540d\u79f0\uff1a",
+  "properties.type": "\u7c7b\u578b\uff1a",
+  "properties.unknown": "\u672a\u77e5",
+  "preview.target": "\u76ee\u6807\uff1a",
+  "preview.args": "\u53c2\u6570\uff1a",
+  "preview.workDir": "\u5de5\u4f5c\u76ee\u5f55\uff1a",
+  "alert.rtfPreviewFailed": "RTF \u9884\u89c8\u5931\u8d25",
+  "alert.docxPreviewFailed": "DOCX \u9884\u89c8\u5931\u8d25"
 }

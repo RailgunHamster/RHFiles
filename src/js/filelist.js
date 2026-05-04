@@ -153,7 +153,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
       if (item.type === 'group') {
         const header = document.createElement('div');
         header.className = 'group-header';
-        header.innerHTML = '<span class="group-label">' + esc(item.label) + '</span><span class="group-count">' + item.count + ' items</span>';
+        header.innerHTML = '<span class="group-label">' + esc(translateGroupKey(item.label)) + '</span><span class="group-count">' + t('group.items', {count: item.count}) + '</span>';
         content.appendChild(header);
         continue;
       }
@@ -448,15 +448,15 @@ function updateStatus(tabOrPane, countId, selId) {
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
   const count = entries.length;
-  let txt = count + " item" + (count !== 1 ? "s" : "");
+  let txt = count === 1 ? t('status.item', {count: count}) : t('status.items', {count: count});
   if (sel.size > 0) {
     const selected = [...sel].map(i => entries[i]).filter(Boolean);
     const dirs = selected.filter(f => f.is_dir).length;
     const files = selected.filter(f => !f.is_dir).length;
     const totalSize = selected.reduce((s, f) => s + (f.size||0), 0);
     let parts = [];
-    if (dirs) parts.push(dirs + " folder" + (dirs > 1 ? "s" : ""));
-    if (files) parts.push(files + " file" + (files > 1 ? "s" : ""));
+    if (dirs) parts.push(dirs === 1 ? t('status.folder', {count: dirs}) : t('status.folders', {count: dirs}));
+    if (files) parts.push(files === 1 ? t('status.file', {count: files}) : t('status.files', {count: files}));
     if (totalSize > 0) parts.push(fmtSize(totalSize));
     txt += " \u00b7 " + parts.join(", ");
   }
@@ -525,10 +525,10 @@ function getCloudStatusSvg(status) {
 
 function getCloudStatusLabel(status) {
   switch (status) {
-    case "synced": return "Synced — available offline";
-    case "online_only": return "Online-only — cloud placeholder";
-    case "syncing": return "Syncing...";
-    case "locally_available": return "Locally available";
+    case "synced": return t('cloud.synced');
+    case "online_only": return t('cloud.onlineOnly');
+    case "syncing": return t('cloud.syncing');
+    case "locally_available": return t('cloud.locallyAvailable');
     default: return status;
   }
 }

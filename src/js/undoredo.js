@@ -17,7 +17,7 @@ async function undo() {
     await action.undo();
     redoStack.push(action);
     await refresh();
-  } catch (e) { alert("Undo failed: " + e); }
+  } catch (e) { alert(t('alert.undoFailed', {error: e})); }
 }
 
 async function redo() {
@@ -27,12 +27,12 @@ async function redo() {
     await action.redo();
     undoStack.push(action);
     await refresh();
-  } catch (e) { alert("Redo failed: " + e); }
+  } catch (e) { alert(t('alert.redoFailed', {error: e})); }
 }
 
 function trackCopy(src, dest) {
   pushUndo({
-    label: "Copy " + src,
+    label: t('undo.copy', {path: src}),
     undo: async () => { await call("delete_file", { path: dest }); },
     redo: async () => { await call("copy_path", { src, dest: dest.split("\\").slice(0, -1).join("\\") }); }
   });
@@ -40,7 +40,7 @@ function trackCopy(src, dest) {
 
 function trackMove(src, dest) {
   pushUndo({
-    label: "Move " + src,
+    label: t('undo.move', {path: src}),
     undo: async () => { await call("move_path_cmd", { src: dest, dest: src.split("\\").slice(0, -1).join("\\") }); },
     redo: async () => { await call("move_path_cmd", { src, dest: dest.split("\\").slice(0, -1).join("\\") }); }
   });
@@ -48,7 +48,7 @@ function trackMove(src, dest) {
 
 function trackRename(oldPath, newPath) {
   pushUndo({
-    label: "Rename to " + newPath.split("\\").pop(),
+    label: t('undo.renameTo', {path: newPath.split("\\").pop()}),
     undo: async () => { await call("rename_file", { path: newPath, newName: oldPath.split("\\").pop() }); },
     redo: async () => { await call("rename_file", { path: oldPath, newName: newPath.split("\\").pop() }); }
   });
@@ -56,9 +56,9 @@ function trackRename(oldPath, newPath) {
 
 function trackDelete(paths) {
   pushUndo({
-    label: "Delete " + paths.length + " items",
+    label: t('undo.deleteItems', {count: paths.length}),
     undo: async () => {
-      showNotice("Deleted items can be restored from the Recycle Bin");
+      showNotice(t('notice.deletedRestore'));
     },
     redo: async () => { for (const p of paths) await call("delete_file", { path: p }); }
   });
@@ -66,7 +66,7 @@ function trackDelete(paths) {
 
 function trackNewFolder(path) {
   pushUndo({
-    label: "New folder " + path,
+    label: t('undo.newFolder', {path: path}),
     undo: async () => { await call("delete_file", { path }); },
     redo: async () => { await call("new_folder", { parent: path.split("\\").slice(0, -1).join("\\") }); }
   });

@@ -1,12 +1,12 @@
 // tabs.js — tab management + breadcrumb navigation
 
 function tabName(path) {
-  if (path === "home://") return "Home";
+  if (path === "home://") return t('nav.home');
   return path;
 }
 
 function tabTooltip(path) {
-  if (path === "home://") return "Home";
+  if (path === "home://") return t('nav.home');
   return path;
 }
 
@@ -32,7 +32,7 @@ function renderTabs() {
       <span class="tab-label">${esc(tabName(t.path))}</span>
       <button class="tab-close" onclick="event.stopPropagation();closeTab(${t.id})">&times;</button>
     </div>`
-  ).join("") + `<button class="tab-new" onclick="addTab()" title="New tab">
+  ).join("") + `<button class="tab-new" onclick="addTab()" title="${t('nav.newTab')}">
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
   </button>`;
   initTabDragDrop();
@@ -195,10 +195,10 @@ function showTabPreview(tabEl) {
 
   _previewEl.innerHTML =
     `<div class="tab-preview-path">${esc(tab.path)}</div>` +
-    `<div class="tab-preview-meta">${dirCount} folders, ${fileCount} files</div>` +
+    `<div class="tab-preview-meta">${t('nav.foldersFiles', {folders: dirCount, files: fileCount})}</div>` +
     `<div class="tab-preview-list">${shown.map(e =>
       `<div class="tab-preview-item${e.is_dir ? ' dir' : ''}">${e.is_dir ? '📁 ' : ''}${esc(e.name)}</div>`
-    ).join("")}${entries.length > maxShow ? `<div class="tab-preview-more">...and ${entries.length - maxShow} more</div>` : ''}</div>`;
+    ).join("")}${entries.length > maxShow ? `<div class="tab-preview-more">${t('nav.moreTabs', {count: entries.length - maxShow})}</div>` : ''}</div>`;
 
   const rect = tabEl.getBoundingClientRect();
   _previewEl.style.top = (rect.bottom + 4) + "px";
@@ -214,7 +214,7 @@ function hideTabPreview() {
 function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   const bc = document.getElementById(bcId || "breadcrumb");
   if (path === "home://") {
-    bc.innerHTML = `<span class="bc-item" data-path="home://">Home</span><span class="breadcrumb-spacer"></span>`;
+    bc.innerHTML = `<span class="bc-item" data-path="home://">${t('nav.home')}</span><span class="breadcrumb-spacer"></span>`;
     const spacer = bc.querySelector(".breadcrumb-spacer");
     if (spacer) spacer.addEventListener("click", () => enterEditMode(isRight));
     return;
@@ -393,7 +393,7 @@ async function navigateTo(path, pushHistory) {
     saveTabState();
     updatePreviewForSelection();
   } catch (e) {
-    document.getElementById("status-count").textContent = "Error: " + e;
+    document.getElementById("status-count").textContent = t('status.error', {error: e});
   }
 }
 
@@ -427,13 +427,13 @@ function applyFilter() {
 
 function toggleSearchMode() {
   const modes = ['normal', 'regex', 'wildcard'];
-  const labels = ['Normal', 'Regex', 'Wildcard'];
+  const labels = [t('search.modeNormal'), t('search.modeRegex'), t('search.modeWildcard')];
   const idx = (modes.indexOf(_searchMode) + 1) % modes.length;
   _searchMode = modes[idx];
   const btn = document.getElementById("btn-search-mode");
   if (btn) {
     btn.textContent = _searchMode === 'regex' ? '.*' : _searchMode === 'wildcard' ? '*?' : 'Ab';
-    btn.title = `Search mode: ${labels[idx]}`;
+    btn.title = t('search.modeTooltip', {mode: labels[idx]});
   }
   const input = document.getElementById("filter-input");
   if (input && input.value.trim().length >= 2) {
@@ -468,7 +468,7 @@ function loadSearchHistory() {
 function clearSearchHistory() {
   localStorage.removeItem('rhfiles-search-history');
   hideQuickSearch();
-  showNotice("Search history cleared");
+  showNotice(t('notice.searchHistoryCleared'));
 }
 
 function showSearchHistory() {
@@ -477,7 +477,7 @@ function showSearchHistory() {
   const dropdown = document.getElementById("quick-search-dropdown");
   if (!dropdown) return;
   dropdown.innerHTML =
-    `<div class="quick-search-header"><span>Recent Searches</span><button class="quick-search-clear" onclick="event.stopPropagation();clearSearchHistory()">Clear</button></div>`;
+    `<div class="quick-search-header"><span>${t('search.recent')}</span><button class="quick-search-clear" onclick="event.stopPropagation();clearSearchHistory()">${t('search.clear')}</button></div>`;
   for (const h of history) {
     const div = document.createElement("div");
     div.className = "quick-search-item history-item";
@@ -556,11 +556,11 @@ async function initQuickSearch() {
         const input = document.getElementById("filter-input");
         const engine = getSearchEngine();
         if (input) {
-            const modeHint = _searchMode === 'regex' ? ' [Regex]' : _searchMode === 'wildcard' ? ' [Wildcard]' : '';
+            const modeHint = _searchMode === 'regex' ? ` [${t('search.modeRegex')}]` : _searchMode === 'wildcard' ? ` [${t('search.modeWildcard')}]` : '';
             if (engine === 'everything' || (engine === 'auto' && _everythingAvailable)) {
-                input.placeholder = "Quick Search..." + modeHint;
+                input.placeholder = t('search.quickSearch') + modeHint;
             } else {
-                input.placeholder = "Search..." + modeHint;
+                input.placeholder = t('search.placeholder') + modeHint;
             }
             input.addEventListener('focus', () => {
               if (!input.value.trim()) showSearchHistory();
@@ -583,7 +583,7 @@ async function runQuickSearch(query) {
         showQuickSearchResults(results, engine);
     } catch (e) {
         if (engine === 'everything') {
-            showQuickSearchError("Everything not running. Install from voidtools.com");
+             showQuickSearchError(t('search.everythingNotRunning'));
         } else {
             hideQuickSearch();
         }
@@ -594,11 +594,11 @@ function showQuickSearchError(msg) {
     const dropdown = document.getElementById("quick-search-dropdown");
     if (!dropdown) return;
     dropdown.innerHTML =
-        `<div class="quick-search-header"><span style="color:var(--text-4)">Quick Search</span></div>` +
+        `<div class="quick-search-header"><span style="color:var(--text-4)">${t('search.quickSearch')}</span></div>` +
         `<div style="padding:12px;text-align:center;color:var(--text-3);font-size:12px">
             <div style="margin-bottom:8px">${esc(msg)}</div>
-            <a href="https://www.voidtools.com" target="_blank" style="color:var(--accent);text-decoration:underline">Download Everything (free)</a>
-            <div style="margin-top:8px;color:var(--text-4)">Or change search engine in Settings</div>
+            <a href="https://www.voidtools.com" target="_blank" style="color:var(--accent);text-decoration:underline">${t('search.downloadEverything')}</a>
+            <div style="margin-top:8px;color:var(--text-4)">${t('search.changeEngine')}</div>
         </div>`;
     _searchDropdownIdx = -1;
     dropdown.style.display = "block";
@@ -612,11 +612,11 @@ function showQuickSearchResults(results, engine) {
     const isEv = engine !== 'builtin' && _everythingAvailable;
     const engineLabel = isEv
         ? '<span class="fast">⚡ Everything</span>'
-        : '<span>Builtin</span>';
+        : `<span>${t('search.builtin')}</span>`;
     const modeLabel = _searchMode !== 'normal' ? ` <span style="color:var(--accent)">${_searchMode}</span>` : '';
 
     dropdown.innerHTML =
-        `<div class="quick-search-header"><span>${results.length} results${modeLabel}</span><span class="quick-search-engine">${engineLabel}</span></div>`;
+        `<div class="quick-search-header"><span>${t('search.results', {count: results.length})}${modeLabel}</span><span class="quick-search-engine">${engineLabel}</span></div>`;
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       const div = document.createElement("div");
@@ -683,14 +683,14 @@ async function runDeepSearch() {
   if (!query) { navigateTo(getTab().path, false); return; }
   const tab = getTab();
   try {
-    document.getElementById("status-count").textContent = "Searching...";
+    document.getElementById("status-count").textContent = t('status.searching');
     const results = await call("search_recursive", { path: tab.path, query, maxResults: 500 });
     tab.entries = results;
     tab.sel.clear();
     tab.lastIdx = -1;
     renderFiles(tab, "file-list", "status-count", "status-selection");
   } catch (e) {
-    document.getElementById("status-count").textContent = "Search error: " + e;
+    document.getElementById("status-count").textContent = t('status.searchError', {error: e});
   }
 }
 
@@ -713,12 +713,12 @@ function showHomePage() {
   hideFileContent();
   const quickAccess = document.getElementById("home-quick-access");
   const folders = [
-    { name: "Desktop", path: homeDir("Desktop"), icon: "M1.5 3h13v10H1.5z M5 14h6" },
-    { name: "Downloads", path: homeDir("Downloads"), icon: "M8 2v7M5 6l3 3 3-3M2.5 10v3h11v-3" },
-    { name: "Documents", path: homeDir("Documents"), icon: "M3 2h5l4 4v8H3z M8 2v4h4" },
-    { name: "Pictures", path: homeDir("Pictures"), icon: "M1 2h14v12H1z" },
-    { name: "Music", path: homeDir("Music"), icon: "M4 12a2 2 0 11-0-4M12 10a2 2 0 11-0-4M6 12V3l8-2v9" },
-    { name: "Videos", path: homeDir("Videos"), icon: "M1 3h14v10H1z" },
+    { name: t('home.desktop'), path: homeDir("Desktop"), icon: "M1.5 3h13v10H1.5z M5 14h6" },
+    { name: t('home.downloads'), path: homeDir("Downloads"), icon: "M8 2v7M5 6l3 3 3-3M2.5 10v3h11v-3" },
+    { name: t('home.documents'), path: homeDir("Documents"), icon: "M3 2h5l4 4v8H3z M8 2v4h4" },
+    { name: t('home.pictures'), path: homeDir("Pictures"), icon: "M1 2h14v12H1z" },
+    { name: t('home.music'), path: homeDir("Music"), icon: "M4 12a2 2 0 11-0-4M12 10a2 2 0 11-0-4M6 12V3l8-2v9" },
+    { name: t('home.videos'), path: homeDir("Videos"), icon: "M1 3h14v10H1z" },
   ];
   quickAccess.innerHTML = "";
   for (const f of folders) {
@@ -747,7 +747,7 @@ async function renderHomeRecent(mode) {
   try {
     const items = await call("db_load_recent", { mode, limit: 20 });
     if (!items || !items.length) {
-      homeRecent.innerHTML = '<div style="color:var(--text-4);padding:8px;font-size:12px;">No recent items</div>';
+      homeRecent.innerHTML = `<div style="color:var(--text-4);padding:8px;font-size:12px;">${t('home.noRecent')}</div>`;
       return;
     }
     homeRecent.innerHTML = "";
@@ -773,7 +773,7 @@ async function renderHomeRecent(mode) {
       homeRecent.appendChild(div);
     }
   } catch (e) {
-    homeRecent.innerHTML = '<div style="color:var(--text-4);padding:8px;font-size:12px;">No recent items</div>';
+    homeRecent.innerHTML = `<div style="color:var(--text-4);padding:8px;font-size:12px;">${t('home.noRecent')}</div>`;
   }
 }
 

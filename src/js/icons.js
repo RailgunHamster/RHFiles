@@ -288,28 +288,28 @@ function _useSystemForFile(file) {
 }
 
 function fileTypeLabel(file) {
-  if (file.is_dir) return "File folder";
+  if (file.is_dir) return t('type.fileFolder');
   const ext = file.extension.toUpperCase();
-  if (!ext) return "File";
+  if (!ext) return t('type.file');
   const labels = {
-    TXT: "Text Document", MD: "Markdown", RS: "Rust Source", PY: "Python File", JS: "JavaScript", TS: "TypeScript",
-    JSON: "JSON File", TOML: "TOML", YAML: "YAML", XML: "XML",
-    PNG: "PNG Image", JPG: "JPEG Image", GIF: "GIF Image", SVG: "SVG Image", WEBP: "WebP Image",
-    ZIP: "ZIP Archive", RAR: "RAR Archive", "7Z": "7Z Archive", TAR: "Tar Archive",
-    MP3: "MP3 Audio", WAV: "WAV Audio", FLAC: "FLAC Audio", OGG: "OGG Audio",
-    MP4: "MP4 Video", MKV: "Matroska Video", AVI: "AVI Video", WEBM: "WebM Video",
-    PDF: "PDF Document", DOC: "Word Document", DOCX: "Word Document", XLS: "Excel Spreadsheet", XLSX: "Excel Spreadsheet",
-    PPT: "PowerPoint Presentation", PPTX: "PowerPoint Presentation",
-    EXE: "Application", DLL: "Dynamic Library", MSI: "Installer",
-    HTML: "HTML File", CSS: "CSS Stylesheet", SCSS: "SCSS Stylesheet",
-    SH: "Shell Script", BAT: "Batch Script", PS1: "PowerShell Script",
-    C: "C Source", CPP: "C++ Source", JAVA: "Java Source", GO: "Go Source", RB: "Ruby Source",
-    SWIFT: "Swift Source", KT: "Kotlin Source", LUA: "Lua Script", PHP: "PHP Script",
-    SQL: "SQL Database", DB: "Database", SQLITE: "SQLite Database",
-    TTF: "TrueType Font", OTF: "OpenType Font", WOFF: "Web Font",
-    CSV: "CSV Spreadsheet", RTF: "Rich Text",
+    TXT: t('type.textDoc'), MD: t('type.markdown'), RS: t('type.rustSource'), PY: t('type.pythonFile'), JS: t('type.javascript'), TS: t('type.typescript'),
+    JSON: t('type.jsonFile'), TOML: t('type.toml'), YAML: t('type.yaml'), XML: t('type.xml'),
+    PNG: t('type.pngImage'), JPG: t('type.jpegImage'), GIF: t('type.gifImage'), SVG: t('type.svgImage'), WEBP: t('type.webpImage'),
+    ZIP: t('type.zipArchive'), RAR: t('type.rarArchive'), "7Z": t('type.7zArchive'), TAR: t('type.tarArchive'),
+    MP3: t('type.mp3Audio'), WAV: t('type.wavAudio'), FLAC: t('type.flacAudio'), OGG: t('type.oggAudio'),
+    MP4: t('type.mp4Video'), MKV: t('type.mkvVideo'), AVI: t('type.aviVideo'), WEBM: t('type.webmVideo'),
+    PDF: t('type.pdfDoc'), DOC: t('type.wordDoc'), DOCX: t('type.wordDoc'), XLS: t('type.excelSheet'), XLSX: t('type.excelSheet'),
+    PPT: t('type.pptPresentation'), PPTX: t('type.pptPresentation'),
+    EXE: t('type.application'), DLL: t('type.dll'), MSI: t('type.installer'),
+    HTML: t('type.htmlFile'), CSS: t('type.cssStylesheet'), SCSS: t('type.scssStylesheet'),
+    SH: t('type.shellScript'), BAT: t('type.batchScript'), PS1: t('type.psScript'),
+    C: t('type.cSource'), CPP: t('type.cppSource'), JAVA: t('type.javaSource'), GO: t('type.goSource'), RB: t('type.rubySource'),
+    SWIFT: t('type.swiftSource'), KT: t('type.kotlinSource'), LUA: t('type.luaScript'), PHP: t('type.phpScript'),
+    SQL: t('type.sqlDb'), DB: t('type.database'), SQLITE: t('type.sqliteDb'),
+    TTF: t('type.ttfFont'), OTF: t('type.otfFont'), WOFF: t('type.webFont'),
+    CSV: t('type.csvSheet'), RTF: t('type.richText'),
   };
-  return labels[ext] || ext + " File";
+  return labels[ext] || (ext + ' ' + t('type.file'));
 }
 
 function tagColor(idx) {
