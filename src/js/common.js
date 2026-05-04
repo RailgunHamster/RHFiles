@@ -3,14 +3,46 @@
 const invoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke;
 
 // --- i18n ---
-const I18N = {
-  en: { 'cmd.new':'New','cmd.cut':'Cut','cmd.copy':'Copy','cmd.paste':'Paste','cmd.rename':'Rename','cmd.delete':'Delete','cmd.sort':'Sort','cmd.hidden':'Hidden','cmd.refresh':'Refresh','ctx.open':'Open','ctx.openWith':'Open with...','ctx.cut':'Cut','ctx.copy':'Copy','ctx.paste':'Paste','ctx.rename':'Rename','ctx.delete':'Delete','ctx.newFolder':'New Folder','ctx.selectAll':'Select All','ctx.properties':'Properties','ctx.showHidden':'Show hidden items','ctx.hideHidden':'Hide hidden items','ctx.batchRename':'Batch Rename','ctx.addTag':'Add Tag','ctx.extract':'Extract','ctx.extractAll':'Extract All','col.name':'Name','col.modified':'Date modified','col.type':'Type','col.size':'Size','sidebar.tree':'Directory Tree','sidebar.quickAccess':'Quick access','sidebar.thisPC':'This PC','sidebar.tags':'Tags','preview.title':'Preview','preview.selectFile':'Select a file to preview','preview.noPreview':'No preview available','preview.binary':'Binary file','batchRename.title':'Batch Rename','batchRename.find':'Find','batchRename.replace':'Replace','properties.title':'Properties','settings.title':'Settings','settings.language':'Language','settings.theme':'Theme','settings.shortcuts':'Keyboard Shortcuts','tag.manage':'Manage Tags','archive.title':'Archive','btn.cancel':'Cancel','btn.rename':'Rename','btn.ok':'OK','btn.add':'Add','btn.save':'Save' },
-  zh: { 'cmd.new':'新建','cmd.cut':'剪切','cmd.copy':'复制','cmd.paste':'粘贴','cmd.rename':'重命名','cmd.delete':'删除','cmd.sort':'排序','cmd.hidden':'隐藏','cmd.refresh':'刷新','ctx.open':'打开','ctx.openWith':'打开方式','ctx.cut':'剪切','ctx.copy':'复制','ctx.paste':'粘贴','ctx.rename':'重命名','ctx.delete':'删除','ctx.newFolder':'新建文件夹','ctx.selectAll':'全选','ctx.properties':'属性','ctx.showHidden':'显示隐藏项','ctx.hideHidden':'隐藏隐藏项','ctx.batchRename':'批量重命名','ctx.addTag':'添加标签','ctx.extract':'解压','ctx.extractAll':'全部解压','col.name':'名称','col.modified':'修改日期','col.type':'类型','col.size':'大小','sidebar.tree':'目录树','sidebar.quickAccess':'快速访问','sidebar.thisPC':'此电脑','sidebar.tags':'标签','preview.title':'预览','preview.selectFile':'选择文件以预览','preview.noPreview':'无预览','preview.binary':'二进制文件','batchRename.title':'批量重命名','batchRename.find':'查找','batchRename.replace':'替换','properties.title':'属性','settings.title':'设置','settings.language':'语言','settings.theme':'主题','settings.shortcuts':'快捷键','tag.manage':'管理标签','archive.title':'压缩文件','btn.cancel':'取消','btn.rename':'重命名','btn.ok':'确定','btn.add':'添加','btn.save':'保存' }
-};
+const I18N = {};
 let _lang = localStorage.getItem('rhfiles-lang') || 'en';
-function t(key) { return (I18N[_lang] && I18N[_lang][key]) || I18N.en[key] || key; }
+let _i18nReady = false;
+const _builtinEn = { 'cmd.new':'New','cmd.cut':'Cut','cmd.copy':'Copy','cmd.paste':'Paste','cmd.rename':'Rename','cmd.delete':'Delete','cmd.sort':'Sort','cmd.hidden':'Hidden','cmd.refresh':'Refresh','ctx.open':'Open','ctx.openWith':'Open with...','ctx.cut':'Cut','ctx.copy':'Copy','ctx.paste':'Paste','ctx.rename':'Rename','ctx.delete':'Delete','ctx.newFolder':'New Folder','ctx.selectAll':'Select All','ctx.properties':'Properties','ctx.showHidden':'Show hidden items','ctx.hideHidden':'Hide hidden items','ctx.batchRename':'Batch Rename','ctx.addTag':'Add Tag','ctx.extract':'Extract','ctx.extractAll':'Extract All','col.name':'Name','col.modified':'Date modified','col.type':'Type','col.size':'Size','sidebar.tree':'Directory Tree','sidebar.quickAccess':'Quick access','sidebar.thisPC':'This PC','sidebar.tags':'Tags','preview.title':'Preview','preview.selectFile':'Select a file to preview','preview.noPreview':'No preview available','preview.binary':'Binary file','batchRename.title':'Batch Rename','batchRename.find':'Find','batchRename.replace':'Replace','properties.title':'Properties','settings.title':'Settings','settings.language':'Language','settings.theme':'Theme','settings.shortcuts':'Keyboard Shortcuts','tag.manage':'Manage Tags','archive.title':'Archive','btn.cancel':'Cancel','btn.rename':'Rename','btn.ok':'OK','btn.add':'Add','btn.save':'Save' };
+
+async function initI18n() {
+  I18N.en = _builtinEn;
+  try {
+    const files = await call("list_i18n_files", {});
+    for (const f of files) {
+      try {
+        const resp = await fetch(f.url);
+        if (resp.ok) {
+          const data = await resp.json();
+          const code = data._meta?.code || f.code;
+          I18N[code] = data;
+          I18N[code]._name = data._meta?.name || code;
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+  _i18nReady = true;
+}
+
+function t(key, params) {
+  const val = (I18N[_lang] && I18N[_lang][key]) || I18N.en[key] || key;
+  if (!params) return val;
+  return val.replace(/\{(\w+)\}/g, (_, k) => params[k] !== undefined ? params[k] : '{' + k + '}');
+}
+
 function setLang(l) { _lang = l; localStorage.setItem('rhfiles-lang', l); applyI18n(); }
 function applyI18n() { document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); }); }
+function getAvailableLanguages() {
+  const langs = [{ code: 'en', name: 'English' }];
+  for (const [code, data] of Object.entries(I18N)) {
+    if (code === 'en') continue;
+    langs.push({ code, name: data._name || data._meta?.name || code });
+  }
+  return langs;
+}
 
 // --- state ---
 let G = {};
@@ -147,6 +179,11 @@ function fallbackCall(cmd, args) {
     case "db_import_all": return null;
     case "db_clear_all": return null;
     case "show_native_context_menu": return null;
+    case "db_add_recent": return null;
+    case "db_load_recent": return [];
+    case "db_remove_recent": return null;
+    case "db_clear_recent": return null;
+    case "list_i18n_files": return [];
     case "svn_status": return {};
     case "svn_info": return { url: "", revision: "", author: "", date: "" };
     case "svn_update": return "";
@@ -290,10 +327,18 @@ function stopFileWatch() {
   if (G._watchTauriUnlisten) { G._watchTauriUnlisten(); G._watchTauriUnlisten = null; }
 }
 
-function addRecentFile(path, name) {
-  let recent = JSON.parse(localStorage.getItem('rhfiles-recent') || '[]');
-  recent = recent.filter(r => r.path !== path);
-  recent.unshift({ path, name, time: Date.now() });
-  recent = recent.slice(0, 50);
-  localStorage.setItem('rhfiles-recent', JSON.stringify(recent));
+let _recentRefreshTimer = null;
+function addRecentFile(path, name, isDir, ext) {
+  call("db_add_recent", {
+    path,
+    name,
+    isDir: !!isDir,
+    ext: ext || "",
+  }).catch(() => {});
+  if (!_recentRefreshTimer) {
+    _recentRefreshTimer = setTimeout(() => {
+      _recentRefreshTimer = null;
+      if (typeof loadRecentList === 'function') loadRecentList();
+    }, 3000);
+  }
 }

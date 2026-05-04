@@ -105,3 +105,14 @@
 .home-drive-label { font-size: 12px; color: var(--text-3); }
 .home-drive-bar { height: 4px; background: var(--bg-3); border-radius: 2px; margin-top: 8px; overflow: hidden; }
 .home-drive-bar-fill { height: 100%; border-radius: 2px; }
+.home-tab-bar { display: inline-flex; gap: 0; margin-left: 12px; font-size: 12px; font-weight: 400; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.home-tab { padding: 2px 10px; cursor: pointer; color: var(--text-3); transition: background .15s, color .15s; }
+.home-tab:hover { background: var(--hover-bg); }
+.home-tab.active { background: var(--accent); color: #fff; }
+.home-recent-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background .1s; }
+.home-recent-item:hover { background: var(--hover-bg); }
+.home-recent-item .hri-icon { flex-shrink: 0; color: var(--text-3); }
+.home-recent-item .hri-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.home-recent-item .hri-name { color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-recent-item .hri-meta { color: var(--text-4); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-recent-item .hri-count { font-size: 10px; color: var(--text-4); background: var(--bg-3); padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }

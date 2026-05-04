@@ -2,6 +2,7 @@
 
 document.addEventListener("DOMContentLoaded", async () => {
   if (typeof initCommands === 'function') initCommands();
+  await initI18n();
   applyI18n();
   document.querySelectorAll(".layout-btn").forEach(b => b.classList.toggle("active", b.dataset.layout === G.layout));
   renderTabs();
@@ -86,6 +87,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await loadTagList();
   await loadPinnedFolders();
+  loadRecentList();
 
   initQuickSearch();
   renderNetwork();
@@ -134,7 +136,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (ext === "zip") {
         await openArchive(file.path);
       } else {
-        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name); } catch (ex) {}
+        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name, false, file.extension); } catch (ex) {}
       }
     }
   });
@@ -153,7 +155,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (ext === "zip") {
         await openArchive(file.path);
       } else {
-        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name); } catch (ex) {}
+        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name, false, file.extension); } catch (ex) {}
       }
     }
   });

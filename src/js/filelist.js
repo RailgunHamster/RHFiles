@@ -19,7 +19,8 @@ function sortEntriesList(entries, field, asc) {
     if (field === "name") return dir * naturalCompare(a.name.toLowerCase(), b.name.toLowerCase());
     let va, vb;
     switch (field) {
-      case "modified": va = a.modified; vb = b.modified; break;
+      case "modified": va = a.modified_ts || 0; vb = b.modified_ts || 0; break;
+      case "created": va = a.created_ts || 0; vb = b.created_ts || 0; break;
       case "type": va = a.is_dir ? "0" : "1" + a.extension.toLowerCase(); vb = b.is_dir ? "0" : "1" + b.extension.toLowerCase(); break;
       case "size": va = a.size; vb = b.size; break;
       default: return dir * naturalCompare(a.name.toLowerCase(), b.name.toLowerCase());
@@ -50,7 +51,7 @@ function sortBy(field) {
 
 function toggleSort() {
   const tab = getTab();
-  const fields = ["name", "modified", "type", "size"];
+  const fields = ["name", "modified", "created", "type", "size"];
   const idx = fields.indexOf(G.sortField);
   G.sortField = fields[(idx + 1) % fields.length];
   G.sortAsc = true;
@@ -210,6 +211,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
         ${gitHtml ? gitHtml : '<div class="row-git"></div>'}
         ${svnHtml || '<div class="row-svn"></div>'}
         <div class="row-date">${esc(file.modified)}</div>
+        <div class="row-date">${esc(file.created)}</div>
         <div class="row-type">${esc(fileTypeLabel(file))}</div>
         <div class="row-size">${esc(file.size_display)}</div>
       `;

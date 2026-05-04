@@ -233,6 +233,105 @@ async function navigateToTagFiles(tag) {
   } catch (e) {}
 }
 
+// --- recent items ---
+async function loadRecentList() {
+  const list = document.getElementById("recent-list");
+  if (!list) return;
+  try {
+    const items = await call("db_load_recent", { mode: "recent", limit: 15 });
+    if (!items || !items.length) {
+      list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No recent items</div>';
+      return;
+    }
+    list.innerHTML = "";
+    for (const item of items) {
+      const div = document.createElement("div");
+      div.className = "sidebar-item recent-item";
+      div.dataset.path = item.path;
+      const folderIcon = item.is_dir
+        ? '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1 4h5l2 2h7v7H1z" stroke="currentColor" stroke-width=".8" fill="none"/></svg>'
+        : '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3" y="1" width="10" height="14" rx="1" stroke="currentColor" stroke-width=".8" fill="none"/><path d="M6 5h4M6 7h4M6 9h3" stroke="currentColor" stroke-width=".6"/></svg>';
+      div.innerHTML = folderIcon + ' ' + esc(item.name);
+      div.title = item.path + "\n" + formatTimeAgo(item.last_accessed) + (item.access_count > 1 ? " \u00b7 " + item.access_count + "x" : "");
+      div.addEventListener("click", () => {
+        if (item.is_dir) {
+          navigateTo(item.path);
+        } else {
+          const parentDir = item.path.split("\\").slice(0, -1).join("\\") || item.path;
+          const fileName = item.path.split("\\").pop();
+          navigateTo(parentDir).then(() => {
+            const tab = getTab();
+            const idx = tab.entries.findIndex(e => e.name === fileName);
+            if (idx >= 0) {
+              tab.sel.clear();
+              tab.sel.add(idx);
+              tab.lastIdx = idx;
+              renderFiles(tab, "file-list", "status-count", "status-selection");
+              updatePreviewForSelection();
+            }
+          });
+        }
+      });
+      div.addEventListener("contextmenu", e => showRecentContextMenu(e, item));
+      list.appendChild(div);
+    }
+  } catch (e) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No recent items</div>';
+  }
+}
+
+function formatTimeAgo(isoStr) {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    const now = Date.now();
+    const diff = now - d.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Just now";
+    if (mins < 60) return mins + " min ago";
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + "h ago";
+    const days = Math.floor(hrs / 24);
+    if (days === 1) return "Yesterday";
+    if (days < 7) return days + " days ago";
+    return d.toLocaleDateString();
+  } catch (e) { return ""; }
+}
+
+function showRecentContextMenu(e, item) {
+  e.preventDefault();
+  e.stopPropagation();
+  removeContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
+  const items = [
+    { label: item.is_dir ? "Open" : "Open File", action: () => { if (item.is_dir) navigateTo(item.path); else call("open_file", { path: item.path }); } },
+    { label: "Open Location", action: () => { const dir = item.is_dir ? item.path : item.path.split("\\").slice(0, -1).join("\\"); navigateTo(dir); } },
+    { label: "-", action: null },
+    { label: "Remove from Recent", action: () => { call("db_remove_recent", { path: item.path }).then(() => loadRecentList()); } },
+    { label: "Clear All Recent", action: () => { if (confirm("Clear all recent items?")) { call("db_clear_recent", {}).then(() => loadRecentList()); } } },
+  ];
+  items.forEach(it => {
+    if (it.label === "-") {
+      const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
+    } else {
+      const mi = document.createElement("div");
+      mi.className = "ctx-item";
+      mi.innerHTML = "<span>" + esc(it.label) + "</span>";
+      mi.addEventListener("click", () => { removeContextMenu(); if (it.action) it.action(); });
+      menu.appendChild(mi);
+    }
+  });
+  document.body.appendChild(menu);
+  contextMenu = menu;
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (e.clientX - rect.width) + "px";
+    if (rect.bottom > window.innerHeight) menu.style.top = (e.clientY - rect.height) + "px";
+  });
+}
+
 function updateSidebarSelection() {
   document.querySelectorAll(".sidebar-item,.tree-row").forEach(el => el.classList.remove("selected"));
   const currentPath = (G.lastActivePane === 'right' ? G.rp : getTab()).path;

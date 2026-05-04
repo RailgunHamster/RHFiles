@@ -363,6 +363,7 @@ async function navigateTo(path, pushHistory) {
       tab.historyIdx = tab.history.length - 1;
     }
     tab.path = path;
+    addRecentFile(path, path.split("\\").pop(), true, "");
     const savedLayout = loadFolderLayout(path);
     if (savedLayout && savedLayout !== G.layout) {
       G.layout = savedLayout;
@@ -729,17 +730,51 @@ function showHomePage() {
   }
   renderHomeDrives();
 
-  const recentData = JSON.parse(localStorage.getItem('rhfiles-recent') || '[]');
+  _homeRecentMode = "recent";
+  renderHomeRecent("recent");
+}
+
+let _homeRecentMode = "recent";
+function switchHomeRecentTab(mode) {
+  _homeRecentMode = mode;
+  document.querySelectorAll(".home-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === mode));
+  renderHomeRecent(mode);
+}
+
+async function renderHomeRecent(mode) {
   const homeRecent = document.getElementById("home-recent");
-  homeRecent.innerHTML = "";
-  recentData.slice(0, 20).forEach(r => {
-    const div = document.createElement("div");
-    div.className = "home-recent-item";
-    div.innerHTML = `<span>${esc(r.name)}</span><span style="color:var(--text-4);font-size:11px">${esc(r.path)}</span>`;
-    div.addEventListener("click", () => navigateTo(r.path.replace(/\\[^\\]+$/, '')));
-    homeRecent.appendChild(div);
-  });
-  if (!recentData.length) homeRecent.innerHTML = '<div style="color:var(--text-4);padding:8px">No recent files</div>';
+  if (!homeRecent) return;
+  try {
+    const items = await call("db_load_recent", { mode, limit: 20 });
+    if (!items || !items.length) {
+      homeRecent.innerHTML = '<div style="color:var(--text-4);padding:8px;font-size:12px;">No recent items</div>';
+      return;
+    }
+    homeRecent.innerHTML = "";
+    for (const item of items) {
+      const div = document.createElement("div");
+      div.className = "home-recent-item";
+      const iconSvg = item.is_dir
+        ? '<svg class="hri-icon" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 4h5l2 2h7v7H1z" stroke="currentColor" stroke-width=".8" fill="none"/></svg>'
+        : '<svg class="hri-icon" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="1" width="10" height="14" rx="1" stroke="currentColor" stroke-width=".8" fill="none"/><path d="M6 5h4M6 7h4M6 9h3" stroke="currentColor" stroke-width=".6"/></svg>';
+      const timeStr = typeof formatTimeAgo === 'function' ? formatTimeAgo(item.last_accessed) : "";
+      div.innerHTML = iconSvg +
+        '<div class="hri-info"><span class="hri-name">' + esc(item.name) + '</span>' +
+        '<span class="hri-meta">' + esc(item.path) + (timeStr ? ' \u00b7 ' + esc(timeStr) : '') + '</span></div>' +
+        (item.access_count > 1 ? '<span class="hri-count">' + item.access_count + 'x</span>' : '');
+      div.addEventListener("click", () => {
+        if (item.is_dir) {
+          navigateTo(item.path);
+        } else {
+          const parentDir = item.path.split("\\").slice(0, -1).join("\\") || item.path;
+          navigateTo(parentDir);
+        }
+      });
+      homeRecent.appendChild(div);
+    }
+  } catch (e) {
+    homeRecent.innerHTML = '<div style="color:var(--text-4);padding:8px;font-size:12px;">No recent items</div>';
+  }
 }
 
 async function renderHomeDrives() {

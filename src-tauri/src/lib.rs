@@ -21,6 +21,8 @@ struct FileInfo {
     size_display: String,
     modified: String,
     created: String,
+    modified_ts: i64,
+    created_ts: i64,
     folder_size: Option<u64>,
 }
 
@@ -66,6 +68,8 @@ fn file_info_from_entry(e: &rhfiles_core::FileEntry) -> FileInfo {
         size_display: e.display_size(),
         modified: format_time(e.modified),
         created: format_time(e.created),
+        modified_ts: e.modified.duration_since(std::time::SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0),
+        created_ts: e.created.duration_since(std::time::SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0),
         folder_size: None,
     }
 }
@@ -584,7 +588,7 @@ fn get_db() -> Result<rusqlite::Connection, String> {
     let db_path = dir.join("rhfiles.db");
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     let ver: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap_or(0);
-    if ver < 2 {
+    if ver < 3 {
         let migrations = match ver {
             0 => "CREATE TABLE IF NOT EXISTS tags (path TEXT PRIMARY KEY, tags TEXT);
                   CREATE TABLE IF NOT EXISTS folder_layouts (path TEXT PRIMARY KEY, layout TEXT);
@@ -601,24 +605,37 @@ fn get_db() -> Result<rusqlite::Connection, String> {
                       sort_order INTEGER DEFAULT 0
                   );",
             1 => "",
+            2 => "",
             _ => "",
         };
         if !migrations.is_empty() {
             conn.execute_batch(migrations).map_err(|e| e.to_string())?;
         }
+        if ver < 2 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS network_favorites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    protocol TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER DEFAULT 0,
+                    path TEXT DEFAULT '/',
+                    username TEXT DEFAULT '',
+                    password TEXT DEFAULT '',
+                    display_name TEXT DEFAULT '',
+                    last_used TEXT DEFAULT ''
+                );"
+            ).map_err(|e| e.to_string())?;
+        }
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS network_favorites (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                protocol TEXT NOT NULL,
-                host TEXT NOT NULL,
-                port INTEGER DEFAULT 0,
-                path TEXT DEFAULT '/',
-                username TEXT DEFAULT '',
-                password TEXT DEFAULT '',
-                display_name TEXT DEFAULT '',
-                last_used TEXT DEFAULT ''
+            "CREATE TABLE IF NOT EXISTS recent_items (
+                path TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                is_dir INTEGER DEFAULT 0,
+                ext TEXT DEFAULT '',
+                access_count INTEGER DEFAULT 1,
+                last_accessed TEXT NOT NULL
             );
-            PRAGMA user_version = 2;"
+            PRAGMA user_version = 3;"
         ).map_err(|e| e.to_string())?;
     }
     Ok(conn)
@@ -743,6 +760,96 @@ fn db_delete_network_favorite(id: i64) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct RecentItem {
+    path: String,
+    name: String,
+    is_dir: bool,
+    ext: String,
+    access_count: i32,
+    last_accessed: String,
+}
+
+#[tauri::command]
+fn db_add_recent(path: String, name: String, is_dir: bool, ext: String) -> Result<(), String> {
+    let conn = get_db()?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO recent_items (path, name, is_dir, ext, access_count, last_accessed) VALUES (?1, ?2, ?3, ?4, 1, ?5)
+         ON CONFLICT(path) DO UPDATE SET access_count = access_count + 1, last_accessed = ?5, name = ?2, is_dir = ?3, ext = ?4",
+        rusqlite::params![path, name, is_dir as i32, ext, now],
+    ).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM recent_items WHERE path NOT IN (SELECT path FROM recent_items ORDER BY last_accessed DESC LIMIT 200)", []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn db_load_recent(mode: String, limit: i32) -> Result<Vec<RecentItem>, String> {
+    let conn = get_db()?;
+    let order = if mode == "frequent" { "access_count DESC, last_accessed DESC" } else { "last_accessed DESC" };
+    let sql = format!("SELECT path, name, is_dir, ext, access_count, last_accessed FROM recent_items ORDER BY {} LIMIT ?1", order);
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![limit], |row| {
+        Ok(RecentItem {
+            path: row.get(0)?,
+            name: row.get(1)?,
+            is_dir: row.get::<_, i32>(2)? != 0,
+            ext: row.get(3)?,
+            access_count: row.get(4)?,
+            last_accessed: row.get(5)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn db_remove_recent(path: String) -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM recent_items WHERE path = ?1", rusqlite::params![path]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn db_clear_recent() -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM recent_items", []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct I18nFileInfo {
+    code: String,
+    name: String,
+    url: String,
+}
+
+#[tauri::command]
+fn list_i18n_files(app: tauri::AppHandle) -> Result<Vec<I18nFileInfo>, String> {
+    let mut result = Vec::new();
+    if let Ok(dir) = std::path::PathBuf::from("../src/i18n").canonicalize() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "json").unwrap_or(false) {
+                    let code = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                    if code.is_empty() { continue; }
+                    let url = format!("/i18n/{}.json", code);
+                    result.push(I18nFileInfo {
+                        code: code.clone(),
+                        name: code.clone(),
+                        url,
+                    });
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 fn db_export_all() -> Result<HashMap<String, String>, String> {
     let conn = get_db()?;
@@ -844,6 +951,7 @@ fn db_clear_all() -> Result<(), String> {
     conn.execute("DELETE FROM folder_prefs", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM pinned", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM network_favorites", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM recent_items", []).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1130,7 +1238,10 @@ fn builtin_search_dir(dir: &Path, filters: &SearchFilters, results: &mut Vec<Fil
                     is_dir, is_hidden: false, size,
                     size_display: format_size(size),
                     modified: metadata.modified().ok().map(|t| format_time(t)).unwrap_or_default(),
-                    created: String::new(), folder_size: None,
+                    created: String::new(),
+                    modified_ts: metadata.modified().ok().and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0),
+                    created_ts: 0,
+                    folder_size: None,
                 });
             }
             if is_dir { builtin_search_dir(&entry.path(), filters, results, max); }
@@ -1167,8 +1278,11 @@ fn quick_search(query: String, max_results: usize, engine: String) -> Result<Vec
                             name, path: line.to_string(), extension,
                             is_dir, is_hidden: false, size,
                             size_display: format_size(size),
-                            modified: metadata.and_then(|m| m.modified().ok()).map(|t| format_time(t)).unwrap_or_default(),
-                            created: String::new(), folder_size: None,
+                            modified: metadata.as_ref().and_then(|m| m.modified().ok()).map(|t| format_time(t)).unwrap_or_default(),
+                            created: String::new(),
+                            modified_ts: metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0),
+                            created_ts: 0,
+                            folder_size: None,
                         });
                     }
                     if results.len() >= max_results { break; }
@@ -2104,6 +2218,8 @@ fn parse_ftp_list(list: &[String], host: &str, path: &str) -> Result<Vec<FileInf
             size_display: if size > 0 { format_size(size) } else { String::new() },
             modified,
             created: String::new(),
+            modified_ts: 0,
+            created_ts: 0,
             folder_size: None,
         });
     }
@@ -2223,6 +2339,8 @@ async fn sftp_list(host: String, port: u16, path: String, user: String, pass: St
             size_display: if size > 0 { format_size(size) } else { String::new() },
             modified: mtime,
             created: String::new(),
+            modified_ts: stat.mtime.map(|t| t as i64 * 1000).unwrap_or(0),
+            created_ts: 0,
             folder_size: None,
         });
     }
@@ -2443,6 +2561,8 @@ fn list_mtp_devices() -> Result<Vec<FileInfo>, String> {
             size_display: String::new(),
             modified: String::new(),
             created: String::new(),
+            modified_ts: 0,
+            created_ts: 0,
             folder_size: None,
         });
     }
@@ -2504,6 +2624,8 @@ fn browse_network() -> Result<Vec<FileInfo>, String> {
                     size_display: String::new(),
                     modified: String::new(),
                     created: String::new(),
+                    modified_ts: 0,
+                    created_ts: 0,
                     folder_size: None,
                 });
             }
@@ -2576,6 +2698,8 @@ fn list_shares(server: String) -> Result<Vec<FileInfo>, String> {
                         size_display: String::new(),
                         modified: String::new(),
                         created: String::new(),
+                        modified_ts: 0,
+                        created_ts: 0,
                         folder_size: None,
                     });
                 }
@@ -2923,6 +3047,8 @@ pub fn run() {
             db_save_layout, db_load_layout,
             db_save_pinned, db_load_pinned,
             db_save_network_favorite, db_load_network_favorites, db_delete_network_favorite,
+            db_add_recent, db_load_recent, db_remove_recent, db_clear_recent,
+            list_i18n_files,
             db_export_all, db_import_all, db_clear_all,
             list_ads, delete_ads, read_ads, unblock_file,
             toggle_pip,

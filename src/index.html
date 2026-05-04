@@ -204,6 +204,10 @@
         <div class="sidebar-heading" data-i18n="sidebar.tags">Tags</div>
         <div id="tag-list" class="tag-list"></div>
       </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading" data-i18n="sidebar.recent">Recent</div>
+        <div id="recent-list"></div>
+      </div>
       <div class="sidebar-section" id="cloud-section" style="display:none">
         <div class="sidebar-heading">Cloud Storage</div>
         <div id="cloud-list"></div>
@@ -244,10 +248,11 @@
         <div class="pane" id="pane-left">
           <div class="content">
             <div class="file-header" id="file-header">
-              <div class="col col-name" data-sort="name" onclick="sortBy('name')">Name <span class="sort-arrow"></span></div>
-              <div class="col col-date" data-sort="modified" onclick="sortBy('modified')">Date modified <span class="sort-arrow"></span></div>
-              <div class="col col-type" data-sort="type" onclick="sortBy('type')">Type <span class="sort-arrow"></span></div>
-              <div class="col col-size" data-sort="size" onclick="sortBy('size')">Size <span class="sort-arrow"></span></div>
+              <div class="col col-name" data-sort="name" onclick="sortBy('name')"><span data-i18n="col.name">Name</span> <span class="sort-arrow"></span></div>
+              <div class="col col-date" data-sort="modified" onclick="sortBy('modified')"><span data-i18n="col.modified">Date Modified</span> <span class="sort-arrow"></span></div>
+              <div class="col col-date" data-sort="created" onclick="sortBy('created')"><span data-i18n="col.created">Date Created</span> <span class="sort-arrow"></span></div>
+              <div class="col col-type" data-sort="type" onclick="sortBy('type')"><span data-i18n="col.type">Type</span> <span class="sort-arrow"></span></div>
+              <div class="col col-size" data-sort="size" onclick="sortBy('size')"><span data-i18n="col.size">Size</span> <span class="sort-arrow"></span></div>
               <div class="col col-svn">SVN</div>
             </div>
             <div id="file-list" class="file-list"></div>
@@ -269,7 +274,13 @@
               <div class="home-grid" id="home-drives"></div>
             </div>
             <div class="home-section">
-              <div class="home-heading">Recent Files</div>
+              <div class="home-heading" style="display:flex;align-items:center;gap:8px;">
+                <span>Recent</span>
+                <div class="home-tab-bar">
+                  <span class="home-tab active" data-tab="recent" onclick="switchHomeRecentTab('recent')">Recent</span>
+                  <span class="home-tab" data-tab="frequent" onclick="switchHomeRecentTab('frequent')">Frequent</span>
+                </div>
+              </div>
               <div class="home-list" id="home-recent"></div>
             </div>
           </div>
@@ -289,10 +300,11 @@
           </div>
           <div class="content">
             <div class="file-header">
-              <div class="col col-name" data-sort="name" onclick="paneSortBy('right','name')">Name <span class="sort-arrow"></span></div>
-              <div class="col col-date" data-sort="modified" onclick="paneSortBy('right','modified')">Date modified <span class="sort-arrow"></span></div>
-              <div class="col col-type" data-sort="type" onclick="paneSortBy('right','type')">Type <span class="sort-arrow"></span></div>
-              <div class="col col-size" data-sort="size" onclick="paneSortBy('right','size')">Size <span class="sort-arrow"></span></div>
+              <div class="col col-name" data-sort="name" onclick="paneSortBy('right','name')"><span data-i18n="col.name">Name</span> <span class="sort-arrow"></span></div>
+              <div class="col col-date" data-sort="modified" onclick="paneSortBy('right','modified')"><span data-i18n="col.modified">Date Modified</span> <span class="sort-arrow"></span></div>
+              <div class="col col-date" data-sort="created" onclick="paneSortBy('right','created')"><span data-i18n="col.created">Date Created</span> <span class="sort-arrow"></span></div>
+              <div class="col col-type" data-sort="type" onclick="paneSortBy('right','type')"><span data-i18n="col.type">Type</span> <span class="sort-arrow"></span></div>
+              <div class="col col-size" data-sort="size" onclick="paneSortBy('right','size')"><span data-i18n="col.size">Size</span> <span class="sort-arrow"></span></div>
             </div>
             <div id="right-file-list" class="file-list"></div>
             <div class="status-bar"><span id="right-status-count"></span></div>

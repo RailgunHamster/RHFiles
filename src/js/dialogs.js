@@ -135,9 +135,12 @@ function openSettings() {
   const dlg = document.getElementById("settings-dialog");
   const content = document.getElementById("settings-content");
   const themeVal = G.theme || 'light';
+  const langOptions = getAvailableLanguages().map(l =>
+    '<option value="' + l.code + '"' + (_lang===l.code?" selected":"") + '>' + esc(l.name) + '</option>'
+  ).join("");
   content.innerHTML =
     '<div class="settings-row"><label>' + t('settings.language') + '</label>' +
-    '<select onchange="setLang(this.value)"><option value="en"' + (_lang==="en"?" selected":"") + '>English</option><option value="zh"' + (_lang==="zh"?" selected":"") + '>' + esc('\u4e2d\u6587') + '</option></select></div>' +
+    '<select onchange="setLang(this.value)">' + langOptions + '</select></div>' +
     '<div class="settings-row"><label>' + t('settings.theme') + '</label>' +
     '<select id="settings-theme-select" onchange="onThemeSelectChange(this.value)"><option value="light"' + (themeVal==="light"?" selected":"") + '>Light</option><option value="dark"' + (themeVal==="dark"?" selected":"") + '>Dark</option><option value="custom"' + (themeVal==="custom"?" selected":"") + '>Custom</option></select></div>' +
     '<div id="custom-theme-section" style="display:' + (themeVal==="custom"?"block":"none") + ';margin-top:8px">' +
