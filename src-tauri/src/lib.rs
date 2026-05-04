@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::Emitter;
+use tauri::{Emitter, Listener};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -104,6 +104,18 @@ fn delete_file(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn delete_files(paths: Vec<String>) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for path in &paths {
+        if let Err(e) = enumerator::delete_to_recycle_bin(&PathBuf::from(path)) {
+            errors.push(format!("{}: {}", path, e));
+        }
+    }
+    if errors.is_empty() { Ok(()) }
+    else { Err(errors.join("\n")) }
+}
+
+#[tauri::command]
 fn rename_file(path: String, new_name: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
     let parent = p.parent().unwrap_or(&p);
@@ -148,9 +160,10 @@ async fn copy_with_progress(src: String, dest: String, app: tauri::AppHandle, ca
         let mut dest_file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
 
         use std::io::{Read, Write};
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 1048576];
         let mut transferred: u64 = 0;
         let start = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
 
         loop {
             if *cancel.0.lock().unwrap() {
@@ -162,15 +175,19 @@ async fn copy_with_progress(src: String, dest: String, app: tauri::AppHandle, ca
             dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
             transferred += n as u64;
 
-            let elapsed = start.elapsed().as_secs_f64();
-            let speed = if elapsed > 0.0 { transferred as f64 / elapsed } else { 0.0 };
-            let pct = if total > 0 { (transferred as f64 / total as f64 * 100.0) as u32 } else { 100 };
+            let now = std::time::Instant::now();
+            if now.duration_since(last_emit).as_millis() >= 100 || n == 0 {
+                last_emit = now;
+                let elapsed = start.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.0 { transferred as f64 / elapsed } else { 0.0 };
+                let pct = if total > 0 { (transferred as f64 / total as f64 * 100.0) as u32 } else { 100 };
 
-            let _ = app.emit("op-progress", serde_json::json!({
-                "operation": "copy", "src": src, "dest": dest,
-                "bytesTransferred": transferred, "totalBytes": total,
-                "percentage": pct, "speed": speed as u64, "status": "progress"
-            }));
+                let _ = app.emit("op-progress", serde_json::json!({
+                    "operation": "copy", "src": src, "dest": dest,
+                    "bytesTransferred": transferred, "totalBytes": total,
+                    "percentage": pct, "speed": speed as u64, "status": "progress"
+                }));
+            }
         }
     }
 
@@ -212,9 +229,10 @@ async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle, ca
         let mut dest_file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
 
         use std::io::{Read, Write};
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 1048576];
         let mut transferred: u64 = 0;
         let start = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
 
         loop {
             if *cancel.0.lock().unwrap() {
@@ -226,15 +244,19 @@ async fn move_with_progress(src: String, dest: String, app: tauri::AppHandle, ca
             dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
             transferred += n as u64;
 
-            let elapsed = start.elapsed().as_secs_f64();
-            let speed = if elapsed > 0.0 { transferred as f64 / elapsed } else { 0.0 };
-            let pct = if total > 0 { ((transferred as f64 / total as f64 * 90.0) + 5.0) as u32 } else { 90 };
+            let now = std::time::Instant::now();
+            if now.duration_since(last_emit).as_millis() >= 100 || n == 0 {
+                last_emit = now;
+                let elapsed = start.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.0 { transferred as f64 / elapsed } else { 0.0 };
+                let pct = if total > 0 { ((transferred as f64 / total as f64 * 90.0) + 5.0) as u32 } else { 90 };
 
-            let _ = app.emit("op-progress", serde_json::json!({
-                "operation": "move", "src": src, "dest": dest,
-                "bytesTransferred": transferred, "totalBytes": total,
-                "percentage": pct, "speed": speed as u64, "status": "progress"
-            }));
+                let _ = app.emit("op-progress", serde_json::json!({
+                    "operation": "move", "src": src, "dest": dest,
+                    "bytesTransferred": transferred, "totalBytes": total,
+                    "percentage": pct, "speed": speed as u64, "status": "progress"
+                }));
+            }
         }
         std::fs::remove_file(&src_path).map_err(|e| e.to_string())?;
     }
@@ -449,6 +471,21 @@ fn extract_archive(path: String, dest: String, entry_path: Option<String>) -> Re
 }
 
 #[tauri::command]
+async fn cleanup_stale_windows(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let open_labels: Vec<String> = app.webview_windows().keys().cloned().collect();
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT window_id FROM window_states").map_err(|e| e.to_string())?;
+    let rows: Vec<String> = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+    for window_id in rows {
+        if !open_labels.contains(&window_id) {
+            conn.execute("DELETE FROM window_states WHERE window_id = ?1", rusqlite::params![window_id]).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn create_archive(sources: Vec<String>, dest: String) -> Result<(), String> {
     let dest_path = PathBuf::from(&dest);
     let file = std::fs::File::create(&dest_path).map_err(|e| e.to_string())?;
@@ -546,12 +583,44 @@ fn get_db() -> Result<rusqlite::Connection, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let db_path = dir.join("rhfiles.db");
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS tags (path TEXT PRIMARY KEY, tags TEXT);
-         CREATE TABLE IF NOT EXISTS folder_layouts (path TEXT PRIMARY KEY, layout TEXT);
-         CREATE TABLE IF NOT EXISTS folder_prefs (path TEXT PRIMARY KEY, prefs TEXT);
-         CREATE TABLE IF NOT EXISTS pinned (path TEXT PRIMARY KEY, name TEXT, ord INTEGER);"
-    ).map_err(|e| e.to_string())?;
+    let ver: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap_or(0);
+    if ver < 2 {
+        let migrations = match ver {
+            0 => "CREATE TABLE IF NOT EXISTS tags (path TEXT PRIMARY KEY, tags TEXT);
+                  CREATE TABLE IF NOT EXISTS folder_layouts (path TEXT PRIMARY KEY, layout TEXT);
+                  CREATE TABLE IF NOT EXISTS folder_prefs (path TEXT PRIMARY KEY, prefs TEXT);
+                  CREATE TABLE IF NOT EXISTS pinned (path TEXT PRIMARY KEY, name TEXT, ord INTEGER);
+                  CREATE TABLE IF NOT EXISTS window_states (
+                      window_id TEXT PRIMARY KEY,
+                      state_json TEXT,
+                      pos_x INTEGER,
+                      pos_y INTEGER,
+                      width INTEGER,
+                      height INTEGER,
+                      maximized INTEGER DEFAULT 0,
+                      sort_order INTEGER DEFAULT 0
+                  );",
+            1 => "",
+            _ => "",
+        };
+        if !migrations.is_empty() {
+            conn.execute_batch(migrations).map_err(|e| e.to_string())?;
+        }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS network_favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                protocol TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER DEFAULT 0,
+                path TEXT DEFAULT '/',
+                username TEXT DEFAULT '',
+                password TEXT DEFAULT '',
+                display_name TEXT DEFAULT '',
+                last_used TEXT DEFAULT ''
+            );
+            PRAGMA user_version = 2;"
+        ).map_err(|e| e.to_string())?;
+    }
     Ok(conn)
 }
 
@@ -624,6 +693,56 @@ fn db_load_pinned() -> Result<Vec<(String, String)>, String> {
     Ok(result)
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct NetworkFavorite {
+    id: i64,
+    protocol: String,
+    host: String,
+    port: i32,
+    path: String,
+    username: String,
+    display_name: String,
+}
+
+#[tauri::command]
+fn db_save_network_favorite(protocol: String, host: String, port: i32, path: String, username: String, display_name: String) -> Result<i64, String> {
+    let conn = get_db()?;
+    conn.execute(
+        "INSERT INTO network_favorites (protocol, host, port, path, username, display_name, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+        rusqlite::params![protocol, host, port, path, username, display_name],
+    ).map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+fn db_load_network_favorites() -> Result<Vec<NetworkFavorite>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT id, protocol, host, port, path, username, display_name FROM network_favorites ORDER BY last_used DESC").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        Ok(NetworkFavorite {
+            id: row.get(0)?,
+            protocol: row.get(1)?,
+            host: row.get(2)?,
+            port: row.get(3)?,
+            path: row.get(4)?,
+            username: row.get(5)?,
+            display_name: row.get(6)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn db_delete_network_favorite(id: i64) -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM network_favorites WHERE id = ?1", rusqlite::params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn db_export_all() -> Result<HashMap<String, String>, String> {
     let conn = get_db()?;
@@ -655,11 +774,29 @@ fn db_export_all() -> Result<HashMap<String, String>, String> {
     }
     data.insert("db_pinned".into(), serde_json::to_string(&pinned_list).map_err(|e| e.to_string())?);
 
+    let mut stmt = conn.prepare("SELECT id, protocol, host, port, path, username, display_name FROM network_favorites ORDER BY last_used DESC").map_err(|e| e.to_string())?;
+    let net_rows = stmt.query_map([], |row| {
+        Ok(NetworkFavorite {
+            id: row.get(0)?,
+            protocol: row.get(1)?,
+            host: row.get(2)?,
+            port: row.get(3)?,
+            path: row.get(4)?,
+            username: row.get(5)?,
+            display_name: row.get(6)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    let mut net_list = Vec::new();
+    for row in net_rows {
+        net_list.push(row.map_err(|e| e.to_string())?);
+    }
+    data.insert("db_network_favorites".into(), serde_json::to_string(&net_list).map_err(|e| e.to_string())?);
+
     Ok(data)
 }
 
 #[tauri::command]
-fn db_import_all(tags_json: String, layouts_json: String, pinned_json: String) -> Result<(), String> {
+fn db_import_all(tags_json: String, layouts_json: String, pinned_json: String, network_favorites_json: String) -> Result<(), String> {
     let conn = get_db()?;
 
     if !tags_json.is_empty() {
@@ -685,6 +822,17 @@ fn db_import_all(tags_json: String, layouts_json: String, pinned_json: String) -
         }
     }
 
+    if !network_favorites_json.is_empty() {
+        let net_list: Vec<NetworkFavorite> = serde_json::from_str(&network_favorites_json).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM network_favorites", []).map_err(|e| e.to_string())?;
+        for fav in &net_list {
+            conn.execute(
+                "INSERT INTO network_favorites (protocol, host, port, path, username, display_name, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+                rusqlite::params![fav.protocol, fav.host, fav.port, fav.path, fav.username, fav.display_name],
+            ).map_err(|e| e.to_string())?;
+        }
+    }
+
     Ok(())
 }
 
@@ -695,6 +843,7 @@ fn db_clear_all() -> Result<(), String> {
     conn.execute("DELETE FROM folder_layouts", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM folder_prefs", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM pinned", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM network_favorites", []).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1330,20 +1479,151 @@ fn set_file_readonly(path: String, readonly: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
+async fn open_new_window(app: tauri::AppHandle, initial_path: Option<String>) -> Result<String, String> {
     let id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
+    let label = format!("window-{}", id);
+    {
+        let conn = get_db()?;
+        let state_json = initial_path.as_ref().map(|p| serde_json::json!({"initial_path": p}).to_string()).unwrap_or_default();
+        conn.execute(
+            "INSERT OR REPLACE INTO window_states (window_id, state_json, pos_x, pos_y, width, height, maximized, sort_order) VALUES (?1, ?2, 0, 0, 1200, 800, 0, 0)",
+            rusqlite::params![label, state_json],
+        ).map_err(|e| e.to_string())?;
+    }
     let _window = tauri::WebviewWindowBuilder::new(
         &app,
-        format!("window-{}", id),
+        &label,
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("RHFiles")
     .inner_size(1200.0, 800.0)
     .build()
     .map_err(|e| e.to_string())?;
+    Ok(label)
+}
+
+#[tauri::command]
+fn get_window_label(window: tauri::WebviewWindow) -> String {
+    window.label().to_string()
+}
+
+#[tauri::command]
+fn save_window_state(window_id: String, state_json: String, pos_x: i32, pos_y: i32, width: i32, height: i32, maximized: bool, sort_order: i32) -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute(
+        "INSERT OR REPLACE INTO window_states (window_id, state_json, pos_x, pos_y, width, height, maximized, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![window_id, state_json, pos_x, pos_y, width, height, maximized as i32, sort_order],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_window_state(window_id: String) -> Result<Option<serde_json::Value>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT state_json, pos_x, pos_y, width, height, maximized, sort_order FROM window_states WHERE window_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let result = stmt.query_row(rusqlite::params![window_id], |row| {
+        let state_json: String = row.get(0)?;
+        let pos_x: i32 = row.get(1)?;
+        let pos_y: i32 = row.get(2)?;
+        let width: i32 = row.get(3)?;
+        let height: i32 = row.get(4)?;
+        let maximized: i32 = row.get(5)?;
+        let sort_order: i32 = row.get(6)?;
+        Ok(serde_json::json!({
+            "state_json": state_json,
+            "pos_x": pos_x,
+            "pos_y": pos_y,
+            "width": width,
+            "height": height,
+            "maximized": maximized != 0,
+            "sort_order": sort_order,
+        }))
+    });
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_all_window_states() -> Result<Vec<serde_json::Value>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn.prepare("SELECT window_id, state_json, pos_x, pos_y, width, height, maximized, sort_order FROM window_states ORDER BY sort_order")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        let window_id: String = row.get(0)?;
+        let state_json: String = row.get(1)?;
+        let pos_x: i32 = row.get(2)?;
+        let pos_y: i32 = row.get(3)?;
+        let width: i32 = row.get(4)?;
+        let height: i32 = row.get(5)?;
+        let maximized: i32 = row.get(6)?;
+        let sort_order: i32 = row.get(7)?;
+        Ok(serde_json::json!({
+            "window_id": window_id,
+            "state_json": state_json,
+            "pos_x": pos_x,
+            "pos_y": pos_y,
+            "width": width,
+            "height": height,
+            "maximized": maximized != 0,
+            "sort_order": sort_order,
+        }))
+    }).map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn delete_window_state(window_id: String) -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM window_states WHERE window_id = ?1", rusqlite::params![window_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn save_current_window_geometry(window: tauri::WebviewWindow, state_json: String) -> Result<(), String> {
+    let pos = window.inner_position().map_err(|e| e.to_string())?;
+    let size = window.inner_size().map_err(|e| e.to_string())?;
+    let is_maximized = window.is_maximized().unwrap_or(false);
+    let window_id = window.label().to_string();
+    let conn = get_db()?;
+    conn.execute(
+        "INSERT OR REPLACE INTO window_states (window_id, state_json, pos_x, pos_y, width, height, maximized, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT COALESCE(sort_order, 0) FROM window_states WHERE window_id = ?1))",
+        rusqlite::params![window_id, state_json, pos.x, pos.y, size.width as i32, size.height as i32, is_maximized as i32],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn restore_window_geometry(window: tauri::WebviewWindow) -> Result<(), String> {
+    let window_id = window.label().to_string();
+    let conn = get_db()?;
+    let result: Result<(i32, i32, i32, i32, bool), _> = conn.query_row(
+        "SELECT pos_x, pos_y, width, height, maximized FROM window_states WHERE window_id = ?1",
+        rusqlite::params![window_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get::<_, i32>(4)? != 0)),
+    );
+    if let Ok((pos_x, pos_y, width, height, maximized)) = result {
+        if width > 0 && height > 0 {
+            let _ = window.set_size(tauri::LogicalSize::new(width as f64, height as f64));
+        }
+        if pos_x != 0 || pos_y != 0 {
+            let _ = window.set_position(tauri::LogicalPosition::new(pos_x as f64, pos_y as f64));
+        }
+        if maximized {
+            let _ = window.maximize();
+        }
+    }
     Ok(())
 }
 
@@ -1574,119 +1854,455 @@ fn get_cloud_status(path: String) -> Result<String, String> {
     }
     const FILE_ATTRIBUTE_OFFLINE: u32 = 0x00001000;
     const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x00400000;
-    if attrs & FILE_ATTRIBUTE_OFFLINE != 0 {
-        Ok("online_only".to_string())
-    } else if attrs & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
+    const FILE_ATTRIBUTE_PINNED: u32 = 0x00000080;
+    const FILE_ATTRIBUTE_UNPINNED: u32 = 0x00100000;
+    if attrs & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0 {
         Ok("syncing".to_string())
+    } else if attrs & FILE_ATTRIBUTE_OFFLINE != 0 {
+        if attrs & FILE_ATTRIBUTE_PINNED != 0 {
+            Ok("syncing".to_string())
+        } else {
+            Ok("online_only".to_string())
+        }
+    } else if attrs & FILE_ATTRIBUTE_UNPINNED != 0 {
+        Ok("locally_available".to_string())
     } else {
         Ok("synced".to_string())
     }
 }
 
-// === FTP Connection ===
+#[derive(Serialize, Clone)]
+struct CloudProvider {
+    id: String,
+    name: String,
+    path: String,
+    icon_dll: String,
+    icon_index: i32,
+}
+
+#[tauri::command]
+fn get_cloud_providers() -> Result<Vec<CloudProvider>, String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let root_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager";
+    let root = hklm.open_subkey(root_path).map_err(|e| e.to_string())?;
+    let mut providers = Vec::new();
+    for child in root.enum_keys().flatten() {
+        if let Ok(subkey) = root.open_subkey(&child) {
+            let name: String = subkey.get_value("DisplayNameResource").unwrap_or_else(|_| {
+                let parts: Vec<&str> = child.split('!').collect();
+                parts.first().map(|s| s.to_string()).unwrap_or_default()
+            });
+            let user_path: Option<String> = subkey.open_subkey("UserSyncRoots")
+                .ok()
+                .and_then(|usr| {
+                    let sids: Vec<String> = usr.enum_values().filter_map(|v| v.ok()).map(|(k, _)| k).collect();
+                    sids.first().and_then(|sid| usr.get_value::<String, _>(sid).ok())
+                });
+            let icon_resource: String = subkey.get_value("IconResource").unwrap_or_else(|_| "".to_string());
+            let (icon_dll, icon_index) = parse_icon_resource(&icon_resource);
+            if let Some(sync_path) = user_path {
+                let display_name = resolve_display_name(&name);
+                providers.push(CloudProvider {
+                    id: child.clone(),
+                    name: display_name,
+                    path: sync_path,
+                    icon_dll,
+                    icon_index,
+                });
+            }
+        }
+    }
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let ns_path = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace";
+    if let Ok(ns_root) = hkcu.open_subkey(ns_path) {
+        for clsid in ns_root.enum_keys().flatten() {
+            if let Ok(clsid_key) = ns_root.open_subkey(&clsid) {
+                let default_name: String = clsid_key.get_value("").unwrap_or_default();
+                let path_lower = default_name.to_lowercase();
+                if path_lower.contains("onedrive") || path_lower.contains("cloud") {
+                    if let Ok(target) = clsid_key.open_subkey("Instance\\InitPropertyBag") {
+                        if let Ok(target_path) = target.get_value::<String, _>("TargetFolderPath") {
+                            let expanded = expand_env_var(&target_path);
+                            if !expanded.is_empty() && !providers.iter().any(|p| p.path.eq_ignore_ascii_case(&expanded)) {
+                                providers.push(CloudProvider {
+                                    id: clsid.clone(),
+                                    name: default_name,
+                                    path: expanded,
+                                    icon_dll: String::new(),
+                                    icon_index: 0,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if providers.is_empty() {
+        let onedrive_env = std::env::var("OneDrive").ok();
+        let onedrive_commercial = std::env::var("OneDriveCommercial").ok();
+        if let Some(od_path) = onedrive_env {
+            if std::path::Path::new(&od_path).exists() {
+                providers.push(CloudProvider {
+                    id: "OneDrive".to_string(),
+                    name: "OneDrive".to_string(),
+                    path: od_path,
+                    icon_dll: String::new(),
+                    icon_index: 0,
+                });
+            }
+        }
+        if let Some(od_path) = onedrive_commercial {
+            if std::path::Path::new(&od_path).exists() && !providers.iter().any(|p| p.path.eq_ignore_ascii_case(&od_path)) {
+                providers.push(CloudProvider {
+                    id: "OneDriveCommercial".to_string(),
+                    name: "OneDrive - ".to_string() + &std::path::Path::new(&od_path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    path: od_path,
+                    icon_dll: String::new(),
+                    icon_index: 0,
+                });
+            }
+        }
+    }
+    Ok(providers)
+}
+
+fn parse_icon_resource(resource: &str) -> (String, i32) {
+    if resource.is_empty() {
+        return (String::new(), 0);
+    }
+    if let Some(idx) = resource.rfind(',') {
+        let dll = &resource[..idx];
+        let index: i32 = resource[idx + 1..].trim().parse().unwrap_or(0);
+        (expand_env_var(dll), index)
+    } else {
+        (expand_env_var(resource), 0)
+    }
+}
+
+fn resolve_display_name(resource: &str) -> String {
+    if resource.contains("OneDrive") { return "OneDrive".to_string(); }
+    if resource.contains("Google") { return "Google Drive".to_string(); }
+    if resource.contains("Dropbox") { return "Dropbox".to_string(); }
+    if resource.starts_with('@') {
+        let path = resource.trim_start_matches('@');
+        let dll = if let Some(idx) = path.rfind(",-") { &path[..idx] } else { path };
+        let expanded = expand_env_var(dll);
+        if let Some(name) = std::path::Path::new(&expanded).file_stem() {
+            return name.to_string_lossy().into_owned();
+        }
+    }
+    resource.to_string()
+}
+
+fn expand_env_var(s: &str) -> String {
+    let s = s.replace("%USERPROFILE%", &std::env::var("USERPROFILE").unwrap_or_default());
+    let s = s.replace("%LOCALAPPDATA%", &std::env::var("LOCALAPPDATA").unwrap_or_default());
+    let s = s.replace("%APPDATA%", &std::env::var("APPDATA").unwrap_or_default());
+    let s = s.replace("%SystemRoot%", &std::env::var("SystemRoot").unwrap_or_default());
+    let s = s.replace("%windir%", &std::env::var("windir").unwrap_or_default());
+    s.replace("%ProgramFiles%", &std::env::var("ProgramFiles").unwrap_or_default())
+}
+
+#[tauri::command]
+fn cloud_pin_file(path: String) -> Result<(), String> {
+    let output = std::process::Command::new("attrib")
+        .args(["+p", &path])
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!("attrib +p failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cloud_unpin_file(path: String) -> Result<(), String> {
+    let output = std::process::Command::new("attrib")
+        .args(["+u", &path])
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!("attrib +u failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cloud_clear_pin(path: String) -> Result<(), String> {
+    let output = std::process::Command::new("attrib")
+        .args(["-p", &path])
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!("attrib -p failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_cloud_file_size(path: String) -> Result<HashMap<String, u64>, String> {
+    use std::os::windows::fs::MetadataExt;
+    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let attrs = metadata.file_attributes();
+    let local_size = metadata.len();
+    let mut result = HashMap::new();
+    result.insert("local_size".to_string(), local_size);
+    if attrs & 0x00001000 != 0 {
+        result.insert("cloud_size".to_string(), 0);
+        result.insert("is_placeholder".to_string(), 1);
+    } else {
+        result.insert("cloud_size".to_string(), local_size);
+        result.insert("is_placeholder".to_string(), 0);
+    }
+    Ok(result)
+}
+
+// === FTP/FTPS Connection ===
 
 #[tauri::command]
 async fn ftp_list(host: String, path: String, user: String, pass: String) -> Result<Vec<FileInfo>, String> {
-    let ps = format!(
-        r#"$uri = "ftp://{host}{path}";
-        $creds = New-Object System.Net.NetworkCredential('{user}', '{pass}');
-        $request = [System.Net.FtpWebRequest]::Create($uri);
-        $request.Credentials = $creds;
-        $request.Method = [System.Net.WebRequestMethods+Ftp]::ListDirectoryDetails;
-        $request.UsePassive = $true;
-        try {{
-            $response = $request.GetResponse();
-            $reader = New-Object System.IO.StreamReader($response.GetResponseStream());
-            $listing = $reader.ReadToEnd();
-            $reader.Close();
-            $response.Close();
-            $results = @();
-            foreach ($line in $listing -split "`n") {{
-                if ($line.Trim() -eq '') continue;
-                $parts = $line -split '\s+';
-                if ($parts.Length -ge 9) {{
-                    $perms = $parts[0];
-                    $isDir = $perms.StartsWith('d');
-                    $name = ($parts[8..($parts.Length-1)] -join ' ').Trim();
-                    if ($name -eq '.' -or $name -eq '..') continue;
-                    $results += @{{
-                        name = $name;
-                        is_dir = $isDir;
-                        size = if ($parts[4] -match '^\d+$') {{ [long]$parts[4] }} else {{ 0 }};
-                        modified = $parts[5] + ' ' + $parts[6] + ' ' + $parts[7];
-                    }}
-                }}
-            }}
-            $results | ConvertTo-Json -Compress
-        }} catch {{
-            Write-Error $_.Exception.Message
-        }}"#,
-        host = host, path = path, user = user, pass = pass
-    );
+    use suppaftp::FtpStream;
+    let port: u16 = if host.contains(':') {
+        host.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(21)
+    } else { 21 };
+    let host_only = host.split(':').next().unwrap_or(&host);
+    let mut ftp = FtpStream::connect((host_only, port)).map_err(|e| format!("FTP connect: {}", e))?;
+    ftp.login(&user, &pass).map_err(|e| format!("FTP login: {}", e))?;
+    let remote_path = if path.is_empty() || path == "/" { "." } else { &path };
+    ftp.cwd(remote_path).map_err(|e| format!("CWD: {}", e))?;
+    let list = ftp.list(None).map_err(|e| format!("LIST: {}", e))?;
+    ftp.quit().ok();
+    parse_ftp_list(&list, &host, &path)
+}
 
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps])
-        .output().map_err(|e| e.to_string())?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() || stdout == "null" {
-        return Ok(Vec::new());
-    }
-
-    let raw: Vec<serde_json::Value> = if stdout.starts_with('[') {
-        serde_json::from_str(&stdout).unwrap_or_default()
-    } else {
-        serde_json::from_str(&format!("[{}]", stdout)).unwrap_or_default()
-    };
-
+fn parse_ftp_list(list: &[String], host: &str, path: &str) -> Result<Vec<FileInfo>, String> {
     let mut entries = Vec::new();
-    for item in raw {
-        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let is_dir = item.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
-        let size = item.get("size").and_then(|v| v.as_i64()).unwrap_or(0) as u64;
-        let ftp_path = format!("ftp://{}/{}{}", host, path.trim_end_matches('/'), if path.ends_with('/') { "" } else { "/" });
-
+    for line in list {
+        let line_str = line.to_string();
+        let parts: Vec<&str> = line_str.split_whitespace().collect();
+        if parts.len() < 9 { continue; }
+        let perms = parts[0];
+        let is_dir = perms.starts_with('d') || perms.starts_with('l');
+        let name = parts[8..].join(" ");
+        if name == "." || name == ".." { continue; }
+        let size: u64 = parts[4].parse().unwrap_or(0);
+        let modified = format!("{} {} {}", parts[5], parts[6], parts[7]);
+        let ftp_path = format!("ftp://{}/{}{}", host, path.trim_end_matches('/'), if path.ends_with('/') || path == "/" { "" } else { "/" });
         entries.push(FileInfo {
             name: name.clone(),
             path: ftp_path + &name,
-            extension: if is_dir { String::new() } else {
-                name.rsplit('.').next().unwrap_or("").to_string()
-            },
+            extension: if is_dir { String::new() } else { name.rsplit('.').next().unwrap_or("").to_string() },
             is_dir,
-            is_hidden: false,
+            is_hidden: name.starts_with('.'),
             size,
             size_display: if size > 0 { format_size(size) } else { String::new() },
-            modified: item.get("modified").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            modified,
             created: String::new(),
             folder_size: None,
         });
     }
-
     Ok(entries)
 }
 
 #[tauri::command]
 async fn ftp_download(host: String, remote_path: String, local_path: String, user: String, pass: String) -> Result<(), String> {
-    let ps = format!(
-        r#"$uri = "ftp://{host}{remote_path}";
-        $creds = New-Object System.Net.NetworkCredential('{user}', '{pass}');
-        $client = New-Object System.Net.WebClient;
-        $client.Credentials = $creds;
-        $client.DownloadFile($uri, '{local_path}')"#,
-        host = host, remote_path = remote_path, local_path = local_path.replace("'", "''"), user = user, pass = pass
-    );
+    use suppaftp::FtpStream;
+    let port: u16 = if host.contains(':') { host.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(21) } else { 21 };
+    let host_only = host.split(':').next().unwrap_or(&host);
+    let mut ftp = FtpStream::connect((host_only, port)).map_err(|e| format!("FTP connect: {}", e))?;
+    ftp.login(&user, &pass).map_err(|e| format!("FTP login: {}", e))?;
+    let remote_dir = std::path::Path::new(&remote_path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or("/".to_string());
+    let filename = std::path::Path::new(&remote_path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    ftp.cwd(&remote_dir).map_err(|e| format!("CWD: {}", e))?;
+    let mut reader = ftp.retr_as_stream(&filename).map_err(|e| format!("RETR: {}", e))?;
+    let mut file = std::fs::File::create(&local_path).map_err(|e| format!("Create file: {}", e))?;
+    std::io::copy(&mut reader, &mut file).map_err(|e| format!("Download: {}", e))?;
+    ftp.finalize_retr_stream(reader).map_err(|e| format!("Finalize: {}", e))?;
+    ftp.quit().ok();
+    Ok(())
+}
 
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps])
-        .output().map_err(|e| e.to_string())?;
+#[tauri::command]
+async fn ftp_upload(host: String, local_path: String, remote_dir: String, user: String, pass: String) -> Result<(), String> {
+    use suppaftp::FtpStream;
+    let port: u16 = if host.contains(':') {
+        host.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(21)
+    } else { 21 };
+    let host_only = host.split(':').next().unwrap_or(&host);
+    let mut ftp = FtpStream::connect((host_only, port)).map_err(|e| format!("FTP connect: {}", e))?;
+    ftp.login(&user, &pass).map_err(|e| format!("FTP login: {}", e))?;
+    ftp.cwd(&remote_dir).map_err(|e| format!("CWD: {}", e))?;
+    let filename = std::path::Path::new(&local_path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut file = std::fs::File::open(&local_path).map_err(|e| format!("Open file: {}", e))?;
+    ftp.put_file(&filename, &mut file).map_err(|e| format!("STOR: {}", e))?;
+    ftp.quit().ok();
+    Ok(())
+}
 
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+#[tauri::command]
+async fn ftp_delete(host: String, remote_path: String, is_dir: bool, user: String, pass: String) -> Result<(), String> {
+    use suppaftp::FtpStream;
+    let port: u16 = if host.contains(':') {
+        host.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(21)
+    } else { 21 };
+    let host_only = host.split(':').next().unwrap_or(&host);
+    let mut ftp = FtpStream::connect((host_only, port)).map_err(|e| format!("FTP connect: {}", e))?;
+    ftp.login(&user, &pass).map_err(|e| format!("FTP login: {}", e))?;
+    if is_dir {
+        ftp.rmdir(&remote_path).map_err(|e| format!("RMD: {}", e))?;
+    } else {
+        ftp.rm(&remote_path).map_err(|e| format!("DELE: {}", e))?;
     }
+    ftp.quit().ok();
+    Ok(())
+}
+
+#[tauri::command]
+async fn ftp_mkdir(host: String, remote_path: String, user: String, pass: String) -> Result<(), String> {
+    use suppaftp::FtpStream;
+    let port: u16 = if host.contains(':') { host.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(21) } else { 21 };
+    let host_only = host.split(':').next().unwrap_or(&host);
+    let mut ftp = FtpStream::connect((host_only, port)).map_err(|e| format!("FTP connect: {}", e))?;
+    ftp.login(&user, &pass).map_err(|e| format!("FTP login: {}", e))?;
+    ftp.mkdir(&remote_path).map_err(|e| format!("MKD: {}", e))?;
+    ftp.quit().ok();
+    Ok(())
+}
+
+#[tauri::command]
+async fn ftp_rename(host: String, old_path: String, new_name: String, user: String, pass: String) -> Result<(), String> {
+    use suppaftp::FtpStream;
+    let port: u16 = if host.contains(':') { host.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(21) } else { 21 };
+    let host_only = host.split(':').next().unwrap_or(&host);
+    let mut ftp = FtpStream::connect((host_only, port)).map_err(|e| format!("FTP connect: {}", e))?;
+    ftp.login(&user, &pass).map_err(|e| format!("FTP login: {}", e))?;
+    let parent = std::path::Path::new(&old_path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or("/".to_string());
+    let new_path = if parent.ends_with('/') { format!("{}{}", parent, new_name) } else { format!("{}\\{}", parent, new_name) };
+    ftp.rename(&old_path, &new_path).map_err(|e| format!("RNFR/RNTO: {}", e))?;
+    ftp.quit().ok();
+    Ok(())
+}
+
+// === SFTP Connection ===
+
+#[tauri::command]
+async fn sftp_list(host: String, port: u16, path: String, user: String, pass: String) -> Result<Vec<FileInfo>, String> {
+    let tcp = std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP connect: {}", e))?;
+    let mut sess = ssh2::Session::new().map_err(|e| format!("SSH session: {}", e))?;
+    sess.set_tcp_stream(tcp);
+    sess.handshake().map_err(|e| format!("SSH handshake: {}", e))?;
+    sess.userauth_password(&user, &pass).map_err(|e| format!("SSH auth: {}", e))?;
+    let sftp = sess.sftp().map_err(|e| format!("SFTP init: {}", e))?;
+    let dir_path = std::path::Path::new(&path);
+    let dir = sftp.readdir(dir_path).map_err(|e| format!("SFTP readdir: {}", e))?;
+    let mut entries = Vec::new();
+    for (entry_path, stat) in dir {
+        let name = entry_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if name == "." || name == ".." { continue; }
+        let is_dir = stat.is_dir();
+        let size = stat.size.unwrap_or(0);
+        let mtime = stat.mtime.map(|t| {
+            chrono::DateTime::from_timestamp(t as i64, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_default()
+        }).unwrap_or_default();
+        let sftp_path = format!("sftp://{}:{}{}", host, port, entry_path.to_string_lossy());
+        entries.push(FileInfo {
+            name: name.clone(),
+            path: sftp_path,
+            extension: if is_dir { String::new() } else { name.rsplit('.').next().unwrap_or("").to_string() },
+            is_dir,
+            is_hidden: name.starts_with('.'),
+            size,
+            size_display: if size > 0 { format_size(size) } else { String::new() },
+            modified: mtime,
+            created: String::new(),
+            folder_size: None,
+        });
+    }
+    sess.disconnect(None, "bye", None).ok();
+    Ok(entries)
+}
+
+#[tauri::command]
+async fn sftp_download(host: String, port: u16, remote_path: String, local_path: String, user: String, pass: String) -> Result<(), String> {
+    let tcp = std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
+    let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
+    sess.set_tcp_stream(tcp);
+    sess.handshake().map_err(|e| format!("Handshake: {}", e))?;
+    sess.userauth_password(&user, &pass).map_err(|e| format!("Auth: {}", e))?;
+    let sftp = sess.sftp().map_err(|e| format!("SFTP: {}", e))?;
+    let remote = std::path::Path::new(&remote_path);
+    let mut remote_file = sftp.open(remote).map_err(|e| format!("Open remote: {}", e))?;
+    let mut local_file = std::fs::File::create(&local_path).map_err(|e| format!("Create local: {}", e))?;
+    std::io::copy(&mut remote_file, &mut local_file).map_err(|e| format!("Download: {}", e))?;
+    sess.disconnect(None, "bye", None).ok();
+    Ok(())
+}
+
+#[tauri::command]
+async fn sftp_upload(host: String, port: u16, local_path: String, remote_path: String, user: String, pass: String) -> Result<(), String> {
+    let tcp = std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
+    let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
+    sess.set_tcp_stream(tcp);
+    sess.handshake().map_err(|e| format!("Handshake: {}", e))?;
+    sess.userauth_password(&user, &pass).map_err(|e| format!("Auth: {}", e))?;
+    let sftp = sess.sftp().map_err(|e| format!("SFTP: {}", e))?;
+    let remote = std::path::Path::new(&remote_path);
+    let mut remote_file = sftp.create(remote).map_err(|e| format!("Create remote: {}", e))?;
+    let mut local_file = std::fs::File::open(&local_path).map_err(|e| format!("Open local: {}", e))?;
+    std::io::copy(&mut local_file, &mut remote_file).map_err(|e| format!("Upload: {}", e))?;
+    sess.disconnect(None, "bye", None).ok();
+    Ok(())
+}
+
+#[tauri::command]
+async fn sftp_delete(host: String, port: u16, remote_path: String, is_dir: bool, user: String, pass: String) -> Result<(), String> {
+    let tcp = std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
+    let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
+    sess.set_tcp_stream(tcp);
+    sess.handshake().map_err(|e| format!("Handshake: {}", e))?;
+    sess.userauth_password(&user, &pass).map_err(|e| format!("Auth: {}", e))?;
+    let sftp = sess.sftp().map_err(|e| format!("SFTP: {}", e))?;
+    let path = std::path::Path::new(&remote_path);
+    if is_dir {
+        sftp.rmdir(path).map_err(|e| format!("RMDIR: {}", e))?;
+    } else {
+        sftp.unlink(path).map_err(|e| format!("UNLINK: {}", e))?;
+    }
+    sess.disconnect(None, "bye", None).ok();
+    Ok(())
+}
+
+#[tauri::command]
+async fn sftp_mkdir(host: String, port: u16, remote_path: String, user: String, pass: String) -> Result<(), String> {
+    let tcp = std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
+    let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
+    sess.set_tcp_stream(tcp);
+    sess.handshake().map_err(|e| format!("Handshake: {}", e))?;
+    sess.userauth_password(&user, &pass).map_err(|e| format!("Auth: {}", e))?;
+    let sftp = sess.sftp().map_err(|e| format!("SFTP: {}", e))?;
+    sftp.mkdir(std::path::Path::new(&remote_path), 0o755).map_err(|e| format!("MKDIR: {}", e))?;
+    sess.disconnect(None, "bye", None).ok();
+    Ok(())
+}
+
+#[tauri::command]
+async fn sftp_rename(host: String, port: u16, old_path: String, new_path: String, user: String, pass: String) -> Result<(), String> {
+    let tcp = std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
+    let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
+    sess.set_tcp_stream(tcp);
+    sess.handshake().map_err(|e| format!("Handshake: {}", e))?;
+    sess.userauth_password(&user, &pass).map_err(|e| format!("Auth: {}", e))?;
+    let sftp = sess.sftp().map_err(|e| format!("SFTP: {}", e))?;
+    sftp.rename(std::path::Path::new(&old_path), std::path::Path::new(&new_path), None).map_err(|e| format!("RENAME: {}", e))?;
+    sess.disconnect(None, "bye", None).ok();
     Ok(())
 }
 
@@ -1836,32 +2452,51 @@ fn list_mtp_devices() -> Result<Vec<FileInfo>, String> {
 
 // === SMB/Network Browsing ===
 
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn browse_network() -> Result<Vec<FileInfo>, String> {
-    #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("net")
-        .args(["view"])
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "windows"))]
-    let output = std::process::Command::new("net")
-        .args(["view"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut servers = Vec::new();
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.starts_with("\\\\") {
-            let name = line.split_whitespace().next().unwrap_or("").trim_start_matches('\\');
-            if !name.is_empty() {
+    use windows::Win32::NetworkManagement::WNet::{
+        WNetOpenEnumA, WNetEnumResourceA, WNetCloseEnum,
+        RESOURCE_GLOBALNET, RESOURCETYPE_ANY, RESOURCEUSAGE_CONTAINER, WNET_OPEN_ENUM_USAGE,
+    };
+    use windows::Win32::NetworkManagement::WNet::NETRESOURCEA;
+    use windows::Win32::Foundation::HANDLE;
+    let mut net_resource = NETRESOURCEA::default();
+    net_resource.dwScope = RESOURCE_GLOBALNET;
+    net_resource.dwType = RESOURCETYPE_ANY;
+    net_resource.dwUsage = RESOURCEUSAGE_CONTAINER.0;
+    let mut handle: HANDLE = HANDLE::default();
+    unsafe {
+        let result = WNetOpenEnumA(
+            RESOURCE_GLOBALNET,
+            RESOURCETYPE_ANY,
+            WNET_OPEN_ENUM_USAGE(0),
+            Some(&net_resource),
+            &mut handle,
+        );
+        if result.0 != 0 {
+            let _ = WNetCloseEnum(handle);
+            return Err(format!("WNetOpenEnum error: {}", result.0));
+        }
+        let mut servers = Vec::new();
+        let mut buf_size: u32 = 16384;
+        let mut buf = vec![0u8; buf_size as usize];
+        let mut count = u32::MAX;
+        loop {
+            let enum_result = WNetEnumResourceA(handle, &mut count, buf.as_mut_ptr() as *mut _, &mut buf_size);
+            if enum_result == windows::Win32::Foundation::ERROR_NO_MORE_ITEMS { break; }
+            if enum_result.0 != 0 { break; }
+            let resources = std::slice::from_raw_parts(buf.as_ptr() as *const NETRESOURCEA, count as usize);
+            for res in resources {
+                let name_ptr = res.lpRemoteName;
+                if name_ptr.is_null() { continue; }
+                let cstr = std::ffi::CStr::from_ptr(name_ptr.0 as *const i8);
+                let name_str = cstr.to_string_lossy().to_string();
+                let display_name = name_str.trim_start_matches('\\');
+                if display_name.is_empty() { continue; }
                 servers.push(FileInfo {
-                    name: name.to_string(),
-                    path: format!("\\\\{}", name),
+                    name: display_name.to_string(),
+                    path: name_str.clone(),
                     extension: String::new(),
                     is_dir: true,
                     is_hidden: false,
@@ -1872,68 +2507,95 @@ fn browse_network() -> Result<Vec<FileInfo>, String> {
                     folder_size: None,
                 });
             }
+            count = u32::MAX;
         }
+        let _ = WNetCloseEnum(handle);
+        Ok(servers)
     }
-    Ok(servers)
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn browse_network() -> Result<Vec<FileInfo>, String> {
+    Ok(Vec::new())
 }
 
 #[tauri::command]
 fn list_shares(server: String) -> Result<Vec<FileInfo>, String> {
     #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("net")
-        .args(["view", &server])
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|e| e.to_string())?;
+    {
+        use windows::Win32::NetworkManagement::WNet::{
+            WNetOpenEnumA, WNetEnumResourceA, WNetCloseEnum,
+            RESOURCE_GLOBALNET, RESOURCETYPE_ANY, RESOURCEUSAGE_CONTAINER, WNET_OPEN_ENUM_USAGE,
+        };
+        use windows::Win32::NetworkManagement::WNet::NETRESOURCEA;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::core::PSTR;
+        let server_bytes = format!("{}\0", server);
+        let mut net_resource = NETRESOURCEA::default();
+        net_resource.dwScope = RESOURCE_GLOBALNET;
+        net_resource.dwType = RESOURCETYPE_ANY;
+        net_resource.dwUsage = RESOURCEUSAGE_CONTAINER.0;
+        net_resource.lpRemoteName = PSTR(server_bytes.as_ptr() as *mut _);
+        let mut handle: HANDLE = HANDLE::default();
+        unsafe {
+            let result = WNetOpenEnumA(
+                RESOURCE_GLOBALNET,
+                RESOURCETYPE_ANY,
+                WNET_OPEN_ENUM_USAGE(0),
+                Some(&net_resource),
+                &mut handle,
+            );
+            if result.0 != 0 {
+                let _ = WNetCloseEnum(handle);
+                return Err(format!("WNetOpenEnum error: {}", result.0));
+            }
+            let mut shares = Vec::new();
+            let mut buf_size: u32 = 16384;
+            let mut buf = vec![0u8; buf_size as usize];
+            let mut count = u32::MAX;
+            loop {
+                let enum_result = WNetEnumResourceA(handle, &mut count, buf.as_mut_ptr() as *mut _, &mut buf_size);
+                if enum_result == windows::Win32::Foundation::ERROR_NO_MORE_ITEMS { break; }
+                if enum_result.0 != 0 { break; }
+                let resources = std::slice::from_raw_parts(buf.as_ptr() as *const NETRESOURCEA, count as usize);
+                for res in resources {
+                    let name_ptr = res.lpRemoteName;
+                    if name_ptr.is_null() { continue; }
+                    let cstr = std::ffi::CStr::from_ptr(name_ptr.0 as *const i8);
+                    let name_str = cstr.to_string_lossy().to_string();
+                    let display = name_str.trim_start_matches('\\').split('\\').last().unwrap_or("").to_string();
+                    if display.is_empty() { continue; }
+                    shares.push(FileInfo {
+                        name: display,
+                        path: name_str,
+                        extension: String::new(),
+                        is_dir: true,
+                        is_hidden: false,
+                        size: 0,
+                        size_display: String::new(),
+                        modified: String::new(),
+                        created: String::new(),
+                        folder_size: None,
+                    });
+                }
+                count = u32::MAX;
+            }
+            let _ = WNetCloseEnum(handle);
+            Ok(shares)
+        }
+    }
     #[cfg(not(target_os = "windows"))]
-    let output = std::process::Command::new("net")
-        .args(["view", &server])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut shares = Vec::new();
-    let mut in_share_section = false;
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.starts_with("Share") {
-            in_share_section = true;
-            continue;
-        }
-        if line.starts_with("---") {
-            continue;
-        }
-        if !in_share_section {
-            continue;
-        }
-        if line.is_empty() || line.starts_with("The command") {
-            break;
-        }
-        let share_name = line.split_whitespace().next().unwrap_or("");
-        if !share_name.is_empty() && share_name != "The" {
-            shares.push(FileInfo {
-                name: share_name.to_string(),
-                path: format!("{}\\{}", server, share_name),
-                extension: String::new(),
-                is_dir: true,
-                is_hidden: false,
-                size: 0,
-                size_display: String::new(),
-                modified: String::new(),
-                created: String::new(),
-                folder_size: None,
-            });
-        }
-    }
-    Ok(shares)
+    { Ok(Vec::new()) }
 }
 
 // === Shell Native Context Menu ===
 
 #[tauri::command]
 fn get_shell_verbs(path: String) -> Result<Vec<serde_json::Value>, String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
     let ext = std::path::Path::new(&path)
         .extension()
         .and_then(|e| e.to_str())
@@ -1944,69 +2606,61 @@ fn get_shell_verbs(path: String) -> Result<Vec<serde_json::Value>, String> {
         return Ok(Vec::new());
     }
 
-    let ps = format!(
-        r#"$ext = '.{}';
-        $verbs = @();
-        try {{
-            $progId = (Get-ItemProperty "HKLM:\Software\Classes\$ext" -ErrorAction Stop).'(default)'
-            if ($progId) {{
-                $shellPath = "HKLM:\Software\Classes\$progId\shell"
-                if (Test-Path $shellPath) {{
-                    Get-ChildItem $shellPath | ForEach-Object {{
-                        $verb = $_.PSChildName
-                        $label = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'(default)'
-                        if (-not $label) {{ $label = $verb }}
-                        $command = (Get-ItemProperty "$($_.PSPath)\command" -ErrorAction SilentlyContinue).'(default)'
-                        if ($command) {{
-                            $verbs += @{{
-                                verb = $verb
-                                label = $label
-                                command = $command
-                            }}
-                        }}
-                    }}
-                }}
-            }}
-        }} catch {{}}
-        try {{
-            $progId = (Get-ItemProperty "HKCU:\Software\Classes\$ext" -ErrorAction SilentlyContinue).'(default)'
-            if ($progId) {{
-                $shellPath = "HKCU:\Software\Classes\$progId\shell"
-                if (Test-Path $shellPath) {{
-                    Get-ChildItem $shellPath | ForEach-Object {{
-                        $verb = $_.PSChildName
-                        $label = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'(default)'
-                        if (-not $label) {{ $label = $verb }}
-                        $command = (Get-ItemProperty "$($_.PSPath)\command" -ErrorAction SilentlyContinue).'(default)'
-                        if ($command) {{
-                            $verbs += @{{
-                                verb = $verb
-                                label = $label
-                                command = $command
-                            }}
-                        }}
-                    }}
-                }}
-            }}
-        }} catch {{}}
-        $verbs | ConvertTo-Json -Compress"#,
-        ext
-    );
+    let ext_with_dot = if ext.starts_with('.') { ext.clone() } else { format!(".{}", ext) };
 
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps])
-        .output().map_err(|e| e.to_string())?;
+    let mut verbs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() || stdout == "null" {
-        return Ok(Vec::new());
+    let hives = [
+        (HKEY_LOCAL_MACHINE, "HKLM"),
+        (HKEY_CURRENT_USER, "HKCU"),
+    ];
+
+    for (hive, _hive_name) in &hives {
+        let root = RegKey::predef(*hive);
+        let ext_key = match root.open_subkey_with_flags(format!("Software\\Classes\\{}", ext_with_dot), KEY_READ) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+        let prog_id: String = match ext_key.get_value("") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if prog_id.is_empty() {
+            continue;
+        }
+        let shell_key = match root.open_subkey_with_flags(format!("Software\\Classes\\{}\\shell", prog_id), KEY_READ) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+        for subkey_result in shell_key.enum_keys() {
+            let verb_name = match subkey_result {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if seen.contains(&verb_name) {
+                continue;
+            }
+            let verb_key = match shell_key.open_subkey_with_flags(&verb_name, KEY_READ) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            let cmd_key = match verb_key.open_subkey_with_flags("command", KEY_READ) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            let _command: String = match cmd_key.get_value("") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let label: String = verb_key.get_value("").unwrap_or_else(|_| verb_name.clone());
+            seen.insert(verb_name.clone());
+            verbs.push(serde_json::json!({
+                "verb": verb_name,
+                "label": label,
+            }));
+        }
     }
-
-    let verbs: Vec<serde_json::Value> = if stdout.starts_with('[') {
-        serde_json::from_str(&stdout).unwrap_or_default()
-    } else {
-        serde_json::from_str(&format!("[{}]", stdout)).unwrap_or_default()
-    };
 
     Ok(verbs)
 }
@@ -2029,6 +2683,118 @@ fn invoke_shell_verb(path: String, verb: String) -> Result<(), String> {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
     }
     Ok(())
+}
+
+#[tauri::command]
+fn show_native_context_menu(path: String, x: i32, y: i32) -> Result<(), String> {
+    use windows::Win32::System::Com::*;
+    use windows::Win32::UI::Shell::*;
+    use windows::Win32::UI::Shell::Common::*;
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    use windows::Win32::Foundation::*;
+
+    unsafe {
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)
+            .ok().map_err(|e| e.to_string())?;
+
+        let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+        SHParseDisplayName(
+            &windows::core::HSTRING::from(&path),
+            None,
+            &mut pidl,
+            0,
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let mut pidl_last: *mut ITEMIDLIST = std::ptr::null_mut();
+        let parent_folder: IShellFolder = SHBindToParent(
+            pidl,
+            Some(&mut pidl_last),
+        ).map_err(|e| e.to_string())?;
+
+        let pcm: IContextMenu = parent_folder.GetUIObjectOf(
+            HWND::default(),
+            &[pidl_last],
+            None,
+        ).map_err(|e| e.to_string())?;
+
+        let hmenu = CreatePopupMenu().map_err(|e| e.to_string())?;
+
+        let hr = pcm.QueryContextMenu(
+            hmenu,
+            0,
+            1,
+            0x7FFF,
+            CMF_NORMAL | CMF_EXTENDEDVERBS,
+        );
+        if hr.is_err() {
+            return Err(format!("QueryContextMenu failed: {:08x}", hr.0 as u32));
+        }
+
+        let result = TrackPopupMenu(
+            hmenu,
+            TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
+            x,
+            y,
+            None,
+            HWND::default(),
+            None,
+        );
+
+        if result.0 != 0 {
+            let cmd_id = result.0 - 1;
+            let cmd_str = format!("{}\0", cmd_id);
+            let mut cmd = CMINVOKECOMMANDINFO::default();
+            cmd.cbSize = std::mem::size_of::<CMINVOKECOMMANDINFO>() as u32;
+            cmd.fMask = SEE_MASK_UNICODE;
+            cmd.lpVerb = windows::core::PCSTR::from_raw(cmd_str.as_ptr());
+            cmd.nShow = SW_SHOWNORMAL.0 as i32;
+            pcm.InvokeCommand(&raw const cmd).map_err(|e| e.to_string())?;
+        }
+
+        let _ = DestroyMenu(hmenu);
+        CoTaskMemFree(Some(pidl as *const _));
+        CoUninitialize();
+    }
+    Ok(())
+}
+
+// === GUI Test Runner ===
+
+#[tauri::command]
+async fn run_gui_tests(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use std::sync::mpsc;
+    let (tx, rx): (mpsc::Sender<String>, mpsc::Receiver<String>) = mpsc::channel();
+    let tx = std::sync::Mutex::new(Some(tx));
+
+    let listener = app.listen("test-results", move |event| {
+        if let Some(tx) = tx.lock().unwrap().take() {
+            let payload = event.payload().to_string();
+            let _ = tx.send(payload);
+        }
+    });
+
+    app.emit("run-tests", ()).map_err(|e| e.to_string())?;
+
+    let result = rx.recv_timeout(std::time::Duration::from_secs(60));
+    app.unlisten(listener);
+
+    match result {
+        Ok(json_str) => {
+            let val: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_else(|_| {
+                serde_json::json!({ "error": "Failed to parse test results", "raw": json_str })
+            });
+            Ok(val)
+        }
+        Err(_) => Ok(serde_json::json!({ "error": "Test runner timed out after 60s" })),
+    }
+}
+
+#[tauri::command]
+fn write_test_results(results: String) -> Result<(), String> {
+    let tmp = std::env::var("TEMP").unwrap_or_else(|_| ".".to_string());
+    let path = std::path::PathBuf::from(tmp).join("rhfiles-test-results.json");
+    std::fs::write(&path, &results).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2074,10 +2840,68 @@ pub fn run() {
                     })
                     .build(app)?;
             }
+
+            // Restore saved windows on startup
+            {
+                let app_handle = app.handle().clone();
+                let restore_result: Result<Vec<_>, String> = (|| {
+                    let conn = get_db()?;
+                    let mut stmt = conn.prepare("SELECT window_id, pos_x, pos_y, width, height, maximized, sort_order FROM window_states WHERE window_id != 'main' ORDER BY sort_order").map_err(|e| e.to_string())?;
+                    let rows = stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i32>(1)?,
+                            row.get::<_, i32>(2)?,
+                            row.get::<_, i32>(3)?,
+                            row.get::<_, i32>(4)?,
+                            row.get::<_, i32>(5)? != 0,
+                            row.get::<_, i32>(6)?,
+                        ))
+                    }).map_err(|e| e.to_string())?;
+                    Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                })();
+                if let Ok(rows) = restore_result {
+                    if !rows.is_empty() {
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            for (window_id, pos_x, pos_y, width, height, _maximized, _sort_order) in rows {
+                                use tauri::WebviewWindowBuilder;
+                                let builder = WebviewWindowBuilder::new(
+                                    &app_handle,
+                                    &window_id,
+                                    tauri::WebviewUrl::App("index.html".into()),
+                                )
+                                .title("RHFiles")
+                                .inner_size(width as f64, height as f64);
+                                let builder = if pos_x != 0 || pos_y != 0 {
+                                    builder.position(pos_x as f64, pos_y as f64)
+                                } else {
+                                    builder
+                                };
+                                let _ = builder.build();
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Auto-run GUI tests if trigger file exists
+            {
+                let trigger = std::path::PathBuf::from("D:\\git\\RHFiles\\rhfiles-run-tests.trigger");
+                if trigger.exists() {
+                    let _ = std::fs::remove_file(&trigger);
+                    let app_handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(12));
+                        let _ = app_handle.emit("run-tests", ());
+                    });
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_dir, get_drives, parent_path, delete_file, rename_file, new_folder,
+            list_dir, get_drives, parent_path, delete_file, delete_files, rename_file, new_folder,
             copy_path, move_path_cmd, copy_with_progress, move_with_progress,
             cancel_operation,
             get_env, get_dir_tree, get_thumbnail, open_file,
@@ -2092,11 +2916,13 @@ pub fn run() {
             run_as_admin, empty_recycle_bin, rotate_image, read_shortcut,
             detect_ides, open_in_ide, install_font, set_wallpaper, set_file_readonly,
             open_new_window,
+            get_window_label, save_window_state, load_window_state, get_all_window_states, delete_window_state, save_current_window_geometry, restore_window_geometry, cleanup_stale_windows,
             set_window_effect, quicklook,
             check_updates,
             db_save_tags, db_load_tags, db_load_all_tags,
             db_save_layout, db_load_layout,
             db_save_pinned, db_load_pinned,
+            db_save_network_favorite, db_load_network_favorites, db_delete_network_favorite,
             db_export_all, db_import_all, db_clear_all,
             list_ads, delete_ads, read_ads, unblock_file,
             toggle_pip,
@@ -2106,12 +2932,15 @@ pub fn run() {
             install_certificate, set_compat_mode, get_compat_mode,
             log_error, get_error_logs,
             git_clone,
-            get_cloud_status,
+            get_cloud_status, get_cloud_providers, cloud_pin_file, cloud_unpin_file, cloud_clear_pin, get_cloud_file_size,
             browse_network, list_shares,
-            ftp_list, ftp_download,
+            ftp_list, ftp_download, ftp_upload, ftp_delete, ftp_mkdir, ftp_rename,
+            sftp_list, sftp_download, sftp_upload, sftp_delete, sftp_mkdir, sftp_rename,
             get_permissions, set_permission, remove_permission, inherit_permissions,
             list_mtp_devices,
             get_shell_verbs, invoke_shell_verb,
+            show_native_context_menu,
+            run_gui_tests, write_test_results,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

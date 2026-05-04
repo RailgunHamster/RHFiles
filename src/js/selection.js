@@ -21,19 +21,29 @@ function initBoxSelection(listEl) {
     listEl.appendChild(selectionRect);
   });
 
+  let _selRaf = 0;
+  let _selE = null;
   document.addEventListener('mousemove', e => {
     if (!isSelecting || !selectionRect) return;
-    const list = listEl;
-    const rect = list.getBoundingClientRect();
-    const x = Math.min(e.clientX, selStartX) - rect.left + list.scrollLeft;
-    const y = Math.min(e.clientY, selStartY) - rect.top + list.scrollTop;
-    const w = Math.abs(e.clientX - selStartX);
-    const h = Math.abs(e.clientY - selStartY);
-    selectionRect.style.left = x + 'px';
-    selectionRect.style.top = y + 'px';
-    selectionRect.style.width = w + 'px';
-    selectionRect.style.height = h + 'px';
-    selectFilesInRect(list, x, y, w, h, e.ctrlKey);
+    _selE = e;
+    if (!_selRaf) {
+      _selRaf = requestAnimationFrame(() => {
+        _selRaf = 0;
+        if (!_selE || !selectionRect) return;
+        const ev = _selE;
+        const list = listEl;
+        const rect = list.getBoundingClientRect();
+        const x = Math.min(ev.clientX, selStartX) - rect.left + list.scrollLeft;
+        const y = Math.min(ev.clientY, selStartY) - rect.top + list.scrollTop;
+        const w = Math.abs(ev.clientX - selStartX);
+        const h = Math.abs(ev.clientY - selStartY);
+        selectionRect.style.left = x + 'px';
+        selectionRect.style.top = y + 'px';
+        selectionRect.style.width = w + 'px';
+        selectionRect.style.height = h + 'px';
+        selectFilesInRect(list, x, y, w, h, ev.ctrlKey);
+      });
+    }
   });
 
   document.addEventListener('mouseup', () => {
@@ -68,4 +78,21 @@ function selectFilesInRect(listEl, rx, ry, rw, rh, additive) {
 
   if (isRight) renderFiles(tabOrPane, "right-file-list", "right-status-count", null, true);
   else renderFiles(tabOrPane, "file-list", "status-count", "status-selection");
+}
+
+function invertSelection(isRight) {
+  const tabOrPane = isRight ? G.rp : getTab();
+  if (!tabOrPane || !tabOrPane.entries) return;
+  const newSel = new Set();
+  for (let i = 0; i < tabOrPane.entries.length; i++) {
+    if (!tabOrPane.sel.has(i)) newSel.add(i);
+  }
+  tabOrPane.sel = newSel;
+  if (newSel.size > 0) tabOrPane.lastIdx = [...newSel].pop();
+  else tabOrPane.lastIdx = -1;
+  const listId = isRight ? "right-file-list" : "file-list";
+  const countId = isRight ? "right-status-count" : "status-count";
+  const selId = isRight ? null : "status-selection";
+  renderFiles(tabOrPane, listId, countId, selId, isRight);
+  updatePreviewForSelection();
 }

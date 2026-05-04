@@ -47,6 +47,8 @@
 .git-untracked { color:var(--git-untracked); }
 .row-tags { display:flex; gap:2px; margin-left:4px; }
 .row-tag-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.cloud-icon { display:inline-flex; align-items:center; flex-shrink:0; }
+.cloud-item svg { flex-shrink:0; }
 
 .status-bar { display:flex; align-items:center; gap:8px; height:24px; padding:0 12px; background:var(--bg); border-top:1px solid var(--border); font-size:12px; color:var(--text-4); }
 

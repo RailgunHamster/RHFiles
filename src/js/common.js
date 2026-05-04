@@ -37,6 +37,7 @@ G.lastActivePane = 'left';
 
 // --- right pane state ---
 G.rp = { path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, history: ["C:\\"], histIdx: 0 };
+G.windowLabel = null;
 
 // --- tab helpers ---
 function getTab(id) {
@@ -46,6 +47,7 @@ function getTab(id) {
 
 // --- utilities ---
 function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+function escAttr(s) { return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function fmtSize(bytes) {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
@@ -123,6 +125,14 @@ function fallbackCall(cmd, args) {
     case "create_archive": return null;
     case "create_shortcut": return null;
     case "open_new_window": window.open(location.href, '_blank'); return null;
+    case "get_window_label": return "main";
+    case "save_window_state": return null;
+    case "load_window_state": return null;
+    case "get_all_window_states": return [];
+    case "delete_window_state": return null;
+    case "save_current_window_geometry": return null;
+    case "restore_window_geometry": return null;
+    case "cleanup_stale_windows": return null;
     case "set_window_effect": return null;
     case "quicklook": return null;
     case "check_updates": return null;
@@ -136,6 +146,7 @@ function fallbackCall(cmd, args) {
     case "db_export_all": return {};
     case "db_import_all": return null;
     case "db_clear_all": return null;
+    case "show_native_context_menu": return null;
     case "svn_status": return {};
     case "svn_info": return { url: "", revision: "", author: "", date: "" };
     case "svn_update": return "";
@@ -164,10 +175,25 @@ function fallbackCall(cmd, args) {
     case "get_error_logs": return [];
     case "git_clone": return "C:\\repo";
     case "get_cloud_status": return "none";
+    case "get_cloud_providers": return [];
+    case "cloud_pin_file": return null;
+    case "cloud_unpin_file": return null;
+    case "cloud_clear_pin": return null;
+    case "get_cloud_file_size": return { local_size: 0, cloud_size: 0, is_placeholder: 0 };
     case "browse_network": return [];
     case "list_shares": return [];
     case "ftp_list": return [];
     case "ftp_download": return null;
+    case "ftp_upload": return null;
+    case "ftp_delete": return null;
+    case "ftp_mkdir": return null;
+    case "ftp_rename": return null;
+    case "sftp_list": return [];
+    case "sftp_download": return null;
+    case "sftp_upload": return null;
+    case "sftp_delete": return null;
+    case "sftp_mkdir": return null;
+    case "sftp_rename": return null;
     case "get_permissions": return [];
     case "set_permission": return null;
     case "remove_permission": return null;
@@ -223,23 +249,33 @@ function loadTabState() {
 G._watchSnapshot = null;
 G._watchTimer = null;
 G._watchTauriUnlisten = null;
+G._watchDebounce = null;
 function startFileWatch() {
   stopFileWatch();
   if (window.__TAURI_INTERNALS__) {
     const { listen } = window.__TAURI_INTERNALS__.event || {};
     if (listen) {
       listen("fs-change", () => {
-        const tab = getTab();
-        if (tab && tab.path) navigateTo(tab.path, false);
+        if (G._watchDebounce) clearTimeout(G._watchDebounce);
+        G._watchDebounce = setTimeout(() => {
+          const tab = getTab();
+          if (tab && tab.path) navigateTo(tab.path, false);
+          G._watchDebounce = null;
+        }, 300);
       }).then(unlisten => { G._watchTauriUnlisten = unlisten; }).catch(() => {});
     }
   }
   G._watchTimer = setInterval(async () => {
+    if (document.hidden) return;
     const tab = getTab();
     if (!tab || !tab.entries) return;
     try {
       const entries = await call("list_dir", { path: tab.path, filter: "" });
-      const snap = entries.map(e => e.name).sort().join("|");
+      let snap = "";
+      for (let i = 0; i < entries.length; i++) {
+        snap += entries[i].name;
+        snap += "|";
+      }
       if (G._watchSnapshot && snap !== G._watchSnapshot) {
         G._watchSnapshot = snap;
         await navigateTo(tab.path, false);
@@ -247,7 +283,7 @@ function startFileWatch() {
         G._watchSnapshot = snap;
       }
     } catch (e) {}
-  }, 1000);
+  }, 2000);
 }
 function stopFileWatch() {
   if (G._watchTimer) { clearInterval(G._watchTimer); G._watchTimer = null; }

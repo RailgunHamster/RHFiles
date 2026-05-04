@@ -170,7 +170,12 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
       row.addEventListener("contextmenu", e => {
         e.preventDefault();
         if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); tabOrPane.lastIdx = fileIdx; renderFiles(tabOrPane, listId, null, null, isRight); }
-        showContextMenu(e.clientX, e.clientY, isRight);
+        if (e.shiftKey) {
+          const p = entries[sel.values().next().value];
+          if (p) call("show_native_context_menu", { path: p.path, x: e.clientX, y: e.clientY });
+        } else {
+          showContextMenu(e.clientX, e.clientY, isRight);
+        }
       });
       row.draggable = true;
       row.addEventListener("dragstart", e => {
@@ -212,7 +217,15 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
     }
   }
 
-  list.onscroll = renderVisible;
+  let _scrollRaf = 0;
+  list.addEventListener('scroll', () => {
+    if (!_scrollRaf) {
+      _scrollRaf = requestAnimationFrame(() => {
+        _scrollRaf = 0;
+        renderVisible();
+      });
+    }
+  });
   renderVisible();
 }
 
@@ -234,7 +247,7 @@ function renderIconLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.dataset.path = file.path;
 
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } if (e.shiftKey) { const p = entries[sel.values().next().value]; if (p) call("show_native_context_menu", { path: p.path, x: e.clientX, y: e.clientY }); } else showContextMenu(e.clientX, e.clientY, isRight); });
     item.addEventListener("dragstart", e => {
       if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
       e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
@@ -266,7 +279,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     if (isSelected) item.style.background = "var(--select-bg)";
 
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } if (e.shiftKey) { const p = entries[sel.values().next().value]; if (p) call("show_native_context_menu", { path: p.path, x: e.clientX, y: e.clientY }); } else showContextMenu(e.clientX, e.clientY, isRight); });
     item.addEventListener("mouseenter", () => { if (!sel.has(i)) item.style.borderColor = "var(--accent)"; });
     item.addEventListener("mouseleave", () => { if (!sel.has(i)) item.style.borderColor = "var(--border)"; });
     item.addEventListener("dragstart", e => {
@@ -355,7 +368,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.dataset.path = file.path;
 
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } if (e.shiftKey) { const p = entries[sel.values().next().value]; if (p) call("show_native_context_menu", { path: p.path, x: e.clientX, y: e.clientY }); } else showContextMenu(e.clientX, e.clientY, isRight); });
     item.addEventListener("dragstart", e => {
       if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
       e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
@@ -467,11 +480,11 @@ function selectAll(isRight) {
 }
 
 async function updateCloudStatus(listEl, entries) {
-  const cloudEntries = entries.filter(e =>
-    e.path.toLowerCase().includes("onedrive") ||
-    e.path.toLowerCase().includes("google drive")
-  );
-  for (const ent of cloudEntries.slice(0, 50)) {
+  const cloudEntries = entries.filter(e => {
+    const pl = e.path.toLowerCase();
+    return pl.includes("onedrive") || pl.includes("google drive") || pl.includes("my drive") || pl.includes("dropbox");
+  });
+  for (const ent of cloudEntries.slice(0, 100)) {
     try {
       const status = await call("get_cloud_status", { path: ent.path });
       if (status && status !== "none") {
@@ -479,17 +492,41 @@ async function updateCloudStatus(listEl, entries) {
         if (row) {
           const nameEl = row.querySelector('.row-fname') || row.querySelector('.row-name');
           if (nameEl && !nameEl.querySelector('.cloud-icon')) {
-            const icon = status === "synced" ? "\u2601" :
-                         status === "online_only" ? "\u26C5" : "\u{1F504}";
+            const svg = getCloudStatusSvg(status);
             const span = document.createElement('span');
             span.className = 'cloud-icon';
-            span.textContent = ' ' + icon;
-            span.title = status;
-            span.style.cssText = 'font-size:10px;margin-left:4px;opacity:0.7;';
+            span.innerHTML = svg;
+            span.title = getCloudStatusLabel(status);
+            span.style.cssText = 'margin-left:4px;vertical-align:middle;';
             nameEl.appendChild(span);
           }
         }
       }
     } catch (e) {}
+  }
+}
+
+function getCloudStatusSvg(status) {
+  switch (status) {
+    case "synced":
+      return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#107c10" stroke-width="1.2"/><path d="M5 8l2 2 4-4" stroke="#107c10" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    case "online_only":
+      return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 5.5a4.5 4.5 0 0 1 8 0c1.4.5 2.5 1.8 2.5 3.5 0 2-1.5 3.5-3.5 3.5H5c-2 0-3.5-1.5-3.5-3.5 0-1.2.6-2.2 1.5-2.8" stroke="#0078d4" stroke-width="1.1" fill="none"/><path d="M6.5 9h3" stroke="#0078d4" stroke-width="1.2" stroke-linecap="round"/></svg>';
+    case "syncing":
+      return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 8a6 6 0 0 1 10.2-4.3" stroke="#0078d4" stroke-width="1.3" stroke-linecap="round"/><path d="M14 8a6 6 0 0 1-10.2 4.3" stroke="#0078d4" stroke-width="1.3" stroke-linecap="round"/><path d="M12 2v2.5h-2.5" stroke="#0078d4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14v-2.5h2.5" stroke="#0078d4" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    case "locally_available":
+      return '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="#8a8886" stroke-width="1.2"/><path d="M5 8l2 2 4-4" stroke="#8a8886" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    default:
+      return '';
+  }
+}
+
+function getCloudStatusLabel(status) {
+  switch (status) {
+    case "synced": return "Synced — available offline";
+    case "online_only": return "Online-only — cloud placeholder";
+    case "syncing": return "Syncing...";
+    case "locally_available": return "Locally available";
+    default: return status;
   }
 }

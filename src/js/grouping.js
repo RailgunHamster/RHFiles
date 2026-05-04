@@ -81,3 +81,32 @@ function renderGroupHeader(label, count, list) {
   header.innerHTML = `<span class="group-label">${esc(label)}</span><span class="group-count">${count} items</span>`;
   list.appendChild(header);
 }
+
+function toggleGroupingMenu() {
+  removeContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  const modes = [
+    { label: "None", field: "none" },
+    { label: "Type", field: "type" },
+    { label: "Date", field: "date" },
+    { label: "Size", field: "size" },
+    { label: "Extension", field: "extension" },
+  ];
+  modes.forEach(m => {
+    const mi = document.createElement("div");
+    mi.className = "ctx-item" + (G.groupBy === m.field ? " active" : "");
+    mi.innerHTML = `<span>${m.label}</span>`;
+    mi.addEventListener("click", () => {
+      removeContextMenu();
+      toggleGrouping(m.field);
+    });
+    menu.appendChild(mi);
+  });
+  document.body.appendChild(menu);
+  contextMenu = menu;
+  requestAnimationFrame(() => {
+    menu.style.left = Math.min(100, window.innerWidth - 150) + "px";
+    menu.style.top = Math.min(200, window.innerHeight - 200) + "px";
+  });
+}

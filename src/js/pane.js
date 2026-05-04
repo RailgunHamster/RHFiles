@@ -82,13 +82,21 @@ async function updatePreviewForSelection() {
   let is_video = ['mp4','mkv','avi','webm','mov','wmv','m4v'].includes(ext);
   if (is_pdf) {
     const src = convertFileSrc(file.path);
-    document.getElementById("preview-content").innerHTML = `<div style="text-align:center;padding:12px;">
-      <div style="font-size:36px;color:#d32f2f">&#128196;</div>
+    const previewContent = document.getElementById("preview-content");
+    const openBtn = document.createElement("button");
+    openBtn.className = "dialog-btn";
+    openBtn.style.marginTop = "8px";
+    openBtn.textContent = "Open PDF";
+    openBtn.addEventListener("click", () => call('open_file', { path: file.path }));
+    const container = document.createElement("div");
+    container.style.cssText = "text-align:center;padding:12px;";
+    container.innerHTML = `<div style="font-size:36px;color:#d32f2f">&#128196;</div>
       <div style="margin-top:4px;font-size:14px;color:var(--text-2)">${esc(file.name)}</div>
-      <div style="margin-top:2px;color:var(--text-4)">${fmtSize(file.size)}</div>
-      <button class="dialog-btn" style="margin-top:8px" onclick="call('open_file',{path:'${esc(file.path)}'})">Open PDF</button>
-      <iframe src="${esc(src)}" style="width:100%;height:280px;border:1px solid var(--border);margin-top:8px;border-radius:4px;"></iframe>
-    </div>`;
+      <div style="margin-top:2px;color:var(--text-4)">${fmtSize(file.size)}</div>`;
+    container.appendChild(openBtn);
+    container.innerHTML += `<iframe src="${esc(src)}" style="width:100%;height:280px;border:1px solid var(--border);margin-top:8px;border-radius:4px;"></iframe>`;
+    previewContent.innerHTML = "";
+    previewContent.appendChild(container);
     return;
   }
   if (is_audio) {

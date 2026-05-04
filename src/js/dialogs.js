@@ -89,10 +89,20 @@ async function renderCurrentTags() {
   const file = sel[0];
   const container = document.getElementById("tag-current");
   const tags = G.tagCache[file.path] || [];
-  container.innerHTML = tags.map((tag, i) =>
-    '<span class="tag-pill-edit" style="background:' + tagColor(i) + '22;color:' + tagColor(i) + '">' +
-    esc(tag) + '<span class="tag-remove" onclick="removeTag(\'' + esc(tag).replace(/'/g, "\\'") + '\')">&times;</span></span>'
-  ).join("");
+  container.innerHTML = "";
+  tags.forEach((tag, i) => {
+    const span = document.createElement("span");
+    span.className = "tag-pill-edit";
+    span.style.background = tagColor(i) + "22";
+    span.style.color = tagColor(i);
+    span.textContent = tag;
+    const remove = document.createElement("span");
+    remove.className = "tag-remove";
+    remove.textContent = "\u00d7";
+    remove.addEventListener("click", () => removeTag(tag));
+    span.appendChild(remove);
+    container.appendChild(span);
+  });
 }
 
 function addTagToSelected() {
@@ -104,7 +114,7 @@ function addTagToSelected() {
   const path = sel[0].path;
   if (!G.tagCache[path]) G.tagCache[path] = [];
   if (!G.tagCache[path].includes(tag)) G.tagCache[path].push(tag);
-  call("save_file_tags", { path, tags: G.tagCache[path] });
+  call("db_save_tags", { path, tags: G.tagCache[path] });
   input.value = "";
   renderCurrentTags();
   renderFiles(getTab(), "file-list", "status-count", "status-selection");
@@ -115,7 +125,7 @@ function removeTag(tag) {
   if (!sel.length) return;
   const path = sel[0].path;
   if (G.tagCache[path]) G.tagCache[path] = G.tagCache[path].filter(t => t !== tag);
-  call("save_file_tags", { path, tags: G.tagCache[path] || [] });
+  call("db_save_tags", { path, tags: G.tagCache[path] || [] });
   renderCurrentTags();
   renderFiles(getTab(), "file-list", "status-count", "status-selection");
 }
@@ -456,6 +466,7 @@ async function collectAllLocalData() {
       if (dbData.db_tags) data._db_tags = dbData.db_tags;
       if (dbData.db_layouts) data._db_layouts = dbData.db_layouts;
       if (dbData.db_pinned) data._db_pinned = dbData.db_pinned;
+      if (dbData.db_network_favorites) data._db_network_favorites = dbData.db_network_favorites;
     }
   } catch (e) {}
   return data;
@@ -495,8 +506,9 @@ function importAllData() {
         const dbTags = data._db_tags || "";
         const dbLayouts = data._db_layouts || "";
         const dbPinned = data._db_pinned || "";
-        if (dbTags || dbLayouts || dbPinned) {
-          call("db_import_all", { tagsJson: dbTags, layoutsJson: dbLayouts, pinnedJson: dbPinned }).then(() => {
+        const dbNetFavs = data._db_network_favorites || "";
+        if (dbTags || dbLayouts || dbPinned || dbNetFavs) {
+          call("db_import_all", { tagsJson: dbTags, layoutsJson: dbLayouts, pinnedJson: dbPinned, networkFavoritesJson: dbNetFavs }).then(() => {
             showNotice("Data imported successfully (localStorage + SQLite). Reloading...");
             setTimeout(() => location.reload(), 1500);
           }).catch(e => {

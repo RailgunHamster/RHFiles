@@ -1,15 +1,40 @@
 // main.js — initialization and event wiring
 
 document.addEventListener("DOMContentLoaded", async () => {
+  if (typeof initCommands === 'function') initCommands();
   applyI18n();
   document.querySelectorAll(".layout-btn").forEach(b => b.classList.toggle("active", b.dataset.layout === G.layout));
   renderTabs();
   updateSortArrows();
 
-  try { G.homeDirPath = await call("get_env", { key: "USERPROFILE" }); } catch (e) { G.homeDirPath = "C:\\"; }
+  {
+    const [home, label] = await Promise.all([
+      call("get_env", { key: "USERPROFILE" }).catch(() => "C:\\"),
+      call("get_window_label", {}).catch(() => "main"),
+    ]);
+    G.homeDirPath = home || "C:\\";
+    G.windowLabel = label || "main";
+  }
 
-  // restore tab state
-  const saved = loadTabState();
+  let saved = null;
+  let geo = null;
+  try {
+    const ws = await call("load_window_state", { window_id: G.windowLabel });
+    if (ws && ws.state_json) {
+      try {
+        const parsed = JSON.parse(ws.state_json);
+        if (parsed.initial_path) {
+          saved = { activeTab: 0, tabs: [{ id: 0, path: parsed.initial_path, sortF: "name", sortAsc: true }] };
+        } else if (parsed.tabs) {
+          saved = parsed;
+        }
+      } catch(e) {}
+      geo = ws;
+    }
+  } catch (e) {}
+
+  if (!saved) saved = loadTabState();
+
   const startPath = G.homeDirPath || "C:\\";
   if (saved && saved.tabs && saved.tabs.length > 0) {
     G.tabs = saved.tabs.map((st, i) => ({
@@ -52,26 +77,26 @@ document.addEventListener("DOMContentLoaded", async () => {
     requestAnimationFrame(() => { if (listEl) listEl.scrollTop = scrollTarget; });
   }
   await loadDrives();
+  document.querySelectorAll(".sidebar-item[data-nav]").forEach(el => {
+    el.addEventListener("click", () => navigateTo(homeDir(el.dataset.nav)));
+  });
+  const ftpBtn = document.getElementById("ftp-connect-btn");
+  if (ftpBtn) ftpBtn.addEventListener("click", showFtpDialog);
   loadTree(getTab().path, true);
+
   await loadTagList();
+  await loadPinnedFolders();
+
   initQuickSearch();
   renderNetwork();
   renderMtpDevices();
+  loadCloudProviders();
   try { detectWSLDistros(); } catch(e) {}
   try { detectWindowsLibraries(); } catch(e) {}
   startFileWatch();
   setupProgressListener();
   initBoxSelection(document.getElementById("file-list"));
   initBoxSelection(document.getElementById("right-file-list"));
-
-  // load file tags for display
-  try {
-    const allTags = await call("load_all_tags", {});
-    if (allTags) G.tagCache = allTags;
-  } catch (e) {}
-
-  // render pinned folders
-  try { renderPinnedFolders(); } catch (e) {}
 
   // single instance: listen for navigate-to-path from second instance
   if (window.__TAURI_INTERNALS__) {
@@ -159,11 +184,46 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   setTimeout(() => checkForUpdates(), 5000);
   applyToolbarConfig();
+
+  if (G.windowLabel === "main") {
+    call("restore_window_geometry", {}).catch(() => {});
+  }
+
+  let _cleanupDone = false;
+  setInterval(() => {
+    try {
+      const listEl = document.getElementById("file-list");
+      const state = {
+        activeTab: G.activeTab,
+        tabs: G.tabs.map(t => ({
+          id: t.id,
+          path: t.path,
+          selPaths: [...(t.sel || [])].map(i => t.entries[i]?.path).filter(Boolean),
+          scrollTop: listEl && t.id === G.activeTab ? listEl.scrollTop : (t._savedState?.scrollTop || 0),
+          sortF: t.sortF,
+          sortAsc: t.sortAsc,
+        })),
+      };
+      call("save_current_window_geometry", {
+        state_json: JSON.stringify(state),
+      }).catch(() => {});
+      if (!_cleanupDone) {
+        _cleanupDone = true;
+        call("cleanup_stale_windows", {}).catch(() => {});
+      }
+    } catch(e) {}
+  }, 15000);
 });
 
 document.addEventListener("contextmenu", e => {
   e.preventDefault();
   removeContextMenu();
+  if (e.shiftKey) {
+    const isRight = G.lastActivePane === 'right';
+    const path = isRight ? G.rp.path : getTab().path;
+    call("show_native_context_menu", { path, x: e.clientX, y: e.clientY });
+    return;
+  }
   const isRight = G.lastActivePane === 'right';
   const menu = document.createElement("div");
   menu.className = "context-menu";

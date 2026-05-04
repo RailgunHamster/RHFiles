@@ -1,5 +1,11 @@
 // ops.js — file operations + context menu
 
+function isCloudPath(isRight) {
+  const path = isRight ? G.rp.path : getTab().path;
+  const pl = path.toLowerCase();
+  return pl.includes("onedrive") || pl.includes("google drive") || pl.includes("my drive") || pl.includes("dropbox");
+}
+
 // --- progress tracking ---
 let currentOperationCancelled = false;
 
@@ -52,7 +58,7 @@ async function deleteSelected(isRight) {
   const msg = sel.length === 1 ? 'Delete "' + sel[0].name + '"?' : 'Delete ' + sel.length + ' items?';
   if (!confirm(msg)) return;
   try {
-    for (const f of sel) await call("delete_file", { path: f.path });
+    await call("delete_files", { paths: sel.map(f => f.path) });
     await refresh();
   } catch (e) { alert("Delete failed: " + e); }
 }
@@ -184,14 +190,18 @@ function showCustomProperties(info) {
   }
 
   html += `<div class="props-row"><span class="props-label">File Hash:</span><span class="props-value">
-    <button class="dialog-btn" onclick="computeAndShowHash('md5','${esc(info.path)}')">MD5</button>
-    <button class="dialog-btn" onclick="computeAndShowHash('sha256','${esc(info.path)}')">SHA256</button>
+    <button class="dialog-btn" id="hash-md5-btn">MD5</button>
+    <button class="dialog-btn" id="hash-sha256-btn">SHA256</button>
     <span id="props-hash-result" style="margin-left:8px;font-size:11px;color:var(--text-3);word-break:break-all;"></span>
   </span></div>`;
 
   html += `<div class="props-row"><span class="props-label">Opens with:</span><span class="props-value" id="props-association">Loading...</span></div>`;
 
   content.innerHTML = html;
+  const md5Btn = content.querySelector("#hash-md5-btn");
+  const sha256Btn = content.querySelector("#hash-sha256-btn");
+  if (md5Btn) md5Btn.addEventListener("click", () => computeAndShowHash('md5', info.path));
+  if (sha256Btn) sha256Btn.addEventListener("click", () => computeAndShowHash('sha256', info.path));
   dlg.style.display = "flex";
 
   if (isDir) {
@@ -299,6 +309,9 @@ function showContextMenu(x, y, isRight) {
     { label: "-", action: null },
     { label: "Unblock File", action: async () => { try { await call("unblock_file", { path: sel[0].path }); showNotice("File unblocked"); refresh(); } catch(e) { alert("Unblock failed: " + e); } }, disabled: !singleFile, hidden: !singleFile },
     { label: "View Streams...", action: async () => { try { const ads = await call("list_ads", { path: sel[0].path }); showStreamsDialog(sel[0].path, ads); } catch(e) { showStreamsDialog(sel[0].path, []); } }, disabled: !singleFile, hidden: !singleFile },
+    { label: "-", action: null },
+    { label: "\u2601 Always keep on this device", action: async () => { try { for (const f of sel) await call("cloud_pin_file", { path: f.path }); showNotice("Files pinned"); await refresh(); } catch(e) { alert("Pin failed: " + e); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
+    { label: "\u2601 Free up space", action: async () => { try { for (const f of sel) await call("cloud_unpin_file", { path: f.path }); showNotice("Space freed up"); await refresh(); } catch(e) { alert("Unpin failed: " + e); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
     { label: "-", action: null },
     { label: "Empty Recycle Bin", action: () => { if (confirm("Empty Recycle Bin?")) call("empty_recycle_bin", {}); } },
     { label: "Git Clone...", action: () => showGitCloneDialog() },

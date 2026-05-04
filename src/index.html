@@ -175,27 +175,27 @@
       </div>
       <div class="sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.quickAccess">Quick access</div>
-        <div class="sidebar-item" onclick="navigateTo(homeDir('Desktop'))">
+        <div class="sidebar-item" data-nav="Desktop">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="1.5" stroke="currentColor" stroke-width="1"/><path d="M5 14h6" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
           <span>Desktop</span>
         </div>
-        <div class="sidebar-item" onclick="navigateTo(homeDir('Downloads'))">
+        <div class="sidebar-item" data-nav="Downloads">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2v7M5 6.5L8 9.5l3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.5 10.5v2.5h11v-2.5" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Downloads</span>
         </div>
-        <div class="sidebar-item" onclick="navigateTo(homeDir('Documents'))">
+        <div class="sidebar-item" data-nav="Documents">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 2h5l4 4v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1"/><path d="M8 2v4h4" stroke="currentColor" stroke-width="1"/></svg>
           <span>Documents</span>
         </div>
-        <div class="sidebar-item" onclick="navigateTo(homeDir('Pictures'))">
+        <div class="sidebar-item" data-nav="Pictures">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="1.5" stroke="currentColor" stroke-width="1"/><circle cx="5.5" cy="6" r="1.5" stroke="currentColor" stroke-width=".9"/><path d="M1 12l4-4 2 2 3-3 5 5" stroke="currentColor" stroke-width="1" stroke-linejoin="round" fill="none"/></svg>
           <span>Pictures</span>
         </div>
-        <div class="sidebar-item" onclick="navigateTo(homeDir('Music'))">
+        <div class="sidebar-item" data-nav="Music">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="12" r="2" stroke="currentColor" stroke-width="1"/><circle cx="12" cy="10" r="2" stroke="currentColor" stroke-width="1"/><path d="M6 12V3l8-2v9" stroke="currentColor" stroke-width="1"/></svg>
           <span>Music</span>
         </div>
-        <div class="sidebar-item" onclick="navigateTo(homeDir('Videos'))">
+        <div class="sidebar-item" data-nav="Videos">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="1.5" stroke="currentColor" stroke-width="1"/><path d="M6.5 6.5v4l3.5-2z" fill="currentColor"/></svg>
           <span>Videos</span>
         </div>
@@ -203,6 +203,10 @@
       <div class="sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.tags">Tags</div>
         <div id="tag-list" class="tag-list"></div>
+      </div>
+      <div class="sidebar-section" id="cloud-section" style="display:none">
+        <div class="sidebar-heading">Cloud Storage</div>
+        <div id="cloud-list"></div>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.thisPC">This PC</div>
@@ -223,7 +227,7 @@
       <div class="sidebar-section">
         <div class="sidebar-heading">FTP</div>
         <div id="ftp-section">
-          <div class="sidebar-item" onclick="showFtpDialog()" style="cursor:pointer">
+          <div class="sidebar-item" id="ftp-connect-btn" style="cursor:pointer">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v8H2z" stroke="currentColor" stroke-width=".9"/><path d="M5 7h6M4 9h8" stroke="currentColor" stroke-width=".8"/></svg>
             <span>Connect to FTP...</span>
           </div>
@@ -434,5 +438,6 @@
 <script src="js/selection.js"></script>
 <script src="js/conflict.js"></script>
 <script src="js/main.js"></script>
+<script src="js/test-harness.js"></script>
 </body>
 </html>

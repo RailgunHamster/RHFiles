@@ -252,7 +252,10 @@ function scrollToVisible(index) {
 }
 
 // --- command palette ---
-const COMMANDS = [
+let COMMANDS = [];
+
+function initCommands() {
+  COMMANDS = [
   { id:"nav.back", label:"Go Back", action: goBack, keys:() => getShortcutBindings()["nav.back"]?.[0] },
   { id:"nav.forward", label:"Go Forward", action: goForward, keys:() => getShortcutBindings()["nav.forward"]?.[0] },
   { id:"nav.up", label:"Go Up", action: goUp, keys:() => getShortcutBindings()["nav.up"]?.[0] },
@@ -290,7 +293,8 @@ const COMMANDS = [
   { id:"settings", label:"Settings", action: openSettings, keys:"Ctrl+," },
   { id:"data.export", label:"Export Data...", action: exportAllData },
   { id:"data.import", label:"Import Data...", action: importAllData },
-];
+  ];
+}
 
 function openCommandPalette() {
   const overlay = document.getElementById("command-palette");

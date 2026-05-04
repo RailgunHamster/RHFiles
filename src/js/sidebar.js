@@ -96,15 +96,22 @@ async function loadDrives() {
   try {
     const drives = await call("get_drives");
     const list = document.getElementById("drives-list");
-    list.innerHTML = drives.map(d =>
-      `<div class="drive-item" onclick="navigateTo('${esc(d.path)}')" oncontextmenu="showDriveContextMenu(event,'${esc(d.path)}','${esc(d.label)}','${esc(d.letter)}')">
-        <div class="drive-name">
+    list.innerHTML = "";
+    for (const d of drives) {
+      const div = document.createElement("div");
+      div.className = "drive-item";
+      div.dataset.path = d.path;
+      div.dataset.label = d.label;
+      div.dataset.letter = d.letter;
+      div.innerHTML = `<div class="drive-name">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="4" width="14" height="8" rx="1.5" stroke="currentColor" stroke-width=".9"/><circle cx="11.5" cy="8" r="1" fill="currentColor" opacity=".4"/></svg>
           ${esc(d.label)} (${esc(d.letter)})
         </div>
-        <div class="drive-info">${esc(d.free)}</div>
-      </div>`
-    ).join("");
+        <div class="drive-info">${esc(d.free)}</div>`;
+      div.addEventListener("click", () => navigateTo(d.path));
+      div.addEventListener("contextmenu", e => showDriveContextMenu(e, d.path, d.label, d.letter));
+      list.appendChild(div);
+    }
   } catch (e) {}
 }
 
@@ -178,7 +185,8 @@ function showFormatDialog(letter, label) {
 // --- tags list in sidebar ---
 async function loadTagList() {
   try {
-    const allTags = await call("load_all_tags", {});
+    const allTags = await call("db_load_all_tags", {});
+    if (allTags) G.tagCache = allTags;
     const list = document.getElementById("tag-list");
     if (!allTags || !Object.keys(allTags).length) {
       list.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">No tags</div>';
@@ -192,18 +200,24 @@ async function loadTagList() {
       }
     }
     list.innerHTML = Object.keys(tagMap).map((tag, idx) =>
-      `<span class="tag-pill" style="background:${tagColor(idx)}22;color:${tagColor(idx)}" onclick="navigateToTagFiles('${esc(tag)}')" title="${tagMap[tag].length} files">${esc(tag)}</span>`
+      `<span class="tag-pill" data-tag="${esc(tag)}" style="background:${tagColor(idx)}22;color:${tagColor(idx)}" title="${tagMap[tag].length} files">${esc(tag)}</span>`
     ).join("");
+    list.querySelectorAll(".tag-pill").forEach(el => {
+      el.addEventListener("click", () => navigateToTagFiles(el.dataset.tag));
+    });
   } catch (e) {}
 }
 
 async function navigateToTagFiles(tag) {
   try {
-    const allTags = await call("load_all_tags", {});
+    const allTags = G.tagCache;
     if (!allTags) return;
-    const paths = allTags[tag];
-    if (!paths || paths.length === 0) return;
-    const firstPath = paths[0];
+    const matchingPaths = [];
+    for (const [path, tags] of Object.entries(allTags)) {
+      if (tags.includes(tag)) matchingPaths.push(path);
+    }
+    if (!matchingPaths.length) return;
+    const firstPath = matchingPaths[0];
     const parentDir = firstPath.split("\\").slice(0, -1).join("\\") || firstPath;
     const fileName = firstPath.split("\\").pop();
     await navigateTo(parentDir);
@@ -232,30 +246,37 @@ function updateSidebarSelection() {
 }
 
 // --- quick access pinning ---
-function getPinnedFolders() {
+let _pinnedFolders = [];
+
+async function loadPinnedFolders() {
   try {
-    return JSON.parse(localStorage.getItem('rhfiles-pinned') || '[]');
-  } catch (e) { return []; }
-}
-
-function pinFolder(path, name) {
-  const pinned = getPinnedFolders();
-  if (!pinned.find(p => p.path === path)) {
-    pinned.push({ path, name: name || path.split("\\").pop() });
-    localStorage.setItem('rhfiles-pinned', JSON.stringify(pinned));
-    renderPinnedFolders();
+    const data = await call("db_load_pinned", {});
+    _pinnedFolders = (data || []).map(([path, name]) => ({ path, name }));
+  } catch (e) {
+    try { _pinnedFolders = JSON.parse(localStorage.getItem('rhfiles-pinned') || '[]'); } catch(e2) { _pinnedFolders = []; }
   }
+  renderPinnedFolders();
 }
 
-function unpinFolder(path) {
-  let pinned = getPinnedFolders();
-  pinned = pinned.filter(p => p.path !== path);
-  localStorage.setItem('rhfiles-pinned', JSON.stringify(pinned));
+function getPinnedFolders() {
+  return _pinnedFolders;
+}
+
+async function pinFolder(path, name) {
+  if (_pinnedFolders.find(p => p.path === path)) return;
+  _pinnedFolders.push({ path, name: name || path.split("\\").pop() });
+  try { await call("db_save_pinned", { paths: _pinnedFolders.map(p => [p.path, p.name]) }); } catch (e) {}
+  renderPinnedFolders();
+}
+
+async function unpinFolder(path) {
+  _pinnedFolders = _pinnedFolders.filter(p => p.path !== path);
+  try { await call("db_save_pinned", { paths: _pinnedFolders.map(p => [p.path, p.name]) }); } catch (e) {}
   renderPinnedFolders();
 }
 
 function renderPinnedFolders() {
-  const pinned = getPinnedFolders();
+  const pinned = _pinnedFolders;
   let container = document.getElementById("pinned-list");
   if (!container) {
     const qaSection = document.querySelector(".sidebar-section[data-section='quickAccess']") ||
@@ -268,11 +289,16 @@ function renderPinnedFolders() {
     }
   }
   if (!container) return;
-  container.innerHTML = pinned.map(p =>
-    '<div class="sidebar-item pinned-item" data-pinned-path="' + esc(p.path) + '" onclick="navigateTo(\'' + esc(p.path) + '\')" oncontextmenu="showSidebarContextMenu(event,\'' + esc(p.path) + '\',\'' + esc(p.name) + '\')">' +
-    '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1l2 4.5H15l-3.8 3 1.4 4.7L8 10.5 3.4 13.2l1.4-4.7L1 5.5h5z" fill="#e8b130" stroke="#c99820" stroke-width=".5"/></svg>' +
-    ' ' + esc(p.name) + '</div>'
-  ).join("");
+  container.innerHTML = "";
+  for (const p of pinned) {
+    const div = document.createElement("div");
+    div.className = "sidebar-item pinned-item";
+    div.dataset.path = p.path;
+    div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1l2 4.5H15l-3.8 3 1.4 4.7L8 10.5 3.4 13.2l1.4-4.7L1 5.5h5z" fill="#e8b130" stroke="#c99820" stroke-width=".5"/></svg> ' + esc(p.name);
+    div.addEventListener("click", () => navigateTo(p.path));
+    div.addEventListener("contextmenu", e => showSidebarContextMenu(e, p.path, p.name));
+    container.appendChild(div);
+  }
 }
 
 function showSidebarContextMenu(e, path, name) {
@@ -298,6 +324,73 @@ function showSidebarContextMenu(e, path, name) {
   contextMenu = menu;
 }
 
+// --- cloud storage providers ---
+async function loadCloudProviders() {
+  const section = document.getElementById("cloud-section");
+  const list = document.getElementById("cloud-list");
+  if (!section || !list) return;
+  try {
+    const providers = await call("get_cloud_providers", {});
+    if (!providers || providers.length === 0) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "";
+    list.innerHTML = "";
+    for (const p of providers) {
+      const div = document.createElement("div");
+      div.className = "sidebar-item cloud-item";
+      div.dataset.path = p.path;
+      div.dataset.name = p.name;
+      div.dataset.id = p.id;
+      const iconSvg = getCloudIcon(p.name);
+      div.innerHTML = iconSvg + ' <span>' + esc(p.name) + '</span>';
+      div.addEventListener("click", () => navigateTo(p.path));
+      div.addEventListener("contextmenu", e => showCloudContextMenu(e, p));
+      list.appendChild(div);
+    }
+  } catch (e) {
+    section.style.display = "none";
+  }
+}
+
+function getCloudIcon(name) {
+  const n = name.toLowerCase();
+  if (n.includes("onedrive")) {
+    return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6.5 4C7.3 2.2 9 1 11 1c2.5 0 4.5 2 4.5 4.5 0 .3 0 .5-.1.8C16.3 6.8 17 8 17 9.5 17 11.4 15.4 13 13.5 13H4C2.3 13 1 11.7 1 10c0-1.5 1-2.7 2.4-3C3.1 6.2 3 5.4 3 4.5 3 2.8 4.3 1.5 6 1.5c.2 0 .3 0 .5.03" stroke="#0078d4" stroke-width="1" fill="none" transform="scale(0.8) translate(1,1)"/></svg>';
+  }
+  if (n.includes("google")) {
+    return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2a6 6 0 0 1 5.2 3H8a3 3 0 0 0-2.6 1.5L3.4 3.5A6 6 0 0 1 8 2zM2.8 4.5L4.8 8l-2 3.5A6 6 0 0 1 2 8c0-1.3.3-2.5.8-3.5zM8 14a6 6 0 0 1-5.2-3h4.4a3 3 0 0 0 2.6-1.5l2 3A6 6 0 0 1 8 14z" fill="#4285f4" transform="scale(0.85) translate(1,1)"/></svg>';
+  }
+  if (n.includes("dropbox")) {
+    return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 2l-3 2.5L4 7l3-2.5L4 2zM12 2L9 4.5 12 7l3-2.5L12 2zM1 9l3 2.5L7 9l-3-2.5L1 9zM9 9l3 2.5L15 9l-3-2.5L9 9zM4 12.5L7 15l3-2.5L7 10 4 12.5z" fill="#0061ff" transform="scale(0.85) translate(1,1)"/></svg>';
+  }
+  return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 5a4 4 0 0 1 7.5-1A3.5 3.5 0 0 1 14 7.5 3.5 3.5 0 0 1 10.5 11h-7A3.5 3.5 0 0 1 0 7.5C0 5.7 1.3 4.2 3 4" stroke="currentColor" stroke-width="1" fill="none" transform="translate(1,2)"/></svg>';
+}
+
+function showCloudContextMenu(e, provider) {
+  e.preventDefault();
+  e.stopPropagation();
+  removeContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
+  const items = [
+    { label: "Open", action: () => navigateTo(provider.path) },
+    { label: "Pin to Quick Access", action: () => pinFolder(provider.path, provider.name) },
+    { label: "Properties", action: () => showPropertiesDialog(provider.path) },
+  ];
+  items.forEach(item => {
+    const mi = document.createElement("div");
+    mi.className = "ctx-item";
+    mi.innerHTML = '<span>' + esc(item.label) + '</span>';
+    mi.addEventListener("click", () => { removeContextMenu(); if (item.action) item.action(); });
+    menu.appendChild(mi);
+  });
+  document.body.appendChild(menu);
+  contextMenu = menu;
+}
+
 // --- WSL & library detection ---
 async function detectWSLDistros() {
   try {
@@ -312,11 +405,14 @@ async function detectWSLDistros() {
       const entries = await call("list_dir", { path: wslBase, filter: "" });
       if (entries && entries.length) {
         container.style.display = "";
-        list.innerHTML = entries.filter(e => e.is_dir).map(d =>
-          '<div class="sidebar-item" onclick="navigateTo(\'' + esc(d.path) + '\')">' +
-          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width=".8"/><text x="8" y="11" text-anchor="middle" font-size="7" fill="currentColor">W</text></svg>' +
-          ' ' + esc(d.name) + '</div>'
-        ).join("");
+        list.innerHTML = "";
+        for (const d of entries.filter(e => e.is_dir)) {
+          const div = document.createElement("div");
+          div.className = "sidebar-item";
+          div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width=".8"/><text x="8" y="11" text-anchor="middle" font-size="7" fill="currentColor">W</text></svg> ' + esc(d.name);
+          div.addEventListener("click", () => navigateTo(d.path));
+          list.appendChild(div);
+        }
       }
     } catch (e) { container.style.display = "none"; }
   } catch (e) {}
@@ -338,11 +434,15 @@ async function detectWindowsLibraries() {
     }));
     let container = document.getElementById("libraries-list");
     if (!container) return;
-    container.innerHTML = mapped.map(l =>
-      '<div class="sidebar-item" onclick="navigateTo(\'' + esc(l.path) + '\')" oncontextmenu="pinFolder(\'' + esc(l.path) + '\',\'' + esc(l.name) + '\')">' +
-      '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 5h5l2 2h5v6H2V5z" stroke="var(--accent)" stroke-width=".8"/></svg>' +
-      ' ' + esc(l.name) + '</div>'
-    ).join("");
+    container.innerHTML = "";
+    for (const l of mapped) {
+      const div = document.createElement("div");
+      div.className = "sidebar-item";
+      div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 5h5l2 2h5v6H2V5z" stroke="var(--accent)" stroke-width=".8"/></svg> ' + esc(l.name);
+      div.addEventListener("click", () => navigateTo(l.path));
+      div.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); pinFolder(l.path, l.name); });
+      container.appendChild(div);
+    }
   } catch (e) {}
 }
 

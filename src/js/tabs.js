@@ -233,11 +233,15 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
     parts = path.replace(/\\/g,"/").split("/").filter(Boolean);
   }
   let html = "", accumulated = "";
+  const isDriveRoot = /^[A-Za-z]:\\?$/.test(path);
   parts.forEach((part, i) => {
     if (isUnc && i === 0) {
       accumulated = part;
     } else {
       accumulated += (accumulated ? "\\" : "") + part;
+    }
+    if (isDriveRoot && accumulated.length === 2 && accumulated.endsWith(":")) {
+      accumulated += "\\";
     }
     html += `<span class="bc-item" data-path="${esc(accumulated)}">${esc(part)}</span>`;
     if (i < parts.length - 1) {
@@ -402,11 +406,15 @@ function getSearchEngine() {
     return G.settings.searchEngine || 'auto';
 }
 
+let _filterTimer = null;
 function applyFilter() {
-  if (G.deepSearch) runDeepSearch();
-  else navigateTo(getTab().path, false);
-
+  if (_filterTimer) clearTimeout(_filterTimer);
   const query = document.getElementById("filter-input").value.trim();
+  if (G.deepSearch) { runDeepSearch(); }
+  else {
+    _filterTimer = setTimeout(() => { navigateTo(getTab().path, false); _filterTimer = null; }, query ? 150 : 0);
+  }
+
   if (query.length < 2) {
     if (query.length === 0) showSearchHistory();
     else hideQuickSearch();
@@ -468,13 +476,19 @@ function showSearchHistory() {
   const dropdown = document.getElementById("quick-search-dropdown");
   if (!dropdown) return;
   dropdown.innerHTML =
-    `<div class="quick-search-header"><span>Recent Searches</span><button class="quick-search-clear" onclick="event.stopPropagation();clearSearchHistory()">Clear</button></div>` +
-    history.map(h =>
-      `<div class="quick-search-item history-item" onclick="document.getElementById('filter-input').value='${esc(h).replace(/'/g, "\\'")}';applyFilter();">
+    `<div class="quick-search-header"><span>Recent Searches</span><button class="quick-search-clear" onclick="event.stopPropagation();clearSearchHistory()">Clear</button></div>`;
+  for (const h of history) {
+    const div = document.createElement("div");
+    div.className = "quick-search-item history-item";
+    div.innerHTML = `
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;color:var(--text-4)"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M4.5 8a3.5 3.5 0 016.5-1.5" stroke="currentColor" stroke-width="1" fill="none" stroke-linecap="round"/></svg>
-        <span class="quick-search-item-name">${esc(h)}</span>
-      </div>`
-    ).join("");
+        <span class="quick-search-item-name">${esc(h)}</span>`;
+    div.addEventListener("click", () => {
+      document.getElementById("filter-input").value = h;
+      applyFilter();
+    });
+    dropdown.appendChild(div);
+  }
   _searchDropdownIdx = -1;
   dropdown.style.display = "block";
   setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
@@ -601,14 +615,19 @@ function showQuickSearchResults(results, engine) {
     const modeLabel = _searchMode !== 'normal' ? ` <span style="color:var(--accent)">${_searchMode}</span>` : '';
 
     dropdown.innerHTML =
-        `<div class="quick-search-header"><span>${results.length} results${modeLabel}</span><span class="quick-search-engine">${engineLabel}</span></div>` +
-        results.map((r, i) =>
-            `<div class="quick-search-item${r.is_dir ? ' dir' : ''}${r.size !== undefined ? '' : ''}" data-path="${esc(r.path)}" data-index="${i}" onclick="quickSearchNavigate('${esc(r.path)}')">
-                <span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
+        `<div class="quick-search-header"><span>${results.length} results${modeLabel}</span><span class="quick-search-engine">${engineLabel}</span></div>`;
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const div = document.createElement("div");
+      div.className = "quick-search-item" + (r.is_dir ? " dir" : "");
+      div.dataset.path = r.path;
+      div.dataset.index = i;
+      div.innerHTML = `<span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
                 <span class="quick-search-item-meta">${r.size ? fmtSize(r.size) : ''}${r.modified ? ' · ' + r.modified.split(' ')[0] : ''}</span>
-                <span class="quick-search-item-path">${esc(r.path)}</span>
-            </div>`
-        ).join("");
+                <span class="quick-search-item-path">${esc(r.path)}</span>`;
+      div.addEventListener("click", () => quickSearchNavigate(r.path));
+      dropdown.appendChild(div);
+    }
     _searchDropdownIdx = -1;
     dropdown.style.display = "block";
 
@@ -700,39 +719,44 @@ function showHomePage() {
     { name: "Music", path: homeDir("Music"), icon: "M4 12a2 2 0 11-0-4M12 10a2 2 0 11-0-4M6 12V3l8-2v9" },
     { name: "Videos", path: homeDir("Videos"), icon: "M1 3h14v10H1z" },
   ];
-  quickAccess.innerHTML = folders.map(f => `
-    <div class="home-card" onclick="navigateTo('${esc(f.path)}')">
-      <svg class="home-card-icon" viewBox="0 0 16 16" fill="none"><path d="${f.icon}" stroke="currentColor" stroke-width="1"/></svg>
-      <div class="home-card-name">${esc(f.name)}</div>
-    </div>
-  `).join("");
+  quickAccess.innerHTML = "";
+  for (const f of folders) {
+    const card = document.createElement("div");
+    card.className = "home-card";
+    card.innerHTML = `<svg class="home-card-icon" viewBox="0 0 16 16" fill="none"><path d="${f.icon}" stroke="currentColor" stroke-width="1"/></svg><div class="home-card-name">${esc(f.name)}</div>`;
+    card.addEventListener("click", () => navigateTo(f.path));
+    quickAccess.appendChild(card);
+  }
   renderHomeDrives();
 
   const recentData = JSON.parse(localStorage.getItem('rhfiles-recent') || '[]');
   const homeRecent = document.getElementById("home-recent");
-  homeRecent.innerHTML = recentData.slice(0, 20).map(r =>
-    `<div class="home-recent-item" onclick="navigateTo('${esc(r.path.replace(/\\[^\\]+$/, ''))}')">
-        <span>${esc(r.name)}</span>
-        <span style="color:var(--text-4);font-size:11px">${esc(r.path)}</span>
-    </div>`
-  ).join("") || '<div style="color:var(--text-4);padding:8px">No recent files</div>';
+  homeRecent.innerHTML = "";
+  recentData.slice(0, 20).forEach(r => {
+    const div = document.createElement("div");
+    div.className = "home-recent-item";
+    div.innerHTML = `<span>${esc(r.name)}</span><span style="color:var(--text-4);font-size:11px">${esc(r.path)}</span>`;
+    div.addEventListener("click", () => navigateTo(r.path.replace(/\\[^\\]+$/, '')));
+    homeRecent.appendChild(div);
+  });
+  if (!recentData.length) homeRecent.innerHTML = '<div style="color:var(--text-4);padding:8px">No recent files</div>';
 }
 
 async function renderHomeDrives() {
   const container = document.getElementById("home-drives");
   try {
     const drives = await call("get_drives");
-    container.innerHTML = drives.map(d => {
+    container.innerHTML = "";
+    for (const d of drives) {
       const pct = d.total_bytes ? (d.free_bytes / d.total_bytes * 100) : 0;
       const usedPct = 100 - pct;
       const color = usedPct > 90 ? '#d32f2f' : usedPct > 70 ? '#ff9800' : '#0078d4';
-      return `<div class="home-drive-card" onclick="navigateTo('${esc(d.path)}')">
-        <div class="home-drive-letter">${esc(d.letter)}</div>
-        <div class="home-drive-label">${esc(d.label)}</div>
-        <div class="home-drive-bar"><div class="home-drive-bar-fill" style="width:${usedPct}%;background:${color}"></div></div>
-        <div style="font-size:11px;color:var(--text-4);margin-top:4px">${esc(d.free)}</div>
-      </div>`;
-    }).join("");
+      const card = document.createElement("div");
+      card.className = "home-drive-card";
+      card.innerHTML = `<div class="home-drive-letter">${esc(d.letter)}</div><div class="home-drive-label">${esc(d.label)}</div><div class="home-drive-bar"><div class="home-drive-bar-fill" style="width:${usedPct}%;background:${color}"></div></div><div style="font-size:11px;color:var(--text-4);margin-top:4px">${esc(d.free)}</div>`;
+      card.addEventListener("click", () => navigateTo(d.path));
+      container.appendChild(card);
+    }
   } catch (e) {}
 }
 

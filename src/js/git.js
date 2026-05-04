@@ -4,17 +4,21 @@ async function loadGitStatus(path) {
   try {
     G.gitCache = await call("git_status", { path });
     const statusEl = document.getElementById("status-git");
-    if (statusEl && Object.keys(G.gitCache).length > 0) {
-      const counts = { modified: 0, added: 0, deleted: 0, untracked: 0 };
-      for (const s of Object.values(G.gitCache)) { if (counts[s] !== undefined) counts[s]++; }
-      const parts = [];
-      if (counts.modified) parts.push("M:" + counts.modified);
-      if (counts.added) parts.push("A:" + counts.added);
-      if (counts.deleted) parts.push("D:" + counts.deleted);
-      if (counts.untracked) parts.push("?:" + counts.untracked);
-      if (parts.length) statusEl.textContent = "Git: " + parts.join(" ");
+    if (statusEl) {
+      if (Object.keys(G.gitCache).length > 0) {
+        const counts = { modified: 0, added: 0, deleted: 0, untracked: 0 };
+        for (const s of Object.values(G.gitCache)) { if (counts[s] !== undefined) counts[s]++; }
+        const parts = [];
+        if (counts.modified) parts.push("M:" + counts.modified);
+        if (counts.added) parts.push("A:" + counts.added);
+        if (counts.deleted) parts.push("D:" + counts.deleted);
+        if (counts.untracked) parts.push("?:" + counts.untracked);
+        if (parts.length) statusEl.textContent = "Git: " + parts.join(" ");
+        else statusEl.textContent = "";
+      } else {
+        statusEl.textContent = "";
+      }
     }
-    renderFiles(getTab(), "file-list", "status-count", "status-selection");
   } catch (e) { G.gitCache = {}; }
 }
 
