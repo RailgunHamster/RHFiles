@@ -220,14 +220,17 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
   }
 
   let _scrollRaf = 0;
-  list.addEventListener('scroll', () => {
+  let _scrollHandler = () => {
     if (!_scrollRaf) {
       _scrollRaf = requestAnimationFrame(() => {
         _scrollRaf = 0;
         renderVisible();
       });
     }
-  });
+  };
+  list.removeEventListener('scroll', list._vlistScrollHandler);
+  list._vlistScrollHandler = _scrollHandler;
+  list.addEventListener('scroll', _scrollHandler);
   renderVisible();
 }
 
@@ -425,6 +428,8 @@ function loadThumbnail(path, container, file) {
 
 function handleRowClick(e, index, sel, tabOrPane, isRight) {
   G.lastActivePane = isRight ? 'right' : 'left';
+  const listId = isRight ? "right-file-list" : "file-list";
+  const list = document.getElementById(listId);
   if (e.ctrlKey) {
     if (sel.has(index)) sel.delete(index);
     else sel.add(index);
@@ -439,8 +444,14 @@ function handleRowClick(e, index, sel, tabOrPane, isRight) {
     sel.add(index);
     tabOrPane.lastIdx = index;
   }
-  if (isRight) renderFiles(tabOrPane, "right-file-list", "right-status-count", null, true);
-  else renderFiles(tabOrPane, "file-list", "status-count", "status-selection");
+  list.querySelectorAll(".file-row").forEach(row => {
+    const idx = parseInt(row.dataset.index);
+    if (isNaN(idx)) return;
+    row.classList.toggle("selected", sel.has(idx));
+  });
+  const countId = isRight ? "right-status-count" : "status-count";
+  const selId = isRight ? null : "status-selection";
+  updateStatus(tabOrPane, countId, selId);
   updatePreviewForSelection();
 }
 

@@ -389,7 +389,7 @@ pub fn extract_file_icon(path: &Path, size: u32) -> Result<String, String> {
     let scanlines = unsafe {
         GetDIBits(hdc, icon_info.hbmColor, 0, target_size, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS)
     };
-    unsafe { SelectObject(hdc, old); DeleteDC(hdc) };
+    unsafe { SelectObject(hdc, old); let _ = DeleteDC(hdc); };
 
     if !icon_info.hbmColor.is_invalid() {
         unsafe { let _ = DeleteObject(icon_info.hbmColor.into()); }

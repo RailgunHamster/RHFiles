@@ -233,17 +233,17 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
     parts = path.replace(/\\/g,"/").split("/").filter(Boolean);
   }
   let html = "", accumulated = "";
-  const isDriveRoot = /^[A-Za-z]:\\?$/.test(path);
   parts.forEach((part, i) => {
     if (isUnc && i === 0) {
       accumulated = part;
     } else {
       accumulated += (accumulated ? "\\" : "") + part;
     }
-    if (isDriveRoot && accumulated.length === 2 && accumulated.endsWith(":")) {
+    if (/^[A-Za-z]:$/.test(accumulated)) {
       accumulated += "\\";
     }
-    html += `<span class="bc-item" data-path="${esc(accumulated)}">${esc(part)}</span>`;
+    const displayPart = /^[A-Za-z]:$/.test(part) ? part.charAt(0) : part;
+    html += `<span class="bc-item" data-path="${esc(accumulated)}">${esc(displayPart)}</span>`;
     if (i < parts.length - 1) {
       html += `<span class="bc-sep" data-path="${esc(accumulated)}">\u203a</span>`;
     }
