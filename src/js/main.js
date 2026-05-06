@@ -223,13 +223,13 @@ document.addEventListener("contextmenu", e => {
   if (e.shiftKey) {
     const isRight = G.lastActivePane === 'right';
     const path = isRight ? G.rp.path : getTab().path;
-    call("show_native_context_menu", { path, x: e.clientX, y: e.clientY });
+    showShellVerbsMenu(path, e.clientX, e.clientY);
     return;
   }
   const isRight = G.lastActivePane === 'right';
   const menu = document.createElement("div");
   menu.className = "context-menu";
-  menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
+  menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;z-index:9999;`;
   const items = [
     { label: t('ctx.newFolder'), shortcut: "F7", action: newFolder },
     { label: t('ctx.newFile'), shortcut: "Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
@@ -242,6 +242,8 @@ document.addEventListener("contextmenu", e => {
     { label: G.showHidden ? t('ctx.hideHidden') : t('ctx.showHidden'), action: toggleHidden },
     { label: t('ctx.openInTerminal'), action: () => { const path = isRight ? G.rp.path : getTab().path; call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(isRight ? G.rp.path : getTab().path) },
+    { label: "-", action: null },
+    { label: t('ctx.moreOptions'), shortcut: "Shift+F10", action: () => { const path = isRight ? G.rp.path : getTab().path; showShellVerbsMenu(path, e.clientX, e.clientY); } },
   ];
   items.forEach(item => {
     if (item.label === "-") {
@@ -255,7 +257,7 @@ document.addEventListener("contextmenu", e => {
     }
   });
   document.body.appendChild(menu);
-  contextMenu = menu;
+  _ctxShow(menu);
   requestAnimationFrame(() => {
     const rect = menu.getBoundingClientRect();
     if (rect.right > window.innerWidth) menu.style.left = (e.clientX - rect.width) + "px";

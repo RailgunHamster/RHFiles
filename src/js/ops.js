@@ -249,6 +249,38 @@ function closeProperties() {
 // --- context menu ---
 let contextMenu = null;
 
+async function showShellVerbsMenu(path, cx, cy) {
+  removeContextMenu();
+  let verbs;
+  try {
+    verbs = await call("get_shell_verbs", { path });
+    if (!verbs || !verbs.length) return;
+  } catch (e) { return; }
+
+  const sub = document.createElement("div");
+  sub.className = "context-menu";
+  sub.style.cssText = `left:${cx}px;top:${cy}px;z-index:9999;`;
+
+  verbs.forEach(v => {
+    const mi = document.createElement("div");
+    mi.className = "ctx-item";
+    mi.innerHTML = `<span>${esc(v.label)}</span>`;
+    mi.addEventListener("click", () => {
+      removeContextMenu();
+      call("invoke_shell_verb", { path, verb: v.verb });
+    });
+    sub.appendChild(mi);
+  });
+
+  document.body.appendChild(sub);
+  requestAnimationFrame(() => {
+    const r = sub.getBoundingClientRect();
+    if (r.right > window.innerWidth) sub.style.left = (cx - r.width) + "px";
+    if (r.bottom > window.innerHeight) sub.style.top = (cy - r.height) + "px";
+  });
+  _ctxShow(sub);
+}
+
 function showContextMenu(x, y, isRight) {
   removeContextMenu();
   const sel = getSelectedPaths(isRight);
@@ -265,7 +297,7 @@ function showContextMenu(x, y, isRight) {
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
-  menu.style.cssText = `left:${x}px;top:${y}px;`;
+  menu.style.cssText = `left:${x}px;top:${y}px;z-index:9999;`;
 
   const items = [
     { label: t('ctx.open'), shortcut:"Enter", action: () => { if (singleSelection) { if (sel[0].is_dir) { if (isRight) rpNavigateTo(sel[0].path); else navigateTo(sel[0].path); } else openFileHandler(sel[0].path); } }, disabled: !singleSelection },
@@ -340,33 +372,32 @@ function showContextMenu(x, y, isRight) {
   });
 
   document.body.appendChild(menu);
-  contextMenu = menu;
+  _ctxShow(menu);
 
-  if (singleFile) {
-    (async () => {
-      try {
-        const verbs = await call("get_shell_verbs", { path: sel[0].path });
-        if (verbs && verbs.length > 0 && contextMenu === menu) {
-          const skip = ['open', 'edit', 'print', 'explore', 'find', 'runas'];
-          const extra = verbs.filter(v => !skip.includes(String(v.verb).toLowerCase()));
-          if (extra.length > 0) {
-            const sep = document.createElement("div");
-            sep.className = "ctx-sep";
-            menu.appendChild(sep);
-            for (const v of extra) {
-              const mi = document.createElement("div");
-              mi.className = "ctx-item";
-              mi.innerHTML = `<span>${esc(v.label)}</span>`;
-              mi.addEventListener("click", () => {
-                removeContextMenu();
-                call("invoke_shell_verb", { path: sel[0].path, verb: v.verb });
-              });
-              menu.appendChild(mi);
-            }
-          }
-        }
-      } catch (e) {}
-    })();
+  if (singleSelection) {
+    const sep = document.createElement("div");
+    sep.className = "ctx-sep";
+    menu.appendChild(sep);
+    const loadingItem = document.createElement("div");
+    loadingItem.className = "ctx-item disabled";
+    loadingItem.innerHTML = `<span>${t('ctx.moreOptions')}...</span>`;
+    menu.appendChild(loadingItem);
+    call("get_shell_verbs", { path: sel[0].path }).then(verbs => {
+      if (!verbs || !verbs.length) { loadingItem.remove(); return; }
+      loadingItem.remove();
+      verbs.forEach(v => {
+        const mi = document.createElement("div");
+        mi.className = "ctx-item";
+        mi.innerHTML = `<span>${esc(v.label)}</span>`;
+        mi.addEventListener("click", () => { removeContextMenu(); call("invoke_shell_verb", { path: sel[0].path, verb: v.verb }); });
+        menu.appendChild(mi);
+      });
+      requestAnimationFrame(() => {
+        const rect = menu.getBoundingClientRect();
+        if (rect.bottom > window.innerHeight) menu.style.top = (parseInt(menu.style.top) - (rect.bottom - window.innerHeight + 8)) + "px";
+        if (rect.right > window.innerWidth) menu.style.left = (parseInt(menu.style.left) - (rect.right - window.innerWidth)) + "px";
+      });
+    }).catch(() => { loadingItem.remove(); });
   }
 
   requestAnimationFrame(() => {
@@ -376,8 +407,36 @@ function showContextMenu(x, y, isRight) {
   });
 }
 
-function removeContextMenu() { if (contextMenu) { contextMenu.remove(); contextMenu = null; } }
-document.addEventListener("click", e => { if (contextMenu && !contextMenu.contains(e.target)) removeContextMenu(); });
+function removeContextMenu() {
+  if (contextMenu) {
+    contextMenu.remove();
+    contextMenu = null;
+  }
+  // Belt and suspenders: remove any orphaned context menus
+  document.querySelectorAll(".context-menu").forEach(el => {
+    el.remove();
+  });
+  document.removeEventListener("pointerdown", _ctxClosePtr, true);
+  window.removeEventListener("blur", _ctxCloseBlur);
+}
+function _ctxClosePtr(e) {
+  if (contextMenu && !contextMenu.contains(e.target)) removeContextMenu();
+}
+function _ctxCloseBlur() {
+  if (contextMenu) removeContextMenu();
+}
+function _ctxShow(menu) {
+  contextMenu = menu;
+  // Register close handlers when menu is shown
+  document.addEventListener("pointerdown", _ctxClosePtr, true);
+  window.addEventListener("blur", _ctxCloseBlur);
+}
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && contextMenu) removeContextMenu();
+});
+document.addEventListener("contextmenu", e => {
+  if (contextMenu && !contextMenu.contains(e.target)) removeContextMenu();
+});
 
 // --- drag & drop ---
 document.addEventListener("dragover", e => e.preventDefault());
