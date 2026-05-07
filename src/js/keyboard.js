@@ -176,33 +176,6 @@ document.addEventListener("keydown", async e => {
       return;
     }
 
-    if (actionId === "nav.up" || actionId === "nav.down") {
-      const isRight = G.lastActivePane === 'right';
-      const pane = isRight ? G.rp : getTab();
-      const entries = pane.entries || [];
-      const sel = pane.sel || new Set();
-      const indices = [...sel];
-      const focusedIndex = indices.length ? indices[indices.length - 1] : -1;
-
-      if (actionId === "nav.up") {
-        if (focusedIndex > 0) {
-          sel.clear(); sel.add(focusedIndex - 1);
-          pane.lastIdx = focusedIndex - 1;
-        }
-      } else {
-        if (focusedIndex < entries.length - 1) {
-          sel.clear(); sel.add(focusedIndex < 0 ? 0 : focusedIndex + 1);
-          pane.lastIdx = focusedIndex < 0 ? 0 : focusedIndex + 1;
-        }
-      }
-      const listId = isRight ? "right-file-list" : "file-list";
-      const countId = isRight ? "right-status-count" : "status-count";
-      renderFiles(pane, listId, countId, null, isRight);
-      scrollToVisible(pane.lastIdx);
-      updatePreviewForSelection();
-      return;
-    }
-
     const handler = ACTION_HANDLERS[actionId];
     if (handler) await handler();
     return;

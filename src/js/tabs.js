@@ -802,8 +802,29 @@ function hideHomePage() {
 
 async function goUp() {
   try {
-    const parent = await call("parent_path", { path: getTab().path });
-    await navigateTo(parent);
+    const isRight = G.lastActivePane === 'right' && G.dualOn;
+    const pane = isRight ? G.rp : getTab();
+    const prevDirName = pane.path.split("\\").pop() || pane.path.split("/").pop();
+    const parent = await call("parent_path", { path: pane.path });
+    if (isRight) {
+      await rpNavigateTo(parent);
+    } else {
+      await navigateTo(parent);
+    }
+    // Select the folder we just came from
+    const entries = pane.entries || [];
+    const idx = entries.findIndex(e => e.is_dir && e.name === prevDirName);
+    if (idx >= 0) {
+      pane.sel.clear();
+      pane.sel.add(idx);
+      pane.lastIdx = idx;
+      const listId = isRight ? "right-file-list" : "file-list";
+      const countId = isRight ? "right-status-count" : "status-count";
+      renderFiles(pane, listId, countId, null, isRight);
+      scrollToVisible(idx);
+      updatePreviewForSelection();
+    }
+    return parent;
   } catch (e) {}
 }
 
