@@ -288,22 +288,34 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
 async function showShellVerbsMenu(path, cx, cy) {
   removeContextMenu();
   let verbs;
+  // Try COM (full Windows Explorer menu) first, fall back to registry scan
   try {
-    verbs = await call("get_shell_verbs", { path });
-    if (!verbs || !verbs.length) return;
-  } catch (e) { return; }
+    verbs = await call("query_context_menu", { path });
+  } catch (e) { /* COM failed */ }
+  if (!verbs || !verbs.length) {
+    try { verbs = await call("get_shell_verbs", { path }); } catch (e) {}
+  }
+  if (!verbs || !verbs.length) return;
 
   const sub = document.createElement("div");
   sub.className = "context-menu";
   sub.style.cssText = `left:${cx}px;top:${cy}px;z-index:9999;`;
 
   verbs.forEach(v => {
+    if (v.separator) {
+      const sep = document.createElement("div"); sep.className = "ctx-sep"; sub.appendChild(sep);
+      return;
+    }
     const mi = document.createElement("div");
     mi.className = "ctx-item";
     mi.innerHTML = `<span>${esc(v.label)}</span>`;
     mi.addEventListener("click", () => {
       removeContextMenu();
-      call("invoke_shell_verb", { path, verb: v.verb });
+      if (v.id !== undefined) {
+        call("invoke_context_menu_command", { path, cmdId: v.id });
+      } else if (v.verb !== undefined) {
+        call("invoke_shell_verb", { path, verb: v.verb });
+      }
     });
     sub.appendChild(mi);
   });
@@ -313,15 +325,16 @@ async function showShellVerbsMenu(path, cx, cy) {
   _ctxShow(sub);
 }
 
-/// Render a context menu from shell verbs (registry scan — fast, no COM).
+/// Render a context menu from shell verbs via registry scan (fast, no COM).
+/// Falls back to built-in menu if registry returns nothing.
 /// Items have the shape: { verb, label, children?: [...] }
 async function showComContextMenu(path, cx, cy) {
   removeContextMenu();
   let items;
   try {
     items = await call("get_shell_verbs", { path });
-    if (!items || !items.length) { showContextMenu(cx, cy); return; }
-  } catch (e) { showContextMenu(cx, cy); return; }
+  } catch (e) { /* registry failed */ }
+  if (!items || !items.length) { showContextMenu(cx, cy); return; }
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
@@ -497,10 +510,17 @@ function showContextMenu(x, y, isRight) {
     loadingItem.className = "ctx-item disabled";
     loadingItem.innerHTML = `<span>${t('ctx.moreOptions')}...</span>`;
     menu.appendChild(loadingItem);
-    call("get_shell_verbs", { path: sel[0].path }).then(verbs => {
+
+    async function loadShellVerbs() {
+      let verbs;
+      try { verbs = await call("get_shell_verbs", { path: sel[0].path }); } catch(e) {}
       if (!verbs || !verbs.length) { loadingItem.remove(); return; }
       loadingItem.remove();
       verbs.forEach(v => {
+        if (v.separator) {
+          const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
+          return;
+        }
         const mi = document.createElement("div");
         mi.className = "ctx-item";
         mi.innerHTML = `<span>${esc(v.label)}</span>`;
@@ -508,7 +528,8 @@ function showContextMenu(x, y, isRight) {
         menu.appendChild(mi);
       });
       requestAnimationFrame(() => clampMenuPosition(menu, x, y));
-    }).catch(() => { loadingItem.remove(); });
+    }
+    loadShellVerbs();
   }
 
   requestAnimationFrame(() => clampMenuPosition(menu, x, y));

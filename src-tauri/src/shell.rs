@@ -51,6 +51,40 @@ fn resolve_mui_string(raw: &str) -> String {
     raw.to_string()
 }
 
+/// Check whether a label looks like a raw file path, DLL/EXE name, or other garbage
+/// that shouldn't appear in a user-facing context menu.
+fn is_garbage_label(label: &str) -> bool {
+    if label.is_empty() {
+        return true;
+    }
+    let lower = label.to_lowercase();
+    // File paths with drive letter or UNC
+    if lower.contains(":\\") || lower.starts_with("\\\\") {
+        return true;
+    }
+    // Known system file extensions used as verb labels (not user-facing)
+    let system_exts = [".dll", ".exe", ".cpl", ".ocx", ".ax", ".sys", ".drv", ".scr", ".mui"];
+    for ext in &system_exts {
+        if lower.ends_with(ext) {
+            // Allow if the label also contains spaces (likely a real display name like "Microsoft OneDrive Setup.exe")
+            if !label.contains(' ') {
+                return true;
+            }
+        }
+    }
+    // Windows internal identifiers that leak as raw labels
+    if lower == "open" || lower == "explore" || lower == "find" || lower == "print" || lower == "edit" {
+        // These are default verbs - only filter if MUIVerb was empty and raw label is just the verb
+        // Check if the label looks like it came from the verb name, not a proper display string
+        return false; // Allow these - they may be the only label for a verb
+    }
+    // Labels that are purely GUIDs
+    if lower.starts_with('{') && lower.ends_with('}') && lower.len() > 30 {
+        return true;
+    }
+    false
+}
+
 /// Check whether a shell verb should be shown in the regular context menu.
 /// Filters out: Extended (Shift-only), HideBasedOnVelocityId, ProgrammaticAccessOnly.
 fn should_include_verb(verb_key: &winreg::RegKey) -> bool {
@@ -124,6 +158,11 @@ fn collect_verb_item(
     let mui_label: String = verb_key.get_value("MUIVerb").unwrap_or_default();
     let candidate = if !mui_label.is_empty() { &mui_label } else { &raw_label };
     let label = resolve_mui_string(candidate);
+
+    // Filter out garbage labels: raw file paths, DLL/EXE filenames, internal identifiers
+    if is_garbage_label(&label) {
+        return None;
+    }
 
     seen.insert(verb_name.to_string());
 

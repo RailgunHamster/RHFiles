@@ -253,6 +253,8 @@ function fallbackCall(cmd, args) {
     case "list_mtp_devices": return [];
     case "get_shell_verbs": return [];
     case "invoke_shell_verb": return null;
+    case "query_context_menu": return [];
+    case "invoke_context_menu_command": return null;
     case "cancel_operation": return null;
     case "is_everything_available": return false;
     case "quick_search": return [];
