@@ -249,6 +249,42 @@ function closeProperties() {
 // --- context menu ---
 let contextMenu = null;
 
+/// Clamp context menu position so it never overflows the viewport.
+/// Falls back to scroll if the menu is larger than the viewport.
+function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
+  const rect = menu.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  // Horizontal: prefer right of anchor, flip left if overflow
+  if (rect.right > vw) {
+    const flippedLeft = anchorX - rect.width;
+    if (flippedLeft >= 0) {
+      menu.style.left = flippedLeft + "px";
+    } else {
+      // Not enough room either side — clamp to left edge + limit width
+      menu.style.left = "0px";
+      menu.style.maxWidth = (vw - 4) + "px";
+    }
+  }
+
+  // Vertical: prefer below anchor, flip above if overflow
+  if (rect.bottom > vh) {
+    const flippedTop = anchorY - rect.height;
+    if (flippedTop >= 0) {
+      menu.style.top = flippedTop + "px";
+    } else {
+      // Not enough room either side — clamp near top + limit height
+      menu.style.top = minVisible + "px";
+      const availH = vh - minVisible - 8;
+      if (rect.height > availH) {
+        menu.style.maxHeight = availH + "px";
+        menu.style.overflowY = "auto";
+      }
+    }
+  }
+}
+
 async function showShellVerbsMenu(path, cx, cy) {
   removeContextMenu();
   let verbs;
@@ -273,12 +309,91 @@ async function showShellVerbsMenu(path, cx, cy) {
   });
 
   document.body.appendChild(sub);
-  requestAnimationFrame(() => {
-    const r = sub.getBoundingClientRect();
-    if (r.right > window.innerWidth) sub.style.left = (cx - r.width) + "px";
-    if (r.bottom > window.innerHeight) sub.style.top = (cy - r.height) + "px";
-  });
+  requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
   _ctxShow(sub);
+}
+
+/// Render a context menu from shell verbs (registry scan — fast, no COM).
+/// Items have the shape: { verb, label, children?: [...] }
+async function showComContextMenu(path, cx, cy) {
+  removeContextMenu();
+  let items;
+  try {
+    items = await call("get_shell_verbs", { path });
+    if (!items || !items.length) { showContextMenu(cx, cy); return; }
+  } catch (e) { showContextMenu(cx, cy); return; }
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.style.cssText = `left:${cx}px;top:${cy}px;z-index:9999;`;
+
+  function closeAllSubs() {
+    menu.querySelectorAll(".ctx-item").forEach(el => { if (el._subOpen) { el._subContainer.style.display = "none"; el._subContainer.innerHTML = ""; el._subOpen = false; } });
+  }
+
+  function openSub(parentEl, children, depth) {
+    const sub = parentEl._subContainer;
+    if (!sub) return;
+    sub.innerHTML = "";
+    buildItems(sub, children, depth);
+    sub.style.display = "block";
+    parentEl._subOpen = true;
+
+    const pRect = parentEl.getBoundingClientRect();
+    sub.style.left = (pRect.right + 2) + "px";
+    sub.style.top = pRect.top + "px";
+
+    requestAnimationFrame(() => {
+      const sRect = sub.getBoundingClientRect();
+      if (sRect.right > window.innerWidth) sub.style.left = (pRect.left - sRect.width - 2) + "px";
+      if (sRect.bottom > window.innerHeight) sub.style.top = Math.max(4, window.innerHeight - sRect.height - 8) + "px";
+    });
+  }
+
+  function buildItems(parentEl, itemList, depth) {
+    itemList.forEach(it => {
+      if (it.separator) {
+        const sep = document.createElement("div"); sep.className = "ctx-sep"; parentEl.appendChild(sep);
+        return;
+      }
+      const mi = document.createElement("div");
+      mi.className = "ctx-item";
+      const hasChildren = it.children && it.children.length > 0;
+      mi.innerHTML = `<span>${esc(it.label)}</span>${hasChildren ? '<span class="ctx-arrow">\u25b6</span>' : ''}`;
+      mi.addEventListener("click", e => {
+        e.stopPropagation();
+        if (hasChildren) {
+          if (mi._subOpen) { mi._subContainer.style.display = "none"; mi._subContainer.innerHTML = ""; mi._subOpen = false; return; }
+          closeAllSubs();
+          openSub(mi, it.children, depth + 1);
+        } else {
+          removeContextMenu();
+          call("invoke_shell_verb", { path, verb: it.verb }).catch(() => {});
+        }
+      });
+      parentEl.appendChild(mi);
+
+      if (hasChildren) {
+        const subContainer = document.createElement("div");
+        subContainer.className = "context-menu ctx-submenu";
+        subContainer.style.display = "none";
+        subContainer.style.position = "fixed";
+        subContainer.style.zIndex = "10001";
+        parentEl.appendChild(subContainer);
+        mi._subContainer = subContainer;
+      }
+    });
+  }
+
+  buildItems(menu, items, 0);
+
+  document.body.appendChild(menu);
+  _ctxShow(menu);
+  requestAnimationFrame(() => clampMenuPosition(menu, cx, cy));
+
+  document.addEventListener("pointerdown", function closeSubs(e) {
+    if (!menu.contains(e.target)) { closeAllSubs(); document.removeEventListener("pointerdown", closeSubs); }
+  }, true);
 }
 
 function showContextMenu(x, y, isRight) {
@@ -392,19 +507,11 @@ function showContextMenu(x, y, isRight) {
         mi.addEventListener("click", () => { removeContextMenu(); call("invoke_shell_verb", { path: sel[0].path, verb: v.verb }); });
         menu.appendChild(mi);
       });
-      requestAnimationFrame(() => {
-        const rect = menu.getBoundingClientRect();
-        if (rect.bottom > window.innerHeight) menu.style.top = (parseInt(menu.style.top) - (rect.bottom - window.innerHeight + 8)) + "px";
-        if (rect.right > window.innerWidth) menu.style.left = (parseInt(menu.style.left) - (rect.right - window.innerWidth)) + "px";
-      });
+      requestAnimationFrame(() => clampMenuPosition(menu, x, y));
     }).catch(() => { loadingItem.remove(); });
   }
 
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + "px";
-    if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + "px";
-  });
+  requestAnimationFrame(() => clampMenuPosition(menu, x, y));
 }
 
 function removeContextMenu() {
