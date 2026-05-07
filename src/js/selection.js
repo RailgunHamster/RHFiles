@@ -5,6 +5,21 @@ function initBoxSelection(listEl) {
   let selStartX = 0, selStartY = 0;
   let selectionRect = null;
 
+  // Click on empty area: clear selection
+  listEl.addEventListener('click', e => {
+    if (e.target.closest('.file-row')) return;
+    const isRight = listEl.id === 'right-file-list';
+    const tabOrPane = isRight ? G.rp : getTab();
+    if (!tabOrPane || !tabOrPane.entries) return;
+    tabOrPane.sel.clear();
+    tabOrPane.lastIdx = -1;
+    const listId = isRight ? "right-file-list" : "file-list";
+    const countId = isRight ? "right-status-count" : "status-count";
+    const selId = isRight ? null : "status-selection";
+    renderFiles(tabOrPane, listId, countId, selId, isRight);
+    updatePreviewForSelection();
+  });
+
   listEl.addEventListener('mousedown', e => {
     if (e.target.closest('.file-row') || e.button !== 0) return;
     isSelecting = true;
