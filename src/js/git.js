@@ -19,7 +19,7 @@ async function loadGitStatus(path) {
         statusEl.textContent = "";
       }
     }
-  } catch (e) { G.gitCache = {}; }
+  } catch (e) { G.gitCache = {}; const statusEl = document.getElementById("status-git"); if (statusEl) statusEl.textContent = ""; }
 }
 
 // --- archive browsing ---

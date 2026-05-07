@@ -17,8 +17,11 @@ async function loadSvnStatus(path) {
       if (counts.missing) parts.push("!!:" + counts.missing);
       if (counts.conflicted) parts.push("C:" + counts.conflicted);
       if (parts.length) statusEl.textContent = "SVN: " + parts.join(" ");
+      else statusEl.textContent = "";
+    } else if (statusEl) {
+      statusEl.textContent = "";
     }
-  } catch (e) { G.svnCache = {}; }
+  } catch (e) { G.svnCache = {}; const statusEl = document.getElementById("status-svn"); if (statusEl) statusEl.textContent = ""; }
 }
 
 async function loadSvnInfo(path) {
