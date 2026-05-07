@@ -363,6 +363,7 @@ async function navigateTo(path, pushHistory) {
       tab.historyIdx = tab.history.length - 1;
     }
     tab.path = path;
+    renderTabs();
     addRecentFile(path, path.split("\\").pop(), true, "");
     const savedLayout = loadFolderLayout(path);
     if (savedLayout && savedLayout !== G.layout) {
