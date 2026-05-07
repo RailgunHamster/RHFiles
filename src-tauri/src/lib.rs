@@ -175,6 +175,7 @@ pub fn run() {
             network::browse_network, network::list_shares,
 
             shell::get_shell_verbs, shell::invoke_shell_verb,
+            shell::query_context_menu, shell::invoke_context_menu_command,
             shell::get_permissions, shell::set_permission,
             shell::remove_permission, shell::inherit_permissions,
         ])

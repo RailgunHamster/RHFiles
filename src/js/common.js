@@ -178,6 +178,22 @@ function fallbackCall(cmd, args) {
     case "db_import_all": return null;
     case "db_clear_all": return null;
     case "show_native_context_menu": return null;
+    case "query_context_menu": return [
+      { label: "Open", id: 0 },
+      { label: "Edit", id: 1 },
+      { separator: true },
+      { label: "Cut", id: 2 },
+      { label: "Copy", id: 3 },
+      { label: "Paste", id: 4 },
+      { separator: true },
+      { label: "7-Zip", id: null, children: [
+        { label: "Add to archive...", id: 5 },
+        { label: "Extract here", id: 6 },
+      ]},
+      { separator: true },
+      { label: "Properties", id: 7 },
+    ];
+    case "invoke_context_menu_command": return null;
     case "db_add_recent": return null;
     case "db_load_recent": return [];
     case "db_remove_recent": return null;
