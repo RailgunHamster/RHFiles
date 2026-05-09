@@ -66,17 +66,17 @@ fn is_garbage_label(label: &str) -> bool {
     let system_exts = [".dll", ".exe", ".cpl", ".ocx", ".ax", ".sys", ".drv", ".scr", ".mui"];
     for ext in &system_exts {
         if lower.ends_with(ext) {
-            // Allow if the label also contains spaces (likely a real display name like "Microsoft OneDrive Setup.exe")
             if !label.contains(' ') {
                 return true;
             }
         }
     }
-    // Windows internal identifiers that leak as raw labels
-    if lower == "open" || lower == "explore" || lower == "find" || lower == "print" || lower == "edit" {
-        // These are default verbs - only filter if MUIVerb was empty and raw label is just the verb
-        // Check if the label looks like it came from the verb name, not a proper display string
-        return false; // Allow these - they may be the only label for a verb
+    // Raw verb names that leak as standalone menu items (should have proper display labels)
+    let raw_verbs = ["open", "explore", "find", "print", "edit", "openas", "runas", "properties"];
+    for verb in &raw_verbs {
+        if lower == *verb {
+            return true;
+        }
     }
     // Labels that are purely GUIDs
     if lower.starts_with('{') && lower.ends_with('}') && lower.len() > 30 {
@@ -329,9 +329,30 @@ pub fn invoke_shell_verb(path: String, verb: String) -> Result<(), String> {
 
 /// Query the COM IContextMenu for a file/directory and return all menu items
 /// (including submenus from shell extensions like 7-Zip, WinRAR, Git).
+/// Runs on a background thread with a 3-second timeout to prevent hangs from
+/// slow/broken shell extensions.
 /// Returns a hierarchical structure: [{id, label, separator, children: [...]}, ...]
 #[tauri::command]
 pub fn query_context_menu(path: String) -> Result<Vec<serde_json::Value>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = query_context_menu_impl(&path);
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err("COM context menu timed out".into())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("COM context menu thread crashed".into())
+        }
+    }
+}
+
+fn query_context_menu_impl(path: &str) -> Result<Vec<serde_json::Value>, String> {
     use windows::Win32::System::Com::*;
     use windows::Win32::UI::Shell::*;
     use windows::Win32::UI::Shell::Common::*;
@@ -405,7 +426,7 @@ pub fn query_context_menu(path: String) -> Result<Vec<serde_json::Value>, String
 
     let items = unsafe {
         let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-        if SHParseDisplayName(&windows::core::HSTRING::from(&path), None, &mut pidl, 0, None).is_err() {
+        if SHParseDisplayName(&windows::core::HSTRING::from(path), None, &mut pidl, 0, None).is_err() {
             CoUninitialize();
             return Err("SHParseDisplayName failed".into());
         }
