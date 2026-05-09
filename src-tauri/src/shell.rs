@@ -341,7 +341,7 @@ pub fn query_context_menu(path: String) -> Result<Vec<serde_json::Value>, String
         let _ = tx.send(result);
     });
 
-    match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+    match rx.recv_timeout(std::time::Duration::from_secs(8)) {
         Ok(result) => result,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             Err("COM context menu timed out".into())

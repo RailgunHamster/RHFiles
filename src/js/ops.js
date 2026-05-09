@@ -287,23 +287,53 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
 
 async function showShellVerbsMenu(path, cx, cy) {
   removeContextMenu();
-  let verbs;
-  // Try COM (full Windows Explorer menu) first, fall back to registry scan
-  try {
-    verbs = await call("query_context_menu", { path });
-  } catch (e) { /* COM failed */ }
-  if (!verbs || !verbs.length) {
-    try { verbs = await call("get_shell_verbs", { path }); } catch (e) {}
-  }
-  if (!verbs || !verbs.length) return;
-
+  // Show loading indicator immediately
   const sub = document.createElement("div");
   sub.className = "context-menu";
   sub.style.cssText = `left:${cx}px;top:${cy}px;z-index:9999;`;
+  const loadingItem = document.createElement("div");
+  loadingItem.className = "ctx-item disabled";
+  loadingItem.innerHTML = `<span>${t('properties.loading')}</span>`;
+  sub.appendChild(loadingItem);
+  document.body.appendChild(sub);
+  requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
+  _ctxShow(sub);
 
-  verbs.forEach(v => {
+  // Fire COM and registry in parallel — render whichever finishes first
+  let comDone = false;
+  let registryDone = false;
+  let comResult = null;
+  let registryResult = null;
+
+  call("query_context_menu", { path }).then(v => {
+    comResult = v;
+    comDone = true;
+    if (!registryDone) renderShellMenu(sub, path, v);
+  }).catch(() => { comDone = true; });
+
+  call("get_shell_verbs", { path }).then(v => {
+    registryResult = v;
+    registryDone = true;
+    if (!comDone) renderShellMenu(sub, path, v);
+  }).catch(() => { registryDone = true; });
+
+  // After 2 seconds, if neither has finished with valid data, give up
+  setTimeout(() => {
+    if (!comDone && !registryDone) { sub.remove(); }
+    else if (comDone && comResult && comResult.length) { /* COM won */ }
+    else if (registryDone && registryResult && registryResult.length) { /* registry won */ }
+    else if (comDone && !comResult?.length && registryDone && !registryResult?.length) { sub.remove(); }
+    else if (comDone && !comResult?.length && !registryDone) { /* wait for registry */ }
+    else if (registryDone && !registryResult?.length && !comDone) { /* wait for COM */ }
+  }, 2000);
+}
+
+function renderShellMenu(container, path, items) {
+  if (!items || !items.length) return;
+  container.innerHTML = "";
+  items.forEach(v => {
     if (v.separator) {
-      const sep = document.createElement("div"); sep.className = "ctx-sep"; sub.appendChild(sep);
+      const sep = document.createElement("div"); sep.className = "ctx-sep"; container.appendChild(sep);
       return;
     }
     const mi = document.createElement("div");
@@ -317,12 +347,9 @@ async function showShellVerbsMenu(path, cx, cy) {
         call("invoke_shell_verb", { path, verb: v.verb });
       }
     });
-    sub.appendChild(mi);
+    container.appendChild(mi);
   });
-
-  document.body.appendChild(sub);
-  requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
-  _ctxShow(sub);
+  requestAnimationFrame(() => clampMenuPosition(container, parseInt(container.style.left), parseInt(container.style.top)));
 }
 
 /// Render a context menu from shell verbs via registry scan (fast, no COM).
