@@ -175,7 +175,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
         const selected = entries[fileIdx];
         if (!selected) return;
         if (e.shiftKey) {
-          showContextMenu(e.clientX, e.clientY, isRight);
+          showShellVerbsMenu(selected.path, e.clientX, e.clientY);
         } else {
           showComContextMenu(selected.path, e.clientX, e.clientY);
         }
@@ -254,7 +254,7 @@ function renderIconLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.dataset.path = file.path;
 
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } const sf = entries[i]; if (!sf) return; if (e.shiftKey) { showContextMenu(e.clientX, e.clientY, isRight); } else { showComContextMenu(sf.path, e.clientX, e.clientY); } });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } const sf = entries[i]; if (!sf) return; if (e.shiftKey) { showShellVerbsMenu(sf.path, e.clientX, e.clientY); } else { showComContextMenu(sf.path, e.clientX, e.clientY); } });
     item.addEventListener("dragstart", e => {
       if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
       e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
@@ -286,7 +286,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     if (isSelected) item.style.background = "var(--select-bg)";
 
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } const sf = entries[i]; if (!sf) return; if (e.shiftKey) { showContextMenu(e.clientX, e.clientY, isRight); } else { showComContextMenu(sf.path, e.clientX, e.clientY); } });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } const sf = entries[i]; if (!sf) return; if (e.shiftKey) { showShellVerbsMenu(sf.path, e.clientX, e.clientY); } else { showComContextMenu(sf.path, e.clientX, e.clientY); } });
     item.addEventListener("mouseenter", () => { if (!sel.has(i)) item.style.borderColor = "var(--accent)"; });
     item.addEventListener("mouseleave", () => { if (!sel.has(i)) item.style.borderColor = "var(--border)"; });
     item.addEventListener("dragstart", e => {
@@ -375,7 +375,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.dataset.path = file.path;
 
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } const sf = entries[i]; if (!sf) return; if (e.shiftKey) { showContextMenu(e.clientX, e.clientY, isRight); } else { showComContextMenu(sf.path, e.clientX, e.clientY); } });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } const sf = entries[i]; if (!sf) return; if (e.shiftKey) { showShellVerbsMenu(sf.path, e.clientX, e.clientY); } else { showComContextMenu(sf.path, e.clientX, e.clientY); } });
     item.addEventListener("dragstart", e => {
       if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
       e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));

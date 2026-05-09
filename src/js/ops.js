@@ -333,8 +333,12 @@ async function showComContextMenu(path, cx, cy) {
   let items;
   try {
     items = await call("get_shell_verbs", { path });
-  } catch (e) { /* registry failed */ }
-  if (!items || !items.length) { showContextMenu(cx, cy); return; }
+  } catch (e) { console.error("get_shell_verbs error:", e); }
+  if (!items || !items.length) {
+    console.log("get_shell_verbs empty for", path, ", falling back to built-in menu");
+    showContextMenu(cx, cy); return;
+  }
+  console.log("get_shell_verbs returned", items.length, "items for", path);
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
