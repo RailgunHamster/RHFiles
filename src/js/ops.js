@@ -287,20 +287,33 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
 
 async function showShellVerbsMenu(path, cx, cy) {
   removeContextMenu();
+  // Show registry menu immediately (fast, reliable)
   let verbs;
-  try { verbs = await call("query_context_menu", { path }); } catch (e) {}
-  if (!verbs || !verbs.length) {
-    try { verbs = await call("get_shell_verbs", { path }); } catch (e) {}
-  }
+  try { verbs = await call("get_shell_verbs", { path }); } catch (e) {}
   if (!verbs || !verbs.length) return;
 
   const sub = document.createElement("div");
   sub.className = "context-menu";
   sub.style.cssText = `left:${cx}px;top:${cy}px;z-index:9999;`;
+  renderShellItems(sub, path, verbs);
+  document.body.appendChild(sub);
+  requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
+  _ctxShow(sub);
 
-  verbs.forEach(v => {
+  // In background, try COM — if it returns, replace menu
+  call("query_context_menu", { path }).then(comVerbs => {
+    if (!comVerbs || !comVerbs.length) return;
+    if (!document.body.contains(sub)) return; // menu already closed
+    sub.innerHTML = "";
+    renderShellItems(sub, path, comVerbs);
+    requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
+  }).catch(() => {});
+}
+
+function renderShellItems(container, path, items) {
+  items.forEach(v => {
     if (v.separator) {
-      const sep = document.createElement("div"); sep.className = "ctx-sep"; sub.appendChild(sep);
+      const sep = document.createElement("div"); sep.className = "ctx-sep"; container.appendChild(sep);
       return;
     }
     const mi = document.createElement("div");
@@ -314,12 +327,8 @@ async function showShellVerbsMenu(path, cx, cy) {
         call("invoke_shell_verb", { path, verb: v.verb });
       }
     });
-    sub.appendChild(mi);
+    container.appendChild(mi);
   });
-
-  document.body.appendChild(sub);
-  requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
-  _ctxShow(sub);
 }
 
 /// Render a context menu from shell verbs via registry scan (fast, no COM).
@@ -330,12 +339,8 @@ async function showComContextMenu(path, cx, cy) {
   let items;
   try {
     items = await call("get_shell_verbs", { path });
-  } catch (e) { console.error("get_shell_verbs error:", e); }
-  if (!items || !items.length) {
-    console.log("get_shell_verbs empty for", path, ", falling back to built-in menu");
-    showContextMenu(cx, cy); return;
-  }
-  console.log("get_shell_verbs returned", items.length, "items for", path);
+  } catch (e) {}
+  if (!items || !items.length) { showContextMenu(cx, cy); return; }
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
