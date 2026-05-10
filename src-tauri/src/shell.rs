@@ -329,30 +329,10 @@ pub fn invoke_shell_verb(path: String, verb: String) -> Result<(), String> {
 
 /// Query the COM IContextMenu for a file/directory and return all menu items
 /// (including submenus from shell extensions like 7-Zip, WinRAR, Git).
-/// Runs on a background thread with a 3-second timeout to prevent hangs from
-/// slow/broken shell extensions.
+/// NOTE: QueryContextMenu can be slow — use with caution on the main thread.
 /// Returns a hierarchical structure: [{id, label, separator, children: [...]}, ...]
 #[tauri::command]
 pub fn query_context_menu(path: String) -> Result<Vec<serde_json::Value>, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    std::thread::spawn(move || {
-        let result = query_context_menu_impl(&path);
-        let _ = tx.send(result);
-    });
-
-    match rx.recv_timeout(std::time::Duration::from_secs(8)) {
-        Ok(result) => result,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            Err("COM context menu timed out".into())
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err("COM context menu thread crashed".into())
-        }
-    }
-}
-
-fn query_context_menu_impl(path: &str) -> Result<Vec<serde_json::Value>, String> {
     use windows::Win32::System::Com::*;
     use windows::Win32::UI::Shell::*;
     use windows::Win32::UI::Shell::Common::*;
@@ -369,18 +349,15 @@ fn query_context_menu_impl(path: &str) -> Result<Vec<serde_json::Value>, String>
             info.cbSize = std::mem::size_of::<MENUITEMINFOW>() as u32;
             info.fMask = MIIM_FTYPE | MIIM_ID | MIIM_STRING | MIIM_SUBMENU;
 
-            // First call to get string length
             if unsafe { GetMenuItemInfoW(hmenu, pos, true, &mut info) }.is_err() {
                 continue;
             }
 
-            // Separator?
             if info.fType.0 & MFT_SEPARATOR.0 != 0 {
                 items.push(serde_json::json!({"separator": true}));
                 continue;
             }
 
-            // Allocate buffer for string
             let mut buf = vec![0u16; (info.cch + 1) as usize];
             info.dwTypeData = windows::core::PWSTR(buf.as_mut_ptr());
             info.cch += 1;
@@ -395,7 +372,6 @@ fn query_context_menu_impl(path: &str) -> Result<Vec<serde_json::Value>, String>
             let has_submenu = !info.hSubMenu.is_invalid();
             let raw_id = info.wID;
 
-            // Translate HMENU command ID back to zero-based offset expected by IContextMenu::InvokeCommand
             let cmd_id = if raw_id >= id_offset && raw_id <= id_offset + 0x7FFE {
                 (raw_id - id_offset) as u32
             } else {
@@ -426,7 +402,7 @@ fn query_context_menu_impl(path: &str) -> Result<Vec<serde_json::Value>, String>
 
     let items = unsafe {
         let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-        if SHParseDisplayName(&windows::core::HSTRING::from(path), None, &mut pidl, 0, None).is_err() {
+        if SHParseDisplayName(&windows::core::HSTRING::from(&path), None, &mut pidl, 0, None).is_err() {
             CoUninitialize();
             return Err("SHParseDisplayName failed".into());
         }
@@ -467,7 +443,6 @@ fn query_context_menu_impl(path: &str) -> Result<Vec<serde_json::Value>, String>
         const ID_CMD_LAST: u32 = 0x7FFF;
         let _ = pcm.QueryContextMenu(hmenu, 0, ID_CMD_FIRST, ID_CMD_LAST, 0u32);
 
-        // Walk the HMENU recursively to extract all items
         let result = walk_menu(hmenu, ID_CMD_FIRST);
 
         DestroyMenu(hmenu).ok();
