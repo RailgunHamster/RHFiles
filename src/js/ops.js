@@ -288,7 +288,10 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
 async function showShellVerbsMenu(path, cx, cy) {
   removeContextMenu();
   let verbs;
-  try { verbs = await call("get_shell_verbs", { path }); } catch (e) {}
+  try { verbs = await call("query_context_menu", { path }); } catch (e) {}
+  if (!verbs || !verbs.length) {
+    try { verbs = await call("get_shell_verbs", { path }); } catch (e) {}
+  }
   if (!verbs || !verbs.length) return;
 
   const sub = document.createElement("div");
@@ -305,7 +308,11 @@ async function showShellVerbsMenu(path, cx, cy) {
     mi.innerHTML = `<span>${esc(v.label)}</span>`;
     mi.addEventListener("click", () => {
       removeContextMenu();
-      call("invoke_shell_verb", { path, verb: v.verb });
+      if (v.id !== undefined) {
+        call("invoke_context_menu_command", { path, cmdId: v.id });
+      } else if (v.verb !== undefined) {
+        call("invoke_shell_verb", { path, verb: v.verb });
+      }
     });
     sub.appendChild(mi);
   });

@@ -327,19 +327,54 @@ pub fn invoke_shell_verb(path: String, verb: String) -> Result<(), String> {
     Err(format!("Could not invoke verb '{}' on '{}'", verb, path))
 }
 
-/// Query the COM IContextMenu for a file/directory and return all menu items
-/// (including submenus from shell extensions like 7-Zip, WinRAR, Git).
-/// NOTE: QueryContextMenu can be slow — use with caution on the main thread.
+/// Query the COM IContextMenu for a file/directory and return all menu items.
+/// Runs on a dedicated STA thread with a Windows message pump (required by COM).
+/// Uses a 5-second timeout to prevent hangs from slow shell extensions.
 /// Returns a hierarchical structure: [{id, label, separator, children: [...]}, ...]
 #[tauri::command]
 pub fn query_context_menu(path: String) -> Result<Vec<serde_json::Value>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("com-sta-thread".into())
+        .spawn(move || {
+            unsafe { windows::Win32::System::Com::CoInitializeEx(None::<*const core::ffi::c_void>, windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE).ok(); }
+            unsafe { let _ = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX); }
+
+            // Do COM work, send result back
+            let result = query_context_menu_com(&path);
+            let _ = tx.send(result);
+
+            // Drain remaining messages before cleanup
+            let mut msg = unsafe { std::mem::zeroed::<windows::Win32::UI::WindowsAndMessaging::MSG>() };
+            while unsafe { windows::Win32::UI::WindowsAndMessaging::PeekMessageW(&mut msg, None, 0, 0, windows::Win32::UI::WindowsAndMessaging::PM_REMOVE) }.as_bool() {
+                unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                    windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                }
+            }
+            unsafe { windows::Win32::System::Com::CoUninitialize(); }
+        })
+        .map_err(|e| format!("Failed to spawn COM thread: {}", e))?;
+
+    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err("COM context menu timed out (5s)".into())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("COM context menu thread crashed".into())
+        }
+    }
+}
+
+fn query_context_menu_com(path: &str) -> Result<Vec<serde_json::Value>, String> {
     use windows::Win32::System::Com::*;
     use windows::Win32::UI::Shell::*;
     use windows::Win32::UI::Shell::Common::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     /// Walk an HMENU recursively, returning structured items.
-    /// `id_offset` is the idCmdFirst value used in QueryContextMenu.
     unsafe fn walk_menu(hmenu: HMENU, id_offset: u32) -> Vec<serde_json::Value> {
         let count = unsafe { GetMenuItemCount(Some(hmenu)) } as u32;
         let mut items = Vec::with_capacity(count as usize);
@@ -393,50 +428,28 @@ pub fn query_context_menu(path: String) -> Result<Vec<serde_json::Value>, String
         items
     }
 
-    unsafe { SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX); }
-    let init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-
-    if init.is_err() {
-        return Err("COM init failed".into());
-    }
-
-    let items = unsafe {
+    unsafe {
         let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-        if SHParseDisplayName(&windows::core::HSTRING::from(&path), None, &mut pidl, 0, None).is_err() {
-            CoUninitialize();
+        if SHParseDisplayName(&windows::core::HSTRING::from(path), None, &mut pidl, 0, None).is_err() {
             return Err("SHParseDisplayName failed".into());
         }
 
         let mut pidl_last: *mut ITEMIDLIST = std::ptr::null_mut();
         let parent = match SHBindToParent::<IShellFolder>(pidl, Some(&mut pidl_last)) {
             Ok(p) => p,
-            Err(_) => {
-                CoTaskMemFree(Some(pidl as *const _));
-                CoUninitialize();
-                return Err("SHBindToParent failed".into());
-            }
+            Err(_) => { CoTaskMemFree(Some(pidl as *const _)); return Err("SHBindToParent failed".into()); }
         };
 
         let pcm: IContextMenu = match parent.GetUIObjectOf::<IContextMenu>(
-            windows::Win32::Foundation::HWND::default(),
-            &[pidl_last],
-            None,
-        ) {
+            windows::Win32::Foundation::HWND::default(), &[pidl_last], None)
+        {
             Ok(p) => p,
-            Err(_) => {
-                CoTaskMemFree(Some(pidl as *const _));
-                CoUninitialize();
-                return Err("GetUIObjectOf failed".into());
-            }
+            Err(_) => { CoTaskMemFree(Some(pidl as *const _)); return Err("GetUIObjectOf failed".into()); }
         };
 
         let hmenu = match CreatePopupMenu() {
             Ok(h) => h,
-            Err(_) => {
-                CoTaskMemFree(Some(pidl as *const _));
-                CoUninitialize();
-                return Err("CreatePopupMenu failed".into());
-            }
+            Err(_) => { CoTaskMemFree(Some(pidl as *const _)); return Err("CreatePopupMenu failed".into()); }
         };
 
         const ID_CMD_FIRST: u32 = 1;
@@ -447,60 +460,69 @@ pub fn query_context_menu(path: String) -> Result<Vec<serde_json::Value>, String
 
         DestroyMenu(hmenu).ok();
         CoTaskMemFree(Some(pidl as *const _));
-        result
-    };
-
-    unsafe { CoUninitialize(); }
-    Ok(items)
+        Ok(result)
+    }
 }
 
 /// Invoke a specific command from the IContextMenu for a file/directory.
 /// `cmd_id` is the zero-based offset returned by query_context_menu.
+/// Runs on a dedicated STA thread for COM safety.
 #[tauri::command]
 pub fn invoke_context_menu_command(path: String, cmd_id: u32) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .name("com-sta-invoke".into())
+        .spawn(move || {
+            unsafe { windows::Win32::System::Com::CoInitializeEx(None::<*const core::ffi::c_void>, windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE).ok(); }
+            unsafe { let _ = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX); }
+
+            let result = invoke_context_menu_com(&path, cmd_id);
+            let _ = tx.send(result);
+
+            let mut msg = unsafe { std::mem::zeroed::<windows::Win32::UI::WindowsAndMessaging::MSG>() };
+            while unsafe { windows::Win32::UI::WindowsAndMessaging::PeekMessageW(&mut msg, None, 0, 0, windows::Win32::UI::WindowsAndMessaging::PM_REMOVE) }.as_bool() {
+                unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                    windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                }
+            }
+            unsafe { windows::Win32::System::Com::CoUninitialize(); }
+        })
+        .map_err(|e| format!("Failed to spawn COM thread: {}", e))?;
+
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(result) => result,
+        Err(_) => Err("COM invoke timed out".into()),
+    }
+}
+
+fn invoke_context_menu_com(path: &str, cmd_id: u32) -> Result<(), String> {
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::*;
     use windows::Win32::UI::Shell::*;
     use windows::Win32::UI::Shell::Common::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
-    // SAFETY: MAKEINTRESOURCEA — lpVerb cast from integer offset
     unsafe fn int_resource(id: usize) -> *const u8 { id as *const u8 }
 
-    unsafe { SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX); }
-    let init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-
-    if init.is_err() {
-        return Err("COM init failed".into());
-    }
-
-    let invoked = unsafe {
+    unsafe {
         let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-        if SHParseDisplayName(&windows::core::HSTRING::from(&path), None, &mut pidl, 0, None).is_err() {
-            CoUninitialize();
+        if SHParseDisplayName(&windows::core::HSTRING::from(path), None, &mut pidl, 0, None).is_err() {
             return Err("SHParseDisplayName failed".into());
         }
 
         let mut pidl_last: *mut ITEMIDLIST = std::ptr::null_mut();
         let parent = match SHBindToParent::<IShellFolder>(pidl, Some(&mut pidl_last)) {
             Ok(p) => p,
-            Err(_) => {
-                CoTaskMemFree(Some(pidl as *const _));
-                CoUninitialize();
-                return Err("SHBindToParent failed".into());
-            }
+            Err(_) => { CoTaskMemFree(Some(pidl as *const _)); return Err("SHBindToParent failed".into()); }
         };
 
         let pcm: IContextMenu = match parent.GetUIObjectOf::<IContextMenu>(
-            windows::Win32::Foundation::HWND::default(),
-            &[pidl_last],
-            None,
-        ) {
+            HWND::default(), &[pidl_last], None)
+        {
             Ok(p) => p,
-            Err(_) => {
-                CoTaskMemFree(Some(pidl as *const _));
-                CoUninitialize();
-                return Err("GetUIObjectOf failed".into());
-            }
+            Err(_) => { CoTaskMemFree(Some(pidl as *const _)); return Err("GetUIObjectOf failed".into()); }
         };
 
         let mut cmd_info = CMINVOKECOMMANDINFO::default();
@@ -510,11 +532,8 @@ pub fn invoke_context_menu_command(path: String, cmd_id: u32) -> Result<(), Stri
 
         let ok = pcm.InvokeCommand(&cmd_info).is_ok();
         CoTaskMemFree(Some(pidl as *const _));
-        ok
-    };
-
-    unsafe { CoUninitialize(); }
-    if invoked { Ok(()) } else { Err("InvokeCommand failed".into()) }
+        if ok { Ok(()) } else { Err("InvokeCommand failed".into()) }
+    }
 }
 
 #[tauri::command]
