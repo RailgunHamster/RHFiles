@@ -2,3 +2,4 @@
 .cache/
 *.slint_cache
 .sisyphus/
+.playwright-mcp/
