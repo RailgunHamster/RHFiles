@@ -500,3 +500,155 @@ pub fn write_test_results(results: String) -> Result<(), String> {
     let path = std::path::PathBuf::from(tmp).join("rhfiles-test-results.json");
     std::fs::write(&path, &results).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn open_with_program(path: String, program: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
+    let p = std::path::PathBuf::from(&path);
+    let is_dir = p.is_dir();
+    let dir = if is_dir { path.clone() } else { p.parent().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default() };
+
+    match program.as_str() {
+        "vscode" => {
+            let local = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default()).join("Programs").join("Microsoft VS Code").join("Code.exe");
+            let exe = which("code").unwrap_or(if local.exists() { local } else { std::path::PathBuf::from("code") });
+            #[cfg(target_os = "windows")] { std::process::Command::new(&exe).arg(&path).creation_flags(0).spawn().map_err(|e| e.to_string())?; }
+            #[cfg(not(target_os = "windows"))] { std::process::Command::new(&exe).arg(&path).spawn().map_err(|e| e.to_string())?; }
+        }
+        "visual_studio" => {
+            let vswhere = std::path::PathBuf::from("C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe");
+            let devenv = if vswhere.exists() {
+                std::process::Command::new(&vswhere).args(["-latest", "-property", "installationPath"]).output().ok()
+                    .and_then(|o| { let s = String::from_utf8_lossy(&o.stdout).trim().to_string(); if s.is_empty() { None } else { Some(std::path::PathBuf::from(s).join("Common7").join("IDE").join("devenv.exe")) } })
+            } else { None };
+            let exe = devenv.unwrap_or_else(|| std::path::PathBuf::from("devenv"));
+            #[cfg(target_os = "windows")] { std::process::Command::new(&exe).arg(&path).creation_flags(0).spawn().map_err(|e| e.to_string())?; }
+            #[cfg(not(target_os = "windows"))] { std::process::Command::new(&exe).arg(&path).spawn().map_err(|e| e.to_string())?; }
+        }
+        "cmd" => {
+            std::process::Command::new("cmd").args(["/k", &format!("cd /d \"{}\"", dir)]).spawn().map_err(|e| e.to_string())?;
+        }
+        "powershell" => {
+            let exe = which("pwsh").unwrap_or(std::path::PathBuf::from("powershell"));
+            std::process::Command::new(&exe).args(["-NoExit", "-Command", &format!("cd '{}'", dir)]).spawn().map_err(|e| e.to_string())?;
+        }
+        "git_bash" => {
+            let exe = std::process::Command::new("git").arg("--exec-path").output().ok()
+                .and_then(|o| { let s = String::from_utf8_lossy(&o.stdout).trim().to_string(); Some(std::path::PathBuf::from(s).join("..").join("git-bash.exe")) });
+            let exe = exe.filter(|e| e.exists()).unwrap_or_else(|| std::path::PathBuf::from("C:\\Program Files\\Git\\git-bash.exe"));
+            std::process::Command::new(&exe).arg("--cd=").arg(&dir).spawn().map_err(|e| e.to_string())?;
+        }
+        "vlc" => {
+            let fallback = std::path::PathBuf::from("C:\\Program Files\\VideoLAN\\VLC\\vlc.exe");
+            let exe = which("vlc").unwrap_or(if fallback.exists() { fallback } else { std::path::PathBuf::from("vlc") });
+            #[cfg(target_os = "windows")] { std::process::Command::new(&exe).arg(&path).creation_flags(0x08000000).spawn().map_err(|e| e.to_string())?; }
+            #[cfg(not(target_os = "windows"))] { std::process::Command::new(&exe).arg(&path).spawn().map_err(|e| e.to_string())?; }
+        }
+        "vlc_folder" => {
+            let fallback = std::path::PathBuf::from("C:\\Program Files\\VideoLAN\\VLC\\vlc.exe");
+            let exe = which("vlc").unwrap_or(if fallback.exists() { fallback } else { std::path::PathBuf::from("vlc") });
+            #[cfg(target_os = "windows")] { std::process::Command::new(&exe).args(["--recursive=expand", &format!("{}\\", path)]).creation_flags(0x08000000).spawn().map_err(|e| e.to_string())?; }
+            #[cfg(not(target_os = "windows"))] { std::process::Command::new(&exe).args(["--recursive=expand", &format!("{}/", path)]).spawn().map_err(|e| e.to_string())?; }
+        }
+        "potplayer" => {
+            let exe64 = std::path::PathBuf::from("C:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe");
+            let exe32 = std::path::PathBuf::from("C:\\Program Files (x86)\\DAUM\\PotPlayer\\PotPlayerMini.exe");
+            let exe = if exe64.exists() { exe64 } else { exe32 };
+            #[cfg(target_os = "windows")] { std::process::Command::new(&exe).arg(&path).creation_flags(0x08000000).spawn().map_err(|e| e.to_string())?; }
+            #[cfg(not(target_os = "windows"))] { std::process::Command::new(&exe).arg(&path).spawn().map_err(|e| e.to_string())?; }
+        }
+        _ => return Err(format!("Unknown program: {}", program)),
+    }
+    Ok(())
+}
+
+fn which(name: &str) -> Option<std::path::PathBuf> {
+    std::process::Command::new("where").arg(name).output().ok().and_then(|o| {
+        let s = String::from_utf8_lossy(&o.stdout);
+        let line = s.lines().next()?.trim();
+        if line.is_empty() { None } else { Some(std::path::PathBuf::from(line)) }
+    })
+}
+
+#[tauri::command]
+pub fn copy_file_path(path: String) -> Result<(), String> {
+    let script = format!("Set-Clipboard -Value '{}'", path.replace('\'', "''"));
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .creation_flags(0x08000000u32)
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn show_open_with_dialog(path: String) -> Result<(), String> {
+    std::process::Command::new("rundll32.exe")
+        .args(["shell32.dll,OpenAs_RunDLL", &path])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn compress_with(sources: Vec<String>, dest: String, tool: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
+    match tool.as_str() {
+        "7zip" => {
+            let exe = std::path::PathBuf::from("C:\\Program Files\\7-Zip\\7z.exe");
+            if !exe.exists() { return Err("7-Zip not found".into()); }
+            #[cfg(target_os = "windows")] { std::process::Command::new(&exe).args(["a", &dest]).args(sources.iter()).creation_flags(0x08000000).spawn().map_err(|e| e.to_string())?; }
+            #[cfg(not(target_os = "windows"))] { std::process::Command::new(&exe).args(["a", &dest]).args(sources.iter()).spawn().map_err(|e| e.to_string())?; }
+        }
+        "bandizip" => {
+            let exe = std::path::PathBuf::from("C:\\Program Files\\Bandizip\\Bandizip.exe");
+            if !exe.exists() { return Err("Bandizip not found".into()); }
+            std::process::Command::new(&exe).args(["a", &dest]).args(sources.iter()).spawn().map_err(|e| e.to_string())?;
+        }
+        "winrar" => {
+            let exe = std::path::PathBuf::from("C:\\Program Files\\WinRAR\\WinRAR.exe");
+            if !exe.exists() { return Err("WinRAR not found".into()); }
+            std::process::Command::new(&exe).args(["a", &dest]).args(sources.iter()).spawn().map_err(|e| e.to_string())?;
+        }
+        _ => return Err(format!("Unknown compression tool: {}", tool)),
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn share_file(path: String, target: String) -> Result<(), String> {
+    let _ = copy_file_path(path.clone());
+    match target.as_str() {
+        "qq" => {
+            let exe = find_app(&[
+                "C:\\Program Files (x86)\\Tencent\\QQ\\Bin\\QQ.exe",
+                "C:\\Program Files\\Tencent\\QQ\\Bin\\QQ.exe",
+            ]);
+            if let Some(exe) = exe { std::process::Command::new(&exe).spawn().map_err(|e| e.to_string())?; }
+        }
+        "wechat" => {
+            let exe = find_app(&[
+                "C:\\Program Files (x86)\\Tencent\\WeChat\\WeChat.exe",
+                "C:\\Program Files\\Tencent\\WeChat\\WeChat.exe",
+            ]);
+            if let Some(exe) = exe { std::process::Command::new(&exe).spawn().map_err(|e| e.to_string())?; }
+        }
+        "feishu" => {
+            let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+            let exe = find_app(&[
+                &format!("{}\\Feishu\\Feishu.exe", local),
+                "C:\\Program Files\\Lark\\Lark.exe",
+            ]);
+            if let Some(exe) = exe { std::process::Command::new(&exe).spawn().map_err(|e| e.to_string())?; }
+        }
+        "windows" => {}
+        _ => return Err(format!("Unknown share target: {}", target)),
+    }
+    Ok(())
+}
+
+fn find_app(paths: &[&str]) -> Option<std::path::PathBuf> {
+    paths.iter().find(|p| std::path::Path::new(p).exists()).map(|p| std::path::PathBuf::from(p))
+}

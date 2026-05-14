@@ -177,84 +177,13 @@ function fallbackCall(cmd, args) {
     case "db_export_all": return {};
     case "db_import_all": return null;
     case "db_clear_all": return null;
-    case "show_native_context_menu": return null;
-    case "query_context_menu": return [
-      { label: "Open", id: 0 },
-      { label: "Edit", id: 1 },
-      { separator: true },
-      { label: "Cut", id: 2 },
-      { label: "Copy", id: 3 },
-      { label: "Paste", id: 4 },
-      { separator: true },
-      { label: "7-Zip", id: null, children: [
-        { label: "Add to archive...", id: 5 },
-        { label: "Extract here", id: 6 },
-      ]},
-      { separator: true },
-      { label: "Properties", id: 7 },
-    ];
-    case "invoke_context_menu_command": return null;
     case "db_add_recent": return null;
-    case "db_load_recent": return [];
-    case "db_remove_recent": return null;
-    case "db_clear_recent": return null;
-    case "list_i18n_files": return [];
-    case "svn_status": return {};
-    case "svn_info": return { url: "", revision: "", author: "", date: "" };
-    case "svn_update": return "";
-    case "svn_commit": return "";
-    case "svn_revert": return null;
-    case "svn_add": return null;
-    case "svn_log": return [];
-    case "svn_checkout": return "";
-    case "svn_cleanup": return null;
-    case "svn_resolve": return null;
-    case "list_ads": return [];
-    case "delete_ads": return null;
-    case "read_ads": return "";
-    case "unblock_file": return null;
-    case "toggle_pip": return true;
-    case "extract_7z": return null;
-    case "create_7z": return null;
-    case "is_7z_available": return false;
-    case "rtf_to_html": return "<pre style='white-space:pre-wrap'>RTF preview (mock)</pre>";
-    case "docx_to_text": return "<pre style='white-space:pre-wrap'>DOCX preview (mock)</pre>";
-    case "format_drive": return null;
-    case "install_certificate": return null;
-    case "set_compat_mode": return null;
-    case "get_compat_mode": return "";
-    case "log_error": return null;
-    case "get_error_logs": return [];
-    case "git_clone": return "C:\\repo";
-    case "get_cloud_status": return "none";
-    case "get_cloud_providers": return [];
-    case "cloud_pin_file": return null;
-    case "cloud_unpin_file": return null;
-    case "cloud_clear_pin": return null;
-    case "get_cloud_file_size": return { local_size: 0, cloud_size: 0, is_placeholder: 0 };
-    case "browse_network": return [];
-    case "list_shares": return [];
-    case "ftp_list": return [];
-    case "ftp_download": return null;
-    case "ftp_upload": return null;
-    case "ftp_delete": return null;
-    case "ftp_mkdir": return null;
-    case "ftp_rename": return null;
-    case "sftp_list": return [];
-    case "sftp_download": return null;
-    case "sftp_upload": return null;
-    case "sftp_delete": return null;
-    case "sftp_mkdir": return null;
-    case "sftp_rename": return null;
-    case "get_permissions": return [];
-    case "set_permission": return null;
-    case "remove_permission": return null;
-    case "inherit_permissions": return null;
-    case "list_mtp_devices": return [];
-    case "get_shell_verbs": return [];
-    case "invoke_shell_verb": return null;
-    case "query_context_menu": return [];
     case "invoke_context_menu_command": return null;
+    case "open_with_program": return null;
+    case "copy_file_path": return null;
+    case "show_open_with_dialog": return null;
+    case "compress_with": return null;
+    case "share_file": return null;
     case "cancel_operation": return null;
     case "is_everything_available": return false;
     case "quick_search": return [];

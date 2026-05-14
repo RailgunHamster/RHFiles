@@ -53,7 +53,19 @@ const ACTION_HANDLERS = {
   "file.newFile":        async () => showNewFileDialog(),
   "file.selectAll":      async () => selectAll(),
   "file.invertSelection":async () => invertSelection(),
-  "file.properties":     async () => await showPropertiesDialog(getSelectedPaths()[0]?.path),
+  "file.properties":     async () => {
+    const isRight = G.lastActivePane === 'right';
+    const paths = getSelectedPaths(isRight);
+    const listId = isRight ? "right-file-list" : "file-list";
+    if (paths.length && typeof flashAt === 'function') {
+      const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
+      if (selEl) {
+        const r = selEl.getBoundingClientRect();
+        flashAt(r.left + r.width / 2, r.top + r.height / 2);
+      }
+    }
+    await showPropertiesDialog(paths[0]?.path);
+  },
   "file.quicklook":      async () => await quicklookSelected(),
   "file.undo":           async () => await undo(),
   "file.redo":           async () => await redo(),
@@ -110,6 +122,16 @@ function findActionForBinding(bindings, combo) {
 }
 
 let _shortcutBindings = null;
+
+window.addEventListener("keydown", e => {
+  if (!e.altKey || e.key !== "Enter") return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  const anyDialog = document.querySelector('.overlay[style*="display: flex"], .overlay[style*="display:flex"]');
+  if (anyDialog) return;
+  e.preventDefault();
+  const handler = ACTION_HANDLERS["file.properties"];
+  if (handler) handler();
+}, true);
 
 function getShortcutBindings() {
   if (!_shortcutBindings) _shortcutBindings = loadShortcutBindings();

@@ -220,22 +220,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 document.addEventListener("contextmenu", e => {
   e.preventDefault();
   removeContextMenu();
-  if (e.shiftKey) {
-    // Shift+right-click empty area: show RHFiles custom menu
-    const isRight = G.lastActivePane === 'right';
-    const path = isRight ? G.rp.path : getTab().path;
-    showShellVerbsMenu(path, e.clientX, e.clientY);
-    return;
-  }
-  // Normal right-click empty area: show COM context menu for the folder
-  const isRight = G.lastActivePane === 'right';
-  const path = isRight ? G.rp.path : getTab().path;
-  if (path && path !== "home://") {
-    showComContextMenu(path, e.clientX, e.clientY);
-    return;
-  }
-  // Home page: show simple HTML menu
   const isRightH = G.lastActivePane === 'right';
+  const path = isRightH ? G.rp.path : getTab().path;
   const menu = document.createElement("div");
   menu.className = "context-menu";
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;z-index:9999;`;
@@ -248,11 +234,8 @@ document.addEventListener("contextmenu", e => {
     { label: t('cmd.refresh'), shortcut: "F5", action: refresh },
     { label: t('ctx.selectAll'), shortcut: "Ctrl+A", action: () => selectAll(isRightH) },
     { label: "-", action: null },
-    { label: G.showHidden ? t('ctx.hideHidden') : t('ctx.showHidden'), action: toggleHidden },
     { label: t('ctx.openInTerminal'), action: () => { const path = isRightH ? G.rp.path : getTab().path; call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(isRightH ? G.rp.path : getTab().path) },
-    { label: "-", action: null },
-    { label: t('ctx.moreOptions'), shortcut: "Shift+F10", action: () => { const path = isRightH ? G.rp.path : getTab().path; showShellVerbsMenu(path, e.clientX, e.clientY); } },
   ];
   items.forEach(item => {
     if (item.label === "-") {

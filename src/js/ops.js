@@ -285,134 +285,79 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
   }
 }
 
-async function showShellVerbsMenu(path, cx, cy) {
-  removeContextMenu();
-  // Show registry menu immediately (fast, reliable)
-  let verbs;
-  try { verbs = await call("get_shell_verbs", { path }); } catch (e) {}
-  if (!verbs || !verbs.length) return;
-
-  const sub = document.createElement("div");
-  sub.className = "context-menu";
-  sub.style.cssText = `left:${cx}px;top:${cy}px;z-index:9999;`;
-  renderShellItems(sub, path, verbs);
-  document.body.appendChild(sub);
-  requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
-  _ctxShow(sub);
-
-  // In background, try COM — if it returns, replace menu
-  call("query_context_menu", { path }).then(comVerbs => {
-    if (!comVerbs || !comVerbs.length) return;
-    if (!document.body.contains(sub)) return; // menu already closed
-    sub.innerHTML = "";
-    renderShellItems(sub, path, comVerbs);
-    requestAnimationFrame(() => clampMenuPosition(sub, cx, cy));
-  }).catch(() => {});
-}
-
-function renderShellItems(container, path, items) {
-  items.forEach(v => {
-    if (v.separator) {
-      const sep = document.createElement("div"); sep.className = "ctx-sep"; container.appendChild(sep);
-      return;
+function renderMenuItems(parent, items, x, y) {
+  items.forEach(item => {
+    if (item.label === "-") {
+      const sep = document.createElement("div"); sep.className = "ctx-sep"; parent.appendChild(sep);
+    } else if (item.submenu) {
+      const mi = document.createElement("div");
+      mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
+      mi.innerHTML = `<span>${esc(item.label)}</span><span class="ctx-arrow">\u25B6</span>`;
+      const sub = document.createElement("div");
+      sub.className = "ctx-submenu";
+      renderMenuItems(sub, item.submenu, x, y);
+      mi.appendChild(sub);
+      mi.addEventListener("mouseenter", () => {
+        const rect = mi.getBoundingClientRect();
+        const subRect = sub.getBoundingClientRect();
+        sub.style.top = "0";
+        sub.style.left = "100%";
+        if (rect.right + 200 > window.innerWidth) {
+          sub.style.left = "auto";
+          sub.style.right = "100%";
+        }
+      });
+      mi.addEventListener("click", e => {
+        if (e.target.closest('.ctx-submenu')) return;
+      });
+      parent.appendChild(mi);
+    } else {
+      const mi = document.createElement("div");
+      mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
+      mi.innerHTML = `<span>${esc(item.label)}</span>${item.shortcut ? `<span class="ctx-shortcut">${item.shortcut}</span>` : ""}`;
+      mi.addEventListener("click", e => {
+        if (item.disabled) return;
+        const actionFn = item.action;
+        if (item._flash) {
+          const rect = mi.getBoundingClientRect();
+          flashAt(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          setTimeout(() => {
+            removeContextMenu();
+            if (actionFn) actionFn();
+          }, 80);
+        } else {
+          removeContextMenu();
+          if (actionFn) actionFn();
+        }
+      });
+      parent.appendChild(mi);
     }
-    const mi = document.createElement("div");
-    mi.className = "ctx-item";
-    mi.innerHTML = `<span>${esc(v.label)}</span>`;
-    mi.addEventListener("click", () => {
-      removeContextMenu();
-      if (v.id !== undefined) {
-        call("invoke_context_menu_command", { path, cmdId: v.id });
-      } else if (v.verb !== undefined) {
-        call("invoke_shell_verb", { path, verb: v.verb });
-      }
-    });
-    container.appendChild(mi);
   });
 }
 
-/// Render a context menu from shell verbs via registry scan (fast, no COM).
-/// Falls back to built-in menu if registry returns nothing.
-/// Items have the shape: { verb, label, children?: [...] }
-async function showComContextMenu(path, cx, cy) {
-  removeContextMenu();
-  let items;
-  try {
-    items = await call("get_shell_verbs", { path });
-  } catch (e) {}
-  if (!items || !items.length) { showContextMenu(cx, cy); return; }
-
-  const menu = document.createElement("div");
-  menu.className = "context-menu";
-  menu.style.cssText = `left:${cx}px;top:${cy}px;z-index:9999;`;
-
-  function closeAllSubs() {
-    menu.querySelectorAll(".ctx-item").forEach(el => { if (el._subOpen) { el._subContainer.style.display = "none"; el._subContainer.innerHTML = ""; el._subOpen = false; } });
-  }
-
-  function openSub(parentEl, children, depth) {
-    const sub = parentEl._subContainer;
-    if (!sub) return;
-    sub.innerHTML = "";
-    buildItems(sub, children, depth);
-    sub.style.display = "block";
-    parentEl._subOpen = true;
-
-    const pRect = parentEl.getBoundingClientRect();
-    sub.style.left = (pRect.right + 2) + "px";
-    sub.style.top = pRect.top + "px";
-
-    requestAnimationFrame(() => {
-      const sRect = sub.getBoundingClientRect();
-      if (sRect.right > window.innerWidth) sub.style.left = (pRect.left - sRect.width - 2) + "px";
-      if (sRect.bottom > window.innerHeight) sub.style.top = Math.max(4, window.innerHeight - sRect.height - 8) + "px";
-    });
-  }
-
-  function buildItems(parentEl, itemList, depth) {
-    itemList.forEach(it => {
-      if (it.separator) {
-        const sep = document.createElement("div"); sep.className = "ctx-sep"; parentEl.appendChild(sep);
-        return;
-      }
-      const mi = document.createElement("div");
-      mi.className = "ctx-item";
-      const hasChildren = it.children && it.children.length > 0;
-      mi.innerHTML = `<span>${esc(it.label)}</span>${hasChildren ? '<span class="ctx-arrow">\u25b6</span>' : ''}`;
-      mi.addEventListener("click", e => {
-        e.stopPropagation();
-        if (hasChildren) {
-          if (mi._subOpen) { mi._subContainer.style.display = "none"; mi._subContainer.innerHTML = ""; mi._subOpen = false; return; }
-          closeAllSubs();
-          openSub(mi, it.children, depth + 1);
-        } else {
-          removeContextMenu();
-          call("invoke_shell_verb", { path, verb: it.verb }).catch(() => {});
-        }
-      });
-      parentEl.appendChild(mi);
-
-      if (hasChildren) {
-        const subContainer = document.createElement("div");
-        subContainer.className = "context-menu ctx-submenu";
-        subContainer.style.display = "none";
-        subContainer.style.position = "fixed";
-        subContainer.style.zIndex = "10001";
-        parentEl.appendChild(subContainer);
-        mi._subContainer = subContainer;
-      }
-    });
-  }
-
-  buildItems(menu, items, 0);
-
-  document.body.appendChild(menu);
-  _ctxShow(menu);
-  requestAnimationFrame(() => clampMenuPosition(menu, cx, cy));
-
-  document.addEventListener("pointerdown", function closeSubs(e) {
-    if (!menu.contains(e.target)) { closeAllSubs(); document.removeEventListener("pointerdown", closeSubs); }
-  }, true);
+function flashAt(x, y) {
+  const d = document.createElement("div");
+  d.style.position = "fixed";
+  d.style.zIndex = "9999";
+  d.style.pointerEvents = "none";
+  d.style.background = "var(--accent)";
+  d.style.opacity = "0.18";
+  d.style.left = "0";
+  d.style.top = "0";
+  d.style.width = "100vw";
+  d.style.height = "100vh";
+  d.style.borderRadius = "0";
+  document.body.appendChild(d);
+  requestAnimationFrame(() => {
+    d.style.transition = "all .4s ease-out";
+    d.style.left = (x - 4) + "px";
+    d.style.top = (y - 4) + "px";
+    d.style.width = "8px";
+    d.style.height = "8px";
+    d.style.borderRadius = "50%";
+    d.style.opacity = "0";
+  });
+  setTimeout(() => d.remove(), 450);
 }
 
 function showContextMenu(x, y, isRight) {
@@ -421,122 +366,129 @@ function showContextMenu(x, y, isRight) {
   const hasSelection = sel.length > 0;
   const singleSelection = sel.length === 1;
   const singleFile = singleSelection && !sel[0].is_dir ? sel[0] : null;
+  const singleDir = singleSelection && sel[0].is_dir ? sel[0] : null;
+  const isDir = singleSelection && sel[0].is_dir;
   const ext = singleFile ? (singleFile.extension || "").toLowerCase() : "";
   const isImage = ["jpg","jpeg","png","gif","bmp","webp","svg","ico","tiff"].includes(ext);
   const isArchive = ["zip","rar","7z","tar","gz","bz2"].includes(ext);
+  const isMedia = ["mp4","mkv","avi","mov","wmv","flv","webm","mp3","flac","wav","aac","ogg","m4a","wma","ape","alac"].includes(ext);
   const isExe = ext === "exe" || ext === "msi";
   const isFont = ["ttf","otf","fon"].includes(ext);
-  const isShortcut = ext === "lnk";
   const isCert = ["cer","crt","p7b","pfx","p12"].includes(ext);
+  const currentPath = isRight ? G.rp.path : getTab().path;
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
   menu.style.cssText = `left:${x}px;top:${y}px;z-index:9999;`;
 
+  const openWithSubmenu = [
+    { label: "VS Code", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "vscode" }) },
+    { label: "Visual Studio", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "visual_studio" }) },
+    "-",
+    { label: "CMD", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "cmd" }) },
+    { label: "PowerShell", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "powershell" }) },
+    { label: "Git Bash", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "git_bash" }) },
+  ];
+  if (isMedia) openWithSubmenu.push({ label: "VLC", action: () => call("open_with_program", { path: sel[0].path, program: "vlc" }) });
+  if (isMedia) openWithSubmenu.push({ label: "PotPlayer", action: () => call("open_with_program", { path: sel[0].path, program: "potplayer" }) });
+  if (isDir) openWithSubmenu.push({ label: "VLC (folder)", action: () => call("open_with_program", { path: sel[0].path, program: "vlc_folder" }) });
+  if (isMedia || isDir) openWithSubmenu.push("-");
+  openWithSubmenu.push({ label: t('ctx.openWithDialog'), action: () => call("show_open_with_dialog", { path: singleSelection ? sel[0].path : currentPath }) });
+  if (isDir) {
+    openWithSubmenu.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initial_path: sel[0].path }) });
+    openWithSubmenu.push({ label: t('ctx.newTab'), action: () => addTab(sel[0].path) });
+  }
+
   const items = [
     { label: t('ctx.open'), shortcut:"Enter", action: () => { if (singleSelection) { if (sel[0].is_dir) { if (isRight) rpNavigateTo(sel[0].path); else navigateTo(sel[0].path); } else openFileHandler(sel[0].path); } }, disabled: !singleSelection },
-    { label: t('ctx.openInIde'), action: async () => { try { const ides = await call("detect_ides", {}); if (ides && ides.length) { await call("open_in_ide", { ide_cmd: ides[0].command, path: sel[0].path }); } } catch(e) { alert(t('alert.noIde')); } }, disabled: !singleSelection },
-    { label: t('ctx.openInTerminal'), action: () => { const path = singleFile ? sel[0].path.split("\\").slice(0,-1).join("\\") : (singleSelection ? sel[0].path : getTab().path); call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
+    { label: t('ctx.openWith'), submenu: openWithSubmenu, disabled: !singleSelection },
     { label: "-", action: null },
-    { label: t('ctx.runAsAdmin'), action: () => { call("run_as_admin", { path: sel[0].path }); }, disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
-    { label: t('ctx.compatSettings'), action: () => showCompatDialog(sel[0].path), disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
-    { label: t('ctx.installCert'), action: async () => { try { await call("install_certificate", { path: sel[0].path }); showNotice(t('notice.certInstalled')); } catch(e) { alert(t('alert.installCertFailed')); } }, disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
-    { label: "-", action: null, hidden: (!singleFile || !isExe) && (!singleFile || !isCert) },
     { label: t('ctx.cut'), shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
     { label: t('ctx.copy'), shortcut:"Ctrl+C", action: () => copySelected(isRight), disabled: !hasSelection },
     { label: t('ctx.paste'), shortcut:"Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
-    { label: t('ctx.pasteShortcut'), action: async () => { if (!G.clipboard) return; const dest = isRight ? G.rp.path : getTab().path; try { for (const src of G.clipboard.paths) { const linkName = src.split("\\").pop().replace(/\.[^.]+$/, ""); await call("create_shortcut", { target: src, name: linkName, dest: dest }); } await refresh(); } catch(e) { alert(t('alert.shortcutFailed')); } }, disabled: !G.clipboard },
     { label: "-", action: null },
     { label: t('ctx.rename'), shortcut:"F2", action: () => renamePrompt(isRight), disabled: !singleSelection },
     { label: t('ctx.delete'), shortcut:"Del", action: () => deleteSelected(isRight), disabled: !hasSelection },
     { label: "-", action: null },
+    { label: t('ctx.copyPath'), shortcut:"Ctrl+Shift+C", action: () => { if (singleSelection) call("copy_file_path", { path: sel[0].path }); } , disabled: !singleSelection },
+    { label: t('ctx.share'), submenu: [
+      { label: "QQ", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "qq" }); } },
+      { label: "\u5FAE\u4FE1", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "wechat" }); } },
+      { label: "\u98DE\u4E66", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "feishu" }); } },
+      "-",
+      { label: t('ctx.windowsShare'), action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "windows" }); } },
+    ], disabled: !singleSelection },
+    { label: t('ctx.compress'), submenu: [
+      { label: "ZIP", action: async () => { const paths = sel.map(f => f.path); try { await call("create_archive", { paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
+      { label: "7-Zip (.7z)", action: async () => { const paths = sel.map(f => f.path); try { await call("compress_with", { sources: paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".7z", tool: "7zip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
+      { label: "Bandizip", action: async () => { const paths = sel.map(f => f.path); try { await call("compress_with", { sources: paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip", tool: "bandizip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
+      { label: "WinRAR (.rar)", action: async () => { const paths = sel.map(f => f.path); try { await call("compress_with", { sources: paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".rar", tool: "winrar" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
+    ], disabled: !hasSelection },
+    { label: "-", action: null },
     { label: t('ctx.newFile'), shortcut:"Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
     { label: t('ctx.newFolder'), shortcut:"F7", action: newFolder },
-    { label: "-", action: null },
+    { label: "-", action: null, hidden: !singleSelection },
     { label: t('ctx.setWallpaper'), action: () => { call("set_wallpaper", { path: sel[0].path }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: t('ctx.rotateLeft'), action: () => { call("rotate_image", { path: sel[0].path, degrees: -90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: t('ctx.rotateRight'), action: () => { call("rotate_image", { path: sel[0].path, degrees: 90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: "-", action: null, hidden: !singleFile || !isImage },
-    { label: t('ctx.extractHere'), action: async () => { const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
-    { label: t('ctx.extractTo'), action: async () => { const sub = sel[0].name.replace(/\.[^.]+$/, ""); const ext = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: getTab().path + "\\" + sub }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: getTab().path + "\\" + sub, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: t('ctx.extractHere'), action: async () => { const ext2 = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext2 === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: currentPath }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: currentPath, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: t('ctx.extractTo'), action: async () => { const sub = sel[0].name.replace(/\.[^.]+$/, ""); const ext2 = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext2 === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: currentPath + "\\" + sub }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: currentPath + "\\" + sub, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
     { label: "-", action: null, hidden: !singleFile || !isArchive },
-    { label: t('ctx.compressZip'), action: async () => { const paths = sel.map(f => f.path); try { await call("create_archive", { paths, dest: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } }, disabled: !hasSelection },
-    { label: t('ctx.compress7z'), action: async () => { const paths = sel.map(f => f.path); try { await call("create_7z", { sources: paths, archive: getTab().path + "\\" + (singleSelection ? sel[0].name : "archive") + ".7z" }); await refresh(); } catch(e) { alert(t('alert.compress7zFailed')); } }, disabled: !hasSelection, hidden: !G._7zAvailable },
-    { label: "-", action: null, hidden: !G._7zAvailable },
+    { label: t('ctx.runAsAdmin'), action: () => { call("run_as_admin", { path: sel[0].path }); }, disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
+    { label: t('ctx.installCert'), action: async () => { try { await call("install_certificate", { path: sel[0].path }); showNotice(t('notice.certInstalled')); } catch(e) { alert(t('alert.installCertFailed')); } }, disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
     { label: t('ctx.installFont'), action: () => { call("install_font", { path: sel[0].path }); }, disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },
-    { label: "-", action: null, hidden: !singleFile || !isFont },
-    { label: t('ctx.selectAll'), shortcut:"Ctrl+A", action: () => selectAll(isRight) },
-    { label: t('ctx.invertSelection'), shortcut:"Ctrl+I", action: () => invertSelection(isRight) },
-    { label: "-", action: null },
-    { label: t('ctx.batchRename'), action: () => openBatchRename(isRight), disabled: !hasSelection },
-    { label: t('ctx.addTag'), action: () => openTagDialog(isRight), disabled: !hasSelection },
-    { label: t('ctx.properties'), shortcut:"Alt+Enter", action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
+    { label: "-", action: null, hidden: !singleSelection },
+    { label: t('ctx.properties'), shortcut:"Alt+Enter", _flash: true, action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
     { label: t('ctx.permissions'), action: () => { if (singleSelection) showPermissionsDialog(sel[0].path); }, disabled: !singleSelection },
-    { label: "-", action: null },
-    { label: t('ctx.unblockFile'), action: async () => { try { await call("unblock_file", { path: sel[0].path }); showNotice(t('notice.fileUnblocked')); refresh(); } catch(e) { alert(t('alert.unblockFailed')); } }, disabled: !singleFile, hidden: !singleFile },
-    { label: t('ctx.viewStreams'), action: async () => { try { const ads = await call("list_ads", { path: sel[0].path }); showStreamsDialog(sel[0].path, ads); } catch(e) { showStreamsDialog(sel[0].path, []); } }, disabled: !singleFile, hidden: !singleFile },
-    { label: "-", action: null },
-    { label: "\u2601 " + t('ctx.alwaysKeep'), action: async () => { try { for (const f of sel) await call("cloud_pin_file", { path: f.path }); showNotice(t('notice.filesPinned')); await refresh(); } catch(e) { alert(t('alert.pinFailed')); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
-    { label: "\u2601 " + t('ctx.freeUpSpace'), action: async () => { try { for (const f of sel) await call("cloud_unpin_file", { path: f.path }); showNotice(t('notice.spaceFreed')); await refresh(); } catch(e) { alert(t('alert.unpinFailed')); } }, disabled: !hasSelection, hidden: !isCloudPath(isRight) },
-    { label: "-", action: null },
-    { label: t('ctx.emptyRecycleBin'), action: () => { if (confirm(t('confirm.emptyRecycleBin'))) call("empty_recycle_bin", {}); } },
-    { label: t('ctx.gitClone'), action: () => showGitCloneDialog() },
-    { label: t('ctx.svnCheckout'), action: () => showSvnCheckoutDialog() },
-    { label: t('ctx.svnUpdate'), action: svnUpdate, hidden: typeof svnUpdate !== 'function' },
-    { label: t('ctx.svnCommit'), action: svnCommit, hidden: typeof svnCommit !== 'function' },
-    { label: t('ctx.svnRevert'), action: svnRevert, hidden: typeof svnRevert !== 'function' },
-    { label: t('ctx.svnAdd'), action: svnAdd, hidden: typeof svnAdd !== 'function' },
-    { label: t('ctx.svnLog'), action: showSvnLog, hidden: typeof showSvnLog !== 'function' },
-    { label: t('ctx.svnCleanup'), action: svnCleanup, hidden: typeof svnCleanup !== 'function' },
-    { label: G.showHidden ? t('ctx.hideHidden') : t('ctx.showHidden'), action: toggleHidden },
   ];
 
   const visibleItems = items.filter(it => !it.hidden);
 
-  visibleItems.forEach(item => {
-    if (item.label === "-") {
-      const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
-    } else {
-      const mi = document.createElement("div");
-      mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
-      mi.innerHTML = `<span>${esc(item.label)}</span>${item.shortcut ? `<span class="ctx-shortcut">${item.shortcut}</span>` : ""}`;
-      mi.addEventListener("click", () => { removeContextMenu(); if (item.action && !item.disabled) item.action(); });
-      menu.appendChild(mi);
-    }
-  });
+  renderMenuItems(menu, visibleItems, x, y);
 
   document.body.appendChild(menu);
   _ctxShow(menu);
 
-  if (singleSelection) {
-    const sep = document.createElement("div");
-    sep.className = "ctx-sep";
-    menu.appendChild(sep);
-    const loadingItem = document.createElement("div");
-    loadingItem.className = "ctx-item disabled";
-    loadingItem.innerHTML = `<span>${t('ctx.moreOptions')}...</span>`;
-    menu.appendChild(loadingItem);
+  let ctxMeta = { x, y, isRight, singleSelection, sel, singleFile, isDir, items };
 
-    async function loadShellVerbs() {
-      let verbs;
-      try { verbs = await call("get_shell_verbs", { path: sel[0].path }); } catch(e) {}
-      if (!verbs || !verbs.length) { loadingItem.remove(); return; }
-      loadingItem.remove();
-      verbs.forEach(v => {
-        if (v.separator) {
-          const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
-          return;
-        }
-        const mi = document.createElement("div");
-        mi.className = "ctx-item";
-        mi.innerHTML = `<span>${esc(v.label)}</span>`;
-        mi.addEventListener("click", () => { removeContextMenu(); call("invoke_shell_verb", { path: sel[0].path, verb: v.verb }); });
-        menu.appendChild(mi);
-      });
-      requestAnimationFrame(() => clampMenuPosition(menu, x, y));
+  menu.addEventListener("keydown", e => {
+    if (e.key === "Escape") { e.preventDefault(); removeContextMenu(); return; }
+    if (e.key === "Enter" && e.altKey) {
+      e.preventDefault();
+      const s = getSelectedPaths(ctxMeta.isRight);
+      if (s.length) {
+        const isR = ctxMeta.isRight;
+        const lid = isR ? "right-file-list" : "file-list";
+        const selEl = document.querySelector(`#${lid} .file-row.selected`) || document.getElementById(lid);
+        if (selEl) { const r = selEl.getBoundingClientRect(); flashAt(r.left + r.width / 2, r.top + r.height / 2); }
+        setTimeout(() => { removeContextMenu(); showPropertiesDialog(s[0].path); }, 80);
+      }
+      return;
     }
-    loadShellVerbs();
-  }
+    if (e.key === "Delete") {
+      e.preventDefault();
+      const s2 = getSelectedPaths(ctxMeta.isRight);
+      if (s2.length) { removeContextMenu(); deleteSelected(ctxMeta.isRight); }
+      return;
+    }
+    if (e.key === "F2") {
+      e.preventDefault();
+      const s3 = getSelectedPaths(ctxMeta.isRight);
+      if (s3.length === 1) { removeContextMenu(); renamePrompt(ctxMeta.isRight); }
+      return;
+    }
+    if (e.key === "Enter" && !e.altKey) {
+      e.preventDefault();
+      if (ctxMeta.singleSelection) {
+        const s = getSelectedPaths(ctxMeta.isRight);
+        if (s.length) { removeContextMenu(); if (s[0].is_dir) { if (ctxMeta.isRight) rpNavigateTo(s[0].path); else navigateTo(s[0].path); } else openFileHandler(s[0].path); }
+      }
+      return;
+    }
+  });
+  menu.tabIndex = -1;
+  menu.focus();
 
   requestAnimationFrame(() => clampMenuPosition(menu, x, y));
 }
@@ -554,7 +506,7 @@ function removeContextMenu() {
   window.removeEventListener("blur", _ctxCloseBlur);
 }
 function _ctxClosePtr(e) {
-  if (contextMenu && !contextMenu.contains(e.target)) removeContextMenu();
+  if (contextMenu && !contextMenu.contains(e.target) && !e.target.closest('.ctx-submenu')) removeContextMenu();
 }
 function _ctxCloseBlur() {
   if (contextMenu) removeContextMenu();

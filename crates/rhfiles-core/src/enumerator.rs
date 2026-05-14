@@ -127,7 +127,7 @@ pub fn show_properties(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;
-        use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
+        use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_INVOKEIDLIST};
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
         let verb: Vec<u16> = "properties\0".encode_utf16().collect();
@@ -137,6 +137,7 @@ pub fn show_properties(path: &Path) -> Result<(), String> {
             info.lpVerb = windows::core::PCWSTR(verb.as_ptr());
             info.lpFile = windows::core::PCWSTR(wide.as_ptr());
             info.nShow = SW_SHOW.0;
+            info.fMask = SEE_MASK_INVOKEIDLIST;
             let _ = ShellExecuteExW(&mut info);
         }
         Ok(())

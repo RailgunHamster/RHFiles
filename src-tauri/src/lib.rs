@@ -138,6 +138,9 @@ pub fn run() {
             system::log_error, system::get_error_logs,
             system::list_i18n_files, system::list_mtp_devices,
             system::run_gui_tests, system::write_test_results,
+            system::open_with_program, system::copy_file_path,
+            system::show_open_with_dialog, system::compress_with,
+            system::share_file,
 
             vcs::git_status, vcs::git_branches, vcs::git_checkout,
             vcs::git_create_branch, vcs::git_init, vcs::git_clone,
@@ -174,8 +177,6 @@ pub fn run() {
             network::sftp_delete, network::sftp_mkdir, network::sftp_rename,
             network::browse_network, network::list_shares,
 
-            shell::get_shell_verbs, shell::invoke_shell_verb,
-            shell::query_context_menu, shell::invoke_context_menu_command,
             shell::get_permissions, shell::set_permission,
             shell::remove_permission, shell::inherit_permissions,
         ])
