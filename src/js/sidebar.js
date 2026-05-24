@@ -5,7 +5,21 @@ async function loadTree(path, expand) {
   const tree = document.getElementById("dir-tree");
   try {
     const children = await call("get_dir_tree", { path });
-    renderTreeNode(tree, children, path, expand);
+    const existing = tree.querySelector(`[data-tpath="${path.replace(/\\/g, "\\\\")}"]`);
+    if (existing) {
+      const childContainer = existing.querySelector(".tree-children");
+      if (childContainer) {
+        const wasOpen = childContainer.classList.contains("open");
+        childContainer.innerHTML = "";
+        children.forEach(c => renderTreeItem(childContainer, c, (parseInt(existing.dataset.depth) || 0) + 1));
+        if (wasOpen || expand) {
+          childContainer.classList.add("open");
+          existing.querySelector(".tree-arrow").classList.add("expanded");
+        }
+      }
+    } else {
+      renderTreeNode(tree, children, path, expand);
+    }
   } catch (e) {}
 }
 
@@ -56,18 +70,22 @@ function renderTreeNode(container, children, parentPath, expand) {
 
 function renderTreeItem(container, entry, depth) {
   depth = depth || 0;
+  const wrapper = document.createElement("div");
+  wrapper.className = "tree-item";
+  wrapper.dataset.tpath = entry.path;
+  wrapper.dataset.depth = depth;
   const div = document.createElement("div");
   div.className = "tree-row";
   div.style.paddingLeft = (depth * 16) + "px";
-  div.dataset.depth = depth;
   div.innerHTML = `
     <span class="tree-arrow ${entry.has_children ? '' : 'empty'}">\u25b6</span>
     <svg class="tree-icon" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.5L7.5 6h7v7h-13V4.5z" stroke="#dcb67a" stroke-width="1"/></svg>
     <span class="tree-name">${esc(entry.name)}</span>
   `;
+  wrapper.appendChild(div);
   const childrenDiv = document.createElement("div");
   childrenDiv.className = "tree-children";
-  div.appendChild(childrenDiv);
+  wrapper.appendChild(childrenDiv);
 
   div.addEventListener("click", async e => {
     e.stopPropagation();
@@ -80,15 +98,17 @@ function renderTreeItem(container, entry, depth) {
       if (entry.has_children) {
         try {
           const kids = await call("get_dir_tree", { path: entry.path });
-          childrenDiv.innerHTML = "";
-          kids.forEach(k => renderTreeItem(childrenDiv, k, depth + 1));
+          if (childrenDiv.children.length === 0) {
+            childrenDiv.innerHTML = "";
+            kids.forEach(k => renderTreeItem(childrenDiv, k, depth + 1));
+          }
         } catch (ex) {}
       }
       childrenDiv.classList.add("open");
       arrow.classList.add("expanded");
     }
   });
-  container.appendChild(div);
+  container.appendChild(wrapper);
 }
 
 // --- drives ---

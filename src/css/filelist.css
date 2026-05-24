@@ -6,7 +6,7 @@
 .pane-right-toolbar { display:flex; align-items:center; gap:6px; height:36px; padding:0 8px; background:var(--bg-card); border-bottom:1px solid var(--border); }
 .pane-address { flex:1; }
 
-.content { flex:1; display:flex; flex-direction:column; min-width:0; background:var(--bg-card); }
+.content { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:var(--bg-card); }
 .file-header { display:flex; align-items:center; height:26px; padding:0 12px; border-bottom:1px solid var(--divider); }
 .col { font-size:12px; color:var(--text-4); padding:0 6px; white-space:nowrap; font-weight:400; cursor:pointer; user-select:none; }
 .col:hover { color:var(--text-3); }
@@ -32,6 +32,8 @@
 .file-row .row-icon { width:16px; height:16px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .file-row .row-icon svg { width:16px; height:16px; }
 .file-row .row-fname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.file-row input.rename-input { border:1px solid var(--accent); outline:none; background:var(--bg-input); color:var(--text); font-size:12px; font-family:inherit; padding:0 4px; width:100%; border-radius:2px; box-sizing:border-box; }
+.file-row input.rename-input:focus { box-shadow:0 0 0 1px var(--accent); }
 .file-row.dir .row-fname { font-weight:500; }
 .file-row .row-date, .file-row .row-type, .file-row .row-size { font-size:12px; color:var(--text-3); white-space:nowrap; padding:0 6px; }
 .file-row:hover .row-date, .file-row:hover .row-type, .file-row:hover .row-size { color:var(--text-2); }

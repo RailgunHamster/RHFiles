@@ -388,7 +388,7 @@ async function navigateTo(path, pushHistory) {
     renderFiles(tab, "file-list", "status-count", "status-selection");
     updateStatus(tab, "status-count", "status-selection");
     updateSidebarSelection();
-    loadTree(path, true);
+    loadTree(path, false);
     loadGitStatus(path);
     if (typeof loadSvnStatus === 'function') loadSvnStatus(path);
     saveTabState();
