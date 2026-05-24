@@ -63,24 +63,74 @@ async function deleteSelected(isRight) {
   } catch (e) { alert(t('alert.deleteFailed', {error: e})); }
 }
 
+function startInlineRename(rowEl, file, isRight, onCancel) {
+  const nameEl = rowEl.querySelector(".row-fname");
+  if (!nameEl) return;
+  const origName = file.name;
+  const ext = file.is_dir ? "" : (file.extension ? "." + file.extension : "");
+  const baseName = file.is_dir ? origName : (ext ? origName.slice(0, -ext.length) : origName);
+
+  const input = document.createElement("input");
+  input.className = "rename-input";
+  input.value = origName;
+  nameEl.replaceWith(input);
+  input.focus();
+  if (!file.is_dir && ext) {
+    input.setSelectionRange(0, baseName.length);
+  } else {
+    input.select();
+  }
+
+  let done = false;
+  const commit = async () => {
+    if (done) return; done = true;
+    const newName = input.value.trim();
+    if (!input.isConnected) return;
+    input.replaceWith(nameEl);
+    nameEl.textContent = esc(file.name);
+    if (!newName || newName === origName) return;
+    try {
+      const oldPath = file.path;
+      await call("rename_file", { path: oldPath, newName });
+      const newPath = oldPath.split("\\").slice(0, -1).join("\\") + "\\" + newName;
+      trackRename(oldPath, newPath);
+      await refresh();
+    } catch (e) { alert(t('alert.renameFailed')); }
+  };
+  const cancel = async () => {
+    if (done) return; done = true;
+    input.replaceWith(nameEl);
+    if (onCancel) { try { await onCancel(); } catch(e) {} }
+  };
+
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener("blur", () => commit());
+}
+
 async function renamePrompt(isRight) {
   const sel = getSelectedPaths(isRight);
   if (sel.length !== 1) return;
-  const newName = prompt(t('prompt.rename'), sel[0].name);
-  if (!newName || newName === sel[0].name) return;
-  try {
-    const oldPath = sel[0].path;
-    await call("rename_file", { path: oldPath, newName });
-    const newPath = oldPath.split("\\").slice(0, -1).join("\\") + "\\" + newName;
-    trackRename(oldPath, newPath);
-    await refresh();
+  const isR = isRight;
+  const listId = isR ? "right-file-list" : "file-list";
+  const rows = document.querySelectorAll(`#${listId} .file-row`);
+  for (const row of rows) {
+    if (row.dataset.path === sel[0].path) {
+      startInlineRename(row, sel[0], isRight);
+      return;
+    }
   }
-  catch (e) { alert(t('alert.renameFailed')); }
 }
 
-async function newFolder() {
-  try { await call("new_folder", { parent: getTab().path }); await refresh(); }
-  catch (e) { alert(t('alert.newFolderFailed')); }
+async function newFolder(isRight) {
+  const destPath = isRight ? G.rp.path : getTab().path;
+  try {
+    await call("new_folder", { parent: destPath });
+    await refresh();
+    _findAndRename(isRight, destPath, "New Folder");
+  } catch (e) { alert(t('alert.newFolderFailed')); }
 }
 
 async function copySelected(isRight) {
@@ -97,6 +147,28 @@ async function cutSelected(isRight) {
   G.clipboard = { op: "cut", paths: new Set(sel.map(f => f.path)) };
   if (isRight) renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
   else renderFiles(getTab(), "file-list", "status-count", "status-selection");
+}
+
+function _findAndRename(isRight, parentPath, prefix) {
+  const listId = isRight ? "right-file-list" : "file-list";
+  const rows = document.querySelectorAll(`#${listId} .file-row`);
+  for (const row of rows) {
+    const nameEl = row.querySelector(".row-fname");
+    if (!nameEl) continue;
+    if (row.dataset.path && row.dataset.path.startsWith(parentPath)) {
+      const fname = row.dataset.path.split("\\").pop();
+      if (fname && fname.startsWith(prefix)) {
+        const file = { name: fname, path: row.dataset.path, is_dir: row.classList.contains("dir") ? 1 : 0, extension: fname.includes(".") ? fname.split(".").pop() : "" };
+        startInlineRename(row, file, isRight, async () => {
+          try {
+            await call("delete_file", { path: file.path });
+            await refresh();
+          } catch(e) { console.error("delete failed", e); }
+        });
+        return;
+      }
+    }
+  }
 }
 
 async function paste(isRight) {
@@ -286,10 +358,14 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
 }
 
 function renderMenuItems(parent, items, x, y) {
+  let lastWasSep = false;
   items.forEach(item => {
-    if (item.label === "-") {
+    if (item === "-" || item.label === "-") {
+      if (lastWasSep) return;
+      lastWasSep = true;
       const sep = document.createElement("div"); sep.className = "ctx-sep"; parent.appendChild(sep);
     } else if (item.submenu) {
+      lastWasSep = false;
       const mi = document.createElement("div");
       mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
       mi.innerHTML = `<span>${esc(item.label)}</span><span class="ctx-arrow">\u25B6</span>`;
@@ -312,6 +388,7 @@ function renderMenuItems(parent, items, x, y) {
       });
       parent.appendChild(mi);
     } else {
+      lastWasSep = false;
       const mi = document.createElement("div");
       mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
       mi.innerHTML = `<span>${esc(item.label)}</span>${item.shortcut ? `<span class="ctx-shortcut">${item.shortcut}</span>` : ""}`;
@@ -384,7 +461,7 @@ function showContextMenu(x, y, isRight) {
   const openWithSubmenu = [
     { label: "VS Code", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "vscode" }) },
     { label: "Visual Studio", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "visual_studio" }) },
-    "-",
+    { label: "-" },
     { label: "CMD", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "cmd" }) },
     { label: "PowerShell", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "powershell" }) },
     { label: "Git Bash", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "git_bash" }) },
@@ -392,7 +469,7 @@ function showContextMenu(x, y, isRight) {
   if (isMedia) openWithSubmenu.push({ label: "VLC", action: () => call("open_with_program", { path: sel[0].path, program: "vlc" }) });
   if (isMedia) openWithSubmenu.push({ label: "PotPlayer", action: () => call("open_with_program", { path: sel[0].path, program: "potplayer" }) });
   if (isDir) openWithSubmenu.push({ label: "VLC (folder)", action: () => call("open_with_program", { path: sel[0].path, program: "vlc_folder" }) });
-  if (isMedia || isDir) openWithSubmenu.push("-");
+  if (isMedia || isDir) openWithSubmenu.push({ label: "-" });
   openWithSubmenu.push({ label: t('ctx.openWithDialog'), action: () => call("show_open_with_dialog", { path: singleSelection ? sel[0].path : currentPath }) });
   if (isDir) {
     openWithSubmenu.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initial_path: sel[0].path }) });
@@ -415,7 +492,7 @@ function showContextMenu(x, y, isRight) {
       { label: "QQ", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "qq" }); } },
       { label: "\u5FAE\u4FE1", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "wechat" }); } },
       { label: "\u98DE\u4E66", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "feishu" }); } },
-      "-",
+      { label: "-" },
       { label: t('ctx.windowsShare'), action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "windows" }); } },
     ], disabled: !singleSelection },
     { label: t('ctx.compress'), submenu: [
@@ -426,7 +503,7 @@ function showContextMenu(x, y, isRight) {
     ], disabled: !hasSelection },
     { label: "-", action: null },
     { label: t('ctx.newFile'), shortcut:"Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
-    { label: t('ctx.newFolder'), shortcut:"F7", action: newFolder },
+    { label: t('ctx.newFolder'), shortcut:"F7", action: () => newFolder(isRight) },
     { label: "-", action: null, hidden: !singleSelection },
     { label: t('ctx.setWallpaper'), action: () => { call("set_wallpaper", { path: sel[0].path }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: t('ctx.rotateLeft'), action: () => { call("rotate_image", { path: sel[0].path, degrees: -90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
@@ -513,7 +590,6 @@ function _ctxCloseBlur() {
 }
 function _ctxShow(menu) {
   contextMenu = menu;
-  // Register close handlers when menu is shown
   document.addEventListener("pointerdown", _ctxClosePtr, true);
   window.addEventListener("blur", _ctxCloseBlur);
 }
