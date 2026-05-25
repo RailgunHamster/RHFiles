@@ -146,7 +146,22 @@ pub fn show_properties(path: &Path) -> Result<(), String> {
     { Err("Not supported".to_string()) }
 }
 
+fn find_repo_root(path: &Path, marker: &str) -> Option<std::path::PathBuf> {
+    let mut current = if path.is_dir() { path.to_path_buf() } else { path.parent()?.to_path_buf() };
+    loop {
+        if current.join(marker).exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
 pub fn get_git_status(path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
+    if find_repo_root(path, ".git").is_none() {
+        return Ok(std::collections::HashMap::new());
+    }
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain", "--no-renames"])
         .current_dir(path).output().map_err(|e| e.to_string())?;
@@ -640,6 +655,9 @@ pub fn git_init(path: &Path) -> Result<(), String> {
 // === SVN ===
 
 pub fn get_svn_status(path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
+    if !path.join(".svn").exists() {
+        return Ok(std::collections::HashMap::new());
+    }
     let output = std::process::Command::new("svn")
         .args(["status", "--non-interactive"])
         .current_dir(path).output().map_err(|e| e.to_string())?;
