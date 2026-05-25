@@ -38,6 +38,9 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       },
+      "wix": {
+        "language": "zh-CN"
+      },
       "nsis": {
         "installMode": "currentUser"
       }
