@@ -409,10 +409,15 @@ function getSearchEngine() {
 }
 
 let _filterTimer = null;
+let _deepSearchTimer = null;
+let _deepSearchRunning = false;
 function applyFilter() {
   if (_filterTimer) clearTimeout(_filterTimer);
   const query = document.getElementById("filter-input").value.trim();
-  if (G.deepSearch) { runDeepSearch(); }
+  if (G.deepSearch) {
+    if (_deepSearchTimer) clearTimeout(_deepSearchTimer);
+    _deepSearchTimer = setTimeout(() => { _deepSearchTimer = null; runDeepSearch(); }, 250);
+  }
   else {
     _filterTimer = setTimeout(() => { navigateTo(getTab().path, false); _filterTimer = null; }, query ? 150 : 0);
   }
@@ -680,18 +685,24 @@ function toggleDeepSearch() {
 }
 
 async function runDeepSearch() {
+  if (_deepSearchRunning) return;
   const query = document.getElementById("filter-input").value;
   if (!query) { navigateTo(getTab().path, false); return; }
   const tab = getTab();
+  _deepSearchRunning = true;
   try {
     document.getElementById("status-count").textContent = t('status.searching');
     const results = await call("search_recursive", { path: tab.path, query, maxResults: 500 });
+    // Discard stale results if query changed while searching
+    if (document.getElementById("filter-input").value.trim() !== query) return;
     tab.entries = results;
     tab.sel.clear();
     tab.lastIdx = -1;
     renderFiles(tab, "file-list", "status-count", "status-selection");
   } catch (e) {
     document.getElementById("status-count").textContent = t('status.searchError', {error: e});
+  } finally {
+    _deepSearchRunning = false;
   }
 }
 
