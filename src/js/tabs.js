@@ -632,7 +632,7 @@ function showQuickSearchResults(results, engine) {
       div.innerHTML = `<span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
                 <span class="quick-search-item-meta">${r.size ? fmtSize(r.size) : ''}${r.modified ? ' · ' + r.modified.split(' ')[0] : ''}</span>
                 <span class="quick-search-item-path">${esc(r.path)}</span>`;
-      div.addEventListener("click", () => quickSearchNavigate(r.path));
+      div.addEventListener("click", () => quickSearchNavigate(r.path, r.is_dir));
       dropdown.appendChild(div);
     }
     _searchDropdownIdx = -1;
@@ -647,26 +647,28 @@ function hideQuickSearch() {
   _searchDropdownIdx = -1;
 }
 
-function quickSearchNavigate(path) {
+async function quickSearchNavigate(path, isDir) {
   hideQuickSearch();
   const input = document.getElementById("filter-input");
   if (input) {
     saveSearchHistory(input.value.trim());
     input.value = "";
   }
+  if (path.toLowerCase().endsWith(".lnk")) {
+    try { await call("open_file", { path }); return; } catch(e) {}
+  }
+  if (isDir) { await navigateTo(path); return; }
   const parentPath = path.replace(/\\[^\\]+$/, '');
-  navigateTo(parentPath);
-  setTimeout(() => {
-    const tab = getTab();
-    const idx = tab.entries.findIndex(e => e.path === path);
-    if (idx >= 0) {
-      tab.sel.clear();
-      tab.sel.add(idx);
-      tab.lastIdx = idx;
-      renderFiles(tab, "file-list", "status-count", "status-selection");
-      scrollToVisible(idx);
-    }
-  }, 200);
+  await navigateTo(parentPath);
+  const tab = getTab();
+  const idx = tab.entries.findIndex(e => e.path === path);
+  if (idx >= 0) {
+    tab.sel.clear();
+    tab.sel.add(idx);
+    tab.lastIdx = idx;
+    renderFiles(tab, "file-list", "status-count", "status-selection");
+    scrollToVisible(idx);
+  }
 }
 
 // --- deep search ---
