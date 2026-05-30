@@ -1,5 +1,6 @@
 // keyboard.js — customizable keyboard shortcuts + command palette
 
+let _ctxMenuTimer = null;
 let _lastMouseX = 0;
 let _lastMouseY = 0;
 document.addEventListener("mousemove", e => { _lastMouseX = e.clientX; _lastMouseY = e.clientY; });
@@ -185,6 +186,23 @@ document.addEventListener("keydown", async e => {
 
   const anyDialogOpen = document.querySelector('.overlay[style*="display: flex"], .overlay[style*="display:flex"]');
   if (anyDialogOpen) return;
+
+  if (e.key === "Control" && e.location === 2) {
+    if (_ctxMenuTimer) clearTimeout(_ctxMenuTimer);
+    _ctxMenuTimer = setTimeout(() => {
+      _ctxMenuTimer = null;
+      const isR = G.lastActivePane === 'right';
+      const lid = isR ? "right-file-list" : "file-list";
+      const selEl = document.querySelector(`#${lid} .file-row.selected`);
+      const anchor = selEl || document.getElementById(lid);
+      if (anchor) {
+        const r = anchor.getBoundingClientRect();
+        showContextMenu(_lastMouseX || r.left + r.width / 2, Math.max(r.top, _lastMouseY), isR);
+      }
+    }, 250);
+    return;
+  }
+  if (_ctxMenuTimer) { clearTimeout(_ctxMenuTimer); _ctxMenuTimer = null; }
 
   const bindings = getShortcutBindings();
   const combo = normalizeKey(e);
