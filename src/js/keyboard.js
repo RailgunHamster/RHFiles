@@ -1,6 +1,9 @@
 // keyboard.js — customizable keyboard shortcuts + command palette
 
 let _ctxMenuTimer = null;
+let _lastMouseX = 0;
+let _lastMouseY = 0;
+document.addEventListener("mousemove", e => { _lastMouseX = e.clientX; _lastMouseY = e.clientY; });
 
 const DEFAULT_SHORTCUTS = {
   "nav.up":              ["Backspace", "Alt+ArrowUp"],
@@ -51,12 +54,9 @@ const ACTION_HANDLERS = {
     const isRight = G.lastActivePane === 'right';
     const listId = isRight ? "right-file-list" : "file-list";
     const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
-    console.log(`[contextMenu] shortcut fired isRight=${isRight} selEl=${selEl?.className}`);
     if (selEl) {
       const r = selEl.getBoundingClientRect();
-      console.log(`[contextMenu] pos=${r.left+r.width/2},${r.top+r.height/2}`);
-      showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRight);
-      console.log(`[contextMenu] showContextMenu returned`);
+      showContextMenu(r.left + r.width / 2, Math.max(r.top, _lastMouseY), isRight);
     }
   },
   "file.copy":           async () => await copySelected(),
@@ -74,10 +74,11 @@ const ACTION_HANDLERS = {
     const listId = isRight ? "right-file-list" : "file-list";
     if (paths.length && typeof flashAt === 'function') {
       const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
-      if (selEl) {
-        const r = selEl.getBoundingClientRect();
-        flashAt(r.left + r.width / 2, r.top + r.height / 2);
-      }
+if (selEl) {
+      const r = selEl.getBoundingClientRect();
+      showContextMenu(r.left + r.width / 2, Math.max(r.top, _lastMouseY), isRight);
+    }
+  },
     }
     await showPropertiesDialog(paths[0]?.path);
   },
@@ -196,7 +197,7 @@ document.addEventListener("keydown", async e => {
       const selEl = document.querySelector(`#${lid} .file-row.selected`) || document.getElementById(lid);
       if (selEl) {
         const r = selEl.getBoundingClientRect();
-        showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRightPane);
+        showContextMenu(r.left + r.width / 2, Math.max(r.top, _lastMouseY), isRightPane);
       }
     }, 250);
     return;

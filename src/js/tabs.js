@@ -351,9 +351,7 @@ async function navigateTo(path, pushHistory) {
   const filterEl = document.getElementById("filter-input");
   if (filterEl && path !== tab.path) filterEl.value = "";
   try {
-    const t0 = performance.now();
     let entries = await call("list_dir", { path, filter: "" });
-    console.log(`[navigateTo] list_dir "${path}" entries=${entries.length} time=${(performance.now()-t0).toFixed(0)}ms`);
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
     const filter = filterEl ? filterEl.value.toLowerCase() : "";
     if (filter) entries = entries.filter(e => e.name.toLowerCase().includes(filter));
@@ -416,7 +414,6 @@ let _deepSearchRunning = false;
 function applyFilter() {
   if (_filterTimer) clearTimeout(_filterTimer);
   const query = document.getElementById("filter-input").value.trim();
-  console.log(`[applyFilter] query="${query}" deepSearch=${G.deepSearch}`);
   if (G.deepSearch) {
     if (_deepSearchTimer) clearTimeout(_deepSearchTimer);
     _deepSearchTimer = setTimeout(() => { _deepSearchTimer = null; runDeepSearch(); }, 250);
@@ -583,18 +580,14 @@ async function initQuickSearch() {
 }
 
 async function runQuickSearch(query) {
-    console.log(`[quickSearch] start query="${query}" engine=${getSearchEngine()}`);
     const engine = getSearchEngine();
     const modePrefix = _searchMode === 'regex' ? 'regex:' : _searchMode === 'wildcard' ? 'wildcards:' : '';
     const fullQuery = modePrefix + query;
     try {
-        const t0 = performance.now();
         const results = await call("quick_search", { query: fullQuery, maxResults: 50, engine });
-        console.log(`[quickSearch] done results=${results.length} time=${(performance.now()-t0).toFixed(0)}ms`);
         if (query.trim().length >= 2) saveSearchHistory(query);
         showQuickSearchResults(results, engine);
     } catch (e) {
-        console.log(`[quickSearch] error`, e);
         if (engine === 'everything') {
              showQuickSearchError(t('search.everythingNotRunning'));
         } else {
@@ -655,7 +648,6 @@ function hideQuickSearch() {
 }
 
 async function quickSearchNavigate(path, isDir) {
-  console.log(`[quickSearchNavigate] path="${path}" isDir=${isDir}`);
   hideQuickSearch();
   const input = document.getElementById("filter-input");
   if (input) {
@@ -667,12 +659,9 @@ async function quickSearchNavigate(path, isDir) {
   }
   if (isDir) { await navigateTo(path); return; }
   const parentPath = path.replace(/\\[^\\]+$/, '');
-  const t0 = performance.now();
   await navigateTo(parentPath);
-  console.log(`[quickSearchNavigate] navigateTo done time=${(performance.now()-t0).toFixed(0)}ms`);
   const tab = getTab();
   const idx = tab.entries.findIndex(e => e.path === path);
-  console.log(`[quickSearchNavigate] idx=${idx} entries=${tab.entries.length}`);
   if (idx >= 0) {
     tab.sel.clear();
     tab.sel.add(idx);
@@ -698,19 +687,15 @@ function toggleDeepSearch() {
 }
 
 async function runDeepSearch() {
-  if (_deepSearchRunning) { console.log(`[deepSearch] blocked (already running)`); return; }
+  if (_deepSearchRunning) return;
   const query = document.getElementById("filter-input").value;
   if (!query) { navigateTo(getTab().path, false); return; }
   const tab = getTab();
-  console.log(`[deepSearch] start query="${query}" path=${tab.path}`);
   _deepSearchRunning = true;
   try {
     document.getElementById("status-count").textContent = t('status.searching');
-    const t0 = performance.now();
     const results = await call("search_recursive", { path: tab.path, query, maxResults: 500 });
-    console.log(`[deepSearch] done results=${results.length} time=${(performance.now()-t0).toFixed(0)}ms`);
-    // Discard stale results if query changed while searching
-    if (document.getElementById("filter-input").value.trim() !== query) { console.log(`[deepSearch] stale discarded`); return; }
+    if (document.getElementById("filter-input").value.trim() !== query) return;
     tab.entries = results;
     tab.sel.clear();
     tab.lastIdx = -1;
