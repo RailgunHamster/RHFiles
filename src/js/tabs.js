@@ -816,6 +816,7 @@ async function goUp() {
   try {
     const isRight = G.lastActivePane === 'right' && G.dualOn;
     const pane = isRight ? G.rp : getTab();
+    if (pane.path === "home://") return;
     const prevDirName = pane.path.split("\\").pop() || pane.path.split("/").pop();
     // Drive root has no parent — go to home
     const isDriveRoot = /^[A-Z]:\\$/i.test(pane.path);

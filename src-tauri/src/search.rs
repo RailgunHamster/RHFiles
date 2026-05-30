@@ -204,41 +204,53 @@ pub fn matches_builtin_filter(name: &str, extension: &str, is_dir: bool, size: u
 
 pub fn builtin_search(filters: &SearchFilters, max_results: usize) -> Vec<FileInfo> {
     let mut results = Vec::new();
+    let mut scanned = 0usize;
+    let max_scan = 100_000;
     for drive in ['C', 'D', 'E', 'F', 'G', 'H'] {
         let root = format!("{}:\\", drive);
         if !Path::new(&root).exists() { continue; }
-        builtin_search_dir(&PathBuf::from(&root), filters, &mut results, max_results);
+        builtin_search_dir(&PathBuf::from(&root), filters, &mut results, max_results, &mut scanned, max_scan);
         if results.len() >= max_results { break; }
     }
     results
 }
 
-pub fn builtin_search_dir(dir: &Path, filters: &SearchFilters, results: &mut Vec<FileInfo>, max: usize) {
-    if results.len() >= max { return; }
+pub fn builtin_search_dir(dir: &Path, filters: &SearchFilters, results: &mut Vec<FileInfo>, max: usize, scanned: &mut usize, max_scan: usize) {
+    if results.len() >= max || *scanned >= max_scan { return; }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
-        if results.len() >= max { return; }
+        if results.len() >= max || *scanned >= max_scan { return; }
+        *scanned += 1;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if let Ok(metadata) = entry.metadata() {
-            let is_dir = metadata.is_dir();
-            let size = metadata.len();
-            let extension = if is_dir { String::new() }
-                else { Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default() };
-            if matches_builtin_filter(&name, &extension, is_dir, size, filters) {
-                results.push(FileInfo {
-                    name, path: entry.path().to_string_lossy().into_owned(), extension,
-                    is_dir, is_hidden: false, size,
-                    size_display: format_size(size),
-                    modified: metadata.modified().ok().map(|t| format_time(t)).unwrap_or_default(),
-                    created: String::new(),
-                    modified_ts: metadata.modified().ok().and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0),
-                    created_ts: 0,
-                    folder_size: None,
-                });
+        // Skip system dirs to avoid permission errors and slow scans
+        if name.starts_with("$") { continue; }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            if name == "." || name == ".." { continue; }
+            builtin_search_dir(&entry.path(), filters, results, max, scanned, max_scan);
+        } else {
+            if let Ok(metadata) = entry.metadata() {
+                let size = metadata.len();
+                let extension = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+                if matches_builtin_filter(&name, &extension, false, size, filters) {
+                    results.push(FileInfo {
+                        name, path: entry.path().to_string_lossy().into_owned(), extension,
+                        is_dir: false, is_hidden: false, size,
+                        size_display: format_size(size),
+                        modified: metadata.modified().ok().map(|t| format_time(t)).unwrap_or_default(),
+                        created: String::new(),
+                        modified_ts: metadata.modified().ok().and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0),
+                        created_ts: 0, folder_size: None,
+                    });
+                }
             }
-            if is_dir { builtin_search_dir(&entry.path(), filters, results, max); }
         }
     }
+}
+
+fn format_time(t: std::time::SystemTime) -> String {
+    let dt: chrono::DateTime<chrono::Local> = t.into();
+    dt.format("%Y-%m-%d %H:%M").to_string()
 }
 
 #[tauri::command]
@@ -295,6 +307,7 @@ pub fn quick_search(query: String, max_results: usize, engine: String) -> Result
 pub fn search_recursive(path: String, query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
     let filters = parse_search_query(&query);
     let mut results = Vec::new();
-    builtin_search_dir(&PathBuf::from(&path), &filters, &mut results, max_results);
+    let mut scanned = 0usize;
+    builtin_search_dir(&PathBuf::from(&path), &filters, &mut results, max_results, &mut scanned, 100_000);
     Ok(results)
 }
