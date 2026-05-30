@@ -1,5 +1,7 @@
 // keyboard.js — customizable keyboard shortcuts + command palette
 
+let _ctxMenuTimer = null;
+
 const DEFAULT_SHORTCUTS = {
   "nav.up":              ["Backspace", "Alt+ArrowUp"],
   "nav.down":            ["Alt+ArrowDown"],
@@ -9,7 +11,7 @@ const DEFAULT_SHORTCUTS = {
   "nav.open":            ["Enter"],
   "nav.home":            ["Home"],
   "nav.end":             ["End"],
-  "file.contextMenu":    ["F9", "ContextMenu"],
+  "file.contextMenu":    ["ContextMenu"],
   "file.copy":           ["Ctrl+C"],
   "file.cut":            ["Ctrl+X"],
   "file.paste":          ["Ctrl+V"],
@@ -183,6 +185,23 @@ document.addEventListener("keydown", async e => {
 
   const anyDialogOpen = document.querySelector('.overlay[style*="display: flex"], .overlay[style*="display:flex"]');
   if (anyDialogOpen) return;
+
+  // Right Ctrl alone → context menu (250ms debounce, canceled by any other key)
+  if (e.key === "Control" && e.location === 2) {
+    if (_ctxMenuTimer) clearTimeout(_ctxMenuTimer);
+    _ctxMenuTimer = setTimeout(() => {
+      _ctxMenuTimer = null;
+      const isRightPane = G.lastActivePane === 'right';
+      const lid = isRightPane ? "right-file-list" : "file-list";
+      const selEl = document.querySelector(`#${lid} .file-row.selected`) || document.getElementById(lid);
+      if (selEl) {
+        const r = selEl.getBoundingClientRect();
+        showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRightPane);
+      }
+    }, 250);
+    return;
+  }
+  if (_ctxMenuTimer) { clearTimeout(_ctxMenuTimer); _ctxMenuTimer = null; }
 
   const bindings = getShortcutBindings();
   const combo = normalizeKey(e);
