@@ -818,12 +818,15 @@ async function goUp() {
     const isRight = G.lastActivePane === 'right' && G.dualOn;
     const pane = isRight ? G.rp : getTab();
     const prevDirName = pane.path.split("\\").pop() || pane.path.split("/").pop();
-    const parent = await call("parent_path", { path: pane.path });
+    // Drive root has no parent — go to home
+    const isDriveRoot = /^[A-Z]:\\$/i.test(pane.path);
+    const parent = isDriveRoot ? "home://" : await call("parent_path", { path: pane.path });
     if (isRight) {
       await rpNavigateTo(parent);
     } else {
       await navigateTo(parent);
     }
+    if (parent === "home://") return;
     // Select the folder we just came from
     const entries = pane.entries || [];
     const idx = entries.findIndex(e => e.is_dir && e.name === prevDirName);
