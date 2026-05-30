@@ -377,4 +377,3 @@ document.getElementById("palette-input").addEventListener("keydown", e => {
     }
   }
 });
-});
