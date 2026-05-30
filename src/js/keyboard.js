@@ -52,10 +52,11 @@ const ACTION_HANDLERS = {
   "file.contextMenu":   async () => {
     const isRight = G.lastActivePane === 'right';
     const listId = isRight ? "right-file-list" : "file-list";
-    const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
-    if (selEl) {
-      const r = selEl.getBoundingClientRect();
-      showContextMenu(r.left + r.width / 2, Math.max(r.top, _lastMouseY), isRight);
+    const selEl = document.querySelector(`#${listId} .file-row.selected`);
+    const anchor = selEl || document.getElementById(listId);
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      showContextMenu(_lastMouseX || r.left + r.width / 2, Math.max(r.top, _lastMouseY), isRight);
     }
   },
   "file.copy":           async () => await copySelected(),
