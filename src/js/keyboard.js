@@ -49,9 +49,12 @@ const ACTION_HANDLERS = {
     const isRight = G.lastActivePane === 'right';
     const listId = isRight ? "right-file-list" : "file-list";
     const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
+    console.log(`[contextMenu] shortcut fired isRight=${isRight} selEl=${selEl?.className}`);
     if (selEl) {
       const r = selEl.getBoundingClientRect();
+      console.log(`[contextMenu] pos=${r.left+r.width/2},${r.top+r.height/2}`);
       showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRight);
+      console.log(`[contextMenu] showContextMenu returned`);
     }
   },
   "file.copy":           async () => await copySelected(),
