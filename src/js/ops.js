@@ -55,8 +55,6 @@ function cancelOperation() {
 async function deleteSelected(isRight) {
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
-  const msg = sel.length === 1 ? t('confirm.deleteItem', {name: sel[0].name}) : t('confirm.deleteItems', {count: sel.length});
-  if (!confirm(msg)) return;
   try {
     await call("delete_files", { paths: sel.map(f => f.path) });
     await refresh();
