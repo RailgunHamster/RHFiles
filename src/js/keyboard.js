@@ -9,7 +9,7 @@ const DEFAULT_SHORTCUTS = {
   "nav.open":            ["Enter"],
   "nav.home":            ["Home"],
   "nav.end":             ["End"],
-  "file.contextMenu":    ["Shift+F10", "ContextMenu"],
+  "file.contextMenu":    ["F10", "ContextMenu"],
   "file.copy":           ["Ctrl+C"],
   "file.cut":            ["Ctrl+X"],
   "file.paste":          ["Ctrl+V"],
@@ -180,6 +180,13 @@ document.addEventListener("keydown", async e => {
 
   const anyDialogOpen = document.querySelector('.overlay[style*="display: flex"], .overlay[style*="display:flex"]');
   if (anyDialogOpen) return;
+
+  // Track right Ctrl for context menu keyup
+  if (e.key === "Control" && e.type === "keydown" && e.location === 2) {
+    _rightCtrlAlone = true;
+  } else {
+    _rightCtrlAlone = false;
+  }
 
   const bindings = getShortcutBindings();
   const combo = normalizeKey(e);
@@ -373,4 +380,21 @@ document.getElementById("palette-input").addEventListener("keydown", e => {
       if (cmdIdx >= 0) executePalette(cmdIdx);
     }
   }
+});
+
+// Right Ctrl alone (keyup) = context menu
+let _rightCtrlAlone = false;
+document.addEventListener("keyup", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (e.key === "Control" && e.location === 2 && _rightCtrlAlone) {
+    _rightCtrlAlone = false;
+    const isRight = G.lastActivePane === 'right';
+    const listId = isRight ? "right-file-list" : "file-list";
+    const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
+    if (selEl) {
+      const r = selEl.getBoundingClientRect();
+      showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRight);
+    }
+  }
+});
 });
