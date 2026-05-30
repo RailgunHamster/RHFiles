@@ -67,17 +67,16 @@ const ACTION_HANDLERS = {
   "file.newFile":        async () => showNewFileDialog(),
   "file.selectAll":      async () => selectAll(),
   "file.invertSelection":async () => invertSelection(),
-  "file.properties":     async () => {
+"file.properties":     async () => {
     const isRight = G.lastActivePane === 'right';
     const paths = getSelectedPaths(isRight);
     const listId = isRight ? "right-file-list" : "file-list";
     if (paths.length && typeof flashAt === 'function') {
       const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
-if (selEl) {
-      const r = selEl.getBoundingClientRect();
-      showContextMenu(r.left + r.width / 2, Math.max(r.top, _lastMouseY), isRight);
-    }
-  },
+      if (selEl) {
+        const r = selEl.getBoundingClientRect();
+        flashAt(r.left + r.width / 2, r.top + r.height / 2);
+      }
     }
     await showPropertiesDialog(paths[0]?.path);
   },
