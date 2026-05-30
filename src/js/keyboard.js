@@ -9,7 +9,7 @@ const DEFAULT_SHORTCUTS = {
   "nav.open":            ["Enter"],
   "nav.home":            ["Home"],
   "nav.end":             ["End"],
-  "file.contextMenu":    ["F10", "ContextMenu"],
+  "file.contextMenu":    ["F9", "ContextMenu"],
   "file.copy":           ["Ctrl+C"],
   "file.cut":            ["Ctrl+X"],
   "file.paste":          ["Ctrl+V"],
