@@ -337,6 +337,7 @@
   "cmd.cut": "Cut",
   "cmd.paste": "Paste",
   "cmd.rename": "Rename",
+  "cmd.contextMenu": "Context Menu",
   "cmd.delete": "Delete",
   "cmd.selectAll": "Select All",
   "cmd.invertSelection": "Invert Selection",

@@ -330,6 +330,7 @@
   "cmd.cut": "\u526a\u5207",
   "cmd.paste": "\u7c98\u8d34",
   "cmd.rename": "\u91cd\u547d\u540d",
+  "cmd.contextMenu": "\u53f3\u952e\u83dc\u5355",
   "cmd.delete": "\u5220\u9664",
   "cmd.selectAll": "\u5168\u9009",
   "cmd.invertSelection": "\u53cd\u9009",

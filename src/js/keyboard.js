@@ -9,6 +9,7 @@ const DEFAULT_SHORTCUTS = {
   "nav.open":            ["Enter"],
   "nav.home":            ["Home"],
   "nav.end":             ["End"],
+  "file.contextMenu":    ["Shift+F10", "ContextMenu"],
   "file.copy":           ["Ctrl+C"],
   "file.cut":            ["Ctrl+X"],
   "file.paste":          ["Ctrl+V"],
@@ -44,6 +45,15 @@ const ACTION_HANDLERS = {
   "nav.open":            async () => {},
   "nav.home":            async () => { const isRight = G.lastActivePane === 'right'; const pane = isRight ? G.rp : getTab(); const sel = pane.sel || new Set(); sel.clear(); sel.add(0); pane.lastIdx = 0; const listId = isRight ? "right-file-list" : "file-list"; const countId = isRight ? "right-status-count" : "status-count"; renderFiles(pane, listId, countId, null, isRight); scrollToVisible(0); updatePreviewForSelection(); },
   "nav.end":             async () => { const isRight = G.lastActivePane === 'right'; const pane = isRight ? G.rp : getTab(); const entries = pane.entries || []; const sel = pane.sel || new Set(); sel.clear(); sel.add(entries.length - 1); pane.lastIdx = entries.length - 1; const listId = isRight ? "right-file-list" : "file-list"; const countId = isRight ? "right-status-count" : "status-count"; renderFiles(pane, listId, countId, null, isRight); scrollToVisible(entries.length - 1); updatePreviewForSelection(); },
+  "file.contextMenu":   async () => {
+    const isRight = G.lastActivePane === 'right';
+    const listId = isRight ? "right-file-list" : "file-list";
+    const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
+    if (selEl) {
+      const r = selEl.getBoundingClientRect();
+      showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRight);
+    }
+  },
   "file.copy":           async () => await copySelected(),
   "file.cut":            async () => await cutSelected(),
   "file.paste":          async () => await paste(),
@@ -261,6 +271,12 @@ function initCommands() {
   { id:"file.cut", label: t('cmd.cut'), action: cutSelected, keys:"Ctrl+X" },
   { id:"file.paste", label: t('cmd.paste'), action: paste, keys:"Ctrl+V" },
   { id:"file.rename", label: t('cmd.rename'), action: renamePrompt, keys:"F2" },
+  { id:"file.contextMenu", label: t('cmd.contextMenu'), action: () => {
+    const isRight = G.lastActivePane === 'right';
+    const listId = isRight ? "right-file-list" : "file-list";
+    const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
+    if (selEl) { const r = selEl.getBoundingClientRect(); showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRight); }
+  }, keys:() => getShortcutBindings()["file.contextMenu"]?.[0] },
   { id:"file.delete", label: t('cmd.delete'), action: deleteSelected, keys:"Delete" },
   { id:"file.selectAll", label: t('cmd.selectAll'), action: selectAll, keys:"Ctrl+A" },
   { id:"file.batchRename", label: t('cmd.batchRename'), action: openBatchRename },
