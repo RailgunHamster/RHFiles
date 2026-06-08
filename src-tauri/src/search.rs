@@ -1,313 +1,305 @@
 use crate::types::*;
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Duration;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-pub fn find_es_exe() -> Option<String> {
-    let candidates = [
-        r"C:\Program Files\Everything\es.exe",
-        r"C:\Program Files (x86)\Everything\es.exe",
-    ];
-    for c in &candidates {
-        if Path::new(c).exists() {
-            return Some(c.to_string());
-        }
-    }
-    #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("where")
-        .arg("es.exe")
-        .creation_flags(0x08000000)
-        .output()
-        .ok();
-    #[cfg(not(target_os = "windows"))]
-    let output = std::process::Command::new("which")
-        .arg("es.exe")
-        .output()
-        .ok();
-    output.and_then(|o| {
-        if o.status.success() {
-            String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
-        } else {
-            None
-        }
-    })
+// ── Everything SDK types ───────────────────────────────────────────────────
+
+type EvSetSearchW     = unsafe extern "system" fn(*const u16);
+type EvSetMatchPath   = unsafe extern "system" fn(i32);
+type EvSetMatchCase   = unsafe extern "system" fn(i32);
+type EvSetRegex       = unsafe extern "system" fn(i32);
+type EvSetMax         = unsafe extern "system" fn(u32);
+type EvSetSort        = unsafe extern "system" fn(u32);
+type EvSetRequestFlags = unsafe extern "system" fn(u32);
+type EvQueryW         = unsafe extern "system" fn(i32) -> i32;
+
+type EvGetNumResults  = unsafe extern "system" fn() -> u32;
+type EvGetResultPathW = unsafe extern "system" fn(u32, *mut u16, u32) -> u32;
+type EvGetResultSize  = unsafe extern "system" fn(u32, *mut i64) -> i32;
+type EvGetResultDate  = unsafe extern "system" fn(u32, *mut i64) -> i32;
+type EvIsFileResult   = unsafe extern "system" fn(u32) -> i32;
+type EvIsFolderResult = unsafe extern "system" fn(u32) -> i32;
+type EvGetLastError   = unsafe extern "system" fn() -> u32;
+type EvCleanup        = unsafe extern "system" fn();
+
+struct EverythingApi {
+    _lib: &'static libloading::Library,
+    set_search:        libloading::Symbol<'static, EvSetSearchW>,
+    set_match_path:    libloading::Symbol<'static, EvSetMatchPath>,
+    #[allow(dead_code)]
+    set_match_case:    libloading::Symbol<'static, EvSetMatchCase>,
+    #[allow(dead_code)]
+    set_regex:         libloading::Symbol<'static, EvSetRegex>,
+    set_max:           libloading::Symbol<'static, EvSetMax>,
+    set_sort:          libloading::Symbol<'static, EvSetSort>,
+    set_request_flags: libloading::Symbol<'static, EvSetRequestFlags>,
+    query:             libloading::Symbol<'static, EvQueryW>,
+    num_results:       libloading::Symbol<'static, EvGetNumResults>,
+    result_path:       libloading::Symbol<'static, EvGetResultPathW>,
+    result_size:       libloading::Symbol<'static, EvGetResultSize>,
+    result_date:       libloading::Symbol<'static, EvGetResultDate>,
+    is_file:           libloading::Symbol<'static, EvIsFileResult>,
+    is_folder:         libloading::Symbol<'static, EvIsFolderResult>,
+    get_last_error:    libloading::Symbol<'static, EvGetLastError>,
+    _cleanup:          libloading::Symbol<'static, EvCleanup>,
 }
 
-#[tauri::command]
-pub fn is_everything_available() -> bool {
+unsafe impl Send for EverythingApi {}
+unsafe impl Sync for EverythingApi {}
+
+static EV_API: Mutex<Option<EverythingApi>> = Mutex::new(None);
+
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+// ── DLL / EXE discovery ────────────────────────────────────────────────────
+
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+pub fn find_everything_exe() -> Option<String> {
+    // 1. 系统安装路径优先（复用已有数据库）
+    for c in &[r"C:\Program Files\Everything\Everything.exe", r"C:\Program Files (x86)\Everything\Everything.exe"] {
+        if Path::new(c).exists() { return Some(c.to_string()); }
+    }
+    // 2. exe 同级目录（打包后捆绑的便携版）
+    if let Some(dir) = exe_dir() {
+        let bundled = dir.join("Everything.exe");
+        if bundled.exists() { return Some(bundled.to_string_lossy().into_owned()); }
+    }
+    // 3. 源码目录 thirdparty（开发时）
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let tp = Path::new(&manifest_dir).join("thirdparty").join("Everything.exe");
+        if tp.exists() { return Some(tp.to_string_lossy().into_owned()); }
+        let tp2 = Path::new(&manifest_dir).join("thirdparty").join("everything.exe");
+        if tp2.exists() { return Some(tp2.to_string_lossy().into_owned()); }
+    }
+    None
+}
+
+fn find_ev_dll() -> Option<PathBuf> {
+    let dll_name = if cfg!(target_arch = "x86_64") { "Everything64.dll" } else { "Everything32.dll" };
+
+    // 1. exe 同级目录（打包后）
+    if let Some(dir) = exe_dir() {
+        let bundled = dir.join(dll_name);
+        if bundled.exists() { return Some(bundled); }
+    }
+
+    // 2. 源码目录 thirdparty（开发时）
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let tp = Path::new(&manifest_dir).join("thirdparty").join("everything").join("dll").join(dll_name);
+        if tp.exists() { return Some(tp); }
+    }
+
+    // 3. 系统安装路径
+    for base in &[r"C:\Program Files\Everything", r"C:\Program Files (x86)\Everything"] {
+        let p = Path::new(base).join(dll_name);
+        if p.exists() { return Some(p); }
+    }
+    None
+}
+
+// ── Everything SDK loader ──────────────────────────────────────────────────
+
+fn load_ev_api(dll_path: &Path) -> Result<EverythingApi, String> {
+    unsafe {
+        let lib: &'static libloading::Library = Box::leak(Box::new(libloading::Library::new(dll_path)
+            .map_err(|e| format!("Failed to load {}: {}", dll_path.display(), e))?));
+
+        Ok(EverythingApi {
+            set_search:        lib.get(b"Everything_SetSearchW").map_err(|e| format!("{}", e))?,
+            set_match_path:    lib.get(b"Everything_SetMatchPath").map_err(|e| format!("{}", e))?,
+            set_match_case:    lib.get(b"Everything_SetMatchCase").map_err(|e| format!("{}", e))?,
+            set_regex:         lib.get(b"Everything_SetRegex").map_err(|e| format!("{}", e))?,
+            set_max:           lib.get(b"Everything_SetMax").map_err(|e| format!("{}", e))?,
+            set_sort:          lib.get(b"Everything_SetSort").map_err(|e| format!("{}", e))?,
+            set_request_flags: lib.get(b"Everything_SetRequestFlags").map_err(|e| format!("{}", e))?,
+            query:             lib.get(b"Everything_QueryW").map_err(|e| format!("{}", e))?,
+            num_results:       lib.get(b"Everything_GetNumResults").map_err(|e| format!("{}", e))?,
+            result_path:       lib.get(b"Everything_GetResultFullPathNameW").map_err(|e| format!("{}", e))?,
+            result_size:       lib.get(b"Everything_GetResultSize").map_err(|e| format!("{}", e))?,
+            result_date:       lib.get(b"Everything_GetResultDateModified").map_err(|e| format!("{}", e))?,
+            is_file:           lib.get(b"Everything_IsFileResult").map_err(|e| format!("{}", e))?,
+            is_folder:         lib.get(b"Everything_IsFolderResult").map_err(|e| format!("{}", e))?,
+            get_last_error:    lib.get(b"Everything_GetLastError").map_err(|e| format!("{}", e))?,
+            _cleanup:          lib.get(b"Everything_CleanUp").map_err(|e| format!("{}", e))?,
+            _lib:               lib,
+        })
+    }
+}
+
+fn get_ev_api() -> Result<(), String> {
+    let mut guard = EV_API.lock().map_err(|e| format!("mutex error: {}", e))?;
+    if guard.is_some() { return Ok(()); }
+    let dll = find_ev_dll().ok_or_else(|| "Everything64.dll not found. Place it next to the app executable.".to_string())?;
+    let api = load_ev_api(&dll)?;
+    *guard = Some(api);
+    Ok(())
+}
+
+fn with_ev_api<F, R>(f: F) -> Result<R, String>
+where F: FnOnce(&EverythingApi) -> Result<R, String>
+{
+    get_ev_api()?;
+    let guard = EV_API.lock().map_err(|e| format!("mutex error: {}", e))?;
+    match guard.as_ref() {
+        Some(api) => f(api),
+        None => Err("Everything SDK not loaded".to_string()),
+    }
+}
+
+// ── Everything process management ──────────────────────────────────────────
+
+fn is_everything_window_running() -> bool {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
         let class_name: Vec<u16> = "EVERYTHING_TASKBAR_NOTIFICATION\0".encode_utf16().collect();
-        let hwnd = unsafe { FindWindowW(windows::core::PCWSTR(class_name.as_ptr()), None) };
-        if hwnd.is_ok() { return true; }
-        find_es_exe().is_some()
+        unsafe { FindWindowW(windows::core::PCWSTR(class_name.as_ptr()), None).is_ok() }
     }
     #[cfg(not(target_os = "windows"))]
-    {
-        find_es_exe().is_some()
-    }
-}
-
-#[derive(Default)]
-pub struct SearchFilters {
-    pub query_text: String,
-    pub ext_filter: Option<Vec<String>>,
-    pub type_filter: Option<String>,
-    pub size_min: Option<u64>,
-    pub size_max: Option<u64>,
-    pub files_only: bool,
-    pub folders_only: bool,
-    pub use_regex: bool,
-    pub use_wildcards: bool,
-}
-
-pub fn parse_size_value(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if s == "empty" { return Some(0); }
-    let lower = s.to_lowercase();
-    let (num_part, multiplier) = if lower.ends_with("gb") {
-        (&lower[..lower.len()-2], 1073741824u64)
-    } else if lower.ends_with("mb") {
-        (&lower[..lower.len()-2], 1048576u64)
-    } else if lower.ends_with("kb") {
-        (&lower[..lower.len()-2], 1024u64)
-    } else {
-        (lower.as_str(), 1u64)
-    };
-    num_part.trim().parse::<f64>().ok().map(|v| (v * multiplier as f64) as u64)
-}
-
-pub fn parse_search_query(raw: &str) -> SearchFilters {
-    let mut f = SearchFilters::default();
-    let mut text_parts: Vec<String> = Vec::new();
-    let tokens = raw.split_whitespace().collect::<Vec<_>>();
-    let mut i = 0;
-    while i < tokens.len() {
-        let token = tokens[i];
-        let lower = token.to_lowercase();
-        if lower.starts_with("regex:") {
-            f.use_regex = true;
-            let rest = &token[6..];
-            if !rest.is_empty() { text_parts.push(rest.to_string()); }
-        } else if lower.starts_with("wildcards:") {
-            f.use_wildcards = true;
-            let rest = &token[10..];
-            if !rest.is_empty() { text_parts.push(rest.to_string()); }
-        } else if lower.starts_with("ext:") {
-            let exts: Vec<String> = token[4..].split(';').map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()).collect();
-            if !exts.is_empty() { f.ext_filter = Some(exts); }
-        } else if lower.starts_with("size:") {
-            let val = &token[5..];
-            if let Some(range) = val.find("..") {
-                f.size_min = parse_size_value(&val[..range]);
-                f.size_max = parse_size_value(&val[range+2..]);
-            } else if val.starts_with('>') {
-                f.size_min = parse_size_value(&val[1..]).map(|v| v + 1);
-            } else if val.starts_with('<') {
-                f.size_max = parse_size_value(&val[1..]).map(|v| if v > 0 { v - 1 } else { 0 });
-            } else if val.starts_with(">=") {
-                f.size_min = parse_size_value(&val[2..]);
-            } else if val.starts_with("<=") {
-                f.size_max = parse_size_value(&val[2..]);
-            } else {
-                let exact = parse_size_value(val);
-                if let Some(s) = exact {
-                    f.size_min = Some(s);
-                    f.size_max = Some(s);
-                }
-            }
-        } else if lower == "file:" || lower == "files:" {
-            f.files_only = true;
-        } else if lower == "folder:" || lower == "folders:" {
-            f.folders_only = true;
-        } else if lower == "audio:" {
-            f.ext_filter = Some(vec!["mp3".into(),"wav".into(),"flac".into(),"aac".into(),"ogg".into(),"wma".into(),"m4a".into(),"opus".into()]);
-        } else if lower == "video:" {
-            f.ext_filter = Some(vec!["mp4".into(),"avi".into(),"mkv".into(),"mov".into(),"wmv".into(),"flv".into(),"webm".into(),"m4v".into()]);
-        } else if lower == "pic:" {
-            f.ext_filter = Some(vec!["jpg".into(),"jpeg".into(),"png".into(),"gif".into(),"bmp".into(),"svg".into(),"webp".into(),"ico".into(),"tiff".into(),"tif".into()]);
-        } else if lower == "doc:" {
-            f.ext_filter = Some(vec!["pdf".into(),"doc".into(),"docx".into(),"xls".into(),"xlsx".into(),"ppt".into(),"pptx".into(),"txt".into(),"rtf".into(),"odt".into()]);
-        } else if lower == "exe:" {
-            f.ext_filter = Some(vec!["exe".into(),"msi".into(),"bat".into(),"cmd".into(),"ps1".into()]);
-        } else if lower == "zip:" {
-            f.ext_filter = Some(vec!["zip".into(),"rar".into(),"7z".into(),"tar".into(),"gz".into(),"bz2".into()]);
-        } else if lower.starts_with("type:") {
-            f.type_filter = Some(token[5..].to_lowercase());
-        } else {
-            text_parts.push(token.to_string());
-        }
-        i += 1;
-    }
-    f.query_text = text_parts.join(" ");
-    if f.ext_filter.is_none() {
-        if let Some(ref tf) = f.type_filter {
-            match tf.as_str() {
-                "audio" => f.ext_filter = Some(vec!["mp3".into(),"wav".into(),"flac".into(),"aac".into(),"ogg".into(),"m4a".into()]),
-                "video" => f.ext_filter = Some(vec!["mp4".into(),"avi".into(),"mkv".into(),"mov".into(),"wmv".into(),"webm".into()]),
-                "image" | "picture" | "pic" => f.ext_filter = Some(vec!["jpg".into(),"jpeg".into(),"png".into(),"gif".into(),"bmp".into(),"svg".into(),"webp".into()]),
-                "document" | "doc" => f.ext_filter = Some(vec!["pdf".into(),"doc".into(),"docx".into(),"txt".into(),"rtf".into()]),
-                "archive" | "zip" => f.ext_filter = Some(vec!["zip".into(),"rar".into(),"7z".into(),"tar".into(),"gz".into()]),
-                _ => {}
-            }
-        }
-    }
-    f
-}
-
-pub fn matches_builtin_filter(name: &str, extension: &str, is_dir: bool, size: u64, filters: &SearchFilters) -> bool {
-    if filters.files_only && is_dir { return false; }
-    if filters.folders_only && !is_dir { return false; }
-    if !is_dir {
-        if let Some(ref exts) = filters.ext_filter {
-            let ext_lower = extension.to_lowercase();
-            if !exts.iter().any(|e| e == &ext_lower) { return false; }
-        }
-    }
-    if let Some(min) = filters.size_min {
-        if size < min { return false; }
-    }
-    if let Some(max) = filters.size_max {
-        if size > max { return false; }
-    }
-    if !filters.query_text.is_empty() {
-        let name_lower = name.to_lowercase();
-        let query_lower = filters.query_text.to_lowercase();
-        if filters.use_regex {
-            if let Ok(re) = regex::Regex::new(&filters.query_text) {
-                if !re.is_match(name) { return false; }
-            } else { return false; }
-        } else if filters.use_wildcards {
-            let pattern = query_lower.replace('*', ".*").replace('?', ".");
-            if let Ok(re) = regex::Regex::new(&format!("^{}$", pattern)) {
-                if !re.is_match(&name_lower) { return false; }
-            } else { return false; }
-        } else {
-            let words: Vec<&str> = query_lower.split('|').collect();
-            let has_or = query_lower.contains('|');
-            if has_or {
-                if !words.iter().any(|w| name_lower.contains(w.trim())) { return false; }
-            } else {
-                for word in query_lower.split_whitespace() {
-                    if word.starts_with('!') || word.starts_with('-') {
-                        if name_lower.contains(&word[1..]) { return false; }
-                    } else if !name_lower.contains(word) { return false; }
-                }
-            }
-        }
-    }
-    true
-}
-
-pub fn builtin_search(filters: &SearchFilters, max_results: usize) -> Vec<FileInfo> {
-    let mut results = Vec::new();
-    let mut scanned = 0usize;
-    let max_scan = 100_000;
-    for drive in ['C', 'D', 'E', 'F', 'G', 'H'] {
-        let root = format!("{}:\\", drive);
-        if !Path::new(&root).exists() { continue; }
-        builtin_search_dir(&PathBuf::from(&root), filters, &mut results, max_results, &mut scanned, max_scan);
-        if results.len() >= max_results { break; }
-    }
-    results
-}
-
-pub fn builtin_search_dir(dir: &Path, filters: &SearchFilters, results: &mut Vec<FileInfo>, max: usize, scanned: &mut usize, max_scan: usize) {
-    if results.len() >= max || *scanned >= max_scan { return; }
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        if results.len() >= max || *scanned >= max_scan { return; }
-        *scanned += 1;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        // Skip system dirs to avoid permission errors and slow scans
-        if name.starts_with("$") { continue; }
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if is_dir {
-            if name == "." || name == ".." { continue; }
-            builtin_search_dir(&entry.path(), filters, results, max, scanned, max_scan);
-        } else {
-            if let Ok(metadata) = entry.metadata() {
-                let size = metadata.len();
-                let extension = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
-                if matches_builtin_filter(&name, &extension, false, size, filters) {
-                    results.push(FileInfo {
-                        name, path: entry.path().to_string_lossy().into_owned(), extension,
-                        is_dir: false, is_hidden: false, size,
-                        size_display: format_size(size),
-                        modified: metadata.modified().ok().map(|t| format_time(t)).unwrap_or_default(),
-                        created: String::new(),
-                        modified_ts: metadata.modified().ok().and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0),
-                        created_ts: 0, folder_size: None,
-                    });
-                }
-            }
-        }
-    }
-}
-
-fn format_time(t: std::time::SystemTime) -> String {
-    let dt: chrono::DateTime<chrono::Local> = t.into();
-    dt.format("%Y-%m-%d %H:%M").to_string()
+    false
 }
 
 #[tauri::command]
-pub fn quick_search(query: String, max_results: usize, engine: String) -> Result<Vec<FileInfo>, String> {
-    let use_everything = engine == "everything" || (engine == "auto" && is_everything_available());
+pub fn is_everything_available() -> bool {
+    is_everything_window_running() || find_everything_exe().is_some()
+}
 
-    if use_everything {
-        if let Some(es) = find_es_exe() {
-            let output = std::process::Command::new(&es)
-                .args(["-n", &max_results.to_string(), &query])
-                .creation_flags(0x08000000)
-                .output()
-                .map_err(|e| e.to_string())?;
-
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let mut results = Vec::new();
-                for line in stdout.lines() {
-                    let line = line.trim();
-                    if line.is_empty() { continue; }
-                    let path = PathBuf::from(line);
-                    if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
-                        let metadata = std::fs::metadata(&path).ok();
-                        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-                        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                        let extension = if is_dir { String::new() }
-                            else { path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default() };
-                        results.push(FileInfo {
-                            name, path: line.to_string(), extension,
-                            is_dir, is_hidden: false, size,
-                            size_display: format_size(size),
-                            modified: metadata.as_ref().and_then(|m| m.modified().ok()).map(|t| format_time(t)).unwrap_or_default(),
-                            created: String::new(),
-                            modified_ts: metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0),
-                            created_ts: 0,
-                            folder_size: None,
-                        });
-                    }
-                    if results.len() >= max_results { break; }
-                }
-                return Ok(results);
-            }
-        }
-        if engine == "everything" {
-            return Err("Everything is not installed. Download from voidtools.com".to_string());
-        }
+#[tauri::command]
+pub fn start_everything() -> Result<String, String> {
+    if is_everything_window_running() {
+        return Ok("already_running".to_string());
     }
+    let ev_exe = find_everything_exe()
+        .ok_or_else(|| "Everything.exe not found. Place it next to the app executable.".to_string())?;
+    let _child = std::process::Command::new(&ev_exe)
+        .arg("-startup")
+        .creation_flags(0x08000000)
+        .spawn()
+        .map_err(|e| format!("Failed to start Everything: {}", e))?;
 
-    let filters = parse_search_query(&query);
-    Ok(builtin_search(&filters, max_results))
+    for _ in 0..60 {
+        std::thread::sleep(Duration::from_millis(500));
+        if is_everything_window_running() { return Ok("started".to_string()); }
+    }
+    Ok("timeout".to_string())
+}
+
+fn ensure_everything_running() -> Result<(), String> {
+    if is_everything_window_running() { return Ok(()); }
+    start_everything().and_then(|s| {
+        if s == "timeout" {
+            Err("Everything started but not responding. Try restarting the app.".to_string())
+        } else { Ok(()) }
+    })
+}
+
+// ── Search via Everything SDK ──────────────────────────────────────────────
+
+fn filetime_to_millis(ft: i64) -> i64 {
+    if ft <= 0 { return 0; }
+    (ft - 116444736000000000) / 10000
+}
+
+fn filetime_to_string(ft: i64) -> String {
+    let ms = filetime_to_millis(ft);
+    if ms <= 0 { return String::new(); }
+    let secs = (ms / 1000) as i64;
+    if let Some(d) = chrono::DateTime::from_timestamp(secs, ((ms % 1000) * 1_000_000) as u32) {
+        d.format("%Y-%m-%d %H:%M").to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn run_ev_sdk_query(query: &str, max_results: usize) -> Result<Vec<FileInfo>, String> {
+    ensure_everything_running()?;
+
+    with_ev_api(|api| {
+        let query_wide = wide(query);
+        unsafe { (api.set_search)(query_wide.as_ptr()) };
+        unsafe { (api.set_max)(max_results as u32) };
+        unsafe { (api.set_sort)(1) }; // 1 = sort by name ascending (always fast)
+        unsafe { (api.set_match_path)(1) };
+        // Request size (0x10) + date modified (0x40) + full path (0x04)
+        unsafe { (api.set_request_flags)(0x54) };
+
+        let ok = unsafe { (api.query)(1) };
+        if ok == 0 {
+            let err_code = unsafe { (api.get_last_error)() };
+            return Err(format!("Everything query failed, error code: {}", err_code));
+        }
+
+        let count = unsafe { (api.num_results)() } as usize;
+        let limit = count.min(max_results);
+        let mut results = Vec::with_capacity(limit);
+
+        let mut path_buf = vec![0u16; 520];
+
+        for i in 0..limit as u32 {
+            let len = unsafe { (api.result_path)(i, path_buf.as_mut_ptr(), path_buf.len() as u32) } as usize;
+            if len == 0 { continue; }
+            let path_str = String::from_utf16_lossy(&path_buf[..len.min(path_buf.len() - 1)]);
+
+            let is_dir = unsafe { (api.is_folder)(i) != 0 };
+            let is_file = unsafe { (api.is_file)(i) != 0 };
+            if !is_dir && !is_file { continue; }
+
+            let mut li_size: i64 = 0;
+            unsafe { (api.result_size)(i, &mut li_size) };
+            let size = li_size as u64;
+
+            let mut ft: i64 = 0;
+            unsafe { (api.result_date)(i, &mut ft) };
+            let modified = filetime_to_string(ft);
+            let modified_ts = filetime_to_millis(ft);
+
+            let name = Path::new(&path_str).file_name()
+                .map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let extension = if is_dir { String::new() }
+                else { Path::new(&path_str).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default() };
+
+            results.push(FileInfo {
+                name,
+                path: path_str,
+                extension,
+                is_dir,
+                is_hidden: false,
+                size,
+                size_display: format_size(size),
+                modified,
+                created: String::new(),
+                modified_ts,
+                created_ts: 0,
+                folder_size: None,
+            });
+        }
+        Ok(results)
+    })
+}
+
+// ── Tauri commands ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn quick_search(query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
+    run_ev_sdk_query(&query, max_results)
 }
 
 #[tauri::command]
 pub fn search_recursive(path: String, query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
-    let filters = parse_search_query(&query);
-    let mut results = Vec::new();
-    let mut scanned = 0usize;
-    builtin_search_dir(&PathBuf::from(&path), &filters, &mut results, max_results, &mut scanned, 100_000);
-    Ok(results)
+    let everything_query = if query.is_empty() {
+        format!("parent:\"{}\"", path)
+    } else {
+        format!("parent:\"{}\" {}", path, query)
+    };
+    run_ev_sdk_query(&everything_query, max_results)
 }

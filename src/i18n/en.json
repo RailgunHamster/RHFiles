@@ -412,6 +412,7 @@
   "search.builtin": "Builtin",
   "search.results": "{count} results",
   "search.noResults": "No results",
+  "search.openLocation": "Open File Location",
   "sidebar.noTags": "No tags",
   "sidebar.noRecent": "No recent items",
   "sidebar.openLocation": "Open Location",

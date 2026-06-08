@@ -166,12 +166,6 @@ function openSettings() {
     '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>' + t('settings.termWt') + '</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>' + t('settings.termPs') + '</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>' + t('settings.termCmd') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
-    '<div class="settings-row"><label>' + t('settings.searchEngine') + '</label>' +
-    '<select onchange="G.settings.searchEngine=this.value;saveSettings();initQuickSearch()">' +
-      '<option value="auto"' + ((G.settings.searchEngine||'auto')==='auto'?" selected":"") + '>' + t('settings.searchAuto') + '</option>' +
-      '<option value="everything"' + (G.settings.searchEngine==='everything'?" selected":"") + '>' + t('settings.searchEverything') + '</option>' +
-      '<option value="builtin"' + (G.settings.searchEngine==='builtin'?" selected":"") + '>' + t('settings.searchBuiltin') + '</option>' +
-    '</select></div>' +
     '<div class="settings-row"><label>' + t('settings.iconStyle') + '</label>' +
     '<select onchange="G.settings.iconMode=this.value;saveSettings();clearIconCache();renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')">' +
       '<option value="builtin"' + ((G.settings.iconMode||'builtin')==='builtin'?" selected":"") + '>' + t('settings.iconBuiltin') + '</option>' +

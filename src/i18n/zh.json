@@ -405,6 +405,7 @@
   "search.builtin": "\u5185\u7f6e",
   "search.results": "{count} \u4e2a\u7ed3\u679c",
   "search.noResults": "\u65e0\u7ed3\u679c",
+  "search.openLocation": "\u6253\u5f00\u6240\u5728\u4f4d\u7f6e",
   "sidebar.noTags": "\u65e0\u6807\u7b7e",
   "sidebar.noRecent": "\u65e0\u6700\u8fd1\u8bbf\u95ee",
   "sidebar.openLocation": "\u6253\u5f00\u6240\u5728\u4f4d\u7f6e",

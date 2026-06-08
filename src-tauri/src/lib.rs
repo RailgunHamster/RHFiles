@@ -159,7 +159,7 @@ pub fn run() {
             db::db_export_all, db::db_import_all, db::db_clear_all,
             db::cleanup_stale_windows,
 
-            search::quick_search, search::search_recursive, search::is_everything_available,
+            search::quick_search, search::search_recursive, search::is_everything_available, search::start_everything,
 
             window::toggle_pip, window::open_new_window, window::get_window_label,
             window::save_window_state, window::load_window_state,

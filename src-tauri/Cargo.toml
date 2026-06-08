@@ -39,7 +39,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 winreg = "0.55"
 tauri-plugin-deep-link = "2"
 chrono = "0.4"
-regex = "1"
+libloading = "0.8"
 suppaftp = { version = "8", features = ["native-tls"] }
 native-tls = "0.2"
 ssh2 = "0.9"

@@ -398,37 +398,25 @@ async function navigateTo(path, pushHistory) {
   }
 }
 
-let _quickSearchTimer = null;
+G.searchActive = false;
+G.searchQuery = '';
+
+let _searchTimer = null;
+let _searchRunning = false;
 let _everythingAvailable = false;
-let _searchDropdownIdx = -1;
 let _searchMode = 'normal';
-let _doubleCtrlTime = 0;
 
-function getSearchEngine() {
-    return G.settings.searchEngine || 'auto';
-}
-
-let _filterTimer = null;
-let _deepSearchTimer = null;
-let _deepSearchRunning = false;
 function applyFilter() {
-  if (_filterTimer) clearTimeout(_filterTimer);
+  if (_searchTimer) clearTimeout(_searchTimer);
   const query = document.getElementById("filter-input").value.trim();
-  if (G.deepSearch) {
-    if (_deepSearchTimer) clearTimeout(_deepSearchTimer);
-    _deepSearchTimer = setTimeout(() => { _deepSearchTimer = null; runDeepSearch(); }, 250);
-  }
-  else {
-    _filterTimer = setTimeout(() => { navigateTo(getTab().path, false); _filterTimer = null; }, query ? 150 : 0);
-  }
-
-  if (query.length < 2) {
-    if (query.length === 0) showSearchHistory();
-    else hideQuickSearch();
+  if (query.length === 0) {
+    G.searchActive = false;
+    G.searchQuery = '';
+    hideQuickSearch();
+    navigateTo(getTab().path, false);
     return;
   }
-  if (_quickSearchTimer) clearTimeout(_quickSearchTimer);
-  _quickSearchTimer = setTimeout(() => runQuickSearch(query), 300);
+  _searchTimer = setTimeout(() => runSearch(query), query.length < 2 ? 400 : 250);
 }
 
 function toggleSearchMode() {
@@ -442,8 +430,8 @@ function toggleSearchMode() {
     btn.title = t('search.modeTooltip', {mode: labels[idx]});
   }
   const input = document.getElementById("filter-input");
-  if (input && input.value.trim().length >= 2) {
-    runQuickSearch(input.value.trim());
+  if (input && input.value.trim().length >= 1) {
+    applyFilter();
   }
 }
 
@@ -456,85 +444,6 @@ function toggleSearchHelp() {
 function hideSearchHelp() {
   const help = document.getElementById("search-help-popover");
   if (help) help.style.display = 'none';
-}
-
-function saveSearchHistory(query) {
-  if (!query || query.length < 2) return;
-  let history = JSON.parse(localStorage.getItem('rhfiles-search-history') || '[]');
-  history = history.filter(h => h !== query);
-  history.unshift(query);
-  history = history.slice(0, 30);
-  localStorage.setItem('rhfiles-search-history', JSON.stringify(history));
-}
-
-function loadSearchHistory() {
-  try { return JSON.parse(localStorage.getItem('rhfiles-search-history') || '[]'); } catch (e) { return []; }
-}
-
-function clearSearchHistory() {
-  localStorage.removeItem('rhfiles-search-history');
-  hideQuickSearch();
-  showNotice(t('notice.searchHistoryCleared'));
-}
-
-function showSearchHistory() {
-  const history = loadSearchHistory();
-  if (history.length === 0) { hideQuickSearch(); return; }
-  const dropdown = document.getElementById("quick-search-dropdown");
-  if (!dropdown) return;
-  dropdown.innerHTML =
-    `<div class="quick-search-header"><span>${t('search.recent')}</span><button class="quick-search-clear" onclick="event.stopPropagation();clearSearchHistory()">${t('search.clear')}</button></div>`;
-  for (const h of history) {
-    const div = document.createElement("div");
-    div.className = "quick-search-item history-item";
-    div.innerHTML = `
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;color:var(--text-4)"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M4.5 8a3.5 3.5 0 016.5-1.5" stroke="currentColor" stroke-width="1" fill="none" stroke-linecap="round"/></svg>
-        <span class="quick-search-item-name">${esc(h)}</span>`;
-    div.addEventListener("click", () => {
-      document.getElementById("filter-input").value = h;
-      applyFilter();
-    });
-    dropdown.appendChild(div);
-  }
-  _searchDropdownIdx = -1;
-  dropdown.style.display = "block";
-  setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
-}
-
-function handleSearchKeydown(e) {
-  const dropdown = document.getElementById("quick-search-dropdown");
-  if (!dropdown || dropdown.style.display === 'none') return;
-  const items = dropdown.querySelectorAll('.quick-search-item:not(.quick-search-header)');
-  if (!items.length) return;
-
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    e.stopPropagation();
-    _searchDropdownIdx = Math.min(_searchDropdownIdx + 1, items.length - 1);
-    updateDropdownHighlight(items);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    e.stopPropagation();
-    _searchDropdownIdx = Math.max(_searchDropdownIdx - 1, 0);
-    updateDropdownHighlight(items);
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    e.stopPropagation();
-    if (_searchDropdownIdx >= 0 && items[_searchDropdownIdx]) {
-      items[_searchDropdownIdx].click();
-    }
-  } else if (e.key === 'Escape') {
-    hideQuickSearch();
-    hideSearchHelp();
-    e.preventDefault();
-  }
-}
-
-function updateDropdownHighlight(items) {
-  items.forEach((item, i) => {
-    item.classList.toggle('active', i === _searchDropdownIdx);
-    if (i === _searchDropdownIdx) item.scrollIntoView({ block: 'nearest' });
-  });
 }
 
 function initDoubleCtrlSearch() {
@@ -558,154 +467,69 @@ function initDoubleCtrlSearch() {
 
 async function initQuickSearch() {
     try {
+        call("start_everything", {}).catch(() => {});
         _everythingAvailable = await call("is_everything_available", {});
         const input = document.getElementById("filter-input");
-        const engine = getSearchEngine();
         if (input) {
             const modeHint = _searchMode === 'regex' ? ` [${t('search.modeRegex')}]` : _searchMode === 'wildcard' ? ` [${t('search.modeWildcard')}]` : '';
-            if (engine === 'everything' || (engine === 'auto' && _everythingAvailable)) {
-                input.placeholder = t('search.quickSearch') + modeHint;
-            } else {
-                input.placeholder = t('search.placeholder') + modeHint;
-            }
-            input.addEventListener('focus', () => {
-              if (!input.value.trim()) showSearchHistory();
-            });
+            input.placeholder = t('search.quickSearch') + modeHint;
             input.addEventListener('keydown', e => {
-              handleSearchKeydown(e);
+              if (e.key === 'Escape') {
+                document.getElementById("filter-input").value = '';
+                applyFilter();
+                hideSearchHelp();
+              }
             });
         }
         initDoubleCtrlSearch();
     } catch (e) {}
 }
 
-async function runQuickSearch(query) {
-    const engine = getSearchEngine();
+async function runSearch(query) {
+    if (_searchRunning) return;
+    const tab = getTab();
     const modePrefix = _searchMode === 'regex' ? 'regex:' : _searchMode === 'wildcard' ? 'wildcards:' : '';
     const fullQuery = modePrefix + query;
+    _searchRunning = true;
     try {
-        const results = await call("quick_search", { query: fullQuery, maxResults: 50, engine });
-        if (query.trim().length >= 2) saveSearchHistory(query);
-        showQuickSearchResults(results, engine);
+        document.getElementById("status-count").textContent = t('status.searching');
+        const results = await call("quick_search", { query: fullQuery, maxResults: 500 });
+        if (document.getElementById("filter-input").value.trim() !== query) return;
+        G.searchActive = true;
+        G.searchQuery = query;
+        tab.entries = results;
+        tab.sel.clear();
+        tab.lastIdx = -1;
+        renderSearchBreadcrumb(query, results.length);
+        renderFiles(tab, "file-list", "status-count", "status-selection");
+        document.getElementById("status-count").textContent = t('search.results', {count: results.length});
     } catch (e) {
-        if (engine === 'everything') {
-             showQuickSearchError(t('search.everythingNotRunning'));
-        } else {
-            hideQuickSearch();
-        }
+        const errMsg = typeof e === 'string' ? e : (e?.message || e?.toString() || 'Unknown error');
+        document.getElementById("status-count").textContent = errMsg;
+    } finally {
+        _searchRunning = false;
     }
 }
 
-function showQuickSearchError(msg) {
-    const dropdown = document.getElementById("quick-search-dropdown");
-    if (!dropdown) return;
-    dropdown.innerHTML =
-        `<div class="quick-search-header"><span style="color:var(--text-4)">${t('search.quickSearch')}</span></div>` +
-        `<div style="padding:12px;text-align:center;color:var(--text-3);font-size:12px">
-            <div style="margin-bottom:8px">${esc(msg)}</div>
-            <a href="https://www.voidtools.com" target="_blank" style="color:var(--accent);text-decoration:underline">${t('search.downloadEverything')}</a>
-            <div style="margin-top:8px;color:var(--text-4)">${t('search.changeEngine')}</div>
-        </div>`;
-    _searchDropdownIdx = -1;
-    dropdown.style.display = "block";
-    setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
+function renderSearchBreadcrumb(query, count) {
+    const label = (_lang === 'zh' ? '搜索' : 'Search') + ': ' + esc(query);
+    const countText = count > 0 ? `(${count} ${_lang === 'zh' ? '个结果' : 'results'})` : '';
+    const bc = document.getElementById("breadcrumb");
+    if (!bc) return;
+    bc.innerHTML = `<span class="bc-item" style="color:var(--accent);font-weight:500">🔍 ${esc(label)}</span>` +
+        (countText ? `<span style="color:var(--text-4);font-size:11px;margin-left:6px">${countText}</span>` : '') +
+        `<span class="breadcrumb-spacer" style="flex:1;cursor:text;min-width:20px;display:block;height:30px"></span>`;
+    // Update right pane breadcrumb too if dual pane
+    const rbc = document.getElementById("right-breadcrumb");
+    if (rbc) rbc.innerHTML = bc.innerHTML;
 }
 
-function showQuickSearchResults(results, engine) {
-    const dropdown = document.getElementById("quick-search-dropdown");
-    if (!dropdown || results.length === 0) { hideQuickSearch(); return; }
+function hideQuickSearch() {}
 
-    const isEv = engine !== 'builtin' && _everythingAvailable;
-    const engineLabel = isEv
-        ? '<span class="fast">⚡ Everything</span>'
-        : `<span>${t('search.builtin')}</span>`;
-    const modeLabel = _searchMode !== 'normal' ? ` <span style="color:var(--accent)">${_searchMode}</span>` : '';
-
-    dropdown.innerHTML =
-        `<div class="quick-search-header"><span>${t('search.results', {count: results.length})}${modeLabel}</span><span class="quick-search-engine">${engineLabel}</span></div>`;
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      const div = document.createElement("div");
-      div.className = "quick-search-item" + (r.is_dir ? " dir" : "");
-      div.dataset.path = r.path;
-      div.dataset.index = i;
-      div.innerHTML = `<span class="quick-search-item-name">${r.is_dir ? '📁 ' : ''}${esc(r.name)}</span>
-                <span class="quick-search-item-meta">${r.size ? fmtSize(r.size) : ''}${r.modified ? ' · ' + r.modified.split(' ')[0] : ''}</span>
-                <span class="quick-search-item-path">${esc(r.path)}</span>`;
-      div.addEventListener("click", () => quickSearchNavigate(r.path, r.is_dir));
-      dropdown.appendChild(div);
-    }
-    _searchDropdownIdx = -1;
-    dropdown.style.display = "block";
-
-    setTimeout(() => document.addEventListener("click", hideQuickSearch, { once: true }), 50);
-}
-
-function hideQuickSearch() {
-  const dropdown = document.getElementById("quick-search-dropdown");
-  if (dropdown) dropdown.style.display = "none";
-  _searchDropdownIdx = -1;
-}
-
-async function quickSearchNavigate(path, isDir) {
-  hideQuickSearch();
-  const input = document.getElementById("filter-input");
-  if (input) {
-    saveSearchHistory(input.value.trim());
-    input.value = "";
-  }
-  if (path.toLowerCase().endsWith(".lnk")) {
-    try { await call("open_file", { path }); return; } catch(e) {}
-  }
-  if (isDir) { await navigateTo(path); return; }
-  const parentPath = path.replace(/\\[^\\]+$/, '');
-  await navigateTo(parentPath);
-  const tab = getTab();
-  const idx = tab.entries.findIndex(e => e.path === path);
-  if (idx >= 0) {
-    tab.sel.clear();
-    tab.sel.add(idx);
-    tab.lastIdx = idx;
-    renderFiles(tab, "file-list", "status-count", "status-selection");
-    scrollToVisible(idx);
-  }
-}
-
-// --- deep search ---
+// --- deep search (legacy stubs, keep for compatibility) ---
 G.deepSearch = false;
-function toggleDeepSearch() {
-  G.deepSearch = !G.deepSearch;
-  const btn = document.getElementById("btn-deep-search");
-  if (G.deepSearch) {
-    btn.style.background = "var(--accent-light)";
-    btn.style.color = "var(--accent)";
-  } else {
-    btn.style.background = "";
-    btn.style.color = "";
-  }
-  if (document.getElementById("filter-input").value) applyFilter();
-}
-
-async function runDeepSearch() {
-  if (_deepSearchRunning) return;
-  const query = document.getElementById("filter-input").value;
-  if (!query) { navigateTo(getTab().path, false); return; }
-  const tab = getTab();
-  _deepSearchRunning = true;
-  try {
-    document.getElementById("status-count").textContent = t('status.searching');
-    const results = await call("search_recursive", { path: tab.path, query, maxResults: 500 });
-    if (document.getElementById("filter-input").value.trim() !== query) return;
-    tab.entries = results;
-    tab.sel.clear();
-    tab.lastIdx = -1;
-    renderFiles(tab, "file-list", "status-count", "status-selection");
-  } catch (e) {
-    document.getElementById("status-count").textContent = t('status.searchError', {error: e});
-  } finally {
-    _deepSearchRunning = false;
-  }
-}
+function toggleDeepSearch() {}
+async function runDeepSearch() {}
 
 function homeDir(name) {
   return (G.homeDirPath || "C:\\") + "\\" + name;

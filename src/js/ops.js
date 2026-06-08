@@ -486,6 +486,24 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.delete'), shortcut:"Del", action: () => deleteSelected(isRight), disabled: !hasSelection },
     { label: "-", action: null },
     { label: t('ctx.copyPath'), shortcut:"Ctrl+Shift+C", action: () => { if (singleSelection) call("copy_file_path", { path: sel[0].path }); } , disabled: !singleSelection },
+    { label: t('search.openLocation'), action: () => {
+        if (singleSelection) {
+            document.getElementById("filter-input").value = '';
+            G.searchActive = false;
+            G.searchQuery = '';
+            const f = sel[0];
+            const parent = f.path.replace(/\\[^\\]+$/, '');
+            navigateTo(parent).then(() => {
+                const tab = getTab();
+                const idx = tab.entries.findIndex(e => e.path === f.path);
+                if (idx >= 0) {
+                    tab.sel.clear(); tab.sel.add(idx); tab.lastIdx = idx;
+                    renderFiles(tab, "file-list", "status-count", "status-selection");
+                    scrollToVisible(idx);
+                }
+            });
+        }
+    }, hidden: !G.searchActive || !singleSelection },
     { label: t('ctx.share'), submenu: [
       { label: "QQ", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "qq" }); } },
       { label: "\u5FAE\u4FE1", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "wechat" }); } },
