@@ -2,9 +2,7 @@
 
 function tabName(path) {
   if (path === "home://") return t('nav.home');
-  if (/^[A-Za-z]:\\$/.test(path)) return path.slice(0, -1);
-  const parts = path.replace(/\\/g, "/").replace(/\/$/, "").split("/");
-  return parts[parts.length - 1] || path;
+  return path.replace(/\\/g, "/");
 }
 
 function tabTooltip(path) {
