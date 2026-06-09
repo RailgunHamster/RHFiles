@@ -2,12 +2,12 @@
 
 function tabName(path) {
   if (path === "home://") return t('nav.home');
-  return path;
+  return path.replace(/\\\\/g, "\\");
 }
 
 function tabTooltip(path) {
   if (path === "home://") return t('nav.home');
-  return path;
+  return path.replace(/\\\\/g, "\\");
 }
 
 function saveFolderLayout(path, layout) {
@@ -326,6 +326,7 @@ function detectAdaptiveLayout(entries) {
 // --- navigation ---
 async function navigateTo(path, pushHistory) {
   if (pushHistory === undefined) pushHistory = true;
+  if (/^[A-Za-z]:/.test(path)) path = path.replace(/\\\\/g, "\\");
   if (path === "home://") {
     const tab = getTab();
     if (pushHistory && path !== tab.path) {

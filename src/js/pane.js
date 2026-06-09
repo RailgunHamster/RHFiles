@@ -198,6 +198,7 @@ function toggleDualPane() {
 
 async function rpNavigateTo(path, pushHistory) {
   if (pushHistory === undefined) pushHistory = true;
+  if (/^[A-Za-z]:/.test(path)) path = path.replace(/\\\\/g, "\\");
   try {
     let entries = await call("list_dir", { path, filter: "" });
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
