@@ -332,7 +332,7 @@
       const tab = getTab();
       const tabEl = $(".tab.active .tab-label");
       assert(tabEl, "Active tab label element not found");
-      const expected = tab.path === "home://" ? "Home" : tab.path;
+      const expected = tab.path === "home://" ? "Home" : /^[A-Za-z]:\\$/.test(tab.path) ? tab.path.slice(0, -1) : tab.path;
       assertEqual(tabEl.textContent, expected, "Tab label text");
     });
 
