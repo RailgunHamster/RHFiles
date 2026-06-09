@@ -2,7 +2,7 @@
 
 function tabName(path) {
   if (path === "home://") return t('nav.home');
-  return path.replace(/\\/g, "/");
+  return path;
 }
 
 function tabTooltip(path) {
@@ -237,7 +237,7 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
     if (isUnc && i === 0) {
       accumulated = part;
     } else {
-      accumulated += (accumulated ? "\\" : "") + part;
+      accumulated += (accumulated && !accumulated.endsWith("\\") ? "\\" : "") + part;
     }
     if (/^[A-Za-z]:$/.test(accumulated)) {
       accumulated += "\\";
