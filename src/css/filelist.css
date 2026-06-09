@@ -32,6 +32,7 @@
 .file-row .row-icon { width:16px; height:16px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .file-row .row-icon svg { width:16px; height:16px; }
 .file-row .row-fname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.file-row .row-path { font-size:10px; color:var(--text-4); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .file-row input.rename-input { border:1px solid var(--accent); outline:none; background:var(--bg-input); color:var(--text); font-size:12px; font-family:inherit; padding:0 4px; width:100%; border-radius:2px; box-sizing:border-box; }
 .file-row input.rename-input:focus { box-shadow:0 0 0 1px var(--accent); }
 .file-row.dir .row-fname { font-weight:500; }
@@ -51,6 +52,8 @@
 .row-tag-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
 .cloud-icon { display:inline-flex; align-items:center; flex-shrink:0; }
 .cloud-item svg { flex-shrink:0; }
+
+.thumb-path { font-size:9px; color:var(--text-4); text-align:center; word-break:break-all; max-height:2em; overflow:hidden; line-height:1.2; }
 
 .status-bar { display:flex; align-items:center; gap:8px; height:24px; padding:0 12px; background:var(--bg); border-top:1px solid var(--border); font-size:12px; color:var(--text-4); }
 

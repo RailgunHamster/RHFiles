@@ -199,10 +199,16 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
         svnHtml = renderSvnStatusIcon(file.name);
       }
 
+      let pathHtml = "";
+      if (G.searchActive && file.path) {
+        const dirPath = file.path.replace(/\\[^\\]+$/, '');
+        pathHtml = `<span class="row-path" title="${esc(file.path)}">${esc(dirPath)}</span>`;
+      }
+
       row.innerHTML = `
         <div class="row-name">
           <span class="row-icon">${fileIcon(file)}</span>
-          <span class="row-fname">${esc(file.name)}</span>${tagsHtml}
+          <span class="row-fname">${esc(file.name)}</span>${tagsHtml}${pathHtml}
         </div>
         ${gitHtml ? gitHtml : '<div class="row-git"></div>'}
         ${svnHtml || '<div class="row-svn"></div>'}
@@ -255,9 +261,15 @@ function renderIconLayout(list, entries, sel, isRight, tabOrPane, listId) {
     });
     item.draggable = true;
 
+    let pathHtml = "";
+    if (G.searchActive && file.path) {
+      const dirPath = file.path.replace(/\\[^\\]+$/, '');
+      pathHtml = `<div style="font-size:9px;color:var(--text-4);text-align:center;word-break:break-all;max-height:2em;overflow:hidden;line-height:1.2;margin-top:1px;width:100%;" title="${esc(file.path)}">${esc(dirPath)}</div>`;
+    }
     item.innerHTML = `
       <div style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${bigFileIcon(file)}</div>
       <div style="font-size:11px;color:var(--text-2);text-align:center;word-break:break-all;max-height:2.4em;overflow:hidden;line-height:1.2;margin-top:2px;width:100%;">${esc(file.name)}</div>
+      ${pathHtml}
     `;
     grid.appendChild(item);
   });
@@ -289,9 +301,15 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     });
     item.draggable = true;
 
+    let pathHtml = "";
+    if (G.searchActive && file.path) {
+      const dirPath = file.path.replace(/\\[^\\]+$/, '');
+      pathHtml = `<div style="font-size:9px;color:var(--text-4);text-align:center;word-break:break-all;max-height:2em;overflow:hidden;line-height:1.2;width:100%;" title="${esc(file.path)}">${esc(dirPath)}</div>`;
+    }
     item.innerHTML = `
       <div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${bigFileIcon(file)}</div>
       <div style="font-size:12px;color:var(--text-2);text-align:center;word-break:break-word;max-height:2.4em;overflow:hidden;line-height:1.2;margin-top:4px;width:100%;">${esc(file.name)}</div>
+      ${pathHtml}
       <div style="font-size:10px;color:var(--text-4);text-align:center;margin-top:2px;">${esc(file.size_display || fileTypeLabel(file))}</div>
       <div style="font-size:10px;color:var(--text-4);text-align:center;">${esc(file.modified)}</div>
     `;
@@ -398,12 +416,22 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     nameEl.className = "thumb-name";
     nameEl.textContent = file.name;
 
+    let pathEl = null;
+    if (G.searchActive && file.path) {
+      const dirPath = file.path.replace(/\\[^\\]+$/, '');
+      pathEl = document.createElement("div");
+      pathEl.className = "thumb-path";
+      pathEl.textContent = dirPath;
+      pathEl.title = file.path;
+    }
+
     const metaEl = document.createElement("div");
     metaEl.className = "thumb-meta";
     metaEl.textContent = file.is_dir ? '' : (file.size_display || '');
 
     item.appendChild(thumbBox);
     item.appendChild(nameEl);
+    if (pathEl) item.appendChild(pathEl);
     item.appendChild(metaEl);
     grid.appendChild(item);
   });
