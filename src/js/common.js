@@ -66,6 +66,8 @@ G._7zAvailable = false;
 
 G.lastActivePane = 'left';
 
+G._typeSearch = { str: '', timer: null };
+
 // --- right pane state ---
 G.rp = { path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, history: ["C:\\"], histIdx: 0 };
 G.windowLabel = null;

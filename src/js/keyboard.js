@@ -264,6 +264,73 @@ document.addEventListener("keydown", async e => {
     scrollToVisible(pane.lastIdx);
     updatePreviewForSelection();
   }
+
+  if (e.key === "Escape") {
+    if (G._typeSearch.str) {
+      G._typeSearch.str = '';
+      if (G._typeSearch.timer) { clearTimeout(G._typeSearch.timer); G._typeSearch.timer = null; }
+    }
+    return;
+  }
+
+  if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    e.preventDefault();
+    const char = e.key.toLowerCase();
+    const isRight = G.lastActivePane === 'right';
+    const pane = isRight ? G.rp : getTab();
+    const entries = pane.entries || [];
+    if (!entries.length) return;
+
+    if (G._typeSearch.timer) clearTimeout(G._typeSearch.timer);
+
+    const sameCharTwice = (G._typeSearch.str.length === 1 && G._typeSearch.str[0] === char);
+    if (sameCharTwice) {
+      let foundIdx = -1;
+      const startIdx = pane.lastIdx;
+      for (let i = 1; i <= entries.length; i++) {
+        const idx = (startIdx + i) % entries.length;
+        if (entries[idx].name.toLowerCase().startsWith(char)) {
+          foundIdx = idx;
+          break;
+        }
+      }
+      if (foundIdx >= 0) {
+        pane.sel.clear();
+        pane.sel.add(foundIdx);
+        pane.lastIdx = foundIdx;
+        const listId = isRight ? "right-file-list" : "file-list";
+        const countId = isRight ? "right-status-count" : "status-count";
+        renderFiles(pane, listId, countId, null, isRight);
+        scrollToVisible(foundIdx);
+        updatePreviewForSelection();
+      }
+      G._typeSearch.timer = setTimeout(() => { G._typeSearch.str = ''; }, 500);
+      return;
+    }
+
+    G._typeSearch.str += char;
+    G._typeSearch.timer = setTimeout(() => { G._typeSearch.str = ''; }, 500);
+
+    const searchStr = G._typeSearch.str;
+    let foundIdx = -1;
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].name.toLowerCase().startsWith(searchStr)) {
+        foundIdx = i;
+        break;
+      }
+    }
+
+    if (foundIdx >= 0) {
+      pane.sel.clear();
+      pane.sel.add(foundIdx);
+      pane.lastIdx = foundIdx;
+      const listId = isRight ? "right-file-list" : "file-list";
+      const countId = isRight ? "right-status-count" : "status-count";
+      renderFiles(pane, listId, countId, null, isRight);
+      scrollToVisible(foundIdx);
+      updatePreviewForSelection();
+    }
+  }
 });
 
 function scrollToVisible(index) {

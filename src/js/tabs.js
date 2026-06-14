@@ -40,15 +40,43 @@ function renderTabs() {
 }
 
 function switchTab(id) {
+  if (id === G.activeTab) return;
   saveCurrentTabState();
   G.activeTab = id;
   const tab = getTab();
   G.sortField = tab.sortF;
   G.sortAsc = tab.sortAsc;
-  renderTabs();
-  navigateTo(tab.path, false);
-  restoreTabState(tab);
+  _updateTabActive();
+  _renderTabContent(tab);
   updateSortArrows();
+  updateSidebarSelection();
+  _refreshTabInBackground(tab);
+}
+
+function _updateTabActive() {
+  document.querySelectorAll("#tab-bar .tab").forEach(el => {
+    el.classList.toggle("active", parseInt(el.dataset.tabId) === G.activeTab);
+  });
+}
+
+function _renderTabContent(tab) {
+  if (tab.path === "home://") {
+    showHomePage();
+    renderBreadcrumb(tab.path);
+    document.getElementById("path-input").value = tab.path;
+    return;
+  }
+  hideHomePage();
+  showFileContent();
+  const filterEl = document.getElementById("filter-input");
+  if (filterEl) filterEl.value = "";
+  renderBreadcrumb(tab.path);
+  document.getElementById("path-input").value = tab.path;
+  _applySavedSelection(tab);
+  renderFiles(tab, "file-list", "status-count", "status-selection");
+  updateStatus(tab, "status-count", "status-selection");
+  updatePreviewForSelection();
+  _applySavedScroll(tab);
 }
 
 function addTab(path) {
@@ -74,9 +102,9 @@ function closeTab(id) {
     G.sortField = tab.sortF;
     G.sortAsc = tab.sortAsc;
     renderTabs();
-    navigateTo(tab.path, false);
-    restoreTabState(tab);
+    _renderTabContent(tab);
     updateSortArrows();
+    _refreshTabInBackground(tab);
   } else {
     renderTabs();
   }
@@ -87,32 +115,79 @@ function saveCurrentTabState() {
   const tab = getTab();
   if (!tab) return;
   const listEl = document.getElementById("file-list");
-  tab._savedState = {
-    selPaths: [...(tab.sel || [])].map(i => tab.entries[i]?.path).filter(Boolean),
-    scrollTop: listEl ? listEl.scrollTop : 0,
-  };
+  tab._savedScroll = listEl ? listEl.scrollTop : 0;
+  tab._savedSelPaths = [...(tab.sel || [])].map(i => tab.entries[i]?.path).filter(Boolean);
 }
 
-function restoreTabState(tab) {
-  if (!tab._savedState) return;
-  const state = tab._savedState;
-  delete tab._savedState;
-  if (state.selPaths && state.selPaths.length > 0) {
-    tab.sel = new Set();
-    state.selPaths.forEach(p => {
+function _applySavedSelection(tab) {
+  tab.sel = new Set();
+  tab.lastIdx = -1;
+  if (tab._savedSelPaths && tab._savedSelPaths.length > 0) {
+    tab._savedSelPaths.forEach(p => {
       const idx = tab.entries.findIndex(e => e.path === p);
       if (idx >= 0) tab.sel.add(idx);
     });
-    if (tab.sel.size > 0) {
-      tab.lastIdx = [...tab.sel].pop();
-    }
-    const listEl = document.getElementById("file-list");
-    if (listEl && state.scrollTop) {
-      requestAnimationFrame(() => { listEl.scrollTop = state.scrollTop; });
-    }
-    renderFiles(tab, "file-list", "status-count", "status-selection");
-    updatePreviewForSelection();
+    if (tab.sel.size > 0) tab.lastIdx = [...tab.sel].pop();
   }
+}
+
+function _applySavedScroll(tab) {
+  const listEl = document.getElementById("file-list");
+  const scroll = tab._savedScroll || 0;
+  delete tab._savedScroll;
+  delete tab._savedSelPaths;
+  if (listEl && scroll > 0) {
+    requestAnimationFrame(() => { listEl.scrollTop = scroll; });
+  }
+}
+
+// --- background refresh (keeps cached entries fresh without blocking UI) ---
+let _tabRefreshToken = 0;
+async function _refreshTabInBackground(tab) {
+  if (tab.path === "home://") return;
+  const token = ++_tabRefreshToken;
+  try {
+    let entries = await call("list_dir", { path: tab.path, filter: "" });
+    if (token !== _tabRefreshToken) return;
+    if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
+    entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
+    if (!_entriesChanged(tab.entries, entries)) {
+      tab.entries = entries;
+      _refreshTabMeta(tab);
+      return;
+    }
+    const selPaths = [...(tab.sel || [])].map(i => tab.entries[i]?.path).filter(Boolean);
+    tab.entries = entries;
+    tab.sel = new Set();
+    selPaths.forEach(p => {
+      const idx = entries.findIndex(e => e.path === p);
+      if (idx >= 0) tab.sel.add(idx);
+    });
+    tab.lastIdx = tab.sel.size > 0 ? [...tab.sel].pop() : -1;
+    if (tab.id === G.activeTab) {
+      const listEl = document.getElementById("file-list");
+      const savedScroll = listEl ? listEl.scrollTop : 0;
+      renderFiles(tab, "file-list", "status-count", "status-selection");
+      updateStatus(tab, "status-count", "status-selection");
+      if (listEl) listEl.scrollTop = savedScroll;
+    }
+    _refreshTabMeta(tab);
+  } catch (e) {}
+}
+
+function _refreshTabMeta(tab) {
+  loadTree(tab.path, false);
+  loadGitStatus(tab.path);
+  if (typeof loadSvnStatus === 'function') loadSvnStatus(tab.path);
+  G._watchSnapshot = null;
+}
+
+function _entriesChanged(oldE, newE) {
+  if (oldE.length !== newE.length) return true;
+  for (let i = 0; i < oldE.length; i++) {
+    if (oldE[i].name !== newE[i].name) return true;
+  }
+  return false;
 }
 
 // --- tab drag-and-drop ---
