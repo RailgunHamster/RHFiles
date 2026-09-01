@@ -74,9 +74,17 @@ function selectFilesInRect(listEl, rx, ry, rw, rh, additive) {
   const listRect = listEl.getBoundingClientRect();
   const scrollTop = listEl.scrollTop;
 
-  if (!additive) sel.clear();
+  // Deselect in place by toggling classes. Re-rendering the whole list here
+  // (every animation frame) would destroy the live selection rect and jank the UI.
+  if (!additive) {
+    listEl.querySelectorAll('.file-row').forEach(row => {
+      if (row.classList.contains('selected')) row.classList.remove('selected');
+    });
+    sel.clear();
+  }
 
   const rows = listEl.querySelectorAll('.file-row');
+  let added = false;
   rows.forEach(row => {
     const rowRect = row.getBoundingClientRect();
     const rowTop = rowRect.top - listRect.top + scrollTop;
@@ -87,12 +95,19 @@ function selectFilesInRect(listEl, rx, ry, rw, rh, additive) {
     if (rx < rowLeft + rowW && rx + rw > rowLeft &&
         ry < rowTop + rowH && ry + rh > rowTop) {
       const idx = parseInt(row.dataset.index);
-      if (!isNaN(idx)) sel.add(idx);
+      if (!isNaN(idx)) {
+        if (!sel.has(idx)) { sel.add(idx); added = true; }
+        if (!row.classList.contains('selected')) row.classList.add('selected');
+      }
     }
   });
 
-  if (isRight) renderFiles(tabOrPane, "right-file-list", "right-status-count", null, true);
-  else renderFiles(tabOrPane, "file-list", "status-count", "status-selection");
+  if (added) {
+    tabOrPane.lastIdx = -1;
+    sel.forEach(i => { if (i > tabOrPane.lastIdx) tabOrPane.lastIdx = i; });
+    if (isRight) updateStatus(tabOrPane, "right-status-count", null);
+    else updateStatus(tabOrPane, "status-count", "status-selection");
+  }
 }
 
 function invertSelection(isRight) {

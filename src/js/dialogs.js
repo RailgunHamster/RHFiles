@@ -245,11 +245,29 @@ function closeSettings() {
   document.getElementById("settings-dialog").style.display = "none";
 }
 
+// --- new file dialog ---
+let _newFileTemplates = [];
+let _newFileDest = "";
+let _newFileIsRight = false;
+
+function newFileTemplateExt(tpl) {
+  if (!tpl) return "";
+  if (tpl.extension) return String(tpl.extension);
+  return String(tpl.ext || "").replace(/^\./, "");
+}
+
 async function showNewFileDialog(isRight) {
+  const dialogEl = document.getElementById("newfile-dialog");
+  const container = document.getElementById("newfile-templates");
+  const nameInput = document.getElementById("newfile-name");
+  if (!dialogEl || !container || !nameInput) return;
+  _newFileIsRight = !!isRight;
+  _newFileDest = _newFileIsRight ? G.rp.path : getTab().path;
   let templates = [];
   try {
     templates = await call("get_new_file_templates", {});
-  } catch (e) {
+  } catch (e) { /* fall back to built-in templates below */ }
+  if (!Array.isArray(templates) || templates.length === 0) {
     templates = [
       { name: t('template.textFile'), ext: ".txt", content: "" },
       { name: t('template.htmlFile'), ext: ".html", content: "<!DOCTYPE html>\n<html>\n<head><title></title></head>\n<body>\n\n</body>\n</html>" },
@@ -261,15 +279,60 @@ async function showNewFileDialog(isRight) {
       { name: t('template.batchFile'), ext: ".bat", content: "@echo off\n\n" },
     ];
   }
-  const destPath = isRight ? G.rp.path : getTab().path;
-  const fileName = prompt(t('dialog.newFileName'), t('dialog.newFileDefault') + (templates.length ? templates[0].ext : ".txt"));
-  if (!fileName) return;
-  const tmpl = templates.find(t => fileName.endsWith(t.ext)) || templates[0];
+  _newFileTemplates = templates;
+  container.innerHTML = templates.map((tpl, i) => {
+    const ext = newFileTemplateExt(tpl);
+    const icon = (typeof fileIcon === "function") ? fileIcon({ name: tpl.name || ext, extension: ext, is_dir: false, size: 0 }) : "";
+    return `<div class="newfile-template${i === 0 ? " selected" : ""}" data-idx="${i}" onclick="selectNewFileTemplate(${i})"><span class="nft-icon">${icon}</span><span class="nft-name">${esc(tpl.name || ext)}</span></div>`;
+  }).join("");
+  nameInput.value = t('dialog.newFileDefault') + (templates.length ? "." + newFileTemplateExt(templates[0]) : ".txt");
+  nameInput.onkeydown = e => {
+    if (e.key === "Enter") { e.preventDefault(); createNewFileFromDialog(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeNewFile(); }
+  };
+  dialogEl.style.display = "flex";
+  nameInput.focus();
+}
+
+function selectNewFileTemplate(idx) {
+  const tpl = _newFileTemplates[idx];
+  if (!tpl) return;
+  document.querySelectorAll("#newfile-templates .newfile-template").forEach(el =>
+    el.classList.toggle("selected", parseInt(el.dataset.idx) === idx));
+  const input = document.getElementById("newfile-name");
+  if (!input) return;
+  let base = input.value.trim();
+  if (!base) base = t('dialog.newFileDefault');
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = newFileTemplateExt(tpl);
+  input.value = stem + (ext ? "." + ext : "");
+  input.selectionStart = input.selectionEnd = stem.length + 1;
+  input.focus();
+}
+
+async function createNewFileFromDialog() {
+  const nameEl = document.getElementById("newfile-name");
+  const name = nameEl ? nameEl.value.trim() : "";
+  if (!name) return;
+  const sel = document.querySelector("#newfile-templates .newfile-template.selected");
+  let idx = sel ? parseInt(sel.dataset.idx) : 0;
+  const byExt = _newFileTemplates.findIndex(tpl => {
+    const ext = newFileTemplateExt(tpl);
+    return ext && name.toLowerCase().endsWith("." + ext.toLowerCase());
+  });
+  if (byExt >= 0) idx = byExt;
+  const tpl = _newFileTemplates[idx];
   try {
-    const templateExt = tmpl ? (tmpl.extension || (tmpl.ext || "").replace(/^\./, '')) : "";
-    await call("create_new_file", { parent: destPath, template: templateExt, name: fileName });
-    await refresh();
+    await call("create_new_file", { parent: _newFileDest, template: newFileTemplateExt(tpl), name });
+    closeNewFile();
+    await refresh(_newFileIsRight);
   } catch (e) { alert(t('alert.createFileFailed', {error: e})); }
+}
+
+function closeNewFile() {
+  const dlg = document.getElementById("newfile-dialog");
+  if (dlg) dlg.style.display = "none";
 }
 
 // --- toolbar customization ---

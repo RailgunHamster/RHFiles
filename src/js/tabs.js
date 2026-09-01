@@ -402,6 +402,9 @@ function detectAdaptiveLayout(entries) {
 async function navigateTo(path, pushHistory) {
   if (pushHistory === undefined) pushHistory = true;
   if (/^[A-Za-z]:/.test(path)) path = path.replace(/\\\\/g, "\\");
+  // navigating away from search results clears search state
+  G.searchActive = false;
+  G.searchQuery = "";
   if (path === "home://") {
     const tab = getTab();
     if (pushHistory && path !== tab.path) {

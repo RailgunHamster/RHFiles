@@ -8,6 +8,7 @@
   "ctx.open": "Open",
   "ctx.openWith": "Open with \u25B6",
   "ctx.openWithDialog": "Choose App...",
+  "ctx.extractAll": "Extract All",
   "ctx.openInIde": "Open in IDE",
   "ctx.openInTerminal": "Open in Terminal",
   "ctx.runAsAdmin": "Run as Administrator",
