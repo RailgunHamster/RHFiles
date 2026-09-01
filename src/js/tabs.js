@@ -546,7 +546,10 @@ function initDoubleCtrlSearch() {
 
 async function initQuickSearch() {
     try {
-        call("start_everything", {}).catch(() => {});
+        // Do NOT eagerly spawn Everything at startup: launching it here pops the
+        // user's existing Everything window to the front (single-instance forward)
+        // and its first-run indexing stalls the machine. It is started lazily by
+        // the first quick search instead (see ensure_everything_running).
         _everythingAvailable = await call("is_everything_available", {});
         const input = document.getElementById("filter-input");
         if (input) {

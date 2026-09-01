@@ -4,14 +4,14 @@ use std::path::PathBuf;
 
 use tauri::Emitter;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_dir(path: String) -> Result<Vec<FileInfo>, String> {
     let p = PathBuf::from(&path);
     let entries = enumerator::list_dir(&p).map_err(|e| e.to_string())?;
     Ok(entries.iter().map(file_info_from_entry).collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_drives() -> Result<Vec<DriveInfoSer>, String> {
     let drives = enumerator::get_drives().map_err(|e| e.to_string())?;
     Ok(drives.iter().map(|d| DriveInfoSer {
@@ -213,7 +213,7 @@ pub fn cancel_operation(cancel: tauri::State<'_, CancelFlag>) {
     *cancel.0.lock().unwrap() = true;
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_dir_tree(path: String) -> Result<Vec<TreeEntry>, String> {
     let p = PathBuf::from(&path);
     let entries = enumerator::get_dir_tree(&p).map_err(|e| e.to_string())?;

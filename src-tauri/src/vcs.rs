@@ -3,7 +3,7 @@ use rhfiles_core::enumerator;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_status(path: String) -> Result<HashMap<String, String>, String> {
     enumerator::get_git_status(&PathBuf::from(&path))
 }
@@ -28,7 +28,7 @@ pub fn git_init(path: String) -> Result<(), String> {
     enumerator::git_init(&PathBuf::from(&path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn svn_status(path: String) -> Result<HashMap<String, String>, String> {
     enumerator::get_svn_status(&PathBuf::from(&path))
 }

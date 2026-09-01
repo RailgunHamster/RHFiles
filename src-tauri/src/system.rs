@@ -7,7 +7,7 @@ use tauri::{Emitter, Listener};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_thumbnail(path: String, size: u32) -> Result<String, String> {
     enumerator::generate_thumbnail(&PathBuf::from(&path), size)
 }
@@ -22,7 +22,7 @@ pub fn show_properties(path: String) -> Result<(), String> {
     enumerator::show_properties(&PathBuf::from(&path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_file_preview(path: String) -> Result<FilePreview, String> {
     let p = PathBuf::from(&path);
     let metadata = std::fs::metadata(&p).map_err(|e| e.to_string())?;

@@ -174,7 +174,7 @@ pub fn is_everything_available() -> bool {
     is_everything_window_running() || find_everything_exe().is_some()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_everything() -> Result<String, String> {
     if is_everything_window_running() {
         return Ok("already_running".to_string());
@@ -189,12 +189,28 @@ pub fn start_everything() -> Result<String, String> {
 
     for _ in 0..60 {
         std::thread::sleep(Duration::from_millis(500));
-        if is_everything_window_running() { return Ok("started".to_string()); }
+        if is_everything_window_running() || everything_ipc_alive() { return Ok("started".to_string()); }
     }
     Ok("timeout".to_string())
 }
 
+/// Probe the SDK IPC itself: a running Everything (any version, any window
+/// class) answers an empty non-blocking query. This is more reliable than
+/// FindWindow, and avoids spawning a second instance whose single-instance
+/// forward would pop the user's existing Everything window to the front.
+fn everything_ipc_alive() -> bool {
+    with_ev_api(|api| {
+        Ok(unsafe {
+            let empty: Vec<u16> = vec![0u16];
+            (api.set_search)(empty.as_ptr());
+            (api.set_max)(0);
+            (api.query)(0) != 0
+        })
+    }).unwrap_or(false)
+}
+
 fn ensure_everything_running() -> Result<(), String> {
+    if everything_ipc_alive() { return Ok(()); }
     if is_everything_window_running() { return Ok(()); }
     start_everything().and_then(|s| {
         if s == "timeout" {
@@ -289,12 +305,12 @@ fn run_ev_sdk_query(query: &str, max_results: usize) -> Result<Vec<FileInfo>, St
 
 // ── Tauri commands ─────────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn quick_search(query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
     run_ev_sdk_query(&query, max_results)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_recursive(path: String, query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
     let everything_query = if query.is_empty() {
         format!("parent:\"{}\"", path)
