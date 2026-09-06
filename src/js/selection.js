@@ -111,6 +111,7 @@ function selectFilesInRect(listEl, rx, ry, rw, rh, additive) {
 }
 
 function invertSelection(isRight) {
+  if (typeof isRight !== 'boolean') isRight = G.dualOn && G.lastActivePane === 'right';
   const tabOrPane = isRight ? G.rp : getTab();
   if (!tabOrPane || !tabOrPane.entries) return;
   const newSel = new Set();

@@ -11,15 +11,20 @@ function tabTooltip(path) {
 }
 
 let _tabTailFrame = 0;
+const _tabTailRoots = new Set();
 function revealTabLabelTails(root) {
-  if (_tabTailFrame) cancelAnimationFrame(_tabTailFrame);
+  _tabTailRoots.add(root || document);
+  if (_tabTailFrame) return;
   _tabTailFrame = requestAnimationFrame(() => {
     _tabTailFrame = 0;
-    (root || document).querySelectorAll('.tab-label').forEach(label => {
-      const clipped = label.scrollWidth > label.clientWidth + 1;
-      label.classList.toggle('tail-clipped', clipped);
-      label.scrollLeft = clipped ? label.scrollWidth : 0;
+    _tabTailRoots.forEach(scope => {
+      scope.querySelectorAll('.tab-label').forEach(label => {
+        const clipped = label.scrollWidth > label.clientWidth + 1;
+        label.classList.toggle('tail-clipped', clipped);
+        label.scrollLeft = clipped ? label.scrollWidth : 0;
+      });
     });
+    _tabTailRoots.clear();
   });
 }
 
@@ -40,23 +45,42 @@ function loadFolderLayout(path) {
 
 function renderTabs() {
   const bar = document.getElementById("tab-bar");
-  const paneOwner = G.dualOn ? `<span class="tab-pane-owner">${t('pane.leftTabs')}</span>` : '';
-  bar.innerHTML = paneOwner + G.tabs.map(t =>
-    `<div class="tab ${t.id===G.activeTab?'active':''}" data-tab-id="${t.id}" onclick="switchTab(${t.id})" onauxclick="if(event.button===1)closeTab(${t.id})" title="${esc(tabTooltip(t.path))}" draggable="true">
-      <span class="tab-label">${esc(tabName(t.path))}</span>
-      <button class="tab-close" onclick="event.stopPropagation();closeTab(${t.id})">&times;</button>
+  if (!bar) return;
+  const paneBadge = G.dualOn ? `<span class="tab-pane-index" title="${esc(t('pane.left'))}">1</span>` : '';
+  bar.innerHTML = paneBadge + G.tabs.map(tab =>
+    `<div class="tab ${tab.id===G.activeTab?'active':''}" data-tab-id="${tab.id}" data-pane="left" onclick="switchTab(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},false)" title="${esc(tabTooltip(tab.path))}" draggable="true">
+      <span class="tab-label">${esc(tabName(tab.path))}</span>
+      <button class="tab-close" onclick="event.stopPropagation();closeTab(${tab.id},false)">&times;</button>
     </div>`
-  ).join("") + `<button class="tab-new" onclick="addTab()" title="${t('nav.newTab')}">
+  ).join("") + `<button class="tab-new" onclick="addTab(undefined,false)" title="${t('nav.newTab')}">
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
   </button>`;
-  initTabDragDrop();
+  initTabDragDrop(bar, false);
   initTabPreview();
+  revealTabLabelTails(bar);
+  renderRightTabs();
+}
+
+function renderRightTabs() {
+  const bar = document.getElementById('right-tab-bar');
+  if (!bar) return;
+  bar.innerHTML = `<span class="tab-pane-index" title="${esc(t('pane.right'))}">2</span>` + G.rpTabs.map(tab =>
+    `<div class="tab ${tab.id===G.activeRpTab?'active':''}" data-tab-id="${tab.id}" data-pane="right" onclick="switchRightTab(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},true)" title="${esc(tabTooltip(tab.path))}" draggable="true">
+      <span class="tab-label">${esc(tabName(tab.path))}</span>
+      <button class="tab-close" onclick="event.stopPropagation();closeTab(${tab.id},true)">&times;</button>
+    </div>`
+  ).join('') + `<button class="tab-new" onclick="addTab(undefined,true)" title="${t('nav.newTab')}">
+    <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  </button>`;
+  initTabDragDrop(bar, true);
   revealTabLabelTails(bar);
 }
 
-window.addEventListener('resize', () => revealTabLabelTails(document.getElementById('tab-bar')));
+window.addEventListener('resize', () => revealTabLabelTails());
 
 function switchTab(id) {
+  G.lastActivePane = 'left';
+  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
   if (id === G.activeTab) return;
   if (typeof resetTypeSearch === 'function') resetTypeSearch();
   hideTabPreview();
@@ -74,10 +98,14 @@ function switchTab(id) {
 }
 
 function switchRelativeTab(delta) {
-  if (G.tabs.length < 2) return;
-  const current = G.tabs.findIndex(tab => tab.id === G.activeTab);
-  const next = (current + delta + G.tabs.length) % G.tabs.length;
-  switchTab(G.tabs[next].id);
+  const isRight = G.dualOn && G.lastActivePane === 'right';
+  const tabs = isRight ? G.rpTabs : G.tabs;
+  const activeId = isRight ? G.activeRpTab : G.activeTab;
+  if (tabs.length < 2) return;
+  const current = tabs.findIndex(tab => tab.id === activeId);
+  const next = (current + delta + tabs.length) % tabs.length;
+  if (isRight) switchRightTab(tabs[next].id);
+  else switchTab(tabs[next].id);
 }
 
 function _updateTabActive() {
@@ -106,7 +134,9 @@ function _renderTabContent(tab) {
   _applySavedScroll(tab);
 }
 
-function addTab(path) {
+function addTab(path, isRight) {
+  if (isRight === undefined) isRight = G.dualOn && G.lastActivePane === 'right';
+  if (isRight) return addRightTab(path);
   path = path || "C:\\";
   const t = { id: G.nextTabId++, path, history: [path], historyIdx: 0, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true };
   G.tabs.push(t);
@@ -118,7 +148,8 @@ function addTab(path) {
   navigateTo(path, false);
 }
 
-function closeTab(id) {
+function closeTab(id, isRight) {
+  if (isRight) return closeRightTab(id);
   if (G.tabs.length <= 1) return;
   hideTabPreview();
   _navigationToken++;
@@ -139,9 +170,69 @@ function closeTab(id) {
   }
 }
 
-function closeOtherTabs(id) {
-  const target = getTab(id);
+function addRightTab(path) {
+  path = path || G.rp?.path || getTab()?.path || 'C:\\';
+  const tab = { id:G.nextRpTabId++, path, history:[path], histIdx:0, entries:[], sel:new Set(), lastIdx:-1, sortF:'name', sortAsc:true };
+  G.rpTabs.push(tab);
+  G.activeRpTab = tab.id;
+  G.rp = tab;
+  G.lastActivePane = 'right';
+  renderRightTabs();
+  updatePaneFocusUI();
+  rpNavigateTo(path, false);
+  saveTabState();
+}
+
+function switchRightTab(id) {
+  if (id === G.activeRpTab) {
+    G.lastActivePane = 'right';
+    updatePaneFocusUI();
+    return;
+  }
+  const currentList = document.getElementById('right-file-list');
+  if (G.rp) G.rp._savedScroll = currentList?.scrollTop || 0;
+  const tab = getRightTab(id);
+  if (!tab) return;
+  G.activeRpTab = id;
+  G.rp = tab;
+  G.lastActivePane = 'right';
+  renderRightTabs();
+  updatePaneFocusUI();
+  document.getElementById('right-path-input').value = tab.path;
+  renderBreadcrumb(tab.path, 'right-breadcrumb', 'right-bc-dropdown', 'right-path-input', true);
+  renderFiles(tab, 'right-file-list', 'right-status-count', null, true);
+  requestAnimationFrame(() => { if (currentList) currentList.scrollTop = tab._savedScroll || 0; });
+  rpNavigateTo(tab.path, false);
+  saveTabState();
+}
+
+function closeRightTab(id) {
+  if (G.rpTabs.length <= 1) return;
+  const index = G.rpTabs.findIndex(tab => tab.id === id);
+  if (index < 0) return;
+  G.rpTabs.splice(index, 1);
+  if (G.activeRpTab === id) {
+    const tab = G.rpTabs[Math.min(index, G.rpTabs.length - 1)];
+    G.activeRpTab = tab.id;
+    G.rp = tab;
+    rpNavigateTo(tab.path, false);
+  }
+  renderRightTabs();
+  saveTabState();
+}
+
+function closeOtherTabs(id, isRight) {
+  const target = isRight ? getRightTab(id) : getTab(id);
   if (!target) return;
+  if (isRight) {
+    G.rpTabs = [target];
+    G.activeRpTab = id;
+    G.rp = target;
+    renderRightTabs();
+    rpNavigateTo(target.path, false);
+    saveTabState();
+    return;
+  }
   G.tabs = [target];
   if (G.activeTab !== id) {
     G.activeTab = id;
@@ -154,20 +245,29 @@ function closeOtherTabs(id) {
   saveTabState();
 }
 
-function closeTabsToRight(id) {
-  const index = G.tabs.findIndex(tab => tab.id === id);
-  if (index < 0 || index === G.tabs.length - 1) return;
-  const removedIds = new Set(G.tabs.slice(index + 1).map(tab => tab.id));
-  G.tabs = G.tabs.slice(0, index + 1);
-  if (removedIds.has(G.activeTab)) {
-    G.activeTab = id;
-    const target = getTab(id);
-    G.sortField = target.sortF;
-    G.sortAsc = target.sortAsc;
-    _renderTabContent(target);
-    updateSortArrows();
+function closeTabsToRight(id, isRight) {
+  const tabs = isRight ? G.rpTabs : G.tabs;
+  const activeId = isRight ? G.activeRpTab : G.activeTab;
+  const index = tabs.findIndex(tab => tab.id === id);
+  if (index < 0 || index === tabs.length - 1) return;
+  const removedIds = new Set(tabs.slice(index + 1).map(tab => tab.id));
+  if (isRight) G.rpTabs = tabs.slice(0, index + 1);
+  else G.tabs = tabs.slice(0, index + 1);
+  if (removedIds.has(activeId)) {
+    if (isRight) {
+      G.activeRpTab = id;
+      G.rp = getRightTab(id);
+      rpNavigateTo(G.rp.path, false);
+    } else {
+      G.activeTab = id;
+      const target = getTab(id);
+      G.sortField = target.sortF;
+      G.sortAsc = target.sortAsc;
+      _renderTabContent(target);
+      updateSortArrows();
+    }
   }
-  renderTabs();
+  if (isRight) renderRightTabs(); else renderTabs();
   saveTabState();
 }
 
@@ -208,7 +308,7 @@ async function _refreshTabInBackground(tab) {
   if (tab.path === "home://") return;
   const token = ++_tabRefreshToken;
   try {
-    let entries = await call("list_dir", { path: tab.path, filter: "" });
+    let entries = await listPathEntries(tab.path, "");
     if (token !== _tabRefreshToken) return;
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
@@ -259,8 +359,10 @@ function _entriesChanged(oldE, newE) {
 
 // --- tab drag-and-drop ---
 let _dragTabId = null;
-function initTabDragDrop() {
-  const bar = document.getElementById("tab-bar");
+function initTabDragDrop(bar, isRight) {
+  bar = bar || document.getElementById("tab-bar");
+  if (!bar) return;
+  const tabs = isRight ? G.rpTabs : G.tabs;
   bar.querySelectorAll(".tab").forEach(tabEl => {
     tabEl.addEventListener("dragstart", e => {
       _dragTabId = parseInt(tabEl.dataset.tabId);
@@ -288,12 +390,12 @@ function initTabDragDrop() {
       const fromId = parseInt(e.dataTransfer.getData("text/plain"));
       const toId = parseInt(tabEl.dataset.tabId);
       if (fromId === toId) return;
-      const fromIdx = G.tabs.findIndex(t => t.id === fromId);
-      const toIdx = G.tabs.findIndex(t => t.id === toId);
+      const fromIdx = tabs.findIndex(t => t.id === fromId);
+      const toIdx = tabs.findIndex(t => t.id === toId);
       if (fromIdx < 0 || toIdx < 0) return;
-      const [moved] = G.tabs.splice(fromIdx, 1);
-      G.tabs.splice(toIdx, 0, moved);
-      renderTabs();
+      const [moved] = tabs.splice(fromIdx, 1);
+      tabs.splice(toIdx, 0, moved);
+      if (isRight) renderRightTabs(); else renderTabs();
       saveTabState();
     });
   });
@@ -426,7 +528,7 @@ async function showBcDropdown(parentPath, sepEl, dropdownId, isRight) {
   hideDropdown(dropdownId);
   if (wasOpen && dropdown._lastPath === parentPath) return;
   try {
-    const entries = await call("list_dir", { path: parentPath, filter: "" });
+    const entries = await listPathEntries(parentPath, "");
     const dirs = entries.filter(e => e.is_dir);
     if (!dirs.length) return;
     dropdown.innerHTML = dirs.map(d =>
@@ -487,7 +589,7 @@ async function navigateTo(path, pushHistory) {
   const navigationToken = ++_navigationToken;
   _searchRequestToken++;
   if (pushHistory === undefined) pushHistory = true;
-  if (/^[A-Za-z]:/.test(path)) path = path.replace(/\\\\/g, "\\");
+  path = normalizeWindowsPathInput(path);
   // navigating away from search results clears search state
   G.searchActive = false;
   G.searchQuery = "";
@@ -518,7 +620,7 @@ async function navigateTo(path, pushHistory) {
   const filterEl = document.getElementById("filter-input");
   if (filterEl && path !== tab.path) filterEl.value = "";
   try {
-    let entries = await call("list_dir", { path, filter: "" });
+    let entries = await listPathEntries(path, "");
     if (navigationToken !== _navigationToken) return false;
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
     const filter = filterEl ? filterEl.value.toLowerCase() : "";
@@ -583,7 +685,7 @@ localStorage.removeItem('rhfiles-search-scope');
 let _searchRequestToken = 0;
 
 function getSearchFolderPath() {
-  const path = getTab()?.path || '';
+  const path = getActivePaneState()?.path || '';
   return /^[A-Za-z]:\\/.test(path) || path.startsWith('\\\\') ? path : null;
 }
 
@@ -655,7 +757,8 @@ function applyFilter() {
     G.searchActive = false;
     G.searchQuery = '';
     hideQuickSearch();
-    navigateTo(getTab().path, false);
+    if (G.dualOn && G.lastActivePane === 'right') rpNavigateTo(G.rp.path, false);
+    else navigateTo(getTab().path, false);
     return;
   }
   _searchTimer = setTimeout(() => runSearch(query), query.length < 2 ? 400 : 250);
@@ -730,14 +833,16 @@ async function initQuickSearch() {
 }
 
 async function runSearch(query) {
-    const tab = getTab();
+    const isRight = G.dualOn && G.lastActivePane === 'right';
+    const tab = isRight ? G.rp : getTab();
+    const statusId = isRight ? 'right-status-count' : 'status-count';
     const requestToken = ++_searchRequestToken;
     const scopePath = _searchScope === 'folder' ? getSearchFolderPath() : null;
     const modePrefix = _searchMode === 'regex' ? 'regex:' : _searchMode === 'wildcard' ? 'wildcards:' : '';
     const fullQuery = modePrefix + query;
     _searchRunning = true;
     try {
-        document.getElementById("status-count").textContent = t('status.searching');
+        document.getElementById(statusId).textContent = t('status.searching');
         const results = scopePath
           ? await call("search_recursive", { path: scopePath, query: fullQuery, maxResults: 500 })
           : await call("quick_search", { query: fullQuery, maxResults: 500 });
@@ -749,22 +854,22 @@ async function runSearch(query) {
         tab.entries = results;
         tab.sel.clear();
         tab.lastIdx = -1;
-        renderSearchBreadcrumb(query, results.length, scopePath);
-        renderFiles(tab, "file-list", "status-count", "status-selection");
-        document.getElementById("status-count").textContent = t('search.results', {count: results.length});
+        renderSearchBreadcrumb(query, results.length, scopePath, isRight);
+        renderFiles(tab, isRight ? 'right-file-list' : 'file-list', statusId, isRight ? null : 'status-selection', isRight);
+        document.getElementById(statusId).textContent = t('search.results', {count: results.length});
     } catch (e) {
         if (requestToken !== _searchRequestToken) return;
         const errMsg = typeof e === 'string' ? e : (e?.message || e?.toString() || 'Unknown error');
-        document.getElementById("status-count").textContent = t('status.searchError', {error: errMsg});
+        document.getElementById(statusId).textContent = t('status.searchError', {error: errMsg});
     } finally {
         if (requestToken === _searchRequestToken) _searchRunning = false;
     }
 }
 
-function renderSearchBreadcrumb(query, count, scopePath) {
+function renderSearchBreadcrumb(query, count, scopePath, isRight) {
     const scopeName = scopePath ? (scopePath.split('\\').filter(Boolean).pop() || scopePath) : t('search.scopeGlobal');
     const scopeLabel = scopePath ? t('search.scopeFolder', {folder: scopeName}) : t('search.scopeGlobal');
-    const bc = document.getElementById("breadcrumb");
+    const bc = document.getElementById(isRight ? 'right-breadcrumb' : 'breadcrumb');
     if (!bc) return;
     const fullTitle = scopePath ? `${scopePath} — ${query}` : query;
     bc.innerHTML = `<span class="bc-item" title="${esc(fullTitle)}" style="color:var(--accent);font-weight:500">🔍 ${esc(query)}</span>` +
@@ -805,7 +910,7 @@ function showHomePage() {
     { name: t('home.documents'), path: homeDir("Documents"), icon: "M3 2h5l4 4v8H3z M8 2v4h4" },
     { name: t('home.pictures'), path: homeDir("Pictures"), icon: "M2 3h12v10H2z M3.5 11l2.7-2.8 2.1 2 2.3-3 2.9 3.8 M5 6.1a1 1 0 1 0 0-.01" },
     { name: t('home.music'), path: homeDir("Music"), icon: "M4 12a2 2 0 11-0-4M12 10a2 2 0 11-0-4M6 12V3l8-2v9" },
-    { name: t('home.videos'), path: homeDir("Videos"), icon: "M1 3h14v10H1z" },
+    { name: t('home.videos'), path: homeDir("Videos"), icon: "M1.5 3.5h13v9h-13z M6.25 5.65l4.2 2.35-4.2 2.35z" },
   ];
   quickAccess.innerHTML = "";
   for (const f of folders) {
@@ -919,6 +1024,7 @@ async function goUp() {
 }
 
 async function goBack() {
+  if (G.dualOn && G.lastActivePane === 'right') return paneGoBack('right');
   const tab = getTab();
   if (tab.historyIdx <= 0) return;
   tab.historyIdx--;
@@ -926,6 +1032,7 @@ async function goBack() {
 }
 
 async function goForward() {
+  if (G.dualOn && G.lastActivePane === 'right') return paneGoForward('right');
   const tab = getTab();
   if (tab.historyIdx >= tab.history.length - 1) return;
   tab.historyIdx++;
@@ -934,17 +1041,18 @@ async function goForward() {
 
 async function refresh() {
   G.gitCache = {};
+  if (G.dualOn && G.lastActivePane === 'right') {
+    await rpNavigateTo(G.rp.path, false);
+    return;
+  }
   const tab = getTab();
   await navigateTo(tab.path, false);
-  if (G.dualOn) {
-    await rpNavigateTo(G.rp.path, false);
-  }
 }
 
 function setLayout(layout) {
   G.layout = layout;
   localStorage.setItem('rhfiles-layout', layout);
-  saveFolderLayout(getTab().path, layout);
+  saveFolderLayout(getActivePaneState().path, layout);
   document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === layout));
   renderFiles(getTab(), "file-list", "status-count", "status-selection");
   if (G.dualOn) renderFiles(G.rp, "right-file-list", "right-status-count", null, true);

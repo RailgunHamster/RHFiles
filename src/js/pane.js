@@ -69,6 +69,7 @@ function setPreviewPaneVisible(visible, persist) {
     btn.style.background = "var(--accent-light)";
     btn.style.color = "var(--accent)";
   } else {
+    togglePreviewFullscreen(false);
     _previewRequestToken++;
     _previewedFile = null;
     pane.style.display = "none";
@@ -92,6 +93,24 @@ function restorePreviewPane() {
 
 function togglePreviewPane() {
   setPreviewPaneVisible(!G.previewOn);
+}
+
+function togglePreviewFullscreen(force) {
+  const pane = document.getElementById('preview-pane');
+  if (!pane) return;
+  const shouldOpen = typeof force === 'boolean'
+    ? force
+    : !document.body.classList.contains('preview-fullscreen-active');
+  if (shouldOpen && !G.previewOn) setPreviewPaneVisible(true);
+  document.body.classList.toggle('preview-fullscreen-active', shouldOpen);
+  pane.classList.toggle('fullscreen-preview', shouldOpen);
+  const button = document.getElementById('preview-fullscreen');
+  if (button) {
+    const label = t(shouldOpen ? 'preview.exitFullscreen' : 'preview.fullscreen');
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.classList.toggle('active', shouldOpen);
+  }
 }
 
 function setPreviewDefaultOpen(enabled) {
@@ -300,29 +319,119 @@ async function updatePreviewForSelection() {
 }
 
 // --- dual pane ---
-function toggleDualPane() {
-  G.dualOn = !G.dualOn;
+let _tabBarAnchor = null;
+let _toolbarAnchor = null;
+let _searchBoxAnchor = null;
+let _previewAutoClosedForDual = false;
+
+function arrangeDualPaneChrome(enabled) {
+  const tabBar = document.getElementById('tab-bar');
+  const toolbar = document.getElementById('main-toolbar');
+  const commandBar = document.getElementById('command-bar');
+  const paneLeft = document.getElementById('pane-left');
+  if (!tabBar || !toolbar || !paneLeft) return;
+  if (enabled) {
+    if (!_tabBarAnchor) {
+      _tabBarAnchor = document.createComment('rhfiles-tab-bar-home');
+      tabBar.parentNode.insertBefore(_tabBarAnchor, tabBar);
+    }
+    if (!_toolbarAnchor) {
+      _toolbarAnchor = document.createComment('rhfiles-toolbar-home');
+      toolbar.parentNode.insertBefore(_toolbarAnchor, toolbar);
+    }
+    paneLeft.insertBefore(toolbar, paneLeft.firstChild);
+    paneLeft.insertBefore(tabBar, toolbar);
+    const searchBox = toolbar.querySelector('.search-box');
+    if (searchBox && commandBar) {
+      if (!_searchBoxAnchor) {
+        _searchBoxAnchor = document.createComment('rhfiles-search-box-home');
+        searchBox.parentNode.insertBefore(_searchBoxAnchor, searchBox);
+      }
+      commandBar.insertBefore(searchBox, commandBar.querySelector('.cmd-stretch'));
+      searchBox.classList.add('dual-global-search');
+    }
+  } else {
+    if (_tabBarAnchor?.parentNode) _tabBarAnchor.parentNode.insertBefore(tabBar, _tabBarAnchor.nextSibling);
+    if (_toolbarAnchor?.parentNode) _toolbarAnchor.parentNode.insertBefore(toolbar, _toolbarAnchor.nextSibling);
+    const searchBox = commandBar?.querySelector('.search-box');
+    if (searchBox && _searchBoxAnchor?.parentNode) {
+      _searchBoxAnchor.parentNode.insertBefore(searchBox, _searchBoxAnchor.nextSibling);
+      searchBox.classList.remove('dual-global-search');
+    }
+  }
+}
+
+function setDualPaneOrientation(orientation) {
+  G.settings.dualPaneOrientation = orientation === 'horizontal' ? 'horizontal' : 'vertical';
+  saveSettings();
+  const container = document.getElementById('pane-container');
+  container?.classList.toggle('horizontal-panes', G.settings.dualPaneOrientation === 'horizontal');
+  document.getElementById('pane-divider')?.classList.toggle('horizontal-divider', G.settings.dualPaneOrientation === 'horizontal');
+  if (G.dualOn) restoreDualPaneSplit();
+}
+
+function restoreDualPaneSplit() {
+  const rightPane = document.getElementById('pane-right');
+  if (!rightPane) return;
+  const ratio = Math.max(.25, Math.min(.75, Number(localStorage.getItem('rhfiles-dual-split') || .5)));
+  if (G.settings.dualPaneOrientation === 'horizontal') {
+    rightPane.style.width = '';
+    rightPane.style.height = (ratio * 100) + '%';
+    rightPane.style.flex = `0 0 ${ratio * 100}%`;
+  } else {
+    rightPane.style.height = '';
+    rightPane.style.width = (ratio * 100) + '%';
+    rightPane.style.flex = `0 0 ${ratio * 100}%`;
+  }
+}
+
+function activatePane(side) {
+  G.lastActivePane = G.dualOn && side === 'right' ? 'right' : 'left';
+  updatePaneFocusUI();
+  updateSearchScopeUI();
+  updatePreviewForSelection();
+}
+
+function toggleDualPane(force) {
+  G.dualOn = typeof force === 'boolean' ? force : !G.dualOn;
   const rightPane = document.getElementById("pane-right");
   const divider = document.getElementById("pane-divider");
   const btn = document.getElementById("btn-dual");
   if (G.dualOn) {
+    if (!G.rpInitialized) {
+      const initialRightPath = getTab()?.path === 'home://' ? (G.homeDirPath || 'C:\\') : (getTab()?.path || 'C:\\');
+      G.rp.path = initialRightPath;
+      G.rp.history = [initialRightPath];
+      G.rp.histIdx = 0;
+      G.rpInitialized = true;
+    }
     document.body.classList.add('dual-pane-active');
+    arrangeDualPaneChrome(true);
     rightPane.style.display = "flex";
     divider.style.display = "block";
     btn.style.background = "var(--accent-light)";
     btn.style.color = "var(--accent)";
+    if (G.previewOn && window.innerWidth < 1100) {
+      _previewAutoClosedForDual = true;
+      setPreviewPaneVisible(false, false);
+    }
+    setDualPaneOrientation(G.settings.dualPaneOrientation);
+    restoreDualPaneSplit();
     if (G.rp.history.length === 0) {
       G.rp.history = [G.rp.path];
       G.rp.histIdx = 0;
     }
     rpNavigateTo(G.rp.path, false);
   } else {
+    arrangeDualPaneChrome(false);
     document.body.classList.remove('dual-pane-active');
     G.lastActivePane = 'left';
     rightPane.style.display = "none";
     divider.style.display = "none";
     btn.style.background = "";
     btn.style.color = "";
+    if (_previewAutoClosedForDual && !G.previewOn) setPreviewPaneVisible(true, false);
+    _previewAutoClosedForDual = false;
   }
   renderTabs();
   updatePaneFocusUI();
@@ -335,28 +444,39 @@ function updatePaneFocusUI() {
   document.getElementById('pane-right')?.classList.toggle('active-pane', rightActive);
 }
 
+let _rpNavigationToken = 0;
 async function rpNavigateTo(path, pushHistory) {
+  const pane = G.rp;
+  const navigationToken = ++_rpNavigationToken;
   if (pushHistory === undefined) pushHistory = true;
-  if (/^[A-Za-z]:/.test(path)) path = path.replace(/\\\\/g, "\\");
+  path = normalizeWindowsPathInput(path);
   try {
-    let entries = await call("list_dir", { path, filter: "" });
+    let entries = await listPathEntries(path, "");
+    if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
-    entries = sortEntriesList(entries, G.rp.sortF, G.rp.sortAsc);
-    G.rp.entries = entries;
-    if (pushHistory && path !== G.rp.path) {
-      G.rp.history = G.rp.history.slice(0, G.rp.histIdx + 1);
-      G.rp.history.push(path);
-      G.rp.histIdx = G.rp.history.length - 1;
+    entries = sortEntriesList(entries, pane.sortF, pane.sortAsc);
+    pane.entries = entries;
+    if (pushHistory && path !== pane.path) {
+      pane.history = pane.history.slice(0, pane.histIdx + 1);
+      pane.history.push(path);
+      pane.histIdx = pane.history.length - 1;
     }
-    G.rp.path = path;
-    G.rp.sel.clear();
-    G.rp.lastIdx = -1;
+    pane.path = path;
+    pane.sel.clear();
+    pane.lastIdx = -1;
     document.getElementById("right-path-input").value = path;
-    renderBreadcrumb(path, "right-breadcrumb", null, "right-path-input", true);
-    renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
+    renderBreadcrumb(path, "right-breadcrumb", "right-bc-dropdown", "right-path-input", true);
+    renderFiles(pane, "right-file-list", "right-status-count", null, true);
+    renderRightTabs();
+    saveTabState();
     if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
     updateSidebarSelection();
-  } catch (e) { document.getElementById("right-status-count").textContent = t('status.error', {error: e}); }
+    return true;
+  } catch (e) {
+    if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;
+    document.getElementById("right-status-count").textContent = t('status.error', {error: e});
+    return false;
+  }
 }
 
 function paneGoBack(pane) {
@@ -388,22 +508,52 @@ function startResize(e, containerId, leftId, rightId) {
   e.preventDefault();
   const container = document.getElementById(containerId);
   const rightEl = document.getElementById(rightId);
-  const startX = e.clientX;
-  const startRightW = rightEl.getBoundingClientRect().width;
-  const containerW = container.clientWidth;
+  const horizontal = containerId === 'pane-container' && G.settings.dualPaneOrientation === 'horizontal';
+  const startPointer = horizontal ? e.clientY : e.clientX;
+  const startRightSize = horizontal ? rightEl.getBoundingClientRect().height : rightEl.getBoundingClientRect().width;
+  const containerSize = horizontal ? container.clientHeight : container.clientWidth;
   const onMove = (ev) => {
-    const dx = ev.clientX - startX;
-    const newRightW = Math.max(200, Math.min(startRightW - dx, containerW - 200));
-    rightEl.style.width = newRightW + "px";
+    const delta = (horizontal ? ev.clientY : ev.clientX) - startPointer;
+    const minimum = horizontal ? 150 : 240;
+    const newRightSize = Math.max(minimum, Math.min(startRightSize - delta, containerSize - minimum));
+    rightEl.style.flex = '0 0 ' + newRightSize + 'px';
+    if (horizontal) rightEl.style.height = newRightSize + 'px';
+    else rightEl.style.width = newRightSize + 'px';
   };
   const onUp = () => {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
     if (rightId === 'preview-pane') localStorage.setItem('rhfiles-preview-width', String(Math.round(rightEl.getBoundingClientRect().width)));
+    if (rightId === 'pane-right') {
+      const size = horizontal ? rightEl.getBoundingClientRect().height : rightEl.getBoundingClientRect().width;
+      localStorage.setItem('rhfiles-dual-split', String(size / containerSize));
+    }
   };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('pane-left')?.addEventListener('pointerdown', () => activatePane('left'));
+  document.getElementById('pane-right')?.addEventListener('pointerdown', () => activatePane('right'));
+  document.getElementById('pane-divider')?.addEventListener('dblclick', () => {
+    localStorage.setItem('rhfiles-dual-split', '.5');
+    restoreDualPaneSplit();
+  });
+  document.getElementById('btn-dual')?.addEventListener('contextmenu', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    showMenuAt(event.clientX, event.clientY, [
+      {label:(G.settings.dualPaneOrientation === 'vertical' ? '\u2713 ' : '') + t('pane.vertical'), action:() => { setDualPaneOrientation('vertical'); if (!G.dualOn) toggleDualPane(true); }},
+      {label:(G.settings.dualPaneOrientation === 'horizontal' ? '\u2713 ' : '') + t('pane.horizontal'), action:() => { setDualPaneOrientation('horizontal'); if (!G.dualOn) toggleDualPane(true); }},
+      {label:'-'},
+      {label:t('pane.resetSplit'), action:() => { localStorage.setItem('rhfiles-dual-split', '.5'); restoreDualPaneSplit(); }},
+    ]);
+  });
+  document.getElementById('preview-content')?.addEventListener('dblclick', event => {
+    if (event.target.closest('.preview-image-stage, video, iframe')) togglePreviewFullscreen();
+  });
+});
 
 // --- lightweight, dependency-free syntax highlighting ---
 // Tokens are escaped one at a time so previewed files can never inject markup.

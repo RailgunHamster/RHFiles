@@ -1,5 +1,9 @@
 // ops.js — file operations + context menu
 
+function resolveRightPane(isRight) {
+  return typeof isRight === 'boolean' ? isRight : (G.dualOn && G.lastActivePane === 'right');
+}
+
 function isCloudPath(isRight) {
   const path = isRight ? G.rp.path : getTab().path;
   const pl = path.toLowerCase();
@@ -124,6 +128,7 @@ function showConfirmDialog(options) {
 
 // --- file ops ---
 async function deleteSelected(isRight) {
+  isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
   const message = sel.length === 1
@@ -195,6 +200,7 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
 }
 
 async function renamePrompt(isRight) {
+  isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
   if (sel.length !== 1) return;
   const isR = isRight;
@@ -209,6 +215,7 @@ async function renamePrompt(isRight) {
 }
 
 async function newFolder(isRight) {
+  isRight = resolveRightPane(isRight);
   const destPath = isRight ? G.rp.path : getTab().path;
   try {
     await call("new_folder", { parent: destPath });
@@ -218,6 +225,7 @@ async function newFolder(isRight) {
 }
 
 async function copySelected(isRight) {
+  isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
   G.clipboard = { op: "copy", paths: new Set(sel.map(f => f.path)) };
@@ -226,6 +234,7 @@ async function copySelected(isRight) {
 }
 
 async function cutSelected(isRight) {
+  isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
   G.clipboard = { op: "cut", paths: new Set(sel.map(f => f.path)) };
@@ -256,6 +265,7 @@ function _findAndRename(isRight, parentPath, prefix) {
 }
 
 async function paste(isRight) {
+  isRight = resolveRightPane(isRight);
   if (!G.clipboard) return;
   const destTab = isRight ? G.rp : getTab();
   const destPath = destTab.path;
@@ -821,21 +831,22 @@ function showMenuAt(x, y, items, className) {
   return menu;
 }
 
-function showTabContextMenu(x, y, tabId) {
-  const tab = getTab(tabId);
+function showTabContextMenu(x, y, tabId, isRight) {
+  const tabs = isRight ? G.rpTabs : G.tabs;
+  const tab = isRight ? getRightTab(tabId) : getTab(tabId);
   if (!tab) return;
-  const index = G.tabs.findIndex(item => item.id === tabId);
+  const index = tabs.findIndex(item => item.id === tabId);
   const folderPath = tab.path;
   showMenuAt(x, y, [
-    { label: t('tab.close'), shortcut: 'Ctrl+W', action: () => closeTab(tabId), disabled: G.tabs.length <= 1 },
-    { label: t('tab.closeOthers'), action: () => closeOtherTabs(tabId), disabled: G.tabs.length <= 1 },
-    { label: t('tab.closeRight'), action: () => closeTabsToRight(tabId), disabled: index < 0 || index === G.tabs.length - 1 },
+    { label: t('tab.close'), shortcut: 'Ctrl+W', action: () => closeTab(tabId, isRight), disabled: tabs.length <= 1 },
+    { label: t('tab.closeOthers'), action: () => closeOtherTabs(tabId, isRight), disabled: tabs.length <= 1 },
+    { label: t('tab.closeRight'), action: () => closeTabsToRight(tabId, isRight), disabled: index < 0 || index === tabs.length - 1 },
     { label: '-' },
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(folderPath), disabled: folderPath === 'home://' },
     { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'cmd'}, 'CMD'), disabled: folderPath === 'home://' },
     { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'powershell'}, 'PowerShell'), disabled: folderPath === 'home://' },
     { label: '-' },
-    { label: t('cmd.refresh'), shortcut: 'F5', action: () => { if (G.activeTab !== tabId) switchTab(tabId); refresh(); } },
+    { label: t('cmd.refresh'), shortcut: 'F5', action: () => { if (isRight) switchRightTab(tabId); else if (G.activeTab !== tabId) switchTab(tabId); refresh(); } },
   ], 'tab-context-menu');
 }
 
@@ -890,11 +901,12 @@ function showPathContextMenu(x, y, path, isDir, isRight) {
   };
   const items = [
     { label: t('ctx.open'), action: openAction },
-    { label: t('ctx.newTab'), action: () => addTab(path), hidden: !isDir },
+    { label: t('ctx.newTab'), action: () => addTab(path, isRight), hidden: !isDir },
     { label: '-' },
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(path) },
     { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'cmd'}, 'CMD') },
     { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'powershell'}, 'PowerShell') },
+    { label: t('diskUsage.analyze'), hidden: !isDir, action: () => showDiskUsageDialog(path) },
     { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), hidden: !isDir, action: () => toggleFavoriteFolder(path, favoriteDisplayName(path)) },
     { label: '-' },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
@@ -917,6 +929,7 @@ function showBlankListContextMenu(x, y, isRight) {
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(path) },
     { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path, terminal: 'cmd'}, 'CMD') },
     { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path, terminal: 'powershell'}, 'PowerShell') },
+    { label: t('diskUsage.analyze'), action: () => showDiskUsageDialog(path) },
     { label: isFavoriteFolder(path) ? t('favorites.removeCurrent') : t('favorites.addCurrent'), action: () => toggleFavoriteFolder(path, favoriteDisplayName(path)) },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
   ]);
@@ -925,10 +938,10 @@ function showBlankListContextMenu(x, y, isRight) {
 function showApplicationContextMenu(event) {
   event.preventDefault();
   if (event.target.closest('.context-menu, .ctx-submenu')) return;
-  const tabEl = event.target.closest('#tab-bar .tab');
+  const tabEl = event.target.closest('#tab-bar .tab, #right-tab-bar .tab');
   if (tabEl) {
     event.stopPropagation();
-    showTabContextMenu(event.clientX, event.clientY, Number(tabEl.dataset.tabId));
+    showTabContextMenu(event.clientX, event.clientY, Number(tabEl.dataset.tabId), tabEl.dataset.pane === 'right');
     return;
   }
   const input = event.target.closest('input[type="text"], input[type="search"], textarea');
@@ -991,10 +1004,14 @@ document.addEventListener("drop", async e => {
       const dropTarget = e.target.closest('.file-list');
       const isRightDrop = dropTarget && dropTarget.id === 'right-file-list';
       const dest = isRightDrop ? G.rp.path : getTab().path;
+      activatePane(isRightDrop ? 'right' : 'left');
       for (const src of paths) {
         try { await call("move_path_cmd", { src, dest }); } catch (ex) {}
       }
-      await refresh();
+      // A cross-pane move changes both directories. Refresh both sides so the
+      // source does not retain a stale item and the destination appears at once.
+      await navigateTo(getTab().path, false);
+      if (G.dualOn) await rpNavigateTo(G.rp.path, false);
     }
   } catch (ex) {}
 });

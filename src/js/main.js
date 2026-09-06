@@ -49,6 +49,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     }));
     G.activeTab = saved.activeTab || G.tabs[0].id;
     G.nextTabId = Math.max(...G.tabs.map(t => t.id)) + 1;
+    if (saved.rightTabs && saved.rightTabs.length > 0) {
+      G.rpTabs = saved.rightTabs.map((st, index) => ({
+        id: st.id || 100000 + index,
+        path: st.path || startPath,
+        history: [st.path || startPath], histIdx: 0,
+        entries: [], sel: new Set(), lastIdx: -1,
+        sortF: st.sortF || 'name', sortAsc: st.sortAsc !== false,
+      }));
+      G.activeRpTab = saved.activeRpTab && G.rpTabs.some(tab => tab.id === saved.activeRpTab)
+        ? saved.activeRpTab
+        : G.rpTabs[0].id;
+      G.rp = getRightTab(G.activeRpTab);
+      G.nextRpTabId = Math.max(...G.rpTabs.map(tab => tab.id)) + 1;
+      G.rpInitialized = true;
+    }
   } else {
     getTab().path = startPath;
     getTab().history = [startPath];
@@ -192,6 +207,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ESC closes all overlays
   document.addEventListener("keydown", e => {
     if (e.key === "Escape") {
+      if (document.body.classList.contains('preview-fullscreen-active')) {
+        togglePreviewFullscreen(false);
+        e.preventDefault();
+        return;
+      }
+      closeDiskUsageDialog();
       closeCommandPalette();
       closeBatchRename();
       closeProperties();
@@ -219,6 +240,13 @@ document.addEventListener("DOMContentLoaded", async () => {
           path: t.path,
           selPaths: [...(t.sel || [])].map(i => t.entries[i]?.path).filter(Boolean),
           scrollTop: listEl && t.id === G.activeTab ? listEl.scrollTop : (t._savedState?.scrollTop || 0),
+          sortF: t.sortF,
+          sortAsc: t.sortAsc,
+        })),
+        activeRpTab: G.activeRpTab,
+        rightTabs: (G.rpTabs || []).map(t => ({
+          id: t.id,
+          path: t.path,
           sortF: t.sortF,
           sortAsc: t.sortAsc,
         })),

@@ -148,6 +148,11 @@ function setLang(l) {
 function applyI18n() {
   document.documentElement.lang = _lang;
   document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const label = t(el.dataset.i18nTitle);
+    el.title = label;
+    el.setAttribute('aria-label', label);
+  });
   if (typeof initCommands === 'function') initCommands();
   if (typeof updateSearchScopeUI === 'function') updateSearchScopeUI();
   if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
@@ -194,13 +199,26 @@ G.lastActivePane = 'left';
 G._typeSearch = { str: '', lastQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
 
 // --- right pane state ---
-G.rp = { path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, history: ["C:\\"], histIdx: 0 };
+G.rp = { id: 100000, path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, history: ["C:\\"], histIdx: 0 };
+G.rpTabs = [G.rp];
+G.activeRpTab = G.rp.id;
+G.nextRpTabId = 100001;
+G.rpInitialized = false;
 G.windowLabel = null;
 
 // --- tab helpers ---
 function getTab(id) {
   const tid = id !== undefined ? id : G.activeTab;
   return G.tabs.find(t => t.id === tid);
+}
+
+function getRightTab(id) {
+  const tid = id !== undefined ? id : G.activeRpTab;
+  return G.rpTabs.find(tab => tab.id === tid) || G.rpTabs[0];
+}
+
+function getActivePaneState() {
+  return G.dualOn && G.lastActivePane === 'right' ? G.rp : getTab();
 }
 
 // --- utilities ---
@@ -213,6 +231,36 @@ function escAttr(s) { return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'")
 function displayPath(path) {
   if (path === 'home://') return t('nav.home');
   return String(path || '').replace(/\\/g, '/');
+}
+
+// Address-bar input is forgiving, while filesystem calls remain canonical.
+// Any run of leading slashes is treated as a single Windows UNC prefix.
+function normalizeWindowsPathInput(value) {
+  let path = String(value == null ? '' : value).trim();
+  if ((path.startsWith('"') && path.endsWith('"')) || (path.startsWith("'") && path.endsWith("'"))) {
+    path = path.slice(1, -1).trim();
+  }
+  if (path === 'home://') return path;
+  path = path.replace(/\//g, '\\');
+  if (/^\\{2,}/.test(path)) {
+    const rest = path.replace(/^\\+/, '').replace(/\\{2,}/g, '\\');
+    return '\\\\' + rest.replace(/\\+$/, '');
+  }
+  if (/^[A-Za-z]:/.test(path)) return path.replace(/\\{2,}/g, '\\');
+  return path;
+}
+
+function uncServerRoot(path) {
+  const normalized = normalizeWindowsPathInput(path);
+  const match = /^\\\\([^\\]+)\\*$/.exec(normalized);
+  return match ? '\\\\' + match[1] : null;
+}
+
+async function listPathEntries(path, filter) {
+  const normalized = normalizeWindowsPathInput(path);
+  const server = uncServerRoot(normalized);
+  if (server) return call('list_shares', { server });
+  return call('list_dir', { path: normalized, filter: filter || '' });
 }
 
 function formatFileDate(timestamp, fallback) {
@@ -293,6 +341,18 @@ function fallbackCall(cmd, args) {
   ];
   switch (cmd) {
     case "list_dir": return mockFiles;
+    case "list_shares": {
+      const server = uncServerRoot(args.server) || '\\\\winserver';
+      return [
+        { name:'Public', path:server + '\\Public', extension:'', is_dir:true, is_hidden:false, size:0, size_display:'', modified:'', created:'' },
+        { name:'Software', path:server + '\\Software', extension:'', is_dir:true, is_hidden:false, size:0, size_display:'', modified:'', created:'' },
+      ];
+    }
+    case "analyze_disk_usage": return { size:'12M', name:args.path || 'C:\\', children:[
+      {size:'7.5M', name:(args.path || 'C:\\').replace(/\\+$/, '') + '\\src', is_dir:true},
+      {size:'3.0M', name:(args.path || 'C:\\').replace(/\\+$/, '') + '\\target', is_dir:true},
+      {size:'1.5M', name:(args.path || 'C:\\').replace(/\\+$/, '') + '\\README.md', is_dir:false},
+    ]};
     case "get_drives": return mockDrives;
     case "parent_path": return "C:\\";
     case "get_dir_tree": return mockFiles.filter(f=>f.is_dir).map(f=>({name:f.name,path:f.path,has_children:true,is_hidden:false}));
@@ -383,6 +443,7 @@ function loadSettings() {
     previewDefaultOpen: true,
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
+    dualPaneOrientation: 'vertical',
   };
   try {
     const s = localStorage.getItem('rhfiles-settings');
@@ -404,6 +465,13 @@ function saveTabState() {
         path: t.path,
         selPaths: [...(t.sel || [])].map(i => t.entries[i]?.path).filter(Boolean),
         scrollTop: listEl && t.id === G.activeTab ? listEl.scrollTop : (t._savedState?.scrollTop || 0),
+        sortF: t.sortF,
+        sortAsc: t.sortAsc,
+      })),
+      activeRpTab: G.activeRpTab,
+      rightTabs: (G.rpTabs || []).map(t => ({
+        id: t.id,
+        path: t.path,
         sortF: t.sortF,
         sortAsc: t.sortAsc,
       })),

@@ -142,6 +142,7 @@ pub fn run() {
             system::open_with_program, system::open_terminal, system::copy_file_path,
             system::show_open_with_dialog, system::compress_with,
             system::share_file,
+            system::analyze_disk_usage,
 
             vcs::git_status, vcs::git_branches, vcs::git_checkout,
             vcs::git_create_branch, vcs::git_init, vcs::git_clone,

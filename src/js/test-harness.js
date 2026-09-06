@@ -1385,6 +1385,52 @@
       assertEqual(parentFolderPath("C:\\one\\two.txt"), "C:\\one", "Nested parent is malformed");
     });
 
+    await test("[network] Address input canonicalizes UNC server roots", async () => {
+      const threeSlashes = '\\'.repeat(3) + 'winserver';
+      assertEqual(normalizeWindowsPathInput(threeSlashes), '\\\\winserver', "Extra UNC slash was not normalized");
+      assertEqual(normalizeWindowsPathInput('//winserver/share'), '\\\\winserver\\share', "Forward-slash UNC input was not normalized");
+      assertEqual(uncServerRoot(threeSlashes), '\\\\winserver', "UNC server root was not detected");
+      assertEqual(uncServerRoot('\\\\winserver\\Public'), null, "A share path must not be treated as a server root");
+    });
+
+    await test("[layout] Thumbnail view uses non-overlapping grid tracks", async () => {
+      const tab = getTab();
+      renderThumbnailLayout(document.getElementById('file-list'), tab.entries.slice(0, 6), tab.sel, false, tab, 'file-list');
+      const grid = document.querySelector('#file-list > .thumbnail-grid');
+      assert(grid, "Thumbnail grid was not rendered");
+      assertEqual(getComputedStyle(grid).display, 'grid', "Thumbnail container must use CSS Grid");
+      const items = grid.querySelectorAll('.thumb-item');
+      if (items.length > 1) {
+        const first = items[0].getBoundingClientRect();
+        const second = items[1].getBoundingClientRect();
+        assert(first.right <= second.left || first.bottom <= second.top || second.bottom <= first.top, "Thumbnail cards overlap");
+      }
+      renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+    });
+
+    await test("[preview] Fullscreen preview toggles and has configurable shortcut", async () => {
+      togglePreviewFullscreen(true);
+      assert(document.body.classList.contains('preview-fullscreen-active'), "Fullscreen preview class missing");
+      assert(document.getElementById('preview-pane').classList.contains('fullscreen-preview'), "Preview pane did not become fullscreen");
+      togglePreviewFullscreen(false);
+      assert(!document.body.classList.contains('preview-fullscreen-active'), "Fullscreen preview did not close");
+      assert(DEFAULT_SHORTCUTS['view.previewFullscreen']?.includes('Ctrl+Space'), "Fullscreen preview shortcut is not configurable");
+    });
+
+    await test("[dual pane] Right pane has an independent tab strip", async () => {
+      renderRightTabs();
+      const bar = document.getElementById('right-tab-bar');
+      assert(bar && bar.querySelectorAll('.tab').length === G.rpTabs.length, "Right tab strip does not reflect right-pane tabs");
+      assert(bar.querySelector('.tab')?.dataset.pane === 'right', "Right tab ownership is missing");
+    });
+
+    await test("[disk usage] Analyzer controls and renderer are available", async () => {
+      assert(typeof showDiskUsageDialog === 'function', "Disk usage dialog is missing");
+      assert(typeof parseDustSize === 'function', "dust size parser is missing");
+      assertEqual(parseDustSize('1.5M'), 1.5 * 1024 * 1024, "dust size parsing is incorrect");
+      assert(document.getElementById('disk-usage-results'), "Disk usage result surface is missing");
+    });
+
     // ================================================================
     // SECTION 25: WINDOW STATE
     // ================================================================

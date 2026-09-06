@@ -158,6 +158,8 @@ function openSettings() {
     '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>' + t('settings.effectNone') + '</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>' + t('settings.effectMica') + '</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>' + t('settings.effectAcrylic') + '</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>' + t('settings.effectMicaAlt') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.layout') + '</label>' +
     '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>' + t('settings.layoutDetails') + '</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>' + t('settings.layoutIcons') + '</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>' + t('settings.layoutThumbnails') + '</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>' + t('settings.layoutCards') + '</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>' + t('settings.layoutColumns') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.dualOrientation') + '</label>' +
+    '<select onchange="setDualPaneOrientation(this.value)"><option value="vertical"' + (G.settings.dualPaneOrientation!=="horizontal"?" selected":"") + '>' + t('pane.vertical') + '</option><option value="horizontal"' + (G.settings.dualPaneOrientation==="horizontal"?" selected":"") + '>' + t('pane.horizontal') + '</option></select></div>' +
     '<div class="settings-row"><label for="settings-preview-default">' + t('settings.previewDefaultOpen') + '</label>' +
     '<input id="settings-preview-default" type="checkbox" onchange="setPreviewDefaultOpen(this.checked)"' + (G.settings.previewDefaultOpen!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-global-search">' + t('settings.enableGlobalSearch') + '</label>' +
@@ -351,6 +353,104 @@ function closeNewFile() {
   if (dlg) dlg.style.display = "none";
 }
 
+// --- folder disk-usage analysis (bundled dust) ---
+let _diskUsagePath = '';
+let _diskUsageToken = 0;
+
+function parseDustSize(value) {
+  const text = String(value == null ? '' : value).trim().replace(/\s+/g, '');
+  const match = /^([\d.]+)([kmgtpe]?)(?:i?b)?$/i.exec(text);
+  if (!match) return Number(value) || 0;
+  const powers = { '':0, k:1, m:2, g:3, t:4, p:5, e:6 };
+  return Number(match[1]) * Math.pow(1024, powers[match[2].toLowerCase()] || 0);
+}
+
+function dustDisplayName(path) {
+  const normalized = String(path || '').replace(/[\\/]+$/, '');
+  return normalized.split(/[\\/]/).filter(Boolean).pop() || displayPath(path);
+}
+
+function flattenDustTree(node, level, rows) {
+  const children = Array.isArray(node?.children) ? node.children : [];
+  children.forEach(child => {
+    rows.push({ node:child, level });
+    flattenDustTree(child, level + 1, rows);
+  });
+  return rows;
+}
+
+function renderDiskUsage(data) {
+  const results = document.getElementById('disk-usage-results');
+  const summary = document.getElementById('disk-usage-summary');
+  if (!results || !summary) return;
+  const rows = flattenDustTree(data, 0, []);
+  const total = Math.max(parseDustSize(data?.size), ...rows.map(row => parseDustSize(row.node.size)), 1);
+  summary.innerHTML = `<span>${esc(t('diskUsage.total'))}</span><strong>${esc(String(data?.size || fmtSize(total)))}</strong><span class="disk-usage-count">${esc(t('diskUsage.entries', {count:rows.length}))}</span>`;
+  if (!rows.length) {
+    results.innerHTML = `<div class="disk-usage-empty">${esc(t('diskUsage.empty'))}</div>`;
+    return;
+  }
+  results.innerHTML = rows.map(({node, level}) => {
+    const bytes = parseDustSize(node.size);
+    const percent = Math.max(1, Math.min(100, bytes / total * 100));
+    const path = String(node.name || '');
+    const isDirectory = node.is_dir === true || Array.isArray(node.children);
+    return `<button class="disk-usage-row" data-path="${esc(path)}" title="${esc(displayPath(path))}">
+      <span class="disk-usage-indent" style="width:${Math.min(level, 8) * 16}px"></span>
+      <span class="disk-usage-icon">${isDirectory ? '&#128193;' : '&#128196;'}</span>
+      <span class="disk-usage-name">${esc(dustDisplayName(path))}</span>
+      <span class="disk-usage-bar-track"><span class="disk-usage-bar" style="width:${percent.toFixed(2)}%"></span></span>
+      <span class="disk-usage-size">${esc(String(node.size || ''))}</span>
+    </button>`;
+  }).join('');
+  results.querySelectorAll('.disk-usage-row').forEach((row, index) => {
+    const node = rows[index]?.node;
+    if (!(node?.is_dir === true || Array.isArray(node?.children))) return;
+    row.classList.add('is-directory');
+    row.addEventListener('dblclick', async () => {
+      const path = row.dataset.path;
+      const opened = G.dualOn && G.lastActivePane === 'right'
+        ? await rpNavigateTo(path)
+        : await navigateTo(path);
+      if (opened !== false) closeDiskUsageDialog();
+    });
+  });
+}
+
+async function refreshDiskUsage() {
+  const token = ++_diskUsageToken;
+  const results = document.getElementById('disk-usage-results');
+  const summary = document.getElementById('disk-usage-summary');
+  const depth = Number(document.getElementById('disk-usage-depth')?.value || 2);
+  if (summary) summary.innerHTML = '';
+  if (results) results.innerHTML = `<div class="disk-usage-loading"><span></span>${esc(t('diskUsage.analyzing'))}</div>`;
+  try {
+    const data = await call('analyze_disk_usage', { path:_diskUsagePath, depth, maxEntries:250 });
+    if (token !== _diskUsageToken) return;
+    renderDiskUsage(data);
+  } catch (error) {
+    if (token !== _diskUsageToken || !results) return;
+    results.innerHTML = `<div class="disk-usage-empty"><strong>${esc(t('diskUsage.failed'))}</strong><span>${esc(String(error))}</span></div>`;
+  }
+}
+
+function showDiskUsageDialog(path) {
+  const activePath = path || getActivePaneState()?.path;
+  _diskUsagePath = activePath === 'home://' ? (G.homeDirPath || 'C:\\') : normalizeWindowsPathInput(activePath);
+  const dialog = document.getElementById('disk-usage-dialog');
+  if (!dialog) return;
+  document.getElementById('disk-usage-path').textContent = displayPath(_diskUsagePath);
+  dialog.style.display = 'flex';
+  applyI18n();
+  refreshDiskUsage();
+}
+
+function closeDiskUsageDialog() {
+  _diskUsageToken++;
+  const dialog = document.getElementById('disk-usage-dialog');
+  if (dialog) dialog.style.display = 'none';
+}
+
 // --- toolbar customization ---
 const TOOLBAR_BUTTONS = [
   { id: "btn-new", labelKey: 'tb.newFolder' },
@@ -367,6 +467,7 @@ const TOOLBAR_BUTTONS = [
   { id: "btn-layout-thumbnails", labelKey: 'tb.thumbnails' },
   { id: "btn-layout-cards", labelKey: 'tb.cards' },
   { id: "btn-layout-columns", labelKey: 'tb.columns' },
+  { id: "btn-disk-usage", labelKey: 'tb.diskUsage' },
   { id: "btn-preview", labelKey: 'tb.preview' },
   { id: "btn-dual", labelKey: 'tb.dualPane' },
   { id: "btn-theme", labelKey: 'tb.theme' },
@@ -376,16 +477,24 @@ const TOOLBAR_BUTTONS = [
 function loadToolbarConfig() {
   try {
     const saved = localStorage.getItem("rhfiles-toolbar");
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const config = JSON.parse(saved);
+      if ((config.version || 1) < 2) {
+        if (!config.visible.includes('btn-disk-usage')) config.visible.push('btn-disk-usage');
+        config.version = 2;
+        localStorage.setItem('rhfiles-toolbar', JSON.stringify(config));
+      }
+      return config;
+    }
   } catch(e) {}
-  return { visible: TOOLBAR_BUTTONS.map(b => b.id) };
+  return { version: 2, visible: TOOLBAR_BUTTONS.map(b => b.id) };
 }
 
 function applyToolbarConfig() {
   const config = loadToolbarConfig();
   const toolbar = document.querySelector(".command-bar");
   if (!toolbar) return;
-  const allBtns = toolbar.querySelectorAll(".cmd, .tb[id], .layout-btn");
+  const allBtns = toolbar.querySelectorAll(":scope > .cmd, :scope > .tb[id], .layout-switcher > .layout-btn");
   const visibleSet = new Set(config.visible);
   allBtns.forEach(btn => {
     const id = btn.id || btn.dataset.layout && ("btn-layout-" + btn.dataset.layout);
@@ -441,6 +550,7 @@ const SHORTCUT_LABEL_KEYS = {
   "nav.back": "cmd.goBack",
   "nav.forward": "cmd.goForward",
   "nav.refresh": "cmd.refresh",
+  "nav.address": "cmd.focusAddress",
   "nav.open": "cmd.openInto",
   "nav.home": "cmd.jumpFirst",
   "nav.end": "cmd.jumpLast",
@@ -460,6 +570,8 @@ const SHORTCUT_LABEL_KEYS = {
   "file.undo": "cmd.undo",
   "file.redo": "cmd.redo",
   "view.fullscreen": "cmd.fullscreen",
+  "view.previewFullscreen": "cmd.previewFullscreen",
+  "view.diskUsage": "cmd.diskUsage",
   "view.dualPane": "cmd.toggleDualPane",
   "view.hidden": "cmd.toggleHidden",
   "view.switchPane": "cmd.switchPane",

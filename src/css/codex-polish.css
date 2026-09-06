@@ -542,6 +542,63 @@ select {
   border-radius: 8px;
 }
 
+/* Stable thumbnail tracks: cards keep a uniform footprint even in a narrow pane. */
+.file-list > .thumbnail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  grid-auto-rows: 184px;
+  align-content: start;
+  align-items: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.thumbnail-grid > .thumb-item {
+  display: flex;
+  width: auto;
+  min-width: 0;
+  height: 184px;
+  box-sizing: border-box;
+  padding: 8px;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.thumbnail-grid .thumb-img-box {
+  width: 100%;
+  height: 126px;
+  flex: 0 0 126px;
+  margin: 0;
+}
+
+.thumbnail-grid .thumb-img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+}
+
+.thumbnail-grid .thumb-name {
+  display: -webkit-box;
+  width: 100%;
+  min-height: 30px;
+  max-height: 30px;
+  margin-top: 6px;
+  overflow: hidden;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.thumbnail-grid .thumb-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Preview */
 .preview-pane {
   width: 320px;
@@ -553,6 +610,49 @@ select {
   min-height: 42px;
   padding: 6px 8px 6px 13px;
   border-color: var(--divider);
+}
+
+.preview-fullscreen.active {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+body.preview-fullscreen-active::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 7998;
+  background: rgba(17, 24, 39, .48);
+  backdrop-filter: blur(3px);
+}
+
+.preview-pane.fullscreen-preview {
+  position: fixed;
+  inset: 14px;
+  z-index: 7999;
+  width: auto !important;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
+}
+
+.preview-pane.fullscreen-preview .preview-header {
+  min-height: 48px;
+  padding-inline: 16px 10px;
+}
+
+.preview-pane.fullscreen-preview .preview-content {
+  padding: 16px;
+}
+
+.preview-pane.fullscreen-preview .preview-image-stage,
+.preview-pane.fullscreen-preview video,
+.preview-pane.fullscreen-preview iframe {
+  max-height: calc(100vh - 120px) !important;
+  height: calc(100vh - 120px);
 }
 
 .preview-heading {
@@ -876,7 +976,8 @@ select {
 }
 
 .tab-pane-owner,
-.pane-side-label {
+.pane-side-label,
+.tab-pane-index {
   display: inline-flex;
   align-items: center;
   height: 22px;
@@ -897,16 +998,273 @@ select {
   -webkit-app-region: no-drag;
 }
 
+.tab-pane-index {
+  align-self: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  margin: 0 3px 3px 0;
+  padding: 0;
+  -webkit-app-region: no-drag;
+}
+
 .pane-side-label {
   flex-shrink: 0;
 }
 
 .dual-pane-active .pane {
   position: relative;
+  transition: background .15s ease, box-shadow .15s ease, opacity .15s ease;
 }
 
 .dual-pane-active .pane.active-pane {
-  box-shadow: inset 0 2px 0 var(--accent);
+  z-index: 1;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 72%, transparent);
+}
+
+.dual-pane-active .pane:not(.active-pane) {
+  background: color-mix(in srgb, var(--bg-card) 92%, var(--bg-soft));
+}
+
+.dual-pane-active #tab-bar,
+.dual-pane-active #right-tab-bar {
+  width: 100%;
+  min-height: 34px;
+  max-height: 70px;
+  box-sizing: border-box;
+  padding-top: 4px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--bg-soft);
+}
+
+.dual-pane-active #main-toolbar {
+  width: 100%;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding-inline: 7px;
+}
+
+.dual-pane-active #main-toolbar .search-box {
+  min-width: 135px;
+  max-width: 240px;
+}
+
+.command-bar > .search-box.dual-global-search {
+  width: clamp(160px, 22vw, 260px);
+  min-width: 140px;
+  height: 30px;
+  margin-left: auto;
+  flex: 0 1 260px;
+}
+
+.dual-pane-active #command-bar .cmd-stretch {
+  flex: 0 0 0;
+}
+
+.dual-pane-active .pane {
+  container-type: inline-size;
+}
+
+@container (max-width: 520px) {
+  .pane .file-header .col-date,
+  .pane .file-header .col-type,
+  .pane .file-row .row-date,
+  .pane .file-row .row-type {
+    display: none;
+  }
+
+  .pane .file-header .col-name,
+  .pane .file-row .row-name {
+    min-width: 90px;
+  }
+}
+
+@container (max-width: 360px) {
+  .pane .file-header .col-size,
+  .pane .file-header .col-svn,
+  .pane .file-row .row-size,
+  .pane .file-row .row-svn,
+  .pane .file-row .row-git {
+    display: none;
+  }
+}
+
+.pane-right-toolbar {
+  min-height: 40px;
+  box-sizing: border-box;
+  background: var(--bg-card);
+}
+
+.pane-container.horizontal-panes {
+  flex-direction: column;
+}
+
+.pane-container.horizontal-panes > .pane {
+  min-height: 0;
+}
+
+.pane-divider.horizontal-divider {
+  width: 100%;
+  height: 4px;
+  cursor: row-resize;
+}
+
+/* Disk usage analyzer */
+.disk-usage-box {
+  width: min(760px, calc(100vw - 40px));
+  height: min(680px, calc(100vh - 40px));
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.disk-usage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 17px 18px 12px;
+}
+
+.disk-usage-header .dialog-title {
+  margin: 0;
+}
+
+.disk-usage-path {
+  max-width: 620px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: 11px;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  white-space: nowrap;
+}
+
+.disk-usage-controls,
+.disk-usage-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 18px;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  background: var(--bg-soft);
+}
+
+.disk-usage-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+}
+
+.disk-usage-controls select {
+  min-width: 54px;
+}
+
+.disk-usage-summary {
+  border-top: 0;
+  border-bottom-color: var(--border);
+  background: var(--bg-card);
+}
+
+.disk-usage-summary strong {
+  color: var(--accent);
+  font-size: 17px;
+}
+
+.disk-usage-count {
+  margin-left: auto;
+  color: var(--text-4);
+}
+
+.disk-usage-results {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  background: var(--bg-card);
+}
+
+.disk-usage-row {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+}
+
+.disk-usage-row:hover {
+  background: var(--hover);
+}
+
+.disk-usage-indent,
+.disk-usage-icon,
+.disk-usage-size {
+  flex: 0 0 auto;
+}
+
+.disk-usage-name {
+  min-width: 90px;
+  flex: 0 1 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disk-usage-bar-track {
+  height: 8px;
+  min-width: 80px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+
+.disk-usage-bar {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 58%, #8b5cf6));
+}
+
+.disk-usage-size {
+  width: 70px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.disk-usage-loading,
+.disk-usage-empty {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-4);
+}
+
+.disk-usage-loading span {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: previewSpin .7s linear infinite;
 }
 
 .file-row .row-date,

@@ -520,6 +520,7 @@ function updateStatus(tabOrPane, countId, selId) {
 }
 
 function getSelectedPaths(isRight) {
+  if (typeof isRight !== 'boolean') isRight = G.dualOn && G.lastActivePane === 'right';
   const tabOrPane = isRight ? G.rp : getTab();
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
@@ -527,6 +528,7 @@ function getSelectedPaths(isRight) {
 }
 
 function selectAll(isRight) {
+  if (typeof isRight !== 'boolean') isRight = G.dualOn && G.lastActivePane === 'right';
   const tabOrPane = isRight ? G.rp : getTab();
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();

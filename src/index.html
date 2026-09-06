@@ -19,7 +19,7 @@
 <div id="app">
   <div class="tab-bar" id="tab-bar"></div>
 
-  <div class="toolbar">
+  <div class="toolbar" id="main-toolbar">
     <div class="toolbar-nav">
       <button class="tb" onclick="goBack()" title="Back (Alt+Left)">
         <svg width="12" height="12" viewBox="0 0 12 12"><path d="M8 2L3.5 6 8 10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
@@ -90,7 +90,7 @@
     </div>
   </div>
 
-  <div class="command-bar">
+  <div class="command-bar" id="command-bar">
     <button class="cmd" id="btn-new" onclick="newFolder()">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.5 4h5l1.5 1.5h6.5v8H1.5V4z" stroke="currentColor" stroke-width="1.1"/><path d="M8 7.5v4M5.5 9.5h5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
       <span data-i18n="cmd.new">New</span>
@@ -132,37 +132,40 @@
     <span class="cmd-stretch"></span>
 
     <div class="layout-switcher">
-      <button class="tb layout-btn active" id="btn-layout-details" data-layout="details" onclick="setLayout('details')" title="Details">
+      <button class="tb layout-btn active" id="btn-layout-details" data-layout="details" onclick="setLayout('details')" data-i18n-title="tb.details" title="Details">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 7h12M2 10h12M2 13h12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
       </button>
-      <button class="tb layout-btn" id="btn-layout-icons" data-layout="icons" onclick="setLayout('icons')" title="Icons">
+      <button class="tb layout-btn" id="btn-layout-icons" data-layout="icons" onclick="setLayout('icons')" data-i18n-title="tb.icons" title="Icons">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="1" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="10" y="9" width="5" height="4" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
       </button>
-      <button class="tb layout-btn" id="btn-layout-thumbnails" data-layout="thumbnails" onclick="setLayout('thumbnails')" title="Thumbnails">
+      <button class="tb layout-btn" id="btn-layout-thumbnails" data-layout="thumbnails" onclick="setLayout('thumbnails')" data-i18n-title="tb.thumbnails" title="Thumbnails">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="3.5" cy="3" r=".8" fill="currentColor"/><path d="M1.5 5.5l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/><rect x="9.5" y="1" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="12" cy="3" r=".8" fill="currentColor"/><path d="M10 5.5l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/><rect x="1" y="9.5" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="3.5" cy="11.5" r=".8" fill="currentColor"/><path d="M1.5 14l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/><rect x="9.5" y="9.5" width="5.5" height="5.5" rx=".5" stroke="currentColor" stroke-width=".9"/><circle cx="12" cy="11.5" r=".8" fill="currentColor"/><path d="M10 14l2-2 1.5 1.5 1-1" stroke="currentColor" stroke-width=".6"/></svg>
       </button>
-      <button class="tb layout-btn" id="btn-layout-cards" data-layout="cards" onclick="setLayout('cards')" title="Cards">
+      <button class="tb layout-btn" id="btn-layout-cards" data-layout="cards" onclick="setLayout('cards')" data-i18n-title="tb.cards" title="Cards">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="1" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="1" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/><rect x="9" y="9" width="6" height="6" rx=".5" stroke="currentColor" stroke-width=".9"/></svg>
       </button>
-      <button class="tb layout-btn" id="btn-layout-columns" data-layout="columns" onclick="setLayout('columns')" title="Columns">
+      <button class="tb layout-btn" id="btn-layout-columns" data-layout="columns" onclick="setLayout('columns')" data-i18n-title="tb.columns" title="Columns">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 3h3v10H2zM7 3h3v10H7zM12 3h3v10h-3z" stroke="currentColor" stroke-width=".9" stroke-linejoin="round"/></svg>
       </button>
     </div>
     <div class="cmd-sep"></div>
 
-    <button class="tb" id="btn-preview" onclick="togglePreviewPane()" title="Preview Pane">
+    <button class="tb" id="btn-disk-usage" onclick="showDiskUsageDialog()" data-i18n-title="tb.diskUsage" title="Disk usage">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1"/><path d="M8 8V1.8A6.2 6.2 0 0 1 14.2 8H8z" fill="currentColor" opacity=".28"/><path d="M8 8l4.4 4.4" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
+    </button>
+    <button class="tb" id="btn-preview" onclick="togglePreviewPane()" data-i18n-title="tb.preview" title="Preview Pane">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="1" stroke="currentColor" stroke-width="1"/><path d="M10 2v12" stroke="currentColor" stroke-width=".8" opacity=".4"/><circle cx="5.5" cy="6.5" r="1.5" stroke="currentColor" stroke-width=".8"/><path d="M1 12l3-3 2 2 2-2.5 3 3" stroke="currentColor" stroke-width=".8" stroke-linejoin="round" fill="none"/></svg>
     </button>
-    <button class="tb" id="btn-dual" onclick="toggleDualPane()" title="Dual Pane">
+    <button class="tb" id="btn-dual" onclick="toggleDualPane()" data-i18n-title="tb.dualPane" title="Dual Pane">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="1" stroke="currentColor" stroke-width="1"/><path d="M8 2v12" stroke="currentColor" stroke-width=".8"/></svg>
     </button>
-    <button class="tb" onclick="toggleTheme()" id="btn-theme" title="Toggle Theme">
+    <button class="tb" onclick="toggleTheme()" id="btn-theme" data-i18n-title="tb.theme" title="Toggle Theme">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" stroke="currentColor" stroke-width=".9" stroke-linecap="round"/></svg>
     </button>
-    <button class="tb" id="btn-refresh" onclick="refresh()" title="Refresh (F5)">
+    <button class="tb" id="btn-refresh" onclick="refresh()" data-i18n-title="tb.refresh" title="Refresh (F5)">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/><path d="M8 0l2.5 3-2.5 3" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
     </button>
-    <button class="tb" id="btn-settings" onclick="openSettings()" title="Settings (Ctrl+,)">
+    <button class="tb" id="btn-settings" onclick="openSettings()" data-i18n-title="cmd.settings" title="Settings (Ctrl+,)">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.6 1.4h2.8l.45 1.55c.4.15.78.37 1.12.65l1.58-.4 1.4 2.4-1.12 1.15a5 5 0 0 1 0 1.3l1.12 1.15-1.4 2.4-1.58-.4c-.34.28-.72.5-1.12.65L9.4 14.6H6.6l-.45-1.55a5 5 0 0 1-1.12-.65l-1.58.4-1.4-2.4 1.12-1.15a5 5 0 0 1 0-1.3L2.05 5.6l1.4-2.4 1.58.4c.34-.28.72-.5 1.12-.65L6.6 1.4z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.15" stroke="currentColor" stroke-width="1"/></svg>
     </button>
   </div>
@@ -291,8 +294,8 @@
         </div>
         <div class="pane-divider" id="pane-divider" style="display:none"></div>
         <div class="pane" id="pane-right" style="display:none">
+          <div class="tab-bar pane-tab-bar" id="right-tab-bar"></div>
           <div class="pane-right-toolbar">
-            <span class="pane-side-label" id="right-pane-label" data-i18n="pane.right">Right</span>
             <div class="toolbar-nav">
               <button class="tb" onclick="paneGoBack('right')"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M8 2L3.5 6 8 10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
               <button class="tb" onclick="paneGoForward('right')"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M4 2l4.5 4L4 10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
@@ -300,6 +303,7 @@
             </div>
             <div class="address-bar pane-address" id="right-address-bar">
               <div id="right-breadcrumb" class="breadcrumb"></div>
+              <div id="right-bc-dropdown" class="bc-dropdown"></div>
               <input type="text" id="right-path-input" spellcheck="false">
               <button class="address-favorite" id="btn-right-favorite" onclick="toggleCurrentFolderFavorite(true, event)" title="Add current folder to Favorites" aria-label="Add current folder to Favorites">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.7l1.9 3.85 4.25.62-3.08 3 0.73 4.23L8 11.4l-3.8 2 .73-4.23-3.08-3 4.25-.62L8 1.7z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
@@ -328,6 +332,7 @@
           </div>
           <div class="preview-actions">
             <button class="tb preview-open" id="preview-open" onclick="openPreviewedFile()" title="Open" aria-label="Open" style="display:none"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3h7v7M13 3L5 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M11 9v4H3V5h4" stroke="currentColor" stroke-width="1"/></svg></button>
+            <button class="tb preview-fullscreen" id="preview-fullscreen" onclick="togglePreviewFullscreen()" data-i18n-title="preview.fullscreen" title="Fullscreen preview" aria-label="Fullscreen preview"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             <button class="tb preview-close" onclick="togglePreviewPane()" title="Close preview" aria-label="Close preview"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
           </div>
         </div>
@@ -336,6 +341,27 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="disk-usage-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeDiskUsageDialog()"></div>
+  <div class="dialog-box dialog-wide disk-usage-box" role="dialog" aria-modal="true" aria-labelledby="disk-usage-title">
+    <div class="disk-usage-header">
+      <div>
+        <div class="dialog-title" id="disk-usage-title" data-i18n="diskUsage.title">Disk usage</div>
+        <div class="disk-usage-path" id="disk-usage-path"></div>
+      </div>
+      <button class="tb" onclick="closeDiskUsageDialog()" data-i18n-title="btn.close" title="Close" aria-label="Close"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+    </div>
+    <div class="disk-usage-controls">
+      <label><span data-i18n="diskUsage.depth">Depth</span>
+        <select id="disk-usage-depth" onchange="refreshDiskUsage()"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select>
+      </label>
+      <button class="dialog-btn" onclick="refreshDiskUsage()" data-i18n="diskUsage.refresh">Rescan</button>
+    </div>
+    <div class="disk-usage-summary" id="disk-usage-summary"></div>
+    <div class="dialog-scroll disk-usage-results" id="disk-usage-results"></div>
   </div>
 </div>
 

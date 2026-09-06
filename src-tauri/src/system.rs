@@ -10,6 +10,95 @@ use std::os::windows::process::CommandExt;
 
 const PREVIEW_SNIFF_BYTES: u64 = 16 * 1024;
 
+fn find_dust_executable() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(exe_dir) = current_exe.parent()
+    {
+        candidates.push(exe_dir.join("dust.exe"));
+        candidates.push(exe_dir.join("resources").join("dust.exe"));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("thirdparty")
+            .join("dust.exe"),
+    );
+    if let Some(on_path) = which("dust.exe").or_else(|| which("dust")) {
+        candidates.push(on_path);
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[tauri::command(async)]
+pub fn analyze_disk_usage(
+    path: String,
+    depth: u8,
+    max_entries: u16,
+) -> Result<serde_json::Value, String> {
+    let target = PathBuf::from(&path);
+    if !target.is_dir() {
+        return Err(format!("Not a folder: {path}"));
+    }
+    let dust =
+        find_dust_executable().ok_or_else(|| "Bundled dust.exe was not found".to_string())?;
+    let depth = depth.clamp(1, 4).to_string();
+    let max_entries = max_entries.clamp(20, 500).to_string();
+    let mut command = std::process::Command::new(dust);
+    command
+        .args(["-j", "-P", "-d", &depth, "-n", &max_entries])
+        .arg(&target);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000u32);
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() {
+            format!("dust exited with status {}", output.status)
+        } else {
+            error
+        });
+    }
+    let mut result: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Invalid dust JSON: {error}"))?;
+    annotate_dust_nodes(&mut result);
+    Ok(result)
+}
+
+fn annotate_dust_nodes(value: &mut serde_json::Value) {
+    if let Some(object) = value.as_object_mut() {
+        let is_dir = object
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(PathBuf::from)
+            .is_some_and(|path| path.is_dir());
+        object.insert("is_dir".to_string(), serde_json::Value::Bool(is_dir));
+        if let Some(children) = object
+            .get_mut("children")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            children.iter_mut().for_each(annotate_dust_nodes);
+        }
+    }
+}
+
+#[cfg(test)]
+mod dust_tests {
+    use super::*;
+
+    #[test]
+    fn bundled_dust_returns_json_for_a_small_folder() {
+        let result = analyze_disk_usage(env!("CARGO_MANIFEST_DIR").to_string(), 1, 20)
+            .expect("bundled dust should analyze the Tauri source folder");
+        assert!(
+            result
+                .get("name")
+                .and_then(|value| value.as_str())
+                .is_some()
+        );
+        assert!(result.get("size").is_some());
+    }
+}
+
 fn has_known_binary_signature(bytes: &[u8]) -> bool {
     const SIGNATURES: &[&[u8]] = &[
         b"MZ",                               // Windows executable / DLL
