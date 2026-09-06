@@ -58,10 +58,8 @@
 
 .thumb-path { width:100%; font-size:9px; color:var(--text-4); text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; direction:rtl; unicode-bidi:plaintext; line-height:1.2; }
 
-.icon-grid { display:grid; grid-template-columns:repeat(auto-fill,112px); align-items:start; gap:6px; padding:8px; }
 .card-grid { display:grid; grid-template-columns:repeat(auto-fill,176px); align-items:start; gap:8px; padding:8px; }
-.file-row.icon-item, .file-row.card-item { box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; width:100%; height:auto; padding:8px 6px; text-align:center; border-radius:7px; }
-.file-row.icon-item { min-height:104px; }
+.file-row.card-item { box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; width:100%; height:auto; padding:8px 6px; text-align:center; border-radius:7px; }
 .file-row.card-item { min-height:176px; border:1px solid var(--border); border-radius:8px; transition:border-color .15s,background .06s; }
 .file-row.card-item:hover { border-color:var(--accent); }
 .file-row.card-item.selected { border-color:var(--accent); background:var(--select-bg); }

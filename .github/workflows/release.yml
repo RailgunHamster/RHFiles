@@ -1,0 +1,63 @@
+name: Velopack release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Velopack CLI
+        shell: pwsh
+        run: dotnet tool install --global vpk --version 1.2.0
+
+      - name: Validate tag and manifest version
+        id: version
+        shell: pwsh
+        run: |
+          $tagVersion = '${{ github.ref_name }}' -replace '^v', ''
+          $manifest = Get-Content src-tauri/Cargo.toml -Raw
+          $manifestVersion = [regex]::Match($manifest, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($tagVersion -ne $manifestVersion) {
+            throw "Tag version $tagVersion does not match Cargo version $manifestVersion"
+          }
+          "version=$tagVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        shell: pwsh
+        run: cargo test --workspace --locked
+
+      - name: Build and package
+        shell: pwsh
+        run: .\scripts\package-velopack.ps1 -Version '${{ steps.version.outputs.version }}'
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          VPK_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          vpk upload github `
+            --outputDir .\dist\velopack-releases `
+            --channel win `
+            --repoUrl https://github.com/RailgunHamster/RHFiles `
+            --token $env:VPK_TOKEN `
+            --publish true `
+            --tag '${{ github.ref_name }}' `
+            --releaseName 'RHFiles ${{ steps.version.outputs.version }}'
+
+      - name: Save release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: RHFiles-${{ steps.version.outputs.version }}-velopack
+          path: dist/velopack-releases/*

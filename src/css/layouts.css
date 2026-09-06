@@ -1,11 +1,3 @@
-.file-list.layout-icons .file-row { display:inline-flex; flex-direction:column; width:var(--icon-grid-size); height:auto; padding:8px 4px; text-align:center; vertical-align:top; border-radius:6px; }
-.file-list.layout-icons .row-name { flex:unset; min-width:unset; flex-direction:column; gap:2px; }
-.file-list.layout-icons .row-icon { width:48px; height:48px; }
-.file-list.layout-icons .row-icon svg { width:48px; height:48px; }
-.file-list.layout-icons .row-fname { font-size:11px; text-align:center; word-break:break-all; max-height:2.4em; overflow:hidden; }
-.file-list.layout-icons .row-date, .file-list.layout-icons .row-type, .file-list.layout-icons .row-size,
-.file-list.layout-icons .row-git, .file-list.layout-icons .row-tags { display:none; }
-
 .file-list.layout-cards .file-row { display:inline-flex; flex-direction:column; width:var(--card-width); height:var(--card-height); padding:8px; border:1px solid var(--border); border-radius:6px; margin:4px; vertical-align:top; transition:border-color .15s,background .06s; }
 .file-list.layout-cards .file-row:hover { border-color:var(--accent); }
 .file-list.layout-cards .file-row.selected { border-color:var(--accent); background:var(--select-bg); }

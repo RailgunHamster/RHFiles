@@ -24,6 +24,15 @@ function setupProgressListener() {
           hideProgress();
         }
       });
+      listen("update-progress", (event) => {
+        if (!event.payload) return;
+        updateProgress({
+          percentage: Math.max(0, Math.min(100, Number(event.payload.percentage) || 0)),
+          speed: 0,
+          totalBytes: 0,
+          bytesTransferred: 0,
+        });
+      });
     }
   }
 }
@@ -82,7 +91,12 @@ function showConfirmDialog(options) {
     body.className = 'app-confirm-body';
     const icon = document.createElement('div');
     icon.className = 'app-confirm-icon';
-    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M8 3h8l1 3h3v2H4V6h3l1-3zM6.5 9h11l-.7 11H7.2L6.5 9z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 12v5M14 12v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    if (config.kind === 'update') {
+      icon.classList.add('update');
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 4v11m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17v2h14v-2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+    } else {
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M8 3h8l1 3h3v2H4V6h3l1-3zM6.5 9h11l-.7 11H7.2L6.5 9z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 12v5M14 12v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    }
     const copy = document.createElement('div');
     copy.className = 'app-confirm-copy';
     const title = document.createElement('div');
@@ -101,9 +115,9 @@ function showConfirmDialog(options) {
     actions.className = 'dialog-actions';
     const cancel = document.createElement('button');
     cancel.className = 'dialog-btn';
-    cancel.textContent = t('btn.cancel');
+    cancel.textContent = config.cancelLabel || t('btn.cancel');
     const confirm = document.createElement('button');
-    confirm.className = 'dialog-btn danger';
+    confirm.className = config.kind === 'update' ? 'dialog-btn primary' : 'dialog-btn danger';
     confirm.textContent = config.confirmLabel || t('btn.delete');
     actions.append(cancel, confirm);
     box.append(body, actions);

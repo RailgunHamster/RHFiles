@@ -551,13 +551,14 @@
       if (tab.entries.length > 0) assert(rows.length > 0, "No rows in details layout");
     });
 
-    await test("[layout] Switch to icons layout", async () => {
+    await test("[layout] Legacy icons layout migrates to cards", async () => {
       if (typeof setLayout !== 'function') { log("SKIP: setLayout not available"); return; }
       setLayout('icons');
       await sleep(200);
-      assertEqual(G.layout, 'icons', "Layout should be icons");
-      const activeBtn = $(".layout-btn.active[data-layout='icons']");
-      assert(activeBtn, "Icons layout button should be active");
+      assertEqual(G.layout, 'cards', "Legacy icons layout should map to cards");
+      assert(!$(".layout-btn[data-layout='icons']"), "Icons layout button should be removed");
+      const activeBtn = $(".layout-btn.active[data-layout='cards']");
+      assert(activeBtn, "Cards layout button should be active after migration");
     });
 
     await test("[layout] Switch to cards layout", async () => {
@@ -736,6 +737,16 @@
       assert(checkbox, "Preview default-open setting is missing");
       assertEqual(checkbox.checked, G.settings.previewDefaultOpen !== false, "Preview setting state is out of sync");
       assert($("#settings-global-search"), "Global-search enable setting is missing");
+      assert($("#settings-auto-update"), "Automatic-update setting is missing");
+      assert($("#settings-update-source"), "Update-source setting is missing");
+      assert($("#settings-check-update"), "Manual update button is missing");
+      const packagedFeed = await call('get_env', {key:'RHFILES_TEST_UPDATE_SOURCE'}).catch(() => '');
+      if (packagedFeed) {
+        const updateStatus = await call('check_updates', {source:packagedFeed});
+        assert(updateStatus?.managed, "Velopack portable build was not recognized as managed");
+        assert(updateStatus?.isPortable, "Velopack build was not recognized as portable");
+        assert(/^\d+\.\d+\.\d+/.test(updateStatus.currentVersion || ''), "Velopack manifest version is invalid");
+      }
       closeSettings();
     });
 
@@ -1173,16 +1184,11 @@
       assertIncludes(html, 'width:64px', "Windows shell icon did not use the requested size");
     });
 
-    await test("[icons] Icon and card labels are not line-clipped", async () => {
+    await test("[icons] Card labels are not line-clipped", async () => {
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;left:-10000px;top:0;width:600px;height:600px';
       document.body.appendChild(host);
       const file = { name: 'a-very-long-file-name-that-needs-several-lines-to-display-completely.txt', path: 'C:\\' + Date.now() + '.txt', is_dir: false, extension: 'txt', size_display: '1 KB', modified: '' };
-      renderIconLayout(host, [file], new Set(), false, { entries: [file], sel: new Set(), lastIdx: -1 }, 'file-list');
-      const iconLabel = host.querySelector('.tile-file-name');
-      assert(iconLabel && iconLabel.textContent === file.name, "Icon label text was truncated");
-      assertEqual(getComputedStyle(iconLabel).maxHeight, 'none', "Icon label still has a height clip");
-      host.innerHTML = '';
       renderCardLayout(host, [file], new Set(), false, { entries: [file], sel: new Set(), lastIdx: -1 }, 'file-list');
       const cardLabel = host.querySelector('.card-file-name');
       assert(cardLabel && cardLabel.textContent === file.name, "Card label text was truncated");

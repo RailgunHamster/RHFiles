@@ -371,7 +371,7 @@ document.addEventListener("keydown", async e => {
     return;
   }
 
-  const gridLayout = G.layout === 'icons' || G.layout === 'cards' || G.layout === 'thumbnails';
+  const gridLayout = G.layout === 'cards' || G.layout === 'thumbnails';
   if (e.key === "ArrowDown" || e.key === "ArrowUp" || (gridLayout && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) {
     e.preventDefault();
     moveFileSelectionByArrow(e.key);
@@ -398,7 +398,7 @@ document.addEventListener("keydown", async e => {
 });
 
 function visibleGridColumnCount(list) {
-  const grid = list?.querySelector('.icon-grid, .card-grid, .thumbnail-grid');
+  const grid = list?.querySelector('.card-grid, .thumbnail-grid');
   const items = grid ? [...grid.querySelectorAll(':scope > .file-row[data-index]')] : [];
   if (items.length < 2) return 1;
   const firstTop = items[0].offsetTop;
@@ -425,7 +425,7 @@ function moveFileSelectionByArrow(key) {
   const list = document.getElementById(listId);
   const selected = [...(pane.sel || [])];
   const current = pane.lastIdx >= 0 ? pane.lastIdx : (selected.length ? selected[selected.length - 1] : -1);
-  const isGrid = G.layout === 'icons' || G.layout === 'cards' || G.layout === 'thumbnails';
+  const isGrid = G.layout === 'cards' || G.layout === 'thumbnails';
   const columns = isGrid ? visibleGridColumnCount(list) : 1;
   const next = gridNavigationIndex(current, key, entries.length, columns);
   if (next < 0) return;
@@ -453,8 +453,7 @@ function scrollToVisible(index) {
     }
   }
   let rowH = ROW_H;
-  if (G.layout === "icons") rowH = ICON_ROW_H;
-  else if (G.layout === "cards") rowH = CARD_ROW_H;
+  if (G.layout === "cards") rowH = CARD_ROW_H;
   const targetTop = index * rowH;
   if (targetTop < list.scrollTop || targetTop > list.scrollTop + list.clientHeight - rowH) {
     list.scrollTop = Math.max(0, targetTop - list.clientHeight / 2);
@@ -495,7 +494,6 @@ function initCommands() {
   { id:"view.dualPane", label: t('cmd.toggleDualPane'), action: toggleDualPane, keys:"Ctrl+B" },
   { id:"view.hidden", label: t('cmd.toggleHidden'), action: toggleHidden, keys:"Ctrl+H" },
   { id:"view.layout.details", label: t('cmd.layoutDetails'), action: () => setLayout("details") },
-  { id:"view.layout.icons", label: t('cmd.layoutIcons'), action: () => setLayout("icons") },
   { id:"view.layout.thumbnails", label: t('cmd.layoutThumbnails'), action: () => setLayout("thumbnails") },
   { id:"view.layout.cards", label: t('cmd.layoutCards'), action: () => setLayout("cards") },
   { id:"view.layout.columns", label: t('cmd.layoutColumns'), action: () => setLayout("columns") },

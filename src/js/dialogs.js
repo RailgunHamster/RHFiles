@@ -161,13 +161,22 @@ function openSettings() {
     '<div class="settings-row"><label>' + t('settings.bgEffect') + '</label>' +
     '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>' + t('settings.effectNone') + '</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>' + t('settings.effectMica') + '</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>' + t('settings.effectAcrylic') + '</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>' + t('settings.effectMicaAlt') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.layout') + '</label>' +
-    '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>' + t('settings.layoutDetails') + '</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>' + t('settings.layoutIcons') + '</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>' + t('settings.layoutThumbnails') + '</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>' + t('settings.layoutCards') + '</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>' + t('settings.layoutColumns') + '</option></select></div>' +
+    '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>' + t('settings.layoutDetails') + '</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>' + t('settings.layoutCards') + '</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>' + t('settings.layoutThumbnails') + '</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>' + t('settings.layoutColumns') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.dualOrientation') + '</label>' +
     '<select onchange="setDualPaneOrientation(this.value)"><option value="vertical"' + (G.settings.dualPaneOrientation!=="horizontal"?" selected":"") + '>' + t('pane.vertical') + '</option><option value="horizontal"' + (G.settings.dualPaneOrientation==="horizontal"?" selected":"") + '>' + t('pane.horizontal') + '</option></select></div>' +
     '<div class="settings-row"><label for="settings-preview-default">' + t('settings.previewDefaultOpen') + '</label>' +
     '<input id="settings-preview-default" type="checkbox" onchange="setPreviewDefaultOpen(this.checked)"' + (G.settings.previewDefaultOpen!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-global-search">' + t('settings.enableGlobalSearch') + '</label>' +
     '<input id="settings-global-search" type="checkbox" onchange="setGlobalSearchEnabled(this.checked)"' + (G.settings.globalSearchEnabled!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-auto-update">' + t('settings.autoUpdate') + '</label>' +
+    '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-update-source">' + t('settings.updateSource') + '</label>' +
+    '<select id="settings-update-source" onchange="setUpdateSource(this.value)">' +
+      '<option value="https://github.com/RailgunHamster/RHFiles"' + (getUpdateSource()==='https://github.com/RailgunHamster/RHFiles'?' selected':'') + '>' + t('settings.updateSourceGithub') + '</option>' +
+      '<option value="\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases"' + (getUpdateSource()==='\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases'?' selected':'') + '>' + t('settings.updateSourceServer') + '</option>' +
+    '</select></div>' +
+    '<div class="settings-row update-settings-row"><span id="settings-update-status" class="settings-help">' + t('update.statusUnknown') + '</span>' +
+    '<button class="dialog-btn" id="settings-check-update" onclick="checkForUpdates(true)">' + t('settings.checkUpdates') + '</button></div>' +
     '<div class="settings-row"><label>' + t('settings.showExtensions') + '</label>' +
     '<input type="checkbox" onchange="G.showExtensions=this.checked;renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')"' + (G.showExtensions!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label>' + t('settings.grouping') + '</label>' +
@@ -205,6 +214,19 @@ function openSettings() {
   dlg.style.display = "flex";
   renderToolbarConfig();
   renderShortcutConfig();
+  refreshUpdateSettingsStatus();
+}
+
+function setAutoUpdateEnabled(enabled) {
+  G.settings.autoUpdateEnabled = !!enabled;
+  saveSettings();
+}
+
+function setUpdateSource(source) {
+  G.settings.updateSource = source;
+  saveSettings();
+  G._updateStatus = null;
+  refreshUpdateSettingsStatus();
 }
 
 function onThemeSelectChange(val) {
@@ -594,7 +616,6 @@ const TOOLBAR_BUTTONS = [
   { id: "btn-hidden", labelKey: 'tb.hidden' },
   { id: "btn-group", labelKey: 'tb.group' },
   { id: "btn-layout-details", labelKey: 'tb.details' },
-  { id: "btn-layout-icons", labelKey: 'tb.icons' },
   { id: "btn-layout-thumbnails", labelKey: 'tb.thumbnails' },
   { id: "btn-layout-cards", labelKey: 'tb.cards' },
   { id: "btn-layout-columns", labelKey: 'tb.columns' },
@@ -612,13 +633,17 @@ function loadToolbarConfig() {
       const config = JSON.parse(saved);
       if ((config.version || 1) < 2) {
         if (!config.visible.includes('btn-disk-usage')) config.visible.push('btn-disk-usage');
-        config.version = 2;
+      }
+      if ((config.version || 1) < 3) {
+        config.visible = config.visible.filter(id => id !== 'btn-layout-icons');
+        if (!config.visible.includes('btn-layout-cards')) config.visible.push('btn-layout-cards');
+        config.version = 3;
         localStorage.setItem('rhfiles-toolbar', JSON.stringify(config));
       }
       return config;
     }
   } catch(e) {}
-  return { version: 2, visible: TOOLBAR_BUTTONS.map(b => b.id) };
+  return { version: 3, visible: TOOLBAR_BUTTONS.map(b => b.id) };
 }
 
 function applyToolbarConfig() {

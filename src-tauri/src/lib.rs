@@ -7,6 +7,7 @@ mod search;
 mod shell;
 mod system;
 mod types;
+mod updates;
 mod vcs;
 mod window;
 
@@ -135,7 +136,7 @@ pub fn run() {
             system::detect_ides, system::open_in_ide, system::install_font, system::set_wallpaper,
             system::set_file_readonly,
             system::list_ads, system::delete_ads, system::read_ads, system::unblock_file,
-            system::quicklook, system::check_updates,
+            system::quicklook,
             system::rtf_to_html, system::docx_to_text,
             system::format_drive, system::install_certificate,
             system::set_compat_mode, system::get_compat_mode,
@@ -185,6 +186,8 @@ pub fn run() {
 
             shell::get_permissions, shell::set_permission,
             shell::remove_permission, shell::inherit_permissions,
+
+            updates::check_updates, updates::download_update, updates::apply_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

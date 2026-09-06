@@ -68,7 +68,6 @@ function toggleHidden() {
 }
 
 const ROW_H = 24;
-const ICON_ROW_H = 80;
 const CARD_ROW_H = 168;
 const THUMB_ROW_H = 140;
 
@@ -79,9 +78,7 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   list.innerHTML = "";
   list.classList.toggle("search-results", !!G.searchActive && !isRight);
 
-  if (G.layout === "icons") {
-    renderIconLayout(list, entries, sel, isRight, tabOrPane, listId);
-  } else if (G.layout === "cards") {
+  if (G.layout === "cards") {
     renderCardLayout(list, entries, sel, isRight, tabOrPane, listId);
   } else if (G.layout === "thumbnails") {
     renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId);
@@ -235,41 +232,6 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
   list._vlistScrollHandler = _scrollHandler;
   list.addEventListener('scroll', _scrollHandler);
   renderVisible();
-}
-
-function renderIconLayout(list, entries, sel, isRight, tabOrPane, listId) {
-  const grid = document.createElement("div");
-  grid.className = "icon-grid";
-  list.appendChild(grid);
-
-  entries.forEach((file, i) => {
-    const isSelected = sel.has(i);
-    const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
-    const item = document.createElement("div");
-    item.className = "file-row icon-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
-    item.dataset.index = i;
-    item.dataset.path = file.path;
-
-    item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
-    item.addEventListener("dragstart", e => {
-      if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
-      e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
-    });
-    item.draggable = true;
-
-    let pathHtml = "";
-    if (G.searchActive && file.path) {
-      const dirPath = file.path.replace(/\\[^\\]+$/, '');
-      pathHtml = `<div class="thumb-path" title="${esc(displayPath(file.path))}">${esc(displayPath(dirPath))}</div>`;
-    }
-    item.innerHTML = `
-      <div class="big-icon-slot">${bigFileIcon(file, 48)}</div>
-      <div class="tile-file-name" title="${esc(file.name)}">${esc(file.name)}</div>
-      ${pathHtml}
-    `;
-    grid.appendChild(item);
-  });
 }
 
 function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {

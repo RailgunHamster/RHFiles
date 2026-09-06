@@ -222,7 +222,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  setTimeout(() => checkForUpdates(), 5000);
+  if (G.windowLabel === "main" && G.settings.autoUpdateEnabled !== false) {
+    setTimeout(() => checkForUpdates(false), 5000);
+  }
   applyToolbarConfig();
 
   if (G.windowLabel === "main") {
@@ -282,17 +284,100 @@ window.addEventListener('unhandledrejection', (e) => {
     }).catch(() => {});
 });
 
-async function checkForUpdates() {
-    try {
-        const result = await call("check_updates", {});
-        if (result) {
-            const [version, url] = result.split("|");
-            const noticeKey = "rhfiles-update-notified";
-            if (localStorage.getItem(noticeKey) === version) return;
-            localStorage.setItem(noticeKey, version);
-            if (confirm(t('confirm.updateAvailable', {version: version}))) {
-                window.open(url, "_blank");
-            }
-        }
-    } catch (e) {}
+function getUpdateSource() {
+  return G.settings.updateSource || 'https://github.com/RailgunHamster/RHFiles';
+}
+
+function updateSettingsStatusText(status, error) {
+  const element = document.getElementById('settings-update-status');
+  if (!element) return;
+  if (error) {
+    element.textContent = t('update.statusError');
+  } else if (!status) {
+    element.textContent = t('update.statusUnknown');
+  } else if (!status.managed) {
+    element.textContent = t('update.statusBootstrap', {version: status.currentVersion || ''});
+  } else if (status.availableVersion) {
+    element.textContent = t(status.pendingRestart ? 'update.statusReady' : 'update.statusAvailable', {
+      version: status.availableVersion,
+    });
+  } else {
+    element.textContent = t('update.statusCurrent', {version: status.currentVersion || ''});
+  }
+}
+
+async function refreshUpdateSettingsStatus() {
+  const button = document.getElementById('settings-check-update');
+  updateSettingsStatusText(null);
+  if (button) button.disabled = true;
+  try {
+    const status = await call('check_updates', {source: getUpdateSource()});
+    G._updateStatus = status;
+    updateSettingsStatusText(status);
+  } catch (error) {
+    updateSettingsStatusText(null, error);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function checkForUpdates(manual) {
+  if (G._updateCheckRunning) return;
+  G._updateCheckRunning = true;
+  const button = document.getElementById('settings-check-update');
+  if (button) button.disabled = true;
+  try {
+    const source = getUpdateSource();
+    const status = await call('check_updates', {source});
+    G._updateStatus = status;
+    updateSettingsStatusText(status);
+
+    if (!status || !status.managed) {
+      if (manual) showNotice(t('update.bootstrapRequired'));
+      return;
+    }
+    if (!status.availableVersion) {
+      if (manual) showNotice(t('update.noUpdate', {version: status.currentVersion || ''}));
+      return;
+    }
+    if (document.getElementById('progress-overlay')?.style.display !== 'none') {
+      if (manual) showNotice(t('update.busy'));
+      return;
+    }
+
+    const version = status.availableVersion;
+    const noticeKey = 'rhfiles-update-notified';
+    if (!manual && localStorage.getItem(noticeKey) === version) return;
+    const notes = String(status.releaseNotes || '').trim();
+    const confirmed = await showConfirmDialog({
+      kind: 'update',
+      title: t(status.pendingRestart ? 'update.readyTitle' : 'update.availableTitle'),
+      message: t(status.pendingRestart ? 'update.readyMessage' : 'update.availableMessage', {version}),
+      detail: notes ? notes.slice(0, 600) : t('update.restartHint'),
+      confirmLabel: t(status.pendingRestart ? 'update.restartNow' : 'update.downloadRestart'),
+      cancelLabel: t('update.later'),
+    });
+    if (!confirmed) {
+      localStorage.setItem(noticeKey, version);
+      return;
+    }
+
+    if (!status.pendingRestart) {
+      showProgress(t('update.downloading', {version}), {cancellable:false});
+      await call('download_update', {source});
+    } else {
+      showProgress(t('update.preparing', {version}), {indeterminate:true, cancellable:false});
+    }
+    document.getElementById('progress-title').textContent = t('update.restarting');
+    updateProgress({percentage:100, speed:0, totalBytes:0, bytesTransferred:0});
+    try { saveTabState(); } catch (error) {}
+    await call('apply_update', {source});
+  } catch (error) {
+    hideProgress();
+    updateSettingsStatusText(null, error);
+    if (manual) showNotice(t('update.failed', {error: String(error)}));
+  } finally {
+    G._updateCheckRunning = false;
+    if (button) button.disabled = false;
+  }
 }

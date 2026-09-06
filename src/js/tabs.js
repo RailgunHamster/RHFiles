@@ -31,7 +31,7 @@ function revealTabLabelTails(root) {
 function saveFolderLayout(path, layout) {
   try {
     const data = JSON.parse(localStorage.getItem('rhfiles-folder-layouts') || '{}');
-    data[path] = layout;
+    data[path] = normalizeLayout(layout);
     localStorage.setItem('rhfiles-folder-layouts', JSON.stringify(data));
   } catch (e) {}
 }
@@ -39,7 +39,12 @@ function saveFolderLayout(path, layout) {
 function loadFolderLayout(path) {
   try {
     const data = JSON.parse(localStorage.getItem('rhfiles-folder-layouts') || '{}');
-    return data[path] || null;
+    const stored = data[path] || null;
+    if (stored === 'icons') {
+      data[path] = 'cards';
+      localStorage.setItem('rhfiles-folder-layouts', JSON.stringify(data));
+    }
+    return stored ? normalizeLayout(stored) : null;
   } catch (e) { return null; }
 }
 
@@ -578,7 +583,7 @@ function detectAdaptiveLayout(entries) {
         else if (['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff'].includes((e.extension||'').toLowerCase())) images++;
     }
     const total = entries.length;
-    if (images / total > 0.8) return 'icons';
+    if (images / total > 0.8) return 'cards';
     return null;
 }
 
@@ -1050,6 +1055,7 @@ async function refresh() {
 }
 
 function setLayout(layout) {
+  layout = normalizeLayout(layout);
   G.layout = layout;
   localStorage.setItem('rhfiles-layout', layout);
   saveFolderLayout(getActivePaneState().path, layout);

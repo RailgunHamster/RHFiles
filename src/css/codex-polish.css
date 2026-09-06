@@ -485,14 +485,12 @@ select {
 }
 
 /* Icon, card and thumbnail layouts */
-.icon-grid,
 .card-grid,
 .thumbnail-grid {
   gap: 10px;
   padding: 12px;
 }
 
-.file-row.icon-item,
 .file-row.card-item,
 .thumb-item {
   border-radius: 10px;
@@ -500,7 +498,6 @@ select {
   transition: background .14s ease, border-color .14s ease, box-shadow .14s ease, transform .14s ease;
 }
 
-.file-row.icon-item:hover,
 .file-row.card-item:hover,
 .thumb-item:hover {
   background: var(--bg-raised);
@@ -509,7 +506,6 @@ select {
   transform: translateY(-1px);
 }
 
-.file-row.icon-item.selected,
 .file-row.card-item.selected,
 .thumb-item.selected {
   background: var(--select-bg);
@@ -517,7 +513,6 @@ select {
   box-shadow: 0 0 0 1px var(--focus-ring);
 }
 
-.file-row.icon-item.selected,
 .file-row.card-item.selected {
   box-shadow: 0 0 0 1px var(--focus-ring);
 }
@@ -1624,6 +1619,11 @@ body.preview-fullscreen-active::before {
 .app-confirm-icon svg {
   width: 22px;
   height: 22px;
+}
+
+.app-confirm-icon.update {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .app-confirm-copy {

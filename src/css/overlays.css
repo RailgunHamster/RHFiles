@@ -43,6 +43,9 @@
 .settings-row { display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--divider); }
 .settings-row label { font-size:12px; color:var(--text-2); }
 .settings-row select, .settings-row input { padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-input); color:var(--text); font-size:12px; }
+.update-settings-row { gap:12px; }
+.settings-help { min-width:0; color:var(--text-4); font-size:11px; line-height:1.4; }
+.update-settings-row .dialog-btn { flex-shrink:0; }
 .tag-current { display:flex; flex-wrap:wrap; gap:4px; padding:8px 20px; }
 .tag-pill-edit { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:10px; font-size:11px; }
 .tag-remove { cursor:pointer; opacity:.6; }

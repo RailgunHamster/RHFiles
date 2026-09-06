@@ -183,7 +183,16 @@ G.sortField = "name";
 G.sortAsc = true;
 G.showHidden = false;
 G.clipboard = null;
-G.layout = localStorage.getItem('rhfiles-layout') || 'details';
+function normalizeLayout(layout) {
+  const requested = String(layout || 'details').toLowerCase();
+  if (requested === 'icons') return 'cards';
+  return ['details', 'cards', 'thumbnails', 'columns'].includes(requested) ? requested : 'details';
+}
+
+G.layout = normalizeLayout(localStorage.getItem('rhfiles-layout'));
+if (localStorage.getItem('rhfiles-layout') === 'icons') {
+  localStorage.setItem('rhfiles-layout', 'cards');
+}
 G.settings = loadSettings();
 G.previewOn = G.settings.previewDefaultOpen !== false;
 G.dualOn = false;
@@ -412,7 +421,9 @@ function fallbackCall(cmd, args) {
     case "cleanup_stale_windows": return null;
     case "set_window_effect": return null;
     case "quicklook": return null;
-    case "check_updates": return null;
+    case "check_updates": return { managed:false, isPortable:false, currentVersion:'0.1.0', availableVersion:null, releaseNotes:'', pendingRestart:false };
+    case "download_update": return null;
+    case "apply_update": return null;
     case "db_save_tags": return null;
     case "db_load_tags": return [];
     case "db_load_all_tags": return {};
@@ -452,6 +463,8 @@ function loadSettings() {
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
     dualPaneOrientation: 'vertical',
+    autoUpdateEnabled: true,
+    updateSource: 'https://github.com/RailgunHamster/RHFiles',
   };
   try {
     const s = localStorage.getItem('rhfiles-settings');

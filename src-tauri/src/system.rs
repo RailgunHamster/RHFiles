@@ -473,38 +473,6 @@ pub fn quicklook(path: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-pub async fn check_updates() -> Result<Option<String>, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
-        .get("https://api.github.com/repos/RailgunHamster/RHFiles/releases/latest")
-        .header("User-Agent", "RHFiles")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Ok(None);
-    }
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let latest = body.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
-    let current = env!("CARGO_PKG_VERSION");
-    let latest_normalized = latest.trim_start_matches(['v', 'V']);
-    let current_normalized = current.trim_start_matches(['v', 'V']);
-    if !latest.is_empty() && latest_normalized != current_normalized {
-        let url = body
-            .get("html_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        Ok(Some(format!("{}|{}", latest, url)))
-    } else {
-        Ok(None)
-    }
-}
-
 #[tauri::command(async)]
 pub fn rtf_to_html(path: String) -> Result<String, String> {
     let ps = format!(
