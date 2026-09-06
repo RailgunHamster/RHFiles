@@ -1,4 +1,5 @@
 /target
+/dist/
 /temp/
 .cache/
 *.slint_cache

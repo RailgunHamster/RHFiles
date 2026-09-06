@@ -5,7 +5,9 @@
 .tab.active { color:var(--text); font-weight:500; }
 .tab.drag-over { border-left:2px solid var(--accent); margin-left:-2px; }
 .tab.dragging { opacity:0.4; }
-.tab-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tab-label { display:block; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:clip; white-space:nowrap; direction:ltr; text-align:left; scrollbar-width:none; }
+.tab-label::-webkit-scrollbar { display:none; }
+.tab-label.tail-clipped { -webkit-mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 100%); mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 100%); }
 .tab-close { background:none; border:none; color:var(--text-4); font-size:13px; width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:3px; cursor:pointer; line-height:1; margin-left:2px; flex-shrink:0; }
 .tab-close:hover { background:var(--hover); color:var(--text); }
 .tab-new { background:none; border:none; color:var(--text-4); width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:4px; cursor:pointer; margin-left:2px; margin-bottom:2px; -webkit-app-region:no-drag; }
@@ -26,26 +28,32 @@
 .tb:hover { background:var(--hover); color:var(--text); }
 .tb:active { background:var(--active); }
 
-.address-bar { flex:1; height:30px; display:flex; align-items:center; background:var(--bg-input); border:1px solid var(--border); border-radius:4px; padding:0 10px; position:relative; transition:border-color .15s; cursor:default; }
+.address-bar { flex:1; min-width:0; height:30px; display:flex; align-items:center; background:var(--bg-input); border:1px solid var(--border); border-radius:4px; padding:0 5px 0 10px; position:relative; transition:border-color .15s; cursor:default; }
 .address-bar.editing { border-color:var(--accent); }
-.address-bar input { flex:1; border:none; outline:none; background:transparent; color:var(--text); font-size:12px; display:none; }
+.address-bar input { flex:1; min-width:0; border:none; outline:none; background:transparent; color:var(--text); font-size:12px; display:none; }
 .address-bar.editing input { display:block; }
 .address-bar.editing .breadcrumb { display:none; }
-.breadcrumb { display:flex; align-items:center; gap:2px; font-size:12px; color:var(--text-3); white-space:nowrap; overflow:hidden; min-height:30px; padding-right:4px; flex:1; }
+.breadcrumb { display:flex; align-items:center; gap:2px; font-size:12px; color:var(--text-3); white-space:nowrap; overflow:hidden; min-width:0; min-height:30px; padding-right:4px; flex:1; scrollbar-width:none; }
+.breadcrumb::-webkit-scrollbar { display:none; }
 .breadcrumb-spacer { flex:1; cursor:text; min-width:20px; display:block; height:30px; }
-.bc-item { padding:2px 5px; border-radius:3px; cursor:pointer; color:var(--text-2); transition:background .08s; white-space:nowrap; }
+.bc-item { padding:2px 5px; border-radius:3px; cursor:pointer; color:var(--text-2); transition:background .08s; white-space:nowrap; flex-shrink:0; }
 .bc-item:hover { background:var(--hover); color:var(--text); }
-.bc-sep { color:var(--text-4); font-size:10px; margin:0 1px; cursor:pointer; padding:2px 0; }
+.bc-sep { color:var(--text-4); font-size:10px; margin:0 1px; cursor:pointer; padding:2px 0; flex-shrink:0; }
 .bc-sep:hover { color:var(--text); }
+.address-favorite { width:22px; height:22px; flex:0 0 22px; display:flex; align-items:center; justify-content:center; border:0; border-radius:4px; background:transparent; color:var(--text-4); padding:0; cursor:pointer; }
+.address-favorite:hover { color:#d59b00; background:var(--hover); }
+.address-favorite.active { color:#e2a800; }
+.address-favorite.active svg { fill:currentColor; }
+.address-favorite:disabled { opacity:.35; pointer-events:none; }
 .bc-dropdown { position:absolute; top:100%; left:0; right:0; max-height:220px; overflow-y:auto; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px var(--shadow); z-index:100; margin-top:4px; display:none; }
 .bc-dropdown.show { display:block; }
 .bc-dropdown-item { padding:5px 12px; font-size:12px; color:var(--text-2); cursor:default; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .bc-dropdown-item:hover { background:var(--select-bg); color:var(--text); }
 
-.search-box { width:200px; height:30px; display:flex; align-items:center; gap:6px; background:var(--bg-input); border:1px solid var(--border); border-radius:4px; padding:0 10px; transition:border-color .15s; position:relative; }
+.search-box { width:clamp(220px,28vw,330px); height:30px; display:flex; align-items:center; gap:4px; background:var(--bg-input); border:1px solid var(--border); border-radius:4px; padding:0 6px 0 8px; transition:border-color .15s; position:relative; }
 .search-box:focus-within { border-color:var(--accent); }
 .search-box svg { color:var(--text-4); flex-shrink:0; }
-.search-box input { flex:1; border:none; outline:none; background:transparent; color:var(--text); }
+.search-box input { flex:1; min-width:0; border:none; outline:none; background:transparent; color:var(--text); }
 
 .command-bar { display:flex; align-items:center; gap:2px; height:36px; padding:0 10px; background:var(--bg-card); border-bottom:1px solid var(--border); }
 .cmd { display:flex; align-items:center; gap:5px; height:28px; padding:0 10px; background:none; border:none; border-radius:4px; color:var(--text-2); font-size:12px; font-family:inherit; cursor:pointer; white-space:nowrap; transition:background .08s,color .08s; }
@@ -73,6 +81,8 @@
 .quick-search-clear { background:none; border:none; color:var(--accent); font-size:11px; cursor:pointer; padding:0; }
 .quick-search-clear:hover { text-decoration:underline; }
 .search-mode-btn { width:22px!important; height:22px!important; font-size:10px!important; font-weight:600; font-family:monospace; }
+.search-scope-btn { width:22px!important; height:22px!important; flex:0 0 22px; }
+.search-scope-btn.active { background:var(--accent-light); color:var(--accent); }
 .search-help-btn { width:22px!important; height:22px!important; }
 
 .search-help-popover { position:absolute; top:100%; right:0; margin-top:4px; width:320px; max-height:420px; overflow-y:auto; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 32px var(--shadow); z-index:300; padding:12px; font-size:12px; }

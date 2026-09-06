@@ -9,17 +9,20 @@ function toggleGrouping(field) {
 function getGroupKey(file) {
   switch (G.groupBy) {
     case 'date':
-      if (!file.modified) return 'group.unknown';
-      if (file.modified.startsWith('Today')) return 'group.today';
-      if (file.modified.startsWith('Yesterday')) return 'group.yesterday';
-      if (file.modified.includes('days ago')) return 'group.thisWeek';
-      if (file.modified.match(/^\d{4}\//)) {
-        const year = file.modified.substring(0, 4);
-        const currentYear = new Date().getFullYear();
-        if (parseInt(year) === currentYear) return 'group.thisYear:' + year;
-        return 'group.older:' + year;
+      if (!file.modified_ts) return 'group.unknown';
+      {
+        const modified = new Date(Number(file.modified_ts));
+        if (Number.isNaN(modified.getTime())) return 'group.unknown';
+        const now = new Date();
+        const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startModified = new Date(modified.getFullYear(), modified.getMonth(), modified.getDate());
+        const days = Math.floor((startToday - startModified) / 86400000);
+        if (days === 0) return 'group.today';
+        if (days === 1) return 'group.yesterday';
+        if (days > 1 && days < 7) return 'group.thisWeek';
+        const year = modified.getFullYear();
+        return year === now.getFullYear() ? 'group.thisYear:' + year : 'group.older:' + year;
       }
-      return 'group.unknown';
     case 'size':
       if (file.is_dir) return 'group.folders';
       if (file.size === 0) return 'group.sizeEmpty';

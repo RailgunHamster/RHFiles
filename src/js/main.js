@@ -1,9 +1,10 @@
 // main.js — initialization and event wiring
 
 document.addEventListener("DOMContentLoaded", async () => {
-  if (typeof initCommands === 'function') initCommands();
   await initI18n();
   applyI18n();
+  if (typeof initCommands === 'function') initCommands();
+  if (typeof restorePreviewPane === 'function') restorePreviewPane();
   document.querySelectorAll(".layout-btn").forEach(b => b.classList.toggle("active", b.dataset.layout === G.layout));
   renderTabs();
   updateSortArrows();
@@ -54,7 +55,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     getTab().historyIdx = 0;
   }
 
-  await navigateTo(getTab().path, false);
+  let initialPathLoaded = false;
+  try {
+    initialPathLoaded = await withTimeout(
+      navigateTo(getTab().path, false),
+      5000,
+      "Initial folder load timed out"
+    );
+  } catch (e) {}
+  if (!initialPathLoaded) {
+    try {
+      initialPathLoaded = await withTimeout(
+        navigateTo("C:\\", false),
+        3000,
+        "Fallback folder load timed out"
+      );
+    } catch (e) {}
+  }
+  if (!initialPathLoaded) await navigateTo("home://", false);
 
   // restore selection and scroll position after navigation
   const activeTab = getTab();
@@ -77,21 +95,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     delete activeTab._restoredScrollTop;
     requestAnimationFrame(() => { if (listEl) listEl.scrollTop = scrollTarget; });
   }
-  await loadDrives();
+  Promise.allSettled([
+    withTimeout(loadDrives(), 3000, "Drive discovery timed out"),
+    withTimeout(loadTagList(), 3000, "Tag loading timed out"),
+    withTimeout(loadPinnedFolders(), 3000, "Pinned folder loading timed out"),
+  ]);
   document.querySelectorAll(".sidebar-item[data-nav]").forEach(el => {
     el.addEventListener("click", () => navigateTo(homeDir(el.dataset.nav)));
   });
   const ftpBtn = document.getElementById("ftp-connect-btn");
   if (ftpBtn) ftpBtn.addEventListener("click", showFtpDialog);
-  loadTree(getTab().path, true);
-
-  await loadTagList();
-  await loadPinnedFolders();
   loadRecentList();
 
   initQuickSearch();
-  renderNetwork();
-  renderMtpDevices();
+  scheduleOptionalDiscovery();
   loadCloudProviders();
   try { detectWSLDistros(); } catch(e) {}
   try { detectWindowsLibraries(); } catch(e) {}
@@ -218,39 +235,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 document.addEventListener("contextmenu", e => {
-  e.preventDefault();
-  removeContextMenu();
-  const isRightH = G.lastActivePane === 'right';
-  const path = isRightH ? G.rp.path : getTab().path;
-  const menu = document.createElement("div");
-  menu.className = "context-menu";
-  menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;z-index:9999;`;
-  const items = [
-    { label: t('ctx.newFolder'), shortcut: "F7", action: newFolder },
-    { label: t('ctx.newFile'), shortcut: "Ctrl+Shift+N", action: () => showNewFileDialog(isRightH) },
-    { label: "-", action: null },
-    { label: t('ctx.paste'), shortcut: "Ctrl+V", action: () => paste(isRightH), disabled: !G.clipboard },
-    { label: "-", action: null },
-    { label: t('cmd.refresh'), shortcut: "F5", action: refresh },
-    { label: t('ctx.selectAll'), shortcut: "Ctrl+A", action: () => selectAll(isRightH) },
-    { label: "-", action: null },
-    { label: t('ctx.openInTerminal'), action: () => { const path = isRightH ? G.rp.path : getTab().path; call("open_terminal", { path, terminal: G.settings.terminal || "wt" }); } },
-    { label: t('ctx.properties'), action: () => showPropertiesDialog(isRightH ? G.rp.path : getTab().path) },
-  ];
-  items.forEach(item => {
-    if (item.label === "-") {
-      const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
-    } else {
-      const mi = document.createElement("div");
-      mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
-      mi.innerHTML = `<span>${esc(item.label)}</span>${item.shortcut ? `<span class="ctx-shortcut">${item.shortcut}</span>` : ""}`;
-      mi.addEventListener("click", () => { removeContextMenu(); if (item.action && !item.disabled) item.action(); });
-      menu.appendChild(mi);
-    }
-  });
-  document.body.appendChild(menu);
-  _ctxShow(menu);
-  requestAnimationFrame(() => clampMenuPosition(menu, e.clientX, e.clientY));
+  showApplicationContextMenu(e);
 });
 
 window.addEventListener('error', (e) => {
@@ -274,6 +259,9 @@ async function checkForUpdates() {
         const result = await call("check_updates", {});
         if (result) {
             const [version, url] = result.split("|");
+            const noticeKey = "rhfiles-update-notified";
+            if (localStorage.getItem(noticeKey) === version) return;
+            localStorage.setItem(noticeKey, version);
             if (confirm(t('confirm.updateAvailable', {version: version}))) {
                 window.open(url, "_blank");
             }

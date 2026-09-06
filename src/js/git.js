@@ -2,7 +2,9 @@
 
 async function loadGitStatus(path) {
   try {
-    G.gitCache = await call("git_status", { path });
+    const cache = await call("git_status", { path });
+    if (!getTab() || getTab().path !== path) return;
+    G.gitCache = cache;
     const statusEl = document.getElementById("status-git");
     if (statusEl) {
       if (Object.keys(G.gitCache).length > 0) {
@@ -19,7 +21,12 @@ async function loadGitStatus(path) {
         statusEl.textContent = "";
       }
     }
-  } catch (e) { G.gitCache = {}; const statusEl = document.getElementById("status-git"); if (statusEl) statusEl.textContent = ""; }
+  } catch (e) {
+    if (!getTab() || getTab().path !== path) return;
+    G.gitCache = {};
+    const statusEl = document.getElementById("status-git");
+    if (statusEl) statusEl.textContent = "";
+  }
 }
 
 // --- archive browsing ---
@@ -58,20 +65,26 @@ function closeArchive() {
 
 async function extractArchiveAll() {
   if (!archiveBrowsingPath) return;
+  showProgress(t('status.extracting', { name: archiveBrowsingPath.split('\\').pop() }));
   try {
     await call("extract_archive", { path: archiveBrowsingPath, dest: getTab().path, entryPath: null });
     closeArchive();
-  } catch (e) { alert(t('alert.extractFailed', {error: e})); }
+  } catch (e) {
+    if (!/cancel/i.test(String(e))) alert(t('alert.extractFailed', {error: e}));
+  } finally { hideProgress(); }
 }
 
 async function extractArchiveEntry(idx) {
   if (!archiveBrowsingPath) return;
   const entries = getTab().entries;
   if (!entries[idx]) return;
+  showProgress(t('status.extracting', { name: entries[idx].name }));
   try {
     await call("extract_archive", { path: archiveBrowsingPath, dest: getTab().path, entryPath: entries[idx].path });
     refresh();
-  } catch (e) { alert(t('alert.extractFailed', {error: e})); }
+  } catch (e) {
+    if (!/cancel/i.test(String(e))) alert(t('alert.extractFailed', {error: e}));
+  } finally { hideProgress(); }
 }
 
 // --- git branch management ---

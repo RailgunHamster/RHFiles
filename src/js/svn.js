@@ -4,7 +4,9 @@ G.svnCache = {};
 
 async function loadSvnStatus(path) {
   try {
-    G.svnCache = await call("svn_status", { path });
+    const cache = await call("svn_status", { path });
+    if (!getTab() || getTab().path !== path) return;
+    G.svnCache = cache;
     const statusEl = document.getElementById("status-svn");
     if (statusEl && Object.keys(G.svnCache).length > 0) {
       const counts = { modified: 0, added: 0, deleted: 0, untracked: 0, missing: 0, conflicted: 0 };
@@ -21,7 +23,12 @@ async function loadSvnStatus(path) {
     } else if (statusEl) {
       statusEl.textContent = "";
     }
-  } catch (e) { G.svnCache = {}; const statusEl = document.getElementById("status-svn"); if (statusEl) statusEl.textContent = ""; }
+  } catch (e) {
+    if (!getTab() || getTab().path !== path) return;
+    G.svnCache = {};
+    const statusEl = document.getElementById("status-svn");
+    if (statusEl) statusEl.textContent = "";
+  }
 }
 
 async function loadSvnInfo(path) {

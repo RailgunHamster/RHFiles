@@ -1,4 +1,3 @@
-
 use rhfiles_core::enumerator;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -80,7 +79,13 @@ pub fn svn_resolve(path: String, targets: Vec<String>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn git_clone(url: String, dest: String) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command
         .args(["clone", &url, &dest])
         .output()
         .map_err(|e| format!("git not found: {}", e))?;

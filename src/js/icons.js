@@ -4,6 +4,10 @@ const _iconCache = new Map();
 const _iconCacheOrder = [];
 const ICON_CACHE_MAX = 500;
 
+function systemIconCacheKey(path, size) {
+  return `${size || 16}:${path || ''}`;
+}
+
 function getIconMode() {
   return G.settings.iconMode || 'builtin';
 }
@@ -15,7 +19,8 @@ function clearIconCache() {
 
 async function getSystemIcon(path, size) {
   size = size || 16;
-  if (_iconCache.has(path)) return _iconCache.get(path);
+  const key = systemIconCacheKey(path, size);
+  if (_iconCache.has(key)) return _iconCache.get(key);
   try {
     const data = await call("get_file_icon", { path, size });
     if (data) {
@@ -23,12 +28,35 @@ async function getSystemIcon(path, size) {
         const old = _iconCacheOrder.shift();
         if (old) _iconCache.delete(old);
       }
-      _iconCache.set(path, data);
-      _iconCacheOrder.push(path);
+      _iconCache.set(key, data);
+      _iconCacheOrder.push(key);
       return data;
     }
   } catch (e) {}
   return null;
+}
+
+function _replaceSystemIconHosts(key, data) {
+  document.querySelectorAll('[data-system-icon-key]').forEach(host => {
+    if (host.dataset.systemIconKey === key) {
+      if (data) host.innerHTML = `<img src="data:image/png;base64,${data}" alt="">`;
+      host.classList.remove('loading');
+      host.removeAttribute('data-system-icon-key');
+    }
+  });
+}
+
+function _systemIconMarkup(file, size) {
+  const path = file.path || '';
+  const key = systemIconCacheKey(path, size);
+  const cached = _iconCache.get(key);
+  if (cached) {
+    return `<span class="system-icon-host" style="width:${size}px;height:${size}px"><img src="data:image/png;base64,${cached}" alt=""></span>`;
+  }
+  if (window.__TAURI_INTERNALS__) {
+    getSystemIcon(path, size).then(data => _replaceSystemIconHosts(key, data));
+  }
+  return `<span class="system-icon-host loading" data-system-icon-key="${esc(key)}" style="width:${size}px;height:${size}px">${_builtinIcon(file, true)}</span>`;
 }
 
 function fileIcon(file, forPreview) {
@@ -40,23 +68,7 @@ function fileIcon(file, forPreview) {
 }
 
 function _systemIconSync(file, forPreview) {
-  const path = file.path || '';
-  const cached = _iconCache.get(path);
-  if (cached) return `<img src="data:image/png;base64,${cached}" style="width:16px;height:16px;vertical-align:middle" alt="">`;
-  if (window.__TAURI_INTERNALS__) {
-    getSystemIcon(path, forPreview ? 32 : 16).then(() => {
-      const listId = G.lastActivePane === 'right' ? "right-file-list" : "file-list";
-      const el = document.getElementById(listId);
-      if (el) {
-        const imgs = el.querySelectorAll(`img[data-icon-path="${CSS.escape(path)}"]`);
-        imgs.forEach(img => {
-          const data = _iconCache.get(path);
-          if (data) img.src = `data:image/png;base64,${data}`;
-        });
-      }
-    });
-  }
-  return `<img data-icon-path="${esc(path)}" style="width:16px;height:16px;vertical-align:middle;opacity:.3" alt="">`;
+  return _systemIconMarkup(file, forPreview ? 32 : 16);
 }
 
 function _mixedIcon(file, forPreview) {
@@ -102,7 +114,7 @@ const _FONT_EXT = new Set(['ttf','otf','woff','woff2','eot']);
 const _DB_EXT = new Set(['sql','db','sqlite','sqlite3','mdb','accdb']);
 
 function _iconFolder() {
-  return '<svg viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.5L7.5 6h7v7h-13V4.5z" fill="#dcb67a" fill-opacity=".25" stroke="#dcb67a" stroke-width=".9" stroke-linejoin="round"/><path d="M1.5 6.5h13" stroke="#dcb67a" stroke-width=".7" opacity=".4"/></svg>';
+  return '<svg viewBox="0 0 16 16" fill="none"><path d="M1.1 3.35c0-1.05.85-1.9 1.9-1.9h3.15L7.7 3H13c1.05 0 1.9.85 1.9 1.9v6.2H1.1V3.35z" fill="#F3B11F"/><path d="M1.1 5.15h13.8v7.45c0 1.05-.85 1.9-1.9 1.9H3c-1.05 0-1.9-.85-1.9-1.9V5.15z" fill="#FFC83D"/><path d="M2 6.15h12v6.15c0 .66-.54 1.2-1.2 1.2H3.2c-.66 0-1.2-.54-1.2-1.2V6.15z" fill="#FFD969"/><path d="M2.15 5.85h11.7" stroke="#FFF4C7" stroke-width=".8" stroke-linecap="round" opacity=".95"/><path d="M2.05 12.85h11.9" stroke="#D8930C" stroke-width=".75" opacity=".55"/></svg>';
 }
 
 function _iconImage(ext) {
@@ -203,7 +215,7 @@ function _fluentIcon(file, forPreview) {
 }
 
 function _fluentFolder() {
-  return '<svg viewBox="0 0 16 16" fill="none"><path d="M1 5.5V12a2 2 0 002 2h10a2 2 0 002-2V5.5H1z" fill="#FFB900"/><path d="M1 5.5V4a2 2 0 012-2h3.17a1 1 0 01.7.3L8.3 3.7a1 1 0 00.7.3H13a2 2 0 012 2v1.5H1z" fill="#FFD75E"/></svg>';
+  return '<svg viewBox="0 0 16 16" fill="none"><path d="M.9 4.8V3.3A2.3 2.3 0 013.2 1h3.05c.38 0 .74.15 1 .42L8.6 2.8c.18.19.44.3.7.3h3.4A2.3 2.3 0 0115 5.4v1.35H.9V4.8z" fill="#F7B928"/><path d="M.9 5.65h14.2v6.95A2.4 2.4 0 0112.7 15H3.3a2.4 2.4 0 01-2.4-2.4V5.65z" fill="#FFC83D"/><path d="M1.9 6.65h12.2v5.7c0 .8-.65 1.45-1.45 1.45h-9.3c-.8 0-1.45-.65-1.45-1.45v-5.7z" fill="#FFDA72"/><path d="M2.05 6.35h11.9" stroke="#FFF6CF" stroke-width=".85" stroke-linecap="round"/></svg>';
 }
 
 function _fluentImage() {
@@ -272,14 +284,15 @@ function _fluentGeneric() {
   return '<svg viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="#888" stroke-width=".8"/><path d="M9 2v4h4" stroke="#888" stroke-width=".7" stroke-linejoin="round"/></svg>';
 }
 
-function bigFileIcon(file) {
+function bigFileIcon(file, size) {
+  size = size || 48;
   const mode = getIconMode();
-  if (mode === 'system' || (mode === 'mixed' && _useSystemForFile(file))) {
-    const cached = _iconCache.get(file.path || '');
-    if (cached) return `<img src="data:image/png;base64,${cached}" style="width:48px;height:48px" alt="">`;
-    return `<div style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;opacity:.3">${_builtinIcon(file, true)}</div>`;
+  // Large views should keep software/folder identity even when the compact list
+  // is using RHFiles' built-in theme.
+  if (mode === 'system' || _useSystemForFile(file)) {
+    return _systemIconMarkup(file, size);
   }
-  return fileIcon(file).replace(/viewBox="0 0 16 16"/g, 'viewBox="0 0 48 48"').replace(/stroke-width="\.(\d+)"/g, (m, n) => `stroke-width="${parseFloat('0.' + n) * 3}"`).replace(/font-size="(\d+)"/g, (m, n) => `font-size="${parseFloat(n) * 3}"`);
+  return `<span class="large-file-icon" style="width:${size}px;height:${size}px">${fileIcon(file, true)}</span>`;
 }
 
 function _useSystemForFile(file) {

@@ -4,25 +4,131 @@ const invoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.inv
 
 // --- i18n ---
 const _builtinEn = { 'cmd.new':'New','cmd.cut':'Cut','cmd.copy':'Copy','cmd.paste':'Paste','cmd.rename':'Rename','cmd.delete':'Delete','cmd.sort':'Sort','cmd.hidden':'Hidden','cmd.refresh':'Refresh','cmd.goBack':'Go Back','cmd.goForward':'Go Forward','cmd.goUp':'Go Up','cmd.openInto':'Open','cmd.newFolder':'New Folder','cmd.newFile':'New File','cmd.batchRename':'Batch Rename','cmd.properties':'Properties','cmd.manageTags':'Manage Tags','cmd.toggleTheme':'Toggle Theme','cmd.togglePreview':'Toggle Preview','cmd.toggleDualPane':'Toggle Dual Pane','cmd.toggleHidden':'Toggle Hidden','cmd.toggleGrouping':'Toggle Grouping','cmd.togglePip':'Toggle PiP','cmd.layoutDetails':'Details Layout','cmd.layoutIcons':'Icons Layout','cmd.layoutThumbnails':'Thumbnails Layout','cmd.layoutCards':'Cards Layout','cmd.layoutColumns':'Columns Layout','cmd.invertSelection':'Invert Selection','cmd.undo':'Undo','cmd.redo':'Redo','cmd.fullscreen':'Fullscreen','cmd.exportData':'Export Data','cmd.importData':'Import Data','cmd.newWindow':'New Window','cmd.quickLook':'Quick Look','cmd.switchPane':'Switch Pane','ctx.open':'Open','ctx.openWith':'Open with...','ctx.cut':'Cut','ctx.copy':'Copy','ctx.paste':'Paste','ctx.rename':'Rename','ctx.delete':'Delete','ctx.newFolder':'New Folder','ctx.selectAll':'Select All','ctx.properties':'Properties','ctx.showHidden':'Show hidden items','ctx.hideHidden':'Hide hidden items','ctx.batchRename':'Batch Rename','ctx.addTag':'Add Tag','ctx.extract':'Extract','ctx.extractAll':'Extract All','col.name':'Name','col.modified':'Date modified','col.created':'Date created','col.type':'Type','col.size':'Size','sidebar.tree':'Directory Tree','sidebar.quickAccess':'Quick access','sidebar.thisPC':'This PC','sidebar.tags':'Tags','sidebar.recent':'Recent','preview.title':'Preview','preview.selectFile':'Select a file to preview','preview.noPreview':'No preview available','preview.binary':'Binary file','batchRename.title':'Batch Rename','batchRename.find':'Find','batchRename.replace':'Replace','properties.title':'Properties','settings.title':'Settings','settings.language':'Language','settings.theme':'Theme','settings.shortcuts':'Keyboard Shortcuts','tag.manage':'Manage Tags','archive.title':'Archive','btn.cancel':'Cancel','btn.rename':'Rename','btn.ok':'OK','btn.add':'Add','btn.save':'Save','nav.home':'Home','nav.newTab':'New Tab','group.items':'{count} items','notice.pipOn':'PiP mode on','notice.pipOff':'PiP mode off','notice.searchHistoryCleared':'Search history cleared','status.items':'{count} items','status.item':'{count} item','status.folders':'{count} folders','status.folder':'{count} folder','status.files':'{count} files','status.file':'{count} file','status.error':'Error: {error}','status.searching':'Searching...','status.searchError':'Search error: {error}','home.desktop':'Desktop','home.downloads':'Downloads','home.documents':'Documents','home.pictures':'Pictures','home.music':'Music','home.videos':'Videos','home.noRecent':'No recent items','search.placeholder':'Search...','search.quickSearch':'Quick Search','search.modeNormal':'Normal','search.modeRegex':'Regex','search.modeWildcard':'Wildcard','search.modeTooltip':'{mode} mode','search.results':'{count} results','search.builtin':'Built-in','search.everythingNotRunning':'Everything not running','search.downloadEverything':'Download Everything','search.changeEngine':'Change in Settings','search.recent':'Recent','search.clear':'Clear','alert.cannotNavArchive':'Cannot navigate into archive','alert.pipFailed':'PiP failed: {error}','confirm.updateAvailable':'Update {version} available','cloud.synced':'Synced','cloud.onlineOnly':'Online only','cloud.syncing':'Syncing','cloud.locallyAvailable':'Locally available','ctx.moreOptions':'Show more options' };
+Object.assign(_builtinEn, {
+  'cmd.quickLook': 'Quick Preview',
+  'cmd.toggleFavorite': 'Add or remove current folder from Favorites',
+  'cmd.nextTab': 'Next Tab',
+  'cmd.previousTab': 'Previous Tab',
+  'settings.previewDefaultOpen': 'Open preview pane by default',
+  'ctx.preview': 'Preview',
+  'ctx.extractHere': 'Extract directly into current folder',
+  'ctx.extractTo': 'Extract into the "{name}" folder',
+  'ctx.playFolderWithVlc': 'Play folder with VLC',
+  'ctx.shareQQ': 'QQ',
+  'ctx.shareWechat': 'WeChat',
+  'ctx.shareFeishu': 'Feishu',
+  'ctx.loadingShares': 'Loading shared folders...',
+  'ctx.sharesUnavailable': 'Shared folders unavailable',
+  'sidebar.favorites': 'Favorites',
+  'sidebar.noFavorites': 'No favorites yet',
+  'preview.loading': 'Loading preview...',
+  'preview.open': 'Open selected item',
+  'notice.favoriteAdded': 'Added to Favorites',
+  'notice.favoriteRemoved': 'Removed from Favorites',
+  'notice.fontInstalled': 'Font installed',
+  'notice.pathCopied': 'Path copied',
+  'favorites.add': 'Add folder to Favorites',
+  'favorites.remove': 'Remove from Favorites',
+  'favorites.addCurrent': 'Add current folder to Favorites',
+  'favorites.removeCurrent': 'Remove current folder from Favorites',
+  'search.scopeFolderTitle': 'Search this folder (click for global search)',
+  'search.scopeGlobalTitle': 'Search everywhere (click for folder search)',
+  'search.inFolderPlaceholder': 'Search in {folder}',
+  'search.globalPlaceholder': 'Search everywhere',
+  'search.scopeFolder': 'In {folder}',
+  'search.scopeGlobal': 'Everywhere',
+  'search.resultCount': '{count} results',
+  'typeSearch.loading': '{query} \u00b7 matching names and Pinyin...',
+  'typeSearch.hint': '{query} \u00b7 {current}/{total} \u00b7 {next} next, {previous} previous',
+  'typeSearch.noMatch': '{query} \u00b7 no matching item',
+  'cmd.typeSearchNext': 'Next typed-search match',
+  'cmd.typeSearchPrevious': 'Previous typed-search match',
+  'cmd.jumpFirst': 'Jump to First Item',
+  'cmd.jumpLast': 'Jump to Last Item',
+  'cmd.commandPalette': 'Command Palette',
+  'cmd.newTab': 'New Tab',
+  'cmd.closeTab': 'Close Tab',
+  'btn.retry': 'Retry',
+  'dialog.permLoading': 'Reading permissions...',
+  'dialog.permLoadFailed': 'Unable to read permissions: {error}',
+  'dialog.permTimedOut': 'Permission lookup timed out after 10 seconds.',
+  'status.openingPowerShell': 'Opening PowerShell...',
+  'alert.openPowerShellFailed': 'Failed to open PowerShell: {error}',
+  'status.openingProgram': 'Opening {name}...',
+  'status.processingAction': '{name}...',
+  'status.compressing': 'Compressing {name}...',
+  'status.deleting': 'Deleting...',
+  'alert.openProgramFailed': 'Failed to open {name}: {error}',
+  'alert.openFileFailed': 'Failed to open file: {error}',
+  'alert.copyPathFailed': 'Failed to copy path: {error}',
+  'alert.actionFailed': '{name} failed: {error}',
+  'status.extracting': 'Extracting {name}...',
+  'template.textFile': 'Text File',
+  'template.htmlFile': 'HTML File',
+  'template.jsonFile': 'JSON File',
+  'template.markdownFile': 'Markdown File',
+  'template.jsFile': 'JavaScript File',
+  'template.cssFile': 'CSS File',
+  'template.pythonFile': 'Python File',
+  'template.rustFile': 'Rust Source File',
+  'template.xmlFile': 'XML File',
+  'template.yamlFile': 'YAML File',
+  'template.shellFile': 'Shell Script',
+  'template.batchFile': 'Batch File',
+  'cmd.group': 'Group',
+  'cmd.toggleSearchScope': 'Toggle folder/global search',
+  'ctx.openCmd': 'Open in Command Prompt',
+  'ctx.openPowerShell': 'Open in PowerShell',
+  'confirm.deleteTitle': 'Move to Recycle Bin',
+  'confirm.recycleBinHint': 'You can restore these items from the Recycle Bin.',
+  'preview.truncated': 'Large file · preview shortened',
+  'preview.truncatedDetail': 'Only the beginning is shown to keep RHFiles responsive ({count} characters total).',
+  'preview.image.displayMode': 'Image display mode',
+  'preview.image.contain': 'Fit',
+  'preview.image.cover': 'Fill',
+  'preview.image.width': 'Fit width',
+  'preview.image.actual': '1:1',
+  'settings.enableGlobalSearch': 'Enable global search',
+  'settings.addShortcut': 'Add key binding',
+  'settings.removeShortcut': 'Remove last key binding',
+  'search.globalDisabledTitle': 'Global search is disabled in Settings',
+  'tab.close': 'Close tab',
+  'tab.closeOthers': 'Close other tabs',
+  'tab.closeRight': 'Close tabs to the right',
+  'pane.leftTabs': 'Left pane tabs',
+  'pane.right': 'Right pane',
+});
 const I18N = { en: _builtinEn };
-let _lang = localStorage.getItem('rhfiles-lang') || 'en';
+const BUNDLED_I18N_FILES = [
+  { code: 'en', name: 'English', url: '/i18n/en.json' },
+  { code: 'zh', name: '\u4e2d\u6587', url: '/i18n/zh.json' },
+];
+
+function detectDefaultLanguage(languages) {
+  const preferred = Array.isArray(languages)
+    ? languages
+    : (navigator.languages?.length ? navigator.languages : [navigator.language]);
+  for (const language of preferred) {
+    const normalized = String(language || '');
+    if (/^zh(?:-|$)/i.test(normalized)) return 'zh';
+    if (/^en(?:-|$)/i.test(normalized)) return 'en';
+  }
+  return 'en';
+}
+
+let _lang = localStorage.getItem('rhfiles-lang') || detectDefaultLanguage();
 let _i18nReady = false;
 
 async function initI18n() {
-  try {
-    const files = await call("list_i18n_files", {});
-    for (const f of files) {
-      try {
-        const resp = await fetch(f.url);
-        if (resp.ok) {
-          const data = await resp.json();
-          const code = data._meta?.code || f.code;
-          I18N[code] = data;
-          I18N[code]._name = data._meta?.name || code;
-        }
-      } catch (e) {}
+  await Promise.allSettled(BUNDLED_I18N_FILES.map(async file => {
+    const resp = await fetch(file.url);
+    if (resp.ok) {
+      const data = await resp.json();
+      const code = data._meta?.code || file.code;
+      I18N[code] = data;
+      I18N[code]._name = data._meta?.name || file.name || code;
     }
-  } catch (e) {}
+  }));
   _i18nReady = true;
 }
 
@@ -32,8 +138,27 @@ function t(key, params) {
   return val.replace(/\{(\w+)\}/g, (_, k) => params[k] !== undefined ? params[k] : '{' + k + '}');
 }
 
-function setLang(l) { _lang = l; localStorage.setItem('rhfiles-lang', l); applyI18n(); }
-function applyI18n() { document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); }); }
+function setLang(l) {
+  _lang = I18N[l] ? l : 'en';
+  localStorage.setItem('rhfiles-lang', _lang);
+  applyI18n();
+  const settingsDialog = document.getElementById('settings-dialog');
+  if (settingsDialog?.style.display === 'flex' && typeof openSettings === 'function') openSettings();
+}
+function applyI18n() {
+  document.documentElement.lang = _lang;
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  if (typeof initCommands === 'function') initCommands();
+  if (typeof updateSearchScopeUI === 'function') updateSearchScopeUI();
+  if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
+  if (typeof renderPinnedFolders === 'function') renderPinnedFolders();
+  if (typeof renderTabs === 'function' && G?.tabs) renderTabs();
+  if (typeof renderFiles === 'function' && typeof getTab === 'function' && getTab()) {
+    renderFiles(getTab(), 'file-list', 'status-count', 'status-selection');
+    if (G.dualOn) renderFiles(G.rp, 'right-file-list', 'right-status-count', null, true);
+  }
+  if (document.getElementById('home-page')?.style.display !== 'none' && typeof showHomePage === 'function') showHomePage();
+}
 function getAvailableLanguages() {
   const langs = [{ code: 'en', name: 'English' }];
   for (const [code, data] of Object.entries(I18N)) {
@@ -54,11 +179,11 @@ G.sortAsc = true;
 G.showHidden = false;
 G.clipboard = null;
 G.layout = localStorage.getItem('rhfiles-layout') || 'details';
-G.previewOn = false;
+G.settings = loadSettings();
+G.previewOn = G.settings.previewDefaultOpen !== false;
 G.dualOn = false;
 G.gitCache = {};
 G.tagCache = {};
-G.settings = loadSettings();
 G.groupBy = localStorage.getItem('rhfiles-groupBy') || 'none';
 G.showExtensions = true;
 G.pipMode = false;
@@ -66,7 +191,7 @@ G._7zAvailable = false;
 
 G.lastActivePane = 'left';
 
-G._typeSearch = { str: '', timer: null };
+G._typeSearch = { str: '', lastQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
 
 // --- right pane state ---
 G.rp = { path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, history: ["C:\\"], histIdx: 0 };
@@ -81,6 +206,39 @@ function getTab(id) {
 // --- utilities ---
 function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 function escAttr(s) { return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+// Keep Windows paths untouched for filesystem operations and clipboard actions,
+// but present them with web-style separators. An UNC prefix therefore stays
+// visibly doubled: //server/share instead of the misleading /server/share.
+function displayPath(path) {
+  if (path === 'home://') return t('nav.home');
+  return String(path || '').replace(/\\/g, '/');
+}
+
+function formatFileDate(timestamp, fallback) {
+  const value = Number(timestamp);
+  let date = Number.isFinite(value) && value > 0
+    ? new Date(value < 100000000000 ? value * 1000 : value)
+    : null;
+  if (!date && fallback) {
+    const text = String(fallback).trim();
+    const parts = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/.exec(text);
+    date = parts
+      ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), Number(parts[4] || 0), Number(parts[5] || 0))
+      : new Date(text);
+  }
+  if (!date) return fallback || '';
+  if (Number.isNaN(date.getTime())) return fallback || '';
+  const pad = part => String(part).padStart(2, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const time = pad(date.getHours()) + ':' + pad(date.getMinutes());
+  return _lang === 'zh'
+    ? year + '年' + month + '月' + day + '日 ' + time
+    : month + '/' + day + '/' + year + ' ' + time;
+}
+
 function fmtSize(bytes) {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
@@ -93,6 +251,24 @@ function fmtSize(bytes) {
 async function call(cmd, args) {
   if (invoke) return invoke(cmd, args || {});
   return fallbackCall(cmd, args || {});
+}
+
+function parentFolderPath(path) {
+  const normalized = String(path || '').replace(/\//g, '\\');
+  if (/^[A-Za-z]:\\$/.test(normalized)) return normalized;
+  const clean = normalized.replace(/\\+$/, '');
+  const idx = clean.lastIndexOf('\\');
+  if (idx === 2 && /^[A-Za-z]:/.test(clean)) return clean.slice(0, 3);
+  return idx > 0 ? clean.slice(0, idx) : clean;
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message || "Operation timed out")), timeoutMs);
+  });
+  return Promise.race([Promise.resolve(promise), timeout])
+    .finally(() => { if (timer !== null) clearTimeout(timer); });
 }
 
 function fallbackCall(cmd, args) {
@@ -182,6 +358,10 @@ function fallbackCall(cmd, args) {
     case "db_add_recent": return null;
     case "invoke_context_menu_command": return null;
     case "open_with_program": return null;
+    case "get_permissions": return [];
+    case "set_permission": return null;
+    case "remove_permission": return null;
+    case "inherit_permissions": return null;
     case "copy_file_path": return null;
     case "show_open_with_dialog": return null;
     case "compress_with": return null;
@@ -189,16 +369,25 @@ function fallbackCall(cmd, args) {
     case "cancel_operation": return null;
     case "is_everything_available": return false;
     case "quick_search": return [];
+    case "search_recursive": return [];
+    case "pinyin_aliases": return (args.names || []).map(() => []);
     default: return null;
   }
 }
 
 // --- settings persistence ---
 function loadSettings() {
+  const defaults = {
+    language: 'en',
+    shortcuts: {},
+    previewDefaultOpen: true,
+    globalSearchEnabled: true,
+    imagePreviewMode: 'contain',
+  };
   try {
     const s = localStorage.getItem('rhfiles-settings');
-    return s ? JSON.parse(s) : { language: 'en', shortcuts: {} };
-  } catch (e) { return { language: 'en', shortcuts: {} }; }
+    return s ? { ...defaults, ...JSON.parse(s) } : defaults;
+  } catch (e) { return defaults; }
 }
 function saveSettings() {
   localStorage.setItem('rhfiles-settings', JSON.stringify(G.settings));

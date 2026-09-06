@@ -122,6 +122,7 @@ pub fn run() {
             file_ops::copy_with_progress, file_ops::move_with_progress,
             file_ops::cancel_operation,
             file_ops::get_env, file_ops::get_dir_tree, file_ops::batch_rename, file_ops::get_file_info,
+            file_ops::folder_size,
             file_ops::create_shortcut,
 
             system::get_thumbnail, system::open_file, system::show_properties,
@@ -138,7 +139,7 @@ pub fn run() {
             system::log_error, system::get_error_logs,
             system::list_i18n_files, system::list_mtp_devices,
             system::run_gui_tests, system::write_test_results,
-            system::open_with_program, system::copy_file_path,
+            system::open_with_program, system::open_terminal, system::copy_file_path,
             system::show_open_with_dialog, system::compress_with,
             system::share_file,
 
@@ -160,6 +161,7 @@ pub fn run() {
             db::cleanup_stale_windows,
 
             search::quick_search, search::search_recursive, search::is_everything_available, search::start_everything,
+            search::pinyin_aliases,
 
             window::toggle_pip, window::open_new_window, window::get_window_label,
             window::save_window_state, window::load_window_state,

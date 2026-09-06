@@ -276,6 +276,38 @@
       assertEqual(bcPath, targetPath, "Breadcrumb path mismatch");
     });
 
+    await test("[nav] Long breadcrumb reveals the path tail", async () => {
+      assert(typeof revealBreadcrumbTail === 'function', "revealBreadcrumbTail not available");
+      const bc = $("#breadcrumb");
+      const oldHtml = bc.innerHTML;
+      const oldWidth = bc.style.width;
+      bc.style.width = "120px";
+      bc.innerHTML = '<span style="display:inline-block;flex:0 0 700px">C:\\very\\long\\path\\whose\\tail\\must\\stay\\visible</span>';
+      revealBreadcrumbTail(bc);
+      await sleep(50);
+      assert(bc.scrollLeft > 0, "Breadcrumb did not scroll toward the trailing path");
+      bc.style.width = oldWidth;
+      bc.innerHTML = oldHtml;
+      renderBreadcrumb(getTab().path);
+    });
+
+    await test("[search] Folder and global scopes can be switched", async () => {
+      assert(typeof toggleSearchScope === 'function', "toggleSearchScope not available");
+      const scopeButton = $("#btn-search-scope");
+      assert(scopeButton, "Search scope button not found");
+      const original = _searchScope;
+      const originalStored = localStorage.getItem('rhfiles-search-scope');
+      _searchScope = 'folder';
+      updateSearchScopeUI();
+      assert(scopeButton.classList.contains('active'), "Folder search scope is not indicated");
+      toggleSearchScope();
+      assertEqual(_searchScope, 'global', "Search scope did not switch to global");
+      _searchScope = original;
+      if (originalStored === null) localStorage.removeItem('rhfiles-search-scope');
+      else localStorage.setItem('rhfiles-search-scope', originalStored);
+      updateSearchScopeUI();
+    });
+
     // ================================================================
     // SECTION 3: TAB MANAGEMENT
     // ================================================================
@@ -332,13 +364,68 @@
       const tab = getTab();
       const tabEl = $(".tab.active .tab-label");
       assert(tabEl, "Active tab label element not found");
-      const expected = tab.path === "home://" ? "Home" : tab.path.replace(/\\\\/g, "\\");
+      const expected = tabName(tab.path);
       assertEqual(tabEl.textContent, expected, "Tab label text");
+    });
+
+    await test("[tabs] Long tab labels reveal their trailing path", async () => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-10000px;top:0;width:90px';
+      const label = document.createElement('span');
+      label.className = 'tab-label';
+      label.style.width = '90px';
+      label.textContent = 'C:\\a-very-long-parent-folder\\another-long-folder\\important-tail';
+      host.appendChild(label);
+      document.body.appendChild(host);
+      revealTabLabelTails(host);
+      await sleep(50);
+      assert(label.scrollWidth > label.clientWidth, "Test label did not overflow");
+      assert(label.scrollLeft >= label.scrollWidth - label.clientWidth - 1, "Tab label was not scrolled to its tail");
+      assert(label.classList.contains('tail-clipped'), "Clipped tab did not receive its tail fade");
+      host.remove();
+    });
+
+    await test("[tabs] Active and inactive tabs have distinct surfaces", async () => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-10000px;top:0;display:flex';
+      host.innerHTML = '<div class="tab"><span class="tab-label">Inactive</span></div><div class="tab active"><span class="tab-label">Active</span></div>';
+      document.body.appendChild(host);
+      const inactive = getComputedStyle(host.children[0]);
+      const active = getComputedStyle(host.children[1]);
+      assert(inactive.backgroundColor !== active.backgroundColor, "Tab surfaces are visually identical");
+      assert(active.boxShadow !== 'none', "Active tab has no visual emphasis");
+      host.remove();
     });
 
     await test("[tabs] Tab new button exists", async () => {
       const newBtn = $(".tab-new");
       assert(newBtn, "New tab button not found");
+    });
+
+    await test("[tabs] Switching tab cancels pending hover preview", async () => {
+      if (G.tabs.length < 2) {
+        addTab();
+        await sleep(300);
+      }
+      const target = G.tabs.find(tab => tab.id !== G.activeTab);
+      assert(target, "No inactive tab available");
+      const targetEl = document.querySelector(`.tab[data-tab-id="${target.id}"]`);
+      assert(targetEl, "Inactive tab element not found");
+      targetEl.dispatchEvent(new MouseEvent("mouseenter"));
+      assert(_previewTimer !== null, "Hover preview timer was not scheduled");
+      switchTab(target.id);
+      await sleep(700);
+      assert(_previewTimer === null, "Hover preview timer was not cleared");
+      assert(!_previewEl || !_previewEl.classList.contains("visible"), "Hover preview opened after tab switch");
+    });
+
+    await test("[tabs] Active tab does not open hover preview", async () => {
+      const activeEl = $(".tab.active");
+      assert(activeEl, "Active tab element not found");
+      activeEl.dispatchEvent(new MouseEvent("mouseenter"));
+      await sleep(700);
+      assert(_previewTimer === null, "Active tab scheduled a hover preview");
+      assert(!_previewEl || !_previewEl.classList.contains("visible"), "Active tab opened a hover preview");
     });
 
     // ================================================================
@@ -482,6 +569,29 @@
       assert(activeBtn, "Cards layout button should be active");
     });
 
+    await test("[layout] Columns select files on one click and open on double-click", async () => {
+      const host = document.createElement('div');
+      host.id = 'column-test-host';
+      document.body.appendChild(host);
+      const entry = {name:'sample.json', path:'C:\\sample.json', is_dir:false, extension:'json', size:2, size_display:'2 B', modified_ts:0, created_ts:0, modified:'', created:''};
+      const pane = {path:'C:\\', entries:[entry], sel:new Set(), lastIdx:-1};
+      const savedPreview = G.previewOn;
+      const originalOpen = openFileHandler;
+      let opened = 0;
+      G.previewOn = false;
+      openFileHandler = async () => { opened++; };
+      renderColumnLayout(host, pane.entries, pane.sel, false, pane, host.id, pane.path);
+      await sleep(20);
+      const item = host.querySelector('.column-item');
+      simulateClick(item);
+      assertEqual(opened, 0, "Column single-click opened a file");
+      item.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));
+      assertEqual(opened, 1, "Column double-click did not open the file");
+      openFileHandler = originalOpen;
+      G.previewOn = savedPreview;
+      host.remove();
+    });
+
     await test("[layout] Switch back to details layout", async () => {
       if (typeof setLayout !== 'function') { log("SKIP: setLayout not available"); return; }
       setLayout('details');
@@ -570,6 +680,11 @@
 
     await test("[preview] Toggle preview pane on", async () => {
       if (typeof togglePreviewPane !== 'function') { log("SKIP: togglePreviewPane not available"); return; }
+      window.__rhfilesTestPreviewState = G.previewOn;
+      window.__rhfilesTestSettings = JSON.parse(JSON.stringify(G.settings));
+      window.__rhfilesTestSettingsStorage = localStorage.getItem('rhfiles-settings');
+      assert(typeof G.settings.previewDefaultOpen === 'boolean', "Preview startup setting is missing");
+      setPreviewPaneVisible(false, false);
       togglePreviewPane();
       await sleep(300);
       assertEqual(G.previewOn, true, "Preview should be on");
@@ -582,11 +697,57 @@
       assert(previewContent, "#preview-content not found");
     });
 
+    await test("[preview] Syntax colors cover code, data, config, markup, and logs", async () => {
+      assert(typeof syntaxHighlight === 'function', "syntaxHighlight not available");
+      assertIncludes(syntaxHighlight('const answer = "42"; // note', 'js', 'sample.js'), 'tok-keyword', "JavaScript keyword color missing");
+      assertIncludes(syntaxHighlight('{"answer": 42, "ready": true}', 'json', 'sample.json'), 'tok-property', "JSON property color missing");
+      assertIncludes(syntaxHighlight('<section class="card">Hello</section>', 'html', 'sample.html'), 'tok-tag', "Markup tag color missing");
+      assertIncludes(syntaxHighlight('server.port = 8080', 'toml', 'settings.toml'), 'tok-property', "Config key color missing");
+      assertIncludes(syntaxHighlight('2026-09-06 ERROR request failed', 'log', 'app.log'), 'tok-error', "Log severity color missing");
+    });
+
+    await test("[preview] Highlighted text stays escaped and shows its language", async () => {
+      const safe = syntaxHighlight('<script>alert("x")</script>', 'txt', 'note.txt');
+      assertNotIncludes(safe, '<script>', "Plain-text preview allowed markup injection");
+      assertIncludes(safe, '&lt;script&gt;', "Plain-text preview did not escape markup");
+      const rendered = renderTextPreview('let value = true;', 'ts', 'sample.ts');
+      assertIncludes(rendered, 'TypeScript', "Language badge missing");
+      assertIncludes(rendered, 'preview-code-shell', "Code preview shell missing");
+    });
+
+    await test("[preview] Very long text is bounded before syntax rendering", async () => {
+      const prepared = truncatePreviewText(('const value = 1;\n').repeat(10000));
+      assert(prepared.truncated, "Long preview was not marked as truncated");
+      assert(prepared.text.length <= TEXT_PREVIEW_MAX_CHARS, "Long preview exceeded the character cap");
+      assert(prepared.text.split('\n').length <= TEXT_PREVIEW_MAX_LINES + 1, "Long preview exceeded the line cap");
+      assertIncludes(renderTextPreview(('x\n').repeat(50000), 'txt', 'large.txt'), t('preview.truncated'), "Truncation notice is missing");
+    });
+
+    await test("[preview] Image preview exposes fit, fill, width, and 1:1 modes", async () => {
+      const rendered = renderImagePreview('AA==', 'sample.png');
+      for (const mode of ['contain', 'cover', 'width', 'actual']) {
+        assertIncludes(rendered, `data-image-mode="${mode}"`, `Image mode ${mode} is missing`);
+      }
+    });
+
+    await test("[preview] Settings exposes the default-open option", async () => {
+      openSettings();
+      const checkbox = $("#settings-preview-default");
+      assert(checkbox, "Preview default-open setting is missing");
+      assertEqual(checkbox.checked, G.settings.previewDefaultOpen !== false, "Preview setting state is out of sync");
+      assert($("#settings-global-search"), "Global-search enable setting is missing");
+      closeSettings();
+    });
+
     await test("[preview] Toggle preview pane off", async () => {
       if (typeof togglePreviewPane !== 'function') { log("SKIP: togglePreviewPane not available"); return; }
       togglePreviewPane();
       await sleep(300);
       assertEqual(G.previewOn, false, "Preview should be off");
+      G.settings = window.__rhfilesTestSettings;
+      if (window.__rhfilesTestSettingsStorage === null) localStorage.removeItem('rhfiles-settings');
+      else localStorage.setItem('rhfiles-settings', window.__rhfilesTestSettingsStorage);
+      setPreviewPaneVisible(!!window.__rhfilesTestPreviewState, false);
     });
 
     // ================================================================
@@ -654,6 +815,92 @@
       const items = $$(".context-menu .ctx-item");
       assert(items.length > 0, "Context menu has no items");
       removeContextMenu();
+    });
+
+    await test("[ctxmenu] Search input uses a localized app context menu", async () => {
+      removeContextMenu();
+      simulateContextMenu($("#filter-input"));
+      await sleep(50);
+      const menu = $(".context-menu");
+      assert(menu, "Search input did not get an app context menu");
+      assertIncludes(menu.textContent, t('search.scopeGlobal'), "Search scope action is missing");
+      removeContextMenu();
+    });
+
+    await test("[ctxmenu] Tab menu includes close, copy path, CMD, and PowerShell", async () => {
+      removeContextMenu();
+      simulateContextMenu($("#tab-bar .tab"));
+      await sleep(50);
+      const menu = $(".context-menu");
+      assert(menu, "Tab context menu did not appear");
+      assertIncludes(menu.textContent, t('tab.close'), "Close-tab action is missing");
+      assertIncludes(menu.textContent, t('ctx.copyPath'), "Copy-path action is missing");
+      assertIncludes(menu.textContent, t('ctx.openCmd'), "CMD action is missing");
+      assertIncludes(menu.textContent, t('ctx.openPowerShell'), "PowerShell action is missing");
+      removeContextMenu();
+    });
+
+    await test("[delete] Deletion requires an explicit second confirmation", async () => {
+      const pending = showConfirmDialog({message: 'test'});
+      const overlay = $(".app-confirm-overlay");
+      assert(overlay, "Delete confirmation overlay did not appear");
+      simulateClick(overlay.querySelector('.dialog-btn:not(.danger)'));
+      assertEqual(await pending, false, "Cancel should stop deletion");
+    });
+
+    await test("[ctxmenu] Submenu labels are localized without duplicate arrows", async () => {
+      assert(!/[\u25b6\u25b8>]$/.test(t('ctx.openWith').trim()), "Open-with translation includes a hard-coded submenu arrow");
+      assert(!/[\u25b6\u25b8>]$/.test(t('ctx.share').trim()), "Share translation includes a hard-coded submenu arrow");
+      assert(!/[\u25b6\u25b8>]$/.test(t('ctx.compress').trim()), "Compress translation includes a hard-coded submenu arrow");
+    });
+
+    await test("[ctxmenu] Network menu opens with a loading state", async () => {
+      showNetworkMenu(
+        { clientX: 16, clientY: 16 },
+        { name: "test-server", path: "\\\\test-server" },
+        [],
+        { loading: true, token: "gui-test-network-menu" },
+      );
+      const menu = $(".context-menu");
+      assert(menu, "Network context menu did not open immediately");
+      assert(menu.textContent.includes(t('ctx.loadingShares')), "Network context menu has no loading state");
+      removeContextMenu();
+    });
+
+    await test("[ctxmenu] Long actions use an indeterminate progress state", async () => {
+      showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
+      assert($("#progress-bar").classList.contains("indeterminate"), "Progress bar is not indeterminate");
+      assertEqual($("#progress-cancel").style.display, "none", "Non-cancellable action still shows Cancel");
+      hideProgress();
+    });
+
+    await test("[ctxmenu] ZIP compression sends the backend sources argument", async () => {
+      const request = makeCompressionRequest(
+        [{ name: "example", path: "C:\\example" }],
+        "C:\\output",
+        "zip",
+      );
+      assertEqual(request.command, "create_archive", "ZIP uses the wrong backend command");
+      assert(Array.isArray(request.args.sources), "ZIP request has no sources argument");
+      assert(request.args.paths === undefined, "ZIP request still uses the invalid paths argument");
+    });
+
+    await test("[permissions] Dialog opens before ACL lookup completes", async () => {
+      const targetPath = getTab().path || "C:\\";
+      const pending = showPermissionsDialog(targetPath);
+      const content = $("#perm-dialog-content");
+      assert(content, "Permission dialog did not open immediately");
+      assert(content.textContent.includes(t('dialog.permLoading')), "Permission dialog did not show a loading state");
+      await pending;
+      const dlg = content.closest("dialog");
+      if (dlg?.open) dlg.close();
+      if (dlg?.isConnected) dlg.remove();
+    });
+
+    await test("[favorites] Address-bar favorite controls exist", async () => {
+      assert($("#btn-favorite-current"), "Left favorite button not found");
+      assert($("#btn-right-favorite"), "Right favorite button not found");
+      assert(typeof toggleCurrentFolderFavorite === 'function', "Favorite toggle function not found");
     });
 
     await test("[ctxmenu] Drive right-click shows context menu", async () => {
@@ -889,6 +1136,42 @@
       assert(typeof bigFileIcon === 'function', "bigFileIcon function not found");
     });
 
+    await test("[icons] Large icon markup respects the requested size", async () => {
+      const oldMode = G.settings.iconMode;
+      G.settings.iconMode = 'builtin';
+      const html = bigFileIcon({ name: 'example.txt', path: 'C:\\example.txt', is_dir: false, extension: 'txt' }, 64);
+      G.settings.iconMode = oldMode;
+      assertIncludes(html, 'large-file-icon', "Large icon wrapper missing");
+      assertIncludes(html, 'width:64px', "Large icon size was not applied");
+      assertNotIncludes(html, 'viewBox="0 0 48 48"', "SVG viewBox was incorrectly enlarged");
+    });
+
+    await test("[icons] Large executable icons use the Windows shell icon", async () => {
+      const oldMode = G.settings.iconMode;
+      G.settings.iconMode = 'builtin';
+      const html = bigFileIcon({ name: 'app.exe', path: 'C:\\Windows\\System32\\notepad.exe', is_dir: false, extension: 'exe' }, 64);
+      G.settings.iconMode = oldMode;
+      assertIncludes(html, 'system-icon-host', "Executable fell back to a generic large icon");
+      assertIncludes(html, 'width:64px', "Windows shell icon did not use the requested size");
+    });
+
+    await test("[icons] Icon and card labels are not line-clipped", async () => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-10000px;top:0;width:600px;height:600px';
+      document.body.appendChild(host);
+      const file = { name: 'a-very-long-file-name-that-needs-several-lines-to-display-completely.txt', path: 'C:\\' + Date.now() + '.txt', is_dir: false, extension: 'txt', size_display: '1 KB', modified: '' };
+      renderIconLayout(host, [file], new Set(), false, { entries: [file], sel: new Set(), lastIdx: -1 }, 'file-list');
+      const iconLabel = host.querySelector('.tile-file-name');
+      assert(iconLabel && iconLabel.textContent === file.name, "Icon label text was truncated");
+      assertEqual(getComputedStyle(iconLabel).maxHeight, 'none', "Icon label still has a height clip");
+      host.innerHTML = '';
+      renderCardLayout(host, [file], new Set(), false, { entries: [file], sel: new Set(), lastIdx: -1 }, 'file-list');
+      const cardLabel = host.querySelector('.card-file-name');
+      assert(cardLabel && cardLabel.textContent === file.name, "Card label text was truncated");
+      assertEqual(getComputedStyle(cardLabel).maxHeight, 'none', "Card label still has a height clip");
+      host.remove();
+    });
+
     await test("[icons] fileTypeLabel function exists", async () => {
       assert(typeof fileTypeLabel === 'function', "fileTypeLabel function not found");
     });
@@ -996,6 +1279,21 @@
       assertIncludes(fmtSize(0), "0", "0 bytes");
     });
 
+    await test("[utils] Display paths preserve UNC roots and use forward slashes", async () => {
+      assertEqual(displayPath('\\\\SERVER-HOME\\Public\\Software'), '//SERVER-HOME/Public/Software', "UNC display path lost its prefix");
+      assertEqual(displayPath('C:\\Users\\Test'), 'C:/Users/Test', "Drive path was not display-normalized");
+    });
+
+    await test("[utils] File dates are fixed-width and language aware", async () => {
+      const oldLang = _lang;
+      const stamp = new Date(2026, 8, 6, 9, 7).getTime();
+      _lang = 'zh';
+      assertEqual(formatFileDate(stamp, ''), '2026\u5e7409\u670806\u65e5 09:07', "Chinese date format is incorrect");
+      _lang = 'en';
+      assertEqual(formatFileDate(stamp, ''), '09/06/2026 09:07', "English date format is incorrect");
+      _lang = oldLang;
+    });
+
     await test("[utils] getTab() returns current tab", async () => {
       const tab = getTab();
       assert(tab !== undefined, "getTab returned undefined");
@@ -1011,6 +1309,15 @@
       assert(typeof normalizeKey === 'function', "normalizeKey not found");
     });
 
+    await test("[i18n] Bundled Chinese translations load in portable builds", async () => {
+      assert(I18N.zh, "Bundled zh translation was not loaded");
+      assertEqual(I18N.zh['settings.title'], '\u8bbe\u7f6e', "Chinese settings translation is unavailable");
+      assertEqual(I18N.zh['ctx.shareWechat'], '\u5fae\u4fe1', "Chinese share-menu translation is unavailable");
+      assertEqual(I18N.zh['template.rustFile'], 'Rust \u6e90\u6587\u4ef6', "New-file templates are not localized");
+      assertEqual(detectDefaultLanguage(['zh-CN']), 'zh', "zh-CN should default to Chinese");
+      assertEqual(detectDefaultLanguage(['en-US']), 'en', "en-US should default to English");
+    });
+
     await test("[keyboard] Shortcut bindings loadable", async () => {
       if (typeof getShortcutBindings !== 'function') { log("SKIP: getShortcutBindings not available"); return; }
       const bindings = getShortcutBindings();
@@ -1021,7 +1328,61 @@
       if (typeof DEFAULT_SHORTCUTS === 'undefined') { log("SKIP: DEFAULT_SHORTCUTS not accessible"); return; }
       assert(DEFAULT_SHORTCUTS['file.copy'], "Missing file.copy shortcut");
       assert(DEFAULT_SHORTCUTS['file.paste'], "Missing file.paste shortcut");
+      assert(DEFAULT_SHORTCUTS['file.toggleFavorite']?.includes('Ctrl+D'), "Missing Ctrl+D favorite shortcut");
       assert(DEFAULT_SHORTCUTS['tab.new'], "Missing tab.new shortcut");
+      assert(DEFAULT_SHORTCUTS['tab.next']?.includes('Ctrl+Tab'), "Missing Ctrl+Tab shortcut");
+      assert(DEFAULT_SHORTCUTS['tab.previous']?.includes('Ctrl+Shift+Tab'), "Missing Ctrl+Shift+Tab shortcut");
+      assert(DEFAULT_SHORTCUTS['typeSearch.next']?.includes('F3'), "Missing configurable F3 search-cycle shortcut");
+      assert(DEFAULT_SHORTCUTS['typeSearch.previous']?.includes('Shift+F3'), "Missing configurable Shift+F3 search-cycle shortcut");
+      assert(typeof ACTION_HANDLERS['typeSearch.next'] === 'function', "Missing next search-match action");
+      assert(typeof ACTION_HANDLERS['typeSearch.previous'] === 'function', "Missing previous search-match action");
+      assert(DEFAULT_SHORTCUTS['search.toggleScope']?.includes('Ctrl+Shift+F'), "Missing global-search toggle shortcut");
+    });
+
+    await test("[keyboard] Repeating a typed initial cycles matches", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSel = tab.sel;
+      const savedLastIdx = tab.lastIdx;
+      const mock = name => ({ name, path: 'C:\\' + name, is_dir: false, extension: 'txt', size: 0, size_display: '0 B', modified: '', created: '' });
+      tab.entries = [mock('alpha.txt'), mock('apple.txt'), mock('beta.txt')];
+      tab.sel = new Set();
+      tab.lastIdx = -1;
+      G._typeSearch.str = 'a';
+      await runTypeSearchSelection('a', 0, false);
+      assertEqual(tab.lastIdx, 0, "First typed match was not selected");
+      await runTypeSearchSelection('a', 1, false);
+      assertEqual(tab.lastIdx, 1, "Typed match did not cycle to the next item");
+      expireTypeSearchInput();
+      assertEqual(G._typeSearch.str, '', "Expired input should start a fresh typed query");
+      assertEqual(G._typeSearch.lastQuery, 'a', "Last typed query should remain available to F3");
+      await cycleTypeSearchSelection(1);
+      assertEqual(tab.lastIdx, 0, "F3-style cycling did not work after the typing timeout");
+      resetTypeSearch();
+      tab.entries = savedEntries;
+      tab.sel = savedSel;
+      tab.lastIdx = savedLastIdx;
+      renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+    });
+
+    await test("[keyboard] Chinese names match full Pinyin, initials, and heteronyms", async () => {
+      const aliases = await call('pinyin_aliases', { names: ['中国人.txt', '重庆'] });
+      assert(aliases[0].includes('zhongguorentxt'), "Full Pinyin alias missing");
+      assert(aliases[0].includes('zgrtxt'), "Pinyin initials alias missing");
+      assert(aliases[1].includes('chongqing'), "Heteronym Pinyin alias missing");
+      assert(typeSearchMatches({ name: '重庆', _pinyinAliases: aliases[1] }, 'cq'), "Pinyin initials do not match type search");
+    });
+
+    await test("[archive] Named-folder extraction path is explicit", async () => {
+      assertEqual(archiveFolderName('photos.zip'), 'photos', "ZIP folder name incorrect");
+      assertEqual(archiveFolderName('backup.tar.gz'), 'backup', "Compound archive folder name incorrect");
+      assertEqual(joinFolderPath('C:\\Temp\\', 'photos'), 'C:\\Temp\\photos', "Extraction destination incorrect");
+      assertIncludes(t('ctx.extractTo', { name: 'photos' }), 'photos', "Named extraction label omits destination folder");
+    });
+
+    await test("[utils] parentFolderPath keeps drive roots intact", async () => {
+      assertEqual(parentFolderPath("C:\\file.txt"), "C:\\", "Drive root parent is malformed");
+      assertEqual(parentFolderPath("C:\\one\\two.txt"), "C:\\one", "Nested parent is malformed");
     });
 
     // ================================================================

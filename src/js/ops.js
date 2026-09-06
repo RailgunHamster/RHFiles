@@ -24,25 +24,35 @@ function setupProgressListener() {
   }
 }
 
-function showProgress(title) {
+function showProgress(title, options = {}) {
+  const { indeterminate = false, cancellable = true } = options;
   document.getElementById("progress-overlay").style.display = "block";
   document.getElementById("progress-title").textContent = title;
-  document.getElementById("progress-bar").style.width = "0%";
-  document.getElementById("progress-percent").textContent = "0%";
+  const bar = document.getElementById("progress-bar");
+  bar.classList.toggle("indeterminate", indeterminate);
+  bar.style.width = indeterminate ? "35%" : "0%";
+  document.getElementById("progress-percent").textContent = indeterminate ? "\u2026" : "0%";
   document.getElementById("progress-speed").textContent = "";
   document.getElementById("progress-bytes").textContent = "";
+  document.getElementById("progress-cancel").style.display = cancellable ? "" : "none";
   currentOperationCancelled = false;
 }
 
 function updateProgress(data) {
-  document.getElementById("progress-bar").style.width = data.percentage + "%";
+  const bar = document.getElementById("progress-bar");
+  bar.classList.remove("indeterminate");
+  bar.style.width = data.percentage + "%";
   document.getElementById("progress-percent").textContent = data.percentage + "%";
-  document.getElementById("progress-speed").textContent = fmtSize(data.speed) + "/s";
-  document.getElementById("progress-bytes").textContent = fmtSize(data.bytesTransferred) + " / " + fmtSize(data.totalBytes);
+  document.getElementById("progress-speed").textContent = data.speed > 0 ? fmtSize(data.speed) + "/s" : "";
+  document.getElementById("progress-bytes").textContent = data.totalBytes > 0
+    ? fmtSize(data.bytesTransferred) + " / " + fmtSize(data.totalBytes)
+    : "";
 }
 
 function hideProgress() {
   document.getElementById("progress-overlay").style.display = "none";
+  document.getElementById("progress-bar").classList.remove("indeterminate");
+  document.getElementById("progress-cancel").style.display = "";
 }
 
 function cancelOperation() {
@@ -51,14 +61,90 @@ function cancelOperation() {
   hideProgress();
 }
 
+function showConfirmDialog(options) {
+  const config = options || {};
+  return new Promise(resolve => {
+    document.querySelector('.app-confirm-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay app-confirm-overlay';
+    overlay.tabIndex = -1;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'dialog-backdrop';
+    const box = document.createElement('div');
+    box.className = 'dialog-box app-confirm-box';
+    box.setAttribute('role', 'alertdialog');
+    box.setAttribute('aria-modal', 'true');
+    const body = document.createElement('div');
+    body.className = 'app-confirm-body';
+    const icon = document.createElement('div');
+    icon.className = 'app-confirm-icon';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M8 3h8l1 3h3v2H4V6h3l1-3zM6.5 9h11l-.7 11H7.2L6.5 9z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 12v5M14 12v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    const copy = document.createElement('div');
+    copy.className = 'app-confirm-copy';
+    const title = document.createElement('div');
+    title.className = 'app-confirm-title';
+    title.textContent = config.title || t('confirm.deleteTitle');
+    const message = document.createElement('div');
+    message.className = 'app-confirm-message';
+    message.textContent = config.message || '';
+    const detail = document.createElement('div');
+    detail.className = 'app-confirm-detail';
+    detail.textContent = config.detail || '';
+    copy.append(title, message);
+    if (detail.textContent) copy.appendChild(detail);
+    body.append(icon, copy);
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+    const cancel = document.createElement('button');
+    cancel.className = 'dialog-btn';
+    cancel.textContent = t('btn.cancel');
+    const confirm = document.createElement('button');
+    confirm.className = 'dialog-btn danger';
+    confirm.textContent = config.confirmLabel || t('btn.delete');
+    actions.append(cancel, confirm);
+    box.append(body, actions);
+    overlay.append(backdrop, box);
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      resolve(value);
+    };
+    cancel.addEventListener('click', () => finish(false));
+    confirm.addEventListener('click', () => finish(true));
+    backdrop.addEventListener('click', () => finish(false));
+    overlay.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+    });
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => { overlay.focus(); cancel.focus(); });
+  });
+}
+
 // --- file ops ---
 async function deleteSelected(isRight) {
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
+  const message = sel.length === 1
+    ? t('confirm.deleteItem', {name: sel[0].name})
+    : t('confirm.deleteItems', {count: sel.length});
+  const confirmed = await showConfirmDialog({
+    title: t('confirm.deleteTitle'),
+    message,
+    detail: t('confirm.recycleBinHint'),
+    confirmLabel: t('btn.delete'),
+  });
+  if (!confirmed) return;
+  showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
   try {
     await call("delete_files", { paths: sel.map(f => f.path) });
     await refresh();
-  } catch (e) { alert(t('alert.deleteFailed', {error: e})); }
+  } catch (e) {
+    alert(t('alert.deleteFailed', {error: e}));
+  } finally {
+    hideProgress();
+  }
 }
 
 function startInlineRename(rowEl, file, isRight, onCancel) {
@@ -216,17 +302,113 @@ async function paste(isRight) {
 }
 
 async function openFileHandler(path) {
-  try { await call("open_file", { path }); } catch (e) {}
-}
-
-async function quicklookSelected(isRight) {
-  const sel = getSelectedPaths(isRight);
-  if (sel.length === 1) {
-    try { await call("quicklook", { path: sel[0].path }); } catch (e) {}
+  try {
+    await call("open_file", { path });
+  } catch (e) {
+    alert(t('alert.openFileFailed', { error: e }));
   }
 }
 
+async function quicklookSelected(isRight) {
+  const targetIsRight = typeof isRight === 'boolean' ? isRight : G.lastActivePane === 'right';
+  const sel = getSelectedPaths(targetIsRight);
+  if (sel.length === 1) {
+    toggleQuickPreview(targetIsRight);
+  }
+}
+
+function archiveFolderName(name) {
+  return String(name || 'archive').replace(/\.(tar\.(gz|bz2|xz)|zip|rar|7z|tar|gz|bz2|xz)$/i, '') || 'archive';
+}
+
+function joinFolderPath(parent, child) {
+  return String(parent || '').replace(/[\\/]+$/, '') + '\\' + child;
+}
+
+async function extractArchiveTo(file, destination) {
+  if (!file) return;
+  showProgress(t('status.extracting', { name: file.name }));
+  try {
+    const ext = (file.extension || '').toLowerCase();
+    if (ext === 'zip') {
+      await call('extract_archive', { path: file.path, dest: destination, entryPath: null });
+    } else {
+      await call('extract_7z', { archive: file.path, dest: destination });
+    }
+    await refresh();
+  } catch (e) {
+    if (!/cancel/i.test(String(e))) alert(t('alert.extractFailed', { error: e }));
+  } finally {
+    hideProgress();
+  }
+}
+
+function makeCompressionRequest(files, currentPath, tool) {
+  const sources = files.map(file => file.path);
+  const baseName = files.length === 1 ? files[0].name : 'archive';
+  const extension = tool === 'winrar' ? 'rar' : tool === '7zip' ? '7z' : 'zip';
+  const destination = joinFolderPath(currentPath, `${baseName}.${extension}`);
+  return {
+    baseName,
+    command: tool === 'zip' ? 'create_archive' : 'compress_with',
+    args: tool === 'zip'
+      ? { sources, dest: destination }
+      : { sources, dest: destination, tool },
+  };
+}
+
+async function compressSelection(files, currentPath, tool) {
+  if (!files.length) return;
+  const request = makeCompressionRequest(files, currentPath, tool);
+  showProgress(t('status.compressing', { name: request.baseName }), { indeterminate: true, cancellable: false });
+  try {
+    await call(request.command, request.args);
+    await refresh();
+  } catch (e) {
+    alert(t('alert.compressFailed', { error: e }));
+  } finally {
+    hideProgress();
+  }
+}
+
+async function openWithProgramFromMenu(path, program, displayName) {
+  showNotice(t('status.openingProgram', { name: displayName }));
+  try {
+    await call('open_with_program', { path, program });
+  } catch (e) {
+    alert(t('alert.openProgramFailed', { name: displayName, error: e }));
+  }
+}
+
+async function copyPathFromMenu(path) {
+  try {
+    await call('copy_file_path', { path });
+    showNotice(t('notice.pathCopied'));
+  } catch (e) {
+    alert(t('alert.copyPathFailed', { error: e }));
+  }
+}
+
+async function runContextCommand(command, args, label, options = {}) {
+  const { refreshAfter = false, successMessage = '' } = options;
+  showNotice(t('status.processingAction', { name: label }));
+  try {
+    await call(command, args);
+    if (refreshAfter) await refresh();
+    if (successMessage) showNotice(successMessage);
+  } catch (e) {
+    alert(t('alert.actionFailed', { name: label, error: e }));
+  }
+}
+
+function openTerminalFromMenu(path) {
+  const terminal = G.settings.terminal || 'wt';
+  const displayName = terminal === 'wt' ? 'Windows Terminal' : terminal === 'powershell' ? 'PowerShell' : 'CMD';
+  return runContextCommand('open_terminal', { path, terminal }, displayName);
+}
+
 async function showPropertiesDialog(path) {
+  if (!path) return;
   try { await call("show_properties", { path }); } catch (e) {
     const info = await call("get_file_info", { path });
     if (info) showCustomProperties(info);
@@ -251,8 +433,8 @@ function showCustomProperties(info) {
   }
 
   html += `
-    <div class="props-row"><span class="props-label">${t('properties.modified')}</span><span class="props-value">${esc(info.modified)}</span></div>
-    <div class="props-row"><span class="props-label">${t('properties.created')}</span><span class="props-value">${esc(info.created)}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.modified')}</span><span class="props-value">${esc(formatFileDate(info.modified_ts, info.modified))}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.created')}</span><span class="props-value">${esc(formatFileDate(info.created_ts, info.created))}</span></div>
     <div class="props-row"><span class="props-label">${t('properties.readonly')}</span><span class="props-value">${info.readonly ? t('properties.yes') : t('properties.no')}</span></div>`;
 
   if (isShortcut) {
@@ -356,8 +538,16 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
 }
 
 function renderMenuItems(parent, items, x, y) {
+  const normalized = [];
+  items.filter(item => !item.hidden).forEach(item => {
+    const isSep = item === "-" || item.label === "-";
+    if (isSep && (normalized.length === 0 || normalized[normalized.length - 1] === "-" || normalized[normalized.length - 1].label === "-")) return;
+    normalized.push(item);
+  });
+  while (normalized.length && (normalized[normalized.length - 1] === "-" || normalized[normalized.length - 1].label === "-")) normalized.pop();
+
   let lastWasSep = false;
-  items.forEach(item => {
+  normalized.forEach(item => {
     if (item === "-" || item.label === "-") {
       if (lastWasSep) return;
       lastWasSep = true;
@@ -376,10 +566,17 @@ function renderMenuItems(parent, items, x, y) {
         const subRect = sub.getBoundingClientRect();
         sub.style.top = "0";
         sub.style.left = "100%";
-        if (rect.right + 200 > window.innerWidth) {
+        sub.style.right = "auto";
+        if (rect.right + subRect.width > window.innerWidth) {
           sub.style.left = "auto";
           sub.style.right = "100%";
         }
+        requestAnimationFrame(() => {
+          const visibleRect = sub.getBoundingClientRect();
+          if (visibleRect.bottom > window.innerHeight - 4) {
+            sub.style.top = Math.min(0, window.innerHeight - 4 - visibleRect.bottom) + "px";
+          }
+        });
       });
       mi.addEventListener("click", e => {
         if (e.target.closest('.ctx-submenu')) return;
@@ -451,48 +648,52 @@ function showContextMenu(x, y, isRight) {
   const isFont = ["ttf","otf","fon"].includes(ext);
   const isCert = ["cer","crt","p7b","pfx","p12"].includes(ext);
   const currentPath = isRight ? G.rp.path : getTab().path;
+  const extractFolder = singleFile ? archiveFolderName(singleFile.name) : '';
+  const openTarget = singleSelection ? sel[0].path : currentPath;
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
   menu.style.cssText = `left:${x}px;top:${y}px;z-index:9999;`;
 
   const openWithSubmenu = [
-    { label: "VS Code", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "vscode" }) },
-    { label: "Visual Studio", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "visual_studio" }) },
+    { label: "VS Code", action: () => openWithProgramFromMenu(openTarget, "vscode", "VS Code") },
+    { label: "Visual Studio", action: () => openWithProgramFromMenu(openTarget, "visual_studio", "Visual Studio") },
     { label: "-" },
-    { label: "CMD", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "cmd" }) },
-    { label: "PowerShell", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "powershell" }) },
-    { label: "Git Bash", action: () => call("open_with_program", { path: singleSelection ? sel[0].path : currentPath, program: "git_bash" }) },
+    { label: "CMD", action: () => openWithProgramFromMenu(openTarget, "cmd", "CMD") },
+    { label: "PowerShell", action: () => openWithProgramFromMenu(openTarget, "powershell", "PowerShell") },
+    { label: "Git Bash", action: () => openWithProgramFromMenu(openTarget, "git_bash", "Git Bash") },
   ];
-  if (isMedia) openWithSubmenu.push({ label: "VLC", action: () => call("open_with_program", { path: sel[0].path, program: "vlc" }) });
-  if (isMedia) openWithSubmenu.push({ label: "PotPlayer", action: () => call("open_with_program", { path: sel[0].path, program: "potplayer" }) });
-  if (isDir) openWithSubmenu.push({ label: "VLC (folder)", action: () => call("open_with_program", { path: sel[0].path, program: "vlc_folder" }) });
+  if (isMedia) openWithSubmenu.push({ label: "VLC", action: () => openWithProgramFromMenu(sel[0].path, "vlc", "VLC") });
+  if (isMedia) openWithSubmenu.push({ label: "PotPlayer", action: () => openWithProgramFromMenu(sel[0].path, "potplayer", "PotPlayer") });
+  if (isDir) openWithSubmenu.push({ label: t('ctx.playFolderWithVlc'), action: () => openWithProgramFromMenu(sel[0].path, "vlc_folder", "VLC") });
   if (isMedia || isDir) openWithSubmenu.push({ label: "-" });
-  openWithSubmenu.push({ label: t('ctx.openWithDialog'), action: () => call("show_open_with_dialog", { path: singleSelection ? sel[0].path : currentPath }) });
-  if (isDir) {
-    openWithSubmenu.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initial_path: sel[0].path }) });
-    openWithSubmenu.push({ label: t('ctx.newTab'), action: () => addTab(sel[0].path) });
-  }
+  openWithSubmenu.push({ label: t('ctx.openWithDialog'), action: () => runContextCommand("show_open_with_dialog", { path: openTarget }, t('ctx.openWithDialog')) });
+  if (isDir) openWithSubmenu.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initial_path: sel[0].path }) });
 
   const items = [
     { label: t('ctx.open'), shortcut:"Enter", action: () => { if (singleSelection) { if (sel[0].is_dir) { if (isRight) rpNavigateTo(sel[0].path); else navigateTo(sel[0].path); } else openFileHandler(sel[0].path); } }, disabled: !singleSelection },
+    { label: t('ctx.preview'), shortcut:"Space", action: () => previewSelected(isRight), disabled: !singleSelection },
+    { label: t('ctx.newTab'), action: () => addTab(singleDir.path), hidden: !singleDir },
     { label: t('ctx.openWith'), submenu: openWithSubmenu, disabled: !singleSelection },
+    { label: isFavoriteFolder(singleDir?.path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(singleDir.path, singleDir.name), hidden: !singleDir },
     { label: "-", action: null },
     { label: t('ctx.cut'), shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
     { label: t('ctx.copy'), shortcut:"Ctrl+C", action: () => copySelected(isRight), disabled: !hasSelection },
     { label: t('ctx.paste'), shortcut:"Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
     { label: "-", action: null },
     { label: t('ctx.rename'), shortcut:"F2", action: () => renamePrompt(isRight), disabled: !singleSelection },
+    { label: t('ctx.batchRename'), action: () => openBatchRename(isRight), hidden: sel.length < 2 },
     { label: t('ctx.delete'), shortcut:"Del", action: () => deleteSelected(isRight), disabled: !hasSelection },
+    { label: t('ctx.addTag'), action: () => openTagDialog(isRight), disabled: !hasSelection },
     { label: "-", action: null },
-    { label: t('ctx.copyPath'), shortcut:"Ctrl+Shift+C", action: () => { if (singleSelection) call("copy_file_path", { path: sel[0].path }); } , disabled: !singleSelection },
+    { label: t('ctx.copyPath'), shortcut:"Ctrl+Shift+C", action: () => { if (singleSelection) copyPathFromMenu(sel[0].path); }, disabled: !singleSelection },
     { label: t('search.openLocation'), action: () => {
         if (singleSelection) {
             document.getElementById("filter-input").value = '';
             G.searchActive = false;
             G.searchQuery = '';
             const f = sel[0];
-            const parent = f.path.replace(/\\[^\\]+$/, '');
+            const parent = parentFolderPath(f.path);
             navigateTo(parent).then(() => {
                 const tab = getTab();
                 const idx = tab.entries.findIndex(e => e.path === f.path);
@@ -505,40 +706,38 @@ function showContextMenu(x, y, isRight) {
         }
     }, hidden: !G.searchActive || !singleSelection },
     { label: t('ctx.share'), submenu: [
-      { label: "QQ", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "qq" }); } },
-      { label: "\u5FAE\u4FE1", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "wechat" }); } },
-      { label: "\u98DE\u4E66", action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "feishu" }); } },
+      { label: t('ctx.shareQQ'), action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "qq" }, t('ctx.shareQQ')); } },
+      { label: t('ctx.shareWechat'), action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "wechat" }, t('ctx.shareWechat')); } },
+      { label: t('ctx.shareFeishu'), action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "feishu" }, t('ctx.shareFeishu')); } },
       { label: "-" },
-      { label: t('ctx.windowsShare'), action: () => { if (singleSelection) call("share_file", { path: sel[0].path, target: "windows" }); } },
+      { label: t('ctx.windowsShare'), action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "windows" }, t('ctx.windowsShare')); } },
     ], disabled: !singleSelection },
     { label: t('ctx.compress'), submenu: [
-      { label: "ZIP", action: async () => { const paths = sel.map(f => f.path); try { await call("create_archive", { paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
-      { label: "7-Zip (.7z)", action: async () => { const paths = sel.map(f => f.path); try { await call("compress_with", { sources: paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".7z", tool: "7zip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
-      { label: "Bandizip", action: async () => { const paths = sel.map(f => f.path); try { await call("compress_with", { sources: paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".zip", tool: "bandizip" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
-      { label: "WinRAR (.rar)", action: async () => { const paths = sel.map(f => f.path); try { await call("compress_with", { sources: paths, dest: currentPath + "\\" + (singleSelection ? sel[0].name : "archive") + ".rar", tool: "winrar" }); await refresh(); } catch(e) { alert(t('alert.compressFailed')); } } },
+      { label: "ZIP", action: () => compressSelection(sel, currentPath, "zip") },
+      { label: "7-Zip (.7z)", action: () => compressSelection(sel, currentPath, "7zip") },
+      { label: "Bandizip", action: () => compressSelection(sel, currentPath, "bandizip") },
+      { label: "WinRAR (.rar)", action: () => compressSelection(sel, currentPath, "winrar") },
     ], disabled: !hasSelection },
     { label: "-", action: null },
     { label: t('ctx.newFile'), shortcut:"Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
     { label: t('ctx.newFolder'), shortcut:"F7", action: () => newFolder(isRight) },
     { label: "-", action: null, hidden: !singleSelection },
-    { label: t('ctx.setWallpaper'), action: () => { call("set_wallpaper", { path: sel[0].path }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
-    { label: t('ctx.rotateLeft'), action: () => { call("rotate_image", { path: sel[0].path, degrees: -90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
-    { label: t('ctx.rotateRight'), action: () => { call("rotate_image", { path: sel[0].path, degrees: 90 }); }, disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
+    { label: t('ctx.setWallpaper'), action: () => runContextCommand("set_wallpaper", { path: sel[0].path }, t('ctx.setWallpaper')), disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
+    { label: t('ctx.rotateLeft'), action: () => runContextCommand("rotate_image", { path: sel[0].path, degrees: -90 }, t('ctx.rotateLeft'), { refreshAfter: true }), disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
+    { label: t('ctx.rotateRight'), action: () => runContextCommand("rotate_image", { path: sel[0].path, degrees: 90 }, t('ctx.rotateRight'), { refreshAfter: true }), disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: "-", action: null, hidden: !singleFile || !isImage },
-    { label: t('ctx.extractHere'), action: async () => { const ext2 = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext2 === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: currentPath }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: currentPath, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
-    { label: t('ctx.extractTo'), action: async () => { const sub = sel[0].name.replace(/\.[^.]+$/, ""); const ext2 = (singleFile ? singleFile.extension : "").toLowerCase(); if (ext2 === "7z") { try { await call("extract_7z", { archive: sel[0].path, dest: currentPath + "\\" + sub }); await refresh(); } catch(e) { alert(t('alert.extractFailed')); } } else { call("extract_archive", { path: sel[0].path, dest: currentPath + "\\" + sub, entryPath: null }); refresh(); } }, disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: t('ctx.extractHere'), action: () => extractArchiveTo(singleFile, currentPath), disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
+    { label: t('ctx.extractTo', {name: extractFolder}), action: () => extractArchiveTo(singleFile, joinFolderPath(currentPath, extractFolder)), disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
     { label: "-", action: null, hidden: !singleFile || !isArchive },
-    { label: t('ctx.runAsAdmin'), action: () => { call("run_as_admin", { path: sel[0].path }); }, disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
-    { label: t('ctx.installCert'), action: async () => { try { await call("install_certificate", { path: sel[0].path }); showNotice(t('notice.certInstalled')); } catch(e) { alert(t('alert.installCertFailed')); } }, disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
-    { label: t('ctx.installFont'), action: () => { call("install_font", { path: sel[0].path }); }, disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },
+    { label: t('ctx.runAsAdmin'), action: () => runContextCommand("run_as_admin", { path: sel[0].path }, t('ctx.runAsAdmin')), disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
+    { label: t('ctx.installCert'), action: () => runContextCommand("install_certificate", { path: sel[0].path }, t('ctx.installCert'), { successMessage: t('notice.certInstalled') }), disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
+    { label: t('ctx.installFont'), action: () => runContextCommand("install_font", { path: sel[0].path }, t('ctx.installFont'), { successMessage: t('notice.fontInstalled') }), disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },
     { label: "-", action: null, hidden: !singleSelection },
-    { label: t('ctx.properties'), shortcut:"Alt+Enter", _flash: true, action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
+    { label: t('ctx.properties'), shortcut:"Alt+Enter", action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
     { label: t('ctx.permissions'), action: () => { if (singleSelection) showPermissionsDialog(sel[0].path); }, disabled: !singleSelection },
   ];
 
-  const visibleItems = items.filter(it => !it.hidden);
-
-  renderMenuItems(menu, visibleItems, x, y);
+  renderMenuItems(menu, items, x, y);
 
   document.body.appendChild(menu);
   _ctxShow(menu);
@@ -551,11 +750,8 @@ function showContextMenu(x, y, isRight) {
       e.preventDefault();
       const s = getSelectedPaths(ctxMeta.isRight);
       if (s.length) {
-        const isR = ctxMeta.isRight;
-        const lid = isR ? "right-file-list" : "file-list";
-        const selEl = document.querySelector(`#${lid} .file-row.selected`) || document.getElementById(lid);
-        if (selEl) { const r = selEl.getBoundingClientRect(); flashAt(r.left + r.width / 2, r.top + r.height / 2); }
-        setTimeout(() => { removeContextMenu(); showPropertiesDialog(s[0].path); }, 80);
+        removeContextMenu();
+        showPropertiesDialog(s[0].path);
       }
       return;
     }
@@ -608,6 +804,174 @@ function _ctxShow(menu) {
   contextMenu = menu;
   document.addEventListener("pointerdown", _ctxClosePtr, true);
   window.addEventListener("blur", _ctxCloseBlur);
+}
+
+function showMenuAt(x, y, items, className) {
+  removeContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu' + (className ? ' ' + className : '');
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  menu.style.zIndex = '9999';
+  renderMenuItems(menu, items, x, y);
+  document.body.appendChild(menu);
+  _ctxShow(menu);
+  menu.tabIndex = -1;
+  requestAnimationFrame(() => { clampMenuPosition(menu, x, y); menu.focus(); });
+  return menu;
+}
+
+function showTabContextMenu(x, y, tabId) {
+  const tab = getTab(tabId);
+  if (!tab) return;
+  const index = G.tabs.findIndex(item => item.id === tabId);
+  const folderPath = tab.path;
+  showMenuAt(x, y, [
+    { label: t('tab.close'), shortcut: 'Ctrl+W', action: () => closeTab(tabId), disabled: G.tabs.length <= 1 },
+    { label: t('tab.closeOthers'), action: () => closeOtherTabs(tabId), disabled: G.tabs.length <= 1 },
+    { label: t('tab.closeRight'), action: () => closeTabsToRight(tabId), disabled: index < 0 || index === G.tabs.length - 1 },
+    { label: '-' },
+    { label: t('ctx.copyPath'), action: () => copyPathFromMenu(folderPath), disabled: folderPath === 'home://' },
+    { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'cmd'}, 'CMD'), disabled: folderPath === 'home://' },
+    { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'powershell'}, 'PowerShell'), disabled: folderPath === 'home://' },
+    { label: '-' },
+    { label: t('cmd.refresh'), shortcut: 'F5', action: () => { if (G.activeTab !== tabId) switchTab(tabId); refresh(); } },
+  ], 'tab-context-menu');
+}
+
+async function writeTextClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(String(text || ''));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function replaceInputSelection(input, text) {
+  const start = input.selectionStart == null ? input.value.length : input.selectionStart;
+  const end = input.selectionEnd == null ? start : input.selectionEnd;
+  input.setRangeText(text, start, end, 'end');
+  input.dispatchEvent(new Event('input', {bubbles: true}));
+}
+
+function showInputContextMenu(x, y, input, options) {
+  const selected = input.value.slice(input.selectionStart || 0, input.selectionEnd || 0);
+  const editable = !input.readOnly && !input.disabled;
+  const items = [
+    { label: t('ctx.cut'), shortcut: 'Ctrl+X', disabled: !editable || !selected, action: async () => { if (await writeTextClipboard(selected)) replaceInputSelection(input, ''); } },
+    { label: t('ctx.copy'), shortcut: 'Ctrl+C', disabled: !selected, action: () => writeTextClipboard(selected) },
+    { label: t('ctx.paste'), shortcut: 'Ctrl+V', disabled: !editable, action: async () => { try { replaceInputSelection(input, await navigator.clipboard.readText()); } catch (e) {} } },
+    { label: t('ctx.selectAll'), shortcut: 'Ctrl+A', disabled: !input.value, action: () => { input.focus(); input.select(); } },
+    { label: t('search.clear'), disabled: !editable || !input.value, action: () => { input.value = ''; input.dispatchEvent(new Event('input', {bubbles: true})); } },
+  ];
+  if (options && options.search) {
+    const folderName = getSearchFolderPath()?.split('\\').filter(Boolean).pop() || t('nav.home');
+    items.push({label: '-'});
+    items.push({ label: (_searchScope === 'folder' ? '\u2713 ' : '') + t('search.scopeFolder', {folder: folderName}), action: () => setSearchScope('folder') });
+    items.push({ label: (_searchScope === 'global' ? '\u2713 ' : '') + t('search.scopeGlobal'), shortcut: 'Ctrl+Shift+F', disabled: G.settings.globalSearchEnabled === false, action: () => setSearchScope('global') });
+  }
+  showMenuAt(x, y, items, 'input-context-menu');
+}
+
+function showPathContextMenu(x, y, path, isDir, isRight) {
+  if (!path || path === 'home://') {
+    showMenuAt(x, y, [
+      { label: t('cmd.refresh'), shortcut: 'F5', action: refresh },
+      { label: t('cmd.newTab'), shortcut: 'Ctrl+T', action: () => addTab('home://') },
+      { label: t('cmd.settings'), shortcut: 'Ctrl+,', action: openSettings },
+    ]);
+    return;
+  }
+  const terminalPath = isDir ? path : parentFolderPath(path);
+  const openAction = () => {
+    if (isDir) { if (isRight) rpNavigateTo(path); else navigateTo(path); }
+    else openFileHandler(path);
+  };
+  const items = [
+    { label: t('ctx.open'), action: openAction },
+    { label: t('ctx.newTab'), action: () => addTab(path), hidden: !isDir },
+    { label: '-' },
+    { label: t('ctx.copyPath'), action: () => copyPathFromMenu(path) },
+    { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'cmd'}, 'CMD') },
+    { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'powershell'}, 'PowerShell') },
+    { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), hidden: !isDir, action: () => toggleFavoriteFolder(path, favoriteDisplayName(path)) },
+    { label: '-' },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
+  ];
+  showMenuAt(x, y, items, 'path-context-menu');
+}
+
+function showBlankListContextMenu(x, y, isRight) {
+  G.lastActivePane = isRight ? 'right' : 'left';
+  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+  const path = isRight ? G.rp.path : getTab().path;
+  showMenuAt(x, y, [
+    { label: t('ctx.newFolder'), shortcut: 'F7', action: () => newFolder(isRight) },
+    { label: t('ctx.newFile'), shortcut: 'Ctrl+Shift+N', action: () => showNewFileDialog(isRight) },
+    { label: '-' },
+    { label: t('ctx.paste'), shortcut: 'Ctrl+V', action: () => paste(isRight), disabled: !G.clipboard },
+    { label: t('cmd.refresh'), shortcut: 'F5', action: refresh },
+    { label: t('ctx.selectAll'), shortcut: 'Ctrl+A', action: () => selectAll(isRight) },
+    { label: '-' },
+    { label: t('ctx.copyPath'), action: () => copyPathFromMenu(path) },
+    { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path, terminal: 'cmd'}, 'CMD') },
+    { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path, terminal: 'powershell'}, 'PowerShell') },
+    { label: isFavoriteFolder(path) ? t('favorites.removeCurrent') : t('favorites.addCurrent'), action: () => toggleFavoriteFolder(path, favoriteDisplayName(path)) },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
+  ]);
+}
+
+function showApplicationContextMenu(event) {
+  event.preventDefault();
+  if (event.target.closest('.context-menu, .ctx-submenu')) return;
+  const tabEl = event.target.closest('#tab-bar .tab');
+  if (tabEl) {
+    event.stopPropagation();
+    showTabContextMenu(event.clientX, event.clientY, Number(tabEl.dataset.tabId));
+    return;
+  }
+  const input = event.target.closest('input[type="text"], input[type="search"], textarea');
+  if (input) {
+    event.stopPropagation();
+    showInputContextMenu(event.clientX, event.clientY, input, {search: input.id === 'filter-input'});
+    return;
+  }
+  const address = event.target.closest('.address-bar');
+  if (address) {
+    event.stopPropagation();
+    const isRight = address.id === 'right-address-bar';
+    const path = isRight ? G.rp.path : getTab().path;
+    showPathContextMenu(event.clientX, event.clientY, path, true, isRight);
+    return;
+  }
+  const search = event.target.closest('.search-box');
+  if (search) {
+    event.stopPropagation();
+    showInputContextMenu(event.clientX, event.clientY, document.getElementById('filter-input'), {search: true});
+    return;
+  }
+  const list = event.target.closest('.file-list');
+  if (list && !event.target.closest('.file-row, .column-item')) {
+    event.stopPropagation();
+    showBlankListContextMenu(event.clientX, event.clientY, list.id === 'right-file-list');
+    return;
+  }
+  const sidebar = event.target.closest('.sidebar');
+  if (sidebar) {
+    event.stopPropagation();
+    const item = event.target.closest('[data-path], [data-nav]');
+    const path = item?.dataset.path || (item?.dataset.nav ? homeDir(item.dataset.nav) : null);
+    if (path) showPathContextMenu(event.clientX, event.clientY, path, true, false);
+    else showMenuAt(event.clientX, event.clientY, [{label: t('cmd.refresh'), action: refresh}, {label: t('cmd.settings'), action: openSettings}]);
+    return;
+  }
+  event.stopPropagation();
+  showMenuAt(event.clientX, event.clientY, [
+    { label: t('cmd.refresh'), shortcut: 'F5', action: refresh },
+    { label: t('cmd.newTab'), shortcut: 'Ctrl+T', action: () => addTab(getTab().path) },
+    { label: t('cmd.settings'), shortcut: 'Ctrl+,', action: openSettings },
+  ], 'app-context-menu');
 }
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && contextMenu) removeContextMenu();
@@ -749,10 +1113,23 @@ function showCompatDialog(path) {
 
 // --- NTFS permissions dialog ---
 async function showPermissionsDialog(path) {
+  const dlg = document.createElement("dialog");
+  dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:420px;";
+  dlg.innerHTML = `
+    <h3 style="margin:0 0 8px;font-size:14px">${t('dialog.permTitle', {path: esc(path.split(/[\\/]/).pop())})}</h3>
+    <div style="font-size:11px;color:var(--text-4);margin-bottom:8px;word-break:break-all;">${esc(path)}</div>
+    <div id="perm-dialog-content" aria-live="polite">
+      <div style="padding:20px 8px;text-align:center;color:var(--text-3);">${t('dialog.permLoading')}</div>
+      <div style="text-align:right;"><button class="dialog-btn" id="perm-close">${t('btn.close')}</button></div>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector("#perm-close").onclick = () => dlg.close();
+  dlg.showModal();
+  dlg.onclose = () => dlg.remove();
+
   try {
     const perms = await call("get_permissions", { path });
-    const dlg = document.createElement("dialog");
-    dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:420px;";
+    if (!dlg.isConnected) return;
     let rows = perms.map(p => `
       <tr>
         <td style="padding:4px 8px;font-size:12px;color:var(--text-2)">${esc(p.account)}</td>
@@ -761,9 +1138,8 @@ async function showPermissionsDialog(path) {
       </tr>
     `).join("");
 
-    dlg.innerHTML = `
-      <h3 style="margin:0 0 8px;font-size:14px">${t('dialog.permTitle', {path: esc(path.split(/[\\/]/).pop())})}</h3>
-      <div style="font-size:11px;color:var(--text-4);margin-bottom:8px;word-break:break-all;">${esc(path)}</div>
+    const content = dlg.querySelector("#perm-dialog-content");
+    content.innerHTML = `
       <table style="width:100%;border-collapse:collapse;">
         <thead><tr style="border-bottom:1px solid var(--border);">
           <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--text-4);">${t('dialog.permAccount')}</th>
@@ -787,9 +1163,8 @@ async function showPermissionsDialog(path) {
         <button class="dialog-btn" id="perm-close">${t('btn.close')}</button>
         <button class="dialog-btn" id="perm-inherit-toggle">${t('dialog.permDisableInherit')}</button>
       </div>`;
-    document.body.appendChild(dlg);
 
-    dlg.querySelector("#perm-close").onclick = () => { dlg.close(); dlg.remove(); };
+    dlg.querySelector("#perm-close").onclick = () => dlg.close();
     dlg.querySelector("#perm-add").onclick = async () => {
       const account = dlg.querySelector("#perm-account").value.trim();
       const level = dlg.querySelector("#perm-level").value;
@@ -820,9 +1195,23 @@ async function showPermissionsDialog(path) {
       } catch (e) { alert(t('alert.inheritFailed')); }
     };
 
-    dlg.showModal();
-    dlg.onclose = () => dlg.remove();
   } catch (e) {
-    alert(t('alert.permGetFailed'));
+    if (!dlg.isConnected) return;
+    const content = dlg.querySelector("#perm-dialog-content");
+    const errorText = String(e);
+    const errorMessage = errorText.includes('timed out')
+      ? t('dialog.permTimedOut')
+      : t('dialog.permLoadFailed', {error: errorText});
+    content.innerHTML = `
+      <div style="padding:16px 8px;color:var(--danger,#d13438);word-break:break-word;">${esc(errorMessage)}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="dialog-btn" id="perm-close">${t('btn.close')}</button>
+        <button class="dialog-btn primary" id="perm-retry">${t('btn.retry')}</button>
+      </div>`;
+    content.querySelector("#perm-close").onclick = () => dlg.close();
+    content.querySelector("#perm-retry").onclick = () => {
+      dlg.close();
+      showPermissionsDialog(path);
+    };
   }
 }

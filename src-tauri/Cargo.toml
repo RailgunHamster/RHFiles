@@ -15,7 +15,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
@@ -40,6 +40,7 @@ winreg = "0.55"
 tauri-plugin-deep-link = "2"
 chrono = "0.4"
 libloading = "0.8"
+pinyin = { version = "0.11", default-features = false, features = ["plain", "heteronym"] }
 suppaftp = { version = "8", features = ["native-tls"] }
 native-tls = "0.2"
 ssh2 = "0.9"

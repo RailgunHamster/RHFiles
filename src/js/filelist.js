@@ -77,6 +77,7 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
   list.innerHTML = "";
+  list.classList.toggle("search-results", !!G.searchActive && !isRight);
 
   if (G.layout === "icons") {
     renderIconLayout(list, entries, sel, isRight, tabOrPane, listId);
@@ -85,7 +86,7 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   } else if (G.layout === "thumbnails") {
     renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId);
   } else if (G.layout === "columns") {
-    renderColumnLayout(list, entries, sel, isRight, tabOrPane.path || getTab().path);
+    renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, tabOrPane.path || getTab().path);
   } else {
     renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId);
   }
@@ -202,18 +203,18 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
       let pathHtml = "";
       if (G.searchActive && file.path) {
         const dirPath = file.path.replace(/\\[^\\]+$/, '');
-        pathHtml = `<span class="row-path" title="${esc(file.path)}">${esc(dirPath)}</span>`;
+        pathHtml = `<span class="row-path" title="${esc(displayPath(file.path))}">${esc(displayPath(dirPath))}</span>`;
       }
 
       row.innerHTML = `
         <div class="row-name">
           <span class="row-icon">${fileIcon(file)}</span>
-          <span class="row-fname">${esc(file.name)}</span>${tagsHtml}${pathHtml}
+          <span class="row-fname" title="${esc(file.name)}">${esc(file.name)}</span>${tagsHtml}${pathHtml}
         </div>
         ${gitHtml ? gitHtml : '<div class="row-git"></div>'}
         ${svnHtml || '<div class="row-svn"></div>'}
-        <div class="row-date">${esc(file.modified)}</div>
-        <div class="row-date">${esc(file.created)}</div>
+        <div class="row-date">${esc(formatFileDate(file.modified_ts, file.modified))}</div>
+        <div class="row-date">${esc(formatFileDate(file.created_ts, file.created))}</div>
         <div class="row-type">${esc(fileTypeLabel(file))}</div>
         <div class="row-size">${esc(file.size_display)}</div>
       `;
@@ -238,18 +239,14 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
 
 function renderIconLayout(list, entries, sel, isRight, tabOrPane, listId) {
   const grid = document.createElement("div");
-  grid.style.display = "flex";
-  grid.style.flexWrap = "wrap";
-  grid.style.gap = "4px";
-  grid.style.padding = "8px";
+  grid.className = "icon-grid";
   list.appendChild(grid);
 
   entries.forEach((file, i) => {
     const isSelected = sel.has(i);
     const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
     const item = document.createElement("div");
-    item.className = "file-row" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
-    item.style.cssText = "display:inline-flex;flex-direction:column;width:96px;height:80px;padding:6px 4px;text-align:center;border-radius:6px;vertical-align:top;align-items:center;justify-content:center;";
+    item.className = "file-row icon-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
     item.dataset.index = i;
     item.dataset.path = file.path;
 
@@ -264,11 +261,11 @@ function renderIconLayout(list, entries, sel, isRight, tabOrPane, listId) {
     let pathHtml = "";
     if (G.searchActive && file.path) {
       const dirPath = file.path.replace(/\\[^\\]+$/, '');
-      pathHtml = `<div style="font-size:9px;color:var(--text-4);text-align:center;word-break:break-all;max-height:2em;overflow:hidden;line-height:1.2;margin-top:1px;width:100%;" title="${esc(file.path)}">${esc(dirPath)}</div>`;
+      pathHtml = `<div class="thumb-path" title="${esc(displayPath(file.path))}">${esc(displayPath(dirPath))}</div>`;
     }
     item.innerHTML = `
-      <div style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${bigFileIcon(file)}</div>
-      <div style="font-size:11px;color:var(--text-2);text-align:center;word-break:break-all;max-height:2.4em;overflow:hidden;line-height:1.2;margin-top:2px;width:100%;">${esc(file.name)}</div>
+      <div class="big-icon-slot">${bigFileIcon(file, 48)}</div>
+      <div class="tile-file-name" title="${esc(file.name)}">${esc(file.name)}</div>
       ${pathHtml}
     `;
     grid.appendChild(item);
@@ -277,20 +274,16 @@ function renderIconLayout(list, entries, sel, isRight, tabOrPane, listId) {
 
 function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
   const grid = document.createElement("div");
-  grid.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;padding:8px;";
+  grid.className = "card-grid";
   list.appendChild(grid);
 
   entries.forEach((file, i) => {
     const isSelected = sel.has(i);
     const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
     const item = document.createElement("div");
-    item.className = "file-row" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
-    item.style.cssText = `display:inline-flex;flex-direction:column;width:${CARD_ROW_H}px;height:${CARD_ROW_H}px;padding:8px;border:1px solid var(--border);border-radius:8px;vertical-align:top;align-items:center;cursor:default;transition:border-color .15s,background .06s;`;
+    item.className = "file-row card-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
     item.dataset.index = i;
     item.dataset.path = file.path;
-    if (isSelected) item.style.borderColor = "var(--accent)";
-    if (isSelected) item.style.background = "var(--select-bg)";
-
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
     item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
     item.addEventListener("mouseenter", () => { if (!sel.has(i)) item.style.borderColor = "var(--accent)"; });
@@ -304,70 +297,95 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     let pathHtml = "";
     if (G.searchActive && file.path) {
       const dirPath = file.path.replace(/\\[^\\]+$/, '');
-      pathHtml = `<div style="font-size:9px;color:var(--text-4);text-align:center;word-break:break-all;max-height:2em;overflow:hidden;line-height:1.2;width:100%;" title="${esc(file.path)}">${esc(dirPath)}</div>`;
+      pathHtml = `<div class="thumb-path" title="${esc(displayPath(file.path))}">${esc(displayPath(dirPath))}</div>`;
     }
     item.innerHTML = `
-      <div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${bigFileIcon(file)}</div>
-      <div style="font-size:12px;color:var(--text-2);text-align:center;word-break:break-word;max-height:2.4em;overflow:hidden;line-height:1.2;margin-top:4px;width:100%;">${esc(file.name)}</div>
+      <div class="big-icon-slot card-icon-slot">${bigFileIcon(file, 64)}</div>
+      <div class="tile-file-name card-file-name" title="${esc(file.name)}">${esc(file.name)}</div>
       ${pathHtml}
       <div style="font-size:10px;color:var(--text-4);text-align:center;margin-top:2px;">${esc(file.size_display || fileTypeLabel(file))}</div>
-      <div style="font-size:10px;color:var(--text-4);text-align:center;">${esc(file.modified)}</div>
+      <div class="card-file-date">${esc(formatFileDate(file.modified_ts, file.modified))}</div>
     `;
     grid.appendChild(item);
   });
 }
 
-function renderColumnLayout(list, entries, sel, isRight, currentPath) {
+function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, currentPath) {
   const browser = document.createElement("div");
   browser.className = "column-browser";
-  browser.style.flex = "1";
-  browser.style.overflow = "auto";
   list.appendChild(browser);
 
-  const parents = [];
-  if (!isRight) {
-    const root = currentPath.match(/^[A-Z]:\\/i);
-    let p = currentPath;
-    while (p && p.length > 3) {
-      const idx = p.endsWith("\\") ? p.slice(0, -1).lastIndexOf("\\") : p.lastIndexOf("\\");
-      if (idx > 0) p = p.substring(0, idx + 1);
-      else break;
-      parents.unshift(p);
-    }
-  }
-
-  async function renderColumn(colIdx, colPath) {
+  async function renderColumn(colIdx, colPath, suppliedEntries) {
+    [...browser.querySelectorAll('.column-col')].forEach((column, index) => {
+      if (index >= colIdx) column.remove();
+    });
     const col = document.createElement("div");
     col.className = "column-col";
     browser.appendChild(col);
     try {
-      let colEntries = await call("list_dir", { path: colPath, filter: "" });
+      let colEntries = suppliedEntries ? [...suppliedEntries] : await call("list_dir", { path: colPath, filter: "" });
       if (!G.showHidden) colEntries = colEntries.filter(e => !e.is_hidden);
       colEntries.sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
-      col.innerHTML = `<div style="padding:4px 12px;font-size:12px;font-weight:600;color:var(--text-3);border-bottom:1px solid var(--divider);">${esc(colPath.split('\\').filter(Boolean).pop() || colPath)}</div>`;
+      const heading = displayPath(colPath).split('/').filter(Boolean).pop() || displayPath(colPath);
+      col.innerHTML = `<div class="column-heading" title="${esc(displayPath(colPath))}">${esc(heading)}</div>`;
       colEntries.forEach(entry => {
         const item = document.createElement("div");
-        item.className = "column-item";
+        const rootIndex = colIdx === 0 ? entries.findIndex(candidate => candidate.path === entry.path) : -1;
+        item.className = "column-item" + (rootIndex >= 0 && sel.has(rootIndex) ? " selected" : "");
         item.dataset.path = entry.path;
-        item.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.5L7.5 6h7v7h-13V4.5z" stroke="#dcb67a" stroke-width="1"/></svg>
-          <span>${esc(entry.name)}</span>
+        item.innerHTML = `<span class="column-item-icon">${fileIcon(entry)}</span>
+          <span class="column-item-name" title="${esc(entry.name)}">${esc(entry.name)}</span>
           ${entry.is_dir ? '<span class="ci-arrow">\u203a</span>' : ''}`;
-        item.addEventListener("click", () => {
+        item.addEventListener("click", async () => {
+          G.lastActivePane = isRight ? 'right' : 'left';
+          if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+          col.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
+          item.classList.add('selected');
+          if (rootIndex >= 0) {
+            sel.clear();
+            sel.add(rootIndex);
+            tabOrPane.lastIdx = rootIndex;
+            updateStatus(tabOrPane, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection');
+            updatePreviewForSelection();
+          }
+          if (entry.is_dir) {
+            await renderColumn(colIdx + 1, entry.path);
+          } else {
+            [...browser.querySelectorAll('.column-col')].forEach((column, index) => {
+              if (index > colIdx) column.remove();
+            });
+          }
+        });
+        item.addEventListener("dblclick", event => {
+          event.preventDefault();
+          event.stopPropagation();
           if (entry.is_dir) {
             if (isRight) rpNavigateTo(entry.path); else navigateTo(entry.path);
           } else {
             openFileHandler(entry.path);
           }
         });
+        item.addEventListener("contextmenu", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (rootIndex >= 0) {
+            sel.clear();
+            sel.add(rootIndex);
+            tabOrPane.lastIdx = rootIndex;
+            showContextMenu(event.clientX, event.clientY, isRight);
+          } else if (typeof showPathContextMenu === 'function') {
+            showPathContextMenu(event.clientX, event.clientY, entry.path, entry.is_dir);
+          }
+        });
         col.appendChild(item);
       });
     } catch (e) {
-      col.innerHTML += `<div style="padding:8px;color:var(--text-4);">Error</div>`;
+      col.innerHTML += `<div class="column-error">${esc(t('status.error', {error: e}))}</div>`;
     }
+    browser.scrollLeft = browser.scrollWidth;
   }
 
-  parents.forEach((p, i) => renderColumn(i, p));
-  renderColumn(parents.length, currentPath);
+  renderColumn(0, currentPath, entries);
 }
 
 const _THUMB_IMAGE_EXT = new Set(['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff','tif','heic','avif']);
@@ -415,6 +433,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     const nameEl = document.createElement("div");
     nameEl.className = "thumb-name";
     nameEl.textContent = file.name;
+    nameEl.title = file.name;
 
     let pathEl = null;
     if (G.searchActive && file.path) {
@@ -452,6 +471,7 @@ function loadThumbnail(path, container, file) {
 
 function handleRowClick(e, index, sel, tabOrPane, isRight) {
   G.lastActivePane = isRight ? 'right' : 'left';
+  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
   const listId = isRight ? "right-file-list" : "file-list";
   const list = document.getElementById(listId);
   if (e.ctrlKey) {

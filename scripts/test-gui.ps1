@@ -30,7 +30,7 @@ Remove-Item $resultFile -ErrorAction SilentlyContinue
 
 Write-Host "`n[2/3] Launching RHFiles with test auto-run..." -ForegroundColor Cyan
 $env:RHFILES_AUTORUN_TESTS = "1"
-$proc = Start-Process -FilePath $exePath -PassThru
+$proc = Start-Process -FilePath $exePath -PassThru -WindowStyle Hidden
 Remove-Item Env:RHFILES_AUTORUN_TESTS
 
 Write-Host "`n[3/3] Waiting for test results (timeout: ${Timeout}s)..." -ForegroundColor Cyan

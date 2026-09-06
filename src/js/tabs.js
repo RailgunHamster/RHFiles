@@ -2,12 +2,25 @@
 
 function tabName(path) {
   if (path === "home://") return t('nav.home');
-  return path.replace(/\\\\/g, "\\");
+  return displayPath(path);
 }
 
 function tabTooltip(path) {
   if (path === "home://") return t('nav.home');
-  return path.replace(/\\\\/g, "\\");
+  return displayPath(path);
+}
+
+let _tabTailFrame = 0;
+function revealTabLabelTails(root) {
+  if (_tabTailFrame) cancelAnimationFrame(_tabTailFrame);
+  _tabTailFrame = requestAnimationFrame(() => {
+    _tabTailFrame = 0;
+    (root || document).querySelectorAll('.tab-label').forEach(label => {
+      const clipped = label.scrollWidth > label.clientWidth + 1;
+      label.classList.toggle('tail-clipped', clipped);
+      label.scrollLeft = clipped ? label.scrollWidth : 0;
+    });
+  });
 }
 
 function saveFolderLayout(path, layout) {
@@ -27,7 +40,8 @@ function loadFolderLayout(path) {
 
 function renderTabs() {
   const bar = document.getElementById("tab-bar");
-  bar.innerHTML = G.tabs.map(t =>
+  const paneOwner = G.dualOn ? `<span class="tab-pane-owner">${t('pane.leftTabs')}</span>` : '';
+  bar.innerHTML = paneOwner + G.tabs.map(t =>
     `<div class="tab ${t.id===G.activeTab?'active':''}" data-tab-id="${t.id}" onclick="switchTab(${t.id})" onauxclick="if(event.button===1)closeTab(${t.id})" title="${esc(tabTooltip(t.path))}" draggable="true">
       <span class="tab-label">${esc(tabName(t.path))}</span>
       <button class="tab-close" onclick="event.stopPropagation();closeTab(${t.id})">&times;</button>
@@ -37,10 +51,16 @@ function renderTabs() {
   </button>`;
   initTabDragDrop();
   initTabPreview();
+  revealTabLabelTails(bar);
 }
+
+window.addEventListener('resize', () => revealTabLabelTails(document.getElementById('tab-bar')));
 
 function switchTab(id) {
   if (id === G.activeTab) return;
+  if (typeof resetTypeSearch === 'function') resetTypeSearch();
+  hideTabPreview();
+  _navigationToken++;
   saveCurrentTabState();
   G.activeTab = id;
   const tab = getTab();
@@ -51,6 +71,13 @@ function switchTab(id) {
   updateSortArrows();
   updateSidebarSelection();
   _refreshTabInBackground(tab);
+}
+
+function switchRelativeTab(delta) {
+  if (G.tabs.length < 2) return;
+  const current = G.tabs.findIndex(tab => tab.id === G.activeTab);
+  const next = (current + delta + G.tabs.length) % G.tabs.length;
+  switchTab(G.tabs[next].id);
 }
 
 function _updateTabActive() {
@@ -93,6 +120,8 @@ function addTab(path) {
 
 function closeTab(id) {
   if (G.tabs.length <= 1) return;
+  hideTabPreview();
+  _navigationToken++;
   saveCurrentTabState();
   const idx = G.tabs.findIndex(t => t.id === id);
   G.tabs.splice(idx, 1);
@@ -108,6 +137,38 @@ function closeTab(id) {
   } else {
     renderTabs();
   }
+}
+
+function closeOtherTabs(id) {
+  const target = getTab(id);
+  if (!target) return;
+  G.tabs = [target];
+  if (G.activeTab !== id) {
+    G.activeTab = id;
+    G.sortField = target.sortF;
+    G.sortAsc = target.sortAsc;
+    _renderTabContent(target);
+    updateSortArrows();
+  }
+  renderTabs();
+  saveTabState();
+}
+
+function closeTabsToRight(id) {
+  const index = G.tabs.findIndex(tab => tab.id === id);
+  if (index < 0 || index === G.tabs.length - 1) return;
+  const removedIds = new Set(G.tabs.slice(index + 1).map(tab => tab.id));
+  G.tabs = G.tabs.slice(0, index + 1);
+  if (removedIds.has(G.activeTab)) {
+    G.activeTab = id;
+    const target = getTab(id);
+    G.sortField = target.sortF;
+    G.sortAsc = target.sortAsc;
+    _renderTabContent(target);
+    updateSortArrows();
+  }
+  renderTabs();
+  saveTabState();
 }
 
 // --- tab state save/restore ---
@@ -171,11 +232,17 @@ async function _refreshTabInBackground(tab) {
       updateStatus(tab, "status-count", "status-selection");
       if (listEl) listEl.scrollTop = savedScroll;
     }
-    _refreshTabMeta(tab);
+    _refreshTabMeta(tab, true);
   } catch (e) {}
 }
 
-function _refreshTabMeta(tab) {
+function _refreshTabMeta(tab, force) {
+  const now = Date.now();
+  if (!force && tab._metaRefreshAt && now - tab._metaRefreshAt < 15000) {
+    G._watchSnapshot = null;
+    return;
+  }
+  tab._metaRefreshAt = now;
   loadTree(tab.path, false);
   loadGitStatus(tab.path);
   if (typeof loadSvnStatus === 'function') loadSvnStatus(tab.path);
@@ -239,7 +306,8 @@ function initTabPreview() {
   const bar = document.getElementById("tab-bar");
   bar.querySelectorAll(".tab").forEach(tabEl => {
     tabEl.addEventListener("mouseenter", () => {
-      if (_previewTimer) clearTimeout(_previewTimer);
+      if (parseInt(tabEl.dataset.tabId) === G.activeTab) return;
+      hideTabPreview();
       _previewTimer = setTimeout(() => showTabPreview(tabEl), 600);
     });
     tabEl.addEventListener("mouseleave", () => {
@@ -251,6 +319,7 @@ function initTabPreview() {
 
 function showTabPreview(tabEl) {
   const tabId = parseInt(tabEl.dataset.tabId);
+  if (!tabEl.isConnected || tabId === G.activeTab) return;
   const tab = G.tabs.find(t => t.id === tabId);
   if (!tab) return;
 
@@ -282,16 +351,26 @@ function showTabPreview(tabEl) {
 }
 
 function hideTabPreview() {
+  if (_previewTimer) {
+    clearTimeout(_previewTimer);
+    _previewTimer = null;
+  }
   if (_previewEl) _previewEl.classList.remove("visible");
 }
 
 // --- breadcrumb ---
+function revealBreadcrumbTail(bc) {
+  if (!bc) return;
+  requestAnimationFrame(() => { bc.scrollLeft = bc.scrollWidth; });
+}
+
 function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   const bc = document.getElementById(bcId || "breadcrumb");
   if (path === "home://") {
     bc.innerHTML = `<span class="bc-item" data-path="home://">${t('nav.home')}</span><span class="breadcrumb-spacer"></span>`;
     const spacer = bc.querySelector(".breadcrumb-spacer");
     if (spacer) spacer.addEventListener("click", () => enterEditMode(isRight));
+    revealBreadcrumbTail(bc);
     return;
   }
   let parts, isUnc = false;
@@ -317,7 +396,9 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
     if (/^[A-Za-z]:$/.test(accumulated)) {
       accumulated += "\\";
     }
-    const displayPart = /^[A-Za-z]:$/.test(part) ? part.charAt(0) : part;
+    const displayPart = /^[A-Za-z]:$/.test(part)
+      ? part.charAt(0)
+      : (isUnc && i === 0 ? displayPath(part) : part);
     html += `<span class="bc-item" data-path="${esc(accumulated)}">${esc(displayPart)}</span>`;
     if (i < parts.length - 1) {
       html += `<span class="bc-sep" data-path="${esc(accumulated)}">\u203a</span>`;
@@ -336,6 +417,7 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   if (spacer) {
     spacer.addEventListener("click", () => enterEditMode(isRight));
   }
+  revealBreadcrumbTail(bc);
 }
 
 async function showBcDropdown(parentPath, sepEl, dropdownId, isRight) {
@@ -399,7 +481,11 @@ function detectAdaptiveLayout(entries) {
 }
 
 // --- navigation ---
+let _navigationToken = 0;
 async function navigateTo(path, pushHistory) {
+  if (typeof resetTypeSearch === 'function') resetTypeSearch();
+  const navigationToken = ++_navigationToken;
+  _searchRequestToken++;
   if (pushHistory === undefined) pushHistory = true;
   if (/^[A-Za-z]:/.test(path)) path = path.replace(/\\\\/g, "\\");
   // navigating away from search results clears search state
@@ -422,7 +508,9 @@ async function navigateTo(path, pushHistory) {
     showHomePage();
     renderTabs();
     saveTabState();
-    return;
+    updateSearchScopeUI();
+    if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
+    return true;
   }
   hideHomePage();
   showFileContent();
@@ -431,6 +519,7 @@ async function navigateTo(path, pushHistory) {
   if (filterEl && path !== tab.path) filterEl.value = "";
   try {
     let entries = await call("list_dir", { path, filter: "" });
+    if (navigationToken !== _navigationToken) return false;
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
     const filter = filterEl ? filterEl.value.toLowerCase() : "";
     if (filter) entries = entries.filter(e => e.name.toLowerCase().includes(filter));
@@ -467,13 +556,16 @@ async function navigateTo(path, pushHistory) {
     renderFiles(tab, "file-list", "status-count", "status-selection");
     updateStatus(tab, "status-count", "status-selection");
     updateSidebarSelection();
-    loadTree(path, false);
-    loadGitStatus(path);
-    if (typeof loadSvnStatus === 'function') loadSvnStatus(path);
+    _refreshTabMeta(tab, true);
     saveTabState();
+    updateSearchScopeUI();
+    if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
     updatePreviewForSelection();
+    return true;
   } catch (e) {
+    if (navigationToken !== _navigationToken) return false;
     document.getElementById("status-count").textContent = t('status.error', {error: e});
+    return false;
   }
 }
 
@@ -484,11 +576,82 @@ let _searchTimer = null;
 let _searchRunning = false;
 let _everythingAvailable = false;
 let _searchMode = 'normal';
+// Search always starts scoped to the current folder. Global search is an
+// explicit, temporary mode so a previous session cannot surprise the user.
+let _searchScope = 'folder';
+localStorage.removeItem('rhfiles-search-scope');
+let _searchRequestToken = 0;
+
+function getSearchFolderPath() {
+  const path = getTab()?.path || '';
+  return /^[A-Za-z]:\\/.test(path) || path.startsWith('\\\\') ? path : null;
+}
+
+function updateSearchScopeUI() {
+  const btn = document.getElementById('btn-search-scope');
+  const input = document.getElementById('filter-input');
+  const folderPath = getSearchFolderPath();
+  const globalEnabled = G.settings.globalSearchEnabled !== false;
+  if (!globalEnabled && _searchScope === 'global') _searchScope = 'folder';
+  const folderScope = _searchScope === 'folder' && !!folderPath;
+  if (btn) {
+    btn.disabled = !folderPath || !globalEnabled;
+    btn.classList.toggle('active', folderScope);
+    btn.innerHTML = folderScope
+      ? '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.8L8 6h6.5v6.8h-13V4.5z" stroke="currentColor" stroke-width="1"/></svg>'
+      : '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1"/><path d="M2 8h12M8 2c1.8 1.7 2.7 3.7 2.7 6S9.8 12.3 8 14M8 2C6.2 3.7 5.3 5.7 5.3 8S6.2 12.3 8 14" stroke="currentColor" stroke-width=".8"/></svg>';
+    const title = !globalEnabled
+      ? t('search.globalDisabledTitle')
+      : (folderScope ? t('search.scopeFolderTitle') : t('search.scopeGlobalTitle'));
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+  }
+  if (input && !input.value) {
+    input.placeholder = folderScope
+      ? t('search.inFolderPlaceholder', {folder: folderPath.split('\\').filter(Boolean).pop() || folderPath})
+      : t('search.globalPlaceholder');
+  }
+}
+
+function toggleSearchScope() {
+  if (!getSearchFolderPath()) return;
+  if (G.settings.globalSearchEnabled === false) {
+    showNotice(t('search.globalDisabledTitle'));
+    return;
+  }
+  setSearchScope(_searchScope === 'folder' ? 'global' : 'folder');
+}
+
+function setSearchScope(scope) {
+  const next = scope === 'global' ? 'global' : 'folder';
+  if (next === 'global' && G.settings.globalSearchEnabled === false) {
+    showNotice(t('search.globalDisabledTitle'));
+    return;
+  }
+  if (next === 'global' && !getSearchFolderPath()) return;
+  _searchScope = next;
+  _searchRequestToken++;
+  updateSearchScopeUI();
+  const input = document.getElementById('filter-input');
+  if (input && input.value.trim()) applyFilter();
+}
+
+function setGlobalSearchEnabled(enabled) {
+  G.settings.globalSearchEnabled = !!enabled;
+  if (!enabled) _searchScope = 'folder';
+  saveSettings();
+  updateSearchScopeUI();
+  const input = document.getElementById('filter-input');
+  if (input && input.value.trim()) applyFilter();
+}
 
 function applyFilter() {
   if (_searchTimer) clearTimeout(_searchTimer);
+  _searchRequestToken++;
   const query = document.getElementById("filter-input").value.trim();
   if (query.length === 0) {
+    _searchRequestToken++;
+    _searchRunning = false;
     G.searchActive = false;
     G.searchQuery = '';
     hideQuickSearch();
@@ -553,8 +716,6 @@ async function initQuickSearch() {
         _everythingAvailable = await call("is_everything_available", {});
         const input = document.getElementById("filter-input");
         if (input) {
-            const modeHint = _searchMode === 'regex' ? ` [${t('search.modeRegex')}]` : _searchMode === 'wildcard' ? ` [${t('search.modeWildcard')}]` : '';
-            input.placeholder = t('search.quickSearch') + modeHint;
             input.addEventListener('keydown', e => {
               if (e.key === 'Escape') {
                 document.getElementById("filter-input").value = '';
@@ -563,47 +724,54 @@ async function initQuickSearch() {
               }
             });
         }
+        updateSearchScopeUI();
         initDoubleCtrlSearch();
     } catch (e) {}
 }
 
 async function runSearch(query) {
-    if (_searchRunning) return;
     const tab = getTab();
+    const requestToken = ++_searchRequestToken;
+    const scopePath = _searchScope === 'folder' ? getSearchFolderPath() : null;
     const modePrefix = _searchMode === 'regex' ? 'regex:' : _searchMode === 'wildcard' ? 'wildcards:' : '';
     const fullQuery = modePrefix + query;
     _searchRunning = true;
     try {
         document.getElementById("status-count").textContent = t('status.searching');
-        const results = await call("quick_search", { query: fullQuery, maxResults: 500 });
-        if (document.getElementById("filter-input").value.trim() !== query) return;
+        const results = scopePath
+          ? await call("search_recursive", { path: scopePath, query: fullQuery, maxResults: 500 })
+          : await call("quick_search", { query: fullQuery, maxResults: 500 });
+        if (requestToken !== _searchRequestToken || document.getElementById("filter-input").value.trim() !== query) return;
         G.searchActive = true;
         G.searchQuery = query;
+        G.searchScope = scopePath ? 'folder' : 'global';
+        G.searchBasePath = scopePath || '';
         tab.entries = results;
         tab.sel.clear();
         tab.lastIdx = -1;
-        renderSearchBreadcrumb(query, results.length);
+        renderSearchBreadcrumb(query, results.length, scopePath);
         renderFiles(tab, "file-list", "status-count", "status-selection");
         document.getElementById("status-count").textContent = t('search.results', {count: results.length});
     } catch (e) {
+        if (requestToken !== _searchRequestToken) return;
         const errMsg = typeof e === 'string' ? e : (e?.message || e?.toString() || 'Unknown error');
-        document.getElementById("status-count").textContent = errMsg;
+        document.getElementById("status-count").textContent = t('status.searchError', {error: errMsg});
     } finally {
-        _searchRunning = false;
+        if (requestToken === _searchRequestToken) _searchRunning = false;
     }
 }
 
-function renderSearchBreadcrumb(query, count) {
-    const label = (_lang === 'zh' ? '搜索' : 'Search') + ': ' + esc(query);
-    const countText = count > 0 ? `(${count} ${_lang === 'zh' ? '个结果' : 'results'})` : '';
+function renderSearchBreadcrumb(query, count, scopePath) {
+    const scopeName = scopePath ? (scopePath.split('\\').filter(Boolean).pop() || scopePath) : t('search.scopeGlobal');
+    const scopeLabel = scopePath ? t('search.scopeFolder', {folder: scopeName}) : t('search.scopeGlobal');
     const bc = document.getElementById("breadcrumb");
     if (!bc) return;
-    bc.innerHTML = `<span class="bc-item" style="color:var(--accent);font-weight:500">🔍 ${esc(label)}</span>` +
-        (countText ? `<span style="color:var(--text-4);font-size:11px;margin-left:6px">${countText}</span>` : '') +
+    const fullTitle = scopePath ? `${scopePath} — ${query}` : query;
+    bc.innerHTML = `<span class="bc-item" title="${esc(fullTitle)}" style="color:var(--accent);font-weight:500">🔍 ${esc(query)}</span>` +
+        `<span class="bc-sep">‹</span><span class="bc-item" title="${esc(scopePath || scopeLabel)}">${esc(scopeLabel)}</span>` +
+        `<span style="color:var(--text-4);font-size:11px;margin-left:6px;flex-shrink:0">${esc(t('search.resultCount', {count}))}</span>` +
         `<span class="breadcrumb-spacer" style="flex:1;cursor:text;min-width:20px;display:block;height:30px"></span>`;
-    // Update right pane breadcrumb too if dual pane
-    const rbc = document.getElementById("right-breadcrumb");
-    if (rbc) rbc.innerHTML = bc.innerHTML;
+    revealBreadcrumbTail(bc);
 }
 
 function hideQuickSearch() {}
@@ -635,7 +803,7 @@ function showHomePage() {
     { name: t('home.desktop'), path: homeDir("Desktop"), icon: "M1.5 3h13v10H1.5z M5 14h6" },
     { name: t('home.downloads'), path: homeDir("Downloads"), icon: "M8 2v7M5 6l3 3 3-3M2.5 10v3h11v-3" },
     { name: t('home.documents'), path: homeDir("Documents"), icon: "M3 2h5l4 4v8H3z M8 2v4h4" },
-    { name: t('home.pictures'), path: homeDir("Pictures"), icon: "M1 2h14v12H1z" },
+    { name: t('home.pictures'), path: homeDir("Pictures"), icon: "M2 3h12v10H2z M3.5 11l2.7-2.8 2.1 2 2.3-3 2.9 3.8 M5 6.1a1 1 0 1 0 0-.01" },
     { name: t('home.music'), path: homeDir("Music"), icon: "M4 12a2 2 0 11-0-4M12 10a2 2 0 11-0-4M6 12V3l8-2v9" },
     { name: t('home.videos'), path: homeDir("Videos"), icon: "M1 3h14v10H1z" },
   ];

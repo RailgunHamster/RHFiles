@@ -158,6 +158,10 @@ function openSettings() {
     '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>' + t('settings.effectNone') + '</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>' + t('settings.effectMica') + '</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>' + t('settings.effectAcrylic') + '</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>' + t('settings.effectMicaAlt') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.layout') + '</label>' +
     '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>' + t('settings.layoutDetails') + '</option><option value="icons"' + (G.layout==="icons"?" selected":"") + '>' + t('settings.layoutIcons') + '</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>' + t('settings.layoutThumbnails') + '</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>' + t('settings.layoutCards') + '</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>' + t('settings.layoutColumns') + '</option></select></div>' +
+    '<div class="settings-row"><label for="settings-preview-default">' + t('settings.previewDefaultOpen') + '</label>' +
+    '<input id="settings-preview-default" type="checkbox" onchange="setPreviewDefaultOpen(this.checked)"' + (G.settings.previewDefaultOpen!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-global-search">' + t('settings.enableGlobalSearch') + '</label>' +
+    '<input id="settings-global-search" type="checkbox" onchange="setGlobalSearchEnabled(this.checked)"' + (G.settings.globalSearchEnabled!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label>' + t('settings.showExtensions') + '</label>' +
     '<input type="checkbox" onchange="G.showExtensions=this.checked;renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')"' + (G.showExtensions!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label>' + t('settings.grouping') + '</label>' +
@@ -256,6 +260,18 @@ function newFileTemplateExt(tpl) {
   return String(tpl.ext || "").replace(/^\./, "");
 }
 
+function newFileTemplateLabel(tpl) {
+  const keyByExtension = {
+    txt: 'template.textFile', md: 'template.markdownFile', html: 'template.htmlFile',
+    css: 'template.cssFile', js: 'template.jsFile', py: 'template.pythonFile',
+    rs: 'template.rustFile', json: 'template.jsonFile', xml: 'template.xmlFile',
+    yaml: 'template.yamlFile', yml: 'template.yamlFile', sh: 'template.shellFile',
+    bat: 'template.batchFile',
+  };
+  const key = keyByExtension[newFileTemplateExt(tpl).toLowerCase()];
+  return key ? t(key) : (tpl?.name || newFileTemplateExt(tpl));
+}
+
 async function showNewFileDialog(isRight) {
   const dialogEl = document.getElementById("newfile-dialog");
   const container = document.getElementById("newfile-templates");
@@ -283,7 +299,7 @@ async function showNewFileDialog(isRight) {
   container.innerHTML = templates.map((tpl, i) => {
     const ext = newFileTemplateExt(tpl);
     const icon = (typeof fileIcon === "function") ? fileIcon({ name: tpl.name || ext, extension: ext, is_dir: false, size: 0 }) : "";
-    return `<div class="newfile-template${i === 0 ? " selected" : ""}" data-idx="${i}" onclick="selectNewFileTemplate(${i})"><span class="nft-icon">${icon}</span><span class="nft-name">${esc(tpl.name || ext)}</span></div>`;
+    return `<div class="newfile-template${i === 0 ? " selected" : ""}" data-idx="${i}" onclick="selectNewFileTemplate(${i})"><span class="nft-icon">${icon}</span><span class="nft-name">${esc(newFileTemplateLabel(tpl))}</span></div>`;
   }).join("");
   nameInput.value = t('dialog.newFileDefault') + (templates.length ? "." + newFileTemplateExt(templates[0]) : ".txt");
   nameInput.onkeydown = e => {
@@ -337,23 +353,24 @@ function closeNewFile() {
 
 // --- toolbar customization ---
 const TOOLBAR_BUTTONS = [
-  { id: "btn-new", label: t('tb.newFolder') },
-  { id: "btn-cut", label: t('tb.cut') },
-  { id: "btn-copy", label: t('tb.copy') },
-  { id: "btn-paste", label: t('tb.paste') },
-  { id: "btn-rename", label: t('tb.rename') },
-  { id: "btn-delete", label: t('tb.delete') },
-  { id: "btn-sort", label: t('tb.sort') },
-  { id: "btn-hidden", label: t('tb.hidden') },
-  { id: "btn-group", label: t('tb.group') },
-  { id: "btn-layout-details", label: t('tb.details') },
-  { id: "btn-layout-icons", label: t('tb.icons') },
-  { id: "btn-layout-cards", label: t('tb.cards') },
-  { id: "btn-layout-columns", label: t('tb.columns') },
-  { id: "btn-preview", label: t('tb.preview') },
-  { id: "btn-dual", label: t('tb.dualPane') },
-  { id: "btn-theme", label: t('tb.theme') },
-  { id: "btn-refresh", label: t('tb.refresh') },
+  { id: "btn-new", labelKey: 'tb.newFolder' },
+  { id: "btn-cut", labelKey: 'tb.cut' },
+  { id: "btn-copy", labelKey: 'tb.copy' },
+  { id: "btn-paste", labelKey: 'tb.paste' },
+  { id: "btn-rename", labelKey: 'tb.rename' },
+  { id: "btn-delete", labelKey: 'tb.delete' },
+  { id: "btn-sort", labelKey: 'tb.sort' },
+  { id: "btn-hidden", labelKey: 'tb.hidden' },
+  { id: "btn-group", labelKey: 'tb.group' },
+  { id: "btn-layout-details", labelKey: 'tb.details' },
+  { id: "btn-layout-icons", labelKey: 'tb.icons' },
+  { id: "btn-layout-thumbnails", labelKey: 'tb.thumbnails' },
+  { id: "btn-layout-cards", labelKey: 'tb.cards' },
+  { id: "btn-layout-columns", labelKey: 'tb.columns' },
+  { id: "btn-preview", labelKey: 'tb.preview' },
+  { id: "btn-dual", labelKey: 'tb.dualPane' },
+  { id: "btn-theme", labelKey: 'tb.theme' },
+  { id: "btn-refresh", labelKey: 'tb.refresh' },
 ];
 
 function loadToolbarConfig() {
@@ -373,6 +390,12 @@ function applyToolbarConfig() {
   allBtns.forEach(btn => {
     const id = btn.id || btn.dataset.layout && ("btn-layout-" + btn.dataset.layout);
     if (!id) return;
+    // Settings must never disappear behind a toolbar customization. Otherwise
+    // the neighboring sun/theme button is easily mistaken for Settings.
+    if (id === 'btn-settings') {
+      btn.style.display = '';
+      return;
+    }
     if (visibleSet.has(id)) {
       btn.style.display = "";
     } else {
@@ -389,7 +412,7 @@ function renderToolbarConfig() {
   container.innerHTML = TOOLBAR_BUTTONS.map(b =>
     `<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:2px 0">
       <input type="checkbox" ${visibleSet.has(b.id) ? "checked" : ""} onchange="toggleToolbarBtn('${b.id}', this.checked)">
-      ${esc(b.label)}
+      ${esc(t(b.labelKey))}
     </label>`
   ).join("");
 }
@@ -412,45 +435,55 @@ function resetToolbarConfig() {
 }
 
 // --- shortcut customization ---
-const SHORTCUT_LABELS = {
-  "nav.up": t('cmd.goUp'),
-  "nav.down": t('cmd.openInto'),
-  "nav.back": t('cmd.goBack'),
-  "nav.forward": t('cmd.goForward'),
-  "nav.refresh": t('cmd.refresh'),
-  "nav.open": t('cmd.openInto'),
-  "nav.home": "Jump to First",
-  "nav.end": "Jump to Last",
-  "file.copy": t('cmd.copy'),
-  "file.cut": t('cmd.cut'),
-  "file.paste": t('cmd.paste'),
-  "file.delete": t('cmd.delete'),
-  "file.rename": t('cmd.rename'),
-  "file.newFolder": t('cmd.newFolder'),
-  "file.newFile": t('cmd.newFile'),
-  "file.selectAll": t('cmd.selectAll'),
-  "file.invertSelection": t('cmd.invertSelection'),
-  "file.properties": t('cmd.properties'),
-  "file.quicklook": t('cmd.quickLook'),
-  "file.undo": t('cmd.undo'),
-  "file.redo": t('cmd.redo'),
-  "view.fullscreen": t('cmd.fullscreen'),
-  "view.dualPane": t('cmd.toggleDualPane'),
-  "view.hidden": t('cmd.toggleHidden'),
-  "view.switchPane": t('cmd.switchPane'),
-  "view.grouping": t('cmd.toggleGrouping'),
-  "window.new": t('cmd.newWindow'),
-  "window.pip": t('cmd.togglePip'),
-  "tab.new": "New Tab",
-  "tab.close": "Close Tab",
+const SHORTCUT_LABEL_KEYS = {
+  "nav.up": "cmd.goUp",
+  "nav.down": "cmd.openInto",
+  "nav.back": "cmd.goBack",
+  "nav.forward": "cmd.goForward",
+  "nav.refresh": "cmd.refresh",
+  "nav.open": "cmd.openInto",
+  "nav.home": "cmd.jumpFirst",
+  "nav.end": "cmd.jumpLast",
+  "file.contextMenu": "cmd.contextMenu",
+  "file.copy": "cmd.copy",
+  "file.cut": "cmd.cut",
+  "file.paste": "cmd.paste",
+  "file.delete": "cmd.delete",
+  "file.rename": "cmd.rename",
+  "file.newFolder": "cmd.newFolder",
+  "file.newFile": "cmd.newFile",
+  "file.selectAll": "cmd.selectAll",
+  "file.invertSelection": "cmd.invertSelection",
+  "file.properties": "cmd.properties",
+  "file.quicklook": "cmd.quickLook",
+  "file.toggleFavorite": "cmd.toggleFavorite",
+  "file.undo": "cmd.undo",
+  "file.redo": "cmd.redo",
+  "view.fullscreen": "cmd.fullscreen",
+  "view.dualPane": "cmd.toggleDualPane",
+  "view.hidden": "cmd.toggleHidden",
+  "view.switchPane": "cmd.switchPane",
+  "view.grouping": "cmd.toggleGrouping",
+  "window.new": "cmd.newWindow",
+  "window.pip": "cmd.togglePip",
+  "palette": "cmd.commandPalette",
+  "settings": "cmd.settings",
+  "tab.new": "cmd.newTab",
+  "tab.close": "cmd.closeTab",
+  "tab.next": "cmd.nextTab",
+  "tab.previous": "cmd.previousTab",
+  "typeSearch.next": "cmd.typeSearchNext",
+  "typeSearch.previous": "cmd.typeSearchPrevious",
+  "search.toggleScope": "cmd.toggleSearchScope",
 };
 
 function renderShortcutConfig() {
   const container = document.getElementById("shortcut-config-list");
   if (!container) return;
   const bindings = getShortcutBindings();
-  const entries = Object.entries(SHORTCUT_LABELS);
-  container.innerHTML = entries.map(([actionId, label]) => {
+  const entries = Object.entries(SHORTCUT_LABEL_KEYS);
+  container.innerHTML = entries.map(([actionId, labelKey]) => {
+    const label = t(labelKey);
     const keys = bindings[actionId] || [];
     const keyInputs = keys.map((k, i) =>
       `<input type="text" class="shortcut-key-input" readonly value="${esc(k)}" data-action="${actionId}" data-index="${i}" data-original="${esc(k)}" style="width:140px;font-size:12px;padding:3px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:3px;cursor:pointer;text-align:center" onclick="recordShortcut(this)">`
@@ -458,15 +491,15 @@ function renderShortcutConfig() {
     return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0">
       <span style="width:160px;font-size:12px;flex-shrink:0">${esc(label)}</span>
       <div style="display:flex;gap:4px;align-items:center">${keyInputs}</div>
-      <button class="dialog-btn" style="font-size:10px;padding:2px 6px" onclick="addShortcutBinding('${actionId}')">+</button>
-      <button class="dialog-btn" style="font-size:10px;padding:2px 6px;color:#e74c3c" onclick="removeShortcutBinding('${actionId}')">-</button>
+       <button class="shortcut-binding-btn add" title="${esc(t('settings.addShortcut'))}" aria-label="${esc(t('settings.addShortcut'))}" onclick="addShortcutBinding('${actionId}')"><span aria-hidden="true"></span></button>
+       <button class="shortcut-binding-btn remove" title="${esc(t('settings.removeShortcut'))}" aria-label="${esc(t('settings.removeShortcut'))}" onclick="removeShortcutBinding('${actionId}')"><span aria-hidden="true"></span></button>
     </div>`;
   }).join("");
 }
 
 function recordShortcut(input) {
   input.classList.add("shortcut-recorder");
-  input.value = "Press keys...";
+  input.value = t('notice.shortcutHelp');
   input.focus();
 }
 

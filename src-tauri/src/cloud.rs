@@ -1,7 +1,6 @@
 use crate::types::*;
 use std::collections::HashMap;
 
-
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -37,8 +36,8 @@ pub fn get_cloud_status(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_cloud_providers() -> Result<Vec<CloudProvider>, String> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let root_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager";
     let root = hklm.open_subkey(root_path).map_err(|e| e.to_string())?;
@@ -49,13 +48,19 @@ pub fn get_cloud_providers() -> Result<Vec<CloudProvider>, String> {
                 let parts: Vec<&str> = child.split('!').collect();
                 parts.first().map(|s| s.to_string()).unwrap_or_default()
             });
-            let user_path: Option<String> = subkey.open_subkey("UserSyncRoots")
-                .ok()
-                .and_then(|usr| {
-                    let sids: Vec<String> = usr.enum_values().filter_map(|v| v.ok()).map(|(k, _)| k).collect();
-                    sids.first().and_then(|sid| usr.get_value::<String, _>(sid).ok())
+            let user_path: Option<String> =
+                subkey.open_subkey("UserSyncRoots").ok().and_then(|usr| {
+                    let sids: Vec<String> = usr
+                        .enum_values()
+                        .filter_map(|v| v.ok())
+                        .map(|(k, _)| k)
+                        .collect();
+                    sids.first()
+                        .and_then(|sid| usr.get_value::<String, _>(sid).ok())
                 });
-            let icon_resource: String = subkey.get_value("IconResource").unwrap_or_else(|_| "".to_string());
+            let icon_resource: String = subkey
+                .get_value("IconResource")
+                .unwrap_or_else(|_| "".to_string());
             let (icon_dll, icon_index) = parse_icon_resource(&icon_resource);
             if let Some(sync_path) = user_path {
                 let display_name = resolve_display_name(&name);
@@ -80,7 +85,11 @@ pub fn get_cloud_providers() -> Result<Vec<CloudProvider>, String> {
                     if let Ok(target) = clsid_key.open_subkey("Instance\\InitPropertyBag") {
                         if let Ok(target_path) = target.get_value::<String, _>("TargetFolderPath") {
                             let expanded = expand_env_var(&target_path);
-                            if !expanded.is_empty() && !providers.iter().any(|p| p.path.eq_ignore_ascii_case(&expanded)) {
+                            if !expanded.is_empty()
+                                && !providers
+                                    .iter()
+                                    .any(|p| p.path.eq_ignore_ascii_case(&expanded))
+                            {
                                 providers.push(CloudProvider {
                                     id: clsid.clone(),
                                     name: default_name,
@@ -110,10 +119,18 @@ pub fn get_cloud_providers() -> Result<Vec<CloudProvider>, String> {
             }
         }
         if let Some(od_path) = onedrive_commercial {
-            if std::path::Path::new(&od_path).exists() && !providers.iter().any(|p| p.path.eq_ignore_ascii_case(&od_path)) {
+            if std::path::Path::new(&od_path).exists()
+                && !providers
+                    .iter()
+                    .any(|p| p.path.eq_ignore_ascii_case(&od_path))
+            {
                 providers.push(CloudProvider {
                     id: "OneDriveCommercial".to_string(),
-                    name: "OneDrive - ".to_string() + &std::path::Path::new(&od_path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    name: "OneDrive - ".to_string()
+                        + &std::path::Path::new(&od_path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
                     path: od_path,
                     icon_dll: String::new(),
                     icon_index: 0,
@@ -132,7 +149,10 @@ pub fn cloud_pin_file(path: String) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(format!("attrib +p failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "attrib +p failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }
@@ -145,7 +165,10 @@ pub fn cloud_unpin_file(path: String) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(format!("attrib +u failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "attrib +u failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }
@@ -158,7 +181,10 @@ pub fn cloud_clear_pin(path: String) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(format!("attrib -p failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "attrib -p failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }

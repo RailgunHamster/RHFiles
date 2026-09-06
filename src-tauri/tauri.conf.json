@@ -21,7 +21,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
@@ -32,11 +36,10 @@
       "thirdparty/everything/dll/Everything64.dll": "Everything64.dll"
     },
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/rhfiles-icon-v3-32.png",
+      "icons/rhfiles-icon-v3-128.png",
+      "icons/rhfiles-icon-v3-256.png",
+      "icons/rhfiles-icon-v3.ico"
     ],
     "windows": {
       "webviewInstallMode": {

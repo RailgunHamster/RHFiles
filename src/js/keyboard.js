@@ -26,6 +26,7 @@ const DEFAULT_SHORTCUTS = {
   "file.invertSelection":["Ctrl+I"],
   "file.properties":     ["Alt+Enter"],
   "file.quicklook":      ["Space"],
+  "file.toggleFavorite": ["Ctrl+D"],
   "file.undo":           ["Ctrl+Z"],
   "file.redo":           ["Ctrl+Y"],
   "view.fullscreen":     ["F11"],
@@ -39,6 +40,11 @@ const DEFAULT_SHORTCUTS = {
   "settings":            ["Ctrl+,"],
   "tab.new":             ["Ctrl+T"],
   "tab.close":           ["Ctrl+W"],
+  "tab.next":            ["Ctrl+Tab"],
+  "tab.previous":        ["Ctrl+Shift+Tab"],
+  "typeSearch.next":     ["F3"],
+  "typeSearch.previous": ["Shift+F3"],
+  "search.toggleScope":  ["Ctrl+Shift+F"],
 };
 
 const ACTION_HANDLERS = {
@@ -60,41 +66,174 @@ const ACTION_HANDLERS = {
       showContextMenu(_lastMouseX || r.left + r.width / 2, Math.max(r.top, _lastMouseY), isRight);
     }
   },
-  "file.copy":           async () => await copySelected(),
-  "file.cut":            async () => await cutSelected(),
-  "file.paste":          async () => await paste(),
-  "file.delete":         async () => await deleteSelected(),
-  "file.rename":         async () => await renamePrompt(),
-  "file.newFolder":      async () => await newFolder(),
-  "file.newFile":        async () => showNewFileDialog(),
-  "file.selectAll":      async () => selectAll(),
-  "file.invertSelection":async () => invertSelection(),
-"file.properties":     async () => {
+  "file.copy":           async () => await copySelected(G.lastActivePane === 'right'),
+  "file.cut":            async () => await cutSelected(G.lastActivePane === 'right'),
+  "file.paste":          async () => await paste(G.lastActivePane === 'right'),
+  "file.delete":         async () => await deleteSelected(G.lastActivePane === 'right'),
+  "file.rename":         async () => await renamePrompt(G.lastActivePane === 'right'),
+  "file.newFolder":      async () => await newFolder(G.lastActivePane === 'right'),
+  "file.newFile":        async () => showNewFileDialog(G.lastActivePane === 'right'),
+  "file.selectAll":      async () => selectAll(G.lastActivePane === 'right'),
+  "file.invertSelection":async () => invertSelection(G.lastActivePane === 'right'),
+  "file.properties":     async () => {
     const isRight = G.lastActivePane === 'right';
     const paths = getSelectedPaths(isRight);
-    const listId = isRight ? "right-file-list" : "file-list";
-    if (paths.length && typeof flashAt === 'function') {
-      const selEl = document.querySelector(`#${listId} .file-row.selected`) || document.getElementById(listId);
-      if (selEl) {
-        const r = selEl.getBoundingClientRect();
-        flashAt(r.left + r.width / 2, r.top + r.height / 2);
-      }
-    }
-    await showPropertiesDialog(paths[0]?.path);
+    if (paths.length) await showPropertiesDialog(paths[0].path);
   },
   "file.quicklook":      async () => await quicklookSelected(),
+  "file.toggleFavorite": async () => await toggleCurrentFolderFavorite(G.lastActivePane === 'right'),
   "file.undo":           async () => await undo(),
   "file.redo":           async () => await redo(),
   "view.fullscreen":     async () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); },
   "view.dualPane":       async () => toggleDualPane(),
   "view.hidden":         async () => toggleHidden(),
-  "view.switchPane":     async () => { if (G.dualOn) { G.lastActivePane = G.lastActivePane === 'right' ? 'left' : 'right'; const targetList = G.lastActivePane === 'right' ? "right-file-list" : "file-list"; document.getElementById(targetList)?.focus(); } },
+  "view.switchPane":     async () => { if (G.dualOn) { G.lastActivePane = G.lastActivePane === 'right' ? 'left' : 'right'; updatePaneFocusUI(); const targetList = G.lastActivePane === 'right' ? "right-file-list" : "file-list"; document.getElementById(targetList)?.focus(); } },
   "view.grouping":       async () => toggleGroupingMenu(),
   "window.new":          async () => call("open_new_window", {}),
   "window.pip":          async () => { try { const isPip = await call("toggle_pip", {}); G.pipMode = isPip; showNotice(isPip ? t('notice.pipOn') : t('notice.pipOff')); } catch(e) { alert(t('alert.pipFailed', {error: e})); } },
   "tab.new":             async () => addTab(),
   "tab.close":           async () => closeTab(G.activeTab),
+  "tab.next":            async () => switchRelativeTab(1),
+  "tab.previous":        async () => switchRelativeTab(-1),
+  "typeSearch.next":     async () => cycleTypeSearchSelection(1),
+  "typeSearch.previous": async () => cycleTypeSearchSelection(-1),
+  "search.toggleScope":  async () => toggleSearchScope(),
 };
+
+const _pinyinAliasLoads = new WeakMap();
+
+function normalizeTypeSearchText(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[\s._\-()[\]{}【】（）]+/g, '');
+}
+
+async function ensurePinyinAliases(entries) {
+  if (!entries.some(entry => /[\u3400-\u9fff]/.test(entry.name || ''))) return;
+  if (entries.every(entry => Array.isArray(entry._pinyinAliases))) return;
+  let pending = _pinyinAliasLoads.get(entries);
+  if (!pending) {
+    pending = call('pinyin_aliases', { names: entries.map(entry => entry.name || '') })
+      .then(result => {
+        entries.forEach((entry, index) => {
+          entry._pinyinAliases = Array.isArray(result?.[index]) ? result[index] : [];
+        });
+      })
+      .catch(() => {
+        entries.forEach(entry => { entry._pinyinAliases = []; });
+      });
+    _pinyinAliasLoads.set(entries, pending);
+  }
+  await pending;
+}
+
+function typeSearchMatches(entry, normalizedQuery) {
+  if (normalizeTypeSearchText(entry.name).startsWith(normalizedQuery)) return true;
+  return (entry._pinyinAliases || []).some(alias => alias.startsWith(normalizedQuery));
+}
+
+function typeSearchShortcutLabel(actionId) {
+  return (getShortcutBindings()[actionId] || []).filter(Boolean).join(' / ') || '\u2014';
+}
+
+function showTypeSearchHud(query, current, total, isRight, loading) {
+  document.querySelectorAll('.type-search-hud').forEach(el => el.remove());
+  const list = document.getElementById(isRight ? 'right-file-list' : 'file-list');
+  if (!list || !query) return;
+  const rect = list.getBoundingClientRect();
+  const hud = document.createElement('div');
+  hud.className = 'type-search-hud';
+  hud.style.right = Math.max(10, window.innerWidth - rect.right + 10) + 'px';
+  hud.style.bottom = Math.max(10, window.innerHeight - rect.bottom + 10) + 'px';
+  hud.textContent = loading
+    ? t('typeSearch.loading', { query })
+    : total > 0
+      ? t('typeSearch.hint', {
+          query,
+          current,
+          total,
+          next: typeSearchShortcutLabel('typeSearch.next'),
+          previous: typeSearchShortcutLabel('typeSearch.previous'),
+        })
+      : t('typeSearch.noMatch', { query });
+  document.body.appendChild(hud);
+}
+
+function resetTypeSearch() {
+  const state = G._typeSearch;
+  state.str = '';
+  state.lastQuery = '';
+  state.matches = [];
+  state.matchPos = -1;
+  state.requestToken++;
+  if (state.timer) clearTimeout(state.timer);
+  state.timer = null;
+  document.querySelectorAll('.type-search-hud').forEach(el => el.remove());
+}
+
+function expireTypeSearchInput() {
+  const state = G._typeSearch;
+  state.str = '';
+  state.requestToken++;
+  state.timer = null;
+  document.querySelectorAll('.type-search-hud').forEach(el => el.remove());
+}
+
+function scheduleTypeSearchReset() {
+  if (G._typeSearch.timer) clearTimeout(G._typeSearch.timer);
+  G._typeSearch.timer = setTimeout(expireTypeSearchInput, 2200);
+}
+
+async function runTypeSearchSelection(query, cycleDelta, isRight) {
+  const pane = isRight ? G.rp : getTab();
+  const entries = pane.entries || [];
+  const normalizedQuery = normalizeTypeSearchText(query);
+  if (!entries.length || !normalizedQuery) return;
+  const token = ++G._typeSearch.requestToken;
+  G._typeSearch.isRight = isRight;
+  const needsPinyin = /^[a-z0-9]+$/i.test(normalizedQuery) && entries.some(entry => /[\u3400-\u9fff]/.test(entry.name || ''));
+  if (needsPinyin && entries.some(entry => !Array.isArray(entry._pinyinAliases))) {
+    showTypeSearchHud(query, 0, 0, isRight, true);
+    await ensurePinyinAliases(entries);
+    if (token !== G._typeSearch.requestToken) return;
+  }
+
+  const matches = [];
+  entries.forEach((entry, index) => {
+    if (typeSearchMatches(entry, normalizedQuery)) matches.push(index);
+  });
+  if (token !== G._typeSearch.requestToken) return;
+
+  let matchPos = 0;
+  if (cycleDelta && matches.length) {
+    const currentPos = matches.indexOf(pane.lastIdx);
+    matchPos = currentPos < 0 ? 0 : (currentPos + cycleDelta + matches.length) % matches.length;
+  }
+  G._typeSearch.matches = matches;
+  G._typeSearch.matchPos = matches.length ? matchPos : -1;
+  if (matches.length) G._typeSearch.lastQuery = query;
+
+  if (matches.length) {
+    const foundIdx = matches[matchPos];
+    pane.sel.clear();
+    pane.sel.add(foundIdx);
+    pane.lastIdx = foundIdx;
+    const listId = isRight ? 'right-file-list' : 'file-list';
+    const countId = isRight ? 'right-status-count' : 'status-count';
+    renderFiles(pane, listId, countId, null, isRight);
+    scrollToVisible(foundIdx);
+    updatePreviewForSelection();
+  }
+  showTypeSearchHud(query, matches.length ? matchPos + 1 : 0, matches.length, isRight, false);
+}
+
+async function cycleTypeSearchSelection(delta) {
+  const query = G._typeSearch.str || G._typeSearch.lastQuery;
+  if (!query) return;
+  scheduleTypeSearchReset();
+  await runTypeSearchSelection(query, delta, G._typeSearch.isRight);
+}
 
 function loadShortcutBindings() {
   try {
@@ -266,70 +405,22 @@ document.addEventListener("keydown", async e => {
   }
 
   if (e.key === "Escape") {
-    if (G._typeSearch.str) {
-      G._typeSearch.str = '';
-      if (G._typeSearch.timer) { clearTimeout(G._typeSearch.timer); G._typeSearch.timer = null; }
-    }
+    if (G._typeSearch.str || G._typeSearch.lastQuery) resetTypeSearch();
     return;
   }
 
-  if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+  if (!e.isComposing && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault();
-    const char = e.key.toLowerCase();
+    const char = e.key.normalize('NFKC').toLocaleLowerCase();
     const isRight = G.lastActivePane === 'right';
+    if (G._typeSearch.str && G._typeSearch.isRight !== isRight) resetTypeSearch();
     const pane = isRight ? G.rp : getTab();
     const entries = pane.entries || [];
     if (!entries.length) return;
-
-    if (G._typeSearch.timer) clearTimeout(G._typeSearch.timer);
-
-    const sameCharTwice = (G._typeSearch.str.length === 1 && G._typeSearch.str[0] === char);
-    if (sameCharTwice) {
-      let foundIdx = -1;
-      const startIdx = pane.lastIdx;
-      for (let i = 1; i <= entries.length; i++) {
-        const idx = (startIdx + i) % entries.length;
-        if (entries[idx].name.toLowerCase().startsWith(char)) {
-          foundIdx = idx;
-          break;
-        }
-      }
-      if (foundIdx >= 0) {
-        pane.sel.clear();
-        pane.sel.add(foundIdx);
-        pane.lastIdx = foundIdx;
-        const listId = isRight ? "right-file-list" : "file-list";
-        const countId = isRight ? "right-status-count" : "status-count";
-        renderFiles(pane, listId, countId, null, isRight);
-        scrollToVisible(foundIdx);
-        updatePreviewForSelection();
-      }
-      G._typeSearch.timer = setTimeout(() => { G._typeSearch.str = ''; }, 500);
-      return;
-    }
-
-    G._typeSearch.str += char;
-    G._typeSearch.timer = setTimeout(() => { G._typeSearch.str = ''; }, 500);
-
-    const searchStr = G._typeSearch.str;
-    let foundIdx = -1;
-    for (let i = 0; i < entries.length; i++) {
-      if (entries[i].name.toLowerCase().startsWith(searchStr)) {
-        foundIdx = i;
-        break;
-      }
-    }
-
-    if (foundIdx >= 0) {
-      pane.sel.clear();
-      pane.sel.add(foundIdx);
-      pane.lastIdx = foundIdx;
-      const listId = isRight ? "right-file-list" : "file-list";
-      const countId = isRight ? "right-status-count" : "status-count";
-      renderFiles(pane, listId, countId, null, isRight);
-      scrollToVisible(foundIdx);
-      updatePreviewForSelection();
-    }
+    const repeatsSingleKey = G._typeSearch.str.length === 1 && G._typeSearch.str === char;
+    if (!repeatsSingleKey) G._typeSearch.str += char;
+    scheduleTypeSearchReset();
+    await runTypeSearchSelection(G._typeSearch.str, repeatsSingleKey ? 1 : 0, isRight);
   }
 });
 
@@ -337,6 +428,17 @@ function scrollToVisible(index) {
   const listId = G.lastActivePane === 'right' ? "right-file-list" : "file-list";
   const list = document.getElementById(listId);
   if (!list) return;
+  if (G.layout !== 'details') {
+    const target = list.querySelector(`[data-index="${index}"]`);
+    if (target) {
+      const listRect = list.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      if (targetRect.top < listRect.top || targetRect.bottom > listRect.bottom) {
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+      return;
+    }
+  }
   let rowH = ROW_H;
   if (G.layout === "icons") rowH = ICON_ROW_H;
   else if (G.layout === "cards") rowH = CARD_ROW_H;
@@ -386,9 +488,13 @@ function initCommands() {
   { id:"file.redo", label: t('cmd.redo'), action: redo, keys:"Ctrl+Y" },
   { id:"file.newFile", label: t('cmd.newFile'), action: showNewFileDialog, keys:"Ctrl+Shift+N" },
   { id:"view.fullscreen", label: t('cmd.fullscreen'), action: () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(()=>{}); }, keys:"F11" },
-  { id:"view.switchPane", label: t('cmd.switchPane'), action: () => { if (G.dualOn) { G.lastActivePane = G.lastActivePane === 'right' ? 'left' : 'right'; } }, keys:"Tab" },
+  { id:"view.switchPane", label: t('cmd.switchPane'), action: () => { if (G.dualOn) { G.lastActivePane = G.lastActivePane === 'right' ? 'left' : 'right'; updatePaneFocusUI(); } }, keys:"Tab" },
   { id:"view.grouping", label: t('cmd.toggleGrouping'), action: toggleGroupingMenu, keys:"Ctrl+Shift+H" },
   { id:"file.quicklook", label: t('cmd.quickLook'), action: quicklookSelected, keys:"Space" },
+  { id:"file.toggleFavorite", label: t('cmd.toggleFavorite'), action: () => toggleCurrentFolderFavorite(G.lastActivePane === 'right'), keys:"Ctrl+D" },
+  { id:"tab.next", label: t('cmd.nextTab'), action: () => switchRelativeTab(1), keys:"Ctrl+Tab" },
+  { id:"tab.previous", label: t('cmd.previousTab'), action: () => switchRelativeTab(-1), keys:"Ctrl+Shift+Tab" },
+  { id:"search.toggleScope", label: t('cmd.toggleSearchScope'), action: toggleSearchScope, keys:"Ctrl+Shift+F" },
   { id:"window.new", label: t('cmd.newWindow'), action: () => call("open_new_window", {}), keys:"Ctrl+N" },
   { id:"window.pip", label: t('cmd.togglePip'), action: async () => { try { const isPip = await call("toggle_pip", {}); G.pipMode = isPip; showNotice(isPip ? t('notice.pipOn') : t('notice.pipOff')); } catch(e) {} }, keys:"Ctrl+Shift+P" },
   { id:"settings", label: t('cmd.settings'), action: openSettings, keys:"Ctrl+," },

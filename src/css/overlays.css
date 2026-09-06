@@ -88,6 +88,11 @@
 .progress-title { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 8px; }
 .progress-bar-container { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
 .progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+.progress-bar.indeterminate { animation: progress-indeterminate 1.1s ease-in-out infinite; }
+@keyframes progress-indeterminate {
+  from { transform: translateX(-140%); }
+  to { transform: translateX(300%); }
+}
 .progress-info { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-top: 6px; }
 .progress-cancel { margin-top: 8px; }
 

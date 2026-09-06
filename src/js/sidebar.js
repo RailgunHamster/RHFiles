@@ -144,23 +144,16 @@ function showDriveContextMenu(e, path, label, letter) {
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
     { label: t('sidebar.open'), action: () => navigateTo(path) },
-    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
+    { label: t('ctx.newTab'), action: () => addTab(path) },
+    { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(path, label) },
     { label: "-", action: null },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
     { label: t('btn.format') + '...', action: () => showFormatDialog(letter, label) },
   ];
-  items.forEach(item => {
-    if (item.label === "-") {
-      const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
-    } else {
-      const mi = document.createElement("div");
-      mi.className = "ctx-item";
-      mi.innerHTML = `<span>${esc(item.label)}</span>`;
-      mi.addEventListener("click", () => { removeContextMenu(); if (item.action) item.action(); });
-      menu.appendChild(mi);
-    }
-  });
+  renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
-  contextMenu = menu;
+  _ctxShow(menu);
+  requestAnimationFrame(() => clampMenuPosition(menu, e.clientX, e.clientY));
 }
 
 function showFormatDialog(letter, label) {
@@ -327,34 +320,23 @@ function showRecentContextMenu(e, item) {
   menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
   const items = [
     { label: item.is_dir ? t('sidebar.open') : t('sidebar.openFile'), action: () => { if (item.is_dir) navigateTo(item.path); else call("open_file", { path: item.path }); } },
-    { label: t('sidebar.openLocation'), action: () => { const dir = item.is_dir ? item.path : item.path.split("\\").slice(0, -1).join("\\"); navigateTo(dir); } },
+    { label: t('sidebar.openLocation'), action: () => navigateTo(item.is_dir ? item.path : parentFolderPath(item.path)) },
     { label: "-", action: null },
     { label: t('sidebar.removeFromRecent'), action: () => { call("db_remove_recent", { path: item.path }).then(() => loadRecentList()); } },
     { label: t('sidebar.clearAllRecent'), action: () => { if (confirm(t('confirm.clearRecent'))) { call("db_clear_recent", {}).then(() => loadRecentList()); } } },
   ];
-  items.forEach(it => {
-    if (it.label === "-") {
-      const sep = document.createElement("div"); sep.className = "ctx-sep"; menu.appendChild(sep);
-    } else {
-      const mi = document.createElement("div");
-      mi.className = "ctx-item";
-      mi.innerHTML = "<span>" + esc(it.label) + "</span>";
-      mi.addEventListener("click", () => { removeContextMenu(); if (it.action) it.action(); });
-      menu.appendChild(mi);
-    }
-  });
+  renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
-  contextMenu = menu;
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = (e.clientX - rect.width) + "px";
-    if (rect.bottom > window.innerHeight) menu.style.top = (e.clientY - rect.height) + "px";
-  });
+  _ctxShow(menu);
+  requestAnimationFrame(() => clampMenuPosition(menu, e.clientX, e.clientY));
 }
 
 function updateSidebarSelection() {
   document.querySelectorAll(".sidebar-item,.tree-row").forEach(el => el.classList.remove("selected"));
   const currentPath = (G.lastActivePane === 'right' ? G.rp : getTab()).path;
+  document.querySelectorAll(".pinned-item").forEach(el => {
+    if (favoritePathKey(el.dataset.path) === favoritePathKey(currentPath)) el.classList.add("selected");
+  });
   document.querySelectorAll(".tree-row").forEach(el => {
     const nameEl = el.querySelector(".tree-name");
     if (nameEl) {
@@ -367,6 +349,27 @@ function updateSidebarSelection() {
 // --- quick access pinning ---
 let _pinnedFolders = [];
 
+function favoritePathKey(path) {
+  return String(path || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+}
+
+function isFavoriteFolder(path) {
+  const key = favoritePathKey(path);
+  return !!key && _pinnedFolders.some(p => favoritePathKey(p.path) === key);
+}
+
+function favoriteDisplayName(path, name) {
+  if (name) return name;
+  const clean = String(path || '').replace(/[\\/]+$/, '');
+  return clean.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+async function savePinnedFolders() {
+  const data = _pinnedFolders.map(p => [p.path, p.name]);
+  localStorage.setItem('rhfiles-pinned', JSON.stringify(_pinnedFolders));
+  try { await call("db_save_pinned", { paths: data }); } catch (e) {}
+}
+
 async function loadPinnedFolders() {
   try {
     const data = await call("db_load_pinned", {});
@@ -375,6 +378,7 @@ async function loadPinnedFolders() {
     try { _pinnedFolders = JSON.parse(localStorage.getItem('rhfiles-pinned') || '[]'); } catch(e2) { _pinnedFolders = []; }
   }
   renderPinnedFolders();
+  updateFavoriteButtons();
 }
 
 function getPinnedFolders() {
@@ -382,16 +386,62 @@ function getPinnedFolders() {
 }
 
 async function pinFolder(path, name) {
-  if (_pinnedFolders.find(p => p.path === path)) return;
-  _pinnedFolders.push({ path, name: name || path.split("\\").pop() });
-  try { await call("db_save_pinned", { paths: _pinnedFolders.map(p => [p.path, p.name]) }); } catch (e) {}
+  if (!path || path === 'home://' || isFavoriteFolder(path)) return false;
+  _pinnedFolders.push({ path, name: favoriteDisplayName(path, name) });
+  await savePinnedFolders();
   renderPinnedFolders();
+  updateFavoriteButtons();
+  showNotice(t('notice.favoriteAdded'));
+  return true;
 }
 
 async function unpinFolder(path) {
-  _pinnedFolders = _pinnedFolders.filter(p => p.path !== path);
-  try { await call("db_save_pinned", { paths: _pinnedFolders.map(p => [p.path, p.name]) }); } catch (e) {}
+  const key = favoritePathKey(path);
+  const oldLength = _pinnedFolders.length;
+  _pinnedFolders = _pinnedFolders.filter(p => favoritePathKey(p.path) !== key);
+  if (_pinnedFolders.length === oldLength) return false;
+  await savePinnedFolders();
   renderPinnedFolders();
+  updateFavoriteButtons();
+  showNotice(t('notice.favoriteRemoved'));
+  return true;
+}
+
+async function toggleFavoriteFolder(path, name) {
+  if (isFavoriteFolder(path)) return unpinFolder(path);
+  return pinFolder(path, name);
+}
+
+function currentFolderForFavorite(isRight) {
+  const path = isRight ? G.rp.path : getTab()?.path;
+  return path && path !== 'home://' && !path.startsWith('ftp://') ? path : null;
+}
+
+async function toggleCurrentFolderFavorite(isRight, event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const path = currentFolderForFavorite(!!isRight);
+  if (!path) return;
+  await toggleFavoriteFolder(path, favoriteDisplayName(path));
+}
+
+function updateFavoriteButtons() {
+  [
+    { id: 'btn-favorite-current', isRight: false },
+    { id: 'btn-right-favorite', isRight: true },
+  ].forEach(item => {
+    const btn = document.getElementById(item.id);
+    if (!btn) return;
+    const path = currentFolderForFavorite(item.isRight);
+    const active = !!path && isFavoriteFolder(path);
+    btn.disabled = !path;
+    btn.classList.toggle('active', active);
+    const label = active ? t('favorites.removeCurrent') : t('favorites.addCurrent');
+    btn.title = label + (item.isRight ? '' : ' (Ctrl+D)');
+    btn.setAttribute('aria-label', label);
+  });
 }
 
 function renderPinnedFolders() {
@@ -409,12 +459,18 @@ function renderPinnedFolders() {
   }
   if (!container) return;
   container.innerHTML = "";
+  if (!pinned.length) {
+    container.innerHTML = `<div class="favorite-empty">${esc(t('sidebar.noFavorites'))}</div>`;
+    return;
+  }
   for (const p of pinned) {
     const div = document.createElement("div");
     div.className = "sidebar-item pinned-item";
     div.dataset.path = p.path;
-    div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1l2 4.5H15l-3.8 3 1.4 4.7L8 10.5 3.4 13.2l1.4-4.7L1 5.5h5z" fill="#e8b130" stroke="#c99820" stroke-width=".5"/></svg> ' + esc(p.name);
+    div.title = p.path;
+    div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1l2 4.5H15l-3.8 3 1.4 4.7L8 10.5 3.4 13.2l1.4-4.7L1 5.5h5z" fill="#e8b130" stroke="#c99820" stroke-width=".5"/></svg><span class="sidebar-item-label">' + esc(p.name) + '</span>';
     div.addEventListener("click", () => navigateTo(p.path));
+    div.addEventListener("auxclick", e => { if (e.button === 1) { e.preventDefault(); addTab(p.path); } });
     div.addEventListener("contextmenu", e => showSidebarContextMenu(e, p.path, p.name));
     container.appendChild(div);
   }
@@ -429,18 +485,35 @@ function showSidebarContextMenu(e, path, name) {
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
     { label: t('sidebar.open'), action: () => navigateTo(path) },
-    { label: t('sidebar.unpin'), action: () => unpinFolder(path) },
+    { label: t('ctx.newTab'), action: () => addTab(path) },
+    { label: "-", action: null },
+    { label: t('favorites.remove'), action: () => unpinFolder(path) },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
   ];
-  items.forEach(item => {
-    const mi = document.createElement("div");
-    mi.className = "ctx-item";
-    mi.innerHTML = `<span>${esc(item.label)}</span>`;
-    mi.addEventListener("click", () => { removeContextMenu(); if (item.action) item.action(); });
-    menu.appendChild(mi);
-  });
+  renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
-  contextMenu = menu;
+  _ctxShow(menu);
+  requestAnimationFrame(() => clampMenuPosition(menu, e.clientX, e.clientY));
+}
+
+function showFolderShortcutContextMenu(e, path, name) {
+  e.preventDefault();
+  e.stopPropagation();
+  removeContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
+  const items = [
+    { label: t('sidebar.open'), action: () => navigateTo(path) },
+    { label: t('ctx.newTab'), action: () => addTab(path) },
+    { label: "-", action: null },
+    { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(path, name) },
+    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
+  ];
+  renderMenuItems(menu, items, e.clientX, e.clientY);
+  document.body.appendChild(menu);
+  _ctxShow(menu);
+  requestAnimationFrame(() => clampMenuPosition(menu, e.clientX, e.clientY));
 }
 
 // --- cloud storage providers ---
@@ -496,18 +569,14 @@ function showCloudContextMenu(e, provider) {
   menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
   const items = [
     { label: t('sidebar.open'), action: () => navigateTo(provider.path) },
-    { label: t('sidebar.pin'), action: () => pinFolder(provider.path, provider.name) },
+    { label: t('ctx.newTab'), action: () => addTab(provider.path) },
+    { label: isFavoriteFolder(provider.path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(provider.path, provider.name) },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(provider.path) },
   ];
-  items.forEach(item => {
-    const mi = document.createElement("div");
-    mi.className = "ctx-item";
-    mi.innerHTML = '<span>' + esc(item.label) + '</span>';
-    mi.addEventListener("click", () => { removeContextMenu(); if (item.action) item.action(); });
-    menu.appendChild(mi);
-  });
+  renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
-  contextMenu = menu;
+  _ctxShow(menu);
+  requestAnimationFrame(() => clampMenuPosition(menu, e.clientX, e.clientY));
 }
 
 // --- WSL & library detection ---
@@ -559,10 +628,23 @@ async function detectWindowsLibraries() {
       div.className = "sidebar-item";
       div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 5h5l2 2h5v6H2V5z" stroke="var(--accent)" stroke-width=".8"/></svg> ' + esc(l.name);
       div.addEventListener("click", () => navigateTo(l.path));
-      div.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); pinFolder(l.path, l.name); });
+      div.addEventListener("contextmenu", e => showFolderShortcutContextMenu(e, l.path, l.name));
       container.appendChild(div);
     }
   } catch (e) {}
+}
+
+// --- optional device/network discovery ---
+function scheduleOptionalDiscovery() {
+  const start = () => {
+    renderNetwork();
+    setTimeout(() => renderMtpDevices(), 250);
+  };
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(start, { timeout: 3000 });
+  } else {
+    setTimeout(start, 1500);
+  }
 }
 
 // --- network browsing ---
@@ -571,7 +653,11 @@ async function renderNetwork() {
   if (!section) return;
   section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('status.scanning') + '...</div>';
   try {
-    const servers = await call("browse_network", {});
+    const servers = await withTimeout(
+      call("browse_network", {}),
+      8000,
+      "Network discovery timed out"
+    );
     section.innerHTML = '';
     for (const s of servers) {
       const div = document.createElement('div');
@@ -579,15 +665,23 @@ async function renderNetwork() {
       div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="1" stroke="currentColor" stroke-width=".8"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width=".6"/></svg> ' + esc(s.name);
       div.dataset.path = s.path;
       div.onclick = () => navigateTo(s.path);
-      div.oncontextmenu = async (e) => {
+      div.oncontextmenu = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        try {
-          const shares = await call("list_shares", { server: s.path });
-          showNetworkMenu(e, s, shares);
-        } catch (ex) {
-          showNetworkMenu(e, s, []);
-        }
+        const anchor = { clientX: e.clientX, clientY: e.clientY };
+        const token = `${s.path}:${Date.now()}:${Math.random()}`;
+        showNetworkMenu(anchor, s, [], { loading: true, token });
+        withTimeout(call("list_shares", { server: s.path }), 8000, "Share discovery timed out")
+          .then(shares => {
+            if (contextMenu?.dataset.networkMenuToken === token) {
+              showNetworkMenu(anchor, s, shares, { token });
+            }
+          })
+          .catch(() => {
+            if (contextMenu?.dataset.networkMenuToken === token) {
+              showNetworkMenu(anchor, s, [], { error: true, token });
+            }
+          });
       };
       section.appendChild(div);
     }
@@ -599,35 +693,34 @@ async function renderNetwork() {
   }
 }
 
-function showNetworkMenu(e, server, shares) {
+function showNetworkMenu(e, server, shares, options = {}) {
+  const { loading = false, error = false, token = '' } = options;
   removeContextMenu();
   const menu = document.createElement('div');
   menu.className = 'context-menu';
   menu.style.cssText = 'left:' + e.clientX + 'px;top:' + e.clientY + 'px;';
-  const openItem = document.createElement('div');
-  openItem.className = 'ctx-item';
-  openItem.innerHTML = '<span>' + t('sidebar.open') + ' \\\\' + esc(server.name) + '</span>';
-  openItem.onclick = () => { removeContextMenu(); navigateTo(server.path); };
-  menu.appendChild(openItem);
+  menu.dataset.networkMenuToken = token;
+  const items = [
+    { label: t('sidebar.open') + ' \\\\' + server.name, action: () => navigateTo(server.path) },
+    { label: t('ctx.newTab'), action: () => addTab(server.path) },
+  ];
+  if (loading) {
+    items.push({ label: '-', action: null });
+    items.push({ label: t('ctx.loadingShares'), disabled: true });
+  } else if (error) {
+    items.push({ label: '-', action: null });
+    items.push({ label: t('ctx.sharesUnavailable'), disabled: true });
+  }
   if (shares.length > 0) {
-    const sep = document.createElement('div');
-    sep.className = 'ctx-sep';
-    menu.appendChild(sep);
+    items.push({ label: '-', action: null });
     for (const sh of shares) {
-      const item = document.createElement('div');
-      item.className = 'ctx-item';
-      item.innerHTML = '<span>' + esc(sh.name) + '</span>';
-      item.onclick = () => { removeContextMenu(); navigateTo(sh.path); };
-      menu.appendChild(item);
+      items.push({ label: sh.name, action: () => navigateTo(sh.path) });
     }
   }
+  renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
-  contextMenu = menu;
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = (e.clientX - rect.width) + 'px';
-    if (rect.bottom > window.innerHeight) menu.style.top = (e.clientY - rect.height) + 'px';
-  });
+  _ctxShow(menu);
+  requestAnimationFrame(() => clampMenuPosition(menu, e.clientX, e.clientY));
 }
 
 // --- FTP ---
@@ -686,7 +779,11 @@ async function renderMtpDevices() {
   if (!section) return;
   section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('status.scanning') + '...</div>';
   try {
-    const devices = await call('list_mtp_devices', {});
+    const devices = await withTimeout(
+      call('list_mtp_devices', {}),
+      5000,
+      "Device discovery timed out"
+    );
     section.innerHTML = '';
     for (const d of devices) {
       const div = document.createElement('div');

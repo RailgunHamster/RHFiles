@@ -1,10 +1,16 @@
 .preview-divider { width:4px; background:var(--border); cursor:col-resize; flex-shrink:0; transition:background .15s; }
 .preview-divider:hover { background:var(--accent); }
 .preview-pane { width:300px; min-width:200px; max-width:500px; background:var(--preview-bg); border-left:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
-.preview-header { display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-bottom:1px solid var(--divider); }
+.preview-header { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:34px; padding:4px 6px 4px 10px; border-bottom:1px solid var(--divider); }
+.preview-heading { min-width:0; display:flex; align-items:baseline; gap:8px; }
 .preview-title { font-size:12px; font-weight:600; color:var(--text-3); }
+.preview-file-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--text-4); }
+.preview-actions { display:flex; align-items:center; gap:2px; flex-shrink:0; }
+.preview-open, .preview-close { width:22px; height:22px; }
 .preview-content { flex:1; overflow:auto; padding:10px; }
 .preview-empty { color:var(--text-4); text-align:center; padding:40px 10px; font-size:12px; }
+.preview-loading::before { content:""; display:block; width:18px; height:18px; margin:0 auto 10px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:previewSpin .7s linear infinite; }
+@keyframes previewSpin { to { transform:rotate(360deg); } }
 .preview-text { font-family:"Cascadia Code","Consolas","Courier New",monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; line-height:1.5; color:var(--text); tab-size:4; }
 .preview-image { text-align:center; }
 .preview-image img { max-width:100%; max-height:100%; object-fit:contain; border-radius:4px; }

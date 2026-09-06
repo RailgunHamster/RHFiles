@@ -123,27 +123,52 @@ pub fn file_info_from_entry(e: &rhfiles_core::FileEntry) -> FileInfo {
         size_display: e.display_size(),
         modified: format_time(e.modified),
         created: format_time(e.created),
-        modified_ts: e.modified.duration_since(std::time::SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0),
-        created_ts: e.created.duration_since(std::time::SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0),
+        modified_ts: e
+            .modified
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0),
+        created_ts: e
+            .created
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0),
         folder_size: None,
     }
 }
 
 pub fn format_size(bytes: u64) -> String {
     let b = bytes as f64;
-    if b < 1024.0 { format!("{} B", bytes) }
-    else if b < 1024.0 * 1024.0 { format!("{:.1} KB", b / 1024.0) }
-    else if b < 1024.0 * 1024.0 * 1024.0 { format!("{:.1} MB", b / (1024.0 * 1024.0)) }
-    else { format!("{:.1} GB", b / (1024.0 * 1024.0 * 1024.0)) }
+    if b < 1024.0 {
+        format!("{} B", bytes)
+    } else if b < 1024.0 * 1024.0 {
+        format!("{:.1} KB", b / 1024.0)
+    } else if b < 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.1} MB", b / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", b / (1024.0 * 1024.0 * 1024.0))
+    }
 }
 
 pub fn expand_env_var(s: &str) -> String {
-    let s = s.replace("%USERPROFILE%", &std::env::var("USERPROFILE").unwrap_or_default());
-    let s = s.replace("%LOCALAPPDATA%", &std::env::var("LOCALAPPDATA").unwrap_or_default());
+    let s = s.replace(
+        "%USERPROFILE%",
+        &std::env::var("USERPROFILE").unwrap_or_default(),
+    );
+    let s = s.replace(
+        "%LOCALAPPDATA%",
+        &std::env::var("LOCALAPPDATA").unwrap_or_default(),
+    );
     let s = s.replace("%APPDATA%", &std::env::var("APPDATA").unwrap_or_default());
-    let s = s.replace("%SystemRoot%", &std::env::var("SystemRoot").unwrap_or_default());
+    let s = s.replace(
+        "%SystemRoot%",
+        &std::env::var("SystemRoot").unwrap_or_default(),
+    );
     let s = s.replace("%windir%", &std::env::var("windir").unwrap_or_default());
-    s.replace("%ProgramFiles%", &std::env::var("ProgramFiles").unwrap_or_default())
+    s.replace(
+        "%ProgramFiles%",
+        &std::env::var("ProgramFiles").unwrap_or_default(),
+    )
 }
 
 pub fn parse_icon_resource(resource: &str) -> (String, i32) {
@@ -160,12 +185,22 @@ pub fn parse_icon_resource(resource: &str) -> (String, i32) {
 }
 
 pub fn resolve_display_name(resource: &str) -> String {
-    if resource.contains("OneDrive") { return "OneDrive".to_string(); }
-    if resource.contains("Google") { return "Google Drive".to_string(); }
-    if resource.contains("Dropbox") { return "Dropbox".to_string(); }
+    if resource.contains("OneDrive") {
+        return "OneDrive".to_string();
+    }
+    if resource.contains("Google") {
+        return "Google Drive".to_string();
+    }
+    if resource.contains("Dropbox") {
+        return "Dropbox".to_string();
+    }
     if resource.starts_with('@') {
         let path = resource.trim_start_matches('@');
-        let dll = if let Some(idx) = path.rfind(",-") { &path[..idx] } else { path };
+        let dll = if let Some(idx) = path.rfind(",-") {
+            &path[..idx]
+        } else {
+            path
+        };
         let expanded = expand_env_var(dll);
         if let Some(name) = std::path::Path::new(&expanded).file_stem() {
             return name.to_string_lossy().into_owned();
