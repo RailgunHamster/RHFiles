@@ -95,6 +95,7 @@
   "preview.fullscreen": "全屏预览（Ctrl+Space）",
   "preview.exitFullscreen": "退出全屏预览（Esc）",
   "diskUsage.title": "文件夹占用分析",
+  "diskUsage.tab": "空间占用",
   "diskUsage.analyze": "分析磁盘占用",
   "diskUsage.analyzing": "正在使用 dust 分析文件夹...",
   "diskUsage.depth": "扫描层级",
@@ -603,6 +604,7 @@
   "undo.copy": "\u590d\u5236 {path}",
   "undo.move": "\u79fb\u52a8 {path}",
   "undo.renameTo": "\u91cd\u547d\u540d\u4e3a {path}",
+  "undo.renameItems": "\u91cd\u547d\u540d {count} \u4e2a\u9879\u76ee",
   "undo.deleteItems": "\u5220\u9664 {count} \u4e2a\u9879\u76ee",
   "undo.newFolder": "\u65b0\u5efa\u6587\u4ef6\u5939 {path}",
   "template.textFile": "\u6587\u672c\u6587\u4ef6",
@@ -626,5 +628,6 @@
   "preview.args": "\u53c2\u6570\uff1a",
   "preview.workDir": "\u5de5\u4f5c\u76ee\u5f55\uff1a",
   "alert.rtfPreviewFailed": "RTF \u9884\u89c8\u5931\u8d25",
-  "alert.docxPreviewFailed": "DOCX \u9884\u89c8\u5931\u8d25"
+  "alert.docxPreviewFailed": "DOCX \u9884\u89c8\u5931\u8d25",
+  "alert.moveFailed": "\u79fb\u52a8\u5931\u8d25\uff1a{error}"
 }

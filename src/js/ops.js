@@ -143,8 +143,14 @@ async function deleteSelected(isRight) {
   if (!confirmed) return;
   showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
   try {
-    await call("delete_files", { paths: sel.map(f => f.path) });
+    const deletedPaths = sel.map(f => f.path);
+    const outcome = await call("delete_files", { paths: deletedPaths });
+    const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
+    if (actuallyDeleted.length) trackDelete(actuallyDeleted);
     await refresh();
+    if (outcome?.errors?.length) {
+      alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
+    }
   } catch (e) {
     alert(t('alert.deleteFailed', {error: e}));
   } finally {
@@ -270,12 +276,18 @@ async function paste(isRight) {
   const destTab = isRight ? G.rp : getTab();
   const destPath = destTab.path;
   const destEntries = destTab.entries || [];
+  const existingNames = new Set(destEntries.map(entry => fileNameKey(entry.name)));
   let applyAllAction = null;
   try {
-    for (const srcPath of G.clipboard.paths) {
-      const srcName = srcPath.split("\\").pop();
-      const destFullPath = destPath + "\\" + srcName;
-      const conflict = destEntries.find(e => e.name === srcName);
+    const clipboard = G.clipboard;
+    for (const srcPath of [...clipboard.paths]) {
+      const srcName = srcPath.split(/[\\/]/).pop();
+      const destFullPath = joinFolderPath(destPath, srcName);
+      if (windowsPathKey(srcPath) === windowsPathKey(destFullPath)) {
+        if (clipboard.op === 'cut') clipboard.paths.delete(srcPath);
+        continue;
+      }
+      const conflict = existingNames.has(fileNameKey(srcName)) || await call('path_exists', { path:destFullPath });
       let action = 'replace';
       if (conflict) {
         if (applyAllAction) {
@@ -291,24 +303,30 @@ async function paste(isRight) {
       }
       if (action === 'cancel') break;
       if (action === 'skip') continue;
-      if (action === 'rename') {
-        await call("rename_file", { path: destFullPath, newName: generateUniqueName(destPath, srcName) });
-      }
-      if (G.clipboard.op === "cut") {
-        showProgress(t('status.moving'));
-        await call("move_with_progress", { src: srcPath, dest: destPath });
-        hideProgress();
-        trackMove(srcPath, destFullPath);
+      const targetName = action === 'rename'
+        ? generateUniqueName(destPath, srcName, existingNames)
+        : srcName;
+      const targetPath = joinFolderPath(destPath, targetName);
+      const overwrites = conflict && action === 'replace';
+      const keepsBoth = action === 'rename';
+      if (clipboard.op === "cut") {
+        showProgress(t('status.moving'), { indeterminate: keepsBoth });
+        if (keepsBoth) await call("move_path_exact", { src: srcPath, dest: targetPath });
+        else await call("move_with_progress", { src: srcPath, dest: destPath, overwrite:overwrites });
+        if (!overwrites) trackMove(srcPath, targetPath);
+        clipboard.paths.delete(srcPath);
       } else {
-        showProgress(t('status.copying'));
-        await call("copy_with_progress", { src: srcPath, dest: destPath });
-        hideProgress();
-        trackCopy(srcPath, destFullPath);
+        showProgress(t('status.copying'), { indeterminate: keepsBoth });
+        if (keepsBoth) await call("copy_path_exact", { src: srcPath, dest: targetPath });
+        else await call("copy_with_progress", { src: srcPath, dest: destPath, overwrite:overwrites });
+        if (!overwrites) trackCopy(srcPath, targetPath);
       }
+      hideProgress();
+      existingNames.add(fileNameKey(targetName));
     }
-    if (G.clipboard.op === "cut") G.clipboard = null;
+    if (G.clipboard?.op === "cut" && !G.clipboard.paths.size) G.clipboard = null;
     await refresh();
-  } catch (e) { hideProgress(); alert(t('alert.pasteFailed')); }
+  } catch (e) { hideProgress(); alert(t('alert.pasteFailed', { error: e })); }
 }
 
 async function openFileHandler(path) {
@@ -333,6 +351,14 @@ function archiveFolderName(name) {
 
 function joinFolderPath(parent, child) {
   return String(parent || '').replace(/[\\/]+$/, '') + '\\' + child;
+}
+
+function windowsPathKey(path) {
+  return String(path || '')
+    .replace(/\//g, '\\')
+    .replace(/\\+$/, '')
+    .normalize('NFC')
+    .toLocaleLowerCase();
 }
 
 async function extractArchiveTo(file, destination) {
@@ -1004,16 +1030,54 @@ document.addEventListener("drop", async e => {
       const dropTarget = e.target.closest('.file-list');
       const isRightDrop = dropTarget && dropTarget.id === 'right-file-list';
       const dest = isRightDrop ? G.rp.path : getTab().path;
+      const destinationPane = isRightDrop ? G.rp : getTab();
+      const existingNames = new Set((destinationPane.entries || []).map(entry => fileNameKey(entry.name)));
+      let applyAllAction = null;
       activatePane(isRightDrop ? 'right' : 'left');
       for (const src of paths) {
-        try { await call("move_path_cmd", { src, dest }); } catch (ex) {}
+        const sourceName = String(src).split(/[\\/]/).pop();
+        const originalTarget = joinFolderPath(dest, sourceName);
+        if (windowsPathKey(src) === windowsPathKey(originalTarget)) continue;
+
+        const conflict = existingNames.has(fileNameKey(sourceName)) || await call('path_exists', { path:originalTarget });
+        let action = 'move';
+        if (conflict) {
+          if (applyAllAction) {
+            action = applyAllAction;
+          } else {
+            action = await new Promise(resolve => {
+              showConflictDialog(sourceName, sourceName, src, originalTarget, (choice, applyAll) => {
+                if (applyAll) applyAllAction = choice;
+                resolve(choice);
+              });
+            });
+          }
+        }
+        if (action === 'cancel') break;
+        if (action === 'skip') continue;
+
+        const targetName = action === 'rename'
+          ? generateUniqueName(dest, sourceName, existingNames)
+          : sourceName;
+        const targetPath = joinFolderPath(dest, targetName);
+        const overwrites = conflict && action === 'replace';
+        const keepsBoth = action === 'rename';
+        showProgress(t('status.moving'), { indeterminate: keepsBoth });
+        if (keepsBoth) await call("move_path_exact", { src, dest: targetPath });
+        else await call("move_with_progress", { src, dest, overwrite:overwrites });
+        hideProgress();
+        if (!overwrites) trackMove(src, targetPath);
+        existingNames.add(fileNameKey(targetName));
       }
       // A cross-pane move changes both directories. Refresh both sides so the
       // source does not retain a stale item and the destination appears at once.
       await navigateTo(getTab().path, false);
       if (G.dualOn) await rpNavigateTo(G.rp.path, false);
     }
-  } catch (ex) {}
+  } catch (ex) {
+    hideProgress();
+    alert(t('alert.moveFailed', { error: ex }));
+  }
 });
 
 // --- ADS streams dialog ---

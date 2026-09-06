@@ -195,6 +195,7 @@ G.pipMode = false;
 G._7zAvailable = false;
 
 G.lastActivePane = 'left';
+G.inspectorTab = 'preview';
 
 G._typeSearch = { str: '', lastQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
 
@@ -377,6 +378,13 @@ function fallbackCall(cmd, args) {
       { name:"Batch File", ext:".bat", content:"@echo off\n\n" },
     ];
     case "create_new_file": return null;
+    case "delete_file": return null;
+    case "delete_files": return { deleted:[...(args.paths || [])], errors:[] };
+    case "restore_recycled_files": return null;
+    case "copy_path_exact": return null;
+    case "move_path_exact": return null;
+    case "move_paths_exact": return null;
+    case "path_exists": return false;
     case "get_file_association": return { name:"Unknown" };
     case "run_as_admin": return null;
     case "empty_recycle_bin": return null;

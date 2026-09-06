@@ -92,7 +92,30 @@ function restorePreviewPane() {
 }
 
 function togglePreviewPane() {
-  setPreviewPaneVisible(!G.previewOn);
+  if (G.previewOn) setPreviewPaneVisible(false);
+  else {
+    switchInspectorTab('preview');
+    setPreviewPaneVisible(true);
+  }
+}
+
+function switchInspectorTab(tab) {
+  const next = tab === 'disk' ? 'disk' : 'preview';
+  G.inspectorTab = next;
+  const pane = document.getElementById('preview-pane');
+  pane?.classList.toggle('inspector-disk-active', next === 'disk');
+  for (const name of ['preview', 'disk']) {
+    const active = name === next;
+    const button = document.getElementById('inspector-tab-' + name);
+    const view = document.getElementById('inspector-' + name + '-view');
+    button?.classList.toggle('active', active);
+    button?.setAttribute('aria-selected', String(active));
+    if (view) {
+      view.classList.toggle('active', active);
+      view.style.display = active ? 'flex' : 'none';
+    }
+  }
+  if (next === 'preview' && G.previewOn) updatePreviewForSelection();
 }
 
 function togglePreviewFullscreen(force) {
@@ -119,12 +142,13 @@ function setPreviewDefaultOpen(enabled) {
 
 function previewSelected(isRight) {
   if (typeof isRight === 'boolean') G.lastActivePane = isRight ? 'right' : 'left';
+  switchInspectorTab('preview');
   if (!G.previewOn) setPreviewPaneVisible(true);
   else updatePreviewForSelection();
 }
 
 function toggleQuickPreview(isRight) {
-  if (G.previewOn) setPreviewPaneVisible(false);
+  if (G.previewOn && G.inspectorTab === 'preview') setPreviewPaneVisible(false);
   else previewSelected(isRight);
 }
 

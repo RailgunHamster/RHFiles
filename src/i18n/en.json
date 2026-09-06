@@ -95,6 +95,7 @@
   "preview.fullscreen": "Fullscreen preview (Ctrl+Space)",
   "preview.exitFullscreen": "Exit fullscreen preview (Esc)",
   "diskUsage.title": "Folder disk usage",
+  "diskUsage.tab": "Disk usage",
   "diskUsage.analyze": "Analyze disk usage",
   "diskUsage.analyzing": "Analyzing folder with dust...",
   "diskUsage.depth": "Scan depth",
@@ -603,6 +604,7 @@
   "undo.copy": "Copy {path}",
   "undo.move": "Move {path}",
   "undo.renameTo": "Rename to {path}",
+  "undo.renameItems": "Rename {count} items",
   "undo.deleteItems": "Delete {count} items",
   "undo.newFolder": "New folder {path}",
   "template.textFile": "Text File",
@@ -626,5 +628,6 @@
   "preview.args": "Args:",
   "preview.workDir": "Work Dir:",
   "alert.rtfPreviewFailed": "RTF preview failed",
-  "alert.docxPreviewFailed": "DOCX preview failed"
+  "alert.docxPreviewFailed": "DOCX preview failed",
+  "alert.moveFailed": "Move failed: {error}"
 }

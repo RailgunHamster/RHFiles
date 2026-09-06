@@ -284,16 +284,6 @@ function findActionForBinding(bindings, combo) {
 
 let _shortcutBindings = null;
 
-window.addEventListener("keydown", e => {
-  if (!e.altKey || e.key !== "Enter") return;
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-  const anyDialog = document.querySelector('.overlay[style*="display: flex"], .overlay[style*="display:flex"]');
-  if (anyDialog) return;
-  e.preventDefault();
-  const handler = ACTION_HANDLERS["file.properties"];
-  if (handler) handler();
-}, true);
-
 function getShortcutBindings() {
   if (!_shortcutBindings) _shortcutBindings = loadShortcutBindings();
   return _shortcutBindings;
@@ -381,33 +371,10 @@ document.addEventListener("keydown", async e => {
     return;
   }
 
-  if (e.key === "ArrowDown") {
+  const gridLayout = G.layout === 'icons' || G.layout === 'cards' || G.layout === 'thumbnails';
+  if (e.key === "ArrowDown" || e.key === "ArrowUp" || (gridLayout && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) {
     e.preventDefault();
-    const isRight = G.lastActivePane === 'right';
-    const pane = isRight ? G.rp : getTab();
-    const entries = pane.entries || [];
-    const sel = pane.sel || new Set();
-    const indices = [...sel];
-    const fi = indices.length ? indices[indices.length - 1] : -1;
-    if (fi < entries.length - 1) { sel.clear(); sel.add(fi < 0 ? 0 : fi + 1); pane.lastIdx = fi < 0 ? 0 : fi + 1; }
-    const listId = isRight ? "right-file-list" : "file-list";
-    const countId = isRight ? "right-status-count" : "status-count";
-    renderFiles(pane, listId, countId, null, isRight);
-    scrollToVisible(pane.lastIdx);
-    updatePreviewForSelection();
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    const isRight = G.lastActivePane === 'right';
-    const pane = isRight ? G.rp : getTab();
-    const sel = pane.sel || new Set();
-    const indices = [...sel];
-    const fi = indices.length ? indices[indices.length - 1] : -1;
-    if (fi > 0) { sel.clear(); sel.add(fi - 1); pane.lastIdx = fi - 1; }
-    const listId = isRight ? "right-file-list" : "file-list";
-    const countId = isRight ? "right-status-count" : "status-count";
-    renderFiles(pane, listId, countId, null, isRight);
-    scrollToVisible(pane.lastIdx);
-    updatePreviewForSelection();
+    moveFileSelectionByArrow(e.key);
   }
 
   if (e.key === "Escape") {
@@ -429,6 +396,46 @@ document.addEventListener("keydown", async e => {
     await runTypeSearchSelection(G._typeSearch.str, repeatsSingleKey ? 1 : 0, isRight);
   }
 });
+
+function visibleGridColumnCount(list) {
+  const grid = list?.querySelector('.icon-grid, .card-grid, .thumbnail-grid');
+  const items = grid ? [...grid.querySelectorAll(':scope > .file-row[data-index]')] : [];
+  if (items.length < 2) return 1;
+  const firstTop = items[0].offsetTop;
+  const count = items.findIndex(item => Math.abs(item.offsetTop - firstTop) > 1);
+  return count < 0 ? items.length : Math.max(1, count);
+}
+
+function gridNavigationIndex(current, key, count, columns) {
+  if (!count) return -1;
+  if (current < 0 || current >= count) return key === 'ArrowUp' ? count - 1 : 0;
+  if (key === 'ArrowLeft') return Math.max(0, current - 1);
+  if (key === 'ArrowRight') return Math.min(count - 1, current + 1);
+  if (key === 'ArrowUp') return current - columns >= 0 ? current - columns : current;
+  if (key === 'ArrowDown') return current + columns < count ? current + columns : Math.min(count - 1, current);
+  return current;
+}
+
+function moveFileSelectionByArrow(key) {
+  const isRight = G.dualOn && G.lastActivePane === 'right';
+  const pane = isRight ? G.rp : getTab();
+  const entries = pane.entries || [];
+  if (!entries.length) return;
+  const listId = isRight ? 'right-file-list' : 'file-list';
+  const list = document.getElementById(listId);
+  const selected = [...(pane.sel || [])];
+  const current = pane.lastIdx >= 0 ? pane.lastIdx : (selected.length ? selected[selected.length - 1] : -1);
+  const isGrid = G.layout === 'icons' || G.layout === 'cards' || G.layout === 'thumbnails';
+  const columns = isGrid ? visibleGridColumnCount(list) : 1;
+  const next = gridNavigationIndex(current, key, entries.length, columns);
+  if (next < 0) return;
+  pane.sel.clear();
+  pane.sel.add(next);
+  pane.lastIdx = next;
+  renderFiles(pane, listId, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection', isRight);
+  scrollToVisible(next);
+  updatePreviewForSelection();
+}
 
 function scrollToVisible(index) {
   const listId = G.lastActivePane === 'right' ? "right-file-list" : "file-list";

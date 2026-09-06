@@ -1082,6 +1082,7 @@
       assert(typeof trackCopy === 'function', "trackCopy not found");
       assert(typeof trackMove === 'function', "trackMove not found");
       assert(typeof trackRename === 'function', "trackRename not found");
+      assert(typeof trackBatchRename === 'function', "trackBatchRename not found");
       assert(typeof trackDelete === 'function', "trackDelete not found");
       assert(typeof trackNewFolder === 'function', "trackNewFolder not found");
     });
@@ -1093,6 +1094,23 @@
       pushUndo({ type: "test", undo: async () => {}, redo: async () => {} });
       assertEqual(undoStack.length, before + 1, "Undo stack should grow");
       undoStack.pop();
+    });
+
+    await test("[undoredo] Delete and move actions use reversible exact operations", async () => {
+      const savedUndo = undoStack;
+      const savedRedo = redoStack;
+      undoStack = [];
+      redoStack = [];
+      try {
+        trackDelete(['C:\\undo-test.txt']);
+        assertIncludes(String(undoStack[0].undo), 'restore_recycled_files', "Delete undo does not restore from the Recycle Bin");
+        trackMove('C:\\source.txt', 'D:\\target.txt');
+        assertIncludes(String(undoStack[1].undo), 'move_path_exact', "Move undo can overwrite an existing destination");
+        assertIncludes(String(undoStack[1].redo), 'move_path_exact', "Move redo is not path-exact");
+      } finally {
+        undoStack = savedUndo;
+        redoStack = savedRedo;
+      }
     });
 
     // ================================================================
@@ -1219,6 +1237,11 @@
       const name = generateUniqueName("C:\\Test", "file.txt");
       assertIncludes(name, "file", "Generated name should contain base name");
       assertIncludes(name, ".txt", "Generated name should preserve extension");
+      assertEqual(
+        generateUniqueName("C:\\Test", "file.txt", new Set(['file.txt', 'file (1).txt'])),
+        'file (2).txt',
+        "Keep-both should not rename or collide with an existing item"
+      );
     });
 
     // ================================================================
@@ -1339,6 +1362,33 @@
       assert(DEFAULT_SHORTCUTS['search.toggleScope']?.includes('Ctrl+Shift+F'), "Missing global-search toggle shortcut");
     });
 
+    await test("[keyboard] Alt+Enter dispatches Properties exactly once", async () => {
+      const originalHandler = ACTION_HANDLERS['file.properties'];
+      const originalBindings = _shortcutBindings;
+      let calls = 0;
+      try {
+        _shortcutBindings = Object.fromEntries(
+          Object.entries(DEFAULT_SHORTCUTS).map(([id, keys]) => [id, [...keys]])
+        );
+        ACTION_HANDLERS['file.properties'] = async () => { calls++; };
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key:'Enter', code:'Enter', altKey:true, bubbles:true, cancelable:true,
+        }));
+        await sleep(30);
+        assertEqual(calls, 1, "Alt+Enter opened Properties more than once");
+      } finally {
+        ACTION_HANDLERS['file.properties'] = originalHandler;
+        _shortcutBindings = originalBindings;
+      }
+    });
+
+    await test("[keyboard] Grid layouts navigate horizontally with Left and Right", async () => {
+      assertEqual(gridNavigationIndex(4, 'ArrowLeft', 10, 3), 3, "Left did not select the previous visual item");
+      assertEqual(gridNavigationIndex(4, 'ArrowRight', 10, 3), 5, "Right did not select the next visual item");
+      assertEqual(gridNavigationIndex(4, 'ArrowUp', 10, 3), 1, "Up did not retain the visual column");
+      assertEqual(gridNavigationIndex(4, 'ArrowDown', 10, 3), 7, "Down did not retain the visual column");
+    });
+
     await test("[keyboard] Repeating a typed initial cycles matches", async () => {
       const tab = getTab();
       const savedEntries = tab.entries;
@@ -1429,6 +1479,12 @@
       assert(typeof parseDustSize === 'function', "dust size parser is missing");
       assertEqual(parseDustSize('1.5M'), 1.5 * 1024 * 1024, "dust size parsing is incorrect");
       assert(document.getElementById('disk-usage-results'), "Disk usage result surface is missing");
+      const previousTab = G.inspectorTab;
+      switchInspectorTab('disk');
+      assertEqual(G.inspectorTab, 'disk', "Disk usage did not open in the inspector workspace");
+      assert(document.getElementById('inspector-tab-disk').classList.contains('active'), "Disk usage inspector tab is not active");
+      assert(document.getElementById('disk-usage-item-actions'), "Disk usage item actions are missing");
+      switchInspectorTab(previousTab);
     });
 
     // ================================================================

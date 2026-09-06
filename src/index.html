@@ -325,43 +325,51 @@
       </div>
       <div class="preview-divider" id="preview-divider" style="display:none"></div>
       <div class="preview-pane" id="preview-pane" style="display:none">
-        <div class="preview-header">
-          <div class="preview-heading">
-            <span class="preview-title" data-i18n="preview.title">Preview</span>
-            <span class="preview-file-name" id="preview-file-name"></span>
+        <div class="inspector-tabbar">
+          <div class="inspector-tabs" role="tablist" aria-label="Inspector">
+            <button class="inspector-tab active" id="inspector-tab-preview" role="tab" aria-selected="true" onclick="switchInspectorTab('preview')" data-i18n="preview.title">Preview</button>
+            <button class="inspector-tab" id="inspector-tab-disk" role="tab" aria-selected="false" onclick="activateDiskUsageTab()" data-i18n="diskUsage.tab">Disk usage</button>
           </div>
           <div class="preview-actions">
-            <button class="tb preview-open" id="preview-open" onclick="openPreviewedFile()" title="Open" aria-label="Open" style="display:none"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3h7v7M13 3L5 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M11 9v4H3V5h4" stroke="currentColor" stroke-width="1"/></svg></button>
             <button class="tb preview-fullscreen" id="preview-fullscreen" onclick="togglePreviewFullscreen()" data-i18n-title="preview.fullscreen" title="Fullscreen preview" aria-label="Fullscreen preview"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             <button class="tb preview-close" onclick="togglePreviewPane()" title="Close preview" aria-label="Close preview"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
           </div>
         </div>
-        <div class="preview-content" id="preview-content">
-          <div class="preview-empty" data-i18n="preview.selectFile">Select a file to preview</div>
-        </div>
+        <section class="inspector-view active" id="inspector-preview-view" role="tabpanel" aria-labelledby="inspector-tab-preview">
+          <div class="preview-header">
+            <div class="preview-heading">
+              <span class="preview-file-name" id="preview-file-name"></span>
+            </div>
+            <button class="tb preview-open" id="preview-open" onclick="openPreviewedFile()" title="Open" aria-label="Open" style="display:none"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3h7v7M13 3L5 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M11 9v4H3V5h4" stroke="currentColor" stroke-width="1"/></svg></button>
+          </div>
+          <div class="preview-content" id="preview-content">
+            <div class="preview-empty" data-i18n="preview.selectFile">Select a file to preview</div>
+          </div>
+        </section>
+        <section class="inspector-view disk-usage-view" id="inspector-disk-view" role="tabpanel" aria-labelledby="inspector-tab-disk" style="display:none">
+          <div class="disk-usage-header">
+            <div>
+              <div class="disk-usage-title" data-i18n="diskUsage.title">Folder disk usage</div>
+              <div class="disk-usage-path" id="disk-usage-path"></div>
+            </div>
+          </div>
+          <div class="disk-usage-controls">
+            <label><span data-i18n="diskUsage.depth">Depth</span>
+              <select id="disk-usage-depth" onchange="refreshDiskUsage()"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select>
+            </label>
+            <button class="dialog-btn" onclick="refreshDiskUsage()" data-i18n="diskUsage.refresh">Rescan</button>
+          </div>
+          <div class="disk-usage-item-actions" id="disk-usage-item-actions">
+            <button class="dialog-btn" id="disk-usage-open" onclick="openSelectedDiskUsageItem()" disabled data-i18n="ctx.open">Open</button>
+            <button class="dialog-btn" id="disk-usage-reveal" onclick="revealSelectedDiskUsageItem()" disabled data-i18n="sidebar.openLocation">Open location</button>
+            <button class="dialog-btn" id="disk-usage-copy" onclick="copySelectedDiskUsagePath()" disabled data-i18n="ctx.copyPath">Copy path</button>
+            <button class="dialog-btn" id="disk-usage-properties" onclick="showSelectedDiskUsageProperties()" disabled data-i18n="ctx.properties">Properties</button>
+          </div>
+          <div class="disk-usage-summary" id="disk-usage-summary"></div>
+          <div class="disk-usage-results" id="disk-usage-results" tabindex="0"></div>
+        </section>
       </div>
     </div>
-  </div>
-</div>
-
-<div class="overlay" id="disk-usage-dialog" style="display:none">
-  <div class="dialog-backdrop" onclick="closeDiskUsageDialog()"></div>
-  <div class="dialog-box dialog-wide disk-usage-box" role="dialog" aria-modal="true" aria-labelledby="disk-usage-title">
-    <div class="disk-usage-header">
-      <div>
-        <div class="dialog-title" id="disk-usage-title" data-i18n="diskUsage.title">Disk usage</div>
-        <div class="disk-usage-path" id="disk-usage-path"></div>
-      </div>
-      <button class="tb" onclick="closeDiskUsageDialog()" data-i18n-title="btn.close" title="Close" aria-label="Close"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
-    </div>
-    <div class="disk-usage-controls">
-      <label><span data-i18n="diskUsage.depth">Depth</span>
-        <select id="disk-usage-depth" onchange="refreshDiskUsage()"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select>
-      </label>
-      <button class="dialog-btn" onclick="refreshDiskUsage()" data-i18n="diskUsage.refresh">Rescan</button>
-    </div>
-    <div class="disk-usage-summary" id="disk-usage-summary"></div>
-    <div class="dialog-scroll disk-usage-results" id="disk-usage-results"></div>
   </div>
 </div>
 

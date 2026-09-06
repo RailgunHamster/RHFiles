@@ -44,9 +44,20 @@ function closeConflict() {
   conflictCallback = null;
 }
 
-function generateUniqueName(destDir, name) {
+function fileNameKey(name) {
+  return String(name || '').normalize('NFC').toLocaleLowerCase();
+}
+
+function generateUniqueName(destDir, name, existingNames) {
   const dot = name.lastIndexOf('.');
   const base = dot > 0 ? name.substring(0, dot) : name;
   const ext = dot > 0 ? name.substring(dot) : '';
-  return base + ' (1)' + ext;
+  const used = new Set(Array.from(existingNames || [], fileNameKey));
+  let index = 1;
+  let candidate = `${base} (${index})${ext}`;
+  while (used.has(fileNameKey(candidate))) {
+    index++;
+    candidate = `${base} (${index})${ext}`;
+  }
+  return candidate;
 }

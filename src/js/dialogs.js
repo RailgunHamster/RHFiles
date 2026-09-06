@@ -61,9 +61,13 @@ async function executeBatchRename() {
   });
   try {
     await call("batch_rename", { renames });
+    const completed = renames
+      .filter(([oldPath, newName]) => oldPath.split(/[\\/]/).pop() !== newName)
+      .map(([oldPath, newName]) => [oldPath, joinFolderPath(parentFolderPath(oldPath), newName)]);
+    if (completed.length) trackBatchRename(completed);
     closeBatchRename();
     await refresh();
-  } catch (e) { alert("Rename failed: " + e); }
+  } catch (e) { alert(t('alert.renameFailed', { error:e })); }
 }
 
 // --- tag dialog ---
@@ -356,6 +360,8 @@ function closeNewFile() {
 // --- folder disk-usage analysis (bundled dust) ---
 let _diskUsagePath = '';
 let _diskUsageToken = 0;
+let _diskUsageRows = [];
+let _diskUsageSelected = null;
 
 function parseDustSize(value) {
   const text = String(value == null ? '' : value).trim().replace(/\s+/g, '');
@@ -379,23 +385,103 @@ function flattenDustTree(node, level, rows) {
   return rows;
 }
 
+function diskUsageNodeIsDirectory(node) {
+  return node?.is_dir === true || (Array.isArray(node?.children) && node.children.length > 0);
+}
+
+function updateDiskUsageActionState() {
+  const enabled = !!_diskUsageSelected;
+  ['disk-usage-open', 'disk-usage-reveal', 'disk-usage-copy', 'disk-usage-properties'].forEach(id => {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !enabled;
+  });
+}
+
+function selectDiskUsageRow(row, node) {
+  document.querySelectorAll('.disk-usage-row.selected').forEach(item => {
+    item.classList.remove('selected');
+    item.setAttribute('aria-selected', 'false');
+  });
+  _diskUsageSelected = node || null;
+  if (row && node) {
+    row.classList.add('selected');
+    row.setAttribute('aria-selected', 'true');
+    row.focus({preventScroll:true});
+  }
+  updateDiskUsageActionState();
+}
+
+async function revealDiskUsageNode(node) {
+  if (!node?.name) return false;
+  const path = String(node.name);
+  const parent = parentFolderPath(path);
+  const isRight = G.dualOn && G.lastActivePane === 'right';
+  const opened = isRight ? await rpNavigateTo(parent) : await navigateTo(parent);
+  if (opened === false) return false;
+  const pane = isRight ? G.rp : getTab();
+  const index = (pane.entries || []).findIndex(entry => entry.path.toLowerCase() === path.toLowerCase());
+  if (index >= 0) {
+    pane.sel.clear();
+    pane.sel.add(index);
+    pane.lastIdx = index;
+    renderFiles(pane, isRight ? 'right-file-list' : 'file-list', isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection', isRight);
+    scrollToVisible(index);
+    updatePreviewForSelection();
+  }
+  return true;
+}
+
+async function openDiskUsageNode(node) {
+  if (!node?.name) return;
+  const path = String(node.name);
+  if (diskUsageNodeIsDirectory(node)) {
+    if (G.dualOn && G.lastActivePane === 'right') await rpNavigateTo(path);
+    else await navigateTo(path);
+  } else {
+    await openFileHandler(path);
+  }
+}
+
+function showDiskUsageNodeContextMenu(event, node) {
+  event.preventDefault();
+  event.stopPropagation();
+  const path = String(node?.name || '');
+  const isDirectory = diskUsageNodeIsDirectory(node);
+  showMenuAt(event.clientX, event.clientY, [
+    {label:t('ctx.open'), action:() => openDiskUsageNode(node)},
+    {label:t('ctx.newTab'), hidden:!isDirectory, action:() => addTab(path)},
+    {label:t('sidebar.openLocation'), action:() => revealDiskUsageNode(node)},
+    {label:t('ctx.preview'), hidden:isDirectory, action:async () => { if (await revealDiskUsageNode(node)) switchInspectorTab('preview'); }},
+    {label:'-'},
+    {label:t('ctx.copyPath'), action:() => copyPathFromMenu(path)},
+    {label:t('diskUsage.analyze'), hidden:!isDirectory, action:() => showDiskUsageDialog(path)},
+    {label:t('ctx.openCmd'), hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'cmd'}, 'CMD')},
+    {label:t('ctx.openPowerShell'), hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'powershell'}, 'PowerShell')},
+    {label:'-'},
+    {label:t('ctx.properties'), action:() => showPropertiesDialog(path)},
+  ], 'disk-usage-context-menu');
+}
+
 function renderDiskUsage(data) {
   const results = document.getElementById('disk-usage-results');
   const summary = document.getElementById('disk-usage-summary');
   if (!results || !summary) return;
   const rows = flattenDustTree(data, 0, []);
+  _diskUsageRows = rows;
+  _diskUsageSelected = null;
+  updateDiskUsageActionState();
   const total = Math.max(parseDustSize(data?.size), ...rows.map(row => parseDustSize(row.node.size)), 1);
   summary.innerHTML = `<span>${esc(t('diskUsage.total'))}</span><strong>${esc(String(data?.size || fmtSize(total)))}</strong><span class="disk-usage-count">${esc(t('diskUsage.entries', {count:rows.length}))}</span>`;
   if (!rows.length) {
     results.innerHTML = `<div class="disk-usage-empty">${esc(t('diskUsage.empty'))}</div>`;
     return;
   }
-  results.innerHTML = rows.map(({node, level}) => {
+  results.innerHTML = rows.map(({node, level}, index) => {
     const bytes = parseDustSize(node.size);
     const percent = Math.max(1, Math.min(100, bytes / total * 100));
     const path = String(node.name || '');
     const isDirectory = node.is_dir === true || Array.isArray(node.children);
-    return `<button class="disk-usage-row" data-path="${esc(path)}" title="${esc(displayPath(path))}">
+    return `<button class="disk-usage-row${isDirectory ? ' is-directory' : ''}" data-index="${index}" data-path="${esc(path)}" title="${esc(displayPath(path))}" aria-selected="false">
       <span class="disk-usage-indent" style="width:${Math.min(level, 8) * 16}px"></span>
       <span class="disk-usage-icon">${isDirectory ? '&#128193;' : '&#128196;'}</span>
       <span class="disk-usage-name">${esc(dustDisplayName(path))}</span>
@@ -405,14 +491,11 @@ function renderDiskUsage(data) {
   }).join('');
   results.querySelectorAll('.disk-usage-row').forEach((row, index) => {
     const node = rows[index]?.node;
-    if (!(node?.is_dir === true || Array.isArray(node?.children))) return;
-    row.classList.add('is-directory');
-    row.addEventListener('dblclick', async () => {
-      const path = row.dataset.path;
-      const opened = G.dualOn && G.lastActivePane === 'right'
-        ? await rpNavigateTo(path)
-        : await navigateTo(path);
-      if (opened !== false) closeDiskUsageDialog();
+    row.addEventListener('click', () => selectDiskUsageRow(row, node));
+    row.addEventListener('dblclick', () => openDiskUsageNode(node));
+    row.addEventListener('contextmenu', event => {
+      selectDiskUsageRow(row, node);
+      showDiskUsageNodeContextMenu(event, node);
     });
   });
 }
@@ -422,6 +505,9 @@ async function refreshDiskUsage() {
   const results = document.getElementById('disk-usage-results');
   const summary = document.getElementById('disk-usage-summary');
   const depth = Number(document.getElementById('disk-usage-depth')?.value || 2);
+  _diskUsageSelected = null;
+  _diskUsageRows = [];
+  updateDiskUsageActionState();
   if (summary) summary.innerHTML = '';
   if (results) results.innerHTML = `<div class="disk-usage-loading"><span></span>${esc(t('diskUsage.analyzing'))}</div>`;
   try {
@@ -437,19 +523,64 @@ async function refreshDiskUsage() {
 function showDiskUsageDialog(path) {
   const activePath = path || getActivePaneState()?.path;
   _diskUsagePath = activePath === 'home://' ? (G.homeDirPath || 'C:\\') : normalizeWindowsPathInput(activePath);
-  const dialog = document.getElementById('disk-usage-dialog');
-  if (!dialog) return;
+  if (!G.previewOn) setPreviewPaneVisible(true);
+  switchInspectorTab('disk');
   document.getElementById('disk-usage-path').textContent = displayPath(_diskUsagePath);
-  dialog.style.display = 'flex';
   applyI18n();
   refreshDiskUsage();
 }
 
-function closeDiskUsageDialog() {
-  _diskUsageToken++;
-  const dialog = document.getElementById('disk-usage-dialog');
-  if (dialog) dialog.style.display = 'none';
+function activateDiskUsageTab() {
+  if (!_diskUsagePath) showDiskUsageDialog();
+  else {
+    if (!G.previewOn) setPreviewPaneVisible(true);
+    switchInspectorTab('disk');
+  }
 }
+
+function closeDiskUsageDialog() {
+  if (G.inspectorTab === 'disk') switchInspectorTab('preview');
+}
+
+function openSelectedDiskUsageItem() {
+  return openDiskUsageNode(_diskUsageSelected);
+}
+
+function revealSelectedDiskUsageItem() {
+  return revealDiskUsageNode(_diskUsageSelected);
+}
+
+function copySelectedDiskUsagePath() {
+  if (_diskUsageSelected?.name) return copyPathFromMenu(String(_diskUsageSelected.name));
+}
+
+function showSelectedDiskUsageProperties() {
+  if (_diskUsageSelected?.name) return showPropertiesDialog(String(_diskUsageSelected.name));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('disk-usage-results')?.addEventListener('keydown', event => {
+    const row = event.target.closest('.disk-usage-row');
+    if (!row) return;
+    const index = Number(row.dataset.index);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      event.stopPropagation();
+      const nextIndex = Math.max(0, Math.min(_diskUsageRows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+      const nextRow = document.querySelector(`.disk-usage-row[data-index="${nextIndex}"]`);
+      if (nextRow) selectDiskUsageRow(nextRow, _diskUsageRows[nextIndex]?.node);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      openDiskUsageNode(_diskUsageRows[index]?.node);
+    } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = row.getBoundingClientRect();
+      showDiskUsageNodeContextMenu({preventDefault(){}, stopPropagation(){}, clientX:rect.left + 18, clientY:rect.bottom}, _diskUsageRows[index]?.node);
+    }
+  });
+});
 
 // --- toolbar customization ---
 const TOOLBAR_BUTTONS = [

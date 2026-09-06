@@ -319,6 +319,9 @@ pub fn delete_to_recycle_bin(path: &Path) -> Result<(), String> {
         if result != 0 {
             return Err(format!("SHFileOperation failed: {result}"));
         }
+        if op.fAnyOperationsAborted.as_bool() {
+            return Err("Recycle Bin operation was cancelled".to_string());
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
