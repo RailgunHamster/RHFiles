@@ -733,6 +733,7 @@ const SHORTCUT_LABEL_KEYS = {
   "nav.end": "cmd.jumpLast",
   "file.contextMenu": "cmd.contextMenu",
   "file.copy": "cmd.copy",
+  "file.copyPaths": "cmd.copyPaths",
   "file.cut": "cmd.cut",
   "file.paste": "cmd.paste",
   "file.delete": "cmd.delete",

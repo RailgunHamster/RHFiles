@@ -1,9 +1,15 @@
 // keyboard.js — customizable keyboard shortcuts + command palette
 
-let _ctxMenuTimer = null;
 let _lastMouseX = 0;
 let _lastMouseY = 0;
+const RIGHT_CTRL_TAP_MAX_MS = 300;
+let _rightCtrlTap = null;
 document.addEventListener("mousemove", e => { _lastMouseX = e.clientX; _lastMouseY = e.clientY; });
+document.addEventListener('pointerdown', () => {
+  // A right-Ctrl used for Ctrl+click selection is a modifier, not a menu tap.
+  if (_rightCtrlTap) _rightCtrlTap.eligible = false;
+}, true);
+window.addEventListener('blur', () => { _rightCtrlTap = null; });
 
 const DEFAULT_SHORTCUTS = {
   "nav.up":              ["Backspace", "Alt+ArrowUp"],
@@ -17,6 +23,7 @@ const DEFAULT_SHORTCUTS = {
   "nav.end":             ["End"],
   "file.contextMenu":    ["F9", "ContextMenu"],
   "file.copy":           ["Ctrl+C"],
+  "file.copyPaths":      ["Ctrl+Shift+C"],
   "file.cut":            ["Ctrl+X"],
   "file.paste":          ["Ctrl+V"],
   "file.delete":         ["Delete"],
@@ -71,6 +78,7 @@ const ACTION_HANDLERS = {
     }
   },
   "file.copy":           async () => await copySelected(G.lastActivePane === 'right'),
+  "file.copyPaths":      async () => await copySelectedPaths(G.lastActivePane === 'right'),
   "file.cut":            async () => await cutSelected(G.lastActivePane === 'right'),
   "file.paste":          async () => await paste(G.lastActivePane === 'right'),
   "file.delete":         async () => await deleteSelected(G.lastActivePane === 'right'),
@@ -282,6 +290,26 @@ function findActionForBinding(bindings, combo) {
   return null;
 }
 
+function findActionForKeyboardEvent(bindings, event) {
+  let actionId = findActionForBinding(bindings, normalizeKey(event));
+  // Ctrl is often still physically down immediately after Ctrl+click
+  // multi-selection. Delete should still invoke the configured Delete action.
+  if (!actionId && event.key === 'Delete' && event.ctrlKey && !event.altKey) {
+    actionId = findActionForBinding(bindings, 'Delete');
+  }
+  return actionId;
+}
+
+function showKeyboardContextMenu() {
+  const isRight = G.lastActivePane === 'right';
+  const listId = isRight ? "right-file-list" : "file-list";
+  const selectedRow = document.querySelector(`#${listId} .file-row.selected`);
+  const anchor = selectedRow || document.getElementById(listId);
+  if (!anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  showContextMenu(_lastMouseX || rect.left + rect.width / 2, Math.max(rect.top, _lastMouseY), isRight);
+}
+
 let _shortcutBindings = null;
 
 function getShortcutBindings() {
@@ -323,26 +351,14 @@ document.addEventListener("keydown", async e => {
   if (anyDialogOpen) return;
 
   if (e.key === "Control" && e.location === 2) {
-    if (_ctxMenuTimer) clearTimeout(_ctxMenuTimer);
-    _ctxMenuTimer = setTimeout(() => {
-      _ctxMenuTimer = null;
-      const isR = G.lastActivePane === 'right';
-      const lid = isR ? "right-file-list" : "file-list";
-      const selEl = document.querySelector(`#${lid} .file-row.selected`);
-      const anchor = selEl || document.getElementById(lid);
-      if (anchor) {
-        const r = anchor.getBoundingClientRect();
-        showContextMenu(_lastMouseX || r.left + r.width / 2, Math.max(r.top, _lastMouseY), isR);
-      }
-    }, 250);
+    if (!e.repeat) _rightCtrlTap = { downAt: performance.now(), eligible: true };
+    else if (_rightCtrlTap) _rightCtrlTap.eligible = false;
     return;
   }
-  if (_ctxMenuTimer) { clearTimeout(_ctxMenuTimer); _ctxMenuTimer = null; }
+  if (_rightCtrlTap) _rightCtrlTap.eligible = false;
 
   const bindings = getShortcutBindings();
-  const combo = normalizeKey(e);
-
-  const actionId = findActionForBinding(bindings, combo);
+  const actionId = findActionForKeyboardEvent(bindings, e);
   if (actionId) {
     e.preventDefault();
 
@@ -395,6 +411,15 @@ document.addEventListener("keydown", async e => {
     scheduleTypeSearchReset();
     await runTypeSearchSelection(G._typeSearch.str, repeatsSingleKey ? 1 : 0, isRight);
   }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key !== 'Control' || e.location !== 2) return;
+  const tap = _rightCtrlTap;
+  _rightCtrlTap = null;
+  if (!tap || !tap.eligible || performance.now() - tap.downAt > RIGHT_CTRL_TAP_MAX_MS) return;
+  e.preventDefault();
+  showKeyboardContextMenu();
 });
 
 function visibleGridColumnCount(list) {
@@ -473,6 +498,7 @@ function initCommands() {
   { id:"nav.address", label: t('cmd.focusAddress'), action: () => enterEditMode(G.dualOn && G.lastActivePane === 'right'), keys:"Ctrl+L" },
   { id:"file.newFolder", label: t('cmd.newFolder'), action: newFolder, keys:"F7" },
   { id:"file.copy", label: t('cmd.copy'), action: copySelected, keys:"Ctrl+C" },
+  { id:"file.copyPaths", label: t('cmd.copyPaths'), action: copySelectedPaths, keys:() => getShortcutBindings()["file.copyPaths"]?.[0] },
   { id:"file.cut", label: t('cmd.cut'), action: cutSelected, keys:"Ctrl+X" },
   { id:"file.paste", label: t('cmd.paste'), action: paste, keys:"Ctrl+V" },
   { id:"file.rename", label: t('cmd.rename'), action: renamePrompt, keys:"F2" },

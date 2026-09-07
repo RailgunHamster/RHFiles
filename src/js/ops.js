@@ -141,34 +141,41 @@ function showConfirmDialog(options) {
 }
 
 // --- file ops ---
+let _deleteRequestActive = false;
+
 async function deleteSelected(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
-  if (!sel.length) return;
+  if (!sel.length || _deleteRequestActive) return;
+  _deleteRequestActive = true;
   const message = sel.length === 1
     ? t('confirm.deleteItem', {name: sel[0].name})
     : t('confirm.deleteItems', {count: sel.length});
-  const confirmed = await showConfirmDialog({
-    title: t('confirm.deleteTitle'),
-    message,
-    detail: t('confirm.recycleBinHint'),
-    confirmLabel: t('btn.delete'),
-  });
-  if (!confirmed) return;
-  showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
   try {
-    const deletedPaths = sel.map(f => f.path);
-    const outcome = await call("delete_files", { paths: deletedPaths });
-    const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
-    if (actuallyDeleted.length) trackDelete(actuallyDeleted);
-    await refresh();
-    if (outcome?.errors?.length) {
-      alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
+    const confirmed = await showConfirmDialog({
+      title: t('confirm.deleteTitle'),
+      message,
+      detail: t('confirm.recycleBinHint'),
+      confirmLabel: t('btn.delete'),
+    });
+    if (!confirmed) return;
+    showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
+    try {
+      const deletedPaths = sel.map(f => f.path);
+      const outcome = await call("delete_files", { paths: deletedPaths });
+      const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
+      if (actuallyDeleted.length) trackDelete(actuallyDeleted);
+      await refresh();
+      if (outcome?.errors?.length) {
+        alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
+      }
+    } catch (e) {
+      alert(t('alert.deleteFailed', {error: e}));
+    } finally {
+      hideProgress();
     }
-  } catch (e) {
-    alert(t('alert.deleteFailed', {error: e}));
   } finally {
-    hideProgress();
+    _deleteRequestActive = false;
   }
 }
 
@@ -430,13 +437,43 @@ async function openWithProgramFromMenu(path, program, displayName) {
   }
 }
 
-async function copyPathFromMenu(path) {
+function formatPathsForClipboard(paths) {
+  const values = Array.isArray(paths) ? paths : [paths];
+  return values
+    .map(value => typeof value === 'string' ? value : value?.path)
+    .filter(value => typeof value === 'string' && value.length > 0)
+    .join('\r\n');
+}
+
+async function copyPathsFromMenu(paths) {
+  const text = formatPathsForClipboard(paths);
+  if (!text) return false;
+  const count = text.split('\r\n').length;
   try {
-    await call('copy_file_path', { path });
-    showNotice(t('notice.pathCopied'));
+    // WebView clipboard is immediate and avoids launching PowerShell. Keep the
+    // backend command as a compatibility fallback for restricted environments.
+    if (!await writeTextClipboard(text)) await call('copy_file_path', { path: text });
+    showNotice(count === 1 ? t('notice.pathCopied') : t('notice.pathsCopied', { count }));
+    return true;
   } catch (e) {
     alert(t('alert.copyPathFailed', { error: e }));
+    return false;
   }
+}
+
+function copyPathFromMenu(path) {
+  return copyPathsFromMenu([path]);
+}
+
+function copySelectedPaths(isRight) {
+  isRight = resolveRightPane(isRight);
+  const pane = isRight ? G.rp : getTab();
+  const entries = pane?.entries || [];
+  const paths = [...(pane?.sel || new Set())]
+    .sort((left, right) => left - right)
+    .map(index => entries[index]?.path)
+    .filter(Boolean);
+  return copyPathsFromMenu(paths);
 }
 
 async function runContextCommand(command, args, label, options = {}) {
@@ -736,7 +773,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.delete'), shortcut:"Del", action: () => deleteSelected(isRight), disabled: !hasSelection },
     { label: t('ctx.addTag'), action: () => openTagDialog(isRight), disabled: !hasSelection },
     { label: "-", action: null },
-    { label: t('ctx.copyPath'), shortcut:"Ctrl+Shift+C", action: () => { if (singleSelection) copyPathFromMenu(sel[0].path); }, disabled: !singleSelection },
+    { label: sel.length > 1 ? t('ctx.copyPaths', {count: sel.length}) : t('ctx.copyPath'), shortcut:"Ctrl+Shift+C", action: () => copySelectedPaths(isRight), disabled: !hasSelection },
     { label: t('search.openLocation'), action: () => {
         if (singleSelection) {
             document.getElementById("filter-input").value = '';
@@ -795,9 +832,10 @@ function showContextMenu(x, y, isRight) {
   let ctxMeta = { x, y, isRight, singleSelection, sel, singleFile, isDir, items };
 
   menu.addEventListener("keydown", e => {
-    if (e.key === "Escape") { e.preventDefault(); removeContextMenu(); return; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); removeContextMenu(); return; }
     if (e.key === "Enter" && e.altKey) {
       e.preventDefault();
+      e.stopPropagation();
       const s = getSelectedPaths(ctxMeta.isRight);
       if (s.length) {
         removeContextMenu();
@@ -807,18 +845,21 @@ function showContextMenu(x, y, isRight) {
     }
     if (e.key === "Delete") {
       e.preventDefault();
+      e.stopPropagation();
       const s2 = getSelectedPaths(ctxMeta.isRight);
       if (s2.length) { removeContextMenu(); deleteSelected(ctxMeta.isRight); }
       return;
     }
     if (e.key === "F2") {
       e.preventDefault();
+      e.stopPropagation();
       const s3 = getSelectedPaths(ctxMeta.isRight);
       if (s3.length === 1) { removeContextMenu(); renamePrompt(ctxMeta.isRight); }
       return;
     }
     if (e.key === "Enter" && !e.altKey) {
       e.preventDefault();
+      e.stopPropagation();
       if (ctxMeta.singleSelection) {
         const s = getSelectedPaths(ctxMeta.isRight);
         if (s.length) { removeContextMenu(); if (s[0].is_dir) { if (ctxMeta.isRight) rpNavigateTo(s[0].path); else navigateTo(s[0].path); } else openFileHandler(s[0].path); }

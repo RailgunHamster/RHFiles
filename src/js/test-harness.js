@@ -1034,6 +1034,47 @@
       }
     });
 
+    await test("[clipboard] Multiple selected paths are copied as Windows path lines", async () => {
+      assert(typeof formatPathsForClipboard === 'function', "formatPathsForClipboard not found");
+      assertEqual(
+        formatPathsForClipboard([
+          {path: 'C:\\Folder with spaces\\alpha.txt'},
+          {path: '\\\\SERVER-HOME\\Public\\beta.txt'},
+          {path: 'D:\\中文\\gamma.txt'},
+        ]),
+        'C:\\Folder with spaces\\alpha.txt\r\n\\\\SERVER-HOME\\Public\\beta.txt\r\nD:\\中文\\gamma.txt',
+        "Multiple paths should use CRLF without changing Windows or UNC syntax",
+      );
+      assert(DEFAULT_SHORTCUTS['file.copyPaths'].includes('Ctrl+Shift+C'), "Copy-path shortcut is not registered");
+    });
+
+    await test("[clipboard] Multi-select context menu enables Copy Paths", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      try {
+        tab.entries = [
+          {name:'first.txt', path:'C:\\first.txt', extension:'txt', is_dir:false, size:1, size_display:'1 B'},
+          {name:'second.txt', path:'C:\\second.txt', extension:'txt', is_dir:false, size:1, size_display:'1 B'},
+        ];
+        tab.sel = new Set([0, 1]);
+        tab.lastIdx = 1;
+        G.lastActivePane = 'left';
+        showContextMenu(20, 20, false);
+        const expectedLabel = t('ctx.copyPaths', {count: 2});
+        const item = [...document.querySelectorAll('.context-menu > .ctx-item')]
+          .find(candidate => candidate.querySelector(':scope > span')?.textContent === expectedLabel);
+        assert(item, "Multi-select Copy Paths action is missing");
+        assert(!item.classList.contains('disabled'), "Multi-select Copy Paths action is disabled");
+      } finally {
+        removeContextMenu();
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
+    });
+
     // ================================================================
     // SECTION 11: CONTEXT MENU
     // ================================================================
@@ -1093,6 +1134,68 @@
       assert(overlay, "Delete confirmation overlay did not appear");
       simulateClick(overlay.querySelector('.dialog-btn:not(.danger)'));
       assertEqual(await pending, false, "Cancel should stop deletion");
+    });
+
+    await test("[delete] Repeated multi-select Delete opens only one confirmation", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      const originalConfirm = showConfirmDialog;
+      let confirmCalls = 0;
+      try {
+        tab.entries = [
+          {name:'first.txt', path:'C:\\first.txt', extension:'txt', is_dir:false},
+          {name:'second.txt', path:'C:\\second.txt', extension:'txt', is_dir:false},
+        ];
+        tab.sel = new Set([0, 1]);
+        tab.lastIdx = 1;
+        G.lastActivePane = 'left';
+        showConfirmDialog = async () => {
+          confirmCalls++;
+          await sleep(30);
+          return false;
+        };
+        await Promise.all([deleteSelected(false), deleteSelected(false)]);
+        assertEqual(confirmCalls, 1, "Repeated Delete created duplicate confirmation requests");
+      } finally {
+        showConfirmDialog = originalConfirm;
+        _deleteRequestActive = false;
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
+    });
+
+    await test("[delete] Context-menu Delete does not bubble into a second dispatch", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      const originalDelete = deleteSelected;
+      let deleteCalls = 0;
+      try {
+        tab.entries = [
+          {name:'first.txt', path:'C:\\first.txt', extension:'txt', is_dir:false},
+          {name:'second.txt', path:'C:\\second.txt', extension:'txt', is_dir:false},
+        ];
+        tab.sel = new Set([0, 1]);
+        tab.lastIdx = 1;
+        G.lastActivePane = 'left';
+        deleteSelected = async () => { deleteCalls++; };
+        showContextMenu(20, 20, false);
+        document.querySelector('.context-menu').dispatchEvent(new KeyboardEvent('keydown', {
+          key:'Delete', bubbles:true, cancelable:true,
+        }));
+        await sleep(10);
+        assertEqual(deleteCalls, 1, "Context-menu Delete was dispatched more than once");
+      } finally {
+        removeContextMenu();
+        deleteSelected = originalDelete;
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
     });
 
     await test("[ctxmenu] Submenu labels are localized without duplicate arrows", async () => {
@@ -1618,6 +1721,7 @@
     await test("[keyboard] Default shortcuts include basic actions", async () => {
       if (typeof DEFAULT_SHORTCUTS === 'undefined') { log("SKIP: DEFAULT_SHORTCUTS not accessible"); return; }
       assert(DEFAULT_SHORTCUTS['file.copy'], "Missing file.copy shortcut");
+      assert(DEFAULT_SHORTCUTS['file.copyPaths']?.includes('Ctrl+Shift+C'), "Missing copy-path shortcut");
       assert(DEFAULT_SHORTCUTS['file.paste'], "Missing file.paste shortcut");
       assert(DEFAULT_SHORTCUTS['file.toggleFavorite']?.includes('Ctrl+D'), "Missing Ctrl+D favorite shortcut");
       assert(DEFAULT_SHORTCUTS['tab.new'], "Missing tab.new shortcut");
@@ -1628,6 +1732,45 @@
       assert(typeof ACTION_HANDLERS['typeSearch.next'] === 'function', "Missing next search-match action");
       assert(typeof ACTION_HANDLERS['typeSearch.previous'] === 'function', "Missing previous search-match action");
       assert(DEFAULT_SHORTCUTS['search.toggleScope']?.includes('Ctrl+Shift+F'), "Missing global-search toggle shortcut");
+    });
+
+    await test("[keyboard] Ctrl held after multi-select still allows Delete", async () => {
+      const action = findActionForKeyboardEvent(DEFAULT_SHORTCUTS, {
+        key:'Delete', ctrlKey:true, shiftKey:false, altKey:false,
+      });
+      assertEqual(action, 'file.delete', "Ctrl+Delete did not fall back to the configured Delete action");
+    });
+
+    await test("[keyboard] Right Ctrl opens menu only for a short standalone tap", async () => {
+      removeContextMenu();
+      const rightCtrlDown = () => document.dispatchEvent(new KeyboardEvent('keydown', {
+        key:'Control', code:'ControlRight', location:2, bubbles:true, cancelable:true,
+      }));
+      const rightCtrlUp = () => document.dispatchEvent(new KeyboardEvent('keyup', {
+        key:'Control', code:'ControlRight', location:2, bubbles:true, cancelable:true,
+      }));
+
+      rightCtrlDown();
+      rightCtrlUp();
+      await sleep(10);
+      assert(document.querySelector('.context-menu'), "Short right-Ctrl tap did not open the context menu");
+      removeContextMenu();
+
+      rightCtrlDown();
+      assert(_rightCtrlTap, "Right-Ctrl tap state was not created");
+      _rightCtrlTap.downAt -= RIGHT_CTRL_TAP_MAX_MS + 1;
+      rightCtrlUp();
+      await sleep(10);
+      assert(!document.querySelector('.context-menu'), "Long right-Ctrl hold opened the context menu");
+
+      rightCtrlDown();
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key:'Shift', code:'ShiftLeft', location:1, ctrlKey:true, bubbles:true, cancelable:true,
+      }));
+      rightCtrlUp();
+      await sleep(10);
+      assert(!document.querySelector('.context-menu'), "Right-Ctrl chord opened the context menu");
+      _rightCtrlTap = null;
     });
 
     await test("[keyboard] Alt+Enter dispatches Properties exactly once", async () => {
