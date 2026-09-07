@@ -33,6 +33,30 @@ function Reset-WorkspaceDirectory([string]$Path, [string]$Description) {
     New-Item -ItemType Directory -Path $safePath -Force | Out-Null
 }
 
+function Write-ReleaseHistory([string]$Destination) {
+    $notesDirectory = Join-Path $repoRoot "docs\release-notes"
+    $releases = Get-ChildItem -LiteralPath $notesDirectory -Filter "*.md" -File | ForEach-Object {
+        $versionText = $_.BaseName
+        if ($versionText -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { return }
+        [pscustomobject]@{
+            version = $versionText
+            notesMarkdown = Get-Content -LiteralPath $_.FullName -Raw
+            sortVersion = [version]($versionText -replace '[-+].*$', '')
+        }
+    } | Sort-Object sortVersion -Descending
+    if (-not $releases -or -not ($releases.version -contains $Version)) {
+        throw "Release history does not contain notes for version $Version"
+    }
+    $document = [ordered]@{
+        schemaVersion = 1
+        releases = @($releases | ForEach-Object {
+            [ordered]@{ version = $_.version; notesMarkdown = $_.notesMarkdown }
+        })
+    }
+    $json = $document | ConvertTo-Json -Depth 5 -Compress
+    [IO.File]::WriteAllText($Destination, $json, [Text.UTF8Encoding]::new($false))
+}
+
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $cargoManifest = Get-Content -LiteralPath (Join-Path $repoRoot "src-tauri\Cargo.toml") -Raw
     $versionMatch = [regex]::Match($cargoManifest, '(?m)^version\s*=\s*"([^"]+)"')
@@ -111,6 +135,7 @@ if (Test-Path -LiteralPath $notesPath -PathType Leaf) {
 
 & $vpk.Source @packArguments
 if ($LASTEXITCODE -ne 0) { throw "vpk pack failed with exit code $LASTEXITCODE" }
+Write-ReleaseHistory (Join-Path $OutputDirectory "release-history.json")
 
 $portableSource = @(
     (Join-Path $OutputDirectory "RHFiles-win-Portable.zip"),

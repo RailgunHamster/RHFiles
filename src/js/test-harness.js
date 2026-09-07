@@ -941,6 +941,12 @@
 
     await test("[preview] Settings exposes the default-open option", async () => {
       openSettings();
+      const settingsBox = document.querySelector('#settings-dialog .settings-dialog-box');
+      assert(settingsBox && settingsBox.getBoundingClientRect().width >= Math.min(700, window.innerWidth - 48), "Settings workspace is still using the narrow dialog layout");
+      assertEqual(document.querySelectorAll('#settings-nav .settings-nav-item').length, SETTINGS_SECTIONS.length, "Settings category navigation is incomplete");
+      assertEqual(document.querySelectorAll('#settings-content .settings-page.active').length, 1, "Settings must show exactly one category at a time");
+      switchSettingsSection('updates', false);
+      assert(document.querySelector('[data-settings-page="updates"].active'), "Settings category navigation did not switch pages");
       const checkbox = $("#settings-preview-default");
       assert(checkbox, "Preview default-open setting is missing");
       assertEqual(checkbox.checked, G.settings.previewDefaultOpen !== false, "Preview setting state is out of sync");
@@ -962,6 +968,33 @@
         assert(/^\d+\.\d+\.\d+/.test(updateStatus.currentVersion || ''), "Velopack manifest version is invalid");
       }
       closeSettings();
+    });
+
+    await test("[themes] Built-in and file-based theme packs are validated and hot-swappable", async () => {
+      assert(getAvailableThemePacks().length >= 6, "Expected at least six built-in themes");
+      const parsed = parseUserTheme({
+        fileName:'test-theme.json',
+        path:'C:\\Themes\\test-theme.json',
+        content:JSON.stringify({schemaVersion:1,id:'test-theme',name:{en:'Test',zh:'测试'},base:'dark',variables:{'--accent':'#39c5bb'}}),
+      });
+      assertEqual(parsed.id, 'user:test-theme', "User theme IDs must not collide with built-in themes");
+      assertEqual(parsed.variables['--accent'], '#39c5bb', "User theme variables were not retained");
+      const previousLanguage = _lang;
+      _lang = 'zh';
+      const localizedName = localizedThemeName(parsed);
+      _lang = previousLanguage;
+      assertEqual(localizedName, '测试', "Localized user-theme name did not follow the UI language");
+      let rejected = false;
+      try {
+        parseUserTheme({fileName:'unsafe.json', content:JSON.stringify({schemaVersion:1,id:'unsafe',name:'Unsafe',base:'light',variables:{'background-image':'url(x)'}})});
+      } catch (_) { rejected = true; }
+      assert(rejected, "Unknown theme variables were not rejected");
+
+      const previousTheme = G.theme;
+      applyTheme('sand', false);
+      assertEqual(document.documentElement.dataset.themePack, 'sand', "Built-in theme pack did not activate");
+      assertEqual(document.documentElement.getAttribute('data-theme'), 'light', "Theme base was not applied");
+      applyTheme(previousTheme, false);
     });
 
     await test("[updates] GitHub and home-server locations are independently configurable", async () => {
@@ -1004,6 +1037,18 @@
       } finally {
         G.settings = savedSettings;
       }
+    });
+
+    await test("[updates] Client exposes the complete bundled release history offline", async () => {
+      const history = await call('get_release_history', {
+        source:getUpdateSource(),
+        proxy:null,
+        allowRemote:false,
+      });
+      assertEqual(history.source, 'bundled', "Offline release history unexpectedly used the network");
+      assert(Array.isArray(history.releases) && history.releases.length >= 10, "Bundled release history is incomplete");
+      assert(history.releases.some(entry => entry.version === history.currentVersion), "Current version is absent from release history");
+      assert(history.releases.some(entry => entry.version === '0.1.0'), "Initial release notes are absent from release history");
     });
 
     await test("[preview] Toggle preview pane off", async () => {
@@ -1325,22 +1370,23 @@
 
     await test("[theme] Theme attribute on html element", async () => {
       const theme = document.documentElement.getAttribute("data-theme");
-      assert(theme === "light" || theme === "dark" || theme === "custom", "Unexpected theme: " + theme);
+      assert(theme === "light" || theme === "dark", "Unexpected theme base: " + theme);
     });
 
     await test("[theme] G.theme is set", async () => {
       assert(G.theme !== undefined, "G.theme not set");
-      assert(G.theme === "light" || G.theme === "dark" || G.theme === "custom", "Unexpected G.theme: " + G.theme);
+      assert(getAvailableThemePacks().some(theme => theme.id === G.theme), "Unknown active theme pack: " + G.theme);
     });
 
     await test("[theme] Toggle theme changes data-theme", async () => {
       if (typeof toggleTheme !== 'function') { log("SKIP: toggleTheme not available"); return; }
+      const previousPack = G.theme;
       const before = document.documentElement.getAttribute("data-theme");
       toggleTheme();
       await sleep(100);
       const after = document.documentElement.getAttribute("data-theme");
       assert(after !== before, "Theme did not change after toggle: " + before + " -> " + after);
-      toggleTheme();
+      applyTheme(previousPack);
       await sleep(100);
     });
 
@@ -1979,12 +2025,23 @@
       assert(typeof parseDustSize === 'function', "dust size parser is missing");
       assertEqual(parseDustSize('1.5M'), 1.5 * 1024 * 1024, "dust size parsing is incorrect");
       assert(document.getElementById('disk-usage-results'), "Disk usage result surface is missing");
+      const previousOpen = G.previewOn;
       const previousTab = G.inspectorTab;
       switchInspectorTab('disk');
       assertEqual(G.inspectorTab, 'disk', "Disk usage did not open in the inspector workspace");
-      assert(document.getElementById('inspector-tab-disk').classList.contains('active'), "Disk usage inspector tab is not active");
+      assert(G.previewOn, "Disk usage did not open the shared inspector");
+      assert(document.getElementById('inspector-disk-view').classList.contains('active'), "Disk usage view is not active");
+      assert(!document.getElementById('inspector-preview-view').classList.contains('active'), "Preview remained visible behind Disk usage");
+      assert(document.getElementById('btn-disk-usage').classList.contains('active'), "Disk usage toolbar action is not active");
+      assert(!document.getElementById('btn-preview').classList.contains('active'), "Preview toolbar action remained active");
+      assertEqual(document.getElementById('inspector-mode-label').textContent, t('diskUsage.tab'), "Shared inspector heading does not reflect Disk usage");
+
+      switchInspectorTab('preview');
+      assert(document.getElementById('inspector-preview-view').classList.contains('active'), "Preview did not replace Disk usage");
+      assert(!document.getElementById('inspector-disk-view').classList.contains('active'), "Disk usage remained visible behind Preview");
       assert(document.getElementById('disk-usage-item-actions'), "Disk usage item actions are missing");
-      switchInspectorTab(previousTab);
+      if (previousOpen) switchInspectorTab(previousTab);
+      else setInspectorMode('closed', false);
     });
 
     await test("[disk usage] Active-folder changes invalidate stale results and schedule a rescan", async () => {

@@ -56,66 +56,88 @@ function setImagePreviewMode(mode) {
   });
 }
 
-function setPreviewPaneVisible(visible, persist) {
-  G.previewOn = !!visible;
+function inspectorModeIcon(mode) {
+  return mode === 'disk'
+    ? '<svg viewBox="0 0 16 16" fill="none"><path d="M2 12.8h12M3.2 11V8.3h2.2V11M6.9 11V5.7h2.2V11M10.6 11V3h2.2v8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>'
+    : '<svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="m4.2 10 2.5-2.6 1.9 1.8 1.4-1.4 1.8 2.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+}
+
+function setInspectorMode(mode, persistPreviewPreference = false) {
+  const next = mode === 'disk' ? 'disk' : mode === 'preview' ? 'preview' : 'closed';
+  const wasMode = G.previewOn ? G.inspectorTab : 'closed';
+  G.previewOn = next !== 'closed';
+  if (G.previewOn) G.inspectorTab = next;
   const pane = document.getElementById("preview-pane");
   const divider = document.getElementById("preview-divider");
-  const btn = document.getElementById("btn-preview");
+  const previewButton = document.getElementById("btn-preview");
+  const diskButton = document.getElementById("btn-disk-usage");
   if (G.previewOn) {
     pane.style.display = "flex";
     divider.style.display = "block";
     const savedWidth = parseInt(localStorage.getItem('rhfiles-preview-width') || '300', 10);
     pane.style.width = Math.max(200, Math.min(savedWidth || 300, 500)) + 'px';
-    btn.style.background = "var(--accent-light)";
-    btn.style.color = "var(--accent)";
   } else {
     togglePreviewFullscreen(false);
     _previewRequestToken++;
     _previewedFile = null;
     pane.style.display = "none";
     divider.style.display = "none";
-    btn.style.background = "";
-    btn.style.color = "";
     setPreviewHeader(null);
     const content = document.getElementById("preview-content");
     if (content) content.innerHTML = `<div class="preview-empty">${t('preview.selectFile')}</div>`;
   }
-  if (persist !== false && G.settings) {
-    G.settings.previewDefaultOpen = G.previewOn;
-    saveSettings();
-  }
-  if (G.previewOn) updatePreviewForSelection();
-}
 
-function restorePreviewPane() {
-  setPreviewPaneVisible(G.previewOn, false);
-}
-
-function togglePreviewPane() {
-  if (G.previewOn) setPreviewPaneVisible(false);
-  else {
-    switchInspectorTab('preview');
-    setPreviewPaneVisible(true);
-  }
-}
-
-function switchInspectorTab(tab) {
-  const next = tab === 'disk' ? 'disk' : 'preview';
-  G.inspectorTab = next;
-  const pane = document.getElementById('preview-pane');
   pane?.classList.toggle('inspector-disk-active', next === 'disk');
   for (const name of ['preview', 'disk']) {
     const active = name === next;
-    const button = document.getElementById('inspector-tab-' + name);
     const view = document.getElementById('inspector-' + name + '-view');
-    button?.classList.toggle('active', active);
-    button?.setAttribute('aria-selected', String(active));
     if (view) {
       view.classList.toggle('active', active);
       view.style.display = active ? 'flex' : 'none';
     }
   }
-  if (next === 'preview' && G.previewOn) updatePreviewForSelection();
+  previewButton?.classList.toggle('active', next === 'preview');
+  diskButton?.classList.toggle('active', next === 'disk');
+  const modeLabel = document.getElementById('inspector-mode-label');
+  if (modeLabel) {
+    const labelKey = next === 'disk' ? 'diskUsage.tab' : 'preview.title';
+    modeLabel.dataset.i18n = labelKey;
+    modeLabel.textContent = t(labelKey);
+  }
+  const modeMark = document.getElementById('inspector-mode-mark');
+  if (modeMark) modeMark.innerHTML = inspectorModeIcon(next);
+
+  if (wasMode === 'preview' && next !== 'preview') _previewRequestToken++;
+  if (wasMode === 'disk' && next !== 'disk' && typeof pauseDiskUsageAnalysis === 'function') {
+    pauseDiskUsageAnalysis();
+  }
+  if (persistPreviewPreference && G.settings) {
+    G.settings.previewDefaultOpen = next === 'preview';
+    saveSettings();
+  }
+  if (next === 'preview') updatePreviewForSelection();
+}
+
+function setPreviewPaneVisible(visible, persist) {
+  if (visible) setInspectorMode(G.inspectorTab === 'disk' ? 'disk' : 'preview', persist !== false);
+  else setInspectorMode('closed', persist !== false);
+}
+
+function restorePreviewPane() {
+  setInspectorMode(G.previewOn ? 'preview' : 'closed', false);
+}
+
+function togglePreviewPane() {
+  if (G.previewOn && G.inspectorTab === 'preview') setInspectorMode('closed', true);
+  else setInspectorMode('preview', true);
+}
+
+function closeInspector() {
+  setInspectorMode('closed', false);
+}
+
+function switchInspectorTab(tab) {
+  setInspectorMode(tab === 'disk' ? 'disk' : 'preview', false);
 }
 
 function togglePreviewFullscreen(force) {
@@ -137,14 +159,15 @@ function togglePreviewFullscreen(force) {
 }
 
 function setPreviewDefaultOpen(enabled) {
-  setPreviewPaneVisible(!!enabled);
+  G.settings.previewDefaultOpen = !!enabled;
+  saveSettings();
+  if (enabled) setInspectorMode('preview', false);
+  else if (G.previewOn && G.inspectorTab === 'preview') setInspectorMode('closed', false);
 }
 
 function previewSelected(isRight) {
   if (typeof isRight === 'boolean') G.lastActivePane = isRight ? 'right' : 'left';
-  switchInspectorTab('preview');
-  if (!G.previewOn) setPreviewPaneVisible(true);
-  else updatePreviewForSelection();
+  setInspectorMode('preview', true);
 }
 
 function toggleQuickPreview(isRight) {
@@ -179,13 +202,13 @@ function openPreviewedFile() {
 }
 
 function previewRequestIsCurrent(token, path, isRight) {
-  if (token !== _previewRequestToken || !G.previewOn) return false;
+  if (token !== _previewRequestToken || !G.previewOn || G.inspectorTab !== 'preview') return false;
   const selected = getSelectedPaths(isRight);
   return selected.length === 1 && selected[0].path === path;
 }
 
 async function updatePreviewForSelection() {
-  if (!G.previewOn) return;
+  if (!G.previewOn || G.inspectorTab !== 'preview') return;
   const isRight = G.lastActivePane === 'right';
   const sel = getSelectedPaths(isRight);
   if (sel.length !== 1) {

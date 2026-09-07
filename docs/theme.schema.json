@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/RailgunHamster/RHFiles/main/docs/theme.schema.json",
+  "title": "RHFiles user theme",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "base", "variables"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$" },
+    "name": {
+      "oneOf": [
+        { "type": "string", "minLength": 1, "maxLength": 80 },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 16,
+          "propertyNames": { "pattern": "^[A-Za-z0-9-]{1,24}$" },
+          "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 80 }
+        }
+      ]
+    },
+    "base": { "enum": ["light", "dark"] },
+    "variables": {
+      "type": "object",
+      "maxProperties": 52,
+      "propertyNames": {
+        "enum": [
+          "--bg", "--bg-card", "--bg-sidebar", "--bg-input", "--bg-soft", "--bg-raised",
+          "--hover", "--active", "--text", "--text-1", "--text-2", "--text-3", "--text-4",
+          "--accent", "--accent-hover", "--accent-light", "--select-bg", "--border", "--divider",
+          "--shadow", "--shadow-soft", "--shadow-float", "--focus-ring", "--code-bg",
+          "--syntax-keyword", "--syntax-string", "--syntax-number", "--syntax-comment",
+          "--syntax-type", "--syntax-property", "--syntax-tag", "--syntax-attribute",
+          "--syntax-operator", "--syntax-meta", "--syntax-error", "--syntax-warning", "--syntax-info",
+          "--scrollbar-thumb", "--scrollbar-hover", "--preview-bg", "--bg-1", "--bg-2", "--bg-3",
+          "--hover-bg", "--row-height", "--card-width", "--card-height"
+        ]
+      },
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 180 }
+    }
+  }
+}

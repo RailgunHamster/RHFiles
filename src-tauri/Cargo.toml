@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-tauri"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 
 [lib]
@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+semver = "1"
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
@@ -45,6 +47,7 @@ chrono = "0.4"
 libloading = "0.8"
 pinyin = { version = "0.11", default-features = false, features = ["plain", "heteronym"] }
 regex = "1"
+semver = "1"
 suppaftp = { version = "8", features = ["native-tls"] }
 native-tls = "0.2"
 ssh2 = "0.9"

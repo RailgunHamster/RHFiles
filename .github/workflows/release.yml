@@ -56,6 +56,16 @@ jobs:
             --tag '${{ github.ref_name }}' `
             --releaseName 'RHFiles ${{ steps.version.outputs.version }}'
 
+      - name: Publish cumulative release history
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload '${{ github.ref_name }}' `
+            .\dist\velopack-releases\release-history.json `
+            --repo RailgunHamster/RHFiles `
+            --clobber
+
       - name: Save release artifacts
         uses: actions/upload-artifact@v4
         with:

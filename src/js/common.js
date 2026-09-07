@@ -161,6 +161,9 @@ function applyI18n() {
     el.title = label;
     el.setAttribute('aria-label', label);
   });
+  document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+    el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
+  });
   if (typeof initCommands === 'function') initCommands();
   if (typeof updateSearchScopeUI === 'function') updateSearchScopeUI();
   if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
@@ -457,6 +460,7 @@ function fallbackCall(cmd, args) {
     case "set_window_effect": return null;
     case "quicklook": return null;
     case "check_updates": return { managed:false, isPortable:false, currentVersion:'0.1.0', availableVersion:null, releaseNotes:'', pendingRestart:false };
+    case "get_release_history": return { currentVersion:'0.1.0', source:'bundled', warning:null, releases:[{version:'0.1.0',notesMarkdown:'# RHFiles 0.1.0\n\n- Initial release'}] };
     case "download_update": return null;
     case "apply_update": return null;
     case "db_save_tags": return null;
@@ -483,6 +487,8 @@ function fallbackCall(cmd, args) {
     case "cancel_operation": return null;
     case "is_everything_available": return false;
     case "open_everything": return null;
+    case "list_user_themes": return { directory:"C:\\Users\\User\\AppData\\Roaming\\RHFiles\\themes", themes:[], errors:[] };
+    case "open_theme_folder": return "C:\\Users\\User\\AppData\\Roaming\\RHFiles\\themes";
     case "quick_search": return [];
     case "search_recursive": return [];
     case "pinyin_aliases": return (args.names || []).map(() => []);

@@ -135,39 +135,147 @@ function removeTag(tag) {
 }
 
 // --- settings ---
+const SETTINGS_SECTIONS = Object.freeze([
+  ['general', 'settings.categoryGeneral'],
+  ['appearance', 'settings.categoryAppearance'],
+  ['files', 'settings.categoryFiles'],
+  ['preview', 'settings.categoryPreview'],
+  ['search', 'settings.categorySearch'],
+  ['updates', 'settings.categoryUpdates'],
+  ['shortcuts', 'settings.categoryShortcuts'],
+  ['data', 'settings.categoryData'],
+]);
+
+function settingsSectionIcon(id) {
+  const paths = {
+    general: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.7v1.4M8 12.9v1.4M1.7 8h1.4M12.9 8h1.4M3.55 3.55l1 1M11.45 11.45l1 1M12.45 3.55l-1 1M4.55 11.45l-1 1"/>',
+    appearance: '<path d="M8 2a6 6 0 1 0 0 12c1.1 0 1.5-.7 1.1-1.5-.4-.7.1-1.5 1-1.5h1.4A2.5 2.5 0 0 0 14 8.5 6.5 6.5 0 0 0 8 2z"/><circle cx="5" cy="6" r=".6"/><circle cx="8" cy="4.8" r=".6"/><circle cx="11" cy="6.3" r=".6"/>',
+    files: '<path d="M1.8 4.5h5l1.6 1.7h5.8v6.6H1.8V4.5z"/><path d="M1.8 4.5V3.2h4.4l1.3 1.3"/>',
+    preview: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m4.2 10 2.5-2.6 1.9 1.8 1.4-1.4 1.8 2.2"/><circle cx="10.8" cy="5.7" r=".8"/>',
+    search: '<circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3.4 3.4"/>',
+    updates: '<path d="M8 2.2v7.1M5.2 6.7 8 9.5l2.8-2.8"/><path d="M2.5 11.2v2h11v-2"/>',
+    shortcuts: '<rect x="1.7" y="3.1" width="12.6" height="9.8" rx="1.5"/><path d="M4 6h1M7.5 6h1M11 6h1M4 9h1M7 9h5"/>',
+    data: '<ellipse cx="8" cy="3.7" rx="5" ry="2"/><path d="M3 3.7v4.2c0 1.1 2.2 2 5 2s5-.9 5-2V3.7M3 7.8V12c0 1.1 2.2 2 5 2s5-.9 5-2V7.8"/>',
+  };
+  return '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">' + (paths[id] || paths.general) + '</svg>';
+}
+
+function settingsPage(id, titleKey, descriptionKey, body) {
+  return '<section class="settings-page" id="settings-page-' + id + '" role="tabpanel" aria-labelledby="settings-nav-' + id + '" data-settings-page="' + id + '">' +
+    '<header class="settings-page-header"><h2>' + esc(t(titleKey)) + '</h2><p>' + esc(t(descriptionKey)) + '</p></header>' +
+    body + '</section>';
+}
+
+function switchSettingsSection(sectionId, persist = true) {
+  if (!SETTINGS_SECTIONS.some(([id]) => id === sectionId)) sectionId = 'general';
+  document.querySelectorAll('#settings-nav .settings-nav-item').forEach(button => {
+    const active = button.dataset.settingsSection === sectionId;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll('#settings-content .settings-page').forEach(page => {
+    const active = page.dataset.settingsPage === sectionId;
+    page.classList.toggle('active', active);
+    page.hidden = !active;
+  });
+  const content = document.getElementById('settings-content');
+  if (content) content.scrollTop = 0;
+  if (persist) localStorage.setItem('rhfiles-settings-section', sectionId);
+}
+
+function handleSettingsNavKey(event, sectionId) {
+  const currentIndex = SETTINGS_SECTIONS.findIndex(([id]) => id === sectionId);
+  if (currentIndex < 0) return;
+  let nextIndex = currentIndex;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % SETTINGS_SECTIONS.length;
+  else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length;
+  else if (event.key === 'Home') nextIndex = 0;
+  else if (event.key === 'End') nextIndex = SETTINGS_SECTIONS.length - 1;
+  else return;
+  event.preventDefault();
+  const nextId = SETTINGS_SECTIONS[nextIndex][0];
+  switchSettingsSection(nextId);
+  document.querySelector(`#settings-nav [data-settings-section="${nextId}"]`)?.focus();
+}
+
 function openSettings() {
   const dlg = document.getElementById("settings-dialog");
+  const nav = document.getElementById("settings-nav");
   const content = document.getElementById("settings-content");
   const themeVal = G.theme || 'light';
   const langOptions = getAvailableLanguages().map(l =>
     '<option value="' + l.code + '"' + (_lang===l.code?" selected":"") + '>' + esc(l.name) + '</option>'
   ).join("");
-  content.innerHTML =
+  nav.setAttribute('aria-label', t('settings.categories'));
+  nav.innerHTML = SETTINGS_SECTIONS.map(([id, labelKey]) =>
+    '<button type="button" class="settings-nav-item" id="settings-nav-' + id + '" role="tab" aria-controls="settings-page-' + id + '" data-settings-section="' + id + '" onclick="switchSettingsSection(\'' + id + '\')" onkeydown="handleSettingsNavKey(event,\'' + id + '\')">' +
+      settingsSectionIcon(id) + '<span>' + esc(t(labelKey)) + '</span></button>'
+  ).join('');
+
+  const general = '<div class="settings-card">' +
     '<div class="settings-row"><label>' + t('settings.language') + '</label>' +
     '<select onchange="setLang(this.value)">' + langOptions + '</select></div>' +
+    '<div class="settings-row"><label>' + t('settings.defaultTerminal') + '</label>' +
+    '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>' + t('settings.termWt') + '</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>' + t('settings.termPs') + '</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>' + t('settings.termCmd') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
+    '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div></div>';
+
+  const appearance = '<div class="settings-card">' +
     '<div class="settings-row"><label>' + t('settings.theme') + '</label>' +
-    '<select id="settings-theme-select" onchange="onThemeSelectChange(this.value)"><option value="light"' + (themeVal==="light"?" selected":"") + '>' + t('settings.themeLight') + '</option><option value="dark"' + (themeVal==="dark"?" selected":"") + '>' + t('settings.themeDark') + '</option><option value="custom"' + (themeVal==="custom"?" selected":"") + '>' + t('settings.themeCustom') + '</option></select></div>' +
-    '<div id="custom-theme-section" style="display:' + (themeVal==="custom"?"block":"none") + ';margin-top:8px">' +
-      '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:4px">' +
+    '<select id="settings-theme-select" onchange="onThemeSelectChange(this.value)">' + themeOptionsHtml(themeVal) + '</select></div>' +
+    '<div class="settings-theme-folder">' +
+      '<div><strong>' + t('settings.userThemes') + '</strong><span id="settings-theme-directory">' + esc(_themeDirectory || t('settings.themeFolderUnknown')) + '</span></div>' +
+      '<div class="settings-inline-actions"><button class="dialog-btn" onclick="openThemeFolder()">' + t('settings.openThemeFolder') + '</button>' +
+      '<button class="dialog-btn" onclick="reloadThemePacks()">' + t('settings.reloadThemes') + '</button></div>' +
+    '</div>' +
+    '<div class="settings-row"><label>' + t('settings.bgEffect') + '</label>' +
+    '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>' + t('settings.effectNone') + '</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>' + t('settings.effectMica') + '</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>' + t('settings.effectAcrylic') + '</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>' + t('settings.effectMicaAlt') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.iconStyle') + '</label>' +
+    '<select onchange="setIconMode(this.value)">' +
+      '<option value="builtin"' + (G.settings.iconMode==='builtin'?" selected":"") + '>' + t('settings.iconBuiltin') + '</option>' +
+      '<option value="fluent"' + (G.settings.iconMode==='fluent'?" selected":"") + '>' + t('settings.iconFluent') + '</option>' +
+      '<option value="system"' + (G.settings.iconMode==='system'?" selected":"") + '>' + t('settings.iconSystem') + '</option>' +
+      '<option value="mixed"' + ((G.settings.iconMode||'mixed')==='mixed'?" selected":"") + '>' + t('settings.iconMixed') + '</option>' +
+    '</select></div></div>' +
+    '<div class="settings-card"><div class="settings-card-title">' + t('settings.advancedCss') + '</div>' +
+      '<p class="settings-card-description">' + t('settings.advancedCssHelp') + '</p>' +
+    '<div id="custom-theme-section" class="settings-nested">' +
+      '<div class="settings-row settings-row-stack">' +
         '<label>' + t('settings.customCss') + '</label>' +
-        '<textarea id="custom-theme-css" rows="8" style="width:100%;font-family:monospace;font-size:12px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px;resize:vertical">' + esc(localStorage.getItem('rhfiles-custom-theme') || '') + '</textarea>' +
+        '<textarea id="custom-theme-css" rows="8" class="settings-code-input">' + esc(localStorage.getItem('rhfiles-custom-theme') || '') + '</textarea>' +
       '</div>' +
-      '<div class="settings-row" style="gap:8px">' +
+      '<div class="settings-inline-actions">' +
         '<button class="dialog-btn" onclick="uploadThemeFile()">' + t('btn.uploadCss') + '</button>' +
         '<button class="dialog-btn primary" onclick="applyCustomThemeFromSettings()">' + t('btn.apply') + '</button>' +
         '<button class="dialog-btn" onclick="resetCustomTheme()">' + t('btn.reset') + '</button>' +
       '</div>' +
-    '</div>' +
-    '<div class="settings-row"><label>' + t('settings.bgEffect') + '</label>' +
-    '<select onchange="applyWindowEffect(this.value)"><option value="none"' + (G.windowEffect==="none"||!G.windowEffect?" selected":"") + '>' + t('settings.effectNone') + '</option><option value="mica"' + (G.windowEffect==="mica"?" selected":"") + '>' + t('settings.effectMica') + '</option><option value="acrylic"' + (G.windowEffect==="acrylic"?" selected":"") + '>' + t('settings.effectAcrylic') + '</option><option value="mica-alt"' + (G.windowEffect==="mica-alt"?" selected":"") + '>' + t('settings.effectMicaAlt') + '</option></select></div>' +
+    '</div></div>';
+
+  const files = '<div class="settings-card">' +
     '<div class="settings-row"><label>' + t('settings.layout') + '</label>' +
     '<select onchange="setLayout(this.value)"><option value="details"' + (G.layout==="details"?" selected":"") + '>' + t('settings.layoutDetails') + '</option><option value="cards"' + (G.layout==="cards"?" selected":"") + '>' + t('settings.layoutCards') + '</option><option value="thumbnails"' + (G.layout==="thumbnails"?" selected":"") + '>' + t('settings.layoutThumbnails') + '</option><option value="columns"' + (G.layout==="columns"?" selected":"") + '>' + t('settings.layoutColumns') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.dualOrientation') + '</label>' +
     '<select onchange="setDualPaneOrientation(this.value)"><option value="vertical"' + (G.settings.dualPaneOrientation!=="horizontal"?" selected":"") + '>' + t('pane.vertical') + '</option><option value="horizontal"' + (G.settings.dualPaneOrientation==="horizontal"?" selected":"") + '>' + t('pane.horizontal') + '</option></select></div>' +
+    '<div class="settings-row"><label>' + t('settings.showExtensions') + '</label>' +
+    '<input type="checkbox" onchange="G.showExtensions=this.checked;renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')"' + (G.showExtensions!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label>' + t('settings.grouping') + '</label>' +
+    '<select onchange="toggleGrouping(this.value)"><option value="none"' + (G.groupBy==='none'||!G.groupBy?" selected":"") + '>' + t('settings.groupNone') + '</option><option value="type"' + (G.groupBy==='type'?" selected":"") + '>' + t('settings.groupType') + '</option><option value="date"' + (G.groupBy==='date'?" selected":"") + '>' + t('settings.groupDate') + '</option><option value="size"' + (G.groupBy==='size'?" selected":"") + '>' + t('settings.groupSize') + '</option><option value="extension"' + (G.groupBy==='extension'?" selected":"") + '>' + t('settings.groupExt') + '</option></select></div></div>' +
+    '<div class="settings-card"><div class="settings-card-title">' + t('settings.customizeToolbar') + '</div>' +
+    '<div id="toolbar-config-list" class="settings-config-list toolbar-config-list"></div>' +
+    '<button class="dialog-btn" onclick="resetToolbarConfig()">' + t('btn.resetDefault') + '</button></div>';
+
+  const preview = '<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-preview-default">' + t('settings.previewDefaultOpen') + '</label>' +
     '<input id="settings-preview-default" type="checkbox" onchange="setPreviewDefaultOpen(this.checked)"' + (G.settings.previewDefaultOpen!==false?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><strong>' + t('settings.previewFormatsTitle') + '</strong><span>' + t('settings.previewFormatsBody') + '</span></div></div>';
+
+  const search = '<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-global-search">' + t('settings.enableGlobalSearch') + '</label>' +
     '<input id="settings-global-search" type="checkbox" onchange="setGlobalSearchEnabled(this.checked)"' + (G.settings.globalSearchEnabled!==false?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><strong>' + t('settings.searchBehaviorTitle') + '</strong><span>' + t('settings.searchBehaviorBody') + '</span></div></div>';
+
+  const updates = '<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-auto-update">' + t('settings.autoUpdate') + '</label>' +
     '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-update-source">' + t('settings.updateSource') + '</label>' +
@@ -186,51 +294,49 @@ function openSettings() {
     '<input id="settings-proxy-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:7890" value="' + esc(String(G.settings.proxyUrl || '')) + '" onchange="setProxyUrl(this.value,this)"' + (G.settings.proxyEnabled===true?'':' disabled') + '></div>' +
     '<div class="settings-source-help">' + t('settings.proxyHelp') + '</div>' +
     '<div class="settings-row update-settings-row"><span id="settings-update-status" class="settings-help">' + t('update.statusUnknown') + '</span>' +
-    '<button class="dialog-btn" id="settings-check-update" onclick="checkForUpdates(true)">' + t('settings.checkUpdates') + '</button></div>' +
-    '<div class="settings-row"><label>' + t('settings.showExtensions') + '</label>' +
-    '<input type="checkbox" onchange="G.showExtensions=this.checked;renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')"' + (G.showExtensions!==false?' checked':'') + '></div>' +
-    '<div class="settings-row"><label>' + t('settings.grouping') + '</label>' +
-    '<select onchange="toggleGrouping(this.value)"><option value="none"' + (G.groupBy==='none'||!G.groupBy?" selected":"") + '>' + t('settings.groupNone') + '</option><option value="type"' + (G.groupBy==='type'?" selected":"") + '>' + t('settings.groupType') + '</option><option value="date"' + (G.groupBy==='date'?" selected":"") + '>' + t('settings.groupDate') + '</option><option value="size"' + (G.groupBy==='size'?" selected":"") + '>' + t('settings.groupSize') + '</option><option value="extension"' + (G.groupBy==='extension'?" selected":"") + '>' + t('settings.groupExt') + '</option></select></div>' +
-    '<div class="settings-row"><label>' + t('settings.defaultTerminal') + '</label>' +
-    '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>' + t('settings.termWt') + '</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>' + t('settings.termPs') + '</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>' + t('settings.termCmd') + '</option></select></div>' +
-    '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
-    '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
-    '<div class="settings-row"><label>' + t('settings.iconStyle') + '</label>' +
-    '<select onchange="setIconMode(this.value)">' +
-      '<option value="builtin"' + (G.settings.iconMode==='builtin'?" selected":"") + '>' + t('settings.iconBuiltin') + '</option>' +
-      '<option value="fluent"' + (G.settings.iconMode==='fluent'?" selected":"") + '>' + t('settings.iconFluent') + '</option>' +
-      '<option value="system"' + (G.settings.iconMode==='system'?" selected":"") + '>' + t('settings.iconSystem') + '</option>' +
-      '<option value="mixed"' + ((G.settings.iconMode||'mixed')==='mixed'?" selected":"") + '>' + t('settings.iconMixed') + '</option>' +
-    '</select></div>' +
-    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.customizeToolbar') + '</label>' +
-    '<div id="toolbar-config-list" style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto"></div>' +
-    '<button class="dialog-btn" onclick="resetToolbarConfig()" style="align-self:flex-start">' + t('btn.resetDefault') + '</button></div>' +
-    '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">' +
-    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.shortcuts') + '</label>' +
-    '<div id="shortcut-config-list" style="display:flex;flex-direction:column;gap:6px;max-height:350px;overflow:auto;padding:4px 0"></div>' +
-    '<div style="display:flex;gap:8px;align-items:center">' +
-      '<button class="dialog-btn" onclick="resetShortcuts()" style="align-self:flex-start">' + t('btn.resetShortcuts') + '</button>' +
-      '<span style="font-size:11px;color:var(--text-secondary)">' + t('settings.shortcutHelp') + '</span>' +
-    '</div></div>' +
-    '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">' +
-    '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.dataManagement') + '</label>' +
-    '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+    '<button class="dialog-btn" id="settings-check-update" onclick="checkForUpdates(true)">' + t('settings.checkUpdates') + '</button></div></div>' +
+    '<div class="settings-card settings-history-card"><div class="settings-card-heading"><div><div class="settings-card-title">' + t('settings.releaseHistory') + '</div><div class="settings-card-description">' + t('settings.releaseHistoryHelp') + '</div></div>' +
+    '<button class="dialog-btn" id="settings-refresh-history" onclick="loadReleaseHistory(true)">' + t('settings.refreshHistory') + '</button></div>' +
+    '<div id="settings-release-history" class="settings-release-history"><div class="settings-history-state">' + t('settings.historyLoading') + '</div></div></div>';
+
+  const shortcuts = '<div class="settings-card"><div id="shortcut-config-list" class="settings-config-list shortcut-config-list"></div>' +
+    '<div class="settings-inline-actions settings-shortcut-actions">' +
+      '<button class="dialog-btn" onclick="resetShortcuts()">' + t('btn.resetShortcuts') + '</button>' +
+      '<span class="settings-help">' + t('settings.shortcutHelp') + '</span>' +
+    '</div></div>';
+
+  const data = '<div class="settings-card"><div class="settings-card-title">' + t('settings.dataManagement') + '</div>' +
+    '<div class="settings-inline-actions">' +
       '<button class="dialog-btn" onclick="exportAllData()">' + t('btn.export') + '</button>' +
       '<button class="dialog-btn" onclick="importAllData()">' + t('btn.import') + '</button>' +
-      '<button class="dialog-btn" onclick="clearAllData()" style="color:#e74c3c">' + t('btn.clearAll') + '</button>' +
+      '<button class="dialog-btn danger" onclick="clearAllData()">' + t('btn.clearAll') + '</button>' +
     '</div>' +
-    '<span style="font-size:11px;color:var(--text-secondary)">' + t('settings.dataHelp') + '</span>' +
-    '</div>';
+    '<p class="settings-card-description">' + t('settings.dataHelp') + '</p></div>';
+
+  content.innerHTML =
+    settingsPage('general', 'settings.categoryGeneral', 'settings.categoryGeneralDesc', general) +
+    settingsPage('appearance', 'settings.categoryAppearance', 'settings.categoryAppearanceDesc', appearance) +
+    settingsPage('files', 'settings.categoryFiles', 'settings.categoryFilesDesc', files) +
+    settingsPage('preview', 'settings.categoryPreview', 'settings.categoryPreviewDesc', preview) +
+    settingsPage('search', 'settings.categorySearch', 'settings.categorySearchDesc', search) +
+    settingsPage('updates', 'settings.categoryUpdates', 'settings.categoryUpdatesDesc', updates) +
+    settingsPage('shortcuts', 'settings.categoryShortcuts', 'settings.categoryShortcutsDesc', shortcuts) +
+    settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data);
   dlg.style.display = "flex";
+  const initialSection = localStorage.getItem('rhfiles-settings-section') || 'general';
+  switchSettingsSection(initialSection, false);
   renderToolbarConfig();
   renderShortcutConfig();
+  updateThemeSettingsControls();
   refreshUpdateSettingsStatus();
+  loadReleaseHistory(false);
 }
 
 function setAutoUpdateEnabled(enabled) {
   G.settings.autoUpdateEnabled = !!enabled;
   saveSettings();
   refreshUpdateSettingsStatus();
+  loadReleaseHistory(false);
 }
 
 function setUpdateSourceMode(mode) {
@@ -239,6 +345,7 @@ function setUpdateSourceMode(mode) {
   saveSettings();
   G._updateStatus = null;
   refreshUpdateSettingsStatus();
+  loadReleaseHistory(false);
 }
 
 function setUpdateSourceLocation(kind, value, input) {
@@ -253,6 +360,7 @@ function setUpdateSourceLocation(kind, value, input) {
   if ((isServer && G.settings.updateSourceMode === 'server') || (!isServer && G.settings.updateSourceMode !== 'server')) {
     G._updateStatus = null;
     refreshUpdateSettingsStatus();
+    loadReleaseHistory(false);
   }
 }
 
@@ -262,6 +370,7 @@ function setProxyEnabled(enabled) {
   if (input) input.disabled = !G.settings.proxyEnabled;
   saveSettings();
   refreshUpdateSettingsStatus();
+  loadReleaseHistory(false);
 }
 
 function setProxyUrl(value, input) {
@@ -269,17 +378,78 @@ function setProxyUrl(value, input) {
   G.settings.proxyUrl = normalized;
   if (input) input.value = normalized;
   saveSettings();
-  if (G.settings.proxyEnabled === true) refreshUpdateSettingsStatus();
+  if (G.settings.proxyEnabled === true) {
+    refreshUpdateSettingsStatus();
+    loadReleaseHistory(false);
+  }
+}
+
+let _releaseHistoryRequestToken = 0;
+let _releaseHistoryEntries = [];
+
+function hydrateReleaseHistoryItem(details) {
+  if (!details || details.dataset.loaded === 'true') return;
+  const index = Number(details.dataset.releaseIndex);
+  const entry = _releaseHistoryEntries[index];
+  const body = details.querySelector('.settings-release-notes');
+  if (!entry || !body) return;
+  body.innerHTML = renderMarkdown(String(entry.notesMarkdown || ''));
+  details.dataset.loaded = 'true';
+}
+
+function renderReleaseHistory(response) {
+  const container = document.getElementById('settings-release-history');
+  if (!container) return;
+  _releaseHistoryEntries = Array.isArray(response?.releases) ? response.releases : [];
+  if (!_releaseHistoryEntries.length) {
+    container.innerHTML = `<div class="settings-history-state">${esc(t('settings.historyEmpty'))}</div>`;
+    return;
+  }
+  const currentVersion = String(response.currentVersion || '');
+  const sourceLabel = response.source === 'remote' ? t('settings.historyRemote') : t('settings.historyBundled');
+  const warning = response.warning
+    ? `<div class="settings-history-warning" title="${esc(String(response.warning))}">${esc(t('settings.historyFallback'))}</div>`
+    : '';
+  container.innerHTML = `<div class="settings-history-source">${esc(sourceLabel)}</div>${warning}` +
+    _releaseHistoryEntries.map((entry, index) => {
+      const current = String(entry.version) === currentVersion;
+      return `<details class="settings-release-item" data-release-index="${index}"${index === 0 ? ' open' : ''}>
+        <summary><span class="settings-release-version">v${esc(String(entry.version || ''))}</span>${current ? `<span class="settings-release-current">${esc(t('settings.currentVersion'))}</span>` : ''}</summary>
+        <div class="settings-release-notes"></div>
+      </details>`;
+    }).join('');
+  container.querySelectorAll('.settings-release-item').forEach(details => {
+    details.addEventListener('toggle', () => { if (details.open) hydrateReleaseHistoryItem(details); });
+    if (details.open) hydrateReleaseHistoryItem(details);
+  });
+}
+
+async function loadReleaseHistory(manual) {
+  const container = document.getElementById('settings-release-history');
+  if (!container) return;
+  const button = document.getElementById('settings-refresh-history');
+  const token = ++_releaseHistoryRequestToken;
+  const allowRemote = !!manual || isAutomaticUpdateCheckEnabled();
+  container.innerHTML = `<div class="settings-history-state">${esc(t('settings.historyLoading'))}</div>`;
+  if (button) button.disabled = true;
+  try {
+    const response = await withTimeout(call('get_release_history', {
+      source: getUpdateSource(),
+      proxy: getUpdateProxy(),
+      allowRemote,
+    }), 35000, 'Release history request timed out');
+    if (token !== _releaseHistoryRequestToken) return;
+    renderReleaseHistory(response);
+  } catch (error) {
+    if (token !== _releaseHistoryRequestToken) return;
+    container.innerHTML = `<div class="settings-history-state settings-history-warning" title="${esc(String(error))}">${esc(t('settings.historyFailed'))}</div>`;
+  } finally {
+    if (token === _releaseHistoryRequestToken && button) button.disabled = false;
+  }
 }
 
 function onThemeSelectChange(val) {
-  const section = document.getElementById("custom-theme-section");
-  if (section) section.style.display = val === "custom" ? "block" : "none";
-  if (val !== "custom") {
-    applyTheme(val);
-  } else {
-    applyTheme("custom");
-  }
+  applyTheme(val);
 }
 
 function applyCustomThemeFromSettings() {
@@ -456,6 +626,13 @@ function resetDiskUsageSurface(loading) {
       ? `<div class="disk-usage-loading"><span></span>${esc(t('diskUsage.analyzing'))}</div>`
       : '';
   }
+}
+
+function pauseDiskUsageAnalysis() {
+  if (_diskUsageRefreshTimer) clearTimeout(_diskUsageRefreshTimer);
+  _diskUsageRefreshTimer = null;
+  _diskUsagePendingPath = '';
+  ++_diskUsageToken;
 }
 
 function syncDiskUsageWithActiveFolder(path, isRight) {
@@ -639,10 +816,10 @@ async function refreshDiskUsage() {
   resetDiskUsageSurface(true);
   try {
     const data = await call('analyze_disk_usage', { path:analysisPath, depth, maxEntries:250 });
-    if (token !== _diskUsageToken || !diskUsagePathsEqual(analysisPath, _diskUsagePath)) return;
+    if (token !== _diskUsageToken || G.inspectorTab !== 'disk' || !G.previewOn || !diskUsagePathsEqual(analysisPath, _diskUsagePath)) return;
     renderDiskUsage(data);
   } catch (error) {
-    if (token !== _diskUsageToken || !diskUsagePathsEqual(analysisPath, _diskUsagePath) || !results) return;
+    if (token !== _diskUsageToken || G.inspectorTab !== 'disk' || !G.previewOn || !diskUsagePathsEqual(analysisPath, _diskUsagePath) || !results) return;
     _diskUsagePendingPath = '';
     results.innerHTML = `<div class="disk-usage-empty"><strong>${esc(t('diskUsage.failed'))}</strong><span>${esc(String(error))}</span></div>`;
   }
@@ -654,7 +831,6 @@ function showDiskUsageDialog(path) {
   _diskUsagePath = diskUsageTargetPath(path);
   _diskUsagePendingPath = _diskUsagePath;
   ++_diskUsageToken;
-  if (!G.previewOn) setPreviewPaneVisible(true);
   switchInspectorTab('disk');
   document.getElementById('disk-usage-path').textContent = displayPath(_diskUsagePath);
   applyI18n();
@@ -662,7 +838,6 @@ function showDiskUsageDialog(path) {
 }
 
 function activateDiskUsageTab() {
-  if (!G.previewOn) setPreviewPaneVisible(true);
   switchInspectorTab('disk');
   if (!syncDiskUsageWithActiveFolder()) {
     if (!_diskUsagePath) showDiskUsageDialog();
@@ -671,7 +846,7 @@ function activateDiskUsageTab() {
 }
 
 function closeDiskUsageDialog() {
-  if (G.inspectorTab === 'disk') switchInspectorTab('preview');
+  if (G.inspectorTab === 'disk') setInspectorMode('closed', false);
 }
 
 function openSelectedDiskUsageItem() {

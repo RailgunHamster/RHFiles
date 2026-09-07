@@ -6,6 +6,7 @@ mod network;
 mod search;
 mod shell;
 mod system;
+mod themes;
 mod types;
 mod updates;
 mod vcs;
@@ -188,7 +189,9 @@ pub fn run() {
             shell::get_permissions, shell::set_permission,
             shell::remove_permission, shell::inherit_permissions,
 
-            updates::check_updates, updates::download_update, updates::apply_update,
+            themes::list_user_themes, themes::open_theme_folder,
+
+            updates::check_updates, updates::get_release_history, updates::download_update, updates::apply_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

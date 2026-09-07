@@ -4235,7 +4235,7 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-tauri"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "libloading 0.8.9",
@@ -4244,6 +4244,7 @@ dependencies = [
  "regex",
  "rhfiles-core",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "ssh2",

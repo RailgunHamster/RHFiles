@@ -1,8 +1,10 @@
-use serde::Serialize;
+use semver::Version;
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs::File,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::mpsc,
     time::Duration,
 };
@@ -19,6 +21,9 @@ const FEED_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const DOWNLOAD_BODY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const MAX_RELEASE_HISTORY_BYTES: usize = 2 * 1024 * 1024;
+const BUNDLED_RELEASE_HISTORY: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/release-history.json"));
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +34,29 @@ pub struct UpdateStatus {
     available_version: Option<String>,
     release_notes: String,
     pending_restart: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseHistoryEntry {
+    version: String,
+    notes_markdown: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseHistoryDocument {
+    schema_version: u32,
+    releases: Vec<ReleaseHistoryEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseHistoryResponse {
+    current_version: String,
+    releases: Vec<ReleaseHistoryEntry>,
+    source: String,
+    warning: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -113,6 +141,16 @@ impl ConfiguredWebSource {
             .body_mut()
             .read_to_string()
             .map_err(|error| web_error("Unable to read update metadata", error))
+    }
+
+    fn get_release_history_text(&self) -> Result<String, VelopackError> {
+        let url = match &self.kind {
+            WebSourceKind::Github { download_base } => {
+                download_base.join("release-history.json")?
+            }
+            WebSourceKind::Static { base_url } => base_url.join("release-history.json")?,
+        };
+        self.get_text(url.as_str(), "application/json")
     }
 
     fn download_to_file(
@@ -266,6 +304,76 @@ fn effective_source(source: Option<String>) -> String {
         .unwrap_or_else(|| DEFAULT_UPDATE_SOURCE.to_string())
 }
 
+fn parse_release_history(json: &str) -> Result<Vec<ReleaseHistoryEntry>, String> {
+    if json.len() > MAX_RELEASE_HISTORY_BYTES {
+        return Err("Release history exceeds the 2 MiB safety limit".to_string());
+    }
+    let document: ReleaseHistoryDocument =
+        serde_json::from_str(json).map_err(|error| error.to_string())?;
+    if document.schema_version != 1 {
+        return Err(format!(
+            "Unsupported release history schema: {}",
+            document.schema_version
+        ));
+    }
+    if document.releases.len() > 512 {
+        return Err("Release history contains too many entries".to_string());
+    }
+    let mut releases = Vec::with_capacity(document.releases.len());
+    for entry in document.releases {
+        Version::parse(&entry.version)
+            .map_err(|error| format!("Invalid release version {}: {error}", entry.version))?;
+        if entry.notes_markdown.trim().is_empty() {
+            return Err(format!("Release {} has empty notes", entry.version));
+        }
+        if entry.notes_markdown.len() > 256 * 1024 {
+            return Err(format!("Release {} notes exceed 256 KiB", entry.version));
+        }
+        releases.push(entry);
+    }
+    Ok(releases)
+}
+
+fn bundled_release_history() -> Vec<ReleaseHistoryEntry> {
+    parse_release_history(BUNDLED_RELEASE_HISTORY).unwrap_or_default()
+}
+
+fn read_remote_release_history(
+    source: &str,
+    proxy: Option<&str>,
+) -> Result<Vec<ReleaseHistoryEntry>, String> {
+    let text = if Url::parse(source)
+        .ok()
+        .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
+    {
+        ConfiguredWebSource::new(source, proxy)
+            .and_then(|configured| configured.get_release_history_text())
+            .map_err(|error| error.to_string())?
+    } else {
+        let path = PathBuf::from(source).join("release-history.json");
+        std::fs::read_to_string(&path)
+            .map_err(|error| format!("Unable to read {}: {error}", path.display()))?
+    };
+    parse_release_history(&text)
+}
+
+fn merge_release_history(
+    bundled: Vec<ReleaseHistoryEntry>,
+    remote: Vec<ReleaseHistoryEntry>,
+) -> Vec<ReleaseHistoryEntry> {
+    let mut by_version = HashMap::new();
+    for entry in bundled.into_iter().chain(remote) {
+        by_version.insert(entry.version.clone(), entry);
+    }
+    let mut releases = by_version.into_values().collect::<Vec<_>>();
+    releases.sort_by(|left, right| {
+        let left_version = Version::parse(&left.version).ok();
+        let right_version = Version::parse(&right.version).ok();
+        right_version.cmp(&left_version)
+    });
+    releases
+}
+
 fn manager_for(source: &str, proxy: Option<&str>) -> Result<UpdateManager, VelopackError> {
     let source_url = Url::parse(source).ok();
     if source_url
@@ -339,6 +447,42 @@ pub async fn check_updates(
                 available_version: None,
                 release_notes: String::new(),
                 pending_restart: false,
+            }),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_release_history(
+    source: Option<String>,
+    proxy: Option<String>,
+    allow_remote: Option<bool>,
+) -> Result<ReleaseHistoryResponse, String> {
+    let source = effective_source(source);
+    tauri::async_runtime::spawn_blocking(move || {
+        let bundled = bundled_release_history();
+        if allow_remote == Some(false) {
+            return Ok(ReleaseHistoryResponse {
+                current_version: env!("CARGO_PKG_VERSION").to_string(),
+                releases: bundled,
+                source: "bundled".to_string(),
+                warning: None,
+            });
+        }
+        match read_remote_release_history(&source, proxy.as_deref()) {
+            Ok(remote) => Ok(ReleaseHistoryResponse {
+                current_version: env!("CARGO_PKG_VERSION").to_string(),
+                releases: merge_release_history(bundled, remote),
+                source: "remote".to_string(),
+                warning: None,
+            }),
+            Err(error) => Ok(ReleaseHistoryResponse {
+                current_version: env!("CARGO_PKG_VERSION").to_string(),
+                releases: bundled,
+                source: "bundled".to_string(),
+                warning: Some(error),
             }),
         }
     })
@@ -451,6 +595,38 @@ mod tests {
         assert!(normalize_proxy_address(Some("  ")).is_err());
         assert!(normalize_proxy_address(Some("socks5://127.0.0.1:1080")).is_err());
         assert!(normalize_proxy_address(Some("http://user:secret@proxy.example")).is_err());
+    }
+
+    #[test]
+    fn bundled_history_contains_every_release_note() {
+        let history = bundled_release_history();
+        assert!(history.len() >= 10);
+        assert_eq!(
+            history.first().map(|entry| entry.version.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(history.iter().any(|entry| entry.version == "0.1.0"));
+    }
+
+    #[test]
+    fn remote_history_replaces_matching_bundled_notes_and_sorts_versions() {
+        let bundled = vec![ReleaseHistoryEntry {
+            version: "0.1.0".into(),
+            notes_markdown: "old".into(),
+        }];
+        let remote = vec![
+            ReleaseHistoryEntry {
+                version: "0.2.0".into(),
+                notes_markdown: "new release".into(),
+            },
+            ReleaseHistoryEntry {
+                version: "0.1.0".into(),
+                notes_markdown: "remote replacement".into(),
+            },
+        ];
+        let merged = merge_release_history(bundled, remote);
+        assert_eq!(merged[0].version, "0.2.0");
+        assert_eq!(merged[1].notes_markdown, "remote replacement");
     }
 
     #[test]
