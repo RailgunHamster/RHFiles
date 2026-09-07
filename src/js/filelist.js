@@ -12,6 +12,13 @@ function naturalCompare(a, b) {
   return ax.length - bx.length;
 }
 
+function sortableDateValue(timestamp, text) {
+  const numeric = Number(timestamp);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(String(text || '').replace(' ', 'T'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function sortEntriesList(entries, field, asc) {
   const dir = asc ? 1 : -1;
   return [...entries].sort((a, b) => {
@@ -19,34 +26,66 @@ function sortEntriesList(entries, field, asc) {
     if (field === "name") return dir * naturalCompare(a.name.toLowerCase(), b.name.toLowerCase());
     let va, vb;
     switch (field) {
-      case "modified": va = a.modified_ts || 0; vb = b.modified_ts || 0; break;
-      case "created": va = a.created_ts || 0; vb = b.created_ts || 0; break;
-      case "type": va = a.is_dir ? "0" : "1" + a.extension.toLowerCase(); vb = b.is_dir ? "0" : "1" + b.extension.toLowerCase(); break;
-      case "size": va = a.size; vb = b.size; break;
+      case "modified": va = sortableDateValue(a.modified_ts, a.modified); vb = sortableDateValue(b.modified_ts, b.modified); break;
+      case "created": va = sortableDateValue(a.created_ts, a.created); vb = sortableDateValue(b.created_ts, b.created); break;
+      case "type": va = (a.extension || "").toLowerCase(); vb = (b.extension || "").toLowerCase(); break;
+      case "size": va = Number(a.size) || 0; vb = Number(b.size) || 0; break;
       default: return dir * naturalCompare(a.name.toLowerCase(), b.name.toLowerCase());
     }
     if (va < vb) return -1 * dir;
     if (va > vb) return 1 * dir;
-    return 0;
+    return naturalCompare(a.name.toLowerCase(), b.name.toLowerCase());
+  });
+}
+
+function sortStateEntries(state, field, asc) {
+  const oldEntries = state.entries || [];
+  const selectedPaths = new Set(
+    [...(state.sel || new Set())].map(index => oldEntries[index]?.path).filter(Boolean)
+  );
+  const lastPath = oldEntries[state.lastIdx]?.path || "";
+  state.entries = sortEntriesList(oldEntries, field, asc);
+  state.sel = new Set();
+  state.entries.forEach((entry, index) => {
+    if (selectedPaths.has(entry.path)) state.sel.add(index);
+  });
+  const remappedLastIndex = lastPath
+    ? state.entries.findIndex(entry => entry.path === lastPath)
+    : -1;
+  state.lastIdx = remappedLastIndex >= 0
+    ? remappedLastIndex
+    : (state.sel.size ? [...state.sel].pop() : -1);
+}
+
+function updateHeaderSortArrows(header, field, asc) {
+  if (!header) return;
+  header.querySelectorAll(".col").forEach(col => {
+    const active = col.dataset.sort === field;
+    col.classList.toggle("sort-active", active);
+    const arrow = col.querySelector(".sort-arrow");
+    if (arrow) arrow.textContent = active ? (asc ? "\u25b2" : "\u25bc") : "";
   });
 }
 
 function updateSortArrows() {
-  document.querySelectorAll(".col").forEach(col => {
-    col.classList.toggle("sort-active", col.dataset.sort === G.sortField);
-    const arrow = col.querySelector(".sort-arrow");
-    if (arrow) arrow.textContent = col.dataset.sort === G.sortField ? (G.sortAsc ? "\u25b2" : "\u25bc") : "";
-  });
+  updateHeaderSortArrows(document.getElementById("file-header"), G.sortField, G.sortAsc);
+  updateHeaderSortArrows(
+    document.querySelector("#pane-right .file-header"),
+    G.rp?.sortF || "name",
+    G.rp?.sortAsc !== false
+  );
 }
 
 function sortBy(field) {
   const tab = getTab();
-  if (G.sortField === field) { G.sortAsc = !G.sortAsc; }
-  else { G.sortField = field; G.sortAsc = true; }
-  tab.sortF = G.sortField;
-  tab.sortAsc = G.sortAsc;
+  if (tab.sortF === field) tab.sortAsc = !tab.sortAsc;
+  else { tab.sortF = field; tab.sortAsc = true; }
+  G.sortField = tab.sortF;
+  G.sortAsc = tab.sortAsc;
+  sortStateEntries(tab, tab.sortF, tab.sortAsc);
   updateSortArrows();
   renderFiles(tab, "file-list", "status-count", "status-selection");
+  saveTabState();
 }
 
 function toggleSort() {
@@ -57,8 +96,10 @@ function toggleSort() {
   G.sortAsc = true;
   tab.sortF = G.sortField;
   tab.sortAsc = G.sortAsc;
+  sortStateEntries(tab, tab.sortF, tab.sortAsc);
   updateSortArrows();
   renderFiles(tab, "file-list", "status-count", "status-selection");
+  saveTabState();
 }
 
 function toggleHidden() {

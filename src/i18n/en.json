@@ -200,7 +200,7 @@
   "settings.iconBuiltin": "Builtin (Rich SVG)",
   "settings.iconFluent": "Fluent UI Style",
   "settings.iconSystem": "System Icons (Real)",
-  "settings.iconMixed": "Mixed (SVG + System)",
+  "settings.iconMixed": "App-associated files + custom folders (Recommended)",
   "settings.shortcutHelp": "Click a key binding to re-record. Multiple keys per action allowed.",
   "settings.dataHelp": "Export includes: shortcuts, tabs, tags, pinned folders, layouts, themes, settings, browsing history.",
   "tag.manage": "Manage Tags",

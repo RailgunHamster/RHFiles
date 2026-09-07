@@ -518,8 +518,11 @@ function paneSortBy(pane, field) {
   if (pane === "right") {
     if (G.rp.sortF === field) G.rp.sortAsc = !G.rp.sortAsc;
     else { G.rp.sortF = field; G.rp.sortAsc = true; }
+    sortStateEntries(G.rp, G.rp.sortF, G.rp.sortAsc);
   }
+  updateSortArrows();
   renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
+  saveTabState();
 }
 
 // --- resizable panes ---

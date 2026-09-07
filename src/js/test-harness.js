@@ -646,6 +646,103 @@
       assertEqual(G.sortField, 'modified', "Sort field should be modified");
     });
 
+    await test("[sort] Date, type, and size sorting reorder files and preserve selection", async () => {
+      if (typeof sortBy !== 'function') { log("SKIP: sortBy not available"); return; }
+      const tab = getTab();
+      const saved = {
+        entries: tab.entries,
+        sel: tab.sel,
+        lastIdx: tab.lastIdx,
+        sortF: tab.sortF,
+        sortAsc: tab.sortAsc,
+        globalField: G.sortField,
+        globalAsc: G.sortAsc,
+      };
+      const mock = (name, extension, size, modified) => ({
+        name, path: `C:\\sort-test\\${name}`, extension, size,
+        size_display: `${size} B`, modified_ts: modified, created_ts: modified,
+        modified: '', created: '', is_dir: false, is_hidden: false,
+      });
+      try {
+        tab.entries = [
+          mock('bravo.txt', 'txt', 30, 200),
+          mock('alpha.jpg', 'jpg', 20, 300),
+          mock('charlie.csv', 'csv', 10, 100),
+        ];
+        tab.sel = new Set([0]);
+        tab.lastIdx = 0;
+        tab.sortF = 'name';
+        tab.sortAsc = true;
+        G.sortField = 'name';
+        G.sortAsc = true;
+
+        sortBy('size');
+        assertEqual(tab.entries.map(entry => entry.name).join(','), 'charlie.csv,alpha.jpg,bravo.txt', "Ascending size sort did not reorder entries");
+        assertEqual(tab.entries[[...tab.sel][0]].path, 'C:\\sort-test\\bravo.txt', "Selection moved to a different file after sorting");
+
+        sortBy('size');
+        assertEqual(tab.entries.map(entry => entry.name).join(','), 'bravo.txt,alpha.jpg,charlie.csv', "Descending size sort did not reorder entries");
+
+        sortBy('modified');
+        assertEqual(tab.entries.map(entry => entry.name).join(','), 'charlie.csv,bravo.txt,alpha.jpg', "Modified-date sort did not reorder entries");
+
+        sortBy('type');
+        assertEqual(tab.entries.map(entry => entry.name).join(','), 'charlie.csv,alpha.jpg,bravo.txt', "Type sort did not reorder entries");
+
+        tab.entries[0].modified_ts = 0;
+        tab.entries[0].modified = '2026-01-03 00:00';
+        tab.entries[1].modified_ts = 0;
+        tab.entries[1].modified = '2026-01-01 00:00';
+        tab.entries[2].modified_ts = 0;
+        tab.entries[2].modified = '2026-01-02 00:00';
+        tab.sortF = 'type';
+        tab.sortAsc = true;
+        sortBy('modified');
+        assertEqual(tab.entries.map(entry => entry.name).join(','), 'alpha.jpg,bravo.txt,charlie.csv', "Text-only modified dates were not sorted");
+      } finally {
+        tab.entries = saved.entries;
+        tab.sel = saved.sel;
+        tab.lastIdx = saved.lastIdx;
+        tab.sortF = saved.sortF;
+        tab.sortAsc = saved.sortAsc;
+        G.sortField = saved.globalField;
+        G.sortAsc = saved.globalAsc;
+        updateSortArrows();
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+        saveTabState();
+      }
+    });
+
+    await test("[sort] Right pane applies its own sort and arrow", async () => {
+      if (typeof paneSortBy !== 'function') { log("SKIP: paneSortBy not available"); return; }
+      const saved = {
+        entries: G.rp.entries,
+        sel: G.rp.sel,
+        lastIdx: G.rp.lastIdx,
+        sortF: G.rp.sortF,
+        sortAsc: G.rp.sortAsc,
+      };
+      try {
+        G.rp.entries = [
+          {name:'large.bin', path:'C:\\large.bin', extension:'bin', size:30, size_display:'30 B', modified_ts:0, created_ts:0, modified:'', created:'', is_dir:false},
+          {name:'small.bin', path:'C:\\small.bin', extension:'bin', size:10, size_display:'10 B', modified_ts:0, created_ts:0, modified:'', created:'', is_dir:false},
+        ];
+        G.rp.sel = new Set([0]);
+        G.rp.lastIdx = 0;
+        G.rp.sortF = 'name';
+        G.rp.sortAsc = true;
+        paneSortBy('right', 'size');
+        assertEqual(G.rp.entries.map(entry => entry.name).join(','), 'small.bin,large.bin', "Right-pane size sort did not reorder entries");
+        assertEqual(document.querySelector('#pane-right .col-size .sort-arrow')?.textContent, '\u25b2', "Right-pane sort arrow was not updated");
+        assertEqual(G.rp.entries[[...G.rp.sel][0]].path, 'C:\\large.bin', "Right-pane selection moved to another file");
+      } finally {
+        Object.assign(G.rp, saved);
+        updateSortArrows();
+        renderFiles(G.rp, 'right-file-list', 'right-status-count', null, true);
+        saveTabState();
+      }
+    });
+
     await test("[sort] Toggle sort direction", async () => {
       if (typeof sortBy !== 'function') { log("SKIP: sortBy not available"); return; }
       sortBy('name');
@@ -1180,6 +1277,32 @@
       const html = fileIcon(testFile);
       assert(typeof html === "string", "fileIcon should return string");
       assert(html.length > 0, "fileIcon returned empty string");
+    });
+
+    await test("[icons] Default mode uses app-associated file icons", async () => {
+      const oldMode = G.settings.iconMode;
+      delete G.settings.iconMode;
+      const html = fileIcon({ name:'capture.rdc', path:'C:\\capture.rdc', is_dir:false, extension:'rdc' });
+      G.settings.iconMode = oldMode;
+      assertIncludes(html, 'system-icon-host', ".rdc did not request its Windows-associated icon");
+    });
+
+    await test("[icons] Associated icon requests share an extension cache", async () => {
+      const first = systemIconCacheKey({path:'C:\\one.rdc', extension:'rdc', is_dir:false}, 16);
+      const second = systemIconCacheKey({path:'D:\\two.rdc', extension:'rdc', is_dir:false}, 16);
+      const exeFirst = systemIconCacheKey({path:'C:\\one.exe', extension:'exe', is_dir:false}, 16);
+      const exeSecond = systemIconCacheKey({path:'D:\\two.exe', extension:'exe', is_dir:false}, 16);
+      assertEqual(first, second, "Same-extension documents do not share their system icon cache");
+      assert(exeFirst !== exeSecond, "Executables incorrectly share path-specific icons");
+    });
+
+    await test("[icons] Recommended mixed mode keeps custom folder icons", async () => {
+      const oldMode = G.settings.iconMode;
+      G.settings.iconMode = 'mixed';
+      const html = fileIcon({ name:'Folder', path:'C:\\Folder', is_dir:true, extension:'' });
+      G.settings.iconMode = oldMode;
+      assertIncludes(html, '<svg', "Mixed mode did not keep the custom folder icon");
+      assertNotIncludes(html, 'system-icon-host', "Mixed mode unexpectedly replaced the custom folder icon");
     });
 
     await test("[icons] bigFileIcon function exists", async () => {

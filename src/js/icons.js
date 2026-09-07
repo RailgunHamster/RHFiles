@@ -2,38 +2,64 @@
 
 const _iconCache = new Map();
 const _iconCacheOrder = [];
+const _iconPending = new Map();
 const ICON_CACHE_MAX = 500;
+const _PATH_SPECIFIC_ICON_EXT = new Set(['exe','dll','lnk','url','ico','cur','ani','scr','cpl','icl']);
 
-function systemIconCacheKey(path, size) {
-  return `${size || 16}:${path || ''}`;
+function systemIconCacheKey(file, size) {
+  const path = file?.path || '';
+  const ext = (file?.extension || '').toLowerCase();
+  const identity = !file?.is_dir && ext && !_PATH_SPECIFIC_ICON_EXT.has(ext)
+    ? `*.${ext}`
+    : path;
+  return `${size || 16}:${identity.toLowerCase()}`;
 }
 
 function getIconMode() {
-  return G.settings.iconMode || 'builtin';
+  return G.settings.iconMode || 'mixed';
 }
 
 function clearIconCache() {
   _iconCache.clear();
   _iconCacheOrder.length = 0;
+  _iconPending.clear();
 }
 
-async function getSystemIcon(path, size) {
+function setIconMode(mode) {
+  G.settings.iconMode = mode;
+  saveSettings();
+  clearIconCache();
+  renderFiles(getTab(), 'file-list', 'status-count', 'status-selection');
+  if (G.dualOn) renderFiles(G.rp, 'right-file-list', 'right-status-count', null, true);
+  if (document.getElementById('home-page')?.style.display !== 'none') showHomePage();
+}
+
+async function getSystemIcon(file, size) {
   size = size || 16;
-  const key = systemIconCacheKey(path, size);
+  const key = systemIconCacheKey(file, size);
   if (_iconCache.has(key)) return _iconCache.get(key);
-  try {
-    const data = await call("get_file_icon", { path, size });
-    if (data) {
-      if (_iconCache.size >= ICON_CACHE_MAX) {
-        const old = _iconCacheOrder.shift();
-        if (old) _iconCache.delete(old);
+  if (_iconPending.has(key)) return _iconPending.get(key);
+  const request = (async () => {
+    try {
+      const data = await call("get_file_icon", { path: file?.path || '', size });
+      if (data) {
+        if (_iconCache.size >= ICON_CACHE_MAX) {
+          const old = _iconCacheOrder.shift();
+          if (old) _iconCache.delete(old);
+        }
+        _iconCache.set(key, data);
+        _iconCacheOrder.push(key);
+        return data;
       }
-      _iconCache.set(key, data);
-      _iconCacheOrder.push(key);
-      return data;
-    }
-  } catch (e) {}
-  return null;
+    } catch (e) {}
+    return null;
+  })();
+  _iconPending.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (_iconPending.get(key) === request) _iconPending.delete(key);
+  }
 }
 
 function _replaceSystemIconHosts(key, data) {
@@ -47,14 +73,13 @@ function _replaceSystemIconHosts(key, data) {
 }
 
 function _systemIconMarkup(file, size) {
-  const path = file.path || '';
-  const key = systemIconCacheKey(path, size);
+  const key = systemIconCacheKey(file, size);
   const cached = _iconCache.get(key);
   if (cached) {
     return `<span class="system-icon-host" style="width:${size}px;height:${size}px"><img src="data:image/png;base64,${cached}" alt=""></span>`;
   }
   if (window.__TAURI_INTERNALS__) {
-    getSystemIcon(path, size).then(data => _replaceSystemIconHosts(key, data));
+    getSystemIcon(file, size).then(data => _replaceSystemIconHosts(key, data));
   }
   return `<span class="system-icon-host loading" data-system-icon-key="${esc(key)}" style="width:${size}px;height:${size}px">${_builtinIcon(file, true)}</span>`;
 }
@@ -72,10 +97,8 @@ function _systemIconSync(file, forPreview) {
 }
 
 function _mixedIcon(file, forPreview) {
-  const ext = (file.extension || '').toLowerCase();
-  const useSystem = ['exe','msi','dll','lnk','bat','cmd','ps1','com'].includes(ext) || file.is_dir;
-  if (useSystem) return _systemIconSync(file, forPreview);
-  return _fluentIcon(file, forPreview);
+  if (file.is_dir) return _builtinIcon(file, forPreview);
+  return _systemIconSync(file, forPreview);
 }
 
 // === BUILTIN: Rich hand-crafted SVGs ===
@@ -287,6 +310,10 @@ function _fluentGeneric() {
 function bigFileIcon(file, size) {
   size = size || 48;
   const mode = getIconMode();
+  if (mode === 'mixed') {
+    if (!file.is_dir) return _systemIconMarkup(file, size);
+    return `<span class="large-file-icon" style="width:${size}px;height:${size}px">${_builtinIcon(file, true)}</span>`;
+  }
   // Large views should keep software/folder identity even when the compact list
   // is using RHFiles' built-in theme.
   if (mode === 'system' || _useSystemForFile(file)) {

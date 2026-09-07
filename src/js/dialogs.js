@@ -186,11 +186,11 @@ function openSettings() {
     '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label>' + t('settings.iconStyle') + '</label>' +
-    '<select onchange="G.settings.iconMode=this.value;saveSettings();clearIconCache();renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')">' +
-      '<option value="builtin"' + ((G.settings.iconMode||'builtin')==='builtin'?" selected":"") + '>' + t('settings.iconBuiltin') + '</option>' +
+    '<select onchange="setIconMode(this.value)">' +
+      '<option value="builtin"' + (G.settings.iconMode==='builtin'?" selected":"") + '>' + t('settings.iconBuiltin') + '</option>' +
       '<option value="fluent"' + (G.settings.iconMode==='fluent'?" selected":"") + '>' + t('settings.iconFluent') + '</option>' +
       '<option value="system"' + (G.settings.iconMode==='system'?" selected":"") + '>' + t('settings.iconSystem') + '</option>' +
-      '<option value="mixed"' + (G.settings.iconMode==='mixed'?" selected":"") + '>' + t('settings.iconMixed') + '</option>' +
+      '<option value="mixed"' + ((G.settings.iconMode||'mixed')==='mixed'?" selected":"") + '>' + t('settings.iconMixed') + '</option>' +
     '</select></div>' +
     '<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px"><label>' + t('settings.customizeToolbar') + '</label>' +
     '<div id="toolbar-config-list" style="display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto"></div>' +

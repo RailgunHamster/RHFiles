@@ -463,6 +463,7 @@ function loadSettings() {
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
     dualPaneOrientation: 'vertical',
+    iconMode: 'mixed',
     autoUpdateEnabled: true,
     updateSource: 'https://github.com/RailgunHamster/RHFiles',
   };
