@@ -4235,7 +4235,7 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-tauri"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "chrono",
  "libloading 0.8.9",
@@ -4252,6 +4252,8 @@ dependencies = [
  "tauri-plugin-deep-link",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
+ "ureq",
+ "url",
  "velopack",
  "windows 0.62.2",
  "winreg",

@@ -180,6 +180,11 @@ function openSettings() {
     '<div class="settings-row update-location-row"><label for="settings-update-server">' + t('settings.serverUpdateSource') + '</label>' +
     '<input id="settings-update-server" type="text" spellcheck="false" value="' + esc(getServerUpdateSource()) + '" onchange="setUpdateSourceLocation(\'server\',this.value,this)"></div>' +
     '<div class="settings-source-help">' + t('settings.updateSourceHelp') + '</div>' +
+    '<div class="settings-row"><label for="settings-proxy-enabled">' + t('settings.proxyEnabled') + '</label>' +
+    '<input id="settings-proxy-enabled" type="checkbox" onchange="setProxyEnabled(this.checked)"' + (G.settings.proxyEnabled===true?' checked':'') + '></div>' +
+    '<div class="settings-row update-location-row"><label for="settings-proxy-url">' + t('settings.proxyAddress') + '</label>' +
+    '<input id="settings-proxy-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:7890" value="' + esc(String(G.settings.proxyUrl || '')) + '" onchange="setProxyUrl(this.value,this)"' + (G.settings.proxyEnabled===true?'':' disabled') + '></div>' +
+    '<div class="settings-source-help">' + t('settings.proxyHelp') + '</div>' +
     '<div class="settings-row update-settings-row"><span id="settings-update-status" class="settings-help">' + t('update.statusUnknown') + '</span>' +
     '<button class="dialog-btn" id="settings-check-update" onclick="checkForUpdates(true)">' + t('settings.checkUpdates') + '</button></div>' +
     '<div class="settings-row"><label>' + t('settings.showExtensions') + '</label>' +
@@ -225,6 +230,7 @@ function openSettings() {
 function setAutoUpdateEnabled(enabled) {
   G.settings.autoUpdateEnabled = !!enabled;
   saveSettings();
+  refreshUpdateSettingsStatus();
 }
 
 function setUpdateSourceMode(mode) {
@@ -248,6 +254,22 @@ function setUpdateSourceLocation(kind, value, input) {
     G._updateStatus = null;
     refreshUpdateSettingsStatus();
   }
+}
+
+function setProxyEnabled(enabled) {
+  G.settings.proxyEnabled = !!enabled;
+  const input = document.getElementById('settings-proxy-url');
+  if (input) input.disabled = !G.settings.proxyEnabled;
+  saveSettings();
+  refreshUpdateSettingsStatus();
+}
+
+function setProxyUrl(value, input) {
+  const normalized = String(value || '').trim();
+  G.settings.proxyUrl = normalized;
+  if (input) input.value = normalized;
+  saveSettings();
+  if (G.settings.proxyEnabled === true) refreshUpdateSettingsStatus();
 }
 
 function onThemeSelectChange(val) {

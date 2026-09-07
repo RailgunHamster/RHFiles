@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-tauri"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 
 [lib]
@@ -22,7 +22,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rhfiles-core = { path = "../crates/rhfiles-core" }
 zip = "2"
-velopack = "=1.2.110-ge826545"
+velopack = { version = "=1.2.110-ge826545", features = ["public-utils"] }
+ureq = "3.4"
+url = "2.5"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",

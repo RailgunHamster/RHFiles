@@ -473,6 +473,8 @@ function loadSettings() {
     dualPaneOrientation: 'vertical',
     iconMode: 'mixed',
     autoUpdateEnabled: true,
+    proxyEnabled: false,
+    proxyUrl: '',
     updateSourceMode: 'github',
     githubUpdateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
     serverUpdateSource: DEFAULT_SERVER_UPDATE_SOURCE,

@@ -946,6 +946,8 @@
       assertEqual(checkbox.checked, G.settings.previewDefaultOpen !== false, "Preview setting state is out of sync");
       assert($("#settings-global-search"), "Global-search enable setting is missing");
       assert($("#settings-auto-update"), "Automatic-update setting is missing");
+      assert($("#settings-proxy-enabled"), "Proxy enable setting is missing");
+      assert($("#settings-proxy-url"), "Proxy address setting is missing");
       assert($("#settings-update-source"), "Update-source setting is missing");
       assert($("#settings-update-github"), "Configurable GitHub update location is missing");
       assert($("#settings-update-server"), "Configurable home-server update location is missing");
@@ -983,6 +985,24 @@
         G.settings = savedSettings;
         if (savedStorage === null) localStorage.removeItem('rhfiles-settings');
         else localStorage.setItem('rhfiles-settings', savedStorage);
+      }
+    });
+
+    await test("[updates] Automatic checks and proxy settings follow the configured policy", async () => {
+      const savedSettings = { ...G.settings };
+      try {
+        assertEqual(UPDATE_CHECK_INTERVAL_MS, 60 * 60 * 1000, "Automatic update interval is not one hour");
+        G.settings.autoUpdateEnabled = false;
+        assertEqual(canCheckForUpdates(false), false, "A background check was allowed while automatic checks were off");
+        assertEqual(canCheckForUpdates(true), true, "A manual check was blocked while automatic checks were off");
+
+        G.settings.proxyEnabled = false;
+        G.settings.proxyUrl = '127.0.0.1:7890';
+        assertEqual(getUpdateProxy(), null, "A disabled proxy was still sent to the updater");
+        G.settings.proxyEnabled = true;
+        assertEqual(getUpdateProxy(), '127.0.0.1:7890', "The configured proxy address was not selected");
+      } finally {
+        G.settings = savedSettings;
       }
     });
 

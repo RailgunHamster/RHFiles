@@ -222,8 +222,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  if (G.windowLabel === "main" && G.settings.autoUpdateEnabled !== false) {
-    setTimeout(() => checkForUpdates(false), 5000);
+  if (G.windowLabel === "main") {
+    const runAutomaticUpdateCheck = () => {
+      if (isAutomaticUpdateCheckEnabled()) checkForUpdates(false);
+    };
+    setTimeout(runAutomaticUpdateCheck, UPDATE_CHECK_STARTUP_DELAY_MS);
+    setInterval(runAutomaticUpdateCheck, UPDATE_CHECK_INTERVAL_MS);
   }
   applyToolbarConfig();
 
@@ -298,10 +302,31 @@ function getServerUpdateSource() {
   return String(G.settings.serverUpdateSource || '').trim() || DEFAULT_SERVER_UPDATE_SOURCE;
 }
 
-function updateSettingsStatusText(status, error) {
+const UPDATE_CHECK_STARTUP_DELAY_MS = 5000;
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
+function isAutomaticUpdateCheckEnabled() {
+  return G.settings.autoUpdateEnabled !== false;
+}
+
+function canCheckForUpdates(manual) {
+  return !!manual || isAutomaticUpdateCheckEnabled();
+}
+
+function getUpdateProxy() {
+  if (G.settings.proxyEnabled !== true) return null;
+  return String(G.settings.proxyUrl || '').trim();
+}
+
+function updateSettingsStatusText(status, error, state) {
   const element = document.getElementById('settings-update-status');
   if (!element) return;
-  if (error) {
+  element.title = error ? String(error) : '';
+  if (state === 'disabled') {
+    element.textContent = t('update.statusDisabled');
+  } else if (state === 'proxy-required') {
+    element.textContent = t('update.statusProxyRequired');
+  } else if (error) {
     element.textContent = t('update.statusError');
   } else if (!status) {
     element.textContent = t('update.statusUnknown');
@@ -318,27 +343,53 @@ function updateSettingsStatusText(status, error) {
 
 async function refreshUpdateSettingsStatus() {
   const button = document.getElementById('settings-check-update');
+  if (!isAutomaticUpdateCheckEnabled()) {
+    updateSettingsStatusText(null, null, 'disabled');
+    if (button) button.disabled = false;
+    return;
+  }
+  if (G.settings.proxyEnabled === true && !getUpdateProxy()) {
+    updateSettingsStatusText(null, null, 'proxy-required');
+    if (button) button.disabled = false;
+    return;
+  }
+  if (G._updateCheckRunning) return;
+  G._updateCheckRunning = true;
   updateSettingsStatusText(null);
   if (button) button.disabled = true;
   try {
-    const status = await call('check_updates', {source: getUpdateSource()});
+    const status = await call('check_updates', {
+      source: getUpdateSource(),
+      proxy: getUpdateProxy(),
+    });
     G._updateStatus = status;
     updateSettingsStatusText(status);
   } catch (error) {
     updateSettingsStatusText(null, error);
   } finally {
     if (button) button.disabled = false;
+    G._updateCheckRunning = false;
   }
 }
 
 async function checkForUpdates(manual) {
+  if (!canCheckForUpdates(manual)) {
+    updateSettingsStatusText(null, null, 'disabled');
+    return;
+  }
+  if (G.settings.proxyEnabled === true && !getUpdateProxy()) {
+    updateSettingsStatusText(null, null, 'proxy-required');
+    if (manual) showNotice(t('update.proxyRequired'));
+    return;
+  }
   if (G._updateCheckRunning) return;
   G._updateCheckRunning = true;
   const button = document.getElementById('settings-check-update');
   if (button) button.disabled = true;
   try {
     const source = getUpdateSource();
-    const status = await call('check_updates', {source});
+    const proxy = getUpdateProxy();
+    const status = await call('check_updates', {source, proxy});
     G._updateStatus = status;
     updateSettingsStatusText(status);
 
@@ -374,14 +425,14 @@ async function checkForUpdates(manual) {
 
     if (!status.pendingRestart) {
       showProgress(t('update.downloading', {version}), {cancellable:false});
-      await call('download_update', {source});
+      await call('download_update', {source, proxy});
     } else {
       showProgress(t('update.preparing', {version}), {indeterminate:true, cancellable:false});
     }
     document.getElementById('progress-title').textContent = t('update.restarting');
     updateProgress({percentage:100, speed:0, totalBytes:0, bytesTransferred:0});
     try { saveTabState(); } catch (error) {}
-    await call('apply_update', {source});
+    await call('apply_update', {source, proxy});
   } catch (error) {
     hideProgress();
     updateSettingsStatusText(null, error);
