@@ -1,6 +1,8 @@
 // common.js — global state, utilities, i18n, API
 
 const invoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke;
+const DEFAULT_GITHUB_UPDATE_SOURCE = 'https://github.com/RailgunHamster/RHFiles';
+const DEFAULT_SERVER_UPDATE_SOURCE = '\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases';
 
 // --- i18n ---
 const _builtinEn = { 'cmd.new':'New','cmd.cut':'Cut','cmd.copy':'Copy','cmd.paste':'Paste','cmd.rename':'Rename','cmd.delete':'Delete','cmd.sort':'Sort','cmd.hidden':'Hidden','cmd.refresh':'Refresh','cmd.goBack':'Go Back','cmd.goForward':'Go Forward','cmd.goUp':'Go Up','cmd.openInto':'Open','cmd.newFolder':'New Folder','cmd.newFile':'New File','cmd.batchRename':'Batch Rename','cmd.properties':'Properties','cmd.manageTags':'Manage Tags','cmd.toggleTheme':'Toggle Theme','cmd.togglePreview':'Toggle Preview','cmd.toggleDualPane':'Toggle Dual Pane','cmd.toggleHidden':'Toggle Hidden','cmd.toggleGrouping':'Toggle Grouping','cmd.togglePip':'Toggle PiP','cmd.layoutDetails':'Details Layout','cmd.layoutIcons':'Icons Layout','cmd.layoutThumbnails':'Thumbnails Layout','cmd.layoutCards':'Cards Layout','cmd.layoutColumns':'Columns Layout','cmd.invertSelection':'Invert Selection','cmd.undo':'Undo','cmd.redo':'Redo','cmd.fullscreen':'Fullscreen','cmd.exportData':'Export Data','cmd.importData':'Import Data','cmd.newWindow':'New Window','cmd.quickLook':'Quick Look','cmd.switchPane':'Switch Pane','ctx.open':'Open','ctx.openWith':'Open with...','ctx.cut':'Cut','ctx.copy':'Copy','ctx.paste':'Paste','ctx.rename':'Rename','ctx.delete':'Delete','ctx.newFolder':'New Folder','ctx.selectAll':'Select All','ctx.properties':'Properties','ctx.showHidden':'Show hidden items','ctx.hideHidden':'Hide hidden items','ctx.batchRename':'Batch Rename','ctx.addTag':'Add Tag','ctx.extract':'Extract','ctx.extractAll':'Extract All','col.name':'Name','col.modified':'Date modified','col.created':'Date created','col.type':'Type','col.size':'Size','sidebar.tree':'Directory Tree','sidebar.quickAccess':'Quick access','sidebar.thisPC':'This PC','sidebar.tags':'Tags','sidebar.recent':'Recent','preview.title':'Preview','preview.selectFile':'Select a file to preview','preview.noPreview':'No preview available','preview.binary':'Binary file','batchRename.title':'Batch Rename','batchRename.find':'Find','batchRename.replace':'Replace','properties.title':'Properties','settings.title':'Settings','settings.language':'Language','settings.theme':'Theme','settings.shortcuts':'Keyboard Shortcuts','tag.manage':'Manage Tags','archive.title':'Archive','btn.cancel':'Cancel','btn.rename':'Rename','btn.ok':'OK','btn.add':'Add','btn.save':'Save','nav.home':'Home','nav.newTab':'New Tab','group.items':'{count} items','notice.pipOn':'PiP mode on','notice.pipOff':'PiP mode off','notice.searchHistoryCleared':'Search history cleared','status.items':'{count} items','status.item':'{count} item','status.folders':'{count} folders','status.folder':'{count} folder','status.files':'{count} files','status.file':'{count} file','status.error':'Error: {error}','status.searching':'Searching...','status.searchError':'Search error: {error}','home.desktop':'Desktop','home.downloads':'Downloads','home.documents':'Documents','home.pictures':'Pictures','home.music':'Music','home.videos':'Videos','home.noRecent':'No recent items','search.placeholder':'Search...','search.quickSearch':'Quick Search','search.modeNormal':'Normal','search.modeRegex':'Regex','search.modeWildcard':'Wildcard','search.modeTooltip':'{mode} mode','search.results':'{count} results','search.builtin':'Built-in','search.everythingNotRunning':'Everything not running','search.downloadEverything':'Download Everything','search.changeEngine':'Change in Settings','search.recent':'Recent','search.clear':'Clear','alert.cannotNavArchive':'Cannot navigate into archive','alert.pipFailed':'PiP failed: {error}','confirm.updateAvailable':'Update {version} available','cloud.synced':'Synced','cloud.onlineOnly':'Online only','cloud.syncing':'Syncing','cloud.locallyAvailable':'Locally available','ctx.moreOptions':'Show more options' };
@@ -465,11 +467,33 @@ function loadSettings() {
     dualPaneOrientation: 'vertical',
     iconMode: 'mixed',
     autoUpdateEnabled: true,
-    updateSource: 'https://github.com/RailgunHamster/RHFiles',
+    updateSourceMode: 'github',
+    githubUpdateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
+    serverUpdateSource: DEFAULT_SERVER_UPDATE_SOURCE,
+    updateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
   };
   try {
     const s = localStorage.getItem('rhfiles-settings');
-    return s ? { ...defaults, ...JSON.parse(s) } : defaults;
+    if (!s) return defaults;
+    const stored = JSON.parse(s);
+    const settings = { ...defaults, ...stored };
+    const legacySource = String(stored.updateSource || '').trim();
+    if (!stored.updateSourceMode && legacySource) {
+      if (/^https?:\/\/github\.com\//i.test(legacySource)) {
+        settings.updateSourceMode = 'github';
+        settings.githubUpdateSource = legacySource;
+      } else {
+        settings.updateSourceMode = 'server';
+        settings.serverUpdateSource = legacySource;
+      }
+    }
+    if (settings.updateSourceMode !== 'server') settings.updateSourceMode = 'github';
+    settings.githubUpdateSource = String(settings.githubUpdateSource || '').trim() || DEFAULT_GITHUB_UPDATE_SOURCE;
+    settings.serverUpdateSource = String(settings.serverUpdateSource || '').trim() || DEFAULT_SERVER_UPDATE_SOURCE;
+    settings.updateSource = settings.updateSourceMode === 'server'
+      ? settings.serverUpdateSource
+      : settings.githubUpdateSource;
+    return settings;
   } catch (e) { return defaults; }
 }
 function saveSettings() {

@@ -171,10 +171,15 @@ function openSettings() {
     '<div class="settings-row"><label for="settings-auto-update">' + t('settings.autoUpdate') + '</label>' +
     '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-update-source">' + t('settings.updateSource') + '</label>' +
-    '<select id="settings-update-source" onchange="setUpdateSource(this.value)">' +
-      '<option value="https://github.com/RailgunHamster/RHFiles"' + (getUpdateSource()==='https://github.com/RailgunHamster/RHFiles'?' selected':'') + '>' + t('settings.updateSourceGithub') + '</option>' +
-      '<option value="\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases"' + (getUpdateSource()==='\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases'?' selected':'') + '>' + t('settings.updateSourceServer') + '</option>' +
+    '<select id="settings-update-source" onchange="setUpdateSourceMode(this.value)">' +
+      '<option value="github"' + (G.settings.updateSourceMode!=='server'?' selected':'') + '>' + t('settings.updateSourceGithub') + '</option>' +
+      '<option value="server"' + (G.settings.updateSourceMode==='server'?' selected':'') + '>' + t('settings.updateSourceServer') + '</option>' +
     '</select></div>' +
+    '<div class="settings-row update-location-row"><label for="settings-update-github">' + t('settings.githubUpdateSource') + '</label>' +
+    '<input id="settings-update-github" type="text" spellcheck="false" value="' + esc(getGithubUpdateSource()) + '" onchange="setUpdateSourceLocation(\'github\',this.value,this)"></div>' +
+    '<div class="settings-row update-location-row"><label for="settings-update-server">' + t('settings.serverUpdateSource') + '</label>' +
+    '<input id="settings-update-server" type="text" spellcheck="false" value="' + esc(getServerUpdateSource()) + '" onchange="setUpdateSourceLocation(\'server\',this.value,this)"></div>' +
+    '<div class="settings-source-help">' + t('settings.updateSourceHelp') + '</div>' +
     '<div class="settings-row update-settings-row"><span id="settings-update-status" class="settings-help">' + t('update.statusUnknown') + '</span>' +
     '<button class="dialog-btn" id="settings-check-update" onclick="checkForUpdates(true)">' + t('settings.checkUpdates') + '</button></div>' +
     '<div class="settings-row"><label>' + t('settings.showExtensions') + '</label>' +
@@ -222,11 +227,27 @@ function setAutoUpdateEnabled(enabled) {
   saveSettings();
 }
 
-function setUpdateSource(source) {
-  G.settings.updateSource = source;
+function setUpdateSourceMode(mode) {
+  G.settings.updateSourceMode = mode === 'server' ? 'server' : 'github';
+  G.settings.updateSource = getUpdateSource();
   saveSettings();
   G._updateStatus = null;
   refreshUpdateSettingsStatus();
+}
+
+function setUpdateSourceLocation(kind, value, input) {
+  const isServer = kind === 'server';
+  const fallback = isServer ? DEFAULT_SERVER_UPDATE_SOURCE : DEFAULT_GITHUB_UPDATE_SOURCE;
+  const normalized = String(value || '').trim() || fallback;
+  if (isServer) G.settings.serverUpdateSource = normalized;
+  else G.settings.githubUpdateSource = normalized;
+  if (input) input.value = normalized;
+  G.settings.updateSource = getUpdateSource();
+  saveSettings();
+  if ((isServer && G.settings.updateSourceMode === 'server') || (!isServer && G.settings.updateSourceMode !== 'server')) {
+    G._updateStatus = null;
+    refreshUpdateSettingsStatus();
+  }
 }
 
 function onThemeSelectChange(val) {

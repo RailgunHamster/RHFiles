@@ -46,6 +46,10 @@
 .update-settings-row { gap:12px; }
 .settings-help { min-width:0; color:var(--text-4); font-size:11px; line-height:1.4; }
 .update-settings-row .dialog-btn { flex-shrink:0; }
+.update-location-row { gap:12px; }
+.update-location-row label { flex:0 0 118px; }
+.update-location-row input { flex:1; min-width:0; font-family:Consolas,"Cascadia Mono",monospace; }
+.settings-source-help { padding:6px 0 10px 130px; color:var(--text-4); font-size:10.5px; line-height:1.45; border-bottom:1px solid var(--divider); }
 .tag-current { display:flex; flex-wrap:wrap; gap:4px; padding:8px 20px; }
 .tag-pill-edit { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:10px; font-size:11px; }
 .tag-remove { cursor:pointer; opacity:.6; }

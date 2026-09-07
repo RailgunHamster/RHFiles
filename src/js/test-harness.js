@@ -857,6 +857,10 @@
       assert($("#settings-global-search"), "Global-search enable setting is missing");
       assert($("#settings-auto-update"), "Automatic-update setting is missing");
       assert($("#settings-update-source"), "Update-source setting is missing");
+      assert($("#settings-update-github"), "Configurable GitHub update location is missing");
+      assert($("#settings-update-server"), "Configurable home-server update location is missing");
+      assertEqual($("#settings-update-github").value, getGithubUpdateSource(), "GitHub source input is out of sync");
+      assertEqual($("#settings-update-server").value, getServerUpdateSource(), "Home-server source input is out of sync");
       assert($("#settings-check-update"), "Manual update button is missing");
       const packagedFeed = await call('get_env', {key:'RHFILES_TEST_UPDATE_SOURCE'}).catch(() => '');
       if (packagedFeed) {
@@ -866,6 +870,30 @@
         assert(/^\d+\.\d+\.\d+/.test(updateStatus.currentVersion || ''), "Velopack manifest version is invalid");
       }
       closeSettings();
+    });
+
+    await test("[updates] GitHub and home-server locations are independently configurable", async () => {
+      const savedSettings = { ...G.settings };
+      const savedStorage = localStorage.getItem('rhfiles-settings');
+      try {
+        G.settings.githubUpdateSource = 'https://github.com/example/custom-files';
+        G.settings.serverUpdateSource = '\\\\HOME-NAS\\Apps\\RHFiles-Releases';
+        G.settings.updateSourceMode = 'github';
+        assertEqual(getUpdateSource(), 'https://github.com/example/custom-files', "Custom GitHub source was not selected");
+        G.settings.updateSourceMode = 'server';
+        assertEqual(getUpdateSource(), '\\\\HOME-NAS\\Apps\\RHFiles-Releases', "Custom home-server source was not selected");
+
+        localStorage.setItem('rhfiles-settings', JSON.stringify({
+          updateSource: '\\\\OLD-SERVER\\Public\\RHFiles-Releases',
+        }));
+        const migrated = loadSettings();
+        assertEqual(migrated.updateSourceMode, 'server', "Legacy server setting did not migrate to server mode");
+        assertEqual(migrated.serverUpdateSource, '\\\\OLD-SERVER\\Public\\RHFiles-Releases', "Legacy server path was not preserved");
+      } finally {
+        G.settings = savedSettings;
+        if (savedStorage === null) localStorage.removeItem('rhfiles-settings');
+        else localStorage.setItem('rhfiles-settings', savedStorage);
+      }
     });
 
     await test("[preview] Toggle preview pane off", async () => {

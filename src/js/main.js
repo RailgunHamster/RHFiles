@@ -285,7 +285,17 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 function getUpdateSource() {
-  return G.settings.updateSource || 'https://github.com/RailgunHamster/RHFiles';
+  return G.settings.updateSourceMode === 'server'
+    ? getServerUpdateSource()
+    : getGithubUpdateSource();
+}
+
+function getGithubUpdateSource() {
+  return String(G.settings.githubUpdateSource || '').trim() || DEFAULT_GITHUB_UPDATE_SOURCE;
+}
+
+function getServerUpdateSource() {
+  return String(G.settings.serverUpdateSource || '').trim() || DEFAULT_SERVER_UPDATE_SOURCE;
 }
 
 function updateSettingsStatusText(status, error) {
