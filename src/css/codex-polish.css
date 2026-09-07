@@ -533,8 +533,86 @@ select {
 }
 
 .thumb-img-box {
-  background: var(--bg-soft);
+  background: transparent;
   border-radius: 8px;
+}
+
+.navigation-error {
+  width: min(560px, calc(100% - 40px));
+  margin: clamp(36px, 10vh, 96px) auto 24px;
+  padding: 28px;
+  box-sizing: border-box;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.navigation-error-icon {
+  width: 54px;
+  height: 54px;
+  margin-bottom: 12px;
+  color: var(--text-3);
+}
+
+.navigation-error-permissionDenied .navigation-error-icon {
+  color: #b45309;
+}
+
+.navigation-error-title {
+  margin-bottom: 7px;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.navigation-error-body {
+  max-width: 480px;
+  margin: 0 auto 14px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.navigation-error-path {
+  padding: 7px 10px;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 7px;
+  background: var(--bg-soft);
+  color: var(--text-2);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11.5px;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navigation-error-details {
+  margin-top: 10px;
+  color: var(--text-4);
+  font-size: 11px;
+  text-align: left;
+}
+
+.navigation-error-details summary {
+  cursor: pointer;
+  text-align: center;
+}
+
+.navigation-error-details > div {
+  margin-top: 7px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--code-bg);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  overflow-wrap: anywhere;
+}
+
+.navigation-error-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
 }
 
 /* Stable thumbnail tracks: cards keep a uniform footprint even in a narrow pane. */

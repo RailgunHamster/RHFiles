@@ -13,7 +13,7 @@
 .thumb-item:hover { border-color:var(--border); background:var(--hover); }
 .thumb-item.selected { border-color:var(--accent); background:var(--select-bg); }
 .thumb-item.dir .thumb-img-box { background:transparent; }
-.thumb-img-box { width:96px; height:96px; display:flex; align-items:center; justify-content:center; border-radius:6px; overflow:hidden; background:var(--bg-2); flex-shrink:0; margin-bottom:4px; }
+.thumb-img-box { width:96px; height:96px; display:flex; align-items:center; justify-content:center; border-radius:6px; overflow:hidden; background:transparent; flex-shrink:0; margin-bottom:4px; }
 .thumb-img-box svg { width:48px; height:48px; }
 .thumb-img { max-width:96px; max-height:96px; object-fit:contain; border-radius:3px; }
 .thumb-loading { width:48px; height:48px; display:flex; align-items:center; justify-content:center; opacity:.3; }

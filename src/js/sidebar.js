@@ -609,21 +609,15 @@ async function detectWSLDistros() {
 async function detectWindowsLibraries() {
   try {
     const libraries = [
-      { name: "Documents", path: "C:\\Users\\User\\Documents" },
-      { name: "Pictures", path: "C:\\Users\\User\\Pictures" },
-      { name: "Music", path: "C:\\Users\\User\\Music" },
-      { name: "Videos", path: "C:\\Users\\User\\Videos" },
+      { name: t('home.documents'), path: homeDir("Documents") },
+      { name: t('home.pictures'), path: homeDir("Pictures") },
+      { name: t('home.music'), path: homeDir("Music") },
+      { name: t('home.videos'), path: homeDir("Videos") },
     ];
-    const env = await call("get_env", { key: "USERPROFILE" });
-    const userProfile = env || "C:\\Users\\User";
-    const mapped = libraries.map(l => ({
-      name: l.name,
-      path: userProfile + "\\" + l.name.toLowerCase().replace(/^./, c => c.toUpperCase())
-    }));
     let container = document.getElementById("libraries-list");
     if (!container) return;
     container.innerHTML = "";
-    for (const l of mapped) {
+    for (const l of libraries) {
       const div = document.createElement("div");
       div.className = "sidebar-item";
       div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 5h5l2 2h5v6H2V5z" stroke="var(--accent)" stroke-width=".8"/></svg> ' + esc(l.name);

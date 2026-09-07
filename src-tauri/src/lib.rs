@@ -125,7 +125,7 @@ pub fn run() {
             file_ops::path_exists,
             file_ops::copy_with_progress, file_ops::move_with_progress,
             file_ops::cancel_operation,
-            file_ops::get_env, file_ops::get_dir_tree, file_ops::batch_rename, file_ops::get_file_info,
+            file_ops::get_env, file_ops::get_known_folders, file_ops::get_dir_tree, file_ops::batch_rename, file_ops::get_file_info,
             file_ops::folder_size,
             file_ops::create_shortcut,
 
@@ -166,6 +166,7 @@ pub fn run() {
             db::cleanup_stale_windows,
 
             search::quick_search, search::search_recursive, search::is_everything_available, search::start_everything,
+            search::open_everything,
             search::pinyin_aliases,
 
             window::toggle_pip, window::open_new_window, window::get_window_label,

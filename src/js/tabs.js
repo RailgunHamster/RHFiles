@@ -593,6 +593,70 @@ function detectAdaptiveLayout(entries) {
 
 // --- navigation ---
 let _navigationToken = 0;
+
+function describeNavigationError(error) {
+  let raw = '';
+  if (typeof error === 'string') raw = error;
+  else if (error && typeof error.message === 'string') raw = error.message;
+  else if (error != null) {
+    try { raw = JSON.stringify(error); } catch (_) { raw = String(error); }
+  }
+
+  let code = '';
+  const tagged = /^RHFILES_FS_ERROR\|([^|]+)\|(.*)$/s.exec(raw);
+  if (tagged) {
+    code = tagged[1];
+    raw = tagged[2];
+  } else if (/access is denied|permission denied|拒绝访问|无权访问|os error 5/i.test(raw)) {
+    code = 'permission_denied';
+  } else if (/not found|cannot find|找不到|不存在|os error (2|3)\b/i.test(raw)) {
+    code = 'not_found';
+  } else if (/network.*(unreachable|not found)|找不到网络路径|网络.*不可用|os error (53|67)\b/i.test(raw)) {
+    code = 'network_unreachable';
+  } else if (/timed? out|超时/i.test(raw)) {
+    code = 'timed_out';
+  }
+
+  const key = code === 'permission_denied' ? 'permissionDenied'
+    : code === 'not_found' ? 'notFound'
+    : (code === 'network_unreachable' || code === 'timed_out') ? 'unavailable'
+    : 'generic';
+  return { code, raw: raw || t('nav.unknownError'), key };
+}
+
+function renderNavigationError(path, error, isRight) {
+  const info = describeNavigationError(error);
+  const list = document.getElementById(isRight ? 'right-file-list' : 'file-list');
+  const status = document.getElementById(isRight ? 'right-status-count' : 'status-count');
+  if (status) status.textContent = t(`nav.${info.key}Title`);
+  if (!list) return;
+
+  list.innerHTML = '';
+  const panel = document.createElement('div');
+  panel.className = `navigation-error navigation-error-${info.key}`;
+  panel.innerHTML =
+    '<svg class="navigation-error-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M3.5 7.5h6l2 2h9v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7.5z" stroke="currentColor" stroke-width="1.6"/>' +
+      '<path d="M12 12v3.2M12 17.5v.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
+    '</svg>' +
+    `<div class="navigation-error-title">${esc(t(`nav.${info.key}Title`))}</div>` +
+    `<div class="navigation-error-body">${esc(t(`nav.${info.key}Body`))}</div>` +
+    `<div class="navigation-error-path" title="${esc(path)}">${esc(displayPath(path))}</div>` +
+    `<details class="navigation-error-details"><summary>${esc(t('nav.errorDetails'))}</summary><div>${esc(info.raw)}</div></details>`;
+
+  const actions = document.createElement('div');
+  actions.className = 'navigation-error-actions';
+  const retry = document.createElement('button');
+  retry.className = 'dialog-btn primary';
+  retry.textContent = t('nav.retry');
+  retry.addEventListener('click', () => {
+    if (isRight) rpNavigateTo(path, false); else navigateTo(path, false);
+  });
+  actions.appendChild(retry);
+  panel.appendChild(actions);
+  list.appendChild(panel);
+}
+
 async function navigateTo(path, pushHistory) {
   if (typeof resetTypeSearch === 'function') resetTypeSearch();
   const navigationToken = ++_navigationToken;
@@ -677,7 +741,7 @@ async function navigateTo(path, pushHistory) {
     return true;
   } catch (e) {
     if (navigationToken !== _navigationToken) return false;
-    document.getElementById("status-count").textContent = t('status.error', {error: e});
+    renderNavigationError(path, e, false);
     return false;
   }
 }
@@ -843,6 +907,59 @@ async function initQuickSearch() {
     } catch (e) {}
 }
 
+function describeSearchError(error) {
+  const raw = typeof error === 'string' ? error
+    : (error && typeof error.message === 'string' ? error.message : String(error || ''));
+  const tagged = /^([^|]+)\|(.*)$/s.exec(raw);
+  const code = tagged ? tagged[1] : '';
+  const details = tagged ? tagged[2] : raw;
+  const key = code === 'EVERYTHING_IPC_UNAVAILABLE' ? 'ipcUnavailable'
+    : code === 'EVERYTHING_DB_NOT_READY' ? 'indexNotReady'
+    : code === 'EVERYTHING_START_TIMEOUT' ? 'startTimeout'
+    : code === 'SEARCH_TIMEOUT' ? 'timeout'
+    : 'generic';
+  return { key, details: details || t('search.unknownError') };
+}
+
+function renderSearchFailure(query, error, isRight) {
+  const info = describeSearchError(error);
+  const list = document.getElementById(isRight ? 'right-file-list' : 'file-list');
+  const status = document.getElementById(isRight ? 'right-status-count' : 'status-count');
+  if (status) status.textContent = t('search.failedTitle');
+  if (!list) return;
+
+  list.innerHTML = '';
+  const panel = document.createElement('div');
+  panel.className = 'navigation-error search-error-state';
+  panel.innerHTML =
+    '<svg class="navigation-error-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.7"/>' +
+      '<path d="m15.5 15.5 5 5M10.5 7.2v4.2M10.5 14.2v.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>' +
+    '</svg>' +
+    `<div class="navigation-error-title">${esc(t('search.failedTitle'))}</div>` +
+    `<div class="navigation-error-body">${esc(t(`search.${info.key}Body`))}</div>` +
+    `<details class="navigation-error-details"><summary>${esc(t('nav.errorDetails'))}</summary><div>${esc(info.details)}</div></details>`;
+  const actions = document.createElement('div');
+  actions.className = 'navigation-error-actions';
+  const retry = document.createElement('button');
+  retry.className = 'dialog-btn primary';
+  retry.textContent = t('nav.retry');
+  retry.addEventListener('click', () => runSearch(query));
+  actions.appendChild(retry);
+  if (info.key === 'ipcUnavailable' || info.key === 'indexNotReady' || info.key === 'startTimeout') {
+    const openEverything = document.createElement('button');
+    openEverything.className = 'dialog-btn';
+    openEverything.textContent = t('search.openEverything');
+    openEverything.addEventListener('click', async () => {
+      try { await call('open_everything', {}); }
+      catch (openError) { showNotice(t('status.searchError', { error: openError })); }
+    });
+    actions.appendChild(openEverything);
+  }
+  panel.appendChild(actions);
+  list.appendChild(panel);
+}
+
 async function runSearch(query) {
     const isRight = G.dualOn && G.lastActivePane === 'right';
     const tab = isRight ? G.rp : getTab();
@@ -854,9 +971,10 @@ async function runSearch(query) {
     _searchRunning = true;
     try {
         document.getElementById(statusId).textContent = t('status.searching');
-        const results = scopePath
-          ? await call("search_recursive", { path: scopePath, query: fullQuery, maxResults: 500 })
-          : await call("quick_search", { query: fullQuery, maxResults: 500 });
+        const request = scopePath
+          ? call("search_recursive", { path: scopePath, query: fullQuery, maxResults: 500 })
+          : call("quick_search", { query: fullQuery, maxResults: 500 });
+        const results = await withTimeout(request, 12000, 'SEARCH_TIMEOUT|The search did not finish within 12 seconds');
         if (requestToken !== _searchRequestToken || document.getElementById("filter-input").value.trim() !== query) return;
         G.searchActive = true;
         G.searchQuery = query;
@@ -870,8 +988,7 @@ async function runSearch(query) {
         document.getElementById(statusId).textContent = t('search.results', {count: results.length});
     } catch (e) {
         if (requestToken !== _searchRequestToken) return;
-        const errMsg = typeof e === 'string' ? e : (e?.message || e?.toString() || 'Unknown error');
-        document.getElementById(statusId).textContent = t('status.searchError', {error: errMsg});
+        renderSearchFailure(query, e, isRight);
     } finally {
         if (requestToken === _searchRequestToken) _searchRunning = false;
     }
@@ -898,6 +1015,9 @@ function toggleDeepSearch() {}
 async function runDeepSearch() {}
 
 function homeDir(name) {
+  const key = String(name || '').toLowerCase();
+  const resolved = G.knownFolders && G.knownFolders[key];
+  if (resolved) return resolved;
   return (G.homeDirPath || "C:\\") + "\\" + name;
 }
 

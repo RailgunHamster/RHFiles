@@ -502,7 +502,7 @@ async function rpNavigateTo(path, pushHistory) {
     return true;
   } catch (e) {
     if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;
-    document.getElementById("right-status-count").textContent = t('status.error', {error: e});
+    renderNavigationError(path, e, true);
     return false;
   }
 }

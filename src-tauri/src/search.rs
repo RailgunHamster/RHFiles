@@ -1,10 +1,13 @@
 use crate::types::*;
 use pinyin::ToPinyinMulti;
+use regex::RegexBuilder;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
+use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -28,6 +31,7 @@ type EvIsFileResult = unsafe extern "system" fn(u32) -> i32;
 type EvIsFolderResult = unsafe extern "system" fn(u32) -> i32;
 type EvGetLastError = unsafe extern "system" fn() -> u32;
 type EvCleanup = unsafe extern "system" fn();
+type EvIsDbLoaded = unsafe extern "system" fn() -> i32;
 
 struct EverythingApi {
     _lib: &'static libloading::Library,
@@ -48,6 +52,7 @@ struct EverythingApi {
     is_file: libloading::Symbol<'static, EvIsFileResult>,
     is_folder: libloading::Symbol<'static, EvIsFolderResult>,
     get_last_error: libloading::Symbol<'static, EvGetLastError>,
+    is_db_loaded: libloading::Symbol<'static, EvIsDbLoaded>,
     _cleanup: libloading::Symbol<'static, EvCleanup>,
 }
 
@@ -55,6 +60,7 @@ unsafe impl Send for EverythingApi {}
 unsafe impl Sync for EverythingApi {}
 
 static EV_API: Mutex<Option<EverythingApi>> = Mutex::new(None);
+static EV_STARTING: AtomicBool = AtomicBool::new(false);
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -198,6 +204,9 @@ fn load_ev_api(dll_path: &Path) -> Result<EverythingApi, String> {
             get_last_error: lib
                 .get(b"Everything_GetLastError")
                 .map_err(|e| format!("{}", e))?,
+            is_db_loaded: lib
+                .get(b"Everything_IsDBLoaded")
+                .map_err(|e| format!("{}", e))?,
             _cleanup: lib
                 .get(b"Everything_CleanUp")
                 .map_err(|e| format!("{}", e))?,
@@ -246,7 +255,7 @@ fn is_everything_window_running() -> bool {
 
 #[tauri::command]
 pub fn is_everything_available() -> bool {
-    is_everything_window_running() || find_everything_exe().is_some()
+    find_ev_dll().is_some() && (is_everything_window_running() || find_everything_exe().is_some())
 }
 
 #[tauri::command(async)]
@@ -263,13 +272,24 @@ pub fn start_everything() -> Result<String, String> {
         .spawn()
         .map_err(|e| format!("Failed to start Everything: {}", e))?;
 
-    for _ in 0..60 {
-        std::thread::sleep(Duration::from_millis(500));
+    for _ in 0..8 {
+        std::thread::sleep(Duration::from_millis(250));
         if is_everything_window_running() || everything_ipc_alive() {
             return Ok("started".to_string());
         }
     }
     Ok("timeout".to_string())
+}
+
+#[tauri::command(async)]
+pub fn open_everything() -> Result<(), String> {
+    let ev_exe = find_everything_exe().ok_or_else(|| {
+        "Everything.exe not found. Place it next to the app executable.".to_string()
+    })?;
+    std::process::Command::new(ev_exe)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to open Everything: {error}"))
 }
 
 /// Probe the SDK IPC itself: a running Everything (any version, any window
@@ -288,20 +308,60 @@ fn everything_ipc_alive() -> bool {
     .unwrap_or(false)
 }
 
+fn everything_db_loaded() -> bool {
+    with_ev_api(|api| Ok(unsafe { (api.is_db_loaded)() != 0 })).unwrap_or(false)
+}
+
+fn wait_for_everything_database(timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if everything_ipc_alive() && everything_db_loaded() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    everything_ipc_alive() && everything_db_loaded()
+}
+
 fn ensure_everything_running() -> Result<(), String> {
     if everything_ipc_alive() {
-        return Ok(());
+        return if wait_for_everything_database(Duration::from_secs(2)) {
+            Ok(())
+        } else {
+            Err(
+                "EVERYTHING_DB_NOT_READY|Everything is still building or loading its index"
+                    .to_string(),
+            )
+        };
     }
     if is_everything_window_running() {
-        return Ok(());
+        return Err("EVERYTHING_IPC_UNAVAILABLE|Everything is running, but RHFiles cannot communicate with it. Make sure both apps run at the same privilege level".to_string());
     }
-    start_everything().and_then(|s| {
-        if s == "timeout" {
-            Err("Everything started but not responding. Try restarting the app.".to_string())
-        } else {
-            Ok(())
-        }
-    })
+    let result = start_everything()?;
+    if result == "timeout" {
+        return Err(
+            "EVERYTHING_START_TIMEOUT|Everything started but did not expose its IPC endpoint"
+                .to_string(),
+        );
+    }
+    if wait_for_everything_database(Duration::from_secs(2)) {
+        Ok(())
+    } else {
+        Err(
+            "EVERYTHING_DB_NOT_READY|Everything started, but its index is not ready yet"
+                .to_string(),
+        )
+    }
+}
+
+fn kickstart_everything_in_background() {
+    if is_everything_window_running() || EV_STARTING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    std::thread::spawn(|| {
+        let _ = start_everything();
+        EV_STARTING.store(false, Ordering::Release);
+    });
 }
 
 // ── Search via Everything SDK ──────────────────────────────────────────────
@@ -481,6 +541,201 @@ fn aliases_for_name(name: &str) -> Vec<String> {
         .collect()
 }
 
+enum BuiltinMatcher {
+    Plain(Vec<String>),
+    Wildcard(String),
+    Regex(regex::Regex),
+}
+
+impl BuiltinMatcher {
+    fn from_query(query: &str) -> Result<Self, String> {
+        if let Some(pattern) = query.strip_prefix("regex:") {
+            return RegexBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .map(Self::Regex)
+                .map_err(|error| format!("INVALID_REGEX|{error}"));
+        }
+        if let Some(pattern) = query.strip_prefix("wildcards:") {
+            return Ok(Self::Wildcard(pattern.to_lowercase()));
+        }
+        let terms = query
+            .to_lowercase()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        Ok(Self::Plain(terms))
+    }
+
+    fn matches(&self, name: &str) -> bool {
+        let lower = name.to_lowercase();
+        match self {
+            Self::Regex(regex) => regex.is_match(name),
+            Self::Wildcard(pattern) => wildcard_matches(pattern, &lower),
+            Self::Plain(terms) => {
+                if terms.is_empty() {
+                    return true;
+                }
+                let needs_aliases = name.chars().any(|ch| !ch.is_ascii())
+                    && terms.iter().any(|term| term.is_ascii());
+                let aliases = if needs_aliases {
+                    aliases_for_name(name)
+                } else {
+                    Vec::new()
+                };
+                terms.iter().all(|term| {
+                    lower.contains(term) || aliases.iter().any(|alias| alias.contains(term))
+                })
+            }
+        }
+    }
+}
+
+fn wildcard_matches(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.chars().collect::<Vec<_>>();
+    let value = value.chars().collect::<Vec<_>>();
+    let mut previous = vec![false; value.len() + 1];
+    previous[0] = true;
+    for token in pattern {
+        let mut current = vec![false; value.len() + 1];
+        if token == '*' {
+            current[0] = previous[0];
+            for index in 1..=value.len() {
+                current[index] = previous[index] || current[index - 1];
+            }
+        } else {
+            for index in 1..=value.len() {
+                current[index] = previous[index - 1] && (token == '?' || token == value[index - 1]);
+            }
+        }
+        previous = current;
+    }
+    previous[value.len()]
+}
+
+fn millis_since_epoch(time: SystemTime) -> i64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "windows")]
+fn is_hidden_result(name: &str, metadata: Option<&Metadata>) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    name.starts_with('.')
+        || metadata
+            .map(|value| value.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_hidden_result(name: &str, _metadata: Option<&Metadata>) -> bool {
+    name.starts_with('.')
+}
+
+fn filesystem_search(
+    root: &Path,
+    query: &str,
+    max_results: usize,
+) -> Result<Vec<FileInfo>, String> {
+    let matcher = BuiltinMatcher::from_query(query)?;
+    let initial = std::fs::read_dir(root).map_err(|error| {
+        let code = match error.kind() {
+            std::io::ErrorKind::PermissionDenied => "permission_denied",
+            std::io::ErrorKind::NotFound => "not_found",
+            std::io::ErrorKind::TimedOut => "timed_out",
+            _ => "io_error",
+        };
+        format!("RHFILES_FS_ERROR|{code}|{error}")
+    })?;
+
+    const MAX_VISITED: usize = 100_000;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut queue = VecDeque::new();
+    let mut results = Vec::new();
+    let mut visited = 0usize;
+
+    // Preserve the already-opened root iterator so a protected root reports a
+    // useful error, while inaccessible descendants can simply be skipped.
+    queue.push_back((root.to_path_buf(), Some(initial)));
+
+    while let Some((directory, opened)) = queue.pop_front() {
+        if results.len() >= max_results || visited >= MAX_VISITED || Instant::now() >= deadline {
+            break;
+        }
+        let entries = match opened {
+            Some(entries) => entries,
+            None => match std::fs::read_dir(&directory) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            },
+        };
+
+        for entry in entries.flatten() {
+            if results.len() >= max_results || visited >= MAX_VISITED || Instant::now() >= deadline
+            {
+                break;
+            }
+            visited += 1;
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let is_dir = file_type.is_dir();
+            if is_dir && !file_type.is_symlink() {
+                queue.push_back((entry.path(), None));
+            }
+
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !matcher.matches(&name) {
+                continue;
+            }
+            let metadata = entry.metadata().ok();
+            let size = metadata.as_ref().map(Metadata::len).unwrap_or(0);
+            let modified_time = metadata
+                .as_ref()
+                .and_then(|value| value.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let created_time = metadata
+                .as_ref()
+                .and_then(|value| value.created().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let extension = if is_dir {
+                String::new()
+            } else {
+                entry
+                    .path()
+                    .extension()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
+
+            results.push(FileInfo {
+                name: name.clone(),
+                path: entry.path().to_string_lossy().into_owned(),
+                extension,
+                is_dir,
+                is_hidden: is_hidden_result(&name, metadata.as_ref()),
+                size,
+                size_display: format_size(size),
+                modified: format_time(modified_time),
+                created: format_time(created_time),
+                modified_ts: millis_since_epoch(modified_time),
+                created_ts: millis_since_epoch(created_time),
+                folder_size: None,
+            });
+        }
+    }
+
+    results.sort_by(|left, right| {
+        right
+            .is_dir
+            .cmp(&left.is_dir)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(results)
+}
+
 // ── Tauri commands ─────────────────────────────────────────────────────────
 
 #[tauri::command(async)]
@@ -494,6 +749,14 @@ pub fn search_recursive(
     query: String,
     max_results: usize,
 ) -> Result<Vec<FileInfo>, String> {
+    // Folder-scoped searches must feel immediate even on the first run of the
+    // portable build. Start Everything opportunistically, but use the bounded
+    // filesystem engine until IPC and the database are both ready.
+    if !everything_ipc_alive() || !everything_db_loaded() {
+        kickstart_everything_in_background();
+        return filesystem_search(Path::new(&path), &query, max_results);
+    }
+
     let mut scope_query = path.replace('/', "\\");
     while scope_query.len() > 3 && scope_query.ends_with('\\') {
         scope_query.pop();
@@ -504,7 +767,13 @@ pub fn search_recursive(
         format!("path:\"{}\" {}", scope_query, query)
     };
     let query_limit = max_results.saturating_mul(2).max(max_results).min(5_000);
-    let mut results = run_ev_sdk_query(&everything_query, query_limit)?;
+    let mut results = match run_ev_sdk_query(&everything_query, query_limit) {
+        Ok(results) => results,
+        // Current-folder search must remain useful on a clean portable setup
+        // where the Everything service/index is not ready yet. The bounded
+        // walker skips protected descendants and never follows junctions.
+        Err(_) => return filesystem_search(Path::new(&path), &query, max_results),
+    };
     // Everything's path: matcher is substring based. Keep the final boundary
     // check here so a scope such as C:\\work never leaks C:\\workspace results.
     results.retain(|entry| is_path_in_scope(&entry.path, &path));
@@ -519,7 +788,9 @@ pub fn pinyin_aliases(names: Vec<String>) -> Vec<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{aliases_for_name, is_path_in_scope};
+    use super::{
+        BuiltinMatcher, aliases_for_name, filesystem_search, is_path_in_scope, wildcard_matches,
+    };
 
     #[test]
     fn folder_scope_accepts_direct_and_nested_children() {
@@ -550,5 +821,38 @@ mod tests {
         let aliases = aliases_for_name("重庆");
         assert!(aliases.iter().any(|alias| alias == "chongqing"));
         assert!(aliases.iter().any(|alias| alias == "cq"));
+    }
+
+    #[test]
+    fn builtin_plain_search_matches_middle_and_pinyin_initials() {
+        let middle = BuiltinMatcher::from_query("port").unwrap();
+        assert!(middle.matches("annual-report-2026.pdf"));
+
+        let pinyin = BuiltinMatcher::from_query("zgzl").unwrap();
+        assert!(pinyin.matches("中国资料.txt"));
+    }
+
+    #[test]
+    fn builtin_wildcard_search_matches_case_insensitively() {
+        assert!(wildcard_matches("*.jpg", "holiday.jpg"));
+        assert!(wildcard_matches("report-??.pdf", "report-26.pdf"));
+        assert!(!wildcard_matches("*.png", "holiday.jpg"));
+    }
+
+    #[test]
+    fn filesystem_fallback_searches_nested_names_and_pinyin() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rhfiles-search-{unique}"));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("中国资料.txt"), b"test").unwrap();
+
+        let results = filesystem_search(&root, "zgzl", 20).unwrap();
+        assert!(results.iter().any(|entry| entry.name == "中国资料.txt"));
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

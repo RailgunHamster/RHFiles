@@ -103,7 +103,7 @@ $packArguments = @(
     "--packAuthors", "RailgunHamster",
     "--packTitle", "RHFiles",
     "--mainExe", "RHFiles.exe",
-    "--icon", (Join-Path $repoRoot "src-tauri\icons\rhfiles-icon-v3.ico")
+    "--icon", (Join-Path $repoRoot "src-tauri\icons\rhfiles-icon-v4.ico")
 )
 if (Test-Path -LiteralPath $notesPath -PathType Leaf) {
     $packArguments += @("--releaseNotes", $notesPath)

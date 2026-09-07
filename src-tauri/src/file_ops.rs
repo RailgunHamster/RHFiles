@@ -2,12 +2,30 @@ use crate::types::*;
 use rhfiles_core::enumerator;
 use std::path::PathBuf;
 
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+
+fn tagged_fs_error(error: &std::io::Error) -> String {
+    let code = match error.raw_os_error() {
+        Some(5 | 65 | 1326) => "permission_denied",
+        Some(2 | 3) => "not_found",
+        Some(53 | 64 | 67 | 1219 | 1231) => "network_unreachable",
+        Some(21 | 32 | 33) => "busy",
+        _ => match error.kind() {
+            std::io::ErrorKind::PermissionDenied => "permission_denied",
+            std::io::ErrorKind::NotFound => "not_found",
+            std::io::ErrorKind::TimedOut => "timed_out",
+            std::io::ErrorKind::WouldBlock => "busy",
+            std::io::ErrorKind::NetworkUnreachable => "network_unreachable",
+            _ => "io_error",
+        },
+    };
+    format!("RHFILES_FS_ERROR|{code}|{error}")
+}
 
 #[tauri::command(async)]
 pub fn list_dir(path: String) -> Result<Vec<FileInfo>, String> {
     let p = PathBuf::from(&path);
-    let entries = enumerator::list_dir(&p).map_err(|e| e.to_string())?;
+    let entries = enumerator::list_dir(&p).map_err(|error| tagged_fs_error(&error))?;
     Ok(entries.iter().map(file_info_from_entry).collect())
 }
 
@@ -605,6 +623,52 @@ pub fn move_with_progress(
 #[tauri::command]
 pub fn get_env(key: String) -> Option<String> {
     std::env::var(key).ok()
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownFolders {
+    pub home: String,
+    pub desktop: String,
+    pub downloads: String,
+    pub documents: String,
+    pub pictures: String,
+    pub music: String,
+    pub videos: String,
+}
+
+fn known_folder_or_fallback(
+    resolved: Result<PathBuf, tauri::Error>,
+    home: &std::path::Path,
+    fallback_name: &str,
+) -> String {
+    resolved
+        .unwrap_or_else(|_| home.join(fallback_name))
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Resolve Windows Known Folders instead of assuming they live directly under
+/// USERPROFILE. This follows OneDrive Known Folder Move, domain redirection and
+/// user-customized locations.
+#[tauri::command]
+pub fn get_known_folders(app: tauri::AppHandle) -> KnownFolders {
+    let paths = app.path();
+    let home = paths.home_dir().unwrap_or_else(|_| {
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:\\"))
+    });
+
+    KnownFolders {
+        home: home.to_string_lossy().into_owned(),
+        desktop: known_folder_or_fallback(paths.desktop_dir(), &home, "Desktop"),
+        downloads: known_folder_or_fallback(paths.download_dir(), &home, "Downloads"),
+        documents: known_folder_or_fallback(paths.document_dir(), &home, "Documents"),
+        pictures: known_folder_or_fallback(paths.picture_dir(), &home, "Pictures"),
+        music: known_folder_or_fallback(paths.audio_dir(), &home, "Music"),
+        videos: known_folder_or_fallback(paths.video_dir(), &home, "Videos"),
+    }
 }
 
 #[tauri::command]

@@ -268,6 +268,24 @@ function normalizeWindowsPathInput(value) {
   return path;
 }
 
+function migrateLegacyKnownFolderPath(path) {
+  const normalized = normalizeWindowsPathInput(path);
+  if (!normalized || normalized === 'home://' || !G.knownFolders || !G.homeDirPath) return normalized;
+  const names = {
+    desktop: 'Desktop', downloads: 'Downloads', documents: 'Documents',
+    pictures: 'Pictures', music: 'Music', videos: 'Videos',
+  };
+  for (const [key, name] of Object.entries(names)) {
+    const resolved = G.knownFolders[key];
+    const legacy = normalizeWindowsPathInput(G.homeDirPath + '\\' + name);
+    if (resolved && normalized.toLowerCase() === legacy.toLowerCase()
+        && normalizeWindowsPathInput(resolved).toLowerCase() !== legacy.toLowerCase()) {
+      return normalizeWindowsPathInput(resolved);
+    }
+  }
+  return normalized;
+}
+
 function uncServerRoot(path) {
   const normalized = normalizeWindowsPathInput(path);
   const match = /^\\\\([^\\]+)\\*$/.exec(normalized);
@@ -375,6 +393,15 @@ function fallbackCall(cmd, args) {
     case "parent_path": return "C:\\";
     case "get_dir_tree": return mockFiles.filter(f=>f.is_dir).map(f=>({name:f.name,path:f.path,has_children:true,is_hidden:false}));
     case "get_env": return args.key==="USERPROFILE"?"C:\\Users\\User":null;
+    case "get_known_folders": return {
+      home: "C:\\Users\\User",
+      desktop: "C:\\Users\\User\\Desktop",
+      downloads: "C:\\Users\\User\\Downloads",
+      documents: "C:\\Users\\User\\Documents",
+      pictures: "C:\\Users\\User\\Pictures",
+      music: "C:\\Users\\User\\Music",
+      videos: "C:\\Users\\User\\Videos",
+    };
     case "read_file_preview": return {preview_type:"text",text_content:"Mock preview content.",image_data:null,size:1024};
     case "git_status": return {};
     case "load_file_tags": return [];
@@ -455,6 +482,7 @@ function fallbackCall(cmd, args) {
     case "share_file": return null;
     case "cancel_operation": return null;
     case "is_everything_available": return false;
+    case "open_everything": return null;
     case "quick_search": return [];
     case "search_recursive": return [];
     case "pinyin_aliases": return (args.names || []).map(() => []);

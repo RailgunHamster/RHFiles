@@ -4235,12 +4235,13 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-tauri"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "chrono",
  "libloading 0.8.9",
  "native-tls",
  "pinyin",
+ "regex",
  "rhfiles-core",
  "rusqlite",
  "serde",

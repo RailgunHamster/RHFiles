@@ -15,11 +15,17 @@ fn hidden_command(program: &str) -> Command {
     command
 }
 
-pub fn list_dir(path: &Path) -> Result<Vec<FileEntry>, String> {
+pub fn list_dir(path: &Path) -> std::io::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
-    for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(path)? {
+        // Directory contents can change while they are being enumerated, and a
+        // single child may be an inaccessible reparse point. Explorer-style
+        // listing should keep the usable entries instead of failing the whole
+        // folder because one child disappeared or denied metadata access.
+        let Ok(entry) = entry else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_hidden = is_hidden(&name, &metadata);
         let extension = if metadata.is_dir() {
@@ -62,11 +68,13 @@ fn is_hidden(name: &str, _metadata: &std::fs::Metadata) -> bool {
     name.starts_with('.')
 }
 
-pub fn get_dir_tree(path: &Path) -> Result<Vec<FileEntry>, String> {
+pub fn get_dir_tree(path: &Path) -> std::io::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
-    for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(path)? {
+        let Ok(entry) = entry else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
         if !metadata.is_dir() {
             continue;
         }

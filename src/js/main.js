@@ -10,11 +10,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateSortArrows();
 
   {
-    const [home, label] = await Promise.all([
-      call("get_env", { key: "USERPROFILE" }).catch(() => "C:\\"),
+    const [knownFolders, label] = await Promise.all([
+      call("get_known_folders", {}).catch(async () => {
+        const home = await call("get_env", { key: "USERPROFILE" }).catch(() => "C:\\");
+        return { home: home || "C:\\" };
+      }),
       call("get_window_label", {}).catch(() => "main"),
     ]);
-    G.homeDirPath = home || "C:\\";
+    G.knownFolders = knownFolders || {};
+    G.homeDirPath = G.knownFolders.home || "C:\\";
     G.windowLabel = label || "main";
   }
 
@@ -40,8 +44,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const startPath = G.homeDirPath || "C:\\";
   if (saved && saved.tabs && saved.tabs.length > 0) {
     G.tabs = saved.tabs.map((st, i) => ({
-      id: st.id || i, path: st.path || startPath,
-      history: [st.path || startPath], historyIdx: 0,
+      id: st.id || i, path: migrateLegacyKnownFolderPath(st.path || startPath),
+      history: [migrateLegacyKnownFolderPath(st.path || startPath)], historyIdx: 0,
       entries: [], sel: new Set(), lastIdx: -1,
       sortF: st.sortF || "name", sortAsc: st.sortAsc !== undefined ? st.sortAsc : true,
       _restoredSelPaths: st.selPaths || [],
@@ -52,8 +56,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (saved.rightTabs && saved.rightTabs.length > 0) {
       G.rpTabs = saved.rightTabs.map((st, index) => ({
         id: st.id || 100000 + index,
-        path: st.path || startPath,
-        history: [st.path || startPath], histIdx: 0,
+        path: migrateLegacyKnownFolderPath(st.path || startPath),
+        history: [migrateLegacyKnownFolderPath(st.path || startPath)], histIdx: 0,
         entries: [], sel: new Set(), lastIdx: -1,
         sortF: st.sortF || 'name', sortAsc: st.sortAsc !== false,
       }));

@@ -1910,6 +1910,37 @@
       assertEqual(uncServerRoot('\\\\winserver\\Public'), null, "A share path must not be treated as a server root");
     });
 
+    await test("[navigation] Known-folder redirects override USERPROFILE guesses", async () => {
+      assert(G.knownFolders && typeof G.knownFolders.pictures === 'string' && G.knownFolders.pictures.length > 0, "Known-folder command did not return Pictures");
+      const previous = G.knownFolders;
+      const previousHome = G.homeDirPath;
+      try {
+        G.knownFolders = { pictures: 'C:\\Users\\Tester\\OneDrive\\Pictures' };
+        G.homeDirPath = 'C:\\Users\\Tester';
+        assertEqual(homeDir('Pictures'), 'C:\\Users\\Tester\\OneDrive\\Pictures', "Redirected Pictures path was ignored");
+        assertEqual(migrateLegacyKnownFolderPath('C:\\Users\\Tester\\Pictures'), 'C:\\Users\\Tester\\OneDrive\\Pictures', "Saved legacy Pictures path was not migrated");
+      } finally {
+        G.knownFolders = previous;
+        G.homeDirPath = previousHome;
+      }
+    });
+
+    await test("[navigation] Failed folders show an actionable error state", async () => {
+      const previousPath = getTab().path;
+      const missingPath = 'C:\\__rhfiles_missing_navigation_test__';
+      const opened = await navigateTo(missingPath, false);
+      assertEqual(opened, false, "Missing folder unexpectedly opened");
+      assert(document.querySelector('#file-list .navigation-error-notFound'), "Missing folder error panel was not rendered");
+      await navigateTo(previousPath, false);
+    });
+
+    await test("[navigation] Filesystem errors retain a stable localized category", async () => {
+      const denied = describeNavigationError('RHFILES_FS_ERROR|permission_denied|Access is denied. (os error 5)');
+      assertEqual(denied.key, 'permissionDenied', "Permission error was not categorized");
+      const missing = describeNavigationError('RHFILES_FS_ERROR|not_found|The system cannot find the path specified.');
+      assertEqual(missing.key, 'notFound', "Missing path error was not categorized");
+    });
+
     await test("[layout] Thumbnail view uses non-overlapping grid tracks", async () => {
       const tab = getTab();
       renderThumbnailLayout(document.getElementById('file-list'), tab.entries.slice(0, 6), tab.sel, false, tab, 'file-list');
@@ -1917,6 +1948,8 @@
       assert(grid, "Thumbnail grid was not rendered");
       assertEqual(getComputedStyle(grid).display, 'grid', "Thumbnail container must use CSS Grid");
       const items = grid.querySelectorAll('.thumb-item');
+      const imageBox = grid.querySelector('.thumb-img-box');
+      if (imageBox) assertEqual(getComputedStyle(imageBox).backgroundColor, 'rgba(0, 0, 0, 0)', "Thumbnail image box should be transparent");
       if (items.length > 1) {
         const first = items[0].getBoundingClientRect();
         const second = items[1].getBoundingClientRect();
