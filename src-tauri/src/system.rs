@@ -183,6 +183,107 @@ pub fn open_file(path: String) -> Result<(), String> {
     enumerator::open_file(&PathBuf::from(&path))
 }
 
+fn folder_for_browser(
+    path: &std::path::Path,
+    is_directory: Option<bool>,
+) -> Result<PathBuf, String> {
+    if let Some(is_directory) = is_directory {
+        return if is_directory {
+            Ok(path.to_path_buf())
+        } else {
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(std::path::Path::to_path_buf)
+                .ok_or_else(|| format!("No containing folder for {}", path.display()))
+        };
+    }
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("Cannot access {}: {error}", path.display()))?;
+    if metadata.is_dir() {
+        return Ok(path.to_path_buf());
+    }
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| format!("No containing folder for {}", path.display()))
+}
+
+fn folder_file_url(path: &std::path::Path) -> Result<String, String> {
+    let mut url = url::Url::from_directory_path(path)
+        .map_err(|_| format!("Cannot convert folder to a file URL: {}", path.display()))?;
+    if !url.path().ends_with('/') {
+        let path_with_slash = format!("{}/", url.path());
+        url.set_path(&path_with_slash);
+    }
+    Ok(url.into())
+}
+
+#[cfg(target_os = "windows")]
+fn default_browser_executable() -> Result<PathBuf, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::{ASSOCF_IS_PROTOCOL, ASSOCSTR_EXECUTABLE, AssocQueryStringW};
+    use windows::core::{PCWSTR, PWSTR};
+
+    for protocol in ["https", "http"] {
+        let association: Vec<u16> = std::ffi::OsStr::new(protocol)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut output = vec![0u16; 32_768];
+        let mut output_len = output.len() as u32;
+        let result = unsafe {
+            AssocQueryStringW(
+                ASSOCF_IS_PROTOCOL,
+                ASSOCSTR_EXECUTABLE,
+                PCWSTR(association.as_ptr()),
+                PCWSTR::null(),
+                Some(PWSTR(output.as_mut_ptr())),
+                &mut output_len,
+            )
+        };
+        if result.is_ok() {
+            let used = output_len.saturating_sub(1) as usize;
+            let executable = String::from_utf16_lossy(&output[..used.min(output.len())]);
+            if !executable.trim().is_empty() {
+                return Ok(PathBuf::from(executable));
+            }
+        }
+    }
+    Err("Windows did not report a default web browser".to_string())
+}
+
+#[tauri::command(async)]
+pub fn open_folder_in_default_browser(
+    path: String,
+    is_directory: Option<bool>,
+) -> Result<(), String> {
+    let folder = folder_for_browser(std::path::Path::new(&path), is_directory)?;
+    let folder_url = folder_file_url(&folder)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let browser = default_browser_executable()?;
+        let mut command = std::process::Command::new(&browser);
+        command.arg(&folder_url).creation_flags(0x0800_0000);
+        command.spawn().map_err(|error| {
+            format!(
+                "Failed to start the default browser {}: {error}",
+                browser.display()
+            )
+        })?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = folder_url;
+        Err(
+            "Opening folders in the Windows default browser is only available on Windows"
+                .to_string(),
+        )
+    }
+}
+
 #[tauri::command(async)]
 pub fn show_properties(path: String) -> Result<(), String> {
     enumerator::show_properties(&PathBuf::from(&path))
@@ -308,6 +409,44 @@ mod preview_detection_tests {
         assert!(is_probably_text_content(
             b"line one\n\x1b[31mred text\x1b[0m\n"
         ));
+    }
+}
+
+#[cfg(test)]
+mod default_browser_tests {
+    use super::{folder_file_url, folder_for_browser};
+
+    #[test]
+    fn folder_target_keeps_a_directory_and_uses_a_files_parent() {
+        let root = std::env::temp_dir().join(format!(
+            "rhfiles-browser-folder-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create browser test folder");
+        let file = root.join("a file.txt");
+        std::fs::write(&file, b"test").expect("create browser test file");
+
+        assert_eq!(folder_for_browser(&root, None).unwrap(), root);
+        assert_eq!(folder_for_browser(&file, None).unwrap(), root);
+        assert_eq!(folder_for_browser(&root, Some(true)).unwrap(), root);
+        assert_eq!(folder_for_browser(&file, Some(false)).unwrap(), root);
+
+        std::fs::remove_file(file).ok();
+        std::fs::remove_dir(root).ok();
+    }
+
+    #[test]
+    fn folder_url_is_a_trailing_slash_file_url() {
+        let url = folder_file_url(std::path::Path::new(r"C:\Program Files\RHFiles"))
+            .expect("Windows folder should become a URL");
+        assert_eq!(url, "file:///C:/Program%20Files/RHFiles/");
+    }
+
+    #[test]
+    fn unc_folder_url_preserves_server_and_share() {
+        let url = folder_file_url(std::path::Path::new(r"\\SERVER-HOME\Public\Software"))
+            .expect("UNC folder should become a URL");
+        assert_eq!(url, "file://server-home/Public/Software/");
     }
 }
 

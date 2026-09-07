@@ -16,11 +16,12 @@ RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、
 - 详细、卡片、缩略图和分栏布局，并可显示 Windows 默认打开程序的关联图标。
 - 当前文件夹搜索带有限时、限量的内置兜底；全局搜索使用随包提供的 Everything。
 - 支持中文汉字、完整拼音、拼音首字母以及文件名中段匹配。
-- 可预览文件夹、图片、文本与源码、Markdown、PDF、音频、视频、RTF、DOCX 文本和 Windows 快捷方式。
+- 可预览文件夹、图片、文本与源码、Markdown、PDF、音频、视频、RTF、DOCX 文本、Windows 快捷方式和常见 3D 模型。
 - 文本预览带语法配色和严格的读取/渲染上限，超长文件不会拖死界面。
 - 使用 `dust` 分析文件夹占用，可直接操作分析结果；它与预览互斥地使用同一检查器区域。
 - 删除、重命名和不覆盖移动操作支持撤销。
 - 支持 Git/SVN 状态、收藏、标签、压缩包、SMB 路径、FTP/SFTP 和云文件状态。
+- 右键菜单可用 Windows 默认浏览器打开文件夹，或打开所选文件所在的文件夹。
 - 使用 Velopack 从 GitHub Releases 或可配置的家庭服务器源进行 portable 自更新，并支持 HTTP/HTTPS 代理。
 - 内置多套配色，也可从配置目录加载用户主题包，无需重新编译。
 
@@ -48,6 +49,8 @@ portable 版本需要完整解压，然后运行解压目录中的 `RHFiles.exe`
 预览和空间占用共用一个检查器区域，并且互斥：打开其中一个会替换另一个。可以在设置中让预览默认打开，也可以将检查器放大到全屏。
 
 音视频是否能直接播放取决于本机 WebView2/Windows 媒体组件支持的编解码器。DOCX 和 RTF 当前提供安全的文本型预览，不会完整还原原始页面排版。
+
+离线 3D 预览支持 glTF/GLB（包括 Draco 与 Meshopt 压缩）、OBJ/MTL、FBX、STL、PLY 和 3MF，提供旋转观察、缩放、平移、复位视角、线框、自动旋转和动画播放。为避免拖慢界面，自动预览限制为 128 MiB 和三百万个三角面；本阶段明确不处理 CAD 格式。
 
 ## 主题
 
@@ -94,4 +97,4 @@ cargo build --release --locked --package rhfiles-tauri
 
 ## 第三方组件
 
-portable 包中包含 Everything 与 `dust`，分发时应保留它们的配套文件和许可证。其他 Rust/JavaScript 依赖记录在 `Cargo.lock` 与源码目录中。
+portable 包中包含 Everything 与 `dust`，分发时应保留它们的配套文件和许可证。离线 3D 预览固定使用 Three.js 0.185.1 的必要子集，并保留其 MIT 许可证。其他 Rust/JavaScript 依赖记录在 `Cargo.lock` 与源码目录中。

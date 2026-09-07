@@ -413,6 +413,7 @@ function fallbackCall(cmd, args) {
     case "folder_size": return 0;
     case "compute_hash": return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     case "open_terminal": return null;
+    case "open_folder_in_default_browser": return null;
     case "get_file_icon": return null;
     case "get_new_file_templates": return [
       { name:"Text File", ext:".txt", content:"" },

@@ -939,6 +939,40 @@
       }
     });
 
+    await test("[preview] Maintained offline 3D loaders are available on demand", async () => {
+      assertEqual(MODEL_PREVIEW_MAX_BYTES, 128 * 1024 * 1024, "3D preview has no safe file-size cap");
+      const module = await loadPreview3DModule();
+      assertEqual(module.MODEL_PREVIEW_MAX_BYTES, MODEL_PREVIEW_MAX_BYTES, "3D loader and preview routing disagree on the size cap");
+      assert(typeof module.render3DPreview === 'function', "3D preview renderer did not load");
+      assert(typeof module.dispose3DPreview === 'function', "3D preview cleanup is missing");
+      for (const extension of ['glb', 'gltf', 'obj', 'fbx', 'stl', 'ply', '3mf']) {
+        assert(module.SUPPORTED_3D_EXTENSIONS.includes(extension), `3D format ${extension} is missing`);
+        assert(MODEL_PREVIEW_EXTENSIONS.has(extension), `Preview routing for ${extension} is missing`);
+      }
+    });
+
+    await test("[preview] 3D renderer parses and draws a local STL model", async () => {
+      const module = await loadPreview3DModule();
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-10000px;top:0;width:320px;height:240px;';
+      document.body.appendChild(host);
+      const stl = 'solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test';
+      try {
+        await module.render3DPreview({
+          container: host,
+          extension: 'stl',
+          sourceUrl: 'data:model/stl;base64,' + btoa(stl),
+          fileName: 'triangle.stl',
+          isCurrent: () => true,
+        });
+        assert(host.querySelector('canvas.preview-model-canvas'), "3D renderer did not create a canvas");
+        assertIncludes(host.querySelector('.preview-model-stats')?.textContent || '', '1', "3D geometry statistics were not rendered");
+      } finally {
+        module.dispose3DPreview();
+        host.remove();
+      }
+    });
+
     await test("[preview] Settings exposes the default-open option", async () => {
       openSettings();
       const settingsBox = document.querySelector('#settings-dialog .settings-dialog-box');
@@ -1180,7 +1214,7 @@
       removeContextMenu();
     });
 
-    await test("[ctxmenu] Tab menu includes close, copy path, CMD, and PowerShell", async () => {
+    await test("[ctxmenu] Tab menu includes close, path, browser, CMD, and PowerShell", async () => {
       removeContextMenu();
       simulateContextMenu($("#tab-bar .tab"));
       await sleep(50);
@@ -1188,6 +1222,7 @@
       assert(menu, "Tab context menu did not appear");
       assertIncludes(menu.textContent, t('tab.close'), "Close-tab action is missing");
       assertIncludes(menu.textContent, t('ctx.copyPath'), "Copy-path action is missing");
+      assertIncludes(menu.textContent, t('ctx.openFolderInBrowser'), "Default-browser folder action is missing");
       assertIncludes(menu.textContent, t('ctx.openCmd'), "CMD action is missing");
       assertIncludes(menu.textContent, t('ctx.openPowerShell'), "PowerShell action is missing");
       removeContextMenu();

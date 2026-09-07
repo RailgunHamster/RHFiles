@@ -99,6 +99,10 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\everything\dll
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\Everything.lng") -Destination (Join-Path $stageDirectory "Everything.lng")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\dust.exe") -Destination (Join-Path $stageDirectory "dust.exe")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\dust-LICENSE.txt") -Destination (Join-Path $stageDirectory "dust-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\LICENSE.txt") -Destination (Join-Path $stageDirectory "Three.js-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\DRACO-LICENSE.txt") -Destination (Join-Path $stageDirectory "Draco-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\FFLATE-LICENSE.txt") -Destination (Join-Path $stageDirectory "fflate-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\MESHOPTIMIZER-LICENSE.md") -Destination (Join-Path $stageDirectory "meshoptimizer-LICENSE.md")
 Copy-Item -LiteralPath (Join-Path $repoRoot "docs\PORTABLE_README.zh-CN.txt") -Destination (Join-Path $stageDirectory "使用说明.txt")
 
 if (-not $SkipPreviousRelease -and $UpdateSource -match '^https://github\.com/') {

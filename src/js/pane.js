@@ -18,6 +18,102 @@ let _previewedFile = null;
 const TEXT_PREVIEW_MAX_CHARS = 40000;
 const TEXT_PREVIEW_MAX_LINES = 1200;
 const IMAGE_PREVIEW_MODES = new Set(['contain', 'cover', 'width', 'actual']);
+const MODEL_PREVIEW_EXTENSIONS = new Set(['glb', 'gltf', 'obj', 'fbx', 'stl', 'ply', '3mf']);
+const MODEL_PREVIEW_MAX_BYTES = 128 * 1024 * 1024;
+let _preview3DModule = null;
+let _preview3DModulePromise = null;
+
+async function loadPreview3DModule() {
+  if (_preview3DModule || window.RHFiles3D) {
+    _preview3DModule = window.RHFiles3D || _preview3DModule;
+    return _preview3DModule;
+  }
+  if (!_preview3DModulePromise) {
+    _preview3DModulePromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = new URL('js/preview3d.bundle.js', document.baseURI).href;
+      script.async = true;
+      script.dataset.rhfilesPreview3d = 'true';
+      script.addEventListener('load', () => {
+        if (!window.RHFiles3D?.render3DPreview) {
+          reject(new Error('3D preview bundle did not expose its API'));
+          return;
+        }
+        _preview3DModule = window.RHFiles3D;
+        resolve(_preview3DModule);
+      }, {once: true});
+      script.addEventListener('error', () => reject(new Error('3D preview bundle could not be loaded')), {once: true});
+      document.head.appendChild(script);
+    }).catch(error => {
+      document.querySelector('script[data-rhfiles-preview3d="true"]')?.remove();
+      _preview3DModulePromise = null;
+      throw error;
+    });
+  }
+  return _preview3DModulePromise;
+}
+
+function dispose3DPreview() {
+  _preview3DModule?.dispose3DPreview?.();
+}
+
+function modelPreviewErrorMessage(error) {
+  switch (error?.code) {
+    case 'MODEL_TOO_LARGE': return t('preview.model.tooLarge', {limit: fmtSize(MODEL_PREVIEW_MAX_BYTES)});
+    case 'MODEL_TOO_COMPLEX': return t('preview.model.tooComplex');
+    case 'MODEL_EMPTY': return t('preview.model.empty');
+    case 'WEBGL_UNAVAILABLE': return t('preview.model.webglUnavailable');
+    case 'MODEL_UNSUPPORTED': return t('preview.model.unsupported');
+    default: return t('preview.model.failed', {error: error?.message || t('properties.unknown')});
+  }
+}
+
+async function renderModelPreview(file, extension, requestToken, isRight) {
+  const content = document.getElementById('preview-content');
+  if (Number(file.size) > MODEL_PREVIEW_MAX_BYTES) {
+    content.innerHTML = `<div class="preview-empty preview-model-limit">
+      <div class="preview-model-limit-icon">3D</div>
+      <div>${esc(t('preview.model.tooLarge', {limit: fmtSize(MODEL_PREVIEW_MAX_BYTES)}))}</div>
+      <div class="preview-model-limit-detail">${esc(t('preview.model.tooLargeDetail', {size: fmtSize(file.size)}))}</div>
+    </div>`;
+    return;
+  }
+  try {
+    const module = await loadPreview3DModule();
+    if (!previewRequestIsCurrent(requestToken, file.path, isRight)) return;
+    await module.render3DPreview({
+      container: content,
+      extension,
+      sourceUrl: convertFileSrc(file.path),
+      fileName: file.name,
+      isCurrent: () => previewRequestIsCurrent(requestToken, file.path, isRight),
+      labels: {
+        loading: t('preview.model.loading'),
+        parsing: t('preview.model.parsing'),
+        reset: t('preview.model.reset'),
+        resetTitle: t('preview.model.resetTitle'),
+        wireframe: t('preview.model.wireframe'),
+        wireframeTitle: t('preview.model.wireframeTitle'),
+        rotate: t('preview.model.rotate'),
+        rotateTitle: t('preview.model.rotateTitle'),
+        play: t('preview.model.play'),
+        pause: t('preview.model.pause'),
+        animationTitle: t('preview.model.animationTitle'),
+        meshes: t('preview.model.meshes'),
+        triangles: t('preview.model.triangles'),
+        vertices: t('preview.model.vertices'),
+        controls: t('preview.model.controls'),
+      },
+    });
+  } catch (error) {
+    if (!previewRequestIsCurrent(requestToken, file.path, isRight) || error?.name === 'AbortError') return;
+    dispose3DPreview();
+    content.innerHTML = `<div class="preview-empty preview-model-error">
+      <div class="preview-model-limit-icon">3D</div>
+      <div>${esc(modelPreviewErrorMessage(error))}</div>
+    </div>`;
+  }
+}
 
 function truncatePreviewText(value) {
   const source = String(value == null ? '' : value);
@@ -79,6 +175,7 @@ function setInspectorMode(mode, persistPreviewPreference = false) {
   } else {
     togglePreviewFullscreen(false);
     _previewRequestToken++;
+    dispose3DPreview();
     _previewedFile = null;
     pane.style.display = "none";
     divider.style.display = "none";
@@ -107,7 +204,10 @@ function setInspectorMode(mode, persistPreviewPreference = false) {
   const modeMark = document.getElementById('inspector-mode-mark');
   if (modeMark) modeMark.innerHTML = inspectorModeIcon(next);
 
-  if (wasMode === 'preview' && next !== 'preview') _previewRequestToken++;
+  if (wasMode === 'preview' && next !== 'preview') {
+    _previewRequestToken++;
+    dispose3DPreview();
+  }
   if (wasMode === 'disk' && next !== 'disk' && typeof pauseDiskUsageAnalysis === 'function') {
     pauseDiskUsageAnalysis();
   }
@@ -209,6 +309,7 @@ function previewRequestIsCurrent(token, path, isRight) {
 
 async function updatePreviewForSelection() {
   if (!G.previewOn || G.inspectorTab !== 'preview') return;
+  dispose3DPreview();
   const isRight = G.lastActivePane === 'right';
   const sel = getSelectedPaths(isRight);
   if (sel.length !== 1) {
@@ -269,6 +370,10 @@ async function updatePreviewForSelection() {
   let is_image = ['png','jpg','jpeg','gif','bmp','webp','ico','tiff','tif','avif'].includes(ext);
   let is_audio = ['mp3','wav','flac','ogg','aac','wma','m4a'].includes(ext);
   let is_video = ['mp4','mkv','avi','webm','mov','wmv','m4v'].includes(ext);
+  if (MODEL_PREVIEW_EXTENSIONS.has(ext)) {
+    await renderModelPreview(file, ext, requestToken, isRight);
+    return;
+  }
   if (is_image) {
     document.getElementById("preview-content").innerHTML = renderImagePreview(convertFileSrc(file.path), file.name, true);
     return;

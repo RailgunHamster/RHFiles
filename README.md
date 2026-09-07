@@ -16,11 +16,12 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 - Details, Cards, Thumbnails, and Columns layouts with Windows file-association icons.
 - Current-folder search with a bounded built-in fallback; global search powered by the bundled Everything engine.
 - Chinese Pinyin and initial-letter matching, including matches inside a filename.
-- Preview inspector for folders, images, text/source code, Markdown, PDF, audio, video, RTF, DOCX text, and Windows shortcuts.
+- Preview inspector for folders, images, text/source code, Markdown, PDF, audio, video, RTF, DOCX text, Windows shortcuts, and common 3D models.
 - Syntax-aware colors with strict preview limits so unusually large files do not freeze the UI.
 - `dust`-powered folder-size analysis with actionable results in the same inspector area as Preview.
 - Reversible delete, rename, and non-overwriting move operations.
 - Git/SVN status, favorites, tags, archives, SMB paths, FTP/SFTP, and cloud-file states.
+- Context-menu actions can open a folder—or a selected file's containing folder—in the Windows default browser.
 - Velopack portable updates from GitHub Releases or a configurable home-server feed, with optional HTTP/HTTPS proxy support.
 - Multiple built-in color themes plus reloadable user theme packs—no recompilation required.
 
@@ -48,6 +49,8 @@ Everything may need its service enabled on a standard Windows account before it 
 Preview and Disk usage share one inspector surface and are mutually exclusive: opening one replaces the other. Preview can be opened by default from Settings and can be expanded to fullscreen.
 
 Media playback depends on codecs supported by the installed WebView2/Windows media stack. DOCX and RTF currently use safe text-oriented previews rather than reproducing the original page layout.
+
+The offline 3D viewer supports glTF/GLB (including Draco and Meshopt compression), OBJ/MTL, FBX, STL, PLY, and 3MF. It provides orbit, zoom, pan, reset, wireframe, automatic rotation, and animation playback. Automatic preview is capped at 128 MiB and three million triangles; CAD formats are intentionally outside the current scope.
 
 ## Themes
 
@@ -94,4 +97,4 @@ See [Release process](docs/RELEASING.md) for versioning, tags, GitHub Releases, 
 
 ## Third-party components
 
-Portable packages bundle Everything and `dust`. Their accompanying files and licenses must remain with the distribution. RHFiles also uses the Rust and JavaScript dependencies recorded in `Cargo.lock` and the source tree.
+Portable packages bundle Everything and `dust`. Their accompanying files and licenses must remain with the distribution. The offline 3D viewer vendors a pinned subset of Three.js 0.185.1 under its MIT license. RHFiles also uses the Rust and JavaScript dependencies recorded in `Cargo.lock` and the source tree.
