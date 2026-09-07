@@ -12,11 +12,11 @@
 .col:hover { color:var(--text-3); }
 .col.sort-active { color:var(--text-2); font-weight:500; }
 .col-name { flex:3; min-width:180px; }
-.col-date { width:140px; }
-.col-type { width:100px; }
-.col-size { width:80px; text-align:right; }
-.col-git { width:20px; text-align:center; }
-.col-svn { width:20px; text-align:center; font-size:11px; }
+.col-date { width:140px; flex:0 0 140px; box-sizing:border-box; }
+.col-type { width:100px; flex:0 0 100px; box-sizing:border-box; }
+.col-size { width:80px; flex:0 0 80px; box-sizing:border-box; text-align:right; }
+.col-git { width:20px; flex:0 0 20px; box-sizing:border-box; padding:0; text-align:center; }
+.col-svn { width:20px; flex:0 0 20px; box-sizing:border-box; padding:0; text-align:center; font-size:11px; }
 .sort-arrow { font-size:10px; margin-left:2px; }
 
 .file-list { flex:1; overflow-y:auto; overflow-x:hidden; position:relative; }
@@ -42,11 +42,11 @@
 .file-row .row-date, .file-row .row-type, .file-row .row-size { font-size:12px; color:var(--text-3); white-space:nowrap; padding:0 6px; }
 .file-row:hover .row-date, .file-row:hover .row-type, .file-row:hover .row-size { color:var(--text-2); }
 .file-row.selected .row-date, .file-row.selected .row-type, .file-row.selected .row-size { color:var(--text-2); }
-.file-row .row-date { width:140px; }
-.file-row .row-type { width:100px; }
-.file-row .row-size { width:80px; text-align:right; }
-.file-row .row-git { width:20px; text-align:center; font-size:10px; }
-.file-row .row-svn { width:20px; text-align:center; font-size:10px; }
+.file-row .row-date { width:140px; flex:0 0 140px; box-sizing:border-box; }
+.file-row .row-type { width:100px; flex:0 0 100px; box-sizing:border-box; }
+.file-row .row-size { width:80px; flex:0 0 80px; box-sizing:border-box; text-align:right; }
+.file-row .row-git { width:20px; flex:0 0 20px; box-sizing:border-box; text-align:center; font-size:10px; }
+.file-row .row-svn { width:20px; flex:0 0 20px; box-sizing:border-box; text-align:center; font-size:10px; }
 .git-modified { color:var(--git-modified); }
 .git-added { color:var(--git-added); }
 .git-deleted { color:var(--git-deleted); }

@@ -489,6 +489,27 @@
       assert(cols.length > 0, "No column headers found");
     });
 
+    await test("[filelist] Detail headers align with row columns", async () => {
+      if (typeof setLayout === 'function') setLayout('details');
+      await sleep(100);
+      const header = $("#file-header");
+      const row = $("#file-list .file-row");
+      if (!row) { log("SKIP: No file rows"); return; }
+      const pairs = [
+        ['.col-date[data-sort="modified"]', '.row-date:nth-of-type(4)'],
+        ['.col-date[data-sort="created"]', '.row-date:nth-of-type(5)'],
+        ['.col-type', '.row-type'],
+        ['.col-size', '.row-size']
+      ];
+      for (const [headerSelector, rowSelector] of pairs) {
+        const headerCell = header.querySelector(headerSelector);
+        const rowCell = row.querySelector(rowSelector);
+        assert(headerCell && rowCell, `Missing alignment pair: ${headerSelector} / ${rowSelector}`);
+        const delta = Math.abs(headerCell.getBoundingClientRect().left - rowCell.getBoundingClientRect().left);
+        assert(delta < 0.6, `${headerSelector} is misaligned by ${delta}px`);
+      }
+    });
+
     await test("[filelist] Sort arrows are rendered", async () => {
       if (typeof updateSortArrows !== 'function') { log("SKIP: updateSortArrows not available"); return; }
       updateSortArrows();
