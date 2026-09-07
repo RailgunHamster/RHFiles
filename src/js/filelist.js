@@ -132,6 +132,18 @@ function teardownVirtualList(list) {
   }
 }
 
+function fileNameHtmlForView(file, index, isRight) {
+  return typeof typeSearchNameHtml === 'function'
+    ? typeSearchNameHtml(file, index, !!isRight)
+    : esc(file?.name || '');
+}
+
+function typeSearchRowClass(index, isRight) {
+  return typeof isCurrentTypeSearchMatch === 'function' && isCurrentTypeSearchMatch(index, !!isRight)
+    ? ' type-search-current'
+    : '';
+}
+
 function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   const list = document.getElementById(listId);
   const entries = tabOrPane.entries || [];
@@ -229,7 +241,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
     const isSelected = sel.has(fileIdx);
     const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
     const row = document.createElement("div");
-    row.className = "file-row" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
+    row.className = "file-row" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "") + typeSearchRowClass(fileIdx, isRight);
     row.dataset.index = fileIdx;
     row.dataset.path = file.path;
     row.dataset.virtualIndex = itemIndex;
@@ -276,7 +288,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
     row.innerHTML = `
       <div class="row-name">
         <span class="row-icon">${fileIcon(file)}</span>
-        <span class="row-fname" title="${esc(file.name)}">${esc(file.name)}</span>${tagsHtml}${pathHtml}
+        <span class="row-fname" title="${esc(file.name)}">${fileNameHtmlForView(file, fileIdx, isRight)}</span>${tagsHtml}${pathHtml}
       </div>
       ${gitHtml ? gitHtml : '<div class="row-git"></div>'}
       ${svnHtml || '<div class="row-svn"></div>'}
@@ -345,7 +357,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     const isSelected = sel.has(i);
     const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
     const item = document.createElement("div");
-    item.className = "file-row card-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
+    item.className = "file-row card-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "") + typeSearchRowClass(i, isRight);
     item.dataset.index = i;
     item.dataset.path = file.path;
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
@@ -365,7 +377,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     }
     item.innerHTML = `
       <div class="big-icon-slot card-icon-slot">${bigFileIcon(file, 64)}</div>
-      <div class="tile-file-name card-file-name" title="${esc(file.name)}">${esc(file.name)}</div>
+      <div class="tile-file-name card-file-name" title="${esc(file.name)}">${fileNameHtmlForView(file, i, isRight)}</div>
       ${pathHtml}
       <div style="font-size:10px;color:var(--text-4);text-align:center;margin-top:2px;">${esc(file.size_display || fileTypeLabel(file))}</div>
       <div class="card-file-date">${esc(formatFileDate(file.modified_ts, file.modified))}</div>
@@ -395,10 +407,11 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
       colEntries.forEach(entry => {
         const item = document.createElement("div");
         const rootIndex = colIdx === 0 ? entries.findIndex(candidate => candidate.path === entry.path) : -1;
-        item.className = "column-item" + (rootIndex >= 0 && sel.has(rootIndex) ? " selected" : "");
+        item.className = "column-item" + (rootIndex >= 0 && sel.has(rootIndex) ? " selected" : "") + (rootIndex >= 0 ? typeSearchRowClass(rootIndex, isRight) : '');
         item.dataset.path = entry.path;
+        if (rootIndex >= 0) item.dataset.index = rootIndex;
         item.innerHTML = `<span class="column-item-icon">${fileIcon(entry)}</span>
-          <span class="column-item-name" title="${esc(entry.name)}">${esc(entry.name)}</span>
+          <span class="column-item-name" title="${esc(entry.name)}">${rootIndex >= 0 ? fileNameHtmlForView(entry, rootIndex, isRight) : esc(entry.name)}</span>
           ${entry.is_dir ? '<span class="ci-arrow">\u203a</span>' : ''}`;
         item.addEventListener("click", async () => {
           G.lastActivePane = isRight ? 'right' : 'left';
@@ -464,7 +477,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     const isSelected = sel.has(i);
     const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
     const item = document.createElement("div");
-    item.className = "file-row thumb-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
+    item.className = "file-row thumb-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "") + typeSearchRowClass(i, isRight);
     item.dataset.index = i;
     item.dataset.path = file.path;
 
@@ -496,7 +509,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
 
     const nameEl = document.createElement("div");
     nameEl.className = "thumb-name";
-    nameEl.textContent = file.name;
+    nameEl.innerHTML = fileNameHtmlForView(file, i, isRight);
     nameEl.title = file.name;
 
     let pathEl = null;

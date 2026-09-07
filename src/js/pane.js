@@ -466,6 +466,9 @@ function updatePaneFocusUI() {
   const rightActive = G.dualOn && G.lastActivePane === 'right';
   document.getElementById('pane-left')?.classList.toggle('active-pane', !rightActive);
   document.getElementById('pane-right')?.classList.toggle('active-pane', rightActive);
+  if (typeof syncDiskUsageWithActiveFolder === 'function') {
+    queueMicrotask(() => syncDiskUsageWithActiveFolder(undefined, rightActive));
+  }
 }
 
 let _rpNavigationToken = 0;
@@ -486,6 +489,7 @@ async function rpNavigateTo(path, pushHistory) {
       pane.histIdx = pane.history.length - 1;
     }
     pane.path = path;
+    if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, true);
     pane.sel.clear();
     pane.lastIdx = -1;
     document.getElementById("right-path-input").value = path;

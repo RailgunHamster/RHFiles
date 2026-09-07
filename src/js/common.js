@@ -46,6 +46,9 @@ Object.assign(_builtinEn, {
   'typeSearch.loading': '{query} \u00b7 matching names and Pinyin...',
   'typeSearch.hint': '{query} \u00b7 {current}/{total} \u00b7 {next} next, {previous} previous',
   'typeSearch.noMatch': '{query} \u00b7 no matching item',
+  'typeSearch.loadingDetail': 'Matching names and Pinyin...',
+  'typeSearch.hintDetail': '{current}/{total} \u00b7 {next} next, {previous} previous',
+  'typeSearch.noMatchDetail': 'No matching item',
   'cmd.typeSearchNext': 'Next typed-search match',
   'cmd.typeSearchPrevious': 'Previous typed-search match',
   'cmd.jumpFirst': 'Jump to First Item',
@@ -211,7 +214,7 @@ G._7zAvailable = false;
 G.lastActivePane = 'left';
 G.inspectorTab = 'preview';
 
-G._typeSearch = { str: '', lastQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
+G._typeSearch = { str: '', lastQuery: '', visualQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
 
 // --- right pane state ---
 G.rp = { id: 100000, path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, history: ["C:\\"], histIdx: 0 };

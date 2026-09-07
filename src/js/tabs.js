@@ -86,13 +86,17 @@ window.addEventListener('resize', () => revealTabLabelTails());
 function switchTab(id) {
   G.lastActivePane = 'left';
   if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
-  if (id === G.activeTab) return;
+  if (id === G.activeTab) {
+    if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(getTab()?.path, false);
+    return;
+  }
   if (typeof resetTypeSearch === 'function') resetTypeSearch();
   hideTabPreview();
   _navigationToken++;
   saveCurrentTabState();
   G.activeTab = id;
   const tab = getTab();
+  if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(tab?.path, false);
   G.sortField = tab.sortF;
   G.sortAsc = tab.sortAsc;
   _updateTabActive();
@@ -606,6 +610,7 @@ async function navigateTo(path, pushHistory) {
       tab.historyIdx = tab.history.length - 1;
     }
     tab.path = path;
+    if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, false);
     tab.entries = [];
     tab.sel.clear();
     tab.lastIdx = -1;
@@ -638,6 +643,7 @@ async function navigateTo(path, pushHistory) {
       tab.historyIdx = tab.history.length - 1;
     }
     tab.path = path;
+    if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, false);
     renderTabs();
     addRecentFile(path, path.split("\\").pop(), true, "");
     const savedLayout = loadFolderLayout(path);

@@ -1818,12 +1818,48 @@
       assertEqual(G._typeSearch.str, '', "Expired input should start a fresh typed query");
       assertEqual(G._typeSearch.lastQuery, 'a', "Last typed query should remain available to F3");
       await cycleTypeSearchSelection(1);
-      assertEqual(tab.lastIdx, 0, "F3-style cycling did not work after the typing timeout");
+      assertEqual(tab.lastIdx, 2, "F3-style cycling did not include the middle-name match");
+      await cycleTypeSearchSelection(1);
+      assertEqual(tab.lastIdx, 0, "F3-style cycling did not wrap to the first match");
       resetTypeSearch();
       tab.entries = savedEntries;
       tab.sel = savedSel;
       tab.lastIdx = savedLastIdx;
       renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+    });
+
+    await test("[keyboard] Typed search matches inside names and highlights the hit", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSel = tab.sel;
+      const savedLastIdx = tab.lastIdx;
+      const savedLayout = G.layout;
+      try {
+        tab.entries = [
+          {name:'alpha.txt', path:'C:\\alpha.txt', is_dir:false, extension:'txt', size:0, size_display:'0 B', modified:'', created:''},
+          {name:'annual-report-final.pdf', path:'C:\\annual-report-final.pdf', is_dir:false, extension:'pdf', size:0, size_display:'0 B', modified:'', created:''},
+        ];
+        tab.sel = new Set();
+        tab.lastIdx = -1;
+        G.layout = 'details';
+        G._typeSearch.str = 'report';
+        await runTypeSearchSelection('report', 0, false);
+        assertEqual(tab.lastIdx, 1, "A match in the middle of the filename was not selected");
+        const mark = document.querySelector('#file-list .file-row[data-index="1"] .type-search-match');
+        assertEqual(mark?.textContent, 'report', "The matching filename characters were not highlighted");
+        assert(getComputedStyle(mark).backgroundColor !== 'rgba(0, 0, 0, 0)', "The filename highlight is not visually distinct");
+        const queryChip = document.querySelector('.type-search-hud .type-search-query');
+        assertEqual(queryChip?.textContent, 'report', "The typed query is not prominent in the HUD");
+        assert(parseFloat(getComputedStyle(queryChip).fontSize) >= 14, "The typed query remains too visually subtle");
+        assert(typeSearchMatches({_pinyinAliases:['zhongguoren'], name:'\u4e2d\u56fd\u4eba'}, 'guo'), "Pinyin aliases do not support middle matching");
+      } finally {
+        resetTypeSearch();
+        tab.entries = savedEntries;
+        tab.sel = savedSel;
+        tab.lastIdx = savedLastIdx;
+        G.layout = savedLayout;
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+      }
     });
 
     await test("[keyboard] Chinese names match full Pinyin, initials, and heteronyms", async () => {
@@ -1896,6 +1932,61 @@
       assert(document.getElementById('inspector-tab-disk').classList.contains('active'), "Disk usage inspector tab is not active");
       assert(document.getElementById('disk-usage-item-actions'), "Disk usage item actions are missing");
       switchInspectorTab(previousTab);
+    });
+
+    await test("[disk usage] Active-folder changes invalidate stale results and schedule a rescan", async () => {
+      const saved = {
+        previewOn:G.previewOn,
+        inspectorTab:G.inspectorTab,
+        dualOn:G.dualOn,
+        lastActivePane:G.lastActivePane,
+        path:_diskUsagePath,
+        token:_diskUsageToken,
+        pendingPath:_diskUsagePendingPath,
+        renderedPath:_diskUsageRenderedPath,
+        rows:_diskUsageRows,
+        selected:_diskUsageSelected,
+        pathHtml:document.getElementById('disk-usage-path')?.innerHTML || '',
+        summaryHtml:document.getElementById('disk-usage-summary')?.innerHTML || '',
+        resultsHtml:document.getElementById('disk-usage-results')?.innerHTML || '',
+      };
+      try {
+        if (_diskUsageRefreshTimer) clearTimeout(_diskUsageRefreshTimer);
+        _diskUsageRefreshTimer = null;
+        G.previewOn = true;
+        G.inspectorTab = 'disk';
+        G.dualOn = false;
+        G.lastActivePane = 'left';
+        _diskUsagePath = 'C:\\Old';
+        _diskUsagePendingPath = '';
+        _diskUsageRenderedPath = 'C:\\Old';
+        document.getElementById('disk-usage-results').innerHTML = '<div>stale old-folder result</div>';
+        const tokenBefore = _diskUsageToken;
+        assert(syncDiskUsageWithActiveFolder('C:\\New', false), "Changing folders did not update the disk-usage target");
+        assertEqual(_diskUsagePath, 'C:\\New', "Disk usage retained the previous folder path");
+        assertEqual(document.getElementById('disk-usage-path').textContent, displayPath('C:\\New'), "Disk-usage path label is stale");
+        assert(!document.getElementById('disk-usage-results').textContent.includes('old-folder'), "Old disk-usage rows remained visible");
+        assert(document.getElementById('disk-usage-results').textContent.includes(t('diskUsage.analyzing')), "Folder change does not show a fresh analysis state");
+        assert(_diskUsageToken > tokenBefore, "The previous dust request was not invalidated");
+        assert(_diskUsageRefreshTimer !== null, "A rescan was not scheduled for the new folder");
+      } finally {
+        if (_diskUsageRefreshTimer) clearTimeout(_diskUsageRefreshTimer);
+        _diskUsageRefreshTimer = null;
+        G.previewOn = saved.previewOn;
+        G.inspectorTab = saved.inspectorTab;
+        G.dualOn = saved.dualOn;
+        G.lastActivePane = saved.lastActivePane;
+        _diskUsagePath = saved.path;
+        _diskUsageToken = saved.token;
+        _diskUsagePendingPath = saved.pendingPath;
+        _diskUsageRenderedPath = saved.renderedPath;
+        _diskUsageRows = saved.rows;
+        _diskUsageSelected = saved.selected;
+        document.getElementById('disk-usage-path').innerHTML = saved.pathHtml;
+        document.getElementById('disk-usage-summary').innerHTML = saved.summaryHtml;
+        document.getElementById('disk-usage-results').innerHTML = saved.resultsHtml;
+        updateDiskUsageActionState();
+      }
     });
 
     // ================================================================

@@ -143,8 +143,64 @@ async function ensurePinyinAliases(entries) {
 }
 
 function typeSearchMatches(entry, normalizedQuery) {
-  if (normalizeTypeSearchText(entry.name).startsWith(normalizedQuery)) return true;
-  return (entry._pinyinAliases || []).some(alias => alias.startsWith(normalizedQuery));
+  if (normalizeTypeSearchText(entry.name).includes(normalizedQuery)) return true;
+  return (entry._pinyinAliases || []).some(alias => normalizeTypeSearchText(alias).includes(normalizedQuery));
+}
+
+function typeSearchNameMatchRange(value, normalizedQuery) {
+  const source = String(value || '');
+  let normalized = '';
+  const sourceRanges = [];
+  for (let offset = 0; offset < source.length;) {
+    const character = String.fromCodePoint(source.codePointAt(offset));
+    const end = offset + character.length;
+    const piece = normalizeTypeSearchText(character);
+    normalized += piece;
+    for (let index = 0; index < piece.length; index++) sourceRanges.push({start:offset, end});
+    offset = end;
+  }
+  const normalizedStart = normalized.indexOf(normalizedQuery);
+  if (normalizedStart < 0) return null;
+  const first = sourceRanges[normalizedStart];
+  const last = sourceRanges[normalizedStart + normalizedQuery.length - 1];
+  return first && last ? {start:first.start, end:last.end} : null;
+}
+
+function isCurrentTypeSearchMatch(index, isRight) {
+  const state = G._typeSearch;
+  return !!state.visualQuery
+    && state.isRight === !!isRight
+    && state.matchPos >= 0
+    && state.matches[state.matchPos] === index;
+}
+
+function typeSearchNameHtml(entry, index, isRight) {
+  const name = String(entry?.name || '');
+  if (!isCurrentTypeSearchMatch(index, isRight)) return esc(name);
+  const normalizedQuery = normalizeTypeSearchText(G._typeSearch.visualQuery);
+  const range = typeSearchNameMatchRange(name, normalizedQuery);
+  if (range) {
+    return esc(name.slice(0, range.start))
+      + `<mark class="type-search-match">${esc(name.slice(range.start, range.end))}</mark>`
+      + esc(name.slice(range.end));
+  }
+  const pinyinMatch = (entry?._pinyinAliases || [])
+    .some(alias => normalizeTypeSearchText(alias).includes(normalizedQuery));
+  return pinyinMatch ? `<span class="type-search-pinyin-match">${esc(name)}</span>` : esc(name);
+}
+
+function clearTypeSearchHighlights(isRight) {
+  const roots = typeof isRight === 'boolean'
+    ? [document.getElementById(isRight ? 'right-file-list' : 'file-list')]
+    : [document.getElementById('file-list'), document.getElementById('right-file-list')];
+  roots.filter(Boolean).forEach(root => {
+    root.querySelectorAll('.type-search-current').forEach(row => row.classList.remove('type-search-current'));
+    root.querySelectorAll('.type-search-match, .type-search-pinyin-match').forEach(highlight => {
+      const parent = highlight.parentNode;
+      highlight.replaceWith(document.createTextNode(highlight.textContent || ''));
+      parent?.normalize();
+    });
+  });
 }
 
 function typeSearchShortcutLabel(actionId) {
@@ -157,20 +213,22 @@ function showTypeSearchHud(query, current, total, isRight, loading) {
   if (!list || !query) return;
   const rect = list.getBoundingClientRect();
   const hud = document.createElement('div');
-  hud.className = 'type-search-hud';
-  hud.style.right = Math.max(10, window.innerWidth - rect.right + 10) + 'px';
-  hud.style.bottom = Math.max(10, window.innerHeight - rect.bottom + 10) + 'px';
-  hud.textContent = loading
-    ? t('typeSearch.loading', { query })
+  hud.className = 'type-search-hud ' + (loading ? 'loading' : total > 0 ? 'has-match' : 'no-match');
+  hud.setAttribute('role', 'status');
+  hud.setAttribute('aria-live', 'polite');
+  hud.style.left = Math.max(12, Math.min(window.innerWidth - 12, rect.left + rect.width / 2)) + 'px';
+  hud.style.top = Math.max(12, rect.top + 12) + 'px';
+  const detail = loading
+    ? t('typeSearch.loadingDetail')
     : total > 0
-      ? t('typeSearch.hint', {
-          query,
+      ? t('typeSearch.hintDetail', {
           current,
           total,
           next: typeSearchShortcutLabel('typeSearch.next'),
           previous: typeSearchShortcutLabel('typeSearch.previous'),
         })
-      : t('typeSearch.noMatch', { query });
+      : t('typeSearch.noMatchDetail');
+  hud.innerHTML = `<span class="type-search-query">${esc(query)}</span><span class="type-search-detail">${esc(detail)}</span>`;
   document.body.appendChild(hud);
 }
 
@@ -178,20 +236,24 @@ function resetTypeSearch() {
   const state = G._typeSearch;
   state.str = '';
   state.lastQuery = '';
+  state.visualQuery = '';
   state.matches = [];
   state.matchPos = -1;
   state.requestToken++;
   if (state.timer) clearTimeout(state.timer);
   state.timer = null;
   document.querySelectorAll('.type-search-hud').forEach(el => el.remove());
+  clearTypeSearchHighlights();
 }
 
 function expireTypeSearchInput() {
   const state = G._typeSearch;
   state.str = '';
+  state.visualQuery = '';
   state.requestToken++;
   state.timer = null;
   document.querySelectorAll('.type-search-hud').forEach(el => el.remove());
+  clearTypeSearchHighlights();
 }
 
 function scheduleTypeSearchReset() {
@@ -200,12 +262,17 @@ function scheduleTypeSearchReset() {
 }
 
 async function runTypeSearchSelection(query, cycleDelta, isRight) {
+  isRight = !!isRight;
   const pane = isRight ? G.rp : getTab();
   const entries = pane.entries || [];
   const normalizedQuery = normalizeTypeSearchText(query);
-  if (!entries.length || !normalizedQuery) return;
+  if (!entries.length || !normalizedQuery) {
+    clearTypeSearchHighlights(isRight);
+    return;
+  }
   const token = ++G._typeSearch.requestToken;
   G._typeSearch.isRight = isRight;
+  G._typeSearch.visualQuery = query;
   const needsPinyin = /^[a-z0-9]+$/i.test(normalizedQuery) && entries.some(entry => /[\u3400-\u9fff]/.test(entry.name || ''));
   if (needsPinyin && entries.some(entry => !Array.isArray(entry._pinyinAliases))) {
     showTypeSearchHud(query, 0, 0, isRight, true);
@@ -227,6 +294,7 @@ async function runTypeSearchSelection(query, cycleDelta, isRight) {
   G._typeSearch.matches = matches;
   G._typeSearch.matchPos = matches.length ? matchPos : -1;
   if (matches.length) G._typeSearch.lastQuery = query;
+  clearTypeSearchHighlights(isRight);
 
   if (matches.length) {
     const foundIdx = matches[matchPos];

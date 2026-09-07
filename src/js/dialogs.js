@@ -405,6 +405,65 @@ let _diskUsagePath = '';
 let _diskUsageToken = 0;
 let _diskUsageRows = [];
 let _diskUsageSelected = null;
+let _diskUsageRefreshTimer = null;
+let _diskUsagePendingPath = '';
+let _diskUsageRenderedPath = '';
+const DISK_USAGE_NAV_REFRESH_DELAY = 180;
+
+function diskUsageTargetPath(path) {
+  const requested = path || getActivePaneState()?.path;
+  if (!requested) return '';
+  return requested === 'home://'
+    ? (G.homeDirPath || 'C:\\')
+    : normalizeWindowsPathInput(requested);
+}
+
+function diskUsagePathsEqual(left, right) {
+  return String(left || '').toLocaleLowerCase() === String(right || '').toLocaleLowerCase();
+}
+
+function resetDiskUsageSurface(loading) {
+  _diskUsageSelected = null;
+  _diskUsageRows = [];
+  updateDiskUsageActionState();
+  const summary = document.getElementById('disk-usage-summary');
+  const results = document.getElementById('disk-usage-results');
+  if (summary) summary.innerHTML = '';
+  if (results) {
+    results.innerHTML = loading
+      ? `<div class="disk-usage-loading"><span></span>${esc(t('diskUsage.analyzing'))}</div>`
+      : '';
+  }
+}
+
+function syncDiskUsageWithActiveFolder(path, isRight) {
+  if (!G.previewOn || G.inspectorTab !== 'disk') return false;
+  const rightActive = G.dualOn && G.lastActivePane === 'right';
+  if (typeof isRight === 'boolean' && rightActive !== isRight) return false;
+  const nextPath = diskUsageTargetPath(path);
+  if (!nextPath) return false;
+  const pathChanged = !diskUsagePathsEqual(nextPath, _diskUsagePath);
+  if (!pathChanged && (diskUsagePathsEqual(nextPath, _diskUsageRenderedPath) || diskUsagePathsEqual(nextPath, _diskUsagePendingPath))) return false;
+
+  if (_diskUsageRefreshTimer) clearTimeout(_diskUsageRefreshTimer);
+  _diskUsageRefreshTimer = null;
+  _diskUsagePath = nextPath;
+  _diskUsagePendingPath = nextPath;
+  ++_diskUsageToken; // invalidate a dust result that belongs to the previous folder
+  const pathLabel = document.getElementById('disk-usage-path');
+  if (pathLabel) pathLabel.textContent = displayPath(nextPath);
+  resetDiskUsageSurface(true);
+
+  _diskUsageRefreshTimer = setTimeout(() => {
+    _diskUsageRefreshTimer = null;
+    if (!G.previewOn || G.inspectorTab !== 'disk' || !diskUsagePathsEqual(nextPath, _diskUsagePath)) {
+      if (diskUsagePathsEqual(nextPath, _diskUsagePendingPath)) _diskUsagePendingPath = '';
+      return;
+    }
+    refreshDiskUsage();
+  }, DISK_USAGE_NAV_REFRESH_DELAY);
+  return true;
+}
 
 function parseDustSize(value) {
   const text = String(value == null ? '' : value).trim().replace(/\s+/g, '');
@@ -510,6 +569,8 @@ function renderDiskUsage(data) {
   const summary = document.getElementById('disk-usage-summary');
   if (!results || !summary) return;
   const rows = flattenDustTree(data, 0, []);
+  _diskUsageRenderedPath = _diskUsagePath;
+  _diskUsagePendingPath = '';
   _diskUsageRows = rows;
   _diskUsageSelected = null;
   updateDiskUsageActionState();
@@ -544,28 +605,33 @@ function renderDiskUsage(data) {
 }
 
 async function refreshDiskUsage() {
+  if (_diskUsageRefreshTimer) clearTimeout(_diskUsageRefreshTimer);
+  _diskUsageRefreshTimer = null;
   const token = ++_diskUsageToken;
   const results = document.getElementById('disk-usage-results');
-  const summary = document.getElementById('disk-usage-summary');
   const depth = Number(document.getElementById('disk-usage-depth')?.value || 2);
-  _diskUsageSelected = null;
-  _diskUsageRows = [];
-  updateDiskUsageActionState();
-  if (summary) summary.innerHTML = '';
-  if (results) results.innerHTML = `<div class="disk-usage-loading"><span></span>${esc(t('diskUsage.analyzing'))}</div>`;
+  const analysisPath = _diskUsagePath;
+  if (!analysisPath) return;
+  _diskUsagePendingPath = analysisPath;
+  _diskUsageRenderedPath = '';
+  resetDiskUsageSurface(true);
   try {
-    const data = await call('analyze_disk_usage', { path:_diskUsagePath, depth, maxEntries:250 });
-    if (token !== _diskUsageToken) return;
+    const data = await call('analyze_disk_usage', { path:analysisPath, depth, maxEntries:250 });
+    if (token !== _diskUsageToken || !diskUsagePathsEqual(analysisPath, _diskUsagePath)) return;
     renderDiskUsage(data);
   } catch (error) {
-    if (token !== _diskUsageToken || !results) return;
+    if (token !== _diskUsageToken || !diskUsagePathsEqual(analysisPath, _diskUsagePath) || !results) return;
+    _diskUsagePendingPath = '';
     results.innerHTML = `<div class="disk-usage-empty"><strong>${esc(t('diskUsage.failed'))}</strong><span>${esc(String(error))}</span></div>`;
   }
 }
 
 function showDiskUsageDialog(path) {
-  const activePath = path || getActivePaneState()?.path;
-  _diskUsagePath = activePath === 'home://' ? (G.homeDirPath || 'C:\\') : normalizeWindowsPathInput(activePath);
+  if (_diskUsageRefreshTimer) clearTimeout(_diskUsageRefreshTimer);
+  _diskUsageRefreshTimer = null;
+  _diskUsagePath = diskUsageTargetPath(path);
+  _diskUsagePendingPath = _diskUsagePath;
+  ++_diskUsageToken;
   if (!G.previewOn) setPreviewPaneVisible(true);
   switchInspectorTab('disk');
   document.getElementById('disk-usage-path').textContent = displayPath(_diskUsagePath);
@@ -574,10 +640,11 @@ function showDiskUsageDialog(path) {
 }
 
 function activateDiskUsageTab() {
-  if (!_diskUsagePath) showDiskUsageDialog();
-  else {
-    if (!G.previewOn) setPreviewPaneVisible(true);
-    switchInspectorTab('disk');
+  if (!G.previewOn) setPreviewPaneVisible(true);
+  switchInspectorTab('disk');
+  if (!syncDiskUsageWithActiveFolder()) {
+    if (!_diskUsagePath) showDiskUsageDialog();
+    else document.getElementById('disk-usage-path').textContent = displayPath(_diskUsagePath);
   }
 }
 
