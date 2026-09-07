@@ -713,6 +713,96 @@
       }
     });
 
+    await test("[sort] Sorted virtual list keeps scroll geometry and remains clickable", async () => {
+      if (typeof sortBy !== 'function' || typeof detailsRowHeight !== 'function') {
+        log("SKIP: virtual-list helpers not available");
+        return;
+      }
+      const tab = getTab();
+      const list = $("#file-list");
+      const saved = {
+        entries: tab.entries,
+        sel: tab.sel,
+        lastIdx: tab.lastIdx,
+        sortF: tab.sortF,
+        sortAsc: tab.sortAsc,
+        globalField: G.sortField,
+        globalAsc: G.sortAsc,
+        layout: G.layout,
+        groupBy: G.groupBy,
+        previewOn: G.previewOn,
+        scrollTop: list.scrollTop,
+      };
+      try {
+        tab.entries = Array.from({length: 160}, (_, index) => ({
+          name: `virtual-${String(index).padStart(3, '0')}.txt`,
+          path: `C:\\virtual-sort-test\\virtual-${String(index).padStart(3, '0')}.txt`,
+          extension: 'txt', size: 160 - index, size_display: `${160 - index} B`,
+          modified_ts: index, created_ts: index, modified: '', created: '',
+          is_dir: false, is_hidden: false,
+        }));
+        tab.sel = new Set();
+        tab.lastIdx = -1;
+        tab.sortF = 'name';
+        tab.sortAsc = true;
+        G.sortField = 'name';
+        G.sortAsc = true;
+        G.layout = 'details';
+        G.groupBy = 'none';
+        G.previewOn = false;
+        list.scrollTop = 0;
+
+        sortBy('size');
+        await sleep(30);
+        const rowH = detailsRowHeight(list);
+        const spacer = list.querySelector('.virtual-list-spacer');
+        assert(spacer, "Virtual spacer was not rendered");
+        assert(Math.abs(parseFloat(spacer.style.height) - rowH * tab.entries.length) < 0.5,
+          "Virtual spacer does not match the themed row height");
+
+        list.scrollTop = rowH * 40;
+        list.dispatchEvent(new Event('scroll'));
+        await sleep(40);
+        const row = [...list.querySelectorAll('.file-row')].find(candidate => {
+          const rect = candidate.getBoundingClientRect();
+          const listRect = list.getBoundingClientRect();
+          return rect.bottom > listRect.top && rect.top < listRect.bottom;
+        });
+        assert(row, "No clickable row was rendered after scrolling");
+        const index = Number(row.dataset.index);
+        const path = row.dataset.path;
+
+        // A sub-row scroll must not destroy the node under the pointer. Replacing
+        // it between mouse-down and click was the cause of intermittent misses.
+        list.scrollTop += Math.max(1, Math.floor(rowH / 4));
+        list.dispatchEvent(new Event('scroll'));
+        await sleep(40);
+        assert(list.querySelector(`.file-row[data-index="${index}"]`) === row,
+          "Visible row node was replaced during a small scroll");
+
+        simulateClick(row);
+        await sleep(20);
+        assert(tab.sel.has(index), "Click did not select the sorted row");
+        assertEqual(tab.entries[index].path, path, "Click selected a different sorted entry");
+        assert(row.classList.contains('selected'), "Selected row did not receive visual state");
+      } finally {
+        tab.entries = saved.entries;
+        tab.sel = saved.sel;
+        tab.lastIdx = saved.lastIdx;
+        tab.sortF = saved.sortF;
+        tab.sortAsc = saved.sortAsc;
+        G.sortField = saved.globalField;
+        G.sortAsc = saved.globalAsc;
+        G.layout = saved.layout;
+        G.groupBy = saved.groupBy;
+        G.previewOn = saved.previewOn;
+        updateSortArrows();
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+        list.scrollTop = saved.scrollTop;
+        saveTabState();
+      }
+    });
+
     await test("[sort] Right pane applies its own sort and arrow", async () => {
       if (typeof paneSortBy !== 'function') { log("SKIP: paneSortBy not available"); return; }
       const saved = {

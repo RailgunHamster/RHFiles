@@ -108,14 +108,35 @@ function toggleHidden() {
   navigateTo(getTab().path, false);
 }
 
-const ROW_H = 24;
+// Fallback only. The active theme may override --row-height, so virtual-list
+// geometry must be derived from the rendered CSS instead of a stale constant.
+const ROW_H = 30;
 const CARD_ROW_H = 168;
 const THUMB_ROW_H = 140;
+
+function detailsRowHeight(list) {
+  if (!list) return ROW_H;
+  const cssValue = parseFloat(getComputedStyle(list).getPropertyValue('--row-height'));
+  return Number.isFinite(cssValue) && cssValue > 0 ? cssValue : ROW_H;
+}
+
+function teardownVirtualList(list) {
+  if (!list) return;
+  if (list._vlistScrollHandler) {
+    list.removeEventListener('scroll', list._vlistScrollHandler);
+    list._vlistScrollHandler = null;
+  }
+  if (list._vlistScrollRaf) {
+    cancelAnimationFrame(list._vlistScrollRaf);
+    list._vlistScrollRaf = 0;
+  }
+}
 
 function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   const list = document.getElementById(listId);
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
+  teardownVirtualList(list);
   list.innerHTML = "";
   list.classList.toggle("search-results", !!G.searchActive && !isRight);
 
@@ -138,6 +159,7 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
 function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
   const groups = (typeof groupEntries === 'function') ? groupEntries(entries) : null;
   const GROUP_HEADER_H = 28;
+  const rowH = detailsRowHeight(list);
 
   let items = [];
   if (groups) {
@@ -158,7 +180,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
   let totalH = 0;
   for (let i = 0; i < items.length; i++) {
     positions[i] = totalH;
-    totalH += items[i].type === 'group' ? GROUP_HEADER_H : ROW_H;
+    totalH += items[i].type === 'group' ? GROUP_HEADER_H : rowH;
   }
 
   const spacer = document.createElement("div");
@@ -170,106 +192,145 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
   content.className = "virtual-list-content";
   list.appendChild(content);
 
-  const viewH = list.clientHeight || 600;
-  const bufferPx = 10 * ROW_H;
+  const bufferPx = 10 * rowH;
+  const renderedNodes = new Map();
+  let renderedStart = -1;
+  let renderedEnd = -1;
 
-  function renderVisible() {
-    const scrollTop = list.scrollTop;
-    let start = 0;
-    for (let i = items.length - 1; i >= 0; i--) {
-      if (positions[i] <= scrollTop - bufferPx) { start = i; break; }
-    }
-    let end = items.length - 1;
-    for (let i = 0; i < items.length; i++) {
-      if (positions[i] > scrollTop + viewH + bufferPx) { end = i; break; }
-    }
-
-    content.innerHTML = "";
-    content.style.top = (positions[start] || 0) + "px";
-
-    for (let i = start; i <= end; i++) {
-      const item = items[i];
-      if (item.type === 'group') {
-        const header = document.createElement('div');
-        header.className = 'group-header';
-        header.innerHTML = '<span class="group-label">' + esc(translateGroupKey(item.label)) + '</span><span class="group-count">' + t('group.items', {count: item.count}) + '</span>';
-        content.appendChild(header);
-        continue;
-      }
-      const fileIdx = item.fileIdx;
-      const file = entries[fileIdx];
-      const isSelected = sel.has(fileIdx);
-      const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
-      const row = document.createElement("div");
-      row.className = "file-row" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
-      row.dataset.index = fileIdx;
-      row.dataset.path = file.path;
-      row.style.position = "relative";
-
-      row.addEventListener("click", e => handleRowClick(e, fileIdx, sel, tabOrPane, isRight));
-      row.addEventListener("contextmenu", e => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); tabOrPane.lastIdx = fileIdx; renderFiles(tabOrPane, listId, null, null, isRight); }
-        showContextMenu(e.clientX, e.clientY, isRight);
-      });
-      row.draggable = true;
-      row.addEventListener("dragstart", e => {
-        if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); renderFiles(tabOrPane, listId, null, null, isRight); }
-        e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
-      });
-
-      let tagsHtml = "";
-      const tags = G.tagCache[file.path];
-      if (tags && tags.length) {
-        tagsHtml = '<span class="row-tags">' + tags.map((tag, ti) => `<span class="row-tag-dot" style="background:${tagColor(ti)}"></span>`).join("") + '</span>';
-      }
-
-      let gitHtml = "";
-      const gitStatus = G.gitCache[file.name];
-      if (gitStatus) {
-        const gitIcons = { modified: '\u25cf', added: '+', deleted: '\u2715', untracked: '?' };
-        const gitClass = 'git-' + gitStatus;
-        gitHtml = `<div class="row-git ${gitClass}" title="${gitStatus}">${gitIcons[gitStatus] || ''}</div>`;
-      }
-
-      let svnHtml = "";
-      if (typeof renderSvnStatusIcon === 'function') {
-        svnHtml = renderSvnStatusIcon(file.name);
-      }
-
-      let pathHtml = "";
-      if (G.searchActive && file.path) {
-        const dirPath = file.path.replace(/\\[^\\]+$/, '');
-        pathHtml = `<span class="row-path" title="${esc(displayPath(file.path))}">${esc(displayPath(dirPath))}</span>`;
-      }
-
-      row.innerHTML = `
-        <div class="row-name">
-          <span class="row-icon">${fileIcon(file)}</span>
-          <span class="row-fname" title="${esc(file.name)}">${esc(file.name)}</span>${tagsHtml}${pathHtml}
-        </div>
-        ${gitHtml ? gitHtml : '<div class="row-git"></div>'}
-        ${svnHtml || '<div class="row-svn"></div>'}
-        <div class="row-date">${esc(formatFileDate(file.modified_ts, file.modified))}</div>
-        <div class="row-date">${esc(formatFileDate(file.created_ts, file.created))}</div>
-        <div class="row-type">${esc(fileTypeLabel(file))}</div>
-        <div class="row-size">${esc(file.size_display)}</div>
-      `;
-      content.appendChild(row);
-    }
+  function itemHeight(item) {
+    return item.type === 'group' ? GROUP_HEADER_H : rowH;
   }
 
-  let _scrollRaf = 0;
-  let _scrollHandler = () => {
-    if (!_scrollRaf) {
-      _scrollRaf = requestAnimationFrame(() => {
-        _scrollRaf = 0;
-        renderVisible();
+  function itemAtOffset(offset) {
+    let low = 0;
+    let high = items.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (positions[mid] + itemHeight(items[mid]) <= offset) low = mid + 1;
+      else high = mid;
+    }
+    return Math.min(low, items.length - 1);
+  }
+
+  function createItemNode(itemIndex) {
+    const item = items[itemIndex];
+    if (item.type === 'group') {
+      const header = document.createElement('div');
+      header.className = 'group-header';
+      header.style.height = GROUP_HEADER_H + 'px';
+      header.style.boxSizing = 'border-box';
+      header.dataset.virtualIndex = itemIndex;
+      header.innerHTML = '<span class="group-label">' + esc(translateGroupKey(item.label)) + '</span><span class="group-count">' + t('group.items', {count: item.count}) + '</span>';
+      return header;
+    }
+
+    const fileIdx = item.fileIdx;
+    const file = entries[fileIdx];
+    const isSelected = sel.has(fileIdx);
+    const isCut = G.clipboard && G.clipboard.op === "cut" && G.clipboard.paths.has(file.path);
+    const row = document.createElement("div");
+    row.className = "file-row" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "");
+    row.dataset.index = fileIdx;
+    row.dataset.path = file.path;
+    row.dataset.virtualIndex = itemIndex;
+    row.style.position = "relative";
+
+    row.addEventListener("click", e => handleRowClick(e, fileIdx, sel, tabOrPane, isRight));
+    row.addEventListener("contextmenu", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); tabOrPane.lastIdx = fileIdx; renderFiles(tabOrPane, listId, null, null, isRight); }
+      showContextMenu(e.clientX, e.clientY, isRight);
+    });
+    row.draggable = true;
+    row.addEventListener("dragstart", e => {
+      if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); renderFiles(tabOrPane, listId, null, null, isRight); }
+      e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
+    });
+
+    let tagsHtml = "";
+    const tags = G.tagCache[file.path];
+    if (tags && tags.length) {
+      tagsHtml = '<span class="row-tags">' + tags.map((tag, ti) => `<span class="row-tag-dot" style="background:${tagColor(ti)}"></span>`).join("") + '</span>';
+    }
+
+    let gitHtml = "";
+    const gitStatus = G.gitCache[file.name];
+    if (gitStatus) {
+      const gitIcons = { modified: '\u25cf', added: '+', deleted: '\u2715', untracked: '?' };
+      const gitClass = 'git-' + gitStatus;
+      gitHtml = `<div class="row-git ${gitClass}" title="${gitStatus}">${gitIcons[gitStatus] || ''}</div>`;
+    }
+
+    let svnHtml = "";
+    if (typeof renderSvnStatusIcon === 'function') {
+      svnHtml = renderSvnStatusIcon(file.name);
+    }
+
+    let pathHtml = "";
+    if (G.searchActive && file.path) {
+      const dirPath = file.path.replace(/\\[^\\]+$/, '');
+      pathHtml = `<span class="row-path" title="${esc(displayPath(file.path))}">${esc(displayPath(dirPath))}</span>`;
+    }
+
+    row.innerHTML = `
+      <div class="row-name">
+        <span class="row-icon">${fileIcon(file)}</span>
+        <span class="row-fname" title="${esc(file.name)}">${esc(file.name)}</span>${tagsHtml}${pathHtml}
+      </div>
+      ${gitHtml ? gitHtml : '<div class="row-git"></div>'}
+      ${svnHtml || '<div class="row-svn"></div>'}
+      <div class="row-date">${esc(formatFileDate(file.modified_ts, file.modified))}</div>
+      <div class="row-date">${esc(formatFileDate(file.created_ts, file.created))}</div>
+      <div class="row-type">${esc(fileTypeLabel(file))}</div>
+      <div class="row-size">${esc(file.size_display)}</div>
+    `;
+    return row;
+  }
+
+  function renderVisible() {
+    if (!items.length) {
+      content.replaceChildren();
+      renderedNodes.clear();
+      renderedStart = renderedEnd = -1;
+      return;
+    }
+    const scrollTop = list.scrollTop;
+    const viewH = list.clientHeight || 600;
+    const start = itemAtOffset(Math.max(0, scrollTop - bufferPx));
+    const end = itemAtOffset(Math.min(totalH, scrollTop + viewH + bufferPx));
+    if (start === renderedStart && end === renderedEnd) return;
+
+    for (const [itemIndex, node] of renderedNodes) {
+      if (itemIndex < start || itemIndex > end) {
+        node.remove();
+        renderedNodes.delete(itemIndex);
+      }
+    }
+
+    content.style.top = (positions[start] || 0) + "px";
+    let cursor = content.firstChild;
+    for (let i = start; i <= end; i++) {
+      let node = renderedNodes.get(i);
+      if (!node) {
+        node = createItemNode(i);
+        renderedNodes.set(i, node);
+      }
+      if (node !== cursor) content.insertBefore(node, cursor);
+      cursor = node.nextSibling;
+    }
+    renderedStart = start;
+    renderedEnd = end;
+  }
+
+  const _scrollHandler = () => {
+    if (!list._vlistScrollRaf) {
+      list._vlistScrollRaf = requestAnimationFrame(() => {
+        list._vlistScrollRaf = 0;
+        if (list._vlistScrollHandler === _scrollHandler) renderVisible();
       });
     }
   };
-  list.removeEventListener('scroll', list._vlistScrollHandler);
   list._vlistScrollHandler = _scrollHandler;
   list.addEventListener('scroll', _scrollHandler);
   renderVisible();

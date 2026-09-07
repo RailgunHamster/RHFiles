@@ -452,7 +452,7 @@ function scrollToVisible(index) {
       return;
     }
   }
-  let rowH = ROW_H;
+  let rowH = detailsRowHeight(list);
   if (G.layout === "cards") rowH = CARD_ROW_H;
   const targetTop = index * rowH;
   if (targetTop < list.scrollTop || targetTop > list.scrollTop + list.clientHeight - rowH) {
