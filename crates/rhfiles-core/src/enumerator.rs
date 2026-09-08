@@ -132,6 +132,21 @@ pub fn read_file_text(path: &Path, max_bytes: u64) -> Result<String, String> {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn shell_execute_working_directory(path: &Path) -> Option<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| {
+            parent
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        })
+}
+
 pub fn open_file(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -141,6 +156,7 @@ pub fn open_file(path: &Path) -> Result<(), String> {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
+        let directory_wide = shell_execute_working_directory(path);
         let operation: Vec<u16> = "open\0".encode_utf16().collect();
         unsafe {
             let result = windows::Win32::UI::Shell::ShellExecuteW(
@@ -148,7 +164,11 @@ pub fn open_file(path: &Path) -> Result<(), String> {
                 windows::core::PCWSTR(operation.as_ptr()),
                 windows::core::PCWSTR(wide.as_ptr()),
                 windows::core::PCWSTR::null(),
-                None,
+                directory_wide
+                    .as_ref()
+                    .map_or_else(windows::core::PCWSTR::null, |directory| {
+                        windows::core::PCWSTR(directory.as_ptr())
+                    }),
                 windows::Win32::UI::WindowsAndMessaging::SW_SHOW,
             );
             if (result.0 as usize) <= 32 {
@@ -701,7 +721,7 @@ pub fn get_new_file_templates() -> Result<Vec<NewFileTemplate>, String> {
 
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    use super::extract_file_icon;
+    use super::{extract_file_icon, open_file, shell_execute_working_directory};
     use base64::Engine;
 
     #[test]
@@ -719,6 +739,65 @@ mod tests {
             .to_rgba8();
         assert_eq!(image.dimensions(), (64, 64));
         assert!(image.pixels().any(|pixel| pixel.0[3] > 0));
+    }
+
+    #[test]
+    fn shell_execute_directory_is_the_nul_terminated_target_parent() {
+        let path = std::path::Path::new(r"C:\Games\示例服务端\run.bat");
+        let wide = shell_execute_working_directory(path).expect("batch parent directory");
+        assert_eq!(wide.last(), Some(&0));
+        assert_eq!(
+            String::from_utf16(&wide[..wide.len() - 1]).expect("valid UTF-16 parent"),
+            r"C:\Games\示例服务端"
+        );
+    }
+
+    #[test]
+    fn opening_a_batch_file_uses_its_directory_for_relative_files() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after Unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "rhfiles-batch-working-directory-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("create batch test directory");
+        let arguments = directory.join("user_jvm_args.txt");
+        let script = directory.join("launch.bat");
+        let result = directory.join("result.txt");
+        std::fs::write(&arguments, "relative-path-ok\r\n").expect("write relative input");
+        std::fs::write(
+            &script,
+            "@echo off\r\nfindstr /x \"relative-path-ok\" user_jvm_args.txt > \"%~dp0result.txt\"\r\n",
+        )
+        .expect("write batch probe");
+
+        let observed = (|| -> Result<String, String> {
+            open_file(&script)?;
+            for _ in 0..200 {
+                if result.is_file() {
+                    let content =
+                        std::fs::read_to_string(&result).map_err(|error| error.to_string())?;
+                    if !content.trim().is_empty() {
+                        return Ok(content);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err("batch probe did not produce result.txt within 10 seconds".to_string())
+        })();
+        for _ in 0..20 {
+            if !directory.exists() || std::fs::remove_dir_all(&directory).is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        assert_eq!(
+            observed.expect("open and run batch probe").trim(),
+            "relative-path-ok"
+        );
     }
 }
 
@@ -809,12 +888,16 @@ pub fn run_as_admin(path: &Path) -> Result<(), String> {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
+        let directory_wide = shell_execute_working_directory(path);
         let verb: Vec<u16> = "runas\0".encode_utf16().collect();
         unsafe {
             let mut info = SHELLEXECUTEINFOW::default();
             info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
             info.lpVerb = windows::core::PCWSTR(verb.as_ptr());
             info.lpFile = windows::core::PCWSTR(wide.as_ptr());
+            if let Some(directory) = directory_wide.as_ref() {
+                info.lpDirectory = windows::core::PCWSTR(directory.as_ptr());
+            }
             info.nShow = SW_SHOW.0;
             let _ = ShellExecuteExW(&mut info);
         }
