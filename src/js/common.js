@@ -89,6 +89,24 @@ Object.assign(_builtinEn, {
   'ctx.openPowerShell': 'Open in PowerShell',
   'confirm.deleteTitle': 'Move to Recycle Bin',
   'confirm.recycleBinHint': 'You can restore these items from the Recycle Bin.',
+  'confirm.permanentDeleteTitle': 'Permanently delete',
+  'confirm.permanentDeleteItem': 'Permanently delete "{name}"?',
+  'confirm.permanentDeleteItems': 'Permanently delete {count} items?',
+  'confirm.permanentDeleteWarning': 'This bypasses the Recycle Bin and cannot be undone.',
+  'confirm.permanentDeleteFinalTitle': 'Final deletion confirmation',
+  'confirm.permanentDeleteFinalWarning': 'This is the final confirmation. The selected items cannot be recovered by RHFiles.',
+  'btn.continue': 'Continue',
+  'btn.copy': 'Copy',
+  'btn.move': 'Move',
+  'btn.deletePermanently': 'Delete permanently',
+  'ctx.deletePermanently': 'Delete permanently',
+  'cmd.deletePermanently': 'Permanently delete selected items',
+  'status.deletingPermanently': 'Permanently deleting...',
+  'dragDrop.title': 'Copy or move items?',
+  'dragDrop.item': 'Choose what to do with "{name}".',
+  'dragDrop.items': 'Choose what to do with {count} items.',
+  'dragDrop.destination': 'Destination: {path}',
+  'alert.copyFailed': 'Copy failed: {error}',
   'preview.truncated': 'Large file · preview shortened',
   'preview.truncatedDetail': 'Only the beginning is shown to keep RHFiles responsive ({count} characters total).',
   'preview.image.displayMode': 'Image display mode',
@@ -226,6 +244,47 @@ G.activeRpTab = G.rp.id;
 G.nextRpTabId = 100001;
 G.rpInitialized = false;
 G.windowLabel = null;
+G.dragWindowToken = (globalThis.crypto?.randomUUID?.() || (Date.now() + '-' + Math.random()));
+
+const RHFILES_FILE_DRAG_MIME = 'application/x-rhfiles-file-list+json';
+const RHFILES_FILE_DRAG_PREFIX = 'RHFILES_FILE_DRAG_V1\n';
+
+function currentFileDragWindowId() {
+  return G.windowLabel || G.dragWindowToken;
+}
+
+function setRhfilesFileDragData(dataTransfer, paths, isRight) {
+  if (!dataTransfer) return;
+  const payload = JSON.stringify({
+    kind: 'rhfiles-file-drag',
+    sourceWindow: currentFileDragWindowId(),
+    sourcePane: isRight ? 'right' : 'left',
+    paths: [...new Set((paths || []).filter(path => typeof path === 'string' && path))],
+  });
+  dataTransfer.effectAllowed = 'copyMove';
+  try { dataTransfer.setData(RHFILES_FILE_DRAG_MIME, payload); } catch (error) {}
+  dataTransfer.setData('text/plain', RHFILES_FILE_DRAG_PREFIX + payload);
+}
+
+function readRhfilesFileDragData(dataTransfer) {
+  if (!dataTransfer) return null;
+  let raw = '';
+  try { raw = dataTransfer.getData(RHFILES_FILE_DRAG_MIME); } catch (error) {}
+  if (!raw) {
+    const plain = dataTransfer.getData('text/plain') || '';
+    if (!plain.startsWith(RHFILES_FILE_DRAG_PREFIX)) return null;
+    raw = plain.slice(RHFILES_FILE_DRAG_PREFIX.length);
+  }
+  try {
+    const payload = JSON.parse(raw);
+    if (payload?.kind !== 'rhfiles-file-drag' || !Array.isArray(payload.paths)) return null;
+    const paths = payload.paths.filter(path => typeof path === 'string' && path);
+    if (!paths.length) return null;
+    return {...payload, paths};
+  } catch (error) {
+    return null;
+  }
+}
 
 // --- tab helpers ---
 function getTab(id) {
@@ -428,6 +487,7 @@ function fallbackCall(cmd, args) {
     case "create_new_file": return null;
     case "delete_file": return null;
     case "delete_files": return { deleted:[...(args.paths || [])], errors:[] };
+    case "delete_files_permanently": return { deleted:[...(args.paths || [])], errors:[] };
     case "restore_recycled_files": return null;
     case "copy_path_exact": return null;
     case "move_path_exact": return null;
@@ -586,12 +646,27 @@ function startFileWatch() {
   if (window.__TAURI_INTERNALS__) {
     const { listen } = window.__TAURI_INTERNALS__.event || {};
     if (listen) {
-      listen("fs-change", () => {
+      listen("fs-change", event => {
+        const payload = event?.payload || {};
+        if (payload.originWindow && payload.originWindow === currentFileDragWindowId()) return;
+        const changedPaths = Array.isArray(payload.paths)
+          ? payload.paths.map(path => windowsPathKey(String(path).replace(/[\\/]+$/, '')))
+          : [];
+        const isAffected = path => {
+          if (!changedPaths.length) return true;
+          return changedPaths.includes(windowsPathKey(String(path).replace(/[\\/]+$/, '')));
+        };
         if (G._watchDebounce) clearTimeout(G._watchDebounce);
-        G._watchDebounce = setTimeout(() => {
+        G._watchDebounce = setTimeout(async () => {
           const tab = getTab();
-          if (tab && tab.path) navigateTo(tab.path, false);
-          G._watchDebounce = null;
+          const refreshes = [];
+          if (tab?.path && isAffected(tab.path)) refreshes.push(navigateTo(tab.path, false));
+          if (G.dualOn && G.rp?.path && isAffected(G.rp.path)) refreshes.push(rpNavigateTo(G.rp.path, false));
+          try {
+            await Promise.allSettled(refreshes);
+          } finally {
+            G._watchDebounce = null;
+          }
         }, 300);
       }).then(unlisten => { G._watchTauriUnlisten = unlisten; }).catch(() => {});
     }

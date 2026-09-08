@@ -305,8 +305,8 @@ pub fn get_drives() -> Result<Vec<DriveInfo>, String> {
     Ok(drives)
 }
 
-pub fn delete_to_recycle_bin(path: &Path) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
+#[cfg(target_os = "windows")]
+fn delete_with_windows_shell(path: &Path, allow_undo: bool) -> Result<(), String> {
     {
         use std::os::windows::ffi::OsStrExt;
         let wide: Vec<u16> = path
@@ -322,21 +322,48 @@ pub fn delete_to_recycle_bin(path: &Path) -> Result<(), String> {
         let mut op = SHFILEOPSTRUCTW::default();
         op.wFunc = FO_DELETE;
         op.pFrom = windows::core::PCWSTR(wide.as_ptr());
-        op.fFlags = (FOF_ALLOWUNDO.0 | FOF_NOCONFIRMATION.0 | FOF_SILENT.0) as u16;
+        let mut flags = FOF_NOCONFIRMATION.0 | FOF_SILENT.0;
+        if allow_undo {
+            flags |= FOF_ALLOWUNDO.0;
+        }
+        op.fFlags = flags as u16;
         let result = unsafe { SHFileOperationW(&mut op) };
         if result != 0 {
             return Err(format!("SHFileOperation failed: {result}"));
         }
         if op.fAnyOperationsAborted.as_bool() {
-            return Err("Recycle Bin operation was cancelled".to_string());
+            return Err("Delete operation was cancelled".to_string());
         }
     }
+    Ok(())
+}
+
+pub fn delete_to_recycle_bin(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    delete_with_windows_shell(path, true)?;
+
     #[cfg(not(target_os = "windows"))]
     {
         if path.is_dir() {
             std::fs::remove_dir_all(path).map_err(|e| e.to_string())?;
         } else {
             std::fs::remove_file(path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+pub fn delete_permanently(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    delete_with_windows_shell(path, false)?;
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            std::fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+        } else {
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
         }
     }
     Ok(())

@@ -395,6 +395,7 @@ function initTabDragDrop(bar, isRight) {
     });
     tabEl.addEventListener("drop", e => {
       e.preventDefault();
+      e.stopPropagation();
       tabEl.classList.remove("drag-over");
       const fromId = parseInt(e.dataTransfer.getData("text/plain"));
       const toId = parseInt(tabEl.dataset.tabId);

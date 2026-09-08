@@ -1001,6 +1001,7 @@ const SHORTCUT_LABEL_KEYS = {
   "file.cut": "cmd.cut",
   "file.paste": "cmd.paste",
   "file.delete": "cmd.delete",
+  "file.deletePermanently": "cmd.deletePermanently",
   "file.rename": "cmd.rename",
   "file.newFolder": "cmd.newFolder",
   "file.newFile": "cmd.newFile",

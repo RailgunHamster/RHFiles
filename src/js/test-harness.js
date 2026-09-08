@@ -1267,6 +1267,43 @@
       }
     });
 
+    await test("[delete] Permanent Delete requires two confirmations", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      const originalConfirm = showConfirmDialog;
+      const originalCall = call;
+      let confirmCalls = 0;
+      let deleteCalls = 0;
+      try {
+        tab.entries = [
+          {name:'permanent.txt', path:'C:\\permanent.txt', extension:'txt', is_dir:false},
+        ];
+        tab.sel = new Set([0]);
+        tab.lastIdx = 0;
+        G.lastActivePane = 'left';
+        showConfirmDialog = async () => {
+          confirmCalls++;
+          return confirmCalls === 1;
+        };
+        call = async command => {
+          if (command === 'delete_files_permanently') deleteCalls++;
+          return {deleted:[], errors:[]};
+        };
+        await deleteSelectedPermanently(false);
+        assertEqual(confirmCalls, 2, "Permanent Delete did not request two confirmations");
+        assertEqual(deleteCalls, 0, "Cancelling the final confirmation still deleted files");
+      } finally {
+        showConfirmDialog = originalConfirm;
+        call = originalCall;
+        _deleteRequestActive = false;
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
+    });
+
     await test("[delete] Context-menu Delete does not bubble into a second dispatch", async () => {
       const tab = getTab();
       const savedEntries = tab.entries;
@@ -1322,6 +1359,79 @@
       assert($("#progress-bar").classList.contains("indeterminate"), "Progress bar is not indeterminate");
       assertEqual($("#progress-cancel").style.display, "none", "Non-cancellable action still shows Cancel");
       hideProgress();
+    });
+
+    await test("[dragdrop] File drag payload identifies its source window", async () => {
+      const savedWindowLabel = G.windowLabel;
+      const values = new Map();
+      const transfer = {
+        effectAllowed: 'none',
+        types: [],
+        setData(type, value) {
+          values.set(type, value);
+          if (!this.types.includes(type)) this.types.push(type);
+        },
+        getData(type) { return values.get(type) || ''; },
+      };
+      try {
+        G.windowLabel = 'drag-source-test';
+        setRhfilesFileDragData(transfer, ['C:\\one.txt', 'C:\\folder'], false);
+        const payload = readRhfilesFileDragData(transfer);
+        assert(payload, "RHFiles drag payload could not be read");
+        assertEqual(payload.sourceWindow, 'drag-source-test', "Drag payload lost the source window");
+        assertEqual(payload.sourcePane, 'left', "Drag payload lost the source pane");
+        assertEqual(payload.paths.length, 2, "Drag payload lost selected paths");
+        assertEqual(transfer.effectAllowed, 'copyMove', "Drag payload does not allow copy and move");
+      } finally {
+        G.windowLabel = savedWindowLabel;
+      }
+    });
+
+    await test("[dragdrop] Cross-window drop asks whether to copy or move", async () => {
+      const pending = showFileDropOperationDialog(['C:\\one.txt'], 'D:\\Destination');
+      const overlay = document.querySelector('.app-file-drop-overlay');
+      assert(overlay, "Copy-or-move dialog did not appear");
+      assertIncludes(overlay.textContent, t('btn.copy'), "Copy action is missing from the drop dialog");
+      assertIncludes(overlay.textContent, t('btn.move'), "Move action is missing from the drop dialog");
+      const moveButton = [...overlay.querySelectorAll('button')]
+        .find(button => button.textContent === t('btn.move'));
+      assert(moveButton, "Move button is missing from the drop dialog");
+      simulateClick(moveButton);
+      assertEqual(await pending, 'move', "Drop dialog returned the wrong operation");
+    });
+
+    await test("[dragdrop] Selected copy and move operations reach the correct backend commands", async () => {
+      const originalCall = call;
+      const originalShowProgress = showProgress;
+      const originalHideProgress = hideProgress;
+      const originalTrackCopy = trackCopy;
+      const originalTrackMove = trackMove;
+      const commands = [];
+      let copyUndoEntries = 0;
+      let moveUndoEntries = 0;
+      try {
+        call = async command => {
+          commands.push(command);
+          if (command === 'path_exists') return false;
+          return null;
+        };
+        showProgress = () => {};
+        hideProgress = () => {};
+        trackCopy = () => { copyUndoEntries++; };
+        trackMove = () => { moveUndoEntries++; };
+        await performDroppedFileOperation(['C:\\Source\\copy.txt'], 'D:\\Destination', [], 'copy');
+        await performDroppedFileOperation(['C:\\Source\\move.txt'], 'D:\\Destination', [], 'move');
+        assert(commands.includes('copy_with_progress'), "Copy choice did not call the copy backend");
+        assert(commands.includes('move_with_progress'), "Move choice did not call the move backend");
+        assertEqual(copyUndoEntries, 1, "Copy drop was not added to undo history");
+        assertEqual(moveUndoEntries, 1, "Move drop was not added to undo history");
+      } finally {
+        call = originalCall;
+        showProgress = originalShowProgress;
+        hideProgress = originalHideProgress;
+        trackCopy = originalTrackCopy;
+        trackMove = originalTrackMove;
+      }
     });
 
     await test("[ctxmenu] ZIP compression sends the backend sources argument", async () => {
@@ -1824,6 +1934,7 @@
       assert(DEFAULT_SHORTCUTS['file.copy'], "Missing file.copy shortcut");
       assert(DEFAULT_SHORTCUTS['file.copyPaths']?.includes('Ctrl+Shift+C'), "Missing copy-path shortcut");
       assert(DEFAULT_SHORTCUTS['file.paste'], "Missing file.paste shortcut");
+      assert(DEFAULT_SHORTCUTS['file.deletePermanently']?.includes('Shift+Delete'), "Missing Shift+Delete permanent-delete shortcut");
       assert(DEFAULT_SHORTCUTS['file.toggleFavorite']?.includes('Ctrl+D'), "Missing Ctrl+D favorite shortcut");
       assert(DEFAULT_SHORTCUTS['tab.new'], "Missing tab.new shortcut");
       assert(DEFAULT_SHORTCUTS['tab.next']?.includes('Ctrl+Tab'), "Missing Ctrl+Tab shortcut");
@@ -1889,6 +2000,10 @@
         key:'Delete', ctrlKey:true, shiftKey:false, altKey:false,
       });
       assertEqual(action, 'file.delete', "Ctrl+Delete did not fall back to the configured Delete action");
+      const permanentAction = findActionForKeyboardEvent(DEFAULT_SHORTCUTS, {
+        key:'Delete', ctrlKey:true, shiftKey:true, altKey:false,
+      });
+      assertEqual(permanentAction, 'file.deletePermanently', "Ctrl+Shift+Delete lost the permanent-delete action");
     });
 
     await test("[keyboard] Right Ctrl opens menu only for a short standalone tap", async () => {

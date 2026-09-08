@@ -27,6 +27,7 @@ const DEFAULT_SHORTCUTS = {
   "file.cut":            ["Ctrl+X"],
   "file.paste":          ["Ctrl+V"],
   "file.delete":         ["Delete"],
+  "file.deletePermanently":["Shift+Delete"],
   "file.rename":         ["F2"],
   "file.newFolder":      ["F7"],
   "file.newFile":        ["Ctrl+Shift+N"],
@@ -82,6 +83,7 @@ const ACTION_HANDLERS = {
   "file.cut":            async () => await cutSelected(G.lastActivePane === 'right'),
   "file.paste":          async () => await paste(G.lastActivePane === 'right'),
   "file.delete":         async () => await deleteSelected(G.lastActivePane === 'right'),
+  "file.deletePermanently": async () => await deleteSelectedPermanently(G.lastActivePane === 'right'),
   "file.rename":         async () => await renamePrompt(G.lastActivePane === 'right'),
   "file.newFolder":      async () => await newFolder(G.lastActivePane === 'right'),
   "file.newFile":        async () => showNewFileDialog(G.lastActivePane === 'right'),
@@ -389,9 +391,9 @@ function findActionForBinding(bindings, combo) {
 function findActionForKeyboardEvent(bindings, event) {
   let actionId = findActionForBinding(bindings, normalizeKey(event));
   // Ctrl is often still physically down immediately after Ctrl+click
-  // multi-selection. Delete should still invoke the configured Delete action.
+  // multi-selection. Preserve Shift so Shift+Delete still means permanent delete.
   if (!actionId && event.key === 'Delete' && event.ctrlKey && !event.altKey) {
-    actionId = findActionForBinding(bindings, 'Delete');
+    actionId = findActionForBinding(bindings, event.shiftKey ? 'Shift+Delete' : 'Delete');
   }
   return actionId;
 }
@@ -443,7 +445,7 @@ document.addEventListener("keydown", async e => {
     return;
   }
 
-  const anyDialogOpen = document.querySelector('.overlay[style*="display: flex"], .overlay[style*="display:flex"]');
+  const anyDialogOpen = document.querySelector('.app-confirm-overlay, .overlay[style*="display: flex"], .overlay[style*="display:flex"]');
   if (anyDialogOpen) return;
 
   if (e.key === "Control" && e.location === 2) {
@@ -605,6 +607,7 @@ function initCommands() {
     if (selEl) { const r = selEl.getBoundingClientRect(); showContextMenu(r.left + r.width / 2, r.top + r.height / 2, isRight); }
   }, keys:() => getShortcutBindings()["file.contextMenu"]?.[0] },
   { id:"file.delete", label: t('cmd.delete'), action: deleteSelected, keys:"Delete" },
+  { id:"file.deletePermanently", label: t('cmd.deletePermanently'), action: deleteSelectedPermanently, keys:"Shift+Delete" },
   { id:"file.selectAll", label: t('cmd.selectAll'), action: selectAll, keys:"Ctrl+A" },
   { id:"file.batchRename", label: t('cmd.batchRename'), action: openBatchRename },
   { id:"file.properties", label: t('cmd.properties'), action: () => showPropertiesDialog(getSelectedPaths()[0]?.path), keys:"Alt+Enter" },

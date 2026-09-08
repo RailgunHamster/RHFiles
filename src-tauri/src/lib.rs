@@ -119,7 +119,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             file_ops::list_dir, file_ops::get_drives, file_ops::parent_path,
-            file_ops::delete_file, file_ops::delete_files, file_ops::restore_recycled_files,
+            file_ops::delete_file, file_ops::delete_files, file_ops::delete_files_permanently, file_ops::restore_recycled_files,
             file_ops::rename_file, file_ops::new_folder,
             file_ops::copy_path, file_ops::move_path_cmd,
             file_ops::copy_path_exact, file_ops::move_path_exact, file_ops::move_paths_exact,

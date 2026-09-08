@@ -257,7 +257,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
     row.draggable = true;
     row.addEventListener("dragstart", e => {
       if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); renderFiles(tabOrPane, listId, null, null, isRight); }
-      e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
+      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight);
     });
 
     let tagsHtml = "";
@@ -366,7 +366,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.addEventListener("mouseleave", () => { if (!sel.has(i)) item.style.borderColor = "var(--border)"; });
     item.addEventListener("dragstart", e => {
       if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
-      e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
+      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight);
     });
     item.draggable = true;
 
@@ -409,6 +409,7 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
         const rootIndex = colIdx === 0 ? entries.findIndex(candidate => candidate.path === entry.path) : -1;
         item.className = "column-item" + (rootIndex >= 0 && sel.has(rootIndex) ? " selected" : "") + (rootIndex >= 0 ? typeSearchRowClass(rootIndex, isRight) : '');
         item.dataset.path = entry.path;
+        item.dataset.isDir = entry.is_dir ? 'true' : 'false';
         if (rootIndex >= 0) item.dataset.index = rootIndex;
         item.innerHTML = `<span class="column-item-icon">${fileIcon(entry)}</span>
           <span class="column-item-name" title="${esc(entry.name)}">${rootIndex >= 0 ? fileNameHtmlForView(entry, rootIndex, isRight) : esc(entry.name)}</span>
@@ -454,6 +455,19 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
             showPathContextMenu(event.clientX, event.clientY, entry.path, entry.is_dir);
           }
         });
+        item.draggable = true;
+        item.addEventListener('dragstart', event => {
+          if (rootIndex >= 0) {
+            if (!sel.has(rootIndex)) {
+              sel.clear();
+              sel.add(rootIndex);
+              tabOrPane.lastIdx = rootIndex;
+            }
+            setRhfilesFileDragData(event.dataTransfer, [...sel].map(index => entries[index]?.path).filter(Boolean), isRight);
+          } else {
+            setRhfilesFileDragData(event.dataTransfer, [entry.path], isRight);
+          }
+        });
         col.appendChild(item);
       });
     } catch (e) {
@@ -485,7 +499,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
     item.addEventListener("dragstart", e => {
       if (!sel.has(i)) { sel.clear(); sel.add(i); renderFiles(tabOrPane, listId, null, null, isRight); }
-      e.dataTransfer.setData("text/plain", JSON.stringify([...sel].map(idx => entries[idx].path)));
+      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight);
     });
     item.draggable = true;
 

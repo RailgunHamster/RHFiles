@@ -91,6 +91,23 @@ pub fn delete_files(paths: Vec<String>) -> DeleteFilesOutcome {
     DeleteFilesOutcome { deleted, errors }
 }
 
+#[tauri::command(async)]
+pub fn delete_files_permanently(paths: Vec<String>) -> DeleteFilesOutcome {
+    let mut deleted = Vec::new();
+    let mut errors = Vec::new();
+    for path in &paths {
+        let target = PathBuf::from(path);
+        let result = std::fs::symlink_metadata(&target)
+            .map_err(|error| format!("Cannot permanently delete {path}: {error}"))
+            .and_then(|_| enumerator::delete_permanently(&target));
+        match result {
+            Ok(()) => deleted.push(path.clone()),
+            Err(error) => errors.push(format!("{path}: {error}")),
+        }
+    }
+    DeleteFilesOutcome { deleted, errors }
+}
+
 #[cfg(target_os = "windows")]
 fn recycle_compare_path(path: &str) -> String {
     let normalized = path.replace('/', "\\");
@@ -863,5 +880,33 @@ mod tests {
         .unwrap();
         assert_eq!(std::fs::read(&source).unwrap(), b"source");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn permanent_delete_removes_files_and_folders_without_recycle_tracking() {
+        let root = std::env::temp_dir().join(format!(
+            "rhfiles-permanent-delete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let file = root.join("file.txt");
+        let folder = root.join("folder");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(&file, b"permanent").unwrap();
+        std::fs::write(folder.join("nested.txt"), b"permanent").unwrap();
+
+        let outcome = delete_files_permanently(vec![
+            file.to_string_lossy().into_owned(),
+            folder.to_string_lossy().into_owned(),
+        ]);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(outcome.deleted.len(), 2);
+        assert!(!file.exists());
+        assert!(!folder.exists());
+
+        std::fs::remove_dir(root).unwrap();
     }
 }

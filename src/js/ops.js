@@ -179,6 +179,49 @@ async function deleteSelected(isRight) {
   }
 }
 
+async function deleteSelectedPermanently(isRight) {
+  isRight = resolveRightPane(isRight);
+  const sel = getSelectedPaths(isRight);
+  if (!sel.length || _deleteRequestActive) return;
+  _deleteRequestActive = true;
+  const message = sel.length === 1
+    ? t('confirm.permanentDeleteItem', {name: sel[0].name})
+    : t('confirm.permanentDeleteItems', {count: sel.length});
+  try {
+    const firstConfirmation = await showConfirmDialog({
+      title: t('confirm.permanentDeleteTitle'),
+      message,
+      detail: t('confirm.permanentDeleteWarning'),
+      confirmLabel: t('btn.continue'),
+    });
+    if (!firstConfirmation) return;
+
+    const finalConfirmation = await showConfirmDialog({
+      title: t('confirm.permanentDeleteFinalTitle'),
+      message,
+      detail: t('confirm.permanentDeleteFinalWarning'),
+      confirmLabel: t('btn.deletePermanently'),
+    });
+    if (!finalConfirmation) return;
+
+    showProgress(t('status.deletingPermanently'), { indeterminate: true, cancellable: false });
+    try {
+      const deletedPaths = sel.map(file => file.path);
+      const outcome = await call('delete_files_permanently', { paths: deletedPaths });
+      await refresh();
+      if (outcome?.errors?.length) {
+        alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
+      }
+    } catch (error) {
+      alert(t('alert.deleteFailed', {error}));
+    } finally {
+      hideProgress();
+    }
+  } finally {
+    _deleteRequestActive = false;
+  }
+}
+
 function startInlineRename(rowEl, file, isRight, onCancel) {
   const nameEl = rowEl.querySelector(".row-fname");
   if (!nameEl) return;
@@ -772,6 +815,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.rename'), shortcut:"F2", action: () => renamePrompt(isRight), disabled: !singleSelection },
     { label: t('ctx.batchRename'), action: () => openBatchRename(isRight), hidden: sel.length < 2 },
     { label: t('ctx.delete'), shortcut:"Del", action: () => deleteSelected(isRight), disabled: !hasSelection },
+    { label: t('ctx.deletePermanently'), shortcut:"Shift+Del", action: () => deleteSelectedPermanently(isRight), disabled: !hasSelection },
     { label: t('ctx.addTag'), action: () => openTagDialog(isRight), disabled: !hasSelection },
     { label: "-", action: null },
     { label: sel.length > 1 ? t('ctx.copyPaths', {count: sel.length}) : t('ctx.copyPath'), shortcut:"Ctrl+Shift+C", action: () => copySelectedPaths(isRight), disabled: !hasSelection },
@@ -848,7 +892,11 @@ function showContextMenu(x, y, isRight) {
       e.preventDefault();
       e.stopPropagation();
       const s2 = getSelectedPaths(ctxMeta.isRight);
-      if (s2.length) { removeContextMenu(); deleteSelected(ctxMeta.isRight); }
+      if (s2.length) {
+        removeContextMenu();
+        if (e.shiftKey) deleteSelectedPermanently(ctxMeta.isRight);
+        else deleteSelected(ctxMeta.isRight);
+      }
       return;
     }
     if (e.key === "F2") {
@@ -1079,63 +1127,184 @@ document.addEventListener("contextmenu", e => {
 });
 
 // --- drag & drop ---
-document.addEventListener("dragover", e => e.preventDefault());
-document.addEventListener("drop", async e => {
-  e.preventDefault();
-  try {
-    const data = e.dataTransfer.getData("text/plain");
-    if (data) {
-      const paths = JSON.parse(data);
-      const dropTarget = e.target.closest('.file-list');
-      const isRightDrop = dropTarget && dropTarget.id === 'right-file-list';
-      const dest = isRightDrop ? G.rp.path : getTab().path;
-      const destinationPane = isRightDrop ? G.rp : getTab();
-      const existingNames = new Set((destinationPane.entries || []).map(entry => fileNameKey(entry.name)));
-      let applyAllAction = null;
-      activatePane(isRightDrop ? 'right' : 'left');
-      for (const src of paths) {
-        const sourceName = String(src).split(/[\\/]/).pop();
-        const originalTarget = joinFolderPath(dest, sourceName);
-        if (windowsPathKey(src) === windowsPathKey(originalTarget)) continue;
-
-        const conflict = existingNames.has(fileNameKey(sourceName)) || await call('path_exists', { path:originalTarget });
-        let action = 'move';
-        if (conflict) {
-          if (applyAllAction) {
-            action = applyAllAction;
-          } else {
-            action = await new Promise(resolve => {
-              showConflictDialog(sourceName, sourceName, src, originalTarget, (choice, applyAll) => {
-                if (applyAll) applyAllAction = choice;
-                resolve(choice);
-              });
-            });
-          }
-        }
-        if (action === 'cancel') break;
-        if (action === 'skip') continue;
-
-        const targetName = action === 'rename'
-          ? generateUniqueName(dest, sourceName, existingNames)
-          : sourceName;
-        const targetPath = joinFolderPath(dest, targetName);
-        const overwrites = conflict && action === 'replace';
-        const keepsBoth = action === 'rename';
-        showProgress(t('status.moving'), { indeterminate: keepsBoth });
-        if (keepsBoth) await call("move_path_exact", { src, dest: targetPath });
-        else await call("move_with_progress", { src, dest, overwrite:overwrites });
-        hideProgress();
-        if (!overwrites) trackMove(src, targetPath);
-        existingNames.add(fileNameKey(targetName));
+function showFileDropOperationDialog(paths, destination) {
+  return new Promise(resolve => {
+    document.querySelector('.app-file-drop-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay app-file-drop-overlay app-confirm-overlay';
+    overlay.tabIndex = -1;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'dialog-backdrop';
+    const box = document.createElement('div');
+    box.className = 'dialog-box app-confirm-box';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    const body = document.createElement('div');
+    body.className = 'app-confirm-body';
+    const icon = document.createElement('div');
+    icon.className = 'app-confirm-icon transfer';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 8h13m0 0-3-3m3 3-3 3M20 16H7m0 0 3-3m-3 3 3 3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const copy = document.createElement('div');
+    copy.className = 'app-confirm-copy';
+    const title = document.createElement('div');
+    title.className = 'app-confirm-title';
+    title.textContent = t('dragDrop.title');
+    const message = document.createElement('div');
+    message.className = 'app-confirm-message';
+    message.textContent = paths.length === 1
+      ? t('dragDrop.item', {name: String(paths[0]).split(/[\\/]/).pop()})
+      : t('dragDrop.items', {count: paths.length});
+    const detail = document.createElement('div');
+    detail.className = 'app-confirm-detail';
+    detail.textContent = t('dragDrop.destination', {path: displayPath(destination)});
+    copy.append(title, message, detail);
+    body.append(icon, copy);
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+    const cancel = document.createElement('button');
+    cancel.className = 'dialog-btn';
+    cancel.textContent = t('btn.cancel');
+    const copyButton = document.createElement('button');
+    copyButton.className = 'dialog-btn';
+    copyButton.textContent = t('btn.copy');
+    const moveButton = document.createElement('button');
+    moveButton.className = 'dialog-btn primary';
+    moveButton.textContent = t('btn.move');
+    actions.append(cancel, copyButton, moveButton);
+    box.append(body, actions);
+    overlay.append(backdrop, box);
+    let settled = false;
+    const finish = choice => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      resolve(choice);
+    };
+    cancel.addEventListener('click', () => finish('cancel'));
+    copyButton.addEventListener('click', () => finish('copy'));
+    moveButton.addEventListener('click', () => finish('move'));
+    backdrop.addEventListener('click', () => finish('cancel'));
+    overlay.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish('cancel');
       }
-      // A cross-pane move changes both directories. Refresh both sides so the
-      // source does not retain a stale item and the destination appears at once.
-      await navigateTo(getTab().path, false);
-      if (G.dualOn) await rpNavigateTo(G.rp.path, false);
+    });
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => { overlay.focus(); cancel.focus(); });
+  });
+}
+
+async function broadcastFileDropChanges(paths) {
+  const emit = window.__TAURI_INTERNALS__?.event?.emit || window.__TAURI__?.event?.emit;
+  if (!emit) return;
+  await emit('fs-change', {
+    paths: [...new Set(paths)],
+    originWindow: currentFileDragWindowId(),
+  });
+}
+
+async function performDroppedFileOperation(paths, destination, destinationEntries, operation) {
+  const existingNames = new Set((destinationEntries || []).map(entry => fileNameKey(entry.name)));
+  const changedFolders = [destination];
+  let applyAllAction = null;
+  let changed = false;
+
+  for (const src of paths) {
+    const sourceName = String(src).split(/[\\/]/).pop();
+    const originalTarget = joinFolderPath(destination, sourceName);
+    const sameTarget = windowsPathKey(src) === windowsPathKey(originalTarget);
+    if (operation === 'move' && sameTarget) continue;
+
+    const conflict = sameTarget
+      || existingNames.has(fileNameKey(sourceName))
+      || await call('path_exists', {path: originalTarget});
+    let conflictAction = sameTarget ? 'rename' : 'move';
+    if (conflict && !sameTarget) {
+      if (applyAllAction) {
+        conflictAction = applyAllAction;
+      } else {
+        conflictAction = await new Promise(resolve => {
+          showConflictDialog(sourceName, sourceName, src, originalTarget, (choice, applyAll) => {
+            if (applyAll) applyAllAction = choice;
+            resolve(choice);
+          });
+        });
+      }
     }
-  } catch (ex) {
+    if (conflictAction === 'cancel') break;
+    if (conflictAction === 'skip') continue;
+
+    const targetName = conflictAction === 'rename'
+      ? generateUniqueName(destination, sourceName, existingNames)
+      : sourceName;
+    const targetPath = joinFolderPath(destination, targetName);
+    const overwrites = conflict && conflictAction === 'replace';
+    const keepsBoth = conflictAction === 'rename';
+    showProgress(operation === 'copy' ? t('status.copying') : t('status.moving'), {indeterminate: keepsBoth});
+    try {
+      if (operation === 'copy') {
+        if (keepsBoth) await call('copy_path_exact', {src, dest: targetPath});
+        else await call('copy_with_progress', {src, dest: destination, overwrite: overwrites});
+        if (!overwrites) trackCopy(src, targetPath);
+      } else {
+        if (keepsBoth) await call('move_path_exact', {src, dest: targetPath});
+        else await call('move_with_progress', {src, dest: destination, overwrite: overwrites});
+        if (!overwrites) trackMove(src, targetPath);
+        changedFolders.push(parentFolderPath(src));
+      }
+      changed = true;
+      existingNames.add(fileNameKey(targetName));
+    } finally {
+      hideProgress();
+    }
+  }
+  return changed ? changedFolders : [];
+}
+
+document.addEventListener('dragover', event => {
+  const types = Array.from(event.dataTransfer?.types || []);
+  if (!types.includes(RHFILES_FILE_DRAG_MIME) && !types.includes('text/plain')) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('drop', async event => {
+  const payload = readRhfilesFileDragData(event.dataTransfer);
+  if (!payload) return;
+  event.preventDefault();
+  const dropTarget = event.target.closest('.file-list');
+  if (!dropTarget) return;
+  const isRightDrop = dropTarget.id === 'right-file-list';
+  const destinationPane = isRightDrop ? G.rp : getTab();
+  const pathRow = event.target.closest('[data-path]');
+  const folderRow = pathRow && (pathRow.classList.contains('dir') || pathRow.dataset.isDir === 'true')
+    ? pathRow
+    : null;
+  const destination = folderRow?.dataset.path || destinationPane.path;
+  const destinationEntries = folderRow ? [] : destinationPane.entries;
+  activatePane(isRightDrop ? 'right' : 'left');
+
+  let operation = 'move';
+  if (payload.sourceWindow && payload.sourceWindow !== currentFileDragWindowId()) {
+    operation = await showFileDropOperationDialog(payload.paths, destination);
+  }
+  if (operation === 'cancel') return;
+
+  try {
+    const changedFolders = await performDroppedFileOperation(
+      payload.paths,
+      destination,
+      destinationEntries,
+      operation,
+    );
+    if (!changedFolders.length) return;
+    await navigateTo(getTab().path, false);
+    if (G.dualOn) await rpNavigateTo(G.rp.path, false);
+    await broadcastFileDropChanges(changedFolders);
+  } catch (error) {
     hideProgress();
-    alert(t('alert.moveFailed', { error: ex }));
+    alert(t(operation === 'copy' ? 'alert.copyFailed' : 'alert.moveFailed', {error}));
   }
 });
 
