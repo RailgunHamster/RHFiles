@@ -48,16 +48,35 @@ function loadFolderLayout(path) {
   } catch (e) { return null; }
 }
 
+function tabPinIndicator() {
+  return `<span class="tab-pin" title="${esc(t('tab.pinned'))}" aria-hidden="true">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M5.2 1.8h5.6l-.72 3.06 1.72 1.88v1.18H8.7v4.8L8 14l-.7-1.28v-4.8H4.2V6.74l1.72-1.88L5.2 1.8Z" fill="currentColor"/></svg>
+  </span>`;
+}
+
+function renderTabMarkup(tab, isRight, index, tabs) {
+  const activeId = isRight ? G.activeRpTab : G.activeTab;
+  const pane = isRight ? 'right' : 'left';
+  const pinned = tab.pinned === true;
+  const boundary = pinned && tabs[index + 1]?.pinned !== true;
+  const closeButton = pinned ? '' : `<button class="tab-close" onclick="event.stopPropagation();closeTab(${tab.id},${isRight})">&times;</button>`;
+  return `<div class="tab ${tab.id===activeId?'active':''} ${pinned?'pinned':''} ${boundary?'pinned-boundary':''}" data-tab-id="${tab.id}" data-pane="${pane}" data-pinned="${pinned}" onclick="${isRight?'switchRightTab':'switchTab'}(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},${isRight})" title="${esc(tabTooltip(tab.path))}" draggable="true">
+    ${pinned ? tabPinIndicator() : ''}<span class="tab-label">${esc(tabName(tab.path))}</span>${closeButton}
+  </div>`;
+}
+
+function normalizePinnedTabOrder(tabs) {
+  if (!Array.isArray(tabs) || tabs.length < 2) return tabs;
+  const ordered = [...tabs.filter(tab => tab.pinned === true), ...tabs.filter(tab => tab.pinned !== true)];
+  tabs.splice(0, tabs.length, ...ordered);
+  return tabs;
+}
+
 function renderTabs() {
   const bar = document.getElementById("tab-bar");
   if (!bar) return;
   const paneBadge = G.dualOn ? `<span class="tab-pane-index" title="${esc(t('pane.left'))}">1</span>` : '';
-  bar.innerHTML = paneBadge + G.tabs.map(tab =>
-    `<div class="tab ${tab.id===G.activeTab?'active':''}" data-tab-id="${tab.id}" data-pane="left" onclick="switchTab(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},false)" title="${esc(tabTooltip(tab.path))}" draggable="true">
-      <span class="tab-label">${esc(tabName(tab.path))}</span>
-      <button class="tab-close" onclick="event.stopPropagation();closeTab(${tab.id},false)">&times;</button>
-    </div>`
-  ).join("") + `<button class="tab-new" onclick="addTab(undefined,false)" title="${t('nav.newTab')}">
+  bar.innerHTML = paneBadge + G.tabs.map((tab, index) => renderTabMarkup(tab, false, index, G.tabs)).join("") + `<button class="tab-new" onclick="addTab(undefined,false)" title="${t('nav.newTab')}">
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
   </button>`;
   initTabDragDrop(bar, false);
@@ -69,12 +88,7 @@ function renderTabs() {
 function renderRightTabs() {
   const bar = document.getElementById('right-tab-bar');
   if (!bar) return;
-  bar.innerHTML = `<span class="tab-pane-index" title="${esc(t('pane.right'))}">2</span>` + G.rpTabs.map(tab =>
-    `<div class="tab ${tab.id===G.activeRpTab?'active':''}" data-tab-id="${tab.id}" data-pane="right" onclick="switchRightTab(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},true)" title="${esc(tabTooltip(tab.path))}" draggable="true">
-      <span class="tab-label">${esc(tabName(tab.path))}</span>
-      <button class="tab-close" onclick="event.stopPropagation();closeTab(${tab.id},true)">&times;</button>
-    </div>`
-  ).join('') + `<button class="tab-new" onclick="addTab(undefined,true)" title="${t('nav.newTab')}">
+  bar.innerHTML = `<span class="tab-pane-index" title="${esc(t('pane.right'))}">2</span>` + G.rpTabs.map((tab, index) => renderTabMarkup(tab, true, index, G.rpTabs)).join('') + `<button class="tab-new" onclick="addTab(undefined,true)" title="${t('nav.newTab')}">
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
   </button>`;
   initTabDragDrop(bar, true);
@@ -147,7 +161,7 @@ function addTab(path, isRight) {
   if (isRight === undefined) isRight = G.dualOn && G.lastActivePane === 'right';
   if (isRight) return addRightTab(path);
   path = path || "C:\\";
-  const t = { id: G.nextTabId++, path, history: [path], historyIdx: 0, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true };
+  const t = { id: G.nextTabId++, path, history: [path], historyIdx: 0, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false };
   G.tabs.push(t);
   G.activeTab = t.id;
   G.sortField = "name";
@@ -183,6 +197,7 @@ async function duplicateTab(tabId, isRight) {
     lastIdx: source.lastIdx ?? -1,
     sortF: source.sortF || 'name',
     sortAsc: source.sortAsc !== false,
+    pinned: source.pinned === true,
     _savedScroll: source._savedScroll || 0,
   };
   if (isRight) duplicate.histIdx = Math.max(0, Math.min(source.histIdx ?? 0, duplicate.history.length - 1));
@@ -226,6 +241,19 @@ async function duplicateTab(tabId, isRight) {
   saveTabState();
 }
 
+function toggleTabPinned(tabId, isRight) {
+  const tabs = isRight ? G.rpTabs : G.tabs;
+  const index = tabs.findIndex(tab => tab.id === tabId);
+  if (index < 0) return;
+  const [tab] = tabs.splice(index, 1);
+  tab.pinned = tab.pinned !== true;
+  const pinnedCount = tabs.filter(item => item.pinned === true).length;
+  tabs.splice(pinnedCount, 0, tab);
+  if (isRight) renderRightTabs();
+  else renderTabs();
+  saveTabState();
+}
+
 function closeTab(id, isRight) {
   if (isRight) return closeRightTab(id);
   if (G.tabs.length <= 1) return;
@@ -233,6 +261,7 @@ function closeTab(id, isRight) {
   _navigationToken++;
   saveCurrentTabState();
   const idx = G.tabs.findIndex(t => t.id === id);
+  if (idx < 0) return;
   G.tabs.splice(idx, 1);
   if (G.activeTab === id) {
     G.activeTab = G.tabs[Math.min(idx, G.tabs.length-1)].id;
@@ -250,7 +279,7 @@ function closeTab(id, isRight) {
 
 function addRightTab(path) {
   path = path || G.rp?.path || getTab()?.path || 'C:\\';
-  const tab = { id:G.nextRpTabId++, path, history:[path], histIdx:0, entries:[], sel:new Set(), lastIdx:-1, sortF:'name', sortAsc:true };
+  const tab = { id:G.nextRpTabId++, path, history:[path], histIdx:0, entries:[], sel:new Set(), lastIdx:-1, sortF:'name', sortAsc:true, pinned:false };
   G.rpTabs.push(tab);
   G.activeRpTab = tab.id;
   G.rp = tab;
@@ -299,11 +328,23 @@ function closeRightTab(id) {
   saveTabState();
 }
 
+function tabsKeptAfterCloseOthers(tabs, id) {
+  return tabs.filter(tab => tab.id === id || tab.pinned === true);
+}
+
+function closableTabIdsToRight(tabs, id) {
+  const index = tabs.findIndex(tab => tab.id === id);
+  if (index < 0) return new Set();
+  return new Set(tabs.slice(index + 1).filter(tab => tab.pinned !== true).map(tab => tab.id));
+}
+
 function closeOtherTabs(id, isRight) {
   const target = isRight ? getRightTab(id) : getTab(id);
   if (!target) return;
+  const sourceTabs = isRight ? G.rpTabs : G.tabs;
+  const keptTabs = tabsKeptAfterCloseOthers(sourceTabs, id);
   if (isRight) {
-    G.rpTabs = [target];
+    G.rpTabs = keptTabs;
     G.activeRpTab = id;
     G.rp = target;
     renderRightTabs();
@@ -311,7 +352,7 @@ function closeOtherTabs(id, isRight) {
     saveTabState();
     return;
   }
-  G.tabs = [target];
+  G.tabs = keptTabs;
   if (G.activeTab !== id) {
     G.activeTab = id;
     G.sortField = target.sortF;
@@ -328,9 +369,11 @@ function closeTabsToRight(id, isRight) {
   const activeId = isRight ? G.activeRpTab : G.activeTab;
   const index = tabs.findIndex(tab => tab.id === id);
   if (index < 0 || index === tabs.length - 1) return;
-  const removedIds = new Set(tabs.slice(index + 1).map(tab => tab.id));
-  if (isRight) G.rpTabs = tabs.slice(0, index + 1);
-  else G.tabs = tabs.slice(0, index + 1);
+  const removedIds = closableTabIdsToRight(tabs, id);
+  if (!removedIds.size) return;
+  const keptTabs = tabs.filter(tab => !removedIds.has(tab.id));
+  if (isRight) G.rpTabs = keptTabs;
+  else G.tabs = keptTabs;
   if (removedIds.has(activeId)) {
     if (isRight) {
       G.activeRpTab = id;
@@ -459,6 +502,7 @@ function reorderTabsByDrop(tabs, fromId, toId, afterTarget) {
   const fromIndex = tabs.findIndex(tab => tab.id === fromId);
   const targetIndex = tabs.findIndex(tab => tab.id === toId);
   if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) return false;
+  if ((tabs[fromIndex].pinned === true) !== (tabs[targetIndex].pinned === true)) return false;
   let insertionIndex = targetIndex + (afterTarget ? 1 : 0);
   const [moved] = tabs.splice(fromIndex, 1);
   if (fromIndex < insertionIndex) insertionIndex--;
@@ -526,6 +570,14 @@ function initTabDragDrop(bar, isRight) {
         return;
       }
       if (!isRhfilesTabDrag(e.dataTransfer) || _dragTabPane !== (isRight ? 'right' : 'left')) return;
+      const tabs = isRight ? G.rpTabs : G.tabs;
+      const dragged = tabs.find(tab => tab.id === _dragTabId);
+      const target = tabs.find(tab => tab.id === parseInt(tabEl.dataset.tabId));
+      if (!dragged || !target || (dragged.pinned === true) !== (target.pinned === true)) {
+        clearTabReorderIndicators(bar);
+        e.dataTransfer.dropEffect = 'none';
+        return;
+      }
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       clearTabReorderIndicators(bar);

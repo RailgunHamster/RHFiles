@@ -119,6 +119,9 @@ Object.assign(_builtinEn, {
   'settings.removeShortcut': 'Remove last key binding',
   'search.globalDisabledTitle': 'Global search is disabled in Settings',
   'tab.close': 'Close tab',
+  'tab.pin': 'Pin tab',
+  'tab.unpin': 'Unpin tab',
+  'tab.pinned': 'Pinned tab',
   'tab.duplicate': 'Duplicate tab',
   'tab.closeOthers': 'Close other tabs',
   'tab.closeRight': 'Close tabs to the right',
@@ -246,7 +249,7 @@ function getAvailableLanguages() {
 // --- state ---
 let G = {};
 window.G = G;
-G.tabs = [{ id: 0, path: "C:\\", history: [], historyIdx: -1, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true }];
+G.tabs = [{ id: 0, path: "C:\\", history: [], historyIdx: -1, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false }];
 G.activeTab = 0;
 G.nextTabId = 1;
 G.sortField = "name";
@@ -279,7 +282,7 @@ G.inspectorTab = 'preview';
 G._typeSearch = { str: '', lastQuery: '', visualQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
 
 // --- right pane state ---
-G.rp = { id: 100000, path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, history: ["C:\\"], histIdx: 0 };
+G.rp = { id: 100000, path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, history: ["C:\\"], histIdx: 0 };
 G.rpTabs = [G.rp];
 G.activeRpTab = G.rp.id;
 G.nextRpTabId = 100001;
@@ -661,6 +664,7 @@ function saveTabState() {
         scrollTop: listEl && t.id === G.activeTab ? listEl.scrollTop : (t._savedState?.scrollTop || 0),
         sortF: t.sortF,
         sortAsc: t.sortAsc,
+        pinned: t.pinned === true,
       })),
       activeRpTab: G.activeRpTab,
       rightTabs: (G.rpTabs || []).map(t => ({
@@ -668,6 +672,7 @@ function saveTabState() {
         path: t.path,
         sortF: t.sortF,
         sortAsc: t.sortAsc,
+        pinned: t.pinned === true,
       })),
     };
     localStorage.setItem('rhfiles-tabs', JSON.stringify(state));

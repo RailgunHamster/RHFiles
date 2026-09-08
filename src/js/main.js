@@ -48,9 +48,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       history: [migrateLegacyKnownFolderPath(st.path || startPath)], historyIdx: 0,
       entries: [], sel: new Set(), lastIdx: -1,
       sortF: st.sortF || "name", sortAsc: st.sortAsc !== undefined ? st.sortAsc : true,
+      pinned: st.pinned === true,
       _restoredSelPaths: st.selPaths || [],
       _restoredScrollTop: st.scrollTop || 0,
     }));
+    normalizePinnedTabOrder(G.tabs);
     G.activeTab = saved.activeTab || G.tabs[0].id;
     G.nextTabId = Math.max(...G.tabs.map(t => t.id)) + 1;
     if (saved.rightTabs && saved.rightTabs.length > 0) {
@@ -60,7 +62,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         history: [migrateLegacyKnownFolderPath(st.path || startPath)], histIdx: 0,
         entries: [], sel: new Set(), lastIdx: -1,
         sortF: st.sortF || 'name', sortAsc: st.sortAsc !== false,
+        pinned: st.pinned === true,
       }));
+      normalizePinnedTabOrder(G.rpTabs);
       G.activeRpTab = saved.activeRpTab && G.rpTabs.some(tab => tab.id === saved.activeRpTab)
         ? saved.activeRpTab
         : G.rpTabs[0].id;
@@ -255,6 +259,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           scrollTop: listEl && t.id === G.activeTab ? listEl.scrollTop : (t._savedState?.scrollTop || 0),
           sortF: t.sortF,
           sortAsc: t.sortAsc,
+          pinned: t.pinned === true,
         })),
         activeRpTab: G.activeRpTab,
         rightTabs: (G.rpTabs || []).map(t => ({
@@ -262,6 +267,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           path: t.path,
           sortF: t.sortF,
           sortAsc: t.sortAsc,
+          pinned: t.pinned === true,
         })),
       };
       call("save_current_window_geometry", {

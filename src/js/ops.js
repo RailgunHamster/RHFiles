@@ -884,6 +884,33 @@ function flashAt(x, y) {
   setTimeout(() => d.remove(), 450);
 }
 
+function buildProgramOpenMenu(targetPath, options) {
+  const opts = options || {};
+  const items = [
+    { label: "VS Code", action: () => openWithProgramFromMenu(targetPath, "vscode", "VS Code") },
+    { label: "Visual Studio", action: () => openWithProgramFromMenu(targetPath, "visual_studio", "Visual Studio") },
+    { label: "-" },
+    { label: "CMD", action: () => openWithProgramFromMenu(targetPath, "cmd", "CMD") },
+    { label: "PowerShell", action: () => openWithProgramFromMenu(targetPath, "powershell", "PowerShell") },
+    { label: "Git Bash", action: () => openWithProgramFromMenu(targetPath, "git_bash", "Git Bash") },
+  ];
+  if (opts.isMedia) {
+    items.push({ label: "VLC", action: () => openWithProgramFromMenu(targetPath, "vlc", "VLC") });
+    items.push({ label: "PotPlayer", action: () => openWithProgramFromMenu(targetPath, "potplayer", "PotPlayer") });
+  }
+  if (opts.isDirectory) {
+    items.push({ label: t('ctx.playFolderWithVlc'), action: () => openWithProgramFromMenu(targetPath, "vlc_folder", "VLC") });
+  }
+  if (opts.isMedia || opts.isDirectory) items.push({ label: "-" });
+  if (opts.includeSystemDialog !== false) {
+    items.push({ label: t('ctx.openWithDialog'), action: () => runContextCommand("show_open_with_dialog", { path: targetPath }, t('ctx.openWithDialog')) });
+  }
+  if (opts.includeNewWindow) {
+    items.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initial_path: targetPath }) });
+  }
+  return items;
+}
+
 function showContextMenu(x, y, isRight) {
   removeContextMenu();
   const sel = getSelectedPaths(isRight);
@@ -907,20 +934,11 @@ function showContextMenu(x, y, isRight) {
   menu.className = "context-menu";
   menu.style.cssText = `left:${x}px;top:${y}px;z-index:9999;`;
 
-  const openWithSubmenu = [
-    { label: "VS Code", action: () => openWithProgramFromMenu(openTarget, "vscode", "VS Code") },
-    { label: "Visual Studio", action: () => openWithProgramFromMenu(openTarget, "visual_studio", "Visual Studio") },
-    { label: "-" },
-    { label: "CMD", action: () => openWithProgramFromMenu(openTarget, "cmd", "CMD") },
-    { label: "PowerShell", action: () => openWithProgramFromMenu(openTarget, "powershell", "PowerShell") },
-    { label: "Git Bash", action: () => openWithProgramFromMenu(openTarget, "git_bash", "Git Bash") },
-  ];
-  if (isMedia) openWithSubmenu.push({ label: "VLC", action: () => openWithProgramFromMenu(sel[0].path, "vlc", "VLC") });
-  if (isMedia) openWithSubmenu.push({ label: "PotPlayer", action: () => openWithProgramFromMenu(sel[0].path, "potplayer", "PotPlayer") });
-  if (isDir) openWithSubmenu.push({ label: t('ctx.playFolderWithVlc'), action: () => openWithProgramFromMenu(sel[0].path, "vlc_folder", "VLC") });
-  if (isMedia || isDir) openWithSubmenu.push({ label: "-" });
-  openWithSubmenu.push({ label: t('ctx.openWithDialog'), action: () => runContextCommand("show_open_with_dialog", { path: openTarget }, t('ctx.openWithDialog')) });
-  if (isDir) openWithSubmenu.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initial_path: sel[0].path }) });
+  const openWithSubmenu = buildProgramOpenMenu(openTarget, {
+    isDirectory: isDir,
+    isMedia,
+    includeNewWindow: isDir,
+  });
 
   const items = [
     { label: t('ctx.open'), shortcut:"Enter", action: () => { if (singleSelection) { if (sel[0].is_dir) { if (isRight) rpNavigateTo(sel[0].path); else navigateTo(sel[0].path); } else openFileHandler(sel[0].path); } }, disabled: !singleSelection },
@@ -1089,12 +1107,15 @@ function showTabContextMenu(x, y, tabId, isRight) {
   if (!tab) return;
   const index = tabs.findIndex(item => item.id === tabId);
   const folderPath = tab.path;
+  const hasClosableOthers = tabsKeptAfterCloseOthers(tabs, tabId).length < tabs.length;
+  const hasClosableRight = closableTabIdsToRight(tabs, tabId).size > 0;
   showMenuAt(x, y, [
+    { label: t(tab.pinned ? 'tab.unpin' : 'tab.pin'), action: () => toggleTabPinned(tabId, isRight) },
     { label: t('tab.duplicate'), action: () => duplicateTab(tabId, isRight) },
     { label: '-' },
     { label: t('tab.close'), shortcut: 'Ctrl+W', action: () => closeTab(tabId, isRight), disabled: tabs.length <= 1 },
-    { label: t('tab.closeOthers'), action: () => closeOtherTabs(tabId, isRight), disabled: tabs.length <= 1 },
-    { label: t('tab.closeRight'), action: () => closeTabsToRight(tabId, isRight), disabled: index < 0 || index === tabs.length - 1 },
+    { label: t('tab.closeOthers'), action: () => closeOtherTabs(tabId, isRight), disabled: !hasClosableOthers },
+    { label: t('tab.closeRight'), action: () => closeTabsToRight(tabId, isRight), disabled: index < 0 || !hasClosableRight },
     { label: '-' },
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(folderPath), disabled: folderPath === 'home://' },
     { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: folderPath, is_directory: true}, t('ctx.openFolderInExplorer')), disabled: folderPath === 'home://' },
@@ -1184,6 +1205,7 @@ function showBlankListContextMenu(x, y, isRight) {
     { label: '-' },
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(path) },
     { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, is_directory: true}, t('ctx.openFolderInExplorer')) },
+    { label: t('ctx.openWith'), submenu: buildProgramOpenMenu(path, {isDirectory:true, includeNewWindow:true}) },
     { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path, terminal: 'cmd'}, 'CMD') },
     { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path, terminal: 'powershell'}, 'PowerShell') },
     { label: t('diskUsage.analyze'), action: () => showDiskUsageDialog(path) },

@@ -416,12 +416,62 @@
         assertEqual(duplicate.path, source.path, "Duplicate tab path differs from its source");
         assertEqual(duplicate.sortF, source.sortF, "Duplicate tab sort field differs from its source");
         assertEqual(duplicate.sortAsc, source.sortAsc, "Duplicate tab sort direction differs from its source");
+        assertEqual(duplicate.pinned === true, source.pinned === true, "Duplicate tab pin state differs from its source");
         assertEqual(JSON.stringify(duplicate.history), JSON.stringify(expectedHistory), "Duplicate tab history differs from its source");
         assert(duplicate.history !== source.history, "Duplicate tab shares its history array with the source");
       } finally {
         closeTab(duplicate.id, false);
         if (G.activeTab !== source.id) switchTab(source.id);
       }
+    });
+
+    await test("[tabs] Pinning moves a tab into the protected leading group and persists", async () => {
+      const originalTabs = [...G.tabs];
+      const originalPinned = new Map(G.tabs.map(tab => [tab.id, tab.pinned === true]));
+      const rightTab = G.rpTabs[0];
+      const originalRightPinned = rightTab?.pinned === true;
+      const originalStored = localStorage.getItem('rhfiles-tabs');
+      const candidate = G.tabs[G.tabs.length - 1];
+      try {
+        G.tabs.forEach(tab => { tab.pinned = false; });
+        if (rightTab) {
+          rightTab.pinned = false;
+          toggleTabPinned(rightTab.id, true);
+          assert(rightTab.pinned === true, "Right-pane tab was not pinned");
+        }
+        toggleTabPinned(candidate.id, false);
+        assert(candidate.pinned === true, "Tab was not marked as pinned");
+        assertEqual(G.tabs[0].id, candidate.id, "Pinned tab was not moved ahead of normal tabs");
+        const element = document.querySelector(`#tab-bar .tab[data-tab-id="${candidate.id}"]`);
+        assert(element?.classList.contains('pinned'), "Pinned tab has no pinned visual state");
+        assert(element?.querySelector('.tab-pin'), "Pinned tab has no pin indicator");
+        assert(!element?.querySelector('.tab-close'), "Pinned tab still exposes an accidental close button");
+        const stored = JSON.parse(localStorage.getItem('rhfiles-tabs') || '{}');
+        assert(stored.tabs?.find(tab => tab.id === candidate.id)?.pinned === true, "Left pinned state was not persisted");
+        assert(stored.rightTabs?.find(tab => tab.id === rightTab?.id)?.pinned === true, "Right pinned state was not persisted");
+        toggleTabPinned(candidate.id, false);
+        assert(candidate.pinned !== true, "Tab was not unpinned");
+      } finally {
+        originalTabs.forEach(tab => { tab.pinned = originalPinned.get(tab.id) === true; });
+        if (rightTab) rightTab.pinned = originalRightPinned;
+        G.tabs.splice(0, G.tabs.length, ...originalTabs);
+        renderTabs();
+        if (originalStored === null) localStorage.removeItem('rhfiles-tabs');
+        else localStorage.setItem('rhfiles-tabs', originalStored);
+      }
+    });
+
+    await test("[tabs] Pinned ordering is stable and bulk close actions protect pinned tabs", async () => {
+      const tabs = [
+        {id:1, pinned:false},
+        {id:2, pinned:true},
+        {id:3, pinned:false},
+        {id:4, pinned:true},
+      ];
+      normalizePinnedTabOrder(tabs);
+      assertEqual(tabs.map(tab => tab.id).join(','), '2,4,1,3', "Pinned normalization did not preserve group order");
+      assertEqual(tabsKeptAfterCloseOthers(tabs, 1).map(tab => tab.id).join(','), '2,4,1', "Close Others did not protect pinned tabs");
+      assertEqual([...closableTabIdsToRight(tabs, 2)].join(','), '1,3', "Close Right included a pinned tab or missed normal tabs");
     });
 
     await test("[tabs] Reorder helper supports dropping before and after a tab", async () => {
@@ -431,6 +481,11 @@
       assert(reorderTabsByDrop(tabs, 3, 2, true), "Reorder after target was rejected");
       assertEqual(tabs.map(tab => tab.id).join(','), '1,2,3', "Drop-after order is wrong");
       assert(!reorderTabsByDrop(tabs, 2, 2, true), "Dropping a tab onto itself changed the order");
+      const grouped = [{id:4, pinned:true}, {id:5, pinned:true}, {id:6, pinned:false}];
+      assert(reorderTabsByDrop(grouped, 5, 4, false), "Pinned tabs could not be reordered within their group");
+      assertEqual(grouped.map(tab => tab.id).join(','), '5,4,6', "Pinned group reorder is wrong");
+      assert(!reorderTabsByDrop(grouped, 4, 6, true), "Pinned tab crossed into the normal tab group");
+      assertEqual(grouped.map(tab => tab.id).join(','), '5,4,6', "Rejected cross-group drag changed the order");
     });
 
     await test("[tabs] Dragging a rendered tab persists the new order", async () => {
@@ -1327,12 +1382,38 @@
       removeContextMenu();
     });
 
+    await test("[ctxmenu] Folder background can open the current folder in VS Code", async () => {
+      removeContextMenu();
+      const expectedPath = getTab().path;
+      const originalOpenWithProgram = openWithProgramFromMenu;
+      let invoked = null;
+      try {
+        openWithProgramFromMenu = async (path, program) => { invoked = {path, program}; };
+        showBlankListContextMenu(20, 20, false);
+        const menu = $(".context-menu");
+        assert(menu, "Folder background context menu did not appear");
+        const openWith = [...menu.children].find(item => item.querySelector(':scope > span')?.textContent === t('ctx.openWith'));
+        assert(openWith, "Folder background has no Open With submenu");
+        const submenu = openWith.querySelector('.ctx-submenu');
+        const vscode = [...(submenu?.children || [])].find(item => item.querySelector(':scope > span')?.textContent === 'VS Code');
+        assert(vscode, "VS Code is missing from the folder background menu");
+        simulateClick(vscode);
+        await sleep(20);
+        assertEqual(invoked?.path, expectedPath, "VS Code did not receive the current folder path");
+        assertEqual(invoked?.program, 'vscode', "Folder background dispatched the wrong program");
+      } finally {
+        openWithProgramFromMenu = originalOpenWithProgram;
+        removeContextMenu();
+      }
+    });
+
     await test("[ctxmenu] Tab menu includes close, path, browser, CMD, and PowerShell", async () => {
       removeContextMenu();
       simulateContextMenu($("#tab-bar .tab"));
       await sleep(50);
       const menu = $(".context-menu");
       assert(menu, "Tab context menu did not appear");
+      assert(menu.textContent.includes(t('tab.pin')) || menu.textContent.includes(t('tab.unpin')), "Pin-tab action is missing");
       assertIncludes(menu.textContent, t('tab.duplicate'), "Duplicate-tab action is missing");
       assertIncludes(menu.textContent, t('tab.close'), "Close-tab action is missing");
       assertIncludes(menu.textContent, t('ctx.copyPath'), "Copy-path action is missing");
