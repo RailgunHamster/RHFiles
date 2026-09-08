@@ -1604,6 +1604,19 @@
       await sleep(200);
     });
 
+    await test("[dialogs] Shortcut reset belongs to the settings footer", async () => {
+      openSettings();
+      switchSettingsSection('shortcuts', false);
+      const resetButton = document.getElementById('settings-reset-shortcuts-footer');
+      assert(resetButton, "Shortcut reset button is missing from the settings footer");
+      assert(!resetButton.hidden, "Shortcut reset button is hidden on the shortcut page");
+      assert(resetButton.closest('.settings-dialog-actions'), "Shortcut reset button still floats inside scrolling content");
+      assert(!document.querySelector('.settings-shortcut-actions'), "Legacy floating shortcut action bar still exists");
+      switchSettingsSection('general', false);
+      assert(resetButton.hidden, "Shortcut reset button leaked into another settings category");
+      closeSettings();
+    });
+
     await test("[dialogs] Properties dialog element exists in DOM", async () => {
       const props = $("#properties-dialog");
       assert(props, "#properties-dialog not found");

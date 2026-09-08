@@ -181,6 +181,8 @@ function switchSettingsSection(sectionId, persist = true) {
   });
   const content = document.getElementById('settings-content');
   if (content) content.scrollTop = 0;
+  const resetShortcutsButton = document.getElementById('settings-reset-shortcuts-footer');
+  if (resetShortcutsButton) resetShortcutsButton.hidden = sectionId !== 'shortcuts';
   if (persist) localStorage.setItem('rhfiles-settings-section', sectionId);
 }
 
@@ -299,11 +301,9 @@ function openSettings() {
     '<button class="dialog-btn" id="settings-refresh-history" onclick="loadReleaseHistory(true)">' + t('settings.refreshHistory') + '</button></div>' +
     '<div id="settings-release-history" class="settings-release-history"><div class="settings-history-state">' + t('settings.historyLoading') + '</div></div></div>';
 
-  const shortcuts = '<div class="settings-card"><div id="shortcut-config-list" class="settings-config-list shortcut-config-list"></div>' +
-    '<div class="settings-inline-actions settings-shortcut-actions">' +
-      '<button class="dialog-btn" onclick="resetShortcuts()">' + t('btn.resetShortcuts') + '</button>' +
-      '<span class="settings-help">' + t('settings.shortcutHelp') + '</span>' +
-    '</div></div>';
+  const shortcuts = '<div class="settings-card settings-shortcut-card">' +
+    '<p class="settings-card-description settings-shortcut-help">' + t('settings.shortcutHelp') + '</p>' +
+    '<div id="shortcut-config-list" class="settings-config-list shortcut-config-list"></div></div>';
 
   const data = '<div class="settings-card"><div class="settings-card-title">' + t('settings.dataManagement') + '</div>' +
     '<div class="settings-inline-actions">' +

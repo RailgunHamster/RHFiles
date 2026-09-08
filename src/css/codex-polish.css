@@ -1407,12 +1407,18 @@ body.preview-fullscreen-active::before {
   border-bottom: 1px solid var(--divider);
 }
 
-.settings-shortcut-actions {
-  position: sticky;
-  bottom: -8px;
-  margin: 6px -8px -8px;
-  padding: 12px 10px;
-  background: linear-gradient(transparent, var(--bg-raised) 18%);
+.settings-shortcut-card {
+  padding-top: 6px;
+}
+
+.settings-shortcut-help {
+  margin: 0 2px 4px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.settings-dialog-actions .settings-footer-primary {
+  margin-left: auto;
 }
 
 .settings-history-card {

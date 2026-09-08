@@ -430,8 +430,9 @@
       <nav class="settings-nav" id="settings-nav" data-i18n-aria-label="settings.categories"></nav>
       <div class="dialog-scroll settings-content" id="settings-content"></div>
     </div>
-    <div class="dialog-actions">
-      <button class="dialog-btn primary" onclick="closeSettings()" data-i18n="btn.ok">OK</button>
+    <div class="dialog-actions settings-dialog-actions">
+      <button class="dialog-btn" id="settings-reset-shortcuts-footer" onclick="resetShortcuts()" data-i18n="btn.resetShortcuts" hidden>Reset Shortcuts</button>
+      <button class="dialog-btn primary settings-footer-primary" onclick="closeSettings()" data-i18n="btn.ok">OK</button>
     </div>
   </div>
 </div>
