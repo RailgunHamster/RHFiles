@@ -542,7 +542,11 @@ pub async fn download_update(
 }
 
 #[tauri::command]
-pub fn apply_update(source: Option<String>, proxy: Option<String>) -> Result<(), String> {
+pub fn apply_update(
+    source: Option<String>,
+    proxy: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let source = effective_source(source);
     let manager = open_manager(&source, proxy.as_deref())?
         .ok_or_else(|| "This build is not managed by Velopack".to_string())?;
@@ -550,8 +554,12 @@ pub fn apply_update(source: Option<String>, proxy: Option<String>) -> Result<(),
         .get_update_pending_restart()
         .ok_or_else(|| "No downloaded update is waiting to be applied".to_string())?;
     manager
-        .apply_updates_and_restart(pending)
-        .map_err(|error| error.to_string())
+        .wait_exit_then_apply_updates(pending, false, true, Vec::<String>::new())
+        .map_err(|error| error.to_string())?;
+    // Unlike Velopack's convenience method, AppHandle::exit lets Tauri destroy
+    // its windows and WebView2 children before Update.exe replaces `current`.
+    app.exit(0);
+    Ok(())
 }
 
 #[cfg(test)]

@@ -144,22 +144,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   initBoxSelection(document.getElementById("right-file-list"));
 
   // single instance: listen for navigate-to-path from second instance
-  if (window.__TAURI_INTERNALS__) {
-    const { listen } = window.__TAURI_INTERNALS__.event || {};
-    if (listen) {
-      listen("navigate-to-path", (event) => {
-        if (event.payload) navigateTo(event.payload);
-      }).catch(() => {});
-      listen("deep-link://request", (event) => {
-        try {
-          const urls = event.payload && event.payload.urls ? event.payload.urls : [];
-          if (urls.length > 0) {
-            let path = urls[0].replace(/^rhfiles:\/\//, '').replace(/\//g, '\\');
-            if (path) navigateTo(path);
-          }
-        } catch (e) {}
-      }).catch(() => {});
-    }
+  const listen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
+  if (listen) {
+    listen("navigate-to-path", (event) => {
+      if (event.payload) navigateTo(event.payload);
+    }).catch(() => {});
+    listen("deep-link://request", (event) => {
+      try {
+        const urls = event.payload && event.payload.urls ? event.payload.urls : [];
+        if (urls.length > 0) {
+          let path = urls[0].replace(/^rhfiles:\/\//, '').replace(/\//g, '\\');
+          if (path) navigateTo(path);
+        }
+      } catch (e) {}
+    }).catch(() => {});
   }
 
   // double-click handling for left pane

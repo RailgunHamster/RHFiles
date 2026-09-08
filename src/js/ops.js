@@ -338,11 +338,14 @@ async function pasteWindowsFileClipboard(destPath, isRight, tabId) {
   showProgress(t('status.pastingWindowsClipboard'), {
     taskId,
     indeterminate: true,
-    cancellable: false,
+    cancellable: true,
     currentPath: destPath,
   });
   try {
-    const result = await call('paste_windows_file_clipboard', { destination: destPath });
+    const result = await call('paste_windows_file_clipboard', {
+      destination: destPath,
+      operationId: taskId,
+    });
     await refreshPastedFolder(destPath, !!isRight, tabId);
     if (result?.aborted) cancelOperationTask(taskId);
     else completeOperationTask(taskId);

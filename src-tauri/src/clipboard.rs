@@ -17,12 +17,21 @@ pub struct WindowsFilePasteResult {
 #[cfg(target_os = "windows")]
 mod native {
     use super::{WindowsFileClipboardInfo, WindowsFilePasteResult};
-    use std::{os::windows::ffi::OsStrExt, path::Path, ptr, thread, time::Duration};
+    use crate::types::CancelFlag;
+    use std::{
+        os::windows::ffi::OsStrExt,
+        path::Path,
+        ptr,
+        sync::Mutex,
+        thread,
+        time::{Duration, Instant},
+    };
+    use tauri::{Emitter, Manager};
     use windows::{
         Win32::{
-            Foundation::{GlobalFree, HANDLE, HGLOBAL, POINT},
+            Foundation::{E_ABORT, GlobalFree, HANDLE, HGLOBAL, HWND, POINT},
             System::{
-                Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
+                Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree},
                 DataExchange::{
                     CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
                     IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
@@ -36,17 +45,301 @@ mod native {
             },
             UI::Shell::{
                 FILEOPERATION_FLAGS, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOFX_ADDUNDORECORD,
-                FOFX_SHOWELEVATIONPROMPT, FileOperation, IFileOperation, IShellItem,
-                SHCreateItemFromParsingName,
+                FOFX_SHOWELEVATIONPROMPT, FileOperation, IFileOperation, IOperationsProgressDialog,
+                IOperationsProgressDialog_Impl, IShellItem,
+                PropertiesSystem::{PDOPS_CANCELLED, PDOPS_PAUSED, PDOPS_RUNNING, PDOPSTATUS},
+                SHCreateItemFromParsingName, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY,
+                SPACTION,
             },
         },
-        core::{HSTRING, IUnknown, Interface},
+        core::{HSTRING, IUnknown, Interface, Ref, implement},
     };
 
     const FILE_DESCRIPTOR_W: &str = "FileGroupDescriptorW";
     const FILE_DESCRIPTOR_A: &str = "FileGroupDescriptor";
     const SHELL_ID_LIST: &str = "Shell IDList Array";
     const PREFERRED_DROP_EFFECT: &str = "Preferred DropEffect";
+
+    fn progress_percentage(
+        points_current: u64,
+        points_total: u64,
+        bytes_current: u64,
+        bytes_total: u64,
+        items_current: u64,
+        items_total: u64,
+    ) -> u32 {
+        let ratio = if bytes_total > 0 {
+            bytes_current as f64 / bytes_total as f64
+        } else if points_total > 0 {
+            points_current as f64 / points_total as f64
+        } else if items_total > 0 {
+            items_current as f64 / items_total as f64
+        } else {
+            0.0
+        };
+        (ratio.clamp(0.0, 1.0) * 100.0).round() as u32
+    }
+
+    struct ClipboardProgressState {
+        started: Instant,
+        last_emit: Instant,
+        last_bytes: u64,
+        smoothed_speed: f64,
+        current_name: String,
+        current_path: String,
+        paused: bool,
+    }
+
+    #[implement(IOperationsProgressDialog)]
+    struct ClipboardProgressDialog {
+        app: tauri::AppHandle,
+        operation_id: String,
+        operation: &'static str,
+        destination: String,
+        state: Mutex<ClipboardProgressState>,
+    }
+
+    impl ClipboardProgressDialog {
+        fn new(
+            app: tauri::AppHandle,
+            operation_id: String,
+            operation: &'static str,
+            destination: String,
+        ) -> Self {
+            let now = Instant::now();
+            Self {
+                app,
+                operation_id,
+                operation,
+                destination: destination.clone(),
+                state: Mutex::new(ClipboardProgressState {
+                    started: now,
+                    last_emit: now,
+                    last_bytes: 0,
+                    smoothed_speed: 0.0,
+                    current_name: String::new(),
+                    current_path: destination,
+                    paused: false,
+                }),
+            }
+        }
+    }
+
+    impl ClipboardProgressDialog_Impl {
+        fn cancelled(&self) -> bool {
+            self.app
+                .try_state::<CancelFlag>()
+                .and_then(|cancel| cancel.is_cancelled(Some(&self.operation_id)).ok())
+                .unwrap_or(false)
+        }
+
+        fn ensure_not_cancelled(&self) -> windows::core::Result<()> {
+            if self.cancelled() {
+                Err(E_ABORT.into())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn emit_progress(
+            &self,
+            points_current: u64,
+            points_total: u64,
+            bytes_current: u64,
+            bytes_total: u64,
+            items_current: u64,
+            items_total: u64,
+        ) {
+            let Ok(mut state) = self.state.lock() else {
+                return;
+            };
+            let now = Instant::now();
+            let interval = now.duration_since(state.last_emit).as_secs_f64();
+            let complete = (bytes_total > 0 && bytes_current >= bytes_total)
+                || (points_total > 0 && points_current >= points_total)
+                || (items_total > 0 && items_current >= items_total);
+            if !complete && interval < 0.1 {
+                return;
+            }
+            if interval > 0.0 && bytes_current >= state.last_bytes {
+                let sample = bytes_current.saturating_sub(state.last_bytes) as f64 / interval;
+                state.smoothed_speed = if state.smoothed_speed > 0.0 {
+                    state.smoothed_speed * 0.72 + sample * 0.28
+                } else {
+                    sample
+                };
+            }
+            state.last_emit = now;
+            state.last_bytes = bytes_current;
+            let elapsed_seconds = now.duration_since(state.started).as_secs_f64();
+            let percentage = progress_percentage(
+                points_current,
+                points_total,
+                bytes_current,
+                bytes_total,
+                items_current,
+                items_total,
+            );
+            let _ = self.app.emit(
+                "op-progress",
+                serde_json::json!({
+                    "operationId": self.operation_id,
+                    "operation": self.operation,
+                    "src": "windows-clipboard",
+                    "dest": self.destination,
+                    "currentPath": state.current_path,
+                    "currentName": state.current_name,
+                    "bytesTransferred": bytes_current,
+                    "totalBytes": bytes_total,
+                    "entriesCompleted": items_current,
+                    "totalEntries": items_total,
+                    "percentage": percentage,
+                    "speed": state.smoothed_speed.max(0.0) as u64,
+                    "elapsedSeconds": elapsed_seconds,
+                    "status": "progress",
+                }),
+            );
+        }
+
+        fn update_current_item(&self, item: Ref<'_, IShellItem>) {
+            let Some(item) = item.as_ref() else {
+                return;
+            };
+            let full_path = shell_item_name(item, SIGDN_FILESYSPATH);
+            let display_name = shell_item_name(item, SIGDN_NORMALDISPLAY);
+            let Ok(mut state) = self.state.lock() else {
+                return;
+            };
+            if let Some(path) = full_path {
+                state.current_name = Path::new(&path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone());
+                state.current_path = path;
+            } else if let Some(name) = display_name {
+                state.current_path = Path::new(&self.destination)
+                    .join(&name)
+                    .to_string_lossy()
+                    .into_owned();
+                state.current_name = name;
+            }
+        }
+    }
+
+    fn shell_item_name(item: &IShellItem, kind: SIGDN) -> Option<String> {
+        unsafe {
+            let value = item.GetDisplayName(kind).ok()?;
+            let result = value.to_string().ok();
+            CoTaskMemFree(Some(value.0.cast()));
+            result
+        }
+    }
+
+    #[allow(non_snake_case)]
+    impl IOperationsProgressDialog_Impl for ClipboardProgressDialog_Impl {
+        fn StartProgressDialog(&self, _hwndowner: HWND, _flags: u32) -> windows::core::Result<()> {
+            self.ensure_not_cancelled()
+        }
+
+        fn StopProgressDialog(&self) -> windows::core::Result<()> {
+            Ok(())
+        }
+
+        fn SetOperation(&self, _action: SPACTION) -> windows::core::Result<()> {
+            self.ensure_not_cancelled()
+        }
+
+        fn SetMode(&self, _mode: u32) -> windows::core::Result<()> {
+            self.ensure_not_cancelled()
+        }
+
+        fn UpdateProgress(
+            &self,
+            points_current: u64,
+            points_total: u64,
+            bytes_current: u64,
+            bytes_total: u64,
+            items_current: u64,
+            items_total: u64,
+        ) -> windows::core::Result<()> {
+            self.ensure_not_cancelled()?;
+            self.emit_progress(
+                points_current,
+                points_total,
+                bytes_current,
+                bytes_total,
+                items_current,
+                items_total,
+            );
+            Ok(())
+        }
+
+        fn UpdateLocations(
+            &self,
+            _source: Ref<'_, IShellItem>,
+            _target: Ref<'_, IShellItem>,
+            item: Ref<'_, IShellItem>,
+        ) -> windows::core::Result<()> {
+            self.ensure_not_cancelled()?;
+            self.update_current_item(item);
+            Ok(())
+        }
+
+        fn ResetTimer(&self) -> windows::core::Result<()> {
+            let now = Instant::now();
+            if let Ok(mut state) = self.state.lock() {
+                state.started = now;
+                state.last_emit = now;
+                state.last_bytes = 0;
+                state.smoothed_speed = 0.0;
+            }
+            Ok(())
+        }
+
+        fn PauseTimer(&self) -> windows::core::Result<()> {
+            if let Ok(mut state) = self.state.lock() {
+                state.paused = true;
+            }
+            Ok(())
+        }
+
+        fn ResumeTimer(&self) -> windows::core::Result<()> {
+            if let Ok(mut state) = self.state.lock() {
+                state.paused = false;
+                state.last_emit = Instant::now();
+            }
+            self.ensure_not_cancelled()
+        }
+
+        fn GetMilliseconds(
+            &self,
+            elapsed: *mut u64,
+            remaining: *mut u64,
+        ) -> windows::core::Result<()> {
+            let elapsed_ms = self
+                .state
+                .lock()
+                .map(|state| state.started.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            unsafe {
+                if !elapsed.is_null() {
+                    elapsed.write(elapsed_ms);
+                }
+                if !remaining.is_null() {
+                    remaining.write(0);
+                }
+            }
+            Ok(())
+        }
+
+        fn GetOperationStatus(&self) -> windows::core::Result<PDOPSTATUS> {
+            if self.cancelled() {
+                return Ok(PDOPS_CANCELLED);
+            }
+            let paused = self.state.lock().map(|state| state.paused).unwrap_or(false);
+            Ok(if paused { PDOPS_PAUSED } else { PDOPS_RUNNING })
+        }
+    }
 
     struct OleApartment;
 
@@ -247,7 +540,11 @@ mod native {
         Ok(true)
     }
 
-    pub fn paste_file_clipboard(destination: String) -> Result<WindowsFilePasteResult, String> {
+    pub fn paste_file_clipboard(
+        destination: String,
+        operation_id: String,
+        app: tauri::AppHandle,
+    ) -> Result<WindowsFilePasteResult, String> {
         if destination.is_empty() || destination == "home://" || destination.contains('\0') {
             return Err("Choose a filesystem folder before pasting".to_string());
         }
@@ -262,7 +559,7 @@ mod native {
         let source: IUnknown = data_object
             .cast()
             .map_err(|error| format!("Invalid Windows clipboard file object: {error}"))?;
-        let destination_path = HSTRING::from(destination);
+        let destination_path = HSTRING::from(destination.as_str());
         let destination_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&destination_path, None) }
                 .map_err(|error| format!("Unable to open the paste destination: {error}"))?;
@@ -275,10 +572,20 @@ mod native {
                 | FOFX_ADDUNDORECORD.0
                 | FOFX_SHOWELEVATIONPROMPT.0,
         );
+        let progress_dialog: IOperationsProgressDialog = ClipboardProgressDialog::new(
+            app.clone(),
+            operation_id.clone(),
+            if moved { "move" } else { "copy" },
+            destination.clone(),
+        )
+        .into();
         unsafe {
             operation.SetOperationFlags(flags).map_err(|error| {
                 format!("Unable to configure the Windows paste operation: {error}")
             })?;
+            operation
+                .SetProgressDialog(&progress_dialog)
+                .map_err(|error| format!("Unable to monitor Windows paste progress: {error}"))?;
             if moved {
                 operation
                     .MoveItems(&source, &destination_item)
@@ -292,8 +599,18 @@ mod native {
                         format!("Unable to queue files from the Windows clipboard: {error}")
                     })?;
             }
-            operation
-                .PerformOperations()
+            let perform_result = operation.PerformOperations();
+            let cancelled = app
+                .try_state::<CancelFlag>()
+                .and_then(|cancel| cancel.is_cancelled(Some(&operation_id)).ok())
+                .unwrap_or(false);
+            if cancelled {
+                return Ok(WindowsFilePasteResult {
+                    aborted: true,
+                    moved,
+                });
+            }
+            perform_result
                 .map_err(|error| format!("Windows could not paste the clipboard files: {error}"))?;
         }
         let aborted = unsafe { operation.GetAnyOperationsAborted() }
@@ -336,6 +653,14 @@ mod native {
                 .map(String::from_utf16_lossy)
                 .collect();
             assert_eq!(decoded, ["C:\\alpha.txt", "D:\\中文.txt"]);
+        }
+
+        #[test]
+        fn progress_prefers_bytes_then_work_points_then_items() {
+            assert_eq!(progress_percentage(1, 4, 50, 100, 1, 8), 50);
+            assert_eq!(progress_percentage(1, 4, 0, 0, 1, 8), 25);
+            assert_eq!(progress_percentage(0, 0, 0, 0, 1, 8), 13);
+            assert_eq!(progress_percentage(0, 0, 150, 100, 0, 0), 100);
         }
     }
 }
@@ -384,13 +709,22 @@ pub fn clear_windows_file_clipboard(expected_sequence: u32) -> Result<bool, Stri
 #[tauri::command]
 pub async fn paste_windows_file_clipboard(
     destination: String,
+    operation_id: Option<String>,
+    app: tauri::AppHandle,
+    cancel: tauri::State<'_, crate::types::CancelFlag>,
 ) -> Result<WindowsFilePasteResult, String> {
     #[cfg(target_os = "windows")]
     {
-        tauri::async_runtime::spawn_blocking(move || {
+        let operation_id = operation_id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "windows-clipboard".to_string());
+        cancel.reset(Some(&operation_id))?;
+        let worker_id = operation_id.clone();
+        let worker_app = app.clone();
+        let result = match tauri::async_runtime::spawn_blocking(move || {
             let worker = std::thread::Builder::new()
                 .name("rhfiles-ole-clipboard".to_string())
-                .spawn(move || native::paste_file_clipboard(destination))
+                .spawn(move || native::paste_file_clipboard(destination, worker_id, worker_app))
                 .map_err(|error| {
                     format!("Unable to start the Windows clipboard worker: {error}")
                 })?;
@@ -399,11 +733,16 @@ pub async fn paste_windows_file_clipboard(
                 .map_err(|_| "The Windows clipboard worker stopped unexpectedly".to_string())?
         })
         .await
-        .map_err(|error| format!("The Windows clipboard task failed: {error}"))?
+        {
+            Ok(result) => result,
+            Err(error) => Err(format!("The Windows clipboard task failed: {error}")),
+        };
+        cancel.clear(Some(&operation_id));
+        result
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = destination;
+        let _ = (destination, operation_id, app, cancel);
         Err("The native file clipboard is only available on Windows".to_string())
     }
 }

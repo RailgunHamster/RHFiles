@@ -693,33 +693,31 @@ G._watchTauriUnlisten = null;
 G._watchDebounce = null;
 function startFileWatch() {
   stopFileWatch();
-  if (window.__TAURI_INTERNALS__) {
-    const { listen } = window.__TAURI_INTERNALS__.event || {};
-    if (listen) {
-      listen("fs-change", event => {
-        const payload = event?.payload || {};
-        if (payload.originWindow && payload.originWindow === currentFileDragWindowId()) return;
-        const changedPaths = Array.isArray(payload.paths)
-          ? payload.paths.map(path => windowsPathKey(String(path).replace(/[\\/]+$/, '')))
-          : [];
-        const isAffected = path => {
-          if (!changedPaths.length) return true;
-          return changedPaths.includes(windowsPathKey(String(path).replace(/[\\/]+$/, '')));
-        };
-        if (G._watchDebounce) clearTimeout(G._watchDebounce);
-        G._watchDebounce = setTimeout(async () => {
-          const tab = getTab();
-          const refreshes = [];
-          if (tab?.path && isAffected(tab.path)) refreshes.push(navigateTo(tab.path, false));
-          if (G.dualOn && G.rp?.path && isAffected(G.rp.path)) refreshes.push(rpNavigateTo(G.rp.path, false));
-          try {
-            await Promise.allSettled(refreshes);
-          } finally {
-            G._watchDebounce = null;
-          }
-        }, 300);
-      }).then(unlisten => { G._watchTauriUnlisten = unlisten; }).catch(() => {});
-    }
+  const listen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
+  if (listen) {
+    listen("fs-change", event => {
+      const payload = event?.payload || {};
+      if (payload.originWindow && payload.originWindow === currentFileDragWindowId()) return;
+      const changedPaths = Array.isArray(payload.paths)
+        ? payload.paths.map(path => windowsPathKey(String(path).replace(/[\\/]+$/, '')))
+        : [];
+      const isAffected = path => {
+        if (!changedPaths.length) return true;
+        return changedPaths.includes(windowsPathKey(String(path).replace(/[\\/]+$/, '')));
+      };
+      if (G._watchDebounce) clearTimeout(G._watchDebounce);
+      G._watchDebounce = setTimeout(async () => {
+        const tab = getTab();
+        const refreshes = [];
+        if (tab?.path && isAffected(tab.path)) refreshes.push(navigateTo(tab.path, false));
+        if (G.dualOn && G.rp?.path && isAffected(G.rp.path)) refreshes.push(rpNavigateTo(G.rp.path, false));
+        try {
+          await Promise.allSettled(refreshes);
+        } finally {
+          G._watchDebounce = null;
+        }
+      }, 300);
+    }).then(unlisten => { G._watchTauriUnlisten = unlisten; }).catch(() => {});
   }
   G._watchTimer = setInterval(async () => {
     if (document.hidden) return;

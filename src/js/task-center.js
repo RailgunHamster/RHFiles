@@ -204,12 +204,11 @@ function clearFinishedOperationTasks() {
 }
 
 function setupProgressListener() {
-  if (!window.__TAURI_INTERNALS__) return;
-  const listen = (window.__TAURI_INTERNALS__.event || {}).listen;
+  const listen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
   if (!listen) return;
   listen('op-progress', function(event) {
     if (event.payload) updateProgress(event.payload);
-  });
+  }).catch(() => {});
   listen('update-progress', function(event) {
     if (!event.payload) return;
     updateProgress({
@@ -218,7 +217,7 @@ function setupProgressListener() {
       totalBytes: 0,
       bytesTransferred: 0,
     }, _updateProgressTaskId);
-  });
+  }).catch(() => {});
 }
 
 function showProgress(title, options) {

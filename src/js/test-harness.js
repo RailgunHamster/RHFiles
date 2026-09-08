@@ -1306,6 +1306,103 @@
       }
     });
 
+    await test("[clipboard] Native paste forwards task-scoped byte progress", async () => {
+      const originalCall = call;
+      const originalRefreshPastedFolder = refreshPastedFolder;
+      let request = null;
+      let wasCancellable = false;
+      try {
+        refreshPastedFolder = async () => {};
+        call = async (command, args) => {
+          if (command !== 'paste_windows_file_clipboard') return originalCall(command, args);
+          request = args;
+          const task = _operationTasks.get(args.operationId);
+          wasCancellable = !!task?.cancellable;
+          updateProgress({
+            operationId: args.operationId,
+            status: 'progress',
+            percentage: 40,
+            bytesTransferred: 40 * 1024 * 1024,
+            totalBytes: 100 * 1024 * 1024,
+            speed: 10 * 1024 * 1024,
+            entriesCompleted: 2,
+            totalEntries: 5,
+          });
+          return {aborted:false, moved:false};
+        };
+        await pasteWindowsFileClipboard('C:\\destination', false, getTab().id);
+        assert(request?.operationId, "Native paste did not forward its task id");
+        assert(wasCancellable, "Native paste task was not cancellable while running");
+        const task = _operationTasks.get(request.operationId);
+        assertEqual(task?.status, 'complete', "Native paste task did not finish");
+        assertEqual(task?.totalBytes, 100 * 1024 * 1024, "Native paste byte total was lost");
+        assertEqual(task?.speed, 10 * 1024 * 1024, "Native paste speed was lost");
+      } finally {
+        if (request?.operationId) _operationTasks.delete(request.operationId);
+        call = originalCall;
+        refreshPastedFolder = originalRefreshPastedFolder;
+        renderOperationCenter();
+      }
+    });
+
+    const nativeClipboardProgressSource = await call('get_env', {
+      key: 'RHFILES_NATIVE_CLIPBOARD_PROGRESS_SOURCE',
+    });
+    const nativeClipboardProgressDestination = await call('get_env', {
+      key: 'RHFILES_NATIVE_CLIPBOARD_PROGRESS_DESTINATION',
+    });
+    if (nativeClipboardProgressSource && nativeClipboardProgressDestination) {
+      await test("[clipboard] Native IFileOperation emits intermediate byte progress", async () => {
+        const eventApi = window.__TAURI_INTERNALS__?.event || window.__TAURI__?.event;
+        assert(eventApi?.listen, "Tauri event listener is unavailable");
+        const operationId = createOperationTaskId();
+        const snapshots = [];
+        let clipboardSequence = 0;
+        let unlisten = null;
+        try {
+          unlisten = await eventApi.listen('op-progress', (event) => {
+            if (event.payload?.operationId === operationId) snapshots.push(event.payload);
+          });
+          clipboardSequence = Number(await call('set_windows_file_clipboard', {
+            paths: [nativeClipboardProgressSource],
+            cut: false,
+          })) || 0;
+          assert(clipboardSequence > 0, "Native file clipboard did not return a sequence number");
+          showProgress(t('status.pastingWindowsClipboard'), {
+            taskId: operationId,
+            indeterminate: true,
+            cancellable: true,
+            currentPath: nativeClipboardProgressDestination,
+          });
+          const outcome = await call('paste_windows_file_clipboard', {
+            destination: nativeClipboardProgressDestination,
+            operationId,
+          });
+          await sleep(150);
+          assert(!outcome?.aborted, "Windows aborted the native clipboard paste");
+          const byteSnapshots = snapshots.filter((entry) => Number(entry.totalBytes) > 0);
+          assert(byteSnapshots.length > 0, "No byte progress event was emitted");
+          assert(byteSnapshots.some((entry) => {
+            const transferred = Number(entry.bytesTransferred) || 0;
+            const total = Number(entry.totalBytes) || 0;
+            return transferred > 0 && transferred < total;
+          }), "No intermediate byte progress was emitted: " + JSON.stringify(byteSnapshots));
+          assert(byteSnapshots.some((entry) => Number(entry.speed) > 0),
+            "No non-zero transfer speed was emitted");
+          completeOperationTask(operationId);
+        } finally {
+          if (typeof unlisten === 'function') unlisten();
+          if (clipboardSequence > 0) {
+            try {
+              await call('clear_windows_file_clipboard', {expectedSequence: clipboardSequence});
+            } catch (error) {}
+          }
+          _operationTasks.delete(operationId);
+          renderOperationCenter();
+        }
+      });
+    }
+
     await test("[clipboard] A newer Windows clipboard replaces stale internal files", async () => {
       const savedClipboard = G.clipboard;
       const originalCall = call;
