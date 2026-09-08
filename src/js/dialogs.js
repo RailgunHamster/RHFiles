@@ -295,7 +295,12 @@ function openSettings() {
     '<div class="settings-row update-location-row"><label for="settings-proxy-url">' + t('settings.proxyAddress') + '</label>' +
     '<input id="settings-proxy-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:7890" value="' + esc(String(G.settings.proxyUrl || '')) + '" onchange="setProxyUrl(this.value,this)"' + (G.settings.proxyEnabled===true?'':' disabled') + '></div>' +
     '<div class="settings-source-help">' + t('settings.proxyHelp') + '</div>' +
-    '<div class="settings-row update-settings-row"><span id="settings-update-status" class="settings-help">' + t('update.statusUnknown') + '</span>' +
+    '<div class="settings-row update-settings-row"><div class="settings-update-copy">' +
+      '<span id="settings-update-status" class="settings-help">' + t('update.statusUnknown') + '</span>' +
+      '<div id="settings-update-failure" class="settings-update-failure" hidden>' +
+        '<span id="settings-update-failure-text"></span>' +
+        '<button type="button" id="settings-update-log" class="settings-text-button" hidden onclick="openUpdateFailureLog()">' + t('update.openLog') + '</button>' +
+      '</div></div>' +
     '<button class="dialog-btn" id="settings-check-update" onclick="checkForUpdates(true)">' + t('settings.checkUpdates') + '</button></div></div>' +
     '<div class="settings-card settings-history-card"><div class="settings-card-heading"><div><div class="settings-card-title">' + t('settings.releaseHistory') + '</div><div class="settings-card-description">' + t('settings.releaseHistoryHelp') + '</div></div>' +
     '<button class="dialog-btn" id="settings-refresh-history" onclick="loadReleaseHistory(true)">' + t('settings.refreshHistory') + '</button></div>' +

@@ -164,6 +164,16 @@ Object.assign(_builtinEn, {
   'tasks.recovery.permanentDeleteInterrupted': 'Permanent deletion stopped after {completed} of {total} selected items. Completed data cannot be restored; the current folder may be partially deleted.',
   'tasks.recovery.recoveryFailed': 'Automatic cleanup failed. Check the source and destination before retrying.',
   'tasks.deleteCancelledDetail': 'Stopped after {completed} of {total} selected items.',
+  'update.failureLocked': 'The last RHFiles{version} installation failed because another program was using the install folder. Close it and retry; restart Windows if the problem remains.',
+  'update.failurePermission': 'The last RHFiles{version} installation failed because the install folder could not be modified. Check its permissions or retry as administrator.',
+  'update.failureDiskSpace': 'The last RHFiles{version} installation failed because the disk did not have enough free space. Free some space and retry.',
+  'update.failurePackage': 'The last RHFiles{version} installation failed because the update package was corrupt or failed verification. Download the update again.',
+  'update.failureNetwork': 'The update check or download failed because RHFiles could not reach the update source. Check the network, source address, and proxy settings.',
+  'update.failureUnknown': "The last update failed. The system's detailed reason is shown below.",
+  'update.failureLockHint': 'Find the lock: open Resource Monitor → CPU → Associated Handles, then search for {path}',
+  'update.failureDetail': 'System report: {error}',
+  'update.openLog': 'Open update log',
+  'update.openLogFailed': 'Unable to open the update log: {error}',
   'pane.leftFiles': 'Files in the left pane',
   'pane.rightFiles': 'Files in the right pane',
 });
@@ -569,6 +579,7 @@ function fallbackCall(cmd, args) {
     case "set_window_effect": return null;
     case "quicklook": return null;
     case "check_updates": return { managed:false, isPortable:false, currentVersion:'0.1.0', availableVersion:null, releaseNotes:'', pendingRestart:false };
+    case "get_last_update_failure": return null;
     case "get_release_history": return { currentVersion:'0.1.0', source:'bundled', warning:null, releases:[{version:'0.1.0',notesMarkdown:'# RHFiles 0.1.0\n\n- Initial release'}] };
     case "download_update": return null;
     case "apply_update": return null;

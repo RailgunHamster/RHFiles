@@ -329,8 +329,89 @@ function getUpdateProxy() {
   return String(G.settings.proxyUrl || '').trim();
 }
 
+function classifyUpdateFailureText(error) {
+  const text = String(error || '').toLowerCase();
+  if (/code:\s*32|running processes prevented|being used by another process|used by another process|另一个程序正在使用|进程无法访问/.test(text)) return 'locked';
+  if (/code:\s*112|not enough space|no space left|磁盘空间不足/.test(text)) return 'disk-space';
+  if (/checksum|data corruption|corrupt|损坏/.test(text)) return 'package';
+  if (/access denied|permission denied|拒绝访问/.test(text)) return 'permission';
+  if (/timed out|timeout|connection|network|dns|unable to retrieve|无法连接/.test(text)) return 'network';
+  return 'unknown';
+}
+
+function normalizedUpdateFailure(error) {
+  if (error && typeof error === 'object' && error.message) return error;
+  const message = String(error || '').trim();
+  return message ? {category: classifyUpdateFailureText(message), message} : null;
+}
+
+function renderUpdateFailure(failure) {
+  const container = document.getElementById('settings-update-failure');
+  const textElement = document.getElementById('settings-update-failure-text');
+  const logButton = document.getElementById('settings-update-log');
+  if (!container || !textElement) return;
+  const normalized = normalizedUpdateFailure(failure);
+  if (!normalized) {
+    container.hidden = true;
+    textElement.textContent = '';
+    container.title = '';
+    if (logButton) logButton.hidden = true;
+    return;
+  }
+
+  const category = ['locked', 'permission', 'disk-space', 'package', 'network'].includes(normalized.category)
+    ? normalized.category
+    : 'unknown';
+  const key = {
+    locked: 'update.failureLocked',
+    permission: 'update.failurePermission',
+    'disk-space': 'update.failureDiskSpace',
+    package: 'update.failurePackage',
+    network: 'update.failureNetwork',
+    unknown: 'update.failureUnknown',
+  }[category];
+  const version = normalized.targetVersion ? ' ' + normalized.targetVersion : '';
+  const lines = [t(key, {version})];
+  if (category === 'locked' && normalized.searchPath) {
+    lines.push(t('update.failureLockHint', {path: normalized.searchPath}));
+  }
+  const technical = String(normalized.technicalDetail || normalized.message || '').trim();
+  if (technical) {
+    const bounded = technical.length > 360 ? technical.slice(0, 357) + '...' : technical;
+    lines.push(t('update.failureDetail', {error: bounded}));
+  }
+  textElement.textContent = lines.join('\n');
+  container.title = [normalized.message, normalized.technicalDetail, normalized.logPath]
+    .filter(Boolean)
+    .join('\n');
+  container.hidden = false;
+  if (logButton) logButton.hidden = !normalized.logPath;
+}
+
+async function refreshLastUpdateFailure() {
+  try {
+    G._lastUpdateFailure = await call('get_last_update_failure', {});
+  } catch (error) {
+    G._lastUpdateFailure = null;
+  }
+  renderUpdateFailure(G._updateTransientFailure || G._lastUpdateFailure);
+  return G._lastUpdateFailure;
+}
+
+async function openUpdateFailureLog() {
+  const path = G._lastUpdateFailure?.logPath;
+  if (!path) return;
+  try {
+    await call('open_in_windows_explorer', {path, is_directory:false});
+  } catch (error) {
+    showNotice(t('update.openLogFailed', {error: String(error)}));
+  }
+}
+
 function updateSettingsStatusText(status, error, state) {
+  G._updateTransientFailure = error ? normalizedUpdateFailure(error) : null;
   const element = document.getElementById('settings-update-status');
+  renderUpdateFailure(G._updateTransientFailure || G._lastUpdateFailure);
   if (!element) return;
   element.title = error ? String(error) : '';
   if (state === 'disabled') {
@@ -354,6 +435,7 @@ function updateSettingsStatusText(status, error, state) {
 
 async function refreshUpdateSettingsStatus() {
   const button = document.getElementById('settings-check-update');
+  await refreshLastUpdateFailure();
   if (!isAutomaticUpdateCheckEnabled()) {
     updateSettingsStatusText(null, null, 'disabled');
     if (button) button.disabled = false;
@@ -393,6 +475,8 @@ async function checkForUpdates(manual) {
     if (manual) showNotice(t('update.proxyRequired'));
     return;
   }
+  if (G._updateCheckRunning) return;
+  await refreshLastUpdateFailure();
   if (G._updateCheckRunning) return;
   G._updateCheckRunning = true;
   const button = document.getElementById('settings-check-update');

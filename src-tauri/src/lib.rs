@@ -197,7 +197,8 @@ pub fn run() {
 
             themes::list_user_themes, themes::open_theme_folder,
 
-            updates::check_updates, updates::get_release_history, updates::download_update, updates::apply_update,
+            updates::check_updates, updates::get_last_update_failure, updates::get_release_history,
+            updates::download_update, updates::apply_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::mpsc,
     time::Duration,
@@ -22,6 +22,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const DOWNLOAD_BODY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MAX_RELEASE_HISTORY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_UPDATE_LOG_BYTES: u64 = 2 * 1024 * 1024;
 const BUNDLED_RELEASE_HISTORY: &str =
     include_str!(concat!(env!("OUT_DIR"), "/release-history.json"));
 
@@ -63,6 +64,17 @@ pub struct ReleaseHistoryResponse {
 #[serde(rename_all = "camelCase")]
 struct UpdateProgress {
     percentage: i16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateFailureInfo {
+    category: String,
+    message: String,
+    technical_detail: Option<String>,
+    target_version: Option<String>,
+    log_path: String,
+    search_path: Option<String>,
 }
 
 #[derive(Clone)]
@@ -374,6 +386,159 @@ fn merge_release_history(
     releases
 }
 
+fn velopack_log_path() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|root| {
+        PathBuf::from(root)
+            .join("velopack")
+            .join("velopack_RHFiles.log")
+    })
+}
+
+fn current_install_search_path() -> Option<String> {
+    let executable = std::env::current_exe().ok()?;
+    let directory = executable.parent()?;
+    if !directory
+        .file_name()?
+        .to_string_lossy()
+        .eq_ignore_ascii_case("current")
+    {
+        return None;
+    }
+    Some(directory.to_string_lossy().into_owned())
+}
+
+fn read_file_tail(path: &Path, max_bytes: u64) -> Result<String, String> {
+    let mut file = File::open(path)
+        .map_err(|error| format!("Unable to open update log {}: {error}", path.display()))?;
+    let length = file
+        .metadata()
+        .map_err(|error| format!("Unable to inspect update log {}: {error}", path.display()))?
+        .len();
+    let offset = length.saturating_sub(max_bytes);
+    if offset > 0 {
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|error| format!("Unable to seek update log {}: {error}", path.display()))?;
+    }
+    let mut bytes = Vec::with_capacity((length - offset).min(max_bytes) as usize);
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("Unable to read update log {}: {error}", path.display()))?;
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if offset > 0
+        && let Some(newline) = text.find('\n')
+    {
+        text.drain(..=newline);
+    }
+    Ok(text)
+}
+
+fn log_message_after_level(line: &str, level: &str) -> Option<String> {
+    let marker = format!("[{level}]");
+    line.split_once(&marker)
+        .map(|(_, message)| message.trim().to_string())
+        .filter(|message| !message.is_empty())
+}
+
+fn target_version_from_update_session(session: &str) -> Option<String> {
+    for line in session.lines().rev() {
+        let Some(package_start) = line.rfind("RHFiles-") else {
+            continue;
+        };
+        let package = &line[package_start + "RHFiles-".len()..];
+        for suffix in ["-full.nupkg", "-delta.nupkg"] {
+            let Some(version_end) = package.find(suffix) else {
+                continue;
+            };
+            let candidate = &package[..version_end];
+            if Version::parse(candidate).is_ok() {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn update_failure_category(session: &str) -> &'static str {
+    let text = session.to_lowercase();
+    if text.contains("code: 32")
+        || text.contains("running processes prevented")
+        || text.contains("being used by another process")
+        || text.contains("used by another process")
+        || text.contains("另一个程序正在使用")
+        || text.contains("进程无法访问")
+    {
+        "locked"
+    } else if text.contains("code: 112")
+        || text.contains("not enough space")
+        || text.contains("no space left")
+        || text.contains("磁盘空间不足")
+    {
+        "disk-space"
+    } else if text.contains("checksum")
+        || text.contains("data corruption")
+        || text.contains("corrupt")
+        || text.contains("损坏")
+    {
+        "package"
+    } else if text.contains("access denied")
+        || text.contains("permission denied")
+        || text.contains("拒绝访问")
+    {
+        "permission"
+    } else if text.contains("timed out")
+        || text.contains("connection")
+        || text.contains("network")
+        || text.contains("dns")
+    {
+        "network"
+    } else {
+        "unknown"
+    }
+}
+
+fn parse_last_update_failure(
+    log: &str,
+    current_version: &str,
+    log_path: &Path,
+    search_path: Option<String>,
+) -> Option<UpdateFailureInfo> {
+    let session_start = log.rfind("Starting Velopack Updater")?;
+    let session = &log[session_start..];
+    if !session.contains("Command: Apply") {
+        return None;
+    }
+
+    let error_line = session
+        .lines()
+        .rev()
+        .find(|line| line.contains("[ERROR] Apply error:"))
+        .or_else(|| session.lines().rev().find(|line| line.contains("[ERROR]")))?;
+    let message = log_message_after_level(error_line, "ERROR")?;
+    let target_version = target_version_from_update_session(session);
+    if let (Some(target), Ok(current)) = (
+        target_version
+            .as_deref()
+            .and_then(|version| Version::parse(version).ok()),
+        Version::parse(current_version),
+    ) && target <= current
+    {
+        return None;
+    }
+    let technical_detail = session
+        .lines()
+        .rev()
+        .find(|line| line.contains("[WARN] Retrying operation") && line.contains("error was:"))
+        .and_then(|line| log_message_after_level(line, "WARN"));
+
+    Some(UpdateFailureInfo {
+        category: update_failure_category(session).to_string(),
+        message,
+        technical_detail,
+        target_version,
+        log_path: log_path.to_string_lossy().into_owned(),
+        search_path,
+    })
+}
+
 fn manager_for(source: &str, proxy: Option<&str>) -> Result<UpdateManager, VelopackError> {
     let source_url = Url::parse(source).ok();
     if source_url
@@ -402,6 +567,23 @@ fn open_manager(source: &str, proxy: Option<&str>) -> Result<Option<UpdateManage
         Err(VelopackError::NotInstalled(_)) => Ok(None),
         Err(error) => Err(error.to_string()),
     }
+}
+
+#[tauri::command]
+pub fn get_last_update_failure() -> Result<Option<UpdateFailureInfo>, String> {
+    let Some(log_path) = velopack_log_path() else {
+        return Ok(None);
+    };
+    if !log_path.is_file() {
+        return Ok(None);
+    }
+    let log = read_file_tail(&log_path, MAX_UPDATE_LOG_BYTES)?;
+    Ok(parse_last_update_failure(
+        &log,
+        env!("CARGO_PKG_VERSION"),
+        &log_path,
+        current_install_search_path(),
+    ))
 }
 
 #[tauri::command]
@@ -584,6 +766,84 @@ mod tests {
             effective_source(Some("https://example.invalid/releases".into())),
             "https://example.invalid/releases"
         );
+    }
+
+    #[test]
+    fn parses_the_latest_failed_apply_session_and_prioritizes_file_locks() {
+        let log = r#"
+[update:10] [20:36:03] [INFO] Starting Velopack Updater (1.2.0)
+[update:10] [20:36:03] [INFO] Command: Apply
+[update:10] [20:36:03] [INFO] Package: Some("D:\software\RHFiles\packages\RHFiles-0.1.18-full.nupkg")
+[update:10] [20:36:03] [WARN] Failed to wait for process (123) to exit (Access denied.)
+[update:10] [20:36:04] [WARN] Retrying operation in 1000ms... (error was: Some(Os { code: 32, message: "The process cannot access the file because it is being used by another process." }))
+[update:10] [20:36:14] [ERROR] Apply error: Unable to start the update, because one or more running processes prevented it.
+[update:10] [20:36:14] [ERROR] An error has occurred: Apply error: Unable to start the update.
+"#;
+        let failure = parse_last_update_failure(
+            log,
+            "0.1.17",
+            Path::new(r"C:\Users\test\AppData\Local\velopack\velopack_RHFiles.log"),
+            Some(r"D:\software\RHFiles\current".to_string()),
+        )
+        .expect("failed apply should be reported");
+        assert_eq!(failure.category, "locked");
+        assert_eq!(failure.target_version.as_deref(), Some("0.1.18"));
+        assert!(failure.message.contains("running processes"));
+        assert!(
+            failure
+                .technical_detail
+                .as_deref()
+                .unwrap()
+                .contains("code: 32")
+        );
+        assert_eq!(
+            failure.search_path.as_deref(),
+            Some(r"D:\software\RHFiles\current")
+        );
+    }
+
+    #[test]
+    fn ignores_stale_or_superseded_update_failures() {
+        let failed = r#"
+[update:10] [10:00:00] [INFO] Starting Velopack Updater (1.2.0)
+[update:10] [10:00:00] [INFO] Command: Apply
+[update:10] [10:00:00] [INFO] Package: Some("D:\RHFiles\packages\RHFiles-0.1.18-full.nupkg")
+[update:10] [10:00:01] [ERROR] Apply error: Access denied.
+"#;
+        assert!(
+            parse_last_update_failure(failed, "0.1.18", Path::new("update.log"), None).is_none(),
+            "a failure for the installed version is stale"
+        );
+
+        let followed_by_success = format!(
+            "{failed}\n[update:11] [10:05:00] [INFO] Starting Velopack Updater (1.2.0)\n\
+             [update:11] [10:05:00] [INFO] Command: Apply\n\
+             [update:11] [10:05:00] [INFO] Package: Some(\"D:\\RHFiles\\packages\\RHFiles-0.1.19-full.nupkg\")\n\
+             [update:11] [10:05:02] [INFO] Complete: Apply package"
+        );
+        assert!(
+            parse_last_update_failure(
+                &followed_by_success,
+                "0.1.17",
+                Path::new("update.log"),
+                None
+            )
+            .is_none(),
+            "only the latest updater session should determine the status"
+        );
+    }
+
+    #[test]
+    fn categorizes_permission_failures_without_a_lock_signature() {
+        let log = r#"
+[update:20] [11:00:00] [INFO] Starting Velopack Updater (1.2.0)
+[update:20] [11:00:00] [INFO] Command: Apply
+[update:20] [11:00:00] [INFO] Package: Some("C:\RHFiles\packages\RHFiles-0.2.0-full.nupkg")
+[update:20] [11:00:01] [ERROR] Apply error: Access denied while replacing RHFiles.exe.
+"#;
+        let failure =
+            parse_last_update_failure(log, "0.1.17", Path::new("update.log"), None).unwrap();
+        assert_eq!(failure.category, "permission");
     }
 
     #[test]

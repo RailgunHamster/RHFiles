@@ -1111,6 +1111,23 @@
       assertEqual($("#settings-update-github").value, getGithubUpdateSource(), "GitHub source input is out of sync");
       assertEqual($("#settings-update-server").value, getServerUpdateSource(), "Home-server source input is out of sync");
       assert($("#settings-check-update"), "Manual update button is missing");
+      assert($("#settings-update-failure"), "Persistent update-failure detail is missing");
+      const sampleFailure = {
+        category:'locked',
+        message:'Apply error: running processes prevented the update',
+        technicalDetail:'code: 32, file is being used by another process',
+        targetVersion:'0.1.18',
+        logPath:'C:\\Users\\test\\AppData\\Local\\velopack\\velopack_RHFiles.log',
+        searchPath:'D:\\software\\RHFiles\\current',
+      };
+      renderUpdateFailure(sampleFailure);
+      assert(!$("#settings-update-failure").hidden, "Update failure was not shown beside the button");
+      assertIncludes($("#settings-update-failure-text").textContent, '0.1.18', "Failed target version is missing");
+      assertIncludes($("#settings-update-failure-text").textContent, sampleFailure.searchPath, "Lock search path is missing");
+      assertIncludes($("#settings-update-failure-text").textContent, 'code: 32', "Technical failure detail is missing");
+      assert(!$("#settings-update-log").hidden, "Update log action is hidden for a logged failure");
+      assertEqual(classifyUpdateFailureText('Access denied; code: 32, file in use'), 'locked', "File lock should outrank a secondary access warning");
+      renderUpdateFailure(null);
       const packagedFeed = await call('get_env', {key:'RHFILES_TEST_UPDATE_SOURCE'}).catch(() => '');
       if (packagedFeed) {
         const updateStatus = await call('check_updates', {source:packagedFeed});

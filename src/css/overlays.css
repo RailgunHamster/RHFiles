@@ -43,9 +43,14 @@
 .settings-row { display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--divider); }
 .settings-row label { font-size:12px; color:var(--text-2); }
 .settings-row select, .settings-row input { padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-input); color:var(--text); font-size:12px; }
-.update-settings-row { gap:12px; }
+.update-settings-row { gap:12px; align-items:flex-start; }
 .settings-help { min-width:0; color:var(--text-4); font-size:11px; line-height:1.4; }
 .update-settings-row .dialog-btn { flex-shrink:0; }
+.settings-update-copy { display:flex; min-width:0; flex:1; flex-direction:column; gap:6px; padding-top:3px; }
+.settings-update-failure { display:flex; min-width:0; flex-direction:column; align-items:flex-start; gap:5px; color:var(--danger,#d14b4b); font-size:11px; line-height:1.45; overflow-wrap:anywhere; white-space:pre-line; }
+.settings-update-failure[hidden] { display:none; }
+.settings-text-button { padding:0; border:0; background:transparent; color:var(--accent); cursor:pointer; font:inherit; text-decoration:none; }
+.settings-text-button:hover { text-decoration:underline; }
 .update-location-row { gap:12px; }
 .update-location-row label { flex:0 0 118px; }
 .update-location-row input { flex:1; min-width:0; font-family:Consolas,"Cascadia Mono",monospace; }

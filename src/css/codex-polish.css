@@ -1266,6 +1266,10 @@ body.preview-fullscreen-active::before {
   padding: 9px 2px;
 }
 
+.settings-card .settings-row.update-settings-row {
+  align-items: flex-start;
+}
+
 .settings-card .settings-row label {
   min-width: 0;
   line-height: 1.35;
