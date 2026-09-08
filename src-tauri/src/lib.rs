@@ -1,4 +1,5 @@
 mod archive;
+mod clipboard;
 mod cloud;
 mod db;
 mod file_ops;
@@ -179,6 +180,11 @@ pub fn run() {
             cloud::get_cloud_status, cloud::get_cloud_providers,
             cloud::cloud_pin_file, cloud::cloud_unpin_file, cloud::cloud_clear_pin,
             cloud::get_cloud_file_size,
+
+            clipboard::get_windows_file_clipboard_info,
+            clipboard::set_windows_file_clipboard,
+            clipboard::clear_windows_file_clipboard,
+            clipboard::paste_windows_file_clipboard,
 
             network::ftp_list, network::ftp_download, network::ftp_upload,
             network::ftp_delete, network::ftp_mkdir, network::ftp_rename,

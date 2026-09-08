@@ -119,8 +119,10 @@ Object.assign(_builtinEn, {
   'settings.removeShortcut': 'Remove last key binding',
   'search.globalDisabledTitle': 'Global search is disabled in Settings',
   'tab.close': 'Close tab',
+  'tab.duplicate': 'Duplicate tab',
   'tab.closeOthers': 'Close other tabs',
   'tab.closeRight': 'Close tabs to the right',
+  'status.pastingWindowsClipboard': 'Pasting from Windows clipboard...',
   'pane.leftTabs': 'Left pane tabs',
   'pane.right': 'Right pane',
   'tasks.title': 'File operations',
@@ -529,6 +531,10 @@ function fallbackCall(cmd, args) {
     case "delete_files_permanently": return { deleted:[...(args.paths || [])], errors:[] };
     case "restore_recycled_files": return null;
     case "copy_path_exact": return null;
+    case "get_windows_file_clipboard_info": return { sequence:0, hasFiles:false };
+    case "set_windows_file_clipboard": return 0;
+    case "clear_windows_file_clipboard": return false;
+    case "paste_windows_file_clipboard": return { aborted:false, moved:false };
     case "move_path_exact": return null;
     case "move_paths_exact": return null;
     case "path_exists": return false;

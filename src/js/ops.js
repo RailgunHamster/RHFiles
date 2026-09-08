@@ -268,18 +268,36 @@ async function copySelected(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
-  G.clipboard = { op: "copy", paths: new Set(sel.map(f => f.path)) };
+  const clipboard = { op: "copy", paths: new Set(sel.map(f => f.path)), sequence: 0 };
+  G.clipboard = clipboard;
   if (isRight) renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
   else renderFiles(getTab(), "file-list", "status-count", "status-selection");
+  if (!window.__rhfilesSuppressNativeClipboard) {
+    try {
+      clipboard.sequence = Number(await call('set_windows_file_clipboard', {
+        paths: [...clipboard.paths],
+        cut: false,
+      })) || 0;
+    } catch (error) {}
+  }
 }
 
 async function cutSelected(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
   if (!sel.length) return;
-  G.clipboard = { op: "cut", paths: new Set(sel.map(f => f.path)) };
+  const clipboard = { op: "cut", paths: new Set(sel.map(f => f.path)), sequence: 0 };
+  G.clipboard = clipboard;
   if (isRight) renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
   else renderFiles(getTab(), "file-list", "status-count", "status-selection");
+  if (!window.__rhfilesSuppressNativeClipboard) {
+    try {
+      clipboard.sequence = Number(await call('set_windows_file_clipboard', {
+        paths: [...clipboard.paths],
+        cut: true,
+      })) || 0;
+    } catch (error) {}
+  }
 }
 
 function _findAndRename(isRight, parentPath, prefix) {
@@ -304,11 +322,77 @@ function _findAndRename(isRight, parentPath, prefix) {
   }
 }
 
+async function refreshPastedFolder(destPath, isRight, tabId) {
+  const target = isRight ? G.rpTabs.find(tab => tab.id === tabId) : getTab(tabId);
+  if (!target || target.path !== destPath) return;
+  if (isRight) {
+    if (G.activeRpTab === tabId) await rpNavigateTo(destPath, false);
+    return;
+  }
+  if (G.activeTab === tabId) await navigateTo(destPath, false);
+  else await _refreshTabInBackground(target);
+}
+
+async function pasteWindowsFileClipboard(destPath, isRight, tabId) {
+  const taskId = createOperationTaskId();
+  showProgress(t('status.pastingWindowsClipboard'), {
+    taskId,
+    indeterminate: true,
+    cancellable: false,
+    currentPath: destPath,
+  });
+  try {
+    const result = await call('paste_windows_file_clipboard', { destination: destPath });
+    await refreshPastedFolder(destPath, !!isRight, tabId);
+    if (result?.aborted) cancelOperationTask(taskId);
+    else completeOperationTask(taskId);
+  } catch (error) {
+    failOperationTask(taskId, error);
+    alert(t('alert.pasteFailed', { error }));
+  }
+}
+
+async function reconcileCutClipboard(clipboard, originalCount) {
+  if (clipboard?.op !== 'cut') return;
+  if (clipboard.sequence) {
+    try {
+      const info = await call('get_windows_file_clipboard_info', {});
+      if (Number(info?.sequence) && Number(info.sequence) !== clipboard.sequence) {
+        if (G.clipboard === clipboard) G.clipboard = null;
+        return;
+      }
+    } catch (error) {}
+  }
+  if (!clipboard.paths.size) {
+    if (G.clipboard === clipboard) G.clipboard = null;
+    if (clipboard.sequence) {
+      try {
+        await call('clear_windows_file_clipboard', { expectedSequence: clipboard.sequence });
+      } catch (error) {}
+    }
+  } else if (clipboard.paths.size !== originalCount && clipboard.sequence) {
+    try {
+      clipboard.sequence = Number(await call('set_windows_file_clipboard', {
+        paths: [...clipboard.paths],
+        cut: true,
+      })) || clipboard.sequence;
+    } catch (error) {}
+  }
+}
+
 async function paste(isRight) {
   isRight = resolveRightPane(isRight);
-  if (!G.clipboard) return;
   const destTab = isRight ? G.rp : getTab();
   const destPath = destTab.path;
+  if (G.clipboard?.sequence) {
+    try {
+      const info = await call('get_windows_file_clipboard_info', {});
+      if (Number(info?.sequence) && Number(info.sequence) !== G.clipboard.sequence) {
+        G.clipboard = null;
+      }
+    } catch (error) {}
+  }
+  if (!G.clipboard) return pasteWindowsFileClipboard(destPath, isRight, destTab.id);
   const destEntries = destTab.entries || [];
   const existingNames = new Set(destEntries.map(entry => fileNameKey(entry.name)));
   let applyAllAction = null;
@@ -398,7 +482,7 @@ async function paste(isRight) {
         errors.push(srcName + ': ' + String(error));
       }
     }
-    if (G.clipboard?.op === "cut" && !G.clipboard.paths.size) G.clipboard = null;
+    await reconcileCutClipboard(clipboard, sources.length);
     await refresh();
     if (taskStarted) {
       if (errors.length) {
@@ -848,7 +932,7 @@ function showContextMenu(x, y, isRight) {
     { label: "-", action: null },
     { label: t('ctx.cut'), shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
     { label: t('ctx.copy'), shortcut:"Ctrl+C", action: () => copySelected(isRight), disabled: !hasSelection },
-    { label: t('ctx.paste'), shortcut:"Ctrl+V", action: () => paste(isRight), disabled: !G.clipboard },
+    { label: t('ctx.paste'), shortcut:"Ctrl+V", action: () => paste(isRight) },
     { label: "-", action: null },
     { label: t('ctx.rename'), shortcut:"F2", action: () => renamePrompt(isRight), disabled: !singleSelection },
     { label: t('ctx.batchRename'), action: () => openBatchRename(isRight), hidden: sel.length < 2 },
@@ -1006,6 +1090,8 @@ function showTabContextMenu(x, y, tabId, isRight) {
   const index = tabs.findIndex(item => item.id === tabId);
   const folderPath = tab.path;
   showMenuAt(x, y, [
+    { label: t('tab.duplicate'), action: () => duplicateTab(tabId, isRight) },
+    { label: '-' },
     { label: t('tab.close'), shortcut: 'Ctrl+W', action: () => closeTab(tabId, isRight), disabled: tabs.length <= 1 },
     { label: t('tab.closeOthers'), action: () => closeOtherTabs(tabId, isRight), disabled: tabs.length <= 1 },
     { label: t('tab.closeRight'), action: () => closeTabsToRight(tabId, isRight), disabled: index < 0 || index === tabs.length - 1 },
@@ -1092,7 +1178,7 @@ function showBlankListContextMenu(x, y, isRight) {
     { label: t('ctx.newFolder'), shortcut: 'F7', action: () => newFolder(isRight) },
     { label: t('ctx.newFile'), shortcut: 'Ctrl+Shift+N', action: () => showNewFileDialog(isRight) },
     { label: '-' },
-    { label: t('ctx.paste'), shortcut: 'Ctrl+V', action: () => paste(isRight), disabled: !G.clipboard },
+    { label: t('ctx.paste'), shortcut: 'Ctrl+V', action: () => paste(isRight) },
     { label: t('cmd.refresh'), shortcut: 'F5', action: refresh },
     { label: t('ctx.selectAll'), shortcut: 'Ctrl+A', action: () => selectAll(isRight) },
     { label: '-' },

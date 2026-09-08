@@ -98,6 +98,7 @@
 
   async function runAllTests() {
     results.length = 0;
+    window.__rhfilesSuppressNativeClipboard = true;
     log("=== GUI Test Suite Start ===");
 
     // ================================================================
@@ -400,6 +401,67 @@
     await test("[tabs] Tab new button exists", async () => {
       const newBtn = $(".tab-new");
       assert(newBtn, "New tab button not found");
+    });
+
+    await test("[tabs] Duplicate tab is inserted beside the source with matching state", async () => {
+      const source = getTab();
+      const sourceIndex = G.tabs.indexOf(source);
+      const originalCount = G.tabs.length;
+      const expectedHistory = [...(source.history || [])];
+      await duplicateTab(source.id, false);
+      const duplicate = getTab();
+      try {
+        assertEqual(G.tabs.length, originalCount + 1, "Duplicate tab was not added");
+        assertEqual(G.tabs[sourceIndex + 1].id, duplicate.id, "Duplicate tab was not placed beside its source");
+        assertEqual(duplicate.path, source.path, "Duplicate tab path differs from its source");
+        assertEqual(duplicate.sortF, source.sortF, "Duplicate tab sort field differs from its source");
+        assertEqual(duplicate.sortAsc, source.sortAsc, "Duplicate tab sort direction differs from its source");
+        assertEqual(JSON.stringify(duplicate.history), JSON.stringify(expectedHistory), "Duplicate tab history differs from its source");
+        assert(duplicate.history !== source.history, "Duplicate tab shares its history array with the source");
+      } finally {
+        closeTab(duplicate.id, false);
+        if (G.activeTab !== source.id) switchTab(source.id);
+      }
+    });
+
+    await test("[tabs] Reorder helper supports dropping before and after a tab", async () => {
+      const tabs = [{id:1}, {id:2}, {id:3}];
+      assert(reorderTabsByDrop(tabs, 3, 1, false), "Reorder before target was rejected");
+      assertEqual(tabs.map(tab => tab.id).join(','), '3,1,2', "Drop-before order is wrong");
+      assert(reorderTabsByDrop(tabs, 3, 2, true), "Reorder after target was rejected");
+      assertEqual(tabs.map(tab => tab.id).join(','), '1,2,3', "Drop-after order is wrong");
+      assert(!reorderTabsByDrop(tabs, 2, 2, true), "Dropping a tab onto itself changed the order");
+    });
+
+    await test("[tabs] Dragging a rendered tab persists the new order", async () => {
+      if (typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') {
+        log("SKIP: DragEvent/DataTransfer constructors unavailable");
+        return;
+      }
+      if (G.tabs.length < 2) {
+        addTab(getTab().path, false);
+        await sleep(100);
+      }
+      const originalTabs = [...G.tabs];
+      const originalOrder = originalTabs.map(tab => tab.id);
+      try {
+        renderTabs();
+        const source = document.querySelector(`#tab-bar .tab[data-tab-id="${originalOrder[0]}"]`);
+        const target = document.querySelector(`#tab-bar .tab[data-tab-id="${originalOrder[originalOrder.length - 1]}"]`);
+        assert(source && target, "Rendered drag source or target is missing");
+        const transfer = new DataTransfer();
+        source.dispatchEvent(new DragEvent('dragstart', {bubbles:true, cancelable:true, dataTransfer:transfer}));
+        const rect = target.getBoundingClientRect();
+        target.dispatchEvent(new DragEvent('dragover', {bubbles:true, cancelable:true, dataTransfer:transfer, clientX:rect.right - 1}));
+        target.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:transfer, clientX:rect.right - 1}));
+        assertEqual(G.tabs[G.tabs.length - 1].id, originalOrder[0], "Rendered tab drag did not move the source after the target");
+        const stored = JSON.parse(localStorage.getItem('rhfiles-tabs') || '{}');
+        assertEqual(stored.tabs?.map(tab => tab.id).join(','), G.tabs.map(tab => tab.id).join(','), "Dragged tab order was not persisted");
+      } finally {
+        G.tabs.splice(0, G.tabs.length, ...originalTabs);
+        renderTabs();
+        saveTabState();
+      }
     });
 
     await test("[tabs] Switching tab cancels pending hover preview", async () => {
@@ -1174,6 +1236,57 @@
       }
     });
 
+    await test("[clipboard] Paste falls back to the native Windows file clipboard", async () => {
+      const savedClipboard = G.clipboard;
+      const originalNativePaste = pasteWindowsFileClipboard;
+      let pastedInto = null;
+      try {
+        G.clipboard = null;
+        pasteWindowsFileClipboard = async path => { pastedInto = path; };
+        await paste(false);
+        assertEqual(pastedInto, getTab().path, "Native clipboard paste did not target the active folder");
+      } finally {
+        pasteWindowsFileClipboard = originalNativePaste;
+        G.clipboard = savedClipboard;
+      }
+    });
+
+    await test("[clipboard] A newer Windows clipboard replaces stale internal files", async () => {
+      const savedClipboard = G.clipboard;
+      const originalCall = call;
+      const originalNativePaste = pasteWindowsFileClipboard;
+      let nativePasteCount = 0;
+      try {
+        G.clipboard = {op:'copy', paths:new Set(['C:\\stale.txt']), sequence:41};
+        call = async (command, args) => command === 'get_windows_file_clipboard_info'
+          ? {sequence:42, hasFiles:true}
+          : originalCall(command, args);
+        pasteWindowsFileClipboard = async () => { nativePasteCount++; };
+        await paste(false);
+        assertEqual(nativePasteCount, 1, "New external clipboard data did not replace the stale internal copy");
+        assertEqual(G.clipboard, null, "Stale internal clipboard was retained");
+      } finally {
+        call = originalCall;
+        pasteWindowsFileClipboard = originalNativePaste;
+        G.clipboard = savedClipboard;
+      }
+    });
+
+    await test("[clipboard] File-view Paste remains available for Explorer and RDP clipboard data", async () => {
+      const savedClipboard = G.clipboard;
+      try {
+        G.clipboard = null;
+        showContextMenu(20, 20, false);
+        const item = [...document.querySelectorAll('.context-menu > .ctx-item')]
+          .find(candidate => candidate.querySelector(':scope > span')?.textContent === t('ctx.paste'));
+        assert(item, "Paste action is missing when the internal clipboard is empty");
+        assert(!item.classList.contains('disabled'), "Paste action is disabled for an external Windows clipboard");
+      } finally {
+        removeContextMenu();
+        G.clipboard = savedClipboard;
+      }
+    });
+
     // ================================================================
     // SECTION 11: CONTEXT MENU
     // ================================================================
@@ -1220,6 +1333,7 @@
       await sleep(50);
       const menu = $(".context-menu");
       assert(menu, "Tab context menu did not appear");
+      assertIncludes(menu.textContent, t('tab.duplicate'), "Duplicate-tab action is missing");
       assertIncludes(menu.textContent, t('tab.close'), "Close-tab action is missing");
       assertIncludes(menu.textContent, t('ctx.copyPath'), "Copy-path action is missing");
       assertIncludes(menu.textContent, t('ctx.openFolderInExplorer'), "Windows Explorer folder action is missing");
