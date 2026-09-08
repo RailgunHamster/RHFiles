@@ -302,6 +302,7 @@ G.dragWindowToken = (globalThis.crypto?.randomUUID?.() || (Date.now() + '-' + Ma
 
 const RHFILES_FILE_DRAG_MIME = 'application/x-rhfiles-file-list+json';
 const RHFILES_FILE_DRAG_PREFIX = 'RHFILES_FILE_DRAG_V1\n';
+G._activeFileDragPayload = null;
 
 function currentFileDragWindowId() {
   return G.windowLabel || G.dragWindowToken;
@@ -309,15 +310,22 @@ function currentFileDragWindowId() {
 
 function setRhfilesFileDragData(dataTransfer, paths, isRight) {
   if (!dataTransfer) return;
-  const payload = JSON.stringify({
+  const dragPayload = {
     kind: 'rhfiles-file-drag',
     sourceWindow: currentFileDragWindowId(),
     sourcePane: isRight ? 'right' : 'left',
     paths: [...new Set((paths || []).filter(path => typeof path === 'string' && path))],
-  });
+  };
+  if (!dragPayload.paths.length) return;
+  G._activeFileDragPayload = dragPayload;
+  const payload = JSON.stringify(dragPayload);
   dataTransfer.effectAllowed = 'copyMove';
   try { dataTransfer.setData(RHFILES_FILE_DRAG_MIME, payload); } catch (error) {}
-  dataTransfer.setData('text/plain', RHFILES_FILE_DRAG_PREFIX + payload);
+  try { dataTransfer.setData('text/plain', RHFILES_FILE_DRAG_PREFIX + payload); } catch (error) {}
+}
+
+function clearRhfilesFileDragSession() {
+  G._activeFileDragPayload = null;
 }
 
 function readRhfilesFileDragData(dataTransfer) {
@@ -325,9 +333,14 @@ function readRhfilesFileDragData(dataTransfer) {
   let raw = '';
   try { raw = dataTransfer.getData(RHFILES_FILE_DRAG_MIME); } catch (error) {}
   if (!raw) {
-    const plain = dataTransfer.getData('text/plain') || '';
-    if (!plain.startsWith(RHFILES_FILE_DRAG_PREFIX)) return null;
-    raw = plain.slice(RHFILES_FILE_DRAG_PREFIX.length);
+    let plain = '';
+    try { plain = dataTransfer.getData('text/plain') || ''; } catch (error) {}
+    if (plain.startsWith(RHFILES_FILE_DRAG_PREFIX)) {
+      raw = plain.slice(RHFILES_FILE_DRAG_PREFIX.length);
+    }
+  }
+  if (!raw && G._activeFileDragPayload?.paths?.length) {
+    return {...G._activeFileDragPayload, paths: [...G._activeFileDragPayload.paths]};
   }
   try {
     const payload = JSON.parse(raw);

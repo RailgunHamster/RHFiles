@@ -1464,9 +1464,39 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
   return changed ? changedFolders : [];
 }
 
+async function handleRhfilesFileDrop(payload, destination, destinationEntries, isRightDrop) {
+  const paths = Array.isArray(payload?.paths)
+    ? payload.paths.filter(path => typeof path === 'string' && path)
+    : [];
+  if (!paths.length || !destination || destination === 'home://') return false;
+
+  activatePane(isRightDrop ? 'right' : 'left');
+  let operation = 'move';
+  if (payload.sourceWindow && payload.sourceWindow !== currentFileDragWindowId()) {
+    operation = await showFileDropOperationDialog(paths, destination);
+  }
+  if (operation === 'cancel') return false;
+
+  try {
+    const changedFolders = await performDroppedFileOperation(
+      paths,
+      destination,
+      destinationEntries,
+      operation,
+    );
+    if (!changedFolders.length) return false;
+    await navigateTo(getTab().path, false);
+    if (G.dualOn) await rpNavigateTo(G.rp.path, false);
+    await broadcastFileDropChanges(changedFolders);
+    return true;
+  } catch (error) {
+    alert(t(operation === 'copy' ? 'alert.copyFailed' : 'alert.moveFailed', {error}));
+    return false;
+  }
+}
+
 document.addEventListener('dragover', event => {
-  const types = Array.from(event.dataTransfer?.types || []);
-  if (!types.includes(RHFILES_FILE_DRAG_MIME) && !types.includes('text/plain')) return;
+  if (!isRhfilesFileDrag(event.dataTransfer)) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = 'copy';
 });
@@ -1485,28 +1515,7 @@ document.addEventListener('drop', async event => {
     : null;
   const destination = folderRow?.dataset.path || destinationPane.path;
   const destinationEntries = folderRow ? [] : destinationPane.entries;
-  activatePane(isRightDrop ? 'right' : 'left');
-
-  let operation = 'move';
-  if (payload.sourceWindow && payload.sourceWindow !== currentFileDragWindowId()) {
-    operation = await showFileDropOperationDialog(payload.paths, destination);
-  }
-  if (operation === 'cancel') return;
-
-  try {
-    const changedFolders = await performDroppedFileOperation(
-      payload.paths,
-      destination,
-      destinationEntries,
-      operation,
-    );
-    if (!changedFolders.length) return;
-    await navigateTo(getTab().path, false);
-    if (G.dualOn) await rpNavigateTo(G.rp.path, false);
-    await broadcastFileDropChanges(changedFolders);
-  } catch (error) {
-    alert(t(operation === 'copy' ? 'alert.copyFailed' : 'alert.moveFailed', {error}));
-  }
+  await handleRhfilesFileDrop(payload, destination, destinationEntries, isRightDrop);
 });
 
 // --- ADS streams dialog ---

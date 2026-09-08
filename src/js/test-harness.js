@@ -1742,37 +1742,138 @@
         assertEqual(transfer.effectAllowed, 'copyMove', "Drag payload does not allow copy and move");
       } finally {
         G.windowLabel = savedWindowLabel;
+        clearRhfilesFileDragSession();
       }
     });
 
-    await test("[dragdrop] Hovering a file over either pane's tab activates it", async () => {
+    await test("[dragdrop] Starting a drag keeps the rendered source node alive", async () => {
+      if (typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') {
+        log("SKIP: DragEvent/DataTransfer constructors unavailable");
+        return;
+      }
+      const list = document.createElement('div');
+      list.id = 'drag-source-node-test';
+      list.style.height = '100px';
+      const entries = [
+        {name:'selected.txt', path:'C:\\DragTest\\selected.txt', is_dir:false, extension:'txt', size_display:'1 B'},
+        {name:'dragged.txt', path:'C:\\DragTest\\dragged.txt', is_dir:false, extension:'txt', size_display:'1 B'},
+      ];
+      const state = {path:'C:\\DragTest', entries, sel:new Set([0]), lastIdx:0};
+      document.body.appendChild(list);
+      try {
+        renderDetailsLayout(list, entries, state.sel, false, state, list.id);
+        const source = list.querySelector('[data-index="1"]');
+        assert(source, "Unselected drag source was not rendered");
+        const transfer = new DataTransfer();
+        source.dispatchEvent(new DragEvent('dragstart', {
+          bubbles:true,
+          cancelable:true,
+          dataTransfer:transfer,
+        }));
+        assert(source.isConnected, "Drag start replaced the DOM node being dragged");
+        assertEqual(state.sel.size, 1, "Drag start did not normalize the selection");
+        assert(state.sel.has(1), "Drag start did not select the dragged item");
+        const payload = readRhfilesFileDragData(transfer);
+        assertEqual(payload?.paths?.join('|'), entries[1].path, "Drag payload did not contain the dragged item");
+      } finally {
+        teardownVirtualList(list);
+        list.remove();
+        clearRhfilesFileDragSession();
+      }
+    });
+
+    await test("[dragdrop] Hovering a file over a tab survives child dragleave events", async () => {
+      if (typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') {
+        log("SKIP: DragEvent/DataTransfer constructors unavailable");
+        return;
+      }
       const originalLeft = switchTab;
-      const originalRight = switchRightTab;
+      const bar = document.createElement('div');
       const left = document.createElement('div');
-      const right = document.createElement('div');
-      left.className = right.className = 'tab';
+      const label = document.createElement('span');
+      left.className = 'tab';
       left.dataset.tabId = String(G.activeTab + 900001);
-      right.dataset.tabId = String(G.activeRpTab + 900002);
-      document.body.append(left, right);
+      label.className = 'tab-label';
+      left.appendChild(label);
+      bar.appendChild(left);
+      document.body.appendChild(bar);
       let leftActivated = null;
-      let rightActivated = null;
       try {
         switchTab = function(id) { leftActivated = id; };
-        switchRightTab = function(id) { rightActivated = id; };
+        clearRhfilesFileDragSession();
         assert(isRhfilesFileDrag({types:[RHFILES_FILE_DRAG_MIME]}), "File drag type was not recognized");
         assert(!isRhfilesFileDrag({types:['text/plain']}), "Tab reordering was mistaken for file dragging");
-        scheduleFileDragTabSwitch(left, false);
+        const payload = JSON.stringify({
+          kind:'rhfiles-file-drag',
+          sourceWindow:currentFileDragWindowId(),
+          sourcePane:'left',
+          paths:['C:\\DragTest\\hover.txt'],
+        });
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', RHFILES_FILE_DRAG_PREFIX + payload);
+        initTabDragDrop(bar, false);
+        left.dispatchEvent(new DragEvent('dragover', {bubbles:true, cancelable:true, dataTransfer:transfer}));
+        label.dispatchEvent(new DragEvent('dragleave', {bubbles:true, cancelable:true, dataTransfer:transfer}));
         await sleep(TAB_FILE_DRAG_SWITCH_DELAY_MS + 50);
         assertEqual(leftActivated, Number(left.dataset.tabId), "Left tab was not activated after hover");
-        scheduleFileDragTabSwitch(right, true);
-        await sleep(TAB_FILE_DRAG_SWITCH_DELAY_MS + 50);
-        assertEqual(rightActivated, Number(right.dataset.tabId), "Right tab was not activated after hover");
       } finally {
         clearFileDragTabHover();
+        clearRhfilesFileDragSession();
         switchTab = originalLeft;
-        switchRightTab = originalRight;
-        left.remove();
-        right.remove();
+        bar.remove();
+      }
+    });
+
+    await test("[dragdrop] Dropping directly on a tab targets that tab's folder", async () => {
+      if (typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') {
+        log("SKIP: DragEvent/DataTransfer constructors unavailable");
+        return;
+      }
+      const originalSwitchTab = switchTab;
+      const originalHandleDrop = handleRhfilesFileDrop;
+      const target = {
+        id:G.nextTabId + 900003,
+        path:'D:\\TabDropTarget',
+        entries:[],
+        sel:new Set(),
+      };
+      const bar = document.createElement('div');
+      const tab = document.createElement('div');
+      tab.className = 'tab';
+      tab.dataset.tabId = String(target.id);
+      bar.appendChild(tab);
+      document.body.appendChild(bar);
+      G.tabs.push(target);
+      let switchedTo = null;
+      let received = null;
+      try {
+        switchTab = id => { switchedTo = id; };
+        handleRhfilesFileDrop = async (payload, destination, entries, isRight) => {
+          received = {payload, destination, entries, isRight};
+          return true;
+        };
+        const payload = JSON.stringify({
+          kind:'rhfiles-file-drag',
+          sourceWindow:currentFileDragWindowId(),
+          sourcePane:'left',
+          paths:['C:\\DragTest\\drop.txt'],
+        });
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', RHFILES_FILE_DRAG_PREFIX + payload);
+        initTabDragDrop(bar, false);
+        tab.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:transfer}));
+        await waitForCondition(() => received !== null, 1000);
+        assertEqual(switchedTo, target.id, "Tab drop did not activate its destination tab");
+        assertEqual(received.destination, target.path, "Tab drop used the wrong destination folder");
+        assertEqual(received.payload.paths[0], 'C:\\DragTest\\drop.txt', "Tab drop lost its source path");
+        assertEqual(received.isRight, false, "Left tab drop was routed to the right pane");
+      } finally {
+        switchTab = originalSwitchTab;
+        handleRhfilesFileDrop = originalHandleDrop;
+        const index = G.tabs.indexOf(target);
+        if (index >= 0) G.tabs.splice(index, 1);
+        clearRhfilesFileDragSession();
+        bar.remove();
       }
     });
 

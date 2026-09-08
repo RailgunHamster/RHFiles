@@ -485,9 +485,18 @@ const RHFILES_TAB_DRAG_MIME = 'application/x-rhfiles-tab+json';
 const TAB_FILE_DRAG_SWITCH_DELAY_MS = 480;
 let _fileDragTabHoverTimer = null;
 let _fileDragTabHoverTarget = null;
+let _fileDragTabLeaveTimer = null;
 
 function isRhfilesFileDrag(dataTransfer) {
-  return Array.from(dataTransfer?.types || []).includes(RHFILES_FILE_DRAG_MIME);
+  const types = Array.from(dataTransfer?.types || []).map(type => String(type).toLowerCase());
+  if (types.includes(RHFILES_FILE_DRAG_MIME)) return true;
+  if (G._activeFileDragPayload?.paths?.length && !types.includes(RHFILES_TAB_DRAG_MIME)) return true;
+  if (!types.includes('text/plain')) return false;
+  try {
+    return String(dataTransfer.getData('text/plain') || '').startsWith(RHFILES_FILE_DRAG_PREFIX);
+  } catch (error) {
+    return false;
+  }
 }
 
 function isRhfilesTabDrag(dataTransfer) {
@@ -512,6 +521,8 @@ function reorderTabsByDrop(tabs, fromId, toId, afterTarget) {
 
 function clearFileDragTabHover(tabEl) {
   if (tabEl && _fileDragTabHoverTarget && tabEl !== _fileDragTabHoverTarget) return;
+  if (_fileDragTabLeaveTimer) clearTimeout(_fileDragTabLeaveTimer);
+  _fileDragTabLeaveTimer = null;
   if (_fileDragTabHoverTimer) clearTimeout(_fileDragTabHoverTimer);
   _fileDragTabHoverTimer = null;
   if (_fileDragTabHoverTarget) _fileDragTabHoverTarget.classList.remove('file-drag-hover');
@@ -519,6 +530,8 @@ function clearFileDragTabHover(tabEl) {
 }
 
 function scheduleFileDragTabSwitch(tabEl, isRight) {
+  if (_fileDragTabLeaveTimer) clearTimeout(_fileDragTabLeaveTimer);
+  _fileDragTabLeaveTimer = null;
   const tabId = parseInt(tabEl?.dataset.tabId);
   const activeId = isRight ? G.activeRpTab : G.activeTab;
   if (!tabEl || !Number.isFinite(tabId) || tabId === activeId) {
@@ -585,18 +598,36 @@ function initTabDragDrop(bar, isRight) {
       tabEl.classList.add(e.clientX >= rect.left + rect.width / 2 ? 'drag-over-after' : 'drag-over-before');
     });
     tabEl.addEventListener("dragleave", e => {
+      // Child elements (label, pin, close button) emit their own bubbling
+      // dragleave events while the pointer is still inside the tab.
+      if (e.target !== tabEl) return;
       tabEl.classList.remove('drag-over-before', 'drag-over-after');
-      if (!tabEl.contains(e.relatedTarget)) clearFileDragTabHover(tabEl);
+      if (e.relatedTarget && tabEl.contains(e.relatedTarget)) return;
+      if (_fileDragTabLeaveTimer) clearTimeout(_fileDragTabLeaveTimer);
+      _fileDragTabLeaveTimer = setTimeout(() => {
+        _fileDragTabLeaveTimer = null;
+        clearFileDragTabHover(tabEl);
+      }, 180);
     });
-    tabEl.addEventListener("drop", e => {
+    tabEl.addEventListener("drop", async e => {
       if (isRhfilesFileDrag(e.dataTransfer)) {
         e.preventDefault();
         e.stopPropagation();
+        const payload = readRhfilesFileDragData(e.dataTransfer);
         clearTabReorderIndicators(bar);
         clearFileDragTabHover();
         const targetId = parseInt(tabEl.dataset.tabId);
+        const tabs = isRight ? G.rpTabs : G.tabs;
+        const target = tabs.find(tab => tab.id === targetId);
         if (isRight) switchRightTab(targetId);
         else switchTab(targetId);
+        try {
+          if (payload && target && target.path !== 'home://' && typeof handleRhfilesFileDrop === 'function') {
+            await handleRhfilesFileDrop(payload, target.path, target.entries || [], isRight);
+          }
+        } finally {
+          clearRhfilesFileDragSession();
+        }
         return;
       }
       if (!isRhfilesTabDrag(e.dataTransfer) || _dragTabPane !== (isRight ? 'right' : 'left')) return;
@@ -637,8 +668,18 @@ function initTabPreview() {
   });
 }
 
-document.addEventListener('dragend', () => clearFileDragTabHover());
-document.addEventListener('drop', () => clearFileDragTabHover());
+document.addEventListener('dragover', event => {
+  if (!_fileDragTabHoverTarget || !isRhfilesFileDrag(event.dataTransfer)) return;
+  if (!event.target.closest?.('.tab')) clearFileDragTabHover();
+});
+document.addEventListener('dragend', () => {
+  clearFileDragTabHover();
+  clearRhfilesFileDragSession();
+});
+document.addEventListener('drop', () => {
+  clearFileDragTabHover();
+  setTimeout(clearRhfilesFileDragSession, 0);
+});
 
 function showTabPreview(tabEl) {
   const tabId = parseInt(tabEl.dataset.tabId);
