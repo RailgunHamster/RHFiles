@@ -1699,10 +1699,18 @@
       _operationTasks.get(copyTask).cancelRequested = true;
       showProgress(t('status.copying'), {taskId: copyTask, currentIndex: 2, totalItems: 3});
       assert(isOperationCancellationRequested(copyTask), "Batch refresh lost its pending cancellation");
+      const taskChevronPath = $("#operation-center-toggle .operation-center-chevron path");
+      assertEqual(taskChevronPath?.getAttribute('d'), 'm4 6 4 4 4-4', "Expanded task center should point down toward its collapse direction");
       toggleOperationCenter(false);
+      await sleep(220);
       assert($("#operation-center").classList.contains("collapsed"), "Task center did not collapse");
+      assertEqual($("#operation-center-toggle").title, t('tasks.expand'), "Collapsed task center should describe the expand action");
+      assert(getComputedStyle($("#operation-center-toggle .operation-center-chevron")).transform !== 'none', "Collapsed task center should rotate the chevron upward");
       toggleOperationCenter(true);
+      await sleep(220);
       assert(!$("#operation-center").classList.contains("collapsed"), "Task center did not expand");
+      assertEqual($("#operation-center-toggle").title, t('tasks.collapse'), "Expanded task center should describe the collapse action");
+      assertEqual(getComputedStyle($("#operation-center-toggle .operation-center-chevron")).transform, 'none', "Expanded task center should point down");
       completeOperationTask(copyTask);
       completeOperationTask(deleteTask);
       dismissOperationTask(copyTask);
