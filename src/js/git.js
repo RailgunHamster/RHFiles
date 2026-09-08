@@ -65,26 +65,52 @@ function closeArchive() {
 
 async function extractArchiveAll() {
   if (!archiveBrowsingPath) return;
-  showProgress(t('status.extracting', { name: archiveBrowsingPath.split('\\').pop() }));
+  const taskId = showProgress(t('status.extracting', { name: archiveBrowsingPath.split('\\').pop() }), {
+    currentName: archiveBrowsingPath.split('\\').pop(),
+    currentPath: archiveBrowsingPath,
+  });
   try {
-    await call("extract_archive", { path: archiveBrowsingPath, dest: getTab().path, entryPath: null });
+    await call("extract_archive", {
+      path: archiveBrowsingPath,
+      dest: getTab().path,
+      entryPath: null,
+      operationId: taskId,
+    });
+    completeOperationTask(taskId);
     closeArchive();
   } catch (e) {
-    if (!/cancel/i.test(String(e))) alert(t('alert.extractFailed', {error: e}));
-  } finally { hideProgress(); }
+    if (/cancel/i.test(String(e))) cancelOperationTask(taskId);
+    else {
+      failOperationTask(taskId, e);
+      alert(t('alert.extractFailed', {error: e}));
+    }
+  }
 }
 
 async function extractArchiveEntry(idx) {
   if (!archiveBrowsingPath) return;
   const entries = getTab().entries;
   if (!entries[idx]) return;
-  showProgress(t('status.extracting', { name: entries[idx].name }));
+  const taskId = showProgress(t('status.extracting', { name: entries[idx].name }), {
+    currentName: entries[idx].name,
+    currentPath: entries[idx].path,
+  });
   try {
-    await call("extract_archive", { path: archiveBrowsingPath, dest: getTab().path, entryPath: entries[idx].path });
+    await call("extract_archive", {
+      path: archiveBrowsingPath,
+      dest: getTab().path,
+      entryPath: entries[idx].path,
+      operationId: taskId,
+    });
+    completeOperationTask(taskId);
     refresh();
   } catch (e) {
-    if (!/cancel/i.test(String(e))) alert(t('alert.extractFailed', {error: e}));
-  } finally { hideProgress(); }
+    if (/cancel/i.test(String(e))) cancelOperationTask(taskId);
+    else {
+      failOperationTask(taskId, e);
+      alert(t('alert.extractFailed', {error: e}));
+    }
+  }
 }
 
 // --- git branch management ---

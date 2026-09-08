@@ -5,6 +5,9 @@
 .tab.active { color:var(--text); font-weight:500; }
 .tab.drag-over { border-left:2px solid var(--accent); margin-left:-2px; }
 .tab.dragging { opacity:0.4; }
+.tab.file-drag-hover { color:var(--text-1); background:color-mix(in srgb, var(--accent) 12%, var(--bg-card)); }
+.tab.file-drag-hover::after { content:""; position:absolute; left:0; right:0; bottom:0; height:2px; background:var(--accent); transform-origin:left center; animation:tab-file-drag-switch 480ms linear forwards; }
+@keyframes tab-file-drag-switch { from { transform:scaleX(0); } to { transform:scaleX(1); } }
 .tab-label { display:block; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:clip; white-space:nowrap; direction:ltr; text-align:left; scrollbar-width:none; }
 .tab-label::-webkit-scrollbar { display:none; }
 .tab-label.tail-clipped { -webkit-mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 100%); mask-image:linear-gradient(to right,transparent 0,#000 12px,#000 100%); }

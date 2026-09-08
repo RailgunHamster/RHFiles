@@ -1,8 +1,79 @@
 use rhfiles_core::enumerator;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::Mutex;
 
-pub struct CancelFlag(pub Mutex<bool>);
+#[derive(Default)]
+pub struct CancelState {
+    active: HashSet<String>,
+    cancelled: HashSet<String>,
+}
+
+pub struct CancelFlag(pub Mutex<CancelState>);
+
+impl CancelFlag {
+    fn key(operation_id: Option<&str>) -> String {
+        operation_id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("legacy")
+            .to_string()
+    }
+
+    pub fn reset(&self, operation_id: Option<&str>) -> Result<(), String> {
+        let key = Self::key(operation_id);
+        let mut state = self.0.lock().map_err(|error| error.to_string())?;
+        state.cancelled.remove(&key);
+        state.active.insert(key);
+        Ok(())
+    }
+
+    pub fn cancel(&self, operation_id: Option<&str>) -> Result<(), String> {
+        let key = Self::key(operation_id);
+        let mut state = self.0.lock().map_err(|error| error.to_string())?;
+        if state.active.contains(&key) {
+            state.cancelled.insert(key);
+        }
+        Ok(())
+    }
+
+    pub fn is_cancelled(&self, operation_id: Option<&str>) -> Result<bool, String> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .cancelled
+            .contains(&Self::key(operation_id)))
+    }
+
+    pub fn clear(&self, operation_id: Option<&str>) {
+        if let Ok(mut state) = self.0.lock() {
+            let key = Self::key(operation_id);
+            state.cancelled.remove(&key);
+            state.active.remove(&key);
+        }
+    }
+}
+
+#[cfg(test)]
+mod cancel_flag_tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_is_scoped_to_active_operations() {
+        let flag = CancelFlag(Mutex::new(CancelState::default()));
+        flag.cancel(Some("inactive")).unwrap();
+        assert!(!flag.is_cancelled(Some("inactive")).unwrap());
+
+        flag.reset(Some("first")).unwrap();
+        flag.reset(Some("second")).unwrap();
+        flag.cancel(Some("first")).unwrap();
+        assert!(flag.is_cancelled(Some("first")).unwrap());
+        assert!(!flag.is_cancelled(Some("second")).unwrap());
+
+        flag.clear(Some("first"));
+        assert!(!flag.is_cancelled(Some("first")).unwrap());
+    }
+}
 
 #[derive(Serialize, Clone)]
 pub struct FileInfo {

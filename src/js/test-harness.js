@@ -1354,11 +1354,52 @@
       removeContextMenu();
     });
 
-    await test("[ctxmenu] Long actions use an indeterminate progress state", async () => {
-      showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
-      assert($("#progress-bar").classList.contains("indeterminate"), "Progress bar is not indeterminate");
-      assertEqual($("#progress-cancel").style.display, "none", "Non-cancellable action still shows Cancel");
-      hideProgress();
+    await test("[tasks] Long actions use an indeterminate non-cancellable task", async () => {
+      const taskId = showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
+      const task = document.querySelector('[data-task-id="' + taskId + '"]');
+      assert(task, "Operation task was not rendered");
+      assert(task.querySelector(".progress-bar").classList.contains("indeterminate"), "Progress bar is not indeterminate");
+      assert(!task.querySelector(".operation-task-cancel"), "Non-cancellable action still shows Cancel");
+      completeOperationTask(taskId);
+      dismissOperationTask(taskId);
+    });
+
+    await test("[tasks] Concurrent operations keep independent progress and can collapse", async () => {
+      const savedCollapsed = _operationCenterCollapsed;
+      const copyTask = showProgress(t('status.copying'), {currentName:'large.bin'});
+      const deleteTask = showProgress(t('status.deleting'), {
+        currentName:'old-folder',
+        indeterminate:true,
+      });
+      updateProgress({
+        operationId: copyTask,
+        status:'progress',
+        percentage:40,
+        bytesTransferred:40 * 1024 * 1024,
+        totalBytes:100 * 1024 * 1024,
+        speed:10 * 1024 * 1024,
+        entriesCompleted:2,
+        totalEntries:5,
+      });
+      const copyCard = document.querySelector('[data-task-id="' + copyTask + '"]');
+      const deleteCard = document.querySelector('[data-task-id="' + deleteTask + '"]');
+      assert(copyCard && deleteCard, "Concurrent task cards were not kept");
+      assertIncludes(copyCard.textContent, '10', "Transfer speed is missing");
+      assertIncludes(copyCard.textContent, formatOperationDuration(6), "ETA is missing");
+      assert(deleteCard.querySelector('.progress-bar.indeterminate'), "Second task lost its own progress state");
+      _operationTasks.get(copyTask).cancelRequested = true;
+      showProgress(t('status.copying'), {taskId: copyTask, currentIndex: 2, totalItems: 3});
+      assert(isOperationCancellationRequested(copyTask), "Batch refresh lost its pending cancellation");
+      toggleOperationCenter(false);
+      assert($("#operation-center").classList.contains("collapsed"), "Task center did not collapse");
+      toggleOperationCenter(true);
+      assert(!$("#operation-center").classList.contains("collapsed"), "Task center did not expand");
+      completeOperationTask(copyTask);
+      completeOperationTask(deleteTask);
+      dismissOperationTask(copyTask);
+      dismissOperationTask(deleteTask);
+      _operationCenterCollapsed = savedCollapsed;
+      renderOperationCenter();
     });
 
     await test("[dragdrop] File drag payload identifies its source window", async () => {
@@ -1384,6 +1425,37 @@
         assertEqual(transfer.effectAllowed, 'copyMove', "Drag payload does not allow copy and move");
       } finally {
         G.windowLabel = savedWindowLabel;
+      }
+    });
+
+    await test("[dragdrop] Hovering a file over either pane's tab activates it", async () => {
+      const originalLeft = switchTab;
+      const originalRight = switchRightTab;
+      const left = document.createElement('div');
+      const right = document.createElement('div');
+      left.className = right.className = 'tab';
+      left.dataset.tabId = String(G.activeTab + 900001);
+      right.dataset.tabId = String(G.activeRpTab + 900002);
+      document.body.append(left, right);
+      let leftActivated = null;
+      let rightActivated = null;
+      try {
+        switchTab = function(id) { leftActivated = id; };
+        switchRightTab = function(id) { rightActivated = id; };
+        assert(isRhfilesFileDrag({types:[RHFILES_FILE_DRAG_MIME]}), "File drag type was not recognized");
+        assert(!isRhfilesFileDrag({types:['text/plain']}), "Tab reordering was mistaken for file dragging");
+        scheduleFileDragTabSwitch(left, false);
+        await sleep(TAB_FILE_DRAG_SWITCH_DELAY_MS + 50);
+        assertEqual(leftActivated, Number(left.dataset.tabId), "Left tab was not activated after hover");
+        scheduleFileDragTabSwitch(right, true);
+        await sleep(TAB_FILE_DRAG_SWITCH_DELAY_MS + 50);
+        assertEqual(rightActivated, Number(right.dataset.tabId), "Right tab was not activated after hover");
+      } finally {
+        clearFileDragTabHover();
+        switchTab = originalLeft;
+        switchRightTab = originalRight;
+        left.remove();
+        right.remove();
       }
     });
 
@@ -1637,9 +1709,9 @@
       assert(cd, "#conflict-dialog not found");
     });
 
-    await test("[dialogs] Progress overlay element exists", async () => {
-      const po = $("#progress-overlay");
-      assert(po, "#progress-overlay not found");
+    await test("[dialogs] File-operation task center exists", async () => {
+      const po = $("#operation-center");
+      assert(po, "#operation-center not found");
     });
 
     // ================================================================
@@ -1957,6 +2029,53 @@
       assert(typeof ACTION_HANDLERS['typeSearch.next'] === 'function', "Missing next search-match action");
       assert(typeof ACTION_HANDLERS['typeSearch.previous'] === 'function', "Missing previous search-match action");
       assert(DEFAULT_SHORTCUTS['search.toggleScope']?.includes('Ctrl+Shift+F'), "Missing global-search toggle shortcut");
+    });
+
+    await test("[keyboard] Ctrl multi-selection focuses the file pane and Delete reaches every selected item", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      const savedPane = G.lastActivePane;
+      const originalDelete = deleteSelected;
+      let deleteCalls = 0;
+      let selectedCount = 0;
+      try {
+        tab.entries = [
+          {name:'first.txt', path:'C:\\first.txt', is_dir:false, extension:'txt', size:1, size_display:'1 B'},
+          {name:'second.txt', path:'C:\\second.txt', is_dir:false, extension:'txt', size:1, size_display:'1 B'},
+        ];
+        tab.sel = new Set();
+        tab.lastIdx = -1;
+        G.lastActivePane = 'left';
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+        const list = $('#file-list');
+        document.getElementById('filter-input').focus();
+        handleRowClick({ctrlKey:true, shiftKey:false}, 0, tab.sel, tab, false);
+        handleRowClick({ctrlKey:true, shiftKey:false}, 1, tab.sel, tab, false);
+        const active = document.activeElement;
+        assert(!['INPUT', 'TEXTAREA', 'SELECT'].includes(active?.tagName),
+          `Editable field kept focus after file selection (active=${active?.tagName || 'none'}#${active?.id || ''})`);
+        deleteSelected = async function(isRight) {
+          deleteCalls += 1;
+          selectedCount = getSelectedPaths(isRight).length;
+        };
+        (document.activeElement || document).dispatchEvent(new KeyboardEvent('keydown', {
+          key:'Delete',
+          bubbles:true,
+          cancelable:true,
+        }));
+        await sleep(20);
+        assertEqual(deleteCalls, 1, "Delete shortcut was swallowed after multi-selection");
+        assertEqual(selectedCount, 2, "Delete shortcut lost part of the selection");
+      } finally {
+        deleteSelected = originalDelete;
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+        G.lastActivePane = savedPane;
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+      }
     });
 
     await test("[keyboard] Typed-search shortcut defaults dispatch in both directions", async () => {

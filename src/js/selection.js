@@ -21,7 +21,13 @@ function initBoxSelection(listEl) {
   });
 
   listEl.addEventListener('mousedown', e => {
-    if (e.target.closest('.file-row') || e.button !== 0) return;
+    if (e.button === 0 || e.button === 2) {
+      G.lastActivePane = listEl.id === 'right-file-list' ? 'right' : 'left';
+      if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+      focusFilePane(listEl);
+    }
+    if (e.button !== 0) return;
+    if (e.target.closest('.file-row')) return;
     isSelecting = true;
     selStartX = e.clientX;
     selStartY = e.clientY;

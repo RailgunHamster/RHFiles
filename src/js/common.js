@@ -123,6 +123,44 @@ Object.assign(_builtinEn, {
   'tab.closeRight': 'Close tabs to the right',
   'pane.leftTabs': 'Left pane tabs',
   'pane.right': 'Right pane',
+  'tasks.title': 'File operations',
+  'tasks.expand': 'Expand file operations',
+  'tasks.collapse': 'Collapse file operations',
+  'tasks.clearFinished': 'Clear finished tasks',
+  'tasks.dismiss': 'Dismiss task',
+  'tasks.activeCount': '{count} active',
+  'tasks.failedCount': '{count} need attention',
+  'tasks.finishedCount': '{count} finished',
+  'tasks.noActive': 'No active tasks',
+  'tasks.waiting': 'Waiting...',
+  'tasks.complete': 'Completed',
+  'tasks.failed': 'Failed',
+  'tasks.attention': 'Needs attention',
+  'tasks.cancelled': 'Cancelled',
+  'tasks.cancelling': 'Cancelling...',
+  'tasks.calculating': 'Calculating size...',
+  'tasks.preparing': 'Preparing...',
+  'tasks.finishing': 'Finishing...',
+  'tasks.itemCount': 'Item {current} of {total}',
+  'tasks.entryCount': '{completed} / {total} entries',
+  'tasks.scannedCount': '{count} entries scanned',
+  'tasks.scannedSize': '{size} scanned',
+  'tasks.remaining': '{time} remaining',
+  'tasks.seconds': '{count}s',
+  'tasks.minutes': '{count}m',
+  'tasks.hours': '{count}h',
+  'tasks.hoursMinutes': '{hours}h {minutes}m',
+  'tasks.interruptedTitle': 'Interrupted {operation}',
+  'tasks.recovered': 'Recovered operation',
+  'tasks.recovery.partialRemoved': 'The incomplete destination was removed. The source and previous destination were kept.',
+  'tasks.recovery.completedAfterRestart': 'The completed destination was kept and temporary recovery files were cleaned.',
+  'tasks.recovery.moveKeptBoth': 'The destination is complete. The source was also kept because RHFiles stopped before the move finished.',
+  'tasks.recovery.recycleDeleteInterrupted': '{completed} of {total} selected items reached the Recycle Bin before RHFiles stopped; the remaining items were left in place.',
+  'tasks.recovery.permanentDeleteInterrupted': 'Permanent deletion stopped after {completed} of {total} selected items. Completed data cannot be restored; the current folder may be partially deleted.',
+  'tasks.recovery.recoveryFailed': 'Automatic cleanup failed. Check the source and destination before retrying.',
+  'tasks.deleteCancelledDetail': 'Stopped after {completed} of {total} selected items.',
+  'pane.leftFiles': 'Files in the left pane',
+  'pane.rightFiles': 'Files in the right pane',
 });
 const I18N = { en: _builtinEn };
 const BUNDLED_I18N_FILES = [
@@ -186,6 +224,7 @@ function applyI18n() {
   if (typeof updateSearchScopeUI === 'function') updateSearchScopeUI();
   if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
   if (typeof renderPinnedFolders === 'function') renderPinnedFolders();
+  if (typeof renderOperationCenter === 'function') renderOperationCenter();
   if (typeof renderTabs === 'function' && G?.tabs) renderTabs();
   if (typeof renderFiles === 'function' && typeof getTab === 'function' && getTab()) {
     renderFiles(getTab(), 'file-list', 'status-count', 'status-selection');

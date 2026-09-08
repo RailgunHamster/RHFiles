@@ -14,12 +14,12 @@ mod window;
 
 use std::sync::Mutex;
 use tauri::Emitter;
-use types::CancelFlag;
+use types::{CancelFlag, CancelState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(CancelFlag(Mutex::new(false)))
+        .manage(CancelFlag(Mutex::new(CancelState::default())))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -125,7 +125,7 @@ pub fn run() {
             file_ops::copy_path_exact, file_ops::move_path_exact, file_ops::move_paths_exact,
             file_ops::path_exists,
             file_ops::copy_with_progress, file_ops::move_with_progress,
-            file_ops::cancel_operation,
+            file_ops::cancel_operation, file_ops::recover_interrupted_operations,
             file_ops::get_env, file_ops::get_known_folders, file_ops::get_dir_tree, file_ops::batch_rename, file_ops::get_file_info,
             file_ops::folder_size,
             file_ops::create_shortcut,

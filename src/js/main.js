@@ -133,6 +133,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   try { detectWindowsLibraries(); } catch(e) {}
   startFileWatch();
   setupProgressListener();
+  if (G.windowLabel === 'main' && typeof loadInterruptedOperationReports === 'function') {
+    loadInterruptedOperationReports();
+  }
   initBoxSelection(document.getElementById("file-list"));
   initBoxSelection(document.getElementById("right-file-list"));
 
@@ -389,6 +392,7 @@ async function checkForUpdates(manual) {
   if (G._updateCheckRunning) return;
   G._updateCheckRunning = true;
   const button = document.getElementById('settings-check-update');
+  let updateTaskId = null;
   if (button) button.disabled = true;
   try {
     const source = getUpdateSource();
@@ -405,7 +409,8 @@ async function checkForUpdates(manual) {
       if (manual) showNotice(t('update.noUpdate', {version: status.currentVersion || ''}));
       return;
     }
-    if (document.getElementById('progress-overlay')?.style.display !== 'none') {
+    if (typeof _operationTasks !== 'undefined'
+        && [..._operationTasks.values()].some(task => task.status === 'running')) {
       if (manual) showNotice(t('update.busy'));
       return;
     }
@@ -428,17 +433,21 @@ async function checkForUpdates(manual) {
     }
 
     if (!status.pendingRestart) {
-      showProgress(t('update.downloading', {version}), {cancellable:false});
+      updateTaskId = showProgress(t('update.downloading', {version}), {cancellable:false});
+      _updateProgressTaskId = updateTaskId;
       await call('download_update', {source, proxy});
     } else {
-      showProgress(t('update.preparing', {version}), {indeterminate:true, cancellable:false});
+      updateTaskId = showProgress(t('update.preparing', {version}), {indeterminate:true, cancellable:false});
+      _updateProgressTaskId = updateTaskId;
     }
-    document.getElementById('progress-title').textContent = t('update.restarting');
-    updateProgress({percentage:100, speed:0, totalBytes:0, bytesTransferred:0});
+    const updateTask = _operationTasks.get(updateTaskId);
+    if (updateTask) updateTask.title = t('update.restarting');
+    updateProgress({percentage:100, speed:0, totalBytes:0, bytesTransferred:0}, updateTaskId);
     try { saveTabState(); } catch (error) {}
     await call('apply_update', {source, proxy});
   } catch (error) {
-    hideProgress();
+    if (updateTaskId) failOperationTask(updateTaskId, error);
+    _updateProgressTaskId = null;
     updateSettingsStatusText(null, error);
     if (manual) showNotice(t('update.failed', {error: String(error)}));
   } finally {

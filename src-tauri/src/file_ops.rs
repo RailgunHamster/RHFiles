@@ -1,6 +1,9 @@
 use crate::types::*;
 use rhfiles_core::enumerator;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{Emitter, Manager};
 
@@ -20,6 +23,429 @@ fn tagged_fs_error(error: &std::io::Error) -> String {
         },
     };
     format!("RHFILES_FS_ERROR|{code}|{error}")
+}
+
+const TRANSFER_BUFFER_SIZE: usize = 1024 * 1024;
+
+#[derive(Clone, Copy, Default)]
+struct PathTotals {
+    bytes: u64,
+    entries: u64,
+}
+
+#[cfg(test)]
+fn scan_path(path: &Path) -> Result<PathTotals, String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
+    let mut totals = PathTotals {
+        bytes: if metadata.is_file() {
+            metadata.len()
+        } else {
+            0
+        },
+        entries: 1,
+    };
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        for entry in std::fs::read_dir(path)
+            .map_err(|error| format!("Cannot list {}: {error}", path.display()))?
+        {
+            let entry = entry
+                .map_err(|error| format!("Cannot list an item in {}: {error}", path.display()))?;
+            let child = scan_path(&entry.path())?;
+            totals.bytes = totals.bytes.saturating_add(child.bytes);
+            totals.entries = totals.entries.saturating_add(child.entries);
+        }
+    }
+    Ok(totals)
+}
+
+struct ReportingScanner<'a> {
+    app: &'a tauri::AppHandle,
+    cancel: &'a CancelFlag,
+    operation_id: &'a str,
+    operation: &'a str,
+    source: &'a str,
+    destination: &'a str,
+    scanned: PathTotals,
+    last_emit: Instant,
+    batch_index: Option<usize>,
+    batch_total: Option<usize>,
+}
+
+impl<'a> ReportingScanner<'a> {
+    fn new(
+        app: &'a tauri::AppHandle,
+        cancel: &'a CancelFlag,
+        operation_id: &'a str,
+        operation: &'a str,
+        source: &'a str,
+        destination: &'a str,
+    ) -> Self {
+        Self {
+            app,
+            cancel,
+            operation_id,
+            operation,
+            source,
+            destination,
+            scanned: PathTotals::default(),
+            last_emit: Instant::now(),
+            batch_index: None,
+            batch_total: None,
+        }
+    }
+
+    fn set_batch_position(&mut self, index: usize, total: usize) {
+        self.batch_index = Some(index);
+        self.batch_total = Some(total);
+    }
+
+    fn emit(&mut self, path: &Path, force: bool) {
+        let now = Instant::now();
+        if !force && now.duration_since(self.last_emit).as_millis() < 120 {
+            return;
+        }
+        self.last_emit = now;
+        let _ = self.app.emit(
+            "op-progress",
+            serde_json::json!({
+                "operationId": self.operation_id,
+                "operation": self.operation,
+                "src": self.source,
+                "dest": self.destination,
+                "currentPath": path.to_string_lossy(),
+                "currentName": display_name(path),
+                "bytesTransferred": self.scanned.bytes,
+                "totalBytes": 0,
+                "entriesCompleted": self.scanned.entries,
+                "totalEntries": 0,
+                "percentage": 0,
+                "speed": 0,
+                "batchIndex": self.batch_index,
+                "batchTotal": self.batch_total,
+                "status": "calculating",
+            }),
+        );
+    }
+
+    fn scan(&mut self, path: &Path) -> Result<PathTotals, String> {
+        if self.cancel.is_cancelled(Some(self.operation_id))? {
+            return Err("Cancelled".to_string());
+        }
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
+        let mut totals = PathTotals {
+            bytes: if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            },
+            entries: 1,
+        };
+        self.scanned.bytes = self.scanned.bytes.saturating_add(totals.bytes);
+        self.scanned.entries = self.scanned.entries.saturating_add(1);
+        self.emit(path, false);
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            for entry in std::fs::read_dir(path)
+                .map_err(|error| format!("Cannot list {}: {error}", path.display()))?
+            {
+                let entry = entry.map_err(|error| {
+                    format!("Cannot list an item in {}: {error}", path.display())
+                })?;
+                let child = self.scan(&entry.path())?;
+                totals.bytes = totals.bytes.saturating_add(child.bytes);
+                totals.entries = totals.entries.saturating_add(child.entries);
+            }
+        }
+        Ok(totals)
+    }
+}
+
+fn operation_id_or_legacy(operation_id: Option<String>) -> String {
+    operation_id
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "legacy".to_string())
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+struct OperationProgress<'a> {
+    app: &'a tauri::AppHandle,
+    operation: &'a str,
+    operation_id: &'a str,
+    source: &'a str,
+    destination: &'a str,
+    total_bytes: u64,
+    total_entries: u64,
+    transferred: u64,
+    completed_entries: u64,
+    started: Instant,
+    last_emit: Instant,
+    last_emit_bytes: u64,
+    smoothed_speed: f64,
+    batch_index: Option<u64>,
+    batch_total: Option<u64>,
+}
+
+impl<'a> OperationProgress<'a> {
+    fn new(
+        app: &'a tauri::AppHandle,
+        operation: &'a str,
+        operation_id: &'a str,
+        source: &'a str,
+        destination: &'a str,
+        totals: PathTotals,
+    ) -> Self {
+        let now = Instant::now();
+        Self {
+            app,
+            operation,
+            operation_id,
+            source,
+            destination,
+            total_bytes: totals.bytes,
+            total_entries: totals.entries,
+            transferred: 0,
+            completed_entries: 0,
+            started: now,
+            last_emit: now,
+            last_emit_bytes: 0,
+            smoothed_speed: 0.0,
+            batch_index: None,
+            batch_total: None,
+        }
+    }
+
+    fn add_bytes(&mut self, bytes: u64) {
+        self.transferred = self.transferred.saturating_add(bytes);
+    }
+
+    fn complete_entry(&mut self) {
+        self.completed_entries = self.completed_entries.saturating_add(1);
+    }
+
+    fn set_batch_position(&mut self, index: usize, total: usize) {
+        self.batch_index = Some(index as u64);
+        self.batch_total = Some(total as u64);
+    }
+
+    fn percentage(&self, status: &str) -> u32 {
+        if status == "complete" {
+            return 100;
+        }
+        let value = if self.total_bytes > 0 {
+            self.transferred as f64 / self.total_bytes as f64 * 100.0
+        } else if self.total_entries > 0 {
+            self.completed_entries as f64 / self.total_entries as f64 * 100.0
+        } else {
+            0.0
+        };
+        value.clamp(0.0, 99.0).round() as u32
+    }
+
+    fn emit(&mut self, status: &str, current_path: Option<&Path>, force: bool) {
+        let now = Instant::now();
+        let interval = now.duration_since(self.last_emit).as_secs_f64();
+        if !force && interval < 0.1 {
+            return;
+        }
+        if interval > 0.0 {
+            let sample = self.transferred.saturating_sub(self.last_emit_bytes) as f64 / interval;
+            self.smoothed_speed = if self.smoothed_speed > 0.0 {
+                self.smoothed_speed * 0.72 + sample * 0.28
+            } else {
+                sample
+            };
+        }
+        self.last_emit = now;
+        self.last_emit_bytes = self.transferred;
+        let current = current_path.map(|path| path.to_string_lossy().into_owned());
+        let current_name = current_path.map(display_name);
+        let elapsed_seconds = self.started.elapsed().as_secs_f64();
+        let _ = self.app.emit(
+            "op-progress",
+            serde_json::json!({
+                "operationId": self.operation_id,
+                "operation": self.operation,
+                "src": self.source,
+                "dest": self.destination,
+                "currentPath": current,
+                "currentName": current_name,
+                "bytesTransferred": self.transferred,
+                "totalBytes": self.total_bytes,
+                "entriesCompleted": self.completed_entries,
+                "totalEntries": self.total_entries,
+                "percentage": self.percentage(status),
+                "speed": self.smoothed_speed.max(0.0) as u64,
+                "elapsedSeconds": elapsed_seconds,
+                "batchIndex": self.batch_index,
+                "batchTotal": self.batch_total,
+                "status": status,
+            }),
+        );
+    }
+}
+
+fn validate_target_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['\\', '/'])
+        || name.chars().any(|character| "<>:\"|?*".contains(character))
+    {
+        return Err(format!("Invalid destination name: {name}"));
+    }
+    Ok(())
+}
+
+fn paths_resolve_to_same_entry(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    let (Ok(left), Ok(right)) = (std::fs::canonicalize(left), std::fs::canonicalize(right)) else {
+        return false;
+    };
+    #[cfg(target_os = "windows")]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        left == right
+    }
+}
+
+fn remove_path_if_present(path: &Path) -> Result<(), String> {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        std::fs::remove_dir_all(path)
+    } else if metadata.is_dir() {
+        std::fs::remove_dir(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+    .map_err(|error| format!("Cannot remove {}: {error}", path.display()))
+}
+
+fn sanitized_operation_id(operation_id: &str) -> String {
+    let mut safe: String = operation_id
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+        .take(72)
+        .collect();
+    if safe.is_empty() || safe == "legacy" {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        safe = format!("{}-{stamp}", std::process::id());
+    }
+    safe
+}
+
+fn hidden_sibling(parent: &Path, kind: &str, operation_id: &str) -> PathBuf {
+    parent.join(format!(
+        ".rhfiles-{kind}-{}",
+        sanitized_operation_id(operation_id)
+    ))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferJournal {
+    schema_version: u32,
+    operation_id: String,
+    operation: String,
+    source: String,
+    target: String,
+    staging: String,
+    backup: Option<String>,
+    phase: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteJournal {
+    schema_version: u32,
+    operation_id: String,
+    operation: String,
+    paths: Vec<String>,
+    completed: Vec<String>,
+    current: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationRecoveryReport {
+    operation_id: String,
+    operation: String,
+    source: String,
+    destination: String,
+    outcome: String,
+    detail: String,
+    completed_items: Option<usize>,
+    total_items: Option<usize>,
+}
+
+fn operation_journal_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Cannot locate operation journal: {error}"))?
+        .join("operation-journal");
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("Cannot create operation journal: {error}"))?;
+    Ok(directory)
+}
+
+fn journal_path(
+    app: &tauri::AppHandle,
+    prefix: &str,
+    operation_id: &str,
+) -> Result<PathBuf, String> {
+    Ok(operation_journal_dir(app)?.join(format!(
+        "{prefix}-{}.json",
+        sanitized_operation_id(operation_id)
+    )))
+}
+
+fn persist_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let payload = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("Cannot write {}: {error}", path.display()))?;
+    file.write_all(&payload)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("Cannot persist {}: {error}", path.display()))
+}
+
+fn persist_transfer_journal(
+    app: &tauri::AppHandle,
+    journal: &TransferJournal,
+) -> Result<PathBuf, String> {
+    let path = journal_path(app, "transfer", &journal.operation_id)?;
+    persist_json(&path, journal)?;
+    Ok(path)
+}
+
+fn persist_delete_journal(
+    app: &tauri::AppHandle,
+    journal: &DeleteJournal,
+) -> Result<PathBuf, String> {
+    let path = journal_path(app, "delete", &journal.operation_id)?;
+    persist_json(&path, journal)?;
+    Ok(path)
 }
 
 #[tauri::command(async)]
@@ -69,43 +495,330 @@ pub fn delete_file(path: String) -> Result<(), String> {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeleteFilesOutcome {
     deleted: Vec<String>,
     errors: Vec<String>,
+    cancelled: bool,
 }
 
 #[tauri::command(async)]
-pub fn delete_files(paths: Vec<String>) -> DeleteFilesOutcome {
+pub fn delete_files(
+    paths: Vec<String>,
+    operation_id: Option<String>,
+    app: tauri::AppHandle,
+    cancel: tauri::State<'_, CancelFlag>,
+) -> DeleteFilesOutcome {
+    let operation_id = operation_id_or_legacy(operation_id);
+    let _ = cancel.reset(Some(&operation_id));
     let mut deleted = Vec::new();
     let mut errors = Vec::new();
-    for path in &paths {
+    let mut cancelled = false;
+    let mut per_path_totals = Vec::with_capacity(paths.len());
+    let mut all_totals = PathTotals::default();
+    let source = paths.first().cloned().unwrap_or_default();
+    let mut scanner = ReportingScanner::new(&app, &cancel, &operation_id, "delete", &source, "");
+    for (path_index, path) in paths.iter().enumerate() {
+        scanner.set_batch_position(path_index + 1, paths.len());
+        scanner.emit(Path::new(path), true);
+        let totals = match scanner.scan(Path::new(path)) {
+            Ok(totals) => totals,
+            Err(error) if error == "Cancelled" => {
+                cancelled = true;
+                break;
+            }
+            Err(_) => PathTotals {
+                bytes: 0,
+                entries: 1,
+            },
+        };
+        all_totals.bytes = all_totals.bytes.saturating_add(totals.bytes);
+        all_totals.entries = all_totals.entries.saturating_add(totals.entries);
+        per_path_totals.push(totals);
+    }
+
+    let mut progress =
+        OperationProgress::new(&app, "delete", &operation_id, &source, "", all_totals);
+    if cancelled {
+        progress.emit("cancelled", None, true);
+        cancel.clear(Some(&operation_id));
+        return DeleteFilesOutcome {
+            deleted,
+            errors,
+            cancelled: true,
+        };
+    }
+    progress.emit("preparing", paths.first().map(Path::new), true);
+    let mut journal = DeleteJournal {
+        schema_version: 1,
+        operation_id: operation_id.clone(),
+        operation: "delete".to_string(),
+        paths: paths.clone(),
+        completed: Vec::new(),
+        current: None,
+    };
+    let journal_file = match persist_delete_journal(&app, &journal) {
+        Ok(path) => Some(path),
+        Err(error) => {
+            progress.emit("failed", None, true);
+            cancel.clear(Some(&operation_id));
+            return DeleteFilesOutcome {
+                deleted,
+                errors: vec![error],
+                cancelled: false,
+            };
+        }
+    };
+
+    for (index, path) in paths.iter().enumerate() {
+        if cancel.is_cancelled(Some(&operation_id)).unwrap_or(false) {
+            cancelled = true;
+            break;
+        }
+        progress.set_batch_position(index + 1, paths.len());
+        journal.current = Some(path.clone());
+        if let Err(error) = persist_delete_journal(&app, &journal) {
+            errors.push(error);
+            break;
+        }
+        progress.emit("progress", Some(Path::new(path)), true);
         let target = PathBuf::from(path);
         let result = std::fs::symlink_metadata(&target)
             .map_err(|error| format!("Cannot delete {path}: {error}"))
             .and_then(|_| enumerator::delete_to_recycle_bin(&target));
         match result {
-            Ok(()) => deleted.push(path.clone()),
+            Ok(()) => {
+                deleted.push(path.clone());
+                journal.completed.push(path.clone());
+                let totals = per_path_totals.get(index).copied().unwrap_or_default();
+                progress.add_bytes(totals.bytes);
+                progress.completed_entries = progress
+                    .completed_entries
+                    .saturating_add(totals.entries.max(1));
+            }
             Err(error) => errors.push(format!("{path}: {error}")),
         }
+        journal.current = None;
+        if let Err(error) = persist_delete_journal(&app, &journal) {
+            errors.push(error);
+            break;
+        }
+        progress.emit("progress", Some(Path::new(path)), true);
     }
-    DeleteFilesOutcome { deleted, errors }
+    let final_status = if cancelled {
+        "cancelled"
+    } else if errors.is_empty() {
+        "complete"
+    } else {
+        "failed"
+    };
+    progress.emit(final_status, None, true);
+    if let Some(path) = journal_file {
+        let _ = std::fs::remove_file(path);
+    }
+    cancel.clear(Some(&operation_id));
+    DeleteFilesOutcome {
+        deleted,
+        errors,
+        cancelled,
+    }
+}
+
+fn delete_permanently_recursive(
+    path: &Path,
+    progress: &mut OperationProgress<'_>,
+    cancel: &CancelFlag,
+    operation_id: &str,
+    errors: &mut Vec<String>,
+) -> Result<(), String> {
+    if cancel.is_cancelled(Some(operation_id))? {
+        return Err("Cancelled".to_string());
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        let entries = std::fs::read_dir(path)
+            .map_err(|error| format!("Cannot list {}: {error}", path.display()))?;
+        for entry in entries {
+            if cancel.is_cancelled(Some(operation_id))? {
+                return Err("Cancelled".to_string());
+            }
+            match entry {
+                Ok(entry) => {
+                    if let Err(error) = delete_permanently_recursive(
+                        &entry.path(),
+                        progress,
+                        cancel,
+                        operation_id,
+                        errors,
+                    ) {
+                        if error == "Cancelled" {
+                            return Err(error);
+                        }
+                        errors.push(error);
+                    }
+                }
+                Err(error) => errors.push(format!(
+                    "Cannot enumerate an item in {}: {error}",
+                    path.display()
+                )),
+            }
+        }
+        progress.emit("progress", Some(path), true);
+        match std::fs::remove_dir(path) {
+            Ok(()) => progress.complete_entry(),
+            Err(error) => errors.push(format!("Cannot remove {}: {error}", path.display())),
+        }
+    } else {
+        progress.emit("progress", Some(path), true);
+        let size = if metadata.is_file() {
+            metadata.len()
+        } else {
+            0
+        };
+        let result = if metadata.is_dir() {
+            std::fs::remove_dir(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        match result {
+            Ok(()) => {
+                progress.add_bytes(size);
+                progress.complete_entry();
+            }
+            Err(error) => errors.push(format!("Cannot remove {}: {error}", path.display())),
+        }
+        progress.emit("progress", Some(path), true);
+    }
+    Ok(())
 }
 
 #[tauri::command(async)]
-pub fn delete_files_permanently(paths: Vec<String>) -> DeleteFilesOutcome {
+pub fn delete_files_permanently(
+    paths: Vec<String>,
+    operation_id: Option<String>,
+    app: tauri::AppHandle,
+    cancel: tauri::State<'_, CancelFlag>,
+) -> DeleteFilesOutcome {
+    let operation_id = operation_id_or_legacy(operation_id);
+    let _ = cancel.reset(Some(&operation_id));
     let mut deleted = Vec::new();
     let mut errors = Vec::new();
-    for path in &paths {
-        let target = PathBuf::from(path);
-        let result = std::fs::symlink_metadata(&target)
-            .map_err(|error| format!("Cannot permanently delete {path}: {error}"))
-            .and_then(|_| enumerator::delete_permanently(&target));
-        match result {
-            Ok(()) => deleted.push(path.clone()),
-            Err(error) => errors.push(format!("{path}: {error}")),
+    let mut cancelled = false;
+    let mut all_totals = PathTotals::default();
+    let source = paths.first().cloned().unwrap_or_default();
+    let mut scanner =
+        ReportingScanner::new(&app, &cancel, &operation_id, "deletePermanent", &source, "");
+    for (path_index, path) in paths.iter().enumerate() {
+        scanner.set_batch_position(path_index + 1, paths.len());
+        scanner.emit(Path::new(path), true);
+        match scanner.scan(Path::new(path)) {
+            Ok(totals) => {
+                all_totals.bytes = all_totals.bytes.saturating_add(totals.bytes);
+                all_totals.entries = all_totals.entries.saturating_add(totals.entries);
+            }
+            Err(error) if error == "Cancelled" => {
+                cancelled = true;
+                break;
+            }
+            Err(error) => errors.push(error),
         }
     }
-    DeleteFilesOutcome { deleted, errors }
+
+    let mut progress = OperationProgress::new(
+        &app,
+        "deletePermanent",
+        &operation_id,
+        &source,
+        "",
+        all_totals,
+    );
+    if cancelled {
+        progress.emit("cancelled", None, true);
+        cancel.clear(Some(&operation_id));
+        return DeleteFilesOutcome {
+            deleted,
+            errors,
+            cancelled: true,
+        };
+    }
+    progress.emit("preparing", paths.first().map(Path::new), true);
+    let mut journal = DeleteJournal {
+        schema_version: 1,
+        operation_id: operation_id.clone(),
+        operation: "deletePermanent".to_string(),
+        paths: paths.clone(),
+        completed: Vec::new(),
+        current: None,
+    };
+    let journal_file = match persist_delete_journal(&app, &journal) {
+        Ok(path) => Some(path),
+        Err(error) => {
+            progress.emit("failed", None, true);
+            cancel.clear(Some(&operation_id));
+            return DeleteFilesOutcome {
+                deleted,
+                errors: vec![error],
+                cancelled: false,
+            };
+        }
+    };
+
+    for (path_index, path) in paths.iter().enumerate() {
+        if cancel.is_cancelled(Some(&operation_id)).unwrap_or(false) {
+            cancelled = true;
+            break;
+        }
+        progress.set_batch_position(path_index + 1, paths.len());
+        journal.current = Some(path.clone());
+        if let Err(error) = persist_delete_journal(&app, &journal) {
+            errors.push(error);
+            break;
+        }
+        let target = PathBuf::from(path);
+        match delete_permanently_recursive(
+            &target,
+            &mut progress,
+            &cancel,
+            &operation_id,
+            &mut errors,
+        ) {
+            Ok(()) => {
+                if std::fs::symlink_metadata(&target).is_err() {
+                    deleted.push(path.clone());
+                    journal.completed.push(path.clone());
+                }
+            }
+            Err(error) if error == "Cancelled" => {
+                cancelled = true;
+                break;
+            }
+            Err(error) => errors.push(error),
+        }
+        journal.current = None;
+        if let Err(error) = persist_delete_journal(&app, &journal) {
+            errors.push(error);
+            break;
+        }
+    }
+
+    let final_status = if cancelled {
+        "cancelled"
+    } else if errors.is_empty() {
+        "complete"
+    } else {
+        "failed"
+    };
+    progress.emit(final_status, None, true);
+    if let Some(path) = journal_file {
+        let _ = std::fs::remove_file(path);
+    }
+    cancel.clear(Some(&operation_id));
+    DeleteFilesOutcome {
+        deleted,
+        errors,
+        cancelled,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -441,95 +1154,409 @@ pub fn move_paths_exact(moves: Vec<(String, String)>) -> Result<(), String> {
     Ok(())
 }
 
+fn copy_path_streaming(
+    source: &Path,
+    target: &Path,
+    progress: &mut OperationProgress<'_>,
+    cancel: &CancelFlag,
+    operation_id: &str,
+) -> Result<(), String> {
+    if cancel.is_cancelled(Some(operation_id))? {
+        return Err("Cancelled".to_string());
+    }
+    let metadata = std::fs::symlink_metadata(source)
+        .map_err(|error| format!("Cannot read {}: {error}", source.display()))?;
+    if metadata.file_type().is_symlink()
+        && std::fs::metadata(source).is_ok_and(|value| value.is_dir())
+    {
+        return Err(format!(
+            "Directory links are not copied recursively for safety: {}",
+            source.display()
+        ));
+    }
+    if metadata.is_dir() {
+        std::fs::create_dir(target)
+            .map_err(|error| format!("Cannot create {}: {error}", target.display()))?;
+        for entry in std::fs::read_dir(source)
+            .map_err(|error| format!("Cannot list {}: {error}", source.display()))?
+        {
+            let entry = entry
+                .map_err(|error| format!("Cannot list an item in {}: {error}", source.display()))?;
+            copy_path_streaming(
+                &entry.path(),
+                &target.join(entry.file_name()),
+                progress,
+                cancel,
+                operation_id,
+            )?;
+        }
+        if let Ok(source_metadata) = std::fs::metadata(source) {
+            let _ = std::fs::set_permissions(target, source_metadata.permissions());
+        }
+        progress.complete_entry();
+        progress.emit("progress", Some(source), false);
+        return Ok(());
+    }
+
+    progress.emit("progress", Some(source), true);
+    let mut input = std::fs::File::open(source)
+        .map_err(|error| format!("Cannot open {}: {error}", source.display()))?;
+    let mut output = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(target)
+        .map_err(|error| format!("Cannot create {}: {error}", target.display()))?;
+    let mut buffer = vec![0u8; TRANSFER_BUFFER_SIZE];
+    loop {
+        if cancel.is_cancelled(Some(operation_id))? {
+            return Err("Cancelled".to_string());
+        }
+        let count = input
+            .read(&mut buffer)
+            .map_err(|error| format!("Cannot read {}: {error}", source.display()))?;
+        if count == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|error| format!("Cannot write {}: {error}", target.display()))?;
+        progress.add_bytes(count as u64);
+        progress.emit("progress", Some(source), false);
+    }
+    output
+        .flush()
+        .map_err(|error| format!("Cannot flush {}: {error}", target.display()))?;
+    if let Ok(source_metadata) = std::fs::metadata(source) {
+        let _ = std::fs::set_permissions(target, source_metadata.permissions());
+    }
+    progress.complete_entry();
+    progress.emit("progress", Some(source), true);
+    Ok(())
+}
+
+fn emit_initial_operation(
+    app: &tauri::AppHandle,
+    operation_id: &str,
+    operation: &str,
+    source: &str,
+    destination: &str,
+    status: &str,
+) {
+    let _ = app.emit(
+        "op-progress",
+        serde_json::json!({
+            "operationId": operation_id,
+            "operation": operation,
+            "src": source,
+            "dest": destination,
+            "currentPath": source,
+            "currentName": display_name(Path::new(source)),
+            "bytesTransferred": 0,
+            "totalBytes": 0,
+            "entriesCompleted": 0,
+            "totalEntries": 0,
+            "percentage": 0,
+            "speed": 0,
+            "status": status,
+        }),
+    );
+}
+
+fn transfer_with_progress(
+    source: String,
+    destination: String,
+    target_name: Option<String>,
+    overwrite: bool,
+    operation: &'static str,
+    operation_id: String,
+    app: &tauri::AppHandle,
+    cancel: &CancelFlag,
+) -> Result<(), String> {
+    cancel.reset(Some(&operation_id))?;
+    let source_path = PathBuf::from(&source);
+    let destination_path = PathBuf::from(&destination);
+    let source_metadata = std::fs::symlink_metadata(&source_path)
+        .map_err(|error| format!("Cannot read {}: {error}", source_path.display()))?;
+    if !destination_path.is_dir() {
+        return Err(format!(
+            "Destination folder does not exist: {}",
+            destination_path.display()
+        ));
+    }
+    let resolved_name = match target_name {
+        Some(name) => {
+            validate_target_name(&name)?;
+            name
+        }
+        None => display_name(&source_path),
+    };
+    let target = destination_path.join(&resolved_name);
+    if paths_resolve_to_same_entry(&source_path, &target) {
+        return Err("Source and destination are the same".to_string());
+    }
+    if source_metadata.is_dir()
+        && std::fs::canonicalize(&destination_path)
+            .ok()
+            .zip(std::fs::canonicalize(&source_path).ok())
+            .is_some_and(|(destination, source)| destination.starts_with(source))
+    {
+        return Err("A folder cannot be copied or moved into itself".to_string());
+    }
+    if target.exists() && !overwrite {
+        return Err(format!("Destination already exists: {}", target.display()));
+    }
+
+    emit_initial_operation(
+        app,
+        &operation_id,
+        operation,
+        &source,
+        &destination,
+        "preparing",
+    );
+
+    // A same-volume move without a conflict is an atomic metadata operation. It
+    // is safer and much faster than needlessly copying every byte.
+    if operation == "move" && !target.exists() {
+        match std::fs::rename(&source_path, &target) {
+            Ok(()) => {
+                let mut progress = OperationProgress::new(
+                    app,
+                    operation,
+                    &operation_id,
+                    &source,
+                    &destination,
+                    PathTotals {
+                        bytes: source_metadata.len(),
+                        entries: 1,
+                    },
+                );
+                progress.transferred = progress.total_bytes;
+                progress.completed_entries = progress.total_entries;
+                progress.emit("complete", Some(&target), true);
+                cancel.clear(Some(&operation_id));
+                return Ok(());
+            }
+            Err(_) => {
+                // Cross-volume moves and providers that do not support rename
+                // fall through to the journaled copy-then-remove path.
+            }
+        }
+    }
+
+    emit_initial_operation(
+        app,
+        &operation_id,
+        operation,
+        &source,
+        &destination,
+        "calculating",
+    );
+    let mut scanner =
+        ReportingScanner::new(app, cancel, &operation_id, operation, &source, &destination);
+    scanner.emit(&source_path, true);
+    let totals = scanner.scan(&source_path)?;
+    let mut progress =
+        OperationProgress::new(app, operation, &operation_id, &source, &destination, totals);
+    progress.emit("preparing", Some(&source_path), true);
+
+    let staging = hidden_sibling(&destination_path, "partial", &operation_id);
+    let backup = target
+        .exists()
+        .then(|| hidden_sibling(&destination_path, "backup", &operation_id));
+    if staging.exists() || backup.as_ref().is_some_and(|path| path.exists()) {
+        return Err(format!(
+            "An unfinished RHFiles operation already uses task id {operation_id}"
+        ));
+    }
+    let mut journal = TransferJournal {
+        schema_version: 1,
+        operation_id: operation_id.clone(),
+        operation: operation.to_string(),
+        source: source.clone(),
+        target: target.to_string_lossy().into_owned(),
+        staging: staging.to_string_lossy().into_owned(),
+        backup: backup
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        phase: "copying".to_string(),
+    };
+    let journal_file = persist_transfer_journal(app, &journal)?;
+
+    if let Err(error) =
+        copy_path_streaming(&source_path, &staging, &mut progress, cancel, &operation_id)
+    {
+        let cleanup_error = remove_path_if_present(&staging).err();
+        let _ = std::fs::remove_file(&journal_file);
+        cancel.clear(Some(&operation_id));
+        progress.emit(
+            if error == "Cancelled" {
+                "cancelled"
+            } else {
+                "failed"
+            },
+            Some(&source_path),
+            true,
+        );
+        return Err(match cleanup_error {
+            Some(cleanup) => format!("{error}; partial-output cleanup failed: {cleanup}"),
+            None => error,
+        });
+    }
+    if cancel.is_cancelled(Some(&operation_id))? {
+        let _ = remove_path_if_present(&staging);
+        let _ = std::fs::remove_file(&journal_file);
+        cancel.clear(Some(&operation_id));
+        progress.emit("cancelled", Some(&source_path), true);
+        return Err("Cancelled".to_string());
+    }
+
+    journal.phase = "stagingReady".to_string();
+    if let Err(error) = persist_json(&journal_file, &journal) {
+        let _ = remove_path_if_present(&staging);
+        let _ = std::fs::remove_file(&journal_file);
+        progress.emit("failed", Some(&source_path), true);
+        return Err(error);
+    }
+    if let Some(backup_path) = &backup {
+        journal.phase = "backingUpTarget".to_string();
+        if let Err(error) = persist_json(&journal_file, &journal) {
+            let _ = remove_path_if_present(&staging);
+            let _ = std::fs::remove_file(&journal_file);
+            progress.emit("failed", Some(&target), true);
+            return Err(error);
+        }
+        std::fs::rename(&target, backup_path).map_err(|error| {
+            let _ = remove_path_if_present(&staging);
+            let _ = std::fs::remove_file(&journal_file);
+            format!("Cannot prepare destination {}: {error}", target.display())
+        })?;
+        journal.phase = "targetBackedUp".to_string();
+        if let Err(error) = persist_json(&journal_file, &journal) {
+            let rollback = std::fs::rename(backup_path, &target);
+            let _ = remove_path_if_present(&staging);
+            if rollback.is_ok() {
+                let _ = std::fs::remove_file(&journal_file);
+            }
+            progress.emit("failed", Some(&target), true);
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => format!(
+                    "{error}; the previous destination could not be restored: {rollback_error}"
+                ),
+            });
+        }
+    }
+
+    if let Err(error) = std::fs::rename(&staging, &target) {
+        let mut rollback_errors = Vec::new();
+        if let Some(backup_path) = &backup {
+            if let Err(rollback_error) = std::fs::rename(backup_path, &target) {
+                rollback_errors.push(format!(
+                    "could not restore previous destination: {rollback_error}"
+                ));
+            }
+        }
+        let _ = remove_path_if_present(&staging);
+        if rollback_errors.is_empty() {
+            let _ = std::fs::remove_file(&journal_file);
+        }
+        cancel.clear(Some(&operation_id));
+        progress.emit("failed", Some(&target), true);
+        return Err(format!(
+            "Cannot commit destination {}: {error}{}",
+            target.display(),
+            if rollback_errors.is_empty() {
+                String::new()
+            } else {
+                format!("; {}", rollback_errors.join("; "))
+            }
+        ));
+    }
+    journal.phase = "targetCommitted".to_string();
+    if let Err(error) = persist_json(&journal_file, &journal) {
+        if operation == "move" {
+            let mut rollback_errors = Vec::new();
+            if let Err(rollback_error) = remove_path_if_present(&target) {
+                rollback_errors.push(rollback_error);
+            }
+            if let Some(backup_path) = &backup {
+                if let Err(rollback_error) = std::fs::rename(backup_path, &target) {
+                    rollback_errors.push(format!(
+                        "Cannot restore the previous destination: {rollback_error}"
+                    ));
+                }
+            }
+            if rollback_errors.is_empty() {
+                let _ = std::fs::remove_file(&journal_file);
+            }
+            progress.emit("failed", Some(&target), true);
+            return Err(if rollback_errors.is_empty() {
+                error
+            } else {
+                format!(
+                    "{error}; rollback also failed: {}",
+                    rollback_errors.join(" | ")
+                )
+            });
+        }
+        if let Some(backup_path) = &backup {
+            let _ = remove_path_if_present(backup_path);
+        }
+        let _ = std::fs::remove_file(&journal_file);
+    }
+
+    if operation == "move" {
+        progress.emit("cleaning", Some(&source_path), true);
+        if let Err(error) = remove_path_if_present(&source_path) {
+            if let Some(backup_path) = &backup {
+                let _ = remove_path_if_present(backup_path);
+            }
+            let _ = std::fs::remove_file(&journal_file);
+            cancel.clear(Some(&operation_id));
+            progress.emit("failed", Some(&source_path), true);
+            return Err(format!(
+                "The destination copy is complete, but the source could not be fully removed. The destination was kept to avoid data loss: {error}"
+            ));
+        }
+        journal.phase = "sourceRemoved".to_string();
+        let _ = persist_json(&journal_file, &journal);
+    }
+
+    if let Some(backup_path) = &backup {
+        remove_path_if_present(backup_path)?;
+    }
+    let _ = std::fs::remove_file(&journal_file);
+    cancel.clear(Some(&operation_id));
+    progress.transferred = progress.total_bytes;
+    progress.completed_entries = progress.total_entries;
+    progress.emit("complete", Some(&target), true);
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn copy_with_progress(
     src: String,
     dest: String,
     overwrite: Option<bool>,
+    target_name: Option<String>,
+    operation_id: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
-    *cancel.0.lock().unwrap() = false;
-    let src_path = PathBuf::from(&src);
-    let dest_path = PathBuf::from(&dest);
-    let src_name = src_path.file_name().ok_or("no filename")?;
-    let target = dest_path.join(src_name);
-    if target.exists() && !overwrite.unwrap_or(false) {
-        return Err(format!("Destination already exists: {}", target.display()));
-    }
-
-    if src_path.is_dir() {
-        let total_size = enumerator::folder_size(&src_path).unwrap_or(0);
-        let _ = app.emit(
-            "op-progress",
-            serde_json::json!({
-                "operation": "copy", "src": src, "dest": dest,
-                "bytesTransferred": 0, "totalBytes": total_size,
-                "percentage": 0, "speed": 0, "status": "calculating"
-            }),
-        );
-        enumerator::copy_path(&src_path, &dest_path)?;
-    } else {
-        let total = std::fs::metadata(&src_path)
-            .map_err(|e| e.to_string())?
-            .len();
-        let mut source_file = std::fs::File::open(&src_path).map_err(|e| e.to_string())?;
-        let mut dest_file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
-
-        use std::io::{Read, Write};
-        let mut buf = vec![0u8; 1048576];
-        let mut transferred: u64 = 0;
-        let start = std::time::Instant::now();
-        let mut last_emit = std::time::Instant::now();
-
-        loop {
-            if *cancel.0.lock().unwrap() {
-                let _ = std::fs::remove_file(&target);
-                return Err("Cancelled".to_string());
-            }
-            let n = source_file.read(&mut buf).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-            transferred += n as u64;
-
-            let now = std::time::Instant::now();
-            if now.duration_since(last_emit).as_millis() >= 100 || n == 0 {
-                last_emit = now;
-                let elapsed = start.elapsed().as_secs_f64();
-                let speed = if elapsed > 0.0 {
-                    transferred as f64 / elapsed
-                } else {
-                    0.0
-                };
-                let pct = if total > 0 {
-                    (transferred as f64 / total as f64 * 100.0) as u32
-                } else {
-                    100
-                };
-
-                let _ = app.emit(
-                    "op-progress",
-                    serde_json::json!({
-                        "operation": "copy", "src": src, "dest": dest,
-                        "bytesTransferred": transferred, "totalBytes": total,
-                        "percentage": pct, "speed": speed as u64, "status": "progress"
-                    }),
-                );
-            }
-        }
-    }
-
-    let _ = app.emit(
-        "op-progress",
-        serde_json::json!({
-            "operation": "copy", "src": src, "dest": dest,
-            "bytesTransferred": 0, "totalBytes": 0,
-            "percentage": 100, "speed": 0, "status": "complete"
-        }),
+    let operation_id = operation_id_or_legacy(operation_id);
+    let result = transfer_with_progress(
+        src,
+        dest,
+        target_name,
+        overwrite.unwrap_or(false),
+        "copy",
+        operation_id.clone(),
+        &app,
+        &cancel,
     );
-    Ok(())
+    cancel.clear(Some(&operation_id));
+    result
 }
 
 #[tauri::command(async)]
@@ -537,104 +1564,24 @@ pub fn move_with_progress(
     src: String,
     dest: String,
     overwrite: Option<bool>,
+    target_name: Option<String>,
+    operation_id: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
-    *cancel.0.lock().unwrap() = false;
-    let src_path = PathBuf::from(&src);
-    let dest_path = PathBuf::from(&dest);
-    let src_name = src_path.file_name().ok_or("no filename")?;
-    let target = dest_path.join(src_name);
-    if target.exists() && !overwrite.unwrap_or(false) {
-        return Err(format!("Destination already exists: {}", target.display()));
-    }
-
-    let _ = app.emit(
-        "op-progress",
-        serde_json::json!({
-            "operation": "move", "src": src, "dest": dest,
-            "bytesTransferred": 0, "totalBytes": 0,
-            "percentage": 0, "speed": 0, "status": "preparing"
-        }),
+    let operation_id = operation_id_or_legacy(operation_id);
+    let result = transfer_with_progress(
+        src,
+        dest,
+        target_name,
+        overwrite.unwrap_or(false),
+        "move",
+        operation_id.clone(),
+        &app,
+        &cancel,
     );
-
-    if src_path.is_dir() {
-        let total_size = enumerator::folder_size(&src_path).unwrap_or(0);
-        let _ = app.emit(
-            "op-progress",
-            serde_json::json!({
-                "operation": "move", "src": src, "dest": dest,
-                "bytesTransferred": 0, "totalBytes": total_size,
-                "percentage": 10, "speed": 0, "status": "progress"
-            }),
-        );
-        if *cancel.0.lock().unwrap() {
-            return Err("Cancelled".to_string());
-        }
-        enumerator::copy_path(&src_path, &dest_path)?;
-        std::fs::remove_dir_all(&src_path).map_err(|e| e.to_string())?;
-    } else {
-        let total = std::fs::metadata(&src_path)
-            .map_err(|e| e.to_string())?
-            .len();
-        let mut source_file = std::fs::File::open(&src_path).map_err(|e| e.to_string())?;
-        let mut dest_file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
-
-        use std::io::{Read, Write};
-        let mut buf = vec![0u8; 1048576];
-        let mut transferred: u64 = 0;
-        let start = std::time::Instant::now();
-        let mut last_emit = std::time::Instant::now();
-
-        loop {
-            if *cancel.0.lock().unwrap() {
-                let _ = std::fs::remove_file(&target);
-                return Err("Cancelled".to_string());
-            }
-            let n = source_file.read(&mut buf).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            dest_file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-            transferred += n as u64;
-
-            let now = std::time::Instant::now();
-            if now.duration_since(last_emit).as_millis() >= 100 || n == 0 {
-                last_emit = now;
-                let elapsed = start.elapsed().as_secs_f64();
-                let speed = if elapsed > 0.0 {
-                    transferred as f64 / elapsed
-                } else {
-                    0.0
-                };
-                let pct = if total > 0 {
-                    ((transferred as f64 / total as f64 * 90.0) + 5.0) as u32
-                } else {
-                    90
-                };
-
-                let _ = app.emit(
-                    "op-progress",
-                    serde_json::json!({
-                        "operation": "move", "src": src, "dest": dest,
-                        "bytesTransferred": transferred, "totalBytes": total,
-                        "percentage": pct, "speed": speed as u64, "status": "progress"
-                    }),
-                );
-            }
-        }
-        std::fs::remove_file(&src_path).map_err(|e| e.to_string())?;
-    }
-
-    let _ = app.emit(
-        "op-progress",
-        serde_json::json!({
-            "operation": "move", "src": src, "dest": dest,
-            "bytesTransferred": 0, "totalBytes": 0,
-            "percentage": 100, "speed": 0, "status": "complete"
-        }),
-    );
-    Ok(())
+    cancel.clear(Some(&operation_id));
+    result
 }
 
 #[tauri::command]
@@ -688,9 +1635,183 @@ pub fn get_known_folders(app: tauri::AppHandle) -> KnownFolders {
     }
 }
 
+fn recover_transfer_journal(
+    journal_path: &Path,
+    journal: &TransferJournal,
+) -> OperationRecoveryReport {
+    let source = PathBuf::from(&journal.source);
+    let target = PathBuf::from(&journal.target);
+    let staging = PathBuf::from(&journal.staging);
+    let backup = journal.backup.as_deref().map(PathBuf::from);
+    let mut errors = Vec::new();
+    let target_was_committed = target.exists()
+        && (!staging.exists()
+            || matches!(journal.phase.as_str(), "targetCommitted" | "sourceRemoved"));
+
+    if !target.exists() {
+        if let Some(backup_path) = backup.as_ref().filter(|path| path.exists()) {
+            if let Err(error) = std::fs::rename(backup_path, &target) {
+                errors.push(format!(
+                    "Could not restore the previous destination {}: {error}",
+                    target.display()
+                ));
+            }
+        }
+    }
+    if staging.exists() {
+        if let Err(error) = remove_path_if_present(&staging) {
+            errors.push(error);
+        }
+    }
+    if target.exists() {
+        if let Some(backup_path) = backup.as_ref().filter(|path| path.exists()) {
+            if let Err(error) = remove_path_if_present(backup_path) {
+                errors.push(error);
+            }
+        }
+    }
+
+    let (outcome, detail) = if !errors.is_empty() {
+        ("recoveryFailed", errors.join(" | "))
+    } else if journal.operation == "move" && target_was_committed && source.exists() {
+        (
+            "moveKeptBoth",
+            "The destination copy is complete and the source was kept because the app stopped before the move could be finalized.".to_string(),
+        )
+    } else if target_was_committed {
+        (
+            "completedAfterRestart",
+            "The committed destination was kept and temporary recovery files were cleaned."
+                .to_string(),
+        )
+    } else {
+        (
+            "partialRemoved",
+            "The incomplete temporary destination was removed; the source and previous destination were kept.".to_string(),
+        )
+    };
+    if errors.is_empty() {
+        let _ = std::fs::remove_file(journal_path);
+    }
+    OperationRecoveryReport {
+        operation_id: journal.operation_id.clone(),
+        operation: journal.operation.clone(),
+        source: journal.source.clone(),
+        destination: journal.target.clone(),
+        outcome: outcome.to_string(),
+        detail,
+        completed_items: None,
+        total_items: None,
+    }
+}
+
+#[tauri::command(async)]
+pub fn recover_interrupted_operations(
+    app: tauri::AppHandle,
+) -> Result<Vec<OperationRecoveryReport>, String> {
+    let directory = operation_journal_dir(&app)?;
+    let mut reports = Vec::new();
+    for entry in std::fs::read_dir(&directory)
+        .map_err(|error| format!("Cannot read operation journal: {error}"))?
+    {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                reports.push(OperationRecoveryReport {
+                    operation_id: "unknown".to_string(),
+                    operation: "unknown".to_string(),
+                    source: String::new(),
+                    destination: String::new(),
+                    outcome: "recoveryFailed".to_string(),
+                    detail: error.to_string(),
+                    completed_items: None,
+                    total_items: None,
+                });
+                continue;
+            }
+        };
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let payload = match std::fs::read(&path) {
+            Ok(payload) => payload,
+            Err(error) => {
+                reports.push(OperationRecoveryReport {
+                    operation_id: name,
+                    operation: "unknown".to_string(),
+                    source: String::new(),
+                    destination: String::new(),
+                    outcome: "recoveryFailed".to_string(),
+                    detail: error.to_string(),
+                    completed_items: None,
+                    total_items: None,
+                });
+                continue;
+            }
+        };
+        if name.starts_with("transfer-") {
+            match serde_json::from_slice::<TransferJournal>(&payload) {
+                Ok(journal) => reports.push(recover_transfer_journal(&path, &journal)),
+                Err(error) => reports.push(OperationRecoveryReport {
+                    operation_id: name,
+                    operation: "unknown".to_string(),
+                    source: String::new(),
+                    destination: String::new(),
+                    outcome: "recoveryFailed".to_string(),
+                    detail: format!("Unreadable transfer journal: {error}"),
+                    completed_items: None,
+                    total_items: None,
+                }),
+            }
+        } else if name.starts_with("delete-") {
+            match serde_json::from_slice::<DeleteJournal>(&payload) {
+                Ok(journal) => {
+                    let outcome = if journal.operation == "deletePermanent" {
+                        "permanentDeleteInterrupted"
+                    } else {
+                        "recycleDeleteInterrupted"
+                    };
+                    let current = journal.current.clone().unwrap_or_default();
+                    reports.push(OperationRecoveryReport {
+                        operation_id: journal.operation_id,
+                        operation: journal.operation,
+                        source: current,
+                        destination: String::new(),
+                        outcome: outcome.to_string(),
+                        detail: format!(
+                            "{} of {} selected items were completed before RHFiles stopped.",
+                            journal.completed.len(),
+                            journal.paths.len()
+                        ),
+                        completed_items: Some(journal.completed.len()),
+                        total_items: Some(journal.paths.len()),
+                    });
+                    let _ = std::fs::remove_file(path);
+                }
+                Err(error) => reports.push(OperationRecoveryReport {
+                    operation_id: name,
+                    operation: "delete".to_string(),
+                    source: String::new(),
+                    destination: String::new(),
+                    outcome: "recoveryFailed".to_string(),
+                    detail: format!("Unreadable delete journal: {error}"),
+                    completed_items: None,
+                    total_items: None,
+                }),
+            }
+        }
+    }
+    Ok(reports)
+}
+
 #[tauri::command]
-pub fn cancel_operation(cancel: tauri::State<'_, CancelFlag>) {
-    *cancel.0.lock().unwrap() = true;
+pub fn cancel_operation(
+    operation_id: Option<String>,
+    cancel: tauri::State<'_, CancelFlag>,
+) -> Result<(), String> {
+    cancel.cancel(operation_id.as_deref())
 }
 
 #[tauri::command(async)]
@@ -820,6 +1941,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn same_file_is_detected_across_windows_path_casing() {
+        let root = std::env::temp_dir().join(format!(
+            "rhfiles-same-path-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let original = root.join("MixedCase.txt");
+        let alternate = root.join("MIXEDCASE.TXT");
+        std::fs::write(&original, b"same").unwrap();
+        assert!(paths_resolve_to_same_entry(&original, &alternate));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     #[ignore = "uses the Windows Recycle Bin"]
     fn deleted_file_can_be_restored_to_its_original_path() {
         let unique = format!(
@@ -898,15 +2037,93 @@ mod tests {
         std::fs::write(&file, b"permanent").unwrap();
         std::fs::write(folder.join("nested.txt"), b"permanent").unwrap();
 
-        let outcome = delete_files_permanently(vec![
-            file.to_string_lossy().into_owned(),
-            folder.to_string_lossy().into_owned(),
-        ]);
-        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
-        assert_eq!(outcome.deleted.len(), 2);
+        let totals = scan_path(&root).unwrap();
+        assert_eq!(totals.entries, 4);
+        assert_eq!(totals.bytes, 18);
+        enumerator::delete_permanently(&file).unwrap();
+        enumerator::delete_permanently(&folder).unwrap();
         assert!(!file.exists());
         assert!(!folder.exists());
 
         std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_copy_removes_staging_and_preserves_existing_destination() {
+        let root = std::env::temp_dir().join(format!(
+            "rhfiles-copy-recovery-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("source.txt");
+        let target = root.join("target.txt");
+        let staging = root.join("partial.tmp");
+        let journal_file = root.join("journal.json");
+        std::fs::write(&source, b"source").unwrap();
+        std::fs::write(&target, b"previous").unwrap();
+        std::fs::write(&staging, b"partial").unwrap();
+        std::fs::write(&journal_file, b"journal").unwrap();
+        let journal = TransferJournal {
+            schema_version: 1,
+            operation_id: "recovery-test".to_string(),
+            operation: "copy".to_string(),
+            source: source.to_string_lossy().into_owned(),
+            target: target.to_string_lossy().into_owned(),
+            staging: staging.to_string_lossy().into_owned(),
+            backup: None,
+            phase: "copying".to_string(),
+        };
+
+        let report = recover_transfer_journal(&journal_file, &journal);
+        assert_eq!(report.outcome, "partialRemoved");
+        assert_eq!(std::fs::read(&target).unwrap(), b"previous");
+        assert!(source.exists());
+        assert!(!staging.exists());
+        assert!(!journal_file.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_move_keeps_complete_source_and_destination() {
+        let root = std::env::temp_dir().join(format!(
+            "rhfiles-move-recovery-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("source.txt");
+        let target = root.join("target.txt");
+        let staging = root.join("missing-partial.tmp");
+        let backup = root.join("backup.tmp");
+        let journal_file = root.join("journal.json");
+        std::fs::write(&source, b"source").unwrap();
+        std::fs::write(&target, b"source").unwrap();
+        std::fs::write(&backup, b"previous").unwrap();
+        std::fs::write(&journal_file, b"journal").unwrap();
+        let journal = TransferJournal {
+            schema_version: 1,
+            operation_id: "recovery-test".to_string(),
+            operation: "move".to_string(),
+            source: source.to_string_lossy().into_owned(),
+            target: target.to_string_lossy().into_owned(),
+            staging: staging.to_string_lossy().into_owned(),
+            backup: Some(backup.to_string_lossy().into_owned()),
+            phase: "targetCommitted".to_string(),
+        };
+
+        let report = recover_transfer_journal(&journal_file, &journal);
+        assert_eq!(report.outcome, "moveKeptBoth");
+        assert_eq!(std::fs::read(&source).unwrap(), b"source");
+        assert_eq!(std::fs::read(&target).unwrap(), b"source");
+        assert!(!backup.exists());
+        assert!(!journal_file.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

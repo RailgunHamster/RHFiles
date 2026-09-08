@@ -372,6 +372,7 @@ function normalizeKey(e) {
   if (e.shiftKey) parts.push("Shift");
   if (e.altKey) parts.push("Alt");
   let key = e.key;
+  if (key === "Del") key = "Delete";
   if (key === " ") key = "Space";
   if (key === ",") key = ",";
   if (!["Control", "Shift", "Alt", "Meta"].includes(key)) {

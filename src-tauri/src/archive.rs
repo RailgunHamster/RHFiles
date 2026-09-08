@@ -7,8 +7,20 @@ use tauri::Emitter;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+struct CancelClearGuard<'a> {
+    cancel: &'a CancelFlag,
+    operation_id: &'a str,
+}
+
+impl Drop for CancelClearGuard<'_> {
+    fn drop(&mut self) {
+        self.cancel.clear(Some(self.operation_id));
+    }
+}
+
 fn emit_extract_progress(
     app: &tauri::AppHandle,
+    operation_id: &str,
     src: &str,
     dest: &str,
     transferred: u64,
@@ -20,6 +32,7 @@ fn emit_extract_progress(
     let _ = app.emit(
         "op-progress",
         serde_json::json!({
+            "operationId": operation_id,
             "operation": "extract",
             "src": src,
             "dest": dest,
@@ -69,10 +82,16 @@ pub fn extract_archive(
     path: String,
     dest: String,
     entry_path: Option<String>,
+    operation_id: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
-    *cancel.0.lock().map_err(|e| e.to_string())? = false;
+    let operation_id = operation_id.unwrap_or_else(|| "legacy".to_string());
+    cancel.reset(Some(&operation_id))?;
+    let _cancel_clear = CancelClearGuard {
+        cancel: &cancel,
+        operation_id: &operation_id,
+    };
     let p = PathBuf::from(&path);
     let d = PathBuf::from(&dest);
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
@@ -90,14 +109,24 @@ pub fn extract_archive(
         }
     }
 
-    emit_extract_progress(&app, &path, &dest, 0, total, 0, 0, "progress");
+    emit_extract_progress(
+        &app,
+        &operation_id,
+        &path,
+        &dest,
+        0,
+        total,
+        0,
+        0,
+        "progress",
+    );
     let started = std::time::Instant::now();
     let mut last_emit = std::time::Instant::now();
     let mut transferred = 0u64;
     let mut buffer = vec![0u8; 1024 * 1024];
 
     for i in 0..archive.len() {
-        if *cancel.0.lock().map_err(|e| e.to_string())? {
+        if cancel.is_cancelled(Some(&operation_id))? {
             return Err("Cancelled".to_string());
         }
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
@@ -121,7 +150,7 @@ pub fn extract_archive(
         }
         let mut out_file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
         loop {
-            if *cancel.0.lock().map_err(|e| e.to_string())? {
+            if cancel.is_cancelled(Some(&operation_id))? {
                 let _ = std::fs::remove_file(&out_path);
                 return Err("Cancelled".to_string());
             }
@@ -149,6 +178,7 @@ pub fn extract_archive(
                 };
                 emit_extract_progress(
                     &app,
+                    &operation_id,
                     &path,
                     &dest,
                     transferred,
@@ -164,7 +194,18 @@ pub fn extract_archive(
         }
     }
 
-    emit_extract_progress(&app, &path, &dest, transferred, total, 100, 0, "complete");
+    emit_extract_progress(
+        &app,
+        &operation_id,
+        &path,
+        &dest,
+        transferred,
+        total,
+        100,
+        0,
+        "complete",
+    );
+    cancel.clear(Some(&operation_id));
     Ok(())
 }
 
@@ -262,13 +303,19 @@ fn percentage_from_7z_line(line: &str) -> Option<u32> {
 pub fn extract_7z(
     archive: String,
     dest: String,
+    operation_id: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
-    *cancel.0.lock().map_err(|e| e.to_string())? = false;
+    let operation_id = operation_id.unwrap_or_else(|| "legacy".to_string());
+    cancel.reset(Some(&operation_id))?;
+    let _cancel_clear = CancelClearGuard {
+        cancel: &cancel,
+        operation_id: &operation_id,
+    };
     let exe = find_7z().ok_or("7-Zip not installed. Download from 7-zip.org")?;
     std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    emit_extract_progress(&app, &archive, &dest, 0, 0, 0, 0, "progress");
+    emit_extract_progress(&app, &operation_id, &archive, &dest, 0, 0, 0, 0, "progress");
     let mut command = std::process::Command::new(&exe);
     command
         .args(["x", &archive, &format!("-o{}", dest), "-y", "-bsp1", "-bb0"])
@@ -307,9 +354,19 @@ pub fn extract_7z(
 
     let status = loop {
         while let Ok(percentage) = progress_rx.try_recv() {
-            emit_extract_progress(&app, &archive, &dest, 0, 0, percentage, 0, "progress");
+            emit_extract_progress(
+                &app,
+                &operation_id,
+                &archive,
+                &dest,
+                0,
+                0,
+                percentage,
+                0,
+                "progress",
+            );
         }
-        if *cancel.0.lock().map_err(|e| e.to_string())? {
+        if cancel.is_cancelled(Some(&operation_id))? {
             let _ = child.kill();
             let _ = child.wait();
             if let Some(reader) = progress_reader {
@@ -339,7 +396,18 @@ pub fn extract_7z(
         };
         return Err(error);
     }
-    emit_extract_progress(&app, &archive, &dest, 0, 0, 100, 0, "complete");
+    emit_extract_progress(
+        &app,
+        &operation_id,
+        &archive,
+        &dest,
+        0,
+        0,
+        100,
+        0,
+        "complete",
+    );
+    cancel.clear(Some(&operation_id));
     Ok(())
 }
 

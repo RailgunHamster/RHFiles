@@ -149,6 +149,13 @@ select {
   color: var(--text-2);
 }
 
+.tab.file-drag-hover,
+.tab.file-drag-hover:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+}
+
 .tab.active {
   z-index: 1;
   background: var(--bg-card);

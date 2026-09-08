@@ -972,15 +972,10 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
 
     match program.as_str() {
         "vscode" => {
-            let local = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default())
-                .join("Programs")
-                .join("Microsoft VS Code")
-                .join("Code.exe");
-            let exe = if local.exists() {
-                local
-            } else {
-                which("code").unwrap_or_else(|| std::path::PathBuf::from("code"))
-            };
+            let exe = find_vscode_executable().ok_or_else(|| {
+                "Visual Studio Code was not found. Install VS Code or enable its command-line launcher."
+                    .to_string()
+            })?;
             #[cfg(target_os = "windows")]
             {
                 std::process::Command::new(&exe)
@@ -1166,6 +1161,127 @@ fn which(name: &str) -> Option<std::path::PathBuf> {
             Some(std::path::PathBuf::from(line))
         }
     })
+}
+
+fn executable_from_command_value(value: &str) -> Option<std::path::PathBuf> {
+    let value = value.trim();
+    if let Some(quoted) = value.strip_prefix('"') {
+        let end = quoted.find('"')?;
+        return Some(std::path::PathBuf::from(&quoted[..end]));
+    }
+    let lower = value.to_ascii_lowercase();
+    let end = lower.find(".exe")? + 4;
+    Some(std::path::PathBuf::from(value[..end].trim()))
+}
+
+#[cfg(target_os = "windows")]
+fn vscode_registry_candidates() -> Vec<std::path::PathBuf> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    let mut candidates = Vec::new();
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        let root = RegKey::predef(root);
+        for key_path in [
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Code.exe",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Code - Insiders.exe",
+            r"SOFTWARE\Classes\Applications\Code.exe\shell\open\command",
+            r"SOFTWARE\Classes\Applications\Code - Insiders.exe\shell\open\command",
+        ] {
+            let Ok(key) = root.open_subkey(key_path) else {
+                continue;
+            };
+            let Ok(value) = key.get_value::<String, _>("") else {
+                continue;
+            };
+            if let Some(path) = executable_from_command_value(&value) {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates
+}
+
+#[cfg(not(target_os = "windows"))]
+fn vscode_registry_candidates() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
+fn find_vscode_executable() -> Option<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    let add_install_root = |candidates: &mut Vec<std::path::PathBuf>, variable: &str| {
+        let Ok(root) = std::env::var(variable) else {
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        candidates.push(root.join("Microsoft VS Code").join("Code.exe"));
+        candidates.push(
+            root.join("Microsoft VS Code Insiders")
+                .join("Code - Insiders.exe"),
+        );
+    };
+
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let programs = std::path::PathBuf::from(local_app_data).join("Programs");
+        candidates.push(programs.join("Microsoft VS Code").join("Code.exe"));
+        candidates.push(
+            programs
+                .join("Microsoft VS Code Insiders")
+                .join("Code - Insiders.exe"),
+        );
+    }
+    add_install_root(&mut candidates, "ProgramFiles");
+    add_install_root(&mut candidates, "ProgramW6432");
+    add_install_root(&mut candidates, "ProgramFiles(x86)");
+    candidates.extend(vscode_registry_candidates());
+
+    for launcher_name in [
+        "Code.exe",
+        "code-insiders.exe",
+        "code.cmd",
+        "code-insiders.cmd",
+    ] {
+        let Some(launcher) = which(launcher_name) else {
+            continue;
+        };
+        if launcher
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+        {
+            candidates.push(launcher.clone());
+        }
+        if let Some(bin_dir) = launcher.parent()
+            && let Some(install_dir) = bin_dir.parent()
+        {
+            candidates.push(install_dir.join("Code.exe"));
+            candidates.push(install_dir.join("Code - Insiders.exe"));
+        }
+    }
+
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+#[cfg(test)]
+mod program_discovery_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_quoted_executable_from_registry_command() {
+        let parsed =
+            executable_from_command_value(r#""C:\Program Files\Microsoft VS Code\Code.exe" "%1""#);
+        assert_eq!(
+            parsed,
+            Some(std::path::PathBuf::from(
+                r"C:\Program Files\Microsoft VS Code\Code.exe"
+            ))
+        );
+    }
+
+    #[test]
+    fn extracts_unquoted_executable_without_arguments() {
+        let parsed = executable_from_command_value(r"C:\Tools\Code.exe --reuse-window");
+        assert_eq!(parsed, Some(std::path::PathBuf::from(r"C:\Tools\Code.exe")));
+    }
 }
 
 fn powershell_executable() -> std::path::PathBuf {

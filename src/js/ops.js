@@ -10,70 +10,6 @@ function isCloudPath(isRight) {
   return pl.includes("onedrive") || pl.includes("google drive") || pl.includes("my drive") || pl.includes("dropbox");
 }
 
-// --- progress tracking ---
-let currentOperationCancelled = false;
-
-function setupProgressListener() {
-  if (window.__TAURI_INTERNALS__) {
-    const { listen } = window.__TAURI_INTERNALS__.event || {};
-    if (listen) {
-      listen("op-progress", (event) => {
-        if (event.payload && event.payload.status === "progress") {
-          updateProgress(event.payload);
-        } else if (event.payload && event.payload.status === "complete") {
-          hideProgress();
-        }
-      });
-      listen("update-progress", (event) => {
-        if (!event.payload) return;
-        updateProgress({
-          percentage: Math.max(0, Math.min(100, Number(event.payload.percentage) || 0)),
-          speed: 0,
-          totalBytes: 0,
-          bytesTransferred: 0,
-        });
-      });
-    }
-  }
-}
-
-function showProgress(title, options = {}) {
-  const { indeterminate = false, cancellable = true } = options;
-  document.getElementById("progress-overlay").style.display = "block";
-  document.getElementById("progress-title").textContent = title;
-  const bar = document.getElementById("progress-bar");
-  bar.classList.toggle("indeterminate", indeterminate);
-  bar.style.width = indeterminate ? "35%" : "0%";
-  document.getElementById("progress-percent").textContent = indeterminate ? "\u2026" : "0%";
-  document.getElementById("progress-speed").textContent = "";
-  document.getElementById("progress-bytes").textContent = "";
-  document.getElementById("progress-cancel").style.display = cancellable ? "" : "none";
-  currentOperationCancelled = false;
-}
-
-function updateProgress(data) {
-  const bar = document.getElementById("progress-bar");
-  bar.classList.remove("indeterminate");
-  bar.style.width = data.percentage + "%";
-  document.getElementById("progress-percent").textContent = data.percentage + "%";
-  document.getElementById("progress-speed").textContent = data.speed > 0 ? fmtSize(data.speed) + "/s" : "";
-  document.getElementById("progress-bytes").textContent = data.totalBytes > 0
-    ? fmtSize(data.bytesTransferred) + " / " + fmtSize(data.totalBytes)
-    : "";
-}
-
-function hideProgress() {
-  document.getElementById("progress-overlay").style.display = "none";
-  document.getElementById("progress-bar").classList.remove("indeterminate");
-  document.getElementById("progress-cancel").style.display = "";
-}
-
-function cancelOperation() {
-  currentOperationCancelled = true;
-  call("cancel_operation", {});
-  hideProgress();
-}
-
 function showConfirmDialog(options) {
   const config = options || {};
   return new Promise(resolve => {
@@ -151,31 +87,46 @@ async function deleteSelected(isRight) {
   const message = sel.length === 1
     ? t('confirm.deleteItem', {name: sel[0].name})
     : t('confirm.deleteItems', {count: sel.length});
+  let confirmed = false;
   try {
-    const confirmed = await showConfirmDialog({
+    confirmed = await showConfirmDialog({
       title: t('confirm.deleteTitle'),
       message,
       detail: t('confirm.recycleBinHint'),
       confirmLabel: t('btn.delete'),
     });
-    if (!confirmed) return;
-    showProgress(t('status.deleting'), { indeterminate: true, cancellable: false });
-    try {
-      const deletedPaths = sel.map(f => f.path);
-      const outcome = await call("delete_files", { paths: deletedPaths });
-      const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
-      if (actuallyDeleted.length) trackDelete(actuallyDeleted);
-      await refresh();
-      if (outcome?.errors?.length) {
-        alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
-      }
-    } catch (e) {
-      alert(t('alert.deleteFailed', {error: e}));
-    } finally {
-      hideProgress();
-    }
   } finally {
     _deleteRequestActive = false;
+  }
+  if (!confirmed) return;
+  const deletedPaths = sel.map(function(file) { return file.path; });
+  const taskId = showProgress(t('status.deleting'), {
+    indeterminate: true,
+    cancellable: true,
+    currentName: sel[0]?.name || '',
+    currentPath: deletedPaths[0] || '',
+    totalItems: deletedPaths.length,
+    aggregateProgress: true,
+  });
+  try {
+    const outcome = await call('delete_files', {paths: deletedPaths, operationId: taskId});
+    const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
+    if (actuallyDeleted.length) trackDelete(actuallyDeleted);
+    await refresh();
+    if (outcome?.cancelled) {
+      cancelOperationTask(taskId, t('tasks.deleteCancelledDetail', {
+        completed: actuallyDeleted.length,
+        total: deletedPaths.length,
+      }));
+    } else if (outcome?.errors?.length) {
+      failOperationTask(taskId, outcome.errors);
+      alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
+    } else {
+      completeOperationTask(taskId);
+    }
+  } catch (error) {
+    failOperationTask(taskId, error);
+    alert(t('alert.deleteFailed', {error}));
   }
 }
 
@@ -187,6 +138,7 @@ async function deleteSelectedPermanently(isRight) {
   const message = sel.length === 1
     ? t('confirm.permanentDeleteItem', {name: sel[0].name})
     : t('confirm.permanentDeleteItems', {count: sel.length});
+  let finalConfirmation = false;
   try {
     const firstConfirmation = await showConfirmDialog({
       title: t('confirm.permanentDeleteTitle'),
@@ -196,29 +148,47 @@ async function deleteSelectedPermanently(isRight) {
     });
     if (!firstConfirmation) return;
 
-    const finalConfirmation = await showConfirmDialog({
+    finalConfirmation = await showConfirmDialog({
       title: t('confirm.permanentDeleteFinalTitle'),
       message,
       detail: t('confirm.permanentDeleteFinalWarning'),
       confirmLabel: t('btn.deletePermanently'),
     });
-    if (!finalConfirmation) return;
-
-    showProgress(t('status.deletingPermanently'), { indeterminate: true, cancellable: false });
-    try {
-      const deletedPaths = sel.map(file => file.path);
-      const outcome = await call('delete_files_permanently', { paths: deletedPaths });
-      await refresh();
-      if (outcome?.errors?.length) {
-        alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
-      }
-    } catch (error) {
-      alert(t('alert.deleteFailed', {error}));
-    } finally {
-      hideProgress();
-    }
   } finally {
     _deleteRequestActive = false;
+  }
+  if (!finalConfirmation) return;
+
+  const deletedPaths = sel.map(function(file) { return file.path; });
+  const taskId = showProgress(t('status.deletingPermanently'), {
+    indeterminate: true,
+    cancellable: true,
+    currentName: sel[0]?.name || '',
+    currentPath: deletedPaths[0] || '',
+    totalItems: deletedPaths.length,
+    aggregateProgress: true,
+  });
+  try {
+    const outcome = await call('delete_files_permanently', {
+      paths: deletedPaths,
+      operationId: taskId,
+    });
+    await refresh();
+    const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : [];
+    if (outcome?.cancelled) {
+      cancelOperationTask(taskId, t('tasks.deleteCancelledDetail', {
+        completed: actuallyDeleted.length,
+        total: deletedPaths.length,
+      }));
+    } else if (outcome?.errors?.length) {
+      failOperationTask(taskId, outcome.errors);
+      alert(t('alert.deleteFailed', {error: outcome.errors.join('\n')}));
+    } else {
+      completeOperationTask(taskId);
+    }
+  } catch (error) {
+    failOperationTask(taskId, error);
+    alert(t('alert.deleteFailed', {error}));
   }
 }
 
@@ -342,9 +312,19 @@ async function paste(isRight) {
   const destEntries = destTab.entries || [];
   const existingNames = new Set(destEntries.map(entry => fileNameKey(entry.name)));
   let applyAllAction = null;
+  const clipboard = G.clipboard;
+  const sources = Array.from(clipboard.paths);
+  const taskId = createOperationTaskId();
+  const errors = [];
+  let taskStarted = false;
+  let userCancelled = false;
   try {
-    const clipboard = G.clipboard;
-    for (const srcPath of [...clipboard.paths]) {
+    for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
+      if (taskStarted && isOperationCancellationRequested(taskId)) {
+        userCancelled = true;
+        break;
+      }
+      const srcPath = sources[sourceIndex];
       const srcName = srcPath.split(/[\\/]/).pop();
       const destFullPath = joinFolderPath(destPath, srcName);
       if (windowsPathKey(srcPath) === windowsPathKey(destFullPath)) {
@@ -365,32 +345,75 @@ async function paste(isRight) {
           });
         }
       }
-      if (action === 'cancel') break;
+      if (action === 'cancel') {
+        userCancelled = true;
+        break;
+      }
       if (action === 'skip') continue;
+      if (taskStarted && isOperationCancellationRequested(taskId)) {
+        userCancelled = true;
+        break;
+      }
       const targetName = action === 'rename'
         ? generateUniqueName(destPath, srcName, existingNames)
         : srcName;
       const targetPath = joinFolderPath(destPath, targetName);
       const overwrites = conflict && action === 'replace';
-      const keepsBoth = action === 'rename';
-      if (clipboard.op === "cut") {
-        showProgress(t('status.moving'), { indeterminate: keepsBoth });
-        if (keepsBoth) await call("move_path_exact", { src: srcPath, dest: targetPath });
-        else await call("move_with_progress", { src: srcPath, dest: destPath, overwrite:overwrites });
-        if (!overwrites) trackMove(srcPath, targetPath);
-        clipboard.paths.delete(srcPath);
-      } else {
-        showProgress(t('status.copying'), { indeterminate: keepsBoth });
-        if (keepsBoth) await call("copy_path_exact", { src: srcPath, dest: targetPath });
-        else await call("copy_with_progress", { src: srcPath, dest: destPath, overwrite:overwrites });
-        if (!overwrites) trackCopy(srcPath, targetPath);
+      taskStarted = true;
+      showProgress(clipboard.op === 'cut' ? t('status.moving') : t('status.copying'), {
+        taskId,
+        indeterminate: true,
+        cancellable: true,
+        currentName: srcName,
+        currentPath: srcPath,
+        currentIndex: sourceIndex + 1,
+        totalItems: sources.length,
+      });
+      if (isOperationCancellationRequested(taskId)) {
+        userCancelled = true;
+        break;
       }
-      hideProgress();
-      existingNames.add(fileNameKey(targetName));
+      try {
+        const args = {
+          src: srcPath,
+          dest: destPath,
+          overwrite: overwrites,
+          targetName: targetName === srcName ? null : targetName,
+          operationId: taskId,
+        };
+        if (clipboard.op === "cut") {
+          await call("move_with_progress", args);
+          if (!overwrites) trackMove(srcPath, targetPath);
+          clipboard.paths.delete(srcPath);
+        } else {
+          await call("copy_with_progress", args);
+          if (!overwrites) trackCopy(srcPath, targetPath);
+        }
+        existingNames.add(fileNameKey(targetName));
+      } catch (error) {
+        if (/cancel/i.test(String(error))) {
+          userCancelled = true;
+          break;
+        }
+        errors.push(srcName + ': ' + String(error));
+      }
     }
     if (G.clipboard?.op === "cut" && !G.clipboard.paths.size) G.clipboard = null;
     await refresh();
-  } catch (e) { hideProgress(); alert(t('alert.pasteFailed', { error: e })); }
+    if (taskStarted) {
+      if (errors.length) {
+        failOperationTask(taskId, errors);
+        alert(t('alert.pasteFailed', { error: errors.join('\n') }));
+      } else if (userCancelled) {
+        cancelOperationTask(taskId);
+      } else {
+        completeOperationTask(taskId);
+      }
+    }
+  } catch (error) {
+    if (taskStarted) failOperationTask(taskId, error);
+    alert(t('alert.pasteFailed', { error }));
+  }
 }
 
 async function openFileHandler(path) {
@@ -427,19 +450,30 @@ function windowsPathKey(path) {
 
 async function extractArchiveTo(file, destination) {
   if (!file) return;
-  showProgress(t('status.extracting', { name: file.name }));
+  const taskId = showProgress(t('status.extracting', { name: file.name }), {
+    currentName: file.name,
+    currentPath: file.path,
+  });
   try {
     const ext = (file.extension || '').toLowerCase();
     if (ext === 'zip') {
-      await call('extract_archive', { path: file.path, dest: destination, entryPath: null });
+      await call('extract_archive', {
+        path: file.path,
+        dest: destination,
+        entryPath: null,
+        operationId: taskId,
+      });
     } else {
-      await call('extract_7z', { archive: file.path, dest: destination });
+      await call('extract_7z', { archive: file.path, dest: destination, operationId: taskId });
     }
+    completeOperationTask(taskId);
     await refresh();
   } catch (e) {
-    if (!/cancel/i.test(String(e))) alert(t('alert.extractFailed', { error: e }));
-  } finally {
-    hideProgress();
+    if (/cancel/i.test(String(e))) cancelOperationTask(taskId);
+    else {
+      failOperationTask(taskId, e);
+      alert(t('alert.extractFailed', { error: e }));
+    }
   }
 }
 
@@ -460,14 +494,18 @@ function makeCompressionRequest(files, currentPath, tool) {
 async function compressSelection(files, currentPath, tool) {
   if (!files.length) return;
   const request = makeCompressionRequest(files, currentPath, tool);
-  showProgress(t('status.compressing', { name: request.baseName }), { indeterminate: true, cancellable: false });
+  const taskId = showProgress(t('status.compressing', { name: request.baseName }), {
+    indeterminate: true,
+    cancellable: false,
+    currentName: request.baseName,
+  });
   try {
     await call(request.command, request.args);
+    completeOperationTask(taskId);
     await refresh();
   } catch (e) {
+    failOperationTask(taskId, e);
     alert(t('alert.compressFailed', { error: e }));
-  } finally {
-    hideProgress();
   }
 }
 
@@ -1209,54 +1247,107 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
   const changedFolders = [destination];
   let applyAllAction = null;
   let changed = false;
+  let userCancelled = false;
+  const taskId = createOperationTaskId();
+  const errors = [];
+  let taskStarted = false;
 
-  for (const src of paths) {
-    const sourceName = String(src).split(/[\\/]/).pop();
-    const originalTarget = joinFolderPath(destination, sourceName);
-    const sameTarget = windowsPathKey(src) === windowsPathKey(originalTarget);
-    if (operation === 'move' && sameTarget) continue;
+  try {
+    for (let sourceIndex = 0; sourceIndex < paths.length; sourceIndex++) {
+      if (taskStarted && isOperationCancellationRequested(taskId)) {
+        userCancelled = true;
+        break;
+      }
+      const src = paths[sourceIndex];
+      const sourceName = String(src).split(/[\\/]/).pop();
+      const originalTarget = joinFolderPath(destination, sourceName);
+      const sameTarget = windowsPathKey(src) === windowsPathKey(originalTarget);
+      if (operation === 'move' && sameTarget) continue;
 
-    const conflict = sameTarget
-      || existingNames.has(fileNameKey(sourceName))
-      || await call('path_exists', {path: originalTarget});
-    let conflictAction = sameTarget ? 'rename' : 'move';
-    if (conflict && !sameTarget) {
-      if (applyAllAction) {
-        conflictAction = applyAllAction;
-      } else {
-        conflictAction = await new Promise(resolve => {
-          showConflictDialog(sourceName, sourceName, src, originalTarget, (choice, applyAll) => {
-            if (applyAll) applyAllAction = choice;
-            resolve(choice);
+      const conflict = sameTarget
+        || existingNames.has(fileNameKey(sourceName))
+        || await call('path_exists', {path: originalTarget});
+      let conflictAction = sameTarget ? 'rename' : 'move';
+      if (conflict && !sameTarget) {
+        if (applyAllAction) {
+          conflictAction = applyAllAction;
+        } else {
+          conflictAction = await new Promise(resolve => {
+            showConflictDialog(sourceName, sourceName, src, originalTarget, (choice, applyAll) => {
+              if (applyAll) applyAllAction = choice;
+              resolve(choice);
+            });
           });
-        });
+        }
+      }
+      if (conflictAction === 'cancel') {
+        userCancelled = true;
+        break;
+      }
+      if (conflictAction === 'skip') continue;
+      if (taskStarted && isOperationCancellationRequested(taskId)) {
+        userCancelled = true;
+        break;
+      }
+
+      const targetName = conflictAction === 'rename'
+        ? generateUniqueName(destination, sourceName, existingNames)
+        : sourceName;
+      const targetPath = joinFolderPath(destination, targetName);
+      const overwrites = conflict && conflictAction === 'replace';
+      taskStarted = true;
+      showProgress(operation === 'copy' ? t('status.copying') : t('status.moving'), {
+        taskId,
+        indeterminate: true,
+        cancellable: true,
+        currentName: sourceName,
+        currentPath: src,
+        currentIndex: sourceIndex + 1,
+        totalItems: paths.length,
+      });
+      if (isOperationCancellationRequested(taskId)) {
+        userCancelled = true;
+        break;
+      }
+      try {
+        const args = {
+          src,
+          dest: destination,
+          overwrite: overwrites,
+          targetName: targetName === sourceName ? null : targetName,
+          operationId: taskId,
+        };
+        if (operation === 'copy') {
+          await call('copy_with_progress', args);
+          if (!overwrites) trackCopy(src, targetPath);
+        } else {
+          await call('move_with_progress', args);
+          if (!overwrites) trackMove(src, targetPath);
+          changedFolders.push(parentFolderPath(src));
+        }
+        changed = true;
+        existingNames.add(fileNameKey(targetName));
+      } catch (error) {
+        if (/cancel/i.test(String(error))) {
+          userCancelled = true;
+          break;
+        }
+        errors.push(sourceName + ': ' + String(error));
       }
     }
-    if (conflictAction === 'cancel') break;
-    if (conflictAction === 'skip') continue;
-
-    const targetName = conflictAction === 'rename'
-      ? generateUniqueName(destination, sourceName, existingNames)
-      : sourceName;
-    const targetPath = joinFolderPath(destination, targetName);
-    const overwrites = conflict && conflictAction === 'replace';
-    const keepsBoth = conflictAction === 'rename';
-    showProgress(operation === 'copy' ? t('status.copying') : t('status.moving'), {indeterminate: keepsBoth});
-    try {
-      if (operation === 'copy') {
-        if (keepsBoth) await call('copy_path_exact', {src, dest: targetPath});
-        else await call('copy_with_progress', {src, dest: destination, overwrite: overwrites});
-        if (!overwrites) trackCopy(src, targetPath);
-      } else {
-        if (keepsBoth) await call('move_path_exact', {src, dest: targetPath});
-        else await call('move_with_progress', {src, dest: destination, overwrite: overwrites});
-        if (!overwrites) trackMove(src, targetPath);
-        changedFolders.push(parentFolderPath(src));
-      }
-      changed = true;
-      existingNames.add(fileNameKey(targetName));
-    } finally {
-      hideProgress();
+  } catch (error) {
+    errors.push(String(error));
+  }
+  if (taskStarted) {
+    if (errors.length) {
+      failOperationTask(taskId, errors);
+      alert(t(operation === 'copy' ? 'alert.copyFailed' : 'alert.moveFailed', {
+        error: errors.join('\n'),
+      }));
+    } else if (userCancelled) {
+      cancelOperationTask(taskId);
+    } else {
+      completeOperationTask(taskId);
     }
   }
   return changed ? changedFolders : [];
@@ -1303,7 +1394,6 @@ document.addEventListener('drop', async event => {
     if (G.dualOn) await rpNavigateTo(G.rp.path, false);
     await broadcastFileDropChanges(changedFolders);
   } catch (error) {
-    hideProgress();
     alert(t(operation === 'copy' ? 'alert.copyFailed' : 'alert.moveFailed', {error}));
   }
 });

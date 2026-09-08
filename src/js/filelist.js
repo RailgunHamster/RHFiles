@@ -144,6 +144,24 @@ function typeSearchRowClass(index, isRight) {
     : '';
 }
 
+function focusFilePane(listOrId) {
+  const list = typeof listOrId === 'string' ? document.getElementById(listOrId) : listOrId;
+  if (!list) return false;
+  const scrollTop = list.scrollTop;
+  const scrollLeft = list.scrollLeft;
+  const previouslyActive = document.activeElement;
+  if (previouslyActive && previouslyActive !== list && typeof previouslyActive.blur === 'function') {
+    previouslyActive.blur();
+  }
+  // WebView2 builds in the wild do not all honour focus({ preventScroll }). A plain
+  // focus call is more reliable. Explicitly blurring an address/search field first
+  // also keeps its input-only shortcut guard from swallowing the next Delete key.
+  list.focus();
+  if (list.scrollTop !== scrollTop) list.scrollTop = scrollTop;
+  if (list.scrollLeft !== scrollLeft) list.scrollLeft = scrollLeft;
+  return document.activeElement === list || document.activeElement === document.body;
+}
+
 function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   const list = document.getElementById(listId);
   const entries = tabOrPane.entries || [];
@@ -565,6 +583,7 @@ function handleRowClick(e, index, sel, tabOrPane, isRight) {
   if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
   const listId = isRight ? "right-file-list" : "file-list";
   const list = document.getElementById(listId);
+  focusFilePane(list);
   if (e.ctrlKey) {
     if (sel.has(index)) sel.delete(index);
     else sel.add(index);

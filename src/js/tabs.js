@@ -368,6 +368,42 @@ function _entriesChanged(oldE, newE) {
 
 // --- tab drag-and-drop ---
 let _dragTabId = null;
+const TAB_FILE_DRAG_SWITCH_DELAY_MS = 480;
+let _fileDragTabHoverTimer = null;
+let _fileDragTabHoverTarget = null;
+
+function isRhfilesFileDrag(dataTransfer) {
+  return Array.from(dataTransfer?.types || []).includes(RHFILES_FILE_DRAG_MIME);
+}
+
+function clearFileDragTabHover(tabEl) {
+  if (tabEl && _fileDragTabHoverTarget && tabEl !== _fileDragTabHoverTarget) return;
+  if (_fileDragTabHoverTimer) clearTimeout(_fileDragTabHoverTimer);
+  _fileDragTabHoverTimer = null;
+  if (_fileDragTabHoverTarget) _fileDragTabHoverTarget.classList.remove('file-drag-hover');
+  _fileDragTabHoverTarget = null;
+}
+
+function scheduleFileDragTabSwitch(tabEl, isRight) {
+  const tabId = parseInt(tabEl?.dataset.tabId);
+  const activeId = isRight ? G.activeRpTab : G.activeTab;
+  if (!tabEl || !Number.isFinite(tabId) || tabId === activeId) {
+    clearFileDragTabHover();
+    return;
+  }
+  if (_fileDragTabHoverTarget === tabEl && _fileDragTabHoverTimer) return;
+  clearFileDragTabHover();
+  hideTabPreview();
+  _fileDragTabHoverTarget = tabEl;
+  tabEl.classList.add('file-drag-hover');
+  _fileDragTabHoverTimer = setTimeout(() => {
+    if (_fileDragTabHoverTarget !== tabEl || !tabEl.isConnected) return;
+    clearFileDragTabHover();
+    if (isRight) switchRightTab(tabId);
+    else switchTab(tabId);
+  }, TAB_FILE_DRAG_SWITCH_DELAY_MS);
+}
+
 function initTabDragDrop(bar, isRight) {
   bar = bar || document.getElementById("tab-bar");
   if (!bar) return;
@@ -381,22 +417,39 @@ function initTabDragDrop(bar, isRight) {
     });
     tabEl.addEventListener("dragend", () => {
       _dragTabId = null;
+      clearFileDragTabHover();
       tabEl.classList.remove("dragging");
       bar.querySelectorAll(".tab").forEach(t => t.classList.remove("drag-over"));
     });
     tabEl.addEventListener("dragover", e => {
+      if (isRhfilesFileDrag(e.dataTransfer)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        bar.querySelectorAll('.tab').forEach(tab => tab.classList.remove('drag-over'));
+        scheduleFileDragTabSwitch(tabEl, isRight);
+        return;
+      }
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       bar.querySelectorAll(".tab").forEach(t => t.classList.remove("drag-over"));
       tabEl.classList.add("drag-over");
     });
-    tabEl.addEventListener("dragleave", () => {
+    tabEl.addEventListener("dragleave", e => {
       tabEl.classList.remove("drag-over");
+      if (!tabEl.contains(e.relatedTarget)) clearFileDragTabHover(tabEl);
     });
     tabEl.addEventListener("drop", e => {
       e.preventDefault();
       e.stopPropagation();
       tabEl.classList.remove("drag-over");
+      if (isRhfilesFileDrag(e.dataTransfer)) {
+        clearFileDragTabHover();
+        const targetId = parseInt(tabEl.dataset.tabId);
+        if (isRight) switchRightTab(targetId);
+        else switchTab(targetId);
+        return;
+      }
       const fromId = parseInt(e.dataTransfer.getData("text/plain"));
       const toId = parseInt(tabEl.dataset.tabId);
       if (fromId === toId) return;
@@ -418,6 +471,7 @@ function initTabPreview() {
   const bar = document.getElementById("tab-bar");
   bar.querySelectorAll(".tab").forEach(tabEl => {
     tabEl.addEventListener("mouseenter", () => {
+      if (_fileDragTabHoverTarget || _dragTabId !== null) return;
       if (parseInt(tabEl.dataset.tabId) === G.activeTab) return;
       hideTabPreview();
       _previewTimer = setTimeout(() => showTabPreview(tabEl), 600);
@@ -428,6 +482,9 @@ function initTabPreview() {
     });
   });
 }
+
+document.addEventListener('dragend', () => clearFileDragTabHover());
+document.addEventListener('drop', () => clearFileDragTabHover());
 
 function showTabPreview(tabEl) {
   const tabId = parseInt(tabEl.dataset.tabId);
