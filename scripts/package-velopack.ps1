@@ -169,7 +169,6 @@ if (-not [string]::IsNullOrWhiteSpace($PublishDirectory)) {
     Get-ChildItem -LiteralPath $OutputDirectory -File | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $feedDirectory $_.Name) -Force
     }
-    Copy-Item -LiteralPath $portableOutput -Destination (Join-Path $publishRoot $portableName) -Force
 }
 
 $hash = Get-FileHash -LiteralPath $portableOutput -Algorithm SHA256

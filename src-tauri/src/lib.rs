@@ -130,7 +130,7 @@ pub fn run() {
             file_ops::folder_size,
             file_ops::create_shortcut,
 
-            system::get_thumbnail, system::open_file, system::open_folder_in_default_browser, system::show_properties,
+            system::get_thumbnail, system::open_file, system::open_in_windows_explorer, system::show_properties,
             system::read_file_preview, system::get_file_icon,
             system::get_new_file_templates, system::create_new_file, system::get_file_association,
             system::run_as_admin, system::empty_recycle_bin, system::rotate_image, system::read_shortcut,

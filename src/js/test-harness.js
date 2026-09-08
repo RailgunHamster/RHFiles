@@ -1222,7 +1222,7 @@
       assert(menu, "Tab context menu did not appear");
       assertIncludes(menu.textContent, t('tab.close'), "Close-tab action is missing");
       assertIncludes(menu.textContent, t('ctx.copyPath'), "Copy-path action is missing");
-      assertIncludes(menu.textContent, t('ctx.openFolderInBrowser'), "Default-browser folder action is missing");
+      assertIncludes(menu.textContent, t('ctx.openFolderInExplorer'), "Windows Explorer folder action is missing");
       assertIncludes(menu.textContent, t('ctx.openCmd'), "CMD action is missing");
       assertIncludes(menu.textContent, t('ctx.openPowerShell'), "PowerShell action is missing");
       removeContextMenu();
@@ -1828,11 +1828,60 @@
       assert(DEFAULT_SHORTCUTS['tab.new'], "Missing tab.new shortcut");
       assert(DEFAULT_SHORTCUTS['tab.next']?.includes('Ctrl+Tab'), "Missing Ctrl+Tab shortcut");
       assert(DEFAULT_SHORTCUTS['tab.previous']?.includes('Ctrl+Shift+Tab'), "Missing Ctrl+Shift+Tab shortcut");
-      assert(DEFAULT_SHORTCUTS['typeSearch.next']?.includes('F3'), "Missing configurable F3 search-cycle shortcut");
-      assert(DEFAULT_SHORTCUTS['typeSearch.previous']?.includes('Shift+F3'), "Missing configurable Shift+F3 search-cycle shortcut");
+      assert(DEFAULT_SHORTCUTS['typeSearch.next']?.includes('Alt+]'), "Missing configurable Alt+] next-match shortcut");
+      assert(DEFAULT_SHORTCUTS['typeSearch.previous']?.includes('Alt+['), "Missing configurable Alt+[ previous-match shortcut");
       assert(typeof ACTION_HANDLERS['typeSearch.next'] === 'function', "Missing next search-match action");
       assert(typeof ACTION_HANDLERS['typeSearch.previous'] === 'function', "Missing previous search-match action");
       assert(DEFAULT_SHORTCUTS['search.toggleScope']?.includes('Ctrl+Shift+F'), "Missing global-search toggle shortcut");
+    });
+
+    await test("[keyboard] Typed-search shortcut defaults dispatch in both directions", async () => {
+      const originalNext = ACTION_HANDLERS['typeSearch.next'];
+      const originalPrevious = ACTION_HANDLERS['typeSearch.previous'];
+      const originalBindings = _shortcutBindings;
+      let nextCalls = 0;
+      let previousCalls = 0;
+      try {
+        _shortcutBindings = Object.fromEntries(
+          Object.entries(DEFAULT_SHORTCUTS).map(([id, keys]) => [id, [...keys]])
+        );
+        ACTION_HANDLERS['typeSearch.next'] = async () => { nextCalls++; };
+        ACTION_HANDLERS['typeSearch.previous'] = async () => { previousCalls++; };
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key:']', code:'BracketRight', altKey:true, bubbles:true, cancelable:true,
+        }));
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key:'[', code:'BracketLeft', altKey:true, bubbles:true, cancelable:true,
+        }));
+        await sleep(30);
+        assertEqual(nextCalls, 1, "Alt+] did not dispatch the next typed-search match");
+        assertEqual(previousCalls, 1, "Alt+[ did not dispatch the previous typed-search match");
+      } finally {
+        ACTION_HANDLERS['typeSearch.next'] = originalNext;
+        ACTION_HANDLERS['typeSearch.previous'] = originalPrevious;
+        _shortcutBindings = originalBindings;
+      }
+    });
+
+    await test("[keyboard] Legacy typed-search defaults migrate once", async () => {
+      const saved = localStorage.getItem('rhfiles-shortcuts');
+      const originalBindings = _shortcutBindings;
+      try {
+        localStorage.setItem('rhfiles-shortcuts', JSON.stringify({
+          'typeSearch.next': ['F3'],
+          'typeSearch.previous': ['Shift+F3'],
+        }));
+        _shortcutBindings = null;
+        const migrated = loadShortcutBindings();
+        assertEqual(migrated['typeSearch.next'][0], 'Alt+]', "Legacy next-match default was not migrated");
+        assertEqual(migrated['typeSearch.previous'][0], 'Alt+[', "Legacy previous-match default was not migrated");
+        const persisted = JSON.parse(localStorage.getItem('rhfiles-shortcuts'));
+        assertEqual(persisted._schemaVersion, SHORTCUT_BINDING_SCHEMA_VERSION, "Shortcut migration version was not persisted");
+      } finally {
+        if (saved === null) localStorage.removeItem('rhfiles-shortcuts');
+        else localStorage.setItem('rhfiles-shortcuts', saved);
+        _shortcutBindings = originalBindings;
+      }
     });
 
     await test("[keyboard] Ctrl held after multi-select still allows Delete", async () => {
@@ -1917,11 +1966,11 @@
       assertEqual(tab.lastIdx, 1, "Typed match did not cycle to the next item");
       expireTypeSearchInput();
       assertEqual(G._typeSearch.str, '', "Expired input should start a fresh typed query");
-      assertEqual(G._typeSearch.lastQuery, 'a', "Last typed query should remain available to F3");
+      assertEqual(G._typeSearch.lastQuery, 'a', "Last typed query should remain available to the configured cycle shortcut");
       await cycleTypeSearchSelection(1);
-      assertEqual(tab.lastIdx, 2, "F3-style cycling did not include the middle-name match");
+      assertEqual(tab.lastIdx, 2, "Configured shortcut cycling did not include the middle-name match");
       await cycleTypeSearchSelection(1);
-      assertEqual(tab.lastIdx, 0, "F3-style cycling did not wrap to the first match");
+      assertEqual(tab.lastIdx, 0, "Configured shortcut cycling did not wrap to the first match");
       resetTypeSearch();
       tab.entries = savedEntries;
       tab.sel = savedSel;

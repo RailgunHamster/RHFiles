@@ -52,8 +52,8 @@ const DEFAULT_SHORTCUTS = {
   "tab.close":           ["Ctrl+W"],
   "tab.next":            ["Ctrl+Tab"],
   "tab.previous":        ["Ctrl+Shift+Tab"],
-  "typeSearch.next":     ["F3"],
-  "typeSearch.previous": ["Shift+F3"],
+  "typeSearch.next":     ["Alt+]"],
+  "typeSearch.previous": ["Alt+["],
   "search.toggleScope":  ["Ctrl+Shift+F"],
 };
 
@@ -317,11 +317,36 @@ async function cycleTypeSearchSelection(delta) {
   await runTypeSearchSelection(query, delta, G._typeSearch.isRight);
 }
 
+const SHORTCUT_BINDING_SCHEMA_VERSION = 2;
+
+function sameShortcutList(value, expected) {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && value.every((shortcut, index) => shortcut === expected[index]);
+}
+
+function migrateShortcutBindings(custom) {
+  const storedVersion = Number(custom?._schemaVersion || 1);
+  delete custom._schemaVersion;
+  if (storedVersion < 2) {
+    // Settings used to persist every merged default, so exact legacy defaults
+    // need a one-time migration while genuinely customized lists stay intact.
+    if (sameShortcutList(custom['typeSearch.next'], ['F3'])) {
+      custom['typeSearch.next'] = [...DEFAULT_SHORTCUTS['typeSearch.next']];
+    }
+    if (sameShortcutList(custom['typeSearch.previous'], ['Shift+F3'])) {
+      custom['typeSearch.previous'] = [...DEFAULT_SHORTCUTS['typeSearch.previous']];
+    }
+    saveShortcutBindings(custom);
+  }
+  return custom;
+}
+
 function loadShortcutBindings() {
   try {
     const saved = localStorage.getItem('rhfiles-shortcuts');
     if (saved) {
-      const custom = JSON.parse(saved);
+      const custom = migrateShortcutBindings(JSON.parse(saved));
       const merged = {};
       for (const id in DEFAULT_SHORTCUTS) {
         merged[id] = custom[id] || DEFAULT_SHORTCUTS[id];
@@ -333,7 +358,10 @@ function loadShortcutBindings() {
 }
 
 function saveShortcutBindings(bindings) {
-  localStorage.setItem('rhfiles-shortcuts', JSON.stringify(bindings));
+  localStorage.setItem('rhfiles-shortcuts', JSON.stringify({
+    ...bindings,
+    _schemaVersion: SHORTCUT_BINDING_SCHEMA_VERSION,
+  }));
 }
 
 function normalizeKey(e) {

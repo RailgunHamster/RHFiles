@@ -21,7 +21,7 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 - `dust`-powered folder-size analysis with actionable results in the same inspector area as Preview.
 - Reversible delete, rename, and non-overwriting move operations.
 - Git/SVN status, favorites, tags, archives, SMB paths, FTP/SFTP, and cloud-file states.
-- Context-menu actions can open a folder—or a selected file's containing folder—in the Windows default browser.
+- Context-menu actions can open a folder—or reveal a selected file—in Windows File Explorer.
 - Velopack portable updates from GitHub Releases or a configurable home-server feed, with optional HTTP/HTTPS proxy support.
 - Multiple built-in color themes plus reloadable user theme packs—no recompilation required.
 

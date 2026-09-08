@@ -183,104 +183,112 @@ pub fn open_file(path: String) -> Result<(), String> {
     enumerator::open_file(&PathBuf::from(&path))
 }
 
-fn folder_for_browser(
+fn explorer_target(
     path: &std::path::Path,
     is_directory: Option<bool>,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, bool), String> {
     if let Some(is_directory) = is_directory {
-        return if is_directory {
-            Ok(path.to_path_buf())
-        } else {
-            path.parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .map(std::path::Path::to_path_buf)
-                .ok_or_else(|| format!("No containing folder for {}", path.display()))
-        };
+        return Ok((path.to_path_buf(), is_directory));
     }
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("Cannot access {}: {error}", path.display()))?;
-    if metadata.is_dir() {
-        return Ok(path.to_path_buf());
-    }
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(std::path::Path::to_path_buf)
-        .ok_or_else(|| format!("No containing folder for {}", path.display()))
-}
-
-fn folder_file_url(path: &std::path::Path) -> Result<String, String> {
-    let mut url = url::Url::from_directory_path(path)
-        .map_err(|_| format!("Cannot convert folder to a file URL: {}", path.display()))?;
-    if !url.path().ends_with('/') {
-        let path_with_slash = format!("{}/", url.path());
-        url.set_path(&path_with_slash);
-    }
-    Ok(url.into())
+    Ok((path.to_path_buf(), metadata.is_dir()))
 }
 
 #[cfg(target_os = "windows")]
-fn default_browser_executable() -> Result<PathBuf, String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::UI::Shell::{ASSOCF_IS_PROTOCOL, ASSOCSTR_EXECUTABLE, AssocQueryStringW};
-    use windows::core::{PCWSTR, PWSTR};
+fn open_explorer_folder(path: &std::path::Path) -> Result<(), String> {
+    let mut command = std::process::Command::new("explorer.exe");
+    command.arg(path).creation_flags(0x0800_0000);
+    command.spawn().map_err(|error| {
+        format!(
+            "Failed to open {} in Windows File Explorer: {error}",
+            path.display()
+        )
+    })?;
+    Ok(())
+}
 
-    for protocol in ["https", "http"] {
-        let association: Vec<u16> = std::ffi::OsStr::new(protocol)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut output = vec![0u16; 32_768];
-        let mut output_len = output.len() as u32;
-        let result = unsafe {
-            AssocQueryStringW(
-                ASSOCF_IS_PROTOCOL,
-                ASSOCSTR_EXECUTABLE,
-                PCWSTR(association.as_ptr()),
-                PCWSTR::null(),
-                Some(PWSTR(output.as_mut_ptr())),
-                &mut output_len,
-            )
+#[cfg(target_os = "windows")]
+fn reveal_file_in_explorer(path: PathBuf) -> Result<(), String> {
+    std::thread::spawn(move || {
+        use windows::Win32::System::Com::{
+            COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize,
         };
-        if result.is_ok() {
-            let used = output_len.saturating_sub(1) as usize;
-            let executable = String::from_utf16_lossy(&output[..used.min(output.len())]);
-            if !executable.trim().is_empty() {
-                return Ok(PathBuf::from(executable));
+        use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
+        use windows::core::HSTRING;
+
+        struct ComGuard;
+        impl Drop for ComGuard {
+            fn drop(&mut self) {
+                unsafe { CoUninitialize() };
             }
         }
-    }
-    Err("Windows did not report a default web browser".to_string())
+
+        struct PidlGuard(*const windows::Win32::UI::Shell::Common::ITEMIDLIST);
+        impl Drop for PidlGuard {
+            fn drop(&mut self) {
+                unsafe { ILFree(Some(self.0)) };
+            }
+        }
+
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+                .ok()
+                .map_err(|error| format!("Cannot initialize Windows Explorer access: {error}"))?;
+            let _com_guard = ComGuard;
+            let encoded_path = HSTRING::from(path.as_path());
+            let item = ILCreateFromPathW(&encoded_path);
+            if item.is_null() {
+                return Err(format!(
+                    "Windows Explorer cannot resolve {}",
+                    path.display()
+                ));
+            }
+            let _pidl_guard = PidlGuard(item);
+            SHOpenFolderAndSelectItems(item, None, 0).map_err(|error| {
+                format!("Windows Explorer cannot reveal {}: {error}", path.display())
+            })
+        }
+    })
+    .join()
+    .map_err(|_| "Windows Explorer worker stopped unexpectedly".to_string())?
 }
 
 #[tauri::command(async)]
-pub fn open_folder_in_default_browser(
-    path: String,
-    is_directory: Option<bool>,
-) -> Result<(), String> {
-    let folder = folder_for_browser(std::path::Path::new(&path), is_directory)?;
-    let folder_url = folder_file_url(&folder)?;
+pub fn open_in_windows_explorer(path: String, is_directory: Option<bool>) -> Result<(), String> {
+    let (target, is_directory) = explorer_target(std::path::Path::new(&path), is_directory)?;
 
     #[cfg(target_os = "windows")]
     {
-        let browser = default_browser_executable()?;
-        let mut command = std::process::Command::new(&browser);
-        command.arg(&folder_url).creation_flags(0x0800_0000);
-        command.spawn().map_err(|error| {
-            format!(
-                "Failed to start the default browser {}: {error}",
-                browser.display()
-            )
-        })?;
-        Ok(())
+        if is_directory {
+            open_explorer_folder(&target)
+        } else {
+            // Use the Shell API so paths containing spaces, commas, Unicode, or
+            // UNC components do not depend on explorer.exe command-line parsing.
+            let reveal_result = reveal_file_in_explorer(target.clone());
+            if reveal_result.is_ok() {
+                return Ok(());
+            }
+
+            // Selection can fail for some shell namespaces or offline cloud
+            // placeholders. Opening the parent still fulfils the core action.
+            let parent = target
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .ok_or_else(|| format!("No containing folder for {}", target.display()))?;
+            open_explorer_folder(parent).map_err(|fallback_error| {
+                format!(
+                    "{}; fallback also failed: {fallback_error}",
+                    reveal_result.unwrap_err()
+                )
+            })
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = folder_url;
-        Err(
-            "Opening folders in the Windows default browser is only available on Windows"
-                .to_string(),
-        )
+        let _ = (target, is_directory);
+        Err("Windows File Explorer is only available on Windows".to_string())
     }
 }
 
@@ -413,40 +421,38 @@ mod preview_detection_tests {
 }
 
 #[cfg(test)]
-mod default_browser_tests {
-    use super::{folder_file_url, folder_for_browser};
+mod windows_explorer_tests {
+    use super::explorer_target;
 
     #[test]
-    fn folder_target_keeps_a_directory_and_uses_a_files_parent() {
+    fn explorer_target_preserves_the_path_and_directory_kind() {
         let root = std::env::temp_dir().join(format!(
-            "rhfiles-browser-folder-test-{}",
+            "rhfiles-explorer-target-test-{}",
             std::process::id()
         ));
-        std::fs::create_dir_all(&root).expect("create browser test folder");
+        std::fs::create_dir_all(&root).expect("create Explorer test folder");
         let file = root.join("a file.txt");
-        std::fs::write(&file, b"test").expect("create browser test file");
+        std::fs::write(&file, b"test").expect("create Explorer test file");
 
-        assert_eq!(folder_for_browser(&root, None).unwrap(), root);
-        assert_eq!(folder_for_browser(&file, None).unwrap(), root);
-        assert_eq!(folder_for_browser(&root, Some(true)).unwrap(), root);
-        assert_eq!(folder_for_browser(&file, Some(false)).unwrap(), root);
+        assert_eq!(explorer_target(&root, None).unwrap(), (root.clone(), true));
+        assert_eq!(explorer_target(&file, None).unwrap(), (file.clone(), false));
+        assert_eq!(
+            explorer_target(&root, Some(true)).unwrap(),
+            (root.clone(), true)
+        );
+        assert_eq!(
+            explorer_target(&file, Some(false)).unwrap(),
+            (file.clone(), false)
+        );
 
         std::fs::remove_file(file).ok();
         std::fs::remove_dir(root).ok();
     }
 
     #[test]
-    fn folder_url_is_a_trailing_slash_file_url() {
-        let url = folder_file_url(std::path::Path::new(r"C:\Program Files\RHFiles"))
-            .expect("Windows folder should become a URL");
-        assert_eq!(url, "file:///C:/Program%20Files/RHFiles/");
-    }
-
-    #[test]
-    fn unc_folder_url_preserves_server_and_share() {
-        let url = folder_file_url(std::path::Path::new(r"\\SERVER-HOME\Public\Software"))
-            .expect("UNC folder should become a URL");
-        assert_eq!(url, "file://server-home/Public/Software/");
+    fn explicit_hint_preserves_an_unc_path_without_probing_it() {
+        let path = std::path::PathBuf::from(r"\\SERVER-HOME\Public\Software\example file.zip");
+        assert_eq!(explorer_target(&path, Some(false)).unwrap(), (path, false));
     }
 }
 

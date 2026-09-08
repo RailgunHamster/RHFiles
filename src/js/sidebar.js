@@ -145,7 +145,7 @@ function showDriveContextMenu(e, path, label, letter) {
   const items = [
     { label: t('sidebar.open'), action: () => navigateTo(path) },
     { label: t('ctx.newTab'), action: () => addTab(path) },
-    { label: t('ctx.openFolderInBrowser'), action: () => runContextCommand('open_folder_in_default_browser', {path, is_directory: true}, t('ctx.openFolderInBrowser')) },
+    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, is_directory: true}, t('ctx.openFolderInExplorer')) },
     { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(path, label) },
     { label: "-", action: null },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
@@ -322,7 +322,7 @@ function showRecentContextMenu(e, item) {
   const items = [
     { label: item.is_dir ? t('sidebar.open') : t('sidebar.openFile'), action: () => { if (item.is_dir) navigateTo(item.path); else call("open_file", { path: item.path }); } },
     { label: t('sidebar.openLocation'), action: () => navigateTo(item.is_dir ? item.path : parentFolderPath(item.path)) },
-    { label: item.is_dir ? t('ctx.openFolderInBrowser') : t('ctx.openContainingFolderInBrowser'), action: () => runContextCommand('open_folder_in_default_browser', {path: item.path, is_directory: !!item.is_dir}, item.is_dir ? t('ctx.openFolderInBrowser') : t('ctx.openContainingFolderInBrowser')) },
+    { label: item.is_dir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: item.path, is_directory: !!item.is_dir}, item.is_dir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')) },
     { label: "-", action: null },
     { label: t('sidebar.removeFromRecent'), action: () => { call("db_remove_recent", { path: item.path }).then(() => loadRecentList()); } },
     { label: t('sidebar.clearAllRecent'), action: () => { if (confirm(t('confirm.clearRecent'))) { call("db_clear_recent", {}).then(() => loadRecentList()); } } },
@@ -488,7 +488,7 @@ function showSidebarContextMenu(e, path, name) {
   const items = [
     { label: t('sidebar.open'), action: () => navigateTo(path) },
     { label: t('ctx.newTab'), action: () => addTab(path) },
-    { label: t('ctx.openFolderInBrowser'), action: () => runContextCommand('open_folder_in_default_browser', {path, is_directory: true}, t('ctx.openFolderInBrowser')) },
+    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, is_directory: true}, t('ctx.openFolderInExplorer')) },
     { label: "-", action: null },
     { label: t('favorites.remove'), action: () => unpinFolder(path) },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
@@ -509,7 +509,7 @@ function showFolderShortcutContextMenu(e, path, name) {
   const items = [
     { label: t('sidebar.open'), action: () => navigateTo(path) },
     { label: t('ctx.newTab'), action: () => addTab(path) },
-    { label: t('ctx.openFolderInBrowser'), action: () => runContextCommand('open_folder_in_default_browser', {path, is_directory: true}, t('ctx.openFolderInBrowser')) },
+    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, is_directory: true}, t('ctx.openFolderInExplorer')) },
     { label: "-", action: null },
     { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(path, name) },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
@@ -574,7 +574,7 @@ function showCloudContextMenu(e, provider) {
   const items = [
     { label: t('sidebar.open'), action: () => navigateTo(provider.path) },
     { label: t('ctx.newTab'), action: () => addTab(provider.path) },
-    { label: t('ctx.openFolderInBrowser'), action: () => runContextCommand('open_folder_in_default_browser', {path: provider.path, is_directory: true}, t('ctx.openFolderInBrowser')) },
+    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: provider.path, is_directory: true}, t('ctx.openFolderInExplorer')) },
     { label: isFavoriteFolder(provider.path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(provider.path, provider.name) },
     { label: t('ctx.properties'), action: () => showPropertiesDialog(provider.path) },
   ];
@@ -702,7 +702,7 @@ function showNetworkMenu(e, server, shares, options = {}) {
   const items = [
     { label: t('sidebar.open') + ' \\\\' + server.name, action: () => navigateTo(server.path) },
     { label: t('ctx.newTab'), action: () => addTab(server.path) },
-    { label: t('ctx.openFolderInBrowser'), action: () => runContextCommand('open_folder_in_default_browser', {path: server.path, is_directory: true}, t('ctx.openFolderInBrowser')) },
+    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: server.path, is_directory: true}, t('ctx.openFolderInExplorer')) },
   ];
   if (loading) {
     items.push({ label: '-', action: null });
