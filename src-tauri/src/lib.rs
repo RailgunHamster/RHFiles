@@ -115,7 +115,10 @@ pub fn run() {
             file_dialog_integration::get_file_dialog_integration_status,
             file_dialog_integration::get_file_dialog_picker_state,
             file_dialog_integration::navigate_file_dialog_location,
+            file_dialog_integration::open_explorer_location_in_rhfiles,
             file_dialog_integration::hide_file_dialog_picker,
+            file_dialog_integration::set_file_dialog_picker_compact,
+            file_dialog_integration::disable_file_dialog_integration,
 
             system::get_thumbnail, system::open_file, system::open_in_windows_explorer, system::show_properties,
             system::read_file_preview, system::get_file_icon,

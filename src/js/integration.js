@@ -44,6 +44,45 @@ function fileDialogIntegrationShortcuts() {
   return Array.isArray(shortcuts) ? shortcuts.filter(Boolean) : [];
 }
 
+function fileDialogIntegrationLocale() {
+  if (typeof _lang === 'string' && /^(?:zh|en)(?:-|$)/i.test(_lang)) return _lang;
+  return document.documentElement.lang || navigator.language || 'en';
+}
+
+function fileDialogIntegrationPathKey(path) {
+  const normalized = normalizeWindowsPathInput(String(path || '')).replace(/\\+$/, '');
+  return normalized.toLocaleLowerCase('en-US');
+}
+
+function findFileDialogIntegrationTab(path, preferredPane, preferredIndex) {
+  const key = fileDialogIntegrationPathKey(path);
+  const panes = preferredPane === 'right' ? ['right', 'left'] : ['left', 'right'];
+  for (const pane of panes) {
+    if (pane === 'right' && !G.dualOn) continue;
+    const tabs = pane === 'right' ? G.rpTabs : G.tabs;
+    const indexed = Number.isInteger(preferredIndex) ? tabs?.[preferredIndex] : null;
+    if (indexed && fileDialogIntegrationPathKey(indexed.path) === key) {
+      return { tab: indexed, right: pane === 'right' };
+    }
+    const tab = (tabs || []).find(candidate => fileDialogIntegrationPathKey(candidate.path) === key);
+    if (tab) return { tab, right: pane === 'right' };
+  }
+  return null;
+}
+
+function openExplorerLocationInRhfiles(payload) {
+  const path = normalizeWindowsPathInput(String(payload?.path || ''));
+  if (!path) return;
+  const existing = findFileDialogIntegrationTab(path, payload?.pane, payload?.tabIndex);
+  if (existing) {
+    if (existing.right) switchRightTab(existing.tab.id);
+    else switchTab(existing.tab.id);
+  } else {
+    addTab(path, false);
+  }
+  scheduleFileDialogIntegrationSync(true);
+}
+
 function renderFileDialogIntegrationStatus() {
   const statusElement = document.getElementById('settings-integration-status');
   const shortcutElement = document.getElementById('settings-integration-shortcut');
@@ -80,7 +119,7 @@ async function syncFileDialogIntegration(force = false) {
       enabled: G.settings.fileDialogIntegrationEnabled === true,
       locations: fileDialogIntegrationLocations(),
       shortcuts: fileDialogIntegrationShortcuts(),
-      locale: G.settings.language || document.documentElement.lang || 'en',
+      locale: fileDialogIntegrationLocale(),
     });
     if (token !== _fileDialogIntegrationRequestToken) return status;
     G._fileDialogIntegrationStatus = status;
@@ -135,3 +174,19 @@ window.addEventListener('storage', event => {
   Object.assign(G.settings, latest);
   scheduleFileDialogIntegrationSync(true);
 });
+
+const fileDialogIntegrationListen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
+if (fileDialogIntegrationListen) {
+  fileDialogIntegrationListen('open-explorer-location-in-rhfiles', event => {
+    openExplorerLocationInRhfiles(event.payload);
+  }).catch(() => {});
+  fileDialogIntegrationListen('file-dialog-integration-disabled', () => {
+    G.settings.fileDialogIntegrationEnabled = false;
+    saveSettings();
+    const checkbox = document.getElementById('settings-integration-enabled');
+    if (checkbox) checkbox.checked = false;
+    renderFileDialogIntegrationStatus();
+    syncFileDialogIntegration(true).catch(() => {});
+    if (document.hasFocus()) showNotice(t('notice.integrationDisabled'));
+  }).catch(() => {});
+}

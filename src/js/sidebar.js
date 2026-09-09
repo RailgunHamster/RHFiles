@@ -143,13 +143,13 @@ function showDriveContextMenu(e, path, label, letter) {
   menu.className = "context-menu";
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
-    { label: t('sidebar.open'), action: () => navigateTo(path) },
-    { label: t('ctx.newTab'), action: () => addTab(path) },
-    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
-    { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(path, label) },
+    { label: t('sidebar.open'), icon: 'open', action: () => navigateTo(path) },
+    { label: t('ctx.newTab'), icon: 'tab', action: () => addTab(path) },
+    { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
+    { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), icon: 'star', action: () => toggleFavoriteFolder(path, label) },
     { label: "-", action: null },
-    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
-    { label: t('btn.format') + '...', action: () => showFormatDialog(letter, label) },
+    { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },
+    { label: t('btn.format') + '...', icon: 'format', action: () => showFormatDialog(letter, label) },
   ];
   renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
@@ -320,12 +320,12 @@ function showRecentContextMenu(e, item) {
   menu.className = "context-menu";
   menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
   const items = [
-    { label: item.is_dir ? t('sidebar.open') : t('sidebar.openFile'), action: () => { if (item.is_dir) navigateTo(item.path); else call("open_file", { path: item.path }); } },
-    { label: t('sidebar.openLocation'), action: () => navigateTo(item.is_dir ? item.path : parentFolderPath(item.path)) },
-    { label: item.is_dir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: item.path, isDirectory: !!item.is_dir}, item.is_dir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')) },
+    { label: item.is_dir ? t('sidebar.open') : t('sidebar.openFile'), icon: 'open', action: () => { if (item.is_dir) navigateTo(item.path); else call("open_file", { path: item.path }); } },
+    { label: t('sidebar.openLocation'), icon: 'location', action: () => navigateTo(item.is_dir ? item.path : parentFolderPath(item.path)) },
+    { label: item.is_dir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path: item.path, isDirectory: !!item.is_dir}, item.is_dir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')) },
     { label: "-", action: null },
-    { label: t('sidebar.removeFromRecent'), action: () => { call("db_remove_recent", { path: item.path }).then(() => loadRecentList()); } },
-    { label: t('sidebar.clearAllRecent'), action: () => { if (confirm(t('confirm.clearRecent'))) { call("db_clear_recent", {}).then(() => loadRecentList()); } } },
+    { label: t('sidebar.removeFromRecent'), icon: 'remove', action: () => { call("db_remove_recent", { path: item.path }).then(() => loadRecentList()); } },
+    { label: t('sidebar.clearAllRecent'), icon: 'clear', action: () => { if (confirm(t('confirm.clearRecent'))) { call("db_clear_recent", {}).then(() => loadRecentList()); } } },
   ];
   renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
@@ -486,12 +486,12 @@ function showSidebarContextMenu(e, path, name) {
   menu.className = "context-menu";
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
-    { label: t('sidebar.open'), action: () => navigateTo(path) },
-    { label: t('ctx.newTab'), action: () => addTab(path) },
-    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
+    { label: t('sidebar.open'), icon: 'open', action: () => navigateTo(path) },
+    { label: t('ctx.newTab'), icon: 'tab', action: () => addTab(path) },
+    { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
     { label: "-", action: null },
-    { label: t('favorites.remove'), action: () => unpinFolder(path) },
-    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
+    { label: t('favorites.remove'), icon: 'star', action: () => unpinFolder(path) },
+    { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },
   ];
   renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
@@ -507,12 +507,12 @@ function showFolderShortcutContextMenu(e, path, name) {
   menu.className = "context-menu";
   menu.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;`;
   const items = [
-    { label: t('sidebar.open'), action: () => navigateTo(path) },
-    { label: t('ctx.newTab'), action: () => addTab(path) },
-    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
+    { label: t('sidebar.open'), icon: 'open', action: () => navigateTo(path) },
+    { label: t('ctx.newTab'), icon: 'tab', action: () => addTab(path) },
+    { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
     { label: "-", action: null },
-    { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(path, name) },
-    { label: t('ctx.properties'), action: () => showPropertiesDialog(path) },
+    { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), icon: 'star', action: () => toggleFavoriteFolder(path, name) },
+    { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },
   ];
   renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
@@ -572,11 +572,11 @@ function showCloudContextMenu(e, provider) {
   menu.className = "context-menu";
   menu.style.cssText = "left:" + e.clientX + "px;top:" + e.clientY + "px;";
   const items = [
-    { label: t('sidebar.open'), action: () => navigateTo(provider.path) },
-    { label: t('ctx.newTab'), action: () => addTab(provider.path) },
-    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: provider.path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
-    { label: isFavoriteFolder(provider.path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(provider.path, provider.name) },
-    { label: t('ctx.properties'), action: () => showPropertiesDialog(provider.path) },
+    { label: t('sidebar.open'), icon: 'open', action: () => navigateTo(provider.path) },
+    { label: t('ctx.newTab'), icon: 'tab', action: () => addTab(provider.path) },
+    { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path: provider.path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
+    { label: isFavoriteFolder(provider.path) ? t('favorites.remove') : t('favorites.add'), icon: 'star', action: () => toggleFavoriteFolder(provider.path, provider.name) },
+    { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(provider.path) },
   ];
   renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
@@ -700,21 +700,21 @@ function showNetworkMenu(e, server, shares, options = {}) {
   menu.style.cssText = 'left:' + e.clientX + 'px;top:' + e.clientY + 'px;';
   menu.dataset.networkMenuToken = token;
   const items = [
-    { label: t('sidebar.open') + ' \\\\' + server.name, action: () => navigateTo(server.path) },
-    { label: t('ctx.newTab'), action: () => addTab(server.path) },
-    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: server.path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
+    { label: t('sidebar.open') + ' \\\\' + server.name, icon: 'open', action: () => navigateTo(server.path) },
+    { label: t('ctx.newTab'), icon: 'tab', action: () => addTab(server.path) },
+    { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path: server.path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
   ];
   if (loading) {
     items.push({ label: '-', action: null });
-    items.push({ label: t('ctx.loadingShares'), disabled: true });
+    items.push({ label: t('ctx.loadingShares'), icon: 'folder', disabled: true });
   } else if (error) {
     items.push({ label: '-', action: null });
-    items.push({ label: t('ctx.sharesUnavailable'), disabled: true });
+    items.push({ label: t('ctx.sharesUnavailable'), icon: 'folder', disabled: true });
   }
   if (shares.length > 0) {
     items.push({ label: '-', action: null });
     for (const sh of shares) {
-      items.push({ label: sh.name, action: () => navigateTo(sh.path) });
+      items.push({ label: sh.name, icon: 'folder', action: () => navigateTo(sh.path) });
     }
   }
   renderMenuItems(menu, items, e.clientX, e.clientY);

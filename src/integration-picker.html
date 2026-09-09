@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RHFiles Locations</title>
+  <title>RHFiles 位置</title>
   <link rel="stylesheet" href="css/integration-picker.css">
 </head>
 <body>
@@ -16,14 +16,32 @@
         <strong id="picker-title">RHFiles 已打开位置</strong>
         <span id="picker-subtitle">选择后让当前 Windows 窗口跳转</span>
       </div>
-      <button id="picker-close" class="picker-close" type="button" aria-label="关闭" title="关闭">
-        <svg viewBox="0 0 16 16" fill="none"><path d="m4 4 8 8m0-8-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      </button>
+      <div class="picker-actions">
+        <button id="picker-open-rhfiles-compact" class="picker-action picker-open-rhfiles-compact" type="button" hidden>
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M2.5 5.2h5l1.35 1.45h6.65v7.15h-13V5.2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="m10.1 9.05 1.55 1.45-1.55 1.45M7 10.5h4.45" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="picker-compact" class="picker-action" type="button" aria-label="收起" title="收起">
+          <svg class="compact-icon" viewBox="0 0 16 16" fill="none"><path d="M3 5.5h10M5.25 9.25 8 12l2.75-2.75" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="expand-icon" viewBox="0 0 16 16" fill="none"><path d="M3 10.5h10M5.25 6.75 8 4l2.75 2.75" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="picker-disable" class="picker-action picker-disable" type="button" aria-label="关闭此功能" title="关闭此功能">
+          <svg viewBox="0 0 16 16" fill="none"><path d="M8 2.25v5M4.45 4.1a5.25 5.25 0 1 0 7.1 0" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+        </button>
+        <button id="picker-close" class="picker-action" type="button" aria-label="暂时隐藏" title="暂时隐藏">
+          <svg viewBox="0 0 16 16" fill="none"><path d="m4 4 8 8m0-8-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+      </div>
     </header>
     <section id="picker-list" class="picker-list" aria-live="polite"></section>
     <footer class="picker-footer">
-      <span id="picker-target">Windows 文件窗口</span>
-      <span id="picker-hint">单击即可跳转</span>
+      <span class="picker-footer-copy">
+        <span id="picker-target">Windows 文件窗口</span>
+        <span id="picker-hint">单击即可跳转</span>
+      </span>
+      <button id="picker-open-rhfiles" class="picker-open-rhfiles" type="button" hidden>
+        <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M2.5 5.2h5l1.35 1.45h6.65v7.15h-13V5.2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="m10.1 9.05 1.55 1.45-1.55 1.45M7 10.5h4.45" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span id="picker-open-rhfiles-label">在 RHFiles 里打开</span>
+      </button>
     </footer>
   </main>
   <script src="js/integration-picker.js"></script>

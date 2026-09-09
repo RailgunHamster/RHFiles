@@ -1149,8 +1149,12 @@
 
     await test("[integration] File-dialog picker stays opt-in and publishes every open location", async () => {
       const savedEnabled = G.settings.fileDialogIntegrationEnabled;
+      const savedLanguage = _lang;
+      const savedPickerState = await call('get_file_dialog_picker_state').catch(() => ({compact:false}));
       try {
         G.settings.fileDialogIntegrationEnabled = false;
+        _lang = 'zh';
+        assert(String(fileDialogIntegrationLocale()).toLowerCase().startsWith('zh'), "Integration picker did not follow the active UI language");
         assertEqual(activeIntegrationFolder(), getTab().path === 'home://' ? null : getTab().path, "Integration did not resolve the active pane folder");
         const locations = fileDialogIntegrationLocations();
         assert(Array.isArray(locations), "Integration locations are not an array");
@@ -1161,7 +1165,21 @@
         assertEqual(status.locationCount, locations.length, "Integration status did not report all open locations");
         assert(Array.isArray(status.supportedTargets) && status.supportedTargets.includes('windowsFileDialog'), "Windows file dialogs are not advertised as a supported target");
         assert(status.supportedTargets.includes('windowsExplorer'), "Windows Explorer is not advertised as a supported target");
+        const currentFolder = activeIntegrationFolder();
+        if (currentFolder) {
+          assertEqual(
+            fileDialogIntegrationPathKey(`${currentFolder}\\`),
+            fileDialogIntegrationPathKey(currentFolder.toUpperCase()),
+            "Windows integration path matching did not ignore case and trailing separators",
+          );
+          const existingTab = findFileDialogIntegrationTab(currentFolder, G.lastActivePane, undefined);
+          assert(existingTab?.tab, "Explorer-to-RHFiles handoff could not find an already-open tab");
+        }
+        const compactState = await call('set_file_dialog_picker_compact', {compact:true});
+        assertEqual(compactState.compact, true, "Integration picker compact state was not applied");
       } finally {
+        _lang = savedLanguage;
+        await call('set_file_dialog_picker_compact', {compact:savedPickerState?.compact === true}).catch(() => {});
         G.settings.fileDialogIntegrationEnabled = savedEnabled;
         await syncFileDialogIntegration(true).catch(() => {});
       }
@@ -1561,6 +1579,17 @@
       await sleep(200);
       const items = $$(".context-menu .ctx-item");
       assert(items.length > 0, "Context menu has no items");
+      removeContextMenu();
+    });
+
+    await test("[ctxmenu] Context menu renders aligned semantic icons", async () => {
+      removeContextMenu();
+      showBlankListContextMenu(20, 20, false);
+      const items = [...$$(".context-menu > .ctx-item")];
+      assert(items.length > 0, "Context menu has no items to decorate");
+      assert(items.every(item => item.querySelector(':scope > .ctx-item-main > .ctx-icon')), "A context-menu item is missing its aligned icon slot");
+      assert(items.some(item => item.querySelector(':scope > .ctx-item-main > .ctx-icon svg')), "Context menu did not render semantic SVG icons");
+      assert(items.some(item => item.querySelector('.ctx-icon-paste')), "Paste did not receive its semantic icon");
       removeContextMenu();
     });
 

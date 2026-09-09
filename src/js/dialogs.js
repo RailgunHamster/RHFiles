@@ -808,17 +808,17 @@ function showDiskUsageNodeContextMenu(event, node) {
   const path = String(node?.name || '');
   const isDirectory = diskUsageNodeIsDirectory(node);
   showMenuAt(event.clientX, event.clientY, [
-    {label:t('ctx.open'), action:() => openDiskUsageNode(node)},
-    {label:t('ctx.newTab'), hidden:!isDirectory, action:() => addTab(path)},
-    {label:t('sidebar.openLocation'), action:() => revealDiskUsageNode(node)},
-    {label:t('ctx.preview'), hidden:isDirectory, action:async () => { if (await revealDiskUsageNode(node)) switchInspectorTab('preview'); }},
+    {label:t('ctx.open'), icon:'open', action:() => openDiskUsageNode(node)},
+    {label:t('ctx.newTab'), icon:'tab', hidden:!isDirectory, action:() => addTab(path)},
+    {label:t('sidebar.openLocation'), icon:'location', action:() => revealDiskUsageNode(node)},
+    {label:t('ctx.preview'), icon:'preview', hidden:isDirectory, action:async () => { if (await revealDiskUsageNode(node)) switchInspectorTab('preview'); }},
     {label:'-'},
-    {label:t('ctx.copyPath'), action:() => copyPathFromMenu(path)},
-    {label:t('diskUsage.analyze'), hidden:!isDirectory, action:() => showDiskUsageDialog(path)},
-    {label:t('ctx.openCmd'), hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'cmd'}, 'CMD')},
-    {label:t('ctx.openPowerShell'), hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'powershell'}, 'PowerShell')},
+    {label:t('ctx.copyPath'), icon:'path', action:() => copyPathFromMenu(path)},
+    {label:t('diskUsage.analyze'), icon:'disk', hidden:!isDirectory, action:() => showDiskUsageDialog(path)},
+    {label:t('ctx.openCmd'), icon:'terminal', hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'cmd'}, 'CMD')},
+    {label:t('ctx.openPowerShell'), icon:'terminal', hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'powershell'}, 'PowerShell')},
     {label:'-'},
-    {label:t('ctx.properties'), action:() => showPropertiesDialog(path)},
+    {label:t('ctx.properties'), icon:'properties', action:() => showPropertiesDialog(path)},
   ], 'disk-usage-context-menu');
 }
 

@@ -88,10 +88,10 @@ Object.assign(_builtinEn, {
   'cmd.syncSystemDialog': 'Show RHFiles locations beside a Windows file dialog',
   'settings.categoryIntegration': 'Windows integration',
   'settings.categoryIntegrationDesc': 'Choose from all open RHFiles locations beside Windows file dialogs and File Explorer.',
-  'settings.integrationEnabled': 'Enable file-dialog integration',
+  'settings.integrationEnabled': 'Enable the Windows file-window companion',
   'settings.integrationExperimental': 'EXPERIMENTAL',
   'settings.integrationBehaviorTitle': 'Show an RHFiles location list',
-  'settings.integrationBehaviorBody': 'A companion list appears automatically beside a Windows Open/Save dialog or File Explorer.',
+  'settings.integrationBehaviorBody': 'A companion list appears automatically beside a Windows Open/Save dialog or File Explorer. Beside Explorer, it can activate an existing RHFiles location or open the folder in a new tab. Collapse it to paths only, or turn it off from its power button and re-enable it here.',
   'settings.integrationTargetsTitle': 'Supported in this first version',
   'settings.integrationTargetsBody': 'Native Windows file pickers and File Explorer.',
   'settings.integrationShortcutTitle': 'Show-list shortcut (optional)',
@@ -104,7 +104,7 @@ Object.assign(_builtinEn, {
   'settings.integrationStatusStarting': 'Starting the Windows integration worker...',
   'settings.integrationStatusError': 'Integration failed to start: {error}',
   'notice.integrationEnabled': 'Windows file-dialog integration enabled',
-  'notice.integrationDisabled': 'Windows file-dialog integration disabled',
+  'notice.integrationDisabled': 'Windows file-window companion disabled',
   'notice.integrationExternalOnly': 'The locations list opens beside a Windows Open/Save dialog or File Explorer',
   'ctx.convertFormat': 'Convert format…',
   'convert.title': 'Convert format',
@@ -786,8 +786,16 @@ function fallbackCall(cmd, args) {
       supportedTargets: ["windowsFileDialog", "windowsExplorer"],
     };
     case "get_file_dialog_picker_state": return {
-      enabled: false, targetAvailable: false, targetKind: "", locale: "en", locations: [],
+      enabled: false, targetAvailable: false, targetKind: "", targetPath: null, locale: "en", compact: false, locations: [],
     };
+    case "set_file_dialog_picker_compact": return {
+      enabled: false, targetAvailable: false, targetKind: "", targetPath: null, locale: "en",
+      compact: !!args.compact, locations: [],
+    };
+    case "open_explorer_location_in_rhfiles": return {
+      path: args.path || "C:\\", existing: false, pane: null, tabIndex: null,
+    };
+    case "disable_file_dialog_integration": return null;
     case "navigate_file_dialog_location": return null;
     case "hide_file_dialog_picker": return null;
     case "detect_ffmpeg": return {

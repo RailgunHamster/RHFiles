@@ -54,7 +54,8 @@ button { font: inherit; }
 .picker-heading strong { font-size: 14px; font-weight: 650; letter-spacing: .01em; }
 .picker-heading span { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.picker-close {
+.picker-actions { display: flex; align-items: center; gap: 2px; }
+.picker-action {
   width: 30px;
   height: 30px;
   border: 0;
@@ -65,8 +66,11 @@ button { font: inherit; }
   place-items: center;
   cursor: pointer;
 }
-.picker-close:hover { background: var(--hover); color: var(--text); }
-.picker-close svg { width: 15px; height: 15px; }
+.picker-action:hover { background: var(--hover); color: var(--text); }
+.picker-action.picker-disable:hover { color: #c53a3a; background: rgba(197, 58, 58, .09); }
+.picker-action svg { width: 15px; height: 15px; }
+.picker-action .expand-icon { display: none; }
+.picker-open-rhfiles-compact { display: none; color: var(--accent); }
 
 .picker-list { overflow: auto; padding: 7px; scrollbar-width: thin; }
 .picker-group + .picker-group { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
@@ -133,17 +137,62 @@ button { font: inherit; }
 .picker-empty span { color: var(--muted); font-size: 11px; }
 
 .picker-footer {
-  min-height: 28px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 6px 12px;
+  padding: 5px 7px 5px 12px;
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 10px;
   user-select: none;
 }
+.picker-footer-copy { min-width: 0; display: grid; gap: 1px; }
+#picker-target { color: var(--text); font-weight: 600; }
+.picker-open-rhfiles {
+  min-height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid rgba(22, 119, 255, .18);
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 10.5px;
+  font-weight: 620;
+  cursor: pointer;
+}
+.picker-open-rhfiles[hidden] { display: none; }
+.picker-open-rhfiles:hover { border-color: rgba(22, 119, 255, .3); background: rgba(22, 119, 255, .15); }
+.picker-open-rhfiles:disabled { opacity: .55; cursor: wait; }
+.picker-open-rhfiles svg { width: 15px; height: 15px; flex: none; }
+
+html.compact .picker-shell { grid-template-rows: auto minmax(0, 1fr); }
+html.compact .picker-header { min-height: 43px; gap: 7px; padding: 6px 7px 5px 10px; }
+html.compact .picker-brand,
+html.compact .picker-heading span,
+html.compact .picker-footer,
+html.compact .picker-group-title,
+html.compact .location-icon,
+html.compact .location-name,
+html.compact .location-meta { display: none; }
+html.compact .picker-heading strong { font-size: 12px; }
+html.compact .picker-action .compact-icon { display: none; }
+html.compact .picker-action .expand-icon { display: block; }
+html.compact .picker-open-rhfiles-compact:not([hidden]) { display: grid; }
+html.compact .picker-list { padding: 4px; }
+html.compact .picker-group + .picker-group { margin-top: 2px; padding-top: 2px; }
+html.compact .picker-location {
+  min-height: 35px;
+  display: block;
+  padding: 7px 8px;
+  border-radius: 7px;
+}
+html.compact .location-copy { display: block; }
+html.compact .location-path { font-size: 11.5px; line-height: 19px; }
 
 @media (prefers-color-scheme: dark) {
   :root {

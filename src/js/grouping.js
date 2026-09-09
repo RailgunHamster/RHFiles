@@ -101,16 +101,16 @@ function toggleGroupingMenu() {
   const menu = document.createElement("div");
   menu.className = "context-menu";
   const modes = [
-    { label: t('group.menuNone'), field: "none" },
-    { label: t('group.menuType'), field: "type" },
-    { label: t('group.menuDate'), field: "date" },
-    { label: t('group.menuSize'), field: "size" },
-    { label: t('group.menuExt'), field: "extension" },
+    { label: t('group.menuNone'), field: "none", icon: "close" },
+    { label: t('group.menuType'), field: "type", icon: "type" },
+    { label: t('group.menuDate'), field: "date", icon: "calendar" },
+    { label: t('group.menuSize'), field: "size", icon: "size" },
+    { label: t('group.menuExt'), field: "extension", icon: "extension" },
   ];
   modes.forEach(m => {
     const mi = document.createElement("div");
     mi.className = "ctx-item" + (G.groupBy === m.field ? " active" : "");
-    mi.innerHTML = `<span>${m.label}</span>`;
+    mi.innerHTML = contextMenuLabelMarkup(m);
     mi.addEventListener("click", () => {
       removeContextMenu();
       toggleGrouping(m.field);

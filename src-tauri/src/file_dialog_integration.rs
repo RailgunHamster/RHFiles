@@ -1,37 +1,64 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ptr;
+#[cfg(test)]
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{
+    GlobalFree, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, RPC_E_CHANGED_MODE, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+    CLSCTX_ALL, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize, IDataObject, IServiceProvider,
+};
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, CountClipboardFormats, EmptyClipboard, GetClipboardSequenceNumber,
+    OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+use windows::Win32::System::Ole::{
+    CF_UNICODETEXT, IOleWindow, OleGetClipboard, OleInitialize, OleSetClipboard, OleUninitialize,
+};
 use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
+    TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_EditControlTypeId, UIA_ValuePatternId,
+};
+#[cfg(test)]
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, TreeScope_Children,
+    UIA_InvokePatternId, UIA_NamePropertyId, UIA_SelectionItemPatternId,
+};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_D,
-    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_OEM_1,
-    VK_OEM_2, VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_COMMA, VK_OEM_MINUS,
-    VK_OEM_PERIOD, VK_OEM_PLUS, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_INSERT, VK_L, VK_LEFT, VK_LWIN, VK_MENU,
+    VK_OEM_1, VK_OEM_2, VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_COMMA,
+    VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE,
+    VK_TAB, VK_UP,
 };
-use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellWindows};
+use windows::Win32::UI::Shell::{
+    IShellBrowser, IShellWindows, IWebBrowser2, SID_STopLevelBrowser, ShellWindows,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, EnumChildWindows, GetClassNameW, GetForegroundWindow,
-    GetMessageW, GetWindowRect, HC_ACTION, HWND_TOPMOST, IsWindow, KBDLLHOOKSTRUCT, LLKHF_INJECTED,
-    MSG, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetForegroundWindow,
-    SetWindowPos, SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
-    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    GetMessageW, GetWindowRect, GetWindowThreadProcessId, HC_ACTION, HWND_TOPMOST, IsWindow,
+    IsWindowVisible, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW,
+    ShowWindow, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
-use windows_core::{BOOL, Interface};
+use windows_core::{BOOL, BSTR, Interface};
 
 const INPUT_MARKER: usize = 0x5248_4649;
 #[cfg(test)]
@@ -108,8 +135,19 @@ pub struct FileDialogPickerState {
     enabled: bool,
     target_available: bool,
     target_kind: &'static str,
+    target_path: Option<String>,
     locale: String,
+    compact: bool,
     locations: Vec<FileDialogLocation>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenExplorerLocationPayload {
+    path: String,
+    existing: bool,
+    pane: Option<String>,
+    tab_index: Option<usize>,
 }
 
 static CONFIG: OnceLock<Mutex<IntegrationConfig>> = OnceLock::new();
@@ -120,6 +158,9 @@ static MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 static CONSUMED_KEY: AtomicU32 = AtomicU32::new(0);
 static ACTIVE_TARGET: AtomicUsize = AtomicUsize::new(0);
 static DISMISSED_TARGET: AtomicUsize = AtomicUsize::new(0);
+static PICKER_COMPACT: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+static LAST_NAVIGATION_METHOD: AtomicU8 = AtomicU8::new(0);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 static ACTION_SENDER: OnceLock<SyncSender<PickerRequest>> = OnceLock::new();
 
@@ -192,6 +233,32 @@ fn normalize_folder_path(path: Option<String>) -> Option<String> {
         value.push('\\');
     }
     Some(value)
+}
+
+fn same_windows_folder(left: &str, right: &str) -> bool {
+    let comparison_key = |value: &str| {
+        normalize_folder_path(Some(value.to_string()))
+            .map(|path| path.trim_end_matches('\\').to_ascii_lowercase())
+    };
+    let Some(left_key) = comparison_key(left) else {
+        return false;
+    };
+    let Some(right_key) = comparison_key(right) else {
+        return false;
+    };
+    if left_key == right_key {
+        return true;
+    }
+
+    // Explorer and WebView APIs may expose the same folder through a DOS 8.3
+    // alias (for example ADMINI~1) and a long path. Only pay the filesystem
+    // resolution cost after the cheap case-insensitive comparison misses.
+    let canonical_key = |value: &str| {
+        std::fs::canonicalize(value)
+            .ok()
+            .and_then(|path| comparison_key(&path.to_string_lossy()))
+    };
+    canonical_key(left).is_some_and(|left| canonical_key(right).as_ref() == Some(&left))
 }
 
 fn parse_hotkey(raw: &str) -> Option<Hotkey> {
@@ -537,15 +604,18 @@ fn picker_state() -> FileDialogPickerState {
     let target = ACTIVE_TARGET.load(Ordering::Acquire);
     let target = HWND(target as *mut core::ffi::c_void);
     let target_available = is_supported_window(target);
+    let target_kind = if target_available {
+        target_kind(target)
+    } else {
+        ""
+    };
     FileDialogPickerState {
         enabled: snapshot.enabled,
         target_available,
-        target_kind: if target_available {
-            target_kind(target)
-        } else {
-            ""
-        },
+        target_kind,
+        target_path: None,
         locale: snapshot.locale,
+        compact: PICKER_COMPACT.load(Ordering::Acquire),
         locations,
     }
 }
@@ -592,10 +662,16 @@ fn position_picker(target: HWND, picker: HWND) -> bool {
         .map(|window| window.locations.len())
         .sum::<usize>();
     let row_count = location_count.clamp(1, 7) as i32;
+    let compact = PICKER_COMPACT.load(Ordering::Acquire);
     let dpi = unsafe { GetDpiForWindow(target) }.max(96) as i32;
     let scaled = |logical: i32| logical.saturating_mul(dpi) / 96;
-    let width = scaled(370);
-    let height = scaled((94 + row_count * 58).clamp(170, 520));
+    let width = scaled(if compact { 310 } else { 370 });
+    let logical_height = if compact {
+        (48 + row_count * 39).clamp(112, 350)
+    } else {
+        (106 + row_count * 58).clamp(182, 532)
+    };
+    let height = scaled(logical_height);
     let gap = scaled(10);
     let work = monitor_info.rcWork;
 
@@ -781,6 +857,229 @@ fn send_inputs(inputs: &[INPUT]) -> bool {
     unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) == inputs.len() as u32 }
 }
 
+struct IntegrationClipboardGuard;
+
+impl IntegrationClipboardGuard {
+    fn open() -> Option<Self> {
+        for _ in 0..24 {
+            if unsafe { OpenClipboard(None) }.is_ok() {
+                return Some(Self);
+            }
+            thread::sleep(Duration::from_millis(4));
+        }
+        None
+    }
+}
+
+impl Drop for IntegrationClipboardGuard {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseClipboard() };
+    }
+}
+
+fn publish_temporary_clipboard_text(text: &str, original: Option<&IDataObject>) -> Option<u32> {
+    if text.contains('\0') {
+        return None;
+    }
+    let wide = text
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let byte_len = wide.len().checked_mul(std::mem::size_of::<u16>())?;
+    let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, byte_len) }.ok()?;
+    let pointer = unsafe { GlobalLock(memory) };
+    if pointer.is_null() {
+        let _ = unsafe { GlobalFree(Some(memory)) };
+        return None;
+    }
+    unsafe {
+        ptr::copy_nonoverlapping(wide.as_ptr().cast::<u8>(), pointer.cast::<u8>(), byte_len);
+        let _ = GlobalUnlock(memory);
+    }
+    let clipboard = match IntegrationClipboardGuard::open() {
+        Some(clipboard) => clipboard,
+        None => {
+            let _ = unsafe { GlobalFree(Some(memory)) };
+            return None;
+        }
+    };
+    if unsafe { EmptyClipboard() }.is_err() {
+        let _ = unsafe { GlobalFree(Some(memory)) };
+        return None;
+    }
+    if unsafe { SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(memory.0))) }.is_err() {
+        let _ = unsafe { GlobalFree(Some(memory)) };
+        let failed_sequence = unsafe { GetClipboardSequenceNumber() };
+        drop(clipboard);
+        let _ = restore_temporary_clipboard(original, failed_sequence);
+        return None;
+    }
+    let sequence = unsafe { GetClipboardSequenceNumber() };
+    drop(clipboard);
+    Some(sequence)
+}
+
+fn clear_temporary_clipboard(expected_sequence: u32) -> bool {
+    if unsafe { GetClipboardSequenceNumber() } != expected_sequence {
+        // The user or another application replaced our temporary value. Never
+        // overwrite that newer clipboard content with the older snapshot.
+        return true;
+    }
+    let Some(_clipboard) = IntegrationClipboardGuard::open() else {
+        return false;
+    };
+    if unsafe { GetClipboardSequenceNumber() } != expected_sequence {
+        return true;
+    }
+    unsafe { EmptyClipboard() }.is_ok()
+}
+
+fn restore_temporary_clipboard(original: Option<&IDataObject>, expected_sequence: u32) -> bool {
+    for _ in 0..20 {
+        if unsafe { GetClipboardSequenceNumber() } != expected_sequence {
+            return true;
+        }
+        let restored = match original {
+            Some(data) => unsafe { OleSetClipboard(data) }.is_ok(),
+            None => clear_temporary_clipboard(expected_sequence),
+        };
+        if restored {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    false
+}
+
+/// Pastes a complete path into the focused Windows location edit in one
+/// operation. Chromium's virtualized dialog and modern Explorer can ignore a
+/// UIA ValuePattern change intermittently, while a real paste reliably
+/// notifies their internal navigation model. The previous clipboard object is
+/// restored before returning.
+fn wait_for_input_foreground(target: HWND, timeout: Duration) -> bool {
+    if unsafe { GetForegroundWindow() } != target {
+        let _ = unsafe { SetForegroundWindow(target) };
+    }
+    let deadline = Instant::now() + timeout;
+    while unsafe { GetForegroundWindow() } != target && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    (unsafe { GetForegroundWindow() }) == target
+}
+
+fn paste_location_without_typing(target: HWND, path: &str) -> bool {
+    struct OleGuard;
+    impl Drop for OleGuard {
+        fn drop(&mut self) {
+            unsafe { OleUninitialize() };
+        }
+    }
+
+    if unsafe { OleInitialize(None) }.is_err() {
+        return false;
+    }
+    let _ole = OleGuard;
+    if !wait_for_input_foreground(target, Duration::from_millis(700)) {
+        return false;
+    }
+    // A browser prompt can steal focus while a newly-created file dialog is
+    // publishing its UIA tree. Re-focus the dialog and its editable location
+    // immediately before pasting, instead of trusting an earlier Ctrl+L.
+    if !send_inputs(&[
+        key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_L, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_L, KEYEVENTF_KEYUP),
+        key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+    ]) {
+        return false;
+    }
+    thread::sleep(Duration::from_millis(70));
+    if !wait_for_input_foreground(target, Duration::from_millis(700)) {
+        return false;
+    }
+    let original_format_count = unsafe { CountClipboardFormats() };
+    let original = unsafe { OleGetClipboard() }.ok();
+    if original_format_count > 0 && original.is_none() {
+        return false;
+    }
+    let Some(temporary_sequence) = publish_temporary_clipboard_text(path, original.as_ref()) else {
+        return false;
+    };
+
+    let paste_sent = wait_for_input_foreground(target, Duration::from_millis(700))
+        && send_inputs(&[
+            key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'A' as u16), KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'A' as u16), KEYEVENTF_KEYUP),
+            key_input(VIRTUAL_KEY(b'V' as u16), KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'V' as u16), KEYEVENTF_KEYUP),
+            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+        ]);
+    if paste_sent {
+        // Paste is delivered synchronously to the focused edit, but the
+        // dialog's navigation model processes the resulting change on its UI
+        // queue. One frame keeps Enter ordered after that notification.
+        thread::sleep(Duration::from_millis(140));
+    }
+    let confirm_sent = paste_sent
+        && wait_for_input_foreground(target, Duration::from_millis(700))
+        && send_inputs(&[
+            key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_RETURN, KEYEVENTF_KEYUP),
+        ]);
+    thread::sleep(Duration::from_millis(35));
+    let restored = restore_temporary_clipboard(original.as_ref(), temporary_sequence);
+    confirm_sent && restored
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstantAddressReplacement {
+    AddressBar,
+    DialogFileName,
+}
+
+fn explorer_browser_has_visible_view(browser: &IWebBrowser2) -> bool {
+    unsafe {
+        let Ok(provider) = browser.cast::<IServiceProvider>() else {
+            return false;
+        };
+        let Ok(shell_browser) = provider.QueryService::<IShellBrowser>(&SID_STopLevelBrowser)
+        else {
+            return false;
+        };
+        let Ok(shell_view) = shell_browser.QueryActiveShellView() else {
+            return false;
+        };
+        let Ok(ole_window) = shell_view.cast::<IOleWindow>() else {
+            return false;
+        };
+        ole_window
+            .GetWindow()
+            .is_ok_and(|view_hwnd| IsWindowVisible(view_hwnd).as_bool())
+    }
+}
+
+fn navigate_explorer_browser(browser: &IWebBrowser2, path: &str) -> Result<(), String> {
+    let url = VARIANT::from(path);
+    let empty = VARIANT::default();
+    for attempt in 0..6 {
+        let result = unsafe {
+            browser.Navigate2(&url, Some(&empty), Some(&empty), Some(&empty), Some(&empty))
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) if error.code().0 as u32 == 0x8007_00aa && attempt < 5 => {
+                // Explorer briefly reports ERROR_BUSY while the active tab is
+                // completing its previous navigation. A short retry keeps a
+                // deliberate second click from becoming a random failure.
+                thread::sleep(Duration::from_millis(80));
+            }
+            Err(error) => return Err(format!("File Explorer rejected the folder: {error}")),
+        }
+    }
+    unreachable!()
+}
+
 fn navigate_explorer_with_shell(hwnd: usize, path: &str) -> Result<bool, String> {
     struct ComGuard;
     impl Drop for ComGuard {
@@ -797,6 +1096,8 @@ fn navigate_explorer_with_shell(hwnd: usize, path: &str) -> Result<bool, String>
         let windows: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL)
             .map_err(|error| format!("Unable to enumerate File Explorer windows: {error}"))?;
         let count = windows.Count().map_err(|error| error.to_string())?;
+        let mut matching_browsers = Vec::new();
+        let mut visible_browsers = Vec::new();
         for index in 0..count {
             let Ok(dispatch) = windows.Item(&VARIANT::from(index)) else {
                 continue;
@@ -810,18 +1111,308 @@ fn navigate_explorer_with_shell(hwnd: usize, path: &str) -> Result<bool, String>
             if browser_hwnd.0 as usize != hwnd {
                 continue;
             }
-            let url = VARIANT::from(path);
-            let empty = VARIANT::default();
-            browser
-                .Navigate2(&url, Some(&empty), Some(&empty), Some(&empty), Some(&empty))
-                .map_err(|error| format!("File Explorer rejected the folder: {error}"))?;
+            if explorer_browser_has_visible_view(&browser) {
+                visible_browsers.push(browser.clone());
+            }
+            matching_browsers.push(browser);
+        }
+
+        // Windows 11 Explorer tabs share a CabinetWClass top-level HWND. ShellWindows
+        // exposes one IWebBrowser2 per tab, so choosing the first matching HWND
+        // always redirects the first tab. Its active Shell view is the only
+        // visible view; use that entry when it is unambiguous.
+        if visible_browsers.len() == 1 {
+            navigate_explorer_browser(&visible_browsers[0], path)?;
             return Ok(true);
         }
+        if matching_browsers.len() == 1 {
+            navigate_explorer_browser(&matching_browsers[0], path)?;
+            return Ok(true);
+        }
+
+        // If a future Explorer build stops exposing view visibility, returning
+        // false deliberately selects the active-window address-bar fallback
+        // below instead of ever redirecting an arbitrary background tab.
     }
     Ok(false)
 }
 
+fn set_focused_uia_edit_value(
+    automation: &IUIAutomation,
+    target_process_id: u32,
+    value: &BSTR,
+) -> Result<InstantAddressReplacement, String> {
+    let element = unsafe { automation.GetFocusedElement() }
+        .map_err(|error| format!("get focused UI element: {error}"))?;
+    let process_id = unsafe { element.CurrentProcessId() }
+        .map_err(|error| format!("read focused process: {error}"))?;
+    if process_id != target_process_id as i32 {
+        return Err(format!(
+            "focused process {process_id} does not match target {target_process_id}"
+        ));
+    }
+    if !unsafe { element.CurrentHasKeyboardFocus() }
+        .map_err(|error| format!("read keyboard focus: {error}"))?
+        .as_bool()
+    {
+        return Err("address element does not have keyboard focus".to_string());
+    }
+    let control_type = unsafe { element.CurrentControlType() }
+        .map_err(|error| format!("read focused control type: {error}"))?;
+    if control_type != UIA_EditControlTypeId {
+        return Err(format!(
+            "focused control type {} is not an edit",
+            control_type.0
+        ));
+    }
+    let pattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+            .map_err(|error| format!("get address value pattern: {error}"))?;
+    if unsafe { pattern.CurrentIsReadOnly() }
+        .map_err(|error| format!("read address mutability: {error}"))?
+        .as_bool()
+    {
+        return Err("address value pattern is read-only".to_string());
+    }
+    unsafe { pattern.SetValue(value) }
+        .map_err(|error| format!("replace address value: {error}"))?;
+    let automation_id = unsafe { element.CurrentAutomationId() }
+        .ok()
+        .map(|value| value.to_string());
+    Ok(if automation_id.as_deref() == Some("1148") {
+        InstantAddressReplacement::DialogFileName
+    } else {
+        InstantAddressReplacement::AddressBar
+    })
+}
+
+fn set_uia_element_value(element: &IUIAutomationElement, value: &BSTR) -> Result<(), String> {
+    unsafe { element.SetFocus() }.map_err(|error| format!("focus address element: {error}"))?;
+    let pattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+            .map_err(|error| format!("get address value pattern: {error}"))?;
+    if unsafe { pattern.CurrentIsReadOnly() }
+        .map_err(|error| format!("read address mutability: {error}"))?
+        .as_bool()
+    {
+        return Err("address value pattern is read-only".to_string());
+    }
+    unsafe { pattern.SetValue(value) }.map_err(|error| format!("replace address value: {error}"))
+}
+
+fn modern_explorer_uia_address_element(
+    automation: &IUIAutomation,
+    target: HWND,
+) -> Result<IUIAutomationElement, String> {
+    let root = unsafe { automation.ElementFromHandle(target) }
+        .map_err(|error| format!("get Explorer automation root: {error}"))?;
+    let address_group_id = VARIANT::from(BSTR::from("PART_AutoSuggestBox"));
+    let address_group_condition = unsafe {
+        automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &address_group_id)
+    }
+    .map_err(|error| format!("create Explorer address-group condition: {error}"))?;
+    let address_groups = unsafe { root.FindAll(TreeScope_Descendants, &address_group_condition) }
+        .map_err(|error| format!("find Explorer address groups: {error}"))?;
+    let text_box_id = VARIANT::from(BSTR::from("TextBox"));
+    let text_box_condition =
+        unsafe { automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &text_box_id) }
+            .map_err(|error| format!("create Explorer address condition: {error}"))?;
+    let mut addresses = Vec::new();
+    let count = unsafe { address_groups.Length() }
+        .map_err(|error| format!("count Explorer address groups: {error}"))?;
+    for index in 0..count {
+        let Ok(group) = (unsafe { address_groups.GetElement(index) }) else {
+            continue;
+        };
+        let Ok(address) = (unsafe { group.FindFirst(TreeScope_Descendants, &text_box_condition) })
+        else {
+            continue;
+        };
+        if unsafe { address.CurrentHasKeyboardFocus() }.is_ok_and(|value| value.as_bool()) {
+            return Ok(address);
+        }
+        addresses.push(address);
+    }
+    if addresses.len() == 1 {
+        return Ok(addresses.remove(0));
+    }
+    Err(format!(
+        "could not identify the focused Explorer address element (found {})",
+        addresses.len()
+    ))
+}
+
+fn set_modern_explorer_uia_address_value(
+    automation: &IUIAutomation,
+    target: HWND,
+    value: &BSTR,
+) -> Result<InstantAddressReplacement, String> {
+    let address = modern_explorer_uia_address_element(automation, target)?;
+    set_uia_element_value(&address, value)?;
+    Ok(InstantAddressReplacement::AddressBar)
+}
+
+fn normalize_explorer_folder_value(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.to_ascii_lowercase().starts_with("file:") {
+        return url::Url::parse(raw)
+            .ok()?
+            .to_file_path()
+            .ok()
+            .and_then(|path| normalize_folder_path(Some(path.to_string_lossy().into_owned())));
+    }
+    normalize_folder_path(Some(raw.to_string()))
+}
+
+fn focused_explorer_folder(target: HWND) -> Option<String> {
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+        return None;
+    }
+    let _guard = ComGuard(initialized.is_ok());
+    let automation =
+        unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) }.ok()?;
+    let mut target_process_id = 0u32;
+    unsafe { GetWindowThreadProcessId(target, Some(&mut target_process_id)) };
+    if let Ok(element) = unsafe { automation.GetFocusedElement() }
+        && unsafe { element.CurrentProcessId() }.ok()? == target_process_id as i32
+        && unsafe { element.CurrentControlType() }.ok()? == UIA_EditControlTypeId
+        && unsafe { element.CurrentHasKeyboardFocus() }.ok()?.as_bool()
+        && let Ok(pattern) =
+            unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+        && let Ok(raw) = unsafe { pattern.CurrentValue() }
+        && let Some(path) = normalize_explorer_folder_value(&raw.to_string())
+    {
+        return Some(path);
+    }
+    // On Windows 11, GetFocusedElement may report the address bar's parent
+    // container even though its active TextBox child owns keyboard focus.
+    // Search the target Explorer window so inactive tabs cannot be selected.
+    let element = modern_explorer_uia_address_element(&automation, target).ok()?;
+    let pattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+            .ok()?;
+    let raw = unsafe { pattern.CurrentValue() }.ok()?.to_string();
+    normalize_explorer_folder_value(&raw)
+}
+
+fn read_active_explorer_folder(target: HWND) -> Result<String, String> {
+    let _ = send_inputs(&[
+        key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_MENU, KEYEVENTF_KEYUP),
+    ]);
+    if !unsafe { SetForegroundWindow(target) }.as_bool() {
+        return Err("Windows did not allow File Explorer to regain focus".to_string());
+    }
+    let foreground_deadline = Instant::now() + Duration::from_millis(1200);
+    while unsafe { GetForegroundWindow() } != target && Instant::now() < foreground_deadline {
+        thread::sleep(Duration::from_millis(15));
+    }
+    if unsafe { GetForegroundWindow() } != target {
+        return Err("File Explorer did not regain focus in time".to_string());
+    }
+    let focus_address = if window_class(target).eq_ignore_ascii_case("cabinetwclass") {
+        [
+            key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_L, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_L, KEYEVENTF_KEYUP),
+            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+        ]
+    } else {
+        [
+            key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_D, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_D, KEYEVENTF_KEYUP),
+            key_input(VK_MENU, KEYEVENTF_KEYUP),
+        ]
+    };
+    if !send_inputs(&focus_address) {
+        return Err("Unable to focus File Explorer's address bar".to_string());
+    }
+    let deadline = Instant::now() + Duration::from_millis(1400);
+    let path = loop {
+        if let Some(path) = focused_explorer_folder(target) {
+            break Some(path);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let _ = send_inputs(&[
+        key_input(VK_ESCAPE, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_ESCAPE, KEYEVENTF_KEYUP),
+    ]);
+    path.ok_or_else(|| "Unable to read File Explorer's active address".to_string())
+}
+
+fn replace_focused_address(target: HWND, path: &str) -> Option<InstantAddressReplacement> {
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    let can_use_com = initialized.is_ok() || initialized == RPC_E_CHANGED_MODE;
+    let _guard = ComGuard(initialized.is_ok());
+    let automation = can_use_com
+        .then(|| unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+        .and_then(Result::ok);
+    let mut target_process_id = 0u32;
+    unsafe { GetWindowThreadProcessId(target, Some(&mut target_process_id)) };
+    let automation_value = BSTR::from(path);
+    let modern_explorer = window_class(target).eq_ignore_ascii_case("cabinetwclass");
+    // Newly-created Chromium file pickers can expose their native HWND before
+    // the UI Automation edit provider is ready. Poll long enough to keep the
+    // whole-path replacement path reliable; already-rendered dialogs return on
+    // the first iteration.
+    let deadline = Instant::now() + Duration::from_millis(2500);
+    while Instant::now() < deadline {
+        if let Some(automation) = automation.as_ref() {
+            let result =
+                set_focused_uia_edit_value(automation, target_process_id, &automation_value)
+                    .or_else(|focused_error| {
+                        if modern_explorer {
+                            set_modern_explorer_uia_address_value(
+                                automation,
+                                target,
+                                &automation_value,
+                            )
+                            .map_err(|explorer_error| {
+                                format!(
+                                    "{focused_error}; Explorer address lookup: {explorer_error}"
+                                )
+                            })
+                        } else {
+                            Err(focused_error)
+                        }
+                    });
+            match result {
+                Ok(replacement) => return Some(replacement),
+                Err(_) => {}
+            }
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    None
+}
+
 fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
+    #[cfg(test)]
+    LAST_NAVIGATION_METHOD.store(0, Ordering::Release);
     let path = normalize_folder_path(Some(path.to_string()))
         .ok_or_else(|| "The selected RHFiles location is not a filesystem folder".to_string())?;
     let target = HWND(hwnd_value as *mut core::ffi::c_void);
@@ -830,21 +1421,29 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
     }
 
     let target_class = window_class(target);
-    if matches!(
-        target_class.to_ascii_lowercase().as_str(),
-        "cabinetwclass" | "explorewclass"
-    ) && navigate_explorer_with_shell(hwnd_value, &path)?
+    // Modern CabinetWClass windows can host several tabs under the same HWND.
+    // ShellWindows cannot reliably identify the selected tab and may activate
+    // and redirect the first one. Use the focused address element below for
+    // modern Explorer; the Shell API remains useful for legacy ExploreWClass.
+    if target_class.eq_ignore_ascii_case("explorewclass")
+        && navigate_explorer_with_shell(hwnd_value, &path)?
     {
+        #[cfg(test)]
+        LAST_NAVIGATION_METHOD.store(1, Ordering::Release);
         return Ok(());
     }
 
     // Selecting a location is an explicit user gesture in RHFiles' companion
-    // window. Release a synthetic Alt tap before restoring the native dialog;
-    // this gives Windows a valid foreground transition without clipboard use.
-    let _ = send_inputs(&[
-        key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
-        key_input(VK_MENU, KEYEVENTF_KEYUP),
-    ]);
+    // window. A synthetic Alt tap permits the foreground transition without
+    // clipboard use, but only send it when a transition is actually needed:
+    // a bare Alt in an already-active Common Item Dialog enters menu mode and
+    // can swallow the following Alt+D.
+    if unsafe { GetForegroundWindow() } != target {
+        let _ = send_inputs(&[
+            key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_MENU, KEYEVENTF_KEYUP),
+        ]);
+    }
     if !unsafe { SetForegroundWindow(target) }.as_bool() {
         return Err("Windows did not allow the file dialog to regain focus".to_string());
     }
@@ -856,45 +1455,89 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
         return Err("The file dialog did not regain focus in time".to_string());
     }
 
-    // Common Windows file dialogs (and the legacy Explorer fallback) focus
-    // their address bar with Alt+D. Unicode SendInput avoids the clipboard.
+    // Common Windows file dialogs and modern Explorer focus their address bar
+    // with Ctrl+L. This avoids localized access-key handling in Chromium-hosted
+    // dialogs, where Alt+D can leave focus in the filename field.
     let focus_address = [
-        key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
-        key_input(VK_D, KEYBD_EVENT_FLAGS(0)),
-        key_input(VK_D, KEYEVENTF_KEYUP),
-        key_input(VK_MENU, KEYEVENTF_KEYUP),
+        key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_L, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_L, KEYEVENTF_KEYUP),
+        key_input(VK_CONTROL, KEYEVENTF_KEYUP),
     ];
     if !send_inputs(&focus_address) {
         return Err("Unable to focus the Windows address bar".to_string());
     }
     // Explorer's breadcrumb animation and the modern IFileDialog address bar
     // can take more than one frame to turn into an editable control.
-    thread::sleep(Duration::from_millis(220));
-    let dialog_path = if path.ends_with('\\') {
-        path
-    } else {
-        format!("{path}\\")
-    };
-    let select_all = [
-        key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
-        key_input(VIRTUAL_KEY(b'A' as u16), KEYBD_EVENT_FLAGS(0)),
-        key_input(VIRTUAL_KEY(b'A' as u16), KEYEVENTF_KEYUP),
-        key_input(VK_CONTROL, KEYEVENTF_KEYUP),
-    ];
-    if !send_inputs(&select_all) {
-        return Err("Unable to select the current Windows address".to_string());
+    thread::sleep(Duration::from_millis(80));
+    let dialog_path = path;
+    // Waiting for UIA here also acts as a readiness probe for newly-created
+    // Chromium dialogs. Their top-level HWND can become foreground before the
+    // focused edit provider is ready to accept a real paste.
+    let instant_replacement = replace_focused_address(target, &dialog_path);
+    if (target_class.eq_ignore_ascii_case("#32770")
+        || target_class.eq_ignore_ascii_case("cabinetwclass"))
+        && paste_location_without_typing(target, &dialog_path)
+    {
+        #[cfg(test)]
+        LAST_NAVIGATION_METHOD.store(2, Ordering::Release);
+        return Ok(());
     }
-    thread::sleep(Duration::from_millis(40));
+    let replaced_directly = instant_replacement.is_some();
+    let replaced_filename = instant_replacement == Some(InstantAddressReplacement::DialogFileName);
+    #[cfg(test)]
+    LAST_NAVIGATION_METHOD.store(if replaced_directly { 2 } else { 3 }, Ordering::Release);
+    if !replaced_directly {
+        // Keep Unicode input as a compatibility fallback for alternate shell
+        // hosts that do not expose a writable UI Automation value pattern.
+        let select_all = [
+            key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'A' as u16), KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'A' as u16), KEYEVENTF_KEYUP),
+            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+        ];
+        if !send_inputs(&select_all) {
+            return Err("Unable to select the current Windows address".to_string());
+        }
+        thread::sleep(Duration::from_millis(40));
 
-    let mut text_inputs = Vec::with_capacity(dialog_path.encode_utf16().count() * 2);
-    for unit in dialog_path.encode_utf16() {
-        text_inputs.push(unicode_input(unit, false));
-        text_inputs.push(unicode_input(unit, true));
+        let mut text_inputs = Vec::with_capacity(dialog_path.encode_utf16().count() * 2);
+        for unit in dialog_path.encode_utf16() {
+            text_inputs.push(unicode_input(unit, false));
+            text_inputs.push(unicode_input(unit, true));
+        }
+        if !send_inputs(&text_inputs) {
+            return Err("Unable to enter the selected folder in Windows".to_string());
+        }
     }
-    if !send_inputs(&text_inputs) {
-        return Err("Unable to type the selected folder into Windows".to_string());
+    if replaced_filename && target_class.eq_ignore_ascii_case("#32770") {
+        let _ = unsafe { SetForegroundWindow(target) };
+        // ValuePattern replaces the complete path without visible typing. A
+        // zero-net-change edit (Space + Backspace) makes Chromium's Common Item
+        // Dialog commit that value, then Enter confirms it in the same input
+        // batch so a foreground race cannot split the operation.
+        if !send_inputs(&[
+            key_input(VK_END, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_END, KEYEVENTF_KEYUP),
+            key_input(VK_SPACE, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_SPACE, KEYEVENTF_KEYUP),
+            key_input(VK_BACK, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_BACK, KEYEVENTF_KEYUP),
+            key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_RETURN, KEYEVENTF_KEYUP),
+        ]) {
+            return Err("Unable to confirm the Windows filename field".to_string());
+        }
+        return Ok(());
     }
-    thread::sleep(Duration::from_millis(100));
+    // Some Chromium-hosted Common Item Dialogs apply ValuePattern changes on
+    // their UI thread. Give that single update one frame to settle before
+    // confirming it; this is still effectively instant to the user.
+    thread::sleep(Duration::from_millis(if replaced_directly {
+        140
+    } else {
+        45
+    }));
     if !send_inputs(&[
         key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
         key_input(VK_RETURN, KEYEVENTF_KEYUP),
@@ -1046,6 +1689,68 @@ pub async fn navigate_file_dialog_location(path: String) -> Result<(), String> {
         .map_err(|error| format!("Unable to run Windows navigation: {error}"))?
 }
 
+#[tauri::command(async)]
+pub async fn open_explorer_location_in_rhfiles(
+    app: tauri::AppHandle,
+) -> Result<OpenExplorerLocationPayload, String> {
+    let target = ACTIVE_TARGET.load(Ordering::Acquire);
+    if target == 0 {
+        return Err("No Windows File Explorer window is available".to_string());
+    }
+    let target_hwnd = HWND(target as *mut core::ffi::c_void);
+    if target_kind(target_hwnd) != "windowsExplorer" || !is_supported_window(target_hwnd) {
+        return Err("The active Windows window is not File Explorer".to_string());
+    }
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        read_active_explorer_folder(HWND(target as *mut core::ffi::c_void))
+    })
+    .await
+    .map_err(|error| format!("Unable to read File Explorer's folder: {error}"))?
+    .map_err(|error| format!("Unable to read File Explorer's current folder: {error}"))?;
+
+    let snapshot = lock_config().clone();
+    let existing_location = all_locations(&snapshot).into_iter().find(|location| {
+        app.get_webview_window(&location.window_label).is_some()
+            && same_windows_folder(&location.path, &path)
+    });
+    let destination_label = if let Some(location) = existing_location.as_ref() {
+        location.window_label.clone()
+    } else if app.get_webview_window("main").is_some() {
+        "main".to_string()
+    } else {
+        let mut labels = snapshot.windows.keys().cloned().collect::<Vec<_>>();
+        labels.sort();
+        labels
+            .into_iter()
+            .find(|label| app.get_webview_window(label).is_some())
+            .ok_or_else(|| "No RHFiles window is available".to_string())?
+    };
+    let payload = OpenExplorerLocationPayload {
+        path,
+        existing: existing_location.is_some(),
+        pane: existing_location
+            .as_ref()
+            .map(|location| location.pane.clone()),
+        tab_index: existing_location
+            .as_ref()
+            .map(|location| location.tab_index),
+    };
+    app.emit_to(
+        &destination_label,
+        "open-explorer-location-in-rhfiles",
+        payload.clone(),
+    )
+    .map_err(|error| format!("Unable to send the Explorer folder to RHFiles: {error}"))?;
+    if let Some(window) = app.get_webview_window(&destination_label) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    DISMISSED_TARGET.store(target, Ordering::Release);
+    hide_picker_native();
+    Ok(payload)
+}
+
 #[tauri::command]
 pub fn hide_file_dialog_picker() {
     let target = ACTIVE_TARGET.load(Ordering::Acquire);
@@ -1053,6 +1758,33 @@ pub fn hide_file_dialog_picker() {
         DISMISSED_TARGET.store(target, Ordering::Release);
     }
     hide_picker_native();
+}
+
+#[tauri::command]
+pub fn set_file_dialog_picker_compact(compact: bool) -> FileDialogPickerState {
+    PICKER_COMPACT.store(compact, Ordering::Release);
+    let target_value = ACTIVE_TARGET.load(Ordering::Acquire);
+    if target_value != 0
+        && let Some(picker) = picker_hwnd()
+    {
+        let target = HWND(target_value as *mut core::ffi::c_void);
+        if is_supported_window(target) {
+            let _ = position_picker(target, picker);
+        }
+    }
+    let state = picker_state();
+    emit_picker_state();
+    state
+}
+
+#[tauri::command]
+pub fn disable_file_dialog_integration(app: tauri::AppHandle) {
+    lock_config().enabled = false;
+    ACTIVE_TARGET.store(0, Ordering::Release);
+    DISMISSED_TARGET.store(0, Ordering::Release);
+    hide_picker_native();
+    let _ = app.emit("file-dialog-integration-disabled", ());
+    emit_picker_state();
 }
 
 #[cfg(test)]
@@ -1063,9 +1795,9 @@ mod tests {
         process::{Child, Command},
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetMenu, GetMenuItemCount, GetMenuItemID, GetMenuStringW, GetSubMenu,
-        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, MF_BYPOSITION, PostMessageW,
-        SetForegroundWindow, WM_CLOSE, WM_COMMAND,
+        EnumWindows, GW_OWNER, GetMenu, GetMenuItemCount, GetMenuItemID, GetMenuStringW,
+        GetSubMenu, GetWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+        MF_BYPOSITION, PostMessageW, SetForegroundWindow, WM_CLOSE, WM_COMMAND,
     };
 
     struct TopLevelWindowSearch {
@@ -1117,6 +1849,12 @@ mod tests {
             .map(|value| HWND(value as *mut core::ffi::c_void))
     }
 
+    fn window_title(hwnd: HWND) -> String {
+        let mut title = [0u16; 1024];
+        let length = unsafe { GetWindowTextW(hwnd, &mut title) };
+        String::from_utf16_lossy(&title[..length.max(0) as usize])
+    }
+
     fn wait_for_explorer_title(title_fragment: &str, timeout: Duration) -> Option<HWND> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -1125,6 +1863,27 @@ mod tests {
             }
             if Instant::now() >= deadline {
                 return None;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn wait_for_explorer_folder(hwnd: HWND, path: &str, timeout: Duration) -> bool {
+        let Some(folder_name) = std::path::Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+        else {
+            return false;
+        };
+        let deadline = Instant::now() + timeout;
+        loop {
+            if top_level_window_with_title("CabinetWClass", folder_name, None)
+                .is_some_and(|current| current == hwnd)
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -1148,6 +1907,295 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    fn explorer_tab_names(hwnd: HWND) -> Vec<String> {
+        struct ComGuard(bool);
+        impl Drop for ComGuard {
+            fn drop(&mut self) {
+                if self.0 {
+                    unsafe { CoUninitialize() };
+                }
+            }
+        }
+
+        let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+            return Vec::new();
+        }
+        let _guard = ComGuard(initialized.is_ok());
+        let Ok(automation) =
+            (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+        else {
+            return Vec::new();
+        };
+        let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+            return Vec::new();
+        };
+        let tab_list_id = VARIANT::from(BSTR::from("TabListView"));
+        let Ok(tab_list_condition) = (unsafe {
+            automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &tab_list_id)
+        }) else {
+            return Vec::new();
+        };
+        let Ok(tab_list) = (unsafe { root.FindFirst(TreeScope_Descendants, &tab_list_condition) })
+        else {
+            return Vec::new();
+        };
+        let Ok(any_condition) = (unsafe { automation.CreateTrueCondition() }) else {
+            return Vec::new();
+        };
+        let Ok(children) = (unsafe { tab_list.FindAll(TreeScope_Children, &any_condition) }) else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        for index in 0..unsafe { children.Length() }.unwrap_or_default() {
+            if let Ok(element) = unsafe { children.GetElement(index) }
+                && let Ok(name) = unsafe { element.CurrentName() }
+            {
+                let name = name.to_string();
+                if !name.is_empty() {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
+
+    fn open_explorer_tab(hwnd: HWND) -> bool {
+        struct ComGuard(bool);
+        impl Drop for ComGuard {
+            fn drop(&mut self) {
+                if self.0 {
+                    unsafe { CoUninitialize() };
+                }
+            }
+        }
+
+        let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+            return false;
+        }
+        let _guard = ComGuard(initialized.is_ok());
+        let Ok(automation) =
+            (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+        else {
+            return false;
+        };
+        let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+            return false;
+        };
+        let add_button_id = VARIANT::from(BSTR::from("AddButton"));
+        let Ok(condition) = (unsafe {
+            automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &add_button_id)
+        }) else {
+            return false;
+        };
+        let Ok(button) = (unsafe { root.FindFirst(TreeScope_Descendants, &condition) }) else {
+            return false;
+        };
+        let Ok(pattern) = (unsafe {
+            button.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+        }) else {
+            return false;
+        };
+        unsafe { pattern.Invoke() }.is_ok()
+    }
+
+    fn select_explorer_tab(hwnd: HWND, index: i32) -> bool {
+        struct ComGuard(bool);
+        impl Drop for ComGuard {
+            fn drop(&mut self) {
+                if self.0 {
+                    unsafe { CoUninitialize() };
+                }
+            }
+        }
+
+        let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+            return false;
+        }
+        let _guard = ComGuard(initialized.is_ok());
+        let Ok(automation) =
+            (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+        else {
+            return false;
+        };
+        let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+            return false;
+        };
+        let tab_list_id = VARIANT::from(BSTR::from("TabListView"));
+        let Ok(condition) = (unsafe {
+            automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &tab_list_id)
+        }) else {
+            return false;
+        };
+        let Ok(tab_list) = (unsafe { root.FindFirst(TreeScope_Descendants, &condition) }) else {
+            return false;
+        };
+        let Ok(any_condition) = (unsafe { automation.CreateTrueCondition() }) else {
+            return false;
+        };
+        let Ok(tabs) = (unsafe { tab_list.FindAll(TreeScope_Children, &any_condition) }) else {
+            return false;
+        };
+        let Ok(tab) = (unsafe { tabs.GetElement(index) }) else {
+            return false;
+        };
+        let Ok(pattern) = (unsafe {
+            tab.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
+        }) else {
+            return false;
+        };
+        if unsafe { pattern.Select() }.is_err() {
+            return false;
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if unsafe { pattern.CurrentIsSelected() }.is_ok_and(|value| value.as_bool()) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn invoke_named_uia_element(hwnd: HWND, name: &str) -> bool {
+        struct ComGuard(bool);
+        impl Drop for ComGuard {
+            fn drop(&mut self) {
+                if self.0 {
+                    unsafe { CoUninitialize() };
+                }
+            }
+        }
+
+        let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+            return false;
+        }
+        let _guard = ComGuard(initialized.is_ok());
+        let Ok(automation) =
+            (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+        else {
+            return false;
+        };
+        let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+            return false;
+        };
+        let element_name = VARIANT::from(BSTR::from(name));
+        let Ok(condition) =
+            (unsafe { automation.CreatePropertyCondition(UIA_NamePropertyId, &element_name) })
+        else {
+            return false;
+        };
+        let Ok(element) = (unsafe { root.FindFirst(TreeScope_Descendants, &condition) }) else {
+            return false;
+        };
+        let Ok(pattern) = (unsafe {
+            element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+        }) else {
+            return false;
+        };
+        unsafe { pattern.Invoke() }.is_ok()
+    }
+
+    fn uia_descendant_names(hwnd: HWND) -> Vec<String> {
+        struct ComGuard(bool);
+        impl Drop for ComGuard {
+            fn drop(&mut self) {
+                if self.0 {
+                    unsafe { CoUninitialize() };
+                }
+            }
+        }
+
+        let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+            return Vec::new();
+        }
+        let _guard = ComGuard(initialized.is_ok());
+        let Ok(automation) =
+            (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+        else {
+            return Vec::new();
+        };
+        let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+            return Vec::new();
+        };
+        let Ok(any_condition) = (unsafe { automation.CreateTrueCondition() }) else {
+            return Vec::new();
+        };
+        let Ok(elements) = (unsafe { root.FindAll(TreeScope_Descendants, &any_condition) }) else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        for index in 0..unsafe { elements.Length() }.unwrap_or_default() {
+            if let Ok(element) = unsafe { elements.GetElement(index) }
+                && let Ok(name) = unsafe { element.CurrentName() }
+            {
+                let name = name.to_string();
+                if !name.is_empty() {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
+
+    fn wait_for_uia_name(hwnd: HWND, name_fragment: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if uia_descendant_names(hwnd)
+                .iter()
+                .any(|name| name.contains(name_fragment))
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn focused_uia_debug() -> String {
+        struct ComGuard(bool);
+        impl Drop for ComGuard {
+            fn drop(&mut self) {
+                if self.0 {
+                    unsafe { CoUninitialize() };
+                }
+            }
+        }
+        let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+            return format!("COM failed: {initialized:?}");
+        }
+        let _guard = ComGuard(initialized.is_ok());
+        let Ok(automation) =
+            (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+        else {
+            return "automation unavailable".to_string();
+        };
+        let Ok(element) = (unsafe { automation.GetFocusedElement() }) else {
+            return "focused element unavailable".to_string();
+        };
+        let name = unsafe { element.CurrentName() }
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let id = unsafe { element.CurrentAutomationId() }
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let value =
+            unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+                .and_then(|pattern| unsafe { pattern.CurrentValue() })
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+        format!("name={name:?} id={id:?} value={value:?}")
     }
 
     struct ChildTextSearch {
@@ -1247,7 +2295,13 @@ mod tests {
         fn drop(&mut self) {
             lock_config().enabled = false;
             if let Some(hwnd) = self.hwnd {
-                let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+                for _ in 0..3 {
+                    if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+                        break;
+                    }
+                    let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+                    thread::sleep(Duration::from_millis(250));
+                }
             }
             thread::sleep(Duration::from_millis(250));
             let _ = fs::remove_dir_all(&self.root);
@@ -1259,6 +2313,32 @@ mod tests {
         main_hwnd: Option<HWND>,
         process: Option<Child>,
         root: std::path::PathBuf,
+    }
+
+    struct EdgeTestGuard {
+        dialog_hwnd: Option<HWND>,
+        browser_hwnd: Option<HWND>,
+        process: Option<Child>,
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for EdgeTestGuard {
+        fn drop(&mut self) {
+            if let Some(hwnd) = self.dialog_hwnd {
+                let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            }
+            if let Some(hwnd) = self.browser_hwnd {
+                let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            }
+            thread::sleep(Duration::from_millis(500));
+            if let Some(mut process) = self.process.take()
+                && process.try_wait().ok().flatten().is_none()
+            {
+                let _ = process.kill();
+                let _ = process.wait();
+            }
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
 
     impl Drop for NotepadTestGuard {
@@ -1345,6 +2425,12 @@ mod tests {
         assert_eq!(picker["create"], false);
         assert_eq!(picker["visible"], false);
         assert_eq!(picker["skipTaskbar"], true);
+        let picker_html = include_str!("../../src/integration-picker.html");
+        assert!(picker_html.contains("id=\"picker-compact\""));
+        assert!(picker_html.contains("id=\"picker-disable\""));
+        assert!(picker_html.contains("id=\"picker-open-rhfiles\""));
+        assert!(picker_html.contains("id=\"picker-open-rhfiles-compact\""));
+        assert!(picker_html.contains("在 RHFiles 里打开"));
     }
 
     #[test]
@@ -1355,6 +2441,11 @@ mod tests {
         );
         assert!(normalize_folder_path(Some("\\\\server\\share".into())).is_some());
         assert!(normalize_folder_path(Some("home://".into())).is_none());
+        assert!(same_windows_folder("C:\\Folder", "c:/folder/"));
+        assert!(same_windows_folder(
+            "\\\\SERVER\\Share\\Folder\\",
+            "\\\\server\\share\\folder"
+        ));
     }
 
     #[test]
@@ -1410,6 +2501,110 @@ mod tests {
         assert_eq!(
             navigated, hwnd,
             "navigation unexpectedly changed Explorer windows"
+        );
+    }
+
+    #[test]
+    #[ignore = "opens a controlled File Explorer window with two tabs"]
+    fn navigates_only_the_active_file_explorer_tab() {
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_millis()
+        );
+        let root = std::env::temp_dir().join(format!("rhfiles-explorer-tabs-e2e-{unique}"));
+        let first = root.join(format!("first-{unique}"));
+        let second = root.join(format!("second-{unique}"));
+        let target = root.join(format!("target-{unique}"));
+        fs::create_dir_all(&first).expect("create first Explorer tab folder");
+        fs::create_dir_all(&second).expect("create second Explorer tab folder");
+        fs::create_dir_all(&target).expect("create Explorer target folder");
+        let first_title = first.file_name().unwrap().to_string_lossy().into_owned();
+        let target_title = target.file_name().unwrap().to_string_lossy().into_owned();
+        let mut guard = ExplorerTestGuard { hwnd: None, root };
+
+        Command::new("explorer.exe")
+            .arg(format!("/n,/e,{}", first.display()))
+            .spawn()
+            .expect("start the controlled File Explorer window");
+        let hwnd = wait_for_explorer_title(&first_title, Duration::from_secs(10))
+            .expect("the controlled Explorer window did not open at the first folder");
+        guard.hwnd = Some(hwnd);
+        focus_controlled_window(hwnd);
+
+        assert!(
+            open_explorer_tab(hwnd),
+            "could not invoke Explorer's new-tab button"
+        );
+        let tab_deadline = Instant::now() + Duration::from_secs(5);
+        let opened_tabs = loop {
+            let names = explorer_tab_names(hwnd);
+            if names.len() >= 2 || Instant::now() >= tab_deadline {
+                break names;
+            }
+            thread::sleep(Duration::from_millis(100));
+        };
+        assert!(
+            opened_tabs.len() >= 2,
+            "Ctrl+T did not create a second Explorer tab: {opened_tabs:?}"
+        );
+        assert!(
+            select_explorer_tab(hwnd, 1),
+            "could not select the controlled second Explorer tab"
+        );
+        thread::sleep(Duration::from_millis(300));
+        focus_controlled_window(hwnd);
+        navigate_target_window(hwnd.0 as usize, &second.to_string_lossy())
+            .expect("navigate the new active Explorer tab to its source folder");
+        assert_eq!(
+            LAST_NAVIGATION_METHOD.load(Ordering::Acquire),
+            2,
+            "Explorer did not replace the active tab address in one operation"
+        );
+        assert!(
+            wait_for_explorer_folder(hwnd, &second.to_string_lossy(), Duration::from_secs(10)),
+            "the second Explorer tab did not navigate to its source folder: {:?}",
+            explorer_tab_names(hwnd)
+        );
+
+        focus_controlled_window(hwnd);
+        navigate_target_window(hwnd.0 as usize, &target.to_string_lossy())
+            .expect("select the target for the active Explorer tab");
+        assert_eq!(
+            LAST_NAVIGATION_METHOD.load(Ordering::Acquire),
+            2,
+            "Explorer did not keep replacing the active tab address in one operation"
+        );
+        assert!(
+            wait_for_explorer_folder(hwnd, &target.to_string_lossy(), Duration::from_secs(10)),
+            "the active Explorer tab did not navigate to the selected folder: expected_hwnd={hwnd:?} expected_title={:?}; tabs={:?}; focused={}; foreground={:?} foreground_class={:?} foreground_title={:?}",
+            window_title(hwnd),
+            explorer_tab_names(hwnd),
+            focused_uia_debug(),
+            unsafe { GetForegroundWindow() },
+            window_class(unsafe { GetForegroundWindow() }),
+            window_title(unsafe { GetForegroundWindow() }),
+        );
+        let active_explorer_path = read_active_explorer_folder(hwnd)
+            .expect("could not read the active Explorer tab's address");
+        assert!(
+            same_windows_folder(&active_explorer_path, &target.to_string_lossy()),
+            "Explorer address lookup returned the wrong tab: active={active_explorer_path:?} target={:?}",
+            target.to_string_lossy()
+        );
+
+        thread::sleep(Duration::from_millis(500));
+        let tab_names = explorer_tab_names(hwnd);
+        assert!(
+            tab_names.iter().any(|name| name.contains(&first_title)),
+            "the first Explorer tab was changed while the second tab was active: {tab_names:?}"
+        );
+        assert!(
+            tab_names.iter().any(|name| name.contains(&target_title)),
+            "the active Explorer tab did not retain the selected target: {tab_names:?}"
         );
     }
 
@@ -1499,6 +2694,11 @@ mod tests {
 
         navigate_target_window(dialog_hwnd.0 as usize, &target_folder.to_string_lossy())
             .expect("select the target from the RHFiles location picker");
+        assert_eq!(
+            LAST_NAVIGATION_METHOD.load(Ordering::Acquire),
+            2,
+            "the common file dialog fell back to visible per-character input"
+        );
         assert!(
             wait_for_child_text(
                 dialog_hwnd,
@@ -1539,5 +2739,140 @@ mod tests {
                 .expect("Notepad did not open the target file by its basename after navigation");
         assert_eq!(reopened, main_hwnd);
         guard.dialog_hwnd = None;
+    }
+
+    #[test]
+    #[ignore = "opens and closes a controlled Microsoft Edge file picker"]
+    fn navigates_a_real_edge_file_picker_without_character_typing() {
+        let edge = [
+            std::env::var_os("PROGRAMFILES(X86)")
+                .map(std::path::PathBuf::from)
+                .map(|path| path.join("Microsoft/Edge/Application/msedge.exe")),
+            std::env::var_os("PROGRAMFILES")
+                .map(std::path::PathBuf::from)
+                .map(|path| path.join("Microsoft/Edge/Application/msedge.exe")),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|path| path.is_file())
+        .expect("Microsoft Edge is not installed in a standard location");
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_millis()
+        );
+        let root = std::env::temp_dir().join(format!("rhfiles-edge-e2e-{unique}"));
+        let profile = root.join("edge-profile");
+        let target_folder = root.join(format!("edge-target-{unique}"));
+        let target_marker_name = format!("edge-marker-{unique}.txt");
+        let page = root.join("picker.html");
+        fs::create_dir_all(&profile).expect("create Edge test profile");
+        fs::create_dir_all(&target_folder).expect("create Edge target folder");
+        fs::write(
+            target_folder.join(&target_marker_name),
+            "RHFiles Edge picker test\n",
+        )
+        .expect("write Edge target marker");
+        let edge_title = format!("RHFiles Edge Dialog {unique}");
+        let button_name = format!("Open RHFiles picker {unique}");
+        fs::write(
+            &page,
+            format!(
+                "<!doctype html><meta charset=\"utf-8\"><title>{edge_title}</title>\
+                 <button onclick=\"document.getElementById('file').click()\">{button_name}</button>\
+                 <input id=\"file\" type=\"file\" hidden>"
+            ),
+        )
+        .expect("write controlled Edge page");
+        let page_url = url::Url::from_file_path(&page)
+            .expect("convert Edge page path to a file URL")
+            .to_string();
+
+        let process = Command::new(edge)
+            .arg("--new-window")
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg("--disable-sync")
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg(page_url)
+            .spawn()
+            .expect("start controlled Microsoft Edge window");
+        let mut guard = EdgeTestGuard {
+            dialog_hwnd: None,
+            browser_hwnd: None,
+            process: Some(process),
+            root,
+        };
+        let browser_hwnd = top_level_window_with_title("Chrome_WidgetWin_1", &edge_title, None)
+            .or_else(|| {
+                let deadline = Instant::now() + Duration::from_secs(15);
+                loop {
+                    if let Some(hwnd) =
+                        top_level_window_with_title("Chrome_WidgetWin_1", &edge_title, None)
+                    {
+                        break Some(hwnd);
+                    }
+                    if Instant::now() >= deadline {
+                        break None;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            })
+            .expect("the controlled Edge test page did not open");
+        guard.browser_hwnd = Some(browser_hwnd);
+        let mut browser_process_id = 0u32;
+        unsafe { GetWindowThreadProcessId(browser_hwnd, Some(&mut browser_process_id)) };
+        assert_ne!(browser_process_id, 0, "could not identify the Edge process");
+        focus_controlled_window(browser_hwnd);
+        let button_deadline = Instant::now() + Duration::from_secs(8);
+        let button_invoked = loop {
+            if invoke_named_uia_element(browser_hwnd, &button_name) {
+                break true;
+            }
+            if Instant::now() >= button_deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(150));
+        };
+        assert!(
+            button_invoked,
+            "could not invoke the controlled Edge file-picker button"
+        );
+        let dialog_deadline = Instant::now() + Duration::from_secs(10);
+        let dialog_hwnd = loop {
+            let foreground = unsafe { GetForegroundWindow() };
+            if window_class(foreground).eq_ignore_ascii_case("#32770")
+                && is_supported_window(foreground)
+                && unsafe { GetWindow(foreground, GW_OWNER) }.ok() == Some(browser_hwnd)
+            {
+                break Some(foreground);
+            }
+            if Instant::now() >= dialog_deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        .expect("Edge did not open its native Windows file picker");
+        guard.dialog_hwnd = Some(dialog_hwnd);
+        focus_controlled_window(dialog_hwnd);
+        navigate_target_window(dialog_hwnd.0 as usize, &target_folder.to_string_lossy())
+            .expect("navigate Edge's native file picker");
+        assert_eq!(
+            LAST_NAVIGATION_METHOD.load(Ordering::Acquire),
+            2,
+            "Edge's file picker fell back to visible per-character input"
+        );
+        let reached_target =
+            wait_for_uia_name(dialog_hwnd, &target_marker_name, Duration::from_secs(10));
+        assert!(
+            reached_target,
+            "Edge's file picker did not reach the selected folder; focused={}; foreground={:?}; names={:?}",
+            focused_uia_debug(),
+            unsafe { GetForegroundWindow() },
+            uia_descendant_names(dialog_hwnd),
+        );
     }
 }

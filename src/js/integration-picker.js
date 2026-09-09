@@ -7,18 +7,20 @@ const pickerText = {
     dialog: 'Windows 打开 / 保存窗口', explorer: 'Windows 资源管理器',
     window: 'RHFiles 窗口 {number}', left: '左窗格', right: '右窗格', tab: '标签 {number}',
     pinned: '已固定', empty: '没有可用的文件夹', emptyHint: '请先在 RHFiles 中打开本地或网络文件夹',
-    failed: '跳转失败：{error}', close: '关闭',
+    failed: '跳转失败：{error}', collapse: '收起（仅显示路径）', expand: '展开详细信息',
+    hide: '暂时隐藏', disable: '关闭此功能（可在设置中重新开启）', openInRhfiles: '在 RHFiles 里打开',
   },
   en: {
     title: 'Open RHFiles locations', subtitle: 'Choose where this Windows window should go', click: 'Click to navigate',
     dialog: 'Windows Open / Save dialog', explorer: 'Windows File Explorer',
     window: 'RHFiles window {number}', left: 'Left pane', right: 'Right pane', tab: 'Tab {number}',
     pinned: 'Pinned', empty: 'No folder is available', emptyHint: 'Open a local or network folder in RHFiles first',
-    failed: 'Navigation failed: {error}', close: 'Close',
+    failed: 'Navigation failed: {error}', collapse: 'Collapse to paths only', expand: 'Expand details',
+    hide: 'Hide for now', disable: 'Turn off this feature (re-enable it in Settings)', openInRhfiles: 'Open in RHFiles',
   },
 };
 
-let pickerState = { locale: 'zh', locations: [], targetKind: '' };
+let pickerState = { locale: 'zh', locations: [], targetKind: '', targetPath: null, compact: false };
 
 function tr(key, values = {}) {
   const locale = String(pickerState.locale || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
@@ -43,13 +45,30 @@ function folderIcon() {
 function renderPicker(state) {
   pickerState = state || pickerState;
   document.documentElement.lang = String(pickerState.locale || '').startsWith('zh') ? 'zh-CN' : 'en';
+  document.documentElement.classList.toggle('compact', pickerState.compact === true);
   document.getElementById('picker-title').textContent = tr('title');
   document.getElementById('picker-subtitle').textContent = tr('subtitle');
   document.getElementById('picker-hint').textContent = tr('click');
   document.getElementById('picker-target').textContent = pickerState.targetKind === 'windowsExplorer' ? tr('explorer') : tr('dialog');
+  const compact = document.getElementById('picker-compact');
+  const compactLabel = tr(pickerState.compact ? 'expand' : 'collapse');
+  compact.title = compactLabel;
+  compact.setAttribute('aria-label', compactLabel);
+  const disable = document.getElementById('picker-disable');
+  disable.title = tr('disable');
+  disable.setAttribute('aria-label', tr('disable'));
   const close = document.getElementById('picker-close');
-  close.title = tr('close');
-  close.setAttribute('aria-label', tr('close'));
+  close.title = tr('hide');
+  close.setAttribute('aria-label', tr('hide'));
+  const openInRhfiles = document.getElementById('picker-open-rhfiles');
+  const compactOpenInRhfiles = document.getElementById('picker-open-rhfiles-compact');
+  const canOpenInRhfiles = pickerState.targetKind === 'windowsExplorer';
+  openInRhfiles.hidden = !canOpenInRhfiles;
+  openInRhfiles.title = canOpenInRhfiles ? (pickerState.targetPath || tr('openInRhfiles')) : '';
+  compactOpenInRhfiles.hidden = !canOpenInRhfiles;
+  compactOpenInRhfiles.title = tr('openInRhfiles');
+  compactOpenInRhfiles.setAttribute('aria-label', tr('openInRhfiles'));
+  document.getElementById('picker-open-rhfiles-label').textContent = tr('openInRhfiles');
 
   const list = document.getElementById('picker-list');
   list.replaceChildren();
@@ -123,6 +142,33 @@ function renderPicker(state) {
   });
 }
 
+document.getElementById('picker-compact').addEventListener('click', async () => {
+  const compact = pickerState.compact !== true;
+  localStorage.setItem('rhfiles-integration-picker-compact', String(compact));
+  try {
+    const state = await pickerInvoke('set_file_dialog_picker_compact', { compact });
+    renderPicker(state);
+  } catch (error) {
+    document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
+  }
+});
+document.getElementById('picker-disable').addEventListener('click', () => {
+  pickerInvoke('disable_file_dialog_integration').catch(error => {
+    document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
+  });
+});
+async function openExplorerLocation(event) {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await pickerInvoke('open_explorer_location_in_rhfiles');
+  } catch (error) {
+    document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
+    button.disabled = false;
+  }
+}
+document.getElementById('picker-open-rhfiles').addEventListener('click', openExplorerLocation);
+document.getElementById('picker-open-rhfiles-compact').addEventListener('click', openExplorerLocation);
 document.getElementById('picker-close').addEventListener('click', () => pickerInvoke('hide_file_dialog_picker'));
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') pickerInvoke('hide_file_dialog_picker');
@@ -131,4 +177,7 @@ document.addEventListener('keydown', event => {
 if (pickerListen) {
   pickerListen('file-dialog-picker-state', event => renderPicker(event.payload)).catch(() => {});
 }
-pickerInvoke('get_file_dialog_picker_state').then(renderPicker).catch(() => renderPicker(pickerState));
+const savedCompact = localStorage.getItem('rhfiles-integration-picker-compact') === 'true';
+pickerInvoke('set_file_dialog_picker_compact', { compact: savedCompact })
+  .then(renderPicker)
+  .catch(() => pickerInvoke('get_file_dialog_picker_state').then(renderPicker).catch(() => renderPicker(pickerState)));
