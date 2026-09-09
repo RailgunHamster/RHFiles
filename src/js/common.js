@@ -571,8 +571,42 @@ function fmtSize(bytes) {
 }
 
 // --- API ---
+function normalizeInvokeArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args || {};
+  const normalized = {};
+  // Explicit camelCase keys win if an older extension supplies both forms.
+  Object.entries(args).forEach(([key, value]) => {
+    if (!key.includes('_')) normalized[key] = value;
+  });
+  Object.entries(args).forEach(([key, value]) => {
+    if (!key.includes('_')) return;
+    const camelKey = key.replace(/_([a-z0-9])/g, (_, letter) => letter.toUpperCase());
+    if (!(camelKey in normalized)) normalized[camelKey] = value;
+  });
+  return normalized;
+}
+
+let _invokeFailureLogPending = false;
+function logInvokeFailure(command, error) {
+  if (!invoke || command === 'log_error' || _invokeFailureLogPending) return;
+  _invokeFailureLogPending = true;
+  const message = error && typeof error.message === 'string' ? error.message : String(error || 'Unknown IPC error');
+  invoke('log_error', {
+    message: `IPC ${command}: ${message}`,
+    source: 'ipc',
+    stack: error?.stack || '',
+  }).catch(() => {}).finally(() => { _invokeFailureLogPending = false; });
+}
+
 async function call(cmd, args) {
-  if (invoke) return invoke(cmd, args || {});
+  if (invoke) {
+    try {
+      return await invoke(cmd, normalizeInvokeArgs(args));
+    } catch (error) {
+      logInvokeFailure(cmd, error);
+      throw error;
+    }
+  }
   return fallbackCall(cmd, args || {});
 }
 

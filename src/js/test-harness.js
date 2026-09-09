@@ -1167,6 +1167,36 @@
       }
     });
 
+    await test("[integration] Enabling the companion keeps native IPC responsive", async () => {
+      const savedEnabled = G.settings.fileDialogIntegrationEnabled;
+      try {
+        G.settings.fileDialogIntegrationEnabled = true;
+        const status = await withTimeout(
+          syncFileDialogIntegration(true),
+          8000,
+          'Enabling Windows integration blocked the native event loop',
+        );
+        assertEqual(status.enabled, true, "Enabled integration was not reported as enabled");
+
+        const tempPath = await withTimeout(call('get_env', {key:'TEMP'}), 3000, 'IPC stopped after enabling integration');
+        const [entries, history, label] = await Promise.all([
+          withTimeout(call('list_dir', {path:tempPath}), 5000, 'Directory IPC stopped after enabling integration'),
+          withTimeout(call('get_release_history', {source:getUpdateSource(),proxy:null,allowRemote:false}), 5000, 'Update IPC stopped after enabling integration'),
+          withTimeout(call('get_window_label', {}), 3000, 'Window IPC stopped after enabling integration'),
+        ]);
+        assert(Array.isArray(entries), "Directory IPC returned an invalid value after enabling integration");
+        assert(Array.isArray(history?.releases) && history.releases.length > 0, "Release history disappeared after enabling integration");
+        assertEqual(label, G.windowLabel, "Window IPC returned the wrong label after enabling integration");
+      } finally {
+        G.settings.fileDialogIntegrationEnabled = false;
+        await withTimeout(syncFileDialogIntegration(true), 5000, 'Disabling Windows integration timed out').catch(() => {});
+        G.settings.fileDialogIntegrationEnabled = savedEnabled;
+        if (savedEnabled) {
+          await withTimeout(syncFileDialogIntegration(true), 5000, 'Restoring Windows integration timed out').catch(() => {});
+        }
+      }
+    });
+
     await test("[media] Conversion dialog supports video, audio, and image profiles", async () => {
       assertEqual(mediaConversionKind({name:'clip.mkv', extension:'mkv', is_dir:false}), 'video', "MKV was not recognized as video");
       assertEqual(mediaConversionKind({name:'track.flac', extension:'flac', is_dir:false}), 'audio', "FLAC was not recognized as audio");
@@ -3019,6 +3049,31 @@
     await test("[window] Window label matches G.windowLabel", async () => {
       const label = await call("get_window_label", {});
       assertEqual(label, G.windowLabel, "Window label from backend should match G.windowLabel");
+    });
+
+    await test("[ipc] Legacy snake_case command keys normalize without changing nested data", async () => {
+      const normalized = normalizeInvokeArgs({
+        window_id:'main',
+        state_json:'{}',
+        windowId:'preferred',
+        nested:{is_dir:true},
+      });
+      assertEqual(normalized.windowId, 'preferred', "An explicit camelCase key did not win");
+      assertEqual(normalized.stateJson, '{}', "A top-level snake_case key was not normalized");
+      assertEqual(normalized.nested.is_dir, true, "Nested serialized data was incorrectly rewritten");
+      assert(!('window_id' in normalized), "The legacy top-level key was retained");
+
+      let state;
+      try {
+        state = await withTimeout(
+          call('load_window_state', {window_id:G.windowLabel}),
+          3000,
+          'Legacy window-state IPC key timed out',
+        );
+      } catch (error) {
+        throw new Error(`Legacy window-state IPC key failed: ${String(error)}`);
+      }
+      assert(state === null || typeof state === 'object', "Window-state IPC returned an invalid value");
     });
 
     // ================================================================

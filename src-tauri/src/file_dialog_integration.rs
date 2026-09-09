@@ -919,7 +919,11 @@ fn current_status() -> FileDialogIntegrationStatus {
     }
 }
 
-#[tauri::command]
+// Creating or destroying a WebView window may synchronously marshal work back
+// to Tauri's event loop. This command must therefore run on the async command
+// executor; running it as a synchronous command deadlocks every later IPC call
+// when the opt-in integration creates its companion picker.
+#[tauri::command(async)]
 pub fn configure_file_dialog_integration(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,

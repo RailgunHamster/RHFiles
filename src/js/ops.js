@@ -909,7 +909,7 @@ function buildProgramOpenMenu(targetPath, options) {
     items.push({ label: t('ctx.openWithDialog'), action: () => runContextCommand("show_open_with_dialog", { path: targetPath }, t('ctx.openWithDialog')) });
   }
   if (opts.includeNewWindow) {
-    items.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initial_path: targetPath }) });
+    items.push({ label: t('ctx.newWindow'), action: () => call("open_new_window", { initialPath: targetPath }) });
   }
   return items;
 }
@@ -950,7 +950,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.newTab'), action: () => addTab(singleDir.path), hidden: !singleDir },
     { label: t('ctx.openWith'), submenu: openWithSubmenu, disabled: !singleSelection },
     { label: t('ctx.convertFormat'), action: () => showMediaConvertDialog(singleFile, isRight), hidden: !conversionKind },
-    { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: sel[0].path, is_directory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')), disabled: !singleSelection },
+    { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: sel[0].path, isDirectory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')), disabled: !singleSelection },
     { label: isFavoriteFolder(singleDir?.path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(singleDir.path, singleDir.name), hidden: !singleDir },
     { label: "-", action: null },
     { label: t('ctx.cut'), shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
@@ -1123,7 +1123,7 @@ function showTabContextMenu(x, y, tabId, isRight) {
     { label: t('tab.closeRight'), action: () => closeTabsToRight(tabId, isRight), disabled: index < 0 || !hasClosableRight },
     { label: '-' },
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(folderPath), disabled: folderPath === 'home://' },
-    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: folderPath, is_directory: true}, t('ctx.openFolderInExplorer')), disabled: folderPath === 'home://' },
+    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: folderPath, isDirectory: true}, t('ctx.openFolderInExplorer')), disabled: folderPath === 'home://' },
     { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'cmd'}, 'CMD'), disabled: folderPath === 'home://' },
     { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'powershell'}, 'PowerShell'), disabled: folderPath === 'home://' },
     { label: '-' },
@@ -1185,7 +1185,7 @@ function showPathContextMenu(x, y, path, isDir, isRight) {
     { label: t('ctx.newTab'), action: () => addTab(path, isRight), hidden: !isDir },
     { label: '-' },
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(path) },
-    { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, is_directory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')) },
+    { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')) },
     { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'cmd'}, 'CMD') },
     { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'powershell'}, 'PowerShell') },
     { label: t('diskUsage.analyze'), hidden: !isDir, action: () => showDiskUsageDialog(path) },
@@ -1209,7 +1209,7 @@ function showBlankListContextMenu(x, y, isRight) {
     { label: t('ctx.selectAll'), shortcut: 'Ctrl+A', action: () => selectAll(isRight) },
     { label: '-' },
     { label: t('ctx.copyPath'), action: () => copyPathFromMenu(path) },
-    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, is_directory: true}, t('ctx.openFolderInExplorer')) },
+    { label: t('ctx.openFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
     { label: t('ctx.openWith'), submenu: buildProgramOpenMenu(path, {isDirectory:true, includeNewWindow:true}) },
     { label: t('ctx.openCmd'), action: () => runContextCommand('open_terminal', {path, terminal: 'cmd'}, 'CMD') },
     { label: t('ctx.openPowerShell'), action: () => runContextCommand('open_terminal', {path, terminal: 'powershell'}, 'PowerShell') },

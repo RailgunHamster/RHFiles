@@ -918,6 +918,17 @@ function describeNavigationError(error) {
 
 function renderNavigationError(path, error, isRight) {
   const info = describeNavigationError(error);
+  const logKey = `${isRight ? 'right' : 'left'}|${path}|${info.raw}`;
+  const now = Date.now();
+  renderNavigationError._loggedAt ||= new Map();
+  if (now - (renderNavigationError._loggedAt.get(logKey) || 0) > 30000) {
+    renderNavigationError._loggedAt.set(logKey, now);
+    call('log_error', {
+      message: `Navigation failed for ${path}: ${info.raw}`,
+      source: isRight ? 'navigation-right' : 'navigation-left',
+      stack: error?.stack || '',
+    }).catch(() => {});
+  }
   const list = document.getElementById(isRight ? 'right-file-list' : 'file-list');
   const status = document.getElementById(isRight ? 'right-status-count' : 'status-count');
   if (status) status.textContent = t(`nav.${info.key}Title`);
@@ -989,7 +1000,11 @@ async function navigateTo(path, pushHistory) {
   if (filterEl && path !== tab.path) filterEl.value = "";
   if (!(tab.entries || []).length) renderNavigationLoading(path, false);
   try {
-    let entries = await listPathEntries(path, "");
+    let entries = await withTimeout(
+      listPathEntries(path, ""),
+      10000,
+      t('nav.folderLoadTimedOut'),
+    );
     if (navigationToken !== _navigationToken) return false;
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
     const filter = filterEl ? filterEl.value.toLowerCase() : "";

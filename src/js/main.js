@@ -80,7 +80,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let geo = null;
   try {
     const ws = await withTimeout(
-      call("load_window_state", { window_id: G.windowLabel }),
+      call("load_window_state", { windowId: G.windowLabel }),
       3000,
       'Saved window state timed out',
     );
@@ -344,7 +344,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         })),
       };
       call("save_current_window_geometry", {
-        state_json: JSON.stringify(state),
+        stateJson: JSON.stringify(state),
       }).catch(() => {});
       if (!_cleanupDone) {
         _cleanupDone = true;
@@ -478,7 +478,7 @@ async function openUpdateFailureLog() {
   const path = G._lastUpdateFailure?.logPath;
   if (!path) return;
   try {
-    await call('open_in_windows_explorer', {path, is_directory:false});
+    await call('open_in_windows_explorer', {path, isDirectory:false});
   } catch (error) {
     showNotice(t('update.openLogFailed', {error: String(error)}));
   }
