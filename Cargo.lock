@@ -4235,7 +4235,7 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-tauri"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "chrono",
  "libloading 0.8.9",
