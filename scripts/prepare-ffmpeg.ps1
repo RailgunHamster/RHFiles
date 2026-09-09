@@ -8,12 +8,15 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $thirdPartyDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot "src-tauri\thirdparty"))
 $workDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot "temp\ffmpeg-9.0.1"))
 $archivePath = Join-Path $workDirectory "ffmpeg-9.0.1-essentials_build.7z"
+$fallbackArchivePath = Join-Path $workDirectory "RHFiles-0.1.26-full.nupkg"
 $extractDirectory = Join-Path $workDirectory "extracted"
 $destinationExe = Join-Path $thirdPartyDirectory "ffmpeg.exe"
 $destinationLicense = Join-Path $thirdPartyDirectory "ffmpeg-LICENSE.txt"
 $destinationReadme = Join-Path $thirdPartyDirectory "ffmpeg-README.txt"
 $downloadUrl = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.1-essentials_build.7z"
 $expectedArchiveSha256 = "49A73BDF0850092A252AC4641D922F3048D63ED113E196CC65CE1E4F7FB33E85"
+$fallbackDownloadUrl = "https://github.com/RailgunHamster/RHFiles/releases/download/v0.1.26/RHFiles-0.1.26-full.nupkg"
+$fallbackArchiveSha256 = "4E16A1F474347DBC2293BA09CE96A906A40F680A95D71E89C022C10FF5CA4556"
 $expectedBinarySha256 = "72A489ECCD008C2EC2C0A5856C5C75BC3D8BBFA90166C4566865C246445E6AA3"
 
 function Assert-WorkspaceChild([string]$Path, [string]$Description) {
@@ -73,6 +76,8 @@ if (-not [string]::IsNullOrWhiteSpace($Proxy)) {
 }
 $downloaded = $false
 $lastDownloadError = $null
+$downloadSource = "Gyan.dev FFmpeg archive"
+$expectedDownloadedSha256 = $expectedArchiveSha256
 for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
         Invoke-WebRequest @downloadArguments
@@ -87,12 +92,34 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
     }
 }
 if (-not $downloaded) {
-    throw "Unable to download the pinned FFmpeg build after 5 attempts: $($lastDownloadError.Exception.Message)"
+    Write-Warning "The primary FFmpeg archive is unavailable; recovering the same verified binary from the RHFiles 0.1.26 package. $($lastDownloadError.Exception.Message)"
+    $archivePath = $fallbackArchivePath
+    $downloadArguments.Uri = $fallbackDownloadUrl
+    $downloadArguments.OutFile = $fallbackArchivePath
+    $downloadSource = "RHFiles 0.1.26 release package"
+    $expectedDownloadedSha256 = $fallbackArchiveSha256
+    $lastDownloadError = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest @downloadArguments
+            $downloaded = $true
+            break
+        } catch {
+            $lastDownloadError = $_
+            if ($attempt -lt 3) {
+                Write-Warning "FFmpeg fallback download attempt $attempt failed; retrying. $($_.Exception.Message)"
+                Start-Sleep -Seconds ([Math]::Pow(2, $attempt))
+            }
+        }
+    }
+    if (-not $downloaded) {
+        throw "Unable to download the pinned FFmpeg build from either source: $($lastDownloadError.Exception.Message)"
+    }
 }
 
 $archiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
-if ($archiveSha256 -ne $expectedArchiveSha256) {
-    throw "FFmpeg archive checksum mismatch. Expected $expectedArchiveSha256, received $archiveSha256"
+if ($archiveSha256 -ne $expectedDownloadedSha256) {
+    throw "FFmpeg source checksum mismatch. Expected $expectedDownloadedSha256, received $archiveSha256"
 }
 
 $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
@@ -118,8 +145,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $sourceExe = Get-ChildItem -LiteralPath $extractDirectory -Recurse -Filter "ffmpeg.exe" -File | Select-Object -First 1
-$sourceLicense = Get-ChildItem -LiteralPath $extractDirectory -Recurse -Filter "LICENSE" -File | Select-Object -First 1
-$sourceReadme = Get-ChildItem -LiteralPath $extractDirectory -Recurse -Filter "README.txt" -File | Select-Object -First 1
+$sourceLicense = Get-ChildItem -LiteralPath $extractDirectory -Recurse -Filter "FFmpeg-LICENSE.txt" -File | Select-Object -First 1
+if (-not $sourceLicense) {
+    $sourceLicense = Get-ChildItem -LiteralPath $extractDirectory -Recurse -Filter "LICENSE" -File | Select-Object -First 1
+}
+$sourceReadme = Get-ChildItem -LiteralPath $extractDirectory -Recurse -Filter "FFmpeg-README.txt" -File | Select-Object -First 1
+if (-not $sourceReadme) {
+    $sourceReadme = Get-ChildItem -LiteralPath $extractDirectory -Recurse -Filter "README.txt" -File | Select-Object -First 1
+}
 if (-not $sourceExe -or -not $sourceLicense -or -not $sourceReadme) {
     throw "The verified FFmpeg archive did not contain ffmpeg.exe, LICENSE, and README.txt"
 }
@@ -135,6 +168,7 @@ if (-not (Test-PinnedFfmpeg $destinationExe)) {
     Version = "9.0.1"
     Executable = $destinationExe
     Reused = $false
+    Source = $downloadSource
     ArchiveSha256 = $archiveSha256
     Sha256 = (Get-FileHash -LiteralPath $destinationExe -Algorithm SHA256).Hash
 }
