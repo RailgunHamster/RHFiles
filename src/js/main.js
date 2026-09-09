@@ -1,7 +1,53 @@
 // main.js — initialization and event wiring
 
+let _startupWatchdogTimer = null;
+
+function startupIssueText(error) {
+  if (error && typeof error.message === 'string') return error.message;
+  return String(error || 'Unknown startup error');
+}
+
+function reportStartupIssue(stage, error) {
+  call('log_error', {
+    message: `Startup ${stage}: ${startupIssueText(error)}`,
+    source: 'startup',
+    stack: error?.stack || '',
+  }).catch(() => {});
+}
+
+function beginStartupWatchdog() {
+  clearTimeout(_startupWatchdogTimer);
+  _startupWatchdogTimer = setTimeout(() => {
+    if (G.startupReady === true) return;
+    const tab = typeof getTab === 'function' ? getTab() : null;
+    const list = document.getElementById('file-list');
+    const homeVisible = document.getElementById('home-page')?.style.display !== 'none';
+    if (list && !homeVisible && tab?._loaded !== true && list.childElementCount === 0
+        && typeof renderNavigationError === 'function') {
+      renderNavigationError(
+        tab?.path || '',
+        new Error(t('nav.startupTimedOutDetail')),
+        false,
+      );
+    }
+    reportStartupIssue('watchdog', new Error('Application initialization did not finish within 12 seconds'));
+  }, 12000);
+}
+
+function completeStartup() {
+  G.startupReady = true;
+  document.documentElement.dataset.appReady = 'true';
+  clearTimeout(_startupWatchdogTimer);
+  _startupWatchdogTimer = null;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
-  await initI18n();
+  beginStartupWatchdog();
+  try {
+    await withTimeout(initI18n(), 3500, 'Language resources timed out');
+  } catch (error) {
+    reportStartupIssue('language', error);
+  }
   applyI18n();
   if (typeof initCommands === 'function') initCommands();
   if (typeof restorePreviewPane === 'function') restorePreviewPane();
@@ -11,11 +57,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   {
     const [knownFolders, label] = await Promise.all([
-      call("get_known_folders", {}).catch(async () => {
-        const home = await call("get_env", { key: "USERPROFILE" }).catch(() => "C:\\");
+      withTimeout(call("get_known_folders", {}), 3000, 'Known folders timed out').catch(async error => {
+        reportStartupIssue('known-folders', error);
+        const home = await withTimeout(
+          call("get_env", { key: "USERPROFILE" }),
+          1500,
+          'Home folder lookup timed out',
+        ).catch(() => "C:\\");
         return { home: home || "C:\\" };
       }),
-      call("get_window_label", {}).catch(() => "main"),
+      withTimeout(call("get_window_label", {}), 2000, 'Window label timed out').catch(error => {
+        reportStartupIssue('window-label', error);
+        return "main";
+      }),
     ]);
     G.knownFolders = knownFolders || {};
     G.homeDirPath = G.knownFolders.home || "C:\\";
@@ -25,7 +79,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   let saved = null;
   let geo = null;
   try {
-    const ws = await call("load_window_state", { window_id: G.windowLabel });
+    const ws = await withTimeout(
+      call("load_window_state", { window_id: G.windowLabel }),
+      3000,
+      'Saved window state timed out',
+    );
     if (ws && ws.state_json) {
       try {
         const parsed = JSON.parse(ws.state_json);
@@ -37,7 +95,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       } catch(e) {}
       geo = ws;
     }
-  } catch (e) {}
+  } catch (error) {
+    reportStartupIssue('saved-window-state', error);
+  }
 
   if (!saved) saved = loadTabState();
 
@@ -47,6 +107,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       id: st.id || i, path: migrateLegacyKnownFolderPath(st.path || startPath),
       history: [migrateLegacyKnownFolderPath(st.path || startPath)], historyIdx: 0,
       entries: [], sel: new Set(), lastIdx: -1,
+      _loaded: false,
       sortF: st.sortF || "name", sortAsc: st.sortAsc !== undefined ? st.sortAsc : true,
       pinned: st.pinned === true,
       _restoredSelPaths: st.selPaths || [],
@@ -61,6 +122,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         path: migrateLegacyKnownFolderPath(st.path || startPath),
         history: [migrateLegacyKnownFolderPath(st.path || startPath)], histIdx: 0,
         entries: [], sel: new Set(), lastIdx: -1,
+        _loaded: false,
         sortF: st.sortF || 'name', sortAsc: st.sortAsc !== false,
         pinned: st.pinned === true,
       }));
@@ -85,7 +147,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       5000,
       "Initial folder load timed out"
     );
-  } catch (e) {}
+  } catch (error) {
+    reportStartupIssue('initial-folder', error);
+  }
   if (!initialPathLoaded) {
     try {
       initialPathLoaded = await withTimeout(
@@ -93,11 +157,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         3000,
         "Fallback folder load timed out"
       );
-    } catch (e) {}
+    } catch (error) {
+      reportStartupIssue('fallback-folder', error);
+    }
   }
   if (!initialPathLoaded) await navigateTo("home://", false);
   if (typeof syncFileDialogIntegration === 'function') {
-    await syncFileDialogIntegration(true).catch(() => {});
+    await withTimeout(
+      syncFileDialogIntegration(true),
+      3000,
+      'Windows integration startup timed out',
+    ).catch(error => reportStartupIssue('windows-integration', error));
     window.addEventListener('focus', () => scheduleFileDialogIntegrationSync(true));
   }
 
@@ -282,6 +352,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     } catch(e) {}
   }, 15000);
+  completeStartup();
 });
 
 document.addEventListener("contextmenu", e => {

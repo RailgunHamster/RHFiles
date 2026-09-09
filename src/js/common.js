@@ -237,12 +237,18 @@ Object.assign(_builtinEn, {
   'update.openLogFailed': 'Unable to open the update log: {error}',
   'pane.leftFiles': 'Files in the left pane',
   'pane.rightFiles': 'Files in the right pane',
+  'nav.loadingTitle': 'Opening folder...',
+  'nav.folderLoadTimedOut': 'Folder loading timed out after 10 seconds',
+  'nav.folderEmpty': 'This folder is empty',
+  'nav.startupTimedOutDetail': 'RHFiles startup did not finish. Try again; diagnostic details were written to the application log.',
+  'settings.historyRefreshing': 'Offline history is ready; refreshing from the selected update source...',
 });
 const I18N = { en: _builtinEn };
 const BUNDLED_I18N_FILES = [
   { code: 'en', name: 'English', url: '/i18n/en.json' },
   { code: 'zh', name: '\u4e2d\u6587', url: '/i18n/zh.json' },
 ];
+const I18N_FILE_TIMEOUT_MS = 2500;
 
 function detectDefaultLanguage(languages) {
   const preferred = Array.isArray(languages)
@@ -260,15 +266,27 @@ let _lang = localStorage.getItem('rhfiles-lang') || detectDefaultLanguage();
 let _i18nReady = false;
 
 async function initI18n() {
-  await Promise.allSettled(BUNDLED_I18N_FILES.map(async file => {
-    const resp = await fetch(file.url);
-    if (resp.ok) {
+  const results = await Promise.allSettled(BUNDLED_I18N_FILES.map(async file => {
+    // These are local, bundled assets. A damaged WebView request must not hold
+    // the whole application at a blank startup screen forever; the compact
+    // built-in English dictionary remains usable as the last-resort fallback.
+    await withTimeout((async () => {
+      const resp = await fetch(file.url, {cache:'no-store'});
+      if (!resp.ok) throw new Error(`Unable to load ${file.url}: HTTP ${resp.status}`);
       const data = await resp.json();
       const code = data._meta?.code || file.code;
       I18N[code] = data;
       I18N[code]._name = data._meta?.name || file.name || code;
-    }
+    })(), I18N_FILE_TIMEOUT_MS, `Loading ${file.url} timed out`);
   }));
+  results.forEach((result, index) => {
+    if (result.status !== 'rejected') return;
+    call('log_error', {
+      message: `Bundled language resource ${BUNDLED_I18N_FILES[index].url}: ${String(result.reason)}`,
+      source: 'startup-language',
+      stack: result.reason?.stack || '',
+    }).catch(() => {});
+  });
   _i18nReady = true;
 }
 
@@ -320,7 +338,7 @@ function getAvailableLanguages() {
 // --- state ---
 let G = {};
 window.G = G;
-G.tabs = [{ id: 0, path: "C:\\", history: [], historyIdx: -1, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false }];
+G.tabs = [{ id: 0, path: "C:\\", history: [], historyIdx: -1, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, _loaded: false }];
 G.activeTab = 0;
 G.nextTabId = 1;
 G.sortField = "name";
@@ -353,7 +371,7 @@ G.inspectorTab = 'preview';
 G._typeSearch = { str: '', lastQuery: '', visualQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
 
 // --- right pane state ---
-G.rp = { id: 100000, path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, history: ["C:\\"], histIdx: 0 };
+G.rp = { id: 100000, path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, history: ["C:\\"], histIdx: 0, _loaded: false };
 G.rpTabs = [G.rp];
 G.activeRpTab = G.rp.id;
 G.nextRpTabId = 100001;

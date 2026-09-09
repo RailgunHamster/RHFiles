@@ -153,8 +153,12 @@ function _renderTabContent(tab) {
   renderBreadcrumb(tab.path);
   document.getElementById("path-input").value = tab.path;
   _applySavedSelection(tab);
-  renderFiles(tab, "file-list", "status-count", "status-selection");
-  updateStatus(tab, "status-count", "status-selection");
+  if (tab._loaded !== true && !(tab.entries || []).length) {
+    renderNavigationLoading(tab.path, false);
+  } else {
+    renderFiles(tab, "file-list", "status-count", "status-selection");
+    updateStatus(tab, "status-count", "status-selection");
+  }
   updatePreviewForSelection();
   _applySavedScroll(tab);
 }
@@ -163,7 +167,7 @@ function addTab(path, isRight) {
   if (isRight === undefined) isRight = G.dualOn && G.lastActivePane === 'right';
   if (isRight) return addRightTab(path);
   path = path || "C:\\";
-  const t = { id: G.nextTabId++, path, history: [path], historyIdx: 0, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false };
+  const t = { id: G.nextTabId++, path, history: [path], historyIdx: 0, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, _loaded: false };
   G.tabs.push(t);
   G.activeTab = t.id;
   G.sortField = "name";
@@ -200,6 +204,7 @@ async function duplicateTab(tabId, isRight) {
     sortF: source.sortF || 'name',
     sortAsc: source.sortAsc !== false,
     pinned: source.pinned === true,
+    _loaded: source._loaded === true,
     _savedScroll: source._savedScroll || 0,
   };
   if (isRight) duplicate.histIdx = Math.max(0, Math.min(source.histIdx ?? 0, duplicate.history.length - 1));
@@ -281,7 +286,7 @@ function closeTab(id, isRight) {
 
 function addRightTab(path) {
   path = path || G.rp?.path || getTab()?.path || 'C:\\';
-  const tab = { id:G.nextRpTabId++, path, history:[path], histIdx:0, entries:[], sel:new Set(), lastIdx:-1, sortF:'name', sortAsc:true, pinned:false };
+  const tab = { id:G.nextRpTabId++, path, history:[path], histIdx:0, entries:[], sel:new Set(), lastIdx:-1, sortF:'name', sortAsc:true, pinned:false, _loaded:false };
   G.rpTabs.push(tab);
   G.activeRpTab = tab.id;
   G.rp = tab;
@@ -426,17 +431,30 @@ function _applySavedScroll(tab) {
 }
 
 // --- background refresh (keeps cached entries fresh without blocking UI) ---
-let _tabRefreshToken = 0;
 async function _refreshTabInBackground(tab) {
   if (tab.path === "home://") return;
-  const token = ++_tabRefreshToken;
+  const token = (tab._refreshToken || 0) + 1;
+  tab._refreshToken = token;
+  if (tab.id === G.activeTab && tab._loaded !== true && !(tab.entries || []).length) {
+    renderNavigationLoading(tab.path, false);
+  }
   try {
-    let entries = await listPathEntries(tab.path, "");
-    if (token !== _tabRefreshToken) return;
+    let entries = await withTimeout(
+      listPathEntries(tab.path, ""),
+      10000,
+      t('nav.folderLoadTimedOut'),
+    );
+    if (token !== tab._refreshToken) return;
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
+    const wasLoaded = tab._loaded === true;
+    tab._loaded = true;
     if (!_entriesChanged(tab.entries, entries)) {
       tab.entries = entries;
+      if (tab.id === G.activeTab && !wasLoaded) {
+        renderFiles(tab, "file-list", "status-count", "status-selection");
+        updateStatus(tab, "status-count", "status-selection");
+      }
       _refreshTabMeta(tab);
       return;
     }
@@ -456,7 +474,12 @@ async function _refreshTabInBackground(tab) {
       if (listEl) listEl.scrollTop = savedScroll;
     }
     _refreshTabMeta(tab, true);
-  } catch (e) {}
+  } catch (error) {
+    if (token !== tab._refreshToken) return;
+    tab._loaded = false;
+    if (tab.id === G.activeTab) renderNavigationError(tab.path, error, false);
+    if (typeof reportStartupIssue === 'function') reportStartupIssue('tab-background-refresh', error);
+  }
 }
 
 function _refreshTabMeta(tab, force) {
@@ -849,6 +872,20 @@ function detectAdaptiveLayout(entries) {
 // --- navigation ---
 let _navigationToken = 0;
 
+function renderNavigationLoading(path, isRight) {
+  const list = document.getElementById(isRight ? 'right-file-list' : 'file-list');
+  const status = document.getElementById(isRight ? 'right-status-count' : 'status-count');
+  if (status) status.textContent = t('nav.loadingTitle');
+  if (!list) return;
+  if (typeof teardownVirtualList === 'function') teardownVirtualList(list);
+  list.innerHTML =
+    '<div class="navigation-loading" role="status">' +
+      '<span class="navigation-loading-spinner" aria-hidden="true"></span>' +
+      `<div class="navigation-loading-title">${esc(t('nav.loadingTitle'))}</div>` +
+      `<div class="navigation-loading-path" title="${esc(path)}">${esc(displayPath(path))}</div>` +
+    '</div>';
+}
+
 function describeNavigationError(error) {
   let raw = '';
   if (typeof error === 'string') raw = error;
@@ -929,6 +966,7 @@ async function navigateTo(path, pushHistory) {
       tab.historyIdx = tab.history.length - 1;
     }
     tab.path = path;
+    tab._loaded = true;
     if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, false);
     tab.entries = [];
     tab.sel.clear();
@@ -949,6 +987,7 @@ async function navigateTo(path, pushHistory) {
   const tab = getTab();
   const filterEl = document.getElementById("filter-input");
   if (filterEl && path !== tab.path) filterEl.value = "";
+  if (!(tab.entries || []).length) renderNavigationLoading(path, false);
   try {
     let entries = await listPathEntries(path, "");
     if (navigationToken !== _navigationToken) return false;
@@ -963,6 +1002,7 @@ async function navigateTo(path, pushHistory) {
       tab.historyIdx = tab.history.length - 1;
     }
     tab.path = path;
+    tab._loaded = true;
     if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, false);
     renderTabs();
     addRecentFile(path, path.split("\\").pop(), true, "");
@@ -998,6 +1038,7 @@ async function navigateTo(path, pushHistory) {
     return true;
   } catch (e) {
     if (navigationToken !== _navigationToken) return false;
+    tab._loaded = false;
     renderNavigationError(path, e, false);
     return false;
   }

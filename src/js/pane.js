@@ -606,8 +606,13 @@ async function rpNavigateTo(path, pushHistory) {
   const navigationToken = ++_rpNavigationToken;
   if (pushHistory === undefined) pushHistory = true;
   path = normalizeWindowsPathInput(path);
+  if (!(pane.entries || []).length) renderNavigationLoading(path, true);
   try {
-    let entries = await listPathEntries(path, "");
+    let entries = await withTimeout(
+      listPathEntries(path, ""),
+      10000,
+      t('nav.folderLoadTimedOut'),
+    );
     if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;
     if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
     entries = sortEntriesList(entries, pane.sortF, pane.sortAsc);
@@ -618,6 +623,7 @@ async function rpNavigateTo(path, pushHistory) {
       pane.histIdx = pane.history.length - 1;
     }
     pane.path = path;
+    pane._loaded = true;
     if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, true);
     pane.sel.clear();
     pane.lastIdx = -1;
@@ -632,6 +638,7 @@ async function rpNavigateTo(path, pushHistory) {
     return true;
   } catch (e) {
     if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;
+    pane._loaded = false;
     renderNavigationError(path, e, true);
     return false;
   }

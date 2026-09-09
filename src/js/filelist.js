@@ -186,6 +186,12 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   list.innerHTML = "";
   list.classList.toggle("search-results", !!G.searchActive && !isRight);
 
+  if (!entries.length && tabOrPane._loaded === true && !(G.searchActive && !isRight)) {
+    list.innerHTML = `<div class="file-list-empty" role="status">${esc(t('nav.folderEmpty'))}</div>`;
+    if (countId) updateStatus(tabOrPane, countId, selId);
+    return;
+  }
+
   if (G.layout === "cards") {
     renderCardLayout(list, entries, sel, isRight, tabOrPane, listId);
   } else if (G.layout === "thumbnails") {

@@ -412,6 +412,7 @@ function setProxyUrl(value, input) {
 
 let _releaseHistoryRequestToken = 0;
 let _releaseHistoryEntries = [];
+let _releaseHistorySnapshot = null;
 
 function hydrateReleaseHistoryItem(details) {
   if (!details || details.dataset.loaded === 'true') return;
@@ -433,10 +434,13 @@ function renderReleaseHistory(response) {
   }
   const currentVersion = String(response.currentVersion || '');
   const sourceLabel = response.source === 'remote' ? t('settings.historyRemote') : t('settings.historyBundled');
+  const refreshing = response.refreshing
+    ? `<div class="settings-history-refreshing"><span aria-hidden="true"></span>${esc(t('settings.historyRefreshing'))}</div>`
+    : '';
   const warning = response.warning
     ? `<div class="settings-history-warning" title="${esc(String(response.warning))}">${esc(t('settings.historyFallback'))}</div>`
     : '';
-  container.innerHTML = `<div class="settings-history-source">${esc(sourceLabel)}</div>${warning}` +
+  container.innerHTML = `<div class="settings-history-source">${esc(sourceLabel)}</div>${refreshing}${warning}` +
     _releaseHistoryEntries.map((entry, index) => {
       const current = String(entry.version) === currentVersion;
       return `<details class="settings-release-item" data-release-index="${index}"${index === 0 ? ' open' : ''}>
@@ -456,22 +460,51 @@ async function loadReleaseHistory(manual) {
   const button = document.getElementById('settings-refresh-history');
   const token = ++_releaseHistoryRequestToken;
   const allowRemote = !!manual || isAutomaticUpdateCheckEnabled();
-  container.innerHTML = `<div class="settings-history-state">${esc(t('settings.historyLoading'))}</div>`;
+  if (_releaseHistorySnapshot) {
+    renderReleaseHistory({..._releaseHistorySnapshot, refreshing:allowRemote});
+  } else {
+    container.innerHTML = `<div class="settings-history-state">${esc(t('settings.historyLoading'))}</div>`;
+  }
   if (button) button.disabled = true;
+  let bundled = null;
   try {
-    const response = await withTimeout(call('get_release_history', {
+    bundled = await withTimeout(call('get_release_history', {
       source: getUpdateSource(),
-      proxy: getUpdateProxy(),
-      allowRemote,
-    }), 35000, 'Release history request timed out');
+      proxy: null,
+      allowRemote: false,
+    }), 5000, 'Bundled release history request timed out');
     if (token !== _releaseHistoryRequestToken) return;
-    renderReleaseHistory(response);
+    _releaseHistorySnapshot = bundled;
+    renderReleaseHistory({...bundled, refreshing:allowRemote});
   } catch (error) {
     if (token !== _releaseHistoryRequestToken) return;
-    container.innerHTML = `<div class="settings-history-state settings-history-warning" title="${esc(String(error))}">${esc(t('settings.historyFailed'))}</div>`;
-  } finally {
-    if (token === _releaseHistoryRequestToken && button) button.disabled = false;
+    if (!_releaseHistorySnapshot) {
+      container.innerHTML = `<div class="settings-history-state settings-history-warning" title="${esc(String(error))}">${esc(t('settings.historyFailed'))}</div>`;
+    }
   }
+
+  if (allowRemote && token === _releaseHistoryRequestToken) {
+    try {
+      const response = await withTimeout(call('get_release_history', {
+        source: getUpdateSource(),
+        proxy: getUpdateProxy(),
+        allowRemote: true,
+      }), 35000, 'Release history request timed out');
+      if (token !== _releaseHistoryRequestToken) return;
+      _releaseHistorySnapshot = response;
+      renderReleaseHistory(response);
+    } catch (error) {
+      if (token !== _releaseHistoryRequestToken) return;
+      const fallback = bundled || _releaseHistorySnapshot;
+      if (fallback) {
+        _releaseHistorySnapshot = {...fallback, warning:String(error), refreshing:false};
+        renderReleaseHistory(_releaseHistorySnapshot);
+      } else {
+        container.innerHTML = `<div class="settings-history-state settings-history-warning" title="${esc(String(error))}">${esc(t('settings.historyFailed'))}</div>`;
+      }
+    }
+  }
+  if (token === _releaseHistoryRequestToken && button) button.disabled = false;
 }
 
 function onThemeSelectChange(val) {

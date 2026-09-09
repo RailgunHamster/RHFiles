@@ -1262,6 +1262,9 @@
       assert(Array.isArray(history.releases) && history.releases.length >= 10, "Bundled release history is incomplete");
       assert(history.releases.some(entry => entry.version === history.currentVersion), "Current version is absent from release history");
       assert(history.releases.some(entry => entry.version === '0.1.0'), "Initial release notes are absent from release history");
+      renderReleaseHistory({...history, refreshing:true});
+      assert(document.querySelector('#settings-release-history .settings-release-item'), "Bundled history was not rendered before a remote refresh");
+      assert(document.querySelector('#settings-release-history .settings-history-refreshing'), "Background refresh state replaced the offline history");
     });
 
     await test("[preview] Toggle preview pane off", async () => {
@@ -2416,6 +2419,12 @@
       assert(G.windowLabel !== null && G.windowLabel !== undefined, "G.windowLabel not set");
     });
 
+    await test("[startup] Initialization reaches a bounded ready state", async () => {
+      assertEqual(G.startupReady, true, "Startup ready flag was not reached");
+      assertEqual(document.documentElement.dataset.appReady, 'true', "Startup readiness is not exposed to diagnostics");
+      assertEqual(I18N_FILE_TIMEOUT_MS, 2500, "Bundled language resources are not time-bounded");
+    });
+
     // ================================================================
     // SECTION 23: COMMON UTILITIES
     // ================================================================
@@ -2839,6 +2848,40 @@
       assertEqual(opened, false, "Missing folder unexpectedly opened");
       assert(document.querySelector('#file-list .navigation-error-notFound'), "Missing folder error panel was not rendered");
       await navigateTo(previousPath, false);
+    });
+
+    await test("[navigation] Restored tabs never fail as a silent blank view", async () => {
+      const tab = getTab();
+      const saved = {
+        path:tab.path,
+        entries:tab.entries,
+        sel:tab.sel,
+        lastIdx:tab.lastIdx,
+        loaded:tab._loaded,
+      };
+      try {
+        tab.path = 'C:\\__rhfiles_missing_background_refresh_test__';
+        tab.entries = [];
+        tab.sel = new Set();
+        tab.lastIdx = -1;
+        tab._loaded = false;
+        renderNavigationLoading(tab.path, false);
+        assert(document.querySelector('#file-list .navigation-loading'), "Unloaded tab did not show a loading state");
+        await _refreshTabInBackground(tab);
+        assert(document.querySelector('#file-list .navigation-error-notFound'), "Background refresh failure was swallowed into a blank view");
+
+        tab.entries = [];
+        tab._loaded = true;
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+        assert(document.querySelector('#file-list .file-list-empty'), "A genuinely empty folder was left visually blank");
+      } finally {
+        tab.path = saved.path;
+        tab.entries = saved.entries;
+        tab.sel = saved.sel;
+        tab.lastIdx = saved.lastIdx;
+        tab._loaded = saved.loaded;
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+      }
     });
 
     await test("[navigation] Filesystem errors retain a stable localized category", async () => {
