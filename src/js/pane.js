@@ -542,6 +542,7 @@ function activatePane(side) {
   updatePaneFocusUI();
   updateSearchScopeUI();
   updatePreviewForSelection();
+  if (typeof scheduleFileDialogIntegrationSync === 'function') scheduleFileDialogIntegrationSync();
 }
 
 function toggleDualPane(force) {
@@ -627,6 +628,7 @@ async function rpNavigateTo(path, pushHistory) {
     saveTabState();
     if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
     updateSidebarSelection();
+    if (typeof scheduleFileDialogIntegrationSync === 'function') scheduleFileDialogIntegrationSync();
     return true;
   } catch (e) {
     if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;

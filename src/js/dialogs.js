@@ -141,6 +141,7 @@ const SETTINGS_SECTIONS = Object.freeze([
   ['files', 'settings.categoryFiles'],
   ['preview', 'settings.categoryPreview'],
   ['search', 'settings.categorySearch'],
+  ['integration', 'settings.categoryIntegration'],
   ['updates', 'settings.categoryUpdates'],
   ['shortcuts', 'settings.categoryShortcuts'],
   ['data', 'settings.categoryData'],
@@ -153,6 +154,7 @@ function settingsSectionIcon(id) {
     files: '<path d="M1.8 4.5h5l1.6 1.7h5.8v6.6H1.8V4.5z"/><path d="M1.8 4.5V3.2h4.4l1.3 1.3"/>',
     preview: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m4.2 10 2.5-2.6 1.9 1.8 1.4-1.4 1.8 2.2"/><circle cx="10.8" cy="5.7" r=".8"/>',
     search: '<circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3.4 3.4"/>',
+    integration: '<path d="M3 3.2h4.3v4.3H3zM8.7 8.5H13v4.3H8.7z"/><path d="M7.3 5.35h2.1a1.6 1.6 0 0 1 1.6 1.6V8.5M8.7 10.65H6.6A1.6 1.6 0 0 1 5 9.05V7.5"/>',
     updates: '<path d="M8 2.2v7.1M5.2 6.7 8 9.5l2.8-2.8"/><path d="M2.5 11.2v2h11v-2"/>',
     shortcuts: '<rect x="1.7" y="3.1" width="12.6" height="9.8" rx="1.5"/><path d="M4 6h1M7.5 6h1M11 6h1M4 9h1M7 9h5"/>',
     data: '<ellipse cx="8" cy="3.7" rx="5" ry="2"/><path d="M3 3.7v4.2c0 1.1 2.2 2 5 2s5-.9 5-2V3.7M3 7.8V12c0 1.1 2.2 2 5 2s5-.9 5-2V7.8"/>',
@@ -277,6 +279,16 @@ function openSettings() {
     '<input id="settings-global-search" type="checkbox" onchange="setGlobalSearchEnabled(this.checked)"' + (G.settings.globalSearchEnabled!==false?' checked':'') + '></div>' +
     '<div class="settings-feature-note"><strong>' + t('settings.searchBehaviorTitle') + '</strong><span>' + t('settings.searchBehaviorBody') + '</span></div></div>';
 
+  const integration = '<div class="settings-card">' +
+    '<div class="settings-row"><label for="settings-integration-enabled"><span class="settings-label-title">' + t('settings.integrationEnabled') + '</span><span class="settings-experimental-badge">' + t('settings.integrationExperimental') + '</span></label>' +
+    '<input id="settings-integration-enabled" type="checkbox" onchange="setFileDialogIntegrationEnabled(this.checked)"' + (G.settings.fileDialogIntegrationEnabled===true?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><strong>' + t('settings.integrationBehaviorTitle') + '</strong><span>' + t('settings.integrationBehaviorBody') + '</span></div>' +
+    '<div class="settings-feature-note"><strong>' + t('settings.integrationTargetsTitle') + '</strong><span>' + t('settings.integrationTargetsBody') + '</span></div></div>' +
+    '<div class="settings-card settings-integration-card"><div class="settings-card-title">' + t('settings.integrationShortcutTitle') + '</div>' +
+    '<div class="settings-integration-shortcut-row"><kbd id="settings-integration-shortcut"></kbd><button type="button" class="dialog-btn" onclick="openIntegrationShortcutSettings()">' + t('settings.integrationEditShortcut') + '</button></div>' +
+    '<p class="settings-card-description">' + t('settings.integrationShortcutHelp') + '</p>' +
+    '<div id="settings-integration-status" class="settings-integration-status" role="status"></div></div>';
+
   const updates = '<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-auto-update">' + t('settings.autoUpdate') + '</label>' +
     '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
@@ -324,6 +336,7 @@ function openSettings() {
     settingsPage('files', 'settings.categoryFiles', 'settings.categoryFilesDesc', files) +
     settingsPage('preview', 'settings.categoryPreview', 'settings.categoryPreviewDesc', preview) +
     settingsPage('search', 'settings.categorySearch', 'settings.categorySearchDesc', search) +
+    settingsPage('integration', 'settings.categoryIntegration', 'settings.categoryIntegrationDesc', integration) +
     settingsPage('updates', 'settings.categoryUpdates', 'settings.categoryUpdatesDesc', updates) +
     settingsPage('shortcuts', 'settings.categoryShortcuts', 'settings.categoryShortcutsDesc', shortcuts) +
     settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data);
@@ -335,6 +348,7 @@ function openSettings() {
   updateThemeSettingsControls();
   refreshUpdateSettingsStatus();
   loadReleaseHistory(false);
+  if (typeof renderFileDialogIntegrationStatus === 'function') renderFileDialogIntegrationStatus();
 }
 
 function setAutoUpdateEnabled(enabled) {
@@ -1035,6 +1049,7 @@ const SHORTCUT_LABEL_KEYS = {
   "typeSearch.next": "cmd.typeSearchNext",
   "typeSearch.previous": "cmd.typeSearchPrevious",
   "search.toggleScope": "cmd.toggleSearchScope",
+  "integration.quickSwitch": "cmd.syncSystemDialog",
 };
 
 function renderShortcutConfig() {
@@ -1091,6 +1106,7 @@ function resetShortcuts() {
   localStorage.removeItem("rhfiles-shortcuts");
   _shortcutBindings = null;
   renderShortcutConfig();
+  if (typeof scheduleFileDialogIntegrationSync === 'function') scheduleFileDialogIntegrationSync(true);
   showNotice(t('notice.shortcutsReset'));
 }
 

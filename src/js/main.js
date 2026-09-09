@@ -96,6 +96,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     } catch (e) {}
   }
   if (!initialPathLoaded) await navigateTo("home://", false);
+  if (typeof syncFileDialogIntegration === 'function') {
+    await syncFileDialogIntegration(true).catch(() => {});
+    window.addEventListener('focus', () => scheduleFileDialogIntegrationSync(true));
+  }
 
   // restore selection and scroll position after navigation
   const activeTab = getTab();

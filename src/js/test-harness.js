@@ -1112,6 +1112,11 @@
       assertEqual($("#settings-update-server").value, getServerUpdateSource(), "Home-server source input is out of sync");
       assert($("#settings-check-update"), "Manual update button is missing");
       assert($("#settings-update-failure"), "Persistent update-failure detail is missing");
+      switchSettingsSection('integration', false);
+      assert($("#settings-integration-enabled"), "Windows integration enable setting is missing");
+      assert($("#settings-integration-shortcut"), "Windows integration shortcut display is missing");
+      assert($("#settings-integration-status"), "Windows integration status is missing");
+      assertEqual($("#settings-integration-enabled").checked, G.settings.fileDialogIntegrationEnabled === true, "Windows integration setting state is out of sync");
       const sampleFailure = {
         category:'locked',
         message:'Apply error: running processes prevented the update',
@@ -1134,8 +1139,27 @@
         assert(updateStatus?.managed, "Velopack portable build was not recognized as managed");
         assert(updateStatus?.isPortable, "Velopack build was not recognized as portable");
         assert(/^\d+\.\d+\.\d+/.test(updateStatus.currentVersion || ''), "Velopack manifest version is invalid");
+        const expectedCurrent = await call('get_env', {key:'RHFILES_TEST_EXPECTED_CURRENT'}).catch(() => '');
+        const expectedUpdate = await call('get_env', {key:'RHFILES_TEST_EXPECTED_UPDATE'}).catch(() => '');
+        if (expectedCurrent) assertEqual(updateStatus.currentVersion, expectedCurrent, "Velopack read the wrong installed version");
+        if (expectedUpdate) assertEqual(updateStatus.availableVersion, expectedUpdate, "Update feed did not select the expected newer release");
       }
       closeSettings();
+    });
+
+    await test("[integration] File-dialog bridge stays opt-in and tracks the active folder", async () => {
+      const savedEnabled = G.settings.fileDialogIntegrationEnabled;
+      try {
+        G.settings.fileDialogIntegrationEnabled = false;
+        assertEqual(activeIntegrationFolder(), getTab().path === 'home://' ? null : getTab().path, "Integration did not resolve the active pane folder");
+        const status = await syncFileDialogIntegration(true);
+        assertEqual(status.enabled, false, "Disabled integration unexpectedly installed an active hook");
+        assert(Array.isArray(status.supportedTargets) && status.supportedTargets.includes('windowsFileDialog'), "Windows file dialogs are not advertised as a supported target");
+        assert(status.supportedTargets.includes('windowsExplorer'), "Windows Explorer is not advertised as a supported target");
+      } finally {
+        G.settings.fileDialogIntegrationEnabled = savedEnabled;
+        await syncFileDialogIntegration(true).catch(() => {});
+      }
     });
 
     await test("[themes] Built-in and file-based theme packs are validated and hot-swappable", async () => {
@@ -1675,6 +1699,8 @@
 
     await test("[tasks] Concurrent operations keep independent progress and can collapse", async () => {
       const savedCollapsed = _operationCenterCollapsed;
+      toggleOperationCenter(true);
+      await sleep(220);
       const copyTask = showProgress(t('status.copying'), {currentName:'large.bin'});
       const deleteTask = showProgress(t('status.deleting'), {
         currentName:'old-folder',
@@ -1710,7 +1736,7 @@
       await sleep(220);
       assert(!$("#operation-center").classList.contains("collapsed"), "Task center did not expand");
       assertEqual($("#operation-center-toggle").title, t('tasks.collapse'), "Expanded task center should describe the collapse action");
-      assertEqual(getComputedStyle($("#operation-center-toggle .operation-center-chevron")).transform, 'none', "Expanded task center should point down");
+      await waitForCondition(() => getComputedStyle($("#operation-center-toggle .operation-center-chevron")).transform === 'none', 1000);
       completeOperationTask(copyTask);
       completeOperationTask(deleteTask);
       dismissOperationTask(copyTask);
@@ -2422,6 +2448,7 @@
       assertEqual(I18N.zh['settings.title'], '\u8bbe\u7f6e', "Chinese settings translation is unavailable");
       assertEqual(I18N.zh['ctx.shareWechat'], '\u5fae\u4fe1', "Chinese share-menu translation is unavailable");
       assertEqual(I18N.zh['template.rustFile'], 'Rust \u6e90\u6587\u4ef6', "New-file templates are not localized");
+      assertEqual(I18N.zh['settings.categoryIntegration'], 'Windows 集成', "Windows integration settings are not localized");
       assertEqual(detectDefaultLanguage(['zh-CN']), 'zh', "zh-CN should default to Chinese");
       assertEqual(detectDefaultLanguage(['en-US']), 'en', "en-US should default to English");
     });
@@ -2447,6 +2474,7 @@
       assert(typeof ACTION_HANDLERS['typeSearch.next'] === 'function', "Missing next search-match action");
       assert(typeof ACTION_HANDLERS['typeSearch.previous'] === 'function', "Missing previous search-match action");
       assert(DEFAULT_SHORTCUTS['search.toggleScope']?.includes('Ctrl+Shift+F'), "Missing global-search toggle shortcut");
+      assert(DEFAULT_SHORTCUTS['integration.quickSwitch']?.includes('Ctrl+G'), "Missing configurable file-dialog integration shortcut");
     });
 
     await test("[keyboard] Ctrl multi-selection focuses the file pane and Delete reaches every selected item", async () => {

@@ -56,6 +56,7 @@ const DEFAULT_SHORTCUTS = {
   "typeSearch.next":     ["Alt+]"],
   "typeSearch.previous": ["Alt+["],
   "search.toggleScope":  ["Ctrl+Shift+F"],
+  "integration.quickSwitch":["Ctrl+G"],
 };
 
 const ACTION_HANDLERS = {
@@ -114,6 +115,7 @@ const ACTION_HANDLERS = {
   "typeSearch.next":     async () => cycleTypeSearchSelection(1),
   "typeSearch.previous": async () => cycleTypeSearchSelection(-1),
   "search.toggleScope":  async () => toggleSearchScope(),
+  "integration.quickSwitch": async () => showNotice(t('notice.integrationExternalOnly')),
 };
 
 const _pinyinAliasLoads = new WeakMap();
@@ -364,6 +366,9 @@ function saveShortcutBindings(bindings) {
     ...bindings,
     _schemaVersion: SHORTCUT_BINDING_SCHEMA_VERSION,
   }));
+  if (typeof scheduleFileDialogIntegrationSync === 'function') {
+    scheduleFileDialogIntegrationSync(true);
+  }
 }
 
 function normalizeKey(e) {

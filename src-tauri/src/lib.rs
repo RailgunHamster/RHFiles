@@ -2,6 +2,7 @@ mod archive;
 mod clipboard;
 mod cloud;
 mod db;
+mod file_dialog_integration;
 mod file_ops;
 mod network;
 mod search;
@@ -130,6 +131,9 @@ pub fn run() {
             file_ops::get_env, file_ops::get_known_folders, file_ops::get_dir_tree, file_ops::batch_rename, file_ops::get_file_info,
             file_ops::folder_size,
             file_ops::create_shortcut,
+
+            file_dialog_integration::configure_file_dialog_integration,
+            file_dialog_integration::get_file_dialog_integration_status,
 
             system::get_thumbnail, system::open_file, system::open_in_windows_explorer, system::show_properties,
             system::read_file_preview, system::get_file_icon,

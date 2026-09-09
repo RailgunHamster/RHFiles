@@ -85,6 +85,27 @@ Object.assign(_builtinEn, {
   'template.batchFile': 'Batch File',
   'cmd.group': 'Group',
   'cmd.toggleSearchScope': 'Toggle folder/global search',
+  'cmd.syncSystemDialog': 'Jump Windows dialog to the active folder',
+  'settings.categoryIntegration': 'Windows integration',
+  'settings.categoryIntegrationDesc': 'Connect the active RHFiles folder to Windows file dialogs and File Explorer.',
+  'settings.integrationEnabled': 'Enable file-dialog integration',
+  'settings.integrationExperimental': 'EXPERIMENTAL',
+  'settings.integrationBehaviorTitle': 'Jump to the active RHFiles folder',
+  'settings.integrationBehaviorBody': 'Use the configured shortcut in a Windows Open/Save dialog or File Explorer.',
+  'settings.integrationTargetsTitle': 'Supported in this first version',
+  'settings.integrationTargetsBody': 'Native Windows file pickers and File Explorer.',
+  'settings.integrationShortcutTitle': 'Quick-switch shortcut',
+  'settings.integrationEditShortcut': 'Edit shortcut',
+  'settings.integrationShortcutHelp': 'The shortcut is intercepted only in recognized Windows file surfaces.',
+  'settings.integrationNoShortcut': 'Not configured',
+  'settings.integrationStatusDisabled': 'Integration is off.',
+  'settings.integrationStatusNoFolder': 'The active tab is not a filesystem folder.',
+  'settings.integrationStatusReady': 'Ready · current folder: {path}',
+  'settings.integrationStatusStarting': 'Starting the Windows integration worker...',
+  'settings.integrationStatusError': 'Integration failed to start: {error}',
+  'notice.integrationEnabled': 'Windows file-dialog integration enabled',
+  'notice.integrationDisabled': 'Windows file-dialog integration disabled',
+  'notice.integrationExternalOnly': 'Use this shortcut in a Windows Open/Save dialog or File Explorer',
   'ctx.openCmd': 'Open in Command Prompt',
   'ctx.openPowerShell': 'Open in PowerShell',
   'confirm.deleteTitle': 'Move to Recycle Bin',
@@ -625,6 +646,20 @@ function fallbackCall(cmd, args) {
     case "quick_search": return [];
     case "search_recursive": return [];
     case "pinyin_aliases": return (args.names || []).map(() => []);
+    case "configure_file_dialog_integration": return {
+      enabled: !!args.enabled,
+      running: !!args.enabled,
+      pathAvailable: !!args.path,
+      currentPath: args.path || null,
+      registeredShortcuts: args.shortcuts || [],
+      rejectedShortcuts: [],
+      supportedTargets: ["windowsFileDialog", "windowsExplorer"],
+    };
+    case "get_file_dialog_integration_status": return {
+      enabled: false, running: false, pathAvailable: false, currentPath: null,
+      registeredShortcuts: [], rejectedShortcuts: [],
+      supportedTargets: ["windowsFileDialog", "windowsExplorer"],
+    };
     default: return null;
   }
 }
@@ -646,6 +681,7 @@ function loadSettings() {
     githubUpdateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
     serverUpdateSource: DEFAULT_SERVER_UPDATE_SOURCE,
     updateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
+    fileDialogIntegrationEnabled: false,
   };
   try {
     const s = localStorage.getItem('rhfiles-settings');

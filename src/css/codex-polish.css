@@ -1408,6 +1408,72 @@ body.preview-fullscreen-active::before {
   font-size: 12px;
 }
 
+.settings-label-title {
+  vertical-align: middle;
+}
+
+.settings-experimental-badge {
+  display: inline-flex;
+  margin-left: 8px;
+  padding: 2px 6px;
+  vertical-align: middle;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 999px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: .03em;
+}
+
+.settings-integration-card {
+  padding-bottom: 14px;
+}
+
+.settings-integration-shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 2px 4px;
+}
+
+.settings-integration-shortcut-row kbd {
+  min-width: 92px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-bottom-color: color-mix(in srgb, var(--border) 72%, var(--text-4));
+  border-radius: 7px;
+  background: var(--bg-input);
+  box-shadow: 0 2px 0 var(--divider);
+  color: var(--text-2);
+  font: 11px/1.2 "Cascadia Mono", Consolas, monospace;
+  text-align: center;
+}
+
+.settings-integration-status {
+  margin: 8px 2px 0;
+  padding: 9px 11px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-integration-status.error {
+  background: color-mix(in srgb, var(--danger, #c43d4b) 9%, var(--bg-soft));
+  color: var(--danger, #b52e3c);
+}
+
+.shortcut-key-input.shortcut-attention {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 .settings-config-list {
   display: flex;
   flex-direction: column;

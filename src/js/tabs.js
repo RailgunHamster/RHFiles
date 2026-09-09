@@ -102,6 +102,7 @@ function switchTab(id) {
   if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
   if (id === G.activeTab) {
     if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(getTab()?.path, false);
+    if (typeof scheduleFileDialogIntegrationSync === 'function') scheduleFileDialogIntegrationSync();
     return;
   }
   if (typeof resetTypeSearch === 'function') resetTypeSearch();
@@ -118,6 +119,7 @@ function switchTab(id) {
   updateSortArrows();
   updateSidebarSelection();
   _refreshTabInBackground(tab);
+  if (typeof scheduleFileDialogIntegrationSync === 'function') scheduleFileDialogIntegrationSync();
 }
 
 function switchRelativeTab(delta) {
@@ -939,6 +941,7 @@ async function navigateTo(path, pushHistory) {
     saveTabState();
     updateSearchScopeUI();
     if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
+    if (typeof scheduleFileDialogIntegrationSync === 'function') scheduleFileDialogIntegrationSync();
     return true;
   }
   hideHomePage();
@@ -991,6 +994,7 @@ async function navigateTo(path, pushHistory) {
     updateSearchScopeUI();
     if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
     updatePreviewForSelection();
+    if (typeof scheduleFileDialogIntegrationSync === 'function') scheduleFileDialogIntegrationSync();
     return true;
   } catch (e) {
     if (navigationToken !== _navigationToken) return false;

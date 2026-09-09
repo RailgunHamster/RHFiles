@@ -22,6 +22,7 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 - Reversible delete, rename, and non-overwriting move operations.
 - Git/SVN status, favorites, tags, archives, SMB paths, FTP/SFTP, and cloud-file states.
 - Context-menu actions can open a folder—or reveal a selected file—in Windows File Explorer.
+- Optional Windows integration sends a standard Open/Save dialog or File Explorer to the active RHFiles folder with a configurable shortcut.
 - Velopack portable updates from GitHub Releases or a configurable home-server feed, with optional HTTP/HTTPS proxy support.
 - Multiple built-in color themes plus reloadable user theme packs—no recompilation required.
 
@@ -65,6 +66,12 @@ Settings can open this folder and reload changed themes immediately. Theme packs
 ## Updates and release history
 
 Automatic checks run after startup, when Settings is opened, and hourly while the app remains open. Disabling automatic checks prevents those requests; manual checks still work. The client can display cumulative release notes from either GitHub or the selected home-server feed and retains bundled notes for offline use.
+
+## Windows integration (experimental)
+
+Enable **Windows integration** in Settings to use the active RHFiles folder from a standard Windows Open/Save dialog or File Explorer. Press the configurable quick-switch shortcut (default: `Ctrl+G`) while the target window is active. RHFiles focuses its address bar and enters the path without replacing the clipboard.
+
+The integration is opt-in and only intercepts its shortcut in recognized Windows file surfaces. Browser uploads that use the native Windows picker are supported; custom in-app pickers and elevated windows may not accept navigation yet.
 
 ## Development
 
