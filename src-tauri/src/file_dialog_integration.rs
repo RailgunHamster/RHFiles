@@ -5,7 +5,11 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Com::{
+    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_D,
@@ -13,15 +17,18 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_OEM_2, VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_COMMA, VK_OEM_MINUS,
     VK_OEM_PERIOD, VK_OEM_PLUS, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
+use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellWindows};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, EnumChildWindows, GetClassNameW, GetForegroundWindow,
     GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, SetWindowsHookExW,
     TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
     WM_SYSKEYUP,
 };
-use windows_core::BOOL;
+use windows_core::{BOOL, Interface};
 
 const INPUT_MARKER: usize = 0x5248_4649;
+#[cfg(test)]
+const TEST_INPUT_MARKER: usize = 0x5248_5445;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Hotkey {
@@ -277,7 +284,12 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
     let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-    if event.flags.contains(LLKHF_INJECTED) || event.dwExtraInfo == INPUT_MARKER {
+    #[cfg(test)]
+    let is_test_input = event.dwExtraInfo == TEST_INPUT_MARKER;
+    #[cfg(not(test))]
+    let is_test_input = false;
+    if !is_test_input && (event.flags.contains(LLKHF_INJECTED) || event.dwExtraInfo == INPUT_MARKER)
+    {
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
 
@@ -413,6 +425,10 @@ fn wait_for_trigger_release(trigger_key: u32) -> bool {
 }
 
 fn key_input(key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+    key_input_with_marker(key, flags, INPUT_MARKER)
+}
+
+fn key_input_with_marker(key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS, marker: usize) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -421,7 +437,7 @@ fn key_input(key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
                 wScan: 0,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: INPUT_MARKER,
+                dwExtraInfo: marker,
             },
         },
     }
@@ -450,6 +466,46 @@ fn send_inputs(inputs: &[INPUT]) -> bool {
     unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) == inputs.len() as u32 }
 }
 
+fn navigate_explorer_with_shell(hwnd: usize, path: &str) -> Result<bool, String> {
+    struct ComGuard;
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    unsafe {
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+            .ok()
+            .map_err(|error| format!("Unable to initialize Explorer automation: {error}"))?;
+        let _guard = ComGuard;
+        let windows: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL)
+            .map_err(|error| format!("Unable to enumerate File Explorer windows: {error}"))?;
+        let count = windows.Count().map_err(|error| error.to_string())?;
+        for index in 0..count {
+            let Ok(dispatch) = windows.Item(&VARIANT::from(index)) else {
+                continue;
+            };
+            let Ok(browser) = dispatch.cast::<IWebBrowser2>() else {
+                continue;
+            };
+            let Ok(browser_hwnd) = browser.HWND() else {
+                continue;
+            };
+            if browser_hwnd.0 as usize != hwnd {
+                continue;
+            }
+            let url = VARIANT::from(path);
+            let empty = VARIANT::default();
+            browser
+                .Navigate2(&url, Some(&empty), Some(&empty), Some(&empty), Some(&empty))
+                .map_err(|error| format!("File Explorer rejected the folder: {error}"))?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn navigate_window(request: NavigationRequest) {
     if !wait_for_trigger_release(request.trigger_key) {
         return;
@@ -460,8 +516,17 @@ fn navigate_window(request: NavigationRequest) {
         return;
     }
 
-    // Standard Windows file dialogs and Explorer both focus their address bar
-    // with Alt+D. Unicode SendInput avoids touching the user's clipboard.
+    let foreground_class = window_class(foreground);
+    if matches!(
+        foreground_class.to_ascii_lowercase().as_str(),
+        "cabinetwclass" | "explorewclass"
+    ) && navigate_explorer_with_shell(request.hwnd, &request.path).unwrap_or(false)
+    {
+        return;
+    }
+
+    // Common Windows file dialogs (and the legacy Explorer fallback) focus
+    // their address bar with Alt+D. Unicode SendInput avoids the clipboard.
     let focus_address = [
         key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
         key_input(VK_D, KEYBD_EVENT_FLAGS(0)),
@@ -471,17 +536,34 @@ fn navigate_window(request: NavigationRequest) {
     if !send_inputs(&focus_address) {
         return;
     }
-    thread::sleep(Duration::from_millis(55));
+    // Explorer's breadcrumb animation and the modern IFileDialog address bar
+    // can take more than one frame to turn into an editable control.
+    thread::sleep(Duration::from_millis(220));
+    let dialog_path = if request.path.ends_with('\\') {
+        request.path.clone()
+    } else {
+        format!("{}\\", request.path)
+    };
+    let select_all = [
+        key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+        key_input(VIRTUAL_KEY(b'A' as u16), KEYBD_EVENT_FLAGS(0)),
+        key_input(VIRTUAL_KEY(b'A' as u16), KEYEVENTF_KEYUP),
+        key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+    ];
+    if !send_inputs(&select_all) {
+        return;
+    }
+    thread::sleep(Duration::from_millis(40));
 
-    let mut text_inputs = Vec::with_capacity(request.path.encode_utf16().count() * 2);
-    for unit in request.path.encode_utf16() {
+    let mut text_inputs = Vec::with_capacity(dialog_path.encode_utf16().count() * 2);
+    for unit in dialog_path.encode_utf16() {
         text_inputs.push(unicode_input(unit, false));
         text_inputs.push(unicode_input(unit, true));
     }
     if !send_inputs(&text_inputs) {
         return;
     }
-    thread::sleep(Duration::from_millis(35));
+    thread::sleep(Duration::from_millis(100));
     let _ = send_inputs(&[
         key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
         key_input(VK_RETURN, KEYEVENTF_KEYUP),
@@ -547,6 +629,254 @@ pub fn get_file_dialog_integration_status() -> FileDialogIntegrationStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        process::{Child, Command},
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetMenu, GetMenuItemCount, GetMenuItemID, GetMenuStringW, GetSubMenu,
+        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, MF_BYPOSITION, PostMessageW,
+        SetForegroundWindow, WM_CLOSE, WM_COMMAND,
+    };
+
+    struct TopLevelWindowSearch {
+        class_name: &'static str,
+        title_fragment: String,
+        process_id: Option<u32>,
+        hwnd: Option<usize>,
+    }
+
+    unsafe extern "system" fn find_top_level_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = unsafe { &mut *(lparam.0 as *mut TopLevelWindowSearch) };
+        let mut process_id = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+        if unsafe { IsWindowVisible(hwnd) }.as_bool()
+            && window_class(hwnd).eq_ignore_ascii_case(search.class_name)
+            && search
+                .process_id
+                .is_none_or(|expected| expected == process_id)
+        {
+            let mut title = [0u16; 1024];
+            let length = unsafe { GetWindowTextW(hwnd, &mut title) };
+            let title = String::from_utf16_lossy(&title[..length.max(0) as usize]);
+            if title.contains(&search.title_fragment) {
+                search.hwnd = Some(hwnd.0 as usize);
+            }
+        }
+        BOOL::from(true)
+    }
+
+    fn top_level_window_with_title(
+        class_name: &'static str,
+        title_fragment: &str,
+        process_id: Option<u32>,
+    ) -> Option<HWND> {
+        let mut search = TopLevelWindowSearch {
+            class_name,
+            title_fragment: title_fragment.to_string(),
+            process_id,
+            hwnd: None,
+        };
+        unsafe {
+            let _ = EnumWindows(
+                Some(find_top_level_window),
+                LPARAM((&mut search as *mut TopLevelWindowSearch) as isize),
+            );
+        }
+        search
+            .hwnd
+            .map(|value| HWND(value as *mut core::ffi::c_void))
+    }
+
+    fn wait_for_explorer_title(title_fragment: &str, timeout: Duration) -> Option<HWND> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(hwnd) = top_level_window_with_title("CabinetWClass", title_fragment, None) {
+                return Some(hwnd);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn wait_for_process_window(
+        class_name: &'static str,
+        title_fragment: &str,
+        process_id: u32,
+        timeout: Duration,
+    ) -> Option<HWND> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(hwnd) =
+                top_level_window_with_title(class_name, title_fragment, Some(process_id))
+            {
+                return Some(hwnd);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    struct ChildTextSearch {
+        class_name: &'static str,
+        text_fragment: String,
+        found: bool,
+    }
+
+    unsafe extern "system" fn find_child_text(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = unsafe { &mut *(lparam.0 as *mut ChildTextSearch) };
+        if window_class(hwnd).eq_ignore_ascii_case(search.class_name) {
+            let mut text = [0u16; 1024];
+            let length = unsafe { GetWindowTextW(hwnd, &mut text) };
+            let text = String::from_utf16_lossy(&text[..length.max(0) as usize]);
+            if text.contains(&search.text_fragment) {
+                search.found = true;
+            }
+        }
+        BOOL::from(true)
+    }
+
+    fn window_has_child_text(top: HWND, class_name: &'static str, text_fragment: &str) -> bool {
+        let mut search = ChildTextSearch {
+            class_name,
+            text_fragment: text_fragment.to_string(),
+            found: false,
+        };
+        unsafe {
+            let _ = EnumChildWindows(
+                Some(top),
+                Some(find_child_text),
+                LPARAM((&mut search as *mut ChildTextSearch) as isize),
+            );
+        }
+        search.found
+    }
+
+    fn wait_for_child_text(
+        top: HWND,
+        class_name: &'static str,
+        text_fragment: &str,
+        timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if window_has_child_text(top, class_name, text_fragment) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn focus_controlled_window(hwnd: HWND) {
+        // Releasing Alt permits a foreground transition without attaching to
+        // or changing any pre-existing windows.
+        assert!(send_inputs(&[
+            key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_MENU, KEYEVENTF_KEYUP),
+        ]));
+        assert!(unsafe { SetForegroundWindow(hwnd) }.as_bool());
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while unsafe { GetForegroundWindow() } != hwnd && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(unsafe { GetForegroundWindow() }, hwnd);
+    }
+
+    fn menu_command_with_accelerator(
+        menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
+        accelerator: &str,
+    ) -> Option<u32> {
+        let count = unsafe { GetMenuItemCount(Some(menu)) };
+        for position in 0..count.max(0) {
+            let mut text = [0u16; 512];
+            let length =
+                unsafe { GetMenuStringW(menu, position as u32, Some(&mut text), MF_BYPOSITION) };
+            let text = String::from_utf16_lossy(&text[..length.max(0) as usize]);
+            if text.contains(accelerator) {
+                let command = unsafe { GetMenuItemID(menu, position) };
+                if command != u32::MAX {
+                    return Some(command);
+                }
+            }
+        }
+        None
+    }
+
+    fn send_test_ctrl_g() {
+        let g = VIRTUAL_KEY(b'G' as u16);
+        assert!(send_inputs(&[key_input_with_marker(
+            VK_CONTROL,
+            KEYBD_EVENT_FLAGS(0),
+            TEST_INPUT_MARKER,
+        )]));
+        let modifier_deadline = Instant::now() + Duration::from_secs(1);
+        while !is_key_down(VK_CONTROL) && Instant::now() < modifier_deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            is_key_down(VK_CONTROL),
+            "test Ctrl modifier did not activate"
+        );
+        assert!(send_inputs(&[
+            key_input_with_marker(g, KEYBD_EVENT_FLAGS(0), TEST_INPUT_MARKER),
+            key_input_with_marker(g, KEYEVENTF_KEYUP, TEST_INPUT_MARKER),
+        ]));
+        assert!(send_inputs(&[key_input_with_marker(
+            VK_CONTROL,
+            KEYEVENTF_KEYUP,
+            TEST_INPUT_MARKER,
+        )]));
+    }
+
+    struct ExplorerTestGuard {
+        hwnd: Option<HWND>,
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for ExplorerTestGuard {
+        fn drop(&mut self) {
+            lock_config().enabled = false;
+            if let Some(hwnd) = self.hwnd {
+                let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            }
+            thread::sleep(Duration::from_millis(250));
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct NotepadTestGuard {
+        dialog_hwnd: Option<HWND>,
+        main_hwnd: Option<HWND>,
+        process: Option<Child>,
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for NotepadTestGuard {
+        fn drop(&mut self) {
+            lock_config().enabled = false;
+            if let Some(hwnd) = self.dialog_hwnd {
+                let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            }
+            if let Some(hwnd) = self.main_hwnd {
+                let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            }
+            thread::sleep(Duration::from_millis(350));
+            if let Some(mut process) = self.process.take()
+                && process.try_wait().ok().flatten().is_none()
+            {
+                let _ = process.kill();
+                let _ = process.wait();
+            }
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
 
     #[test]
     fn parses_configurable_shortcuts() {
@@ -629,5 +959,187 @@ mod tests {
         .expect("the hook should be disableable without stopping its worker");
         assert!(!disabled.enabled);
         assert!(disabled.running);
+    }
+
+    #[test]
+    #[ignore = "opens and closes a real File Explorer window"]
+    fn navigates_a_real_file_explorer_window() {
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_millis()
+        );
+        let root = std::env::temp_dir().join(format!("rhfiles-explorer-e2e-{unique}"));
+        let source = root.join(format!("source-{unique}"));
+        let target = root.join(format!("target-{unique}"));
+        fs::create_dir_all(&source).expect("create Explorer source folder");
+        fs::create_dir_all(&target).expect("create Explorer target folder");
+        let source_title = source.file_name().unwrap().to_string_lossy().into_owned();
+        let target_title = target.file_name().unwrap().to_string_lossy().into_owned();
+        let mut guard = ExplorerTestGuard { hwnd: None, root };
+
+        Command::new("explorer.exe")
+            .arg(format!("/n,/e,{}", source.display()))
+            .spawn()
+            .expect("start the controlled File Explorer window");
+        let hwnd = wait_for_explorer_title(&source_title, Duration::from_secs(10))
+            .expect("the controlled Explorer window did not open at the source folder");
+        guard.hwnd = Some(hwnd);
+
+        focus_controlled_window(hwnd);
+
+        let status = configure_file_dialog_integration(
+            true,
+            Some(target.to_string_lossy().into_owned()),
+            vec!["Ctrl+G".to_string()],
+        )
+        .expect("enable the Explorer integration");
+        assert!(status.running);
+
+        focus_controlled_window(hwnd);
+        send_test_ctrl_g();
+
+        let navigated = wait_for_explorer_title(&target_title, Duration::from_secs(10))
+            .expect("Ctrl+G did not navigate Explorer to the configured RHFiles folder");
+        assert_eq!(
+            navigated, hwnd,
+            "navigation unexpectedly changed Explorer windows"
+        );
+    }
+
+    #[test]
+    #[ignore = "opens and closes a controlled Notepad file dialog"]
+    fn navigates_a_real_windows_file_dialog() {
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_millis()
+        );
+        let root = std::env::temp_dir().join(format!("rhfiles-notepad-e2e-{unique}"));
+        let target_folder = root.join(format!("target-folder-{unique}"));
+        let source = root.join(format!("source-{unique}.txt"));
+        let target = target_folder.join(format!("target-{unique}.txt"));
+        fs::create_dir_all(&target_folder).expect("create Notepad target folder");
+        fs::write(&source, "RHFiles controlled source file\n").expect("write Notepad source file");
+        fs::write(&target, "RHFiles controlled target file\n").expect("write Notepad target file");
+
+        let process = Command::new("notepad.exe")
+            .arg(&source)
+            .spawn()
+            .expect("start controlled Notepad process");
+        let process_id = process.id();
+        let mut guard = NotepadTestGuard {
+            dialog_hwnd: None,
+            main_hwnd: None,
+            process: Some(process),
+            root,
+        };
+        let source_name = source.file_name().unwrap().to_string_lossy().into_owned();
+        let target_name = target.file_name().unwrap().to_string_lossy().into_owned();
+        let target_folder_name = target_folder
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        let main_hwnd =
+            wait_for_process_window("Notepad", &source_name, process_id, Duration::from_secs(10))
+                .expect("the controlled Notepad window did not open");
+        guard.main_hwnd = Some(main_hwnd);
+        focus_controlled_window(main_hwnd);
+        // The title is visible slightly before Notepad finishes wiring its
+        // native menu on slower Windows hosts.
+        thread::sleep(Duration::from_millis(300));
+        let menu = unsafe { GetMenu(main_hwnd) };
+        assert!(!menu.0.is_null(), "controlled Notepad has no native menu");
+        let file_menu = unsafe { GetSubMenu(menu, 0) };
+        assert!(
+            !file_menu.0.is_null(),
+            "controlled Notepad has no File menu"
+        );
+        let open_command = menu_command_with_accelerator(file_menu, "Ctrl+O")
+            .expect("Notepad Open command was not found");
+        unsafe {
+            PostMessageW(
+                Some(main_hwnd),
+                WM_COMMAND,
+                WPARAM(open_command as usize),
+                LPARAM(0),
+            )
+        }
+        .expect("invoke Notepad's Open command");
+
+        let dialog_hwnd =
+            wait_for_process_window("#32770", "", process_id, Duration::from_secs(10))
+                .expect("Notepad did not open its native file dialog");
+        guard.dialog_hwnd = Some(dialog_hwnd);
+        focus_controlled_window(dialog_hwnd);
+        let mut dialog_evidence = DialogEvidence::default();
+        unsafe {
+            let _ = EnumChildWindows(
+                Some(dialog_hwnd),
+                Some(collect_dialog_evidence),
+                LPARAM((&mut dialog_evidence as *mut DialogEvidence) as isize),
+            );
+        }
+        assert_eq!(
+            supported_foreground_window(),
+            Some(dialog_hwnd),
+            "Notepad's native dialog was not recognized: {dialog_evidence:?}"
+        );
+
+        configure_file_dialog_integration(
+            true,
+            Some(target_folder.to_string_lossy().into_owned()),
+            vec!["Ctrl+G".to_string()],
+        )
+        .expect("enable the native file-dialog integration");
+        send_test_ctrl_g();
+        assert!(
+            wait_for_child_text(
+                dialog_hwnd,
+                "ToolbarWindow32",
+                &target_folder_name,
+                Duration::from_secs(10),
+            ),
+            "Ctrl+G did not navigate Notepad's dialog to the configured folder"
+        );
+
+        focus_controlled_window(dialog_hwnd);
+        assert!(send_inputs(&[
+            key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'N' as u16), KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'N' as u16), KEYEVENTF_KEYUP),
+            key_input(VK_MENU, KEYEVENTF_KEYUP),
+        ]));
+        thread::sleep(Duration::from_millis(150));
+        assert!(send_inputs(&[
+            key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'A' as u16), KEYBD_EVENT_FLAGS(0)),
+            key_input(VIRTUAL_KEY(b'A' as u16), KEYEVENTF_KEYUP),
+            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+        ]));
+        let mut filename_inputs = Vec::with_capacity(target_name.encode_utf16().count() * 2);
+        for unit in target_name.encode_utf16() {
+            filename_inputs.push(unicode_input(unit, false));
+            filename_inputs.push(unicode_input(unit, true));
+        }
+        assert!(send_inputs(&filename_inputs));
+        assert!(send_inputs(&[
+            key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_RETURN, KEYEVENTF_KEYUP),
+        ]));
+
+        let reopened =
+            wait_for_process_window("Notepad", &target_name, process_id, Duration::from_secs(10))
+                .expect("Notepad did not open the target file by its basename after navigation");
+        assert_eq!(reopened, main_hwnd);
+        guard.dialog_hwnd = None;
     }
 }
