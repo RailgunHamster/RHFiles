@@ -5,3 +5,6 @@
 *.slint_cache
 .sisyphus/
 .playwright-mcp/
+/src-tauri/thirdparty/ffmpeg.exe
+/src-tauri/thirdparty/ffmpeg-LICENSE.txt
+/src-tauri/thirdparty/ffmpeg-README.txt

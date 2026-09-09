@@ -1147,19 +1147,40 @@
       closeSettings();
     });
 
-    await test("[integration] File-dialog bridge stays opt-in and tracks the active folder", async () => {
+    await test("[integration] File-dialog picker stays opt-in and publishes every open location", async () => {
       const savedEnabled = G.settings.fileDialogIntegrationEnabled;
       try {
         G.settings.fileDialogIntegrationEnabled = false;
         assertEqual(activeIntegrationFolder(), getTab().path === 'home://' ? null : getTab().path, "Integration did not resolve the active pane folder");
+        const locations = fileDialogIntegrationLocations();
+        assert(Array.isArray(locations), "Integration locations are not an array");
+        assert(locations.every(location => location.path && ['left','right'].includes(location.pane)), "Integration published an invalid tab location");
+        assert(locations.some(location => location.active) || locations.length === 0, "Integration did not identify the active RHFiles location");
         const status = await syncFileDialogIntegration(true);
         assertEqual(status.enabled, false, "Disabled integration unexpectedly installed an active hook");
+        assertEqual(status.locationCount, locations.length, "Integration status did not report all open locations");
         assert(Array.isArray(status.supportedTargets) && status.supportedTargets.includes('windowsFileDialog'), "Windows file dialogs are not advertised as a supported target");
         assert(status.supportedTargets.includes('windowsExplorer'), "Windows Explorer is not advertised as a supported target");
       } finally {
         G.settings.fileDialogIntegrationEnabled = savedEnabled;
         await syncFileDialogIntegration(true).catch(() => {});
       }
+    });
+
+    await test("[media] Conversion dialog supports video, audio, and image profiles", async () => {
+      assertEqual(mediaConversionKind({name:'clip.mkv', extension:'mkv', is_dir:false}), 'video', "MKV was not recognized as video");
+      assertEqual(mediaConversionKind({name:'track.flac', extension:'flac', is_dir:false}), 'audio', "FLAC was not recognized as audio");
+      assertEqual(mediaConversionKind({name:'photo.webp', extension:'webp', is_dir:false}), 'image', "WebP was not recognized as an image");
+      assertEqual(mediaConversionKind({name:'notes.txt', extension:'txt', is_dir:false}), null, "Text was incorrectly treated as convertible media");
+      await showMediaConvertDialog({name:'clip.mkv', path:'C:\\Media\\clip.mkv', extension:'mkv', is_dir:false}, false);
+      assertEqual($('#media-convert-dialog').style.display, 'flex', "Conversion dialog did not open");
+      assert(_mediaConvertFfmpegStatus?.available, "Bundled development FFmpeg was not detected");
+      assert($('#media-convert-format').querySelector('option[value="mp4"]'), "Video conversion is missing MP4 output");
+      assert(!$('#media-convert-codec').hidden, "Video codec configuration is hidden");
+      $('#media-convert-format').value = 'gif';
+      updateMediaConvertControls();
+      assert($('#media-convert-codec').hidden, "GIF conversion kept an irrelevant video codec option");
+      closeMediaConvertDialog();
     });
 
     await test("[themes] Built-in and file-based theme packs are validated and hot-swappable", async () => {
@@ -2731,6 +2752,69 @@
       assertEqual(normalizeWindowsPathInput('//winserver/share'), '\\\\winserver\\share', "Forward-slash UNC input was not normalized");
       assertEqual(uncServerRoot(threeSlashes), '\\\\winserver', "UNC server root was not detected");
       assertEqual(uncServerRoot('\\\\winserver\\Public'), null, "A share path must not be treated as a server root");
+    });
+
+    await test("[navigation] Address input accepts local and UNC file URLs", async () => {
+      assertEqual(
+        normalizeWindowsPathInput('file:///D:/BetterLoreData/Deployment/New-PC/RailgunHamster%20BetterLore.zip'),
+        'D:\\BetterLoreData\\Deployment\\New-PC\\RailgunHamster BetterLore.zip',
+        "Local file URL was not decoded",
+      );
+      assertEqual(
+        normalizeWindowsPathInput('file://SERVER-HOME/Public/Software/RHFiles.zip'),
+        '\\\\server-home\\Public\\Software\\RHFiles.zip',
+        "UNC file URL was not decoded",
+      );
+      assertEqual(
+        normalizeWindowsPathInput('"file:///D:/%E6%B5%8B%E8%AF%95/file.txt"'),
+        'D:\\测试\\file.txt',
+        "Quoted Unicode file URL was not decoded",
+      );
+    });
+
+    await test("[navigation] A file address selects the matching folder entry", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSel = tab.sel;
+      const savedLastIdx = tab.lastIdx;
+      try {
+        tab.entries = [
+          {name:'one.txt', path:'C:\\AddressTest\\one.txt', is_dir:false, extension:'txt'},
+          {name:'target.zip', path:'C:\\AddressTest\\Target.zip', is_dir:false, extension:'zip'},
+        ];
+        tab.sel = new Set();
+        tab.lastIdx = -1;
+        assert(selectNavigatedPath('c:\\addresstest\\target.zip', false), "Matching file was not selected");
+        assert(tab.sel.has(1), "Selected index does not point at the addressed file");
+        assertEqual(tab.lastIdx, 1, "Selection anchor was not updated");
+      } finally {
+        tab.entries = savedEntries;
+        tab.sel = savedSel;
+        tab.lastIdx = savedLastIdx;
+        renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+      }
+    });
+
+    await test("[navigation] A real file URL opens its parent and selects the file", async () => {
+      const originalPath = getTab().path;
+      const tempPath = await call('get_env', {key:'TEMP'});
+      const candidates = tempPath ? await listPathEntries(tempPath, '') : [];
+      const target = candidates.find(entry => !entry.is_dir && !entry.is_hidden);
+      if (!target) { log("SKIP: no visible file is available in TEMP"); return; }
+      const fileUrl = 'file:///' + target.path
+        .replace(/\\/g, '/')
+        .split('/')
+        .map((segment, index) => index === 0 ? segment : encodeURIComponent(segment))
+        .join('/');
+      try {
+        assert(await navigateAddressInput(fileUrl, false), "File URL navigation failed");
+        assertEqual(getTab().path.toLocaleLowerCase(), parentFolderPath(target.path).toLocaleLowerCase(), "File URL did not open its parent folder");
+        const selected = getSelectedPaths(false);
+        assertEqual(selected.length, 1, "File URL did not create a single selection");
+        assertEqual(selected[0].path.toLocaleLowerCase(), target.path.toLocaleLowerCase(), "File URL selected the wrong entry");
+      } finally {
+        await navigateTo(originalPath, false);
+      }
     });
 
     await test("[navigation] Known-folder redirects override USERPROFILE guesses", async () => {

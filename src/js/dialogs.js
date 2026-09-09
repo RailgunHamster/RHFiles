@@ -265,6 +265,12 @@ function openSettings() {
     '<input type="checkbox" onchange="G.showExtensions=this.checked;renderFiles(getTab(),\'file-list\',\'status-count\',\'status-selection\')"' + (G.showExtensions!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label>' + t('settings.grouping') + '</label>' +
     '<select onchange="toggleGrouping(this.value)"><option value="none"' + (G.groupBy==='none'||!G.groupBy?" selected":"") + '>' + t('settings.groupNone') + '</option><option value="type"' + (G.groupBy==='type'?" selected":"") + '>' + t('settings.groupType') + '</option><option value="date"' + (G.groupBy==='date'?" selected":"") + '>' + t('settings.groupDate') + '</option><option value="size"' + (G.groupBy==='size'?" selected":"") + '>' + t('settings.groupSize') + '</option><option value="extension"' + (G.groupBy==='extension'?" selected":"") + '>' + t('settings.groupExt') + '</option></select></div></div>' +
+    '<div class="settings-card"><div class="settings-card-title">' + t('settings.ffmpegTitle') + '</div>' +
+    '<p class="settings-card-description">' + t('settings.ffmpegHelp') + '</p>' +
+    '<div class="settings-row update-location-row"><label for="settings-ffmpeg-path">' + t('settings.ffmpegPath') + '</label>' +
+    '<input id="settings-ffmpeg-path" type="text" spellcheck="false" placeholder="C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe" value="' + esc(String(G.settings.ffmpegPath || '')) + '" onchange="setFfmpegPath(this.value,this)"></div>' +
+    '<div class="settings-inline-actions"><button class="dialog-btn" type="button" onclick="refreshFfmpegSettingsStatus()">' + t('settings.ffmpegDetect') + '</button></div>' +
+    '<div id="settings-ffmpeg-status" class="media-convert-engine" role="status"></div></div>' +
     '<div class="settings-card"><div class="settings-card-title">' + t('settings.customizeToolbar') + '</div>' +
     '<div id="toolbar-config-list" class="settings-config-list toolbar-config-list"></div>' +
     '<button class="dialog-btn" onclick="resetToolbarConfig()">' + t('btn.resetDefault') + '</button></div>';
@@ -349,6 +355,7 @@ function openSettings() {
   refreshUpdateSettingsStatus();
   loadReleaseHistory(false);
   if (typeof renderFileDialogIntegrationStatus === 'function') renderFileDialogIntegrationStatus();
+  if (typeof refreshFfmpegSettingsStatus === 'function') refreshFfmpegSettingsStatus();
 }
 
 function setAutoUpdateEnabled(enabled) {

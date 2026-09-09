@@ -8,7 +8,7 @@
 
 <p align="center"><a href="README.md">English</a> · <strong>简体中文</strong></p>
 
-RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、丰富预览、Everything 全局搜索、中文拼音匹配、空间占用分析和 portable 原地更新，主要面向 Windows 10 与 Windows 11。
+RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、丰富预览、Everything 全局搜索、中文拼音匹配、空间占用分析、媒体格式转换和 portable 原地更新，主要面向 Windows 10 与 Windows 11。
 
 ## 主要功能
 
@@ -22,7 +22,9 @@ RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、
 - 删除、重命名和不覆盖移动操作支持撤销。
 - 支持 Git/SVN 状态、收藏、标签、压缩包、SMB 路径、FTP/SFTP 和云文件状态。
 - 右键菜单可用 Windows 资源管理器打开文件夹，或打开并定位所选文件。
-- 可选的 Windows 集成可通过自定义快捷键，让原生打开 / 保存框或资源管理器跳到 RHFiles 当前文件夹。
+- 可选的 Windows 集成会在原生打开 / 保存框或资源管理器旁列出全部 RHFiles 窗口、标签页和双窗格位置。
+- 右键即可转换常见视频、音频和图片格式；随包 FFmpeg 提供进度、取消、相关参数与详细错误。
+- 地址栏接受本地/UNC 路径及 `file:///` 地址；输入文件地址时会进入所在文件夹并选中它。
 - 使用 Velopack 从 GitHub Releases 或可配置的家庭服务器源进行 portable 自更新，并支持 HTTP/HTTPS 代理。
 - 内置多套配色，也可从配置目录加载用户主题包，无需重新编译。
 
@@ -30,7 +32,7 @@ RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、
 
 请从 [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest) 下载最新版 portable 压缩包或安装程序。
 
-portable 版本需要完整解压，然后运行解压目录中的 `RHFiles.exe`。请保留同目录下的 `Everything.exe`、`Everything64.dll`、`dust.exe` 等文件。首次使用 Velopack portable 版本后，后续版本可以在软件内下载、覆盖并重启。
+portable 版本需要完整解压，然后运行解压目录中的 `RHFiles.exe`。请保留同目录下的 `Everything.exe`、`Everything64.dll`、`dust.exe`、`ffmpeg.exe` 等文件。首次使用 Velopack portable 版本后，后续版本可以在软件内下载、覆盖并重启。
 
 当前构建尚未进行代码签名，因此 Windows 可能显示“未知发布者”。
 
@@ -53,6 +55,12 @@ portable 版本需要完整解压，然后运行解压目录中的 `RHFiles.exe`
 
 离线 3D 预览支持 glTF/GLB（包括 Draco 与 Meshopt 压缩）、OBJ/MTL、FBX、STL、PLY 和 3MF，提供旋转观察、缩放、平移、复位视角、线框、自动旋转和动画播放。为避免拖慢界面，自动预览限制为 128 MiB 和三百万个三角面；本阶段明确不处理 CAD 格式。
 
+## 媒体格式转换
+
+右键支持的视频、音频或图片并选择“转换格式”，即可选择常用输出格式，以及对应的质量、编码器、编码速度、分辨率、码率、采样率、声道和图片最大宽度。转换会进入“文件任务”面板，显示进度、当前输出大小、速度，并可取消；失败时会显示 FFmpeg 的具体错误原因。
+
+portable 包随附固定版本的 Windows x64 FFmpeg 9.0.1 Essentials，也可以在设置中指定另一份 `ffmpeg.exe`。RHFiles 总是先在同目录写临时文件；取消或失败不会动已有目标，只有完整转换成功后才会执行覆盖替换。
+
 ## 主题
 
 RHFiles 内置纸白、深色、暖沙、薄雾、森林和石板主题。用户主题包是放在以下目录中的 JSON 文件：
@@ -69,9 +77,9 @@ RHFiles 内置纸白、深色、暖沙、薄雾、森林和石板主题。用户
 
 ## Windows 集成（实验性）
 
-在设置中启用“Windows 集成”后，可以把 RHFiles 当前活动窗格的文件夹带到标准 Windows 打开 / 保存对话框或资源管理器。目标窗口处于前台时按下可配置的快速跳转快捷键（默认 `Ctrl+G`），RHFiles 会聚焦其地址栏并输入路径，不会改写剪贴板。
+在设置中启用“Windows 集成”后，激活标准 Windows 打开 / 保存对话框或资源管理器，它的旁边会自动出现一个紧凑列表，包含所有 RHFiles 窗口、标签页以及当前可见的左右窗格位置。单击某一项后，只让当前这个 Windows 窗口跳转；列表会标出活动与固定标签，长路径优先露出后半部分，也会随目标显示器 DPI 缩放。
 
-该功能默认关闭，快捷键也只会在识别出的 Windows 文件界面中被拦截。浏览器上传文件时调用的 Windows 原生选择器可以使用；软件自绘的选择器和管理员权限窗口目前可能无法接管。
+可配置快捷键（默认 `Ctrl+G`）现在只是可选的“重新唤出并聚焦列表”，不会直接跳转。该功能默认关闭并按需创建，不改写剪贴板。浏览器上传文件时调用的 Windows 原生选择器可以使用；软件自绘的选择器和管理员权限窗口目前可能无法接管。
 
 ## 开发
 
@@ -104,4 +112,4 @@ cargo build --release --locked --package rhfiles-tauri
 
 ## 第三方组件
 
-portable 包中包含 Everything 与 `dust`，分发时应保留它们的配套文件和许可证。离线 3D 预览固定使用 Three.js 0.185.1 的必要子集，并保留其 MIT 许可证。其他 Rust/JavaScript 依赖记录在 `Cargo.lock` 与源码目录中。
+portable 包中包含 Everything、`dust` 和作为独立程序调用的未修改 FFmpeg，分发时应保留相应说明与许可证。FFmpeg 的构建和源码信息记录在 `FFmpeg-NOTICE.txt`；也可查看 [FFmpeg 法律说明](https://ffmpeg.org/legal.html)与 [Gyan Windows 构建](https://www.gyan.dev/ffmpeg/builds/)。离线 3D 预览固定使用 Three.js 0.185.1 的必要子集，并保留其 MIT 许可证。其他 Rust/JavaScript 依赖记录在 `Cargo.lock` 与源码目录中。

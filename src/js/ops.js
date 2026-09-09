@@ -926,6 +926,7 @@ function showContextMenu(x, y, isRight) {
   const isImage = ["jpg","jpeg","png","gif","bmp","webp","svg","ico","tiff"].includes(ext);
   const isArchive = ["zip","rar","7z","tar","gz","bz2"].includes(ext);
   const isMedia = ["mp4","mkv","avi","mov","wmv","flv","webm","mp3","flac","wav","aac","ogg","m4a","wma","ape","alac"].includes(ext);
+  const conversionKind = singleFile && typeof mediaConversionKind === 'function' ? mediaConversionKind(singleFile) : null;
   const isExe = ext === "exe" || ext === "msi";
   const isFont = ["ttf","otf","fon"].includes(ext);
   const isCert = ["cer","crt","p7b","pfx","p12"].includes(ext);
@@ -948,6 +949,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.preview'), shortcut:"Space", action: () => previewSelected(isRight), disabled: !singleSelection },
     { label: t('ctx.newTab'), action: () => addTab(singleDir.path), hidden: !singleDir },
     { label: t('ctx.openWith'), submenu: openWithSubmenu, disabled: !singleSelection },
+    { label: t('ctx.convertFormat'), action: () => showMediaConvertDialog(singleFile, isRight), hidden: !conversionKind },
     { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), action: () => runContextCommand('open_in_windows_explorer', {path: sel[0].path, is_directory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')), disabled: !singleSelection },
     { label: isFavoriteFolder(singleDir?.path) ? t('favorites.remove') : t('favorites.add'), action: () => toggleFavoriteFolder(singleDir.path, singleDir.name), hidden: !singleDir },
     { label: "-", action: null },

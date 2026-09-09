@@ -1,0 +1,17 @@
+RHFiles bundles an unmodified FFmpeg command-line executable as a separate
+program for optional media conversion.
+
+Bundled build
+-------------
+FFmpeg 9.0.1 Essentials Build for Windows x64 by Gyan Doshi
+Package: ffmpeg-9.0.1-essentials_build.7z
+Package SHA-256: 49a73bdf0850092a252ac4641d922f3048d63ed113e196cc65ce1e4f7fb33e85
+Binary and build information: https://www.gyan.dev/ffmpeg/builds/
+Corresponding FFmpeg revision: https://github.com/FFmpeg/FFmpeg/commit/bf1b838f2a
+FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/bf1b838f2a
+
+The bundled build is licensed under GPLv3. Its original LICENSE and README are
+included beside RHFiles as FFmpeg-LICENSE.txt and FFmpeg-README.txt. RHFiles
+invokes ffmpeg.exe as a separate process and does not link against FFmpeg.
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RHFiles Locations</title>
+  <link rel="stylesheet" href="css/integration-picker.css">
+</head>
+<body>
+  <main class="picker-shell">
+    <header class="picker-header" data-tauri-drag-region>
+      <div class="picker-brand" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3.25 6.5h6.1l1.7 1.85h9.7v10.4H3.25V6.5Z" fill="currentColor" opacity=".18"/><path d="M3.25 6.5h6.1l1.7 1.85h9.7v10.4H3.25V6.5Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><path d="m13.2 12 2.1 2.05L13.2 16.1M8.7 14.05h6.2" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="picker-heading" data-tauri-drag-region>
+        <strong id="picker-title">RHFiles 已打开位置</strong>
+        <span id="picker-subtitle">选择后让当前 Windows 窗口跳转</span>
+      </div>
+      <button id="picker-close" class="picker-close" type="button" aria-label="关闭" title="关闭">
+        <svg viewBox="0 0 16 16" fill="none"><path d="m4 4 8 8m0-8-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <section id="picker-list" class="picker-list" aria-live="polite"></section>
+    <footer class="picker-footer">
+      <span id="picker-target">Windows 文件窗口</span>
+      <span id="picker-hint">单击即可跳转</span>
+    </footer>
+  </main>
+  <script src="js/integration-picker.js"></script>
+</body>
+</html>

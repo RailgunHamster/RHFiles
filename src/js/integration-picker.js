@@ -1,0 +1,134 @@
+const pickerInvoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke;
+const pickerListen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
+
+const pickerText = {
+  zh: {
+    title: 'RHFiles 已打开位置', subtitle: '选择后让当前 Windows 窗口跳转', click: '单击即可跳转',
+    dialog: 'Windows 打开 / 保存窗口', explorer: 'Windows 资源管理器',
+    window: 'RHFiles 窗口 {number}', left: '左窗格', right: '右窗格', tab: '标签 {number}',
+    pinned: '已固定', empty: '没有可用的文件夹', emptyHint: '请先在 RHFiles 中打开本地或网络文件夹',
+    failed: '跳转失败：{error}', close: '关闭',
+  },
+  en: {
+    title: 'Open RHFiles locations', subtitle: 'Choose where this Windows window should go', click: 'Click to navigate',
+    dialog: 'Windows Open / Save dialog', explorer: 'Windows File Explorer',
+    window: 'RHFiles window {number}', left: 'Left pane', right: 'Right pane', tab: 'Tab {number}',
+    pinned: 'Pinned', empty: 'No folder is available', emptyHint: 'Open a local or network folder in RHFiles first',
+    failed: 'Navigation failed: {error}', close: 'Close',
+  },
+};
+
+let pickerState = { locale: 'zh', locations: [], targetKind: '' };
+
+function tr(key, values = {}) {
+  const locale = String(pickerState.locale || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  let value = pickerText[locale][key] || pickerText.en[key] || key;
+  for (const [name, replacement] of Object.entries(values)) {
+    value = value.replaceAll(`{${name}}`, String(replacement));
+  }
+  return value;
+}
+
+function basename(path) {
+  const normalized = String(path || '').replace(/[\\/]+$/, '');
+  if (/^[a-z]:$/i.test(normalized)) return normalized.toUpperCase();
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+  return parts.at(-1) || path || '';
+}
+
+function folderIcon() {
+  return '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.25 5.1h6l1.55 1.7h7.95v8.1H2.25V5.1Z" fill="currentColor" opacity=".25"/><path d="M2.25 5.1h6l1.55 1.7h7.95v8.1H2.25V5.1Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/></svg>';
+}
+
+function renderPicker(state) {
+  pickerState = state || pickerState;
+  document.documentElement.lang = String(pickerState.locale || '').startsWith('zh') ? 'zh-CN' : 'en';
+  document.getElementById('picker-title').textContent = tr('title');
+  document.getElementById('picker-subtitle').textContent = tr('subtitle');
+  document.getElementById('picker-hint').textContent = tr('click');
+  document.getElementById('picker-target').textContent = pickerState.targetKind === 'windowsExplorer' ? tr('explorer') : tr('dialog');
+  const close = document.getElementById('picker-close');
+  close.title = tr('close');
+  close.setAttribute('aria-label', tr('close'));
+
+  const list = document.getElementById('picker-list');
+  list.replaceChildren();
+  const locations = Array.isArray(pickerState.locations) ? pickerState.locations : [];
+  if (!locations.length) {
+    const empty = document.createElement('div');
+    empty.className = 'picker-empty';
+    const title = document.createElement('strong');
+    title.textContent = tr('empty');
+    const hint = document.createElement('span');
+    hint.textContent = tr('emptyHint');
+    empty.append(title, hint);
+    list.append(empty);
+    return;
+  }
+
+  const windowLabels = [...new Set(locations.map(location => location.windowLabel || 'main'))];
+  windowLabels.forEach((windowLabel, windowIndex) => {
+    const group = document.createElement('div');
+    group.className = 'picker-group';
+    if (windowLabels.length > 1) {
+      const heading = document.createElement('div');
+      heading.className = 'picker-group-title';
+      heading.textContent = tr('window', { number: windowIndex + 1 });
+      group.append(heading);
+    }
+    locations.filter(location => (location.windowLabel || 'main') === windowLabel).forEach(location => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `picker-location${location.active ? ' active' : ''}`;
+      button.title = location.path;
+
+      const icon = document.createElement('span');
+      icon.className = 'location-icon';
+      icon.innerHTML = folderIcon();
+      const copy = document.createElement('span');
+      copy.className = 'location-copy';
+      const name = document.createElement('span');
+      name.className = 'location-name';
+      name.textContent = basename(location.path);
+      const path = document.createElement('span');
+      path.className = 'location-path';
+      path.textContent = location.path;
+      copy.append(name, path);
+      const meta = document.createElement('span');
+      meta.className = 'location-meta';
+      const tab = document.createElement('span');
+      tab.className = 'location-badge';
+      tab.textContent = `${location.pane === 'right' ? tr('right') : tr('left')} · ${tr('tab', { number: Number(location.tabIndex || 0) + 1 })}`;
+      meta.append(tab);
+      if (location.pinned) {
+        const pin = document.createElement('span');
+        pin.className = 'location-badge pin';
+        pin.textContent = tr('pinned');
+        meta.append(pin);
+      }
+      button.append(icon, copy, meta);
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await pickerInvoke('navigate_file_dialog_location', { path: location.path });
+        } catch (error) {
+          document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
+        } finally {
+          button.disabled = false;
+        }
+      });
+      group.append(button);
+    });
+    list.append(group);
+  });
+}
+
+document.getElementById('picker-close').addEventListener('click', () => pickerInvoke('hide_file_dialog_picker'));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') pickerInvoke('hide_file_dialog_picker');
+});
+
+if (pickerListen) {
+  pickerListen('file-dialog-picker-state', event => renderPicker(event.payload)).catch(() => {});
+}
+pickerInvoke('get_file_dialog_picker_state').then(renderPicker).catch(() => renderPicker(pickerState));

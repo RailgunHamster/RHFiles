@@ -1,15 +1,21 @@
-use serde::Serialize;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use tauri::{Emitter, Manager};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+};
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_D,
@@ -20,9 +26,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellWindows};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, EnumChildWindows, GetClassNameW, GetForegroundWindow,
-    GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, SetWindowsHookExW,
-    TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    GetMessageW, GetWindowRect, HC_ACTION, HWND_TOPMOST, IsWindow, KBDLLHOOKSTRUCT, LLKHF_INJECTED,
+    MSG, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetForegroundWindow,
+    SetWindowPos, SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
+    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 use windows_core::{BOOL, Interface};
 
@@ -38,20 +45,38 @@ struct Hotkey {
     key: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDialogLocation {
+    id: String,
+    #[serde(default)]
+    window_label: String,
+    pane: String,
+    tab_index: usize,
+    path: String,
+    active: bool,
+    pinned: bool,
+}
+
+#[derive(Clone)]
+struct WindowLocations {
+    locations: Vec<FileDialogLocation>,
+}
+
 #[derive(Clone, Default)]
 struct IntegrationConfig {
     enabled: bool,
-    path: Option<String>,
+    windows: HashMap<String, WindowLocations>,
+    locale: String,
     hotkeys: Vec<Hotkey>,
     shortcut_labels: Vec<String>,
     rejected_shortcuts: Vec<String>,
 }
 
 #[derive(Debug)]
-struct NavigationRequest {
+struct PickerRequest {
     hwnd: usize,
     trigger_key: u32,
-    path: String,
 }
 
 #[derive(Debug, Default)]
@@ -71,16 +96,32 @@ pub struct FileDialogIntegrationStatus {
     running: bool,
     path_available: bool,
     current_path: Option<String>,
+    location_count: usize,
     registered_shortcuts: Vec<String>,
     rejected_shortcuts: Vec<String>,
     supported_targets: Vec<&'static str>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDialogPickerState {
+    enabled: bool,
+    target_available: bool,
+    target_kind: &'static str,
+    locale: String,
+    locations: Vec<FileDialogLocation>,
+}
+
 static CONFIG: OnceLock<Mutex<IntegrationConfig>> = OnceLock::new();
 static HOOK_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static HOOK_RUNNING: AtomicBool = AtomicBool::new(false);
+static MONITOR_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 static CONSUMED_KEY: AtomicU32 = AtomicU32::new(0);
-static ACTION_SENDER: OnceLock<SyncSender<NavigationRequest>> = OnceLock::new();
+static ACTIVE_TARGET: AtomicUsize = AtomicUsize::new(0);
+static DISMISSED_TARGET: AtomicUsize = AtomicUsize::new(0);
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+static ACTION_SENDER: OnceLock<SyncSender<PickerRequest>> = OnceLock::new();
 
 fn config() -> &'static Mutex<IntegrationConfig> {
     CONFIG.get_or_init(|| Mutex::new(IntegrationConfig::default()))
@@ -92,19 +133,46 @@ fn lock_config() -> std::sync::MutexGuard<'static, IntegrationConfig> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn action_sender() -> &'static SyncSender<NavigationRequest> {
+fn action_sender() -> &'static SyncSender<PickerRequest> {
     ACTION_SENDER.get_or_init(|| {
-        let (sender, receiver) = mpsc::sync_channel::<NavigationRequest>(4);
+        let (sender, receiver) = mpsc::sync_channel::<PickerRequest>(4);
         thread::Builder::new()
-            .name("rhfiles-dialog-navigation".to_string())
+            .name("rhfiles-dialog-picker-shortcut".to_string())
             .spawn(move || {
                 while let Ok(request) = receiver.recv() {
-                    navigate_window(request);
+                    if wait_for_trigger_release(request.trigger_key) {
+                        DISMISSED_TARGET.store(0, Ordering::Release);
+                        show_picker_for(request.hwnd, true);
+                    }
                 }
             })
-            .expect("failed to start file-dialog navigation worker");
+            .expect("failed to start file-dialog picker shortcut worker");
         sender
     })
+}
+
+fn all_locations(snapshot: &IntegrationConfig) -> Vec<FileDialogLocation> {
+    let mut windows = snapshot.windows.iter().collect::<Vec<_>>();
+    windows.sort_by(|(left_label, _), (right_label, _)| {
+        let left_main = left_label.as_str() == "main";
+        let right_main = right_label.as_str() == "main";
+        right_main
+            .cmp(&left_main)
+            .then_with(|| left_label.cmp(right_label))
+    });
+    windows
+        .into_iter()
+        .flat_map(|(_, window)| window.locations.iter().cloned())
+        .collect()
+}
+
+fn active_location(snapshot: &IntegrationConfig) -> Option<String> {
+    let locations = all_locations(snapshot);
+    locations
+        .iter()
+        .find(|location| location.active)
+        .or_else(|| locations.first())
+        .map(|location| location.path.clone())
 }
 
 fn normalize_folder_path(path: Option<String>) -> Option<String> {
@@ -252,20 +320,19 @@ fn is_supported_window_shape(top_class: &str, evidence: &DialogEvidence) -> bool
     }
 }
 
-fn supported_foreground_window() -> Option<HWND> {
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.0.is_null() {
-        return None;
+fn is_supported_window(hwnd: HWND) -> bool {
+    if hwnd.0.is_null() || !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        return false;
     }
     let top_class = window_class(hwnd);
     if matches!(
         top_class.to_ascii_lowercase().as_str(),
         "cabinetwclass" | "explorewclass"
     ) {
-        return Some(hwnd);
+        return true;
     }
     if top_class != "#32770" {
-        return None;
+        return false;
     }
 
     let mut evidence = DialogEvidence::default();
@@ -276,7 +343,12 @@ fn supported_foreground_window() -> Option<HWND> {
             LPARAM((&mut evidence as *mut DialogEvidence) as isize),
         );
     }
-    is_supported_window_shape(&top_class, &evidence).then_some(hwnd)
+    is_supported_window_shape(&top_class, &evidence)
+}
+
+fn supported_foreground_window() -> Option<HWND> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    is_supported_window(hwnd).then_some(hwnd)
 }
 
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -314,9 +386,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     if !snapshot.enabled {
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
-    let Some(path) = snapshot.path else {
-        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
-    };
     if !snapshot
         .hotkeys
         .iter()
@@ -330,10 +399,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     };
 
     if action_sender()
-        .try_send(NavigationRequest {
+        .try_send(PickerRequest {
             hwnd: hwnd.0 as usize,
             trigger_key: event.vkCode,
-            path,
         })
         .is_ok()
     {
@@ -403,6 +471,253 @@ fn hook_message_loop(startup_sender: SyncSender<Result<(), String>>) {
     }
     let _ = unsafe { UnhookWindowsHookEx(hook) };
     HOOK_RUNNING.store(false, Ordering::Release);
+}
+
+fn picker_hwnd() -> Option<HWND> {
+    let app = APP_HANDLE.get()?;
+    let window = app.get_webview_window("integration-picker")?;
+    let raw = window.hwnd().ok()?;
+    Some(HWND(raw.0))
+}
+
+fn ensure_picker_window() -> Result<(), String> {
+    let app = APP_HANDLE
+        .get()
+        .ok_or_else(|| "RHFiles is not ready to create the location picker".to_string())?;
+    if app.get_webview_window("integration-picker").is_some() {
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "integration-picker",
+        tauri::WebviewUrl::App("integration-picker.html".into()),
+    )
+    .title("RHFiles Locations")
+    .inner_size(370.0, 320.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .closable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    .visible(false)
+    .shadow(true)
+    .build()
+    .map(|_| ())
+    .map_err(|error| format!("Unable to create the RHFiles location picker: {error}"))
+}
+
+fn target_kind(hwnd: HWND) -> &'static str {
+    match window_class(hwnd).to_ascii_lowercase().as_str() {
+        "cabinetwclass" | "explorewclass" => "windowsExplorer",
+        "#32770" => "windowsFileDialog",
+        _ => "",
+    }
+}
+
+fn prune_closed_window_locations() -> bool {
+    let Some(app) = APP_HANDLE.get() else {
+        return false;
+    };
+    let mut snapshot = lock_config();
+    let previous = snapshot.windows.len();
+    snapshot
+        .windows
+        .retain(|label, _| app.get_webview_window(label).is_some());
+    previous != snapshot.windows.len()
+}
+
+fn picker_state() -> FileDialogPickerState {
+    let _ = prune_closed_window_locations();
+    let snapshot = lock_config().clone();
+    let locations = all_locations(&snapshot);
+    let target = ACTIVE_TARGET.load(Ordering::Acquire);
+    let target = HWND(target as *mut core::ffi::c_void);
+    let target_available = is_supported_window(target);
+    FileDialogPickerState {
+        enabled: snapshot.enabled,
+        target_available,
+        target_kind: if target_available {
+            target_kind(target)
+        } else {
+            ""
+        },
+        locale: snapshot.locale,
+        locations,
+    }
+}
+
+fn emit_picker_state() {
+    if let Some(app) = APP_HANDLE.get() {
+        let _ = app.emit_to(
+            "integration-picker",
+            "file-dialog-picker-state",
+            picker_state(),
+        );
+    }
+}
+
+fn hide_picker_native() {
+    if let Some(hwnd) = picker_hwnd() {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+fn position_picker(target: HWND, picker: HWND) -> bool {
+    let mut target_rect = RECT::default();
+    if unsafe { GetWindowRect(target, &mut target_rect) }.is_err() {
+        return false;
+    }
+
+    let monitor = unsafe { MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST) };
+    if monitor.0.is_null() {
+        return false;
+    }
+    let mut monitor_info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(monitor, &mut monitor_info) }.as_bool() {
+        return false;
+    }
+
+    let location_count = lock_config()
+        .windows
+        .values()
+        .map(|window| window.locations.len())
+        .sum::<usize>();
+    let row_count = location_count.clamp(1, 7) as i32;
+    let dpi = unsafe { GetDpiForWindow(target) }.max(96) as i32;
+    let scaled = |logical: i32| logical.saturating_mul(dpi) / 96;
+    let width = scaled(370);
+    let height = scaled((94 + row_count * 58).clamp(170, 520));
+    let gap = scaled(10);
+    let work = monitor_info.rcWork;
+
+    let x = if work.right - target_rect.right >= width + gap {
+        target_rect.right + gap
+    } else if target_rect.left - work.left >= width + gap {
+        target_rect.left - width - gap
+    } else {
+        (target_rect.right - width - scaled(18)).clamp(work.left, work.right - width)
+    };
+    let y = target_rect
+        .top
+        .clamp(work.top, (work.bottom - height).max(work.top));
+
+    unsafe {
+        SetWindowPos(
+            picker,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+        .is_ok()
+    }
+}
+
+fn show_picker_for(target_value: usize, activate: bool) {
+    let target = HWND(target_value as *mut core::ffi::c_void);
+    if !lock_config().enabled || !is_supported_window(target) {
+        return;
+    }
+    let Some(picker) = picker_hwnd() else {
+        return;
+    };
+    let locations_changed = prune_closed_window_locations();
+    let previous = ACTIVE_TARGET.swap(target_value, Ordering::AcqRel);
+    if previous != target_value || locations_changed {
+        emit_picker_state();
+    }
+    if !position_picker(target, picker) {
+        return;
+    }
+    if activate {
+        unsafe {
+            let _ = ShowWindow(picker, SW_SHOWNOACTIVATE);
+            let _ = SetForegroundWindow(picker);
+        }
+    }
+}
+
+fn monitor_picker() {
+    MONITOR_RUNNING.store(true, Ordering::Release);
+    let mut previous_foreground = 0usize;
+    loop {
+        let enabled = lock_config().enabled;
+        if !enabled {
+            if ACTIVE_TARGET.swap(0, Ordering::AcqRel) != 0 {
+                emit_picker_state();
+                hide_picker_native();
+            }
+            DISMISSED_TARGET.store(0, Ordering::Release);
+            thread::sleep(Duration::from_millis(500));
+            continue;
+        }
+        thread::sleep(Duration::from_millis(140));
+
+        let foreground = unsafe { GetForegroundWindow() };
+        let foreground_value = foreground.0 as usize;
+        let picker = picker_hwnd();
+        let picker_value = picker.map_or(0, |hwnd| hwnd.0 as usize);
+        let active_value = ACTIVE_TARGET.load(Ordering::Acquire);
+        let active = HWND(active_value as *mut core::ffi::c_void);
+
+        if foreground_value == picker_value && active_value != 0 && is_supported_window(active) {
+            if let Some(picker) = picker {
+                let _ = position_picker(active, picker);
+            }
+            previous_foreground = foreground_value;
+            continue;
+        }
+
+        if is_supported_window(foreground) {
+            if DISMISSED_TARGET.load(Ordering::Acquire) == foreground_value {
+                hide_picker_native();
+            } else {
+                show_picker_for(foreground_value, false);
+            }
+            previous_foreground = foreground_value;
+            continue;
+        }
+
+        if foreground_value != previous_foreground {
+            DISMISSED_TARGET.store(0, Ordering::Release);
+        }
+        previous_foreground = foreground_value;
+        hide_picker_native();
+    }
+}
+
+pub fn initialize(app: tauri::AppHandle) -> Result<(), String> {
+    let _ = APP_HANDLE.set(app);
+    Ok(())
+}
+
+fn ensure_monitor_started() -> Result<(), String> {
+    if MONITOR_RUNNING.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let _guard = MONITOR_START_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if MONITOR_RUNNING.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    thread::Builder::new()
+        .name("rhfiles-dialog-picker-monitor".to_string())
+        .spawn(monitor_picker)
+        .map_err(|error| format!("Unable to start the Windows integration monitor: {error}"))?;
+    Ok(())
 }
 
 fn wait_for_trigger_release(trigger_key: u32) -> bool {
@@ -506,23 +821,39 @@ fn navigate_explorer_with_shell(hwnd: usize, path: &str) -> Result<bool, String>
     Ok(false)
 }
 
-fn navigate_window(request: NavigationRequest) {
-    if !wait_for_trigger_release(request.trigger_key) {
-        return;
-    }
-    thread::sleep(Duration::from_millis(25));
-    let foreground = unsafe { GetForegroundWindow() };
-    if foreground.0 as usize != request.hwnd || supported_foreground_window().is_none() {
-        return;
+fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
+    let path = normalize_folder_path(Some(path.to_string()))
+        .ok_or_else(|| "The selected RHFiles location is not a filesystem folder".to_string())?;
+    let target = HWND(hwnd_value as *mut core::ffi::c_void);
+    if !is_supported_window(target) {
+        return Err("The Windows file window is no longer available".to_string());
     }
 
-    let foreground_class = window_class(foreground);
+    let target_class = window_class(target);
     if matches!(
-        foreground_class.to_ascii_lowercase().as_str(),
+        target_class.to_ascii_lowercase().as_str(),
         "cabinetwclass" | "explorewclass"
-    ) && navigate_explorer_with_shell(request.hwnd, &request.path).unwrap_or(false)
+    ) && navigate_explorer_with_shell(hwnd_value, &path)?
     {
-        return;
+        return Ok(());
+    }
+
+    // Selecting a location is an explicit user gesture in RHFiles' companion
+    // window. Release a synthetic Alt tap before restoring the native dialog;
+    // this gives Windows a valid foreground transition without clipboard use.
+    let _ = send_inputs(&[
+        key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_MENU, KEYEVENTF_KEYUP),
+    ]);
+    if !unsafe { SetForegroundWindow(target) }.as_bool() {
+        return Err("Windows did not allow the file dialog to regain focus".to_string());
+    }
+    let focus_deadline = Instant::now() + Duration::from_millis(1200);
+    while unsafe { GetForegroundWindow() } != target && Instant::now() < focus_deadline {
+        thread::sleep(Duration::from_millis(15));
+    }
+    if unsafe { GetForegroundWindow() } != target {
+        return Err("The file dialog did not regain focus in time".to_string());
     }
 
     // Common Windows file dialogs (and the legacy Explorer fallback) focus
@@ -534,15 +865,15 @@ fn navigate_window(request: NavigationRequest) {
         key_input(VK_MENU, KEYEVENTF_KEYUP),
     ];
     if !send_inputs(&focus_address) {
-        return;
+        return Err("Unable to focus the Windows address bar".to_string());
     }
     // Explorer's breadcrumb animation and the modern IFileDialog address bar
     // can take more than one frame to turn into an editable control.
     thread::sleep(Duration::from_millis(220));
-    let dialog_path = if request.path.ends_with('\\') {
-        request.path.clone()
+    let dialog_path = if path.ends_with('\\') {
+        path
     } else {
-        format!("{}\\", request.path)
+        format!("{path}\\")
     };
     let select_all = [
         key_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
@@ -551,7 +882,7 @@ fn navigate_window(request: NavigationRequest) {
         key_input(VK_CONTROL, KEYEVENTF_KEYUP),
     ];
     if !send_inputs(&select_all) {
-        return;
+        return Err("Unable to select the current Windows address".to_string());
     }
     thread::sleep(Duration::from_millis(40));
 
@@ -561,22 +892,27 @@ fn navigate_window(request: NavigationRequest) {
         text_inputs.push(unicode_input(unit, true));
     }
     if !send_inputs(&text_inputs) {
-        return;
+        return Err("Unable to type the selected folder into Windows".to_string());
     }
     thread::sleep(Duration::from_millis(100));
-    let _ = send_inputs(&[
+    if !send_inputs(&[
         key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
         key_input(VK_RETURN, KEYEVENTF_KEYUP),
-    ]);
+    ]) {
+        return Err("Unable to confirm the selected folder in Windows".to_string());
+    }
+    Ok(())
 }
 
 fn current_status() -> FileDialogIntegrationStatus {
     let snapshot = lock_config().clone();
+    let locations = all_locations(&snapshot);
     FileDialogIntegrationStatus {
         enabled: snapshot.enabled,
-        running: HOOK_RUNNING.load(Ordering::Acquire),
-        path_available: snapshot.path.is_some(),
-        current_path: snapshot.path,
+        running: snapshot.enabled && MONITOR_RUNNING.load(Ordering::Acquire),
+        path_available: !locations.is_empty(),
+        current_path: active_location(&snapshot),
+        location_count: locations.len(),
         registered_shortcuts: snapshot.shortcut_labels,
         rejected_shortcuts: snapshot.rejected_shortcuts,
         supported_targets: vec!["windowsFileDialog", "windowsExplorer"],
@@ -585,10 +921,14 @@ fn current_status() -> FileDialogIntegrationStatus {
 
 #[tauri::command]
 pub fn configure_file_dialog_integration(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     enabled: bool,
-    path: Option<String>,
+    locations: Vec<FileDialogLocation>,
     shortcuts: Vec<String>,
+    locale: Option<String>,
 ) -> Result<FileDialogIntegrationStatus, String> {
+    initialize(app.clone())?;
     let mut hotkeys = Vec::new();
     let mut shortcut_labels = Vec::new();
     let mut rejected_shortcuts = Vec::new();
@@ -602,28 +942,113 @@ pub fn configure_file_dialog_integration(
             rejected_shortcuts.push(shortcut);
         }
     }
-    if enabled && hotkeys.is_empty() {
-        return Err("Configure at least one shortcut containing Ctrl, Shift, or Alt".to_string());
-    }
+
+    let window_label = window.label().to_string();
+    let normalized_locations = locations
+        .into_iter()
+        .take(200)
+        .enumerate()
+        .filter_map(|(index, mut location)| {
+            location.path = normalize_folder_path(Some(location.path))?;
+            location.window_label = window_label.clone();
+            location.pane = if location.pane.eq_ignore_ascii_case("right") {
+                "right".to_string()
+            } else {
+                "left".to_string()
+            };
+            if location.id.trim().is_empty() {
+                location.id = format!("{window_label}:{}:{index}", location.pane);
+            }
+            Some(location)
+        })
+        .collect::<Vec<_>>();
 
     {
         let mut state = lock_config();
         state.enabled = enabled;
-        state.path = normalize_folder_path(path);
+        state.windows.insert(
+            window_label,
+            WindowLocations {
+                locations: normalized_locations,
+            },
+        );
+        if let Some(locale) = locale {
+            state.locale = if locale.to_ascii_lowercase().starts_with("zh") {
+                "zh".to_string()
+            } else {
+                "en".to_string()
+            };
+        }
         state.hotkeys = hotkeys;
         state.shortcut_labels = shortcut_labels;
         state.rejected_shortcuts = rejected_shortcuts;
     }
-    if enabled && let Err(error) = ensure_hook_started() {
-        lock_config().enabled = false;
-        return Err(error);
+    if enabled {
+        let startup = ensure_picker_window()
+            .and_then(|_| ensure_monitor_started())
+            .and_then(|_| {
+                if lock_config().hotkeys.is_empty() {
+                    Ok(())
+                } else {
+                    ensure_hook_started()
+                }
+            });
+        if let Err(error) = startup {
+            lock_config().enabled = false;
+            if let Some(picker) = app.get_webview_window("integration-picker") {
+                let _ = picker.destroy();
+            }
+            return Err(error);
+        }
     }
+    if !enabled {
+        ACTIVE_TARGET.store(0, Ordering::Release);
+        DISMISSED_TARGET.store(0, Ordering::Release);
+        hide_picker_native();
+        if let Some(picker) = app.get_webview_window("integration-picker") {
+            let _ = picker.destroy();
+        }
+    }
+    emit_picker_state();
     Ok(current_status())
 }
 
 #[tauri::command]
 pub fn get_file_dialog_integration_status() -> FileDialogIntegrationStatus {
     current_status()
+}
+
+#[tauri::command]
+pub fn get_file_dialog_picker_state() -> FileDialogPickerState {
+    picker_state()
+}
+
+#[tauri::command]
+pub async fn navigate_file_dialog_location(path: String) -> Result<(), String> {
+    let target = ACTIVE_TARGET.load(Ordering::Acquire);
+    if target == 0 {
+        return Err("No Windows file dialog or File Explorer window is available".to_string());
+    }
+    let path = normalize_folder_path(Some(path))
+        .ok_or_else(|| "The selected RHFiles location is not a filesystem folder".to_string())?;
+    let location_is_current = all_locations(&lock_config())
+        .iter()
+        .any(|location| location.path.eq_ignore_ascii_case(&path));
+    if !location_is_current {
+        return Err("The selected RHFiles location is no longer open".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || navigate_target_window(target, &path))
+        .await
+        .map_err(|error| format!("Unable to run Windows navigation: {error}"))?
+}
+
+#[tauri::command]
+pub fn hide_file_dialog_picker() {
+    let target = ACTIVE_TARGET.load(Ordering::Acquire);
+    if target != 0 {
+        DISMISSED_TARGET.store(target, Ordering::Release);
+    }
+    hide_picker_native();
 }
 
 #[cfg(test)]
@@ -809,32 +1234,6 @@ mod tests {
         None
     }
 
-    fn send_test_ctrl_g() {
-        let g = VIRTUAL_KEY(b'G' as u16);
-        assert!(send_inputs(&[key_input_with_marker(
-            VK_CONTROL,
-            KEYBD_EVENT_FLAGS(0),
-            TEST_INPUT_MARKER,
-        )]));
-        let modifier_deadline = Instant::now() + Duration::from_secs(1);
-        while !is_key_down(VK_CONTROL) && Instant::now() < modifier_deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(
-            is_key_down(VK_CONTROL),
-            "test Ctrl modifier did not activate"
-        );
-        assert!(send_inputs(&[
-            key_input_with_marker(g, KEYBD_EVENT_FLAGS(0), TEST_INPUT_MARKER),
-            key_input_with_marker(g, KEYEVENTF_KEYUP, TEST_INPUT_MARKER),
-        ]));
-        assert!(send_inputs(&[key_input_with_marker(
-            VK_CONTROL,
-            KEYEVENTF_KEYUP,
-            TEST_INPUT_MARKER,
-        )]));
-    }
-
     struct ExplorerTestGuard {
         hwnd: Option<HWND>,
         root: std::path::PathBuf,
@@ -930,6 +1329,21 @@ mod tests {
     }
 
     #[test]
+    fn integration_picker_window_is_created_lazily() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let picker = config["app"]["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|window| window["label"] == "integration-picker")
+            .expect("integration picker window config");
+        assert_eq!(picker["create"], false);
+        assert_eq!(picker["visible"], false);
+        assert_eq!(picker["skipTaskbar"], true);
+    }
+
+    #[test]
     fn accepts_drive_and_unc_folders_but_not_virtual_locations() {
         assert_eq!(
             normalize_folder_path(Some("C:".into())).as_deref(),
@@ -941,24 +1355,16 @@ mod tests {
 
     #[test]
     fn installs_the_out_of_process_hook_and_can_disable_it() {
-        let enabled = configure_file_dialog_integration(
-            true,
-            Some("C:\\".to_string()),
-            vec!["Ctrl+Shift+F24".to_string()],
-        )
-        .expect("the low-level Windows hook should install");
-        assert!(enabled.enabled);
-        assert!(enabled.running);
-        assert!(enabled.path_available);
+        {
+            let mut state = lock_config();
+            state.enabled = true;
+            state.hotkeys = vec![parse_hotkey("Ctrl+Shift+F24").unwrap()];
+        }
+        ensure_hook_started().expect("the low-level Windows hook should install");
+        assert!(HOOK_RUNNING.load(Ordering::Acquire));
 
-        let disabled = configure_file_dialog_integration(
-            false,
-            Some("C:\\".to_string()),
-            vec!["Ctrl+Shift+F24".to_string()],
-        )
-        .expect("the hook should be disableable without stopping its worker");
-        assert!(!disabled.enabled);
-        assert!(disabled.running);
+        lock_config().enabled = false;
+        assert!(HOOK_RUNNING.load(Ordering::Acquire));
     }
 
     #[test]
@@ -991,19 +1397,12 @@ mod tests {
 
         focus_controlled_window(hwnd);
 
-        let status = configure_file_dialog_integration(
-            true,
-            Some(target.to_string_lossy().into_owned()),
-            vec!["Ctrl+G".to_string()],
-        )
-        .expect("enable the Explorer integration");
-        assert!(status.running);
-
         focus_controlled_window(hwnd);
-        send_test_ctrl_g();
+        navigate_target_window(hwnd.0 as usize, &target.to_string_lossy())
+            .expect("select the target from the RHFiles location picker");
 
         let navigated = wait_for_explorer_title(&target_title, Duration::from_secs(10))
-            .expect("Ctrl+G did not navigate Explorer to the configured RHFiles folder");
+            .expect("the location picker did not navigate Explorer to the selected folder");
         assert_eq!(
             navigated, hwnd,
             "navigation unexpectedly changed Explorer windows"
@@ -1094,13 +1493,8 @@ mod tests {
             "Notepad's native dialog was not recognized: {dialog_evidence:?}"
         );
 
-        configure_file_dialog_integration(
-            true,
-            Some(target_folder.to_string_lossy().into_owned()),
-            vec!["Ctrl+G".to_string()],
-        )
-        .expect("enable the native file-dialog integration");
-        send_test_ctrl_g();
+        navigate_target_window(dialog_hwnd.0 as usize, &target_folder.to_string_lossy())
+            .expect("select the target from the RHFiles location picker");
         assert!(
             wait_for_child_text(
                 dialog_hwnd,
@@ -1108,7 +1502,7 @@ mod tests {
                 &target_folder_name,
                 Duration::from_secs(10),
             ),
-            "Ctrl+G did not navigate Notepad's dialog to the configured folder"
+            "the location picker did not navigate Notepad's dialog to the selected folder"
         );
 
         focus_controlled_window(dialog_hwnd);

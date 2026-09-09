@@ -4,6 +4,7 @@ mod cloud;
 mod db;
 mod file_dialog_integration;
 mod file_ops;
+mod media;
 mod network;
 mod search;
 mod shell;
@@ -42,6 +43,7 @@ pub fn run() {
         .setup(|app| {
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
             use tauri::Manager;
+            file_dialog_integration::initialize(app.handle().clone())?;
             if let Some(icon) = app.default_window_icon() {
                 let _tray = TrayIconBuilder::new()
                     .icon(icon.clone())
@@ -134,6 +136,9 @@ pub fn run() {
 
             file_dialog_integration::configure_file_dialog_integration,
             file_dialog_integration::get_file_dialog_integration_status,
+            file_dialog_integration::get_file_dialog_picker_state,
+            file_dialog_integration::navigate_file_dialog_location,
+            file_dialog_integration::hide_file_dialog_picker,
 
             system::get_thumbnail, system::open_file, system::open_in_windows_explorer, system::show_properties,
             system::read_file_preview, system::get_file_icon,
@@ -153,6 +158,8 @@ pub fn run() {
             system::show_open_with_dialog, system::compress_with,
             system::share_file,
             system::analyze_disk_usage,
+
+            media::detect_ffmpeg, media::convert_media,
 
             vcs::git_status, vcs::git_branches, vcs::git_checkout,
             vcs::git_create_branch, vcs::git_init, vcs::git_clone,
@@ -204,6 +211,25 @@ pub fn run() {
             updates::check_updates, updates::get_last_update_failure, updates::get_release_history,
             updates::download_update, updates::apply_update,
         ])
+        .on_window_event(|window, event| {
+            if window.label() == "integration-picker"
+                || !matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            {
+                return;
+            }
+            use tauri::Manager;
+            let app = window.app_handle();
+            let user_window_count = app
+                .webview_windows()
+                .keys()
+                .filter(|label| label.as_str() != "integration-picker")
+                .count();
+            if user_window_count <= 1
+                && let Some(picker) = app.get_webview_window("integration-picker")
+            {
+                let _ = picker.destroy();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

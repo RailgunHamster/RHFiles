@@ -90,6 +90,9 @@ if (-not (Test-Path -LiteralPath $releaseExe -PathType Leaf)) {
     throw "Release executable was not found: $releaseExe"
 }
 
+& (Join-Path $PSScriptRoot "prepare-ffmpeg.ps1")
+if ($LASTEXITCODE -ne 0) { throw "FFmpeg preparation failed with exit code $LASTEXITCODE" }
+
 Reset-WorkspaceDirectory $stageDirectory "Velopack staging directory"
 Reset-WorkspaceDirectory $OutputDirectory "Velopack output directory"
 
@@ -99,6 +102,10 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\everything\dll
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\Everything.lng") -Destination (Join-Path $stageDirectory "Everything.lng")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\dust.exe") -Destination (Join-Path $stageDirectory "dust.exe")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\dust-LICENSE.txt") -Destination (Join-Path $stageDirectory "dust-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\ffmpeg.exe") -Destination (Join-Path $stageDirectory "ffmpeg.exe")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\ffmpeg-LICENSE.txt") -Destination (Join-Path $stageDirectory "FFmpeg-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\ffmpeg-README.txt") -Destination (Join-Path $stageDirectory "FFmpeg-README.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\FFmpeg-NOTICE.txt") -Destination (Join-Path $stageDirectory "FFmpeg-NOTICE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\LICENSE.txt") -Destination (Join-Path $stageDirectory "Three.js-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\DRACO-LICENSE.txt") -Destination (Join-Path $stageDirectory "Draco-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\FFLATE-LICENSE.txt") -Destination (Join-Path $stageDirectory "fflate-LICENSE.txt")

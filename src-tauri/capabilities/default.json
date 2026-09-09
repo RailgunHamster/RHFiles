@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capability",
-  "windows": ["main"],
+  "windows": ["main", "window-*", "integration-picker"],
   "permissions": [
     "core:default",
     "shell:allow-open",

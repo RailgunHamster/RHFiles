@@ -65,7 +65,38 @@ fn generate_release_history() {
     .expect("write embedded release history");
 }
 
+fn enable_common_controls_for_all_windows_targets() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+
+    // Tauri embeds this activation context in the application executable, but
+    // Cargo's unit-test executable does not receive Tauri's app resources. A
+    // generic linker dependency keeps native dialogs available in both targets
+    // and prevents the test process from failing to load TaskDialogIndirect.
+    let output = PathBuf::from(env::var("OUT_DIR").expect("build output directory"));
+    let manifest = output.join("common-controls.manifest");
+    fs::write(
+        &manifest,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+    </dependentAssembly>
+  </dependency>
+</assembly>
+"#,
+    )
+    .expect("write common-controls manifest");
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+}
+
 fn main() {
+    enable_common_controls_for_all_windows_targets();
     generate_release_history();
-    tauri_build::build()
+    let attributes = tauri_build::Attributes::new()
+        .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    tauri_build::try_build(attributes).expect("failed to run Tauri build script");
 }

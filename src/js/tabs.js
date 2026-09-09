@@ -1003,6 +1003,56 @@ async function navigateTo(path, pushHistory) {
   }
 }
 
+function selectNavigatedPath(path, isRight) {
+  const pane = isRight ? G.rp : getTab();
+  const target = normalizeWindowsPathInput(path).toLocaleLowerCase();
+  const index = (pane.entries || []).findIndex(entry =>
+    normalizeWindowsPathInput(entry.path).toLocaleLowerCase() === target
+  );
+  if (index < 0) return false;
+
+  pane.sel.clear();
+  pane.sel.add(index);
+  pane.lastIdx = index;
+  G.lastActivePane = isRight ? 'right' : 'left';
+  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+  renderFiles(
+    pane,
+    isRight ? 'right-file-list' : 'file-list',
+    isRight ? 'right-status-count' : 'status-count',
+    isRight ? null : 'status-selection',
+    isRight,
+  );
+  if (!isRight) updateStatus(pane, 'status-count', 'status-selection');
+  scrollToVisible(index);
+  updatePreviewForSelection();
+  return true;
+}
+
+async function navigateAddressInput(value, isRight) {
+  const path = normalizeWindowsPathInput(value);
+  if (!path) return false;
+  const navigate = isRight ? rpNavigateTo : navigateTo;
+
+  // Address bars can receive a file:/// URL or a normal filesystem path that
+  // points at a file. In that case, mirror Explorer: show its parent folder and
+  // select the file instead of attempting to enumerate the file itself.
+  try {
+    const info = await call('get_file_info', {path});
+    if (info && info.is_dir === false) {
+      const parent = parentFolderPath(path);
+      const opened = await navigate(parent);
+      if (opened === false) return false;
+      selectNavigatedPath(path, !!isRight);
+      return true;
+    }
+  } catch (_) {
+    // Let regular navigation render its categorized not-found, permission, or
+    // network error rather than replacing it with a metadata error.
+  }
+  return navigate(path);
+}
+
 G.searchActive = false;
 G.searchQuery = '';
 
@@ -1455,7 +1505,7 @@ document.addEventListener("DOMContentLoaded", () => {
     input.addEventListener("keydown", e => {
       if (e.key === "Enter") {
         e.preventDefault();
-        if (isRight) rpNavigateTo(input.value); else navigateTo(input.value);
+        navigateAddressInput(input.value, isRight);
         exitEditMode(isRight);
         input.blur();
       }

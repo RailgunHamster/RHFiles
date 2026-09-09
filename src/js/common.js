@@ -85,27 +85,67 @@ Object.assign(_builtinEn, {
   'template.batchFile': 'Batch File',
   'cmd.group': 'Group',
   'cmd.toggleSearchScope': 'Toggle folder/global search',
-  'cmd.syncSystemDialog': 'Jump Windows dialog to the active folder',
+  'cmd.syncSystemDialog': 'Show RHFiles locations beside a Windows file dialog',
   'settings.categoryIntegration': 'Windows integration',
-  'settings.categoryIntegrationDesc': 'Connect the active RHFiles folder to Windows file dialogs and File Explorer.',
+  'settings.categoryIntegrationDesc': 'Choose from all open RHFiles locations beside Windows file dialogs and File Explorer.',
   'settings.integrationEnabled': 'Enable file-dialog integration',
   'settings.integrationExperimental': 'EXPERIMENTAL',
-  'settings.integrationBehaviorTitle': 'Jump to the active RHFiles folder',
-  'settings.integrationBehaviorBody': 'Use the configured shortcut in a Windows Open/Save dialog or File Explorer.',
+  'settings.integrationBehaviorTitle': 'Show an RHFiles location list',
+  'settings.integrationBehaviorBody': 'A companion list appears automatically beside a Windows Open/Save dialog or File Explorer.',
   'settings.integrationTargetsTitle': 'Supported in this first version',
   'settings.integrationTargetsBody': 'Native Windows file pickers and File Explorer.',
-  'settings.integrationShortcutTitle': 'Quick-switch shortcut',
+  'settings.integrationShortcutTitle': 'Show-list shortcut (optional)',
   'settings.integrationEditShortcut': 'Edit shortcut',
-  'settings.integrationShortcutHelp': 'The shortcut is intercepted only in recognized Windows file surfaces.',
+  'settings.integrationShortcutHelp': 'The list appears automatically. The shortcut only brings it back and focuses it.',
   'settings.integrationNoShortcut': 'Not configured',
   'settings.integrationStatusDisabled': 'Integration is off.',
-  'settings.integrationStatusNoFolder': 'The active tab is not a filesystem folder.',
-  'settings.integrationStatusReady': 'Ready · current folder: {path}',
+  'settings.integrationStatusNoFolder': 'No filesystem folder is open in RHFiles.',
+  'settings.integrationStatusReady': 'Ready · {count} open locations available',
   'settings.integrationStatusStarting': 'Starting the Windows integration worker...',
   'settings.integrationStatusError': 'Integration failed to start: {error}',
   'notice.integrationEnabled': 'Windows file-dialog integration enabled',
   'notice.integrationDisabled': 'Windows file-dialog integration disabled',
-  'notice.integrationExternalOnly': 'Use this shortcut in a Windows Open/Save dialog or File Explorer',
+  'notice.integrationExternalOnly': 'The locations list opens beside a Windows Open/Save dialog or File Explorer',
+  'ctx.convertFormat': 'Convert format…',
+  'convert.title': 'Convert format',
+  'convert.outputFormat': 'Output format',
+  'convert.outputName': 'Output filename',
+  'convert.quality': 'Quality',
+  'convert.qualityVeryHigh': 'Very high',
+  'convert.qualityHigh': 'High',
+  'convert.qualityBalanced': 'Balanced',
+  'convert.qualitySmall': 'Smaller file',
+  'convert.videoCodec': 'Video codec',
+  'convert.codecAuto': 'Automatic',
+  'convert.preset': 'Encoding speed',
+  'convert.presetFast': 'Fast',
+  'convert.presetBalanced': 'Balanced',
+  'convert.presetSlow': 'Slow / smaller',
+  'convert.presetVerySlow': 'Very slow / smallest',
+  'convert.resolution': 'Resolution',
+  'convert.original': 'Keep original',
+  'convert.audioBitrate': 'Audio bitrate',
+  'convert.sampleRate': 'Sample rate',
+  'convert.channels': 'Channels',
+  'convert.stereo': 'Stereo',
+  'convert.mono': 'Mono',
+  'convert.maxWidth': 'Maximum width',
+  'convert.overwrite': 'Overwrite an existing output file',
+  'convert.start': 'Start conversion',
+  'convert.ffmpegChecking': 'Detecting FFmpeg…',
+  'convert.ffmpegReady': 'FFmpeg is ready: {path}\n{version}',
+  'convert.ffmpegMissing': 'FFmpeg is unavailable: {error}',
+  'convert.ffmpegUnknownError': 'Unknown error',
+  'convert.ffmpegRequired': 'Configure a working ffmpeg.exe in Settings first.',
+  'convert.invalidName': 'Enter a valid Windows filename.',
+  'convert.extensionMismatch': 'The output filename must end in .{format}.',
+  'convert.taskTitle': 'Converting {name}',
+  'convert.complete': 'Conversion complete: {name}',
+  'convert.failedShort': 'Conversion failed. The detailed reason is shown in File operations.',
+  'settings.ffmpegTitle': 'Media format conversion',
+  'settings.ffmpegHelp': 'Video, audio, and image conversion uses FFmpeg. RHFiles checks portable, bundled, and PATH locations.',
+  'settings.ffmpegPath': 'FFmpeg path',
+  'settings.ffmpegDetect': 'Detect FFmpeg',
   'ctx.openCmd': 'Open in Command Prompt',
   'ctx.openPowerShell': 'Open in PowerShell',
   'confirm.deleteTitle': 'Move to Recycle Bin',
@@ -401,14 +441,44 @@ function displayPath(path) {
   return String(path || '').replace(/\\/g, '/');
 }
 
+function decodeFileUriPath(value) {
+  const raw = String(value == null ? '' : value);
+  if (!/^file:/i.test(raw)) return raw;
+
+  const decode = part => {
+    try { return decodeURIComponent(part); } catch (_) { return part; }
+  };
+  try {
+    const uri = new URL(raw);
+    if (uri.protocol.toLowerCase() !== 'file:') return raw;
+    const host = decode(uri.hostname || '');
+    let pathname = decode(uri.pathname || '');
+    if (host && host.toLowerCase() !== 'localhost') {
+      return '\\\\' + host + pathname.replace(/\//g, '\\');
+    }
+    // Windows file URIs spell drive paths as /C:/path. The leading slash is
+    // URI syntax, not part of the filesystem path.
+    if (/^\/[A-Za-z]:/.test(pathname)) pathname = pathname.slice(1);
+    return pathname.replace(/\//g, '\\');
+  } catch (_) {
+    // Keep accepting common pasted forms even when they contain an invalid
+    // percent escape and cannot be parsed by URL.
+    let path = raw.replace(/^file:(?:\/\/\/)?/i, '');
+    if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1);
+    return decode(path).replace(/\//g, '\\');
+  }
+}
+
 // Address-bar input is forgiving, while filesystem calls remain canonical.
-// Any run of leading slashes is treated as a single Windows UNC prefix.
+// It accepts file:/// URLs copied from browsers and Windows, and treats any
+// run of leading slashes as a single Windows UNC prefix.
 function normalizeWindowsPathInput(value) {
   let path = String(value == null ? '' : value).trim();
   if ((path.startsWith('"') && path.endsWith('"')) || (path.startsWith("'") && path.endsWith("'"))) {
     path = path.slice(1, -1).trim();
   }
   if (path === 'home://') return path;
+  path = decodeFileUriPath(path);
   path = path.replace(/\//g, '\\');
   if (/^\\{2,}/.test(path)) {
     const rest = path.replace(/^\\+/, '').replace(/\\{2,}/g, '\\');
@@ -649,17 +719,29 @@ function fallbackCall(cmd, args) {
     case "configure_file_dialog_integration": return {
       enabled: !!args.enabled,
       running: !!args.enabled,
-      pathAvailable: !!args.path,
-      currentPath: args.path || null,
+      pathAvailable: Array.isArray(args.locations) && args.locations.length > 0,
+      currentPath: (args.locations || []).find(location => location.active)?.path || args.locations?.[0]?.path || null,
+      locationCount: (args.locations || []).length,
       registeredShortcuts: args.shortcuts || [],
       rejectedShortcuts: [],
       supportedTargets: ["windowsFileDialog", "windowsExplorer"],
     };
     case "get_file_dialog_integration_status": return {
       enabled: false, running: false, pathAvailable: false, currentPath: null,
+      locationCount: 0,
       registeredShortcuts: [], rejectedShortcuts: [],
       supportedTargets: ["windowsFileDialog", "windowsExplorer"],
     };
+    case "get_file_dialog_picker_state": return {
+      enabled: false, targetAvailable: false, targetKind: "", locale: "en", locations: [],
+    };
+    case "navigate_file_dialog_location": return null;
+    case "hide_file_dialog_picker": return null;
+    case "detect_ffmpeg": return {
+      available: false, path: null, version: null, source: null,
+      error: "FFmpeg is not available in the browser test harness",
+    };
+    case "convert_media": return args.options?.outputPath || null;
     default: return null;
   }
 }
@@ -682,6 +764,7 @@ function loadSettings() {
     serverUpdateSource: DEFAULT_SERVER_UPDATE_SOURCE,
     updateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
     fileDialogIntegrationEnabled: false,
+    ffmpegPath: '',
   };
   try {
     const s = localStorage.getItem('rhfiles-settings');

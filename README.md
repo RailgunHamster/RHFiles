@@ -8,7 +8,7 @@
 
 <p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
-RHFiles combines familiar Windows file operations with tabs, dual panes, rich previews, Everything-powered global search, Pinyin matching, disk-usage analysis, and portable in-place updates. It is designed primarily for Windows 10 and Windows 11.
+RHFiles combines familiar Windows file operations with tabs, dual panes, rich previews, Everything-powered global search, Pinyin matching, disk-usage analysis, media conversion, and portable in-place updates. It is designed primarily for Windows 10 and Windows 11.
 
 ## Highlights
 
@@ -22,7 +22,9 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 - Reversible delete, rename, and non-overwriting move operations.
 - Git/SVN status, favorites, tags, archives, SMB paths, FTP/SFTP, and cloud-file states.
 - Context-menu actions can open a folder—or reveal a selected file—in Windows File Explorer.
-- Optional Windows integration sends a standard Open/Save dialog or File Explorer to the active RHFiles folder with a configurable shortcut.
+- Optional Windows integration shows every open RHFiles window, tab, and dual-pane location in a companion list beside standard Open/Save dialogs and File Explorer.
+- Right-click conversion for common video, audio, and image formats, powered by the bundled FFmpeg executable with progress, cancellation, configurable profiles, and detailed errors.
+- Address-bar support for local/UNC paths and `file:///` URLs; file addresses open the parent folder and select the target.
 - Velopack portable updates from GitHub Releases or a configurable home-server feed, with optional HTTP/HTTPS proxy support.
 - Multiple built-in color themes plus reloadable user theme packs—no recompilation required.
 
@@ -30,7 +32,7 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 
 Download the latest portable archive or installer from [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest).
 
-For the portable build, extract the complete ZIP and launch `RHFiles.exe` from the extracted directory. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, and the other bundled files beside it. A Velopack portable installation can download, replace, and restart itself for later updates.
+For the portable build, extract the complete ZIP and launch `RHFiles.exe` from the extracted directory. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, `ffmpeg.exe`, and the other bundled files beside it. A Velopack portable installation can download, replace, and restart itself for later updates.
 
 Windows may show an “Unknown publisher” warning because current builds are not code-signed.
 
@@ -53,6 +55,12 @@ Media playback depends on codecs supported by the installed WebView2/Windows med
 
 The offline 3D viewer supports glTF/GLB (including Draco and Meshopt compression), OBJ/MTL, FBX, STL, PLY, and 3MF. It provides orbit, zoom, pan, reset, wireframe, automatic rotation, and animation playback. Automatic preview is capped at 128 MiB and three million triangles; CAD formats are intentionally outside the current scope.
 
+## Media conversion
+
+Right-click a supported video, audio, or image and choose **Convert format**. RHFiles offers common output formats plus the relevant quality, codec, encoding speed, resolution, bitrate, sample-rate, channel, and image-width controls. Conversions run in the File operations panel, where progress, current output size, speed, cancellation, and the complete FFmpeg error are available.
+
+The portable package includes a pinned Windows x64 FFmpeg 9.0.1 Essentials executable. Settings can override it with another `ffmpeg.exe`. RHFiles writes to a same-folder temporary file first; cancelling or failing leaves an existing output untouched, and overwrite replacement happens only after conversion succeeds.
+
 ## Themes
 
 RHFiles includes Paper, Dark, Sand, Mist, Forest, and Slate themes. User theme packs are JSON files placed in:
@@ -69,9 +77,9 @@ Automatic checks run after startup, when Settings is opened, and hourly while th
 
 ## Windows integration (experimental)
 
-Enable **Windows integration** in Settings to use the active RHFiles folder from a standard Windows Open/Save dialog or File Explorer. Press the configurable quick-switch shortcut (default: `Ctrl+G`) while the target window is active. RHFiles focuses its address bar and enters the path without replacing the clipboard.
+Enable **Windows integration** in Settings and activate a standard Windows Open/Save dialog or File Explorer. A compact companion list appears beside it with the filesystem locations from every open RHFiles window, tab, and visible dual pane. Click a location to send only that exact Windows window there. Active and pinned tabs are identified, long paths reveal their trailing components, and the list scales with the target monitor's DPI.
 
-The integration is opt-in and only intercepts its shortcut in recognized Windows file surfaces. Browser uploads that use the native Windows picker are supported; custom in-app pickers and elevated windows may not accept navigation yet.
+The configurable shortcut (default: `Ctrl+G`) is now optional and only brings the list back into focus—it never navigates by itself. The integration is opt-in, created lazily, and does not replace the clipboard. Browser uploads that use the native Windows picker are supported; custom in-app pickers and elevated windows may not accept navigation yet.
 
 ## Development
 
@@ -104,4 +112,4 @@ See [Release process](docs/RELEASING.md) for versioning, tags, GitHub Releases, 
 
 ## Third-party components
 
-Portable packages bundle Everything and `dust`. Their accompanying files and licenses must remain with the distribution. The offline 3D viewer vendors a pinned subset of Three.js 0.185.1 under its MIT license. RHFiles also uses the Rust and JavaScript dependencies recorded in `Cargo.lock` and the source tree.
+Portable packages bundle Everything, `dust`, and a separate unmodified FFmpeg command-line executable. Their accompanying notices and licenses must remain with the distribution. FFmpeg build/source details are recorded in `FFmpeg-NOTICE.txt`; see also [FFmpeg's legal information](https://ffmpeg.org/legal.html) and the [Gyan Windows builds](https://www.gyan.dev/ffmpeg/builds/). The offline 3D viewer vendors a pinned subset of Three.js 0.185.1 under its MIT license. RHFiles also uses the Rust and JavaScript dependencies recorded in `Cargo.lock` and the source tree.

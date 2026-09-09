@@ -476,6 +476,87 @@
   </div>
 </div>
 
+<div class="overlay" id="media-convert-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeMediaConvertDialog()"></div>
+  <div class="dialog-box dialog-wide media-convert-box" role="dialog" aria-modal="true" aria-labelledby="media-convert-title">
+    <div class="dialog-title media-convert-titlebar">
+      <div>
+        <div id="media-convert-title" data-i18n="convert.title">Convert format</div>
+        <div id="media-convert-source" class="media-convert-source"></div>
+      </div>
+      <button class="settings-close" type="button" onclick="closeMediaConvertDialog()" data-i18n-title="btn.close" aria-label="Close">&times;</button>
+    </div>
+    <div class="dialog-scroll media-convert-content">
+      <div id="media-convert-ffmpeg" class="media-convert-engine" role="status"></div>
+      <div class="media-convert-grid">
+        <label for="media-convert-format" data-i18n="convert.outputFormat">Output format</label>
+        <select id="media-convert-format" onchange="updateMediaConvertControls()"></select>
+
+        <label for="media-convert-name" data-i18n="convert.outputName">Output filename</label>
+        <input id="media-convert-name" type="text" spellcheck="false">
+
+        <label class="media-quality-option" for="media-convert-quality" data-i18n="convert.quality">Quality</label>
+        <select class="media-quality-option" id="media-convert-quality">
+          <option value="92" data-i18n="convert.qualityVeryHigh">Very high</option>
+          <option value="80" selected data-i18n="convert.qualityHigh">High</option>
+          <option value="65" data-i18n="convert.qualityBalanced">Balanced</option>
+          <option value="45" data-i18n="convert.qualitySmall">Smaller file</option>
+        </select>
+
+        <label class="media-video-option" for="media-convert-codec" data-i18n="convert.videoCodec">Video codec</label>
+        <select class="media-video-option" id="media-convert-codec">
+          <option value="auto" data-i18n="convert.codecAuto">Automatic</option>
+          <option value="h264">H.264</option>
+          <option value="h265">H.265 / HEVC</option>
+          <option value="vp9">VP9</option>
+        </select>
+
+        <label class="media-video-option" for="media-convert-preset" data-i18n="convert.preset">Encoding speed</label>
+        <select class="media-video-option" id="media-convert-preset">
+          <option value="fast" data-i18n="convert.presetFast">Fast</option>
+          <option value="medium" selected data-i18n="convert.presetBalanced">Balanced</option>
+          <option value="slow" data-i18n="convert.presetSlow">Slow / smaller</option>
+          <option value="veryslow" data-i18n="convert.presetVerySlow">Very slow / smallest</option>
+        </select>
+
+        <label class="media-video-option" for="media-convert-resolution" data-i18n="convert.resolution">Resolution</label>
+        <select class="media-video-option" id="media-convert-resolution">
+          <option value="original" data-i18n="convert.original">Original</option>
+          <option value="2160">2160p</option><option value="1080">1080p</option>
+          <option value="720">720p</option><option value="480">480p</option>
+        </select>
+
+        <label class="media-audio-option" for="media-convert-bitrate" data-i18n="convert.audioBitrate">Audio bitrate</label>
+        <select class="media-audio-option" id="media-convert-bitrate">
+          <option value="96k">96 kbps</option><option value="128k">128 kbps</option>
+          <option value="192k" selected>192 kbps</option><option value="256k">256 kbps</option><option value="320k">320 kbps</option>
+        </select>
+
+        <label class="media-audio-only" for="media-convert-rate" data-i18n="convert.sampleRate">Sample rate</label>
+        <select class="media-audio-only" id="media-convert-rate">
+          <option value="original" data-i18n="convert.original">Original</option><option value="44100">44.1 kHz</option><option value="48000">48 kHz</option>
+        </select>
+
+        <label class="media-audio-only" for="media-convert-channels" data-i18n="convert.channels">Channels</label>
+        <select class="media-audio-only" id="media-convert-channels">
+          <option value="original" data-i18n="convert.original">Original</option><option value="stereo" data-i18n="convert.stereo">Stereo</option><option value="mono" data-i18n="convert.mono">Mono</option>
+        </select>
+
+        <label class="media-image-option" for="media-convert-width" data-i18n="convert.maxWidth">Maximum width</label>
+        <select class="media-image-option" id="media-convert-width">
+          <option value="original" data-i18n="convert.original">Original</option><option value="3840">3840 px</option><option value="2560">2560 px</option><option value="1920">1920 px</option><option value="1280">1280 px</option><option value="800">800 px</option>
+        </select>
+      </div>
+      <label class="media-convert-overwrite"><input id="media-convert-overwrite" type="checkbox"><span data-i18n="convert.overwrite">Overwrite an existing output file</span></label>
+      <div id="media-convert-error" class="media-convert-error" hidden></div>
+    </div>
+    <div class="dialog-actions">
+      <button class="dialog-btn" type="button" onclick="closeMediaConvertDialog()" data-i18n="btn.cancel">Cancel</button>
+      <button class="dialog-btn primary" id="media-convert-start" type="button" onclick="startMediaConversion()" data-i18n="convert.start">Start conversion</button>
+    </div>
+  </div>
+</div>
+
 <section class="operation-center" id="operation-center" hidden aria-live="polite" aria-label="File operations" data-i18n-aria-label="tasks.title">
   <div class="operation-center-header">
     <button class="operation-center-toggle" id="operation-center-toggle" type="button" onclick="toggleOperationCenter()" aria-expanded="true">
@@ -514,6 +595,7 @@
 <script src="js/undoredo.js"></script>
 <script src="js/grouping.js"></script>
 <script src="js/selection.js"></script>
+<script src="js/media.js"></script>
 <script src="js/conflict.js"></script>
 <script src="js/main.js"></script>
 <script src="js/test-harness.js"></script>

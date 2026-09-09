@@ -151,14 +151,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   const listen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
   if (listen) {
     listen("navigate-to-path", (event) => {
-      if (event.payload) navigateTo(event.payload);
+      if (event.payload) navigateAddressInput(event.payload, false);
     }).catch(() => {});
     listen("deep-link://request", (event) => {
       try {
         const urls = event.payload && event.payload.urls ? event.payload.urls : [];
         if (urls.length > 0) {
           let path = urls[0].replace(/^rhfiles:\/\//, '').replace(/\//g, '\\');
-          if (path) navigateTo(path);
+          if (path) navigateAddressInput(path, false);
         }
       } catch (e) {}
     }).catch(() => {});
@@ -232,6 +232,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       closeTagDialog();
       closeSettings();
       closeConflict();
+      if (typeof closeMediaConvertDialog === 'function') closeMediaConvertDialog();
     }
   });
 

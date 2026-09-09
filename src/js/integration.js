@@ -14,6 +14,31 @@ function activeIntegrationFolder() {
   return null;
 }
 
+function fileDialogIntegrationLocations() {
+  const locations = [];
+  const addTabs = (tabs, pane, activeId, paneActive) => {
+    (tabs || []).forEach((tab, tabIndex) => {
+      const raw = String(tab?.path || '').trim();
+      if (!raw || raw.includes('://')) return;
+      const path = normalizeWindowsPathInput(raw);
+      if (!/^[a-z]:[\\/]/i.test(path) && !/^\\\\[^\\]/.test(path)) return;
+      locations.push({
+        id: `${G.windowLabel || 'main'}:${pane}:${tab.id ?? tabIndex}`,
+        pane,
+        tabIndex,
+        path,
+        active: paneActive && tab.id === activeId,
+        pinned: tab.pinned === true,
+      });
+    });
+  };
+
+  const rightActive = G.dualOn && G.lastActivePane === 'right';
+  addTabs(G.tabs, 'left', G.activeTab, !rightActive);
+  if (G.dualOn) addTabs(G.rpTabs, 'right', G.activeRpTab, rightActive);
+  return locations;
+}
+
 function fileDialogIntegrationShortcuts() {
   const shortcuts = getShortcutBindings()?.['integration.quickSwitch'];
   return Array.isArray(shortcuts) ? shortcuts.filter(Boolean) : [];
@@ -39,7 +64,7 @@ function renderFileDialogIntegrationStatus() {
     statusElement.textContent = t('settings.integrationStatusNoFolder');
   } else if (status.running) {
     statusElement.textContent = t('settings.integrationStatusReady', {
-      path: status.currentPath || activeIntegrationFolder() || '',
+      count: status.locationCount || fileDialogIntegrationLocations().length,
     });
     statusElement.title = status.currentPath || '';
   } else {
@@ -53,8 +78,9 @@ async function syncFileDialogIntegration(force = false) {
   try {
     const status = await call('configure_file_dialog_integration', {
       enabled: G.settings.fileDialogIntegrationEnabled === true,
-      path: activeIntegrationFolder(),
+      locations: fileDialogIntegrationLocations(),
       shortcuts: fileDialogIntegrationShortcuts(),
+      locale: G.settings.language || document.documentElement.lang || 'en',
     });
     if (token !== _fileDialogIntegrationRequestToken) return status;
     G._fileDialogIntegrationStatus = status;
@@ -101,3 +127,11 @@ function openIntegrationShortcutSettings() {
     setTimeout(() => input?.classList.remove('shortcut-attention'), 1600);
   });
 }
+
+
+window.addEventListener('storage', event => {
+  if (event.key !== 'rhfiles-settings') return;
+  const latest = loadSettings();
+  Object.assign(G.settings, latest);
+  scheduleFileDialogIntegrationSync(true);
+});
