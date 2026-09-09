@@ -305,6 +305,7 @@ function setLang(l) {
 }
 function applyI18n() {
   document.documentElement.lang = _lang;
+  call('set_tray_language', { language: _lang }).catch(() => {});
   document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll('[data-i18n-title]').forEach(el => {
     const label = t(el.dataset.i18nTitle);

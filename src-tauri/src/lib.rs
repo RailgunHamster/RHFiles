@@ -10,6 +10,7 @@ mod search;
 mod shell;
 mod system;
 mod themes;
+mod tray;
 mod types;
 mod updates;
 mod vcs;
@@ -23,15 +24,11 @@ use types::{CancelFlag, CancelState};
 pub fn run() {
     tauri::Builder::default()
         .manage(CancelFlag(Mutex::new(CancelState::default())))
+        .manage(tray::TrayMenuState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            use tauri::Manager;
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
-                let _ = window.unminimize();
-                let _ = window.show();
-            }
+            let _ = tray::show_main_window(app);
             if args.len() > 1 {
                 let mut path = args[1].clone();
                 if let Some(stripped) = path.strip_prefix("rhfiles://") {
@@ -41,28 +38,8 @@ pub fn run() {
             }
         }))
         .setup(|app| {
-            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-            use tauri::Manager;
             file_dialog_integration::initialize(app.handle().clone())?;
-            if let Some(icon) = app.default_window_icon() {
-                let _tray = TrayIconBuilder::new()
-                    .icon(icon.clone())
-                    .tooltip("RHFiles")
-                    .on_tray_icon_event(|tray, event| {
-                        if let TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } = event
-                        {
-                            if let Some(w) = tray.app_handle().get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
-                    })
-                    .build(app)?;
-            }
+            tray::install(app)?;
 
             {
                 let app_handle = app.handle().clone();
@@ -208,15 +185,18 @@ pub fn run() {
 
             themes::list_user_themes, themes::open_theme_folder,
 
+            tray::set_tray_language,
+
             updates::check_updates, updates::get_last_update_failure, updates::get_release_history,
             updates::download_update, updates::apply_update,
         ])
         .on_window_event(|window, event| {
-            if window.label() == "integration-picker"
-                || !matches!(event, tauri::WindowEvent::CloseRequested { .. })
-            {
+            if window.label() == "integration-picker" {
                 return;
             }
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
             use tauri::Manager;
             let app = window.app_handle();
             let user_window_count = app
@@ -228,6 +208,10 @@ pub fn run() {
                 && let Some(picker) = app.get_webview_window("integration-picker")
             {
                 let _ = picker.destroy();
+            }
+            if user_window_count <= 1 && window.label() == "main" {
+                api.prevent_close();
+                let _ = window.hide();
             }
         })
         .run(tauri::generate_context!())
