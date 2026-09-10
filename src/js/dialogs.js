@@ -203,6 +203,73 @@ function handleSettingsNavKey(event, sectionId) {
   document.querySelector(`#settings-nav [data-settings-section="${nextId}"]`)?.focus();
 }
 
+function archiveToolSettings() {
+  const normalized = normalizeArchiveToolSettings(G.settings.archiveTools);
+  G.settings.archiveTools = normalized;
+  return normalized;
+}
+
+function archiveToolEditorHtml(tool, displayName) {
+  const config = archiveToolSettings()[tool];
+  const executableId = `settings-archive-${tool}-executable`;
+  const argumentsId = `settings-archive-${tool}-arguments`;
+  return '<details class="archive-tool-editor" data-archive-tool="' + tool + '">' +
+    '<summary><span>' + esc(displayName) + '</span><span class="archive-tool-mode">' + t(config.executable ? 'settings.archiveCustomPath' : 'settings.archiveAutoDetect') + '</span></summary>' +
+    '<div class="archive-tool-editor-body">' +
+      '<label for="' + executableId + '">' + t('settings.archiveExecutable') + '</label>' +
+      '<input id="' + executableId + '" class="archive-tool-path" type="text" spellcheck="false" placeholder="' + esc(t('settings.archiveExecutablePlaceholder')) + '" value="' + esc(config.executable) + '" onchange="setArchiveToolExecutable(\'' + tool + '\',this.value)">' +
+      '<label for="' + argumentsId + '">' + t('settings.archiveArguments') + '</label>' +
+      '<textarea id="' + argumentsId + '" class="settings-code-input archive-tool-arguments" rows="6" spellcheck="false" onchange="setArchiveToolArguments(\'' + tool + '\',this.value,this)">' + esc(config.arguments.join('\n')) + '</textarea>' +
+      '<p class="archive-tool-help">' + t('settings.archiveArgumentsHelp') + '</p>' +
+      '<div class="settings-inline-actions"><button type="button" class="dialog-btn" onclick="resetArchiveToolConfig(\'' + tool + '\')">' + t('settings.archiveResetTool') + '</button></div>' +
+    '</div></details>';
+}
+
+function setArchiveToolExecutable(tool, value) {
+  const settings = archiveToolSettings();
+  if (!settings[tool]) return;
+  settings[tool].executable = String(value || '').trim();
+  saveSettings();
+  const editor = document.querySelector(`.archive-tool-editor[data-archive-tool="${tool}"]`);
+  const mode = editor?.querySelector('.archive-tool-mode');
+  if (mode) mode.textContent = t(settings[tool].executable ? 'settings.archiveCustomPath' : 'settings.archiveAutoDetect');
+}
+
+function setArchiveToolArguments(tool, value, textarea) {
+  const args = String(value || '').split(/\r?\n/).filter(argument => argument.length > 0);
+  let error = '';
+  if (!args.some(argument => argument.includes('{dest}'))) error = t('settings.archiveMissingDestination');
+  else if (!args.includes('{sources}')) error = t('settings.archiveMissingSources');
+  if (textarea) {
+    textarea.setCustomValidity(error);
+    if (error) textarea.reportValidity();
+  }
+  if (error) return false;
+  const settings = archiveToolSettings();
+  if (!settings[tool]) return false;
+  settings[tool].arguments = args;
+  saveSettings();
+  return true;
+}
+
+function resetArchiveToolConfig(tool) {
+  const defaults = defaultArchiveToolSettings();
+  if (!defaults[tool]) return;
+  const settings = archiveToolSettings();
+  settings[tool] = defaults[tool];
+  saveSettings();
+  const editor = document.querySelector(`.archive-tool-editor[data-archive-tool="${tool}"]`);
+  const executable = editor?.querySelector('.archive-tool-path');
+  const args = editor?.querySelector('.archive-tool-arguments');
+  const mode = editor?.querySelector('.archive-tool-mode');
+  if (executable) executable.value = '';
+  if (args) {
+    args.value = defaults[tool].arguments.join('\n');
+    args.setCustomValidity('');
+  }
+  if (mode) mode.textContent = t('settings.archiveAutoDetect');
+}
+
 function openSettings() {
   const dlg = document.getElementById("settings-dialog");
   const nav = document.getElementById("settings-nav");
@@ -271,6 +338,13 @@ function openSettings() {
     '<input id="settings-ffmpeg-path" type="text" spellcheck="false" placeholder="C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe" value="' + esc(String(G.settings.ffmpegPath || '')) + '" onchange="setFfmpegPath(this.value,this)"></div>' +
     '<div class="settings-inline-actions"><button class="dialog-btn" type="button" onclick="refreshFfmpegSettingsStatus()">' + t('settings.ffmpegDetect') + '</button></div>' +
     '<div id="settings-ffmpeg-status" class="media-convert-engine" role="status"></div></div>' +
+    '<div class="settings-card archive-tools-card"><div class="settings-card-title">' + t('settings.archiveToolsTitle') + '</div>' +
+    '<p class="settings-card-description">' + t('settings.archiveToolsHelp') + '</p>' +
+    '<div class="archive-tool-list">' +
+      archiveToolEditorHtml('7zip', '7-Zip') +
+      archiveToolEditorHtml('bandizip', 'Bandizip') +
+      archiveToolEditorHtml('winrar', 'WinRAR') +
+    '</div></div>' +
     '<div class="settings-card"><div class="settings-card-title">' + t('settings.customizeToolbar') + '</div>' +
     '<div id="toolbar-config-list" class="settings-config-list toolbar-config-list"></div>' +
     '<button class="dialog-btn" onclick="resetToolbarConfig()">' + t('btn.resetDefault') + '</button></div>';

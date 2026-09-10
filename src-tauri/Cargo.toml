@@ -29,6 +29,12 @@ velopack = { version = "=1.2.110-ge826545", features = ["public-utils"] }
 ureq = "3.4"
 url = "2.5"
 windows = { version = "0.62", features = [
+    "ApplicationModel_DataTransfer",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage",
+    "Storage_Search",
+    "Storage_Streams",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
@@ -40,6 +46,7 @@ windows = { version = "0.62", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_WinRT",
     "Win32_System_Variant",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
@@ -49,6 +56,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell_PropertiesSystem",
 ] }
 windows-core = "=0.62.2"
+windows-collections = "=0.3.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 winreg = "0.55"
 tauri-plugin-deep-link = "2"

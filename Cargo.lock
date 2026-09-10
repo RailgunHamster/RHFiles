@@ -4258,6 +4258,7 @@ dependencies = [
  "url",
  "velopack",
  "windows 0.62.2",
+ "windows-collections 0.3.2",
  "windows-core 0.62.2",
  "winreg",
  "zip 2.4.2",

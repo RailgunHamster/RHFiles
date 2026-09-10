@@ -1400,6 +1400,98 @@ body.preview-fullscreen-active::before {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+.archive-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 4px 0 10px;
+}
+
+.archive-tool-editor {
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 9px;
+  background: var(--bg-soft);
+}
+
+.archive-tool-editor summary {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  gap: 10px;
+  padding: 7px 11px;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
+  list-style: none;
+}
+
+.archive-tool-editor summary::-webkit-details-marker { display: none; }
+
+.archive-tool-editor summary::before {
+  content: "›";
+  color: var(--text-4);
+  font-size: 16px;
+  transform: rotate(0deg);
+  transition: transform .12s ease;
+}
+
+.archive-tool-editor[open] summary::before { transform: rotate(90deg); }
+
+.archive-tool-mode {
+  margin-left: auto;
+  color: var(--text-4);
+  font-size: 10px;
+  font-weight: 450;
+}
+
+.archive-tool-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.archive-tool-editor-body label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.archive-tool-path {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text);
+  font: 11px/1.4 "Cascadia Code", Consolas, monospace;
+}
+
+.archive-tool-path:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.archive-tool-arguments {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.archive-tool-help {
+  margin: 0;
+  color: var(--text-4);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.archive-tool-editor-body .settings-inline-actions { padding: 2px 0 0; }
+
 .settings-card-title {
   padding: 8px 2px 5px;
   color: var(--text);

@@ -183,11 +183,15 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
   teardownVirtualList(list);
-  list.innerHTML = "";
+  clearFileListForRender(list);
   list.classList.toggle("search-results", !!G.searchActive && !isRight);
 
   if (!entries.length && tabOrPane._loaded === true && !(G.searchActive && !isRight)) {
-    list.innerHTML = `<div class="file-list-empty" role="status">${esc(t('nav.folderEmpty'))}</div>`;
+    const empty = document.createElement('div');
+    empty.className = 'file-list-empty';
+    empty.setAttribute('role', 'status');
+    empty.textContent = t('nav.folderEmpty');
+    list.appendChild(empty);
     if (countId) updateStatus(tabOrPane, countId, selId);
     return;
   }

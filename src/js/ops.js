@@ -569,12 +569,21 @@ function makeCompressionRequest(files, currentPath, tool) {
   const baseName = files.length === 1 ? files[0].name : 'archive';
   const extension = tool === 'winrar' ? 'rar' : tool === '7zip' ? '7z' : 'zip';
   const destination = joinFolderPath(currentPath, `${baseName}.${extension}`);
+  const externalConfig = tool === 'zip'
+    ? null
+    : normalizeArchiveToolSettings(G.settings.archiveTools)[tool];
   return {
     baseName,
     command: tool === 'zip' ? 'create_archive' : 'compress_with',
     args: tool === 'zip'
       ? { sources, dest: destination }
-      : { sources, dest: destination, tool },
+      : {
+          sources,
+          dest: destination,
+          tool,
+          executable: String(externalConfig?.executable || '').trim() || null,
+          arguments: [...(externalConfig?.arguments || [])],
+        },
   };
 }
 
@@ -631,6 +640,12 @@ async function copyPathsFromMenu(paths) {
 
 function copyPathFromMenu(path) {
   return copyPathsFromMenu([path]);
+}
+
+function shareSelection(files) {
+  const paths = (files || []).map(file => file?.path).filter(Boolean);
+  if (!paths.length) return false;
+  return runContextCommand('share_files', { paths }, t('ctx.share'));
 }
 
 function copySelectedPaths(isRight) {
@@ -1091,13 +1106,7 @@ function showContextMenu(x, y, isRight) {
             });
         }
     }, hidden: !G.searchActive || !singleSelection },
-    { label: t('ctx.share'), icon:"share", submenu: [
-      { label: t('ctx.shareQQ'), icon:"qq", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "qq" }, t('ctx.shareQQ')); } },
-      { label: t('ctx.shareWechat'), icon:"wechat", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "wechat" }, t('ctx.shareWechat')); } },
-      { label: t('ctx.shareFeishu'), icon:"feishu", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "feishu" }, t('ctx.shareFeishu')); } },
-      { label: "-" },
-      { label: t('ctx.windowsShare'), icon:"windows-share", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "windows" }, t('ctx.windowsShare')); } },
-    ], disabled: !singleSelection },
+    { label: t('ctx.share'), icon:"windows-share", action: () => shareSelection(sel), disabled: !hasSelection },
     { label: t('ctx.compress'), icon:"archive", submenu: [
       { label: "ZIP", icon:"zip", action: () => compressSelection(sel, currentPath, "zip") },
       { label: "7-Zip (.7z)", icon:"seven-zip", action: () => compressSelection(sel, currentPath, "7zip") },
@@ -1582,10 +1591,7 @@ async function handleRhfilesFileDrop(payload, destination, destinationEntries, i
   if (!paths.length || !destination || destination === 'home://') return false;
 
   activatePane(isRightDrop ? 'right' : 'left');
-  let operation = 'move';
-  if (payload.sourceWindow && payload.sourceWindow !== currentFileDragWindowId()) {
-    operation = await showFileDropOperationDialog(paths, destination);
-  }
+  const operation = await showFileDropOperationDialog(paths, destination);
   if (operation === 'cancel') return false;
 
   try {

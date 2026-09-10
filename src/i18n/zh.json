@@ -12,7 +12,7 @@
   "ctx.newTab": "\u5728\u65b0\u6807\u7b7e\u9875\u4e2d\u6253\u5f00",
   "ctx.copyPath": "\u590d\u5236\u8def\u5f84",
   "ctx.copyPaths": "\u590d\u5236 {count} \u4e2a\u8def\u5f84",
-  "ctx.share": "\u5171\u4eab",
+  "ctx.share": "\u5171\u4eab\u2026",
   "ctx.shareQQ": "QQ",
   "ctx.shareWechat": "\u5fae\u4fe1",
   "ctx.shareFeishu": "\u98de\u4e66",
@@ -892,5 +892,16 @@
   "settings.ffmpegTitle": "媒体格式转换",
   "settings.ffmpegHelp": "视频、音频与图片转换使用 FFmpeg。RHFiles 会依次检测便携版同目录、内置资源和 PATH；也可以在这里指定 ffmpeg.exe。",
   "settings.ffmpegPath": "FFmpeg 路径",
-  "settings.ffmpegDetect": "检测 FFmpeg"
+  "settings.ffmpegDetect": "检测 FFmpeg",
+  "settings.archiveToolsTitle": "外部压缩工具",
+  "settings.archiveToolsHelp": "RHFiles 会自动查找 7-Zip、Bandizip 和 WinRAR。展开对应工具即可覆盖程序路径或命令参数，不需要重新编译 RHFiles。",
+  "settings.archiveExecutable": "程序路径",
+  "settings.archiveExecutablePlaceholder": "留空则自动检测",
+  "settings.archiveArguments": "参数（每行是一个完整参数）",
+  "settings.archiveArgumentsHelp": "{dest} 会替换为输出压缩包；{sources} 必须独占一行，并展开成所有选中的文件或文件夹。无需添加引号，RHFiles 会把每一行作为一个参数传入。",
+  "settings.archiveAutoDetect": "自动检测",
+  "settings.archiveCustomPath": "自定义程序",
+  "settings.archiveResetTool": "重置此工具",
+  "settings.archiveMissingDestination": "参数中必须包含 {dest}。",
+  "settings.archiveMissingSources": "{sources} 必须独占一行。"
 }

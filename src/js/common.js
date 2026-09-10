@@ -146,6 +146,17 @@ Object.assign(_builtinEn, {
   'settings.ffmpegHelp': 'Video, audio, and image conversion uses FFmpeg. RHFiles checks portable, bundled, and PATH locations.',
   'settings.ffmpegPath': 'FFmpeg path',
   'settings.ffmpegDetect': 'Detect FFmpeg',
+  'settings.archiveToolsTitle': 'External compression tools',
+  'settings.archiveToolsHelp': 'Auto-detect compression tools or customize their executable and arguments.',
+  'settings.archiveExecutable': 'Executable',
+  'settings.archiveExecutablePlaceholder': 'Leave blank to detect automatically',
+  'settings.archiveArguments': 'Arguments (one exact argument per line)',
+  'settings.archiveArgumentsHelp': '{dest} is the output archive. {sources} must be on its own line. Do not add quotes.',
+  'settings.archiveAutoDetect': 'Automatic detection',
+  'settings.archiveCustomPath': 'Custom executable',
+  'settings.archiveResetTool': 'Reset this tool',
+  'settings.archiveMissingDestination': 'The arguments must contain {dest}.',
+  'settings.archiveMissingSources': '{sources} must appear on its own line.',
   'ctx.openCmd': 'Open in Command Prompt',
   'ctx.openPowerShell': 'Open in PowerShell',
   'confirm.deleteTitle': 'Move to Recycle Bin',
@@ -384,19 +395,17 @@ const RHFILES_FILE_DRAG_MIME = 'application/x-rhfiles-file-list+json';
 const RHFILES_FILE_DRAG_PREFIX = 'RHFILES_FILE_DRAG_V1\n';
 G._activeFileDragPayload = null;
 G._activeFileDragSourceNode = null;
-G._activeFileDragParkingLot = null;
+G._activeFileDragRetainedRoot = null;
 
 function currentFileDragWindowId() {
   return G.windowLabel || G.dragWindowToken;
 }
 
 function releaseRhfilesFileDragSource() {
-  const source = G._activeFileDragSourceNode;
-  const parkingLot = G._activeFileDragParkingLot;
-  if (source && parkingLot && source.parentElement === parkingLot) source.remove();
-  parkingLot?.remove();
+  const retainedRoot = G._activeFileDragRetainedRoot;
+  if (retainedRoot?.classList.contains('file-drag-retained')) retainedRoot.remove();
   G._activeFileDragSourceNode = null;
-  G._activeFileDragParkingLot = null;
+  G._activeFileDragRetainedRoot = null;
 }
 
 function rememberRhfilesFileDragSource(sourceNode) {
@@ -404,17 +413,37 @@ function rememberRhfilesFileDragSource(sourceNode) {
   G._activeFileDragSourceNode = sourceNode?.isConnected ? sourceNode : null;
 }
 
-function parkRhfilesFileDragSource() {
+function retainRhfilesFileDragSourceForRender(listId) {
   const source = G._activeFileDragSourceNode;
   if (!source?.isConnected) return false;
-  if (source.parentElement === G._activeFileDragParkingLot) return true;
-  const parkingLot = document.createElement('div');
-  parkingLot.className = 'file-drag-parking';
-  parkingLot.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(parkingLot);
-  parkingLot.appendChild(source);
-  G._activeFileDragParkingLot = parkingLot;
-  return source.isConnected;
+  const list = source.closest?.('.file-list');
+  // Switching the other pane does not redraw the source list, so the browser's
+  // native drag source is already safe and must remain visible there.
+  if (!list || list.id !== listId) return true;
+  if (G._activeFileDragRetainedRoot?.contains(source)) return true;
+  let root = source;
+  while (root.parentElement && root.parentElement !== list) root = root.parentElement;
+  if (root.parentElement !== list) return false;
+  // Do not reparent or clone the source. WebView2 cancels a real HTML drag when
+  // its source is moved, even if it is immediately attached elsewhere. The
+  // next render keeps this entire direct child untouched and draws the target
+  // tab beside it.
+  root.classList.add('file-drag-retained');
+  root.setAttribute('aria-hidden', 'true');
+  G._activeFileDragRetainedRoot = root;
+  return true;
+}
+
+function clearFileListForRender(list) {
+  const retainedRoot = G._activeFileDragRetainedRoot;
+  const source = G._activeFileDragSourceNode;
+  if (retainedRoot?.parentElement === list && retainedRoot.contains(source)) {
+    [...list.children].forEach(child => {
+      if (child !== retainedRoot) child.remove();
+    });
+    return;
+  }
+  list.replaceChildren();
 }
 
 function setRhfilesFileDragData(dataTransfer, paths, isRight, sourceNode) {
@@ -791,7 +820,7 @@ function fallbackCall(cmd, args) {
     case "copy_file_path": return null;
     case "show_open_with_dialog": return null;
     case "compress_with": return null;
-    case "share_file": return null;
+    case "share_files": return null;
     case "cancel_operation": return null;
     case "is_everything_available": return false;
     case "open_everything": return null;
@@ -839,6 +868,39 @@ function fallbackCall(cmd, args) {
 }
 
 // --- settings persistence ---
+function defaultArchiveToolSettings() {
+  return {
+    '7zip': {
+      executable: '',
+      arguments: ['a', '-y', '{dest}', '{sources}'],
+    },
+    bandizip: {
+      executable: '',
+      arguments: ['c', '-y', '-r', '{dest}', '{sources}'],
+    },
+    winrar: {
+      executable: '',
+      arguments: ['a', '-r', '-y', '{dest}', '{sources}'],
+    },
+  };
+}
+
+function normalizeArchiveToolSettings(value) {
+  const defaults = defaultArchiveToolSettings();
+  const stored = value && typeof value === 'object' ? value : {};
+  for (const tool of Object.keys(defaults)) {
+    const configured = stored[tool] && typeof stored[tool] === 'object' ? stored[tool] : {};
+    const args = Array.isArray(configured.arguments)
+      ? configured.arguments.map(argument => String(argument)).filter(argument => argument.length > 0)
+      : [];
+    defaults[tool] = {
+      executable: typeof configured.executable === 'string' ? configured.executable : '',
+      arguments: args.length ? args : defaults[tool].arguments,
+    };
+  }
+  return defaults;
+}
+
 function loadSettings() {
   const defaults = {
     language: 'en',
@@ -857,12 +919,14 @@ function loadSettings() {
     updateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
     fileDialogIntegrationEnabled: false,
     ffmpegPath: '',
+    archiveTools: defaultArchiveToolSettings(),
   };
   try {
     const s = localStorage.getItem('rhfiles-settings');
     if (!s) return defaults;
     const stored = JSON.parse(s);
     const settings = { ...defaults, ...stored };
+    settings.archiveTools = normalizeArchiveToolSettings(stored.archiveTools);
     const legacySource = String(stored.updateSource || '').trim();
     if (!stored.updateSourceMode && legacySource) {
       if (/^https?:\/\/github\.com\//i.test(legacySource)) {

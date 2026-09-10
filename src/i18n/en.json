@@ -26,7 +26,7 @@
   "ctx.delete": "Delete",
   "ctx.copyPath": "Copy Path",
   "ctx.copyPaths": "Copy {count} Paths",
-  "ctx.share": "Share",
+  "ctx.share": "Share…",
   "ctx.shareQQ": "QQ",
   "ctx.shareWechat": "WeChat",
   "ctx.shareFeishu": "Feishu",
@@ -892,5 +892,16 @@
   "settings.ffmpegTitle": "Media format conversion",
   "settings.ffmpegHelp": "Video, audio, and image conversion uses FFmpeg. RHFiles checks beside the portable app, bundled resources, and PATH, or you can specify ffmpeg.exe here.",
   "settings.ffmpegPath": "FFmpeg path",
-  "settings.ffmpegDetect": "Detect FFmpeg"
+  "settings.ffmpegDetect": "Detect FFmpeg",
+  "settings.archiveToolsTitle": "External compression tools",
+  "settings.archiveToolsHelp": "RHFiles auto-detects 7-Zip, Bandizip, and WinRAR. Expand a tool to override its executable or command arguments without recompiling RHFiles.",
+  "settings.archiveExecutable": "Executable",
+  "settings.archiveExecutablePlaceholder": "Leave blank to detect automatically",
+  "settings.archiveArguments": "Arguments (one exact argument per line)",
+  "settings.archiveArgumentsHelp": "{dest} is replaced with the output archive. {sources} must be on its own line and expands to every selected file or folder. Do not add quotes; RHFiles passes each line as one argument.",
+  "settings.archiveAutoDetect": "Automatic detection",
+  "settings.archiveCustomPath": "Custom executable",
+  "settings.archiveResetTool": "Reset this tool",
+  "settings.archiveMissingDestination": "The arguments must contain {dest}.",
+  "settings.archiveMissingSources": "{sources} must appear on its own line."
 }

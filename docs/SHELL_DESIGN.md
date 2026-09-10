@@ -199,44 +199,57 @@ fn open_with_program(path: String, program: String) -> Result<(), String>
 Detection logic:
 - **VSCode**: `code` from PATH, fallback: `%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe`
 - **Visual Studio**: `devenv` from PATH, or query VS Where: `C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`
-- **CMD**: `cmd.exe /K "cd /D <dir>"`
-- **PowerShell**: `pwsh` or `powershell` with `-NoExit -Command "cd '<dir>'"`
-- **Git Bash**: `git-bash.exe` from `git --exec-path`, or `C:\Program Files\Git\git-bash.exe`
+- **CMD**: `cmd.exe /D /K "pushd <dir>"` (works for drive letters and UNC paths)
+- **PowerShell**: `pwsh` or `powershell` with `-NoExit -Command "Set-Location -LiteralPath '<dir>'"`
+- **Git Bash**: Git for Windows registry, standard install folders, PATH, or `git --exec-path`; receives one `--cd=<dir>` argument
+- For a file target, all terminal actions use its containing directory. For a folder target, they use the folder itself.
 - **VLC**: `vlc` from PATH, fallback: `C:\Program Files\VideoLAN\VLC\vlc.exe`
 - **PotPlayer**: `C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe`
 
-### 2. `share_file`
+### 2. `share_files`
 
 ```rust
 #[tauri::command]
-fn share_file(path: String, target: String) -> Result<(), String>
+async fn share_files(window: WebviewWindow, paths: Vec<String>) -> Result<(), String>
 ```
 
-`target` values: `"qq"`, `"wechat"`, `"feishu"`, `"windows"`
-
-- **QQ**: `C:\Program Files (x86)\Tencent\QQ\Bin\QQ.exe` with share protocol, or use `tencent://` URI
-- **WeChat**: `C:\Program Files (x86)\Tencent\WeChat\WeChat.exe` — may need to copy path to clipboard + notify user
-- **Feishu**: `C:\Users\<user>\AppData\Local\Feishu\Feishu.exe` — similar approach
-- **Windows Share**: Use Windows `ShowShareUIForWindow` API (UWP) or invoke the system share dialog
-
-Note: Most Chinese IM apps don't have proper CLI share APIs. Practical approach:
-1. Copy file path to clipboard
-2. Open the target app
-3. User pastes manually
+RHFiles creates a Windows `DataPackage`, adds every selected file/folder as a
+read-only storage item, and opens the native share sheet with
+`IDataTransferManagerInterop::ShowShareUIForWindow`. QQ, WeChat, Feishu, and
+other programs appear only if their installed version registers itself as a
+Windows share target. Merely launching an IM client does not transfer a file,
+so RHFiles does not expose fake per-application entries.
 
 ### 3. `compress_with`
 
 ```rust
 #[tauri::command]
-fn compress_with(sources: Vec<String>, dest: String, tool: String) -> Result<(), String>
+fn compress_with(
+    sources: Vec<String>,
+    dest: String,
+    tool: String,
+    executable: Option<String>,
+    arguments: Option<Vec<String>>,
+) -> Result<(), String>
 ```
 
 `tool` values: `"7zip"`, `"bandizip"`, `"winrar"`
 
-Detection:
-- **7-Zip**: `C:\Program Files\7-Zip\7z.exe` — `7z a -t<fmt> <archive> <files>`
-- **Bandizip**: `C:\Program Files\Bandizip\Bandizip.exe` — `Bandizip a <archive> <files>`
-- **WinRAR**: `C:\Program Files\WinRAR\WinRAR.exe` — `WinRAR a <archive> <files>`
+Detection checks configured paths, standard Program Files folders, Windows App
+Paths, and PATH. Bandizip supports both `bz.exe` and `Bandizip.exe`.
+
+The configuration is available under **Settings > Files & layout > External
+compression tools** and is persisted inside the existing `rhfiles-settings`
+localStorage object as `archiveTools`. Each line is passed as one exact process
+argument; no shell parses it and users should not add quotes. `{dest}` expands
+to the output archive and `{sources}` must occupy its own line so it can expand
+to all selected items.
+
+Defaults:
+
+- **7-Zip**: `a`, `-y`, `{dest}`, `{sources}`
+- **Bandizip**: `c`, `-y`, `-r`, `{dest}`, `{sources}`
+- **WinRAR**: `a`, `-r`, `-y`, `{dest}`, `{sources}`
 
 ### 4. `copy_file_path`
 
@@ -329,21 +342,15 @@ async function detectVcs(path) {
   { label: t('ctx.newTab'), action: () => addTab(path), hidden: !isDir },
 ]},
 
-// Share submenu:
-{ label: t('ctx.share'), submenu: [
-  { label: "QQ", action: () => call("share_file", { path, target: "qq" }) },
-  { label: "微信", action: () => call("share_file", { path, target: "wechat" }) },
-  { label: "飞书", action: () => call("share_file", { path, target: "feishu" }) },
-  "-",
-  { label: t('ctx.windowsShare'), action: () => call("share_file", { path, target: "windows" }) },
-]},
+// Native Windows share sheet; supports multi-selection:
+{ label: t('ctx.share'), action: () => call("share_files", { paths }) },
 
 // Compress submenu:
 { label: t('ctx.compress'), submenu: [
   { label: "ZIP (built-in)", action: /* existing */ },
-  { label: "7-Zip (.7z)", action: () => call("compress_with", { sources, dest, tool: "7zip" }) },
-  { label: "Bandizip", action: () => call("compress_with", { sources, dest, tool: "bandizip" }) },
-  { label: "WinRAR (.rar)", action: () => call("compress_with", { sources, dest, tool: "winrar" }) },
+  { label: "7-Zip (.7z)", action: () => call("compress_with", { sources, dest, tool: "7zip", executable, arguments }) },
+  { label: "Bandizip", action: () => call("compress_with", { sources, dest, tool: "bandizip", executable, arguments }) },
+  { label: "WinRAR (.rar)", action: () => call("compress_with", { sources, dest, tool: "winrar", executable, arguments }) },
 ]},
 
 // Copy path:
@@ -378,8 +385,8 @@ async function detectVcs(path) {
 2. **`open_with_program`** — VSCode, VS, CMD, PowerShell, Git Bash, VLC, PotPlayer
 3. **`copy_file_path`** — clipboard
 4. **`show_open_with_dialog`** — Windows Open With
-5. **`compress_with`** — 7-Zip, Bandizip, WinRAR detection + invocation
-6. **`share_file`** — QQ, WeChat, Feishu, Windows Share
+5. **`compress_with`** — configurable 7-Zip, Bandizip, WinRAR detection + invocation
+6. **`share_files`** — native Windows sharing for all selected storage items
 7. **`detect_vcs`** + Git/SVN context menus (context-sensitive)
 8. **Empty Recycle Bin** — show only when path is Recycle Bin
 9. **New Window / New Tab** — wire up existing commands

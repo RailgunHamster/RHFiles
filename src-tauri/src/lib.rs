@@ -136,7 +136,7 @@ pub fn run() {
             system::run_gui_tests, system::write_test_results,
             system::open_with_program, system::open_terminal, system::copy_file_path,
             system::show_open_with_dialog, system::compress_with,
-            system::share_file,
+            system::share_files,
             system::analyze_disk_usage,
 
             media::detect_ffmpeg, media::convert_media,

@@ -502,17 +502,26 @@ pub fn file_hash(path: &Path, algorithm: &str) -> Result<String, String> {
 }
 
 pub fn open_terminal(path: &Path, terminal: &str) -> Result<(), String> {
-    let dir = path.to_string_lossy().into_owned();
+    let directory = if path.is_dir() {
+        path
+    } else {
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(path)
+    };
+    let dir = directory.to_string_lossy().into_owned();
     match terminal {
         "cmd" => {
+            let command = format!("pushd \"{}\"", &dir);
             std::process::Command::new("cmd")
-                .args(["/k", &format!("cd /d {}", &dir)])
+                .args(["/d", "/k", &command])
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
         "powershell" => {
+            let command = format!("Set-Location -LiteralPath '{}'", dir.replace('\'', "''"));
             std::process::Command::new("powershell")
-                .args(["-NoExit", "-Command", &format!("cd '{}'", &dir)])
+                .args(["-NoExit", "-Command", &command])
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
@@ -523,8 +532,9 @@ pub fn open_terminal(path: &Path, terminal: &str) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
         }
         _ => {
+            let command = format!("pushd \"{}\"", &dir);
             std::process::Command::new("cmd")
-                .args(["/k", &format!("cd /d {}", &dir)])
+                .args(["/d", "/k", &command])
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }

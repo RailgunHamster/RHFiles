@@ -1112,6 +1112,16 @@
       assertEqual($("#settings-update-server").value, getServerUpdateSource(), "Home-server source input is out of sync");
       assert($("#settings-check-update"), "Manual update button is missing");
       assert($("#settings-update-failure"), "Persistent update-failure detail is missing");
+      switchSettingsSection('files', false);
+      const archiveEditors = [...document.querySelectorAll('.archive-tool-editor')];
+      assertEqual(archiveEditors.length, 3, "External compression tool editors are incomplete");
+      const bandizipEditor = document.querySelector('.archive-tool-editor[data-archive-tool="bandizip"]');
+      assert(bandizipEditor, "Bandizip configuration is missing");
+      assertEqual(
+        bandizipEditor.querySelector('.archive-tool-arguments')?.value.split(/\r?\n/).join('|'),
+        archiveToolSettings().bandizip.arguments.join('|'),
+        "Bandizip configuration UI is out of sync",
+      );
       switchSettingsSection('integration', false);
       assert($("#settings-integration-enabled"), "Windows integration enable setting is missing");
       assert($("#settings-integration-shortcut"), "Windows integration shortcut display is missing");
@@ -1593,7 +1603,7 @@
       removeContextMenu();
     });
 
-    await test("[ctxmenu] Programs, share targets, and archive tools have distinct icons", async () => {
+    await test("[ctxmenu] Programs, Windows sharing, and archive tools have distinct icons", async () => {
       const programMenu = buildProgramOpenMenu('C:\\icon-test', {isDirectory:true, isMedia:true});
       const expectedProgramIcons = {
         'VS Code': 'vscode',
@@ -1642,8 +1652,9 @@
             .find(item => item.querySelector(':scope > .ctx-item-main > .ctx-label')?.textContent === itemLabel)
             ?.querySelector(':scope > .ctx-item-main > .ctx-icon');
         };
-        assert(submenuIcon(t('ctx.share'), t('ctx.shareQQ'))?.classList.contains('ctx-icon-qq'), "QQ share menu uses the wrong icon");
-        assert(submenuIcon(t('ctx.share'), t('ctx.shareWechat'))?.classList.contains('ctx-icon-wechat'), "WeChat share menu uses the wrong icon");
+        const shareItem = rootItem(t('ctx.share'));
+        assert(shareItem?.querySelector(':scope > .ctx-item-main > .ctx-icon-windows-share'), "Windows share action uses the wrong icon");
+        assert(!shareItem?.querySelector(':scope > .ctx-submenu'), "Share still exposes fake application launch targets");
         assert(submenuIcon(t('ctx.compress'), 'ZIP')?.classList.contains('ctx-icon-zip'), "ZIP menu uses the wrong icon");
         assert(submenuIcon(t('ctx.compress'), '7-Zip (.7z)')?.classList.contains('ctx-icon-seven-zip'), "7-Zip menu uses the wrong icon");
         assert(submenuIcon(t('ctx.compress'), 'Bandizip')?.classList.contains('ctx-icon-bandizip'), "Bandizip menu uses the wrong icon");
@@ -2025,10 +2036,14 @@
       bar.appendChild(tab);
       document.body.appendChild(bar);
       G.tabs.push(target);
+      const sourceRoot = document.createElement('div');
+      sourceRoot.className = 'virtual-list-content drag-test-source-root';
       const source = document.createElement('div');
       source.className = 'file-row';
       source.dataset.path = 'C:\\DragTest\\parked.txt';
-      document.getElementById('file-list').appendChild(source);
+      sourceRoot.appendChild(source);
+      document.getElementById('file-list').appendChild(sourceRoot);
+      const sourceParent = source.parentElement;
       let received = null;
       try {
         handleRhfilesFileDrop = async (payload, destination, entries, isRight) => {
@@ -2042,7 +2057,8 @@
         await sleep(TAB_FILE_DRAG_SWITCH_DELAY_MS + 80);
         assertEqual(G.activeTab, target.id, "Hovering did not perform the real tab switch");
         assert(source.isConnected, "Switching tabs detached the browser's native drag source");
-        assert(source.parentElement?.classList.contains('file-drag-parking'), "The drag source was not parked before the file list redraw");
+        assertEqual(source.parentElement, sourceParent, "Switching tabs reparented the browser's native drag source");
+        assert(sourceRoot.classList.contains('file-drag-retained'), "The original drag-source tree was not retained during the redraw");
         assertEqual(G._activeFileDragPayload?.paths?.[0], source.dataset.path, "Tab switching cleared the active file drag payload");
         document.getElementById('file-list').dispatchEvent(new DragEvent('drop', {
           bubbles:true,
@@ -2062,7 +2078,7 @@
         if (targetIndex >= 0) G.tabs.splice(targetIndex, 1);
         G.lastActivePane = savedLastActivePane;
         bar.remove();
-        source.remove();
+        sourceRoot.remove();
       }
     });
 
@@ -2119,7 +2135,7 @@
       }
     });
 
-    await test("[dragdrop] Cross-window drop asks whether to copy or move", async () => {
+    await test("[dragdrop] Every internal drop asks whether to copy or move", async () => {
       const pending = showFileDropOperationDialog(['C:\\one.txt'], 'D:\\Destination');
       const overlay = document.querySelector('.app-file-drop-overlay');
       assert(overlay, "Copy-or-move dialog did not appear");
@@ -2175,6 +2191,48 @@
       assertEqual(request.command, "create_archive", "ZIP uses the wrong backend command");
       assert(Array.isArray(request.args.sources), "ZIP request has no sources argument");
       assert(request.args.paths === undefined, "ZIP request still uses the invalid paths argument");
+    });
+
+    await test("[ctxmenu] External compression settings are normalized and forwarded", async () => {
+      const savedTools = G.settings.archiveTools;
+      try {
+        G.settings.archiveTools = {
+          bandizip: {
+            executable: 'C:\\Portable Apps\\Bandizip\\bz.exe',
+            arguments: ['c', '-y', '-l:9', '{dest}', '{sources}'],
+          },
+        };
+        const request = makeCompressionRequest(
+          [
+            {name:'one.txt', path:'C:\\input\\one.txt'},
+            {name:'two.txt', path:'C:\\input\\two.txt'},
+          ],
+          'D:\\output',
+          'bandizip',
+        );
+        assertEqual(request.command, 'compress_with', "Bandizip uses the wrong backend command");
+        assertEqual(request.args.executable, 'C:\\Portable Apps\\Bandizip\\bz.exe', "Custom Bandizip executable was not forwarded");
+        assertEqual(request.args.arguments.join('|'), 'c|-y|-l:9|{dest}|{sources}', "Custom Bandizip arguments were not forwarded");
+        assertEqual(normalizeArchiveToolSettings({}).bandizip.arguments.join('|'), 'c|-y|-r|{dest}|{sources}', "Bandizip defaults are incorrect");
+      } finally {
+        G.settings.archiveTools = savedTools;
+      }
+    });
+
+    await test("[ctxmenu] Windows sharing forwards every selected path", async () => {
+      const originalRunContextCommand = runContextCommand;
+      let request = null;
+      try {
+        runContextCommand = (command, args) => { request = {command, args}; return true; };
+        shareSelection([
+          {path:'C:\\share\\one.txt'},
+          {path:'C:\\share\\two.txt'},
+        ]);
+        assertEqual(request?.command, 'share_files', "Share did not use the Windows sharing command");
+        assertEqual(request?.args?.paths?.length, 2, "Share dropped part of the multi-selection");
+      } finally {
+        runContextCommand = originalRunContextCommand;
+      }
     });
 
     await test("[permissions] Dialog opens before ACL lookup completes", async () => {
