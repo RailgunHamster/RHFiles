@@ -21,6 +21,7 @@ function showConfirmDialog(options) {
     backdrop.className = 'dialog-backdrop';
     const box = document.createElement('div');
     box.className = 'dialog-box app-confirm-box';
+    if (config.kind === 'update') box.classList.add('app-confirm-box-update');
     box.setAttribute('role', 'alertdialog');
     box.setAttribute('aria-modal', 'true');
     const body = document.createElement('div');
@@ -43,9 +44,15 @@ function showConfirmDialog(options) {
     message.textContent = config.message || '';
     const detail = document.createElement('div');
     detail.className = 'app-confirm-detail';
-    detail.textContent = config.detail || '';
+    const detailText = String(config.detail || '');
+    if (config.detailMarkdown && typeof renderMarkdown === 'function') {
+      detail.classList.add('app-confirm-detail-markdown');
+      detail.innerHTML = renderMarkdown(detailText);
+    } else {
+      detail.textContent = detailText;
+    }
     copy.append(title, message);
-    if (detail.textContent) copy.appendChild(detail);
+    if (detailText) copy.appendChild(detail);
     body.append(icon, copy);
     const actions = document.createElement('div');
     actions.className = 'dialog-actions';

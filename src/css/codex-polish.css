@@ -2539,6 +2539,11 @@ body.preview-fullscreen-active::before {
   animation: confirmIn .16s cubic-bezier(.2, .85, .25, 1);
 }
 
+.app-confirm-box-update {
+  width: min(560px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+}
+
 .app-confirm-body {
   display: flex;
   gap: 14px;
@@ -2569,6 +2574,7 @@ body.preview-fullscreen-active::before {
 }
 
 .app-confirm-copy {
+  flex: 1;
   min-width: 0;
 }
 
@@ -2592,6 +2598,24 @@ body.preview-fullscreen-active::before {
   color: var(--text-4);
   font-size: 11px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.app-confirm-detail-markdown {
+  max-height: min(340px, 48vh);
+  margin-top: 10px;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-2) 72%, transparent);
+  color: var(--text-3);
+  white-space: normal;
+}
+
+.app-confirm-detail-markdown .md-heading:first-child {
+  margin-top: 0 !important;
 }
 
 .dialog-btn.danger {

@@ -1725,6 +1725,24 @@
       assertEqual(await pending, false, "Cancel should stop deletion");
     });
 
+    await test("[update] Confirmation preserves release-note structure", async () => {
+      const pending = showConfirmDialog({
+        kind: 'update',
+        title: 'RHFiles 9.9.9',
+        message: 'Update available',
+        detail: '# RHFiles 9.9.9\n\n## 中文\n\n- 第一项\n- 第二项',
+        detailMarkdown: true,
+      });
+      const overlay = $(".app-confirm-overlay");
+      const detail = overlay?.querySelector('.app-confirm-detail-markdown');
+      assert(detail, "Update release notes were not rendered as structured Markdown");
+      assert(detail.querySelector('h1'), "Release-note title lost its line structure");
+      assertIncludes(detail.textContent, '第一项', "First release-note item is missing");
+      assertIncludes(detail.textContent, '第二项', "Second release-note item is missing");
+      simulateClick(overlay.querySelector('.dialog-btn:not(.primary)'));
+      assertEqual(await pending, false, "Cancel should dismiss the update confirmation");
+    });
+
     await test("[delete] Repeated multi-select Delete opens only one confirmation", async () => {
       const tab = getTab();
       const savedEntries = tab.entries;

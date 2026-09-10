@@ -315,10 +315,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   applyToolbarConfig();
 
-  if (G.windowLabel === "main") {
-    call("restore_window_geometry", {}).catch(() => {});
-  }
-
   let _cleanupDone = false;
   setInterval(() => {
     try {
@@ -587,7 +583,8 @@ async function checkForUpdates(manual) {
       kind: 'update',
       title: t(status.pendingRestart ? 'update.readyTitle' : 'update.availableTitle'),
       message: t(status.pendingRestart ? 'update.readyMessage' : 'update.availableMessage', {version}),
-      detail: notes ? notes.slice(0, 600) : t('update.restartHint'),
+      detail: notes ? notes.slice(0, 12000) : t('update.restartHint'),
+      detailMarkdown: Boolean(notes),
       confirmLabel: t(status.pendingRestart ? 'update.restartNow' : 'update.downloadRestart'),
       cancelLabel: t('update.later'),
     });

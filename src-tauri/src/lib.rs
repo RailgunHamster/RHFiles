@@ -17,7 +17,7 @@ mod vcs;
 mod window;
 
 use std::sync::Mutex;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use types::{CancelFlag, CancelState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -41,6 +41,12 @@ pub fn run() {
             file_dialog_integration::initialize(app.handle().clone())?;
             tray::install(app)?;
 
+            // Restore physical-pixel geometry before the frontend becomes busy.
+            // This also repairs coordinates left on a disconnected display.
+            if let Some(main_window) = app.get_webview_window("main") {
+                let _ = window::restore_saved_window_geometry(&main_window);
+            }
+
             {
                 let app_handle = app.handle().clone();
                 let restore_result: Result<Vec<_>, String> = (|| {
@@ -63,7 +69,7 @@ pub fn run() {
                     if !rows.is_empty() {
                         std::thread::spawn(move || {
                             std::thread::sleep(std::time::Duration::from_millis(500));
-                            for (window_id, pos_x, pos_y, width, height, _maximized, _sort_order) in rows {
+                            for (window_id, pos_x, pos_y, width, height, maximized, _sort_order) in rows {
                                 use tauri::WebviewWindowBuilder;
                                 let builder = WebviewWindowBuilder::new(
                                     &app_handle,
@@ -71,13 +77,18 @@ pub fn run() {
                                     tauri::WebviewUrl::App("index.html".into()),
                                 )
                                 .title("RHFiles")
-                                .inner_size(width as f64, height as f64);
-                                let builder = if pos_x != 0 || pos_y != 0 {
-                                    builder.position(pos_x as f64, pos_y as f64)
-                                } else {
-                                    builder
-                                };
-                                let _ = builder.build();
+                                .inner_size(1200.0, 800.0)
+                                .min_inner_size(700.0, 450.0);
+                                if let Ok(restored_window) = builder.build() {
+                                    let _ = window::apply_saved_window_geometry(
+                                        &restored_window,
+                                        pos_x,
+                                        pos_y,
+                                        width,
+                                        height,
+                                        maximized,
+                                    );
+                                }
                             }
                         });
                     }
@@ -194,13 +205,18 @@ pub fn run() {
             updates::download_update, updates::apply_update,
         ])
         .on_window_event(|window, event| {
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::Focused(true))
+                && let Some(main_window) = window.app_handle().get_webview_window("main")
+            {
+                let _ = crate::window::ensure_window_visible(&main_window);
+            }
             if window.label() == "integration-picker" {
                 return;
             }
             let tauri::WindowEvent::CloseRequested { api, .. } = event else {
                 return;
             };
-            use tauri::Manager;
             let app = window.app_handle();
             let user_window_count = app
                 .webview_windows()

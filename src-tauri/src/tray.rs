@@ -43,7 +43,10 @@ pub(crate) fn show_main_window(app: &AppHandle<Wry>) -> Result<(), String> {
     window
         .show()
         .map_err(|error| format!("Unable to show the main window: {error}"))?;
-    let _ = window.unminimize();
+    window
+        .unminimize()
+        .map_err(|error| format!("Unable to restore the main window: {error}"))?;
+    crate::window::ensure_window_visible(&window)?;
     window
         .set_focus()
         .map_err(|error| format!("Unable to focus the main window: {error}"))
