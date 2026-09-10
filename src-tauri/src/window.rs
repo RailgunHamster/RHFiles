@@ -283,6 +283,11 @@ pub async fn open_new_window(
     }
     let _window =
         tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+            // Tauri's native file-drop handler owns WebView2's drop target on
+            // Windows. RHFiles uses HTML5 drag events for files and tabs, so
+            // leaving it enabled makes every real file drag show the forbidden
+            // cursor even though synthetic frontend tests pass.
+            .disable_drag_drop_handler()
             .title("RHFiles")
             .inner_size(1200.0, 800.0)
             .build()

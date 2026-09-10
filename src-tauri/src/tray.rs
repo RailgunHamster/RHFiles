@@ -33,6 +33,7 @@ pub(crate) fn show_main_window(app: &AppHandle<Wry>) -> Result<(), String> {
     let window = match app.get_webview_window("main") {
         Some(window) => window,
         None => WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            .disable_drag_drop_handler()
             .title("RHFiles")
             .inner_size(1200.0, 800.0)
             .min_inner_size(700.0, 450.0)

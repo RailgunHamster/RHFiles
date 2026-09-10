@@ -876,18 +876,29 @@ function detectAdaptiveLayout(entries) {
 // --- navigation ---
 let _navigationToken = 0;
 
+function clearFileListForNavigation(list) {
+  if (typeof teardownVirtualList === 'function') teardownVirtualList(list);
+  // A tab hover can navigate while a native HTML drag is still active. Keep
+  // the original source subtree connected until dragend/drop; removing it
+  // makes WebView2 cancel the drag before the user can release the mouse.
+  if (typeof clearFileListForRender === 'function') clearFileListForRender(list);
+  else list.replaceChildren();
+}
+
 function renderNavigationLoading(path, isRight) {
   const list = document.getElementById(isRight ? 'right-file-list' : 'file-list');
   const status = document.getElementById(isRight ? 'right-status-count' : 'status-count');
   if (status) status.textContent = t('nav.loadingTitle');
   if (!list) return;
-  if (typeof teardownVirtualList === 'function') teardownVirtualList(list);
-  list.innerHTML =
-    '<div class="navigation-loading" role="status">' +
-      '<span class="navigation-loading-spinner" aria-hidden="true"></span>' +
-      `<div class="navigation-loading-title">${esc(t('nav.loadingTitle'))}</div>` +
-      `<div class="navigation-loading-path" title="${esc(path)}">${esc(displayPath(path))}</div>` +
-    '</div>';
+  clearFileListForNavigation(list);
+  const loading = document.createElement('div');
+  loading.className = 'navigation-loading';
+  loading.setAttribute('role', 'status');
+  loading.innerHTML =
+    '<span class="navigation-loading-spinner" aria-hidden="true"></span>' +
+    `<div class="navigation-loading-title">${esc(t('nav.loadingTitle'))}</div>` +
+    `<div class="navigation-loading-path" title="${esc(path)}">${esc(displayPath(path))}</div>`;
+  list.appendChild(loading);
 }
 
 function describeNavigationError(error) {
@@ -938,7 +949,7 @@ function renderNavigationError(path, error, isRight) {
   if (status) status.textContent = t(`nav.${info.key}Title`);
   if (!list) return;
 
-  list.innerHTML = '';
+  clearFileListForNavigation(list);
   const panel = document.createElement('div');
   panel.className = `navigation-error navigation-error-${info.key}`;
   panel.innerHTML =

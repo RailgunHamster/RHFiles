@@ -2024,12 +2024,13 @@
       }
     });
 
-    await test("[dragdrop] Real hover tab switch keeps the native drag source connected", async () => {
+    await test("[dragdrop] Hover switching to an unloaded tab keeps the native drag source connected", async () => {
       if (typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') {
         log("SKIP: DragEvent/DataTransfer constructors unavailable");
         return;
       }
       const originalHandleDrop = handleRhfilesFileDrop;
+      const originalRefreshTabInBackground = _refreshTabInBackground;
       const sourceTab = getTab();
       const savedActiveTab = G.activeTab;
       const savedLastActivePane = G.lastActivePane;
@@ -2038,13 +2039,13 @@
         path:sourceTab.path,
         history:[sourceTab.path],
         historyIdx:0,
-        entries:[...(sourceTab.entries || [])],
+        entries:[],
         sel:new Set(),
         lastIdx:-1,
         sortF:sourceTab.sortF || 'name',
         sortAsc:sourceTab.sortAsc !== false,
         pinned:false,
-        _loaded:true,
+        _loaded:false,
         _metaRefreshAt:Date.now(),
       };
       const bar = document.createElement('div');
@@ -2064,6 +2065,7 @@
       const sourceParent = source.parentElement;
       let received = null;
       try {
+        _refreshTabInBackground = async () => {};
         handleRhfilesFileDrop = async (payload, destination, entries, isRight) => {
           received = {payload, destination, entries, isRight};
           return true;
@@ -2074,6 +2076,7 @@
         tab.dispatchEvent(new DragEvent('dragover', {bubbles:true, cancelable:true, dataTransfer:transfer}));
         await sleep(TAB_FILE_DRAG_SWITCH_DELAY_MS + 80);
         assertEqual(G.activeTab, target.id, "Hovering did not perform the real tab switch");
+        assert(document.querySelector('#file-list .navigation-loading'), "The unloaded target tab did not render its loading state");
         assert(source.isConnected, "Switching tabs detached the browser's native drag source");
         assertEqual(source.parentElement, sourceParent, "Switching tabs reparented the browser's native drag source");
         assert(sourceRoot.classList.contains('file-drag-retained'), "The original drag-source tree was not retained during the redraw");
@@ -2089,6 +2092,7 @@
         assertEqual(received?.isRight, false, "Dropping after the left-tab switch targeted the right pane");
       } finally {
         handleRhfilesFileDrop = originalHandleDrop;
+        _refreshTabInBackground = originalRefreshTabInBackground;
         clearFileDragTabHover();
         clearRhfilesFileDragSession();
         if (G.tabs.some(candidate => candidate.id === savedActiveTab) && G.activeTab !== savedActiveTab) switchTab(savedActiveTab);
