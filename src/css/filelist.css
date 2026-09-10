@@ -91,3 +91,4 @@
 .preview-folder-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
 .preview-folder-item .pfi-icon { width: 14px; height: 14px; }
 .preview-folder-more { font-size: 11px; color: var(--text-4); padding: 4px 0; }
+.file-drag-parking { position:fixed; left:-10000px; top:-10000px; width:1px; height:1px; overflow:hidden; pointer-events:none; opacity:.001; }

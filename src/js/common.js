@@ -383,12 +383,41 @@ G.dragWindowToken = (globalThis.crypto?.randomUUID?.() || (Date.now() + '-' + Ma
 const RHFILES_FILE_DRAG_MIME = 'application/x-rhfiles-file-list+json';
 const RHFILES_FILE_DRAG_PREFIX = 'RHFILES_FILE_DRAG_V1\n';
 G._activeFileDragPayload = null;
+G._activeFileDragSourceNode = null;
+G._activeFileDragParkingLot = null;
 
 function currentFileDragWindowId() {
   return G.windowLabel || G.dragWindowToken;
 }
 
-function setRhfilesFileDragData(dataTransfer, paths, isRight) {
+function releaseRhfilesFileDragSource() {
+  const source = G._activeFileDragSourceNode;
+  const parkingLot = G._activeFileDragParkingLot;
+  if (source && parkingLot && source.parentElement === parkingLot) source.remove();
+  parkingLot?.remove();
+  G._activeFileDragSourceNode = null;
+  G._activeFileDragParkingLot = null;
+}
+
+function rememberRhfilesFileDragSource(sourceNode) {
+  releaseRhfilesFileDragSource();
+  G._activeFileDragSourceNode = sourceNode?.isConnected ? sourceNode : null;
+}
+
+function parkRhfilesFileDragSource() {
+  const source = G._activeFileDragSourceNode;
+  if (!source?.isConnected) return false;
+  if (source.parentElement === G._activeFileDragParkingLot) return true;
+  const parkingLot = document.createElement('div');
+  parkingLot.className = 'file-drag-parking';
+  parkingLot.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(parkingLot);
+  parkingLot.appendChild(source);
+  G._activeFileDragParkingLot = parkingLot;
+  return source.isConnected;
+}
+
+function setRhfilesFileDragData(dataTransfer, paths, isRight, sourceNode) {
   if (!dataTransfer) return;
   const dragPayload = {
     kind: 'rhfiles-file-drag',
@@ -397,6 +426,7 @@ function setRhfilesFileDragData(dataTransfer, paths, isRight) {
     paths: [...new Set((paths || []).filter(path => typeof path === 'string' && path))],
   };
   if (!dragPayload.paths.length) return;
+  rememberRhfilesFileDragSource(sourceNode);
   G._activeFileDragPayload = dragPayload;
   const payload = JSON.stringify(dragPayload);
   dataTransfer.effectAllowed = 'copyMove';
@@ -406,6 +436,7 @@ function setRhfilesFileDragData(dataTransfer, paths, isRight) {
 
 function clearRhfilesFileDragSession() {
   G._activeFileDragPayload = null;
+  releaseRhfilesFileDragSource();
 }
 
 function readRhfilesFileDragData(dataTransfer) {

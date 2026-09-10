@@ -1593,6 +1593,68 @@
       removeContextMenu();
     });
 
+    await test("[ctxmenu] Programs, share targets, and archive tools have distinct icons", async () => {
+      const programMenu = buildProgramOpenMenu('C:\\icon-test', {isDirectory:true, isMedia:true});
+      const expectedProgramIcons = {
+        'VS Code': 'vscode',
+        'Visual Studio': 'visual-studio',
+        'CMD': 'cmd',
+        'PowerShell': 'powershell',
+        'Git Bash': 'git-bash',
+        'VLC': 'vlc',
+        'PotPlayer': 'potplayer',
+      };
+      Object.entries(expectedProgramIcons).forEach(([label, icon]) => {
+        const item = programMenu.find(candidate => candidate.label === label);
+        assertEqual(item?.icon, icon, label + " did not receive its dedicated icon");
+      });
+
+      const requestedIcons = [
+        ...Object.values(expectedProgramIcons),
+        'qq', 'wechat', 'feishu', 'windows-share',
+        'zip', 'seven-zip', 'bandizip', 'winrar',
+      ];
+      assertEqual(new Set(requestedIcons).size, requestedIcons.length, "Dedicated context-menu icon names are not unique");
+      const paths = requestedIcons.map(name => CONTEXT_MENU_ICON_PATHS[name]);
+      assert(paths.every(Boolean), "A dedicated context-menu icon has no SVG path");
+      assertEqual(new Set(paths).size, paths.length, "Two dedicated context-menu icons reuse the same artwork");
+      requestedIcons.forEach(name => {
+        const markup = contextMenuIconMarkup(name);
+        assertIncludes(markup, `ctx-icon-${name}`, name + " did not render its icon class");
+        assertIncludes(markup, 'ctx-icon-brand', name + " did not retain its identifying color");
+      });
+
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      try {
+        tab.entries = [{name:'icon-test.txt', path:'C:\\icon-test.txt', extension:'txt', is_dir:false}];
+        tab.sel = new Set([0]);
+        tab.lastIdx = 0;
+        showContextMenu(20, 20, false);
+        const menu = document.querySelector('.context-menu');
+        const rootItem = label => [...menu.children]
+          .find(item => item.querySelector(':scope > .ctx-item-main > .ctx-label')?.textContent === label);
+        const submenuIcon = (rootLabel, itemLabel) => {
+          const submenu = rootItem(rootLabel)?.querySelector(':scope > .ctx-submenu');
+          return [...(submenu?.children || [])]
+            .find(item => item.querySelector(':scope > .ctx-item-main > .ctx-label')?.textContent === itemLabel)
+            ?.querySelector(':scope > .ctx-item-main > .ctx-icon');
+        };
+        assert(submenuIcon(t('ctx.share'), t('ctx.shareQQ'))?.classList.contains('ctx-icon-qq'), "QQ share menu uses the wrong icon");
+        assert(submenuIcon(t('ctx.share'), t('ctx.shareWechat'))?.classList.contains('ctx-icon-wechat'), "WeChat share menu uses the wrong icon");
+        assert(submenuIcon(t('ctx.compress'), 'ZIP')?.classList.contains('ctx-icon-zip'), "ZIP menu uses the wrong icon");
+        assert(submenuIcon(t('ctx.compress'), '7-Zip (.7z)')?.classList.contains('ctx-icon-seven-zip'), "7-Zip menu uses the wrong icon");
+        assert(submenuIcon(t('ctx.compress'), 'Bandizip')?.classList.contains('ctx-icon-bandizip'), "Bandizip menu uses the wrong icon");
+      } finally {
+        removeContextMenu();
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
+    });
+
     await test("[ctxmenu] Search input uses a localized app context menu", async () => {
       removeContextMenu();
       simulateContextMenu($("#filter-input"));
@@ -1930,6 +1992,77 @@
         clearRhfilesFileDragSession();
         switchTab = originalLeft;
         bar.remove();
+      }
+    });
+
+    await test("[dragdrop] Real hover tab switch keeps the native drag source connected", async () => {
+      if (typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') {
+        log("SKIP: DragEvent/DataTransfer constructors unavailable");
+        return;
+      }
+      const originalHandleDrop = handleRhfilesFileDrop;
+      const sourceTab = getTab();
+      const savedActiveTab = G.activeTab;
+      const savedLastActivePane = G.lastActivePane;
+      const target = {
+        id:G.nextTabId + 900002,
+        path:sourceTab.path,
+        history:[sourceTab.path],
+        historyIdx:0,
+        entries:[...(sourceTab.entries || [])],
+        sel:new Set(),
+        lastIdx:-1,
+        sortF:sourceTab.sortF || 'name',
+        sortAsc:sourceTab.sortAsc !== false,
+        pinned:false,
+        _loaded:true,
+        _metaRefreshAt:Date.now(),
+      };
+      const bar = document.createElement('div');
+      const tab = document.createElement('div');
+      tab.className = 'tab';
+      tab.dataset.tabId = String(target.id);
+      bar.appendChild(tab);
+      document.body.appendChild(bar);
+      G.tabs.push(target);
+      const source = document.createElement('div');
+      source.className = 'file-row';
+      source.dataset.path = 'C:\\DragTest\\parked.txt';
+      document.getElementById('file-list').appendChild(source);
+      let received = null;
+      try {
+        handleRhfilesFileDrop = async (payload, destination, entries, isRight) => {
+          received = {payload, destination, entries, isRight};
+          return true;
+        };
+        const transfer = new DataTransfer();
+        setRhfilesFileDragData(transfer, [source.dataset.path], false, source);
+        initTabDragDrop(bar, false);
+        tab.dispatchEvent(new DragEvent('dragover', {bubbles:true, cancelable:true, dataTransfer:transfer}));
+        await sleep(TAB_FILE_DRAG_SWITCH_DELAY_MS + 80);
+        assertEqual(G.activeTab, target.id, "Hovering did not perform the real tab switch");
+        assert(source.isConnected, "Switching tabs detached the browser's native drag source");
+        assert(source.parentElement?.classList.contains('file-drag-parking'), "The drag source was not parked before the file list redraw");
+        assertEqual(G._activeFileDragPayload?.paths?.[0], source.dataset.path, "Tab switching cleared the active file drag payload");
+        document.getElementById('file-list').dispatchEvent(new DragEvent('drop', {
+          bubbles:true,
+          cancelable:true,
+          dataTransfer:transfer,
+        }));
+        await waitForCondition(() => received !== null, 1000);
+        assertEqual(received?.payload?.paths?.[0], source.dataset.path, "Dropping after the tab switch lost the source path");
+        assertEqual(received?.destination, target.path, "Dropping after the tab switch used the old tab's folder");
+        assertEqual(received?.isRight, false, "Dropping after the left-tab switch targeted the right pane");
+      } finally {
+        handleRhfilesFileDrop = originalHandleDrop;
+        clearFileDragTabHover();
+        clearRhfilesFileDragSession();
+        if (G.tabs.some(candidate => candidate.id === savedActiveTab) && G.activeTab !== savedActiveTab) switchTab(savedActiveTab);
+        const targetIndex = G.tabs.indexOf(target);
+        if (targetIndex >= 0) G.tabs.splice(targetIndex, 1);
+        G.lastActivePane = savedLastActivePane;
+        bar.remove();
+        source.remove();
       }
     });
 

@@ -570,6 +570,10 @@ function scheduleFileDragTabSwitch(tabEl, isRight) {
   tabEl.classList.add('file-drag-hover');
   _fileDragTabHoverTimer = setTimeout(() => {
     if (_fileDragTabHoverTarget !== tabEl || !tabEl.isConnected) return;
+    // Switching tabs redraws the file list. Keep the browser's real drag
+    // source connected or WebView2 ends the drag before the user can drop in
+    // the destination tab.
+    parkRhfilesFileDragSource();
     clearFileDragTabHover();
     if (isRight) switchRightTab(tabId);
     else switchTab(tabId);

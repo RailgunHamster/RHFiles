@@ -14,10 +14,27 @@
 .ctx-icon-favorite { color:#d99b18; }
 .ctx-icon-danger { color:var(--danger,#d14b4b); }
 .ctx-icon-security { color:#7b69c7; }
+.ctx-icon-vscode { --ctx-icon-brand:#268bd2; }
+.ctx-icon-visual-studio { --ctx-icon-brand:#8f54b8; }
+.ctx-icon-cmd { --ctx-icon-brand:#536576; }
+.ctx-icon-powershell { --ctx-icon-brand:#3278bd; }
+.ctx-icon-git-bash { --ctx-icon-brand:#d95b3f; }
+.ctx-icon-vlc { --ctx-icon-brand:#d78328; }
+.ctx-icon-potplayer { --ctx-icon-brand:#8158ad; }
+.ctx-icon-qq { --ctx-icon-brand:#1688bd; }
+.ctx-icon-wechat { --ctx-icon-brand:#159455; }
+.ctx-icon-feishu { --ctx-icon-brand:#386fd6; }
+.ctx-icon-windows-share { --ctx-icon-brand:#247fc2; }
+.ctx-icon-zip { --ctx-icon-brand:#b87c16; }
+.ctx-icon-seven-zip { --ctx-icon-brand:#606b76; }
+.ctx-icon-bandizip { --ctx-icon-brand:#168ca9; }
+.ctx-icon-winrar { --ctx-icon-brand:#80569e; }
+.ctx-icon-brand { color:var(--ctx-icon-brand,var(--accent)); }
 .ctx-item:hover .ctx-icon { color:var(--accent); }
 .ctx-item:hover .ctx-icon-favorite { color:#d99b18; }
 .ctx-item:hover .ctx-icon-danger { color:var(--danger,#d14b4b); }
 .ctx-item:hover .ctx-icon-security { color:#7b69c7; }
+.ctx-item:hover .ctx-icon-brand { color:var(--ctx-icon-brand,var(--accent)); }
 .ctx-item:active .ctx-icon,
 .ctx-item.ctx-firing .ctx-icon { color:currentColor; }
 .ctx-item:active { background:var(--accent); color:#fff; }

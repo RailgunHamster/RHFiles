@@ -815,8 +815,8 @@ function showDiskUsageNodeContextMenu(event, node) {
     {label:'-'},
     {label:t('ctx.copyPath'), icon:'path', action:() => copyPathFromMenu(path)},
     {label:t('diskUsage.analyze'), icon:'disk', hidden:!isDirectory, action:() => showDiskUsageDialog(path)},
-    {label:t('ctx.openCmd'), icon:'terminal', hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'cmd'}, 'CMD')},
-    {label:t('ctx.openPowerShell'), icon:'terminal', hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'powershell'}, 'PowerShell')},
+    {label:t('ctx.openCmd'), icon:'cmd', hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'cmd'}, 'CMD')},
+    {label:t('ctx.openPowerShell'), icon:'powershell', hidden:!isDirectory, action:() => runContextCommand('open_terminal', {path, terminal:'powershell'}, 'PowerShell')},
     {label:'-'},
     {label:t('ctx.properties'), icon:'properties', action:() => showPropertiesDialog(path)},
   ], 'disk-usage-context-menu');

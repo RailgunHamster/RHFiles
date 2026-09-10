@@ -801,6 +801,21 @@ const CONTEXT_MENU_ICON_PATHS = Object.freeze({
   terminal: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m4.5 6 2 2-2 2M8 10h3"/>',
   code: '<path d="m5.5 4-4 4 4 4M10.5 4l4 4-4 4M9 2.5 7 13.5"/>',
   media: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="m6.5 5.5 4 2.5-4 2.5Z"/>',
+  vscode: '<path d="m2.7 5.5 2.2-2.1 2.9 2.3 3.9-3.2 1.6.8v9.4l-1.6.8-3.9-3.2-2.9 2.3-2.2-2.1L5.4 8Z"/><path d="M7.8 5.7v4.6L11.7 8Z"/>',
+  'visual-studio': '<path d="M2.3 5.3 4.7 3 8 6.1l3.8-3.3 2.2 1v8.4l-2.2 1L8 9.9 4.7 13l-2.4-2.3L5 8Z"/><path d="M8 6.1v3.8M11.8 2.8v10.4"/>',
+  cmd: '<rect x="1.8" y="3" width="12.4" height="10" rx="1.4"/><path d="M1.8 5.5h12.4M4 7.5l1.7 1.7L4 10.9M8 10.9h3"/>',
+  powershell: '<path d="M5 2.7h7.2c.9 0 1.5.8 1.2 1.7L11.1 12c-.2.7-.8 1.2-1.6 1.2H3c-.9 0-1.5-.8-1.2-1.7l2.3-7.6C4.3 3.2 4.5 2.7 5 2.7Z"/><path d="m5 6 2.2 2L5 10M8.4 10h2.1"/>',
+  'git-bash': '<path d="M8 1.8 14.2 8 8 14.2 1.8 8Z"/><circle cx="5.8" cy="5.8" r=".8"/><circle cx="10.2" cy="5.8" r=".8"/><circle cx="10.2" cy="10.2" r=".8"/><path d="M6.6 5.8h2.8M6.4 6.4l3.2 3.2"/>',
+  vlc: '<path d="m8 2 4.5 11h-9ZM5 9h6M6 6.5h4M2.5 13h11"/>',
+  potplayer: '<path d="M8 2.2c3.4 0 5.8 2.1 5.8 5.2 0 3.7-2.7 6.4-6.2 6.4-3.1 0-5.4-2.3-5.4-5.3C2.2 5.1 4.7 2.2 8 2.2Z"/><path d="m6.5 5.5 4 2.5-4 2.5Z"/>',
+  qq: '<circle cx="8" cy="4.5" r="2.4"/><path d="M5.8 6.2c-1.3 1.1-1.6 4.6-.7 6.3.8 1.4 5 1.4 5.8 0 .9-1.7.6-5.2-.7-6.3M5 8h6M5.2 13l-1.8.6M10.8 13l1.8.6"/><circle cx="7.2" cy="4.2" r=".25"/><circle cx="8.8" cy="4.2" r=".25"/>',
+  wechat: '<path d="M8.8 9.8c-.8.5-1.8.8-2.9.8-.5 0-1-.1-1.5-.2l-1.8 1 .5-1.7C2.4 9 2 8.1 2 7.1c0-2 1.8-3.7 4-3.7 2 0 3.7 1.3 4 3"/><path d="M14 9.2c0 1-.4 1.9-1.1 2.5l.4 1.5-1.5-.8c-.4.1-.8.2-1.3.2-1.9 0-3.5-1.4-3.5-3.2s1.6-3.2 3.5-3.2S14 7.4 14 9.2Z"/><circle cx="4.8" cy="6.7" r=".25"/><circle cx="7.2" cy="6.7" r=".25"/><circle cx="9.6" cy="8.8" r=".25"/><circle cx="11.6" cy="8.8" r=".25"/>',
+  feishu: '<path d="m8 2.1 1.5 3.2 3.4-1.2-1.2 3.4 2.9 1.7-3.2 1-.1 3.6-2.7-2.4L6 13.8l-.2-3.6-3.2-1 2.9-1.7-1.2-3.4 3.4 1.2Z"/>',
+  'windows-share': '<path d="M2.5 3.5 7.2 2.8v4.6H2.5ZM8.2 2.7l5.3-.8v5.5H8.2ZM2.5 8.4h4.7V13l-4.7-.7ZM8.2 8.4h5.3v5.7l-5.3-.9Z"/>',
+  zip: '<path d="M4 2.5h5l3 3V14H4ZM9 2.5v3h3M7 3.2h2M7 5.2h2M7 7.2h2M6.3 10h3.4l-3.4 2h3.4"/>',
+  'seven-zip': '<rect x="2.5" y="3" width="11" height="10" rx="1.4"/><path d="M4.5 5.5h5L7 10.8M10.5 7v3.5M12 7v3.5"/>',
+  bandizip: '<rect x="2.5" y="2.8" width="11" height="10.4" rx="1.5"/><path d="M5.2 4.7v6.6h3.3a1.7 1.7 0 0 0 0-3.4H5.2h3a1.6 1.6 0 0 0 0-3.2Z"/>',
+  winrar: '<path d="M3 2.5h10v3H3ZM3 6.5h10v3H3ZM3 10.5h10v3H3ZM7.2 2.5v11h2v-2h-2"/>',
   settings: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M12.4 3.6l-1 1M4.6 11.4l-1 1"/>',
   disk: '<ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/>',
   format: '<path d="m3 11 7-7 3 3-7 7H3ZM8.5 5.5l3 3M9 12h5"/>',
@@ -821,6 +836,21 @@ const CONTEXT_MENU_ICON_TONES = Object.freeze({
   star: 'favorite',
   shield: 'security',
   permissions: 'security',
+  vscode: 'brand',
+  'visual-studio': 'brand',
+  cmd: 'brand',
+  powershell: 'brand',
+  'git-bash': 'brand',
+  vlc: 'brand',
+  potplayer: 'brand',
+  qq: 'brand',
+  wechat: 'brand',
+  feishu: 'brand',
+  'windows-share': 'brand',
+  zip: 'brand',
+  'seven-zip': 'brand',
+  bandizip: 'brand',
+  winrar: 'brand',
 });
 
 function contextMenuIconMarkup(name) {
@@ -969,19 +999,19 @@ function flashAt(x, y) {
 function buildProgramOpenMenu(targetPath, options) {
   const opts = options || {};
   const items = [
-    { label: "VS Code", icon: "code", action: () => openWithProgramFromMenu(targetPath, "vscode", "VS Code") },
-    { label: "Visual Studio", icon: "code", action: () => openWithProgramFromMenu(targetPath, "visual_studio", "Visual Studio") },
+    { label: "VS Code", icon: "vscode", action: () => openWithProgramFromMenu(targetPath, "vscode", "VS Code") },
+    { label: "Visual Studio", icon: "visual-studio", action: () => openWithProgramFromMenu(targetPath, "visual_studio", "Visual Studio") },
     { label: "-" },
-    { label: "CMD", icon: "terminal", action: () => openWithProgramFromMenu(targetPath, "cmd", "CMD") },
-    { label: "PowerShell", icon: "terminal", action: () => openWithProgramFromMenu(targetPath, "powershell", "PowerShell") },
-    { label: "Git Bash", icon: "terminal", action: () => openWithProgramFromMenu(targetPath, "git_bash", "Git Bash") },
+    { label: "CMD", icon: "cmd", action: () => openWithProgramFromMenu(targetPath, "cmd", "CMD") },
+    { label: "PowerShell", icon: "powershell", action: () => openWithProgramFromMenu(targetPath, "powershell", "PowerShell") },
+    { label: "Git Bash", icon: "git-bash", action: () => openWithProgramFromMenu(targetPath, "git_bash", "Git Bash") },
   ];
   if (opts.isMedia) {
-    items.push({ label: "VLC", icon: "media", action: () => openWithProgramFromMenu(targetPath, "vlc", "VLC") });
-    items.push({ label: "PotPlayer", icon: "media", action: () => openWithProgramFromMenu(targetPath, "potplayer", "PotPlayer") });
+    items.push({ label: "VLC", icon: "vlc", action: () => openWithProgramFromMenu(targetPath, "vlc", "VLC") });
+    items.push({ label: "PotPlayer", icon: "potplayer", action: () => openWithProgramFromMenu(targetPath, "potplayer", "PotPlayer") });
   }
   if (opts.isDirectory) {
-    items.push({ label: t('ctx.playFolderWithVlc'), icon: "media", action: () => openWithProgramFromMenu(targetPath, "vlc_folder", "VLC") });
+    items.push({ label: t('ctx.playFolderWithVlc'), icon: "vlc", action: () => openWithProgramFromMenu(targetPath, "vlc_folder", "VLC") });
   }
   if (opts.isMedia || opts.isDirectory) items.push({ label: "-" });
   if (opts.includeSystemDialog !== false) {
@@ -1062,17 +1092,17 @@ function showContextMenu(x, y, isRight) {
         }
     }, hidden: !G.searchActive || !singleSelection },
     { label: t('ctx.share'), icon:"share", submenu: [
-      { label: t('ctx.shareQQ'), icon:"share", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "qq" }, t('ctx.shareQQ')); } },
-      { label: t('ctx.shareWechat'), icon:"share", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "wechat" }, t('ctx.shareWechat')); } },
-      { label: t('ctx.shareFeishu'), icon:"share", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "feishu" }, t('ctx.shareFeishu')); } },
+      { label: t('ctx.shareQQ'), icon:"qq", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "qq" }, t('ctx.shareQQ')); } },
+      { label: t('ctx.shareWechat'), icon:"wechat", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "wechat" }, t('ctx.shareWechat')); } },
+      { label: t('ctx.shareFeishu'), icon:"feishu", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "feishu" }, t('ctx.shareFeishu')); } },
       { label: "-" },
-      { label: t('ctx.windowsShare'), icon:"share", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "windows" }, t('ctx.windowsShare')); } },
+      { label: t('ctx.windowsShare'), icon:"windows-share", action: () => { if (singleSelection) runContextCommand("share_file", { path: sel[0].path, target: "windows" }, t('ctx.windowsShare')); } },
     ], disabled: !singleSelection },
     { label: t('ctx.compress'), icon:"archive", submenu: [
-      { label: "ZIP", icon:"archive", action: () => compressSelection(sel, currentPath, "zip") },
-      { label: "7-Zip (.7z)", icon:"archive", action: () => compressSelection(sel, currentPath, "7zip") },
-      { label: "Bandizip", icon:"archive", action: () => compressSelection(sel, currentPath, "bandizip") },
-      { label: "WinRAR (.rar)", icon:"archive", action: () => compressSelection(sel, currentPath, "winrar") },
+      { label: "ZIP", icon:"zip", action: () => compressSelection(sel, currentPath, "zip") },
+      { label: "7-Zip (.7z)", icon:"seven-zip", action: () => compressSelection(sel, currentPath, "7zip") },
+      { label: "Bandizip", icon:"bandizip", action: () => compressSelection(sel, currentPath, "bandizip") },
+      { label: "WinRAR (.rar)", icon:"winrar", action: () => compressSelection(sel, currentPath, "winrar") },
     ], disabled: !hasSelection },
     { label: "-", action: null },
     { label: t('ctx.newFile'), icon:"filePlus", shortcut:"Ctrl+Shift+N", action: () => showNewFileDialog(isRight) },
@@ -1203,8 +1233,8 @@ function showTabContextMenu(x, y, tabId, isRight) {
     { label: '-' },
     { label: t('ctx.copyPath'), icon: 'path', action: () => copyPathFromMenu(folderPath), disabled: folderPath === 'home://' },
     { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path: folderPath, isDirectory: true}, t('ctx.openFolderInExplorer')), disabled: folderPath === 'home://' },
-    { label: t('ctx.openCmd'), icon: 'terminal', action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'cmd'}, 'CMD'), disabled: folderPath === 'home://' },
-    { label: t('ctx.openPowerShell'), icon: 'terminal', action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'powershell'}, 'PowerShell'), disabled: folderPath === 'home://' },
+    { label: t('ctx.openCmd'), icon: 'cmd', action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'cmd'}, 'CMD'), disabled: folderPath === 'home://' },
+    { label: t('ctx.openPowerShell'), icon: 'powershell', action: () => runContextCommand('open_terminal', {path: folderPath, terminal: 'powershell'}, 'PowerShell'), disabled: folderPath === 'home://' },
     { label: '-' },
     { label: t('cmd.refresh'), icon: 'refresh', shortcut: 'F5', action: () => { if (isRight) switchRightTab(tabId); else if (G.activeTab !== tabId) switchTab(tabId); refresh(); } },
   ], 'tab-context-menu');
@@ -1265,8 +1295,8 @@ function showPathContextMenu(x, y, path, isDir, isRight) {
     { label: '-' },
     { label: t('ctx.copyPath'), icon: 'path', action: () => copyPathFromMenu(path) },
     { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')) },
-    { label: t('ctx.openCmd'), icon: 'terminal', action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'cmd'}, 'CMD') },
-    { label: t('ctx.openPowerShell'), icon: 'terminal', action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'powershell'}, 'PowerShell') },
+    { label: t('ctx.openCmd'), icon: 'cmd', action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'cmd'}, 'CMD') },
+    { label: t('ctx.openPowerShell'), icon: 'powershell', action: () => runContextCommand('open_terminal', {path: terminalPath, terminal: 'powershell'}, 'PowerShell') },
     { label: t('diskUsage.analyze'), icon: 'disk', hidden: !isDir, action: () => showDiskUsageDialog(path) },
     { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), icon: 'star', hidden: !isDir, action: () => toggleFavoriteFolder(path, favoriteDisplayName(path)) },
     { label: '-' },
@@ -1290,8 +1320,8 @@ function showBlankListContextMenu(x, y, isRight) {
     { label: t('ctx.copyPath'), icon: 'path', action: () => copyPathFromMenu(path) },
     { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
     { label: t('ctx.openWith'), icon: 'window', submenu: buildProgramOpenMenu(path, {isDirectory:true, includeNewWindow:true}) },
-    { label: t('ctx.openCmd'), icon: 'terminal', action: () => runContextCommand('open_terminal', {path, terminal: 'cmd'}, 'CMD') },
-    { label: t('ctx.openPowerShell'), icon: 'terminal', action: () => runContextCommand('open_terminal', {path, terminal: 'powershell'}, 'PowerShell') },
+    { label: t('ctx.openCmd'), icon: 'cmd', action: () => runContextCommand('open_terminal', {path, terminal: 'cmd'}, 'CMD') },
+    { label: t('ctx.openPowerShell'), icon: 'powershell', action: () => runContextCommand('open_terminal', {path, terminal: 'powershell'}, 'PowerShell') },
     { label: t('diskUsage.analyze'), icon: 'disk', action: () => showDiskUsageDialog(path) },
     { label: isFavoriteFolder(path) ? t('favorites.removeCurrent') : t('favorites.addCurrent'), icon: 'star', action: () => toggleFavoriteFolder(path, favoriteDisplayName(path)) },
     { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },

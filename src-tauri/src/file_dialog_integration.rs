@@ -669,7 +669,7 @@ fn position_picker(target: HWND, picker: HWND) -> bool {
     let logical_height = if compact {
         (48 + row_count * 39).clamp(112, 350)
     } else {
-        (106 + row_count * 58).clamp(182, 532)
+        (106 + row_count * 48).clamp(174, 462)
     };
     let height = scaled(logical_height);
     let gap = scaled(10);
@@ -2431,6 +2431,14 @@ mod tests {
         assert!(picker_html.contains("id=\"picker-open-rhfiles\""));
         assert!(picker_html.contains("id=\"picker-open-rhfiles-compact\""));
         assert!(picker_html.contains("在 RHFiles 里打开"));
+        let picker_js = include_str!("../../src/js/integration-picker.js");
+        assert!(!picker_js.contains("folderIcon"));
+        assert!(!picker_js.contains("location-meta"));
+        assert!(!picker_js.contains("tr('left')"));
+        assert!(!picker_js.contains("tr('right')"));
+        assert!(!picker_js.contains("tr('tab'"));
+        assert!(picker_js.contains("} finally {"));
+        assert!(picker_js.contains("button.disabled = false"));
     }
 
     #[test]

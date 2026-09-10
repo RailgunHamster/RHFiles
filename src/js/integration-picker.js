@@ -5,16 +5,14 @@ const pickerText = {
   zh: {
     title: 'RHFiles 已打开位置', subtitle: '选择后让当前 Windows 窗口跳转', click: '单击即可跳转',
     dialog: 'Windows 打开 / 保存窗口', explorer: 'Windows 资源管理器',
-    window: 'RHFiles 窗口 {number}', left: '左窗格', right: '右窗格', tab: '标签 {number}',
-    pinned: '已固定', empty: '没有可用的文件夹', emptyHint: '请先在 RHFiles 中打开本地或网络文件夹',
+    window: 'RHFiles 窗口 {number}', empty: '没有可用的文件夹', emptyHint: '请先在 RHFiles 中打开本地或网络文件夹',
     failed: '跳转失败：{error}', collapse: '收起（仅显示路径）', expand: '展开详细信息',
     hide: '暂时隐藏', disable: '关闭此功能（可在设置中重新开启）', openInRhfiles: '在 RHFiles 里打开',
   },
   en: {
     title: 'Open RHFiles locations', subtitle: 'Choose where this Windows window should go', click: 'Click to navigate',
     dialog: 'Windows Open / Save dialog', explorer: 'Windows File Explorer',
-    window: 'RHFiles window {number}', left: 'Left pane', right: 'Right pane', tab: 'Tab {number}',
-    pinned: 'Pinned', empty: 'No folder is available', emptyHint: 'Open a local or network folder in RHFiles first',
+    window: 'RHFiles window {number}', empty: 'No folder is available', emptyHint: 'Open a local or network folder in RHFiles first',
     failed: 'Navigation failed: {error}', collapse: 'Collapse to paths only', expand: 'Expand details',
     hide: 'Hide for now', disable: 'Turn off this feature (re-enable it in Settings)', openInRhfiles: 'Open in RHFiles',
   },
@@ -36,10 +34,6 @@ function basename(path) {
   if (/^[a-z]:$/i.test(normalized)) return normalized.toUpperCase();
   const parts = normalized.split(/[\\/]/).filter(Boolean);
   return parts.at(-1) || path || '';
-}
-
-function folderIcon() {
-  return '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2.25 5.1h6l1.55 1.7h7.95v8.1H2.25V5.1Z" fill="currentColor" opacity=".25"/><path d="M2.25 5.1h6l1.55 1.7h7.95v8.1H2.25V5.1Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/></svg>';
 }
 
 function renderPicker(state) {
@@ -101,9 +95,6 @@ function renderPicker(state) {
       button.className = `picker-location${location.active ? ' active' : ''}`;
       button.title = location.path;
 
-      const icon = document.createElement('span');
-      icon.className = 'location-icon';
-      icon.innerHTML = folderIcon();
       const copy = document.createElement('span');
       copy.className = 'location-copy';
       const name = document.createElement('span');
@@ -113,19 +104,7 @@ function renderPicker(state) {
       path.className = 'location-path';
       path.textContent = location.path;
       copy.append(name, path);
-      const meta = document.createElement('span');
-      meta.className = 'location-meta';
-      const tab = document.createElement('span');
-      tab.className = 'location-badge';
-      tab.textContent = `${location.pane === 'right' ? tr('right') : tr('left')} · ${tr('tab', { number: Number(location.tabIndex || 0) + 1 })}`;
-      meta.append(tab);
-      if (location.pinned) {
-        const pin = document.createElement('span');
-        pin.className = 'location-badge pin';
-        pin.textContent = tr('pinned');
-        meta.append(pin);
-      }
-      button.append(icon, copy, meta);
+      button.append(copy);
       button.addEventListener('click', async () => {
         button.disabled = true;
         try {
@@ -158,13 +137,17 @@ document.getElementById('picker-disable').addEventListener('click', () => {
   });
 });
 async function openExplorerLocation(event) {
-  const button = event.currentTarget;
-  button.disabled = true;
+  const buttons = [
+    document.getElementById('picker-open-rhfiles'),
+    document.getElementById('picker-open-rhfiles-compact'),
+  ].filter(Boolean);
+  buttons.forEach(button => { button.disabled = true; });
   try {
     await pickerInvoke('open_explorer_location_in_rhfiles');
   } catch (error) {
     document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
-    button.disabled = false;
+  } finally {
+    buttons.forEach(button => { button.disabled = false; });
   }
 }
 document.getElementById('picker-open-rhfiles').addEventListener('click', openExplorerLocation);
