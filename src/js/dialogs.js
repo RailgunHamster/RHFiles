@@ -293,6 +293,14 @@ function openSettings() {
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-confirm-delete">' + t('settings.confirmDelete') + '</label>' +
     '<input id="settings-confirm-delete" type="checkbox" onchange="G.settings.confirmRecycleDelete=this.checked;saveSettings()"' + (G.settings.confirmRecycleDelete!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-typesearch-timeout">' + t('settings.typeSearchTimeout') + '</label>' +
+    '<select id="settings-typesearch-timeout" onchange="G.settings.typeSearchTimeoutMs=Number(this.value);saveSettings()">' +
+      '<option value="3000"' + (Number(G.settings.typeSearchTimeoutMs)===3000?" selected":"") + '>' + t('settings.typeSearchTimeout3s') + '</option>' +
+      '<option value="10000"' + (Number(G.settings.typeSearchTimeoutMs)===10000?" selected":"") + '>' + t('settings.typeSearchTimeout10s') + '</option>' +
+      '<option value="30000"' + (Number(G.settings.typeSearchTimeoutMs)===30000?" selected":"") + '>' + t('settings.typeSearchTimeout30s') + '</option>' +
+      '<option value="0"' + (!Number(G.settings.typeSearchTimeoutMs)?" selected":"") + '>' + t('settings.typeSearchTimeoutPermanent') + '</option>' +
+    '</select></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.typeSearchTimeoutHelp') + '</span></div>' +
     '<div class="settings-feature-note"><span>' + t('settings.confirmDeleteHelp') + '</span></div></div>';
 
   const appearance = '<div class="settings-card">' +

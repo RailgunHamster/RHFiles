@@ -325,37 +325,77 @@ pub fn get_drives() -> Result<Vec<DriveInfo>, String> {
     Ok(drives)
 }
 
+/// Maps common Windows delete HRESULTs onto a short human hint so failures
+/// surface a reason instead of a bare code.
+#[cfg(target_os = "windows")]
+fn describe_delete_failure(code: i32) -> String {
+    let code = code as u32;
+    match code {
+        0x8007_0005 | 5 => "access denied — the item may be in use or need administrator rights".to_string(),
+        0x8007_0020 | 32 => "the file is in use by another process".to_string(),
+        0x8007_007B | 123 => "the path is invalid or too long".to_string(),
+        0x8007_0002 | 2 => "the item no longer exists".to_string(),
+        0x8027_0000..=0x8027_FFFF => "Windows rejected the operation (item in use or protected)".to_string(),
+        _ => String::new(),
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn delete_with_windows_shell(path: &Path, allow_undo: bool) -> Result<(), String> {
-    {
-        use std::os::windows::ffi::OsStrExt;
-        let wide: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .chain(std::iter::once(0))
-            .collect();
-        use windows::Win32::UI::Shell::{
-            FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_SILENT, SHFILEOPSTRUCTW,
-            SHFileOperationW,
-        };
-        let mut op = SHFILEOPSTRUCTW::default();
-        op.wFunc = FO_DELETE;
-        op.pFrom = windows::core::PCWSTR(wide.as_ptr());
-        let mut flags = FOF_NOCONFIRMATION.0 | FOF_SILENT.0;
+    use windows::core::HSTRING;
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        FileOperation, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+        FILEOPERATION_FLAGS, IFileOperation, IShellItem, SHCreateItemFromParsingName,
+    };
+
+    let apartment = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if apartment.is_err() && apartment != RPC_E_CHANGED_MODE {
+        return Err(format!(
+            "Unable to initialize Windows for deleting {}: {apartment}",
+            path.display()
+        ));
+    }
+    let outcome = (|| -> Result<(), String> {
+        let operation: IFileOperation =
+            unsafe { CoCreateInstance(&FileOperation, None, CLSCTX_ALL) }.map_err(|error| {
+                format!("Unable to start the Windows delete operation: {error}")
+            })?;
+        let mut flags = FOF_NOCONFIRMATION.0 | FOF_SILENT.0 | FOF_NOERRORUI.0;
         if allow_undo {
             flags |= FOF_ALLOWUNDO.0;
         }
-        op.fFlags = flags as u16;
-        let result = unsafe { SHFileOperationW(&mut op) };
-        if result != 0 {
-            return Err(format!("SHFileOperation failed: {result}"));
+        unsafe { operation.SetOperationFlags(FILEOPERATION_FLAGS(flags)) }
+            .map_err(|error| format!("Unable to configure the Windows delete operation: {error}"))?;
+        let parsing_name = HSTRING::from(path.as_os_str().to_string_lossy().as_ref());
+        let item: IShellItem = unsafe { SHCreateItemFromParsingName(&parsing_name, None) }
+            .map_err(|error| {
+                format!("Cannot open {} for deletion: {error}", path.display())
+            })?;
+        unsafe { operation.DeleteItem(&item, None) }
+            .map_err(|error| format!("Unable to queue {} for deletion: {error}", path.display()))?;
+        if let Err(error) = unsafe { operation.PerformOperations() } {
+            let hint = describe_delete_failure(error.code().0);
+            return Err(match hint.is_empty() {
+                true => format!("Windows could not delete {}: {error}", path.display()),
+                false => format!("Windows could not delete {}: {error} ({hint})", path.display()),
+            });
         }
-        if op.fAnyOperationsAborted.as_bool() {
+        if unsafe { operation.GetAnyOperationsAborted() }
+            .map_err(|error| format!("Unable to read the Windows delete result: {error}"))?
+            .as_bool()
+        {
             return Err("Delete operation was cancelled".to_string());
         }
+        Ok(())
+    })();
+    if apartment.is_ok() {
+        unsafe { CoUninitialize() };
     }
-    Ok(())
+    outcome
 }
 
 pub fn delete_to_recycle_bin(path: &Path) -> Result<(), String> {
@@ -731,8 +771,16 @@ pub fn get_new_file_templates() -> Result<Vec<NewFileTemplate>, String> {
 
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    use super::{extract_file_icon, open_file, shell_execute_working_directory};
+    use super::{describe_delete_failure, extract_file_icon, open_file, shell_execute_working_directory};
     use base64::Engine;
+
+    #[test]
+    fn delete_failures_map_to_readable_hints() {
+        assert!(describe_delete_failure(0x8007_0005_u32 as i32).contains("access denied"));
+        assert!(describe_delete_failure(0x8007_0020_u32 as i32).contains("in use"));
+        assert!(describe_delete_failure(0x8007_007B_u32 as i32).contains("too long"));
+        assert!(describe_delete_failure(0).is_empty());
+    }
 
     #[test]
     fn extracts_a_visible_scaled_windows_icon() {

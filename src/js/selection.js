@@ -4,9 +4,16 @@ function initBoxSelection(listEl) {
   let isSelecting = false;
   let selStartX = 0, selStartY = 0;
   let selectionRect = null;
+  // A finished rubber-band drag is followed by a click event on the same spot.
+  // Swallow that one click so it cannot clear the selection that was just made.
+  let suppressNextClick = false;
 
   // Click on empty area: clear selection
   listEl.addEventListener('click', e => {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      return;
+    }
     if (e.target.closest('.file-row')) return;
     const isRight = listEl.id === 'right-file-list';
     const tabOrPane = isRight ? G.rp : getTab();
@@ -68,7 +75,11 @@ function initBoxSelection(listEl) {
   });
 
   document.addEventListener('mouseup', () => {
-    if (selectionRect) { selectionRect.remove(); selectionRect = null; }
+    if (selectionRect) {
+      selectionRect.remove();
+      selectionRect = null;
+      suppressNextClick = true;
+    }
     isSelecting = false;
   });
 }

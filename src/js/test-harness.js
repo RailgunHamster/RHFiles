@@ -1143,6 +1143,9 @@
       const deleteConfirm = $("#settings-confirm-delete");
       assert(deleteConfirm, "Delete-confirmation setting is missing");
       assertEqual(deleteConfirm.checked, G.settings.confirmRecycleDelete !== false, "Delete-confirmation setting state is out of sync");
+      const typeSearchTimeout = $("#settings-typesearch-timeout");
+      assert(typeSearchTimeout, "Type-search timeout setting is missing");
+      assertEqual(Number(typeSearchTimeout.value), Number(G.settings.typeSearchTimeoutMs) || 0, "Type-search timeout setting state is out of sync");
       assert($("#settings-global-search"), "Global-search enable setting is missing");
       assert($("#settings-auto-update"), "Automatic-update setting is missing");
       assert($("#settings-proxy-enabled"), "Proxy enable setting is missing");
@@ -2964,6 +2967,18 @@
       assert(DEFAULT_SHORTCUTS['tab.previous']?.includes('Ctrl+Shift+Tab'), "Missing Ctrl+Shift+Tab shortcut");
       assert(DEFAULT_SHORTCUTS['typeSearch.next']?.includes('Alt+]'), "Missing configurable Alt+] next-match shortcut");
       assert(DEFAULT_SHORTCUTS['typeSearch.previous']?.includes('Alt+['), "Missing configurable Alt+[ previous-match shortcut");
+      const savedTypeSearchTimeout = G.settings.typeSearchTimeoutMs;
+      try {
+        G.settings.typeSearchTimeoutMs = 0;
+        scheduleTypeSearchReset();
+        assertEqual(G._typeSearch.timer, null, "Permanent type-search mode still armed a dismiss timer");
+        G.settings.typeSearchTimeoutMs = 10000;
+        scheduleTypeSearchReset();
+        assert(G._typeSearch.timer !== null && G._typeSearch.timer !== undefined, "Default type-search mode did not arm a dismiss timer");
+        resetTypeSearch();
+      } finally {
+        G.settings.typeSearchTimeoutMs = savedTypeSearchTimeout;
+      }
       assert(typeof ACTION_HANDLERS['typeSearch.next'] === 'function', "Missing next search-match action");
       assert(typeof ACTION_HANDLERS['typeSearch.previous'] === 'function', "Missing previous search-match action");
       assert(DEFAULT_SHORTCUTS['search.toggleScope']?.includes('Ctrl+Shift+F'), "Missing global-search toggle shortcut");

@@ -1747,6 +1747,49 @@ fn validate_share_paths(paths: &[String]) -> Result<Vec<(PathBuf, bool)>, String
 }
 
 #[cfg(target_os = "windows")]
+fn pump_sta_messages(deadline: std::time::Instant) {
+    use std::time::Duration;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    };
+    let mut message = MSG::default();
+    while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() } {
+        unsafe {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    if std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(15));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wait_with_message_pump<T>(
+    receiver: &std::sync::mpsc::Receiver<T>,
+    timeout: std::time::Duration,
+) -> Result<T, String> {
+    use std::sync::mpsc::TryRecvError;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match receiver.try_recv() {
+            Ok(value) => return Ok(value),
+            Err(TryRecvError::Disconnected) => {
+                return Err("the share worker stopped unexpectedly".to_string())
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("timed out waiting on channel".to_string());
+        }
+        // WinRT event handlers registered on an STA thread are delivered
+        // through its message queue; without this pump the DataRequested
+        // callback never arrives and the share sheet dies on a timeout.
+        pump_sta_messages(deadline);
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn show_windows_share_ui(window: tauri::WebviewWindow, paths: Vec<String>) -> Result<(), String> {
     use std::sync::mpsc;
     use std::time::Duration;
@@ -1767,108 +1810,136 @@ fn show_windows_share_ui(window: tauri::WebviewWindow, paths: Vec<String>) -> Re
     // Tauri currently exposes HWND through windows 0.61 while RHFiles uses
     // windows 0.62 directly. Re-wrap the same native pointer at the boundary.
     let hwnd = windows::Win32::Foundation::HWND(tauri_hwnd.0);
-    // The command can run on a thread whose apartment was already initialized.
-    // Either successful initialization or an existing apartment is sufficient.
-    let _ = unsafe { RoInitialize(RO_INIT_SINGLETHREADED) };
-    let class = HSTRING::from("Windows.ApplicationModel.DataTransfer.DataTransferManager");
-    let interop: IDataTransferManagerInterop = unsafe { RoGetActivationFactory(&class) }
-        .map_err(|error| format!("Windows sharing is unavailable: {error}"))?;
-    let manager: DataTransferManager = unsafe { interop.GetForWindow(hwnd) }
-        .map_err(|error| format!("Windows sharing is unavailable for this window: {error}"))?;
 
-    let (setup_tx, setup_rx) = mpsc::channel::<Result<(), String>>();
-    let (complete_tx, complete_rx) = mpsc::channel::<bool>();
-    let title = if items.len() == 1 {
-        items[0]
-            .0
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "RHFiles".to_string())
-    } else {
-        format!("{} items from RHFiles", items.len())
-    };
+    // Run the whole flow on a dedicated thread: WinRT share events require a
+    // single-threaded apartment with a pumped message loop, and threads from
+    // the async pool may already carry an incompatible COM apartment. The
+    // window handle travels as a plain integer because raw pointers are not
+    // sendable across threads.
+    let hwnd_value = hwnd.0 as usize;
+    let (result_tx, result_rx) = mpsc::channel::<Result<(), String>>();
+    let worker = std::thread::Builder::new()
+        .name("rhfiles-windows-share".to_string())
+        .spawn(move || {
+            let hwnd = windows::Win32::Foundation::HWND(hwnd_value as *mut core::ffi::c_void);
+            let outcome = (|| -> Result<(), String> {
+                // A fresh thread guarantees the STA request succeeds instead of
+                // silently degrading to an apartment that cannot receive events.
+                unsafe { RoInitialize(RO_INIT_SINGLETHREADED) }
+                    .map_err(|error| format!("Windows sharing is unavailable: {error}"))?;
+                let class =
+                    HSTRING::from("Windows.ApplicationModel.DataTransfer.DataTransferManager");
+                let interop: IDataTransferManagerInterop = unsafe { RoGetActivationFactory(&class) }
+                    .map_err(|error| format!("Windows sharing is unavailable: {error}"))?;
+                let manager: DataTransferManager = unsafe { interop.GetForWindow(hwnd) }
+                    .map_err(|error| format!("Windows sharing is unavailable for this window: {error}"))?;
 
-    let handler: TypedEventHandler<DataTransferManager, DataRequestedEventArgs> =
-        TypedEventHandler::new(
-            move |_, args: windows::core::Ref<'_, DataRequestedEventArgs>| {
-                let result = (|| -> windows::core::Result<()> {
-                    let Some(args) = args.as_ref() else {
+                let (setup_tx, setup_rx) = mpsc::channel::<Result<(), String>>();
+                let (complete_tx, complete_rx) = mpsc::channel::<bool>();
+                let title = if items.len() == 1 {
+                    items[0]
+                        .0
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "RHFiles".to_string())
+                } else {
+                    format!("{} items from RHFiles", items.len())
+                };
+
+                let handler: TypedEventHandler<DataTransferManager, DataRequestedEventArgs> =
+                    TypedEventHandler::new(
+                        move |_, args: windows::core::Ref<'_, DataRequestedEventArgs>| {
+                            let result = (|| -> windows::core::Result<()> {
+                                let Some(args) = args.as_ref() else {
+                                    return Ok(());
+                                };
+                                let data = args.Request()?.Data()?;
+                                let properties = data.Properties()?;
+                                let title = HSTRING::from(&title);
+                                properties.SetTitle(&title)?;
+                                properties.SetDescription(&HSTRING::from("Shared from RHFiles"))?;
+
+                                let mut storage_items = Vec::with_capacity(items.len());
+                                for (path, is_directory) in &items {
+                                    let path = HSTRING::from(path.to_string_lossy().as_ref());
+                                    let item = if *is_directory {
+                                        StorageFolder::GetFolderFromPathAsync(&path)?
+                                            .join()?
+                                            .cast::<IStorageItem>()?
+                                    } else {
+                                        StorageFile::GetFileFromPathAsync(&path)?
+                                            .join()?
+                                            .cast::<IStorageItem>()?
+                                    };
+                                    storage_items.push(Some(item));
+                                }
+                                let storage_items: IIterable<IStorageItem> = storage_items.into();
+                                data.SetStorageItemsReadOnly(&storage_items)?;
+
+                                let completed = complete_tx.clone();
+                                data.ShareCompleted(&TypedEventHandler::new(move |_, _| {
+                                    let _ = completed.send(true);
+                                    Ok(())
+                                }))?;
+                                let cancelled = complete_tx.clone();
+                                data.ShareCanceled(&TypedEventHandler::new(move |_, _| {
+                                    let _ = cancelled.send(false);
+                                    Ok(())
+                                }))?;
+                                Ok(())
+                            })();
+                            let _ = setup_tx.send(result.map_err(|error| error.to_string()));
+                            Ok(())
+                        },
+                    );
+                let token = manager
+                    .DataRequested(&handler)
+                    .map_err(|error| format!("Could not prepare the Windows share data: {error}"))?;
+                if let Err(error) = unsafe { interop.ShowShareUIForWindow(hwnd) } {
+                    let _ = manager.RemoveDataRequested(token);
+                    if is_cancelled_share_status(error.code().0 as u32, &error.to_string()) {
                         return Ok(());
-                    };
-                    let data = args.Request()?.Data()?;
-                    let properties = data.Properties()?;
-                    let title = HSTRING::from(&title);
-                    properties.SetTitle(&title)?;
-                    properties.SetDescription(&HSTRING::from("Shared from RHFiles"))?;
-
-                    let mut storage_items = Vec::with_capacity(items.len());
-                    for (path, is_directory) in &items {
-                        let path = HSTRING::from(path.to_string_lossy().as_ref());
-                        let item = if *is_directory {
-                            StorageFolder::GetFolderFromPathAsync(&path)?
-                                .join()?
-                                .cast::<IStorageItem>()?
-                        } else {
-                            StorageFile::GetFileFromPathAsync(&path)?
-                                .join()?
-                                .cast::<IStorageItem>()?
-                        };
-                        storage_items.push(Some(item));
                     }
-                    let storage_items: IIterable<IStorageItem> = storage_items.into();
-                    data.SetStorageItemsReadOnly(&storage_items)?;
+                    return Err(format!("Could not open the Windows share panel: {error}"));
+                }
 
-                    let completed = complete_tx.clone();
-                    data.ShareCompleted(&TypedEventHandler::new(move |_, _| {
-                        let _ = completed.send(true);
-                        Ok(())
-                    }))?;
-                    let cancelled = complete_tx.clone();
-                    data.ShareCanceled(&TypedEventHandler::new(move |_, _| {
-                        let _ = cancelled.send(false);
-                        Ok(())
-                    }))?;
-                    Ok(())
-                })();
-                let _ = setup_tx.send(result.map_err(|error| error.to_string()));
+                let setup = match wait_with_message_pump(&setup_rx, Duration::from_secs(15)) {
+                    Ok(setup) => setup,
+                    Err(error) => {
+                        let _ = manager.RemoveDataRequested(token);
+                        if is_cancelled_share_status(0, &error) {
+                            return Ok(());
+                        }
+                        return Err(format!("Windows did not request the share data: {error}"));
+                    }
+                };
+                if let Err(error) = setup {
+                    let _ = manager.RemoveDataRequested(token);
+                    if is_cancelled_share_status(0, &error) {
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "Could not prepare the selected items for sharing: {error}"
+                    ));
+                }
+                // Keep DataTransferManager and its event handler alive while the
+                // system UI owns the operation. Closing the share sheet is a
+                // normal, successful exit.
+                let _ = wait_with_message_pump(&complete_rx, Duration::from_secs(300));
+                let _ = manager.RemoveDataRequested(token);
                 Ok(())
-            },
-        );
-    let token = manager
-        .DataRequested(&handler)
-        .map_err(|error| format!("Could not prepare the Windows share data: {error}"))?;
-    if let Err(error) = unsafe { interop.ShowShareUIForWindow(hwnd) } {
-        let _ = manager.RemoveDataRequested(token);
-        if is_cancelled_share_status(error.code().0 as u32, &error.to_string()) {
-            return Ok(());
-        }
-        return Err(format!("Could not open the Windows share panel: {error}"));
-    }
-
-    let setup = match setup_rx.recv_timeout(Duration::from_secs(15)) {
-        Ok(setup) => setup,
-        Err(error) => {
-            let _ = manager.RemoveDataRequested(token);
-            if is_cancelled_share_status(0, &error.to_string()) {
-                return Ok(());
-            }
-            return Err(format!("Windows did not request the share data: {error}"));
-        }
-    };
-    if let Err(error) = setup {
-        let _ = manager.RemoveDataRequested(token);
-        if is_cancelled_share_status(0, &error) {
-            return Ok(());
-        }
-        return Err(format!(
-            "Could not prepare the selected items for sharing: {error}"
-        ));
-    }
-    // Keep DataTransferManager and its event handler alive while the system UI
-    // owns the operation. Closing the share sheet is a normal, successful exit.
-    let _ = complete_rx.recv_timeout(Duration::from_secs(300));
-    let _ = manager.RemoveDataRequested(token);
-    Ok(())
+            })();
+            let _ = result_tx.send(outcome);
+        })
+        .map_err(|error| format!("Could not start the Windows share worker: {error}"))?;
+    let worker_handle = worker;
+    let join_result = worker_handle
+        .join()
+        .map_err(|_| "the share worker stopped unexpectedly".to_string());
+    join_result?;
+    result_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|error| format!("the share worker did not report back: {error}"))?
 }
 
 #[tauri::command]

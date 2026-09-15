@@ -254,6 +254,7 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
       const newPath = joinFolderPath(parent, finalName);
       trackRename(oldPath, newPath);
       await refresh();
+      selectNavigatedPath(newPath, isRight);
     } catch (e) { alert(t('alert.renameFailed', { error: e })); }
   };
   const cancel = async () => {

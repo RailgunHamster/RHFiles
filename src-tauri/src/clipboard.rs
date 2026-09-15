@@ -20,7 +20,7 @@ mod native {
     use crate::types::CancelFlag;
     use std::{
         os::windows::ffi::OsStrExt,
-        path::Path,
+        path::{Path, PathBuf},
         ptr,
         sync::Mutex,
         thread,
@@ -31,7 +31,10 @@ mod native {
         Win32::{
             Foundation::{E_ABORT, GlobalFree, HANDLE, HGLOBAL, HWND, POINT},
             System::{
-                Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree},
+                Com::{
+                    CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, DVASPECT_CONTENT,
+                    FORMATETC, TYMED_HGLOBAL, TYMED_ISTREAM,
+                },
                 DataExchange::{
                     CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
                     IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
@@ -40,25 +43,190 @@ mod native {
                 Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
                 Ole::{
                     CF_HDROP, CF_UNICODETEXT, DROPEFFECT_MOVE, OleGetClipboard, OleInitialize,
-                    OleUninitialize,
+                    OleUninitialize, ReleaseStgMedium,
                 },
             },
             UI::Shell::{
-                FILEOPERATION_FLAGS, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOF_RENAMEONCOLLISION,
-                FOFX_ADDUNDORECORD, FOFX_SHOWELEVATIONPROMPT, FileOperation, IFileOperation,
-                IOperationsProgressDialog,
+                FILEDESCRIPTORW, FILEOPERATION_FLAGS, FOF_ALLOWUNDO,
+                FOF_NOCONFIRMMKDIR, FOF_RENAMEONCOLLISION, FOFX_ADDUNDORECORD,
+                FOFX_SHOWELEVATIONPROMPT, FileOperation, IFileOperation, IOperationsProgressDialog,
                 IOperationsProgressDialog_Impl, IShellItem,
                 PropertiesSystem::{PDOPS_CANCELLED, PDOPS_PAUSED, PDOPS_RUNNING, PDOPSTATUS},
                 SHCreateItemFromParsingName, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY,
                 SPACTION,
             },
         },
+        Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY,
         core::{HSTRING, IUnknown, Interface, Ref, implement},
     };
 
     const FILE_DESCRIPTOR_W: &str = "FileGroupDescriptorW";
     const FILE_DESCRIPTOR_A: &str = "FileGroupDescriptor";
     const SHELL_ID_LIST: &str = "Shell IDList Array";
+    const FILE_CONTENTS: &str = "FileContents";
+
+    /// Decodes the wide, null-terminated `cFileName` of a file descriptor.
+    /// The descriptor struct is packed, so field access goes through raw
+    /// pointers instead of references.
+    fn descriptor_file_name(descriptor: &FILEDESCRIPTORW) -> String {
+        let base = unsafe { ptr::addr_of!((*descriptor).cFileName) as *const u16 };
+        let mut units = Vec::with_capacity(260);
+        unsafe {
+            for index in 0..260 {
+                let unit = base.add(index).read_unaligned();
+                if unit == 0 {
+                    break;
+                }
+                units.push(unit);
+            }
+        }
+        String::from_utf16_lossy(&units)
+    }
+
+    /// Builds a collision-free target path, appending " (n)" before the
+    /// extension like Explorer does when both files must be kept.
+    fn unique_destination_path(destination: &Path, name: &str) -> PathBuf {
+        let cleaned = name.replace(['/', '\\'], "_");
+        let direct = destination.join(&cleaned);
+        if !direct.exists() {
+            return direct;
+        }
+        let dot = cleaned.rfind('.').filter(|index| *index > 0);
+        let (base, extension) = match dot {
+            Some(index) => (cleaned[..index].to_string(), cleaned[index..].to_string()),
+            None => (cleaned.clone(), String::new()),
+        };
+        for index in 1u32.. {
+            let candidate = destination.join(format!("{base} ({index}){extension}"));
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+        direct
+    }
+
+    /// Streams one virtual clipboard file into `target` through the
+    /// FileContents format exposed by Remote Desktop and similar hosts.
+    unsafe fn write_descriptor_stream(
+        data_object: &windows::Win32::System::Com::IDataObject,
+        contents_format: u32,
+        index: i32,
+        target: &Path,
+    ) -> Result<(), String> {
+        let request = FORMATETC {
+            cfFormat: contents_format as u16,
+            ptd: ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0 as u32,
+            lindex: index,
+            tymed: TYMED_ISTREAM.0 as u32,
+        };
+        let mut medium = unsafe { data_object.GetData(&request) }
+            .map_err(|error| format!("Unable to open the remote file stream: {error}"))?;
+        if medium.tymed != TYMED_ISTREAM.0 as u32 || (*medium.u.pstm).is_none() {
+            unsafe { ReleaseStgMedium(&mut medium) };
+            return Err("The remote clipboard did not provide file contents".to_string());
+        }
+        let stream = (*medium.u.pstm).clone()
+            .ok_or_else(|| "The remote clipboard did not provide file contents".to_string())?;
+        let outcome = (|| -> Result<(), String> {
+            use std::io::Write;
+            let mut file = std::fs::File::create(target)
+                .map_err(|error| format!("Cannot create {}: {error}", target.display()))?;
+            let mut buffer = vec![0u8; 1024 * 512];
+            loop {
+                let mut read = 0u32;
+                let status =
+                    unsafe { stream.Read(buffer.as_mut_ptr().cast(), buffer.len() as u32, Some(&mut read)) };
+                if status.is_err() {
+                    return Err(format!("Unable to read the remote file: {status}"));
+                }
+                if read == 0 {
+                    break;
+                }
+                file.write_all(&buffer[..read as usize])
+                    .map_err(|error| format!("Cannot write {}: {error}", target.display()))?;
+            }
+            Ok(())
+        })();
+        drop(stream);
+        unsafe { ReleaseStgMedium(&mut medium) };
+        outcome
+    }
+
+    /// Pastes a Remote Desktop (or otherwise virtual) clipboard that only
+    /// offers FileGroupDescriptorW + FileContents instead of CF_HDROP.
+    /// Returns how many items were written.
+    pub fn paste_file_group_descriptors(
+        data_object: &windows::Win32::System::Com::IDataObject,
+        destination: &str,
+    ) -> Result<usize, String> {
+        let descriptor_format = register_format(FILE_DESCRIPTOR_W);
+        let contents_format = register_format(FILE_CONTENTS);
+        if descriptor_format == 0 || contents_format == 0 {
+            return Err("The remote clipboard did not expose its file transfer formats".to_string());
+        }
+        let request = FORMATETC {
+            cfFormat: descriptor_format as u16,
+            ptd: ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0 as u32,
+            lindex: -1,
+            tymed: TYMED_HGLOBAL.0 as u32,
+        };
+        let mut medium = unsafe { data_object.GetData(&request) }
+            .map_err(|error| format!("Unable to read the remote file list: {error}"))?;
+        if medium.tymed != TYMED_HGLOBAL.0 as u32 || unsafe { medium.u.hGlobal.is_invalid() } {
+            unsafe { ReleaseStgMedium(&mut medium) };
+            return Err("The remote clipboard file list was empty".to_string());
+        }
+        let memory = unsafe { medium.u.hGlobal };
+        let pointer = unsafe { GlobalLock(memory) };
+        if pointer.is_null() {
+            unsafe { ReleaseStgMedium(&mut medium) };
+            return Err("Unable to read the remote clipboard file list".to_string());
+        }
+        let descriptors: Vec<FILEDESCRIPTORW> = unsafe {
+            let count = *(pointer.cast::<u32>());
+            let stride = std::mem::size_of::<FILEDESCRIPTORW>();
+            let array_base = pointer.cast::<u8>().add(std::mem::size_of::<u32>());
+            let usable = GlobalSize(memory).saturating_sub(std::mem::size_of::<u32>());
+            let count = (count as usize).min(usable / stride.max(1));
+            (0..count)
+                .map(|index| ptr::read_unaligned(array_base.add(index * stride).cast()))
+                .collect()
+        };
+        unsafe {
+            let _ = GlobalUnlock(memory);
+            ReleaseStgMedium(&mut medium);
+        }
+
+        let destination_path = PathBuf::from(destination);
+        if !destination_path.is_dir() {
+            return Err(format!(
+                "Destination folder does not exist: {}",
+                destination_path.display()
+            ));
+        }
+        let mut pasted = 0usize;
+        for (index, descriptor) in descriptors.iter().enumerate() {
+            let name = descriptor_file_name(descriptor);
+            if name.trim().is_empty() || name.contains("..") {
+                continue;
+            }
+            let target = unique_destination_path(&destination_path, &name);
+            if descriptor.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0 {
+                std::fs::create_dir_all(&target)
+                    .map_err(|error| format!("Cannot create {name}: {error}"))?;
+                pasted += 1;
+                continue;
+            }
+            unsafe { write_descriptor_stream(data_object, contents_format, index as i32, &target)? };
+            pasted += 1;
+        }
+        if pasted == 0 {
+            return Err("The remote clipboard did not contain any files".to_string());
+        }
+        Ok(pasted)
+    }
     const PREFERRED_DROP_EFFECT: &str = "Preferred DropEffect";
 
     fn progress_percentage(
@@ -587,6 +755,26 @@ mod native {
         let _apartment = OleApartment::initialize()?;
         let data_object = unsafe { OleGetClipboard() }
             .map_err(|error| format!("Unable to read files from the Windows clipboard: {error}"))?;
+
+        // Remote Desktop and other virtualized clipboards transfer files as
+        // FileGroupDescriptorW + FileContents streams instead of CF_HDROP.
+        // IFileOperation cannot consume them, so stream them manually.
+        let hdrop_probe = FORMATETC {
+            cfFormat: CF_HDROP.0 as u16,
+            ptd: ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0 as u32,
+            lindex: -1,
+            tymed: TYMED_HGLOBAL.0 as u32,
+        };
+        let has_hdrop = unsafe { data_object.QueryGetData(&hdrop_probe) }.is_ok();
+        if !has_hdrop && registered_format_available(FILE_DESCRIPTOR_W) {
+            paste_file_group_descriptors(&data_object, &destination)?;
+            return Ok(WindowsFilePasteResult {
+                aborted: false,
+                moved: false,
+            });
+        }
+
         let source: IUnknown = data_object
             .cast()
             .map_err(|error| format!("Invalid Windows clipboard file object: {error}"))?;
@@ -708,6 +896,33 @@ mod native {
         fn same_path_and_cancel_paste_errors_are_benign() {
             let cancel = windows::core::Error::from(E_ABORT);
             assert!(is_benign_paste_failure(&cancel));
+        }
+
+        #[test]
+        fn descriptor_names_decode_and_targets_avoid_collisions() {
+            use windows::Win32::UI::Shell::FILEDESCRIPTORW;
+            let mut descriptor = FILEDESCRIPTORW::default();
+            let name_units: [u16; 5] = [b'r' as u16, b'e' as u16, b'm' as u16, b'o' as u16, b't' as u16];
+            let name_slot = unsafe { ptr::addr_of_mut!(descriptor.cFileName) };
+            unsafe {
+                for (index, unit) in name_units.iter().enumerate() {
+                    name_slot.cast::<u16>().add(index).write_unaligned(*unit);
+                }
+                name_slot.cast::<u16>().add(name_units.len()).write_unaligned(0);
+            }
+            assert_eq!(descriptor_file_name(&descriptor), "remot");
+
+            let root = std::env::temp_dir().join(format!(
+                "rhfiles-descriptor-targets-{}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&root).expect("create descriptor test root");
+            let existing = root.join("file.txt");
+            std::fs::write(&existing, b"x").expect("seed collision");
+            let unique = unique_destination_path(&root, "file.txt");
+            assert_ne!(unique, existing, "unique target collided with an existing file");
+            assert!(unique.to_string_lossy().contains("file (1).txt"));
+            let _ = std::fs::remove_dir_all(root);
         }
     }
 }

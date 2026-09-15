@@ -116,6 +116,12 @@ Object.assign(_builtinEn, {
   'tab.reopen': 'Reopen closed tab',
   'settings.confirmDelete': 'Confirm before deleting to the Recycle Bin',
   'settings.confirmDeleteHelp': 'Turn off to delete immediately with Delete. Permanent deletion (Shift+Delete) always requires confirmation.',
+  'settings.typeSearchTimeout': 'Keep the type-search highlight for',
+  'settings.typeSearchTimeout3s': '3 seconds',
+  'settings.typeSearchTimeout10s': '10 seconds (default)',
+  'settings.typeSearchTimeout30s': '30 seconds',
+  'settings.typeSearchTimeoutPermanent': 'Until Esc or leaving the folder',
+  'settings.typeSearchTimeoutHelp': 'How long the typed-search highlight stays after you stop typing. It always disappears on Esc or when you navigate away.',
   'address.suggestHistory': 'Recent',
   'address.suggestFolder': 'Folder',
   'notice.integrationExternalOnly': 'The locations list opens beside a Windows Open/Save dialog or File Explorer',
@@ -937,6 +943,7 @@ function loadSettings() {
     language: 'en',
     shortcuts: {},
     confirmRecycleDelete: true,
+    typeSearchTimeoutMs: 10000,
     previewDefaultOpen: true,
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
@@ -961,6 +968,10 @@ function loadSettings() {
     const stored = JSON.parse(s);
     const settings = { ...defaults, ...stored };
     settings.archiveTools = normalizeArchiveToolSettings(stored.archiveTools);
+    const storedTimeout = Number(stored.typeSearchTimeoutMs);
+    settings.typeSearchTimeoutMs = Number.isFinite(storedTimeout) && storedTimeout >= 0
+      ? storedTimeout
+      : 10000;
     const masterEnabled = stored.fileDialogIntegrationEnabled === true;
     if (!Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationExplorer')
       && !Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationFileDialog')) {

@@ -60,7 +60,9 @@ function renderTabMarkup(tab, isRight, index, tabs) {
   const pinned = tab.pinned === true;
   const boundary = pinned && tabs[index + 1]?.pinned !== true;
   const closeButton = pinned ? '' : `<button class="tab-close" onclick="event.stopPropagation();closeTab(${tab.id},${isRight})">&times;</button>`;
-  return `<div class="tab ${tab.id===activeId?'active':''} ${pinned?'pinned':''} ${boundary?'pinned-boundary':''}" data-tab-id="${tab.id}" data-pane="${pane}" data-pinned="${pinned}" onclick="${isRight?'switchRightTab':'switchTab'}(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},${isRight})" title="${esc(tabTooltip(tab.path))}" draggable="true">
+  // No native title attribute: the rich hover preview card below is the only
+  // tooltip, so two competing bubbles never stack on the same tab.
+  return `<div class="tab ${tab.id===activeId?'active':''} ${pinned?'pinned':''} ${boundary?'pinned-boundary':''}" data-tab-id="${tab.id}" data-pane="${pane}" data-pinned="${pinned}" onclick="${isRight?'switchRightTab':'switchTab'}(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},${isRight})" draggable="true">
     ${pinned ? tabPinIndicator() : ''}<span class="tab-label">${esc(tabName(tab.path))}</span>${closeButton}
   </div>`;
 }
@@ -770,7 +772,7 @@ function initTabPreview() {
       if (_fileDragTabHoverTarget || _dragTabId !== null) return;
       if (parseInt(tabEl.dataset.tabId) === G.activeTab) return;
       hideTabPreview();
-      _previewTimer = setTimeout(() => showTabPreview(tabEl), 600);
+      _previewTimer = setTimeout(() => showTabPreview(tabEl), 300);
     });
     tabEl.addEventListener("mouseleave", () => {
       if (_previewTimer) clearTimeout(_previewTimer);
@@ -902,7 +904,7 @@ async function showBcDropdown(parentPath, sepEl, dropdownId, isRight) {
   if (wasOpen && dropdown._lastPath === parentPath) return;
   try {
     const entries = await listPathEntries(parentPath, "");
-    const dirs = entries.filter(e => e.is_dir);
+    const dirs = entries.filter(e => e.is_dir && (G.showHidden || !e.is_hidden));
     if (!dirs.length) return;
     dropdown.innerHTML = dirs.map(d =>
       `<div class="bc-dropdown-item" data-path="${esc(d.path)}">${esc(d.name)}</div>`
@@ -1035,7 +1037,9 @@ async function refreshAddressSuggestions(query, isRight, token) {
   if (parent && (/^[A-Za-z]:\\/.test(parent) || parent.startsWith('\\\\'))) {
     try {
       const listed = await listPathEntries(parent.replace(/\\+$/, '') || parent, '');
-      childFolders = (listed || []).filter(entry => entry.is_dir).map(entry => entry.path);
+      childFolders = (listed || [])
+        .filter(entry => entry.is_dir && (G.showHidden || !entry.is_hidden))
+        .map(entry => entry.path);
     } catch (error) {}
   }
   try {

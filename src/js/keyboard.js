@@ -264,7 +264,14 @@ function expireTypeSearchInput() {
 
 function scheduleTypeSearchReset() {
   if (G._typeSearch.timer) clearTimeout(G._typeSearch.timer);
-  G._typeSearch.timer = setTimeout(expireTypeSearchInput, 2200);
+  const timeoutMs = Number(G.settings.typeSearchTimeoutMs);
+  // 0 (or any non-positive value) keeps the HUD on screen until Escape or a
+  // navigation resets it.
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    G._typeSearch.timer = null;
+    return;
+  }
+  G._typeSearch.timer = setTimeout(expireTypeSearchInput, timeoutMs);
 }
 
 async function runTypeSearchSelection(query, cycleDelta, isRight) {
