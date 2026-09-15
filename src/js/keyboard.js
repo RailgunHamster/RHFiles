@@ -62,12 +62,12 @@ const DEFAULT_SHORTCUTS = {
 
 const ACTION_HANDLERS = {
   "nav.up":              async () => await goUp(),
-  "nav.down":            async () => { const tab = getTab(); const entries = tab.entries || []; const sel = tab.sel || new Set(); const indices = [...sel]; const fi = indices.length ? indices[indices.length - 1] : -1; if (indices.length === 1 && entries[fi]) { if (entries[fi].is_dir) await navigateTo(entries[fi].path); else openFileHandler(entries[fi].path); } },
+  "nav.down":            async () => await openActiveSelection(),
   "nav.back":            async () => await goBack(),
   "nav.forward":         async () => await goForward(),
   "nav.refresh":         async () => await refresh(),
   "nav.address":         async () => enterEditMode(G.dualOn && G.lastActivePane === 'right'),
-  "nav.open":            async () => {},
+  "nav.open":            async () => await openActiveSelection(),
   "nav.home":            async () => { const isRight = G.lastActivePane === 'right'; const pane = isRight ? G.rp : getTab(); const sel = pane.sel || new Set(); sel.clear(); sel.add(0); pane.lastIdx = 0; const listId = isRight ? "right-file-list" : "file-list"; const countId = isRight ? "right-status-count" : "status-count"; renderFiles(pane, listId, countId, null, isRight); scrollToVisible(0); updatePreviewForSelection(); },
   "nav.end":             async () => { const isRight = G.lastActivePane === 'right'; const pane = isRight ? G.rp : getTab(); const entries = pane.entries || []; const sel = pane.sel || new Set(); sel.clear(); sel.add(entries.length - 1); pane.lastIdx = entries.length - 1; const listId = isRight ? "right-file-list" : "file-list"; const countId = isRight ? "right-status-count" : "status-count"; renderFiles(pane, listId, countId, null, isRight); scrollToVisible(entries.length - 1); updatePreviewForSelection(); },
   "file.contextMenu":   async () => {

@@ -1,5 +1,18 @@
 // selection.js - rectangle (rubber band) selection
 
+// Grabbing one of these starts a file drag; grabbing anywhere else inside a row
+// (the date/type/size cells, the blank space right of a name, card padding)
+// starts a rubber-band selection instead.
+const BOX_SELECT_CONTENT_SELECTOR = [
+  '.row-fname', '.row-icon', '.thumb-img-box', '.thumb-name', '.thumb-meta',
+  '.tile-file-name', '.row-tags', '.row-path', '.system-icon-host',
+  '.large-file-icon', '.big-icon-slot', '.card-icon-slot', 'input', 'button',
+].join(', ');
+
+function usesRubberBandTarget(target) {
+  return !target.closest(BOX_SELECT_CONTENT_SELECTOR);
+}
+
 function initBoxSelection(listEl) {
   let isSelecting = false;
   let selStartX = 0, selStartY = 0;
@@ -8,10 +21,33 @@ function initBoxSelection(listEl) {
   // Swallow that one click so it cannot clear the selection that was just made.
   let suppressNextClick = false;
 
-  // Click on empty area: clear selection
+  const beginSelection = event => {
+    isSelecting = true;
+    suppressNextClick = false;
+    selStartX = event.clientX;
+    selStartY = event.clientY;
+    const rect = listEl.getBoundingClientRect();
+    selectionRect = document.createElement('div');
+    selectionRect.className = 'selection-rect';
+    const startX = Math.min(Math.max(event.clientX, rect.left), rect.right) - rect.left;
+    const startY = event.clientY - rect.top;
+    selectionRect.style.left = (startX + listEl.scrollLeft) + 'px';
+    selectionRect.style.top = (startY + listEl.scrollTop) + 'px';
+    selectionRect.style.width = '0px';
+    selectionRect.style.height = '0px';
+    listEl.style.position = 'relative';
+    listEl.appendChild(selectionRect);
+    selStartX = rect.left + startX;
+    selStartY = event.clientY;
+  };
+
+  // Click on empty area: clear selection. Capture phase so the click that ends
+  // a rubber-band drag can be stopped before it reaches the row handlers.
   listEl.addEventListener('click', e => {
     if (suppressNextClick) {
       suppressNextClick = false;
+      e.stopPropagation();
+      e.preventDefault();
       return;
     }
     if (e.target.closest('.file-row')) return;
@@ -25,7 +61,7 @@ function initBoxSelection(listEl) {
     const selId = isRight ? null : "status-selection";
     renderFiles(tabOrPane, listId, countId, selId, isRight);
     updatePreviewForSelection();
-  });
+  }, true);
 
   listEl.addEventListener('mousedown', e => {
     if (e.button === 0 || e.button === 2) {
@@ -34,20 +70,32 @@ function initBoxSelection(listEl) {
       focusFilePane(listEl);
     }
     if (e.button !== 0) return;
-    if (e.target.closest('.file-row')) return;
-    isSelecting = true;
-    selStartX = e.clientX;
-    selStartY = e.clientY;
-    const rect = listEl.getBoundingClientRect();
-    selectionRect = document.createElement('div');
-    selectionRect.className = 'selection-rect';
-    selectionRect.style.left = (e.clientX - rect.left + listEl.scrollLeft) + 'px';
-    selectionRect.style.top = (e.clientY - rect.top + listEl.scrollTop) + 'px';
-    selectionRect.style.width = '0px';
-    selectionRect.style.height = '0px';
-    listEl.style.position = 'relative';
-    listEl.appendChild(selectionRect);
+    // A new gesture always clears the stale swallow flag: the click it targets
+    // belongs to the previous drag and never arrived.
+    suppressNextClick = false;
+    const row = e.target.closest('.file-row');
+    if (row && !usesRubberBandTarget(e.target)) return;
+    beginSelection(e);
   });
+
+  // The gutter is the always-available fallback for full grids and card
+  // layouts where every row is packed with content.
+  const gutter = document.querySelector(`.box-select-gutter[data-target="${listEl.id}"]`);
+  if (gutter) {
+    gutter.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      G.lastActivePane = listEl.id === 'right-file-list' ? 'right' : 'left';
+      if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+      focusFilePane(listEl);
+      beginSelection(e);
+    });
+  }
+
+  // A rubber-band drag must not be hijacked by the native file drag that the
+  // row's draggable attribute would otherwise start.
+  listEl.addEventListener('dragstart', e => {
+    if (isSelecting) e.preventDefault();
+  }, true);
 
   let _selRaf = 0;
   let _selE = null;

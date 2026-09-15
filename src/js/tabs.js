@@ -794,7 +794,9 @@ document.addEventListener('drop', () => {
   setTimeout(clearRhfilesFileDragSession, 0);
 });
 
-function showTabPreview(tabEl) {
+let _previewFetchToken = 0;
+
+async function showTabPreview(tabEl) {
   const tabId = parseInt(tabEl.dataset.tabId);
   if (!tabEl.isConnected || tabId === G.activeTab) return;
   const tab = G.tabs.find(t => t.id === tabId);
@@ -808,7 +810,20 @@ function showTabPreview(tabEl) {
     document.body.appendChild(_previewEl);
   }
 
-  const entries = tab.entries || [];
+  let entries = tab.entries || [];
+  // Background tabs are loaded lazily, so an unvisited tab has no entries yet.
+  // Fetch them for the preview instead of reporting an empty folder.
+  if (!entries.length && tab.path && tab.path !== 'home://') {
+    const token = ++_previewFetchToken;
+    try {
+      const listed = await listPathEntries(tab.path, '');
+      if (token !== _previewFetchToken || !tabEl.isConnected) return;
+      entries = listed || [];
+    } catch (error) {
+      return;
+    }
+  }
+  if (!G.showHidden) entries = entries.filter(entry => !entry.is_hidden);
   const dirCount = entries.filter(e => e.is_dir).length;
   const fileCount = entries.length - dirCount;
   const maxShow = 10;

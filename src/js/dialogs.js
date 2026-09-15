@@ -291,6 +291,17 @@ function openSettings() {
     '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>' + t('settings.termWt') + '</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>' + t('settings.termPs') + '</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>' + t('settings.termCmd') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-show-hidden">' + t('settings.showHidden') + '</label>' +
+    '<input id="settings-show-hidden" type="checkbox" onchange="setShowHidden(this.checked)"' + (G.showHidden?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.showHiddenHelp') + '</span></div>' +
+    '<div class="settings-row"><label for="settings-notice-duration">' + t('settings.noticeDuration') + '</label>' +
+    '<select id="settings-notice-duration" onchange="G.settings.noticeDurationMs=Number(this.value);saveSettings()">' +
+      '<option value="2000"' + (Number(G.settings.noticeDurationMs)===2000?" selected":"") + '>' + t('settings.noticeDuration2s') + '</option>' +
+      '<option value="5000"' + (Number(G.settings.noticeDurationMs)===5000?" selected":"") + '>' + t('settings.noticeDuration5s') + '</option>' +
+      '<option value="10000"' + (Number(G.settings.noticeDurationMs)===10000?" selected":"") + '>' + t('settings.noticeDuration10s') + '</option>' +
+      '<option value="0"' + (!Number(G.settings.noticeDurationMs)?" selected":"") + '>' + t('settings.noticeDurationPermanent') + '</option>' +
+    '</select></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.noticeDurationHelp') + '</span></div>' +
     '<div class="settings-row"><label for="settings-confirm-delete">' + t('settings.confirmDelete') + '</label>' +
     '<input id="settings-confirm-delete" type="checkbox" onchange="G.settings.confirmRecycleDelete=this.checked;saveSettings()"' + (G.settings.confirmRecycleDelete!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-typesearch-timeout">' + t('settings.typeSearchTimeout') + '</label>' +

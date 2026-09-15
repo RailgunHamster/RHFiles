@@ -103,9 +103,18 @@ function toggleSort() {
 }
 
 function toggleHidden() {
-  G.showHidden = !G.showHidden;
-  document.getElementById("btn-hidden").classList.toggle("active-toggle", G.showHidden);
+  setShowHidden(!G.showHidden);
+}
+
+function setShowHidden(show) {
+  G.showHidden = !!show;
+  try { localStorage.setItem('rhfiles-showHidden', String(G.showHidden)); } catch (e) {}
+  const button = document.getElementById("btn-hidden");
+  if (button) button.classList.toggle("active-toggle", G.showHidden);
+  const checkbox = document.getElementById('settings-show-hidden');
+  if (checkbox) checkbox.checked = G.showHidden;
   navigateTo(getTab().path, false);
+  if (G.dualOn && G.rp?.path) rpNavigateTo(G.rp.path, false);
 }
 
 // Fallback only. The active theme may override --row-height, so virtual-list

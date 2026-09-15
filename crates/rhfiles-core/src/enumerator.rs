@@ -398,9 +398,45 @@ fn delete_with_windows_shell(path: &Path, allow_undo: bool) -> Result<(), String
     outcome
 }
 
+/// True for UNC paths and mapped network drives. The Recycle Bin is a
+/// per-volume local feature, so recycling anything on a network share always
+/// fails with "the Recycle Bin on \\\\host is corrupted or unavailable".
+#[cfg(target_os = "windows")]
+fn is_network_path(path: &Path) -> bool {
+    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    use windows::core::PCWSTR;
+
+    // DRIVE_REMOTE from the Win32 GetDriveType contract. The windows crate
+    // exposes it under a feature this crate does not enable.
+    const DRIVE_REMOTE: u32 = 4;
+
+    let text = path.to_string_lossy();
+    if text.starts_with("\\\\") {
+        return true;
+    }
+    let mut chars = text.chars();
+    let is_drive_letter = matches!(chars.next(), Some(letter) if letter.is_ascii_alphabetic())
+        && chars.next() == Some(':');
+    if !is_drive_letter {
+        return false;
+    }
+    let root: Vec<u16> = format!("{}:\\", &text[..2])
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) == DRIVE_REMOTE }
+}
+
 pub fn delete_to_recycle_bin(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    delete_with_windows_shell(path, true)?;
+    {
+        // Network locations cannot be recycled; delete them permanently
+        // instead of failing the whole operation.
+        if is_network_path(path) {
+            return delete_permanently(path);
+        }
+        delete_with_windows_shell(path, true)?;
+    }
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -771,7 +807,7 @@ pub fn get_new_file_templates() -> Result<Vec<NewFileTemplate>, String> {
 
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    use super::{describe_delete_failure, extract_file_icon, open_file, shell_execute_working_directory};
+    use super::{describe_delete_failure, extract_file_icon, is_network_path, open_file, shell_execute_working_directory};
     use base64::Engine;
 
     #[test]
@@ -780,6 +816,16 @@ mod tests {
         assert!(describe_delete_failure(0x8007_0020_u32 as i32).contains("in use"));
         assert!(describe_delete_failure(0x8007_007B_u32 as i32).contains("too long"));
         assert!(describe_delete_failure(0).is_empty());
+    }
+
+    #[test]
+    fn network_paths_are_detected_for_recycle_bin_fallback() {
+        assert!(is_network_path(std::path::Path::new(r"\\SERVER-HOME\Public\file.txt")));
+        assert!(is_network_path(std::path::Path::new(r"\\server\share")));
+        // Local drive letters must not be mistaken for network locations.
+        let local_root = std::env::temp_dir();
+        assert!(!is_network_path(&local_root));
+        assert!(!is_network_path(std::path::Path::new(r"C:\Windows")));
     }
 
     #[test]

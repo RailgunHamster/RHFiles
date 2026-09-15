@@ -94,13 +94,17 @@ async function deleteSelected(isRight) {
   const message = sel.length === 1
     ? t('confirm.deleteItem', {name: sel[0].name})
     : t('confirm.deleteItems', {count: sel.length});
+  // Network locations have no Recycle Bin, so the listing hint must not
+  // promise a recoverable delete there.
+  const onNetwork = sel.some(file => /^\\\\/.test(String(file.path || '')));
+  const detail = onNetwork ? t('confirm.networkDeleteHint') : t('confirm.recycleBinHint');
   let confirmed = true;
   if (G.settings.confirmRecycleDelete !== false) {
     try {
       confirmed = await showConfirmDialog({
         title: t('confirm.deleteTitle'),
         message,
-        detail: t('confirm.recycleBinHint'),
+        detail,
         confirmLabel: t('btn.delete'),
       });
     } finally {
@@ -567,6 +571,50 @@ async function openFileHandler(path) {
   } catch (e) {
     alert(t('alert.openFileFailed', { error: e }));
   }
+}
+
+// Single entry point for "open this item" so double-click and Enter behave
+// identically: folders navigate, archives are browsed in place, everything
+// else is handed to the system shell.
+async function activateEntry(file, isRight, index) {
+  if (!file) return;
+  if (file.archive_entry) {
+    if (file.is_dir) {
+      showNotice(t('alert.cannotNavArchive'));
+    } else {
+      await extractArchiveEntry(index);
+    }
+    return;
+  }
+  if (file.is_dir) {
+    if (isRight) await rpNavigateTo(file.path);
+    else await navigateTo(file.path);
+    return;
+  }
+  const extension = (file.extension || "").toLowerCase();
+  if (extension === "zip") {
+    await openArchive(file.path);
+    return;
+  }
+  try {
+    await call("open_file", { path: file.path });
+    addRecentFile(file.path, file.name, false, file.extension);
+  } catch (error) {}
+}
+
+function activePaneSelection() {
+  const isRight = G.dualOn && G.lastActivePane === 'right';
+  const pane = isRight ? G.rp : getTab();
+  const entries = pane?.entries || [];
+  const indices = [...(pane?.sel || new Set())];
+  const index = indices.length ? indices[indices.length - 1] : -1;
+  return { isRight, entries, index, file: index >= 0 ? entries[index] : null, count: indices.length };
+}
+
+async function openActiveSelection() {
+  const selection = activePaneSelection();
+  if (!selection.file || selection.count !== 1) return;
+  await activateEntry(selection.file, selection.isRight, selection.index);
 }
 
 async function quicklookSelected(isRight) {
@@ -1757,13 +1805,32 @@ function showNotice(msg) {
   if (!toast) {
     toast = document.createElement("div");
     toast.id = "rhfiles-toast";
-    toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:6px;background:var(--bg-2);color:var(--text-1);border:1px solid var(--border);font-size:12px;z-index:99999;transition:opacity 0.3s";
+    toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:8px 16px;border-radius:6px;background:var(--bg-2);color:var(--text-1);border:1px solid var(--border);font-size:12px;z-index:99999;transition:opacity 0.3s";
     document.body.appendChild(toast);
   }
-  toast.textContent = msg;
+  toast.replaceChildren();
+  const label = document.createElement('span');
+  label.textContent = msg;
+  toast.appendChild(label);
+
+  const duration = Number(G.settings?.noticeDurationMs);
+  const permanent = Number.isFinite(duration) && duration <= 0;
+  if (permanent) {
+    // A notice that never expires needs an explicit way to dismiss it.
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = '×';
+    close.setAttribute('aria-label', t('btn.close'));
+    close.style.cssText = 'border:0;background:transparent;color:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0 2px;opacity:.7';
+    close.addEventListener('click', () => { toast.style.opacity = '0'; });
+    toast.appendChild(close);
+  }
+
   toast.style.opacity = "1";
   clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => { toast.style.opacity = "0"; }, 2000);
+  toast._timer = permanent
+    ? null
+    : setTimeout(() => { toast.style.opacity = "0"; }, Number.isFinite(duration) && duration > 0 ? duration : 5000);
 }
 
 // --- 7z availability ---

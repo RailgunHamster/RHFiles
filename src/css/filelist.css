@@ -20,6 +20,11 @@
 .sort-arrow { font-size:10px; margin-left:2px; }
 
 .file-list { flex:1; overflow-y:auto; overflow-x:hidden; position:relative; }
+/* Wrapper that keeps the file list beside the rubber-band gutter. */
+.file-body { flex:1; display:flex; min-height:0; min-width:0; }
+.file-body > .file-list { min-width:0; }
+.box-select-gutter { flex:0 0 18px; cursor:crosshair; border-left:1px solid transparent; }
+.box-select-gutter:hover { background:var(--hover); border-left-color:var(--border); }
 .virtual-list-spacer { width:100%; }
 .virtual-list-content { position:absolute; top:0; left:0; right:0; }
 

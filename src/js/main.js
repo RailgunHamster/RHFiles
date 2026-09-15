@@ -241,19 +241,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const idx = parseInt(row.dataset.index);
     const file = getTab().entries[idx];
     if (!file) return;
-    if (file.archive_entry) {
-      if (file.is_dir) { showNotice(t('alert.cannotNavArchive')); }
-      else extractArchiveEntry(idx);
-    } else if (file.is_dir) {
-      navigateTo(file.path);
-    } else {
-      const ext = (file.extension || "").toLowerCase();
-      if (ext === "zip") {
-        await openArchive(file.path);
-      } else {
-        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name, false, file.extension); } catch (ex) {}
-      }
-    }
+    await activateEntry(file, false, idx);
   });
 
   // double-click handling for right pane
@@ -263,16 +251,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const idx = parseInt(row.dataset.index);
     const file = G.rp.entries[idx];
     if (!file) return;
-    if (file.is_dir) {
-      rpNavigateTo(file.path);
-    } else {
-      const ext = (file.extension || "").toLowerCase();
-      if (ext === "zip") {
-        await openArchive(file.path);
-      } else {
-        try { await call("open_file", { path: file.path }); addRecentFile(file.path, file.name, false, file.extension); } catch (ex) {}
-      }
-    }
+    await activateEntry(file, true, idx);
   });
 
   // Close overlays on backdrop click

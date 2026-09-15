@@ -122,6 +122,15 @@ Object.assign(_builtinEn, {
   'settings.typeSearchTimeout30s': '30 seconds',
   'settings.typeSearchTimeoutPermanent': 'Until Esc or leaving the folder',
   'settings.typeSearchTimeoutHelp': 'How long the typed-search highlight stays after you stop typing. It always disappears on Esc or when you navigate away.',
+  'settings.showHidden': 'Show hidden items',
+  'settings.showHiddenHelp': 'Show files and folders with the hidden attribute. Also available from the toolbar toggle.',
+  'settings.noticeDuration': 'Hide success notices after',
+  'settings.noticeDuration2s': '2 seconds',
+  'settings.noticeDuration5s': '5 seconds (default)',
+  'settings.noticeDuration10s': '10 seconds',
+  'settings.noticeDurationPermanent': 'Keep until dismissed',
+  'settings.noticeDurationHelp': 'Applies to the notices shown in the corner (copy, move, and other completed actions). Errors always stay until dismissed.',
+  'confirm.networkDeleteHint': 'Network locations have no Recycle Bin: these items will be deleted permanently.',
   'address.suggestHistory': 'Recent',
   'address.suggestFolder': 'Folder',
   'notice.integrationExternalOnly': 'The locations list opens beside a Windows Open/Save dialog or File Explorer',
@@ -375,7 +384,9 @@ G.activeTab = 0;
 G.nextTabId = 1;
 G.sortField = "name";
 G.sortAsc = true;
-G.showHidden = false;
+// Hidden items are shown by default; the toolbar toggle and Settings persist an
+// explicit user choice.
+G.showHidden = localStorage.getItem('rhfiles-showHidden') !== 'false';
 G.clipboard = null;
 function normalizeLayout(layout) {
   const requested = String(layout || 'details').toLowerCase();
@@ -944,6 +955,7 @@ function loadSettings() {
     shortcuts: {},
     confirmRecycleDelete: true,
     typeSearchTimeoutMs: 10000,
+    noticeDurationMs: 5000,
     previewDefaultOpen: true,
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
@@ -972,6 +984,10 @@ function loadSettings() {
     settings.typeSearchTimeoutMs = Number.isFinite(storedTimeout) && storedTimeout >= 0
       ? storedTimeout
       : 10000;
+    const storedNotice = Number(stored.noticeDurationMs);
+    settings.noticeDurationMs = Number.isFinite(storedNotice) && storedNotice >= 0
+      ? storedNotice
+      : 5000;
     const masterEnabled = stored.fileDialogIntegrationEnabled === true;
     if (!Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationExplorer')
       && !Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationFileDialog')) {

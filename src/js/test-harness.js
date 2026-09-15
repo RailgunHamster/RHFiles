@@ -1146,6 +1146,12 @@
       const typeSearchTimeout = $("#settings-typesearch-timeout");
       assert(typeSearchTimeout, "Type-search timeout setting is missing");
       assertEqual(Number(typeSearchTimeout.value), Number(G.settings.typeSearchTimeoutMs) || 0, "Type-search timeout setting state is out of sync");
+      const showHiddenBox = $("#settings-show-hidden");
+      assert(showHiddenBox, "Hidden-items setting is missing");
+      assertEqual(showHiddenBox.checked, G.showHidden === true, "Hidden-items setting state is out of sync");
+      const noticeDuration = $("#settings-notice-duration");
+      assert(noticeDuration, "Notice duration setting is missing");
+      assertEqual(Number(noticeDuration.value), Number(G.settings.noticeDurationMs) || 0, "Notice duration setting state is out of sync");
       assert($("#settings-global-search"), "Global-search enable setting is missing");
       assert($("#settings-auto-update"), "Automatic-update setting is missing");
       assert($("#settings-proxy-enabled"), "Proxy enable setting is missing");
@@ -1885,6 +1891,99 @@
         tab.entries = savedEntries;
         tab.sel = savedSelection;
         tab.lastIdx = savedLastIndex;
+      }
+    });
+
+    await test("[selection] Empty row space starts a rubber band, names still drag", async () => {
+      const row = document.createElement('div');
+      row.className = 'file-row';
+      const nameCell = document.createElement('div');
+      nameCell.className = 'row-name';
+      const nameText = document.createElement('span');
+      nameText.className = 'row-fname';
+      nameText.textContent = 'report.txt';
+      nameCell.appendChild(nameText);
+      const dateCell = document.createElement('div');
+      dateCell.className = 'row-date';
+      const sizeCell = document.createElement('div');
+      sizeCell.className = 'row-size';
+      row.append(nameCell, dateCell, sizeCell);
+      document.body.appendChild(row);
+      try {
+        assert(!usesRubberBandTarget(nameText), "Dragging by the file name must still move the file");
+        assert(usesRubberBandTarget(nameCell), "Blank space beside the name should start a rubber band");
+        assert(usesRubberBandTarget(dateCell), "The date cell should start a rubber band");
+        assert(usesRubberBandTarget(sizeCell), "The size cell should start a rubber band");
+      } finally {
+        row.remove();
+      }
+      assert(document.querySelector('.box-select-gutter[data-target="file-list"]'), "Left pane rubber-band gutter is missing");
+      assert(document.querySelector('.box-select-gutter[data-target="right-file-list"]'), "Right pane rubber-band gutter is missing");
+    });
+
+    await test("[open] Enter uses the same open path as double-click", async () => {
+      assert(typeof activateEntry === 'function', "activateEntry is missing");
+      assert(typeof openActiveSelection === 'function', "openActiveSelection is missing");
+      assertIncludes(String(ACTION_HANDLERS['nav.open']), 'openActiveSelection', "Enter does not use the shared open action");
+      assertIncludes(String(ACTION_HANDLERS['nav.down']), 'openActiveSelection', "Alt+Down does not use the shared open action");
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      const opened = [];
+      const originalActivate = activateEntry;
+      try {
+        tab.entries = [{name:'folder', path:'C:\\folder', is_dir:true}, {name:'second', path:'C:\\second', is_dir:true}];
+        tab.sel = new Set([0, 1]);
+        tab.lastIdx = 1;
+        activateEntry = async (file, isRight, index) => { opened.push({file: file.name, isRight, index}); };
+        await openActiveSelection();
+        assertEqual(opened.length, 0, "Enter opened an item while a multi-selection was active");
+        tab.sel = new Set([1]);
+        await openActiveSelection();
+        assertEqual(opened.length, 1, "Enter did not open exactly one item");
+        assertEqual(opened[0]?.file, 'second', "Enter opened the wrong item");
+      } finally {
+        activateEntry = originalActivate;
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
+    });
+
+    await test("[notice] Notice duration setting controls auto-dismiss", async () => {
+      const saved = G.settings.noticeDurationMs;
+      try {
+        G.settings.noticeDurationMs = 0;
+        showNotice("permanent notice");
+        const toast = $("#rhfiles-toast");
+        assert(toast, "Notice toast was not created");
+        assertEqual(toast._timer, null, "Permanent notice still armed a dismiss timer");
+        assert(toast.querySelector('button'), "Permanent notice has no dismiss button");
+        G.settings.noticeDurationMs = 5000;
+        showNotice("temporary notice");
+        assert(toast._timer !== null && toast._timer !== undefined, "Timed notice did not arm a dismiss timer");
+        assert(!toast.querySelector('button'), "Timed notice should not show a dismiss button");
+      } finally {
+        G.settings.noticeDurationMs = saved;
+        const toast = $("#rhfiles-toast");
+        if (toast) { clearTimeout(toast._timer); toast.style.opacity = '0'; }
+      }
+    });
+
+    await test("[settings] Hidden items default to shown and persist a toggle", async () => {
+      const savedValue = G.showHidden;
+      const savedStored = localStorage.getItem('rhfiles-showHidden');
+      try {
+        setShowHidden(false);
+        assertEqual(G.showHidden, false, "Hiding items did not update the state");
+        assertEqual(localStorage.getItem('rhfiles-showHidden'), 'false', "Hiding items was not persisted");
+        setShowHidden(true);
+        assertEqual(localStorage.getItem('rhfiles-showHidden'), 'true', "Showing items was not persisted");
+      } finally {
+        G.showHidden = savedValue;
+        if (savedStored == null) localStorage.removeItem('rhfiles-showHidden');
+        else localStorage.setItem('rhfiles-showHidden', savedStored);
       }
     });
 
