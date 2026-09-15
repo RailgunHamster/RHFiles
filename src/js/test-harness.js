@@ -2037,6 +2037,10 @@
         rules.some(text => text.includes('.file-row.selected .row-icon')),
         "Selected rows have no tinted drag plate behind the icon",
       );
+      assert(
+        rules.some(text => text.includes('.row-name::after') && text.includes('content')),
+        "The draggable name column has no divider marking its end",
+      );
     });
 
     await test("[open] Enter uses the same open path as double-click", async () => {
