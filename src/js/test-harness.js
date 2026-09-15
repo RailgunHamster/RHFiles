@@ -1921,6 +1921,63 @@
       assert(document.querySelector('.box-select-gutter[data-target="right-file-list"]'), "Right pane rubber-band gutter is missing");
     });
 
+    await test("[selection] Plain click on blank row space still selects the row", async () => {
+      const list = document.getElementById("file-list");
+      const rows = list ? list.querySelectorAll('.file-row') : [];
+      if (!rows.length) { log("SKIP: no rows rendered"); return; }
+      const row = rows[0];
+      const index = parseInt(row.dataset.index);
+      const target = row.querySelector('.row-date') || row;
+      const tab = getTab();
+      const savedSelection = new Set(tab.sel);
+      const savedLastIndex = tab.lastIdx;
+      const rect = target.getBoundingClientRect();
+      const options = {
+        bubbles: true, cancelable: true, button: 0,
+        clientX: rect.left + Math.max(1, rect.width / 2),
+        clientY: rect.top + Math.max(1, rect.height / 2),
+      };
+      try {
+        tab.sel.clear();
+        target.dispatchEvent(new MouseEvent('mousedown', options));
+        document.dispatchEvent(new MouseEvent('mouseup', options));
+        target.dispatchEvent(new MouseEvent('click', options));
+        assert(tab.sel.has(index), "A plain click on blank row space did not select that row");
+      } finally {
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+        renderFiles(tab, "file-list", "status-count", "status-selection");
+      }
+    });
+
+    await test("[selection] Dragging blank row space draws a marquee and swallows the click", async () => {
+      const list = document.getElementById("file-list");
+      const rows = list ? list.querySelectorAll('.file-row') : [];
+      if (!rows.length) { log("SKIP: no rows rendered"); return; }
+      const row = rows[0];
+      const target = row.querySelector('.row-date') || row;
+      const tab = getTab();
+      const savedSelection = new Set(tab.sel);
+      const savedLastIndex = tab.lastIdx;
+      const rect = target.getBoundingClientRect();
+      const start = {
+        clientX: rect.left + Math.max(1, rect.width / 2),
+        clientY: rect.top + Math.max(1, rect.height / 2),
+      };
+      const end = { clientX: start.clientX + 40, clientY: start.clientY + 40 };
+      try {
+        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, ...start }));
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, ...end }));
+        assert(document.querySelector('.selection-rect'), "A marquee drag did not start a selection rectangle");
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, ...end }));
+        assert(!document.querySelector('.selection-rect'), "The selection rectangle was not removed on mouseup");
+      } finally {
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+        renderFiles(tab, "file-list", "status-count", "status-selection");
+      }
+    });
+
     await test("[open] Enter uses the same open path as double-click", async () => {
       assert(typeof activateEntry === 'function', "activateEntry is missing");
       assert(typeof openActiveSelection === 'function', "openActiveSelection is missing");

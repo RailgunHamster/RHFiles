@@ -13,36 +13,49 @@ function usesRubberBandTarget(target) {
   return !target.closest(BOX_SELECT_CONTENT_SELECTOR);
 }
 
+// Pointer travel (px) before a press becomes a marquee. Below it the gesture
+// stays a plain click: selecting the row under the cursor, or clearing the
+// selection when the empty background was pressed.
+const BOX_SELECT_DRAG_THRESHOLD = 4;
+
 function initBoxSelection(listEl) {
   let isSelecting = false;
-  let selStartX = 0, selStartY = 0;
+  let dragActive = false;
+  let anchorX = 0, anchorY = 0;
+  let pressX = 0, pressY = 0;
   let selectionRect = null;
-  // A finished rubber-band drag is followed by a click event on the same spot.
-  // Swallow that one click so it cannot clear the selection that was just made.
+  // Only a real marquee swallows the click that follows it; a plain click must
+  // still reach the row handler (select) or the empty-area handler (clear).
   let suppressNextClick = false;
 
   const beginSelection = event => {
     isSelecting = true;
+    dragActive = false;
     suppressNextClick = false;
-    selStartX = event.clientX;
-    selStartY = event.clientY;
+    pressX = event.clientX;
+    pressY = event.clientY;
+    // The gutter sits beside the list, so clamp the anchor into its bounds.
+    const rect = listEl.getBoundingClientRect();
+    anchorX = Math.min(Math.max(event.clientX, rect.left), rect.right - 1);
+    anchorY = event.clientY;
+  };
+
+  const activateMarquee = () => {
+    if (dragActive) return;
+    dragActive = true;
     const rect = listEl.getBoundingClientRect();
     selectionRect = document.createElement('div');
     selectionRect.className = 'selection-rect';
-    const startX = Math.min(Math.max(event.clientX, rect.left), rect.right) - rect.left;
-    const startY = event.clientY - rect.top;
-    selectionRect.style.left = (startX + listEl.scrollLeft) + 'px';
-    selectionRect.style.top = (startY + listEl.scrollTop) + 'px';
+    selectionRect.style.left = (anchorX - rect.left + listEl.scrollLeft) + 'px';
+    selectionRect.style.top = (anchorY - rect.top + listEl.scrollTop) + 'px';
     selectionRect.style.width = '0px';
     selectionRect.style.height = '0px';
     listEl.style.position = 'relative';
     listEl.appendChild(selectionRect);
-    selStartX = rect.left + startX;
-    selStartY = event.clientY;
   };
 
   // Click on empty area: clear selection. Capture phase so the click that ends
-  // a rubber-band drag can be stopped before it reaches the row handlers.
+  // a marquee drag can be stopped before it reaches the row handlers.
   listEl.addEventListener('click', e => {
     if (suppressNextClick) {
       suppressNextClick = false;
@@ -91,8 +104,8 @@ function initBoxSelection(listEl) {
     });
   }
 
-  // A rubber-band drag must not be hijacked by the native file drag that the
-  // row's draggable attribute would otherwise start.
+  // A marquee drag must not be hijacked by the native file drag that the row's
+  // draggable attribute would otherwise start.
   listEl.addEventListener('dragstart', e => {
     if (isSelecting) e.preventDefault();
   }, true);
@@ -100,7 +113,13 @@ function initBoxSelection(listEl) {
   let _selRaf = 0;
   let _selE = null;
   document.addEventListener('mousemove', e => {
-    if (!isSelecting || !selectionRect) return;
+    if (!isSelecting) return;
+    if (!dragActive) {
+      const travelled = Math.hypot(e.clientX - pressX, e.clientY - pressY);
+      if (travelled < BOX_SELECT_DRAG_THRESHOLD) return;
+      activateMarquee();
+    }
+    if (!selectionRect) return;
     _selE = e;
     if (!_selRaf) {
       _selRaf = requestAnimationFrame(() => {
@@ -109,10 +128,10 @@ function initBoxSelection(listEl) {
         const ev = _selE;
         const list = listEl;
         const rect = list.getBoundingClientRect();
-        const x = Math.min(ev.clientX, selStartX) - rect.left + list.scrollLeft;
-        const y = Math.min(ev.clientY, selStartY) - rect.top + list.scrollTop;
-        const w = Math.abs(ev.clientX - selStartX);
-        const h = Math.abs(ev.clientY - selStartY);
+        const x = Math.min(ev.clientX, anchorX) - rect.left + list.scrollLeft;
+        const y = Math.min(ev.clientY, anchorY) - rect.top + list.scrollTop;
+        const w = Math.abs(ev.clientX - anchorX);
+        const h = Math.abs(ev.clientY - anchorY);
         selectionRect.style.left = x + 'px';
         selectionRect.style.top = y + 'px';
         selectionRect.style.width = w + 'px';
@@ -123,12 +142,14 @@ function initBoxSelection(listEl) {
   });
 
   document.addEventListener('mouseup', () => {
+    const finishedMarquee = dragActive;
     if (selectionRect) {
       selectionRect.remove();
       selectionRect = null;
-      suppressNextClick = true;
     }
+    suppressNextClick = finishedMarquee;
     isSelecting = false;
+    dragActive = false;
   });
 }
 
