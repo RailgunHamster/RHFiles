@@ -477,6 +477,51 @@ function clearFileListForRender(list) {
   list.replaceChildren();
 }
 
+// Builds the drag image shown while dragging. A single item keeps the native
+// row snapshot, but a multi-selection must show every dragged item instead of
+// only the row the pointer grabbed.
+function buildFileDragGhost(paths) {
+  const ghost = document.createElement('div');
+  ghost.className = 'file-drag-ghost';
+  const header = document.createElement('div');
+  header.className = 'file-drag-ghost-title';
+  header.textContent = t('status.items', { count: paths.length });
+  ghost.appendChild(header);
+  const list = document.createElement('div');
+  list.className = 'file-drag-ghost-list';
+  const shown = paths.slice(0, 4);
+  shown.forEach(path => {
+    const row = document.createElement('div');
+    row.className = 'file-drag-ghost-item';
+    row.textContent = String(path).split(/[\\/]/).filter(Boolean).pop() || path;
+    list.appendChild(row);
+  });
+  if (paths.length > shown.length) {
+    const more = document.createElement('div');
+    more.className = 'file-drag-ghost-more';
+    more.textContent = `+${paths.length - shown.length}`;
+    list.appendChild(more);
+  }
+  ghost.appendChild(list);
+  return ghost;
+}
+
+function applyFileDragImage(dataTransfer, paths, sourceNode) {
+  if (!dataTransfer || typeof dataTransfer.setDragImage !== 'function') return;
+  if (paths.length < 2) return;
+  const ghost = buildFileDragGhost(paths);
+  // The browser snapshots the element synchronously during dragstart, so it
+  // only has to be in the layout for this turn.
+  ghost.style.position = 'fixed';
+  ghost.style.top = '-1000px';
+  ghost.style.left = '-1000px';
+  document.body.appendChild(ghost);
+  try {
+    dataTransfer.setDragImage(ghost, 14, 14);
+  } catch (error) {}
+  setTimeout(() => ghost.remove(), 0);
+}
+
 function setRhfilesFileDragData(dataTransfer, paths, isRight, sourceNode) {
   if (!dataTransfer) return;
   const dragPayload = {
@@ -487,6 +532,7 @@ function setRhfilesFileDragData(dataTransfer, paths, isRight, sourceNode) {
   };
   if (!dragPayload.paths.length) return;
   rememberRhfilesFileDragSource(sourceNode);
+  applyFileDragImage(dataTransfer, dragPayload.paths, sourceNode);
   G._activeFileDragPayload = dragPayload;
   const payload = JSON.stringify(dragPayload);
   dataTransfer.effectAllowed = 'copyMove';

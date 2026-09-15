@@ -22,7 +22,8 @@
 .tree-arrow { width:12px; height:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:8px; color:var(--text-4); transition:transform .1s; }
 .tree-arrow.expanded { transform:rotate(90deg); }
 .tree-arrow.empty { visibility:hidden; }
-.tree-icon { color:var(--text-3); flex-shrink:0; }
+.tree-icon { display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; flex-shrink:0; }
+.tree-icon svg, .tree-icon img { width:14px; height:14px; }
 .tree-name { overflow:hidden; text-overflow:ellipsis; }
 .tree-children { display:none; }
 .tree-children.open { display:block; }

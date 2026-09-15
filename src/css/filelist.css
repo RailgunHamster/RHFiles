@@ -36,6 +36,59 @@
 .file-row .row-name { flex:3; display:flex; align-items:center; gap:6px; min-width:180px; padding:0 6px; }
 .file-row .row-icon { width:16px; height:16px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .file-row .row-icon svg { width:16px; height:16px; }
+
+/* Selected rows advertise their drag surface: the icon area is what drags,
+   while cells and blank space start a marquee selection. */
+.file-row.selected .row-icon,
+.file-row.selected .big-icon-slot,
+.file-row.selected .card-icon-slot,
+.thumb-item.selected .thumb-img-box { position:relative; }
+.file-row.selected .row-icon::before,
+.file-row.selected .big-icon-slot::before,
+.file-row.selected .card-icon-slot::before,
+.thumb-item.selected .thumb-img-box::before {
+  content:""; position:absolute; inset:-1px; border-radius:5px;
+  background:color-mix(in srgb, var(--accent) 16%, transparent);
+  opacity:.75; pointer-events:none;
+}
+.file-row.selected:hover .row-icon::before,
+.file-row.selected:hover .big-icon-slot::before,
+.file-row.selected:hover .card-icon-slot::before,
+.thumb-item.selected:hover .thumb-img-box::before { opacity:1; }
+.file-row.selected .row-icon::after,
+.file-row.selected .big-icon-slot::after,
+.file-row.selected .card-icon-slot::after,
+.thumb-item.selected .thumb-img-box::after {
+  content:""; position:absolute; inset:0;
+  background-color:var(--accent);
+  -webkit-mask-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cg fill='black'%3E%3Ccircle cx='3' cy='3.6' r='1.25'/%3E%3Ccircle cx='7' cy='3.6' r='1.25'/%3E%3Ccircle cx='3' cy='8' r='1.25'/%3E%3Ccircle cx='7' cy='8' r='1.25'/%3E%3Ccircle cx='3' cy='12.4' r='1.25'/%3E%3Ccircle cx='7' cy='12.4' r='1.25'/%3E%3C/g%3E%3C/svg%3E");
+  mask-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cg fill='black'%3E%3Ccircle cx='3' cy='3.6' r='1.25'/%3E%3Ccircle cx='7' cy='3.6' r='1.25'/%3E%3Ccircle cx='3' cy='8' r='1.25'/%3E%3Ccircle cx='7' cy='8' r='1.25'/%3E%3Ccircle cx='3' cy='12.4' r='1.25'/%3E%3Ccircle cx='7' cy='12.4' r='1.25'/%3E%3C/g%3E%3C/svg%3E");
+  -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+  -webkit-mask-position:center; mask-position:center;
+  -webkit-mask-size:11px 17px; mask-size:11px 17px;
+  opacity:.6; pointer-events:none;
+}
+.file-row.selected:hover .row-icon::after,
+.file-row.selected:hover .big-icon-slot::after,
+.file-row.selected:hover .card-icon-slot::after,
+.thumb-item.selected:hover .thumb-img-box::after { opacity:.95; }
+.file-row.selected .big-icon-slot::after,
+.file-row.selected .card-icon-slot::after { -webkit-mask-size:18px 28px; mask-size:18px 28px; }
+.file-row.selected .big-icon-slot::before,
+.file-row.selected .card-icon-slot::before { inset:-4px; border-radius:9px; }
+.thumb-item.selected .thumb-img-box::after { -webkit-mask-size:16px 26px; mask-size:16px 26px; }
+
+/* Drag image used for multi-item drags. */
+.file-drag-ghost {
+  min-width:150px; max-width:280px; padding:6px 10px;
+  border:1px solid var(--border); border-radius:8px;
+  background:var(--bg-card); color:var(--text-2);
+  box-shadow:0 10px 26px var(--shadow);
+  font-size:12px; pointer-events:none;
+}
+.file-drag-ghost-title { margin-bottom:3px; color:var(--text); font-weight:600; font-size:11px; }
+.file-drag-ghost-item { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; line-height:1.5; }
+.file-drag-ghost-more { color:var(--text-4); font-size:11px; }
 .file-row .row-fname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .file-row .row-path { font-size:10px; color:var(--text-4); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .file-list.search-results .file-row .row-name { min-width:0; }

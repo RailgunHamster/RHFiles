@@ -23,6 +23,10 @@ async function loadTree(path, expand) {
   } catch (e) {}
 }
 
+function treeFolderIcon(path, name) {
+  return `<span class="tree-icon">${fileIcon({ is_dir: true, path: path || '', name: name || '' }, false)}</span>`;
+}
+
 function renderTreeNode(container, children, parentPath, expand) {
   const existing = Array.from(container.querySelectorAll("[data-tpath]")).find(el => el.dataset.tpath === parentPath) || null;
   let node;
@@ -43,7 +47,7 @@ function renderTreeNode(container, children, parentPath, expand) {
     node.dataset.depth = "0";
     node.innerHTML = `<div class="tree-row" style="padding-left:0px">
       <span class="tree-arrow ${expand?'expanded':''}">\u25b6</span>
-      <svg class="tree-icon" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.5L7.5 6h7v7h-13V4.5z" stroke="#dcb67a" stroke-width="1"/></svg>
+      ${treeFolderIcon(parentPath, parentPath.split('\\').filter(Boolean).pop() || parentPath)}
       <span class="tree-name">${esc(parentPath.split('\\').filter(Boolean).pop() || parentPath)}</span>
     </div>
     <div class="tree-children ${expand?'open':''}"></div>`;
@@ -79,7 +83,7 @@ function renderTreeItem(container, entry, depth) {
   div.style.paddingLeft = (depth * 16) + "px";
   div.innerHTML = `
     <span class="tree-arrow ${entry.has_children ? '' : 'empty'}">\u25b6</span>
-    <svg class="tree-icon" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1.5 4.5h4.5L7.5 6h7v7h-13V4.5z" stroke="#dcb67a" stroke-width="1"/></svg>
+    ${treeFolderIcon(entry.path, entry.name)}
     <span class="tree-name">${esc(entry.name)}</span>
   `;
   wrapper.appendChild(div);

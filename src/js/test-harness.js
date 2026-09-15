@@ -1894,6 +1894,48 @@
       }
     });
 
+    await test("[drag] Multi-selection drag image lists every dragged item", async () => {
+      let captured = null;
+      const transfer = {
+        effectAllowed: '',
+        setData() {},
+        setDragImage(image) { captured = image; },
+      };
+      try {
+        setRhfilesFileDragData(transfer, ['C:\\one.txt', 'C:\\folder\\two.txt', 'C:\\three.txt'], false);
+        assert(captured, "Multi-selection drag did not set a drag image");
+        assertIncludes(captured.textContent, '3', "Drag image does not show the item count");
+        assertIncludes(captured.textContent, 'one.txt', "Drag image is missing the first item");
+        assertIncludes(captured.textContent, 'two.txt', "Drag image is missing the second item");
+        assertIncludes(captured.textContent, 'three.txt', "Drag image is missing the third item");
+        captured = null;
+        setRhfilesFileDragData(transfer, ['C:\\only.txt'], false);
+        assertEqual(captured, null, "Single-item drag should keep the native row snapshot");
+      } finally {
+        clearRhfilesFileDragSession();
+      }
+    });
+
+    await test("[sidebar] Directory tree uses the shared folder icon", async () => {
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      try {
+        renderTreeItem(host, { name: 'projects', path: 'C:\\projects', has_children: true }, 0);
+        const icon = host.querySelector('.tree-icon');
+        assert(icon, "Directory tree row has no icon host");
+        assert(
+          icon.innerHTML.includes('#FFC83D') || icon.querySelector('img'),
+          "Directory tree folder icon is not the shared folder artwork",
+        );
+        assert(
+          !icon.innerHTML.toLowerCase().includes('dcb67a'),
+          "Directory tree still renders the flat outline folder icon",
+        );
+      } finally {
+        host.remove();
+      }
+    });
+
     await test("[selection] Empty row space starts a rubber band, names still drag", async () => {
       const row = document.createElement('div');
       row.className = 'file-row';
