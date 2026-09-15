@@ -1936,7 +1936,7 @@
       }
     });
 
-    await test("[selection] Empty row space starts a rubber band, names still drag", async () => {
+    await test("[selection] Name cell drags while the other cells start a rubber band", async () => {
       const row = document.createElement('div');
       row.className = 'file-row';
       const nameCell = document.createElement('div');
@@ -1952,10 +1952,11 @@
       row.append(nameCell, dateCell, sizeCell);
       document.body.appendChild(row);
       try {
-        assert(!usesRubberBandTarget(nameText), "Dragging by the file name must still move the file");
-        assert(usesRubberBandTarget(nameCell), "Blank space beside the name should start a rubber band");
+        assert(!usesRubberBandTarget(nameText), "Dragging by the file name must move the file");
+        assert(!usesRubberBandTarget(nameCell), "The whole name cell is the drag surface and must not start a marquee");
         assert(usesRubberBandTarget(dateCell), "The date cell should start a rubber band");
         assert(usesRubberBandTarget(sizeCell), "The size cell should start a rubber band");
+        assert(usesRubberBandTarget(row), "Blank space at the end of a row should start a rubber band");
       } finally {
         row.remove();
       }
@@ -2018,6 +2019,24 @@
         tab.lastIdx = savedLastIndex;
         renderFiles(tab, "file-list", "status-count", "status-selection");
       }
+    });
+
+    await test("[drag] Drag hint and multi-item ghost styling are present", async () => {
+      const rules = [...document.styleSheets].flatMap(sheet => {
+        try { return [...sheet.cssRules].map(rule => rule.cssText); } catch (e) { return []; }
+      });
+      assert(
+        rules.some(text => text.includes('.file-row.selected .row-icon::after')),
+        "Selected rows have no drag-grip styling for the icon area",
+      );
+      assert(
+        rules.some(text => text.includes('.file-drag-ghost')),
+        "Multi-item drag image styling is missing",
+      );
+      assert(
+        rules.some(text => text.includes('.file-row.selected .row-icon')),
+        "Selected rows have no tinted drag plate behind the icon",
+      );
     });
 
     await test("[open] Enter uses the same open path as double-click", async () => {

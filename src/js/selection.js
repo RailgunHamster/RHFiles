@@ -1,12 +1,13 @@
 // selection.js - rectangle (rubber band) selection
 
-// Grabbing one of these starts a file drag; grabbing anywhere else inside a row
-// (the date/type/size cells, the blank space right of a name, card padding)
-// starts a rubber-band selection instead.
+// The name cell (icon + label) is the drag surface and advertises itself with a
+// grip chip when selected. Cells to the right of it, empty row space, the grid
+// gaps and the gutter all start a rubber-band selection.
 const BOX_SELECT_CONTENT_SELECTOR = [
-  '.row-fname', '.row-icon', '.thumb-img-box', '.thumb-name', '.thumb-meta',
-  '.tile-file-name', '.row-tags', '.row-path', '.system-icon-host',
-  '.large-file-icon', '.big-icon-slot', '.card-icon-slot', 'input', 'button',
+  '.row-name',
+  '.thumb-img-box', '.thumb-name', '.thumb-meta',
+  '.column-item',
+  'input', 'button',
 ].join(', ');
 
 function usesRubberBandTarget(target) {
