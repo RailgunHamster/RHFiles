@@ -44,8 +44,9 @@ mod native {
                 },
             },
             UI::Shell::{
-                FILEOPERATION_FLAGS, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOFX_ADDUNDORECORD,
-                FOFX_SHOWELEVATIONPROMPT, FileOperation, IFileOperation, IOperationsProgressDialog,
+                FILEOPERATION_FLAGS, FOF_ALLOWUNDO, FOF_NOCONFIRMMKDIR, FOF_RENAMEONCOLLISION,
+                FOFX_ADDUNDORECORD, FOFX_SHOWELEVATIONPROMPT, FileOperation, IFileOperation,
+                IOperationsProgressDialog,
                 IOperationsProgressDialog_Impl, IShellItem,
                 PropertiesSystem::{PDOPS_CANCELLED, PDOPS_PAUSED, PDOPS_RUNNING, PDOPSTATUS},
                 SHCreateItemFromParsingName, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY,
@@ -540,6 +541,36 @@ mod native {
         Ok(true)
     }
 
+    fn paste_failure_message(error: &windows::core::Error) -> String {
+        error.message().to_ascii_lowercase()
+    }
+
+    fn is_same_path_paste_failure(error: &windows::core::Error) -> bool {
+        matches!(error.code().0 as u32, 0x8027_000C | 0x8027_000D)
+            || {
+                let lower = paste_failure_message(error);
+                lower.contains("same as the source")
+                    || lower.contains("same file")
+                    || lower.contains("destination are the same")
+            }
+    }
+
+    fn is_benign_paste_failure(error: &windows::core::Error) -> bool {
+        let code = error.code().0 as u32;
+        is_same_path_paste_failure(error)
+            || matches!(
+                code,
+                0x8000_4004 | // E_ABORT
+                0x8007_04C7 | // ERROR_CANCELLED
+                0x8027_0000 | // COPYENGINE_E_USER_CANCELLED
+                0x8027_0001
+            )
+            || {
+                let lower = paste_failure_message(error);
+                lower.contains("cancel") || lower.contains("abort")
+            }
+    }
+
     pub fn paste_file_clipboard(
         destination: String,
         operation_id: String,
@@ -569,6 +600,7 @@ mod native {
         let flags = FILEOPERATION_FLAGS(
             FOF_ALLOWUNDO.0
                 | FOF_NOCONFIRMMKDIR.0
+                | FOF_RENAMEONCOLLISION.0
                 | FOFX_ADDUNDORECORD.0
                 | FOFX_SHOWELEVATIONPROMPT.0,
         );
@@ -610,8 +642,17 @@ mod native {
                     moved,
                 });
             }
-            perform_result
-                .map_err(|error| format!("Windows could not paste the clipboard files: {error}"))?;
+            if let Err(error) = perform_result {
+                if is_benign_paste_failure(&error) {
+                    return Ok(WindowsFilePasteResult {
+                        aborted: !is_same_path_paste_failure(&error),
+                        moved,
+                    });
+                }
+                return Err(format!(
+                    "Windows could not paste the clipboard files: {error}"
+                ));
+            }
         }
         let aborted = unsafe { operation.GetAnyOperationsAborted() }
             .map_err(|error| format!("Unable to read the Windows paste result: {error}"))?
@@ -661,6 +702,12 @@ mod native {
             assert_eq!(progress_percentage(1, 4, 0, 0, 1, 8), 25);
             assert_eq!(progress_percentage(0, 0, 0, 0, 1, 8), 13);
             assert_eq!(progress_percentage(0, 0, 150, 100, 0, 0), 100);
+        }
+
+        #[test]
+        fn same_path_and_cancel_paste_errors_are_benign() {
+            let cancel = windows::core::Error::from(E_ABORT);
+            assert!(is_benign_paste_failure(&cancel));
         }
     }
 }

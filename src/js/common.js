@@ -89,6 +89,10 @@ Object.assign(_builtinEn, {
   'settings.categoryIntegration': 'Windows integration',
   'settings.categoryIntegrationDesc': 'Choose from all open RHFiles locations beside Windows file dialogs and File Explorer.',
   'settings.integrationEnabled': 'Enable the Windows file-window companion',
+  'settings.integrationExplorer': 'File Explorer',
+  'settings.integrationFileDialog': 'Windows file dialogs',
+  'settings.integrationExplorerHelp': 'Show the companion beside File Explorer windows.',
+  'settings.integrationFileDialogHelp': 'Show the companion beside Open/Save dialogs from browsers and desktop apps.',
   'settings.integrationExperimental': 'EXPERIMENTAL',
   'settings.integrationBehaviorTitle': 'Show an RHFiles location list',
   'settings.integrationBehaviorBody': 'A companion list appears automatically beside a Windows Open/Save dialog or File Explorer. Beside Explorer, it can activate an existing RHFiles location or open the folder in a new tab. Collapse it to paths only, or turn it off from its power button and re-enable it here.',
@@ -105,6 +109,15 @@ Object.assign(_builtinEn, {
   'settings.integrationStatusError': 'Integration failed to start: {error}',
   'notice.integrationEnabled': 'Windows file-dialog integration enabled',
   'notice.integrationDisabled': 'Windows file-window companion disabled',
+  'notice.integrationExplorerDisabled': 'File Explorer companion disabled',
+  'notice.integrationFileDialogDisabled': 'Windows file-dialog companion disabled',
+  'notice.noClosedTab': 'No recently closed tab to restore',
+  'cmd.reopenTab': 'Reopen Closed Tab',
+  'tab.reopen': 'Reopen closed tab',
+  'settings.confirmDelete': 'Confirm before deleting to the Recycle Bin',
+  'settings.confirmDeleteHelp': 'Turn off to delete immediately with Delete. Permanent deletion (Shift+Delete) always requires confirmation.',
+  'address.suggestHistory': 'Recent',
+  'address.suggestFolder': 'Folder',
   'notice.integrationExternalOnly': 'The locations list opens beside a Windows Open/Save dialog or File Explorer',
   'ctx.convertFormat': 'Convert format…',
   'convert.title': 'Convert format',
@@ -351,6 +364,7 @@ function getAvailableLanguages() {
 let G = {};
 window.G = G;
 G.tabs = [{ id: 0, path: "C:\\", history: [], historyIdx: -1, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, _loaded: false }];
+G.closedTabs = [];
 G.activeTab = 0;
 G.nextTabId = 1;
 G.sortField = "name";
@@ -563,6 +577,7 @@ function normalizeWindowsPathInput(value) {
     const rest = path.replace(/^\\+/, '').replace(/\\{2,}/g, '\\');
     return '\\\\' + rest.replace(/\\+$/, '');
   }
+  if (/^[A-Za-z]:$/.test(path)) return path + '\\';
   if (/^[A-Za-z]:/.test(path)) return path.replace(/\\{2,}/g, '\\');
   return path;
 }
@@ -677,6 +692,16 @@ function parentFolderPath(path) {
   const idx = clean.lastIndexOf('\\');
   if (idx === 2 && /^[A-Za-z]:/.test(clean)) return clean.slice(0, 3);
   return idx > 0 ? clean.slice(0, idx) : clean;
+}
+
+function isBenignUserCancel(error) {
+  const text = String(error || '').toLowerCase();
+  return /cancel(?:led)?|canceled|user dismissed|operation aborted|0x800704c7|0x80004004|0x80010108|0x80010111|0x80270000/.test(text);
+}
+
+function isSamePathTransferError(error) {
+  const text = String(error || '').toLowerCase();
+  return /source and destination are the same|same as the source|same file/.test(text);
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -811,6 +836,7 @@ function fallbackCall(cmd, args) {
     case "db_import_all": return null;
     case "db_clear_all": return null;
     case "db_add_recent": return null;
+    case "db_load_recent": return [];
     case "invoke_context_menu_command": return null;
     case "open_with_program": return null;
     case "get_permissions": return [];
@@ -830,30 +856,35 @@ function fallbackCall(cmd, args) {
     case "search_recursive": return [];
     case "pinyin_aliases": return (args.names || []).map(() => []);
     case "configure_file_dialog_integration": return {
-      enabled: !!args.enabled,
-      running: !!args.enabled,
+      enabled: args.explorerEnabled === true || args.fileDialogEnabled === true || !!args.enabled,
+      running: args.explorerEnabled === true || args.fileDialogEnabled === true || !!args.enabled,
       pathAvailable: Array.isArray(args.locations) && args.locations.length > 0,
       currentPath: (args.locations || []).find(location => location.active)?.path || args.locations?.[0]?.path || null,
       locationCount: (args.locations || []).length,
       registeredShortcuts: args.shortcuts || [],
       rejectedShortcuts: [],
+      explorerEnabled: args.explorerEnabled !== false && (args.explorerEnabled === true || !!args.enabled),
+      fileDialogEnabled: args.fileDialogEnabled !== false && (args.fileDialogEnabled === true || !!args.enabled),
       supportedTargets: ["windowsFileDialog", "windowsExplorer"],
     };
     case "get_file_dialog_integration_status": return {
       enabled: false, running: false, pathAvailable: false, currentPath: null,
       locationCount: 0,
       registeredShortcuts: [], rejectedShortcuts: [],
+      explorerEnabled: false, fileDialogEnabled: false,
       supportedTargets: ["windowsFileDialog", "windowsExplorer"],
     };
     case "get_file_dialog_picker_state": return {
       enabled: false, targetAvailable: false, targetKind: "", targetPath: null, locale: "en", compact: false, locations: [],
+      selectionKind: "", selectedPath: null, selectedName: null, selectedIsDir: false,
     };
     case "set_file_dialog_picker_compact": return {
       enabled: false, targetAvailable: false, targetKind: "", targetPath: null, locale: "en",
       compact: !!args.compact, locations: [],
+      selectionKind: "", selectedPath: null, selectedName: null, selectedIsDir: false,
     };
     case "open_explorer_location_in_rhfiles": return {
-      path: args.path || "C:\\", existing: false, pane: null, tabIndex: null,
+      path: args.path || "C:\\", existing: false, pane: null, tabIndex: null, selectPath: null,
     };
     case "disable_file_dialog_integration": return null;
     case "navigate_file_dialog_location": return null;
@@ -905,6 +936,7 @@ function loadSettings() {
   const defaults = {
     language: 'en',
     shortcuts: {},
+    confirmRecycleDelete: true,
     previewDefaultOpen: true,
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
@@ -918,6 +950,8 @@ function loadSettings() {
     serverUpdateSource: DEFAULT_SERVER_UPDATE_SOURCE,
     updateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
     fileDialogIntegrationEnabled: false,
+    fileDialogIntegrationExplorer: false,
+    fileDialogIntegrationFileDialog: false,
     ffmpegPath: '',
     archiveTools: defaultArchiveToolSettings(),
   };
@@ -927,6 +961,16 @@ function loadSettings() {
     const stored = JSON.parse(s);
     const settings = { ...defaults, ...stored };
     settings.archiveTools = normalizeArchiveToolSettings(stored.archiveTools);
+    const masterEnabled = stored.fileDialogIntegrationEnabled === true;
+    if (!Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationExplorer')
+      && !Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationFileDialog')) {
+      settings.fileDialogIntegrationExplorer = masterEnabled;
+      settings.fileDialogIntegrationFileDialog = masterEnabled;
+    } else {
+      settings.fileDialogIntegrationExplorer = stored.fileDialogIntegrationExplorer === true;
+      settings.fileDialogIntegrationFileDialog = stored.fileDialogIntegrationFileDialog === true;
+    }
+    settings.fileDialogIntegrationEnabled = settings.fileDialogIntegrationExplorer || settings.fileDialogIntegrationFileDialog;
     const legacySource = String(stored.updateSource || '').trim();
     if (!stored.updateSourceMode && legacySource) {
       if (/^https?:\/\/github\.com\//i.test(legacySource)) {
@@ -1005,7 +1049,12 @@ function startFileWatch() {
         return changedPaths.includes(windowsPathKey(String(path).replace(/[\\/]+$/, '')));
       };
       if (G._watchDebounce) clearTimeout(G._watchDebounce);
+      const debounceNavigationToken = _navigationToken;
       G._watchDebounce = setTimeout(async () => {
+        // A navigation that started while this debounce was pending already
+        // renders the freshest state; refreshing the stale path here would
+        // bump the navigation token and silently cancel it.
+        if (debounceNavigationToken !== _navigationToken) return;
         const tab = getTab();
         const refreshes = [];
         if (tab?.path && isAffected(tab.path)) refreshes.push(navigateTo(tab.path, false));
@@ -1022,6 +1071,7 @@ function startFileWatch() {
     if (document.hidden) return;
     const tab = getTab();
     if (!tab || !tab.entries) return;
+    const listingNavigationToken = _navigationToken;
     try {
       const entries = await call("list_dir", { path: tab.path, filter: "" });
       let snap = "";
@@ -1031,6 +1081,10 @@ function startFileWatch() {
       }
       if (G._watchSnapshot && snap !== G._watchSnapshot) {
         G._watchSnapshot = snap;
+        // The listing raced with a navigation started while it was in flight.
+        // Navigating to the pre-listing path now would cancel the newer
+        // navigation and leave the view stuck on the old folder.
+        if (listingNavigationToken !== _navigationToken) return;
         await navigateTo(tab.path, false);
       } else {
         G._watchSnapshot = snap;

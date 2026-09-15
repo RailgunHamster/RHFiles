@@ -1706,6 +1706,20 @@ mod compression_tests {
     }
 }
 
+fn is_cancelled_share_status(code: u32, message: &str) -> bool {
+    matches!(
+        code,
+        0x8000_4004 | // E_ABORT
+        0x8007_04C7 | // HRESULT_FROM_WIN32(ERROR_CANCELLED)
+        0x8001_0108 | // RPC_E_DISCONNECTED
+        0x8001_0111 | // RPC_E_CALL_CANCELED
+        0x8000_000B
+    ) || {
+        let lower = message.to_ascii_lowercase();
+        lower.contains("cancel") || lower.contains("abort") || lower.contains("user dismissed")
+    }
+}
+
 fn validate_share_paths(paths: &[String]) -> Result<Vec<(PathBuf, bool)>, String> {
     if paths.is_empty() {
         return Err("No files or folders were selected for sharing".to_string());
@@ -1825,14 +1839,27 @@ fn show_windows_share_ui(window: tauri::WebviewWindow, paths: Vec<String>) -> Re
         .map_err(|error| format!("Could not prepare the Windows share data: {error}"))?;
     if let Err(error) = unsafe { interop.ShowShareUIForWindow(hwnd) } {
         let _ = manager.RemoveDataRequested(token);
+        if is_cancelled_share_status(error.code().0 as u32, &error.to_string()) {
+            return Ok(());
+        }
         return Err(format!("Could not open the Windows share panel: {error}"));
     }
 
-    let setup = setup_rx
-        .recv_timeout(Duration::from_secs(15))
-        .map_err(|error| format!("Windows did not request the share data: {error}"))?;
+    let setup = match setup_rx.recv_timeout(Duration::from_secs(15)) {
+        Ok(setup) => setup,
+        Err(error) => {
+            let _ = manager.RemoveDataRequested(token);
+            if is_cancelled_share_status(0, &error.to_string()) {
+                return Ok(());
+            }
+            return Err(format!("Windows did not request the share data: {error}"));
+        }
+    };
     if let Err(error) = setup {
         let _ = manager.RemoveDataRequested(token);
+        if is_cancelled_share_status(0, &error) {
+            return Ok(());
+        }
         return Err(format!(
             "Could not prepare the selected items for sharing: {error}"
         ));
@@ -1895,5 +1922,12 @@ mod share_tests {
         let error = validate_share_paths(&[path.to_string_lossy().into_owned()])
             .expect_err("missing share path should fail");
         assert!(error.contains("Cannot share"));
+    }
+
+    #[test]
+    fn share_cancel_status_is_not_a_failure() {
+        assert!(is_cancelled_share_status(0x8007_04C7, ""));
+        assert!(is_cancelled_share_status(0, "The operation was canceled"));
+        assert!(!is_cancelled_share_status(0, "Cannot share C:\\missing.txt"));
     }
 }

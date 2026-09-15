@@ -94,15 +94,19 @@ async function deleteSelected(isRight) {
   const message = sel.length === 1
     ? t('confirm.deleteItem', {name: sel[0].name})
     : t('confirm.deleteItems', {count: sel.length});
-  let confirmed = false;
-  try {
-    confirmed = await showConfirmDialog({
-      title: t('confirm.deleteTitle'),
-      message,
-      detail: t('confirm.recycleBinHint'),
-      confirmLabel: t('btn.delete'),
-    });
-  } finally {
+  let confirmed = true;
+  if (G.settings.confirmRecycleDelete !== false) {
+    try {
+      confirmed = await showConfirmDialog({
+        title: t('confirm.deleteTitle'),
+        message,
+        detail: t('confirm.recycleBinHint'),
+        confirmLabel: t('btn.delete'),
+      });
+    } finally {
+      _deleteRequestActive = false;
+    }
+  } else {
     _deleteRequestActive = false;
   }
   if (!confirmed) return;
@@ -223,15 +227,34 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
     const newName = input.value.trim();
     if (!input.isConnected) return;
     input.replaceWith(nameEl);
-    nameEl.textContent = esc(file.name);
+    nameEl.textContent = file.name;
     if (!newName || newName === origName) return;
     try {
       const oldPath = file.path;
-      await call("rename_file", { path: oldPath, newName });
-      const newPath = oldPath.split("\\").slice(0, -1).join("\\") + "\\" + newName;
+      const parent = parentFolderPath(oldPath);
+      const destPath = joinFolderPath(parent, newName);
+      let finalName = newName;
+      if (windowsPathKey(oldPath) !== windowsPathKey(destPath)) {
+        const pane = isRight ? G.rp : getTab();
+        const existingNames = new Set((pane?.entries || []).map(entry => fileNameKey(entry.name)));
+        const exists = existingNames.has(fileNameKey(newName)) || await call('path_exists', { path: destPath });
+        if (exists) {
+          const action = await new Promise(resolve => {
+            showConflictDialog(origName, newName, oldPath, destPath, (choice) => resolve(choice));
+          });
+          if (action === 'cancel' || action === 'skip') return;
+          if (action === 'rename') {
+            finalName = await allocateUniqueName(parent, newName, existingNames);
+          } else if (action === 'replace') {
+            try { await call('delete_file', { path: destPath }); } catch (error) {}
+          }
+        }
+      }
+      await call("rename_file", { path: oldPath, newName: finalName });
+      const newPath = joinFolderPath(parent, finalName);
       trackRename(oldPath, newPath);
       await refresh();
-    } catch (e) { alert(t('alert.renameFailed')); }
+    } catch (e) { alert(t('alert.renameFailed', { error: e })); }
   };
   const cancel = async () => {
     if (done) return; done = true;
@@ -357,6 +380,11 @@ async function pasteWindowsFileClipboard(destPath, isRight, tabId) {
     if (result?.aborted) cancelOperationTask(taskId);
     else completeOperationTask(taskId);
   } catch (error) {
+    if (isBenignUserCancel(error) || isSamePathTransferError(error)) {
+      await refreshPastedFolder(destPath, !!isRight, tabId);
+      completeOperationTask(taskId);
+      return;
+    }
     failOperationTask(taskId, error);
     alert(t('alert.pasteFailed', { error }));
   }
@@ -421,13 +449,14 @@ async function paste(isRight) {
       const srcPath = sources[sourceIndex];
       const srcName = srcPath.split(/[\\/]/).pop();
       const destFullPath = joinFolderPath(destPath, srcName);
-      if (windowsPathKey(srcPath) === windowsPathKey(destFullPath)) {
-        if (clipboard.op === 'cut') clipboard.paths.delete(srcPath);
+      const sameTarget = windowsPathKey(srcPath) === windowsPathKey(destFullPath);
+      if (sameTarget && clipboard.op === 'cut') {
+        clipboard.paths.delete(srcPath);
         continue;
       }
-      const conflict = existingNames.has(fileNameKey(srcName)) || await call('path_exists', { path:destFullPath });
-      let action = 'replace';
-      if (conflict) {
+      const conflict = sameTarget || existingNames.has(fileNameKey(srcName)) || await call('path_exists', { path:destFullPath });
+      let action = sameTarget ? 'rename' : 'replace';
+      if (conflict && !sameTarget) {
         if (applyAllAction) {
           action = applyAllAction;
         } else {
@@ -449,7 +478,7 @@ async function paste(isRight) {
         break;
       }
       const targetName = action === 'rename'
-        ? generateUniqueName(destPath, srcName, existingNames)
+        ? await allocateUniqueName(destPath, srcName, existingNames)
         : srcName;
       const targetPath = joinFolderPath(destPath, targetName);
       const overwrites = conflict && action === 'replace';
@@ -489,6 +518,27 @@ async function paste(isRight) {
           userCancelled = true;
           break;
         }
+        if (isSamePathTransferError(error) && clipboard.op === 'copy') {
+          try {
+            const fallbackName = await allocateUniqueName(destPath, srcName, existingNames);
+            const fallbackPath = joinFolderPath(destPath, fallbackName);
+            await call("copy_with_progress", {
+              src: srcPath,
+              dest: destPath,
+              overwrite: false,
+              targetName: fallbackName,
+              operationId: taskId,
+            });
+            trackCopy(srcPath, fallbackPath);
+            existingNames.add(fileNameKey(fallbackName));
+            continue;
+          } catch (retryError) {
+            if (isSamePathTransferError(retryError) || isBenignUserCancel(retryError)) continue;
+            errors.push(srcName + ': ' + String(retryError));
+            continue;
+          }
+        }
+        if (isSamePathTransferError(error) || isBenignUserCancel(error)) continue;
         errors.push(srcName + ': ' + String(error));
       }
     }
@@ -652,7 +702,17 @@ function copyPathFromMenu(path) {
 function shareSelection(files) {
   const paths = (files || []).map(file => file?.path).filter(Boolean);
   if (!paths.length) return false;
-  return runContextCommand('share_files', { paths }, t('ctx.share'));
+  return shareFiles(paths);
+}
+
+async function shareFiles(paths) {
+  showNotice(t('status.processingAction', { name: t('ctx.share') }));
+  try {
+    await call('share_files', { paths });
+  } catch (error) {
+    if (isBenignUserCancel(error)) return;
+    alert(t('alert.actionFailed', { name: t('ctx.share'), error }));
+  }
 }
 
 function copySelectedPaths(isRight) {
@@ -1244,6 +1304,7 @@ function showTabContextMenu(x, y, tabId, isRight) {
     { label: t('tab.duplicate'), icon: 'duplicate', action: () => duplicateTab(tabId, isRight) },
     { label: '-' },
     { label: t('tab.close'), icon: 'close', shortcut: 'Ctrl+W', action: () => closeTab(tabId, isRight), disabled: tabs.length <= 1 },
+    { label: t('tab.reopen'), icon: 'duplicate', shortcut: 'Ctrl+Shift+T', action: restoreClosedTab, disabled: !(G.closedTabs && G.closedTabs.length) },
     { label: t('tab.closeOthers'), icon: 'close', action: () => closeOtherTabs(tabId, isRight), disabled: !hasClosableOthers },
     { label: t('tab.closeRight'), icon: 'close', action: () => closeTabsToRight(tabId, isRight), disabled: index < 0 || !hasClosableRight },
     { label: '-' },
@@ -1529,7 +1590,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
       }
 
       const targetName = conflictAction === 'rename'
-        ? generateUniqueName(destination, sourceName, existingNames)
+        ? await allocateUniqueName(destination, sourceName, existingNames)
         : sourceName;
       const targetPath = joinFolderPath(destination, targetName);
       const overwrites = conflict && conflictAction === 'replace';

@@ -27,6 +27,9 @@
 
   async function test(name, fn) {
     currentSuite = name;
+    // Surface progress through the window title so external watchdogs can see
+    // which test is running (or hung) even when the window is hidden.
+    document.title = "RHFiles ▸ " + name;
     try {
       await fn();
       results.push({ name, status: "PASS" });
@@ -35,6 +38,28 @@
       results.push({ name, status: "FAIL", error: e.message });
       log("FAIL: " + name + " — " + e.message);
     }
+    writeProgress(name);
+  }
+
+  // Incrementally persist partial progress through the raw IPC channel so an
+  // external watcher can see the last finished test while the suite is still
+  // running. Uses the unwrapped invoke on purpose: tests routinely replace the
+  // global call() with mocks that must not observe or record these writes.
+  function writeProgress(current) {
+    const rawInvoke = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) ||
+      (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
+    if (!rawInvoke) return;
+    try {
+      const passed = results.filter(r => r.status === "PASS").length;
+      const failed = results.filter(r => r.status === "FAIL").length;
+      rawInvoke("write_test_results", {
+        results: JSON.stringify({
+          passed, failed, total: results.length,
+          partial: true, running: current,
+          results, version: "progress",
+        }),
+      }).catch(() => {});
+    } catch (e) {}
   }
 
   function $(sel) { return document.querySelector(sel); }
@@ -343,6 +368,20 @@
       closeTab(lastTabId);
       await sleep(300);
       assertEqual(G.tabs.length, initialCount - 1, "Tab count after closeTab");
+    });
+
+    await test("[tabs] Ctrl+Shift+T restores the last closed tab", async () => {
+      const startCount = G.tabs.length;
+      const restoredPath = getTab().path || 'C:\\';
+      addTab(restoredPath, false);
+      await sleep(50);
+      const closedId = G.tabs[G.tabs.length - 1].id;
+      closeTab(closedId, false);
+      assertEqual(G.tabs.length, startCount, "Closed tab was not removed before restore");
+      restoreClosedTab();
+      assertEqual(G.tabs.length, startCount + 1, "Closed tab was not restored");
+      assertEqual(getTab().path, restoredPath, "Restored tab opened the wrong folder");
+      closeTab(getTab().id, false);
     });
 
     await test("[tabs] Switch tab changes active tab", async () => {
@@ -1101,6 +1140,9 @@
       const checkbox = $("#settings-preview-default");
       assert(checkbox, "Preview default-open setting is missing");
       assertEqual(checkbox.checked, G.settings.previewDefaultOpen !== false, "Preview setting state is out of sync");
+      const deleteConfirm = $("#settings-confirm-delete");
+      assert(deleteConfirm, "Delete-confirmation setting is missing");
+      assertEqual(deleteConfirm.checked, G.settings.confirmRecycleDelete !== false, "Delete-confirmation setting state is out of sync");
       assert($("#settings-global-search"), "Global-search enable setting is missing");
       assert($("#settings-auto-update"), "Automatic-update setting is missing");
       assert($("#settings-proxy-enabled"), "Proxy enable setting is missing");
@@ -1124,9 +1166,13 @@
       );
       switchSettingsSection('integration', false);
       assert($("#settings-integration-enabled"), "Windows integration enable setting is missing");
+      assert($("#settings-integration-explorer"), "File Explorer integration setting is missing");
+      assert($("#settings-integration-file-dialog"), "Windows file-dialog integration setting is missing");
       assert($("#settings-integration-shortcut"), "Windows integration shortcut display is missing");
       assert($("#settings-integration-status"), "Windows integration status is missing");
       assertEqual($("#settings-integration-enabled").checked, G.settings.fileDialogIntegrationEnabled === true, "Windows integration setting state is out of sync");
+      assertEqual($("#settings-integration-explorer").checked, G.settings.fileDialogIntegrationExplorer === true, "Explorer integration setting is out of sync");
+      assertEqual($("#settings-integration-file-dialog").checked, G.settings.fileDialogIntegrationFileDialog === true, "File-dialog integration setting is out of sync");
       const sampleFailure = {
         category:'locked',
         message:'Apply error: running processes prevented the update',
@@ -1159,10 +1205,14 @@
 
     await test("[integration] File-dialog picker stays opt-in and publishes every open location", async () => {
       const savedEnabled = G.settings.fileDialogIntegrationEnabled;
+      const savedExplorer = G.settings.fileDialogIntegrationExplorer === true;
+      const savedDialog = G.settings.fileDialogIntegrationFileDialog === true;
       const savedLanguage = _lang;
       const savedPickerState = await call('get_file_dialog_picker_state').catch(() => ({compact:false}));
       try {
         G.settings.fileDialogIntegrationEnabled = false;
+        G.settings.fileDialogIntegrationExplorer = false;
+        G.settings.fileDialogIntegrationFileDialog = false;
         _lang = 'zh';
         assert(String(fileDialogIntegrationLocale()).toLowerCase().startsWith('zh'), "Integration picker did not follow the active UI language");
         assertEqual(activeIntegrationFolder(), getTab().path === 'home://' ? null : getTab().path, "Integration did not resolve the active pane folder");
@@ -1175,6 +1225,13 @@
         assertEqual(status.locationCount, locations.length, "Integration status did not report all open locations");
         assert(Array.isArray(status.supportedTargets) && status.supportedTargets.includes('windowsFileDialog'), "Windows file dialogs are not advertised as a supported target");
         assert(status.supportedTargets.includes('windowsExplorer'), "Windows Explorer is not advertised as a supported target");
+        const saved = localStorage.getItem('rhfiles-settings');
+        localStorage.setItem('rhfiles-settings', JSON.stringify({ fileDialogIntegrationEnabled: true }));
+        const migrated = loadSettings();
+        assertEqual(migrated.fileDialogIntegrationExplorer, true, "Legacy integration setting did not enable Explorer");
+        assertEqual(migrated.fileDialogIntegrationFileDialog, true, "Legacy integration setting did not enable file dialogs");
+        if (saved == null) localStorage.removeItem('rhfiles-settings');
+        else localStorage.setItem('rhfiles-settings', saved);
         const currentFolder = activeIntegrationFolder();
         if (currentFolder) {
           assertEqual(
@@ -1191,14 +1248,20 @@
         _lang = savedLanguage;
         await call('set_file_dialog_picker_compact', {compact:savedPickerState?.compact === true}).catch(() => {});
         G.settings.fileDialogIntegrationEnabled = savedEnabled;
+        G.settings.fileDialogIntegrationExplorer = savedExplorer;
+        G.settings.fileDialogIntegrationFileDialog = savedDialog;
         await syncFileDialogIntegration(true).catch(() => {});
       }
     });
 
     await test("[integration] Enabling the companion keeps native IPC responsive", async () => {
       const savedEnabled = G.settings.fileDialogIntegrationEnabled;
+      const savedExplorer = G.settings.fileDialogIntegrationExplorer === true;
+      const savedDialog = G.settings.fileDialogIntegrationFileDialog === true;
       try {
         G.settings.fileDialogIntegrationEnabled = true;
+        G.settings.fileDialogIntegrationExplorer = true;
+        G.settings.fileDialogIntegrationFileDialog = true;
         const status = await withTimeout(
           syncFileDialogIntegration(true),
           8000,
@@ -1217,9 +1280,13 @@
         assertEqual(label, G.windowLabel, "Window IPC returned the wrong label after enabling integration");
       } finally {
         G.settings.fileDialogIntegrationEnabled = false;
+        G.settings.fileDialogIntegrationExplorer = false;
+        G.settings.fileDialogIntegrationFileDialog = false;
         await withTimeout(syncFileDialogIntegration(true), 5000, 'Disabling Windows integration timed out').catch(() => {});
         G.settings.fileDialogIntegrationEnabled = savedEnabled;
-        if (savedEnabled) {
+        G.settings.fileDialogIntegrationExplorer = savedExplorer;
+        G.settings.fileDialogIntegrationFileDialog = savedDialog;
+        if (savedEnabled || savedExplorer || savedDialog) {
           await withTimeout(syncFileDialogIntegration(true), 5000, 'Restoring Windows integration timed out').catch(() => {});
         }
       }
@@ -1774,6 +1841,50 @@
       }
     });
 
+    await test("[delete] Turning off confirmation deletes immediately, permanent delete still asks", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      const savedConfirmSetting = G.settings.confirmRecycleDelete;
+      const savedRefresh = refresh;
+      const originalConfirm = showConfirmDialog;
+      const originalCall = call;
+      let confirmCalls = 0;
+      let recycleDeleteCalls = 0;
+      try {
+        G.settings.confirmRecycleDelete = false;
+        refresh = async () => {};
+        tab.entries = [
+          {name:'quiet.txt', path:'C:\\quiet.txt', extension:'txt', is_dir:false},
+        ];
+        tab.sel = new Set([0]);
+        tab.lastIdx = 0;
+        G.lastActivePane = 'left';
+        showConfirmDialog = async () => { confirmCalls++; return true; };
+        call = async command => {
+          if (command === 'delete_files') recycleDeleteCalls++;
+          return {deleted:[], errors:[]};
+        };
+        await deleteSelected(false);
+        assertEqual(confirmCalls, 0, "Recycle-bin delete asked for confirmation despite the setting being off");
+        assertEqual(recycleDeleteCalls, 1, "Recycle-bin delete did not run without confirmation");
+        let permanentConfirmCalls = 0;
+        showConfirmDialog = async () => { permanentConfirmCalls++; return permanentConfirmCalls === 1; };
+        await deleteSelectedPermanently(false);
+        assertEqual(permanentConfirmCalls, 2, "Permanent delete skipped its always-on confirmations");
+      } finally {
+        G.settings.confirmRecycleDelete = savedConfirmSetting;
+        refresh = savedRefresh;
+        showConfirmDialog = originalConfirm;
+        call = originalCall;
+        _deleteRequestActive = false;
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
+    });
+
     await test("[delete] Permanent Delete requires two confirmations", async () => {
       const tab = getTab();
       const savedEntries = tab.entries;
@@ -2242,18 +2353,24 @@
     });
 
     await test("[ctxmenu] Windows sharing forwards every selected path", async () => {
-      const originalRunContextCommand = runContextCommand;
+      const originalCall = call;
       let request = null;
       try {
-        runContextCommand = (command, args) => { request = {command, args}; return true; };
-        shareSelection([
+        call = async (command, args) => {
+          request = {command, args};
+          // Never invoke the real share backend here: it opens the Windows
+          // share panel or alerts, which blocks the hidden test window.
+          if (command === 'share_files') return null;
+          return originalCall(command, args);
+        };
+        await shareSelection([
           {path:'C:\\share\\one.txt'},
           {path:'C:\\share\\two.txt'},
         ]);
         assertEqual(request?.command, 'share_files', "Share did not use the Windows sharing command");
         assertEqual(request?.args?.paths?.length, 2, "Share dropped part of the multi-selection");
       } finally {
-        runContextCommand = originalRunContextCommand;
+        call = originalCall;
       }
     });
 
@@ -2359,6 +2476,22 @@
     await test("[toolbar] Path input shows current path", async () => {
       const input = $("#path-input");
       assert(input, "#path-input not found");
+      assertEqual(input.getAttribute('autocomplete'), 'off', "Address bar still uses web-style autocomplete");
+      assert($("#address-suggest"), "Address-bar suggestion list is missing");
+      const split = splitAddressQuery('C:\\Users\\Adm');
+      assertEqual(split.parent, 'C:\\Users\\', "Address query parent is wrong");
+      assertEqual(split.prefix, 'Adm', "Address query prefix is wrong");
+      assertEqual(normalizeWindowsPathInput('D:'), 'D:\\', "Bare drive letter stayed drive-relative");
+      assertEqual(normalizeWindowsPathInput('d:\\\\'), 'd:\\', "Drive root with doubled separators was not normalized");
+      const suggestions = filterAddressSuggestions(
+        'C:\\Users\\A',
+        ['C:\\Users\\Admin-Docs', 'C:\\Windows', 'D:\\Projects'],
+        ['C:\\Users\\Administrator', 'C:\\Users\\Public'],
+      );
+      assert(suggestions.some(item => item.kind === 'history' && /admin-docs/i.test(item.path)), "Address history suggestion is missing");
+      assert(suggestions.some(item => item.kind === 'folder' && /Administrator/i.test(item.path)), "Address folder completion is missing");
+      assert(!suggestions.some(item => item.path === 'C:\\Windows'), "Unrelated history leaked into address suggestions");
+      assert(!suggestions.some(item => /Public/i.test(item.path)), "Unrelated child folder leaked into address suggestions");
       const tab = getTab();
       if (tab.path !== "home://") {
         assertEqual(input.value, tab.path, "Path input value mismatch");
@@ -2651,6 +2784,63 @@
       );
     });
 
+    await test("[conflict] allocateUniqueName skips names that already exist on disk", async () => {
+      const originalCall = call;
+      try {
+        call = async (command, args) => {
+          if (command === 'path_exists') return args.path.endsWith('file (1).txt');
+          return originalCall(command, args);
+        };
+        assertEqual(await allocateUniqueName('C:\\Test', 'file.txt', new Set(['file.txt'])), 'file (2).txt', "Unique rename did not skip an on-disk collision");
+      } finally {
+        call = originalCall;
+      }
+    });
+
+    await test("[conflict] Same-folder copy auto-renames instead of erroring", async () => {
+      const originalCall = call;
+      const originalClipboard = G.clipboard;
+      const originalAlert = alert;
+      const originalRefresh = refresh;
+      const tab = getTab();
+      const savedPath = tab.path;
+      const savedEntries = tab.entries;
+      let copiedAs = null;
+      try {
+        alert = () => { throw new Error('same-path paste should not alert'); };
+        refresh = async () => {};
+        tab.path = 'C:\\SamePaste';
+        tab.entries = [{ name: 'file.txt', path: 'C:\\SamePaste\\file.txt' }];
+        G.clipboard = { op: 'copy', paths: new Set(['C:\\SamePaste\\file.txt']), sequence: 0 };
+        call = async (command, args) => {
+          if (command === 'path_exists') return args.path === 'C:\\SamePaste\\file.txt';
+          if (command === 'list_dir') return tab.entries;
+          if (command === 'copy_with_progress') {
+            copiedAs = args.targetName;
+            return null;
+          }
+          if (command === 'get_windows_file_clipboard_info') return { sequence: 0, hasFiles: true };
+          return originalCall(command, args);
+        };
+        await paste(false);
+        assertEqual(copiedAs, 'file (1).txt', "Copying a file onto itself did not keep both");
+      } finally {
+        call = originalCall;
+        alert = originalAlert;
+        refresh = originalRefresh;
+        G.clipboard = originalClipboard;
+        tab.path = savedPath;
+        tab.entries = savedEntries;
+      }
+    });
+
+    await test("[share] Cancelling the Windows share sheet is not an error", async () => {
+      assert(isBenignUserCancel('Could not open the Windows share panel: 0x800704C7'), "Share cancel HRESULT was treated as a failure");
+      assert(isBenignUserCancel('Windows did not request the share data: canceled'), "Share cancel text was treated as a failure");
+      assert(!isBenignUserCancel('Cannot share C:\\missing.txt: The system cannot find the file specified'), "A missing share path was hidden as a cancel");
+      assert(isSamePathTransferError('Source and destination are the same'), "Same-path paste error was not recognized");
+    });
+
     // ================================================================
     // SECTION 21: TOAST NOTIFICATIONS
     // ================================================================
@@ -2769,6 +2959,7 @@
       assert(DEFAULT_SHORTCUTS['file.deletePermanently']?.includes('Shift+Delete'), "Missing Shift+Delete permanent-delete shortcut");
       assert(DEFAULT_SHORTCUTS['file.toggleFavorite']?.includes('Ctrl+D'), "Missing Ctrl+D favorite shortcut");
       assert(DEFAULT_SHORTCUTS['tab.new'], "Missing tab.new shortcut");
+      assert(DEFAULT_SHORTCUTS['tab.reopen']?.includes('Ctrl+Shift+T'), "Missing Ctrl+Shift+T reopen-tab shortcut");
       assert(DEFAULT_SHORTCUTS['tab.next']?.includes('Ctrl+Tab'), "Missing Ctrl+Tab shortcut");
       assert(DEFAULT_SHORTCUTS['tab.previous']?.includes('Ctrl+Shift+Tab'), "Missing Ctrl+Shift+Tab shortcut");
       assert(DEFAULT_SHORTCUTS['typeSearch.next']?.includes('Alt+]'), "Missing configurable Alt+] next-match shortcut");
@@ -3356,6 +3547,7 @@
     });
 
     log("=== GUI Test Suite End ===");
+    document.title = "RHFiles";
     const passed = results.filter(r => r.status === "PASS").length;
     const failed = results.filter(r => r.status === "FAIL").length;
     log("Results: " + passed + " passed, " + failed + " failed, " + results.length + " total");
@@ -3386,7 +3578,7 @@
       log("Tauri event listen not available");
     }
 
-    // Auto-run: check trigger via Rust command
+      // Auto-run: check trigger via Rust command
     setTimeout(async () => {
       try {
         const val = await call("get_env", { key: "RHFILES_AUTORUN_TESTS" });

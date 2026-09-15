@@ -38,7 +38,8 @@
     <div class="address-bar" id="address-bar">
       <div id="breadcrumb" class="breadcrumb"></div>
       <div id="bc-dropdown" class="bc-dropdown"></div>
-      <input type="text" id="path-input" spellcheck="false">
+      <input type="text" id="path-input" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" aria-autocomplete="list" aria-controls="address-suggest">
+      <div id="address-suggest" class="address-suggest" hidden role="listbox" aria-label="Path suggestions"></div>
       <button class="address-favorite" id="btn-favorite-current" onclick="toggleCurrentFolderFavorite(false, event)" title="Add current folder to Favorites" aria-label="Add current folder to Favorites">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.7l1.9 3.85 4.25.62-3.08 3 0.73 4.23L8 11.4l-3.8 2 .73-4.23-3.08-3 4.25-.62L8 1.7z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
       </button>
@@ -302,7 +303,8 @@
             <div class="address-bar pane-address" id="right-address-bar">
               <div id="right-breadcrumb" class="breadcrumb"></div>
               <div id="right-bc-dropdown" class="bc-dropdown"></div>
-              <input type="text" id="right-path-input" spellcheck="false">
+              <input type="text" id="right-path-input" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" aria-autocomplete="list" aria-controls="right-address-suggest">
+              <div id="right-address-suggest" class="address-suggest" hidden role="listbox" aria-label="Path suggestions"></div>
               <button class="address-favorite" id="btn-right-favorite" onclick="toggleCurrentFolderFavorite(true, event)" title="Add current folder to Favorites" aria-label="Add current folder to Favorites">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.7l1.9 3.85 4.25.62-3.08 3 0.73 4.23L8 11.4l-3.8 2 .73-4.23-3.08-3 4.25-.62L8 1.7z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
               </button>

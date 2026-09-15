@@ -8,6 +8,7 @@ const pickerText = {
     window: 'RHFiles 窗口 {number}', empty: '没有可用的文件夹', emptyHint: '请先在 RHFiles 中打开本地或网络文件夹',
     failed: '跳转失败：{error}', collapse: '收起（仅显示路径）', expand: '展开详细信息',
     hide: '暂时隐藏', disable: '关闭此功能（可在设置中重新开启）', openInRhfiles: '在 RHFiles 里打开',
+    preview: '选中文件预览', noPreview: '没有可预览的文件',
   },
   en: {
     title: 'Open RHFiles locations', subtitle: 'Choose where this Windows window should go', click: 'Click to navigate',
@@ -15,8 +16,12 @@ const pickerText = {
     window: 'RHFiles window {number}', empty: 'No folder is available', emptyHint: 'Open a local or network folder in RHFiles first',
     failed: 'Navigation failed: {error}', collapse: 'Collapse to paths only', expand: 'Expand details',
     hide: 'Hide for now', disable: 'Turn off this feature (re-enable it in Settings)', openInRhfiles: 'Open in RHFiles',
+    preview: 'Selected file preview', noPreview: 'No file is selected',
   },
 };
+
+const previewImageExt = new Set(['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff','tif','heic','avif']);
+let previewRequest = 0;
 
 let pickerState = { locale: 'zh', locations: [], targetKind: '', targetPath: null, compact: false };
 
@@ -56,13 +61,14 @@ function renderPicker(state) {
   close.setAttribute('aria-label', tr('hide'));
   const openInRhfiles = document.getElementById('picker-open-rhfiles');
   const compactOpenInRhfiles = document.getElementById('picker-open-rhfiles-compact');
-  const canOpenInRhfiles = pickerState.targetKind === 'windowsExplorer';
+  const canOpenInRhfiles = pickerState.targetKind === 'windowsExplorer' || pickerState.targetKind === 'windowsFileDialog';
   openInRhfiles.hidden = !canOpenInRhfiles;
-  openInRhfiles.title = canOpenInRhfiles ? (pickerState.targetPath || tr('openInRhfiles')) : '';
+  openInRhfiles.title = canOpenInRhfiles ? (pickerState.selectedPath || pickerState.targetPath || tr('openInRhfiles')) : '';
   compactOpenInRhfiles.hidden = !canOpenInRhfiles;
   compactOpenInRhfiles.title = tr('openInRhfiles');
   compactOpenInRhfiles.setAttribute('aria-label', tr('openInRhfiles'));
   document.getElementById('picker-open-rhfiles-label').textContent = tr('openInRhfiles');
+  renderPickerPreview(pickerState);
 
   const list = document.getElementById('picker-list');
   list.replaceChildren();
@@ -131,8 +137,48 @@ document.getElementById('picker-compact').addEventListener('click', async () => 
     document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
   }
 });
+function renderPickerPreview(state) {
+  const preview = document.getElementById('picker-preview');
+  const visual = document.getElementById('picker-preview-visual');
+  const nameEl = document.getElementById('picker-preview-name');
+  const metaEl = document.getElementById('picker-preview-meta');
+  const pathEl = document.getElementById('picker-preview-path');
+  const selectedPath = state.selectionKind === 'file' ? state.selectedPath : '';
+  const show = state.targetKind === 'windowsFileDialog' && !!selectedPath && state.selectedIsDir !== true;
+  document.documentElement.classList.toggle('has-preview', show);
+  preview.hidden = !show;
+  if (!show) {
+    visual.replaceChildren();
+    nameEl.textContent = '';
+    metaEl.textContent = '';
+    pathEl.textContent = '';
+    return;
+  }
+  const selectedName = state.selectedName || basename(selectedPath);
+  nameEl.textContent = selectedName;
+  pathEl.textContent = selectedPath;
+  metaEl.textContent = tr('preview');
+  visual.innerHTML = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3.5h7.2L19 8.4V20.5H7V3.5Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><path d="M14 3.6V8.5h5" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/></svg>';
+  const token = ++previewRequest;
+  pickerInvoke('get_file_info', { path: selectedPath }).then(info => {
+    if (token !== previewRequest) return;
+    if (info?.sizeDisplay) metaEl.textContent = info.sizeDisplay;
+    else if (info?.size_display) metaEl.textContent = info.size_display;
+  }).catch(() => {});
+  const ext = String(selectedName.split('.').pop() || '').toLowerCase();
+  if (previewImageExt.has(ext)) {
+    pickerInvoke('get_thumbnail', { path: selectedPath, size: 128 }).then(b64 => {
+      if (token !== previewRequest || !b64) return;
+      const image = document.createElement('img');
+      image.alt = selectedName;
+      image.src = `data:image/png;base64,${b64}`;
+      visual.replaceChildren(image);
+    }).catch(() => {});
+  }
+}
+
 document.getElementById('picker-disable').addEventListener('click', () => {
-  pickerInvoke('disable_file_dialog_integration').catch(error => {
+  pickerInvoke('disable_file_dialog_integration', { targetKind: pickerState.targetKind }).catch(error => {
     document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
   });
 });

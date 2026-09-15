@@ -61,3 +61,24 @@ function generateUniqueName(destDir, name, existingNames) {
   }
   return candidate;
 }
+
+async function allocateUniqueName(destDir, name, existingNames) {
+  const used = new Set(Array.from(existingNames || [], fileNameKey));
+  used.add(fileNameKey(name));
+  let candidate = generateUniqueName(destDir, name, used);
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const fullPath = typeof joinFolderPath === 'function'
+      ? joinFolderPath(destDir, candidate)
+      : String(destDir || '').replace(/[\\/]+$/, '') + '\\' + candidate;
+    let exists = false;
+    try {
+      exists = await call('path_exists', { path: fullPath });
+    } catch (error) {
+      exists = false;
+    }
+    if (!exists) return candidate;
+    used.add(fileNameKey(candidate));
+    candidate = generateUniqueName(destDir, name, used);
+  }
+  return candidate;
+}

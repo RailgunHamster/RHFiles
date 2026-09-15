@@ -261,6 +261,80 @@ function toggleTabPinned(tabId, isRight) {
   saveTabState();
 }
 
+function snapshotClosedTab(tab, isRight, index) {
+  if (!tab) return null;
+  const history = [...(tab.history || [tab.path])];
+  const historyIdx = isRight
+    ? Math.max(0, Math.min(tab.histIdx ?? 0, history.length - 1))
+    : Math.max(0, Math.min(tab.historyIdx ?? 0, history.length - 1));
+  return {
+    isRight: !!isRight,
+    index: Math.max(0, index),
+    path: tab.path,
+    history,
+    historyIdx,
+    sortF: tab.sortF || 'name',
+    sortAsc: tab.sortAsc !== false,
+    pinned: tab.pinned === true,
+  };
+}
+
+function rememberClosedTab(tab, isRight, index) {
+  const snapshot = snapshotClosedTab(tab, isRight, index);
+  if (!snapshot) return;
+  G.closedTabs = Array.isArray(G.closedTabs) ? G.closedTabs : [];
+  G.closedTabs.push(snapshot);
+  if (G.closedTabs.length > 20) G.closedTabs.shift();
+}
+
+function restoreClosedTab() {
+  G.closedTabs = Array.isArray(G.closedTabs) ? G.closedTabs : [];
+  const snapshot = G.closedTabs.pop();
+  if (!snapshot) {
+    if (typeof showNotice === 'function') showNotice(t('notice.noClosedTab'));
+    return;
+  }
+  const isRight = snapshot.isRight === true && G.dualOn;
+  const tabs = isRight ? G.rpTabs : G.tabs;
+  const tab = {
+    id: isRight ? G.nextRpTabId++ : G.nextTabId++,
+    path: snapshot.path || 'C:\\',
+    history: [...(snapshot.history || [snapshot.path || 'C:\\'])],
+    entries: [],
+    sel: new Set(),
+    lastIdx: -1,
+    sortF: snapshot.sortF || 'name',
+    sortAsc: snapshot.sortAsc !== false,
+    pinned: snapshot.pinned === true,
+    _loaded: false,
+  };
+  if (isRight) tab.histIdx = Math.max(0, Math.min(snapshot.historyIdx ?? 0, tab.history.length - 1));
+  else tab.historyIdx = Math.max(0, Math.min(snapshot.historyIdx ?? 0, tab.history.length - 1));
+  const index = Math.min(Math.max(0, snapshot.index || 0), tabs.length);
+  tabs.splice(index, 0, tab);
+  if (isRight) {
+    G.activeRpTab = tab.id;
+    G.rp = tab;
+    G.lastActivePane = 'right';
+    renderRightTabs();
+    if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+    rpNavigateTo(tab.path, false);
+  } else {
+    hideTabPreview();
+    _navigationToken++;
+    G.activeTab = tab.id;
+    G.lastActivePane = 'left';
+    G.sortField = tab.sortF;
+    G.sortAsc = tab.sortAsc;
+    renderTabs();
+    _renderTabContent(tab);
+    updateSortArrows();
+    if (typeof updateSidebarSelection === 'function') updateSidebarSelection();
+    _refreshTabInBackground(tab);
+  }
+  saveTabState();
+}
+
 function closeTab(id, isRight) {
   if (isRight) return closeRightTab(id);
   if (G.tabs.length <= 1) return;
@@ -269,6 +343,7 @@ function closeTab(id, isRight) {
   saveCurrentTabState();
   const idx = G.tabs.findIndex(t => t.id === id);
   if (idx < 0) return;
+  rememberClosedTab(G.tabs[idx], false, idx);
   G.tabs.splice(idx, 1);
   if (G.activeTab === id) {
     G.activeTab = G.tabs[Math.min(idx, G.tabs.length-1)].id;
@@ -324,6 +399,7 @@ function closeRightTab(id) {
   if (G.rpTabs.length <= 1) return;
   const index = G.rpTabs.findIndex(tab => tab.id === id);
   if (index < 0) return;
+  rememberClosedTab(G.rpTabs[index], true, index);
   G.rpTabs.splice(index, 1);
   if (G.activeRpTab === id) {
     const tab = G.rpTabs[Math.min(index, G.rpTabs.length - 1)];
@@ -349,6 +425,9 @@ function closeOtherTabs(id, isRight) {
   const target = isRight ? getRightTab(id) : getTab(id);
   if (!target) return;
   const sourceTabs = isRight ? G.rpTabs : G.tabs;
+  sourceTabs.forEach((tab, index) => {
+    if (tab.id !== id && tab.pinned !== true) rememberClosedTab(tab, isRight, index);
+  });
   const keptTabs = tabsKeptAfterCloseOthers(sourceTabs, id);
   if (isRight) {
     G.rpTabs = keptTabs;
@@ -378,6 +457,9 @@ function closeTabsToRight(id, isRight) {
   if (index < 0 || index === tabs.length - 1) return;
   const removedIds = closableTabIdsToRight(tabs, id);
   if (!removedIds.size) return;
+  tabs.forEach((tab, tabIndex) => {
+    if (removedIds.has(tab.id)) rememberClosedTab(tab, isRight, tabIndex);
+  });
   const keptTabs = tabs.filter(tab => !removedIds.has(tab.id));
   if (isRight) G.rpTabs = keptTabs;
   else G.tabs = keptTabs;
@@ -839,6 +921,158 @@ function hideDropdown(dropdownId) {
   if (dropdown) dropdown.classList.remove("show");
 }
 
+function splitAddressQuery(query) {
+  const raw = String(query || '').replace(/\//g, '\\');
+  if (!raw.trim()) return { parent: '', prefix: '', trailingSep: false };
+  if (/^[A-Za-z]:\\?$/.test(raw.trim())) {
+    const drive = raw.trim().slice(0, 2) + '\\';
+    return { parent: drive, prefix: '', trailingSep: true };
+  }
+  const trailingSep = raw.endsWith('\\');
+  if (trailingSep) return { parent: raw, prefix: '', trailingSep: true };
+  const idx = raw.lastIndexOf('\\');
+  if (idx < 0) return { parent: '', prefix: raw, trailingSep: false };
+  return { parent: raw.slice(0, idx + 1), prefix: raw.slice(idx + 1), trailingSep: false };
+}
+
+function addressHistoryCandidates() {
+  const ordered = [];
+  const seen = new Set();
+  const push = (path) => {
+    const normalized = normalizeWindowsPathInput(String(path || ''));
+    if (!normalized || normalized.includes('://')) return;
+    const key = typeof windowsPathKey === 'function' ? windowsPathKey(normalized) : normalized.toLocaleLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    ordered.push(normalized);
+  };
+  const considerTab = (tab) => {
+    if (!tab) return;
+    const history = tab.history || [];
+    const idx = tab.historyIdx ?? tab.histIdx ?? history.length - 1;
+    for (let i = idx; i >= 0; i--) push(history[i]);
+    for (let i = idx + 1; i < history.length; i++) push(history[i]);
+    push(tab.path);
+  };
+  considerTab(typeof getTab === 'function' ? getTab() : null);
+  (G.tabs || []).forEach(considerTab);
+  (G.rpTabs || []).forEach(considerTab);
+  return ordered;
+}
+
+function filterAddressSuggestions(query, historyPaths, childFolders) {
+  const q = String(query || '').trim();
+  const qLower = q.toLocaleLowerCase();
+  const items = [];
+  const seen = new Set();
+  const keyOf = (path) => typeof windowsPathKey === 'function' ? windowsPathKey(path) : String(path || '').toLocaleLowerCase();
+  const add = (path, kind) => {
+    const normalized = normalizeWindowsPathInput(String(path || ''));
+    if (!normalized || normalized.includes('://')) return;
+    const key = keyOf(normalized);
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({ path: normalized, kind });
+  };
+  const { prefix } = splitAddressQuery(q);
+  const prefixLower = prefix.toLocaleLowerCase();
+  (childFolders || []).forEach(path => {
+    const name = String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+    if (!prefixLower || name.toLocaleLowerCase().startsWith(prefixLower)) add(path, 'folder');
+  });
+  (historyPaths || []).forEach(path => {
+    if (!qLower) {
+      add(path, 'history');
+      return;
+    }
+    if (String(path).toLocaleLowerCase().includes(qLower) || keyOf(path).includes(keyOf(q))) add(path, 'history');
+  });
+  return items.slice(0, 12);
+}
+
+function addressSuggestEl(isRight) {
+  return document.getElementById(isRight ? 'right-address-suggest' : 'address-suggest');
+}
+
+function hideAddressSuggestions(isRight) {
+  const el = addressSuggestEl(isRight);
+  if (!el) return;
+  el.hidden = true;
+  el.innerHTML = '';
+  el._items = [];
+  el._index = -1;
+}
+
+function renderAddressSuggestions(isRight, items, activeIndex) {
+  const el = addressSuggestEl(isRight);
+  if (!el) return;
+  const list = Array.isArray(items) ? items : [];
+  el._items = list;
+  el._index = list.length ? Math.max(-1, Math.min(activeIndex ?? -1, list.length - 1)) : -1;
+  if (!list.length) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = list.map((item, index) => {
+    const kind = item.kind === 'folder' ? t('address.suggestFolder') : t('address.suggestHistory');
+    return `<div class="address-suggest-item${index === el._index ? ' active' : ''}" role="option" data-index="${index}" aria-selected="${index === el._index ? 'true' : 'false'}"><span class="address-suggest-kind">${esc(kind)}</span><span class="address-suggest-path">${esc(item.path)}</span></div>`;
+  }).join('');
+  el.querySelectorAll('.address-suggest-item').forEach(node => {
+    node.addEventListener('mousedown', event => event.preventDefault());
+    node.addEventListener('click', () => {
+      const item = list[Number(node.dataset.index)];
+      if (item) applyAddressSuggestion(item.path, isRight);
+    });
+  });
+}
+
+async function refreshAddressSuggestions(query, isRight, token) {
+  const history = addressHistoryCandidates();
+  const { parent } = splitAddressQuery(query);
+  let childFolders = [];
+  if (parent && (/^[A-Za-z]:\\/.test(parent) || parent.startsWith('\\\\'))) {
+    try {
+      const listed = await listPathEntries(parent.replace(/\\+$/, '') || parent, '');
+      childFolders = (listed || []).filter(entry => entry.is_dir).map(entry => entry.path);
+    } catch (error) {}
+  }
+  try {
+    const recent = await call('db_load_recent', { mode: 'recent', limit: 30 });
+    (recent || []).forEach(item => {
+      if (item && item.isDir && item.path) history.push(item.path);
+    });
+  } catch (error) {}
+  const input = document.getElementById(isRight ? 'right-path-input' : 'path-input');
+  if (!input || token !== input._suggestToken) return;
+  renderAddressSuggestions(isRight, filterAddressSuggestions(query, history, childFolders), -1);
+}
+
+function moveAddressSuggestion(isRight, delta) {
+  const el = addressSuggestEl(isRight);
+  const items = el?._items || [];
+  if (!items.length) return;
+  const next = ((el._index ?? -1) + delta + items.length) % items.length;
+  renderAddressSuggestions(isRight, items, next);
+  el.querySelector('.address-suggest-item.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+function currentAddressSuggestion(isRight) {
+  const el = addressSuggestEl(isRight);
+  const items = el?._items || [];
+  if (!items.length || el._index < 0) return null;
+  return items[el._index] || null;
+}
+
+async function applyAddressSuggestion(path, isRight) {
+  const input = document.getElementById(isRight ? 'right-path-input' : 'path-input');
+  if (input) input.value = path;
+  hideAddressSuggestions(isRight);
+  await navigateAddressInput(path, isRight);
+  exitEditMode(isRight);
+}
+
 function enterEditMode(isRight) {
   const barId = isRight ? "right-address-bar" : "address-bar";
   const inputId = isRight ? "right-path-input" : "path-input";
@@ -849,6 +1083,8 @@ function enterEditMode(isRight) {
   input.style.display = "block";
   input.focus();
   input.select();
+  input._suggestToken = (input._suggestToken || 0) + 1;
+  refreshAddressSuggestions(input.value, isRight, input._suggestToken);
 }
 
 function exitEditMode(isRight) {
@@ -856,6 +1092,7 @@ function exitEditMode(isRight) {
   const inputId = isRight ? "right-path-input" : "path-input";
   const bar = document.getElementById(barId);
   const input = document.getElementById(inputId);
+  hideAddressSuggestions(isRight);
   bar.classList.remove("editing");
   input.style.display = "none";
   input.blur();
@@ -1013,7 +1250,7 @@ async function navigateTo(path, pushHistory) {
   const tab = getTab();
   const filterEl = document.getElementById("filter-input");
   if (filterEl && path !== tab.path) filterEl.value = "";
-  if (!(tab.entries || []).length) renderNavigationLoading(path, false);
+  if (!(tab.entries || []).length || path !== tab.path) renderNavigationLoading(path, false);
   try {
     let entries = await withTimeout(
       listPathEntries(path, ""),
@@ -1573,17 +1810,49 @@ document.addEventListener("DOMContentLoaded", () => {
   function setupEditInput(inputId, isRight) {
     const input = document.getElementById(inputId);
     if (!input) return;
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('autocapitalize', 'off');
     input.addEventListener("keydown", e => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        moveAddressSuggestion(isRight, 1);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        moveAddressSuggestion(isRight, -1);
+        return;
+      }
+      if (e.key === "Tab") {
+        const suggestion = currentAddressSuggestion(isRight);
+        if (suggestion) {
+          e.preventDefault();
+          input.value = suggestion.path;
+          hideAddressSuggestions(isRight);
+        }
+        return;
+      }
       if (e.key === "Enter") {
         e.preventDefault();
-        navigateAddressInput(input.value, isRight);
-        exitEditMode(isRight);
-        input.blur();
+        const suggestion = currentAddressSuggestion(isRight);
+        if (suggestion) applyAddressSuggestion(suggestion.path, isRight);
+        else {
+          navigateAddressInput(input.value, isRight);
+          exitEditMode(isRight);
+          input.blur();
+        }
       }
       if (e.key === "Escape") {
         exitEditMode(isRight);
         input.blur();
       }
+    });
+    input.addEventListener("input", () => {
+      input._suggestToken = (input._suggestToken || 0) + 1;
+      const token = input._suggestToken;
+      clearTimeout(input._suggestTimer);
+      input._suggestTimer = setTimeout(() => refreshAddressSuggestions(input.value, isRight, token), 80);
     });
     input.addEventListener("blur", () => exitEditMode(isRight));
   }

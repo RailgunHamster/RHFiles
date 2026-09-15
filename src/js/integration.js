@@ -70,15 +70,26 @@ function findFileDialogIntegrationTab(path, preferredPane, preferredIndex) {
   return null;
 }
 
-function openExplorerLocationInRhfiles(payload) {
+async function openExplorerLocationInRhfiles(payload) {
   const path = normalizeWindowsPathInput(String(payload?.path || ''));
   if (!path) return;
+  const selectPath = normalizeWindowsPathInput(String(payload?.selectPath || ''));
   const existing = findFileDialogIntegrationTab(path, payload?.pane, payload?.tabIndex);
   if (existing) {
-    if (existing.right) switchRightTab(existing.tab.id);
-    else switchTab(existing.tab.id);
+    if (existing.right) {
+      switchRightTab(existing.tab.id);
+      if (existing.tab.path !== path) await rpNavigateTo(path);
+      if (selectPath) selectNavigatedPath(selectPath, true);
+    } else {
+      switchTab(existing.tab.id);
+      if (existing.tab.path !== path) await navigateTo(path);
+      if (selectPath) selectNavigatedPath(selectPath, false);
+    }
   } else {
     addTab(path, false);
+    if (selectPath) {
+      Promise.resolve(navigateTo(path)).then(() => selectNavigatedPath(selectPath, false)).catch(() => {});
+    }
   }
   scheduleFileDialogIntegrationSync(true);
 }
@@ -91,10 +102,17 @@ function renderFileDialogIntegrationStatus() {
   }
   if (!statusElement) return;
 
-  const enabled = G.settings.fileDialogIntegrationEnabled === true;
+  const targets = currentIntegrationTargets();
+  const enabled = targets.explorer || targets.fileDialog;
   const status = G._fileDialogIntegrationStatus;
   const error = G._fileDialogIntegrationError;
   statusElement.classList.toggle('error', !!error);
+  const explorerBox = document.getElementById('settings-integration-explorer');
+  const dialogBox = document.getElementById('settings-integration-file-dialog');
+  const masterBox = document.getElementById('settings-integration-enabled');
+  if (explorerBox) explorerBox.checked = G.settings.fileDialogIntegrationExplorer === true;
+  if (dialogBox) dialogBox.checked = G.settings.fileDialogIntegrationFileDialog === true;
+  if (masterBox) masterBox.checked = enabled;
   if (error) {
     statusElement.textContent = t('settings.integrationStatusError', { error });
   } else if (!enabled) {
@@ -115,8 +133,11 @@ async function syncFileDialogIntegration(force = false) {
   if (!force && !document.hasFocus()) return G._fileDialogIntegrationStatus || null;
   const token = ++_fileDialogIntegrationRequestToken;
   try {
+    const targets = currentIntegrationTargets();
     const status = await call('configure_file_dialog_integration', {
-      enabled: G.settings.fileDialogIntegrationEnabled === true,
+      enabled: targets.explorer || targets.fileDialog,
+      explorerEnabled: targets.explorer,
+      fileDialogEnabled: targets.fileDialog,
       locations: fileDialogIntegrationLocations(),
       shortcuts: fileDialogIntegrationShortcuts(),
       locale: fileDialogIntegrationLocale(),
@@ -142,17 +163,44 @@ function scheduleFileDialogIntegrationSync(force = false) {
   }, 80);
 }
 
-async function setFileDialogIntegrationEnabled(enabled) {
-  G.settings.fileDialogIntegrationEnabled = !!enabled;
+function currentIntegrationTargets() {
+  const explorer = G.settings.fileDialogIntegrationExplorer === true;
+  const fileDialog = G.settings.fileDialogIntegrationFileDialog === true;
+  if (explorer || fileDialog) return { explorer, fileDialog };
+  const master = G.settings.fileDialogIntegrationEnabled === true;
+  return { explorer: master, fileDialog: master };
+}
+
+function applyFileDialogIntegrationFlags(explorerEnabled, fileDialogEnabled) {
+  G.settings.fileDialogIntegrationExplorer = !!explorerEnabled;
+  G.settings.fileDialogIntegrationFileDialog = !!fileDialogEnabled;
+  G.settings.fileDialogIntegrationEnabled = G.settings.fileDialogIntegrationExplorer || G.settings.fileDialogIntegrationFileDialog;
   saveSettings();
+}
+
+async function setFileDialogIntegrationEnabled(enabled) {
+  applyFileDialogIntegrationFlags(!!enabled, !!enabled);
   try {
     await syncFileDialogIntegration(true);
     showNotice(t(enabled ? 'notice.integrationEnabled' : 'notice.integrationDisabled'));
   } catch (error) {
-    G.settings.fileDialogIntegrationEnabled = false;
-    saveSettings();
-    const checkbox = document.getElementById('settings-integration-enabled');
-    if (checkbox) checkbox.checked = false;
+    applyFileDialogIntegrationFlags(false, false);
+  }
+  renderFileDialogIntegrationStatus();
+}
+
+async function setFileDialogIntegrationTarget(target, enabled) {
+  const previousExplorer = G.settings.fileDialogIntegrationExplorer === true;
+  const previousDialog = G.settings.fileDialogIntegrationFileDialog === true;
+  const explorer = target === 'explorer' ? !!enabled : previousExplorer;
+  const fileDialog = target === 'fileDialog' ? !!enabled : previousDialog;
+  applyFileDialogIntegrationFlags(explorer, fileDialog);
+  try {
+    await syncFileDialogIntegration(true);
+    if (enabled) showNotice(t('notice.integrationEnabled'));
+    else showNotice(t(target === 'explorer' ? 'notice.integrationExplorerDisabled' : 'notice.integrationFileDialogDisabled'));
+  } catch (error) {
+    applyFileDialogIntegrationFlags(previousExplorer, previousDialog);
   }
   renderFileDialogIntegrationStatus();
 }
@@ -180,11 +228,18 @@ if (fileDialogIntegrationListen) {
   fileDialogIntegrationListen('open-explorer-location-in-rhfiles', event => {
     openExplorerLocationInRhfiles(event.payload);
   }).catch(() => {});
+  fileDialogIntegrationListen('file-dialog-integration-changed', event => {
+    const payload = event.payload || {};
+    applyFileDialogIntegrationFlags(payload.explorerEnabled === true, payload.fileDialogEnabled === true);
+    renderFileDialogIntegrationStatus();
+    syncFileDialogIntegration(true).catch(() => {});
+    if (!document.hasFocus()) return;
+    if (!payload.enabled) showNotice(t('notice.integrationDisabled'));
+    else if (payload.targetKind === 'windowsExplorer') showNotice(t('notice.integrationExplorerDisabled'));
+    else if (payload.targetKind === 'windowsFileDialog') showNotice(t('notice.integrationFileDialogDisabled'));
+  }).catch(() => {});
   fileDialogIntegrationListen('file-dialog-integration-disabled', () => {
-    G.settings.fileDialogIntegrationEnabled = false;
-    saveSettings();
-    const checkbox = document.getElementById('settings-integration-enabled');
-    if (checkbox) checkbox.checked = false;
+    applyFileDialogIntegrationFlags(false, false);
     renderFileDialogIntegrationStatus();
     syncFileDialogIntegration(true).catch(() => {});
     if (document.hasFocus()) showNotice(t('notice.integrationDisabled'));

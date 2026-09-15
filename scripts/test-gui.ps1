@@ -57,8 +57,13 @@ while (((Get-Date) - $startTime) -lt $maxWait) {
         try {
             $content = Get-Content $resultFile -Raw
             if ($content -and $content.Trim() -ne "") {
-                $testResults = $content | ConvertFrom-Json
-                break
+                $candidate = $content | ConvertFrom-Json
+                # The harness streams partial progress into the same file while
+                # the suite is still running; only a final report ends the wait.
+                if (-not $candidate.partial) {
+                    $testResults = $candidate
+                    break
+                }
             }
         } catch {}
     }

@@ -1292,6 +1292,18 @@ fn transfer_with_progress(
     };
     let target = destination_path.join(&resolved_name);
     if paths_resolve_to_same_entry(&source_path, &target) {
+        if operation == "move" {
+            emit_initial_operation(
+                app,
+                &operation_id,
+                operation,
+                &source,
+                &destination,
+                "complete",
+            );
+            cancel.clear(Some(&operation_id));
+            return Ok(());
+        }
         return Err("Source and destination are the same".to_string());
     }
     if source_metadata.is_dir()

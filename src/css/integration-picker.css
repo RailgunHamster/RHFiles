@@ -28,6 +28,9 @@ button { font: inherit; }
   box-shadow: var(--shadow);
   overflow: hidden;
 }
+html.has-preview .picker-shell {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
 
 .picker-header {
   min-height: 66px;
@@ -115,6 +118,48 @@ button { font: inherit; }
 .picker-empty strong { font-size: 13px; }
 .picker-empty span { color: var(--muted); font-size: 11px; }
 
+.picker-preview {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 108px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+.picker-preview[hidden] { display: none; }
+.picker-preview-visual {
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--hover);
+  color: var(--muted);
+}
+.picker-preview-visual img, .picker-preview-visual svg {
+  max-width: 88px;
+  max-height: 88px;
+  object-fit: contain;
+}
+.picker-preview-copy { min-width: 0; display: grid; gap: 3px; }
+.picker-preview-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.picker-preview-copy span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#picker-preview-path { direction: rtl; text-align: left; unicode-bidi: plaintext; }
+
 .picker-footer {
   min-height: 40px;
   display: flex;
@@ -150,6 +195,9 @@ button { font: inherit; }
 .picker-open-rhfiles svg { width: 15px; height: 15px; flex: none; }
 
 html.compact .picker-shell { grid-template-rows: auto minmax(0, 1fr); }
+html.compact.has-preview .picker-shell { grid-template-rows: auto minmax(0, 1fr) auto; }
+html.compact .picker-preview { min-height: 72px; grid-template-columns: 56px minmax(0, 1fr); padding: 6px 8px; }
+html.compact .picker-preview-visual, html.compact .picker-preview-visual img, html.compact .picker-preview-visual svg { width: 56px; height: 56px; max-width: 56px; max-height: 56px; }
 html.compact .picker-header { min-height: 43px; gap: 7px; padding: 6px 7px 5px 10px; }
 html.compact .picker-brand,
 html.compact .picker-heading span,

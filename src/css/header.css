@@ -58,6 +58,13 @@
 .bc-dropdown.show { display:block; }
 .bc-dropdown-item { padding:5px 12px; font-size:12px; color:var(--text-2); cursor:default; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .bc-dropdown-item:hover { background:var(--select-bg); color:var(--text); }
+.address-suggest { position:absolute; top:calc(100% + 4px); left:0; right:0; max-height:260px; overflow-y:auto; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px var(--shadow); z-index:120; padding:4px; }
+.address-suggest[hidden] { display:none; }
+.address-suggest-item { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:6px; font-size:12px; color:var(--text-2); cursor:pointer; }
+.address-suggest-item:hover, .address-suggest-item.active { background:var(--select-bg); color:var(--text); }
+.address-suggest-kind { flex:none; width:42px; color:var(--text-4); font-size:10px; letter-spacing:.02em; text-transform:uppercase; }
+.address-suggest-path { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; unicode-bidi:plaintext; }
+.address-suggest-empty { padding:8px 10px; color:var(--text-4); font-size:11px; }
 
 .search-box { width:clamp(220px,28vw,330px); height:30px; display:flex; align-items:center; gap:4px; background:var(--bg-input); border:1px solid var(--border); border-radius:4px; padding:0 6px 0 8px; transition:border-color .15s; position:relative; }
 .search-box:focus-within { border-color:var(--accent); }

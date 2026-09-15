@@ -30,13 +30,14 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
-    TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_EditControlTypeId, UIA_ValuePatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern,
+    IUIAutomationValuePattern, TreeScope_Descendants, UIA_AutomationIdPropertyId,
+    UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_ListItemControlTypeId,
+    UIA_SelectionItemPatternId, UIA_ValuePatternId,
 };
 #[cfg(test)]
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, TreeScope_Children,
-    UIA_InvokePatternId, UIA_NamePropertyId, UIA_SelectionItemPatternId,
+    IUIAutomationInvokePattern, TreeScope_Children, UIA_InvokePatternId, UIA_NamePropertyId,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -93,6 +94,8 @@ struct WindowLocations {
 #[derive(Clone, Default)]
 struct IntegrationConfig {
     enabled: bool,
+    explorer_enabled: bool,
+    file_dialog_enabled: bool,
     windows: HashMap<String, WindowLocations>,
     locale: String,
     hotkeys: Vec<Hotkey>,
@@ -126,6 +129,8 @@ pub struct FileDialogIntegrationStatus {
     location_count: usize,
     registered_shortcuts: Vec<String>,
     rejected_shortcuts: Vec<String>,
+    explorer_enabled: bool,
+    file_dialog_enabled: bool,
     supported_targets: Vec<&'static str>,
 }
 
@@ -139,6 +144,10 @@ pub struct FileDialogPickerState {
     locale: String,
     compact: bool,
     locations: Vec<FileDialogLocation>,
+    selection_kind: &'static str,
+    selected_path: Option<String>,
+    selected_name: Option<String>,
+    selected_is_dir: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -148,6 +157,32 @@ pub struct OpenExplorerLocationPayload {
     existing: bool,
     pane: Option<String>,
     tab_index: Option<usize>,
+    select_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IntegrationChangePayload {
+    enabled: bool,
+    explorer_enabled: bool,
+    file_dialog_enabled: bool,
+    target_kind: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TargetInspect {
+    kind: &'static str,
+    folder: Option<String>,
+    selection_kind: &'static str,
+    selected_path: Option<String>,
+    selected_name: Option<String>,
+    selected_is_dir: bool,
+}
+
+struct TargetInspectCache {
+    hwnd: usize,
+    inspected_at: Instant,
+    info: TargetInspect,
 }
 
 static CONFIG: OnceLock<Mutex<IntegrationConfig>> = OnceLock::new();
@@ -163,6 +198,7 @@ static PICKER_COMPACT: AtomicBool = AtomicBool::new(false);
 static LAST_NAVIGATION_METHOD: AtomicU8 = AtomicU8::new(0);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 static ACTION_SENDER: OnceLock<SyncSender<PickerRequest>> = OnceLock::new();
+static LAST_INSPECT: OnceLock<Mutex<TargetInspectCache>> = OnceLock::new();
 
 fn config() -> &'static Mutex<IntegrationConfig> {
     CONFIG.get_or_init(|| Mutex::new(IntegrationConfig::default()))
@@ -172,6 +208,16 @@ fn lock_config() -> std::sync::MutexGuard<'static, IntegrationConfig> {
     config()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn inspect_cache() -> &'static Mutex<TargetInspectCache> {
+    LAST_INSPECT.get_or_init(|| {
+        Mutex::new(TargetInspectCache {
+            hwnd: 0,
+            inspected_at: Instant::now(),
+            info: TargetInspect::default(),
+        })
+    })
 }
 
 fn action_sender() -> &'static SyncSender<PickerRequest> {
@@ -464,6 +510,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     let Some(hwnd) = supported_foreground_window() else {
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     };
+    if !target_kind_enabled(target_kind(hwnd), &snapshot) {
+        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
+    };
 
     if action_sender()
         .try_send(PickerRequest {
@@ -585,6 +634,290 @@ fn target_kind(hwnd: HWND) -> &'static str {
     }
 }
 
+fn target_kind_enabled(kind: &str, snapshot: &IntegrationConfig) -> bool {
+    match kind {
+        "windowsExplorer" => snapshot.explorer_enabled,
+        "windowsFileDialog" => snapshot.file_dialog_enabled,
+        _ => false,
+    }
+}
+
+fn is_enabled_supported_window(hwnd: HWND) -> bool {
+    if !is_supported_window(hwnd) {
+        return false;
+    }
+    let snapshot = lock_config();
+    target_kind_enabled(target_kind(hwnd), &snapshot)
+}
+
+fn join_dialog_selection(folder: Option<&str>, name: &str) -> Option<String> {
+    let name = name.trim().trim_matches('"');
+    if name.is_empty() {
+        return None;
+    }
+    let looks_absolute = {
+        let trimmed = name.trim_end_matches(['\\', '/']);
+        (trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':') || trimmed.starts_with("\\\\")
+    };
+    if looks_absolute {
+        return Some(name.replace('/', "\\"));
+    }
+    let folder = folder?.trim().trim_end_matches(['\\', '/']);
+    if folder.is_empty() {
+        return None;
+    }
+    Some(format!("{folder}\\{name}"))
+}
+
+fn parent_windows_folder(path: &str) -> Option<String> {
+    let normalized = path.replace('/', "\\");
+    let trimmed = normalized.trim_end_matches('\\');
+    if trimmed.len() <= 3 && trimmed.chars().nth(1) == Some(':') {
+        return Some(format!("{}\\", &trimmed[..2]));
+    }
+    let idx = trimmed.rfind('\\')?;
+    if idx <= 2 && trimmed.chars().nth(1) == Some(':') {
+        return Some(format!("{}\\", &trimmed[..2]));
+    }
+    Some(trimmed[..idx].to_string())
+}
+
+fn path_is_dir(path: &str) -> bool {
+    std::fs::metadata(path).map(|metadata| metadata.is_dir()).unwrap_or(false)
+}
+
+fn uia_element_value(element: &IUIAutomationElement) -> Option<String> {
+    let pattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+            .ok()?;
+    let raw = unsafe { pattern.CurrentValue() }.ok()?.to_string();
+    let trimmed = raw.trim().trim_matches('"').to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn find_automation_id(
+    automation: &IUIAutomation,
+    root: &IUIAutomationElement,
+    id: &str,
+) -> Option<IUIAutomationElement> {
+    let id_var = VARIANT::from(BSTR::from(id));
+    let condition =
+        unsafe { automation.CreatePropertyCondition(UIA_AutomationIdPropertyId, &id_var) }.ok()?;
+    unsafe { root.FindFirst(TreeScope_Descendants, &condition) }.ok()
+}
+
+fn selected_list_item_name(
+    automation: &IUIAutomation,
+    root: &IUIAutomationElement,
+) -> Option<String> {
+    let list_item = VARIANT::from(UIA_ListItemControlTypeId.0);
+    let condition =
+        unsafe { automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &list_item) }.ok()?;
+    let items = unsafe { root.FindAll(TreeScope_Descendants, &condition) }.ok()?;
+    let count = unsafe { items.Length() }.ok()?.min(64);
+    for index in 0..count {
+        let Ok(item) = (unsafe { items.GetElement(index) }) else {
+            continue;
+        };
+        let Ok(pattern) = (unsafe {
+            item.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
+        }) else {
+            continue;
+        };
+        if !unsafe { pattern.CurrentIsSelected() }
+            .ok()
+            .is_some_and(|value| value.as_bool())
+        {
+            continue;
+        }
+        if let Ok(name) = unsafe { item.CurrentName() } {
+            let name = name.to_string();
+            if !name.trim().is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+fn dialog_folder_from_uia(automation: &IUIAutomation, root: &IUIAutomationElement) -> Option<String> {
+    let edit_type = VARIANT::from(UIA_EditControlTypeId.0);
+    let condition =
+        unsafe { automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &edit_type) }.ok()?;
+    let edits = unsafe { root.FindAll(TreeScope_Descendants, &condition) }.ok()?;
+    let count = unsafe { edits.Length() }.ok()?.min(24);
+    for index in 0..count {
+        let Ok(edit) = (unsafe { edits.GetElement(index) }) else {
+            continue;
+        };
+        let automation_id = unsafe { edit.CurrentAutomationId() }
+            .ok()
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        if automation_id == "1148" {
+            continue;
+        }
+        if let Some(value) = uia_element_value(&edit)
+            && let Some(folder) = normalize_folder_path(Some(value))
+        {
+            return Some(folder);
+        }
+    }
+    None
+}
+
+fn explorer_visible_location(hwnd: usize) -> Option<String> {
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+        return None;
+    }
+    let _guard = ComGuard(initialized.is_ok());
+    let windows: IShellWindows = unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_ALL) }.ok()?;
+    let count = unsafe { windows.Count() }.ok()?;
+    let mut visible = Vec::new();
+    for index in 0..count {
+        let Ok(dispatch) = (unsafe { windows.Item(&VARIANT::from(index)) }) else {
+            continue;
+        };
+        let Ok(browser) = dispatch.cast::<IWebBrowser2>() else {
+            continue;
+        };
+        let Ok(browser_hwnd) = (unsafe { browser.HWND() }) else {
+            continue;
+        };
+        if browser_hwnd.0 as usize != hwnd {
+            continue;
+        }
+        if explorer_browser_has_visible_view(&browser) {
+            visible.push(browser);
+        }
+    }
+    let browser = if visible.len() == 1 {
+        visible.pop()?
+    } else {
+        return None;
+    };
+    let url = unsafe { browser.LocationURL() }.ok()?.to_string();
+    normalize_explorer_folder_value(&url)
+}
+
+fn inspect_file_dialog(hwnd: HWND) -> TargetInspect {
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+        return TargetInspect {
+            kind: "windowsFileDialog",
+            selection_kind: "folder",
+            ..TargetInspect::default()
+        };
+    }
+    let _guard = ComGuard(initialized.is_ok());
+    let Ok(automation) =
+        (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+    else {
+        return TargetInspect {
+            kind: "windowsFileDialog",
+            selection_kind: "folder",
+            ..TargetInspect::default()
+        };
+    };
+    let Ok(root) = (unsafe { automation.ElementFromHandle(hwnd) }) else {
+        return TargetInspect {
+            kind: "windowsFileDialog",
+            selection_kind: "folder",
+            ..TargetInspect::default()
+        };
+    };
+    let filename_element = find_automation_id(&automation, &root, "1148");
+    let file_picker = filename_element.is_some();
+    let mut selected_name = filename_element.as_ref().and_then(uia_element_value);
+    if file_picker && selected_name.is_none() {
+        selected_name = selected_list_item_name(&automation, &root);
+    }
+    if let Some(name) = selected_name.as_deref()
+        && (name.eq_ignore_ascii_case("file name") || name.contains('\n'))
+    {
+        selected_name = None;
+    }
+    let folder = dialog_folder_from_uia(&automation, &root);
+    let selected_path = selected_name
+        .as_deref()
+        .and_then(|name| join_dialog_selection(folder.as_deref(), name));
+    let selected_is_dir = selected_path
+        .as_deref()
+        .map(path_is_dir)
+        .unwrap_or(false);
+    TargetInspect {
+        kind: "windowsFileDialog",
+        folder,
+        selection_kind: if file_picker { "file" } else { "folder" },
+        selected_path,
+        selected_name,
+        selected_is_dir,
+    }
+}
+
+fn inspect_target(hwnd: HWND) -> TargetInspect {
+    match target_kind(hwnd) {
+        "windowsExplorer" => TargetInspect {
+            kind: "windowsExplorer",
+            folder: explorer_visible_location(hwnd.0 as usize),
+            selection_kind: "folder",
+            selected_path: None,
+            selected_name: None,
+            selected_is_dir: true,
+        },
+        "windowsFileDialog" => inspect_file_dialog(hwnd),
+        _ => TargetInspect::default(),
+    }
+}
+
+fn cached_inspect(hwnd: HWND) -> TargetInspect {
+    let value = hwnd.0 as usize;
+    {
+        let cache = inspect_cache()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cache.hwnd == value && cache.inspected_at.elapsed() < Duration::from_millis(280) {
+            return cache.info.clone();
+        }
+    }
+    let info = inspect_target(hwnd);
+    let mut cache = inspect_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.hwnd = value;
+    cache.inspected_at = Instant::now();
+    cache.info = info.clone();
+    info
+}
+
+fn picker_shows_preview(info: &TargetInspect) -> bool {
+    info.kind == "windowsFileDialog"
+        && info.selection_kind == "file"
+        && info.selected_path.is_some()
+        && !info.selected_is_dir
+}
+
 fn prune_closed_window_locations() -> bool {
     let Some(app) = APP_HANDLE.get() else {
         return false;
@@ -603,20 +936,24 @@ fn picker_state() -> FileDialogPickerState {
     let locations = all_locations(&snapshot);
     let target = ACTIVE_TARGET.load(Ordering::Acquire);
     let target = HWND(target as *mut core::ffi::c_void);
-    let target_available = is_supported_window(target);
-    let target_kind = if target_available {
-        target_kind(target)
+    let target_available = is_enabled_supported_window(target);
+    let inspect = if target_available {
+        cached_inspect(target)
     } else {
-        ""
+        TargetInspect::default()
     };
     FileDialogPickerState {
         enabled: snapshot.enabled,
         target_available,
-        target_kind,
-        target_path: None,
+        target_kind: inspect.kind,
+        target_path: inspect.folder.clone(),
         locale: snapshot.locale,
         compact: PICKER_COMPACT.load(Ordering::Acquire),
         locations,
+        selection_kind: inspect.selection_kind,
+        selected_path: inspect.selected_path,
+        selected_name: inspect.selected_name,
+        selected_is_dir: inspect.selected_is_dir,
     }
 }
 
@@ -663,13 +1000,15 @@ fn position_picker(target: HWND, picker: HWND) -> bool {
         .sum::<usize>();
     let row_count = location_count.clamp(1, 7) as i32;
     let compact = PICKER_COMPACT.load(Ordering::Acquire);
+    let inspect = cached_inspect(target);
+    let preview = picker_shows_preview(&inspect);
     let dpi = unsafe { GetDpiForWindow(target) }.max(96) as i32;
     let scaled = |logical: i32| logical.saturating_mul(dpi) / 96;
     let width = scaled(if compact { 310 } else { 370 });
     let logical_height = if compact {
-        (48 + row_count * 39).clamp(112, 350)
+        (48 + row_count * 39).clamp(112, 350) + if preview { 78 } else { 0 }
     } else {
-        (106 + row_count * 48).clamp(174, 462)
+        (106 + row_count * 48).clamp(174, 462) + if preview { 118 } else { 0 }
     };
     let height = scaled(logical_height);
     let gap = scaled(10);
@@ -702,15 +1041,21 @@ fn position_picker(target: HWND, picker: HWND) -> bool {
 
 fn show_picker_for(target_value: usize, activate: bool) {
     let target = HWND(target_value as *mut core::ffi::c_void);
-    if !lock_config().enabled || !is_supported_window(target) {
+    if !lock_config().enabled || !is_enabled_supported_window(target) {
         return;
     }
     let Some(picker) = picker_hwnd() else {
         return;
     };
     let locations_changed = prune_closed_window_locations();
+    let previous_inspect = inspect_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .info
+        .clone();
+    let current_inspect = cached_inspect(target);
     let previous = ACTIVE_TARGET.swap(target_value, Ordering::AcqRel);
-    if previous != target_value || locations_changed {
+    if previous != target_value || locations_changed || current_inspect != previous_inspect {
         emit_picker_state();
     }
     if !position_picker(target, picker) {
@@ -725,6 +1070,7 @@ fn show_picker_for(target_value: usize, activate: bool) {
 }
 
 fn monitor_picker() {
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     MONITOR_RUNNING.store(true, Ordering::Release);
     let mut previous_foreground = 0usize;
     loop {
@@ -747,15 +1093,25 @@ fn monitor_picker() {
         let active_value = ACTIVE_TARGET.load(Ordering::Acquire);
         let active = HWND(active_value as *mut core::ffi::c_void);
 
-        if foreground_value == picker_value && active_value != 0 && is_supported_window(active) {
+        if foreground_value == picker_value && active_value != 0 && is_enabled_supported_window(active)
+        {
             if let Some(picker) = picker {
+                let previous = inspect_cache()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .info
+                    .clone();
+                let current = cached_inspect(active);
+                if current != previous {
+                    emit_picker_state();
+                }
                 let _ = position_picker(active, picker);
             }
             previous_foreground = foreground_value;
             continue;
         }
 
-        if is_supported_window(foreground) {
+        if is_enabled_supported_window(foreground) {
             if DISMISSED_TARGET.load(Ordering::Acquire) == foreground_value {
                 hide_picker_native();
             } else {
@@ -1558,6 +1914,8 @@ fn current_status() -> FileDialogIntegrationStatus {
         location_count: locations.len(),
         registered_shortcuts: snapshot.shortcut_labels,
         rejected_shortcuts: snapshot.rejected_shortcuts,
+        explorer_enabled: snapshot.explorer_enabled,
+        file_dialog_enabled: snapshot.file_dialog_enabled,
         supported_targets: vec!["windowsFileDialog", "windowsExplorer"],
     }
 }
@@ -1571,6 +1929,8 @@ pub fn configure_file_dialog_integration(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     enabled: bool,
+    explorer_enabled: Option<bool>,
+    file_dialog_enabled: Option<bool>,
     locations: Vec<FileDialogLocation>,
     shortcuts: Vec<String>,
     locale: Option<String>,
@@ -1610,9 +1970,14 @@ pub fn configure_file_dialog_integration(
         })
         .collect::<Vec<_>>();
 
+    let explorer = explorer_enabled.unwrap_or(enabled);
+    let file_dialog = file_dialog_enabled.unwrap_or(enabled);
+    let master = explorer || file_dialog;
     {
         let mut state = lock_config();
-        state.enabled = enabled;
+        state.enabled = master;
+        state.explorer_enabled = explorer;
+        state.file_dialog_enabled = file_dialog;
         state.windows.insert(
             window_label,
             WindowLocations {
@@ -1630,7 +1995,7 @@ pub fn configure_file_dialog_integration(
         state.shortcut_labels = shortcut_labels;
         state.rejected_shortcuts = rejected_shortcuts;
     }
-    if enabled {
+    if master {
         let startup = ensure_picker_window()
             .and_then(|_| ensure_monitor_started())
             .and_then(|_| {
@@ -1641,14 +2006,17 @@ pub fn configure_file_dialog_integration(
                 }
             });
         if let Err(error) = startup {
-            lock_config().enabled = false;
+            let mut state = lock_config();
+            state.enabled = false;
+            state.explorer_enabled = false;
+            state.file_dialog_enabled = false;
             if let Some(picker) = app.get_webview_window("integration-picker") {
                 let _ = picker.destroy();
             }
             return Err(error);
         }
     }
-    if !enabled {
+    if !master {
         ACTIVE_TARGET.store(0, Ordering::Release);
         DISMISSED_TARGET.store(0, Ordering::Release);
         hide_picker_native();
@@ -1698,15 +2066,42 @@ pub async fn open_explorer_location_in_rhfiles(
         return Err("No Windows File Explorer window is available".to_string());
     }
     let target_hwnd = HWND(target as *mut core::ffi::c_void);
-    if target_kind(target_hwnd) != "windowsExplorer" || !is_supported_window(target_hwnd) {
-        return Err("The active Windows window is not File Explorer".to_string());
+    if !is_supported_window(target_hwnd) {
+        return Err("The active Windows window is not File Explorer or a file dialog".to_string());
     }
-    let path = tauri::async_runtime::spawn_blocking(move || {
-        read_active_explorer_folder(HWND(target as *mut core::ffi::c_void))
+    let kind = target_kind(target_hwnd);
+    let inspect = tauri::async_runtime::spawn_blocking(move || {
+        inspect_target(HWND(target as *mut core::ffi::c_void))
     })
     .await
-    .map_err(|error| format!("Unable to read File Explorer's folder: {error}"))?
-    .map_err(|error| format!("Unable to read File Explorer's current folder: {error}"))?;
+    .map_err(|error| format!("Unable to read the Windows location: {error}"))?;
+    let mut select_path = None;
+    let path = if let Some(selected) = inspect.selected_path.clone() {
+        if inspect.selected_is_dir {
+            selected
+        } else if let Some(parent) = parent_windows_folder(&selected) {
+            select_path = Some(selected);
+            parent
+        } else if let Some(folder) = inspect.folder.clone() {
+            select_path = Some(selected);
+            folder
+        } else {
+            selected
+        }
+    } else if let Some(folder) = inspect.folder.clone() {
+        folder
+    } else if kind == "windowsExplorer" {
+        tauri::async_runtime::spawn_blocking(move || {
+            read_active_explorer_folder(HWND(target as *mut core::ffi::c_void))
+        })
+        .await
+        .map_err(|error| format!("Unable to read File Explorer's folder: {error}"))?
+        .map_err(|error| format!("Unable to read File Explorer's current folder: {error}"))?
+    } else {
+        return Err("Unable to read the current Windows location".to_string());
+    };
+    let path = normalize_folder_path(Some(path))
+        .ok_or_else(|| "The current Windows location is not a filesystem folder".to_string())?;
 
     let snapshot = lock_config().clone();
     let existing_location = all_locations(&snapshot).into_iter().find(|location| {
@@ -1734,6 +2129,7 @@ pub async fn open_explorer_location_in_rhfiles(
         tab_index: existing_location
             .as_ref()
             .map(|location| location.tab_index),
+        select_path,
     };
     app.emit_to(
         &destination_label,
@@ -1778,12 +2174,40 @@ pub fn set_file_dialog_picker_compact(compact: bool) -> FileDialogPickerState {
 }
 
 #[tauri::command]
-pub fn disable_file_dialog_integration(app: tauri::AppHandle) {
-    lock_config().enabled = false;
-    ACTIVE_TARGET.store(0, Ordering::Release);
-    DISMISSED_TARGET.store(0, Ordering::Release);
-    hide_picker_native();
-    let _ = app.emit("file-dialog-integration-disabled", ());
+pub fn disable_file_dialog_integration(app: tauri::AppHandle, target_kind: Option<String>) {
+    let requested = target_kind.unwrap_or_default();
+    let (enabled, explorer_enabled, file_dialog_enabled) = {
+        let mut state = lock_config();
+        match requested.as_str() {
+            "windowsExplorer" => state.explorer_enabled = false,
+            "windowsFileDialog" => state.file_dialog_enabled = false,
+            _ => {
+                state.explorer_enabled = false;
+                state.file_dialog_enabled = false;
+            }
+        }
+        state.enabled = state.explorer_enabled || state.file_dialog_enabled;
+        (
+            state.enabled,
+            state.explorer_enabled,
+            state.file_dialog_enabled,
+        )
+    };
+    if !enabled {
+        ACTIVE_TARGET.store(0, Ordering::Release);
+        DISMISSED_TARGET.store(0, Ordering::Release);
+        hide_picker_native();
+        let _ = app.emit("file-dialog-integration-disabled", ());
+    }
+    let _ = app.emit(
+        "file-dialog-integration-changed",
+        IntegrationChangePayload {
+            enabled,
+            explorer_enabled,
+            file_dialog_enabled,
+            target_kind: requested,
+        },
+    );
     emit_picker_state();
 }
 
@@ -2430,6 +2854,7 @@ mod tests {
         assert!(picker_html.contains("id=\"picker-disable\""));
         assert!(picker_html.contains("id=\"picker-open-rhfiles\""));
         assert!(picker_html.contains("id=\"picker-open-rhfiles-compact\""));
+        assert!(picker_html.contains("id=\"picker-preview\""));
         assert!(picker_html.contains("在 RHFiles 里打开"));
         let picker_js = include_str!("../../src/js/integration-picker.js");
         assert!(!picker_js.contains("folderIcon"));
@@ -2439,6 +2864,28 @@ mod tests {
         assert!(!picker_js.contains("tr('tab'"));
         assert!(picker_js.contains("} finally {"));
         assert!(picker_js.contains("button.disabled = false"));
+        assert!(picker_js.contains("renderPickerPreview"));
+        assert!(picker_js.contains("windowsFileDialog"));
+    }
+
+    #[test]
+    fn joins_dialog_filename_to_the_current_folder() {
+        assert_eq!(
+            join_dialog_selection(Some("C:\\Users\\Pictures"), "cat.png").as_deref(),
+            Some("C:\\Users\\Pictures\\cat.png")
+        );
+        assert_eq!(
+            join_dialog_selection(Some("C:\\Users\\Pictures\\"), "D:\\abs.txt").as_deref(),
+            Some("D:\\abs.txt")
+        );
+        assert_eq!(
+            parent_windows_folder("C:\\Users\\Pictures\\cat.png").as_deref(),
+            Some("C:\\Users\\Pictures")
+        );
+        let mut snapshot = IntegrationConfig::default();
+        snapshot.explorer_enabled = true;
+        assert!(target_kind_enabled("windowsExplorer", &snapshot));
+        assert!(!target_kind_enabled("windowsFileDialog", &snapshot));
     }
 
     #[test]

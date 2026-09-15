@@ -290,7 +290,10 @@ function openSettings() {
     '<div class="settings-row"><label>' + t('settings.defaultTerminal') + '</label>' +
     '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>' + t('settings.termWt') + '</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>' + t('settings.termPs') + '</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>' + t('settings.termCmd') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
-    '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div></div>';
+    '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-confirm-delete">' + t('settings.confirmDelete') + '</label>' +
+    '<input id="settings-confirm-delete" type="checkbox" onchange="G.settings.confirmRecycleDelete=this.checked;saveSettings()"' + (G.settings.confirmRecycleDelete!==false?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.confirmDeleteHelp') + '</span></div></div>';
 
   const appearance = '<div class="settings-card">' +
     '<div class="settings-row"><label>' + t('settings.theme') + '</label>' +
@@ -360,8 +363,13 @@ function openSettings() {
     '<div class="settings-feature-note"><strong>' + t('settings.searchBehaviorTitle') + '</strong><span>' + t('settings.searchBehaviorBody') + '</span></div></div>';
 
   const integration = '<div class="settings-card">' +
-    '<div class="settings-row"><label for="settings-integration-enabled"><span class="settings-label-title">' + t('settings.integrationEnabled') + '</span><span class="settings-experimental-badge">' + t('settings.integrationExperimental') + '</span></label>' +
-    '<input id="settings-integration-enabled" type="checkbox" onchange="setFileDialogIntegrationEnabled(this.checked)"' + (G.settings.fileDialogIntegrationEnabled===true?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-integration-explorer"><span class="settings-label-title">' + t('settings.integrationExplorer') + '</span><span class="settings-experimental-badge">' + t('settings.integrationExperimental') + '</span></label>' +
+    '<input id="settings-integration-explorer" type="checkbox" onchange="setFileDialogIntegrationTarget(\'explorer\', this.checked)"' + (G.settings.fileDialogIntegrationExplorer===true?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.integrationExplorerHelp') + '</span></div>' +
+    '<div class="settings-row"><label for="settings-integration-file-dialog"><span class="settings-label-title">' + t('settings.integrationFileDialog') + '</span></label>' +
+    '<input id="settings-integration-file-dialog" type="checkbox" onchange="setFileDialogIntegrationTarget(\'fileDialog\', this.checked)"' + (G.settings.fileDialogIntegrationFileDialog===true?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.integrationFileDialogHelp') + '</span></div>' +
+    '<input id="settings-integration-enabled" type="checkbox" hidden' + (G.settings.fileDialogIntegrationEnabled===true?' checked':'') + '>' +
     '<div class="settings-feature-note"><strong>' + t('settings.integrationBehaviorTitle') + '</strong><span>' + t('settings.integrationBehaviorBody') + '</span></div>' +
     '<div class="settings-feature-note"><strong>' + t('settings.integrationTargetsTitle') + '</strong><span>' + t('settings.integrationTargetsBody') + '</span></div></div>' +
     '<div class="settings-card settings-integration-card"><div class="settings-card-title">' + t('settings.integrationShortcutTitle') + '</div>' +
@@ -1158,6 +1166,7 @@ const SHORTCUT_LABEL_KEYS = {
   "settings": "cmd.settings",
   "tab.new": "cmd.newTab",
   "tab.close": "cmd.closeTab",
+  "tab.reopen": "cmd.reopenTab",
   "tab.next": "cmd.nextTab",
   "tab.previous": "cmd.previousTab",
   "typeSearch.next": "cmd.typeSearchNext",
