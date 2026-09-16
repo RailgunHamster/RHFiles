@@ -2041,8 +2041,12 @@
         "Selected rows have no tinted drag plate behind the icon",
       );
       assert(
-        rules.some(text => text.includes('.row-name::after') && text.includes('content')),
-        "The draggable name column has no divider marking its end",
+        document.querySelector('.file-boundary-line:not([hidden])'),
+        "The details pane has no continuous drag boundary line",
+      );
+      assert(
+        !rules.some(text => text.includes('.row-name::after')),
+        "The drag boundary reverted to per-row pseudo-elements",
       );
       assert(
         !rules.some(text => text.includes('repeating-linear-gradient')),
@@ -2061,13 +2065,20 @@
         }
         const headerName = document.querySelector('#file-header.details-mode .col-name');
         const rowName = document.querySelector('#file-list .file-row:not(.card-item):not(.thumb-item) .row-name');
-        if (!headerName || !rowName) { log("SKIP: details rows are not currently rendered"); return; }
+        const boundaryLine = document.querySelector('.file-boundary-line:not([hidden])');
+        if (!headerName || !rowName || !boundaryLine) { log("SKIP: details boundary is not currently rendered"); return; }
         const headerRight = headerName.getBoundingClientRect().right;
         const rowRight = rowName.getBoundingClientRect().right;
+        const lineRect = boundaryLine.getBoundingClientRect();
         assert(
           Math.abs(headerRight - rowRight) <= 1.5,
           `Header and row drag boundaries differ by ${Math.abs(headerRight - rowRight).toFixed(2)}px (header=${headerRight.toFixed(2)}, row=${rowRight.toFixed(2)})`,
         );
+        assert(
+          Math.abs(lineRect.left - headerRight) <= 1.5,
+          `Continuous boundary line is misaligned by ${Math.abs(lineRect.left - headerRight).toFixed(2)}px`,
+        );
+        assert(lineRect.height > headerName.getBoundingClientRect().height, "Continuous boundary line does not span header and file rows");
       } finally {
         if (G.layout !== savedLayout) {
           G.layout = savedLayout;

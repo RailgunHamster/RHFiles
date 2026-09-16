@@ -35,45 +35,17 @@
 .file-row.cut-item { opacity:.5; }
 .file-row .row-name { flex:3; display:flex; align-items:center; gap:6px; min-width:180px; padding:0 6px; }
 
-/* Details layout: a quiet continuous marker shows where the draggable name
-   column ends. It fades at the top and bottom instead of becoming a dotted
-   or dashed stripe at narrow widths. */
-.file-row:not(.card-item):not(.thumb-item) .row-name,
-.file-header.details-mode .col-name { position:relative; }
-.file-row:not(.card-item):not(.thumb-item) .row-name::after,
-.file-header.details-mode .col-name::after {
-  content:""; position:absolute; top:5px; bottom:5px; right:-1px; width:1px;
-  border-radius:1px;
-  background:linear-gradient(
-    to bottom,
-    transparent 0%,
-    color-mix(in srgb, var(--divider) 68%, transparent) 18%,
-    color-mix(in srgb, var(--divider) 68%, transparent) 82%,
-    transparent 100%
-  );
-  opacity:.48;
+.content { position:relative; }
+.file-boundary-line {
+  position:absolute;
+  width:1px;
+  min-height:0;
+  background:color-mix(in srgb, var(--divider) 72%, transparent);
+  opacity:.82;
   pointer-events:none;
+  z-index:4;
 }
-.file-row:not(.card-item):not(.thumb-item):hover .row-name::after {
-  background:linear-gradient(
-    to bottom,
-    transparent 0%,
-    color-mix(in srgb, var(--text-3) 72%, transparent) 16%,
-    color-mix(in srgb, var(--text-3) 72%, transparent) 84%,
-    transparent 100%
-  );
-  opacity:.78;
-}
-.file-row:not(.card-item):not(.thumb-item).selected .row-name::after {
-  background:linear-gradient(
-    to bottom,
-    transparent 0%,
-    color-mix(in srgb, var(--accent) 82%, transparent) 16%,
-    color-mix(in srgb, var(--accent) 82%, transparent) 84%,
-    transparent 100%
-  );
-  opacity:.86;
-}
+
 .file-row .row-icon { width:16px; height:16px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .file-row .row-icon svg { width:16px; height:16px; }
 

@@ -6,13 +6,33 @@
 let _fileHeaderGeometryObserver = null;
 let _fileHeaderGeometryRaf = 0;
 
+function ensureFileBoundaryLine(content) {
+  let line = content.querySelector('.file-boundary-line');
+  if (!line) {
+    line = document.createElement('div');
+    line.className = 'file-boundary-line';
+    line.setAttribute('aria-hidden', 'true');
+    content.appendChild(line);
+  }
+  return line;
+}
+
 function syncFileHeaderGeometry() {
   document.querySelectorAll('.content').forEach(content => {
     const header = content.querySelector('.file-header');
     const body = content.querySelector('.file-body');
     const list = body?.querySelector('.file-list');
     const gutter = body?.querySelector('.box-select-gutter');
-    if (!header || !list || !gutter) return;
+    if (!header || !body || !list || !gutter) return;
+    const line = ensureFileBoundaryLine(content);
+    const detailsMode = header.classList.contains('details-mode');
+    line.hidden = !detailsMode;
+    if (!detailsMode) {
+      if (header.dataset.baseRightPadding) {
+        header.style.paddingRight = `${Number(header.dataset.baseRightPadding) || 0}px`;
+      }
+      return;
+    }
     if (!header.dataset.baseRightPadding) {
       const padding = parseFloat(getComputedStyle(header).paddingRight);
       header.dataset.baseRightPadding = String(Number.isFinite(padding) ? padding : 0);
@@ -21,6 +41,16 @@ function syncFileHeaderGeometry() {
     const scrollbar = Math.max(0, list.offsetWidth - list.clientWidth);
     const inset = gutter.getBoundingClientRect().width + scrollbar;
     header.style.paddingRight = `${base + inset}px`;
+
+    const nameColumn = header.querySelector('.col-name');
+    if (!nameColumn) return;
+    const contentRect = content.getBoundingClientRect();
+    const headerRect = header.getBoundingClientRect();
+    const bodyRect = body.getBoundingClientRect();
+    const nameRect = nameColumn.getBoundingClientRect();
+    line.style.left = `${nameRect.right - contentRect.left - 0.5}px`;
+    line.style.top = `${headerRect.top - contentRect.top}px`;
+    line.style.height = `${Math.max(0, bodyRect.bottom - headerRect.top)}px`;
   });
 }
 
