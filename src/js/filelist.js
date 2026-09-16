@@ -41,6 +41,7 @@ function syncFileHeaderGeometry() {
       if (header.dataset.baseRightPadding) {
         header.style.paddingRight = `${Number(header.dataset.baseRightPadding) || 0}px`;
       }
+      content.querySelector('.file-selection-frames')?.replaceChildren();
       return;
     }
     if (!header.dataset.baseRightPadding) {
@@ -66,6 +67,7 @@ function syncFileHeaderGeometry() {
       const settled = headerName.getBoundingClientRect().right;
       const boundary = Math.abs(settled - anchor) <= 1.5 ? settled : anchor;
       placeFileBoundaryLine(content, header, body, boundary);
+      syncSelectionFrames(content, list);
       return;
     }
 
@@ -73,6 +75,7 @@ function syncFileHeaderGeometry() {
     const inset = gutter.getBoundingClientRect().width + scrollbar;
     header.style.paddingRight = `${base + inset}px`;
     placeFileBoundaryLine(content, header, body, headerName.getBoundingClientRect().right);
+    syncSelectionFrames(content, list);
   });
 }
 
@@ -84,6 +87,60 @@ function scheduleFileHeaderGeometry() {
   });
 }
 
+function ensureSelectionFrameLayer(content) {
+  let layer = content.querySelector('.file-selection-frames');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.className = 'file-selection-frames';
+    layer.setAttribute('aria-hidden', 'true');
+    content.appendChild(layer);
+  }
+  return layer;
+}
+
+// Draws one faint rounded frame around the draggable zone of each contiguous
+// selection run. Consecutive selected rows share a single frame, so the result
+// reads as a box around the left part instead of a stack of per-row rings.
+function syncSelectionFrames(content, list) {
+  const layer = ensureSelectionFrameLayer(content);
+  const entries = [...list.querySelectorAll('.file-row.selected:not(.card-item):not(.thumb-item)')]
+    .map(row => {
+      const nameRect = row.querySelector('.row-name')?.getBoundingClientRect();
+      if (!nameRect || !nameRect.height) return null;
+      return { rowRect: row.getBoundingClientRect(), nameRect };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.rowRect.top - b.rowRect.top);
+  const runs = [];
+  for (const entry of entries) {
+    const last = runs[runs.length - 1];
+    if (last && entry.rowRect.top - last.bottom < 2) {
+      last.bottom = entry.rowRect.bottom;
+    } else {
+      runs.push({
+        top: entry.rowRect.top,
+        bottom: entry.rowRect.bottom,
+        left: entry.nameRect.left,
+        right: entry.nameRect.right,
+      });
+    }
+  }
+  while (layer.children.length < runs.length) {
+    const frame = document.createElement('div');
+    frame.className = 'file-selection-frame';
+    layer.appendChild(frame);
+  }
+  while (layer.children.length > runs.length) layer.lastElementChild.remove();
+  const contentRect = content.getBoundingClientRect();
+  runs.forEach((run, index) => {
+    const frame = layer.children[index];
+    frame.style.left = `${run.left - contentRect.left}px`;
+    frame.style.top = `${run.top - contentRect.top}px`;
+    frame.style.width = `${Math.max(0, run.right - run.left)}px`;
+    frame.style.height = `${Math.max(0, run.bottom - run.top)}px`;
+  });
+}
+
 function initFileHeaderGeometry() {
   if (typeof ResizeObserver === 'function' && !_fileHeaderGeometryObserver) {
     _fileHeaderGeometryObserver = new ResizeObserver(scheduleFileHeaderGeometry);
@@ -91,6 +148,11 @@ function initFileHeaderGeometry() {
       _fileHeaderGeometryObserver.observe(element);
     });
   }
+  document.querySelectorAll('.file-list').forEach(list => {
+    if (list.dataset.geometryScrollBound === 'true') return;
+    list.dataset.geometryScrollBound = 'true';
+    list.addEventListener('scroll', scheduleFileHeaderGeometry, { passive: true });
+  });
   scheduleFileHeaderGeometry();
 }
 
