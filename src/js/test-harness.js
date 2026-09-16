@@ -2040,15 +2040,19 @@
         !rules.some(text => text.includes('repeating-linear-gradient')),
         "The drag boundary reverted to a dotted repeating gradient",
       );
-      // The selected zone left of the boundary must be clearly highlighted, and
-      // the old six-dot grip affordance must be gone.
+      // The selection must be a faint frame around the draggable zone, and the
+      // earlier heavy gradient / solid accent bar must stay gone.
       assert(
-        rules.some(text => text.includes('.selected .row-name') && text.includes('linear-gradient')),
-        "Selected rows have no glow on the draggable zone left of the boundary",
+        rules.some(text => text.includes('.file-selection-frame') && text.includes('border')),
+        "Selected rows have no frame around the draggable zone",
       );
       assert(
-        rules.some(text => text.includes('.selected .row-name::after') && text.includes('box-shadow')),
-        "The boundary has no emphasised accent segment on selected rows",
+        rules.some(text => text.includes('.file-selection-frames')),
+        "The selection frame layer has no styling",
+      );
+      assert(
+        !rules.some(text => text.includes('.selected .row-name') && text.includes('linear-gradient')),
+        "The heavy selection gradient came back",
       );
       assert(
         !rules.some(text => text.includes('row-icon::after')),
@@ -2623,6 +2627,57 @@
         assertEqual(normalizeArchiveToolSettings({}).bandizip.arguments.join('|'), 'c|-y|-r|{dest}|{sources}', "Bandizip defaults are incorrect");
       } finally {
         G.settings.archiveTools = savedTools;
+      }
+    });
+
+    await test("[ctxmenu] Compression names the archive after the first selected item", async () => {
+      const multi = makeCompressionRequest(
+        [{ name: 'photo.png', path: 'C:\\in\\photo.png' }, { name: 'notes.txt', path: 'C:\\in\\notes.txt' }],
+        'D:\\out',
+        'zip',
+      );
+      assertEqual(multi.baseName, 'photo', "Archive does not use the first selected file name");
+      assertEqual(multi.args.dest, 'D:\\out\\photo.zip', "Archive destination does not use the derived name");
+
+      const folder = makeCompressionRequest(
+        [{ name: 'projects', path: 'C:\\in\\projects', is_dir: true }],
+        'D:\\out',
+        '7zip',
+      );
+      assertEqual(folder.baseName, 'projects', "Folder archive name was altered");
+      assertEqual(folder.args.dest, 'D:\\out\\projects.7z', "Folder archive extension is wrong");
+
+      assertEqual(compressionBaseName([]), 'archive', "Empty selection has no fallback archive name");
+    });
+
+    await test("[sidebar] File drags resolve sidebar destinations", async () => {
+      const host = document.createElement('div');
+      host.className = 'sidebar';
+      host.innerHTML = `
+        <div class="sidebar-item" id="probe-fav" data-path="C:\\Favorites\\docs"></div>
+        <div class="tree-item" id="probe-tree" data-tpath="C:\\Tree" data-depth="0">
+          <div class="tree-row"><span class="tree-arrow"></span></div>
+          <div class="tree-children"></div>
+        </div>
+        <div class="drive-item" id="probe-drive" data-path="D:\\"></div>`;
+      document.body.appendChild(host);
+      try {
+        assertEqual(
+          sidebarDropDestination(document.getElementById('probe-fav'))?.path,
+          'C:\\Favorites\\docs',
+          "Favorite drop destination was not resolved",
+        );
+        assertEqual(
+          sidebarDropDestination(document.getElementById('probe-drive'))?.path,
+          'D:\\',
+          "Drive drop destination was not resolved",
+        );
+        const tree = sidebarDropDestination(document.querySelector('#probe-tree .tree-row'));
+        assertEqual(tree?.path, 'C:\\Tree', "Tree drop destination was not resolved");
+        assert(tree?.treeItem, "Tree drop did not expose the expandable node");
+        assertEqual(sidebarDropDestination(document.body), null, "Non-sidebar targets must not resolve a destination");
+      } finally {
+        host.remove();
       }
     });
 

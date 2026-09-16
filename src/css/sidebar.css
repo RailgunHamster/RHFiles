@@ -28,6 +28,14 @@
 .tree-children { display:none; }
 .tree-children.open { display:block; }
 
+/* Sidebar destination currently hovered by a file drag. */
+.sidebar .drop-target {
+  background:var(--select-bg);
+  outline:1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset:-1px;
+  border-radius:4px;
+}
+
 .tag-list { padding:2px 8px; display:flex; flex-wrap:wrap; gap:4px; }
 .tag-pill { display:inline-flex; align-items:center; gap:3px; padding:2px 8px; border-radius:10px; font-size:11px; cursor:pointer; transition:opacity .15s; }
 .tag-pill:hover { opacity:.8; }

@@ -27,6 +27,27 @@ function treeFolderIcon(path, name) {
   return `<span class="tree-icon">${fileIcon({ is_dir: true, path: path || '', name: name || '' }, false)}</span>`;
 }
 
+// Expands a collapsed tree node while a file drag hovers over it, so nested
+// folders become reachable without dropping somewhere first.
+async function expandTreeNodeForDrop(item) {
+  if (!item || !item.isConnected) return;
+  const childrenDiv = item.querySelector(':scope > .tree-children');
+  if (!childrenDiv || childrenDiv.classList.contains('open')) return;
+  const path = item.dataset.tpath;
+  if (!path) return;
+  const depth = (parseInt(item.dataset.depth) || 0) + 1;
+  try {
+    const kids = await call('get_dir_tree', { path });
+    if (!item.isConnected) return;
+    if (childrenDiv.children.length === 0) {
+      childrenDiv.innerHTML = '';
+      kids.forEach(kid => renderTreeItem(childrenDiv, kid, depth));
+    }
+  } catch (error) {}
+  childrenDiv.classList.add('open');
+  item.querySelector(':scope > .tree-row .tree-arrow')?.classList.add('expanded');
+}
+
 function renderTreeNode(container, children, parentPath, expand) {
   const existing = Array.from(container.querySelectorAll("[data-tpath]")).find(el => el.dataset.tpath === parentPath) || null;
   let node;

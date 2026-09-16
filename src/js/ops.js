@@ -264,6 +264,9 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
   const cancel = async () => {
     if (done) return; done = true;
     input.replaceWith(nameEl);
+    // Cancelling restores the original row, so keep it selected instead of
+    // dropping the selection the user had before starting the rename.
+    selectNavigatedPath(oldPath, isRight);
     if (onCancel) { try { await onCancel(); } catch(e) {} }
   };
 
@@ -670,10 +673,26 @@ async function extractArchiveTo(file, destination) {
   }
 }
 
-function makeCompressionRequest(files, currentPath, tool) {
+// The archive is named after the first selected item (file extensions are
+// stripped), falling back to a generic name when nothing usable is selected.
+function compressionBaseName(files) {
+  const first = files && files[0];
+  const raw = String(first?.name || '').trim();
+  if (!raw) return 'archive';
+  if (first?.is_dir) return raw;
+  const dot = raw.lastIndexOf('.');
+  const stem = dot > 0 ? raw.slice(0, dot) : raw;
+  return stem || 'archive';
+}
+
+function compressionExtension(tool) {
+  return tool === 'winrar' ? 'rar' : tool === '7zip' ? '7z' : 'zip';
+}
+
+function makeCompressionRequest(files, currentPath, tool, baseNameOverride) {
   const sources = files.map(file => file.path);
-  const baseName = files.length === 1 ? files[0].name : 'archive';
-  const extension = tool === 'winrar' ? 'rar' : tool === '7zip' ? '7z' : 'zip';
+  const baseName = String(baseNameOverride || compressionBaseName(files));
+  const extension = compressionExtension(tool);
   const destination = joinFolderPath(currentPath, `${baseName}.${extension}`);
   const externalConfig = tool === 'zip'
     ? null
@@ -693,9 +712,35 @@ function makeCompressionRequest(files, currentPath, tool) {
   };
 }
 
+// Picks a base name that does not collide with an entry that is already in the
+// folder or on disk, so compressing twice creates "name (1).zip" instead of
+// silently overwriting.
+async function uniqueCompressionBaseName(files, currentPath, tool) {
+  const baseName = compressionBaseName(files);
+  const archiveName = `${baseName}.${compressionExtension(tool)}`;
+  const pane = G.dualOn && G.lastActivePane === 'right' ? G.rp : getTab();
+  const known = pane && windowsPathKey(pane.path || '') === windowsPathKey(currentPath || '')
+    ? (pane.entries || []).map(entry => entry.name)
+    : [];
+  const used = new Set(known.map(fileNameKey));
+  let exists = used.has(fileNameKey(archiveName));
+  if (!exists) {
+    try {
+      exists = await call('path_exists', { path: joinFolderPath(currentPath, archiveName) });
+    } catch (error) {
+      exists = false;
+    }
+  }
+  if (!exists) return baseName;
+  const unique = await allocateUniqueName(currentPath, archiveName, used);
+  const dot = unique.lastIndexOf('.');
+  return dot > 0 ? unique.slice(0, dot) : unique;
+}
+
 async function compressSelection(files, currentPath, tool) {
   if (!files.length) return;
-  const request = makeCompressionRequest(files, currentPath, tool);
+  const baseName = await uniqueCompressionBaseName(files, currentPath, tool);
+  const request = makeCompressionRequest(files, currentPath, tool, baseName);
   const taskId = showProgress(t('status.compressing', { name: request.baseName }), {
     indeterminate: true,
     cancellable: false,
@@ -1729,16 +1774,78 @@ async function handleRhfilesFileDrop(payload, destination, destinationEntries, i
   }
 }
 
+// --- sidebar drop targets (tree, favorites, quick access, drives, libraries,
+// cloud, recent) ---
+let _sidebarDropHover = null;
+let _sidebarExpandTimer = null;
+let _sidebarExpandTarget = null;
+
+function sidebarDropElement(target) {
+  return target?.closest?.('.sidebar [data-tpath], .sidebar [data-path]') || null;
+}
+
+function sidebarDropDestination(target) {
+  const element = sidebarDropElement(target);
+  if (!element) return null;
+  const treeItem = element.closest('[data-tpath]');
+  const path = treeItem ? treeItem.dataset.tpath : element.dataset.path;
+  if (!path || path === 'home://') return null;
+  return { path, treeItem: treeItem && treeItem.contains(element) ? treeItem : null };
+}
+
+function clearSidebarDropHover() {
+  if (_sidebarDropHover) _sidebarDropHover.classList.remove('drop-target');
+  _sidebarDropHover = null;
+  if (_sidebarExpandTimer) clearTimeout(_sidebarExpandTimer);
+  _sidebarExpandTimer = null;
+  _sidebarExpandTarget = null;
+}
+
+function highlightSidebarDropTarget(element, destination) {
+  if (_sidebarDropHover !== element) {
+    if (_sidebarDropHover) _sidebarDropHover.classList.remove('drop-target');
+    _sidebarDropHover = element;
+    element.classList.add('drop-target');
+  }
+  const treeItem = destination?.treeItem;
+  if (!treeItem || treeItem === _sidebarExpandTarget) return;
+  _sidebarExpandTarget = treeItem;
+  if (_sidebarExpandTimer) clearTimeout(_sidebarExpandTimer);
+  _sidebarExpandTimer = setTimeout(() => {
+    _sidebarExpandTimer = null;
+    if (typeof expandTreeNodeForDrop === 'function') expandTreeNodeForDrop(treeItem);
+  }, 700);
+}
+
 document.addEventListener('dragover', event => {
   if (!isRhfilesFileDrag(event.dataTransfer)) return;
   event.preventDefault();
-  event.dataTransfer.dropEffect = 'copy';
+  event.dataTransfer.dropEffect = event.ctrlKey ? 'copy' : 'move';
+  const destination = sidebarDropDestination(event.target);
+  if (destination) highlightSidebarDropTarget(sidebarDropElement(event.target), destination);
+  else clearSidebarDropHover();
 });
+
+document.addEventListener('dragend', clearSidebarDropHover);
+document.addEventListener('dragleave', event => { if (!event.relatedTarget) clearSidebarDropHover(); });
+window.addEventListener('blur', clearSidebarDropHover);
 
 document.addEventListener('drop', async event => {
   const payload = readRhfilesFileDragData(event.dataTransfer);
   if (!payload) return;
   event.preventDefault();
+  const sidebarDestination = sidebarDropDestination(event.target);
+  clearSidebarDropHover();
+  if (sidebarDestination && !event.target.closest('.file-list')) {
+    const destination = sidebarDestination.path;
+    const activePane = getTab();
+    const destinationEntries = windowsPathKey(activePane.path || '') === windowsPathKey(destination)
+      ? activePane.entries
+      : [];
+    activatePane('left');
+    await handleRhfilesFileDrop(payload, destination, destinationEntries, false);
+    return;
+  }
   const dropTarget = event.target.closest('.file-list');
   if (!dropTarget) return;
   const isRightDrop = dropTarget.id === 'right-file-list';

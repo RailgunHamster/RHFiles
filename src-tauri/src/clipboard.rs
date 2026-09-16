@@ -42,7 +42,7 @@ mod native {
                 },
                 Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
                 Ole::{
-                    CF_HDROP, CF_UNICODETEXT, DROPEFFECT_MOVE, OleGetClipboard, OleInitialize,
+                    CF_HDROP, DROPEFFECT_MOVE, OleGetClipboard, OleInitialize,
                     OleUninitialize, ReleaseStgMedium,
                 },
             },
@@ -657,15 +657,6 @@ mod native {
         bytes
     }
 
-    fn unicode_text_bytes(text: &str) -> Vec<u8> {
-        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let mut bytes = vec![0u8; wide.len() * std::mem::size_of::<u16>()];
-        unsafe {
-            ptr::copy_nonoverlapping(wide.as_ptr().cast::<u8>(), bytes.as_mut_ptr(), bytes.len());
-        }
-        bytes
-    }
-
     pub fn set_file_clipboard(paths: Vec<String>, cut: bool) -> Result<u32, String> {
         if paths.is_empty() {
             return Err("No files were selected".to_string());
@@ -682,11 +673,10 @@ mod native {
             .map_err(|error| format!("Unable to clear the Windows clipboard: {error}"))?;
         unsafe { set_global_clipboard_data(CF_HDROP.0 as u32, &file_drop_bytes(&paths)) }?;
 
-        // These companion formats make RHFiles copy/cut interoperable with Explorer.
-        let text = paths.join("\r\n");
-        let _ = unsafe {
-            set_global_clipboard_data(CF_UNICODETEXT.0 as u32, &unicode_text_bytes(&text))
-        };
+        // Only file formats are published. Adding CF_UNICODETEXT here made
+        // chat apps (WeChat, QQ) and similar targets paste a path string
+        // instead of the files themselves; copying a path is a separate
+        // command that writes the text clipboard explicitly.
         let format = register_format(PREFERRED_DROP_EFFECT);
         if format != 0 {
             let effect = if cut { DROPEFFECT_MOVE.0 } else { 1 };
@@ -896,6 +886,23 @@ mod native {
         fn same_path_and_cancel_paste_errors_are_benign() {
             let cancel = windows::core::Error::from(E_ABORT);
             assert!(is_benign_paste_failure(&cancel));
+        }
+
+        #[test]
+        fn copying_files_publishes_only_file_formats() {
+            use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
+            use windows::Win32::System::Ole::CF_UNICODETEXT;
+
+            let paths = vec![r"C:\Windows\notepad.exe".to_string()];
+            set_file_clipboard(paths, false).expect("copy files to the clipboard");
+
+            let has_files = unsafe { IsClipboardFormatAvailable(CF_HDROP.0 as u32) }.is_ok();
+            let has_text = unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32) }.is_ok();
+            assert!(has_files, "copying files must publish CF_HDROP");
+            assert!(
+                !has_text,
+                "copying files must not publish a text format: chat apps then paste a path string instead of the files",
+            );
         }
 
         #[test]
