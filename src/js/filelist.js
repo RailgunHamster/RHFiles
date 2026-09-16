@@ -1,5 +1,50 @@
 // filelist.js — virtual list, layouts, sorting, rendering
 
+// The header sits outside the scrolling list and the rubber-band gutter. Keep
+// its column track equal to the list's actual content width, including the
+// platform scrollbar, rather than guessing a fixed Windows scrollbar width.
+let _fileHeaderGeometryObserver = null;
+let _fileHeaderGeometryRaf = 0;
+
+function syncFileHeaderGeometry() {
+  document.querySelectorAll('.content').forEach(content => {
+    const header = content.querySelector('.file-header');
+    const body = content.querySelector('.file-body');
+    const list = body?.querySelector('.file-list');
+    const gutter = body?.querySelector('.box-select-gutter');
+    if (!header || !list || !gutter) return;
+    if (!header.dataset.baseRightPadding) {
+      const padding = parseFloat(getComputedStyle(header).paddingRight);
+      header.dataset.baseRightPadding = String(Number.isFinite(padding) ? padding : 0);
+    }
+    const base = Number(header.dataset.baseRightPadding) || 0;
+    const scrollbar = Math.max(0, list.offsetWidth - list.clientWidth);
+    const inset = gutter.getBoundingClientRect().width + scrollbar;
+    header.style.paddingRight = `${base + inset}px`;
+  });
+}
+
+function scheduleFileHeaderGeometry() {
+  if (_fileHeaderGeometryRaf) return;
+  _fileHeaderGeometryRaf = requestAnimationFrame(() => {
+    _fileHeaderGeometryRaf = 0;
+    syncFileHeaderGeometry();
+  });
+}
+
+function initFileHeaderGeometry() {
+  if (typeof ResizeObserver === 'function' && !_fileHeaderGeometryObserver) {
+    _fileHeaderGeometryObserver = new ResizeObserver(scheduleFileHeaderGeometry);
+    document.querySelectorAll('.file-body, .file-list').forEach(element => {
+      _fileHeaderGeometryObserver.observe(element);
+    });
+  }
+  scheduleFileHeaderGeometry();
+}
+
+window.addEventListener('resize', scheduleFileHeaderGeometry);
+document.addEventListener('DOMContentLoaded', initFileHeaderGeometry);
+
 function naturalCompare(a, b) {
   const ax = [], bx = [];
   a.replace(/(\d+)|(\D+)/g, (_, $1, $2) => { ax.push([$1 || Infinity, $2 || '']); });
@@ -194,7 +239,9 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   teardownVirtualList(list);
   clearFileListForRender(list);
   list.classList.toggle("search-results", !!G.searchActive && !isRight);
-
+  const header = list.closest('.content')?.querySelector('.file-header');
+  if (header) header.classList.toggle('details-mode', G.layout === 'details');
+  scheduleFileHeaderGeometry();
   if (!entries.length && tabOrPane._loaded === true && !(G.searchActive && !isRight)) {
     const empty = document.createElement('div');
     empty.className = 'file-list-empty';
@@ -218,6 +265,7 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   if (countId) updateStatus(tabOrPane, countId, selId);
 
   const currentEntries = entries;
+  scheduleFileHeaderGeometry();
   setTimeout(() => updateCloudStatus(list, currentEntries), 50);
 }
 

@@ -575,13 +575,16 @@
       assert(!_previewEl || !_previewEl.classList.contains("visible"), "Hover preview opened after tab switch");
     });
 
-    await test("[tabs] Active tab does not open hover preview", async () => {
+    await test("[tabs] Active tab opens hover preview", async () => {
       const activeEl = $(".tab.active");
       assert(activeEl, "Active tab element not found");
       activeEl.dispatchEvent(new MouseEvent("mouseenter"));
-      await sleep(700);
-      assert(_previewTimer === null, "Active tab scheduled a hover preview");
-      assert(!_previewEl || !_previewEl.classList.contains("visible"), "Active tab opened a hover preview");
+      await waitForCondition(
+        () => !!_previewEl && _previewEl.classList.contains("visible"),
+        2500,
+      );
+      assert(_previewEl.classList.contains("visible"), "Active tab did not open a hover preview");
+      hideTabPreview();
     });
 
     // ================================================================
@@ -2041,6 +2044,32 @@
         rules.some(text => text.includes('.row-name::after') && text.includes('content')),
         "The draggable name column has no divider marking its end",
       );
+    });
+
+    await test("[layout] Header and row drag boundaries share one x coordinate", async () => {
+      const savedLayout = G.layout;
+      const tab = getTab();
+      try {
+        if (G.layout !== 'details') {
+          G.layout = 'details';
+          renderFiles(tab, "file-list", "status-count", "status-selection");
+          await sleep(40);
+        }
+        const headerName = document.querySelector('#file-header.details-mode .col-name');
+        const rowName = document.querySelector('#file-list .file-row:not(.card-item):not(.thumb-item) .row-name');
+        if (!headerName || !rowName) { log("SKIP: details rows are not currently rendered"); return; }
+        const headerRight = headerName.getBoundingClientRect().right;
+        const rowRight = rowName.getBoundingClientRect().right;
+        assert(
+          Math.abs(headerRight - rowRight) <= 1.5,
+          `Header and row drag boundaries differ by ${Math.abs(headerRight - rowRight).toFixed(2)}px (header=${headerRight.toFixed(2)}, row=${rowRight.toFixed(2)})`,
+        );
+      } finally {
+        if (G.layout !== savedLayout) {
+          G.layout = savedLayout;
+          renderFiles(tab, "file-list", "status-count", "status-selection");
+        }
+      }
     });
 
     await test("[open] Enter uses the same open path as double-click", async () => {

@@ -82,9 +82,9 @@ function renderTabs() {
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
   </button>`;
   initTabDragDrop(bar, false);
-  initTabPreview();
   revealTabLabelTails(bar);
   renderRightTabs();
+  initTabPreview();
 }
 
 function renderRightTabs() {
@@ -95,6 +95,7 @@ function renderRightTabs() {
   </button>`;
   initTabDragDrop(bar, true);
   revealTabLabelTails(bar);
+  initTabPreview();
 }
 
 window.addEventListener('resize', () => revealTabLabelTails());
@@ -766,11 +767,15 @@ function initTabDragDrop(bar, isRight) {
 let _previewTimer = null;
 let _previewEl = null;
 function initTabPreview() {
-  const bar = document.getElementById("tab-bar");
-  bar.querySelectorAll(".tab").forEach(tabEl => {
+  const bars = [
+    document.getElementById("tab-bar"),
+    document.getElementById("right-tab-bar"),
+  ].filter(Boolean);
+  bars.forEach(bar => bar.querySelectorAll(".tab").forEach(tabEl => {
+    if (tabEl.dataset.previewBound === 'true') return;
+    tabEl.dataset.previewBound = 'true';
     tabEl.addEventListener("mouseenter", () => {
       if (_fileDragTabHoverTarget || _dragTabId !== null) return;
-      if (parseInt(tabEl.dataset.tabId) === G.activeTab) return;
       hideTabPreview();
       _previewTimer = setTimeout(() => showTabPreview(tabEl), 300);
     });
@@ -778,7 +783,7 @@ function initTabPreview() {
       if (_previewTimer) clearTimeout(_previewTimer);
       hideTabPreview();
     });
-  });
+  }));
 }
 
 document.addEventListener('dragover', event => {
@@ -798,8 +803,10 @@ let _previewFetchToken = 0;
 
 async function showTabPreview(tabEl) {
   const tabId = parseInt(tabEl.dataset.tabId);
-  if (!tabEl.isConnected || tabId === G.activeTab) return;
-  const tab = G.tabs.find(t => t.id === tabId);
+  const isRight = tabEl.dataset.pane === 'right';
+  const tabs = isRight ? (G.rpTabs || []) : G.tabs;
+  if (!tabEl.isConnected) return;
+  const tab = tabs.find(item => item.id === tabId);
   if (!tab) return;
 
   if (!_previewEl) {
