@@ -2044,6 +2044,10 @@
         rules.some(text => text.includes('.row-name::after') && text.includes('content')),
         "The draggable name column has no divider marking its end",
       );
+      assert(
+        !rules.some(text => text.includes('repeating-linear-gradient')),
+        "The drag boundary reverted to a dotted repeating gradient",
+      );
     });
 
     await test("[layout] Header and row drag boundaries share one x coordinate", async () => {
