@@ -49,46 +49,45 @@
 .file-row .row-icon { width:16px; height:16px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .file-row .row-icon svg { width:16px; height:16px; }
 
-/* Selected rows advertise their drag surface. The file icon itself stays
-   untouched: it only gains a tinted plate behind it plus a grip chip on its
-   left, both inside the draggable name cell. */
-.file-row.selected .row-icon,
+/* Details layout: the selection lights up the draggable zone left of the
+   boundary line. The glow fades in toward the line and an accent segment sits
+   exactly on the line, so consecutive selected rows read as one highlighted
+   run while the single continuous boundary stays intact. */
+.file-row:not(.card-item):not(.thumb-item) .row-name { align-self:stretch; }
+.file-row:not(.card-item):not(.thumb-item).selected .row-name {
+  position:relative;
+  border-radius:6px 0 0 6px;
+  background:linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 5%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 11%, transparent) 55%,
+    color-mix(in srgb, var(--accent) 22%, transparent) 100%
+  );
+}
+.file-row:not(.card-item):not(.thumb-item).selected:hover .row-name {
+  background:linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 8%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 17%, transparent) 55%,
+    color-mix(in srgb, var(--accent) 30%, transparent) 100%
+  );
+}
+.file-row:not(.card-item):not(.thumb-item).selected .row-name::after {
+  content:""; position:absolute; top:0; bottom:0; right:-1px; width:2px;
+  border-radius:2px;
+  background:var(--accent);
+  box-shadow:0 0 9px 1px color-mix(in srgb, var(--accent) 62%, transparent);
+  pointer-events:none;
+}
+
+/* Icon, card and thumbnail layouts have no column boundary, so their drag
+   surface keeps a tinted plate behind the artwork. */
 .thumb-item.selected .thumb-img-box { position:relative; }
-.file-row.selected .row-icon {
-  border-radius:4px;
-  background:color-mix(in srgb, var(--accent) 16%, transparent);
-}
-.file-row.selected:hover .row-icon { background:color-mix(in srgb, var(--accent) 26%, transparent); }
-.file-row.selected .row-icon::after,
-.file-row.selected .big-icon-slot::after,
-.file-row.selected .card-icon-slot::after,
-.thumb-item.selected .thumb-img-box::after {
-  content:""; position:absolute;
-  left:-7px; top:50%; transform:translateY(-50%);
-  width:5px; height:13px;
-  background-color:var(--accent);
-  -webkit-mask-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 6 14'%3E%3Cg fill='black'%3E%3Ccircle cx='1.6' cy='2.6' r='1.05'/%3E%3Ccircle cx='4.4' cy='2.6' r='1.05'/%3E%3Ccircle cx='1.6' cy='7' r='1.05'/%3E%3Ccircle cx='4.4' cy='7' r='1.05'/%3E%3Ccircle cx='1.6' cy='11.4' r='1.05'/%3E%3Ccircle cx='4.4' cy='11.4' r='1.05'/%3E%3C/g%3E%3C/svg%3E");
-  mask-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 6 14'%3E%3Cg fill='black'%3E%3Ccircle cx='1.6' cy='2.6' r='1.05'/%3E%3Ccircle cx='4.4' cy='2.6' r='1.05'/%3E%3Ccircle cx='1.6' cy='7' r='1.05'/%3E%3Ccircle cx='4.4' cy='7' r='1.05'/%3E%3Ccircle cx='1.6' cy='11.4' r='1.05'/%3E%3Ccircle cx='4.4' cy='11.4' r='1.05'/%3E%3C/g%3E%3C/svg%3E");
-  -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
-  -webkit-mask-position:center; mask-position:center;
-  -webkit-mask-size:5px 13px; mask-size:5px 13px;
-  opacity:.5; pointer-events:none;
-}
-.file-row.selected:hover .row-icon::after,
-.thumb-item.selected:hover .thumb-img-box::after { opacity:1; }
-/* Large icon slots need a bigger plate and a taller grip. */
 .file-row.selected .big-icon-slot,
 .file-row.selected .card-icon-slot { position:relative; border-radius:9px; background:color-mix(in srgb, var(--accent) 13%, transparent); }
 .file-row.selected:hover .big-icon-slot,
 .file-row.selected:hover .card-icon-slot { background:color-mix(in srgb, var(--accent) 20%, transparent); }
-.file-row.selected .big-icon-slot::after,
-.file-row.selected .card-icon-slot::after {
-  left:-9px; top:10px; transform:none;
-  width:6px; height:20px;
-  -webkit-mask-size:6px 20px; mask-size:6px 20px;
-}
 .thumb-item.selected .thumb-img-box { border-radius:8px; background:color-mix(in srgb, var(--accent) 12%, transparent); }
-.thumb-item.selected .thumb-img-box::after { left:-6px; top:8px; transform:none; width:6px; height:20px; -webkit-mask-size:6px 20px; mask-size:6px 20px; }
 
 /* Drag image used for multi-item drags. */
 .file-drag-ghost {

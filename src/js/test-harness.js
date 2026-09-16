@@ -2029,28 +2029,30 @@
         try { return [...sheet.cssRules].map(rule => rule.cssText); } catch (e) { return []; }
       });
       assert(
-        rules.some(text => text.includes('.file-row.selected .row-icon::after')),
-        "Selected rows have no drag-grip styling for the icon area",
-      );
-      assert(
         rules.some(text => text.includes('.file-drag-ghost')),
         "Multi-item drag image styling is missing",
-      );
-      assert(
-        rules.some(text => text.includes('.file-row.selected .row-icon')),
-        "Selected rows have no tinted drag plate behind the icon",
       );
       assert(
         document.querySelector('.file-boundary-line:not([hidden])'),
         "The details pane has no continuous drag boundary line",
       );
       assert(
-        !rules.some(text => text.includes('.row-name::after')),
-        "The drag boundary reverted to per-row pseudo-elements",
-      );
-      assert(
         !rules.some(text => text.includes('repeating-linear-gradient')),
         "The drag boundary reverted to a dotted repeating gradient",
+      );
+      // The selected zone left of the boundary must be clearly highlighted, and
+      // the old six-dot grip affordance must be gone.
+      assert(
+        rules.some(text => text.includes('.selected .row-name') && text.includes('linear-gradient')),
+        "Selected rows have no glow on the draggable zone left of the boundary",
+      );
+      assert(
+        rules.some(text => text.includes('.selected .row-name::after') && text.includes('box-shadow')),
+        "The boundary has no emphasised accent segment on selected rows",
+      );
+      assert(
+        !rules.some(text => text.includes('row-icon::after')),
+        "The confusing six-dot drag grip came back",
       );
     });
 
@@ -2076,7 +2078,11 @@
         );
         assert(
           Math.abs(lineRect.left - headerRight) <= 1.5,
-          `Continuous boundary line is misaligned by ${Math.abs(lineRect.left - headerRight).toFixed(2)}px`,
+          `Continuous boundary line is misaligned with the header column by ${Math.abs(lineRect.left - headerRight).toFixed(2)}px`,
+        );
+        assert(
+          Math.abs(lineRect.left - rowRight) <= 1.5,
+          `Continuous boundary line is misaligned with the row drag zone by ${Math.abs(lineRect.left - rowRight).toFixed(2)}px`,
         );
         assert(lineRect.height > headerName.getBoundingClientRect().height, "Continuous boundary line does not span header and file rows");
       } finally {

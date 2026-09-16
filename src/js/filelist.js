@@ -17,6 +17,16 @@ function ensureFileBoundaryLine(content) {
   return line;
 }
 
+function placeFileBoundaryLine(content, header, body, boundaryX) {
+  const line = ensureFileBoundaryLine(content);
+  const contentRect = content.getBoundingClientRect();
+  const headerRect = header.getBoundingClientRect();
+  const bodyRect = body.getBoundingClientRect();
+  line.style.left = `${boundaryX - contentRect.left - 0.5}px`;
+  line.style.top = `${headerRect.top - contentRect.top}px`;
+  line.style.height = `${Math.max(0, bodyRect.bottom - headerRect.top)}px`;
+}
+
 function syncFileHeaderGeometry() {
   document.querySelectorAll('.content').forEach(content => {
     const header = content.querySelector('.file-header');
@@ -38,19 +48,31 @@ function syncFileHeaderGeometry() {
       header.dataset.baseRightPadding = String(Number.isFinite(padding) ? padding : 0);
     }
     const base = Number(header.dataset.baseRightPadding) || 0;
+    const headerName = header.querySelector('.col-name');
+    if (!headerName) return;
+
+    // A rendered row is the source of truth for where the draggable name
+    // column ends, so the header is nudged until its column track matches the
+    // row instead of relying on gutter/scrollbar arithmetic that can drift.
+    const rowName = list.querySelector('.file-row:not(.card-item):not(.thumb-item) .row-name');
+    if (rowName) {
+      const anchor = rowName.getBoundingClientRect().right;
+      const delta = headerName.getBoundingClientRect().right - anchor;
+      if (Math.abs(delta) > 0.5) {
+        const current = parseFloat(getComputedStyle(header).paddingRight);
+        const next = Math.max(0, (Number.isFinite(current) ? current : base) + delta);
+        header.style.paddingRight = `${next}px`;
+      }
+      const settled = headerName.getBoundingClientRect().right;
+      const boundary = Math.abs(settled - anchor) <= 1.5 ? settled : anchor;
+      placeFileBoundaryLine(content, header, body, boundary);
+      return;
+    }
+
     const scrollbar = Math.max(0, list.offsetWidth - list.clientWidth);
     const inset = gutter.getBoundingClientRect().width + scrollbar;
     header.style.paddingRight = `${base + inset}px`;
-
-    const nameColumn = header.querySelector('.col-name');
-    if (!nameColumn) return;
-    const contentRect = content.getBoundingClientRect();
-    const headerRect = header.getBoundingClientRect();
-    const bodyRect = body.getBoundingClientRect();
-    const nameRect = nameColumn.getBoundingClientRect();
-    line.style.left = `${nameRect.right - contentRect.left - 0.5}px`;
-    line.style.top = `${headerRect.top - contentRect.top}px`;
-    line.style.height = `${Math.max(0, bodyRect.bottom - headerRect.top)}px`;
+    placeFileBoundaryLine(content, header, body, headerName.getBoundingClientRect().right);
   });
 }
 
