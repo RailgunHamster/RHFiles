@@ -800,6 +800,7 @@ function handleRowClick(e, index, sel, tabOrPane, isRight) {
   const selId = isRight ? null : "status-selection";
   updateStatus(tabOrPane, countId, selId);
   updatePreviewForSelection();
+  if (typeof fileChoiceRefreshSelection === "function") fileChoiceRefreshSelection();
 }
 
 function updateStatus(tabOrPane, countId, selId) {
@@ -839,6 +840,7 @@ function selectAll(isRight) {
   entries.forEach((_, i) => sel.add(i));
   if (isRight) renderFiles(tabOrPane, "right-file-list", "right-status-count", null, true);
   else { renderFiles(tabOrPane, "file-list", "status-count", "status-selection"); updatePreviewForSelection(); }
+  if (typeof fileChoiceRefreshSelection === "function") fileChoiceRefreshSelection();
 }
 
 async function updateCloudStatus(listEl, entries) {

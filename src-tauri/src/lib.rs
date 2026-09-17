@@ -131,6 +131,10 @@ pub fn run() {
             file_dialog_integration::hide_file_dialog_picker,
             file_dialog_integration::set_file_dialog_picker_compact,
             file_dialog_integration::disable_file_dialog_integration,
+            file_dialog_integration::begin_file_choice_in_rhfiles,
+            file_dialog_integration::get_file_choice_session,
+            file_dialog_integration::choose_files_in_file_dialog,
+            file_dialog_integration::cancel_file_choice,
 
             system::get_thumbnail, system::open_file, system::open_in_windows_explorer, system::show_properties,
             system::read_file_preview, system::get_file_icon,

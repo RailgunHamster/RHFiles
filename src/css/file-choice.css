@@ -1,0 +1,116 @@
+/* file-choice.css — the confirm bar shown while a browser upload is waiting for
+   files chosen in RHFiles. It sits above the panes and deliberately does not
+   cover the file list: RHFiles' own browsing, preview and selection are the UI. */
+
+.file-choice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.file-choice-bar[hidden] {
+  display: none;
+}
+
+.file-choice-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 7px;
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.file-choice-badge svg {
+  width: 17px;
+  height: 17px;
+}
+
+.file-choice-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.file-choice-copy strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.file-choice-copy span {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-choice-filter {
+  flex: none;
+  max-width: 260px;
+  overflow: hidden;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text-2);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-choice-error {
+  flex: none;
+  max-width: 320px;
+  overflow: hidden;
+  color: var(--git-deleted, #d32f2f);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-choice-error:empty {
+  display: none;
+}
+
+.file-choice-action {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-choice-action:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.file-choice-action:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.file-choice-action.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.file-choice-action.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}

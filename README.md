@@ -81,6 +81,12 @@ Enable **Windows integration** in Settings and activate a standard Windows Open/
 
 The configurable shortcut (default: `Ctrl+G`) is now optional and only brings the list back into focus—it never navigates by itself. The integration is opt-in, created lazily, and does not replace the clipboard. Browser uploads that use the native Windows picker are supported; custom in-app pickers and elevated windows may not accept navigation yet.
 
+### Choosing upload files inside RHFiles
+
+When a browser asks for a file—an image upload, for example—the companion list offers **Choose files in RHFiles**. RHFiles then opens its own picker: a thumbnail grid filtered to the types that dialog actually accepts, a live preview pane, multi-selection, and keyboard navigation. The browser's own dialog stays open the whole time, so confirming writes the chosen files back into it and the upload completes as usual.
+
+The filter is read from the dialog itself rather than guessed, so it works on any UI language and follows whatever the user changed the file-type dropdown to. Cancelling returns focus to the original dialog, and the browser's dialog remains fully usable if you would rather pick there.
+
 ## Development
 
 Prerequisites:
@@ -109,6 +115,21 @@ Create the portable/update feed:
 ```
 
 See [Release process](docs/RELEASING.md) for versioning, tags, GitHub Releases, and LAN publishing.
+
+## RHFiles for Android
+
+A separate mobile application lives in [`android/`](android/). It is not a port of this codebase — the
+desktop backend is Win32/COM bound — but it targets the same goal from the other side: an ad-free,
+telemetry-free file manager with full storage access, built to replace File Manager Plus. It browses
+local, SD-card and USB storage, searches a self-built file-name index, and can serve the phone's files
+to a computer over HTTP. Its feature boundary, permission model and milestones are in
+[docs/ANDROID.md](docs/ANDROID.md).
+
+```powershell
+cd android
+cargo test --lib                                    # backend logic tests
+cargo tauri android build --apk --target aarch64    # release APK
+```
 
 ## Third-party components
 

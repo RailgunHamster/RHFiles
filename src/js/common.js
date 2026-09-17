@@ -940,12 +940,33 @@ function fallbackCall(cmd, args) {
     case "get_file_dialog_picker_state": return {
       enabled: false, targetAvailable: false, targetKind: "", targetPath: null, locale: "en", compact: false, locations: [],
       selectionKind: "", selectedPath: null, selectedName: null, selectedIsDir: false,
+      choiceAvailable: false, choiceActive: false, choiceStartFolder: null,
+      choiceExtensions: [], choiceAllowMultiple: true, choiceFilterLabel: null,
     };
     case "set_file_dialog_picker_compact": return {
       enabled: false, targetAvailable: false, targetKind: "", targetPath: null, locale: "en",
       compact: !!args.compact, locations: [],
       selectionKind: "", selectedPath: null, selectedName: null, selectedIsDir: false,
+      choiceAvailable: false, choiceActive: false, choiceStartFolder: null,
+      choiceExtensions: [], choiceAllowMultiple: true, choiceFilterLabel: null,
     };
+    case "begin_file_choice_in_rhfiles": return {
+      active: true,
+      startFolder: args.startFolder || "C:\\",
+      extensions: ["png", "jpg"],
+      allowMultiple: true,
+      filterLabel: "Image Files",
+      locale: "en",
+    };
+    case "get_file_choice_session": return {
+      active: false, startFolder: null, extensions: [], allowMultiple: true,
+      filterLabel: null, locale: "en",
+    };
+    case "choose_files_in_file_dialog":
+      // Record the hand-off so tests can assert exactly what was delivered.
+      window.__rhfilesLastChosenFiles = Array.isArray(args.files) ? args.files.slice() : [];
+      return null;
+    case "cancel_file_choice": return null;
     case "open_explorer_location_in_rhfiles": return {
       path: args.path || "C:\\", existing: false, pane: null, tabIndex: null, selectPath: null,
     };

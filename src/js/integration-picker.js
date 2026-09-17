@@ -9,6 +9,9 @@ const pickerText = {
     failed: '跳转失败：{error}', collapse: '收起（仅显示路径）', expand: '展开详细信息',
     hide: '暂时隐藏', disable: '关闭此功能（可在设置中重新开启）', openInRhfiles: '在 RHFiles 里打开',
     preview: '选中文件预览', noPreview: '没有可预览的文件',
+    chooseInRhfiles: '用 RHFiles 选文件', chooseInRhfilesSingle: '用 RHFiles 选这个文件',
+    choiceResume: '回到 RHFiles 继续选择',
+    choiceBusy: '正在打开 RHFiles…',
   },
   en: {
     title: 'Open RHFiles locations', subtitle: 'Choose where this Windows window should go', click: 'Click to navigate',
@@ -17,6 +20,9 @@ const pickerText = {
     failed: 'Navigation failed: {error}', collapse: 'Collapse to paths only', expand: 'Expand details',
     hide: 'Hide for now', disable: 'Turn off this feature (re-enable it in Settings)', openInRhfiles: 'Open in RHFiles',
     preview: 'Selected file preview', noPreview: 'No file is selected',
+    chooseInRhfiles: 'Choose files in RHFiles', chooseInRhfilesSingle: 'Choose this file in RHFiles',
+    choiceResume: 'Back to RHFiles to keep choosing',
+    choiceBusy: 'Opening RHFiles…',
   },
 };
 
@@ -68,6 +74,7 @@ function renderPicker(state) {
   compactOpenInRhfiles.title = tr('openInRhfiles');
   compactOpenInRhfiles.setAttribute('aria-label', tr('openInRhfiles'));
   document.getElementById('picker-open-rhfiles-label').textContent = tr('openInRhfiles');
+  renderPickerChoice(pickerState);
   renderPickerPreview(pickerState);
 
   const list = document.getElementById('picker-list');
@@ -137,6 +144,50 @@ document.getElementById('picker-compact').addEventListener('click', async () => 
     document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
   }
 });
+
+/** Offer RHFiles as the picker for dialogs that are choosing a file. */
+function renderPickerChoice(state) {
+  const button = document.getElementById('picker-choose-rhfiles');
+  const label = document.getElementById('picker-choose-rhfiles-label');
+  if (!button || !label) return;
+  const available = state.choiceAvailable === true && state.targetKind === 'windowsFileDialog';
+  button.hidden = !available;
+  document.documentElement.classList.toggle('has-choice', available);
+  if (!available) return;
+  // While a hand-off is in progress the same button brings RHFiles back to the
+  // front, which matters because RHFiles is where the choosing happens.
+  const active = state.choiceActive === true;
+  const text = active
+    ? tr('choiceResume')
+    : (state.choiceAllowMultiple === false ? tr('chooseInRhfilesSingle') : tr('chooseInRhfiles'));
+  const filter = Array.isArray(state.choiceExtensions) && state.choiceExtensions.length
+    ? state.choiceExtensions.map(extension => `*.${extension}`).join(' ')
+    : '';
+  label.textContent = text;
+  button.title = filter ? `${text} · ${filter}` : text;
+  button.setAttribute('aria-label', text);
+}
+
+let pickerChoiceBusy = false;
+async function chooseWithRhfiles() {
+  if (pickerChoiceBusy) return;
+  pickerChoiceBusy = true;
+  const button = document.getElementById('picker-choose-rhfiles');
+  const label = document.getElementById('picker-choose-rhfiles-label');
+  const previous = label.textContent;
+  document.getElementById('picker-subtitle').textContent = tr('choiceBusy');
+  try {
+    await pickerInvoke('begin_file_choice_in_rhfiles');
+  } catch (error) {
+    document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
+    label.textContent = previous;
+  } finally {
+    pickerChoiceBusy = false;
+    button.disabled = false;
+  }
+}
+document.getElementById('picker-choose-rhfiles').addEventListener('click', chooseWithRhfiles);
+
 function renderPickerPreview(state) {
   const preview = document.getElementById('picker-preview');
   const visual = document.getElementById('picker-preview-visual');

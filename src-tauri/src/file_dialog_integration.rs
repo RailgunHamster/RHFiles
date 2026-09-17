@@ -31,9 +31,10 @@ use windows::Win32::System::Ole::{
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern,
-    IUIAutomationValuePattern, TreeScope_Descendants, UIA_AutomationIdPropertyId,
-    UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_ListItemControlTypeId,
-    UIA_SelectionItemPatternId, UIA_ValuePatternId,
+    IUIAutomationSelectionPattern, IUIAutomationValuePattern, TreeScope_Descendants,
+    UIA_AutomationIdPropertyId, UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId,
+    UIA_EditControlTypeId, UIA_ListItemControlTypeId, UIA_SelectionItemPatternId,
+    UIA_SelectionPatternId, UIA_ValuePatternId,
 };
 #[cfg(test)]
 use windows::Win32::UI::Accessibility::{
@@ -148,6 +149,44 @@ pub struct FileDialogPickerState {
     selected_path: Option<String>,
     selected_name: Option<String>,
     selected_is_dir: bool,
+    choice_available: bool,
+    choice_active: bool,
+    choice_start_folder: Option<String>,
+    choice_extensions: Vec<String>,
+    choice_allow_multiple: bool,
+    choice_filter_label: Option<String>,
+}
+
+/// One or more files chosen in RHFiles that still have to reach the Windows
+/// dialog which asked for them. `hwnd` is the dialog itself, not RHFiles: the
+/// whole point of the hand-off is that the original picker stays alive and
+/// completes the upload once its filename field is confirmed.
+#[derive(Clone, Debug)]
+struct FileChoiceSession {
+    hwnd: usize,
+    allowed_extensions: Vec<String>,
+    allow_multiple: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChoiceRequestPayload {
+    start_folder: Option<String>,
+    extensions: Vec<String>,
+    allow_multiple: bool,
+    filter_label: Option<String>,
+    locale: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChoiceSessionState {
+    active: bool,
+    start_folder: Option<String>,
+    extensions: Vec<String>,
+    allow_multiple: bool,
+    filter_label: Option<String>,
+    locale: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -199,6 +238,7 @@ static LAST_NAVIGATION_METHOD: AtomicU8 = AtomicU8::new(0);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 static ACTION_SENDER: OnceLock<SyncSender<PickerRequest>> = OnceLock::new();
 static LAST_INSPECT: OnceLock<Mutex<TargetInspectCache>> = OnceLock::new();
+static FILE_CHOICE_SESSION: OnceLock<Mutex<Option<FileChoiceSession>>> = OnceLock::new();
 
 fn config() -> &'static Mutex<IntegrationConfig> {
     CONFIG.get_or_init(|| Mutex::new(IntegrationConfig::default()))
@@ -710,6 +750,279 @@ fn find_automation_id(
     unsafe { root.FindFirst(TreeScope_Descendants, &condition) }.ok()
 }
 
+/// Read the dialog's own file-type filter so RHFiles can show only what the
+/// dialog would accept. The Common Item Dialog exposes it as a ComboBox whose
+/// selected item is the visible filter text ("Image Files (*.png;*.jpg)").
+fn file_dialog_filter_text(automation: &IUIAutomation, root: &IUIAutomationElement) -> Option<String> {
+    let combo_type = VARIANT::from(UIA_ComboBoxControlTypeId.0);
+    let condition =
+        unsafe { automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &combo_type) }.ok()?;
+    let combos = unsafe { root.FindAll(TreeScope_Descendants, &condition) }.ok()?;
+    let count = unsafe { combos.Length() }.ok()?.min(8);
+    for index in 0..count {
+        let Ok(combo) = (unsafe { combos.GetElement(index) }) else {
+            continue;
+        };
+        let Ok(pattern) = (unsafe {
+            combo.GetCurrentPatternAs::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId)
+        }) else {
+            continue;
+        };
+        let Ok(selection) = (unsafe { pattern.GetCurrentSelection() }) else {
+            continue;
+        };
+        let selected_count = unsafe { selection.Length() }.ok().unwrap_or(0).min(4);
+        for selected_index in 0..selected_count {
+            let Ok(item) = (unsafe { selection.GetElement(selected_index) }) else {
+                continue;
+            };
+            let Ok(name) = (unsafe { item.CurrentName() }) else {
+                continue;
+            };
+            let name = name.to_string();
+            if name.contains('*') && !name.trim().is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+/// Pull the `*.ext` patterns out of a Windows filter string. The filter grammar
+/// is localized in its label but never in its patterns, so this works on any UI
+/// language. `*.*` means "everything" and is reported as no restriction.
+fn file_filter_extensions(text: &str) -> Vec<String> {
+    let mut extensions: Vec<String> = Vec::new();
+    let mut wildcard = false;
+    let mut rest = text;
+    while let Some(start) = rest.find("*.") {
+        let after = &rest[start + 2..];
+        let end = after
+            .find(|character: char| {
+                !character.is_ascii_alphanumeric() && character != '-' && character != '_'
+            })
+            .unwrap_or(after.len());
+        let extension = after[..end].to_ascii_lowercase();
+        if extension.is_empty() || extension == "*" {
+            wildcard = true;
+        } else if !extensions.contains(&extension) {
+            extensions.push(extension);
+        }
+        rest = &after[end..];
+    }
+    if wildcard { Vec::new() } else { extensions }
+}
+
+/// Everything before the first `(` is the human-readable filter name, which is
+/// already localized by the dialog itself.
+fn file_filter_label(text: &str) -> Option<String> {
+    let label = text.split('(').next().unwrap_or(text).trim();
+    (!label.is_empty()).then(|| label.to_string())
+}
+
+/// Quote each path that needs it and join them the way the dialog's own
+/// filename field expects a multi-file selection.
+fn dialog_selection_text(paths: &[String]) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::with_capacity(paths.len());
+    for path in paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.contains(' ') {
+            parts.push(format!("\"{trimmed}\""));
+        } else {
+            parts.push(trimmed.to_string());
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+fn is_absolute_file_path(path: &str) -> bool {
+    // Normalize separators first so a `file:///`-style or forward-slash path
+    // from the frontend is treated as the same location Windows uses.
+    let normalized = path.trim().replace('/', "\\");
+    let trimmed = normalized.trim_end_matches('\\');
+    trimmed.len() >= 3 && trimmed.as_bytes()[1] == b':' && trimmed.as_bytes()[2] == b'\\'
+        || trimmed.starts_with("\\\\")
+}
+
+/// The extensions the dialog in `target` currently accepts. An empty vector
+/// means "no restriction": either the dialog accepts everything or the filter
+/// could not be read.
+fn dialog_extensions(target: HWND) -> Vec<String> {
+    if !is_supported_window(target) {
+        return Vec::new();
+    }
+    let Ok(automation) =
+        (unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) })
+    else {
+        return Vec::new();
+    };
+    let Ok(root) = (unsafe { automation.ElementFromHandle(target) }) else {
+        return Vec::new();
+    };
+    file_dialog_filter_text(&automation, &root)
+        .map(|text| file_filter_extensions(&text))
+        .unwrap_or_default()
+}
+
+fn file_choice_session() -> &'static Mutex<Option<FileChoiceSession>> {
+    FILE_CHOICE_SESSION.get_or_init(|| Mutex::new(None))
+}
+
+fn file_choice_target() -> Option<usize> {
+    file_choice_session()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|session| session.hwnd)
+}
+
+/// Read once from the active hand-off session, if there is one. The lock is
+/// taken and released inside so callers never hold it across a blocking call.
+fn with_file_choice_session<T>(use_session: impl FnOnce(&FileChoiceSession) -> T) -> Option<T> {
+    file_choice_session()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(use_session)
+}
+
+fn start_file_choice_session(
+    hwnd: usize,
+    allowed_extensions: Vec<String>,
+    allow_multiple: bool,
+) -> FileChoiceSessionState {
+    {
+        let mut guard = file_choice_session()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(FileChoiceSession {
+            hwnd,
+            allowed_extensions,
+            allow_multiple,
+        });
+    }
+    ACTIVE_TARGET.store(hwnd, Ordering::Release);
+    emit_file_choice_request();
+    emit_picker_state();
+    file_choice_state()
+}
+
+fn end_file_choice_session() {
+    {
+        let mut guard = file_choice_session()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = None;
+    }
+    emit_file_choice_session_ended();
+    emit_picker_state();
+}
+
+/// Drop the session without emitting picker state; callers that already
+/// re-emit (or tear the picker down) use this to avoid duplicate events.
+fn clear_file_choice_session() {
+    let mut guard = file_choice_session()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = None;
+}
+
+/// Drop a session whose dialog disappeared, so RHFiles never offers to hand
+/// files to a window that no longer exists.
+fn prune_file_choice_session() -> bool {
+    let Some(hwnd) = file_choice_target() else {
+        return false;
+    };
+    let alive = is_supported_window(HWND(hwnd as *mut core::ffi::c_void));
+    if !alive {
+        end_file_choice_session();
+    }
+    !alive
+}
+
+fn file_choice_state() -> FileChoiceSessionState {
+    let locale = lock_config().locale.clone();
+    let session = with_file_choice_session(|session| session.clone());
+    let target = session
+        .as_ref()
+        .map(|session| HWND(session.hwnd as *mut core::ffi::c_void));
+    // A session stays reported as active even when its dialog is not a live
+    // window yet, so a caller that has just started one sees it immediately.
+    // `prune_file_choice_session` is what retires a genuinely closed dialog.
+    match session {
+        Some(session) => FileChoiceSessionState {
+            active: true,
+            start_folder: target.and_then(file_choice_start_folder),
+            extensions: session.allowed_extensions,
+            allow_multiple: session.allow_multiple,
+            filter_label: target.and_then(dialog_filter_label),
+            locale,
+        },
+        None => FileChoiceSessionState {
+            active: false,
+            start_folder: None,
+            extensions: Vec::new(),
+            allow_multiple: true,
+            filter_label: None,
+            locale,
+        },
+    }
+}
+
+fn file_choice_start_folder(target: HWND) -> Option<String> {
+    is_supported_window(target)
+        .then(|| cached_inspect(target).folder)
+        .flatten()
+}
+
+/// The dialog's own visible filter text, e.g. "Image Files (*.png;*.jpg)".
+fn dialog_filter_text(target: HWND) -> Option<String> {
+    if !is_supported_window(target) {
+        return None;
+    }
+    let automation =
+        unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) }.ok()?;
+    let root = unsafe { automation.ElementFromHandle(target) }.ok()?;
+    file_dialog_filter_text(&automation, &root)
+}
+
+fn dialog_filter_label(target: HWND) -> Option<String> {
+    dialog_filter_text(target).and_then(|text| file_filter_label(&text))
+}
+
+fn emit_file_choice_request() {
+    let Some(app) = APP_HANDLE.get() else {
+        return;
+    };
+    let state = file_choice_state();
+    if !state.active {
+        return;
+    }
+    let payload = FileChoiceRequestPayload {
+        start_folder: state.start_folder,
+        extensions: state.extensions,
+        allow_multiple: state.allow_multiple,
+        filter_label: state.filter_label,
+        locale: state.locale,
+    };
+    // Only the main window can hand files back, so target it explicitly rather
+    // than broadcasting: every other open RHFiles window stays untouched.
+    let _ = app.emit_to("main", "file-choice-request", payload);
+}
+
+fn emit_file_choice_session_ended() {
+    let Some(app) = APP_HANDLE.get() else {
+        return;
+    };
+    let _ = app.emit("file-choice-ended", ());
+}
+
 fn selected_list_item_name(
     automation: &IUIAutomation,
     root: &IUIAutomationElement,
@@ -932,6 +1245,7 @@ fn prune_closed_window_locations() -> bool {
 
 fn picker_state() -> FileDialogPickerState {
     let _ = prune_closed_window_locations();
+    let _ = prune_file_choice_session();
     let snapshot = lock_config().clone();
     let locations = all_locations(&snapshot);
     let target = ACTIVE_TARGET.load(Ordering::Acquire);
@@ -942,6 +1256,8 @@ fn picker_state() -> FileDialogPickerState {
     } else {
         TargetInspect::default()
     };
+    let choice_target = file_choice_target();
+    let choice_session = choice_target.and_then(|_| with_file_choice_session(|session| session.clone()));
     FileDialogPickerState {
         enabled: snapshot.enabled,
         target_available,
@@ -954,6 +1270,26 @@ fn picker_state() -> FileDialogPickerState {
         selected_path: inspect.selected_path,
         selected_name: inspect.selected_name,
         selected_is_dir: inspect.selected_is_dir,
+        // A chooser dialog is one that asks for a file rather than a folder;
+        // that is exactly when RHFiles can offer its own browsing surface.
+        choice_available: target_available && inspect.selection_kind == "file",
+        choice_active: choice_session.is_some(),
+        choice_start_folder: choice_session
+            .as_ref()
+            .map(|session| session.hwnd)
+            .and_then(|hwnd| file_choice_start_folder(HWND(hwnd as *mut core::ffi::c_void))),
+        choice_extensions: choice_session
+            .as_ref()
+            .map(|session| session.allowed_extensions.clone())
+            .unwrap_or_default(),
+        choice_allow_multiple: choice_session
+            .as_ref()
+            .map(|session| session.allow_multiple)
+            .unwrap_or(true),
+        choice_filter_label: choice_session
+            .as_ref()
+            .map(|session| session.hwnd)
+            .and_then(|hwnd| dialog_filter_label(HWND(hwnd as *mut core::ffi::c_void))),
     }
 }
 
@@ -1085,6 +1421,25 @@ fn monitor_picker() {
             continue;
         }
         thread::sleep(Duration::from_millis(140));
+
+        // While a file-choice hand-off is in progress the user is working inside
+        // RHFiles and choosing from its own file list. The companion list would
+        // only cover that window up, so hide it and keep the original dialog
+        // recorded; the normal foreground logic below restores the list as soon
+        // as the user is back in the dialog.
+        if let Some(choice_target) = file_choice_target() {
+            if !is_enabled_supported_window(HWND(choice_target as *mut core::ffi::c_void)) {
+                end_file_choice_session();
+            } else {
+                ACTIVE_TARGET.store(choice_target, Ordering::Release);
+                hide_picker_native();
+                // A completed selection hands the user back to the browser's
+                // dialog, which must be allowed to bring the list up again.
+                DISMISSED_TARGET.store(0, Ordering::Release);
+                previous_foreground = unsafe { GetForegroundWindow() }.0 as usize;
+                continue;
+            }
+        }
 
         let foreground = unsafe { GetForegroundWindow() };
         let foreground_value = foreground.0 as usize;
@@ -1392,6 +1747,24 @@ fn paste_location_without_typing(target: HWND, path: &str) -> bool {
 enum InstantAddressReplacement {
     AddressBar,
     DialogFileName,
+}
+
+/// Commit a value that was written straight into the dialog's filename field
+/// with ValuePattern, which never triggers the editing notifications the dialog
+/// listens for. A zero-net-change edit (Space + Backspace) makes Chromium's
+/// Common Item Dialog pick the value up, then Enter confirms it in the same
+/// input batch so a foreground race cannot split the operation.
+fn commit_dialog_filename_field() -> bool {
+    send_inputs(&[
+        key_input(VK_END, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_END, KEYEVENTF_KEYUP),
+        key_input(VK_SPACE, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_SPACE, KEYEVENTF_KEYUP),
+        key_input(VK_BACK, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_BACK, KEYEVENTF_KEYUP),
+        key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+        key_input(VK_RETURN, KEYEVENTF_KEYUP),
+    ])
 }
 
 fn explorer_browser_has_visible_view(browser: &IWebBrowser2) -> bool {
@@ -1868,20 +2241,7 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
     }
     if replaced_filename && target_class.eq_ignore_ascii_case("#32770") {
         let _ = unsafe { SetForegroundWindow(target) };
-        // ValuePattern replaces the complete path without visible typing. A
-        // zero-net-change edit (Space + Backspace) makes Chromium's Common Item
-        // Dialog commit that value, then Enter confirms it in the same input
-        // batch so a foreground race cannot split the operation.
-        if !send_inputs(&[
-            key_input(VK_END, KEYBD_EVENT_FLAGS(0)),
-            key_input(VK_END, KEYEVENTF_KEYUP),
-            key_input(VK_SPACE, KEYBD_EVENT_FLAGS(0)),
-            key_input(VK_SPACE, KEYEVENTF_KEYUP),
-            key_input(VK_BACK, KEYBD_EVENT_FLAGS(0)),
-            key_input(VK_BACK, KEYEVENTF_KEYUP),
-            key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
-            key_input(VK_RETURN, KEYEVENTF_KEYUP),
-        ]) {
+        if !commit_dialog_filename_field() {
             return Err("Unable to confirm the Windows filename field".to_string());
         }
         return Ok(());
@@ -1901,6 +2261,116 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
         return Err("Unable to confirm the selected folder in Windows".to_string());
     }
     Ok(())
+}
+
+/// Hand one or more absolute file paths to the dialog that asked for them and
+/// confirm the selection, which completes the browser's upload.
+///
+/// This deliberately bypasses the address bar: a browser upload dialog filters
+/// an *empty* filename field by extension, so typing a full path there is
+/// rejected. Writing the filename field directly, then confirming it, is the
+/// same mechanism the existing folder flow already proves on Chromium dialogs.
+fn choose_files_in_target_window(hwnd_value: usize, paths: &[String]) -> Result<(), String> {
+    let target = focus_file_dialog_for_choice(hwnd_value)?;
+    write_files_into_dialog_field(target, paths)?;
+    if !commit_dialog_filename_field() {
+        return Err("Unable to confirm the selected files".to_string());
+    }
+    Ok(())
+}
+
+/// Bring the waiting dialog back to the foreground so its filename field can be
+/// written. A synthetic Alt tap permits the foreground transition to a window
+/// owned by another process; a bare Alt in an already-active dialog enters menu
+/// mode, so only send it when the transition is actually needed.
+fn focus_file_dialog_for_choice(hwnd_value: usize) -> Result<HWND, String> {
+    let target = HWND(hwnd_value as *mut core::ffi::c_void);
+    if !is_supported_window(target) {
+        return Err("The browser file dialog is no longer open".to_string());
+    }
+    if unsafe { GetForegroundWindow() } != target {
+        let _ = send_inputs(&[
+            key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_MENU, KEYEVENTF_KEYUP),
+        ]);
+    }
+    if !unsafe { SetForegroundWindow(target) }.as_bool() {
+        return Err("Windows did not allow the browser file dialog to regain focus".to_string());
+    }
+    if !wait_for_input_foreground(target, Duration::from_millis(1200)) {
+        return Err("The browser file dialog did not regain focus in time".to_string());
+    }
+    Ok(target)
+}
+
+/// Write the chosen paths into the dialog's filename field without confirming,
+/// so the caller can verify the value before it commits.
+fn write_files_into_dialog_field(target: HWND, paths: &[String]) -> Result<(), String> {
+    let selection =
+        dialog_selection_text(paths).ok_or_else(|| "No file was selected in RHFiles".to_string())?;
+    if paths.iter().any(|path| !is_absolute_file_path(path)) {
+        return Err("Only local files can be handed back to the browser".to_string());
+    }
+    let mut target_process_id = 0u32;
+    unsafe { GetWindowThreadProcessId(target, Some(&mut target_process_id)) };
+    let value = BSTR::from(selection.as_str());
+    // The dialog's automation tree can still be publishing right after it
+    // regains focus, so poll for the filename field instead of sampling once.
+    let deadline = Instant::now() + Duration::from_millis(2500);
+    while Instant::now() < deadline {
+        if matches!(
+            set_dialog_filename_value(target, target_process_id, &value),
+            Ok(InstantAddressReplacement::DialogFileName)
+        ) {
+            thread::sleep(Duration::from_millis(120));
+            let _ = unsafe { SetForegroundWindow(target) };
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    // Fall back to the visible paste path: Ctrl+A then Ctrl+V replaces the
+    // field wholesale without per-character input.
+    if paste_location_without_typing(target, &selection) {
+        Ok(())
+    } else {
+        Err("Unable to write the selected files into the browser dialog".to_string())
+    }
+}
+
+/// Re-focus the dialog's own filename field and write the value with
+/// ValuePattern. Following the field's focus (rather than assuming the address
+/// bar) is what lets this target upload dialogs as well as navigation ones.
+fn set_dialog_filename_value(
+    target: HWND,
+    target_process_id: u32,
+    value: &BSTR,
+) -> Result<InstantAddressReplacement, String> {
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    let can_use_com = initialized.is_ok() || initialized == RPC_E_CHANGED_MODE;
+    let _guard = ComGuard(initialized.is_ok());
+    if !can_use_com {
+        return Err("COM is unavailable for dialog automation".to_string());
+    }
+    let automation = unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL)
+    }
+    .map_err(|error| format!("start UI automation: {error}"))?;
+    let root = unsafe { automation.ElementFromHandle(target) }
+        .map_err(|error| format!("read the dialog automation root: {error}"))?;
+    let filename = find_automation_id(&automation, &root, "1148")
+        .ok_or_else(|| "the dialog has no filename field to write".to_string())?;
+    set_uia_element_value(&filename, value)?;
+    let _ = target_process_id;
+    Ok(InstantAddressReplacement::DialogFileName)
 }
 
 fn current_status() -> FileDialogIntegrationStatus {
@@ -2017,6 +2487,7 @@ pub fn configure_file_dialog_integration(
         }
     }
     if !master {
+        clear_file_choice_session();
         ACTIVE_TARGET.store(0, Ordering::Release);
         DISMISSED_TARGET.store(0, Ordering::Release);
         hide_picker_native();
@@ -2036,6 +2507,153 @@ pub fn get_file_dialog_integration_status() -> FileDialogIntegrationStatus {
 #[tauri::command]
 pub fn get_file_dialog_picker_state() -> FileDialogPickerState {
     picker_state()
+}
+
+/// Open RHFiles' own file-choosing surface for the dialog that is currently
+/// asking for a file. The dialog itself is never touched here — it stays open
+/// so the browser's upload can be completed once files come back.
+#[tauri::command(async)]
+pub async fn begin_file_choice_in_rhfiles(
+    window: tauri::WebviewWindow,
+) -> Result<FileChoiceSessionState, String> {
+    let target = ACTIVE_TARGET.load(Ordering::Acquire);
+    if target == 0 {
+        return Err("No Windows file dialog is available".to_string());
+    }
+    let target_hwnd = HWND(target as *mut core::ffi::c_void);
+    if !is_supported_window(target_hwnd) {
+        return Err("The Windows file dialog is no longer open".to_string());
+    }
+    let kind = target_kind(target_hwnd);
+    if kind != "windowsFileDialog" {
+        return Err("The active Windows window is not a file dialog".to_string());
+    }
+    // A Chromium picker publishes its window before its automation tree, so the
+    // filename field can still be missing on the first look. Poll briefly
+    // instead of refusing a dialog the user is clearly looking at.
+    let mut inspect = None;
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < deadline {
+        let current = tauri::async_runtime::spawn_blocking(move || {
+            inspect_target(HWND(target as *mut core::ffi::c_void))
+        })
+        .await
+        .map_err(|error| format!("Unable to read the dialog location: {error}"))?;
+        let is_file_chooser = current.selection_kind == "file";
+        inspect = Some(current);
+        if is_file_chooser {
+            break;
+        }
+        thread::sleep(Duration::from_millis(80));
+    }
+    let inspect = inspect.ok_or_else(|| "Unable to read the Windows file dialog".to_string())?;
+    if inspect.selection_kind != "file" {
+        return Err("This Windows dialog is choosing a folder, not a file".to_string());
+    }
+
+    let extensions = tauri::async_runtime::spawn_blocking(move || {
+        dialog_extensions(HWND(target as *mut core::ffi::c_void))
+    })
+    .await
+    .map_err(|error| format!("Unable to read the dialog filter: {error}"))?;
+
+    // `allow_multiple` is unknown until the selection is delivered; start
+    // permissive and let the dialog reject anything it will not accept.
+    let state = start_file_choice_session(target, extensions, true);
+    // Bring the main window to the front. The caller is the companion window,
+    // which is always-on-top and would otherwise keep covering RHFiles; only
+    // the main window owns the file list the user is about to choose from.
+    let app = window.app_handle().clone();
+    crate::tray::show_main_window(&app)?;
+    if let Some(main_window) = app.get_webview_window("main") {
+        // The window must be foreground before its list can take keyboard input.
+        let _ = main_window.set_focus();
+    }
+    // The returned state already carries the folder RHFiles should open; the
+    // session itself emitted the request event the picker banner listens for.
+    Ok(state)
+}
+
+/// What RHFiles should remember while the picker surface is open, so reopening
+/// a window mid-selection restores the same constraints.
+#[tauri::command]
+pub fn get_file_choice_session() -> FileChoiceSessionState {
+    file_choice_state()
+}
+
+/// Hand the chosen files to the dialog and let it finish the upload.
+#[tauri::command(async)]
+pub async fn choose_files_in_file_dialog(
+    files: Vec<String>,
+    cancel: Option<bool>,
+) -> Result<(), String> {
+    let Some(target) = file_choice_target() else {
+        return Err("No browser file dialog is waiting for a selection".to_string());
+    };
+    if cancel == Some(true) {
+        end_file_choice_session();
+        return Ok(());
+    }
+    if files.is_empty() {
+        return Err("No file was selected in RHFiles".to_string());
+    }
+    let allow_multiple = with_file_choice_session(|session| session.allow_multiple).unwrap_or(true);
+    let allowed = with_file_choice_session(|session| session.allowed_extensions.clone())
+        .unwrap_or_default();
+    if !allow_multiple && files.len() > 1 {
+        return Err("This browser dialog accepts a single file".to_string());
+    }
+    if !allowed.is_empty() {
+        for file in &files {
+            let extension = std::path::Path::new(file)
+                .extension()
+                .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            if !allowed.contains(&extension) {
+                return Err(if extension.is_empty() {
+                    "The browser dialog only accepts specific file types; this file has none"
+                        .to_string()
+                } else {
+                    format!("The browser dialog does not accept .{extension} files")
+                });
+            }
+        }
+    }
+
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        choose_files_in_target_window(target, &files)
+    })
+    .await
+    .map_err(|error| format!("Unable to run Windows file selection: {error}"))?;
+    // The session has served its purpose whether or not the write succeeded;
+    // leaving it open would block the monitor from following the user again.
+    let _ = tauri::async_runtime::spawn_blocking(|| {
+        end_file_choice_session();
+    })
+    .await;
+    outcome
+}
+
+/// Abandon a hand-off and give focus back to the dialog that is still waiting.
+#[tauri::command(async)]
+pub async fn cancel_file_choice() {
+    let target = file_choice_target();
+    end_file_choice_session();
+    let Some(target) = target else {
+        return;
+    };
+    if !is_supported_window(HWND(target as *mut core::ffi::c_void)) {
+        return;
+    }
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let target = HWND(target as *mut core::ffi::c_void);
+        let _ = send_inputs(&[
+            key_input(VK_MENU, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_MENU, KEYEVENTF_KEYUP),
+        ]);
+        let _ = unsafe { SetForegroundWindow(target) };
+    })
+    .await;
 }
 
 #[tauri::command]
@@ -2194,6 +2812,7 @@ pub fn disable_file_dialog_integration(app: tauri::AppHandle, target_kind: Optio
         )
     };
     if !enabled {
+        clear_file_choice_session();
         ACTIVE_TARGET.store(0, Ordering::Release);
         DISMISSED_TARGET.store(0, Ordering::Release);
         hide_picker_native();
@@ -2866,6 +3485,168 @@ mod tests {
         assert!(picker_js.contains("button.disabled = false"));
         assert!(picker_js.contains("renderPickerPreview"));
         assert!(picker_js.contains("windowsFileDialog"));
+        // The browser-upload hand-off action must exist and be reachable.
+        assert!(picker_html.contains("id=\"picker-choose-rhfiles\""));
+        assert!(picker_html.contains("id=\"picker-choose-rhfiles-label\""));
+        assert!(picker_js.contains("renderPickerChoice"));
+        assert!(picker_js.contains("begin_file_choice_in_rhfiles"));
+        assert!(picker_js.contains("choiceAvailable"));
+        // The overlay that receives the hand-off must be wired into the main
+        // window and speak the same event and command names as the backend.
+        let index_html = include_str!("../../src/index.html");
+        assert!(index_html.contains("js/file-choice.js"));
+        assert!(index_html.contains("css/file-choice.css"));
+        let choice_js = include_str!("../../src/js/file-choice.js");
+        assert!(choice_js.contains("'file-choice-request'"));
+        assert!(choice_js.contains("'file-choice-ended'"));
+        assert!(choice_js.contains("begin_file_choice_in_rhfiles"));
+        assert!(choice_js.contains("choose_files_in_file_dialog"));
+        assert!(choice_js.contains("cancel_file_choice"));
+        assert!(choice_js.contains("choiceStartFolder") || choice_js.contains("start_folder"));
+    }
+
+    #[test]
+    fn reads_windows_file_dialog_filters() {
+        // The label before '(' is localized by the dialog itself; the patterns
+        // never are, which is what makes this work on any UI language.
+        assert_eq!(
+            file_filter_extensions("Image Files (*.png;*.jpg;*.JPG;*.jpeg)"),
+            vec!["png", "jpg", "jpeg"]
+        );
+        assert_eq!(
+            file_filter_extensions("图片文件 (*.bmp; *.gif)"),
+            vec!["bmp", "gif"]
+        );
+        // "All files" must not be mistaken for a restriction to no files.
+        assert!(file_filter_extensions("All Files (*.*)").is_empty());
+        assert!(file_filter_extensions("所有文件 (*.*)").is_empty());
+        assert!(file_filter_extensions("").is_empty());
+        assert!(file_filter_extensions("no patterns here").is_empty());
+        // One wildcard filter inside a multi-filter list still means "anything".
+        assert!(file_filter_extensions("Images (*.png)|All (*.*)").is_empty());
+        // Extension-looking text without the `*.` prefix is not a filter.
+        assert!(file_filter_extensions("report (pdf)").is_empty());
+    }
+
+    #[test]
+    fn extracts_the_localized_filter_label() {
+        assert_eq!(
+            file_filter_label("Image Files (*.png;*.jpg)").as_deref(),
+            Some("Image Files")
+        );
+        assert_eq!(
+            file_filter_label("图片文件 (*.png)").as_deref(),
+            Some("图片文件")
+        );
+        assert_eq!(file_filter_label("   ").as_deref(), None);
+        assert_eq!(file_filter_label("(*.png)").as_deref(), None);
+    }
+
+    #[test]
+    fn quotes_dialog_selections_the_way_windows_expects() {
+        assert_eq!(dialog_selection_text(&[]), None);
+        assert_eq!(
+            dialog_selection_text(&["C:\\a\\b.png".to_string()]).as_deref(),
+            Some("C:\\a\\b.png")
+        );
+        // A path with a space has to be quoted or the dialog sees two names.
+        assert_eq!(
+            dialog_selection_text(&["C:\\my photos\\a b.png".to_string()]).as_deref(),
+            Some("\"C:\\my photos\\a b.png\"")
+        );
+        // Multiple files are space separated, exactly like the dialog's own
+        // multi-select produces.
+        assert_eq!(
+            dialog_selection_text(&[
+                "C:\\a\\one.png".to_string(),
+                "C:\\b\\two three.jpg".to_string(),
+            ])
+            .as_deref(),
+            Some("C:\\a\\one.png \"C:\\b\\two three.jpg\"")
+        );
+        // Whitespace-only entries are dropped rather than producing a bare "".
+        assert_eq!(dialog_selection_text(&["   ".to_string()]), None);
+    }
+
+    #[test]
+    fn accepts_only_absolute_local_file_paths() {
+        assert!(is_absolute_file_path("C:\\a\\b.png"));
+        assert!(is_absolute_file_path("d:/a/b.png"));
+        assert!(is_absolute_file_path("\\\\server\\share\\b.png"));
+        assert!(!is_absolute_file_path("b.png"));
+        assert!(!is_absolute_file_path("C:"));
+        assert!(!is_absolute_file_path(""));
+        assert!(!is_absolute_file_path("https://example.com/b.png"));
+    }
+
+    #[test]
+    fn picker_state_publishes_the_choice_contract() {
+        // The companion window decides whether to offer the hand-off purely from
+        // these fields, so their JSON names are part of the frontend contract.
+        let payload = serde_json::to_value(FileDialogPickerState {
+            enabled: true,
+            target_available: true,
+            target_kind: "windowsFileDialog",
+            target_path: Some("C:\\pictures".to_string()),
+            locale: "zh".to_string(),
+            compact: false,
+            locations: Vec::new(),
+            selection_kind: "file",
+            selected_path: None,
+            selected_name: None,
+            selected_is_dir: false,
+            choice_available: true,
+            choice_active: false,
+            choice_start_folder: Some("C:\\pictures".to_string()),
+            choice_extensions: vec!["png".to_string(), "jpg".to_string()],
+            choice_allow_multiple: true,
+            choice_filter_label: Some("Image Files".to_string()),
+        })
+        .expect("picker state should serialize");
+        assert_eq!(payload["choiceAvailable"], true);
+        assert_eq!(payload["choiceActive"], false);
+        assert_eq!(payload["choiceStartFolder"], "C:\\pictures");
+        assert_eq!(payload["choiceExtensions"][0], "png");
+        assert_eq!(payload["choiceAllowMultiple"], true);
+        assert_eq!(payload["choiceFilterLabel"], "Image Files");
+
+        // A session state with no active hand-off is still a complete shape.
+        let empty = serde_json::to_value(FileChoiceSessionState {
+            active: false,
+            start_folder: None,
+            extensions: Vec::new(),
+            allow_multiple: true,
+            filter_label: None,
+            locale: "en".to_string(),
+        })
+        .expect("session state should serialize");
+        assert_eq!(empty["active"], false);
+        assert_eq!(empty["allowMultiple"], true);
+    }
+
+    #[test]
+    fn file_choice_session_holds_and_releases_its_target() {
+        let _guard = HOOK_START_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        clear_file_choice_session();
+        assert_eq!(file_choice_target(), None);
+        assert_eq!(file_choice_state().active, false);
+
+        let state = start_file_choice_session(0x1234, vec!["png".to_string()], false);
+        assert!(state.active);
+        assert_eq!(state.extensions, vec!["png".to_string()]);
+        assert_eq!(state.allow_multiple, false);
+        // The session is reported even though this HWND is not a real dialog,
+        // so a caller that just started one always sees it.
+        assert_eq!(file_choice_target(), Some(0x1234));
+        assert!(file_choice_state().active);
+        // A bogus HWND is not a live dialog, so it is pruned rather than held.
+        assert!(prune_file_choice_session());
+        assert_eq!(file_choice_target(), None);
+        assert_eq!(file_choice_state().active, false);
+        clear_file_choice_session();
     }
 
     #[test]
@@ -3193,6 +3974,179 @@ mod tests {
             wait_for_process_window("Notepad", &target_name, process_id, Duration::from_secs(10))
                 .expect("Notepad did not open the target file by its basename after navigation");
         assert_eq!(reopened, main_hwnd);
+        guard.dialog_hwnd = None;
+    }
+
+    /// Read the file dialog's own File-name field through the same automation
+    /// id the production code uses, so a test can see what was written without
+    /// relying on localized labels.
+    fn file_dialog_filename_value(hwnd: HWND) -> Option<String> {
+        let automation =
+            unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) }.ok()?;
+        let root = unsafe { automation.ElementFromHandle(hwnd) }.ok()?;
+        let element = find_automation_id(&automation, &root, "1148")?;
+        uia_element_value(&element)
+    }
+
+    /// Exercises the same path the RHFiles picker uses to finish a browser
+    /// upload: a real Chromium upload dialog, a full path written into its
+    /// File-name field, and the confirmation that lets the page receive it.
+    ///
+    /// Like the other real-window tests in this module it needs an interactive
+    /// desktop session; a headless or disconnected session cannot show the
+    /// browser window, so it fails at the first wait rather than in the tested
+    /// code.
+    #[test]
+    #[ignore = "opens and closes a controlled Microsoft Edge upload picker"]
+    fn chooses_a_file_into_a_real_edge_upload_picker() {
+        let edge = [
+            std::env::var_os("PROGRAMFILES(X86)")
+                .map(std::path::PathBuf::from)
+                .map(|path| path.join("Microsoft/Edge/Application/msedge.exe")),
+            std::env::var_os("PROGRAMFILES")
+                .map(std::path::PathBuf::from)
+                .map(|path| path.join("Microsoft/Edge/Application/msedge.exe")),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|path| path.is_file())
+        .expect("Microsoft Edge is not installed in a standard location");
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_millis()
+        );
+        let root = std::env::temp_dir().join(format!("rhfiles-choice-edge-{unique}"));
+        let profile = root.join("edge-profile");
+        // A space in the name proves the quoting path as well as the write.
+        let chosen_folder = root.join("chosen pictures");
+        fs::create_dir_all(&profile).expect("create the Edge test profile");
+        fs::create_dir_all(&chosen_folder).expect("create the choice target folder");
+        let chosen_name = format!("upload marker {unique}.png");
+        let chosen_path = chosen_folder.join(&chosen_name);
+        fs::write(&chosen_path, b"not really a png, but a real file\n")
+            .expect("write the chosen file");
+        let edge_title = format!("RHFiles Choice Edge {unique}");
+        let button_name = format!("Open RHFiles chooser {unique}");
+        // A file input that accepts images is exactly what an upload page uses.
+        let page = root.join("upload.html");
+        fs::write(
+            &page,
+            format!(
+                "<!doctype html><meta charset=\"utf-8\"><title>{edge_title}</title>\
+                 <button onclick=\"document.getElementById('file').click()\">{button_name}</button>\
+                 <input id=\"file\" type=\"file\" accept=\"image/png,image/jpeg\" hidden>"
+            ),
+        )
+        .expect("write the controlled upload page");
+        let page_url = url::Url::from_file_path(&page)
+            .expect("convert the upload page path to a file URL")
+            .to_string();
+
+        let process = Command::new(edge)
+            .arg("--new-window")
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg("--disable-sync")
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg(page_url)
+            .spawn()
+            .expect("start a controlled Microsoft Edge window");
+        let mut guard = EdgeTestGuard {
+            dialog_hwnd: None,
+            browser_hwnd: None,
+            process: Some(process),
+            root: root.clone(),
+        };
+        let browser_hwnd = {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Some(hwnd) =
+                    top_level_window_with_title("Chrome_WidgetWin_1", &edge_title, None)
+                {
+                    break Some(hwnd);
+                }
+                if Instant::now() >= deadline {
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+        .expect("the controlled Edge upload page did not open");
+        guard.browser_hwnd = Some(browser_hwnd);
+        focus_controlled_window(browser_hwnd);
+        let button_deadline = Instant::now() + Duration::from_secs(10);
+        let button_invoked = loop {
+            if invoke_named_uia_element(browser_hwnd, &button_name) {
+                break true;
+            }
+            if Instant::now() >= button_deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(150));
+        };
+        assert!(
+            button_invoked,
+            "could not invoke the controlled Edge upload button"
+        );
+
+        let dialog_deadline = Instant::now() + Duration::from_secs(15);
+        let dialog_hwnd = loop {
+            let foreground = unsafe { GetForegroundWindow() };
+            if window_class(foreground).eq_ignore_ascii_case("#32770")
+                && is_supported_window(foreground)
+                && unsafe { GetWindow(foreground, GW_OWNER) }.ok() == Some(browser_hwnd)
+            {
+                break Some(foreground);
+            }
+            if Instant::now() >= dialog_deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        .expect("Edge did not open its native upload picker");
+        guard.dialog_hwnd = Some(dialog_hwnd);
+        focus_controlled_window(dialog_hwnd);
+
+        // An upload picker must be recognized as choosing a file, not a folder.
+        let inspect = inspect_file_dialog(dialog_hwnd);
+        assert_eq!(
+            inspect.selection_kind, "file",
+            "Edge's upload picker was not recognized as a file chooser; names={:?}",
+            uia_descendant_names(dialog_hwnd)
+        );
+
+        // Hand the file over the way the RHFiles picker does, then read the
+        // dialog's own File-name field back through UI Automation.
+        let target = dialog_hwnd.0 as usize;
+        let focused = focus_file_dialog_for_choice(target).expect("focus Edge's upload picker");
+        let chosen = chosen_path.to_string_lossy().into_owned();
+        write_files_into_dialog_field(focused, std::slice::from_ref(&chosen))
+            .expect("write the chosen file into Edge's upload picker");
+        assert_eq!(
+            file_dialog_filename_value(dialog_hwnd).as_deref(),
+            Some(chosen.as_str()),
+            "Edge's File-name field did not receive the chosen path; focused={}; names={:?}",
+            focused_uia_debug(),
+            uia_descendant_names(dialog_hwnd),
+        );
+
+        // Confirming is what actually completes the upload.
+        assert!(
+            commit_dialog_filename_field(),
+            "the confirmation keystrokes were not delivered"
+        );
+        let closed_deadline = Instant::now() + Duration::from_secs(10);
+        while unsafe { IsWindow(Some(dialog_hwnd)) }.as_bool() && Instant::now() < closed_deadline {
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            !unsafe { IsWindow(Some(dialog_hwnd)) }.as_bool(),
+            "Edge's upload picker stayed open after the selection was confirmed"
+        );
         guard.dialog_hwnd = None;
     }
 

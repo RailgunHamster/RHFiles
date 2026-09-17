@@ -1304,6 +1304,98 @@
       }
     });
 
+    await test("[integration] RHFiles confirm bar round-trips a browser upload selection", async () => {
+      // The bar reports what RHFiles' own selection contains, so it must keep
+      // only the files the dialog accepts and never count folders.
+      assertEqual(fileChoiceFilterPaths(['C:\\a.png','C:\\b.txt','C:\\c.jpg'], ['png','jpg']).join(','),
+        'C:\\a.png,C:\\c.jpg', "Files outside the dialog filter were kept");
+      assertEqual(fileChoiceFilterPaths(['C:\\a.png','C:\\b.txt'], []).length, 2,
+        "An unrestricted dialog must keep every path");
+      assertEqual(fileChoiceExtension('C:\\x\\Photo.JPG'), 'jpg', "Extension matching must be case-insensitive");
+
+      // The bar is built on first use and is hidden until a hand-off starts.
+      fileChoiceEnsureDom();
+      assert($('#file-choice-bar'), "The RHFiles confirm bar was not built");
+      for (const id of ['file-choice-title', 'file-choice-subtitle', 'file-choice-filter',
+                        'file-choice-confirm', 'file-choice-cancel', 'file-choice-clear']) {
+        assert($(`#${id}`), `The confirm bar is missing #${id}`);
+      }
+      assert($('#file-choice-bar').hidden, "The confirm bar must start hidden");
+      assert(!fileChoiceIsActive(), "Building the bar must not start a hand-off");
+      // It must sit in the layout rather than covering the file list.
+      assertEqual(getComputedStyle($('#file-choice-bar')).position, 'static',
+        "The confirm bar must not overlay the file list");
+
+      function serveFileChoiceSession(extensions) {
+        call = (cmd, args) => {
+          if (cmd === 'begin_file_choice_in_rhfiles') {
+            return Promise.resolve({
+              active: true,
+              startFolder: 'C:\\',
+              extensions,
+              allowMultiple: true,
+              filterLabel: extensions.length ? 'Image Files' : null,
+              locale: 'en',
+            });
+          }
+          return originalCall(cmd, args);
+        };
+        return () => { call = originalCall; };
+      }
+
+      const savedSelection = getSelectedPaths().slice();
+      let restore = serveFileChoiceSession(['png', 'jpg']);
+      try {
+        window.__rhfilesLastChosenFiles = null;
+        await fileChoiceBegin();
+        assert(fileChoiceIsActive(), "The confirm bar did not activate for a browser dialog");
+        assert(!$('#file-choice-bar').hidden, "The confirm bar stayed hidden after opening");
+        assert($('#file-choice-confirm').disabled, "Confirm must be disabled with nothing selected");
+
+        // Selection comes from RHFiles' real selection, not a private list.
+        const tab = getTab();
+        tab.sel.clear();
+        tab.entries.forEach((entry, index) => {
+          if (entry && !entry.is_dir) tab.sel.add(index);
+        });
+        fileChoiceRefreshSelection();
+        const selectedFiles = getSelectedPaths().filter(entry => !entry.is_dir);
+        const accepted = selectedFiles.filter(entry => ['png','jpg'].includes(fileChoiceExtension(entry.path)));
+        assert(accepted.length > 0, "The test fixture has no image to select");
+        assertEqual($('#file-choice-confirm').disabled, accepted.length === 0,
+          "Confirm state did not follow the filtered selection");
+        assertIncludes($('#file-choice-subtitle').textContent, String(accepted.length),
+          "The bar did not report how many files would be delivered");
+
+        await fileChoiceConfirm();
+        assertEqual((window.__rhfilesLastChosenFiles || []).length, accepted.length,
+          "Confirming did not deliver exactly the accepted files");
+        assert(!fileChoiceIsActive(), "The confirm bar stayed active after the hand-off");
+        assert($('#file-choice-bar').hidden, "The confirm bar stayed visible after the hand-off");
+
+        // Cancelling must release the session without delivering anything.
+        window.__rhfilesLastChosenFiles = null;
+        await fileChoiceBegin();
+        assert(!$('#file-choice-bar').hidden, "The confirm bar did not return for a new hand-off");
+        await fileChoiceCancel();
+        assert(!fileChoiceIsActive(), "Cancelling did not end the hand-off");
+        assert($('#file-choice-bar').hidden, "Cancelling did not hide the confirm bar");
+        assertEqual(window.__rhfilesLastChosenFiles, null, "Cancelling delivered files anyway");
+      } finally {
+        restore();
+        fileChoiceClose();
+        const tab = getTab();
+        if (tab?.sel) {
+          tab.sel.clear();
+          savedSelection.forEach((entry, index) => {
+            const found = (tab.entries || []).findIndex(candidate => candidate.path === entry.path);
+            if (found >= 0) tab.sel.add(found);
+          });
+          renderFiles(tab, 'file-list', 'status-count', 'status-selection');
+        }
+      }
+    });
+
     await test("[media] Conversion dialog supports video, audio, and image profiles", async () => {
       assertEqual(mediaConversionKind({name:'clip.mkv', extension:'mkv', is_dir:false}), 'video', "MKV was not recognized as video");
       assertEqual(mediaConversionKind({name:'track.flac', extension:'flac', is_dir:false}), 'audio', "FLAC was not recognized as audio");
