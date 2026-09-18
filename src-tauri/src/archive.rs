@@ -211,11 +211,20 @@ fn list_archive_with_7z(exe: &str, path: &Path) -> Result<Vec<ArchiveEntry>, Str
     command.creation_flags(0x0800_0000);
     let output = command.output().map_err(|e| e.to_string())?;
     if !output.status.success() {
+        let exit_code = output.status.code().unwrap_or(-1);
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if error.is_empty() {
-            "7-Zip listing failed".to_string()
-        } else {
+        let stdout_tail = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        return Err(if !error.is_empty() {
             error
+        } else if !stdout_tail.is_empty() {
+            format!("7-Zip listing failed (exit code {exit_code}): {stdout_tail}")
+        } else {
+            format!("7-Zip listing failed (exit code {exit_code})")
         });
     }
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -250,6 +259,11 @@ fn run_7z_extraction(
     command.creation_flags(0x0800_0000);
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let (progress_tx, progress_rx) = std::sync::mpsc::channel();
+    // 7-Zip prints some failures (command-line problems, crash aftermath) only
+    // to stdout, and crash exit codes carry no output at all, so keep a short
+    // tail of stdout lines to build an actionable error message.
+    let stdout_tail = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let tail_for_reader = std::sync::Arc::clone(&stdout_tail);
     let progress_reader = child.stdout.take().map(|stdout| {
         std::thread::spawn(move || {
             let mut reader = std::io::BufReader::new(stdout);
@@ -263,8 +277,18 @@ fn run_7z_extraction(
                 if count == 0 {
                     break;
                 }
-                if let Some(percentage) = percentage_from_7z_line(&String::from_utf8_lossy(&line)) {
+                let text = String::from_utf8_lossy(&line).to_string();
+                if let Some(percentage) = percentage_from_7z_line(&text) {
                     let _ = progress_tx.send(percentage.min(99));
+                }
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    if let Ok(mut tail) = tail_for_reader.lock() {
+                        if tail.len() >= 15 {
+                            tail.pop_front();
+                        }
+                        tail.push_back(trimmed.to_string());
+                    }
                 }
             }
         })
@@ -314,11 +338,23 @@ fn run_7z_extraction(
         .and_then(|reader| reader.join().ok())
         .unwrap_or_default();
     if !status.success() {
-        let error = if stderr.trim().is_empty() {
-            "7-Zip extraction failed".to_string()
-        } else {
-            stderr
-        };
+        let exit_code = status.code().unwrap_or(-1);
+        let mut error = format!("7-Zip extraction failed (exit code {exit_code})");
+        let stderr_text = stderr.trim();
+        if !stderr_text.is_empty() {
+            error.push_str(": ");
+            error.push_str(stderr_text);
+        } else if let Ok(tail) = stdout_tail.lock() {
+            let tail = tail
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" | ");
+            if !tail.is_empty() {
+                error.push_str(": ");
+                error.push_str(&tail);
+            }
+        }
         return Err(error);
     }
     emit_extract_progress(app, operation_id, archive, dest, 0, 0, 100, 0, "complete");
