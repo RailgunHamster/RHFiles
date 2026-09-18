@@ -116,6 +116,7 @@ pub struct ArchiveEntry {
     pub is_dir: bool,
     pub size: u64,
     pub modified: String,
+    pub encrypted: bool,
 }
 
 #[derive(Serialize)]

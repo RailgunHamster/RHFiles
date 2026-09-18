@@ -42,7 +42,7 @@ async function openArchive(path) {
     tab.entries = entries.map((e, i) => ({
       name: e.name, path: e.path, extension: e.is_dir ? "" : (e.name.split(".").pop() || ""),
       is_dir: e.is_dir, is_hidden: false, size: e.size, size_display: fmtSize(e.size),
-      modified: e.modified, created: "", archive_entry: true, archive_index: i
+      modified: e.modified, created: "", encrypted: !!e.encrypted, archive_entry: true, archive_index: i
     }));
     tab.sel.clear();
     const header = document.querySelector(".file-header");
@@ -65,24 +65,38 @@ function closeArchive() {
 
 async function extractArchiveAll() {
   if (!archiveBrowsingPath) return;
-  const taskId = showProgress(t('status.extracting', { name: archiveBrowsingPath.split('\\').pop() }), {
-    currentName: archiveBrowsingPath.split('\\').pop(),
-    currentPath: archiveBrowsingPath,
-  });
-  try {
-    await call("extract_archive", {
-      path: archiveBrowsingPath,
-      dest: getTab().path,
-      entryPath: null,
-      operationId: taskId,
+  const name = archiveBrowsingPath.split('\\').pop();
+  let password = null;
+  if ((getTab().entries || []).some(e => e.encrypted)) {
+    password = await promptArchivePassword(name);
+    if (password === null) return;
+  }
+  for (let attempt = 0; ; attempt++) {
+    const taskId = showProgress(t('status.extracting', { name }), {
+      currentName: name,
+      currentPath: archiveBrowsingPath,
     });
-    completeOperationTask(taskId);
-    closeArchive();
-  } catch (e) {
-    if (/cancel/i.test(String(e))) cancelOperationTask(taskId);
-    else {
+    try {
+      await call("extract_archive", {
+        path: archiveBrowsingPath,
+        dest: getTab().path,
+        entryPath: null,
+        password,
+        operationId: taskId,
+      });
+      completeOperationTask(taskId);
+      closeArchive();
+      return;
+    } catch (e) {
+      if (/cancel/i.test(String(e))) { cancelOperationTask(taskId); return; }
+      if (isArchivePasswordError(e) && attempt < 2) {
+        cancelOperationTask(taskId);
+        const next = await promptArchivePassword(name);
+        if (next !== null) { password = next; continue; }
+      }
       failOperationTask(taskId, e);
       alert(t('alert.extractFailed', {error: e}));
+      return;
     }
   }
 }
@@ -91,24 +105,37 @@ async function extractArchiveEntry(idx) {
   if (!archiveBrowsingPath) return;
   const entries = getTab().entries;
   if (!entries[idx]) return;
-  const taskId = showProgress(t('status.extracting', { name: entries[idx].name }), {
-    currentName: entries[idx].name,
-    currentPath: entries[idx].path,
-  });
-  try {
-    await call("extract_archive", {
-      path: archiveBrowsingPath,
-      dest: getTab().path,
-      entryPath: entries[idx].path,
-      operationId: taskId,
+  let password = null;
+  if (entries[idx].encrypted) {
+    password = await promptArchivePassword(entries[idx].name);
+    if (password === null) return;
+  }
+  for (let attempt = 0; ; attempt++) {
+    const taskId = showProgress(t('status.extracting', { name: entries[idx].name }), {
+      currentName: entries[idx].name,
+      currentPath: entries[idx].path,
     });
-    completeOperationTask(taskId);
-    refresh();
-  } catch (e) {
-    if (/cancel/i.test(String(e))) cancelOperationTask(taskId);
-    else {
+    try {
+      await call("extract_archive", {
+        path: archiveBrowsingPath,
+        dest: getTab().path,
+        entryPath: entries[idx].path,
+        password,
+        operationId: taskId,
+      });
+      completeOperationTask(taskId);
+      refresh();
+      return;
+    } catch (e) {
+      if (/cancel/i.test(String(e))) { cancelOperationTask(taskId); return; }
+      if (isArchivePasswordError(e) && attempt < 2) {
+        cancelOperationTask(taskId);
+        const next = await promptArchivePassword(entries[idx].name);
+        if (next !== null) { password = next; continue; }
+      }
       failOperationTask(taskId, e);
       alert(t('alert.extractFailed', {error: e}));
+      return;
     }
   }
 }

@@ -644,31 +644,92 @@ function windowsPathKey(path) {
     .toLocaleLowerCase();
 }
 
-async function extractArchiveTo(file, destination) {
-  if (!file) return;
-  const taskId = showProgress(t('status.extracting', { name: file.name }), {
-    currentName: file.name,
-    currentPath: file.path,
+function isArchivePasswordError(error) {
+  return /wrong password|sub items errors/i.test(String(error));
+}
+
+// Promise-based password prompt for encrypted archives. Resolves with the
+// entered password, or null when cancelled / left empty.
+function promptArchivePassword(label) {
+  return new Promise(resolve => {
+    const dlg = document.createElement("dialog");
+    dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:380px;";
+    dlg.innerHTML = `
+      <h3 style="margin:0 0 8px;font-size:14px">${t('archive.passwordTitle')}</h3>
+      <div style="font-size:12px;color:var(--text-4);margin-bottom:10px;word-break:break-all;">${esc(String(label || ''))}</div>
+      <input type="password" autocomplete="off" placeholder="${t('archive.passwordPrompt')}"
+        style="width:100%;box-sizing:border-box;padding:6px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+        <button class="dialog-btn" data-act="cancel">${t('btn.cancel')}</button>
+        <button class="dialog-btn primary" data-act="ok">${t('archive.passwordUnlock')}</button>
+      </div>`;
+    const input = dlg.querySelector("input");
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      dlg.close();
+      dlg.remove();
+      resolve(value);
+    };
+    const submit = () => finish(input.value === "" ? null : input.value);
+    dlg.querySelector('[data-act="cancel"]').onclick = () => finish(null);
+    dlg.querySelector('[data-act="ok"]').onclick = submit;
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter") { event.preventDefault(); submit(); }
+    });
+    dlg.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    input.focus();
   });
-  try {
-    const ext = (file.extension || '').toLowerCase();
-    if (ext === 'zip') {
-      await call('extract_archive', {
-        path: file.path,
-        dest: destination,
-        entryPath: null,
-        operationId: taskId,
-      });
-    } else {
-      await call('extract_7z', { archive: file.path, dest: destination, operationId: taskId });
-    }
-    completeOperationTask(taskId);
-    await refresh();
-  } catch (e) {
-    if (/cancel/i.test(String(e))) cancelOperationTask(taskId);
-    else {
+}
+
+async function extractArchiveTo(file, destination, password) {
+  if (!file) return;
+  let currentPassword = password || null;
+  for (let attempt = 0; ; attempt++) {
+    const taskId = showProgress(t('status.extracting', { name: file.name }), {
+      currentName: file.name,
+      currentPath: file.path,
+    });
+    try {
+      const ext = (file.extension || '').toLowerCase();
+      if (ext === 'zip') {
+        await call('extract_archive', {
+          path: file.path,
+          dest: destination,
+          entryPath: null,
+          password: currentPassword,
+          operationId: taskId,
+        });
+      } else {
+        await call('extract_7z', {
+          archive: file.path,
+          dest: destination,
+          password: currentPassword,
+          operationId: taskId,
+        });
+      }
+      completeOperationTask(taskId);
+      await refresh();
+      return;
+    } catch (e) {
+      if (/cancel/i.test(String(e))) {
+        cancelOperationTask(taskId);
+        return;
+      }
+      if (isArchivePasswordError(e) && attempt < 2) {
+        cancelOperationTask(taskId);
+        const next = await promptArchivePassword(file.name);
+        if (next !== null) {
+          currentPassword = next;
+          continue;
+        }
+      }
       failOperationTask(taskId, e);
       alert(t('alert.extractFailed', { error: e }));
+      return;
     }
   }
 }

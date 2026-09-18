@@ -57,6 +57,7 @@ pub fn extract_archive(
     path: String,
     dest: String,
     entry_path: Option<String>,
+    password: Option<String>,
     operation_id: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
@@ -69,7 +70,16 @@ pub fn extract_archive(
     };
     let entry = entry_path.as_deref().map(sanitize_7z_entry).transpose()?;
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
-    run_7z_extraction(&exe, &path, &dest, entry, &operation_id, &app, &cancel)
+    run_7z_extraction(
+        &exe,
+        &path,
+        &dest,
+        entry,
+        password.as_deref(),
+        &operation_id,
+        &app,
+        &cancel,
+    )
 }
 
 #[tauri::command(async)]
@@ -147,7 +157,13 @@ fn sanitize_7z_entry(entry: &str) -> Result<&str, String> {
     Ok(entry)
 }
 
-fn make_7z_entry(path: String, is_dir: bool, size: u64, modified: &str) -> ArchiveEntry {
+fn make_7z_entry(
+    path: String,
+    is_dir: bool,
+    size: u64,
+    modified: &str,
+    encrypted: bool,
+) -> ArchiveEntry {
     let name = path
         .rsplit(|c| c == '/' || c == '\\')
         .next()
@@ -159,6 +175,7 @@ fn make_7z_entry(path: String, is_dir: bool, size: u64, modified: &str) -> Archi
         is_dir,
         size,
         modified: modified.to_string(),
+        encrypted,
     }
 }
 
@@ -170,16 +187,18 @@ fn parse_7z_listing(text: &str) -> Result<Vec<ArchiveEntry>, String> {
     let mut is_dir = false;
     let mut size = 0u64;
     let mut modified = String::new();
+    let mut encrypted = false;
     for line in text.lines() {
         let line = line.trim_end_matches('\r');
         if let Some(value) = line.strip_prefix("Path = ") {
             if let Some(existing) = path.take() {
-                entries.push(make_7z_entry(existing, is_dir, size, &modified));
+                entries.push(make_7z_entry(existing, is_dir, size, &modified, encrypted));
             }
             path = Some(value.to_string());
             is_dir = false;
             size = 0;
             modified.clear();
+            encrypted = false;
         } else if path.is_some() {
             if let Some(value) = line.strip_prefix("Folder = ") {
                 is_dir = value.trim() == "+" || value.trim() == "1";
@@ -187,11 +206,13 @@ fn parse_7z_listing(text: &str) -> Result<Vec<ArchiveEntry>, String> {
                 size = value.trim().parse().unwrap_or(0);
             } else if let Some(value) = line.strip_prefix("Modified = ") {
                 modified = value.trim().to_string();
+            } else if let Some(value) = line.strip_prefix("Encrypted = ") {
+                encrypted = value.trim() == "+" || value.trim() == "1";
             }
         }
     }
     if let Some(existing) = path.take() {
-        entries.push(make_7z_entry(existing, is_dir, size, &modified));
+        entries.push(make_7z_entry(existing, is_dir, size, &modified, encrypted));
     }
     if entries.is_empty() {
         return Err("7-Zip returned no archive entries".to_string());
@@ -231,14 +252,41 @@ fn list_archive_with_7z(exe: &str, path: &Path) -> Result<Vec<ArchiveEntry>, Str
     parse_7z_listing(&stdout)
 }
 
+/// Build the 7-Zip `x` argument vector. The password is glued to `-p` inside a
+/// single argument so passwords containing spaces or a leading `-` survive
+/// verbatim; `None` passes an empty password so encrypted archives fail fast
+/// with "Wrong password" instead of blocking on an interactive prompt.
+fn build_7z_extract_args(
+    archive: &str,
+    dest: &str,
+    entry: Option<&str>,
+    password: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec!["x".to_string(), archive.to_string()];
+    if let Some(entry) = entry {
+        args.push(entry.to_string());
+    }
+    args.push(format!("-o{dest}"));
+    args.push("-y".to_string());
+    args.push(match password {
+        Some(password) => format!("-p{password}"),
+        None => "-p".to_string(),
+    });
+    args.push("-bsp1".to_string());
+    args.push("-bb0".to_string());
+    args
+}
+
 /// Shared 7-Zip extraction used both by the explicit `extract_7z` command and
-/// as the fallback for split ZIP archives. `entry` optionally restricts the
-/// extraction to a single archive member (wildcard-safe names only).
+/// by `extract_archive`. `entry` optionally restricts the extraction to a
+/// single archive member (wildcard-safe names only); `password` unlocks
+/// encrypted archives.
 fn run_7z_extraction(
     exe: &str,
     archive: &str,
     dest: &str,
     entry: Option<&str>,
+    password: Option<&str>,
     operation_id: &str,
     app: &tauri::AppHandle,
     cancel: &CancelFlag,
@@ -246,13 +294,8 @@ fn run_7z_extraction(
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     emit_extract_progress(app, operation_id, archive, dest, 0, 0, 0, 0, "progress");
     let mut command = std::process::Command::new(exe);
-    command.arg("x").arg(archive);
-    if let Some(entry) = entry {
-        command.arg(entry);
-    }
+    command.args(build_7z_extract_args(archive, dest, entry, password));
     command
-        .arg(format!("-o{dest}"))
-        .args(["-y", "-p", "-bsp1", "-bb0"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -416,6 +459,7 @@ fn percentage_from_7z_line(line: &str) -> Option<u32> {
 pub fn extract_7z(
     archive: String,
     dest: String,
+    password: Option<String>,
     operation_id: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
@@ -427,7 +471,16 @@ pub fn extract_7z(
         operation_id: &operation_id,
     };
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
-    run_7z_extraction(&exe, &archive, &dest, None, &operation_id, &app, &cancel)
+    run_7z_extraction(
+        &exe,
+        &archive,
+        &dest,
+        None,
+        password.as_deref(),
+        &operation_id,
+        &app,
+        &cancel,
+    )
 }
 
 #[tauri::command(async)]
@@ -453,8 +506,8 @@ pub fn is_7z_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_7z, list_archive_with_7z, make_7z_entry, parse_7z_listing, percentage_from_7z_line,
-        sanitize_7z_entry,
+        build_7z_extract_args, find_7z, list_archive_with_7z, make_7z_entry, parse_7z_listing,
+        percentage_from_7z_line, sanitize_7z_entry,
     };
     use std::path::PathBuf;
 
@@ -486,11 +539,34 @@ mod tests {
 
     #[test]
     fn make_7z_entry_derives_display_name() {
-        let entry = make_7z_entry("vamzhb\\AddonPackages\\pack.var".to_string(), false, 2245, "");
+        let entry = make_7z_entry(
+            "vamzhb\\AddonPackages\\pack.var".to_string(),
+            false,
+            2245,
+            "",
+            true,
+        );
         assert_eq!(entry.name, "pack.var");
         assert_eq!(entry.path, "vamzhb\\AddonPackages\\pack.var");
         assert!(!entry.is_dir);
         assert_eq!(entry.size, 2245);
+        assert!(entry.encrypted);
+    }
+
+    #[test]
+    fn builds_7z_extract_args_with_password() {
+        let plain = build_7z_extract_args("a.zip", "D:\\out", None, None);
+        assert_eq!(plain, vec!["x", "a.zip", "-oD:\\out", "-y", "-p", "-bsp1", "-bb0"]);
+        let with_entry = build_7z_extract_args("a.zip", "D:\\out", Some("dir/file.txt"), None);
+        assert_eq!(with_entry[2], "dir/file.txt");
+        assert_eq!(with_entry[5], "-p");
+        let with_password = build_7z_extract_args(
+            "a.zip",
+            "D:\\out",
+            None,
+            Some("my pass - with specials"),
+        );
+        assert!(with_password.contains(&"-pmy pass - with specials".to_string()));
     }
 
     #[test]
@@ -500,22 +576,26 @@ mod tests {
                     Size = 0\r\n\
                     Modified = 2026-05-27 22:40:05.8123076\r\n\
                     Attributes = D\r\n\
+                    Encrypted = -\r\n\
                     \r\n\
                     Path = vamzhb\\AddonPackages\\04_PG.FollowMe.1.var\r\n\
                     Folder = -\r\n\
                     Size = 2245\r\n\
                     Modified = 2026-05-27 01:23:03.4778233\r\n\
                     Attributes = A\r\n\
+                    Encrypted = +\r\n\
                     \r\n";
         let entries = parse_7z_listing(text).expect("parse listing");
         assert_eq!(entries.len(), 2);
         assert!(entries[0].is_dir);
         assert_eq!(entries[0].name, "vamzhb");
         assert_eq!(entries[0].modified, "2026-05-27 22:40:05.8123076");
+        assert!(!entries[0].encrypted);
         assert!(!entries[1].is_dir);
         assert_eq!(entries[1].name, "04_PG.FollowMe.1.var");
         assert_eq!(entries[1].path, "vamzhb\\AddonPackages\\04_PG.FollowMe.1.var");
         assert_eq!(entries[1].size, 2245);
+        assert!(entries[1].encrypted);
     }
 
     #[test]
