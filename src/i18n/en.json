@@ -308,6 +308,8 @@
   "settings.dataHelp": "Export includes: shortcuts, tabs, tags, pinned folders, layouts, themes, settings, browsing history.",
   "tag.manage": "Manage Tags",
   "archive.title": "Archive",
+  "settings.previewVolume": "Preview volume",
+  "settings.previewVolumeHelp": "Default volume for audio and video previews. Adjusting the player slider also updates this value.",
   "archive.passwordTitle": "Archive password",
   "archive.passwordPrompt": "Enter password",
   "archive.passwordUnlock": "Extract",
