@@ -274,6 +274,9 @@ fn build_7z_extract_args(
     });
     args.push("-bsp1".to_string());
     args.push("-bb0".to_string());
+    // Force UTF-8 console output: 7-Zip otherwise emits OEM-codepage (e.g. GBK)
+    // text, which cannot be decoded as UTF-8 and would hide real errors.
+    args.push("-sccUTF-8".to_string());
     args
 }
 
@@ -338,9 +341,11 @@ fn run_7z_extraction(
     });
     let stderr_reader = child.stderr.take().map(|mut stderr| {
         std::thread::spawn(move || {
-            let mut message = String::new();
-            let _ = stderr.read_to_string(&mut message);
-            message
+            // Read raw bytes: 7-Zip error lines can contain non-UTF-8 file
+            // names, and read_to_string would fail and lose the whole message.
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes);
+            String::from_utf8_lossy(&bytes).into_owned()
         })
     });
 
@@ -556,7 +561,19 @@ mod tests {
     #[test]
     fn builds_7z_extract_args_with_password() {
         let plain = build_7z_extract_args("a.zip", "D:\\out", None, None);
-        assert_eq!(plain, vec!["x", "a.zip", "-oD:\\out", "-y", "-p", "-bsp1", "-bb0"]);
+        assert_eq!(
+            plain,
+            vec![
+                "x",
+                "a.zip",
+                "-oD:\\out",
+                "-y",
+                "-p",
+                "-bsp1",
+                "-bb0",
+                "-sccUTF-8"
+            ]
+        );
         let with_entry = build_7z_extract_args("a.zip", "D:\\out", Some("dir/file.txt"), None);
         assert_eq!(with_entry[2], "dir/file.txt");
         assert_eq!(with_entry[5], "-p");
@@ -567,6 +584,223 @@ mod tests {
             Some("my pass - with specials"),
         );
         assert!(with_password.contains(&"-pmy pass - with specials".to_string()));
+    }
+
+    /// Creates a zip with 7-Zip, then extracts it through the exact argument
+    /// vector RHFiles uses, asserting the recovered file content.
+    fn round_trip_with_7z(exe: &str, dir: &PathBuf, name: &str, password: Option<&str>) {
+        let source = dir.join(format!("{name}.txt"));
+        let payload = "RHFiles round trip probe 内容";
+        std::fs::write(&source, payload).expect("write source");
+        let archive = dir.join(format!("{name}.zip"));
+        let mut create = std::process::Command::new(exe);
+        create.arg("a").arg("-tzip");
+        if let Some(password) = password {
+            create.arg(format!("-p{password}"));
+        }
+        let status = create
+            .arg(&archive)
+            .arg(&source)
+            .status()
+            .expect("run 7-Zip create");
+        assert!(status.success(), "7-Zip failed to create {name}.zip");
+
+        let dest = dir.join(format!("out-{name}"));
+        let dest_text = dest.to_string_lossy().into_owned();
+        let args = build_7z_extract_args(
+            &archive.to_string_lossy(),
+            &dest_text,
+            None,
+            password,
+        );
+        let output = std::process::Command::new(exe)
+            .args(&args)
+            .output()
+            .expect("run 7-Zip extract");
+        assert!(
+            output.status.success(),
+            "extract {name} failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let extracted = dest.join(format!("{name}.txt"));
+        assert_eq!(
+            std::fs::read_to_string(&extracted).expect("read extracted file"),
+            payload
+        );
+    }
+
+    #[test]
+    fn round_trips_zip_with_and_without_password() {
+        let Some(exe) = find_7z() else {
+            return;
+        };
+        let dir = test_dir("roundtrip");
+        round_trip_with_7z(&exe, &dir, "plain", None);
+        round_trip_with_7z(&exe, &dir, "ascii-pw", Some("Secret Pass-1"));
+    }
+
+    /// 7-Zip refuses to *create* ZIP archives with non-ASCII passwords, so the
+    /// Chinese-password case is produced by Bandizip (the tool family that
+    /// creates such archives in the first place) and must then be extractable
+    /// through our 7-Zip argument vector. Skipped when Bandizip is absent.
+    #[test]
+    fn round_trips_bandizip_chinese_password_zip() {
+        let Some(exe) = find_7z() else {
+            return;
+        };
+        let bandizip = [
+            r"C:\Program Files\Bandizip\bz.exe",
+            r"C:\Program Files (x86)\Bandizip\bz.exe",
+        ]
+        .into_iter()
+        .find(|candidate| std::path::Path::new(candidate).is_file());
+        let Some(bandizip) = bandizip else {
+            return;
+        };
+        let dir = test_dir("chinese-pw");
+        let source = dir.join("payload.txt");
+        let payload = "RHFiles chinese password probe";
+        std::fs::write(&source, payload).expect("write source");
+        let archive = dir.join("cn.zip");
+        let password = "中文密码测试";
+        let status = std::process::Command::new(bandizip)
+            .arg("c")
+            .arg(format!("-p:{password}"))
+            .arg(&archive)
+            .arg(&source)
+            .status()
+            .expect("run Bandizip");
+        assert!(status.success(), "Bandizip failed to create cn.zip");
+
+        let dest = dir.join("out");
+        let args = build_7z_extract_args(
+            &archive.to_string_lossy(),
+            &dest.to_string_lossy(),
+            None,
+            Some(password),
+        );
+        let output = std::process::Command::new(&exe)
+            .args(&args)
+            .output()
+            .expect("run 7-Zip extract");
+        assert!(
+            output.status.success(),
+            "chinese password extract failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("payload.txt")).expect("read extracted file"),
+            payload
+        );
+
+        let wrong = build_7z_extract_args(
+            &archive.to_string_lossy(),
+            &dir.join("out-wrong").to_string_lossy(),
+            None,
+            Some("definitely-not-it"),
+        );
+        let output = std::process::Command::new(&exe)
+            .args(&wrong)
+            .output()
+            .expect("run 7-Zip extract");
+        assert!(!output.status.success(), "wrong password extraction succeeded");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Wrong password"),
+            "expected a wrong-password report, got: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn round_trips_split_zip_with_password() {
+        let Some(exe) = find_7z() else {
+            return;
+        };
+        let dir = test_dir("split-encrypted");
+        let source = dir.join("payload.txt");
+        let payload = "RHFiles split encrypted probe";
+        std::fs::write(&source, payload).expect("write source");
+        let full = dir.join("full.zip");
+        let status = std::process::Command::new(&exe)
+            .arg("a")
+            .arg("-tzip")
+            .arg("-pSecretPass")
+            .arg(&full)
+            .arg(&source)
+            .status()
+            .expect("run 7-Zip create");
+        assert!(status.success(), "7-Zip failed to create the encrypted zip");
+        let bytes = std::fs::read(&full).expect("read zip");
+
+        // Split it into a two-volume set the way real splitters write them.
+        let eocd_pos = bytes.len() - 22;
+        let entries_total =
+            u16::from_le_bytes([bytes[eocd_pos + 10], bytes[eocd_pos + 11]]) as u64;
+        let cd_size = u32::from_le_bytes([
+            bytes[eocd_pos + 12],
+            bytes[eocd_pos + 13],
+            bytes[eocd_pos + 14],
+            bytes[eocd_pos + 15],
+        ]) as u64;
+        let cd_offset = u32::from_le_bytes([
+            bytes[eocd_pos + 16],
+            bytes[eocd_pos + 17],
+            bytes[eocd_pos + 18],
+            bytes[eocd_pos + 19],
+        ]) as usize;
+        let cut = cd_offset;
+        std::fs::write(dir.join("probe.z01"), &bytes[..cut]).expect("write first volume");
+        let mut zip: Vec<u8> = Vec::new();
+        zip.extend_from_slice(&bytes[cut..eocd_pos]);
+        let mut z64 = [0u8; 56];
+        z64[0..4].copy_from_slice(&[0x50, 0x4B, 0x06, 0x06]);
+        z64[4..12].copy_from_slice(&44u64.to_le_bytes());
+        z64[12..14].copy_from_slice(&45u16.to_le_bytes());
+        z64[14..16].copy_from_slice(&45u16.to_le_bytes());
+        z64[16..20].copy_from_slice(&1u32.to_le_bytes());
+        z64[20..24].copy_from_slice(&1u32.to_le_bytes());
+        z64[24..32].copy_from_slice(&entries_total.to_le_bytes());
+        z64[32..40].copy_from_slice(&entries_total.to_le_bytes());
+        z64[40..48].copy_from_slice(&cd_size.to_le_bytes());
+        z64[48..56].copy_from_slice(&0u64.to_le_bytes());
+        zip.extend_from_slice(&z64);
+        let mut locator = [0u8; 20];
+        locator[0..4].copy_from_slice(&[0x50, 0x4B, 0x06, 0x07]);
+        locator[4..8].copy_from_slice(&1u32.to_le_bytes());
+        locator[8..16].copy_from_slice(&((eocd_pos - cut) as u64).to_le_bytes());
+        locator[16..20].copy_from_slice(&2u32.to_le_bytes());
+        zip.extend_from_slice(&locator);
+        let mut eocd = [0u8; 22];
+        eocd.copy_from_slice(&bytes[eocd_pos..]);
+        eocd[4..6].copy_from_slice(&1u16.to_le_bytes());
+        eocd[6..8].copy_from_slice(&1u16.to_le_bytes());
+        eocd[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+        zip.extend_from_slice(&eocd);
+        std::fs::write(dir.join("probe.zip"), &zip).expect("write last volume");
+
+        let dest = dir.join("out");
+        let args = build_7z_extract_args(
+            &dir.join("probe.zip").to_string_lossy(),
+            &dest.to_string_lossy(),
+            None,
+            Some("SecretPass"),
+        );
+        let output = std::process::Command::new(&exe)
+            .args(&args)
+            .output()
+            .expect("run 7-Zip extract");
+        assert!(
+            output.status.success(),
+            "encrypted split extract failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("payload.txt")).expect("read extracted file"),
+            payload
+        );
     }
 
     #[test]

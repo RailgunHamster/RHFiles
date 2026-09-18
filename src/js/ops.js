@@ -649,14 +649,16 @@ function isArchivePasswordError(error) {
 }
 
 // Promise-based password prompt for encrypted archives. Resolves with the
-// entered password, or null when cancelled / left empty.
-function promptArchivePassword(label) {
+// entered password, or null when cancelled / left empty. `retry` marks a
+// follow-up attempt after a wrong password.
+function promptArchivePassword(label, retry) {
   return new Promise(resolve => {
     const dlg = document.createElement("dialog");
     dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:380px;";
     dlg.innerHTML = `
       <h3 style="margin:0 0 8px;font-size:14px">${t('archive.passwordTitle')}</h3>
       <div style="font-size:12px;color:var(--text-4);margin-bottom:10px;word-break:break-all;">${esc(String(label || ''))}</div>
+      ${retry ? `<div style="font-size:12px;color:var(--git-deleted);margin-bottom:8px;">${t('archive.passwordRetry')}</div>` : ''}
       <input type="password" autocomplete="off" placeholder="${t('archive.passwordPrompt')}"
         style="width:100%;box-sizing:border-box;padding:6px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
       <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
@@ -721,14 +723,16 @@ async function extractArchiveTo(file, destination, password) {
       }
       if (isArchivePasswordError(e) && attempt < 2) {
         cancelOperationTask(taskId);
-        const next = await promptArchivePassword(file.name);
+        const next = await promptArchivePassword(file.name, attempt > 0);
         if (next !== null) {
           currentPassword = next;
           continue;
         }
       }
       failOperationTask(taskId, e);
-      alert(t('alert.extractFailed', { error: e }));
+      alert(isArchivePasswordError(e)
+        ? t('alert.archivePasswordFailed', { error: e })
+        : t('alert.extractFailed', { error: e }));
       return;
     }
   }

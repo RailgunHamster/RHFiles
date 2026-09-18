@@ -91,11 +91,13 @@ async function extractArchiveAll() {
       if (/cancel/i.test(String(e))) { cancelOperationTask(taskId); return; }
       if (isArchivePasswordError(e) && attempt < 2) {
         cancelOperationTask(taskId);
-        const next = await promptArchivePassword(name);
+        const next = await promptArchivePassword(name, attempt > 0);
         if (next !== null) { password = next; continue; }
       }
       failOperationTask(taskId, e);
-      alert(t('alert.extractFailed', {error: e}));
+      alert(isArchivePasswordError(e)
+        ? t('alert.archivePasswordFailed', { error: e })
+        : t('alert.extractFailed', {error: e}));
       return;
     }
   }
@@ -130,11 +132,13 @@ async function extractArchiveEntry(idx) {
       if (/cancel/i.test(String(e))) { cancelOperationTask(taskId); return; }
       if (isArchivePasswordError(e) && attempt < 2) {
         cancelOperationTask(taskId);
-        const next = await promptArchivePassword(entries[idx].name);
+        const next = await promptArchivePassword(entries[idx].name, attempt > 0);
         if (next !== null) { password = next; continue; }
       }
       failOperationTask(taskId, e);
-      alert(t('alert.extractFailed', {error: e}));
+      alert(isArchivePasswordError(e)
+        ? t('alert.archivePasswordFailed', { error: e })
+        : t('alert.extractFailed', {error: e}));
       return;
     }
   }
