@@ -1277,6 +1277,7 @@ async function navigateTo(path, pushHistory) {
   const filterEl = document.getElementById("filter-input");
   if (filterEl && path !== tab.path) filterEl.value = "";
   if (!(tab.entries || []).length || path !== tab.path) renderNavigationLoading(path, false);
+  const isSamePathReload = tab._loaded && path === tab.path;
   try {
     let entries = await withTimeout(
       listPathEntries(path, ""),
@@ -1299,17 +1300,25 @@ async function navigateTo(path, pushHistory) {
     if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, false);
     renderTabs();
     addRecentFile(path, path.split("\\").pop(), true, "");
-    const savedLayout = loadFolderLayout(path);
-    if (savedLayout && savedLayout !== G.layout) {
-      G.layout = savedLayout;
-      localStorage.setItem('rhfiles-layout', savedLayout);
-      document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === savedLayout));
-    } else if (G.settings.adaptiveLayout !== false) {
-      const detected = detectAdaptiveLayout(entries);
-      if (detected && detected !== G.layout) {
-        G.layout = detected;
-        localStorage.setItem('rhfiles-layout', detected);
-        document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === detected));
+    // Refreshing the same folder must not change the layout. Re-running the
+    // per-folder / adaptive detection here made F5 flip image folders between
+    // thumbnails and cards on every reload, and the explicit folder layout was
+    // ignored whenever it already matched the current one.
+    if (!isSamePathReload) {
+      const savedLayout = loadFolderLayout(path);
+      if (savedLayout) {
+        if (savedLayout !== G.layout) {
+          G.layout = savedLayout;
+          localStorage.setItem('rhfiles-layout', savedLayout);
+          document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === savedLayout));
+        }
+      } else if (G.settings.adaptiveLayout !== false) {
+        const detected = detectAdaptiveLayout(entries);
+        if (detected && detected !== G.layout) {
+          G.layout = detected;
+          localStorage.setItem('rhfiles-layout', detected);
+          document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === detected));
+        }
       }
     }
     tab.sel.clear();

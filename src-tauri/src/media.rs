@@ -171,6 +171,91 @@ fn resolve_ffmpeg(
     })
 }
 
+/// Renders one frame at `seek` seconds, reporting both the PNG bytes and the
+/// frame's average luma (parsed from the same pass via the signalstats
+/// filter), so callers can avoid black lead-in frames.
+fn render_video_frame(
+    executable: &Path,
+    video: &Path,
+    size: u32,
+    seek: f64,
+    temp: &Path,
+) -> Result<(f64, Vec<u8>), String> {
+    let filter = format!(
+        "scale={size}:{size}:force_original_aspect_ratio=decrease,signalstats,metadata=print:file=-"
+    );
+    let mut command = silent_command(executable);
+    command.args(["-hide_banner", "-loglevel", "error"]);
+    if seek > 0.0 {
+        command.args(["-ss", &format!("{seek:.3}")]);
+    }
+    let output = command
+        .arg("-y")
+        .arg("-i")
+        .arg(video)
+        .args(["-vf", &filter, "-frames:v", "1"])
+        .arg(temp)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let metadata = String::from_utf8_lossy(&output.stdout);
+    let luma = metadata
+        .lines()
+        .find_map(|line| {
+            let (_, value) = line.split_once("lavfi.signalstats.YAVG=")?;
+            value.trim().parse::<f64>().ok()
+        })
+        .unwrap_or(255.0);
+    let bytes = std::fs::read(temp).map_err(|error| error.to_string())?;
+    Ok((luma, bytes))
+}
+
+/// Renders a representative frame for the file-manager thumbnail grid. Frames
+/// are sampled a little way into the video and the brightest one wins, so a
+/// black fade-in or a black first frame does not produce an empty-looking
+/// thumbnail. Returns the PNG bytes as base64, like the image thumbnails.
+pub fn generate_video_thumbnail(
+    app: &tauri::AppHandle,
+    configured_path: Option<&str>,
+    video: &Path,
+    size: u32,
+) -> Result<String, String> {
+    use base64::Engine;
+    static THUMB_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let executable = resolve_ffmpeg(app, configured_path)?;
+    let target = size.clamp(32, 512);
+    let sequence = THUMB_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = std::env::temp_dir().join(format!(
+        "rhfiles-thumb-{}-{sequence}.png",
+        std::process::id()
+    ));
+    // 1s and 3s in skip the usual black lead-ins; 0 is the last resort for very
+    // short clips where the seeks produce nothing.
+    let mut best: Option<(f64, Vec<u8>)> = None;
+    let mut last_error = String::new();
+    for seek in [1.0_f64, 3.0, 0.0] {
+        match render_video_frame(&executable.command, video, target, seek, &temp) {
+            Ok((luma, bytes)) => {
+                if best.as_ref().is_none_or(|(best_luma, _)| luma > *best_luma) {
+                    best = Some((luma, bytes));
+                }
+                if luma >= 32.0 {
+                    break;
+                }
+            }
+            Err(error) => last_error = error,
+        }
+    }
+    let _ = std::fs::remove_file(&temp);
+    let (_, bytes) = best.ok_or(last_error)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 #[tauri::command(async)]
 pub fn detect_ffmpeg(app: tauri::AppHandle, configured_path: Option<String>) -> FfmpegStatus {
     match resolve_ffmpeg(&app, configured_path.as_deref()) {

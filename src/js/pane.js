@@ -152,6 +152,41 @@ function setImagePreviewMode(mode) {
   });
 }
 
+// --- preview volume ---
+function previewVolumePercent() {
+  const value = Number(G.settings && G.settings.previewVolume);
+  if (!Number.isFinite(value)) return 100;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function setPreviewVolume(percent, options) {
+  const value = Math.min(100, Math.max(0, Math.round(Number(percent) || 0)));
+  G.settings.previewVolume = value;
+  if (!options || options.persist !== false) saveSettings();
+  const label = document.getElementById('settings-preview-volume-value');
+  if (label) label.textContent = value + '%';
+  const slider = document.getElementById('settings-preview-volume');
+  if (slider && Number(slider.value) !== value) slider.value = String(value);
+  document.querySelectorAll('#preview-content audio, #preview-content video').forEach(el => {
+    el.volume = value / 100;
+  });
+}
+
+// Applies the configured default volume to the freshly rendered player, and
+// remembers later manual adjustments so the next preview starts at that level.
+function applyPreviewVolume() {
+  const percent = previewVolumePercent();
+  document.querySelectorAll('#preview-content audio, #preview-content video').forEach(el => {
+    el.volume = percent / 100;
+    if (el.dataset.volumeBound === '1') return;
+    el.dataset.volumeBound = '1';
+    el.addEventListener('volumechange', () => {
+      const next = Math.round(el.volume * 100);
+      if (next !== previewVolumePercent()) setPreviewVolume(next, { persist: true });
+    });
+  });
+}
+
 function inspectorModeIcon(mode) {
   return mode === 'disk'
     ? '<svg viewBox="0 0 16 16" fill="none"><path d="M2 12.8h12M3.2 11V8.3h2.2V11M6.9 11V5.7h2.2V11M10.6 11V3h2.2v8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>'
@@ -405,6 +440,7 @@ async function updatePreviewForSelection() {
       <div style="margin-top:4px;color:var(--text-4)">${fmtSize(file.size)}</div>
       <audio controls style="width:100%;margin-top:12px" src="${esc(src)}"></audio>
     </div>`;
+    applyPreviewVolume();
     return;
   }
   if (is_video) {
@@ -413,6 +449,7 @@ async function updatePreviewForSelection() {
       <video controls style="width:100%;max-height:300px" src="${esc(src)}"></video>
       <div style="margin-top:4px;font-size:12px;color:var(--text-3)">${esc(file.name)}</div>
     </div>`;
+    applyPreviewVolume();
     return;
   }
   if (ext === "rtf") {

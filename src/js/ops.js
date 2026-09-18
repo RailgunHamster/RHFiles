@@ -266,7 +266,7 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
     input.replaceWith(nameEl);
     // Cancelling restores the original row, so keep it selected instead of
     // dropping the selection the user had before starting the rename.
-    selectNavigatedPath(oldPath, isRight);
+    selectNavigatedPath(file.path, isRight);
     if (onCancel) { try { await onCancel(); } catch(e) {} }
   };
 
@@ -1903,7 +1903,22 @@ function highlightSidebarDropTarget(element, destination) {
     element.classList.add('drop-target');
   }
   const treeItem = destination?.treeItem;
-  if (!treeItem || treeItem === _sidebarExpandTarget) return;
+  if (!treeItem) {
+    // Quick access, libraries and drives are flat rows: spring-load them by
+    // navigating after a short hover, so the user can keep drilling into the
+    // folder while still dragging (the tree expands instead).
+    const path = destination?.path || null;
+    if (!path || path === _sidebarExpandTarget) return;
+    _sidebarExpandTarget = path;
+    if (_sidebarExpandTimer) clearTimeout(_sidebarExpandTimer);
+    _sidebarExpandTimer = setTimeout(() => {
+      _sidebarExpandTimer = null;
+      const pane = G.dualOn && G.lastActivePane === 'right' ? G.rp : getTab();
+      if (pane && windowsPathKey(pane.path || '') !== windowsPathKey(path)) navigateTo(path);
+    }, 700);
+    return;
+  }
+  if (treeItem === _sidebarExpandTarget) return;
   _sidebarExpandTarget = treeItem;
   if (_sidebarExpandTimer) clearTimeout(_sidebarExpandTimer);
   _sidebarExpandTimer = setTimeout(() => {

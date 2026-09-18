@@ -198,7 +198,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     withTimeout(loadPinnedFolders(), 3000, "Pinned folder loading timed out"),
   ]);
   document.querySelectorAll(".sidebar-item[data-nav]").forEach(el => {
-    el.addEventListener("click", () => navigateTo(homeDir(el.dataset.nav)));
+    const navPath = homeDir(el.dataset.nav);
+    // Expose the real folder so sidebar drag & drop (and hover spring-loading)
+    // can resolve Quick access rows, which only carry a data-nav name.
+    if (navPath) el.dataset.path = navPath;
+    el.addEventListener("click", () => navigateTo(navPath || homeDir(el.dataset.nav)));
   });
   const ftpBtn = document.getElementById("ftp-connect-btn");
   if (ftpBtn) ftpBtn.addEventListener("click", showFtpDialog);

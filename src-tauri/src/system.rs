@@ -173,9 +173,38 @@ fn is_probably_text_file(path: &std::path::Path) -> Result<bool, String> {
     Ok(is_probably_text_content(&sample))
 }
 
+fn is_video_thumbnail_candidate(path: &std::path::Path) -> bool {
+    const VIDEO_EXTENSIONS: &[&str] = &[
+        "mp4", "mkv", "avi", "webm", "mov", "wmv", "m4v", "flv", "mpg", "mpeg", "ts", "m2ts",
+        "3gp", "rmvb", "vob",
+    ];
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| VIDEO_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
 #[tauri::command(async)]
-pub fn get_thumbnail(path: String, size: u32) -> Result<String, String> {
-    enumerator::generate_thumbnail(&PathBuf::from(&path), size)
+pub fn get_thumbnail(
+    path: String,
+    size: u32,
+    app: tauri::AppHandle,
+    configured_ffmpeg_path: Option<String>,
+) -> Result<String, String> {
+    let file = PathBuf::from(&path);
+    // Videos have no image data to decode, so a frame is rendered with the
+    // bundled FFmpeg (the `thumbnail` filter skips black lead-in frames).
+    if is_video_thumbnail_candidate(&file)
+        && let Ok(frame) = crate::media::generate_video_thumbnail(
+            &app,
+            configured_ffmpeg_path.as_deref(),
+            &file,
+            size,
+        )
+    {
+        return Ok(frame);
+    }
+    enumerator::generate_thumbnail(&file, size)
 }
 
 #[tauri::command(async)]

@@ -650,6 +650,8 @@ async function detectWindowsLibraries() {
     for (const l of libraries) {
       const div = document.createElement("div");
       div.className = "sidebar-item";
+      div.dataset.path = l.path;
+      div.title = l.path;
       div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 5h5l2 2h5v6H2V5z" stroke="var(--accent)" stroke-width=".8"/></svg> ' + esc(l.name);
       div.addEventListener("click", () => navigateTo(l.path));
       div.addEventListener("contextmenu", e => showFolderShortcutContextMenu(e, l.path, l.name));

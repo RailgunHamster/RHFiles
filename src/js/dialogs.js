@@ -374,6 +374,12 @@ function openSettings() {
   const preview = '<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-preview-default">' + t('settings.previewDefaultOpen') + '</label>' +
     '<input id="settings-preview-default" type="checkbox" onchange="setPreviewDefaultOpen(this.checked)"' + (G.settings.previewDefaultOpen!==false?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-preview-volume">' + t('settings.previewVolume') + '</label>' +
+    '<div style="display:flex;align-items:center;gap:8px;">' +
+      '<input id="settings-preview-volume" type="range" min="0" max="100" step="5" style="width:150px" value="' + previewVolumePercent() + '" oninput="setPreviewVolume(this.value)">' +
+      '<span id="settings-preview-volume-value" style="min-width:40px;text-align:right;">' + previewVolumePercent() + '%</span>' +
+    '</div></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.previewVolumeHelp') + '</span></div>' +
     '<div class="settings-feature-note"><strong>' + t('settings.previewFormatsTitle') + '</strong><span>' + t('settings.previewFormatsBody') + '</span></div></div>';
 
   const search = '<div class="settings-card">' +

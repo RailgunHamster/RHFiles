@@ -97,7 +97,7 @@ function _systemIconSync(file, forPreview) {
 }
 
 function _mixedIcon(file, forPreview) {
-  if (file.is_dir) return _builtinIcon(file, forPreview);
+  if (file.is_dir || _preferBuiltinOverSystem(file)) return _builtinIcon(file, forPreview);
   return _systemIconSync(file, forPreview);
 }
 
@@ -106,6 +106,7 @@ function _mixedIcon(file, forPreview) {
 function _builtinIcon(file, forPreview) {
   if (file.is_dir) return _iconFolder();
   const ext = (file.extension || '').toLowerCase();
+  if (_SCRIPT_EXT.has(ext)) return _iconScript(ext);
   if (_IMAGE_EXT.has(ext)) return _iconImage(ext);
   if (_AUDIO_EXT.has(ext)) return _iconAudio(ext);
   if (_VIDEO_EXT.has(ext)) return _iconVideo(ext);
@@ -214,6 +215,23 @@ function _iconGeneric() {
   return '<svg viewBox="0 0 16 16" fill="none"><path d="M4.5 1.5h4.6l3.4 3.4v9.6a1 1 0 01-1 1h-7a1 1 0 01-1-1v-13a1 1 0 011-1z" stroke="#888" stroke-width=".8"/><path d="M9 1.5V5h3.5" stroke="#888" stroke-width=".8"/></svg>';
 }
 
+// Scripts get an explicit console window instead of the shell icon: Windows
+// hands back a pale window-with-gears glyph that reads exactly like a folder at
+// list sizes, and .cmd had no builtin icon at all.
+function _iconScript(ext) {
+  const bg = ext === 'ps1' || ext === 'psm1' ? '#012456' : '#1f2430';
+  const accent = ext === 'ps1' || ext === 'psm1' ? '#4fc3f7' : '#8bd450';
+  return `<svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="3" width="13" height="10" rx="1.4" fill="${bg}" stroke="#0d1117" stroke-width=".7"/><path d="M1.5 5.4h13" stroke="#0d1117" stroke-width=".7"/><circle cx="3.4" cy="4.2" r=".5" fill="#ff5f57"/><circle cx="5" cy="4.2" r=".5" fill="#febc2e"/><circle cx="6.6" cy="4.2" r=".5" fill="#28c840"/><path d="M4 7.6l1.7 1.7L4 11M8 11h3.4" stroke="${accent}" stroke-width=".9" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+const _SCRIPT_EXT = new Set(['bat', 'cmd', 'ps1', 'psm1', 'vbs', 'vbe']);
+
+// Scripts keep RHFiles' console icon in every mode (the Windows shell icon for
+// them is the folder-like one users cannot tell apart from a directory).
+function _preferBuiltinOverSystem(file) {
+  return !file.is_dir && _SCRIPT_EXT.has((file.extension || '').toLowerCase());
+}
+
 // === FLUENT UI style — cleaner, Win11 inspired ===
 
 function _fluentIcon(file, forPreview) {
@@ -311,7 +329,12 @@ function bigFileIcon(file, size) {
   size = size || 48;
   const mode = getIconMode();
   if (mode === 'mixed') {
-    if (!file.is_dir) return _systemIconMarkup(file, size);
+    if (!file.is_dir) {
+      if (_preferBuiltinOverSystem(file)) {
+        return `<span class="large-file-icon" style="width:${size}px;height:${size}px">${_builtinIcon(file, true)}</span>`;
+      }
+      return _systemIconMarkup(file, size);
+    }
     return `<span class="large-file-icon" style="width:${size}px;height:${size}px">${_builtinIcon(file, true)}</span>`;
   }
   // Large views should keep software/folder identity even when the compact list
@@ -324,7 +347,8 @@ function bigFileIcon(file, size) {
 
 function _useSystemForFile(file) {
   const ext = (file.extension || '').toLowerCase();
-  return ['exe','msi','dll','lnk','bat','cmd','ps1','com'].includes(ext) || file.is_dir;
+  if (_SCRIPT_EXT.has(ext)) return false;
+  return ['exe','msi','dll','lnk','com'].includes(ext) || file.is_dir;
 }
 
 function fileTypeLabel(file) {

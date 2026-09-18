@@ -1024,6 +1024,7 @@ function loadSettings() {
     typeSearchTimeoutMs: 10000,
     noticeDurationMs: 5000,
     previewDefaultOpen: true,
+    previewVolume: 100,
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
     dualPaneOrientation: 'vertical',
@@ -1055,6 +1056,10 @@ function loadSettings() {
     settings.noticeDurationMs = Number.isFinite(storedNotice) && storedNotice >= 0
       ? storedNotice
       : 5000;
+    const storedVolume = Number(stored.previewVolume);
+    settings.previewVolume = Number.isFinite(storedVolume)
+      ? Math.min(100, Math.max(0, Math.round(storedVolume)))
+      : 100;
     const masterEnabled = stored.fileDialogIntegrationEnabled === true;
     if (!Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationExplorer')
       && !Object.prototype.hasOwnProperty.call(stored, 'fileDialogIntegrationFileDialog')) {

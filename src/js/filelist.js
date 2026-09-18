@@ -691,7 +691,15 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
 }
 
 const _THUMB_IMAGE_EXT = new Set(['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff','tif','heic','avif']);
+const _THUMB_VIDEO_EXT = new Set(['mp4','mkv','avi','webm','mov','wmv','m4v','flv','mpg','mpeg','ts','m2ts','3gp','rmvb','vob']);
 const _thumbCache = new Map();
+
+// Thumbnails are cached per file *version*: when an image changes on disk its
+// modified time (and size) change too, so the key changes and the next render
+// reloads the picture instead of showing the stale one forever.
+function thumbnailCacheKey(file) {
+  return `${file.path}|${file.modified || ''}|${file.size || 0}`;
+}
 
 function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
   const grid = document.createElement("div");
@@ -715,13 +723,13 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.draggable = true;
 
     const ext = (file.extension || '').toLowerCase();
-    const isImage = !file.is_dir && _THUMB_IMAGE_EXT.has(ext);
+    const isImage = !file.is_dir && (_THUMB_IMAGE_EXT.has(ext) || _THUMB_VIDEO_EXT.has(ext));
 
     const thumbBox = document.createElement("div");
     thumbBox.className = "thumb-img-box";
 
     if (isImage) {
-      const cached = _thumbCache.get(file.path);
+      const cached = _thumbCache.get(thumbnailCacheKey(file));
       if (cached) {
         thumbBox.innerHTML = `<img src="data:image/png;base64,${cached}" class="thumb-img" alt="">`;
       } else {
@@ -759,9 +767,13 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
 }
 
 function loadThumbnail(path, container, file) {
-  call("get_thumbnail", { path, size: 128 }).then(b64 => {
+  call("get_thumbnail", {
+    path,
+    size: 128,
+    configuredFfmpegPath: String((G.settings && G.settings.ffmpegPath) || '').trim() || null,
+  }).then(b64 => {
     if (b64) {
-      _thumbCache.set(path, b64);
+      _thumbCache.set(thumbnailCacheKey(file), b64);
       container.innerHTML = `<img src="data:image/png;base64,${b64}" class="thumb-img" alt="">`;
     } else {
       container.innerHTML = bigFileIcon(file);
