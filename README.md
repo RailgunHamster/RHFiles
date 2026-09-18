@@ -21,6 +21,7 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 - `dust`-powered folder-size analysis with actionable results in the same inspector area as Preview.
 - Reversible delete, rename, and non-overwriting move operations.
 - Git/SVN status, favorites, tags, archives, SMB paths, FTP/SFTP, and cloud-file states.
+- Archive extraction and browsing run on the bundled 7-Zip console executable (ZIP including split volumes, 7z, RAR, and more) with progress and cancellation; creating ZIP archives stays built-in.
 - Context-menu actions can open a folder—or reveal a selected file—in Windows File Explorer.
 - Optional Windows integration shows every open RHFiles window, tab, and dual-pane location in a companion list beside standard Open/Save dialogs and File Explorer.
 - Right-click conversion for common video, audio, and image formats, powered by the bundled FFmpeg executable with progress, cancellation, configurable profiles, and detailed errors.
@@ -32,7 +33,7 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 
 Download the latest portable archive or installer from [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest).
 
-For the portable build, extract the complete ZIP and launch `RHFiles.exe` from the extracted directory. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, `ffmpeg.exe`, and the other bundled files beside it. A Velopack portable installation can download, replace, and restart itself for later updates.
+For the portable build, extract the complete ZIP and launch `RHFiles.exe` from the extracted directory. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, `ffmpeg.exe`, `7z.exe`, `7z.dll`, and the other bundled files beside it. A Velopack portable installation can download, replace, and restart itself for later updates.
 
 Windows may show an “Unknown publisher” warning because current builds are not code-signed.
 
@@ -133,4 +134,4 @@ cargo tauri android build --apk --target aarch64    # release APK
 
 ## Third-party components
 
-Portable packages bundle Everything, `dust`, and a separate unmodified FFmpeg command-line executable. Their accompanying notices and licenses must remain with the distribution. FFmpeg build/source details are recorded in `FFmpeg-NOTICE.txt`; see also [FFmpeg's legal information](https://ffmpeg.org/legal.html) and the [Gyan Windows builds](https://www.gyan.dev/ffmpeg/builds/). The offline 3D viewer vendors a pinned subset of Three.js 0.185.1 under its MIT license. RHFiles also uses the Rust and JavaScript dependencies recorded in `Cargo.lock` and the source tree.
+Portable packages bundle Everything, `dust`, a separate unmodified FFmpeg command-line executable, and the unmodified 7-Zip console executable `7z.exe` with `7z.dll` taken from the official 7-Zip 26.03 x64 installer (source: [7-zip.org](https://www.7-zip.org/); LGPL with the unRAR restriction, see `7zip-LICENSE.txt`). Their accompanying notices and licenses must remain with the distribution. FFmpeg build/source details are recorded in `FFmpeg-NOTICE.txt`; see also [FFmpeg's legal information](https://ffmpeg.org/legal.html) and the [Gyan Windows builds](https://www.gyan.dev/ffmpeg/builds/). The offline 3D viewer vendors a pinned subset of Three.js 0.185.1 under its MIT license. RHFiles also uses the Rust and JavaScript dependencies recorded in `Cargo.lock` and the source tree.

@@ -21,6 +21,7 @@ RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、
 - 使用 `dust` 分析文件夹占用，可直接操作分析结果；它与预览互斥地使用同一检查器区域。
 - 删除、重命名和不覆盖移动操作支持撤销。
 - 支持 Git/SVN 状态、收藏、标签、压缩包、SMB 路径、FTP/SFTP 和云文件状态。
+- 压缩包解压与浏览由随包 7-Zip 命令行程序完成（ZIP 含分卷、7z、RAR 等），带进度与取消；创建 ZIP 压缩包仍为内置实现。
 - 右键菜单可用 Windows 资源管理器打开文件夹，或打开并定位所选文件。
 - 可选的 Windows 集成会在原生打开 / 保存框或资源管理器旁列出全部 RHFiles 窗口、标签页和双窗格位置。
 - 右键即可转换常见视频、音频和图片格式；随包 FFmpeg 提供进度、取消、相关参数与详细错误。
@@ -32,7 +33,7 @@ RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、
 
 请从 [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest) 下载最新版 portable 压缩包或安装程序。
 
-portable 版本需要完整解压，然后运行解压目录中的 `RHFiles.exe`。请保留同目录下的 `Everything.exe`、`Everything64.dll`、`dust.exe`、`ffmpeg.exe` 等文件。首次使用 Velopack portable 版本后，后续版本可以在软件内下载、覆盖并重启。
+portable 版本需要完整解压，然后运行解压目录中的 `RHFiles.exe`。请保留同目录下的 `Everything.exe`、`Everything64.dll`、`dust.exe`、`ffmpeg.exe`、`7z.exe`、`7z.dll` 等文件。首次使用 Velopack portable 版本后，后续版本可以在软件内下载、覆盖并重启。
 
 当前构建尚未进行代码签名，因此 Windows 可能显示“未知发布者”。
 
@@ -118,4 +119,4 @@ cargo build --release --locked --package rhfiles-tauri
 
 ## 第三方组件
 
-portable 包中包含 Everything、`dust` 和作为独立程序调用的未修改 FFmpeg，分发时应保留相应说明与许可证。FFmpeg 的构建和源码信息记录在 `FFmpeg-NOTICE.txt`；也可查看 [FFmpeg 法律说明](https://ffmpeg.org/legal.html)与 [Gyan Windows 构建](https://www.gyan.dev/ffmpeg/builds/)。离线 3D 预览固定使用 Three.js 0.185.1 的必要子集，并保留其 MIT 许可证。其他 Rust/JavaScript 依赖记录在 `Cargo.lock` 与源码目录中。
+portable 包中包含 Everything、`dust` 和作为独立程序调用的未修改 FFmpeg，分发时应保留相应说明与许可证。7-Zip 同样随包分发：`7z.exe` 与 `7z.dll` 取自官方 7-Zip 26.03 x64 安装包（来源：[7-zip.org](https://www.7-zip.org/)；LGPL 及 unRAR 限制，见 `7zip-LICENSE.txt`）。FFmpeg 的构建和源码信息记录在 `FFmpeg-NOTICE.txt`；也可查看 [FFmpeg 法律说明](https://ffmpeg.org/legal.html)与 [Gyan Windows 构建](https://www.gyan.dev/ffmpeg/builds/)。离线 3D 预览固定使用 Three.js 0.185.1 的必要子集，并保留其 MIT 许可证。其他 Rust/JavaScript 依赖记录在 `Cargo.lock` 与源码目录中。

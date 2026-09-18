@@ -18,7 +18,7 @@ To package and publish the portable archive plus update feed to the home server'
 
 Use `-PortableName` when a particular versioned archive name must be preserved inside the feed, for example `-PortableName 'RHFiles-0.1.0-portable-x64-r2.zip'`. Publishing does not create a duplicate portable archive in the parent `Software` directory.
 
-The script reads the version from `src-tauri/Cargo.toml`, builds `target\release\rhfiles.exe`, stages the bundled Everything and dust tools, downloads the previous GitHub release when available, and runs `vpk pack`. The resulting `releases.win.json`, `release-history.json`, and NuGet packages must stay beside each other in the update feed. `release-history.json` is generated from every semantic-versioned file in `docs/release-notes`; packaging fails if the current version has no notes.
+The script reads the version from `src-tauri/Cargo.toml`, builds `target\release\rhfiles.exe`, stages the bundled Everything, dust, FFmpeg, and 7-Zip (`prepare-ffmpeg.ps1` / `prepare-7zip.ps1` download and verify pinned copies into `src-tauri\thirdparty`), downloads the previous GitHub release when available, and runs `vpk pack`. The resulting `releases.win.json`, `release-history.json`, and NuGet packages must stay beside each other in the update feed. `release-history.json` is generated from every semantic-versioned file in `docs/release-notes`; packaging fails if the current version has no notes.
 
 The packaging machine needs .NET 8 and Velopack CLI 1.2.0:
 
