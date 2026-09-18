@@ -165,6 +165,7 @@ pub fn run() {
 
             archive::list_archive, archive::extract_archive, archive::create_archive,
             archive::extract_7z, archive::create_7z, archive::is_7z_available,
+            archive::archive_encryption_probe, archive::verify_archive_password,
 
             db::db_save_tags, db::db_load_tags, db::db_load_all_tags,
             db::db_save_layout, db::db_load_layout,

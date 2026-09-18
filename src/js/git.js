@@ -66,9 +66,13 @@ function closeArchive() {
 async function extractArchiveAll() {
   if (!archiveBrowsingPath) return;
   const name = archiveBrowsingPath.split('\\').pop();
+  const entries = getTab().entries || [];
   let password = null;
-  if ((getTab().entries || []).some(e => e.encrypted)) {
-    password = await promptArchivePassword(name);
+  const sample = entries
+    .filter(e => e.encrypted && !e.is_dir)
+    .sort((a, b) => (a.size || 0) - (b.size || 0))[0];
+  if (sample) {
+    password = await resolveArchivePassword(archiveBrowsingPath, sample.path, name);
     if (password === null) return;
   }
   for (let attempt = 0; ; attempt++) {

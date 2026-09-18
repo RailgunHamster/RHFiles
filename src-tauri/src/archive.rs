@@ -52,6 +52,53 @@ pub fn list_archive(path: String) -> Result<Vec<ArchiveEntry>, String> {
     list_archive_with_7z(&exe, &p)
 }
 
+/// Smallest encrypted file in the archive, used to verify a password cheaply
+/// before a long extraction. `None` means the archive has no encrypted files.
+fn smallest_encrypted_entry(entries: &[ArchiveEntry]) -> Option<String> {
+    entries
+        .iter()
+        .filter(|entry| entry.encrypted && !entry.is_dir)
+        .min_by_key(|entry| entry.size)
+        .map(|entry| entry.path.clone())
+}
+
+/// Pre-flight probe so the UI can ask for a password *before* starting a long
+/// extraction instead of failing after a full pass.
+#[tauri::command(async)]
+pub fn archive_encryption_probe(path: String) -> Result<Option<String>, String> {
+    let p = PathBuf::from(&path);
+    let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
+    let entries = list_archive_with_7z(&exe, &p)?;
+    Ok(smallest_encrypted_entry(&entries))
+}
+
+/// Test one archive member with the given password (`7z t`). Cheap because the
+/// caller passes the smallest encrypted entry, and it lets the UI reject a
+/// wrong password immediately instead of after a full failed extraction.
+#[tauri::command(async)]
+pub fn verify_archive_password(
+    path: String,
+    entry: String,
+    password: String,
+) -> Result<bool, String> {
+    let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
+    let entry = sanitize_7z_entry(&entry)?;
+    let mut command = std::process::Command::new(&exe);
+    command
+        .arg("t")
+        .arg(&path)
+        .arg(entry)
+        .arg(format!("-p{password}"))
+        .arg("-y")
+        .arg("-sccUTF-8")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x0800_0000);
+    let output = command.output().map_err(|e| e.to_string())?;
+    Ok(output.status.success())
+}
+
 #[tauri::command(async)]
 pub fn extract_archive(
     path: String,
@@ -695,6 +742,29 @@ mod tests {
             payload
         );
 
+        // The pre-flight probe finds the encrypted member, and verification
+        // accepts the right password while rejecting a wrong one.
+        let archive_path = archive.to_string_lossy().into_owned();
+        let probed = super::archive_encryption_probe(archive_path.clone())
+            .expect("probe encrypted archive");
+        assert_eq!(probed.as_deref(), Some("payload.txt"));
+        assert!(
+            super::verify_archive_password(
+                archive_path.clone(),
+                "payload.txt".to_string(),
+                password.to_string(),
+            )
+            .expect("verify correct password")
+        );
+        assert!(
+            !super::verify_archive_password(
+                archive_path,
+                "payload.txt".to_string(),
+                "definitely-not-it".to_string(),
+            )
+            .expect("verify wrong password")
+        );
+
         let wrong = build_7z_extract_args(
             &archive.to_string_lossy(),
             &dir.join("out-wrong").to_string_lossy(),
@@ -711,6 +781,40 @@ mod tests {
             "expected a wrong-password report, got: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn smallest_encrypted_entry_picks_the_cheapest_member() {
+        let text = "Path = big.bin\r\nFolder = -\r\nSize = 900000\r\nEncrypted = +\r\n\r\n\
+                    Path = small.txt\r\nFolder = -\r\nSize = 12\r\nEncrypted = +\r\n\r\n\
+                    Path = plain.txt\r\nFolder = -\r\nSize = 5\r\nEncrypted = -\r\n\r\n\
+                    Path = docs\r\nFolder = +\r\nSize = 0\r\nEncrypted = -\r\n\r\n";
+        let entries = parse_7z_listing(text).expect("parse listing");
+        assert_eq!(
+            super::smallest_encrypted_entry(&entries).as_deref(),
+            Some("small.txt")
+        );
+        let plain = parse_7z_listing("Path = a.txt\r\nFolder = -\r\nSize = 3\r\nEncrypted = -\r\n")
+            .expect("parse plain listing");
+        assert_eq!(super::smallest_encrypted_entry(&plain), None);
+    }
+
+    #[test]
+    fn probes_plain_zip_without_password() {
+        let Some(exe) = find_7z() else {
+            return;
+        };
+        let dir = test_dir("probe-plain");
+        let archive = dir.join("plain.zip");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).expect("create zip"));
+        writer
+            .start_file("hello.txt", zip::write::SimpleFileOptions::default())
+            .expect("start entry");
+        std::io::Write::write_all(&mut writer, b"probe").expect("write entry");
+        writer.finish().expect("finish zip");
+        let probed = super::archive_encryption_probe(archive.to_string_lossy().into_owned())
+            .expect("probe plain archive");
+        assert_eq!(probed, None);
     }
 
     #[test]

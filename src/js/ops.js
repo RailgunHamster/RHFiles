@@ -687,9 +687,39 @@ function promptArchivePassword(label, retry) {
   });
 }
 
+// Ask for a password until it verifies against the archive's smallest
+// encrypted entry, so a long extraction never starts with a wrong password.
+// Returns null when the user cancels.
+async function resolveArchivePassword(path, sample, label) {
+  for (let retry = 0; ; retry++) {
+    const password = await promptArchivePassword(label, retry > 0);
+    if (password === null) return null;
+    let verified = false;
+    try {
+      verified = await call('verify_archive_password', { path, entry: sample, password });
+    } catch (e) {
+      // The backend could not verify; let the extraction itself decide.
+      return password;
+    }
+    if (verified) return password;
+  }
+}
+
 async function extractArchiveTo(file, destination, password) {
   if (!file) return;
   let currentPassword = password || null;
+  if (!currentPassword) {
+    let sample = null;
+    try {
+      sample = await call('archive_encryption_probe', { path: file.path });
+    } catch (e) {
+      sample = null;
+    }
+    if (sample) {
+      currentPassword = await resolveArchivePassword(file.path, sample, file.name);
+      if (currentPassword === null) return;
+    }
+  }
   for (let attempt = 0; ; attempt++) {
     const taskId = showProgress(t('status.extracting', { name: file.name }), {
       currentName: file.name,
