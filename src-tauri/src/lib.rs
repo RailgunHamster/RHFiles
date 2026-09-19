@@ -22,6 +22,16 @@ use types::{CancelFlag, CancelState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let mut context = tauri::generate_context!();
+    if let Some(args) = window::requested_browser_args() {
+        // WebView2 shares one user-data folder across the process and refuses
+        // environments whose options differ, so every window gets the same value.
+        // Without RHFILES_CDP_PORT nothing here changes.
+        for config in context.config_mut().app.windows.iter_mut() {
+            config.additional_browser_args = Some(args.clone());
+        }
+        eprintln!("RHFiles: WebView2 DevTools port enabled (RHFILES_CDP_PORT)");
+    }
     tauri::Builder::default()
         .manage(CancelFlag(Mutex::new(CancelState::default())))
         .manage(tray::TrayMenuState::default())
@@ -71,7 +81,7 @@ pub fn run() {
                             std::thread::sleep(std::time::Duration::from_millis(500));
                             for (window_id, pos_x, pos_y, width, height, maximized, _sort_order) in rows {
                                 use tauri::WebviewWindowBuilder;
-                                let builder = WebviewWindowBuilder::new(
+                                let builder = window::with_browser_args(WebviewWindowBuilder::new(
                                     &app_handle,
                                     &window_id,
                                     tauri::WebviewUrl::App("index.html".into()),
@@ -79,7 +89,7 @@ pub fn run() {
                                 .disable_drag_drop_handler()
                                 .title("RHFiles")
                                 .inner_size(1200.0, 800.0)
-                                .min_inner_size(700.0, 450.0);
+                                .min_inner_size(700.0, 450.0));
                                 if let Ok(restored_window) = builder.build() {
                                     let _ = window::apply_saved_window_geometry(
                                         &restored_window,
@@ -239,6 +249,6 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

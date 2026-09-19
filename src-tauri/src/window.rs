@@ -1,5 +1,65 @@
 use crate::db::get_db;
 
+/// wry's own default WebView2 arguments. They have to be repeated whenever RHFiles
+/// supplies its own: passing any value replaces wry's defaults rather than adding
+/// to them (no Edge mini menu, no SmartScreen prompt).
+pub const WRY_DEFAULT_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+/// Extra WebView2 arguments for this process, when a DevTools port was requested.
+///
+/// Why this exists: wry always assigns
+/// `CoreWebView2EnvironmentOptions::AdditionalBrowserArguments`, and once that
+/// property is set WebView2 ignores the `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`
+/// environment variable. Exporting that variable therefore never opened a
+/// debugging port, so the DevTools protocol could not reach an RHFiles window at
+/// all. The port has to travel through the same channel wry uses, which is what
+/// this returns.
+///
+/// Opt in with `RHFILES_CDP_PORT=<port>`; without it nothing changes and no port
+/// is opened. Every window in the process must use the same value, because they
+/// share one WebView2 user-data folder and WebView2 rejects environments whose
+/// options differ.
+pub fn requested_browser_args() -> Option<String> {
+    let port = parse_cdp_port(&std::env::var("RHFILES_CDP_PORT").ok()?)?;
+    Some(format!(
+        "{WRY_DEFAULT_BROWSER_ARGS} --remote-debugging-port={port}"
+    ))
+}
+
+/// Accepts a plain port number (surrounding whitespace tolerated) and rejects
+/// anything else, so a typo cannot silently open port 0 or a nonsense value.
+fn parse_cdp_port(raw: &str) -> Option<u16> {
+    let port: u16 = raw.trim().parse().ok()?;
+    (port != 0).then_some(port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_cdp_port;
+
+    #[test]
+    fn parses_only_usable_debug_ports() {
+        assert_eq!(parse_cdp_port("9222"), Some(9222));
+        assert_eq!(parse_cdp_port("  9222\n"), Some(9222));
+        assert_eq!(parse_cdp_port("0"), None);
+        assert_eq!(parse_cdp_port(""), None);
+        assert_eq!(parse_cdp_port("http://9222"), None);
+        assert_eq!(parse_cdp_port("70000"), None);
+    }
+}
+
+/// Applies `requested_browser_args` to a window built by hand, so hand-built
+/// windows can still be created while a debugging port is active.
+pub fn with_browser_args<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    match requested_browser_args() {
+        Some(args) => builder.additional_browser_args(&args),
+        None => builder,
+    }
+}
+
 const DEFAULT_WINDOW_WIDTH: u32 = 1200;
 const DEFAULT_WINDOW_HEIGHT: u32 = 800;
 const MIN_SAVED_WINDOW_WIDTH: i32 = 700;

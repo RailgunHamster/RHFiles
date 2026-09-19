@@ -1322,11 +1322,16 @@
       }
       assert($('#file-choice-bar').hidden, "The confirm bar must start hidden");
       assert(!fileChoiceIsActive(), "Building the bar must not start a hand-off");
-      // It must sit in the layout rather than covering the file list.
+      // It must sit in the layout rather than covering the file list. #main-area
+      // is a row (panes + inspector), so being appended there once turned the bar
+      // into a tall, mostly empty column that squeezed the panes.
       assertEqual(getComputedStyle($('#file-choice-bar')).position, 'static',
         "The confirm bar must not overlay the file list");
 
       function serveFileChoiceSession(extensions) {
+        // Capture the live bridge first: the wrapper below has to delegate every
+        // other command back to it, and restoring it is what ends the stub.
+        const originalCall = call;
         call = (cmd, args) => {
           if (cmd === 'begin_file_choice_in_rhfiles') {
             return Promise.resolve({
@@ -1338,6 +1343,13 @@
               locale: 'en',
             });
           }
+          // Record the hand-off so the assertions can check what was delivered;
+          // nothing else in the harness observes this command.
+          if (cmd === 'choose_files_in_file_dialog') {
+            window.__rhfilesLastChosenFiles = Array.isArray(args?.files) ? args.files.slice() : [];
+            return Promise.resolve(null);
+          }
+          if (cmd === 'cancel_file_choice') return Promise.resolve(null);
           return originalCall(cmd, args);
         };
         return () => { call = originalCall; };
@@ -1345,15 +1357,41 @@
 
       const savedSelection = getSelectedPaths().slice();
       let restore = serveFileChoiceSession(['png', 'jpg']);
+      let savedEntries = null;
       try {
         window.__rhfilesLastChosenFiles = null;
         await fileChoiceBegin();
         assert(fileChoiceIsActive(), "The confirm bar did not activate for a browser dialog");
         assert(!$('#file-choice-bar').hidden, "The confirm bar stayed hidden after opening");
+        {
+          // Measured while visible: a hidden bar has no box at all. The bar has to
+          // be a full-width strip below the panes, not a column beside them.
+          const bar = $('#file-choice-bar').getBoundingClientRect();
+          const body = document.querySelector('.body').getBoundingClientRect();
+          const pane = $('#pane-container').getBoundingClientRect();
+          assert(Math.abs(bar.width - body.width) < 2,
+            `The confirm bar is not full width (bar ${Math.round(bar.width)}, body ${Math.round(body.width)})`);
+          assert(bar.top >= body.bottom - 1,
+            `The confirm bar sits inside the panes (bar top ${Math.round(bar.top)}, body bottom ${Math.round(body.bottom)})`);
+          assert(bar.height > 10 && bar.height < 90,
+            `The confirm bar is not a thin strip (height ${Math.round(bar.height)})`);
+          assert(pane.width > body.width * 0.3,
+            `The confirm bar squeezed the panes (pane ${Math.round(pane.width)}, body ${Math.round(body.width)})`);
+        }
         assert($('#file-choice-confirm').disabled, "Confirm must be disabled with nothing selected");
 
-        // Selection comes from RHFiles' real selection, not a private list.
+        // Selection comes from RHFiles' real selection, not a private list. The
+        // visible folder may hold no image at all (a drive root, a source tree),
+        // which used to fail this test, so the fixture adds the two files the
+        // round trip needs and is removed again in the cleanup below.
         const tab = getTab();
+        savedEntries = (tab.entries || []).slice();
+        const fixtureFolder = String(tab.path || 'C:\\').replace(/[\\/]+$/, '');
+        tab.entries = savedEntries.concat([
+          { name: 'rhfiles-choice-fixture.png', path: `${fixtureFolder}\\rhfiles-choice-fixture.png`, is_dir: false, size: 2048, modified: '', extension: 'png' },
+          { name: 'rhfiles-choice-fixture.jpg', path: `${fixtureFolder}\\rhfiles-choice-fixture.jpg`, is_dir: false, size: 4096, modified: '', extension: 'jpg' },
+          { name: 'rhfiles-choice-fixture.txt', path: `${fixtureFolder}\\rhfiles-choice-fixture.txt`, is_dir: false, size: 12, modified: '', extension: 'txt' },
+        ]);
         tab.sel.clear();
         tab.entries.forEach((entry, index) => {
           if (entry && !entry.is_dir) tab.sel.add(index);
@@ -1385,6 +1423,7 @@
         restore();
         fileChoiceClose();
         const tab = getTab();
+        if (tab && savedEntries) tab.entries = savedEntries;
         if (tab?.sel) {
           tab.sel.clear();
           savedSelection.forEach((entry, index) => {

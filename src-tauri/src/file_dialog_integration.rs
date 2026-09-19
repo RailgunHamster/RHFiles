@@ -643,11 +643,11 @@ fn ensure_picker_window() -> Result<(), String> {
     if app.get_webview_window("integration-picker").is_some() {
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(
+    crate::window::with_browser_args(tauri::WebviewWindowBuilder::new(
         app,
         "integration-picker",
         tauri::WebviewUrl::App("integration-picker.html".into()),
-    )
+    ))
     .title("RHFiles Locations")
     .inner_size(370.0, 320.0)
     .resizable(false)

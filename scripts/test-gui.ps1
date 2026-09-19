@@ -4,7 +4,11 @@ param(
     [switch]$KeepOpen,
     [int]$Timeout = 90,
     [string]$ExecutablePath = "",
-    [string]$UpdateSource = ""
+    [string]$UpdateSource = "",
+    # Run the suite over the DevTools protocol instead of the harness auto-run.
+    # This is the mode that works on a headless/disconnected session, where the
+    # hidden window never initialises its WebView and no results are ever written.
+    [int]$CdpPort = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,10 +43,17 @@ Remove-Item $resultFile -ErrorAction SilentlyContinue
 
 Write-Host "`n[2/3] Launching RHFiles with test auto-run..." -ForegroundColor Cyan
 $env:RHFILES_AUTORUN_TESTS = "1"
+if ($CdpPort -gt 0) {
+    $env:RHFILES_CDP_PORT = "$CdpPort"
+    Write-Host "  DevTools port: $CdpPort (RHFILES_CDP_PORT)" -ForegroundColor Gray
+}
 if (-not [string]::IsNullOrWhiteSpace($UpdateSource)) {
     $env:RHFILES_TEST_UPDATE_SOURCE = [IO.Path]::GetFullPath($UpdateSource)
 }
-$proc = Start-Process -FilePath $exePath -PassThru -WindowStyle Hidden
+# A hidden window never brings up its WebView on a headless session, so the CDP
+# mode launches visibly; the window is closed again when the run finishes.
+$windowStyle = if ($CdpPort -gt 0) { "Normal" } else { "Hidden" }
+$proc = Start-Process -FilePath $exePath -PassThru -WindowStyle $windowStyle
 Remove-Item Env:RHFILES_AUTORUN_TESTS
 Remove-Item Env:RHFILES_TEST_UPDATE_SOURCE -ErrorAction SilentlyContinue
 
@@ -76,6 +87,18 @@ while (((Get-Date) - $startTime) -lt $maxWait) {
 Write-Host "`n========================================" -ForegroundColor White
 Write-Host "  GUI TEST RESULTS" -ForegroundColor White
 Write-Host "========================================" -ForegroundColor White
+
+if (-not $testResults -and $CdpPort -gt 0) {
+    # The harness auto-run may not have reported (a hidden start, a slow first
+    # paint). Drive the same suite over the DevTools protocol instead.
+    Write-Host "  No results file; running the suite over CDP..." -ForegroundColor Yellow
+    try {
+        $json = & node (Join-Path $ProjectRoot "scripts\cdp-window.mjs") eval "window.__runTests().then(r => JSON.stringify(r))" 2>&1
+        $testResults = ($json | Out-String).Trim() | ConvertFrom-Json
+    } catch {
+        Write-Host "  CDP run failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
 
 if ($testResults) {
     if ($testResults.error) {
