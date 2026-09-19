@@ -4376,6 +4376,45 @@ mod tests {
         );
     }
 
+    /// Drives the companion picker's *navigation* against an open file dialog and
+    /// reports what the dialog actually ended up showing. Run it on a machine with
+    /// a normal desktop, where the foreground transition and keystrokes work:
+    ///
+    ///   msedge.exe --remote-debugging-port=9333 <a page with input type=file>
+    ///   node scripts/cdp-open-file-dialog.mjs 9333 "#picker"
+    ///   $env:RHFILES_TEST_NAVIGATE_TO='C:\Windows'
+    ///   cargo test -p rhfiles-tauri --lib navigates_an_open_file_dialog -- --ignored --nocapture
+    #[test]
+    #[ignore = "requires a file dialog that is already open"]
+    fn navigates_an_open_file_dialog() {
+        let dialog = any_open_file_dialog().expect("no open file dialog was found");
+        let target = dialog.0 as usize;
+        let before = inspect_file_dialog(dialog);
+        println!("before: folder={:?}", before.folder);
+        let wanted = std::env::var("RHFILES_TEST_NAVIGATE_TO")
+            .expect("set RHFILES_TEST_NAVIGATE_TO to the folder RHFiles should jump to");
+        println!("requested: {wanted}");
+        match navigate_target_window(target, &wanted) {
+            Ok(()) => println!("navigate_target_window: ok"),
+            Err(error) => println!("navigate_target_window: failed ({error})"),
+        }
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let mut after = None;
+        while Instant::now() < deadline {
+            let current = inspect_file_dialog(dialog).folder;
+            if current.is_some() {
+                after = current;
+            }
+            thread::sleep(Duration::from_millis(150));
+        }
+        println!("after: folder={after:?}");
+        let landed = after.unwrap_or_default();
+        assert!(
+            same_windows_folder(&landed, &wanted),
+            "the dialog jumped to {landed:?} instead of {wanted:?}"
+        );
+    }
+
     #[test]
     #[ignore = "opens and closes a controlled Microsoft Edge file picker"]
     fn navigates_a_real_edge_file_picker_without_character_typing() {

@@ -87,6 +87,7 @@
   "preview.noPreview": "No preview available",
   "preview.binary": "Binary file",
   "preview.loading": "Loading preview...",
+  "preview.pdfLoad": "Load preview",
   "preview.open": "Open selected item",
   "preview.truncated": "Large file · preview shortened",
   "preview.truncatedDetail": "Only the beginning is shown to keep RHFiles responsive ({count} characters total).",

@@ -190,6 +190,12 @@ async function main() {
   check('all thumbnail cache writes use the key', list.includes('_thumbCache.set(thumbnailCacheKey(file), b64)'));
   check('video extensions request thumbnails', /_THUMB_VIDEO_EXT/.test(list) && /configuredFfmpegPath/.test(list));
 
+  // 0.1.60: the PDF viewer must not start on selection — it runs inside the app's
+  // own renderer and stalls the UI on large or scanned documents.
+  const pdfBranch = (panes.match(/if \(is_pdf\) \{[\s\S]*?\n  \}/) || [''])[0];
+  check('the PDF viewer is not mounted on selection', pdfBranch.length > 0 && !/innerHTML \+= `[^`]*iframe/.test(pdfBranch), pdfBranch.slice(0, 60));
+  check('the PDF viewer loads on demand', /previewBtn\.addEventListener\("click"[\s\S]{0,500}createElement\('iframe'\)/.test(pdfBranch));
+
   check('ESC rename cancel uses the real path', /selectNavigatedPath\(file\.path, isRight\)/.test(ops));
   check('ESC rename cancel no longer references oldPath', !/selectNavigatedPath\(oldPath, isRight\)/.test(ops));
 

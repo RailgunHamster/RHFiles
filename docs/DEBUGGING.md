@@ -75,6 +75,15 @@ cargo test -p rhfiles-tauri --lib delivers_into_an_open_edge_upload_picker -- --
 
 会打印：对话框识别结果（`selection_kind`）、写入后文件名框的实际内容、确认是否被接受、对话框是否真的关闭。
 
+同一份诊断还能验证**跳转路径**（伴随选择器点一个位置后，Windows 对话框应当跳到那个文件夹）：
+
+```powershell
+$env:RHFILES_TEST_NAVIGATE_TO='C:\Windows'
+cargo test -p rhfiles-tauri --lib navigates_an_open_file_dialog -- --ignored --nocapture
+```
+
+它会打印 `before: folder=…`、`requested: …`、`after: folder=…`，并在跳错时断言失败——"跳转路径不对"这类问题用这条命令就能定位到是写入的路径错了，还是对话框最终落在了别处。
+
 ### 已知的坑
 
 - **不要依赖 `SetForegroundWindow` + `SendInput` 做确认**：Windows 前台锁定经常拒绝焦点转移，而且用 UI Automation 写入文件名框不会移动键盘焦点，按键会落到别的控件上，回车等于没按——但代码会以为成功。确认应当用 UIA 直接 Invoke 对话框的默认按钮（通用对话框的自动化 ID 是 `1`，与语言无关），并**验证对话框确实关闭**后再报成功。
