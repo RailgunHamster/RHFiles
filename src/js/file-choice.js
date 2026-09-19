@@ -131,7 +131,16 @@ function fileChoiceEnsureDom() {
     <button type="button" class="file-choice-action" id="file-choice-clear"></button>
     <button type="button" class="file-choice-action" id="file-choice-cancel"></button>
     <button type="button" class="file-choice-action primary" id="file-choice-confirm"></button>`;
-  mainArea.append(bar);
+  // #main-area is a row flex container (panes + inspector) inside .body, which
+  // itself is a row (sidebar | main area). Appending the bar to either of them
+  // made it a tall, mostly empty column beside the panes. #app is the column
+  // that stacks .body, so the bar belongs there as a full-width bottom strip.
+  const appRoot = document.getElementById('app') || mainArea.parentElement;
+  if (appRoot) {
+    appRoot.append(bar);
+  } else {
+    mainArea.append(bar);
+  }
 
   const nodes = {
     mainArea,

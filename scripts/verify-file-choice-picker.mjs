@@ -27,14 +27,15 @@ const pagePath = path.join(tmp, 'probe.html');
 const profile = path.join(tmp, 'profile');
 
 const srcUrl = srcDir.replace(/\\/g, '/');
-// The bar is appended to #main-area, exactly as in the real window.
-const page = `<!doctype html><html><head><meta charset="utf-8">
-<link rel="stylesheet" href="file:///${srcUrl}/css/variables.css">
-<link rel="stylesheet" href="file:///${srcUrl}/css/file-choice.css">
-</head><body>
-<div id="main-area"></div>
-</body></html>`;
-fs.writeFileSync(pagePath, page);
+// The probe uses the real index.html DOM and every shipped stylesheet, with the
+// app scripts removed (they need Tauri). Layout is the point: #main-area is a
+// row flex container, so where the bar is inserted decides whether it is a
+// bottom strip or a squeezed column between the panes and the inspector.
+let indexHtml = fs.readFileSync(path.join(srcDir, 'index.html'), 'utf8');
+indexHtml = indexHtml.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+indexHtml = indexHtml.replace(/(href|src)="(?!https?:|file:|data:|#)([^"]+)"/gi,
+  (match, attr, value) => `${attr}="file:///${srcUrl}/${value}"`);
+fs.writeFileSync(pagePath, indexHtml);
 
 const edge = [
   path.join(process.env['PROGRAMFILES(X86)'] || '', 'Microsoft/Edge/Application/msedge.exe'),
@@ -109,10 +110,10 @@ async function evaluate(expression) {
 await send('Runtime.enable');
 
 const failures = [];
-function check(name, actual, expected) {
+function check(name, actual, expected, detail) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  if (!ok) failures.push(`${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : ` -> got ${JSON.stringify(actual)}`}`);
+  if (!ok) failures.push(`${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}${detail ? ` :: ${detail}` : ''}`);
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : ` -> got ${JSON.stringify(actual)}${detail ? ` :: ${detail}` : ''}`}`);
 }
 
 // Install the globals the module expects, then load the real module file through
@@ -261,11 +262,43 @@ await evaluate('window.__resumeDone');
 check('resuming does not re-navigate the pane',
   await evaluate('window.__navigated'), null);
 
-// --- stylesheet really applies ---
-check('the bar is laid out as a non-overlapping strip', await evaluate(`
+// --- real layout: a full-width strip under the panes, not a squeezed column ---
+await evaluate(`
+  document.getElementById('file-choice-bar').hidden = false;
+  true;
+`);
+const layout = await evaluate(`
   (() => {
     const bar = document.getElementById('file-choice-bar');
-    const style = getComputedStyle(bar);
+    const app = document.getElementById('app');
+    const body = document.querySelector('.body');
+    const pane = document.getElementById('pane-container');
+    const b = bar.getBoundingClientRect();
+    const bodyRect = body.getBoundingClientRect();
+    const p = pane.getBoundingClientRect();
+    const clear = document.getElementById('file-choice-clear').getBoundingClientRect();
+    const confirm = document.getElementById('file-choice-confirm').getBoundingClientRect();
+    return {
+      barWidth: Math.round(b.width),
+      barHeight: Math.round(b.height),
+      barTop: Math.round(b.top),
+      bodyWidth: Math.round(bodyRect.width),
+      bodyBottom: Math.round(bodyRect.bottom),
+      appBottom: Math.round(app.getBoundingClientRect().bottom),
+      paneWidth: Math.round(p.width),
+      buttonsInRow: confirm.left > clear.left && Math.abs(confirm.top - clear.top) < 2,
+    };
+  })()
+`);
+const layoutDetail = JSON.stringify(layout);
+check('the bar spans the window width', Math.abs(layout.barWidth - layout.bodyWidth) < 2, true, layoutDetail);
+check('the bar sits below the panes', layout.barTop >= layout.bodyBottom - 1, true, layoutDetail);
+check('the bar stays a thin strip', layout.barHeight > 10 && layout.barHeight < 90, true, layoutDetail);
+check('the panes keep their width', layout.paneWidth > layout.bodyWidth * 0.3, true, layoutDetail);
+check('the bar buttons are laid out in a row', layout.buttonsInRow === true, true, layoutDetail);
+check('the bar keeps its own flex strip', await evaluate(`
+  (() => {
+    const style = getComputedStyle(document.getElementById('file-choice-bar'));
     return style.position + '/' + style.display;
   })()
 `), 'static/flex');
