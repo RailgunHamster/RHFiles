@@ -1,4 +1,9 @@
 * { margin:0; padding:0; box-sizing:border-box; }
+/* The reset above clears the user-agent `margin: auto` that centres a modal
+   <dialog>, so every prompt built with showModal() (archive password, git clone,
+   disk format, FTP, streams, permissions) landed in the top-left corner.
+   #settings-dialog positions itself as a workspace and is left alone. */
+dialog:not(#settings-dialog) { position:fixed; inset:0; margin:auto; }
 html,body,#app { height:100%; font-family:"Segoe UI Variable Small","Segoe UI",system-ui,-apple-system,sans-serif; font-size:12px; color:var(--text); -webkit-font-smoothing:antialiased; }
 body { background:var(--bg); overflow:hidden; user-select:none; }
 #app { display:flex; flex-direction:column; height:100vh; }

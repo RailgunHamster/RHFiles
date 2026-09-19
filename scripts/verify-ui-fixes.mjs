@@ -26,7 +26,9 @@ const pagePath = path.join(tmp, 'probe.html');
 const profile = path.join(tmp, 'profile');
 const srcUrl = srcDir.replace(/\\/g, '/');
 
-const page = `<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>`;
+const page = `<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="file:///${srcUrl}/css/base.css">
+</head><body></body></html>`;
 fs.writeFileSync(pagePath, page);
 
 const edge = [
@@ -135,6 +137,31 @@ async function main() {
   check('cmd thumbnail prefers the builtin icon in mixed mode', results.cmdLarge.includes('large-file-icon'));
   check('images keep the shell icon in mixed mode', results.pngLarge.includes('system-icon-host'));
   check('directories keep the builtin folder icon', results.dirLarge.includes('#F3B11F'));
+
+  // base.css resets `margin` on everything, which used to strip the UA's
+  // centring from every showModal() prompt.
+  const dialogBox = await evaluate(`(() => {
+    const dlg = document.createElement('dialog');
+    dlg.style.cssText = 'border:1px solid #ccd;border-radius:8px;padding:16px;min-width:380px;';
+    dlg.innerHTML = '<h3 style="margin:0 0 8px">probe</h3><input type="password">';
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    const rect = dlg.getBoundingClientRect();
+    const result = {
+      dx: Math.abs((rect.left + rect.width / 2) - window.innerWidth / 2),
+      dy: Math.abs((rect.top + rect.height / 2) - window.innerHeight / 2),
+      width: rect.width,
+      height: rect.height,
+      left: rect.left,
+      top: rect.top,
+    };
+    dlg.close();
+    dlg.remove();
+    return result;
+  })()`);
+  check('modal prompt is horizontally centred', dialogBox.dx < 2, `offset ${dialogBox.dx}px (left ${dialogBox.left})`);
+  check('modal prompt is vertically centred', dialogBox.dy < 2, `offset ${dialogBox.dy}px (top ${dialogBox.top})`);
+  check('modal prompt keeps its content size', dialogBox.width >= 380 && dialogBox.height > 40, `${dialogBox.width}x${dialogBox.height}`);
 
   socket.close();
 
