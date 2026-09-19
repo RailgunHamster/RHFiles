@@ -427,27 +427,25 @@ async function updatePreviewForSelection() {
       <div style="margin-top:4px;font-size:14px;color:var(--text-2)">${esc(file.name)}</div>
       <div style="margin-top:2px;color:var(--text-4)">${fmtSize(file.size)}</div>`;
     container.appendChild(openBtn);
-    // The embedded PDF viewer is loaded on demand. Mounting it as soon as a PDF
-    // is selected starts a viewer inside the app's own renderer, which stalls the
-    // UI for large or scanned documents; browsing a folder of PDFs paid that cost
-    // for every file the user merely stepped over.
-    const previewBtn = document.createElement("button");
-    previewBtn.className = "dialog-btn";
-    previewBtn.style.marginTop = "8px";
-    previewBtn.style.marginLeft = "6px";
-    previewBtn.textContent = t('preview.pdfLoad');
-    previewBtn.addEventListener("click", () => {
-      if (container.querySelector('iframe')) return;
-      previewBtn.remove();
+    // The viewer is mounted straight away, but only after the information above
+    // has painted: creating it starts a PDF viewer inside this same renderer, and
+    // large or scanned documents make that expensive. Deferring keeps the click,
+    // the selection and the panel update responsive while the viewer loads in the
+    // background, instead of freezing the UI inside the selection handler.
+    const mountViewer = () => {
+      if (!previewRequestIsCurrent(requestToken, file.path, isRight)) return;
       const frame = document.createElement('iframe');
       frame.src = src;
-      frame.loading = 'lazy';
       frame.style.cssText = "width:100%;height:280px;border:1px solid var(--border);margin-top:8px;border-radius:4px;";
       container.appendChild(frame);
-    });
-    container.appendChild(previewBtn);
+    };
     previewContent.innerHTML = "";
     previewContent.appendChild(container);
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => setTimeout(mountViewer, 0));
+    } else {
+      setTimeout(mountViewer, 0);
+    }
     return;
   }
   if (is_audio) {

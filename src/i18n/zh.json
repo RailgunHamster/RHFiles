@@ -87,7 +87,6 @@
   "preview.noPreview": "\u65e0\u9884\u89c8",
   "preview.binary": "\u4e8c\u8fdb\u5236\u6587\u4ef6",
   "preview.loading": "\u6b63\u5728\u52a0\u8f7d\u9884\u89c8...",
-  "preview.pdfLoad": "\u52a0\u8f7d\u9884\u89c8",
   "preview.open": "\u6253\u5f00\u6240\u9009\u9879\u76ee",
   "preview.truncated": "文件较大 · 已截断预览",
   "preview.truncatedDetail": "为保持 RHFiles 流畅，仅显示开头（共 {count} 个字符）。",

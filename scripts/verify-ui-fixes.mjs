@@ -190,11 +190,11 @@ async function main() {
   check('all thumbnail cache writes use the key', list.includes('_thumbCache.set(thumbnailCacheKey(file), b64)'));
   check('video extensions request thumbnails', /_THUMB_VIDEO_EXT/.test(list) && /configuredFfmpegPath/.test(list));
 
-  // 0.1.60: the PDF viewer must not start on selection — it runs inside the app's
-  // own renderer and stalls the UI on large or scanned documents.
+  // 0.1.61: the PDF viewer loads automatically, but never inside the selection
+  // handler — starting it there is what made selecting a large PDF freeze the UI.
   const pdfBranch = (panes.match(/if \(is_pdf\) \{[\s\S]*?\n  \}/) || [''])[0];
-  check('the PDF viewer is not mounted on selection', pdfBranch.length > 0 && !/innerHTML \+= `[^`]*iframe/.test(pdfBranch), pdfBranch.slice(0, 60));
-  check('the PDF viewer loads on demand', /previewBtn\.addEventListener\("click"[\s\S]{0,500}createElement\('iframe'\)/.test(pdfBranch));
+  check('the PDF viewer is not started inside the selection handler', pdfBranch.length > 0 && !/innerHTML \+= `[^`]*iframe/.test(pdfBranch), pdfBranch.slice(0, 60));
+  check('the PDF viewer still loads automatically', /requestAnimationFrame\(\(\) => setTimeout\(mountViewer, 0\)\)/.test(pdfBranch));
 
   check('ESC rename cancel uses the real path', /selectNavigatedPath\(file\.path, isRight\)/.test(ops));
   check('ESC rename cancel no longer references oldPath', !/selectNavigatedPath\(oldPath, isRight\)/.test(ops));

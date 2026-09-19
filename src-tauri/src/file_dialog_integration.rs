@@ -850,6 +850,74 @@ fn is_absolute_file_path(path: &str) -> bool {
         || trimmed.starts_with("\\\\")
 }
 
+/// Automation ids for a Windows file dialog's File-name field: 1148 in the Common
+/// Item Dialog (IFileDialog) and 1152 (`edt1`) in the legacy `GetOpenFileName`
+/// dialog that Chromium's picker still uses. Looking up only 1148 is what made the
+/// hand-off fall through to the address-bar paste, which *navigates* into the
+/// folder and selects nothing — the "it jumped into a subfolder instead of taking
+/// my file" symptom.
+const DIALOG_FILENAME_AUTOMATION_IDS: [&str; 2] = ["1148", "1152"];
+
+fn find_dialog_filename_field(
+    automation: &IUIAutomation,
+    root: &IUIAutomationElement,
+) -> Option<IUIAutomationElement> {
+    for id in DIALOG_FILENAME_AUTOMATION_IDS {
+        if let Some(element) = find_automation_id(automation, root, id) {
+            return Some(element);
+        }
+    }
+    // Last resort: the first edit control in the dialog.
+    let edit_type = VARIANT::from(UIA_EditControlTypeId.0);
+    let condition =
+        unsafe { automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &edit_type) }
+            .ok()?;
+    let edits = unsafe { root.FindAll(TreeScope_Descendants, &condition) }.ok()?;
+    let count = unsafe { edits.Length() }.ok()?.min(8);
+    (0..count).find_map(|index| unsafe { edits.GetElement(index) }.ok())
+}
+
+/// Compares a dialog's File-name field with what RHFiles wrote. Quoting and
+/// spacing differ between the two dialog generations, so both are ignored.
+fn dialog_selection_matches(current: &str, expected: &str) -> bool {
+    let key = |value: &str| {
+        value
+            .chars()
+            .filter(|character| !character.is_whitespace() && *character != '"')
+            .flat_map(|character| character.to_lowercase())
+            .collect::<String>()
+    };
+    !expected.is_empty() && key(current) == key(expected)
+}
+
+/// Reads the dialog's File-name field, to verify a write actually stuck.
+fn read_dialog_filename_value(target: HWND) -> Option<String> {
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    let can_use_com = initialized.is_ok() || initialized == RPC_E_CHANGED_MODE;
+    let _guard = ComGuard(initialized.is_ok());
+    if !can_use_com {
+        return None;
+    }
+    let automation =
+        unsafe { CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL) }.ok()?;
+    let root = unsafe { automation.ElementFromHandle(target) }.ok()?;
+    let field = find_dialog_filename_field(&automation, &root)?;
+    let pattern =
+        unsafe { field.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+            .ok()?;
+    let value = unsafe { pattern.CurrentValue() }.ok()?;
+    Some(value.to_string())
+}
+
 /// The extensions the dialog in `target` currently accepts. An empty vector
 /// means "no restriction": either the dialog accepts everything or the filter
 /// could not be read.
@@ -2455,24 +2523,34 @@ fn write_files_into_dialog_field(target: HWND, paths: &[String]) -> Result<(), S
     // The dialog's automation tree can still be publishing right after it
     // regains focus, so poll for the filename field instead of sampling once.
     let deadline = Instant::now() + Duration::from_millis(2500);
+    let mut wrote = false;
     while Instant::now() < deadline {
         if matches!(
             set_dialog_filename_value(target, target_process_id, &value),
             Ok(InstantAddressReplacement::DialogFileName)
         ) {
-            thread::sleep(Duration::from_millis(120));
-            let _ = unsafe { SetForegroundWindow(target) };
-            return Ok(());
+            wrote = true;
+            break;
         }
         thread::sleep(Duration::from_millis(20));
     }
-    // Fall back to the visible paste path: Ctrl+A then Ctrl+V replaces the
-    // field wholesale without per-character input.
-    if paste_location_without_typing(target, &selection) {
-        Ok(())
-    } else {
-        Err("Unable to write the selected files into the browser dialog".to_string())
+    if !wrote {
+        return Err("Unable to write the selected files into the browser dialog".to_string());
     }
+    thread::sleep(Duration::from_millis(120));
+    // Verify the write stuck before confirming it. This must never fall back to
+    // pasting into the address bar: that is the *navigation* gesture, so the
+    // dialog would open the file's folder, select nothing, and still look like a
+    // success to the caller.
+    if let Some(current) = read_dialog_filename_value(target)
+        && !dialog_selection_matches(&current, &selection)
+    {
+        return Err(format!(
+            "The browser dialog did not keep the selected files (its file-name field shows {current:?})"
+        ));
+    }
+    let _ = unsafe { SetForegroundWindow(target) };
+    Ok(())
 }
 
 /// Re-focus the dialog's own filename field and write the value with
@@ -2504,7 +2582,7 @@ fn set_dialog_filename_value(
     .map_err(|error| format!("start UI automation: {error}"))?;
     let root = unsafe { automation.ElementFromHandle(target) }
         .map_err(|error| format!("read the dialog automation root: {error}"))?;
-    let filename = find_automation_id(&automation, &root, "1148")
+    let filename = find_dialog_filename_field(&automation, &root)
         .ok_or_else(|| "the dialog has no filename field to write".to_string())?;
     set_uia_element_value(&filename, value)?;
     let _ = target_process_id;
@@ -2980,6 +3058,33 @@ mod tests {
         GetSubMenu, GetWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
         MF_BYPOSITION, PostMessageW, SetForegroundWindow, WM_CLOSE, WM_COMMAND,
     };
+
+    #[test]
+    fn matches_dialog_filename_fields_across_dialog_generations() {
+        // Both generations must be looked up, otherwise Chromium's picker (1152)
+        // is written through the address bar and the dialog only navigates.
+        assert_eq!(DIALOG_FILENAME_AUTOMATION_IDS, ["1148", "1152"]);
+        assert!(dialog_selection_matches(
+            "C:\\Users\\me\\shot.png",
+            "C:\\Users\\me\\shot.png"
+        ));
+        assert!(dialog_selection_matches(
+            "\"C:\\a b.png\" C:\\c.png",
+            "\"C:\\a b.png\" C:\\c.png"
+        ));
+        // Quoting and spacing differ between the dialog generations.
+        assert!(dialog_selection_matches(
+            "C:\\a b.png C:\\c.png",
+            "\"C:\\a b.png\" C:\\c.png"
+        ));
+        assert!(!dialog_selection_matches("", "C:\\a.png"));
+        // A folder path is not an accepted delivery: that is the navigation
+        // gesture which made the dialog jump into the containing folder.
+        assert!(!dialog_selection_matches(
+            "C:\\Users\\me\\Pictures",
+            "C:\\Users\\me\\Pictures\\shot.png"
+        ));
+    }
 
     struct TopLevelWindowSearch {
         class_name: &'static str,
