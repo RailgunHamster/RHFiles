@@ -918,6 +918,55 @@ fn read_dialog_filename_value(target: HWND) -> Option<String> {
     Some(value.to_string())
 }
 
+/// Navigate a file dialog by writing the folder into its File-name field and
+/// confirming it — the same thing the user does by typing a path and pressing
+/// Enter. Returns whether the write itself was accepted; the caller still has to
+/// check that the dialog really moved.
+fn navigate_dialog_through_filename_field(target: HWND, path: &str) -> bool {
+    let mut process_id = 0u32;
+    unsafe { GetWindowThreadProcessId(target, Some(&mut process_id)) };
+    let value = BSTR::from(path);
+    if !matches!(
+        set_dialog_filename_value(target, process_id, &value),
+        Ok(InstantAddressReplacement::DialogFileName)
+    ) {
+        return false;
+    }
+    thread::sleep(Duration::from_millis(120));
+    // Enter navigates when the field holds a folder. It is preferred over pressing
+    // the dialog's Open button, which is the *selection* gesture; the button is
+    // only used when the dialog is not in the foreground for real keystrokes.
+    if unsafe { GetForegroundWindow() } == target
+        && send_inputs(&[
+            key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_RETURN, KEYEVENTF_KEYUP),
+        ])
+    {
+        thread::sleep(Duration::from_millis(150));
+        return true;
+    }
+    commit_dialog_filename_field(target)
+}
+
+/// Whether the dialog's own folder has become `wanted`. Used to refuse reporting
+/// success for a navigation that never happened — the case where the dialog
+/// merely flashed and stayed where it was.
+fn wait_for_dialog_folder(target: HWND, wanted: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if inspect_file_dialog(target)
+            .folder
+            .is_some_and(|folder| same_windows_folder(&folder, wanted))
+        {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(120));
+    }
+}
+
 /// The extensions the dialog in `target` currently accepts. An empty vector
 /// means "no restriction": either the dialog accepts everything or the filter
 /// could not be read.
@@ -2347,6 +2396,20 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
     }
 
     let target_class = window_class(target);
+    // A Chromium-hosted picker is the legacy GetOpenFileName dialog: Ctrl+L does
+    // not focus an address bar there, so the address-bar route further down writes
+    // into whatever happens to be focused and the dialog only flashes as focus
+    // moves. Typing the folder into its File-name field and confirming it is the
+    // navigation that dialog generation actually honours, and it needs no
+    // foreground window.
+    if target_class.eq_ignore_ascii_case("#32770")
+        && navigate_dialog_through_filename_field(target, &path)
+        && wait_for_dialog_folder(target, &path, Duration::from_millis(2000))
+    {
+        #[cfg(test)]
+        LAST_NAVIGATION_METHOD.store(4, Ordering::Release);
+        return Ok(());
+    }
     // Modern CabinetWClass windows can host several tabs under the same HWND.
     // ShellWindows cannot reliably identify the selected tab and may activate
     // and redirect the first one. Use the focused address element below for
@@ -2396,7 +2459,7 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
     // Explorer's breadcrumb animation and the modern IFileDialog address bar
     // can take more than one frame to turn into an editable control.
     thread::sleep(Duration::from_millis(80));
-    let dialog_path = path;
+    let dialog_path = path.clone();
     // Waiting for UIA here also acts as a readiness probe for newly-created
     // Chromium dialogs. Their top-level HWND can become foreground before the
     // focused edit provider is ready to accept a real paste.
@@ -2457,7 +2520,13 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
     ]) {
         return Err("Unable to confirm the selected folder in Windows".to_string());
     }
-    Ok(())
+    // Verify instead of assuming: a dialog that merely regains focus and then
+    // ignores the path used to be reported as a successful navigation.
+    if wait_for_dialog_folder(target, &path, Duration::from_millis(1500)) {
+        Ok(())
+    } else {
+        Err("The Windows window did not move to the selected folder".to_string())
+    }
 }
 
 /// Hand one or more absolute file paths to the dialog that asked for them and
