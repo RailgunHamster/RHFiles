@@ -30,16 +30,15 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern,
-    IUIAutomationSelectionPattern, IUIAutomationValuePattern, TreeScope_Descendants,
-    UIA_AutomationIdPropertyId, UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId,
-    UIA_EditControlTypeId, UIA_ListItemControlTypeId, UIA_SelectionItemPatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+    IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationValuePattern,
+    TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_ButtonControlTypeId,
+    UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId, UIA_EditControlTypeId,
+    UIA_InvokePatternId, UIA_ListItemControlTypeId, UIA_SelectionItemPatternId,
     UIA_SelectionPatternId, UIA_ValuePatternId,
 };
 #[cfg(test)]
-use windows::Win32::UI::Accessibility::{
-    IUIAutomationInvokePattern, TreeScope_Children, UIA_InvokePatternId, UIA_NamePropertyId,
-};
+use windows::Win32::UI::Accessibility::{TreeScope_Children, UIA_NamePropertyId};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
@@ -54,7 +53,8 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, EnumChildWindows, GetClassNameW, GetForegroundWindow,
-    GetMessageW, GetWindowRect, GetWindowThreadProcessId, HC_ACTION, HWND_TOPMOST, IsWindow,
+    GetMessageW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, HC_ACTION, HWND_TOPMOST,
+    IsWindow,
     IsWindowVisible, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, SW_HIDE, SW_SHOWNOACTIVATE,
     SWP_NOACTIVATE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW,
     ShowWindow, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
@@ -1754,8 +1754,134 @@ enum InstantAddressReplacement {
 /// listens for. A zero-net-change edit (Space + Backspace) makes Chromium's
 /// Common Item Dialog pick the value up, then Enter confirms it in the same
 /// input batch so a foreground race cannot split the operation.
-fn commit_dialog_filename_field() -> bool {
-    send_inputs(&[
+/// The window's own caption, used to recognize the Common Item Dialog's
+/// confirmation button, which is labelled after the dialog itself.
+fn read_window_title(hwnd: HWND) -> String {
+    let mut title = [0u16; 512];
+    let length = unsafe { GetWindowTextW(hwnd, &mut title) };
+    String::from_utf16_lossy(&title[..length.max(0) as usize])
+}
+
+/// Fallback for dialogs that do not expose automation id 1: the enabled button
+/// that is not the cancel button, preferring one labelled like the dialog itself
+/// (the Common Item Dialog labels its Open button the same as its title).
+fn find_dialog_confirm_button(
+    automation: &IUIAutomation,
+    root: &IUIAutomationElement,
+    dialog_title: &str,
+) -> Option<IUIAutomationElement> {
+    let button_type = VARIANT::from(UIA_ButtonControlTypeId.0);
+    let condition =
+        unsafe { automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &button_type) }
+            .ok()?;
+    let buttons = unsafe { root.FindAll(TreeScope_Descendants, &condition) }.ok()?;
+    let count = unsafe { buttons.Length() }.ok()?.min(12);
+    let title_head = dialog_title
+        .split(['(', '（'])
+        .next()
+        .unwrap_or(dialog_title)
+        .trim()
+        .to_string();
+    let mut fallback = None;
+    for index in 0..count {
+        let Ok(button) = (unsafe { buttons.GetElement(index) }) else {
+            continue;
+        };
+        let name = unsafe { button.CurrentName() }
+            .map(|name| name.to_string())
+            .unwrap_or_default();
+        let is_cancel = name.starts_with("Cancel") || name.starts_with("取消");
+        if is_cancel {
+            continue;
+        }
+        let Ok(enabled) = (unsafe { button.CurrentIsEnabled() }) else {
+            continue;
+        };
+        if !enabled.as_bool() {
+            continue;
+        }
+        if unsafe {
+            button
+                .GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+                .is_ok()
+        } {
+            if !title_head.is_empty() && name.starts_with(&title_head) {
+                return Some(button);
+            }
+            if fallback.is_none() {
+                fallback = Some(button);
+            }
+        }
+    }
+    fallback
+}
+
+/// Press the dialog's confirmation button (Open/Save) through UI Automation.
+///
+/// The Common Item Dialog exposes its default button as automation id "1", so
+/// this needs no localized label, no foreground window and no synthetic
+/// keystrokes. Keyboard confirmation is unreliable here for two reasons: Windows
+/// often refuses the foreground transition back to the dialog (the keys then land
+/// in whatever window does have focus, and the dialog silently keeps its old
+/// state), and writing the value with ValuePattern never moves keyboard focus to
+/// the field in the first place.
+fn invoke_dialog_default_button(target: HWND) -> Result<(), String> {
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    let can_use_com = initialized.is_ok() || initialized == RPC_E_CHANGED_MODE;
+    let _guard = ComGuard(initialized.is_ok());
+    if !can_use_com {
+        return Err("COM is unavailable for dialog automation".to_string());
+    }
+    let automation = unsafe {
+        CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL)
+    }
+    .map_err(|error| format!("start UI automation: {error}"))?;
+    let root = unsafe { automation.ElementFromHandle(target) }
+        .map_err(|error| format!("read the dialog automation root: {error}"))?;
+    let button = find_automation_id(&automation, &root, "1")
+        .or_else(|| find_dialog_confirm_button(&automation, &root, &read_window_title(target)))
+        .ok_or_else(|| "the dialog has no confirmation button to press".to_string())?;
+    let pattern =
+        unsafe { button.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) }
+            .map_err(|error| format!("read the confirmation button: {error}"))?;
+    unsafe { pattern.Invoke() }.map_err(|error| format!("press the confirmation button: {error}"))
+}
+
+/// Whether the dialog really went away, which is the only honest signal that the
+/// selection was accepted.
+fn wait_for_dialog_closed(target: HWND, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while unsafe { IsWindow(Some(target)) }.as_bool() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    true
+}
+
+/// Confirm the filename field. UI Automation goes first because it works without
+/// foreground; the keystroke sequence stays as a fallback for shells that do not
+/// expose an invokable button.
+fn commit_dialog_filename_field(target: HWND) -> bool {
+    if invoke_dialog_default_button(target).is_ok()
+        && wait_for_dialog_closed(target, Duration::from_millis(2500))
+    {
+        return true;
+    }
+    if focus_file_dialog_for_choice(target.0 as usize).is_err() {
+        return false;
+    }
+    if !send_inputs(&[
         key_input(VK_END, KEYBD_EVENT_FLAGS(0)),
         key_input(VK_END, KEYEVENTF_KEYUP),
         key_input(VK_SPACE, KEYBD_EVENT_FLAGS(0)),
@@ -1764,7 +1890,10 @@ fn commit_dialog_filename_field() -> bool {
         key_input(VK_BACK, KEYEVENTF_KEYUP),
         key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
         key_input(VK_RETURN, KEYEVENTF_KEYUP),
-    ])
+    ]) {
+        return false;
+    }
+    wait_for_dialog_closed(target, Duration::from_millis(2500))
 }
 
 fn explorer_browser_has_visible_view(browser: &IWebBrowser2) -> bool {
@@ -2241,7 +2370,7 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
     }
     if replaced_filename && target_class.eq_ignore_ascii_case("#32770") {
         let _ = unsafe { SetForegroundWindow(target) };
-        if !commit_dialog_filename_field() {
+        if !commit_dialog_filename_field(target) {
             return Err("Unable to confirm the Windows filename field".to_string());
         }
         return Ok(());
@@ -2271,9 +2400,18 @@ fn navigate_target_window(hwnd_value: usize, path: &str) -> Result<(), String> {
 /// rejected. Writing the filename field directly, then confirming it, is the
 /// same mechanism the existing folder flow already proves on Chromium dialogs.
 fn choose_files_in_target_window(hwnd_value: usize, paths: &[String]) -> Result<(), String> {
-    let target = focus_file_dialog_for_choice(hwnd_value)?;
+    let target = HWND(hwnd_value as *mut core::ffi::c_void);
+    if !is_supported_window(target) {
+        return Err("The browser file dialog is no longer open".to_string());
+    }
+    // Foreground is only needed by the keystroke fallback below. The value write
+    // and the confirmation both go through UI Automation, which is what makes the
+    // hand-off work even when Windows refuses the foreground transition — the case
+    // where the old keystroke-only path reported success while the dialog kept
+    // waiting with an empty File-name field.
+    let _ = focus_file_dialog_for_choice(hwnd_value);
     write_files_into_dialog_field(target, paths)?;
-    if !commit_dialog_filename_field() {
+    if !commit_dialog_filename_field(target) {
         return Err("Unable to confirm the selected files".to_string());
     }
     Ok(())
@@ -4136,8 +4274,8 @@ mod tests {
 
         // Confirming is what actually completes the upload.
         assert!(
-            commit_dialog_filename_field(),
-            "the confirmation keystrokes were not delivered"
+            commit_dialog_filename_field(dialog_hwnd),
+            "the confirmation was not accepted by the dialog"
         );
         let closed_deadline = Instant::now() + Duration::from_secs(10);
         while unsafe { IsWindow(Some(dialog_hwnd)) }.as_bool() && Instant::now() < closed_deadline {
@@ -4148,6 +4286,94 @@ mod tests {
             "Edge's upload picker stayed open after the selection was confirmed"
         );
         guard.dialog_hwnd = None;
+    }
+
+    /// Drives the whole delivery chain against a file dialog that is already
+    /// open, printing what each step did. The foreground hooks never fire on a
+    /// headless or disconnected session, so this is the only way to exercise the
+    /// hand-off there — and it is how the "the picker reports success but the
+    /// dialog stays empty" failure was found.
+    ///
+    ///   msedge.exe --remote-debugging-port=9333 <a page with input type=file>
+    ///   node scripts/cdp-open-file-dialog.mjs 9333 "#picker"
+    ///   $env:RHFILES_TEST_CHOSEN_FILE='C:\path\photo.png'
+    ///   cargo test -p rhfiles-tauri --lib delivers_into_an_open_edge_upload_picker -- --ignored --nocapture
+    /// Like `top_level_window_with_title`, but without the visibility test: on a
+    /// session with no interactive desktop every window reports invisible, which
+    /// is also why the foreground hooks never fire there. Several shell windows
+    /// share the dialog class, so the file chooser is picked by asking UI
+    /// Automation which one is choosing a file.
+    fn any_open_file_dialog() -> Option<HWND> {
+        unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let list = unsafe { &mut *(lparam.0 as *mut Vec<HWND>) };
+            let title = window_title(hwnd);
+            if window_class(hwnd).eq_ignore_ascii_case("#32770")
+                && (title.contains("打开") || title.contains("Open"))
+            {
+                list.push(hwnd);
+            }
+            BOOL::from(true)
+        }
+        let mut found: Vec<HWND> = Vec::new();
+        unsafe {
+            let _ = EnumWindows(
+                Some(visit),
+                LPARAM((&mut found as *mut Vec<HWND>) as isize),
+            );
+        }
+        found
+            .iter()
+            .copied()
+            .find(|hwnd| inspect_file_dialog(*hwnd).selection_kind == "file")
+            .or_else(|| found.first().copied())
+    }
+
+    #[test]
+    #[ignore = "requires a file dialog that is already open"]
+    fn delivers_into_an_open_edge_upload_picker() {
+        let dialog = any_open_file_dialog().expect("no open file dialog was found");
+        let inspect = inspect_file_dialog(dialog);
+        println!(
+            "selection_kind={} start_folder={:?}",
+            inspect.selection_kind, inspect.folder
+        );
+        println!("elements={:?}", uia_descendant_names(dialog));
+
+        let target = dialog.0 as usize;
+        // The write itself must not depend on foreground: UI Automation does not
+        // need it, and on this session the transition is impossible anyway.
+        let focused = match focus_file_dialog_for_choice(target) {
+            Ok(focused) => {
+                println!("dialog focused");
+                focused
+            }
+            Err(error) => {
+                println!("focus refused ({error}); continuing with UI Automation only");
+                dialog
+            }
+        };
+        let chosen = std::env::var("RHFILES_TEST_CHOSEN_FILE")
+            .expect("set RHFILES_TEST_CHOSEN_FILE to a file that exists");
+        write_files_into_dialog_field(focused, std::slice::from_ref(&chosen))
+            .expect("write the chosen path into the dialog");
+        println!(
+            "file-name field = {:?}",
+            file_dialog_filename_value(dialog)
+        );
+        println!("focused element = {}", focused_uia_debug());
+
+        let delivered = commit_dialog_filename_field(dialog);
+        println!("confirmation accepted = {delivered}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while unsafe { IsWindow(Some(dialog)) }.as_bool() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(100));
+        }
+        let closed = !unsafe { IsWindow(Some(dialog)) }.as_bool();
+        println!("dialog closed = {closed}");
+        assert!(
+            closed,
+            "the dialog stayed open, so the selection never reached the browser"
+        );
     }
 
     #[test]

@@ -59,6 +59,27 @@ node scripts/cdp-window.mjs shot "$env:TEMP\rhfiles.png"             # 截图（
 node scripts/cdp-window.mjs eval "window.__runTests().then(r => JSON.stringify({total:r.total, failed:r.failed}))"
 ```
 
+## 排查"选好了但对话框没反应"
+
+投递链路的每一步都可以单独跑（对**已经打开的**文件对话框操作，不需要前台钩子）：
+
+```powershell
+# 1. 打开一个真实的上传对话框
+msedge.exe --remote-debugging-port=9333 "$env:TEMP\probe.html"   # 页面里放 <input type=file>
+node scripts/cdp-open-file-dialog.mjs 9333 "#picker"
+
+# 2. 逐步驱动投递链路并打印结果
+$env:RHFILES_TEST_CHOSEN_FILE='C:\path\photo.png'
+cargo test -p rhfiles-tauri --lib delivers_into_an_open_edge_upload_picker -- --ignored --nocapture
+```
+
+会打印：对话框识别结果（`selection_kind`）、写入后文件名框的实际内容、确认是否被接受、对话框是否真的关闭。
+
+### 已知的坑
+
+- **不要依赖 `SetForegroundWindow` + `SendInput` 做确认**：Windows 前台锁定经常拒绝焦点转移，而且用 UI Automation 写入文件名框不会移动键盘焦点，按键会落到别的控件上，回车等于没按——但代码会以为成功。确认应当用 UIA 直接 Invoke 对话框的默认按钮（通用对话框的自动化 ID 是 `1`，与语言无关），并**验证对话框确实关闭**后再报成功。
+- 无交互桌面的会话里：`GetForegroundWindow()` 返回 0、`SetForegroundWindow` 恒定失败、所有窗口 `IsWindowVisible` 为 False（`top_level_window_with_title` 因此找不到窗口），Win32 对话框的 UIA 树也不完整（只能枚举到系统菜单项）。这类会话适合验证布局与前端逻辑，**不适合**验证依赖前台或输入的交互。
+
 ## 前端专项检查（无需启动应用）
 
 ```powershell
