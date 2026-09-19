@@ -421,6 +421,7 @@
   "alert.shortcutFailed": "Create shortcut failed: {error}",
   "alert.extractFailed": "Extract failed: {error}",
   "alert.archivePasswordFailed": "Extract failed: wrong password, or the archive needs one and none was provided.\n{error}",
+  "alert.archivePartialExtract": "Extraction was incomplete. The password is confirmed correct, so the listed entries could not be decrypted: their data inside the archive is probably damaged, or they were added with a different password. Everything else was extracted.\n{error}",
   "alert.compressFailed": "Compress failed: {error}",
   "alert.compress7zFailed": "7z compress failed: {error}",
   "alert.pinFailed": "Pin failed: {error}",

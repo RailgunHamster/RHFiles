@@ -68,12 +68,14 @@ async function extractArchiveAll() {
   const name = archiveBrowsingPath.split('\\').pop();
   const entries = getTab().entries || [];
   let password = null;
+  let passwordVerified = false;
   const sample = entries
     .filter(e => e.encrypted && !e.is_dir)
     .sort((a, b) => (a.size || 0) - (b.size || 0))[0];
   if (sample) {
     password = await resolveArchivePassword(archiveBrowsingPath, sample.path, name);
     if (password === null) return;
+    passwordVerified = true;
   }
   for (let attempt = 0; ; attempt++) {
     const taskId = showProgress(t('status.extracting', { name }), {
@@ -93,15 +95,20 @@ async function extractArchiveAll() {
       return;
     } catch (e) {
       if (/cancel/i.test(String(e))) { cancelOperationTask(taskId); return; }
-      if (isArchivePasswordError(e) && attempt < 2) {
-        cancelOperationTask(taskId);
-        const next = await promptArchivePassword(name, attempt > 0);
-        if (next !== null) { password = next; continue; }
+      if (isArchivePasswordError(e)) {
+        if (!passwordVerified && attempt < 2) {
+          cancelOperationTask(taskId);
+          const next = await promptArchivePassword(name, attempt > 0);
+          if (next !== null) { password = next; continue; }
+        }
+        failOperationTask(taskId, e);
+        alert(passwordVerified
+          ? t('alert.archivePartialExtract', { error: e })
+          : t('alert.archivePasswordFailed', { error: e }));
+        return;
       }
       failOperationTask(taskId, e);
-      alert(isArchivePasswordError(e)
-        ? t('alert.archivePasswordFailed', { error: e })
-        : t('alert.extractFailed', {error: e}));
+      alert(t('alert.extractFailed', {error: e}));
       return;
     }
   }
@@ -143,8 +150,7 @@ async function extractArchiveEntry(idx) {
       alert(isArchivePasswordError(e)
         ? t('alert.archivePasswordFailed', { error: e })
         : t('alert.extractFailed', {error: e}));
-      return;
-    }
+      return;    }
   }
 }
 

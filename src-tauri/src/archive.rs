@@ -327,6 +327,49 @@ fn build_7z_extract_args(
     args
 }
 
+/// Collapses 7-Zip's per-entry error lines into a short, actionable summary.
+/// Lines look like `ERROR: Wrong password : path\inside\archive`. Reporting the
+/// reasons and counts matters: with a verified password, "Wrong password" for a
+/// handful of entries means their ciphertext is damaged (or was encrypted with
+/// a different password), not that the user typed the wrong password.
+fn summarize_7z_failures(stderr: &str) -> Option<String> {
+    let mut reasons: Vec<(String, usize)> = Vec::new();
+    let mut first_entry: Option<String> = None;
+    for line in stderr.lines() {
+        let Some(rest) = line.trim().strip_prefix("ERROR: ") else {
+            continue;
+        };
+        let (reason, entry) = match rest.rsplit_once(" : ") {
+            Some((reason, entry)) => (reason.trim(), Some(entry.trim())),
+            None => (rest.trim(), None),
+        };
+        if reason.is_empty() {
+            continue;
+        }
+        match reasons.iter_mut().find(|(name, _)| name == reason) {
+            Some((_, count)) => *count += 1,
+            None => reasons.push((reason.to_string(), 1)),
+        }
+        if first_entry.is_none() && entry.is_some_and(|entry| !entry.is_empty()) {
+            first_entry = entry.map(str::to_string);
+        }
+    }
+    if reasons.is_empty() {
+        return None;
+    }
+    let total: usize = reasons.iter().map(|(_, count)| count).sum();
+    let summary = reasons
+        .iter()
+        .take(3)
+        .map(|(reason, count)| format!("{reason} ×{count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(match first_entry {
+        Some(entry) => format!("{total} entries failed: {summary} (first: {entry})"),
+        None => format!("{total} entries failed: {summary}"),
+    })
+}
+
 /// Shared 7-Zip extraction used both by the explicit `extract_7z` command and
 /// by `extract_archive`. `entry` optionally restricts the extraction to a
 /// single archive member (wildcard-safe names only); `password` unlocks
@@ -435,19 +478,20 @@ fn run_7z_extraction(
     if !status.success() {
         let exit_code = status.code().unwrap_or(-1);
         let mut error = format!("7-Zip extraction failed (exit code {exit_code})");
-        let stderr_text = stderr.trim();
-        if !stderr_text.is_empty() {
+        if let Some(summary) = summarize_7z_failures(&stderr) {
             error.push_str(": ");
-            error.push_str(stderr_text);
-        } else if let Ok(tail) = stdout_tail.lock() {
-            let tail = tail
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(" | ");
-            if !tail.is_empty() {
+            error.push_str(&summary);
+        } else {
+            let stderr_text = stderr.trim();
+            if !stderr_text.is_empty() {
                 error.push_str(": ");
-                error.push_str(&tail);
+                error.push_str(stderr_text);
+            } else if let Ok(tail) = stdout_tail.lock() {
+                let tail = tail.iter().cloned().collect::<Vec<_>>().join(" | ");
+                if !tail.is_empty() {
+                    error.push_str(": ");
+                    error.push_str(&tail);
+                }
             }
         }
         return Err(error);
@@ -559,7 +603,7 @@ pub fn is_7z_available() -> bool {
 mod tests {
     use super::{
         build_7z_extract_args, find_7z, list_archive_with_7z, make_7z_entry, parse_7z_listing,
-        percentage_from_7z_line, sanitize_7z_entry,
+        percentage_from_7z_line, sanitize_7z_entry, summarize_7z_failures,
     };
     use std::path::PathBuf;
 
@@ -576,6 +620,23 @@ mod tests {
     fn parses_7z_progress_lines() {
         assert_eq!(percentage_from_7z_line(" 37% 12 - file.txt"), Some(37));
         assert_eq!(percentage_from_7z_line("Everything is Ok"), None);
+    }
+
+    #[test]
+    fn summarizes_7z_failure_reasons() {
+        let stderr = "ERROR: Wrong password : vamzhb\\AddonPackages\\a.var\r\n\
+                      ERROR: Wrong password : vamzhb\\AddonPackages\\b.var\r\n\
+                      ERROR: Data Error : vamzhb\\textures\\c.dds\r\n";
+        let summary = summarize_7z_failures(stderr).expect("summary");
+        assert!(summary.contains("3 entries failed"), "{summary}");
+        assert!(summary.contains("Wrong password ×2"), "{summary}");
+        assert!(summary.contains("Data Error ×1"), "{summary}");
+        assert!(
+            summary.contains("(first: vamzhb\\AddonPackages\\a.var)"),
+            "{summary}"
+        );
+        assert_eq!(summarize_7z_failures("Everything is Ok\r\n"), None);
+        assert_eq!(summarize_7z_failures(""), None);
     }
 
     #[test]

@@ -645,7 +645,10 @@ function windowsPathKey(path) {
 }
 
 function isArchivePasswordError(error) {
-  return /wrong password|sub items errors/i.test(String(error));
+  // Only genuine password rejections. 7-Zip's "Sub items Errors" summary shows
+  // up whenever any entry fails (damaged data, locked files), so treating it as
+  // a password problem re-opened the prompt even with the correct password.
+  return /wrong password|password is incorrect|cannot open encrypted/i.test(String(error));
 }
 
 // Promise-based password prompt for encrypted archives. Resolves with the
@@ -708,6 +711,7 @@ async function resolveArchivePassword(path, sample, label) {
 async function extractArchiveTo(file, destination, password) {
   if (!file) return;
   let currentPassword = password || null;
+  let passwordVerified = false;
   if (!currentPassword) {
     let sample = null;
     try {
@@ -718,6 +722,7 @@ async function extractArchiveTo(file, destination, password) {
     if (sample) {
       currentPassword = await resolveArchivePassword(file.path, sample, file.name);
       if (currentPassword === null) return;
+      passwordVerified = true;
     }
   }
   for (let attempt = 0; ; attempt++) {
@@ -751,18 +756,23 @@ async function extractArchiveTo(file, destination, password) {
         cancelOperationTask(taskId);
         return;
       }
-      if (isArchivePasswordError(e) && attempt < 2) {
-        cancelOperationTask(taskId);
-        const next = await promptArchivePassword(file.name, attempt > 0);
-        if (next !== null) {
-          currentPassword = next;
-          continue;
+      if (isArchivePasswordError(e)) {
+        if (!passwordVerified && attempt < 2) {
+          cancelOperationTask(taskId);
+          const next = await promptArchivePassword(file.name, attempt > 0);
+          if (next !== null) {
+            currentPassword = next;
+            continue;
+          }
         }
+        failOperationTask(taskId, e);
+        alert(passwordVerified
+          ? t('alert.archivePartialExtract', { error: e })
+          : t('alert.archivePasswordFailed', { error: e }));
+        return;
       }
       failOperationTask(taskId, e);
-      alert(isArchivePasswordError(e)
-        ? t('alert.archivePasswordFailed', { error: e })
-        : t('alert.extractFailed', { error: e }));
+      alert(t('alert.extractFailed', { error: e }));
       return;
     }
   }

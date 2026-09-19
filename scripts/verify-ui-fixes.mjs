@@ -193,6 +193,17 @@ async function main() {
   check('ESC rename cancel uses the real path', /selectNavigatedPath\(file\.path, isRight\)/.test(ops));
   check('ESC rename cancel no longer references oldPath', !/selectNavigatedPath\(oldPath, isRight\)/.test(ops));
 
+  // 0.1.56: "Sub items Errors" is not a password symptom; a verified password
+  // must not re-open the prompt when individual entries fail.
+  const detection = (ops.match(/function isArchivePasswordError[\s\S]*?return (\/[^\n]*?\/i)\.test/) || [])[1] || '';
+  check('password detection ignores the generic error summary', /wrong password|password is incorrect|cannot open encrypted/i.test(detection) && !/sub items errors/i.test(detection), detection);
+  check('verified passwords do not re-prompt', /if \(!passwordVerified && attempt < 2\)/.test(ops) && /if \(!passwordVerified && attempt < 2\)/.test(read('git.js')));
+  check('extract-all tracks password verification', /let passwordVerified = false;/.test(read('git.js')));
+  const i18n = { en: JSON.parse(fs.readFileSync(path.join(srcDir, 'i18n', 'en.json'), 'utf8')), zh: JSON.parse(fs.readFileSync(path.join(srcDir, 'i18n', 'zh.json'), 'utf8')) };
+  check('partial-extract message exists (en)', typeof i18n.en['alert.archivePartialExtract'] === 'string' && i18n.en['alert.archivePartialExtract'].includes('{error}'));
+  check('partial-extract message exists (zh)', typeof i18n.zh['alert.archivePartialExtract'] === 'string' && i18n.zh['alert.archivePartialExtract'].includes('{error}'));
+  check('preview volume strings exist (en/zh)', Boolean(i18n.en['settings.previewVolume'] && i18n.zh['settings.previewVolume']));
+
   check('libraries rows expose data-path', /div\.dataset\.path = l\.path;/.test(sidebar));
   check('quick access rows expose data-path', /el\.dataset\.path = navPath;/.test(mainjs));
   check('flat sidebar rows spring-load on hover', /spring-load them by[\s\S]{0,900}navigateTo\(path\)/.test(ops));
