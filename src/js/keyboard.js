@@ -94,7 +94,7 @@ const ACTION_HANDLERS = {
   "file.properties":     async () => {
     const isRight = G.lastActivePane === 'right';
     const paths = getSelectedPaths(isRight);
-    if (paths.length) await showPropertiesDialog(paths[0].path);
+    if (paths.length) await showPropertiesDialog(paths);
   },
   "file.quicklook":      async () => await quicklookSelected(),
   "file.toggleFavorite": async () => await toggleCurrentFolderFavorite(G.lastActivePane === 'right'),
@@ -625,7 +625,7 @@ function initCommands() {
   { id:"file.deletePermanently", label: t('cmd.deletePermanently'), action: deleteSelectedPermanently, keys:"Shift+Delete" },
   { id:"file.selectAll", label: t('cmd.selectAll'), action: selectAll, keys:"Ctrl+A" },
   { id:"file.batchRename", label: t('cmd.batchRename'), action: openBatchRename },
-  { id:"file.properties", label: t('cmd.properties'), action: () => showPropertiesDialog(getSelectedPaths()[0]?.path), keys:"Alt+Enter" },
+  { id:"file.properties", label: t('cmd.properties'), action: () => showPropertiesDialog(getSelectedPaths()), keys:"Alt+Enter" },
   { id:"file.tags", label: t('cmd.manageTags'), action: openTagDialog },
   { id:"view.theme", label: t('cmd.toggleTheme'), action: toggleTheme },
   { id:"view.preview", label: t('cmd.togglePreview'), action: togglePreviewPane },

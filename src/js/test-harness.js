@@ -1630,6 +1630,63 @@
       }
     });
 
+    await test("[ctxmenu] Multi-select archives offer extraction and properties", async () => {
+      const tab = getTab();
+      const savedEntries = tab.entries;
+      const savedSelection = tab.sel;
+      const savedLastIndex = tab.lastIdx;
+      try {
+        tab.entries = [
+          {name:'one.zip', path:'C:\\one.zip', extension:'zip', is_dir:false, size:10, size_display:'10 B', modified_ts:1},
+          {name:'two.7z', path:'C:\\two.7z', extension:'7z', is_dir:false, size:20, size_display:'20 B', modified_ts:2},
+          {name:'notes.txt', path:'C:\\notes.txt', extension:'txt', is_dir:false, size:5, size_display:'5 B', modified_ts:3},
+        ];
+        tab.sel = new Set([0, 1]);
+        tab.lastIdx = 1;
+        G.lastActivePane = 'left';
+        showContextMenu(20, 20, false);
+        const candidates = [...document.querySelectorAll('.context-menu > .ctx-item')];
+        const labels = candidates.map(item => item.querySelector(':scope > span')?.textContent);
+        assert(labels.includes(t('ctx.extractHere')), "Extracting a multi-selection into the current folder is missing");
+        assert(labels.includes(t('ctx.extractEach')), "Per-archive extraction is missing for a multi-selection");
+        assert(!labels.some(label => label && label.includes('one.zip')), "A single-archive destination label survived the multi-selection");
+        const propsItem = candidates.find(item => item.querySelector(':scope > span')?.textContent === t('ctx.properties'));
+        assert(propsItem, "Properties is missing for a multi-selection");
+        assert(!propsItem.classList.contains('disabled'), "Properties is disabled for a multi-selection");
+      } finally {
+        removeContextMenu();
+        tab.entries = savedEntries;
+        tab.sel = savedSelection;
+        tab.lastIdx = savedLastIndex;
+      }
+    });
+
+    await test("[properties] Multi-selection summary combines counts, sizes, and location", async () => {
+      assert(typeof summarizeSelection === 'function', "summarizeSelection is not available");
+      assert(isArchiveEntry({name:'a.zip', extension:'zip', is_dir:false}), "zip must count as an archive");
+      assert(isArchiveEntry({name:'a.tar.gz', extension:'gz', is_dir:false}), "gz must count as an archive");
+      assert(!isArchiveEntry({name:'folder.zip', extension:'zip', is_dir:true}), "a directory must never count as an archive");
+      assert(!isArchiveEntry({name:'a.txt', extension:'txt', is_dir:false}), "txt is not an archive");
+
+      const summary = summarizeSelection([
+        {name:'a.txt', path:'C:\\work\\a.txt', is_dir:false, size:100, modified_ts:1000},
+        {name:'b.txt', path:'C:\\work\\b.txt', is_dir:false, size:250, modified_ts:3000},
+        {name:'sub', path:'C:\\work\\sub', is_dir:true, size:0, modified_ts:2000},
+      ]);
+      assertEqual(summary.count, 3, "Selection count is wrong");
+      assertEqual(summary.fileCount, 2, "File count is wrong");
+      assertEqual(summary.folderCount, 1, "Folder count is wrong");
+      assertEqual(summary.totalBytes, 350, "Combined file size is wrong");
+      assertEqual(summary.latestModifiedTs, 3000, "Newest timestamp is wrong");
+      assertEqual(summary.parentPath, 'C:\\work', "Common parent folder is wrong");
+
+      const scattered = summarizeSelection([
+        {name:'a.txt', path:'C:\\one\\a.txt', is_dir:false, size:1, modified_ts:1},
+        {name:'b.txt', path:'D:\\two\\b.txt', is_dir:false, size:1, modified_ts:1},
+      ]);
+      assertEqual(scattered.parentPath, '', "A selection spanning folders must not claim a single location");
+    });
+
     await test("[clipboard] Paste falls back to the native Windows file clipboard", async () => {
       const savedClipboard = G.clipboard;
       const originalNativePaste = pasteWindowsFileClipboard;

@@ -632,6 +632,42 @@ function archiveFolderName(name) {
   return String(name || 'archive').replace(/\.(tar\.(gz|bz2|xz)|zip|rar|7z|tar|gz|bz2|xz)$/i, '') || 'archive';
 }
 
+const ARCHIVE_EXTENSIONS = ["zip", "rar", "7z", "tar", "gz", "bz2"];
+
+function isArchiveEntry(entry) {
+  return !!entry && !entry.is_dir
+    && ARCHIVE_EXTENSIONS.includes(String(entry.extension || '').toLowerCase());
+}
+
+// Everything the multi-selection Properties sheet needs, derived from the
+// listing itself so no extra backend round-trip is required. Folder sizes are
+// deliberately not part of this: they cost a scan each and are filled in later.
+function summarizeSelection(entries) {
+  const list = (Array.isArray(entries) ? entries : []).filter(Boolean);
+  const files = list.filter(entry => !entry.is_dir);
+  const folders = list.filter(entry => entry.is_dir);
+  const totalBytes = files.reduce((sum, entry) => sum + (Number(entry.size) || 0), 0);
+  const timestamps = list.map(entry => Number(entry.modified_ts) || 0).filter(value => value > 0);
+  let parentPath = '';
+  if (list.length) {
+    parentPath = parentFolderPath(list[0].path);
+    // A selection spanning folders has no single location; report that instead
+    // of pretending the first entry's parent is the answer.
+    if (list.some(entry => windowsPathKey(parentFolderPath(entry.path)) !== windowsPathKey(parentPath))) {
+      parentPath = '';
+    }
+  }
+  return {
+    count: list.length,
+    fileCount: files.length,
+    folderCount: folders.length,
+    totalBytes,
+    parentPath,
+    latestModifiedTs: timestamps.length ? Math.max(...timestamps) : 0,
+    folders,
+  };
+}
+
 function joinFolderPath(parent, child) {
   return String(parent || '').replace(/[\\/]+$/, '') + '\\' + child;
 }
@@ -708,8 +744,19 @@ async function resolveArchivePassword(path, sample, label) {
   }
 }
 
-async function extractArchiveTo(file, destination, password) {
-  if (!file) return;
+// Extracts a single archive. With `options.silent` the failure is returned
+// instead of alerted, so a multi-archive run can report one summary; the
+// returned value is also the error text (null on success or user cancel).
+async function extractArchiveTo(file, destination, password, options) {
+  if (!file) return null;
+  const opts = options || {};
+  const silent = opts.silent === true;
+  const refreshAfter = opts.refreshAfter !== false;
+  const report = error => {
+    if (silent) return String(error);
+    alert(error);
+    return null;
+  };
   let currentPassword = password || null;
   let passwordVerified = false;
   if (!currentPassword) {
@@ -721,7 +768,7 @@ async function extractArchiveTo(file, destination, password) {
     }
     if (sample) {
       currentPassword = await resolveArchivePassword(file.path, sample, file.name);
-      if (currentPassword === null) return;
+      if (currentPassword === null) return null;
       passwordVerified = true;
     }
   }
@@ -749,12 +796,12 @@ async function extractArchiveTo(file, destination, password) {
         });
       }
       completeOperationTask(taskId);
-      await refresh();
-      return;
+      if (refreshAfter) await refresh();
+      return null;
     } catch (e) {
       if (/cancel/i.test(String(e))) {
         cancelOperationTask(taskId);
-        return;
+        return null;
       }
       if (isArchivePasswordError(e)) {
         if (!passwordVerified && attempt < 2) {
@@ -766,15 +813,33 @@ async function extractArchiveTo(file, destination, password) {
           }
         }
         failOperationTask(taskId, e);
-        alert(passwordVerified
+        return report(passwordVerified
           ? t('alert.archivePartialExtract', { error: e })
           : t('alert.archivePasswordFailed', { error: e }));
-        return;
       }
       failOperationTask(taskId, e);
-      alert(t('alert.extractFailed', { error: e }));
-      return;
+      return report(t('alert.extractFailed', { error: e }));
     }
+  }
+}
+
+// Extract several archives in turn. Each one keeps its own progress task and
+// password prompt, and a single failure must not abort the rest.
+async function extractArchives(archives, destinationFor) {
+  const list = (archives || []).filter(Boolean);
+  if (!list.length) return;
+  const failures = [];
+  for (const file of list) {
+    const error = await extractArchiveTo(file, destinationFor(file), null, { silent: true, refreshAfter: false });
+    if (error) failures.push(file.name);
+  }
+  await refresh();
+  if (failures.length) {
+    alert(t('alert.extractSomeFailed', {
+      failed: failures.length,
+      total: list.length,
+      names: failures.join(', '),
+    }));
   }
 }
 
@@ -943,12 +1008,67 @@ function openTerminalFromMenu(path) {
   return runContextCommand('open_terminal', { path, terminal }, displayName);
 }
 
-async function showPropertiesDialog(path) {
+// Accepts one path (the historical callers), one entry, or a whole selection.
+// The Windows shell sheet only handles a single item, so a multi-selection is
+// summarized by the in-app dialog instead.
+async function showPropertiesDialog(pathOrEntries) {
+  const entries = (Array.isArray(pathOrEntries) ? pathOrEntries : [pathOrEntries]).filter(Boolean);
+  if (!entries.length) return;
+  if (entries.length > 1) {
+    showSelectionProperties(entries);
+    return;
+  }
+  const target = entries[0];
+  const path = typeof target === "string" ? target : target.path;
   if (!path) return;
   try { await call("show_properties", { path }); } catch (e) {
     const info = await call("get_file_info", { path });
     if (info) showCustomProperties(info);
   }
+}
+
+// Explorer's multi-selection summary: counts, combined size and the newest
+// timestamp. Directory contents are added asynchronously because each folder
+// costs a scan.
+function showSelectionProperties(entries) {
+  const summary = summarizeSelection(entries);
+  if (!summary.count) return;
+  const dlg = document.getElementById("properties-dialog");
+  const content = document.getElementById("props-content");
+  if (!dlg || !content) return;
+
+  const location = summary.parentPath || t('properties.multipleLocations');
+  let html = `
+    <div class="props-row"><span class="props-label">${t('properties.name')}</span><span class="props-value">${esc(t('properties.itemsSelected', {count: summary.count}))}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.path')}</span><span class="props-value">${esc(location)}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.type')}</span><span class="props-value">${esc(t('properties.selectionBreakdown', {files: summary.fileCount, folders: summary.folderCount}))}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.size')}</span><span class="props-value" id="props-selection-size">${esc(fmtSize(summary.totalBytes))}</span></div>`;
+
+  if (summary.folderCount) {
+    html += `<div class="props-row"><span class="props-label">${t('properties.folderSize')}</span><span class="props-value" id="props-folder-size">${t('properties.calculating')}</span></div>`;
+  }
+  if (summary.latestModifiedTs) {
+    html += `<div class="props-row"><span class="props-label">${t('properties.modified')}</span><span class="props-value">${esc(formatFileDate(summary.latestModifiedTs, ''))}</span></div>`;
+  }
+
+  content.innerHTML = html;
+  dlg.style.display = "flex";
+
+  if (!summary.folderCount) return;
+  Promise.all(summary.folders.map(entry =>
+    call("folder_size", { path: entry.path }).catch(() => null)
+  )).then(sizes => {
+    const row = document.getElementById("props-folder-size");
+    if (!row) return;
+    if (sizes.some(size => size === null)) {
+      row.textContent = t('properties.unableToCalc');
+      return;
+    }
+    const folderBytes = sizes.reduce((sum, size) => sum + (Number(size) || 0), 0);
+    row.textContent = fmtSize(folderBytes);
+    const total = document.getElementById("props-selection-size");
+    if (total) total.textContent = fmtSize(summary.totalBytes + folderBytes);
+  });
 }
 
 function showCustomProperties(info) {
@@ -1314,15 +1434,32 @@ function showContextMenu(x, y, isRight) {
   const isDir = singleSelection && sel[0].is_dir;
   const ext = singleFile ? (singleFile.extension || "").toLowerCase() : "";
   const isImage = ["jpg","jpeg","png","gif","bmp","webp","svg","ico","tiff"].includes(ext);
-  const isArchive = ["zip","rar","7z","tar","gz","bz2"].includes(ext);
   const isMedia = ["mp4","mkv","avi","mov","wmv","flv","webm","mp3","flac","wav","aac","ogg","m4a","wma","ape","alac"].includes(ext);
   const conversionKind = singleFile && typeof mediaConversionKind === 'function' ? mediaConversionKind(singleFile) : null;
   const isExe = ext === "exe" || ext === "msi";
   const isFont = ["ttf","otf","fon"].includes(ext);
   const isCert = ["cer","crt","p7b","pfx","p12"].includes(ext);
   const currentPath = isRight ? G.rp.path : getTab().path;
-  const extractFolder = singleFile ? archiveFolderName(singleFile.name) : '';
   const openTarget = singleSelection ? sel[0].path : currentPath;
+  const selectedArchives = sel.filter(isArchiveEntry);
+  // With several archives selected the two single-archive routes ("here" vs.
+  // "into its own folder") no longer make sense, so they are replaced by the
+  // merge-here and extract-each-into-its-own-folder pair.
+  const extractItems = selectedArchives.length > 1
+    ? [
+        { label: t('ctx.extractHere'), icon:"extract", action: () => extractArchives(selectedArchives, () => currentPath) },
+        { label: t('ctx.extractEach'), icon:"extract", action: () => extractArchives(selectedArchives, file => joinFolderPath(currentPath, archiveFolderName(file.name))) },
+      ]
+    : selectedArchives.length === 1
+      ? (() => {
+          const archive = selectedArchives[0];
+          const folder = archiveFolderName(archive.name);
+          return [
+            { label: t('ctx.extractHere'), icon:"extract", action: () => extractArchiveTo(archive, currentPath) },
+            { label: t('ctx.extractTo', {name: folder}), icon:"extract", action: () => extractArchiveTo(archive, joinFolderPath(currentPath, folder)) },
+          ];
+        })()
+      : [];
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
@@ -1386,15 +1523,14 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.setWallpaper'), icon:"image", action: () => runContextCommand("set_wallpaper", { path: sel[0].path }, t('ctx.setWallpaper')), disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: t('ctx.rotateLeft'), icon:"rotateLeft", action: () => runContextCommand("rotate_image", { path: sel[0].path, degrees: -90 }, t('ctx.rotateLeft'), { refreshAfter: true }), disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
     { label: t('ctx.rotateRight'), icon:"rotateRight", action: () => runContextCommand("rotate_image", { path: sel[0].path, degrees: 90 }, t('ctx.rotateRight'), { refreshAfter: true }), disabled: !singleFile || !isImage, hidden: !singleFile || !isImage },
-    { label: "-", action: null, hidden: !singleFile || !isImage },
-    { label: t('ctx.extractHere'), icon:"extract", action: () => extractArchiveTo(singleFile, currentPath), disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
-    { label: t('ctx.extractTo', {name: extractFolder}), icon:"extract", action: () => extractArchiveTo(singleFile, joinFolderPath(currentPath, extractFolder)), disabled: !singleFile || !isArchive, hidden: !singleFile || !isArchive },
-    { label: "-", action: null, hidden: !singleFile || !isArchive },
+    { label: "-", action: null, hidden: !extractItems.length },
+    ...extractItems,
+    { label: "-", action: null, hidden: !extractItems.length },
     { label: t('ctx.runAsAdmin'), icon:"shield", action: () => runContextCommand("run_as_admin", { path: sel[0].path }, t('ctx.runAsAdmin')), disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
     { label: t('ctx.installCert'), icon:"certificate", action: () => runContextCommand("install_certificate", { path: sel[0].path }, t('ctx.installCert'), { successMessage: t('notice.certInstalled') }), disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
     { label: t('ctx.installFont'), icon:"font", action: () => runContextCommand("install_font", { path: sel[0].path }, t('ctx.installFont'), { successMessage: t('notice.fontInstalled') }), disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },
-    { label: "-", action: null, hidden: !singleSelection },
-    { label: t('ctx.properties'), icon:"properties", shortcut:"Alt+Enter", action: () => { if (singleSelection) showPropertiesDialog(sel[0].path); }, disabled: !singleSelection },
+    { label: "-", action: null, hidden: !hasSelection },
+    { label: t('ctx.properties'), icon:"properties", shortcut:"Alt+Enter", action: () => showPropertiesDialog(sel), disabled: !hasSelection },
     { label: t('ctx.permissions'), icon:"permissions", action: () => { if (singleSelection) showPermissionsDialog(sel[0].path); }, disabled: !singleSelection },
   ];
 
@@ -1413,7 +1549,7 @@ function showContextMenu(x, y, isRight) {
       const s = getSelectedPaths(ctxMeta.isRight);
       if (s.length) {
         removeContextMenu();
-        showPropertiesDialog(s[0].path);
+        showPropertiesDialog(s);
       }
       return;
     }
