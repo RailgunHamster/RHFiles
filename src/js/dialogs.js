@@ -291,9 +291,14 @@ function openSettings() {
     '<select onchange="G.settings.terminal=this.value;saveSettings()"><option value="wt"' + ((G.settings.terminal||'wt')==='wt'?" selected":"") + '>' + t('settings.termWt') + '</option><option value="powershell"' + (G.settings.terminal==='powershell'?" selected":"") + '>' + t('settings.termPs') + '</option><option value="cmd"' + (G.settings.terminal==='cmd'?" selected":"") + '>' + t('settings.termCmd') + '</option></select></div>' +
     '<div class="settings-row"><label>' + t('settings.adaptiveLayout') + '</label>' +
     '<input type="checkbox" onchange="G.settings.adaptiveLayout=this.checked;saveSettings()"' + (G.settings.adaptiveLayout!==false?' checked':'') + '></div>' +
-    '<div class="settings-row"><label for="settings-show-hidden">' + t('settings.showHidden') + '</label>' +
-    '<input id="settings-show-hidden" type="checkbox" onchange="setShowHidden(this.checked)"' + (G.showHidden?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-show-dotfiles">' + t('settings.showHidden') + '</label>' +
+    '<input id="settings-show-dotfiles" type="checkbox" onchange="setShowDotfiles(this.checked)"' + (G.showDotfiles?' checked':'') + '></div>' +
     '<div class="settings-feature-note"><span>' + t('settings.showHiddenHelp') + '</span></div>' +
+    '<div class="settings-row"><label for="settings-show-hidden-attr">' + t('settings.showHiddenAttr') + '</label>' +
+    '<input id="settings-show-hidden-attr" type="checkbox" onchange="setShowHiddenAttr(this.checked)"' + (G.showHiddenAttr?' checked':'') + '></div>' +
+    '<div class="settings-row"><label for="settings-show-system">' + t('settings.showSystem') + '</label>' +
+    '<input id="settings-show-system" type="checkbox" onchange="setShowSystem(this.checked)"' + (G.showSystem?' checked':'') + '></div>' +
+    '<div class="settings-feature-note"><span>' + t('settings.showWindowsHiddenHelp') + '</span></div>' +
     '<div class="settings-row"><label for="settings-notice-duration">' + t('settings.noticeDuration') + '</label>' +
     '<select id="settings-notice-duration" onchange="G.settings.noticeDurationMs=Number(this.value);saveSettings()">' +
       '<option value="2000"' + (Number(G.settings.noticeDurationMs)===2000?" selected":"") + '>' + t('settings.noticeDuration2s') + '</option>' +

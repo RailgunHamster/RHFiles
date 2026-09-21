@@ -1149,9 +1149,15 @@
       const typeSearchTimeout = $("#settings-typesearch-timeout");
       assert(typeSearchTimeout, "Type-search timeout setting is missing");
       assertEqual(Number(typeSearchTimeout.value), Number(G.settings.typeSearchTimeoutMs) || 0, "Type-search timeout setting state is out of sync");
-      const showHiddenBox = $("#settings-show-hidden");
-      assert(showHiddenBox, "Hidden-items setting is missing");
-      assertEqual(showHiddenBox.checked, G.showHidden === true, "Hidden-items setting state is out of sync");
+      const showDotfilesBox = $("#settings-show-dotfiles");
+      assert(showDotfilesBox, "Dot-prefixed hidden-file setting is missing");
+      assertEqual(showDotfilesBox.checked, G.showDotfiles === true, "Dot-prefixed hidden-file setting state is out of sync");
+      const showHiddenAttrBox = $("#settings-show-hidden-attr");
+      assert(showHiddenAttrBox, "Hidden-attribute setting is missing");
+      assertEqual(showHiddenAttrBox.checked, G.showHiddenAttr === true, "Hidden-attribute setting state is out of sync");
+      const showSystemBox = $("#settings-show-system");
+      assert(showSystemBox, "System-file setting is missing");
+      assertEqual(showSystemBox.checked, G.showSystem === true, "System-file setting state is out of sync");
       const noticeDuration = $("#settings-notice-duration");
       assert(noticeDuration, "Notice duration setting is missing");
       assertEqual(Number(noticeDuration.value), Number(G.settings.noticeDurationMs) || 0, "Notice duration setting state is out of sync");
@@ -2278,19 +2284,64 @@
       }
     });
 
-    await test("[settings] Hidden items default to shown and persist a toggle", async () => {
-      const savedValue = G.showHidden;
-      const savedStored = localStorage.getItem('rhfiles-showHidden');
+    await test("[settings] Visibility defaults follow Explorer and persist toggles", async () => {
+      const saved = { showDotfiles: G.showDotfiles, showHiddenAttr: G.showHiddenAttr, showSystem: G.showSystem };
+      const savedStored = {
+        dotfiles: localStorage.getItem('rhfiles-showDotfiles'),
+        hiddenAttr: localStorage.getItem('rhfiles-showHiddenAttr'),
+        system: localStorage.getItem('rhfiles-showSystem'),
+      };
       try {
-        setShowHidden(false);
-        assertEqual(G.showHidden, false, "Hiding items did not update the state");
-        assertEqual(localStorage.getItem('rhfiles-showHidden'), 'false', "Hiding items was not persisted");
-        setShowHidden(true);
-        assertEqual(localStorage.getItem('rhfiles-showHidden'), 'true', "Showing items was not persisted");
+        setShowDotfiles(false);
+        assertEqual(G.showDotfiles, false, "Hiding dot-prefixed files did not update the state");
+        assertEqual(localStorage.getItem('rhfiles-showDotfiles'), 'false', "Hiding dot-prefixed files was not persisted");
+        setShowHiddenAttr(true);
+        assertEqual(G.showHiddenAttr, true, "Showing hidden-attribute items did not update the state");
+        assertEqual(localStorage.getItem('rhfiles-showHiddenAttr'), 'true', "Showing hidden-attribute items was not persisted");
+        setShowSystem(true);
+        assertEqual(G.showSystem, true, "Showing system files did not update the state");
+        assertEqual(localStorage.getItem('rhfiles-showSystem'), 'true', "Showing system files was not persisted");
       } finally {
-        G.showHidden = savedValue;
-        if (savedStored == null) localStorage.removeItem('rhfiles-showHidden');
-        else localStorage.setItem('rhfiles-showHidden', savedStored);
+        G.showDotfiles = saved.showDotfiles;
+        G.showHiddenAttr = saved.showHiddenAttr;
+        G.showSystem = saved.showSystem;
+        const restore = [
+          ['rhfiles-showDotfiles', savedStored.dotfiles],
+          ['rhfiles-showHiddenAttr', savedStored.hiddenAttr],
+          ['rhfiles-showSystem', savedStored.system],
+        ];
+        for (const [key, value] of restore) {
+          if (value == null) localStorage.removeItem(key);
+          else localStorage.setItem(key, value);
+        }
+      }
+    });
+
+    await test("[settings] Dot-prefixed names and Windows attributes are judged separately", async () => {
+      assert(typeof entryVisible === 'function', "entryVisible is not available");
+      const saved = { showDotfiles: G.showDotfiles, showHiddenAttr: G.showHiddenAttr, showSystem: G.showSystem };
+      try {
+        G.showDotfiles = true;
+        G.showHiddenAttr = false;
+        G.showSystem = false;
+        assert(entryVisible({ is_hidden: false, is_system: false, is_dot: true }), "A dot-prefixed file must stay visible by default");
+        assert(!entryVisible({ is_hidden: true, is_system: false, is_dot: false }), "A hidden-attribute item must be filtered out by default");
+        assert(!entryVisible({ is_hidden: false, is_system: true, is_dot: false }), "A system item must be filtered out by default");
+        assert(!entryVisible({ is_hidden: true, is_system: true, is_dot: false }), "desktop.ini style entries must be filtered out by default");
+        G.showHiddenAttr = true;
+        G.showSystem = false;
+        assert(entryVisible({ is_hidden: true, is_system: false, is_dot: false }), "Hidden-attribute items must appear once their toggle is on");
+        assert(!entryVisible({ is_hidden: true, is_system: true, is_dot: false }), "System items must stay hidden while only the attribute toggle is on");
+        G.showHiddenAttr = false;
+        G.showSystem = true;
+        assert(entryVisible({ is_hidden: false, is_system: true, is_dot: false }), "System items must appear once their toggle is on");
+        assert(!entryVisible({ is_hidden: true, is_system: false, is_dot: false }), "Hidden-attribute items must stay hidden while only the system toggle is on");
+        G.showDotfiles = false;
+        assert(!entryVisible({ is_hidden: false, is_system: false, is_dot: true }), "Turning the dot-file toggle off must filter dot-prefixed names");
+      } finally {
+        G.showDotfiles = saved.showDotfiles;
+        G.showHiddenAttr = saved.showHiddenAttr;
+        G.showSystem = saved.showSystem;
       }
     });
 

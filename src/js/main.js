@@ -297,6 +297,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     setInterval(runAutomaticUpdateCheck, UPDATE_CHECK_INTERVAL_MS);
   }
   applyToolbarConfig();
+  syncVisibilityToggleUI();
 
   let _cleanupDone = false;
   setInterval(() => {

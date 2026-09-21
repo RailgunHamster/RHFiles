@@ -530,7 +530,7 @@ async function _refreshTabInBackground(tab) {
       t('nav.folderLoadTimedOut'),
     );
     if (token !== tab._refreshToken) return;
-    if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
+    entries = entries.filter(entryVisible);
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
     const wasLoaded = tab._loaded === true;
     tab._loaded = true;
@@ -830,7 +830,7 @@ async function showTabPreview(tabEl) {
       return;
     }
   }
-  if (!G.showHidden) entries = entries.filter(entry => !entry.is_hidden);
+  entries = entries.filter(entryVisible);
   const dirCount = entries.filter(e => e.is_dir).length;
   const fileCount = entries.length - dirCount;
   const maxShow = 10;
@@ -926,7 +926,7 @@ async function showBcDropdown(parentPath, sepEl, dropdownId, isRight) {
   if (wasOpen && dropdown._lastPath === parentPath) return;
   try {
     const entries = await listPathEntries(parentPath, "");
-    const dirs = entries.filter(e => e.is_dir && (G.showHidden || !e.is_hidden));
+    const dirs = entries.filter(e => e.is_dir && entryVisible(e));
     if (!dirs.length) return;
     dropdown.innerHTML = dirs.map(d =>
       `<div class="bc-dropdown-item" data-path="${esc(d.path)}">${esc(d.name)}</div>`
@@ -1060,7 +1060,7 @@ async function refreshAddressSuggestions(query, isRight, token) {
     try {
       const listed = await listPathEntries(parent.replace(/\\+$/, '') || parent, '');
       childFolders = (listed || [])
-        .filter(entry => entry.is_dir && (G.showHidden || !entry.is_hidden))
+        .filter(entry => entry.is_dir && entryVisible(entry))
         .map(entry => entry.path);
     } catch (error) {}
   }
@@ -1285,7 +1285,7 @@ async function navigateTo(path, pushHistory) {
       t('nav.folderLoadTimedOut'),
     );
     if (navigationToken !== _navigationToken) return false;
-    if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
+    entries = entries.filter(entryVisible);
     const filter = filterEl ? filterEl.value.toLowerCase() : "";
     if (filter) entries = entries.filter(e => e.name.toLowerCase().includes(filter));
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);

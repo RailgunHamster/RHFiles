@@ -437,6 +437,7 @@ fn run_ev_sdk_query(query: &str, max_results: usize) -> Result<Vec<FileInfo>, St
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let is_dot = is_dot_result(&name);
             let extension = if is_dir {
                 String::new()
             } else {
@@ -452,6 +453,8 @@ fn run_ev_sdk_query(query: &str, max_results: usize) -> Result<Vec<FileInfo>, St
                 extension,
                 is_dir,
                 is_hidden: false,
+                is_system: false,
+                is_dot,
                 size,
                 size_display: format_size(size),
                 modified,
@@ -620,18 +623,35 @@ fn millis_since_epoch(time: SystemTime) -> i64 {
 }
 
 #[cfg(target_os = "windows")]
-fn is_hidden_result(name: &str, metadata: Option<&Metadata>) -> bool {
+fn is_hidden_result(_name: &str, metadata: Option<&Metadata>) -> bool {
+    is_attribute_result(metadata, 0x2)
+}
+
+#[cfg(target_os = "windows")]
+fn is_system_result(metadata: Option<&Metadata>) -> bool {
+    is_attribute_result(metadata, 0x4)
+}
+
+#[cfg(target_os = "windows")]
+fn is_attribute_result(metadata: Option<&Metadata>, mask: u32) -> bool {
     use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
-    name.starts_with('.')
-        || metadata
-            .map(|value| value.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
-            .unwrap_or(false)
+    metadata
+        .map(|value| value.file_attributes() & mask != 0)
+        .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn is_hidden_result(name: &str, _metadata: Option<&Metadata>) -> bool {
-    name.starts_with('.')
+fn is_hidden_result(_name: &str, _metadata: Option<&Metadata>) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_system_result(_metadata: Option<&Metadata>) -> bool {
+    false
+}
+
+fn is_dot_result(name: &str) -> bool {
+    name.starts_with('.') && name != "." && name != ".."
 }
 
 fn filesystem_search(
@@ -716,6 +736,8 @@ fn filesystem_search(
                 extension,
                 is_dir,
                 is_hidden: is_hidden_result(&name, metadata.as_ref()),
+                is_system: is_system_result(metadata.as_ref()),
+                is_dot: is_dot_result(&name),
                 size,
                 size_display: format_size(size),
                 modified: format_time(modified_time),

@@ -5,7 +5,7 @@ const DEFAULT_GITHUB_UPDATE_SOURCE = 'https://github.com/RailgunHamster/RHFiles'
 const DEFAULT_SERVER_UPDATE_SOURCE = '\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases';
 
 // --- i18n ---
-const _builtinEn = { 'cmd.new':'New','cmd.cut':'Cut','cmd.copy':'Copy','cmd.paste':'Paste','cmd.rename':'Rename','cmd.delete':'Delete','cmd.sort':'Sort','cmd.hidden':'Hidden','cmd.refresh':'Refresh','cmd.goBack':'Go Back','cmd.goForward':'Go Forward','cmd.goUp':'Go Up','cmd.openInto':'Open','cmd.newFolder':'New Folder','cmd.newFile':'New File','cmd.batchRename':'Batch Rename','cmd.properties':'Properties','cmd.manageTags':'Manage Tags','cmd.toggleTheme':'Toggle Theme','cmd.togglePreview':'Toggle Preview','cmd.toggleDualPane':'Toggle Dual Pane','cmd.toggleHidden':'Toggle Hidden','cmd.toggleGrouping':'Toggle Grouping','cmd.togglePip':'Toggle PiP','cmd.layoutDetails':'Details Layout','cmd.layoutIcons':'Icons Layout','cmd.layoutThumbnails':'Thumbnails Layout','cmd.layoutCards':'Cards Layout','cmd.layoutColumns':'Columns Layout','cmd.invertSelection':'Invert Selection','cmd.undo':'Undo','cmd.redo':'Redo','cmd.fullscreen':'Fullscreen','cmd.exportData':'Export Data','cmd.importData':'Import Data','cmd.newWindow':'New Window','cmd.quickLook':'Quick Look','cmd.switchPane':'Switch Pane','ctx.open':'Open','ctx.openWith':'Open with...','ctx.cut':'Cut','ctx.copy':'Copy','ctx.paste':'Paste','ctx.rename':'Rename','ctx.delete':'Delete','ctx.newFolder':'New Folder','ctx.selectAll':'Select All','ctx.properties':'Properties','ctx.showHidden':'Show hidden items','ctx.hideHidden':'Hide hidden items','ctx.batchRename':'Batch Rename','ctx.addTag':'Add Tag','ctx.extract':'Extract','ctx.extractAll':'Extract All','col.name':'Name','col.modified':'Date modified','col.created':'Date created','col.type':'Type','col.size':'Size','sidebar.tree':'Directory Tree','sidebar.quickAccess':'Quick access','sidebar.thisPC':'This PC','sidebar.tags':'Tags','sidebar.recent':'Recent','preview.title':'Preview','preview.selectFile':'Select a file to preview','preview.noPreview':'No preview available','preview.binary':'Binary file','batchRename.title':'Batch Rename','batchRename.find':'Find','batchRename.replace':'Replace','properties.title':'Properties','settings.title':'Settings','settings.language':'Language','settings.theme':'Theme','settings.shortcuts':'Keyboard Shortcuts','tag.manage':'Manage Tags','archive.title':'Archive','btn.cancel':'Cancel','btn.rename':'Rename','btn.ok':'OK','btn.add':'Add','btn.save':'Save','nav.home':'Home','nav.newTab':'New Tab','group.items':'{count} items','notice.pipOn':'PiP mode on','notice.pipOff':'PiP mode off','notice.searchHistoryCleared':'Search history cleared','status.items':'{count} items','status.item':'{count} item','status.folders':'{count} folders','status.folder':'{count} folder','status.files':'{count} files','status.file':'{count} file','status.error':'Error: {error}','status.searching':'Searching...','status.searchError':'Search error: {error}','home.desktop':'Desktop','home.downloads':'Downloads','home.documents':'Documents','home.pictures':'Pictures','home.music':'Music','home.videos':'Videos','home.noRecent':'No recent items','search.placeholder':'Search...','search.quickSearch':'Quick Search','search.modeNormal':'Normal','search.modeRegex':'Regex','search.modeWildcard':'Wildcard','search.modeTooltip':'{mode} mode','search.results':'{count} results','search.builtin':'Built-in','search.everythingNotRunning':'Everything not running','search.downloadEverything':'Download Everything','search.changeEngine':'Change in Settings','search.recent':'Recent','search.clear':'Clear','alert.cannotNavArchive':'Cannot navigate into archive','alert.pipFailed':'PiP failed: {error}','confirm.updateAvailable':'Update {version} available','cloud.synced':'Synced','cloud.onlineOnly':'Online only','cloud.syncing':'Syncing','cloud.locallyAvailable':'Locally available','ctx.moreOptions':'Show more options' };
+const _builtinEn = { 'cmd.new':'New','cmd.cut':'Cut','cmd.copy':'Copy','cmd.paste':'Paste','cmd.rename':'Rename','cmd.delete':'Delete','cmd.sort':'Sort','cmd.hidden':'Hidden','cmd.refresh':'Refresh','cmd.goBack':'Go Back','cmd.goForward':'Go Forward','cmd.goUp':'Go Up','cmd.openInto':'Open','cmd.newFolder':'New Folder','cmd.newFile':'New File','cmd.batchRename':'Batch Rename','cmd.properties':'Properties','cmd.manageTags':'Manage Tags','cmd.toggleTheme':'Toggle Theme','cmd.togglePreview':'Toggle Preview','cmd.toggleDualPane':'Toggle Dual Pane','cmd.toggleHidden':'Toggle Dot-prefixed Hidden Files','cmd.toggleHiddenTitle':'Dot-prefixed hidden files (Windows hidden/system attributes are separate, in Settings)','cmd.toggleHiddenAttr':'Toggle Hidden-attribute Files','cmd.toggleSystem':'Toggle System Files','cmd.toggleGrouping':'Toggle Grouping','cmd.togglePip':'Toggle PiP','cmd.layoutDetails':'Details Layout','cmd.layoutIcons':'Icons Layout','cmd.layoutThumbnails':'Thumbnails Layout','cmd.layoutCards':'Cards Layout','cmd.layoutColumns':'Columns Layout','cmd.invertSelection':'Invert Selection','cmd.undo':'Undo','cmd.redo':'Redo','cmd.fullscreen':'Fullscreen','cmd.exportData':'Export Data','cmd.importData':'Import Data','cmd.newWindow':'New Window','cmd.quickLook':'Quick Look','cmd.switchPane':'Switch Pane','ctx.open':'Open','ctx.openWith':'Open with...','ctx.cut':'Cut','ctx.copy':'Copy','ctx.paste':'Paste','ctx.rename':'Rename','ctx.delete':'Delete','ctx.newFolder':'New Folder','ctx.selectAll':'Select All','ctx.properties':'Properties','ctx.showHidden':'Show hidden items','ctx.hideHidden':'Hide hidden items','ctx.batchRename':'Batch Rename','ctx.addTag':'Add Tag','ctx.extract':'Extract','ctx.extractAll':'Extract All','col.name':'Name','col.modified':'Date modified','col.created':'Date created','col.type':'Type','col.size':'Size','sidebar.tree':'Directory Tree','sidebar.quickAccess':'Quick access','sidebar.thisPC':'This PC','sidebar.tags':'Tags','sidebar.recent':'Recent','preview.title':'Preview','preview.selectFile':'Select a file to preview','preview.noPreview':'No preview available','preview.binary':'Binary file','batchRename.title':'Batch Rename','batchRename.find':'Find','batchRename.replace':'Replace','properties.title':'Properties','settings.title':'Settings','settings.language':'Language','settings.theme':'Theme','settings.shortcuts':'Keyboard Shortcuts','tag.manage':'Manage Tags','archive.title':'Archive','btn.cancel':'Cancel','btn.rename':'Rename','btn.ok':'OK','btn.add':'Add','btn.save':'Save','nav.home':'Home','nav.newTab':'New Tab','group.items':'{count} items','notice.pipOn':'PiP mode on','notice.pipOff':'PiP mode off','notice.searchHistoryCleared':'Search history cleared','status.items':'{count} items','status.item':'{count} item','status.folders':'{count} folders','status.folder':'{count} folder','status.files':'{count} files','status.file':'{count} file','status.error':'Error: {error}','status.searching':'Searching...','status.searchError':'Search error: {error}','home.desktop':'Desktop','home.downloads':'Downloads','home.documents':'Documents','home.pictures':'Pictures','home.music':'Music','home.videos':'Videos','home.noRecent':'No recent items','search.placeholder':'Search...','search.quickSearch':'Quick Search','search.modeNormal':'Normal','search.modeRegex':'Regex','search.modeWildcard':'Wildcard','search.modeTooltip':'{mode} mode','search.results':'{count} results','search.builtin':'Built-in','search.everythingNotRunning':'Everything not running','search.downloadEverything':'Download Everything','search.changeEngine':'Change in Settings','search.recent':'Recent','search.clear':'Clear','alert.cannotNavArchive':'Cannot navigate into archive','alert.pipFailed':'PiP failed: {error}','confirm.updateAvailable':'Update {version} available','cloud.synced':'Synced','cloud.onlineOnly':'Online only','cloud.syncing':'Syncing','cloud.locallyAvailable':'Locally available','ctx.moreOptions':'Show more options' };
 Object.assign(_builtinEn, {
   'cmd.quickLook': 'Quick Preview',
   'cmd.toggleFavorite': 'Add or remove current folder from Favorites',
@@ -122,8 +122,11 @@ Object.assign(_builtinEn, {
   'settings.typeSearchTimeout30s': '30 seconds',
   'settings.typeSearchTimeoutPermanent': 'Until Esc or leaving the folder',
   'settings.typeSearchTimeoutHelp': 'How long the typed-search highlight stays after you stop typing. It always disappears on Esc or when you navigate away.',
-  'settings.showHidden': 'Show hidden items',
-  'settings.showHiddenHelp': 'Show files and folders with the hidden attribute. Also available from the toolbar toggle.',
+  'settings.showHidden': 'Show dot-prefixed hidden files',
+  'settings.showHiddenHelp': 'Traditional hidden files whose name starts with a dot (.git, .gitignore). Shown by default; the toolbar eye button and Ctrl+H toggle the same setting.',
+  'settings.showHiddenAttr': 'Show items with the hidden attribute',
+  'settings.showSystem': 'Show protected operating system files',
+  'settings.showWindowsHiddenHelp': 'These two mirror Explorer\'s \u201cHidden items\u201d and \u201cHide protected operating system files\u201d check boxes. Both stay off by default, which matches Explorer\'s default view.',
   'settings.noticeDuration': 'Hide success notices after',
   'settings.noticeDuration2s': '2 seconds',
   'settings.noticeDuration5s': '5 seconds (default)',
@@ -384,9 +387,31 @@ G.activeTab = 0;
 G.nextTabId = 1;
 G.sortField = "name";
 G.sortAsc = true;
-// Hidden items are shown by default; the toolbar toggle and Settings persist an
-// explicit user choice.
-G.showHidden = localStorage.getItem('rhfiles-showHidden') !== 'false';
+// Visibility mirrors Explorer's independent judgements, with one deliberate
+// difference: the dot-prefixed "traditional" hidden files stay visible by
+// default and keep the historical "show hidden items" toggle (toolbar eye,
+// Ctrl+H, Settings). The Windows attributes are hidden by default and are
+// configured from Settings:
+//   rhfiles-showDotfiles    names starting with "."     (default on)
+//   rhfiles-showHiddenAttr  FILE_ATTRIBUTE_HIDDEN       (default off)
+//   rhfiles-showSystem      FILE_ATTRIBUTE_SYSTEM       (default off)
+const _legacyShowHidden = localStorage.getItem('rhfiles-showHidden');
+const _storedShowDotfiles = localStorage.getItem('rhfiles-showDotfiles');
+G.showDotfiles = _storedShowDotfiles !== null
+  ? _storedShowDotfiles === 'true'
+  : _legacyShowHidden !== 'false';
+G.showHiddenAttr = localStorage.getItem('rhfiles-showHiddenAttr') === 'true';
+G.showSystem = localStorage.getItem('rhfiles-showSystem') === 'true';
+
+// A Windows attribute and the dot-prefix convention are judged separately, so
+// an entry has to pass all three gates to reach the list.
+function entryVisible(entry) {
+  if (!entry) return false;
+  if (entry.is_hidden && !G.showHiddenAttr) return false;
+  if (entry.is_system && !G.showSystem) return false;
+  if (entry.is_dot && !G.showDotfiles) return false;
+  return true;
+}
 G.clipboard = null;
 function normalizeLayout(layout) {
   const requested = String(layout || 'details').toLowerCase();
@@ -780,7 +805,7 @@ function fallbackCall(cmd, args) {
   const mockFiles = [
     { name:"Documents", path:"C:\\Documents", extension:"", is_dir:true, is_hidden:false, size:0, size_display:"", modified:"2025-12-10 14:22", created:"" },
     { name:"Downloads", path:"C:\\Downloads", extension:"", is_dir:true, is_hidden:false, size:0, size_display:"", modified:"2025-12-09 09:15", created:"" },
-    { name:".gitconfig", path:"C:\\.gitconfig", extension:"gitconfig", is_dir:false, is_hidden:true, size:256, size_display:"256 B", modified:"2025-11-01 08:00", created:"" },
+    { name:".gitconfig", path:"C:\\.gitconfig", extension:"gitconfig", is_dir:false, is_hidden:false, is_system:false, is_dot:true, size:256, size_display:"256 B", modified:"2025-11-01 08:00", created:"" },
     { name:"file1.txt", path:"C:\\file1.txt", extension:"txt", is_dir:false, is_hidden:false, size:1234, size_display:"1.2 KB", modified:"2025-12-08 18:30", created:"" },
     { name:"image.png", path:"C:\\image.png", extension:"png", is_dir:false, is_hidden:false, size:567890, size_display:"567.9 KB", modified:"2025-11-20 11:45", created:"" },
     { name:"project", path:"C:\\project", extension:"", is_dir:true, is_hidden:false, size:0, size_display:"", modified:"2025-12-07 16:00", created:"" },
@@ -812,7 +837,7 @@ function fallbackCall(cmd, args) {
     ]};
     case "get_drives": return mockDrives;
     case "parent_path": return "C:\\";
-    case "get_dir_tree": return mockFiles.filter(f=>f.is_dir).map(f=>({name:f.name,path:f.path,has_children:true,is_hidden:false}));
+    case "get_dir_tree": return mockFiles.filter(f=>f.is_dir).map(f=>({name:f.name,path:f.path,has_children:true,is_hidden:false,is_system:false,is_dot:false}));
     case "get_env": return args.key==="USERPROFILE"?"C:\\Users\\User":null;
     case "get_known_folders": return {
       home: "C:\\Users\\User",

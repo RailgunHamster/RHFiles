@@ -27,7 +27,8 @@ pub fn list_dir(path: &Path) -> std::io::Result<Vec<FileEntry>> {
             continue;
         };
         let name = entry.file_name().to_string_lossy().into_owned();
-        let is_hidden = is_hidden(&name, &metadata);
+        let (is_hidden, is_system) = attribute_flags(&metadata);
+        let is_dot = is_dot_name(&name);
         let extension = if metadata.is_dir() {
             String::new()
         } else {
@@ -42,6 +43,8 @@ pub fn list_dir(path: &Path) -> std::io::Result<Vec<FileEntry>> {
             extension,
             is_dir: metadata.is_dir(),
             is_hidden,
+            is_system,
+            is_dot,
             size: metadata.len(),
             modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
             created: metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),
@@ -55,17 +58,29 @@ pub fn list_dir(path: &Path) -> std::io::Result<Vec<FileEntry>> {
     Ok(entries)
 }
 
+/// Windows visibility attributes, reported separately so callers can mirror
+/// Explorer's two independent check boxes ("hidden items" vs "protected
+/// operating system files") instead of collapsing them into one flag.
 #[cfg(target_os = "windows")]
-fn is_hidden(name: &str, metadata: &std::fs::Metadata) -> bool {
+fn attribute_flags(metadata: &std::fs::Metadata) -> (bool, bool) {
     use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_HIDDEN: u32 = 2;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
     let attr = metadata.file_attributes();
-    name.starts_with('.') || (attr & FILE_ATTRIBUTE_HIDDEN) != 0
+    (
+        (attr & FILE_ATTRIBUTE_HIDDEN) != 0,
+        (attr & FILE_ATTRIBUTE_SYSTEM) != 0,
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
-fn is_hidden(name: &str, _metadata: &std::fs::Metadata) -> bool {
-    name.starts_with('.')
+fn attribute_flags(_metadata: &std::fs::Metadata) -> (bool, bool) {
+    (false, false)
+}
+
+/// The traditional dot-prefixed hidden file, judged by name only.
+fn is_dot_name(name: &str) -> bool {
+    name.starts_with('.') && name != "." && name != ".."
 }
 
 pub fn get_dir_tree(path: &Path) -> std::io::Result<Vec<FileEntry>> {
@@ -79,13 +94,16 @@ pub fn get_dir_tree(path: &Path) -> std::io::Result<Vec<FileEntry>> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        let is_hidden = is_hidden(&name, &metadata);
+        let (is_hidden, is_system) = attribute_flags(&metadata);
+        let is_dot = is_dot_name(&name);
         entries.push(FileEntry {
             name,
             path: entry.path(),
             extension: String::new(),
             is_dir: true,
             is_hidden,
+            is_system,
+            is_dot,
             size: 0,
             modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
             created: metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),

@@ -667,7 +667,7 @@ async function rpNavigateTo(path, pushHistory) {
       t('nav.folderLoadTimedOut'),
     );
     if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;
-    if (!G.showHidden) entries = entries.filter(e => !e.is_hidden);
+    entries = entries.filter(entryVisible);
     entries = sortEntriesList(entries, pane.sortF, pane.sortAsc);
     pane.entries = entries;
     if (pushHistory && path !== pane.path) {

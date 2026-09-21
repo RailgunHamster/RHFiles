@@ -82,6 +82,8 @@ pub struct FileInfo {
     pub extension: String,
     pub is_dir: bool,
     pub is_hidden: bool,
+    pub is_system: bool,
+    pub is_dot: bool,
     pub size: u64,
     pub size_display: String,
     pub modified: String,
@@ -107,6 +109,8 @@ pub struct TreeEntry {
     pub path: String,
     pub has_children: bool,
     pub is_hidden: bool,
+    pub is_system: bool,
+    pub is_dot: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -191,6 +195,8 @@ pub fn file_info_from_entry(e: &rhfiles_core::FileEntry) -> FileInfo {
         extension: e.extension.clone(),
         is_dir: e.is_dir,
         is_hidden: e.is_hidden,
+        is_system: e.is_system,
+        is_dot: e.is_dot,
         size: e.size,
         size_display: e.display_size(),
         modified: format_time(e.modified),

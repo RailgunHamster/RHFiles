@@ -67,7 +67,9 @@ fn parse_ftp_list(list: &[String], host: &str, path: &str) -> Result<Vec<FileInf
                 name.rsplit('.').next().unwrap_or("").to_string()
             },
             is_dir,
-            is_hidden: name.starts_with('.'),
+            is_hidden: false,
+            is_system: false,
+            is_dot: name.starts_with('.'),
             size,
             size_display: if size > 0 {
                 format_size(size)
@@ -304,7 +306,9 @@ pub async fn sftp_list(
                 name.rsplit('.').next().unwrap_or("").to_string()
             },
             is_dir,
-            is_hidden: name.starts_with('.'),
+            is_hidden: false,
+            is_system: false,
+            is_dot: name.starts_with('.'),
             size,
             size_display: if size > 0 {
                 format_size(size)
@@ -516,6 +520,8 @@ pub fn browse_network() -> Result<Vec<FileInfo>, String> {
                     extension: String::new(),
                     is_dir: true,
                     is_hidden: false,
+                    is_system: false,
+                    is_dot: false,
                     size: 0,
                     size_display: String::new(),
                     modified: String::new(),
@@ -609,6 +615,8 @@ pub fn list_shares(server: String) -> Result<Vec<FileInfo>, String> {
                         extension: String::new(),
                         is_dir: true,
                         is_hidden: false,
+                        is_system: false,
+                        is_dot: false,
                         size: 0,
                         size_display: String::new(),
                         modified: String::new(),

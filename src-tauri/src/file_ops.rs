@@ -1837,6 +1837,8 @@ pub fn get_dir_tree(path: String) -> Result<Vec<TreeEntry>, String> {
             path: e.path.to_string_lossy().into_owned(),
             has_children: enumerator::has_subdirs(&e.path),
             is_hidden: e.is_hidden,
+            is_system: e.is_system,
+            is_dot: e.is_dot,
         })
         .collect())
 }

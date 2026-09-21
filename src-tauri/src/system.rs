@@ -936,6 +936,8 @@ pub fn list_mtp_devices() -> Result<Vec<FileInfo>, String> {
             extension: String::new(),
             is_dir: true,
             is_hidden: false,
+            is_system: false,
+            is_dot: false,
             size: 0,
             size_display: String::new(),
             modified: String::new(),

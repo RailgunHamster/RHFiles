@@ -13,7 +13,15 @@ pub struct FileEntry {
     pub path: PathBuf,
     pub extension: String,
     pub is_dir: bool,
+    /// Windows `FILE_ATTRIBUTE_HIDDEN`, i.e. what Explorer calls a hidden item.
     pub is_hidden: bool,
+    /// Windows `FILE_ATTRIBUTE_SYSTEM`, i.e. what Explorer calls a protected
+    /// operating system file. Explorer hides these even with "show hidden
+    /// items" on, so it stays a separate flag.
+    pub is_system: bool,
+    /// Dot-prefixed name. The traditional hidden-file convention is judged
+    /// independently from the Windows attributes.
+    pub is_dot: bool,
     pub size: u64,
     pub modified: SystemTime,
     pub created: SystemTime,

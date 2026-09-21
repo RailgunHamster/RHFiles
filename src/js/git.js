@@ -41,7 +41,7 @@ async function openArchive(path) {
     const tab = getTab();
     tab.entries = entries.map((e, i) => ({
       name: e.name, path: e.path, extension: e.is_dir ? "" : (e.name.split(".").pop() || ""),
-      is_dir: e.is_dir, is_hidden: false, size: e.size, size_display: fmtSize(e.size),
+      is_dir: e.is_dir, is_hidden: false, is_system: false, is_dot: String(e.name || "").startsWith("."), size: e.size, size_display: fmtSize(e.size),
       modified: e.modified, created: "", encrypted: !!e.encrypted, archive_entry: true, archive_index: i
     }));
     tab.sel.clear();

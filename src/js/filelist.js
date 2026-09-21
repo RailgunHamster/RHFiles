@@ -261,20 +261,52 @@ function toggleSort() {
   saveTabState();
 }
 
-function toggleHidden() {
-  setShowHidden(!G.showHidden);
+function toggleDotfiles() {
+  setShowDotfiles(!G.showDotfiles);
 }
 
-function setShowHidden(show) {
-  G.showHidden = !!show;
-  try { localStorage.setItem('rhfiles-showHidden', String(G.showHidden)); } catch (e) {}
-  const button = document.getElementById("btn-hidden");
-  if (button) button.classList.toggle("active-toggle", G.showHidden);
-  const checkbox = document.getElementById('settings-show-hidden');
-  if (checkbox) checkbox.checked = G.showHidden;
+function _refreshVisibilityToggles() {
   navigateTo(getTab().path, false);
   if (G.dualOn && G.rp?.path) rpNavigateTo(G.rp.path, false);
 }
+
+// The toolbar eye button mirrors the dot-file toggle, including on startup.
+function syncVisibilityToggleUI() {
+  const button = document.getElementById("btn-hidden");
+  if (button) button.classList.toggle("active-toggle", G.showDotfiles);
+}
+
+// The historical "show hidden items" toggle: it governs the dot-prefixed
+// traditional hidden files, which stay visible by default.
+function setShowDotfiles(show) {
+  G.showDotfiles = !!show;
+  try { localStorage.setItem('rhfiles-showDotfiles', String(G.showDotfiles)); } catch (e) {}
+  syncVisibilityToggleUI();
+  const checkbox = document.getElementById('settings-show-dotfiles');
+  if (checkbox) checkbox.checked = G.showDotfiles;
+  _refreshVisibilityToggles();
+}
+
+// Windows FILE_ATTRIBUTE_HIDDEN, hidden by default like Explorer.
+function setShowHiddenAttr(show) {
+  G.showHiddenAttr = !!show;
+  try { localStorage.setItem('rhfiles-showHiddenAttr', String(G.showHiddenAttr)); } catch (e) {}
+  const checkbox = document.getElementById('settings-show-hidden-attr');
+  if (checkbox) checkbox.checked = G.showHiddenAttr;
+  _refreshVisibilityToggles();
+}
+
+// Windows FILE_ATTRIBUTE_SYSTEM ("protected operating system file").
+function setShowSystem(show) {
+  G.showSystem = !!show;
+  try { localStorage.setItem('rhfiles-showSystem', String(G.showSystem)); } catch (e) {}
+  const checkbox = document.getElementById('settings-show-system');
+  if (checkbox) checkbox.checked = G.showSystem;
+  _refreshVisibilityToggles();
+}
+
+function toggleHiddenAttr() { setShowHiddenAttr(!G.showHiddenAttr); }
+function toggleSystem() { setShowSystem(!G.showSystem); }
 
 // Fallback only. The active theme may override --row-height, so virtual-list
 // geometry must be derived from the rendered CSS instead of a stale constant.
@@ -615,7 +647,7 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
     browser.appendChild(col);
     try {
       let colEntries = suppliedEntries ? [...suppliedEntries] : await call("list_dir", { path: colPath, filter: "" });
-      if (!G.showHidden) colEntries = colEntries.filter(e => !e.is_hidden);
+      colEntries = colEntries.filter(entryVisible);
       colEntries.sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
       const heading = displayPath(colPath).split('/').filter(Boolean).pop() || displayPath(colPath);
       col.innerHTML = `<div class="column-heading" title="${esc(displayPath(colPath))}">${esc(heading)}</div>`;
