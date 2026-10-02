@@ -8,6 +8,7 @@
   },
   "bundle": {
     "targets": ["app", "dmg"],
+    "resources": {"macos-licenses/OpenSSL-LICENSE.txt": "licenses/OpenSSL-LICENSE.txt"},
     "icon": ["icons/icon.icns", "icons/rhfiles-icon-v4-256.png"],
     "macOS": {"minimumSystemVersion": "12.0", "signingIdentity": "-", "infoPlist": "Info.macos.plist"}
   }

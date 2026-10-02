@@ -42,6 +42,8 @@ brew install sevenzip ffmpeg dust
 
 Executable discovery includes `/opt/homebrew/bin` and `/usr/local/bin`, so Finder launches do not depend on shell startup files. FFmpeg and 7-Zip paths/arguments can also be configured in Settings. Media codecs remain subject to the system WebView's capabilities.
 
+The SFTP engine statically links its OpenSSL dependency on Mac; it does not require the build machine's Homebrew libraries at runtime. The package includes OpenSSL's license, and packaging verifies the application signature and checks for external absolute dylib dependencies.
+
 Updates are **manual** for now: quit RHFiles, replace the `.app`, reopen. Never run Windows `Update.exe` or use a Windows portable feed. Bundled version history remains readable offline. The Mac settings link opens the build downloads.
 
 用户数据保存在 `~/Library/Application Support/RHFiles`，与其他 macOS 账号独立；系统 WebKit 缓存由 WebKit 管理。当前不按 macOS Spaces 自动拆分数据，也不调用非公开 Spaces 接口。

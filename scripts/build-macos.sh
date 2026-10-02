@@ -10,4 +10,12 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o src-tauri/icons/icon.icns
 npx --yes @tauri-apps/cli@2.10.1 build --bundles app,dmg
+binary=target/release/bundle/macos/RHFiles.app/Contents/MacOS/rhfiles
+test -x "$binary"
+codesign --verify --deep --strict target/release/bundle/macos/RHFiles.app
+# A build can link successfully on CI but fail to launch on a clean Mac.
+if otool -L "$binary" | tail -n +2 | awk '{print $1}' | grep -vE '^(/System/Library/|/usr/lib/|@executable_path/|@loader_path/|@rpath/)' ; then
+  echo 'Non-system dynamic library dependency found; refusing to ship this build.' >&2
+  exit 1
+fi
 ditto -c -k --sequesterRsrc --keepParent target/release/bundle/macos/RHFiles.app "target/release/bundle/RHFiles-macos-$(uname -m).app.zip"

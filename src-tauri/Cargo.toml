@@ -99,3 +99,7 @@ version = "0.2"
 
 [dependencies.ssh2]
 version = "0.9"
+
+# Distributable .app must not depend on the build runner's Homebrew OpenSSL dylibs.
+[target.'cfg(target_os = "macos")'.dependencies]
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
