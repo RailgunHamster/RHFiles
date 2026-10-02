@@ -7,11 +7,24 @@ use std::sync::Mutex;
 pub struct CancelState {
     active: HashSet<String>,
     cancelled: HashSet<String>,
+    update_lock: Option<std::fs::File>,
+    updating: bool,
 }
 
 pub struct CancelFlag(pub Mutex<CancelState>);
 
+pub struct ActiveOperation<'a> { cancel: &'a CancelFlag, id: String }
+impl Drop for ActiveOperation<'_> {
+    fn drop(&mut self) { self.cancel.clear(Some(&self.id)); }
+}
+
 impl CancelFlag {
+    pub fn begin(&self, kind: &str) -> Result<ActiveOperation<'_>, String> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = format!("{kind}-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        self.reset(Some(&id))?;
+        Ok(ActiveOperation { cancel: self, id })
+    }
     fn key(operation_id: Option<&str>) -> String {
         operation_id
             .filter(|value| !value.trim().is_empty())
@@ -22,6 +35,12 @@ impl CancelFlag {
     pub fn reset(&self, operation_id: Option<&str>) -> Result<(), String> {
         let key = Self::key(operation_id);
         let mut state = self.0.lock().map_err(|error| error.to_string())?;
+        if state.updating { return Err("[update_busy] An update is being installed".into()); }
+        if state.update_lock.is_none() {
+            let lease = crate::profile::coordination_file("operations.lock")?;
+            lease.try_lock_shared().map_err(|_| "[update_busy] An update is being installed")?;
+            state.update_lock = Some(lease);
+        }
         state.cancelled.remove(&key);
         state.active.insert(key);
         Ok(())
@@ -50,6 +69,30 @@ impl CancelFlag {
             let key = Self::key(operation_id);
             state.cancelled.remove(&key);
             state.active.remove(&key);
+            if state.active.is_empty() && !state.updating { state.update_lock = None; }
+        }
+    }
+
+    pub fn begin_update(&self) -> Result<(), String> {
+        let mut state = self.0.lock().map_err(|e| e.to_string())?;
+        if !state.active.is_empty() || state.updating {
+            return Err("[update_busy] Wait for all file tasks to finish before updating".into());
+        }
+        let lease = crate::profile::coordination_file("operations.lock")?;
+        lease.try_lock().map_err(|_| "[update_busy] Another RHFiles instance is processing files")?;
+        crate::profile::reserve_update()?;
+        state.update_lock = Some(lease);
+        state.updating = true;
+        Ok(())
+    }
+
+    pub fn abort_update(&self) {
+        if let Ok(mut state) = self.0.lock() {
+            if state.updating {
+                state.updating = false;
+                state.update_lock = None;
+                crate::profile::release_update();
+            }
         }
     }
 }
@@ -72,6 +115,25 @@ mod cancel_flag_tests {
 
         flag.clear(Some("first"));
         assert!(!flag.is_cancelled(Some("first")).unwrap());
+    }
+
+    #[test]
+    fn operation_guard_blocks_update_and_releases_on_early_return() {
+        let flag = CancelFlag(Mutex::new(CancelState::default()));
+        {
+            let _operation = flag.begin("compress").unwrap();
+            assert!(flag.begin_update().unwrap_err().contains("[update_busy]"));
+            assert_eq!(flag.0.lock().unwrap().active.len(), 1);
+        }
+        let state = flag.0.lock().unwrap();
+        assert!(state.active.is_empty());
+        assert!(state.update_lock.is_none());
+    }
+
+    #[test]
+    fn update_reservation_prevents_new_operations() {
+        let flag = CancelFlag(Mutex::new(CancelState { updating: true, ..Default::default() }));
+        assert!(flag.reset(Some("copy")).unwrap_err().contains("[update_busy]"));
     }
 }
 

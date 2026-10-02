@@ -54,9 +54,9 @@ function trackMove(src, dest) {
 
 function trackRename(oldPath, newPath) {
   pushUndo({
-    label: t('undo.renameTo', {path: newPath.split("\\").pop()}),
-    undo: async () => { await call("rename_file", { path: newPath, newName: oldPath.split("\\").pop() }); },
-    redo: async () => { await call("rename_file", { path: oldPath, newName: newPath.split("\\").pop() }); }
+    label: t('undo.renameTo', {path: pathLeaf(newPath)}),
+    undo: async () => { await call("rename_file", { path: newPath, newName: pathLeaf(oldPath) }); },
+    redo: async () => { await call("rename_file", { path: oldPath, newName: pathLeaf(newPath) }); }
   });
 }
 

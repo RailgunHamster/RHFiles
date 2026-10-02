@@ -650,7 +650,10 @@ pub fn quicklook(path: String) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn rtf_to_html(path: String) -> Result<String, String> {
     let ps = format!(
-        r#"$rtb = New-Object System.Windows.Forms.RichTextBox;
+        r#"$ErrorActionPreference = 'Stop';
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);
+        Add-Type -AssemblyName System.Windows.Forms;
+        $rtb = New-Object System.Windows.Forms.RichTextBox;
         $rtb.Rtf = [System.IO.File]::ReadAllText('{}');
         $rtb.Text"#,
         path.replace("'", "''")
@@ -812,10 +815,7 @@ pub fn log_error(
         source.unwrap_or_default(),
         stack.unwrap_or_default()
     );
-    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-    let log_dir = std::path::PathBuf::from(app_data)
-        .join("RHFiles")
-        .join("logs");
+    let log_dir = crate::profile::data_dir()?.join("logs");
     std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     let log_path = log_dir.join(format!(
         "error-{}.log",
@@ -833,10 +833,7 @@ pub fn log_error(
 
 #[tauri::command]
 pub fn get_error_logs() -> Result<Vec<String>, String> {
-    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-    let log_dir = std::path::PathBuf::from(app_data)
-        .join("RHFiles")
-        .join("logs");
+    let log_dir = crate::profile::data_dir()?.join("logs");
     if !log_dir.exists() {
         return Ok(Vec::new());
     }
@@ -1450,7 +1447,9 @@ pub fn compress_with(
     tool: String,
     executable: Option<String>,
     arguments: Option<Vec<String>>,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation = cancel.begin("compress")?;
     if sources.is_empty() {
         return Err("No files were selected for compression".to_string());
     }

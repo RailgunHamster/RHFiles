@@ -656,6 +656,11 @@ function updatePaneFocusUI() {
 let _rpNavigationToken = 0;
 async function rpNavigateTo(path, pushHistory) {
   const pane = G.rp;
+  _searchRequestToken++;
+  G.searchActive = false;
+  G.searchQuery = '';
+  pane._archiveToken = (pane._archiveToken || 0) + 1;
+  pane.archivePath = null;
   const navigationToken = ++_rpNavigationToken;
   if (pushHistory === undefined) pushHistory = true;
   path = normalizeWindowsPathInput(path);

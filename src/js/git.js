@@ -29,129 +29,73 @@ async function loadGitStatus(path) {
   }
 }
 
-// --- archive browsing ---
-let archiveBrowsingPath = null;
+// --- archive browsing: state belongs to the originating tab/pane ---
+function archivePane(isRight) { return isRight ? G.rp : getTab(); }
 
-async function openArchive(path) {
+function renderArchiveHeader(pane, list, isRight) {
+  const content = list.closest('.content');
+  content?.querySelector('.archive-header')?.remove();
+  if (!pane.archivePath || !content) return;
+  const header = document.createElement('div');
+  header.className = 'archive-header';
+  const title = document.createElement('span');
+  title.textContent = t('archive.title') + ': ' + pane.archivePath.split(/[\\/]/).pop();
+  const close = document.createElement('button');
+  close.className = 'archive-close';
+  close.textContent = '×';
+  close.onclick = () => closeArchive(isRight);
+  const extract = document.createElement('button');
+  extract.className = 'dialog-btn';
+  extract.textContent = t('ctx.extractAll');
+  extract.onclick = () => extractArchiveAll(isRight);
+  header.append(title, close, extract);
+  (list.closest('.file-body') || list).before(header);
+}
+
+async function openArchive(path, isRight = false) {
+  const pane = archivePane(isRight);
+  const directory = pane.path;
+  const token = pane._archiveToken = (pane._archiveToken || 0) + 1;
+  pane._refreshToken = (pane._refreshToken || 0) + 1;
   try {
-    const entries = await call("list_archive", { path });
-    archiveBrowsingPath = path;
-    const listId = "file-list";
-    const list = document.getElementById(listId);
-    const tab = getTab();
-    tab.entries = entries.map((e, i) => ({
-      name: e.name, path: e.path, extension: e.is_dir ? "" : (e.name.split(".").pop() || ""),
-      is_dir: e.is_dir, is_hidden: false, is_system: false, is_dot: String(e.name || "").startsWith("."), size: e.size, size_display: fmtSize(e.size),
-      modified: e.modified, created: "", encrypted: !!e.encrypted, archive_entry: true, archive_index: i
+    const entries = await call('list_archive', { path });
+    if (pane._archiveToken !== token || pane.path !== directory) return;
+    pane.archivePath = path;
+    pane.entries = entries.map((e, i) => ({
+      name: e.name, path: e.path, extension: e.is_dir ? '' : (e.name.split('.').pop() || ''),
+      is_dir: e.is_dir, is_hidden: false, is_system: false, is_dot: String(e.name || '').startsWith('.'),
+      size: e.size, size_display: fmtSize(e.size), modified: e.modified, created: '',
+      encrypted: !!e.encrypted, archive_entry: true, archive_index: i,
     }));
-    tab.sel.clear();
-    const header = document.querySelector(".file-header");
-    if (header) {
-      header.insertAdjacentHTML("beforebegin",
-        '<div class="archive-header"><span>' + t("archive.title") + ': ' + esc(path.split("\\").pop()) +
-        '</span><button class="archive-close" onclick="closeArchive()">&times;</button>' +
-        '<button class="dialog-btn" style="margin-left:8px" onclick="extractArchiveAll()">' + t("ctx.extractAll") + '</button></div>');
+    pane.sel.clear();
+    if (pane === archivePane(isRight)) {
+      renderFiles(pane, isRight ? 'right-file-list' : 'file-list',
+        isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection', isRight);
     }
-    renderFiles(tab, listId, "status-count", "status-selection");
-  } catch (e) { alert(t('alert.openArchiveFailed', {error: e})); }
+  } catch (error) { alert(t('alert.openArchiveFailed', {error})); }
 }
 
-function closeArchive() {
-  archiveBrowsingPath = null;
-  const hdr = document.querySelector(".archive-header");
-  if (hdr) hdr.remove();
-  refresh();
+async function closeArchive(isRight = false) {
+  const pane = archivePane(isRight);
+  pane.archivePath = null;
+  if (isRight) await rpNavigateTo(pane.path, false);
+  else await navigateTo(pane.path, false);
 }
 
-async function extractArchiveAll() {
-  if (!archiveBrowsingPath) return;
-  const name = archiveBrowsingPath.split('\\').pop();
-  const entries = getTab().entries || [];
-  let password = null;
-  let passwordVerified = false;
-  const sample = entries
-    .filter(e => e.encrypted && !e.is_dir)
-    .sort((a, b) => (a.size || 0) - (b.size || 0))[0];
-  if (sample) {
-    password = await resolveArchivePassword(archiveBrowsingPath, sample.path, name);
-    if (password === null) return;
-    passwordVerified = true;
-  }
-  for (let attempt = 0; ; attempt++) {
-    const taskId = showProgress(t('status.extracting', { name }), {
-      currentName: name,
-      currentPath: archiveBrowsingPath,
-    });
-    try {
-      await call("extract_archive", {
-        path: archiveBrowsingPath,
-        dest: getTab().path,
-        entryPath: null,
-        password,
-        operationId: taskId,
-      });
-      completeOperationTask(taskId);
-      closeArchive();
-      return;
-    } catch (e) {
-      if (/cancel/i.test(String(e))) { cancelOperationTask(taskId); return; }
-      if (isArchivePasswordError(e)) {
-        if (!passwordVerified && attempt < 2) {
-          cancelOperationTask(taskId);
-          const next = await promptArchivePassword(name, attempt > 0);
-          if (next !== null) { password = next; continue; }
-        }
-        failOperationTask(taskId, e);
-        alert(passwordVerified
-          ? t('alert.archivePartialExtract', { error: e })
-          : t('alert.archivePasswordFailed', { error: e }));
-        return;
-      }
-      failOperationTask(taskId, e);
-      alert(t('alert.extractFailed', {error: e}));
-      return;
-    }
-  }
+async function extractArchiveAll(isRight = false) {
+  const pane = archivePane(isRight);
+  const path = pane.archivePath;
+  if (!path) return;
+  await extractArchiveTo({ path, name: path.split(/[\\/]/).pop(), extension: 'zip' }, pane.path);
 }
 
-async function extractArchiveEntry(idx) {
-  if (!archiveBrowsingPath) return;
-  const entries = getTab().entries;
-  if (!entries[idx]) return;
-  let password = null;
-  if (entries[idx].encrypted) {
-    password = await promptArchivePassword(entries[idx].name);
-    if (password === null) return;
-  }
-  for (let attempt = 0; ; attempt++) {
-    const taskId = showProgress(t('status.extracting', { name: entries[idx].name }), {
-      currentName: entries[idx].name,
-      currentPath: entries[idx].path,
-    });
-    try {
-      await call("extract_archive", {
-        path: archiveBrowsingPath,
-        dest: getTab().path,
-        entryPath: entries[idx].path,
-        password,
-        operationId: taskId,
-      });
-      completeOperationTask(taskId);
-      refresh();
-      return;
-    } catch (e) {
-      if (/cancel/i.test(String(e))) { cancelOperationTask(taskId); return; }
-      if (isArchivePasswordError(e) && attempt < 2) {
-        cancelOperationTask(taskId);
-        const next = await promptArchivePassword(entries[idx].name, attempt > 0);
-        if (next !== null) { password = next; continue; }
-      }
-      failOperationTask(taskId, e);
-      alert(isArchivePasswordError(e)
-        ? t('alert.archivePasswordFailed', { error: e })
-        : t('alert.extractFailed', {error: e}));
-      return;    }
-  }
+async function extractArchiveEntry(index, isRight = false) {
+  const pane = archivePane(isRight);
+  const path = pane.archivePath;
+  const entry = pane.entries[index];
+  if (!path || !entry) return;
+  await extractArchiveTo({ path, name: path.split(/[\\/]/).pop(), extension: 'zip' }, pane.path,
+    null, { entryPath: entry.path });
 }
 
 // --- git branch management ---
@@ -185,7 +129,7 @@ async function gitCheckout(branch) {
 async function gitCreateBranch(name) {
   if (!name) return;
   try {
-    await call("git_create_branch", { path: getTab().path, branch: name });
+    await call("git_create_branch", { path: getTab().path, name });
     await gitCheckout(name);
   } catch (e) { alert(t('alert.branchFailed', {error: e})); }
 }

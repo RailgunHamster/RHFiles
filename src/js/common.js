@@ -659,6 +659,7 @@ function normalizeWindowsPathInput(value) {
     path = path.slice(1, -1).trim();
   }
   if (path === 'home://') return path;
+  if (/^ftp:\/\//i.test(path)) return new URL(path).href;
   path = decodeFileUriPath(path);
   path = path.replace(/\//g, '\\');
   if (/^\\{2,}/.test(path)) {
@@ -762,6 +763,10 @@ function logInvokeFailure(command, error) {
 }
 
 async function call(cmd, args) {
+  if (typeof routeFtpCommand === 'function') {
+    const routed = await routeFtpCommand(cmd, args || {});
+    if (routed) return routed.value;
+  }
   if (invoke) {
     try {
       return await invoke(cmd, normalizeInvokeArgs(args));
@@ -774,6 +779,13 @@ async function call(cmd, args) {
 }
 
 function parentFolderPath(path) {
+  if (/^ftp:\/\//i.test(path)) {
+    const url = new URL(path);
+    const parts = url.pathname.replace(/\/+$/, '').split('/');
+    parts.pop();
+    url.pathname = parts.join('/') || '/';
+    return url.href;
+  }
   const normalized = String(path || '').replace(/\//g, '\\');
   if (/^[A-Za-z]:\\$/.test(normalized)) return normalized;
   const clean = normalized.replace(/\\+$/, '');
@@ -1191,29 +1203,31 @@ function startFileWatch() {
       }, 300);
     }).then(unlisten => { G._watchTauriUnlisten = unlisten; }).catch(() => {});
   }
+  const snapshots = new WeakMap();
+  let polling = false;
   G._watchTimer = setInterval(async () => {
-    if (document.hidden) return;
-    const tab = getTab();
-    if (!tab || !tab.entries) return;
-    const listingNavigationToken = _navigationToken;
+    if (document.hidden || polling || G.searchActive) return;
+    polling = true;
+    const pairs = [[getTab(), false], ...(G.dualOn ? [[G.rp, true]] : [])];
     try {
-      const entries = await call("list_dir", { path: tab.path, filter: "" });
-      let snap = "";
-      for (let i = 0; i < entries.length; i++) {
-        snap += entries[i].name;
-        snap += "|";
-      }
-      if (G._watchSnapshot && snap !== G._watchSnapshot) {
-        G._watchSnapshot = snap;
-        // The listing raced with a navigation started while it was in flight.
-        // Navigating to the pre-listing path now would cancel the newer
-        // navigation and leave the view stuck on the old folder.
-        if (listingNavigationToken !== _navigationToken) return;
-        await navigateTo(tab.path, false);
-      } else {
-        G._watchSnapshot = snap;
-      }
-    } catch (e) {}
+      await Promise.allSettled(pairs.map(async ([pane, isRight]) => {
+        if (!pane?.path || pane.path === 'home://' || pane.archivePath) return;
+        const path = pane.path;
+        const token = isRight ? _rpNavigationToken : _navigationToken;
+        const entries = await listPathEntries(path, '');
+        if (pane.path !== path || pane !== (isRight ? G.rp : getTab()) ||
+            token !== (isRight ? _rpNavigationToken : _navigationToken)) return;
+        const snapshot = JSON.stringify(entries.map(e =>
+          [e.path, e.name, e.size, e.modified_ts, e.modified, e.is_dir]).sort((a,b) =>
+          String(a[0]).localeCompare(String(b[0]))));
+        const previous = snapshots.get(pane);
+        snapshots.set(pane, {path, snapshot});
+        if (previous?.path === path && previous.snapshot !== snapshot) {
+          if (isRight) await rpNavigateTo(path, false);
+          else await navigateTo(path, false);
+        }
+      }));
+    } finally { polling = false; }
   }, 2000);
 }
 function stopFileWatch() {

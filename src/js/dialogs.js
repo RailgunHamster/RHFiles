@@ -441,6 +441,8 @@ function openSettings() {
     '<div id="shortcut-config-list" class="settings-config-list shortcut-config-list"></div></div>';
 
   const data = '<div class="settings-card"><div class="settings-card-title">' + t('settings.dataManagement') + '</div>' +
+    '<p class="settings-card-description">' + t('settings.desktopIsolation') + '</p>' +
+    '<div id="settings-instance-profile" class="settings-card-description" style="overflow-wrap:anywhere;white-space:pre-wrap"></div>' +
     '<div class="settings-inline-actions">' +
       '<button class="dialog-btn" onclick="exportAllData()">' + t('btn.export') + '</button>' +
       '<button class="dialog-btn" onclick="importAllData()">' + t('btn.import') + '</button>' +
@@ -459,6 +461,12 @@ function openSettings() {
     settingsPage('shortcuts', 'settings.categoryShortcuts', 'settings.categoryShortcutsDesc', shortcuts) +
     settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data);
   dlg.style.display = "flex";
+  call('get_instance_profile', {}).then(profile => {
+    const element = document.getElementById('settings-instance-profile');
+    if (element && profile) element.textContent = t('settings.profileDetails', {
+      desktop: profile.desktopId, data: profile.dataDirectory, webview: profile.webviewDirectory,
+    });
+  }).catch(() => {});
   const initialSection = localStorage.getItem('rhfiles-settings-section') || 'general';
   switchSettingsSection(initialSection, false);
   renderToolbarConfig();

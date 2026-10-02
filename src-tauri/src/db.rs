@@ -1,10 +1,8 @@
 use crate::types::*;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 pub fn get_db() -> Result<rusqlite::Connection, String> {
-    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-    let dir = PathBuf::from(app_data).join("RHFiles");
+    let dir = crate::profile::data_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let db_path = dir.join("rhfiles.db");
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;

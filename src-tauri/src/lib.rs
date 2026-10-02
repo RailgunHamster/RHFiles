@@ -6,6 +6,7 @@ mod file_dialog_integration;
 mod file_ops;
 mod media;
 mod network;
+mod profile;
 mod search;
 mod shell;
 mod system;
@@ -23,6 +24,20 @@ use types::{CancelFlag, CancelState};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut context = tauri::generate_context!();
+    let profile = match profile::initialize() {
+        Ok(profile) => profile,
+        Err(error) => {
+            #[cfg(windows)]
+            unsafe { windows::Win32::UI::WindowsAndMessaging::MessageBoxW(None,
+                &windows::core::HSTRING::from(error), windows::core::w!("RHFiles"),
+                windows::Win32::UI::WindowsAndMessaging::MB_ICONERROR); }
+            return;
+        }
+    };
+    context.config_mut().identifier = profile.instance_id.clone();
+    for window in &mut context.config_mut().app.windows {
+        window.data_directory = Some(profile.webview_directory.clone());
+    }
     if let Some(args) = window::requested_browser_args() {
         // WebView2 shares one user-data folder across the process and refuses
         // environments whose options differ, so every window gets the same value.
@@ -121,6 +136,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            profile::get_instance_profile,
             file_ops::list_dir, file_ops::get_drives, file_ops::parent_path,
             file_ops::delete_file, file_ops::delete_files, file_ops::delete_files_permanently, file_ops::restore_recycled_files,
             file_ops::rename_file, file_ops::new_folder,

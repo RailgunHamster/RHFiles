@@ -64,7 +64,7 @@ function initBoxSelection(listEl) {
       e.preventDefault();
       return;
     }
-    if (e.target.closest('.file-row')) return;
+    if (e.target.closest('.file-row, .column-item')) return;
     const isRight = listEl.id === 'right-file-list';
     const tabOrPane = isRight ? G.rp : getTab();
     if (!tabOrPane || !tabOrPane.entries) return;
@@ -87,7 +87,7 @@ function initBoxSelection(listEl) {
     // A new gesture always clears the stale swallow flag: the click it targets
     // belongs to the previous drag and never arrived.
     suppressNextClick = false;
-    const row = e.target.closest('.file-row');
+    const row = e.target.closest('.file-row, .column-item');
     if (row && !usesRubberBandTarget(e.target)) return;
     beginSelection(e);
   });

@@ -86,9 +86,16 @@ function showConfirmDialog(options) {
 // --- file ops ---
 let _deleteRequestActive = false;
 
+function archiveSelectionIsReadOnly(selection) {
+  if (!selection.some(file => file.archive_entry)) return false;
+  showNotice(t('archive.readOnly'));
+  return true;
+}
+
 async function deleteSelected(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
+  if (archiveSelectionIsReadOnly(sel)) return;
   if (!sel.length || _deleteRequestActive) return;
   _deleteRequestActive = true;
   const message = sel.length === 1
@@ -96,7 +103,7 @@ async function deleteSelected(isRight) {
     : t('confirm.deleteItems', {count: sel.length});
   // Network locations have no Recycle Bin, so the listing hint must not
   // promise a recoverable delete there.
-  const onNetwork = sel.some(file => /^\\\\/.test(String(file.path || '')));
+  const onNetwork = sel.some(file => /^\\\\|^ftp:\/\//i.test(String(file.path || '')));
   const detail = onNetwork ? t('confirm.networkDeleteHint') : t('confirm.recycleBinHint');
   let confirmed = true;
   if (G.settings.confirmRecycleDelete !== false) {
@@ -126,7 +133,8 @@ async function deleteSelected(isRight) {
   try {
     const outcome = await call('delete_files', {paths: deletedPaths, operationId: taskId});
     const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
-    if (actuallyDeleted.length) trackDelete(actuallyDeleted);
+    const recyclable = actuallyDeleted.filter(path => !isFtpPath(path));
+    if (recyclable.length) trackDelete(recyclable);
     await refresh();
     if (outcome?.cancelled) {
       cancelOperationTask(taskId, t('tasks.deleteCancelledDetail', {
@@ -148,6 +156,7 @@ async function deleteSelected(isRight) {
 async function deleteSelectedPermanently(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
+  if (archiveSelectionIsReadOnly(sel)) return;
   if (!sel.length || _deleteRequestActive) return;
   _deleteRequestActive = true;
   const message = sel.length === 1
@@ -280,6 +289,7 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
 async function renamePrompt(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
+  if (archiveSelectionIsReadOnly(sel)) return;
   if (sel.length !== 1) return;
   const isR = isRight;
   const listId = isR ? "right-file-list" : "file-list";
@@ -296,15 +306,16 @@ async function newFolder(isRight) {
   isRight = resolveRightPane(isRight);
   const destPath = isRight ? G.rp.path : getTab().path;
   try {
-    await call("new_folder", { parent: destPath });
+    const createdPath = await call("new_folder", { parent: destPath });
     await refresh();
-    _findAndRename(isRight, destPath, "New Folder");
+    _findAndRename(isRight, createdPath);
   } catch (e) { alert(t('alert.newFolderFailed')); }
 }
 
 async function copySelected(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
+  if (archiveSelectionIsReadOnly(sel)) return;
   if (!sel.length) return;
   const clipboard = { op: "copy", paths: new Set(sel.map(f => f.path)), sequence: 0 };
   G.clipboard = clipboard;
@@ -323,6 +334,7 @@ async function copySelected(isRight) {
 async function cutSelected(isRight) {
   isRight = resolveRightPane(isRight);
   const sel = getSelectedPaths(isRight);
+  if (archiveSelectionIsReadOnly(sel)) return;
   if (!sel.length) return;
   const clipboard = { op: "cut", paths: new Set(sel.map(f => f.path)), sequence: 0 };
   G.clipboard = clipboard;
@@ -338,22 +350,18 @@ async function cutSelected(isRight) {
   }
 }
 
-function _findAndRename(isRight, parentPath, prefix) {
+function _findAndRename(isRight, createdPath) {
   const listId = isRight ? "right-file-list" : "file-list";
   const rows = document.querySelectorAll(`#${listId} .file-row`);
   for (const row of rows) {
     const nameEl = row.querySelector(".row-fname");
     if (!nameEl) continue;
-    if (row.dataset.path && row.dataset.path.startsWith(parentPath)) {
-      const fname = row.dataset.path.split("\\").pop();
-      if (fname && fname.startsWith(prefix)) {
+    if (createdPath && windowsPathKey(row.dataset.path) === windowsPathKey(createdPath)) {
+      const fname = pathLeaf(row.dataset.path);
+      if (fname) {
         const file = { name: fname, path: row.dataset.path, is_dir: row.classList.contains("dir") ? 1 : 0, extension: fname.includes(".") ? fname.split(".").pop() : "" };
-        startInlineRename(row, file, isRight, async () => {
-          try {
-            await call("delete_file", { path: file.path });
-            await refresh();
-          } catch(e) { console.error("delete failed", e); }
-        });
+        // Escape cancels the rename, not the creation (and never deletes data).
+        startInlineRename(row, file, isRight);
         return;
       }
     }
@@ -455,7 +463,7 @@ async function paste(isRight) {
         break;
       }
       const srcPath = sources[sourceIndex];
-      const srcName = srcPath.split(/[\\/]/).pop();
+      const srcName = pathLeaf(srcPath);
       const destFullPath = joinFolderPath(destPath, srcName);
       const sameTarget = windowsPathKey(srcPath) === windowsPathKey(destFullPath);
       if (sameTarget && clipboard.op === 'cut') {
@@ -585,7 +593,7 @@ async function activateEntry(file, isRight, index) {
     if (file.is_dir) {
       showNotice(t('alert.cannotNavArchive'));
     } else {
-      await extractArchiveEntry(index);
+      await extractArchiveEntry(index, isRight);
     }
     return;
   }
@@ -596,7 +604,7 @@ async function activateEntry(file, isRight, index) {
   }
   const extension = (file.extension || "").toLowerCase();
   if (extension === "zip") {
-    await openArchive(file.path);
+    await openArchive(file.path, isRight);
     return;
   }
   try {
@@ -669,10 +677,12 @@ function summarizeSelection(entries) {
 }
 
 function joinFolderPath(parent, child) {
+  if (isFtpPath(parent)) return String(parent).replace(/\/+$/, '') + '/' + encodeURIComponent(child);
   return String(parent || '').replace(/[\\/]+$/, '') + '\\' + child;
 }
 
 function windowsPathKey(path) {
+  if (isFtpPath(path)) return new URL(path).href.replace(/\/+$/, '').normalize('NFC');
   return String(path || '')
     .replace(/\//g, '\\')
     .replace(/\\+$/, '')
@@ -754,9 +764,23 @@ async function extractArchiveTo(file, destination, password, options) {
   const refreshAfter = opts.refreshAfter !== false;
   const report = error => {
     if (silent) return String(error);
-    alert(error);
+    alert(String(error));
     return null;
   };
+  let overwrite = 'rename';
+  try {
+    if (await call('path_exists', { path: destination })) {
+      const existing = await listPathEntries(destination, '');
+      if (existing.length) {
+        overwrite = await new Promise(resolve => {
+          showConflictDialog(file.name, destination, file.path, destination, choice => resolve(choice));
+          const message = document.querySelector('#conflict-content .conflict-message');
+          if (message) message.textContent = t('archive.overwritePrompt');
+        });
+        if (overwrite === 'cancel') return null;
+      }
+    }
+  } catch (error) { return report(error); }
   let currentPassword = password || null;
   let passwordVerified = false;
   if (!currentPassword) {
@@ -779,13 +803,14 @@ async function extractArchiveTo(file, destination, password, options) {
     });
     try {
       const ext = (file.extension || '').toLowerCase();
-      if (ext === 'zip') {
+      if (ext === 'zip' || opts.entryPath) {
         await call('extract_archive', {
           path: file.path,
           dest: destination,
-          entryPath: null,
+          entryPath: opts.entryPath || null,
           password: currentPassword,
           operationId: taskId,
+          overwrite,
         });
       } else {
         await call('extract_7z', {
@@ -793,6 +818,7 @@ async function extractArchiveTo(file, destination, password, options) {
           dest: destination,
           password: currentPassword,
           operationId: taskId,
+          overwrite,
         });
       }
       completeOperationTask(taskId);
@@ -1893,7 +1919,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
         break;
       }
       const src = paths[sourceIndex];
-      const sourceName = String(src).split(/[\\/]/).pop();
+      const sourceName = pathLeaf(src);
       const originalTarget = joinFolderPath(destination, sourceName);
       const sameTarget = windowsPathKey(src) === windowsPathKey(originalTarget);
       if (operation === 'move' && sameTarget) continue;

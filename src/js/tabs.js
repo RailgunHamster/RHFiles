@@ -517,7 +517,8 @@ function _applySavedScroll(tab) {
 
 // --- background refresh (keeps cached entries fresh without blocking UI) ---
 async function _refreshTabInBackground(tab) {
-  if (tab.path === "home://") return;
+  if (tab.path === "home://" || tab.archivePath) return;
+  const requestedPath = tab.path;
   const token = (tab._refreshToken || 0) + 1;
   tab._refreshToken = token;
   if (tab.id === G.activeTab && tab._loaded !== true && !(tab.entries || []).length) {
@@ -529,7 +530,7 @@ async function _refreshTabInBackground(tab) {
       10000,
       t('nav.folderLoadTimedOut'),
     );
-    if (token !== tab._refreshToken) return;
+    if (token !== tab._refreshToken || tab.path !== requestedPath) return;
     entries = entries.filter(entryVisible);
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
     const wasLoaded = tab._loaded === true;
@@ -560,7 +561,7 @@ async function _refreshTabInBackground(tab) {
     }
     _refreshTabMeta(tab, true);
   } catch (error) {
-    if (token !== tab._refreshToken) return;
+    if (token !== tab._refreshToken || tab.path !== requestedPath) return;
     tab._loaded = false;
     if (tab.id === G.activeTab) renderNavigationError(tab.path, error, false);
     if (typeof reportStartupIssue === 'function') reportStartupIssue('tab-background-refresh', error);
@@ -583,7 +584,7 @@ function _refreshTabMeta(tab, force) {
 function _entriesChanged(oldE, newE) {
   if (oldE.length !== newE.length) return true;
   for (let i = 0; i < oldE.length; i++) {
-    if (oldE[i].name !== newE[i].name) return true;
+    if (['path', 'name', 'size', 'modified_ts', 'modified', 'is_dir'].some(key => oldE[i][key] !== newE[i][key])) return true;
   }
   return false;
 }
@@ -865,6 +866,22 @@ function revealBreadcrumbTail(bc) {
 
 function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   const bc = document.getElementById(bcId || "breadcrumb");
+  if (typeof isFtpPath === 'function' && isFtpPath(path)) {
+    const url = new URL(path);
+    bc.replaceChildren();
+    let current = 'ftp://' + url.host + '/';
+    const segments = [url.host, ...url.pathname.split('/').filter(Boolean)];
+    segments.forEach((segment, index) => {
+      if (index) current = current.replace(/\/$/, '') + '/' + segment;
+      const destination = current;
+      const item = document.createElement('span');
+      item.className = 'bc-item';
+      item.textContent = index ? decodeURIComponent(segment) : 'FTP: ' + segment;
+      item.onclick = () => isRight ? rpNavigateTo(destination) : navigateTo(destination);
+      bc.appendChild(item);
+    });
+    return;
+  }
   if (path === "home://") {
     bc.innerHTML = `<span class="bc-item" data-path="home://">${t('nav.home')}</span><span class="breadcrumb-spacer"></span>`;
     const spacer = bc.querySelector(".breadcrumb-spacer");
@@ -1239,6 +1256,10 @@ function renderNavigationError(path, error, isRight) {
 }
 
 async function navigateTo(path, pushHistory) {
+  const navigatingTab = getTab();
+  navigatingTab._refreshToken = (navigatingTab._refreshToken || 0) + 1;
+  navigatingTab._archiveToken = (navigatingTab._archiveToken || 0) + 1;
+  navigatingTab.archivePath = null;
   if (typeof resetTypeSearch === 'function') resetTypeSearch();
   const navigationToken = ++_navigationToken;
   _searchRequestToken++;
@@ -1621,7 +1642,9 @@ async function runSearch(query) {
     _searchRunning = true;
     try {
         document.getElementById(statusId).textContent = t('status.searching');
-        const request = scopePath
+        const request = scopePath && isFtpPath(scopePath)
+          ? ftpEntries(scopePath).then(entries => entries.filter(entry => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())))
+          : scopePath
           ? call("search_recursive", { path: scopePath, query: fullQuery, maxResults: 500 })
           : call("quick_search", { query: fullQuery, maxResults: 500 });
         const results = await withTimeout(request, 12000, 'SEARCH_TIMEOUT|The search did not finish within 12 seconds');

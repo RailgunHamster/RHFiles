@@ -6,6 +6,8 @@
  *   node scripts/cdp-window.mjs dom                # outline of the live DOM
  *   node scripts/cdp-window.mjs shot out.png       # screenshot the window
  *   node scripts/cdp-window.mjs targets            # list windows/pages
+ *   node scripts/cdp-window.mjs drag ".file-name" ".tab" "#file-list"
+ *       # protocol-level primary-button drag; optional final drop selector
  *
  * Windows note: exporting WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS does NOT work —
  * wry always assigns CoreWebView2EnvironmentOptions::AdditionalBrowserArguments,
@@ -42,8 +44,10 @@ async function connect(target) {
   });
   let nextId = 1;
   const pending = new Map();
+  const events = [];
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
+    if (message.method === 'Input.dragIntercepted') events.push(message);
     if (message.id && pending.has(message.id)) {
       pending.get(message.id)(message);
       pending.delete(message.id);
@@ -54,7 +58,7 @@ async function connect(target) {
     pending.set(id, resolve);
     socket.send(JSON.stringify({ id, method, params: params || {} }));
   });
-  return { socket, send };
+  return { socket, send, events };
 }
 
 const list = await targets();
@@ -71,7 +75,7 @@ if (!main) {
   process.exit(2);
 }
 
-const { socket, send } = await connect(main);
+const { socket, send, events } = await connect(main);
 await send('Runtime.enable');
 
 if (command === 'eval') {
@@ -84,6 +88,45 @@ if (command === 'eval') {
   }
   const value = details?.result?.value;
   console.log(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+} else if (command === 'drag') {
+  const [sourceSelector, targetSelector, dropSelector] = rest;
+  const response = await send('Runtime.evaluate', {expression: `(() => {
+    const center = selector => { const element = document.querySelector(selector); if (!element) throw new Error('Missing drag target: ' + selector); const r = element.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; };
+    return [center(${JSON.stringify(sourceSelector)}), center(${JSON.stringify(targetSelector)})];
+  })()`, returnByValue:true});
+  const points = response.result?.result?.value;
+  if (!points) throw new Error('Unable to resolve drag targets');
+  const [from,to] = points;
+  await send('Input.setInterceptDrags', {enabled:true});
+  await send('Input.dispatchMouseEvent', {type:'mouseMoved', ...from});
+  await send('Input.dispatchMouseEvent', {type:'mousePressed', ...from, button:'left', buttons:1, clickCount:1});
+  try {
+    for (let step=1;step<=12 && !events.length;step++) {
+      await send('Input.dispatchMouseEvent', {type:'mouseMoved', x:from.x+(to.x-from.x)*step/12, y:from.y+(to.y-from.y)*step/12, button:'left', buttons:1});
+      await new Promise(resolve=>setTimeout(resolve,40));
+    }
+    for (let attempt=0;attempt<20 && !events.length;attempt++) await sleep(50);
+    const data = events.at(-1)?.params.data;
+    if (!data) throw new Error('The source did not start a browser drag');
+    const dispatch = async (type, point) => {
+      const reply = await send('Input.dispatchDragEvent', {type,...point,data});
+      if (reply.error) throw new Error(JSON.stringify(reply.error));
+    };
+    await dispatch('dragEnter',to);
+    for (let step=0;step<8;step++) { await dispatch('dragOver',to); await sleep(100); }
+    let destination = to;
+    if (dropSelector) {
+      const reply = await send('Runtime.evaluate', {expression:`(() => { const r=document.querySelector(${JSON.stringify(dropSelector)})?.getBoundingClientRect(); return r && {x:r.x+r.width/2,y:r.y+r.height/2}; })()`,returnByValue:true});
+      destination = reply.result?.result?.value;
+      if (!destination) throw new Error('Drop selector not found after hovering');
+    }
+    await dispatch('dragOver',destination);
+    await dispatch('drop',destination);
+  } finally {
+    await send('Input.dispatchMouseEvent', {type:'mouseReleased', ...to, button:'left', buttons:0, clickCount:1});
+    await send('Input.setInterceptDrags', {enabled:false});
+  }
+  console.log('Protocol drag/drop dispatched; verify the application result separately.');
 } else if (command === 'dom') {
   const response = await send('Runtime.evaluate', {
     expression: `(() => {

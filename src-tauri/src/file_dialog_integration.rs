@@ -1527,7 +1527,7 @@ fn monitor_picker() {
     MONITOR_RUNNING.store(true, Ordering::Release);
     let mut previous_foreground = 0usize;
     loop {
-        let enabled = lock_config().enabled;
+        let enabled = lock_config().enabled && crate::profile::owns_current_desktop();
         if !enabled {
             if ACTIVE_TARGET.swap(0, Ordering::AcqRel) != 0 {
                 emit_picker_state();

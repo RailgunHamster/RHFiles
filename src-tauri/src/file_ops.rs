@@ -395,12 +395,8 @@ pub struct OperationRecoveryReport {
     total_items: Option<usize>,
 }
 
-fn operation_journal_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Cannot locate operation journal: {error}"))?
-        .join("operation-journal");
+fn operation_journal_dir(_app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let directory = crate::profile::journal_dir()?;
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("Cannot create operation journal: {error}"))?;
     Ok(directory)
@@ -510,7 +506,9 @@ pub fn delete_files(
     cancel: tauri::State<'_, CancelFlag>,
 ) -> DeleteFilesOutcome {
     let operation_id = operation_id_or_legacy(operation_id);
-    let _ = cancel.reset(Some(&operation_id));
+    if let Err(error) = cancel.reset(Some(&operation_id)) {
+        return DeleteFilesOutcome { deleted: vec![], errors: vec![error], cancelled: false };
+    }
     let mut deleted = Vec::new();
     let mut errors = Vec::new();
     let mut cancelled = false;
@@ -701,7 +699,9 @@ pub fn delete_files_permanently(
     cancel: tauri::State<'_, CancelFlag>,
 ) -> DeleteFilesOutcome {
     let operation_id = operation_id_or_legacy(operation_id);
-    let _ = cancel.reset(Some(&operation_id));
+    if let Err(error) = cancel.reset(Some(&operation_id)) {
+        return DeleteFilesOutcome { deleted: vec![], errors: vec![error], cancelled: false };
+    }
     let mut deleted = Vec::new();
     let mut errors = Vec::new();
     let mut cancelled = false;
@@ -983,17 +983,28 @@ pub fn rename_file(path: String, new_name: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-pub fn new_folder(parent: String) -> Result<(), String> {
-    enumerator::create_new_file(&PathBuf::from(&parent), "folder", "")
+pub fn new_folder(parent: String) -> Result<String, String> {
+    for index in 0u32.. {
+        let name = if index == 0 { "New Folder".to_string() } else { format!("New Folder ({index})") };
+        let path = PathBuf::from(&parent).join(name);
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path.to_string_lossy().into_owned()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("Unable to allocate a folder name".into())
 }
 
 #[tauri::command(async)]
-pub fn copy_path(src: String, dest: String) -> Result<(), String> {
+pub fn copy_path(src: String, dest: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    let _operation = cancel.begin("copy")?;
     enumerator::copy_path(&PathBuf::from(&src), &PathBuf::from(&dest))
 }
 
 #[tauri::command(async)]
-pub fn move_path_cmd(src: String, dest: String) -> Result<(), String> {
+pub fn move_path_cmd(src: String, dest: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    let _operation = cancel.begin("move")?;
     enumerator::move_path(&PathBuf::from(&src), &PathBuf::from(&dest))
 }
 
@@ -1010,77 +1021,68 @@ fn remove_partial_copy(path: &std::path::Path) {
     }
 }
 
-fn copy_path_to_exact(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
-    if !src.exists() {
-        return Err(format!("Source does not exist: {}", src.display()));
+fn copy_path_to_exact(src: &Path, dest: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(src).map_err(|e| e.to_string())?;
+    if metadata.file_type().is_symlink() && src.is_dir() {
+        return Err(format!("Directory links cannot be copied recursively: {}", src.display()));
     }
-    if dest.exists() {
-        return Err(format!("Destination already exists: {}", dest.display()));
-    }
-    let parent = dest
-        .parent()
-        .ok_or_else(|| format!("Destination has no parent: {}", dest.display()))?;
+    let parent = dest.parent().ok_or_else(|| format!("Destination has no parent: {}", dest.display()))?;
     if !parent.is_dir() {
-        return Err(format!(
-            "Destination folder does not exist: {}",
-            parent.display()
-        ));
+        return Err(format!("Destination folder does not exist: {}", parent.display()));
+    }
+    if src.is_dir() {
+        let source_real = std::fs::canonicalize(src).map_err(|e| e.to_string())?;
+        let parent_real = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+        if parent_real.starts_with(source_real) {
+            return Err("Cannot copy a folder into itself".into());
+        }
     }
 
+    // Allocate the root atomically. Cleanup below is allowed only after we own
+    // this new path; a concurrent creator's existing destination is never removed.
     let result = if src.is_dir() {
-        fn copy_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
-            std::fs::create_dir(dest).map_err(|error| error.to_string())?;
-            for entry in std::fs::read_dir(src).map_err(|error| error.to_string())? {
-                let entry = entry.map_err(|error| error.to_string())?;
+        std::fs::create_dir(dest).map_err(|e| e.to_string())?;
+        fn copy_contents(src: &Path, dest: &Path) -> Result<(), String> {
+            for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
                 let source = entry.path();
                 let target = dest.join(entry.file_name());
+                if entry.file_type().map_err(|e| e.to_string())?.is_symlink() && source.is_dir() {
+                    return Err(format!("Directory links cannot be copied recursively: {}", source.display()));
+                }
                 if source.is_dir() {
-                    copy_dir(&source, &target)?;
+                    std::fs::create_dir(&target).map_err(|e| e.to_string())?;
+                    copy_contents(&source, &target)?;
                 } else {
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&target)
-                        .and_then(|mut output| {
-                            let mut input = std::fs::File::open(&source)?;
-                            std::io::copy(&mut input, &mut output)?;
-                            Ok(())
-                        })
-                        .map_err(|error| error.to_string())?;
-                    if let Ok(metadata) = std::fs::metadata(&source) {
-                        let _ = std::fs::set_permissions(&target, metadata.permissions());
-                    }
+                    let mut input = std::fs::File::open(&source).map_err(|e| e.to_string())?;
+                    let mut output = std::fs::OpenOptions::new().write(true).create_new(true)
+                        .open(&target).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
+                    drop(output);
+                    preserve_copy_metadata(&source, &target)?;
                 }
             }
-            Ok(())
+            preserve_copy_metadata(src, dest)
         }
-        copy_dir(src, dest)
+        copy_contents(src, dest)
     } else {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(dest)
-            .and_then(|mut output| {
-                let mut input = std::fs::File::open(src)?;
-                std::io::copy(&mut input, &mut output)?;
-                Ok(())
-            })
-            .map_err(|error| error.to_string())
-            .map(|_| {
-                if let Ok(metadata) = std::fs::metadata(src) {
-                    let _ = std::fs::set_permissions(dest, metadata.permissions());
-                }
-            })
+        let mut output = std::fs::OpenOptions::new().write(true).create_new(true)
+            .open(dest).map_err(|e| e.to_string())?;
+        let copied = (|| {
+            let mut input = std::fs::File::open(src).map_err(|e| e.to_string())?;
+            std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
+            Ok::<_, String>(())
+        })();
+        drop(output);
+        copied.and_then(|_| preserve_copy_metadata(src, dest))
     };
-
-    if result.is_err() {
-        remove_partial_copy(dest);
-    }
+    if result.is_err() { remove_partial_copy(dest); }
     result
 }
 
 #[tauri::command(async)]
-pub fn copy_path_exact(src: String, dest: String) -> Result<(), String> {
+pub fn copy_path_exact(src: String, dest: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    let _operation = cancel.begin("copy")?;
     copy_path_to_exact(&PathBuf::from(src), &PathBuf::from(dest))
 }
 
@@ -1123,12 +1125,14 @@ fn move_path_to_exact(source: &std::path::Path, target: &std::path::Path) -> Res
 }
 
 #[tauri::command(async)]
-pub fn move_path_exact(src: String, dest: String) -> Result<(), String> {
+pub fn move_path_exact(src: String, dest: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    let _operation = cancel.begin("move")?;
     move_path_to_exact(&PathBuf::from(src), &PathBuf::from(dest))
 }
 
 #[tauri::command(async)]
-pub fn move_paths_exact(moves: Vec<(String, String)>) -> Result<(), String> {
+pub fn move_paths_exact(moves: Vec<(String, String)>, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    let _operation = cancel.begin("move")?;
     let mut completed: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (src, dest) in moves {
         let source = PathBuf::from(src);
@@ -1190,9 +1194,7 @@ fn copy_path_streaming(
                 operation_id,
             )?;
         }
-        if let Ok(source_metadata) = std::fs::metadata(source) {
-            let _ = std::fs::set_permissions(target, source_metadata.permissions());
-        }
+        preserve_copy_metadata(source, target)?;
         progress.complete_entry();
         progress.emit("progress", Some(source), false);
         return Ok(());
@@ -1226,12 +1228,28 @@ fn copy_path_streaming(
     output
         .flush()
         .map_err(|error| format!("Cannot flush {}: {error}", target.display()))?;
-    if let Ok(source_metadata) = std::fs::metadata(source) {
-        let _ = std::fs::set_permissions(target, source_metadata.permissions());
-    }
+    drop(output);
+    preserve_copy_metadata(source, target)?;
     progress.complete_entry();
     progress.emit("progress", Some(source), true);
     Ok(())
+}
+
+fn preserve_copy_metadata(source: &Path, target: &Path) -> Result<(), String> {
+    let metadata = std::fs::metadata(source).map_err(|e| e.to_string())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.access_mode(0x100).custom_flags(0x0200_0000); // FILE_WRITE_ATTRIBUTES; directories
+    }
+    let file = options.open(target).map_err(|e| e.to_string())?;
+    let mut times = std::fs::FileTimes::new();
+    if let Ok(modified) = metadata.modified() { times = times.set_modified(modified); }
+    if let Ok(accessed) = metadata.accessed() { times = times.set_accessed(accessed); }
+    file.set_times(times).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(target, metadata.permissions()).map_err(|e| e.to_string())
 }
 
 fn emit_initial_operation(
@@ -1955,6 +1973,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn new_folder_returns_exact_unique_path_and_preserves_old_directory() {
+        let root = std::env::temp_dir().join(format!("rhfiles-new-folder-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(root.join("New Folder")).unwrap();
+        std::fs::write(root.join("New Folder/user.txt"), b"keep").unwrap();
+        let created = new_folder(root.to_string_lossy().into()).unwrap();
+        assert_eq!(PathBuf::from(created), root.join("New Folder (1)"));
+        assert_eq!(std::fs::read(root.join("New Folder/user.txt")).unwrap(), b"keep");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copied_files_and_directories_preserve_modification_time() {
+        let root = std::env::temp_dir().join(format!("rhfiles-copy-times-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("source"); let target = root.join("target");
+        std::fs::write(&source, b"data").unwrap();
+        std::fs::write(&target, b"data").unwrap();
+        let modified = UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        std::fs::File::options().write(true).open(&source).unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();
+        preserve_copy_metadata(&source, &target).unwrap();
+        assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), modified);
+        let a = root.join("a"); let b = root.join("b");
+        std::fs::create_dir(&a).unwrap(); std::fs::create_dir(&b).unwrap();
+        preserve_copy_metadata(&a, &b).unwrap();
+        assert_eq!(std::fs::metadata(&a).unwrap().modified().unwrap(), std::fs::metadata(&b).unwrap().modified().unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn same_file_is_detected_across_windows_path_casing() {
         let root = std::env::temp_dir().join(format!(
             "rhfiles-same-path-{}-{}",
@@ -2011,27 +2059,37 @@ mod tests {
         std::fs::write(&target, b"target").unwrap();
 
         assert!(
-            move_path_exact(
-                source.to_string_lossy().into_owned(),
-                target.to_string_lossy().into_owned()
-            )
+            move_path_to_exact(&source, &target)
             .is_err()
         );
         assert_eq!(std::fs::read(&source).unwrap(), b"source");
         assert_eq!(std::fs::read(&target).unwrap(), b"target");
 
         std::fs::remove_file(&target).unwrap();
-        move_path_exact(
-            source.to_string_lossy().into_owned(),
-            target.to_string_lossy().into_owned(),
-        )
+        move_path_to_exact(&source, &target)
         .unwrap();
-        move_path_exact(
-            target.to_string_lossy().into_owned(),
-            source.to_string_lossy().into_owned(),
-        )
+        move_path_to_exact(&target, &source)
         .unwrap();
         assert_eq!(std::fs::read(&source).unwrap(), b"source");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exact_copy_preserves_timestamps_and_rejects_recursion_without_touching_existing_data() {
+        let root = std::env::temp_dir().join(format!("rhfiles-exact-copy-{}", std::process::id()));
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("data.txt"), b"source").unwrap();
+        let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1234567890);
+        std::fs::OpenOptions::new().write(true).open(source.join("data.txt")).unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(timestamp)).unwrap();
+        let target = root.join("target");
+        copy_path_to_exact(&source, &target).unwrap();
+        assert_eq!(std::fs::metadata(target.join("data.txt")).unwrap().modified().unwrap(), timestamp);
+        assert!(copy_path_to_exact(&source, &source.join("child")).is_err());
+        assert!(!source.join("child").exists());
+        assert!(copy_path_to_exact(&source, &target).is_err());
+        assert_eq!(std::fs::read(target.join("data.txt")).unwrap(), b"source");
         std::fs::remove_dir_all(root).unwrap();
     }
 

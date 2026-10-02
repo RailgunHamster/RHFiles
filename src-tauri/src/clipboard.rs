@@ -69,7 +69,7 @@ mod native {
     /// The descriptor struct is packed, so field access goes through raw
     /// pointers instead of references.
     fn descriptor_file_name(descriptor: &FILEDESCRIPTORW) -> String {
-        let base = unsafe { ptr::addr_of!((*descriptor).cFileName) as *const u16 };
+        let base = ptr::addr_of!((*descriptor).cFileName) as *const u16;
         let mut units = Vec::with_capacity(260);
         unsafe {
             for index in 0..260 {
@@ -105,6 +105,46 @@ mod native {
         direct
     }
 
+    fn descriptor_components(name: &str) -> Result<Vec<String>, String> {
+        let normalized = name.replace('\\', "/");
+        let components: Vec<String> = normalized.split('/').map(str::to_string).collect();
+        if components.iter().any(|s| s.is_empty() || s == "." || s == ".." ||
+            s.ends_with(['.', ' ']) || s.contains([':', '\0', '*', '?', '"', '<', '>', '|'])) {
+            return Err(format!("Invalid remote clipboard path: {name}"));
+        }
+        Ok(components)
+    }
+
+    struct VirtualPasteProgress<'a> {
+        app: &'a tauri::AppHandle,
+        id: &'a str,
+        bytes: u64,
+        total: u64,
+        completed: usize,
+        count: usize,
+        start: Instant,
+        last_emit: Instant,
+    }
+
+    impl VirtualPasteProgress<'_> {
+        fn check(&self) -> Result<(), String> {
+            if self.app.state::<CancelFlag>().is_cancelled(Some(self.id))? { Err("Cancelled".into()) } else { Ok(()) }
+        }
+        fn emit(&mut self, path: &Path, force: bool) {
+            if !force && self.last_emit.elapsed() < Duration::from_millis(100) { return; }
+            self.last_emit = Instant::now();
+            let speed = (self.bytes as f64 / self.start.elapsed().as_secs_f64().max(0.001)) as u64;
+            let percentage = if self.total > 0 { (self.bytes.saturating_mul(100) / self.total).min(99) } else { 0 };
+            let _ = self.app.emit("op-progress", serde_json::json!({
+                "operationId": self.id, "operation": "copy", "status": "progress",
+                "src": path.to_string_lossy(), "dest": path.to_string_lossy(),
+                "bytesTransferred": self.bytes, "totalBytes": self.total, "speed": speed,
+                "percentage": percentage, "entriesCompleted": self.completed, "totalEntries": self.count,
+                "etaSeconds": if speed > 0 { self.total.saturating_sub(self.bytes) / speed } else { 0 }
+            }));
+        }
+    }
+
     /// Streams one virtual clipboard file into `target` through the
     /// FileContents format exposed by Remote Desktop and similar hosts.
     unsafe fn write_descriptor_stream(
@@ -112,6 +152,7 @@ mod native {
         contents_format: u32,
         index: i32,
         target: &Path,
+        progress: &mut VirtualPasteProgress<'_>,
     ) -> Result<(), String> {
         let request = FORMATETC {
             cfFormat: contents_format as u16,
@@ -122,18 +163,22 @@ mod native {
         };
         let mut medium = unsafe { data_object.GetData(&request) }
             .map_err(|error| format!("Unable to open the remote file stream: {error}"))?;
-        if medium.tymed != TYMED_ISTREAM.0 as u32 || (*medium.u.pstm).is_none() {
+        if medium.tymed != TYMED_ISTREAM.0 as u32 || unsafe { (*medium.u.pstm).is_none() } {
             unsafe { ReleaseStgMedium(&mut medium) };
             return Err("The remote clipboard did not provide file contents".to_string());
         }
-        let stream = (*medium.u.pstm).clone()
+        let stream = unsafe { (*medium.u.pstm).clone() }
             .ok_or_else(|| "The remote clipboard did not provide file contents".to_string())?;
+        let mut created = false;
         let outcome = (|| -> Result<(), String> {
             use std::io::Write;
-            let mut file = std::fs::File::create(target)
+            progress.check()?;
+            let mut file = std::fs::OpenOptions::new().create_new(true).write(true).open(target)
                 .map_err(|error| format!("Cannot create {}: {error}", target.display()))?;
+            created = true;
             let mut buffer = vec![0u8; 1024 * 512];
             loop {
+                progress.check()?;
                 let mut read = 0u32;
                 let status =
                     unsafe { stream.Read(buffer.as_mut_ptr().cast(), buffer.len() as u32, Some(&mut read)) };
@@ -145,9 +190,13 @@ mod native {
                 }
                 file.write_all(&buffer[..read as usize])
                     .map_err(|error| format!("Cannot write {}: {error}", target.display()))?;
+                progress.bytes += read as u64;
+                progress.emit(target, false);
             }
+            file.flush().map_err(|e| e.to_string())?;
             Ok(())
         })();
+        if outcome.is_err() && created { let _ = std::fs::remove_file(target); }
         drop(stream);
         unsafe { ReleaseStgMedium(&mut medium) };
         outcome
@@ -159,6 +208,8 @@ mod native {
     pub fn paste_file_group_descriptors(
         data_object: &windows::Win32::System::Com::IDataObject,
         destination: &str,
+        operation_id: &str,
+        app: &tauri::AppHandle,
     ) -> Result<usize, String> {
         let descriptor_format = register_format(FILE_DESCRIPTOR_W);
         let contents_format = register_format(FILE_CONTENTS);
@@ -207,20 +258,32 @@ mod native {
             ));
         }
         let mut pasted = 0usize;
+        let mut roots = std::collections::HashMap::<String, PathBuf>::new();
+        let total = descriptors.iter()
+            .filter(|d| d.dwFlags & windows::Win32::UI::Shell::FD_FILESIZE.0 as u32 != 0)
+            .filter(|d| d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 == 0)
+            .fold(0u64, |sum, d| sum.saturating_add(((d.nFileSizeHigh as u64) << 32) | d.nFileSizeLow as u64));
+        let mut progress = VirtualPasteProgress { app, id: operation_id, bytes: 0, total, completed: 0,
+            count: descriptors.len(), start: Instant::now(), last_emit: Instant::now() };
         for (index, descriptor) in descriptors.iter().enumerate() {
+            progress.check()?;
             let name = descriptor_file_name(descriptor);
-            if name.trim().is_empty() || name.contains("..") {
-                continue;
-            }
-            let target = unique_destination_path(&destination_path, &name);
+            let parts = descriptor_components(&name)?;
+            let root = roots.entry(parts[0].to_lowercase()).or_insert_with(|| unique_destination_path(&destination_path, &parts[0]));
+            let target = parts.iter().skip(1).fold(root.clone(), |p, part| p.join(part));
+            progress.emit(&target, true);
             if descriptor.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0 {
                 std::fs::create_dir_all(&target)
                     .map_err(|error| format!("Cannot create {name}: {error}"))?;
                 pasted += 1;
+                progress.completed += 1;
                 continue;
             }
-            unsafe { write_descriptor_stream(data_object, contents_format, index as i32, &target)? };
+            if let Some(parent) = target.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+            unsafe { write_descriptor_stream(data_object, contents_format, index as i32, &target, &mut progress)? };
             pasted += 1;
+            progress.completed += 1;
+            progress.emit(&target, true);
         }
         if pasted == 0 {
             return Err("The remote clipboard did not contain any files".to_string());
@@ -758,7 +821,7 @@ mod native {
         };
         let has_hdrop = unsafe { data_object.QueryGetData(&hdrop_probe) }.is_ok();
         if !has_hdrop && registered_format_available(FILE_DESCRIPTOR_W) {
-            paste_file_group_descriptors(&data_object, &destination)?;
+            paste_file_group_descriptors(&data_object, &destination, &operation_id, &app)?;
             return Ok(WindowsFilePasteResult {
                 aborted: false,
                 moved: false,
@@ -841,6 +904,14 @@ mod native {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn descriptor_paths_preserve_structure_and_reject_traversal() {
+            assert_eq!(descriptor_components(r"Folder\child\a..txt").unwrap(), vec!["Folder", "child", "a..txt"]);
+            for invalid in ["../a", "a/../b", "/root", "C:\\a", "a//b", "a/./b", "a:stream"] {
+                assert!(descriptor_components(invalid).is_err(), "{invalid}");
+            }
+        }
 
         #[test]
         fn preferred_drop_effect_parser_requires_four_bytes() {

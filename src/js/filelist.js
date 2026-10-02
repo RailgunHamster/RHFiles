@@ -380,10 +380,12 @@ function focusFilePane(listOrId) {
 
 function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   const list = document.getElementById(listId);
+  list._thumbnailObserver?.disconnect();
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
   teardownVirtualList(list);
   clearFileListForRender(list);
+  if (typeof renderArchiveHeader === 'function') renderArchiveHeader(tabOrPane, list, !!isRight);
   list.classList.toggle("search-results", !!G.searchActive && !isRight);
   const header = list.closest('.content')?.querySelector('.file-header');
   if (header) header.classList.toggle('details-mode', G.layout === 'details');
@@ -501,7 +503,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
       if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); tabOrPane.lastIdx = fileIdx; renderFiles(tabOrPane, listId, null, null, isRight); }
       showContextMenu(e.clientX, e.clientY, isRight);
     });
-    row.draggable = true;
+    row.draggable = !file.archive_entry;
     row.addEventListener("dragstart", e => {
       prepareFileDragSelection(row, fileIdx, sel, tabOrPane, listId, isRight);
       setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, row);
@@ -615,7 +617,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
       prepareFileDragSelection(item, i, sel, tabOrPane, listId, isRight);
       setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item);
     });
-    item.draggable = true;
+    item.draggable = !file.archive_entry;
 
     let pathHtml = "";
     if (G.searchActive && file.path) {
@@ -702,7 +704,7 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
             showPathContextMenu(event.clientX, event.clientY, entry.path, entry.is_dir);
           }
         });
-        item.draggable = true;
+        item.draggable = !entry.archive_entry;
         item.addEventListener('dragstart', event => {
           if (rootIndex >= 0) {
             prepareFileDragSelection(item, rootIndex, sel, tabOrPane, listId, isRight);
@@ -737,6 +739,16 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
   const grid = document.createElement("div");
   grid.className = "thumbnail-grid";
   list.appendChild(grid);
+  const pending = new WeakMap();
+  const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(changes => {
+    for (const change of changes) {
+      if (!change.isIntersecting) continue;
+      const file = pending.get(change.target);
+      observer.unobserve(change.target);
+      if (file) loadThumbnail(file.path, change.target, file);
+    }
+  }, { root: list, rootMargin: '200px' }) : null;
+  list._thumbnailObserver = observer;
 
   entries.forEach((file, i) => {
     const isSelected = sel.has(i);
@@ -752,7 +764,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
       prepareFileDragSelection(item, i, sel, tabOrPane, listId, isRight);
       setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item);
     });
-    item.draggable = true;
+    item.draggable = !file.archive_entry;
 
     const ext = (file.extension || '').toLowerCase();
     const isImage = !file.is_dir && (_THUMB_IMAGE_EXT.has(ext) || _THUMB_VIDEO_EXT.has(ext));
@@ -766,7 +778,8 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
         thumbBox.innerHTML = `<img src="data:image/png;base64,${cached}" class="thumb-img" alt="">`;
       } else {
         thumbBox.innerHTML = `<div class="thumb-loading">${bigFileIcon(file)}</div>`;
-        loadThumbnail(file.path, thumbBox, file);
+        if (observer) { pending.set(thumbBox, file); observer.observe(thumbBox); }
+        else queueMicrotask(() => loadThumbnail(file.path, thumbBox, file));
       }
     } else {
       thumbBox.innerHTML = bigFileIcon(file);
@@ -798,21 +811,50 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
   });
 }
 
+const _thumbnailPending = new Map();
+const _thumbnailQueue = [];
+let _thumbnailWorkers = 0;
+const THUMBNAIL_CONCURRENCY = 3;
+
 function loadThumbnail(path, container, file) {
-  call("get_thumbnail", {
-    path,
-    size: 128,
-    configuredFfmpegPath: String((G.settings && G.settings.ffmpegPath) || '').trim() || null,
-  }).then(b64 => {
-    if (b64) {
-      _thumbCache.set(thumbnailCacheKey(file), b64);
-      container.innerHTML = `<img src="data:image/png;base64,${b64}" class="thumb-img" alt="">`;
-    } else {
-      container.innerHTML = bigFileIcon(file);
-    }
-  }).catch(() => {
-    container.innerHTML = bigFileIcon(file);
-  });
+  const key = thumbnailCacheKey(file);
+  let work = _thumbnailPending.get(key);
+  if (!work) {
+    work = {key, path, file, containers: []};
+    _thumbnailPending.set(key, work);
+    _thumbnailQueue.push(work);
+  }
+  work.containers.push(container);
+  pumpThumbnailQueue();
+}
+
+function pumpThumbnailQueue() {
+  while (_thumbnailWorkers < THUMBNAIL_CONCURRENCY && _thumbnailQueue.length) {
+    const work = _thumbnailQueue.shift();
+    work.containers = work.containers.filter(node => node.isConnected);
+    if (!work.containers.length) { _thumbnailPending.delete(work.key); continue; }
+    _thumbnailWorkers++;
+    call('get_thumbnail', {
+      path: work.path, size: 128,
+      configuredFfmpegPath: String(G.settings?.ffmpegPath || '').trim() || null,
+    }).then(b64 => {
+      if (b64) {
+        _thumbCache.set(work.key, b64);
+        while (_thumbCache.size > 256) _thumbCache.delete(_thumbCache.keys().next().value);
+      }
+      for (const node of work.containers) {
+        if (node.isConnected) node.innerHTML = b64
+          ? `<img src="data:image/png;base64,${b64}" class="thumb-img" alt="">`
+          : bigFileIcon(work.file);
+      }
+    }).catch(() => {
+      for (const node of work.containers) if (node.isConnected) node.innerHTML = bigFileIcon(work.file);
+    }).finally(() => {
+      _thumbnailPending.delete(work.key);
+      _thumbnailWorkers--;
+      pumpThumbnailQueue();
+    });
+  }
 }
 
 function handleRowClick(e, index, sel, tabOrPane, isRight) {

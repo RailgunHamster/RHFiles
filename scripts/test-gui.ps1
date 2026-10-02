@@ -20,6 +20,7 @@ if (-not $NoBuild) {
     cargo build --manifest-path (Join-Path $ProjectRoot "src-tauri\Cargo.toml") 2>&1 | ForEach-Object {
         if ($_ -match "^error") { Write-Host $_ -ForegroundColor Red }
     }
+    if ($LASTEXITCODE -ne 0) { throw 'RHFiles build failed; refusing to test an older executable.' }
     Write-Host "Build done." -ForegroundColor Green
 } else {
     Write-Host "`n[1/3] Skipping build (-NoBuild)" -ForegroundColor Gray
@@ -147,5 +148,6 @@ if (-not $KeepOpen -and $isVelopackLauncher) {
     }
 }
 
-if ($testResults -and [int]$testResults.failed -gt 0) { exit 1 }
+if (-not $testResults -or $testResults.error -or $testResults.partial -or [int]$testResults.total -le 0 -or
+    [int]$testResults.failed -gt 0 -or [int]$testResults.passed -ne [int]$testResults.total) { exit 1 }
 exit 0

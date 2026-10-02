@@ -106,6 +106,7 @@ pub fn extract_archive(
     entry_path: Option<String>,
     password: Option<String>,
     operation_id: Option<String>,
+    overwrite: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
@@ -126,20 +127,37 @@ pub fn extract_archive(
         &operation_id,
         &app,
         &cancel,
+        overwrite.as_deref(),
     )
 }
 
 #[tauri::command(async)]
-pub fn create_archive(sources: Vec<String>, dest: String) -> Result<(), String> {
+pub fn create_archive(sources: Vec<String>, dest: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    let _operation = cancel.begin("compress")?;
+    write_archive(sources, dest)
+}
+
+fn write_archive(sources: Vec<String>, dest: String) -> Result<(), String> {
     let dest_path = PathBuf::from(&dest);
-    let file = std::fs::File::create(&dest_path).map_err(|e| e.to_string())?;
+    let parent = dest_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    for src in &sources {
+        if Path::new(src).is_dir() && parent.starts_with(std::fs::canonicalize(src).map_err(|e| e.to_string())?) {
+            return Err("The output archive must be outside the selected folders".into());
+        }
+    }
+    let file = std::fs::OpenOptions::new().write(true).create_new(true).open(&dest_path).map_err(|e| e.to_string())?;
+    let result = (|| {
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     for src in &sources {
         let src_path = PathBuf::from(src);
         if src_path.is_dir() {
-            add_dir_to_zip(&mut zip_writer, &src_path, &src_path, &options)?;
+            let base = src_path.parent().ok_or("Cannot archive a filesystem root")?;
+            let name = src_path.file_name().ok_or("no filename")?.to_string_lossy();
+            zip_writer.add_directory(format!("{name}/"), options).map_err(|e| e.to_string())?;
+            add_dir_to_zip(&mut zip_writer, base, &src_path, &options)?;
         } else {
             let name = src_path.file_name().ok_or("no filename")?.to_string_lossy();
             zip_writer
@@ -150,7 +168,10 @@ pub fn create_archive(sources: Vec<String>, dest: String) -> Result<(), String> 
         }
     }
     zip_writer.finish().map_err(|e| e.to_string())?;
-    Ok(())
+    Ok::<_, String>(())
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&dest_path); }
+    result
 }
 
 fn add_dir_to_zip(
@@ -162,6 +183,9 @@ fn add_dir_to_zip(
     for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
+        if entry.file_type().map_err(|e| e.to_string())?.is_symlink() {
+            return Err(format!("Directory links cannot be archived recursively: {}", path.display()));
+        }
         let relative = path.strip_prefix(base).map_err(|e| e.to_string())?;
         let name = relative.to_string_lossy().replace("\\", "/");
         if path.is_dir() {
@@ -315,6 +339,7 @@ fn build_7z_extract_args(
     }
     args.push(format!("-o{dest}"));
     args.push("-y".to_string());
+    args.push("-aou".to_string()); // Safe by default: never overwrite without an explicit choice.
     args.push(match password {
         Some(password) => format!("-p{password}"),
         None => "-p".to_string(),
@@ -383,11 +408,19 @@ fn run_7z_extraction(
     operation_id: &str,
     app: &tauri::AppHandle,
     cancel: &CancelFlag,
+    overwrite: Option<&str>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     emit_extract_progress(app, operation_id, archive, dest, 0, 0, 0, 0, "progress");
     let mut command = std::process::Command::new(exe);
-    command.args(build_7z_extract_args(archive, dest, entry, password));
+    let mut args = build_7z_extract_args(archive, dest, entry, password);
+    args.retain(|arg| !arg.starts_with("-ao"));
+    args.push(match overwrite {
+        Some("replace") => "-aoa",
+        Some("skip") => "-aos",
+        _ => "-aou",
+    }.to_string());
+    command.args(args);
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -557,6 +590,7 @@ pub fn extract_7z(
     dest: String,
     password: Option<String>,
     operation_id: Option<String>,
+    overwrite: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
@@ -576,11 +610,13 @@ pub fn extract_7z(
         &operation_id,
         &app,
         &cancel,
+        overwrite.as_deref(),
     )
 }
 
 #[tauri::command(async)]
-pub fn create_7z(sources: Vec<String>, archive: String) -> Result<(), String> {
+pub fn create_7z(sources: Vec<String>, archive: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
+    let _operation = cancel.begin("compress")?;
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
     let mut cmd = std::process::Command::new(&exe);
     cmd.args(["a", &archive, "-mx=5"]);
@@ -620,6 +656,52 @@ mod tests {
     fn parses_7z_progress_lines() {
         assert_eq!(percentage_from_7z_line(" 37% 12 - file.txt"), Some(37));
         assert_eq!(percentage_from_7z_line("Everything is Ok"), None);
+    }
+
+    #[test]
+    fn zip_preserves_root_folders_empty_folders_and_duplicate_child_names() {
+        let dir = test_dir("folder-layout");
+        let a = dir.join("A"); let b = dir.join("B"); let empty = dir.join("Empty");
+        for path in [&a, &b, &empty] { std::fs::create_dir_all(path).unwrap(); }
+        std::fs::write(a.join("same.txt"), b"A").unwrap();
+        std::fs::write(b.join("same.txt"), b"B").unwrap();
+        let zip = dir.join("folders.zip");
+        super::write_archive(vec![a, b, empty].iter().map(|p| p.to_string_lossy().into()).collect(), zip.to_string_lossy().into()).unwrap();
+        let archive = zip::ZipArchive::new(std::fs::File::open(&zip).unwrap()).unwrap();
+        let names = archive.file_names().collect::<Vec<_>>();
+        for name in ["A/", "A/same.txt", "B/", "B/same.txt", "Empty/"] { assert!(names.contains(&name)); }
+        drop(archive);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_zip_creation_removes_only_its_own_partial_output() {
+        let dir = test_dir("failed-zip");
+        let zip = dir.join("test.zip");
+        assert!(super::write_archive(vec![dir.join("missing").to_string_lossy().into()], zip.to_string_lossy().into()).is_err());
+        assert!(!zip.exists());
+        std::fs::write(&zip, b"existing").unwrap();
+        assert!(super::write_archive(vec![], zip.to_string_lossy().into()).is_err());
+        assert_eq!(std::fs::read(&zip).unwrap(), b"existing");
+        assert!(super::write_archive(vec![dir.to_string_lossy().into()], dir.join("recursive.zip").to_string_lossy().into()).is_err());
+        assert!(!dir.join("recursive.zip").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn default_extraction_keeps_existing_file() {
+        let Some(exe) = find_7z() else { return; };
+        let dir = test_dir("no-silent-overwrite");
+        let source = dir.join("data.txt"); std::fs::write(&source, b"archive").unwrap();
+        let zip = dir.join("data.zip");
+        super::write_archive(vec![source.to_string_lossy().into()], zip.to_string_lossy().into()).unwrap();
+        let dest = dir.join("out"); std::fs::create_dir(&dest).unwrap();
+        std::fs::write(dest.join("data.txt"), b"user edit").unwrap();
+        let status = std::process::Command::new(exe).args(build_7z_extract_args(&zip.to_string_lossy(), &dest.to_string_lossy(), None, None)).output().unwrap();
+        assert!(status.status.success());
+        assert_eq!(std::fs::read(dest.join("data.txt")).unwrap(), b"user edit");
+        assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -676,6 +758,7 @@ mod tests {
                 "a.zip",
                 "-oD:\\out",
                 "-y",
+                "-aou",
                 "-p",
                 "-bsp1",
                 "-bb0",
@@ -684,7 +767,7 @@ mod tests {
         );
         let with_entry = build_7z_extract_args("a.zip", "D:\\out", Some("dir/file.txt"), None);
         assert_eq!(with_entry[2], "dir/file.txt");
-        assert_eq!(with_entry[5], "-p");
+        assert!(with_entry.contains(&"-p".to_string()));
         let with_password = build_7z_extract_args(
             "a.zip",
             "D:\\out",

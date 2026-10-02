@@ -93,7 +93,9 @@ pub async fn ftp_download(
     local_path: String,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation = cancel.begin("ftp-download")?;
     use suppaftp::FtpStream;
     let port: u16 = if host.contains(':') {
         host.split(':')
@@ -120,10 +122,11 @@ pub async fn ftp_download(
     let mut reader = ftp
         .retr_as_stream(&filename)
         .map_err(|e| format!("RETR: {}", e))?;
-    let mut file = std::fs::File::create(&local_path).map_err(|e| format!("Create file: {}", e))?;
-    std::io::copy(&mut reader, &mut file).map_err(|e| format!("Download: {}", e))?;
-    ftp.finalize_retr_stream(reader)
-        .map_err(|e| format!("Finalize: {}", e))?;
+    let mut file = std::fs::OpenOptions::new().create_new(true).write(true).open(&local_path).map_err(|e| format!("Create file: {}", e))?;
+    let result = std::io::copy(&mut reader, &mut file).map_err(|e| format!("Download: {e}"))
+        .and_then(|_| ftp.finalize_retr_stream(reader).map_err(|e| format!("Finalize: {e}")));
+    drop(file);
+    if let Err(error) = result { let _ = std::fs::remove_file(&local_path); return Err(error); }
     ftp.quit().ok();
     Ok(())
 }
@@ -133,9 +136,12 @@ pub async fn ftp_upload(
     host: String,
     local_path: String,
     remote_dir: String,
+    remote_name: Option<String>,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation = cancel.begin("ftp-upload")?;
     use suppaftp::FtpStream;
     let port: u16 = if host.contains(':') {
         host.split(':')
@@ -151,10 +157,12 @@ pub async fn ftp_upload(
     ftp.login(&user, &pass)
         .map_err(|e| format!("FTP login: {}", e))?;
     ftp.cwd(&remote_dir).map_err(|e| format!("CWD: {}", e))?;
-    let filename = std::path::Path::new(&local_path)
+    let filename = remote_name.unwrap_or_else(|| std::path::Path::new(&local_path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .unwrap_or_default());
+    if filename.contains(['/', '\\']) || filename == ".." { return Err("Invalid remote filename".into()); }
+    if ftp.size(&filename).is_ok() { return Err("Remote target already exists".into()); }
     let mut file = std::fs::File::open(&local_path).map_err(|e| format!("Open file: {}", e))?;
     ftp.put_file(&filename, &mut file)
         .map_err(|e| format!("STOR: {}", e))?;
@@ -169,7 +177,9 @@ pub async fn ftp_delete(
     is_dir: bool,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation = cancel.begin("ftp-delete")?;
     use suppaftp::FtpStream;
     let port: u16 = if host.contains(':') {
         host.split(':')
@@ -199,7 +209,9 @@ pub async fn ftp_mkdir(
     remote_path: String,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation = cancel.begin("ftp-mkdir")?;
     use suppaftp::FtpStream;
     let port: u16 = if host.contains(':') {
         host.split(':')
@@ -226,7 +238,9 @@ pub async fn ftp_rename(
     new_name: String,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation = cancel.begin("ftp-rename")?;
     use suppaftp::FtpStream;
     let port: u16 = if host.contains(':') {
         host.split(':')
@@ -248,7 +262,7 @@ pub async fn ftp_rename(
     let new_path = if parent.ends_with('/') {
         format!("{}{}", parent, new_name)
     } else {
-        format!("{}\\{}", parent, new_name)
+        format!("{}/{}", parent.replace('\\', "/"), new_name)
     };
     ftp.rename(&old_path, &new_path)
         .map_err(|e| format!("RNFR/RNTO: {}", e))?;

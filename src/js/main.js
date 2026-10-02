@@ -589,8 +589,13 @@ async function checkForUpdates(manual) {
     if (updateTask) updateTask.title = t('update.restarting');
     updateProgress({percentage:100, speed:0, totalBytes:0, bytesTransferred:0}, updateTaskId);
     try { saveTabState(); } catch (error) {}
+    if ([..._operationTasks.values()].some(task => task.id !== updateTaskId && task.status === 'running')) {
+      throw new Error(t('update.busy'));
+    }
     await call('apply_update', {source, proxy});
   } catch (error) {
+    if (String(error).includes('[update_other_instances]')) error = t('update.otherInstances');
+    else if (String(error).includes('[update_busy]')) error = t('update.busy');
     if (updateTaskId) failOperationTask(updateTaskId, error);
     _updateProgressTaskId = null;
     updateSettingsStatusText(null, error);

@@ -54,6 +54,10 @@ mod tests {
 pub fn with_browser_args<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
     builder: tauri::WebviewWindowBuilder<'a, R, M>,
 ) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    let builder = match crate::profile::webview_dir() {
+        Some(directory) => builder.data_directory(directory),
+        None => builder,
+    };
     match requested_browser_args() {
         Some(args) => builder.additional_browser_args(&args),
         None => builder,

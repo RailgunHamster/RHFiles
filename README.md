@@ -72,6 +72,14 @@ RHFiles includes Paper, Dark, Sand, Mist, Forest, and Slate themes. User theme p
 
 Settings can open this folder and reload changed themes immediately. Theme packs define a light/dark base and a validated set of CSS variables; an independent advanced-CSS override remains available for users who deliberately need unrestricted styling. See [Theme packs](docs/THEMES.md).
 
+## Virtual desktops and Windows accounts
+
+RHFiles binds each process to the Windows virtual desktop where it starts. Launching it again on that desktop activates its existing instance; launching it on another desktop starts an independent instance. Settings, tabs/window state, favorites, tags, recent items, user themes, and the WebView cache are isolated. Moving an existing window between desktops does not switch its profile underneath running tasks; open RHFiles on the destination desktop for that desktop's profile.
+
+The first desktop retains existing user data. Additional profiles use `%APPDATA%\RHFiles\desktops\<desktop-id>` and a separate WebView directory under `%LOCALAPPDATA%\RHFiles\desktops`. Settings → Data shows the exact directories for the current instance. Windows accounts already have separate AppData directories; the instance identifier is now account-specific as well. This isolates application state, not access to shared filesystem folders.
+
+The installation is shared across profiles. Installing an update requires all file tasks to finish and RHFiles instances on other desktops to exit; failures explain what must be closed. Checking/downloading an update does not force those instances to exit.
+
 ## Updates and release history
 
 Automatic checks run after startup, when Settings is opened, and hourly while the app remains open. Disabling automatic checks prevents those requests; manual checks still work. The client can display cumulative release notes from either GitHub or the selected home-server feed and retains bundled notes for offline use.

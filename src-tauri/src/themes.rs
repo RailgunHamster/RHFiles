@@ -19,12 +19,8 @@ pub struct ThemeDiscovery {
     errors: Vec<String>,
 }
 
-fn theme_directory() -> PathBuf {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("RHFiles")
-        .join("themes")
+fn theme_directory() -> Result<PathBuf, String> {
+    Ok(crate::profile::data_dir()?.join("themes"))
 }
 
 fn is_theme_file(path: &Path) -> bool {
@@ -34,7 +30,7 @@ fn is_theme_file(path: &Path) -> bool {
 
 #[tauri::command(async)]
 pub fn list_user_themes() -> Result<ThemeDiscovery, String> {
-    let directory = theme_directory();
+    let directory = theme_directory()?;
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let mut paths = std::fs::read_dir(&directory)
         .map_err(|error| error.to_string())?
@@ -81,7 +77,7 @@ pub fn list_user_themes() -> Result<ThemeDiscovery, String> {
 
 #[tauri::command]
 pub fn open_theme_folder() -> Result<String, String> {
-    let directory = theme_directory();
+    let directory = theme_directory()?;
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     std::process::Command::new("explorer.exe")
         .arg(&directory)

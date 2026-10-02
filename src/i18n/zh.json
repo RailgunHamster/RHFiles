@@ -1,4 +1,13 @@
 {
+  "archive.readOnly": "压缩包浏览为只读，请先解压项目，再修改或复制。",
+  "update.otherInstances": "请先关闭其他虚拟桌面上的 RHFiles 实例，再安装更新。",
+  "settings.desktopIsolation": "每个 Windows 账号、每个虚拟桌面使用独立的标签、设置、收藏和历史。在目标桌面启动 RHFiles 即可打开该桌面的实例。移动已有窗口不会切换其数据。",
+  "settings.profileDetails": "虚拟桌面：{desktop}\n数据目录：{data}\nWebView 数据：{webview}",
+  "ftp.reconnect": "请重新连接此 FTP 服务器。密码不会保存在地址中。",
+  "ftp.targetExists": "目标已存在，请先选择同名文件的处理方式。",
+  "ftp.serverCopyUnsupported": "暂不支持服务器之间直接传输，请先复制到本地文件夹。",
+  "ftp.localOnly": "此操作仅适用于本地文件，请先下载 FTP 项目。",
+  "archive.overwritePrompt": "目标文件夹不是空的。请选择如何处理压缩包中的同名文件；只有选择“替换”才会覆盖已有文件。",
   "_meta": { "name": "\u4e2d\u6587", "code": "zh" },
   "col.name": "\u540d\u79f0",
   "col.modified": "\u4fee\u6539\u65e5\u671f",

@@ -789,15 +789,9 @@ function showFtpDialog() {
 
 async function showFtpEntries(host, path, user, pass, entries) {
   G.ftpConnection = { host, path, user, pass };
-  const tab = getTab();
-  tab.entries = entries;
-  tab.sel.clear();
-  tab.lastIdx = -1;
-  tab.path = 'ftp://' + host + path;
-  document.getElementById('path-input').value = tab.path;
-  renderBreadcrumb(tab.path);
-  renderFiles(tab, 'file-list', 'status-count', 'status-selection');
-  updateStatus(tab, 'status-count', 'status-selection');
+  if (!G.ftpConnections) G.ftpConnections = new Map();
+  G.ftpConnections.set(new URL(ftpUrl(host, '/')).host.toLowerCase(), {host, user, pass});
+  await navigateTo(ftpUrl(host, path));
 }
 
 // --- MTP Devices ---

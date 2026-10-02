@@ -1,4 +1,13 @@
 {
+  "archive.readOnly": "Archive browsing is read-only. Extract the item before modifying or copying it.",
+  "update.otherInstances": "Close RHFiles on other virtual desktops before installing this update.",
+  "settings.desktopIsolation": "Each Windows account and virtual desktop has independent tabs, settings, favorites and history. Launch RHFiles on a desktop to open its instance. Moving an existing window does not change its profile.",
+  "settings.profileDetails": "Desktop: {desktop}\nData: {data}\nWebView: {webview}",
+  "ftp.reconnect": "Reconnect to this FTP server to continue. Passwords are not stored in the URL.",
+  "ftp.targetExists": "The destination already exists. Choose an overwrite policy before transferring.",
+  "ftp.serverCopyUnsupported": "Direct server-to-server transfers are not supported. Copy to a local folder first.",
+  "ftp.localOnly": "This action is only available for local files. Download the FTP item first.",
+  "archive.overwritePrompt": "The destination is not empty. Choose how to handle matching files in this archive. Existing files are only overwritten if you choose Replace.",
   "_meta": { "name": "English", "code": "en" },
   "col.name": "Name",
   "col.modified": "Date Modified",
