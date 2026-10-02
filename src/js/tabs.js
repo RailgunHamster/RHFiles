@@ -169,7 +169,7 @@ function _renderTabContent(tab) {
 function addTab(path, isRight) {
   if (isRight === undefined) isRight = G.dualOn && G.lastActivePane === 'right';
   if (isRight) return addRightTab(path);
-  path = path || "C:\\";
+  path = path || FS_ROOT;
   const t = { id: G.nextTabId++, path, history: [path], historyIdx: 0, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, _loaded: false };
   G.tabs.push(t);
   G.activeTab = t.id;
@@ -301,8 +301,8 @@ function restoreClosedTab() {
   const tabs = isRight ? G.rpTabs : G.tabs;
   const tab = {
     id: isRight ? G.nextRpTabId++ : G.nextTabId++,
-    path: snapshot.path || 'C:\\',
-    history: [...(snapshot.history || [snapshot.path || 'C:\\'])],
+    path: snapshot.path || FS_ROOT,
+    history: [...(snapshot.history || [snapshot.path || FS_ROOT])],
     entries: [],
     sel: new Set(),
     lastIdx: -1,
@@ -363,7 +363,7 @@ function closeTab(id, isRight) {
 }
 
 function addRightTab(path) {
-  path = path || G.rp?.path || getTab()?.path || 'C:\\';
+  path = path || G.rp?.path || getTab()?.path || FS_ROOT;
   const tab = { id:G.nextRpTabId++, path, history:[path], histIdx:0, entries:[], sel:new Set(), lastIdx:-1, sortF:'name', sortAsc:true, pinned:false, _loaded:false };
   G.rpTabs.push(tab);
   G.activeRpTab = tab.id;
@@ -893,7 +893,9 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
     return;
   }
   let parts, isUnc = false;
-  if (path.startsWith("\\\\")) {
+  if (IS_MAC) {
+    parts = ['/', ...path.split('/').filter(Boolean)];
+  } else if (path.startsWith("\\\\")) {
     isUnc = true;
     const withoutPrefix = path.substring(2);
     const slashIdx = withoutPrefix.indexOf("\\");
@@ -907,7 +909,9 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   }
   let html = "", accumulated = "";
   parts.forEach((part, i) => {
-    if (isUnc && i === 0) {
+    if (IS_MAC) {
+      accumulated = i === 0 ? '/' : accumulated.replace(/\/+$/, '') + '/' + part;
+    } else if (isUnc && i === 0) {
       accumulated = part;
     } else {
       accumulated += (accumulated && !accumulated.endsWith("\\") ? "\\" : "") + part;
@@ -966,6 +970,11 @@ function hideDropdown(dropdownId) {
 }
 
 function splitAddressQuery(query) {
+  if (IS_MAC) {
+    const raw = normalizeWindowsPathInput(query);
+    const idx = raw.lastIndexOf('/');
+    return { parent: idx < 0 ? '' : raw.slice(0, idx + 1), prefix: raw.slice(idx + 1), trailingSep: raw.endsWith('/') };
+  }
   const raw = String(query || '').replace(/\//g, '\\');
   if (!raw.trim()) return { parent: '', prefix: '', trailingSep: false };
   if (/^[A-Za-z]:\\?$/.test(raw.trim())) {
@@ -1076,7 +1085,7 @@ async function refreshAddressSuggestions(query, isRight, token) {
   const history = addressHistoryCandidates();
   const { parent } = splitAddressQuery(query);
   let childFolders = [];
-  if (parent && (/^[A-Za-z]:\\/.test(parent) || parent.startsWith('\\\\'))) {
+  if (parent && ((IS_MAC && parent.startsWith('/')) || /^[A-Za-z]:\\/.test(parent) || parent.startsWith('\\\\'))) {
     try {
       const listed = await listPathEntries(parent.replace(/\\+$/, '') || parent, '');
       childFolders = (listed || [])
@@ -1435,6 +1444,7 @@ let _searchRequestToken = 0;
 
 function getSearchFolderPath() {
   const path = getActivePaneState()?.path || '';
+  if (IS_MAC) return path.startsWith('/') ? path : null;
   return /^[A-Za-z]:\\/.test(path) || path.startsWith('\\\\') ? path : null;
 }
 
@@ -1694,7 +1704,7 @@ function homeDir(name) {
   const key = String(name || '').toLowerCase();
   const resolved = G.knownFolders && G.knownFolders[key];
   if (resolved) return resolved;
-  return (G.homeDirPath || "C:\\") + "\\" + name;
+  return joinFolderPath(G.homeDirPath || FS_ROOT, name);
 }
 
 function hideFileContent() {

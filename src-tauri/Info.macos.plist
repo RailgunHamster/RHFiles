@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>NSAppleEventsUsageDescription</key><string>RHFiles can ask Finder to display information about a selected file.</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Browse and manage files on your Desktop.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Browse and manage files in Documents.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>Browse and manage files in Downloads.</string>
+  <key>NSRemovableVolumesUsageDescription</key><string>Browse and manage files on removable disks.</string>
+  <key>NSNetworkVolumesUsageDescription</key><string>Browse and manage files on mounted network shares.</string>
+</dict></plist>

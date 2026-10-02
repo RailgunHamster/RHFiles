@@ -785,7 +785,7 @@ function diskUsageTargetPath(path) {
   const requested = path || getActivePaneState()?.path;
   if (!requested) return '';
   return requested === 'home://'
-    ? (G.homeDirPath || 'C:\\')
+    ? (G.homeDirPath || FS_ROOT)
     : normalizeWindowsPathInput(requested);
 }
 

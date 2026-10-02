@@ -54,6 +54,8 @@ mod tests {
 pub fn with_browser_args<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
     builder: tauri::WebviewWindowBuilder<'a, R, M>,
 ) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    #[cfg(target_os = "windows")]
+    let builder = builder.disable_drag_drop_handler();
     let builder = match crate::profile::webview_dir() {
         Some(directory) => builder.data_directory(directory),
         None => builder,
@@ -351,7 +353,6 @@ pub async fn open_new_window(
             // Windows. RHFiles uses HTML5 drag events for files and tabs, so
             // leaving it enabled makes every real file drag show the forbidden
             // cursor even though synthetic frontend tests pass.
-            .disable_drag_drop_handler()
             .title("RHFiles")
             .inner_size(1200.0, 800.0)
             .build()

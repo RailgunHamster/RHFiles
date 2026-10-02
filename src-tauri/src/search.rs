@@ -255,7 +255,7 @@ fn is_everything_window_running() -> bool {
 
 #[tauri::command]
 pub fn is_everything_available() -> bool {
-    find_ev_dll().is_some() && (is_everything_window_running() || find_everything_exe().is_some())
+    cfg!(windows) && find_ev_dll().is_some() && (is_everything_window_running() || find_everything_exe().is_some())
 }
 
 #[tauri::command(async)]
@@ -266,10 +266,11 @@ pub fn start_everything() -> Result<String, String> {
     let ev_exe = find_everything_exe().ok_or_else(|| {
         "Everything.exe not found. Place it next to the app executable.".to_string()
     })?;
-    let _child = std::process::Command::new(&ev_exe)
-        .arg("-startup")
-        .creation_flags(0x08000000)
-        .spawn()
+    let mut command = std::process::Command::new(&ev_exe);
+    command.arg("-startup");
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let _child = command.spawn()
         .map_err(|e| format!("Failed to start Everything: {}", e))?;
 
     for _ in 0..8 {
@@ -762,6 +763,8 @@ fn filesystem_search(
 
 #[tauri::command(async)]
 pub fn quick_search(query: String, max_results: usize) -> Result<Vec<FileInfo>, String> {
+    #[cfg(target_os = "macos")]
+    { return filesystem_search(Path::new(&std::env::var("HOME").map_err(|e| e.to_string())?), &query, max_results.min(5_000)); }
     run_ev_sdk_query(&query, max_results)
 }
 
@@ -771,6 +774,8 @@ pub fn search_recursive(
     query: String,
     max_results: usize,
 ) -> Result<Vec<FileInfo>, String> {
+    #[cfg(target_os = "macos")]
+    { return filesystem_search(Path::new(&path), &query, max_results.min(5_000)); }
     // Folder-scoped searches must feel immediate even on the first run of the
     // portable build. Start Everything opportunistically, but use the bounded
     // filesystem engine until IPC and the database are both ready.

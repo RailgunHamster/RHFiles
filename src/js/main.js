@@ -63,8 +63,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           call("get_env", { key: "USERPROFILE" }),
           1500,
           'Home folder lookup timed out',
-        ).catch(() => "C:\\");
-        return { home: home || "C:\\" };
+        ).catch(() => FS_ROOT);
+        return { home: home || FS_ROOT };
       }),
       withTimeout(call("get_window_label", {}), 2000, 'Window label timed out').catch(error => {
         reportStartupIssue('window-label', error);
@@ -72,7 +72,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }),
     ]);
     G.knownFolders = knownFolders || {};
-    G.homeDirPath = G.knownFolders.home || "C:\\";
+    G.homeDirPath = G.knownFolders.home || FS_ROOT;
     G.windowLabel = label || "main";
   }
 
@@ -101,7 +101,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (!saved) saved = loadTabState();
 
-  const startPath = G.homeDirPath || "C:\\";
+  const startPath = G.homeDirPath || FS_ROOT;
   if (saved && saved.tabs && saved.tabs.length > 0) {
     G.tabs = saved.tabs.map((st, i) => ({
       id: st.id || i, path: migrateLegacyKnownFolderPath(st.path || startPath),
@@ -153,7 +153,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (!initialPathLoaded) {
     try {
       initialPathLoaded = await withTimeout(
-        navigateTo("C:\\", false),
+        navigateTo(FS_ROOT, false),
         3000,
         "Fallback folder load timed out"
       );
@@ -211,8 +211,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   initQuickSearch();
   scheduleOptionalDiscovery();
   loadCloudProviders();
-  try { detectWSLDistros(); } catch(e) {}
-  try { detectWindowsLibraries(); } catch(e) {}
+  if (!IS_MAC) {
+    try { detectWSLDistros(); } catch(e) {}
+    try { detectWindowsLibraries(); } catch(e) {}
+  }
   startFileWatch();
   setupProgressListener();
   if (G.windowLabel === 'main' && typeof loadInterruptedOperationReports === 'function') {
@@ -373,6 +375,7 @@ const UPDATE_CHECK_STARTUP_DELAY_MS = 5000;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 function isAutomaticUpdateCheckEnabled() {
+  if (IS_MAC) return false; // macOS does not consume Windows Velopack feeds.
   return G.settings.autoUpdateEnabled !== false;
 }
 

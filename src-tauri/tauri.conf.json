@@ -51,13 +51,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
-    "resources": {
-      "thirdparty/everything.exe": "Everything.exe",
-      "thirdparty/everything/dll/Everything64.dll": "Everything64.dll",
-      "thirdparty/dust.exe": "dust.exe",
-      "thirdparty/dust-LICENSE.txt": "dust-LICENSE.txt"
-    },
+    "targets": "all",
     "icon": [
       "icons/rhfiles-icon-v4-32.png",
       "icons/rhfiles-icon-v4-128.png",

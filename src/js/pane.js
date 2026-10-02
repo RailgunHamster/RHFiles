@@ -605,7 +605,7 @@ function toggleDualPane(force) {
   const btn = document.getElementById("btn-dual");
   if (G.dualOn) {
     if (!G.rpInitialized) {
-      const initialRightPath = getTab()?.path === 'home://' ? (G.homeDirPath || 'C:\\') : (getTab()?.path || 'C:\\');
+      const initialRightPath = getTab()?.path === 'home://' ? (G.homeDirPath || FS_ROOT) : (getTab()?.path || FS_ROOT);
       G.rp.path = initialRightPath;
       G.rp.history = [initialRightPath];
       G.rp.histIdx = 0;

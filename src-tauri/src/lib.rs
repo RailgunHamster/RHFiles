@@ -1,19 +1,25 @@
 mod archive;
 mod clipboard;
+#[cfg_attr(target_os = "macos", path = "macos/cloud.rs")]
 mod cloud;
 mod db;
+#[cfg_attr(target_os = "macos", path = "macos/integration.rs")]
 mod file_dialog_integration;
 mod file_ops;
 mod media;
 mod network;
 mod profile;
 mod search;
+#[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]
 mod shell;
 mod system;
 mod themes;
 mod tray;
 mod types;
+#[cfg_attr(target_os = "macos", path = "macos/updates.rs")]
 mod updates;
+#[cfg(target_os = "macos")]
+mod macos;
 mod vcs;
 mod window;
 #[cfg(test)]
@@ -59,7 +65,7 @@ pub fn run() {
             if args.len() > 1 {
                 let mut path = args[1].clone();
                 if let Some(stripped) = path.strip_prefix("rhfiles://") {
-                    path = stripped.replace('/', "\\");
+                    path = if cfg!(windows) { stripped.replace('/', "\\") } else { format!("/{}", stripped.trim_start_matches('/')) };
                 }
                 let _ = app.emit("navigate-to-path", path);
             }
@@ -103,7 +109,6 @@ pub fn run() {
                                     &window_id,
                                     tauri::WebviewUrl::App("index.html".into()),
                                 )
-                                .disable_drag_drop_handler()
                                 .title("RHFiles")
                                 .inner_size(1200.0, 800.0)
                                 .min_inner_size(700.0, 450.0));
@@ -267,6 +272,11 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) { let _ = tray::show_main_window(app); }
+            let _ = (app, event);
+        });
 }

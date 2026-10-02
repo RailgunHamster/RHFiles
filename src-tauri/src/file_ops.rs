@@ -8,6 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
 fn tagged_fs_error(error: &std::io::Error) -> String {
+    #[cfg(windows)]
     let code = match error.raw_os_error() {
         Some(5 | 65 | 1326) => "permission_denied",
         Some(2 | 3) => "not_found",
@@ -21,6 +22,14 @@ fn tagged_fs_error(error: &std::io::Error) -> String {
             std::io::ErrorKind::NetworkUnreachable => "network_unreachable",
             _ => "io_error",
         },
+    };
+    #[cfg(not(windows))]
+    let code = match error.kind() {
+        std::io::ErrorKind::PermissionDenied => "permission_denied",
+        std::io::ErrorKind::NotFound => "not_found",
+        std::io::ErrorKind::TimedOut => "timed_out",
+        std::io::ErrorKind::WouldBlock => "busy",
+        _ => "io_error",
     };
     format!("RHFILES_FS_ERROR|{code}|{error}")
 }
@@ -296,6 +305,10 @@ impl<'a> OperationProgress<'a> {
 }
 
 fn validate_target_name(name: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return if name.is_empty() || matches!(name, "." | "..") || name.contains(['/', '\0']) {
+        Err(format!("Invalid destination name: {name}"))
+    } else { Ok(()) }; }
     if name.is_empty()
         || name == "."
         || name == ".."
@@ -317,6 +330,8 @@ fn validate_target_name(name: &str) -> Result<(), String> {
 }
 
 fn rename_without_replacing(source: &Path, target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return rhfiles_core::macos::rename_exclusive(source, target); }
     #[cfg(target_os = "windows")]
     unsafe {
         // Unlike std::fs::rename, MoveFileW never replaces a concurrently created
@@ -326,7 +341,7 @@ fn rename_without_replacing(source: &Path, target: &Path) -> Result<(), String> 
             &windows::core::HSTRING::from(target.as_os_str()),
         ).map_err(|e| e.to_string())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         if target.exists() { return Err("Destination already exists".into()); }
         std::fs::rename(source, target).map_err(|e| e.to_string())
@@ -498,7 +513,7 @@ pub fn get_drives() -> Result<Vec<DriveInfoSer>, String> {
                 d.free_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
                 d.total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
             ),
-            path: format!("{}\\", d.letter),
+            path: if cfg!(windows) { format!("{}\\", d.letter) } else { d.letter.clone() },
             free_bytes: d.free_bytes,
             total_bytes: d.total_bytes,
         })
@@ -993,6 +1008,8 @@ fn restore_recycled_files_windows(paths: Vec<String>) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn restore_recycled_files(paths: Vec<String>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return paths.iter().try_for_each(|path| rhfiles_core::macos::restore(Path::new(path))); }
     #[cfg(target_os = "windows")]
     {
         restore_recycled_files_windows(paths)
@@ -1647,6 +1664,8 @@ pub fn move_with_progress(
 
 #[tauri::command]
 pub fn get_env(key: String) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    if key == "USERPROFILE" { return std::env::var("HOME").ok(); }
     std::env::var(key).ok()
 }
 
@@ -1680,9 +1699,9 @@ fn known_folder_or_fallback(
 pub fn get_known_folders(app: tauri::AppHandle) -> KnownFolders {
     let paths = app.path();
     let home = paths.home_dir().unwrap_or_else(|_| {
-        std::env::var_os("USERPROFILE")
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("C:\\"))
+            .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" }))
     });
 
     KnownFolders {
@@ -1894,18 +1913,20 @@ pub fn get_dir_tree(path: String) -> Result<Vec<TreeEntry>, String> {
 
 #[tauri::command(async)]
 pub fn batch_rename(renames: Vec<(String, String)>) -> Result<Vec<String>, String> {
-    let mut completed = Vec::new();
+    for (_, name) in &renames { validate_target_name(name)?; }
+    let mut completed: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (old_path, new_name) in &renames {
+        validate_target_name(new_name)?;
         let p = PathBuf::from(old_path);
         let parent = p.parent().unwrap_or(&p);
         let new_path = parent.join(new_name);
         if p == new_path {
             continue;
         }
-        if let Err(error) = std::fs::rename(&p, &new_path) {
+        if let Err(error) = rename_without_replacing(&p, &new_path) {
             let mut rollback_errors = Vec::new();
             for (original, renamed) in completed.iter().rev() {
-                if let Err(rollback_error) = std::fs::rename(renamed, original) {
+                if let Err(rollback_error) = rename_without_replacing(renamed, original) {
                     rollback_errors.push(rollback_error.to_string());
                 }
             }
@@ -1976,6 +1997,11 @@ pub fn folder_size(path: String) -> Result<u64, String> {
 
 #[tauri::command(async)]
 pub fn create_shortcut(target: String, name: String, dest: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        validate_target_name(&name)?;
+        return std::os::unix::fs::symlink(&target, Path::new(&dest).join(name)).map_err(|e| e.to_string());
+    }
     #[cfg(target_os = "windows")]
     {
         let dest_path = PathBuf::from(&dest);

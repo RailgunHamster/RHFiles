@@ -6,6 +6,8 @@ use tokio::sync::mpsc;
 pub mod config;
 pub mod enumerator;
 pub mod operations;
+#[cfg(target_os = "macos")]
+pub mod macos;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FileEntry {

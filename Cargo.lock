@@ -4219,6 +4219,7 @@ name = "rhfiles-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "cc",
  "chrono",
  "digest 0.10.7",
  "image",
@@ -4226,6 +4227,7 @@ dependencies = [
  "notify",
  "rayon",
  "serde",
+ "serde_json",
  "sha1 0.10.6",
  "sha2 0.10.9",
  "tokio",
@@ -4239,6 +4241,7 @@ version = "0.1.64"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "libc",
  "libloading 0.8.9",
  "native-tls",
  "pinyin",

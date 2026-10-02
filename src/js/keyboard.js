@@ -60,6 +60,21 @@ const DEFAULT_SHORTCUTS = {
   "integration.quickSwitch":["Ctrl+G"],
 };
 
+if (IS_MAC) {
+  for (const action of Object.keys(DEFAULT_SHORTCUTS)) {
+    DEFAULT_SHORTCUTS[action] = DEFAULT_SHORTCUTS[action].map(key => key.replace(/^Ctrl\+/, 'Meta+'));
+  }
+  Object.assign(DEFAULT_SHORTCUTS, {
+    'nav.up': ['Meta+ArrowUp'], 'nav.back': ['Meta+['], 'nav.forward': ['Meta+]'],
+    'nav.open': ['Meta+ArrowDown', 'Enter'], 'nav.refresh': ['Meta+R'],
+    'file.delete': ['Meta+Backspace', 'Delete'], 'file.deletePermanently': ['Meta+Alt+Backspace', 'Shift+Delete'],
+    'file.newFolder': ['Meta+Shift+N'], 'file.newFile': ['Meta+Alt+N'],
+    'file.properties': ['Meta+I'], 'file.invertSelection': [], 'file.redo': ['Meta+Shift+Z'],
+    'view.hidden': ['Meta+Shift+.'], 'view.fullscreen': ['Ctrl+Meta+F'],
+    'tab.next': ['Ctrl+Tab'], 'tab.previous': ['Ctrl+Shift+Tab'], 'integration.quickSwitch': [],
+  });
+}
+
 const ACTION_HANDLERS = {
   "nav.up":              async () => await goUp(),
   "nav.down":            async () => await openActiveSelection(),
@@ -383,6 +398,7 @@ function saveShortcutBindings(bindings) {
 function normalizeKey(e) {
   let parts = [];
   if (e.ctrlKey) parts.push("Ctrl");
+  if (e.metaKey) parts.push("Meta");
   if (e.shiftKey) parts.push("Shift");
   if (e.altKey) parts.push("Alt");
   let key = e.key;

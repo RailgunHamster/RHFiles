@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
@@ -16,14 +18,44 @@ windows = { version = "0.62", features = [
     "Win32_System_Ole",
     "Win32_Graphics_Gdi",
 ] }
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-image = "0.25"
-rayon = "1"
-base64 = "0.22"
-notify = { version = "7", optional = true }
-chrono = "0.4"
-md-5 = "0.10"
-sha1 = "0.10"
-sha2 = "0.10"
-digest = "0.10"
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1"
+
+[build-dependencies]
+cc = "1"
+
+[dependencies.toml]
+version = "0.8"
+
+[dependencies.image]
+version = "0.25"
+
+[dependencies.rayon]
+version = "1"
+
+[dependencies.base64]
+version = "0.22"
+
+[dependencies.notify]
+version = "7"
+optional = true
+
+[dependencies.chrono]
+version = "0.4"
+
+[dependencies.md-5]
+version = "0.10"
+
+[dependencies.sha1]
+version = "0.10"
+
+[dependencies.sha2]
+version = "0.10"
+
+[dependencies.digest]
+version = "0.10"

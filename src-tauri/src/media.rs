@@ -122,6 +122,8 @@ fn resolve_ffmpeg(
     }
 
     let mut candidates = Vec::<(&'static str, PathBuf)>::new();
+    #[cfg(target_os = "macos")]
+    if let Some(path)=crate::macos::executable("ffmpeg") { candidates.push(("path",path)); }
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.push(("bundled", resource_dir.join("ffmpeg.exe")));
         candidates.push((

@@ -1007,6 +1007,11 @@ mod native {
 
 #[tauri::command]
 pub fn get_windows_file_clipboard_info() -> WindowsFileClipboardInfo {
+    #[cfg(target_os = "macos")]
+    {
+        let info = rhfiles_core::macos::request(serde_json::json!({"action":"clipboard.read"})).unwrap_or_default();
+        return WindowsFileClipboardInfo { sequence:info["sequence"].as_u64().unwrap_or(0) as u32, has_files:info["hasFiles"].as_bool().unwrap_or(false) };
+    }
     #[cfg(target_os = "windows")]
     {
         native::clipboard_info()
@@ -1022,6 +1027,8 @@ pub fn get_windows_file_clipboard_info() -> WindowsFileClipboardInfo {
 
 #[tauri::command]
 pub fn set_windows_file_clipboard(paths: Vec<String>, cut: bool) -> Result<u32, String> {
+    #[cfg(target_os = "macos")]
+    { return rhfiles_core::macos::request(serde_json::json!({"action":"clipboard.write","paths":paths,"cut":cut})).map(|v|v.as_u64().unwrap_or(0) as u32); }
     #[cfg(target_os = "windows")]
     {
         native::set_file_clipboard(paths, cut)
@@ -1035,6 +1042,8 @@ pub fn set_windows_file_clipboard(paths: Vec<String>, cut: bool) -> Result<u32, 
 
 #[tauri::command]
 pub fn clear_windows_file_clipboard(expected_sequence: u32) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    { return rhfiles_core::macos::request(serde_json::json!({"action":"clipboard.clear","sequence":expected_sequence})).map(|v|v.as_bool().unwrap_or(false)); }
     #[cfg(target_os = "windows")]
     {
         native::clear_file_clipboard(expected_sequence)
@@ -1053,6 +1062,21 @@ pub async fn paste_windows_file_clipboard(
     app: tauri::AppHandle,
     cancel: tauri::State<'_, crate::types::CancelFlag>,
 ) -> Result<WindowsFilePasteResult, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let info = rhfiles_core::macos::request(serde_json::json!({"action":"clipboard.read"}))?;
+        let paths = info["paths"].as_array().ok_or("No files on the clipboard")?;
+        if paths.is_empty() || paths.len()>10000 { return Err("Clipboard file count is out of range".into()); }
+        let moved=info["cut"].as_bool().unwrap_or(false);
+        // Use the same staged, non-overwriting transfer engine as internal paste.
+        for path in paths {
+            let source=path.as_str().ok_or("Invalid clipboard file URL")?.to_owned();
+            if moved { crate::file_ops::move_with_progress(source,destination.clone(),Some(false),None,operation_id.clone(),app.clone(),cancel.clone())?; }
+            else { crate::file_ops::copy_with_progress(source,destination.clone(),Some(false),None,operation_id.clone(),app.clone(),cancel.clone())?; }
+        }
+        if moved { clear_windows_file_clipboard(info["sequence"].as_u64().unwrap_or(0) as u32)?; }
+        return Ok(WindowsFilePasteResult { aborted:false, moved });
+    }
     #[cfg(target_os = "windows")]
     {
         let operation_id = operation_id

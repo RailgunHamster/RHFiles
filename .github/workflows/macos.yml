@@ -1,0 +1,39 @@
+name: macOS build and file business tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.runner }}
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Native filesystem, Trash and business regression tests
+        run: cargo test --workspace --locked
+      - name: Build application and disk image
+        run: bash scripts/build-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RHFiles-${{ matrix.runner }}
+          path: |
+            target/release/bundle/*.app.zip
+            target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

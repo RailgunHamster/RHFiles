@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "targets": ["msi", "nsis"],
+    "resources": {
+      "thirdparty/everything.exe": "Everything.exe",
+      "thirdparty/everything/dll/Everything64.dll": "Everything64.dll",
+      "thirdparty/dust.exe": "dust.exe",
+      "thirdparty/dust-LICENSE.txt": "dust-LICENSE.txt"
+    }
+  }
+}

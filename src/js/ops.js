@@ -678,10 +678,12 @@ function summarizeSelection(entries) {
 
 function joinFolderPath(parent, child) {
   if (isFtpPath(parent)) return String(parent).replace(/\/+$/, '') + '/' + encodeURIComponent(child);
+  if (IS_MAC) return String(parent || '').replace(/\/+$/, '') + '/' + child;
   return String(parent || '').replace(/[\\/]+$/, '') + '\\' + child;
 }
 
 function windowsPathKey(path) {
+  if (IS_MAC && !isFtpPath(path)) return String(path || '').replace(/\/+$/, '') || '/';
   if (isFtpPath(path)) return new URL(path).href.replace(/\/+$/, '').normalize('NFC');
   return String(path || '')
     .replace(/\//g, '\\')
@@ -1425,6 +1427,15 @@ function flashAt(x, y) {
 
 function buildProgramOpenMenu(targetPath, options) {
   const opts = options || {};
+  if (IS_MAC) {
+    const programs = [['VS Code', 'vscode', 'vscode'], ['Terminal', 'terminal', 'cmd'], ['iTerm', 'iterm', 'cmd']];
+    if (!opts.isDirectory) programs.push(['TextEdit', 'textedit', 'file'], ['Preview', 'preview', 'preview']);
+    if (opts.isMedia) programs.push(['VLC', 'vlc', 'vlc']);
+    const items = programs.map(([label, program, icon]) => ({label, icon, action: () => openWithProgramFromMenu(targetPath, program, label)}));
+    if (opts.includeSystemDialog !== false) items.push({label:t('ctx.openWithDialog'), icon:'window', action:() => runContextCommand('show_open_with_dialog', {path:targetPath}, t('ctx.openWithDialog'))});
+    if (opts.includeNewWindow) items.push({label:t('ctx.newWindow'), icon:'window', action:() => call('open_new_window', {initialPath:targetPath})});
+    return items;
+  }
   const items = [
     { label: "VS Code", icon: "vscode", action: () => openWithProgramFromMenu(targetPath, "vscode", "VS Code") },
     { label: "Visual Studio", icon: "visual-studio", action: () => openWithProgramFromMenu(targetPath, "visual_studio", "Visual Studio") },

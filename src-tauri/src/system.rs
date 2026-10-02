@@ -11,6 +11,8 @@ use std::os::windows::process::CommandExt;
 const PREVIEW_SNIFF_BYTES: u64 = 16 * 1024;
 
 fn find_dust_executable() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::executable("dust");
     let mut candidates = Vec::new();
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(exe_dir) = current_exe.parent()
@@ -81,7 +83,7 @@ fn annotate_dust_nodes(value: &mut serde_json::Value) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod dust_tests {
     use super::*;
 
@@ -314,7 +316,9 @@ pub fn open_in_windows_explorer(path: String, is_directory: Option<bool>) -> Res
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    { return rhfiles_core::macos::request(serde_json::json!({"action":"reveal","path":target})).map(|_| ()); }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (target, is_directory);
         Err("Windows File Explorer is only available on Windows".to_string())
@@ -537,11 +541,15 @@ pub fn open_in_ide(ide_cmd: String, path: String) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn install_font(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return rhfiles_core::macos::open(std::path::Path::new(&path)); }
     enumerator::install_font(&PathBuf::from(&path))
 }
 
 #[tauri::command(async)]
 pub fn set_wallpaper(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return rhfiles_core::macos::request(serde_json::json!({"action":"wallpaper", "path":path})).map(|_| ()); }
     enumerator::set_wallpaper(&PathBuf::from(&path))
 }
 
@@ -615,6 +623,10 @@ pub fn unblock_file(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn quicklook(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return std::process::Command::new("/usr/bin/qlmanage").arg("-p").arg(path)
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .spawn().map(|_| ()).map_err(|e| e.to_string()); }
     let output = std::process::Command::new("cmd")
         .args(["/C", "where", "QuickLook.exe"])
         .output();
@@ -751,10 +763,13 @@ pub fn format_drive(drive: String, label: String, fs: String, quick: bool) -> Re
 
 #[tauri::command(async)]
 pub fn install_certificate(path: String) -> Result<(), String> {
-    let output = std::process::Command::new("certutil")
-        .args(["-addstore", "TrustedPublisher", &path])
-        .creation_flags(0x08000000)
-        .output()
+    #[cfg(target_os = "macos")]
+    return rhfiles_core::macos::open(Path::new(&path));
+    let mut command = std::process::Command::new("certutil");
+    command.args(["-addstore", "TrustedPublisher", &path]);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let output = command.output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -986,6 +1001,8 @@ pub fn write_test_results(results: String) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn open_with_program(path: String, program: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::open_with(Path::new(&path), &program);
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
     let p = PathBuf::from(&path);
@@ -1232,6 +1249,8 @@ fn find_git_bash_executable() -> Option<PathBuf> {
 }
 
 fn which(name: &str) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::executable(name);
     let mut command = std::process::Command::new("where");
     command.arg(name);
     #[cfg(target_os = "windows")]
@@ -1406,6 +1425,8 @@ fn powershell_executable() -> std::path::PathBuf {
 
 #[tauri::command(async)]
 pub fn open_terminal(path: String, terminal: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return enumerator::open_terminal(Path::new(&path), &terminal);
     match terminal.as_str() {
         "powershell" | "cmd" => open_with_program(path, terminal),
         _ => {
@@ -1417,11 +1438,14 @@ pub fn open_terminal(path: String, terminal: String) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn copy_file_path(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return rhfiles_core::macos::request(serde_json::json!({"action":"clipboard.text","text":path})).map(|_| ());
     let script = format!("Set-Clipboard -Value '{}'", path.replace('\'', "''"));
-    let status = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .creation_flags(0x08000000u32)
-        .status()
+    let mut command = std::process::Command::new("powershell");
+    command.args(["-NoProfile", "-Command", &script]);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000u32);
+    let status = command.status()
         .map_err(|e| e.to_string())?;
     if !status.success() {
         return Err(format!(
@@ -1433,6 +1457,8 @@ pub fn copy_file_path(path: String) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn show_open_with_dialog(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return rhfiles_core::macos::request(serde_json::json!({"action":"open-with","path":path})).map(|_| ());
     std::process::Command::new("rundll32.exe")
         .args(["shell32.dll,OpenAs_RunDLL", &path])
         .spawn()

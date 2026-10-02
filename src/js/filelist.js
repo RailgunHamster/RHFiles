@@ -863,7 +863,7 @@ function handleRowClick(e, index, sel, tabOrPane, isRight) {
   const listId = isRight ? "right-file-list" : "file-list";
   const list = document.getElementById(listId);
   focusFilePane(list);
-  if (e.ctrlKey) {
+  if (e.ctrlKey || (IS_MAC && e.metaKey)) {
     if (sel.has(index)) sel.delete(index);
     else sel.add(index);
     tabOrPane.lastIdx = index;

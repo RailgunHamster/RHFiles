@@ -166,6 +166,8 @@ fn shell_execute_working_directory(path: &Path) -> Option<Vec<u16>> {
 }
 
 pub fn open_file(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return crate::macos::open(path); }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -195,7 +197,7 @@ pub fn open_file(path: &Path) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         std::process::Command::new("xdg-open")
             .arg(path)
@@ -206,6 +208,11 @@ pub fn open_file(path: &Path) -> Result<(), String> {
 }
 
 pub fn show_properties(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("/usr/bin/osascript").args(["-e", "on run argv\ntell application \"Finder\"\nactivate\nopen information window of (POSIX file (item 1 of argv) as alias)\nend tell\nend run", "--"]).arg(path).output().map_err(|e| e.to_string())?;
+        return if output.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&output.stderr).into_owned()) };
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -285,6 +292,8 @@ pub fn get_git_status(path: &Path) -> Result<std::collections::HashMap<String, S
 }
 
 pub fn get_drives() -> Result<Vec<DriveInfo>, String> {
+    #[cfg(target_os = "macos")]
+    { return serde_json::from_value(crate::macos::request(serde_json::json!({"action":"drives"}))?).map_err(|e| e.to_string()); }
     let mut drives = Vec::new();
     #[cfg(target_os = "windows")]
     {
@@ -456,14 +465,10 @@ pub fn delete_to_recycle_bin(path: &Path) -> Result<(), String> {
         delete_with_windows_shell(path, true)?;
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        if path.is_dir() {
-            std::fs::remove_dir_all(path).map_err(|e| e.to_string())?;
-        } else {
-            std::fs::remove_file(path).map_err(|e| e.to_string())?;
-        }
-    }
+    #[cfg(target_os = "macos")]
+    crate::macos::trash(path)?;
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    return Err("Trash is unavailable on this platform; refusing permanent deletion".into());
     Ok(())
 }
 
@@ -604,6 +609,12 @@ pub fn open_terminal(path: &Path, terminal: &str) -> Result<(), String> {
             .unwrap_or(path)
     };
     let dir = directory.to_string_lossy().into_owned();
+    #[cfg(target_os = "macos")]
+    {
+        let application = match terminal { "iterm" => "iTerm", "terminal" | "cmd" | "powershell" | "wt" => "Terminal", _ => return Err("Unsupported macOS terminal".into()) };
+        let status = std::process::Command::new("/usr/bin/open").args(["-a", application, "--", &dir]).status().map_err(|e| e.to_string())?;
+        return if status.success() { Ok(()) } else { Err(format!("Could not open {application}: {status}")) };
+    }
     match terminal {
         "cmd" => {
             let command = format!("pushd \"{}\"", &dir);
@@ -788,7 +799,17 @@ pub fn extract_file_icon(path: &Path, size: u32) -> Result<String, String> {
 
 #[cfg(not(target_os = "windows"))]
 pub fn extract_file_icon(_path: &Path, _size: u32) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::request(serde_json::json!({"action":"icon","path":_path,"size":_size}))?
+        .as_str().map(str::to_owned).ok_or_else(|| "No macOS file icon".into());
+    #[cfg(not(target_os = "macos"))]
     Err("Not supported".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn get_new_file_templates() -> Result<Vec<NewFileTemplate>, String> {
+    Ok([("Text Document", ".txt"), ("Markdown", ".md"), ("JSON", ".json"), ("Shell Script", ".sh")]
+        .into_iter().map(|(name, extension)| NewFileTemplate{name:name.into(),extension:extension.into(),template_content:String::new()}).collect())
 }
 
 #[cfg(target_os = "windows")]

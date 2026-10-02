@@ -1,6 +1,8 @@
 // common.js — global state, utilities, i18n, API
 
 const invoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke;
+const IS_MAC = /Mac/i.test(globalThis.navigator?.platform || '');
+const FS_ROOT = IS_MAC ? '/' : 'C:\\';
 const DEFAULT_GITHUB_UPDATE_SOURCE = 'https://github.com/RailgunHamster/RHFiles';
 const DEFAULT_SERVER_UPDATE_SOURCE = '\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases';
 
@@ -333,7 +335,15 @@ async function initI18n() {
 }
 
 function t(key, params) {
-  const val = (I18N[_lang] && I18N[_lang][key]) || I18N.en[key] || key;
+  const mac = IS_MAC ? {
+    'ctx.openFolderInExplorer': ['在 Finder 中打开','Open in Finder'],
+    'ctx.openContainingFolderInExplorer': ['在 Finder 中显示','Show in Finder'],
+    'ctx.openCmd': ['在终端中打开','Open in Terminal'],
+    'settings.desktopIsolation': ['数据按 macOS 用户独立保存；暂不按 Spaces 自动隔离。','Data is isolated by macOS user; automatic Spaces isolation is not supported.'],
+    'update.unmanaged': ['Mac 版请手动安装新版 .app；尚未配置签名自动更新。','Install the new macOS .app manually; signed automatic updates are not configured.'],
+    'search.builtin': ['文件系统搜索','Filesystem search'],
+  } : {};
+  const val = mac[key]?.[_lang.startsWith('zh') ? 0 : 1] || (I18N[_lang] && I18N[_lang][key]) || I18N.en[key] || key;
   if (!params) return val;
   return val.replace(/\{(\w+)\}/g, (_, k) => params[k] !== undefined ? params[k] : '{' + k + '}');
 }
@@ -381,7 +391,7 @@ function getAvailableLanguages() {
 // --- state ---
 let G = {};
 window.G = G;
-G.tabs = [{ id: 0, path: "C:\\", history: [], historyIdx: -1, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, _loaded: false }];
+G.tabs = [{ id: 0, path: FS_ROOT, history: [], historyIdx: -1, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, _loaded: false }];
 G.closedTabs = [];
 G.activeTab = 0;
 G.nextTabId = 1;
@@ -439,7 +449,7 @@ G.inspectorTab = 'preview';
 G._typeSearch = { str: '', lastQuery: '', visualQuery: '', timer: null, matches: [], matchPos: -1, requestToken: 0, isRight: false };
 
 // --- right pane state ---
-G.rp = { id: 100000, path: "C:\\", entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, history: ["C:\\"], histIdx: 0, _loaded: false };
+G.rp = { id: 100000, path: FS_ROOT, entries: [], sel: new Set(), lastIdx: -1, sortF: "name", sortAsc: true, pinned: false, history: [FS_ROOT], histIdx: 0, _loaded: false };
 G.rpTabs = [G.rp];
 G.activeRpTab = G.rp.id;
 G.nextRpTabId = 100001;
@@ -619,6 +629,7 @@ function escAttr(s) { return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'")
 // visibly doubled: //server/share instead of the misleading /server/share.
 function displayPath(path) {
   if (path === 'home://') return t('nav.home');
+  if (IS_MAC) return String(path || '');
   return String(path || '').replace(/\\/g, '/');
 }
 
@@ -634,6 +645,7 @@ function decodeFileUriPath(value) {
     if (uri.protocol.toLowerCase() !== 'file:') return raw;
     const host = decode(uri.hostname || '');
     let pathname = decode(uri.pathname || '');
+    if (IS_MAC) return host && host.toLowerCase() !== 'localhost' ? 'smb://' + host + pathname : pathname;
     if (host && host.toLowerCase() !== 'localhost') {
       return '\\\\' + host + pathname.replace(/\//g, '\\');
     }
@@ -661,6 +673,11 @@ function normalizeWindowsPathInput(value) {
   if (path === 'home://') return path;
   if (/^ftp:\/\//i.test(path)) return new URL(path).href;
   path = decodeFileUriPath(path);
+  if (IS_MAC) {
+    if (path === '~') return G.homeDirPath || '/';
+    if (path.startsWith('~/')) return (G.homeDirPath || '').replace(/\/+$/, '') + path.slice(1);
+    return path;
+  }
   path = path.replace(/\//g, '\\');
   if (/^\\{2,}/.test(path)) {
     const rest = path.replace(/^\\+/, '').replace(/\\{2,}/g, '\\');
@@ -673,6 +690,7 @@ function normalizeWindowsPathInput(value) {
 
 function migrateLegacyKnownFolderPath(path) {
   const normalized = normalizeWindowsPathInput(path);
+  if (IS_MAC) return normalized;
   if (!normalized || normalized === 'home://' || !G.knownFolders || !G.homeDirPath) return normalized;
   const names = {
     desktop: 'Desktop', downloads: 'Downloads', documents: 'Documents',
@@ -785,6 +803,11 @@ function parentFolderPath(path) {
     parts.pop();
     url.pathname = parts.join('/') || '/';
     return url.href;
+  }
+  if (IS_MAC) {
+    const clean = String(path || '').replace(/\/+$/, '');
+    const index = clean.lastIndexOf('/');
+    return index <= 0 ? '/' : clean.slice(0, index);
   }
   const normalized = String(path || '').replace(/\//g, '\\');
   if (/^[A-Za-z]:\\$/.test(normalized)) return normalized;

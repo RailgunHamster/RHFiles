@@ -539,6 +539,8 @@ fn run_7z_extraction(
 }
 
 fn find_7z() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::executable("7zz").or_else(||crate::macos::executable("7z")).map(|p|p.to_string_lossy().into_owned());
     // Prefer the copy bundled with RHFiles: portable builds keep 7z.exe and
     // its engine 7z.dll next to RHFiles.exe. Both must exist, 7z.exe alone
     // cannot run.

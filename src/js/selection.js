@@ -137,7 +137,7 @@ function initBoxSelection(listEl) {
         selectionRect.style.top = y + 'px';
         selectionRect.style.width = w + 'px';
         selectionRect.style.height = h + 'px';
-        selectFilesInRect(list, x, y, w, h, ev.ctrlKey);
+        selectFilesInRect(list, x, y, w, h, ev.ctrlKey || (IS_MAC && ev.metaKey));
       });
     }
   });

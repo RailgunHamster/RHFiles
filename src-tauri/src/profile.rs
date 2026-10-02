@@ -22,6 +22,11 @@ pub fn user_root() -> Result<PathBuf, String> {
     if let Some(root) = std::env::var_os("RHFILES_TEST_PROFILE_ROOT") {
         return Ok(PathBuf::from(root));
     }
+    #[cfg(target_os = "macos")]
+    return std::env::var_os("HOME").filter(|p| !p.is_empty())
+        .map(|p| PathBuf::from(p).join("Library/Application Support/RHFiles"))
+        .ok_or_else(|| "Cannot locate this macOS user's home directory".into());
+    #[cfg(not(target_os = "macos"))]
     std::env::var_os("APPDATA")
         .filter(|p| !p.is_empty())
         .map(|p| PathBuf::from(p).join("RHFiles"))
@@ -36,10 +41,15 @@ fn stable_hash(value: &str) -> u64 {
     })
 }
 
+#[cfg(windows)]
 fn guid_key(id: windows::core::GUID) -> Option<String> {
     (id != windows::core::GUID::zeroed()).then(|| format!("{id:?}").to_ascii_lowercase())
 }
 
+#[cfg(not(windows))]
+pub fn current_desktop_id() -> Option<String> { Some("default".into()) }
+
+#[cfg(windows)]
 pub fn current_desktop_id() -> Option<String> {
     use windows::Win32::{
         System::Com::*,
@@ -92,6 +102,7 @@ pub fn current_desktop_id() -> Option<String> {
     })
 }
 
+#[cfg(windows)]
 fn desktop_guid_bytes(bytes: &[u8]) -> Option<String> {
     let bytes: [u8; 16] = bytes.try_into().ok()?;
     guid_key(windows::core::GUID::from_values(
@@ -157,6 +168,9 @@ pub fn initialize() -> Result<&'static Profile, String> {
         return Ok(profile);
     }
     let root = user_root()?;
+    #[cfg(target_os = "macos")]
+    let mut local = root.join("WebKit");
+    #[cfg(not(target_os = "macos"))]
     let mut local = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .ok_or("LOCALAPPDATA is unavailable")?;
@@ -199,6 +213,8 @@ pub fn owns_current_desktop() -> bool {
 }
 
 pub fn journal_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    return Ok(data_dir()?.join("operation-journal"));
     if PROFILE.get().is_some_and(|p| p.legacy) {
         return Ok(user_root()?
             .parent()
@@ -262,6 +278,7 @@ pub fn get_instance_profile() -> Result<Profile, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
     #[test]
     fn registry_guid_is_little_endian_and_rejects_empty_or_invalid_ids() {
         assert_eq!(
