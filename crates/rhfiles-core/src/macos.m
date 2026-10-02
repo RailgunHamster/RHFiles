@@ -36,8 +36,10 @@ static id perform(NSDictionary *request, NSError **error) {
         NSArray *urls = [pb readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}] ?: @[];
         NSMutableArray *paths = [NSMutableArray array];
         for (NSURL *url in urls) if (url.isFileURL) [paths addObject:url.path];
-        return @{@"sequence":@(pb.changeCount), @"hasFiles":@(paths.count > 0), @"paths":paths,
-                 @"cut":@([[pb stringForType:cutType] isEqual:@"true"])};
+        // Objective-C comparison expressions have type int, so boxing them with
+        // @() serializes 0/1 instead of JSON false/true. Keep the FFI schema Boolean.
+        return @{@"sequence":@(pb.changeCount), @"hasFiles":paths.count > 0 ? @YES : @NO, @"paths":paths,
+                 @"cut":[[pb stringForType:cutType] isEqual:@"true"] ? @YES : @NO};
     }
     if ([action isEqual:@"clipboard.clear"]) {
         if (pb.changeCount != [request[@"sequence"] integerValue]) return @NO;

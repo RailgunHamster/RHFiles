@@ -193,6 +193,7 @@ mod tests {
             .unwrap();
             let info = request(json!({"action":"clipboard.read","testPasteboard":board})).unwrap();
             assert_eq!(info["paths"], json!(paths));
+            assert_eq!(info["hasFiles"], true);
             assert_eq!(info["cut"], cut);
             assert_eq!(info["sequence"], seq);
             assert_eq!(
