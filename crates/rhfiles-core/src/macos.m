@@ -26,8 +26,12 @@ static id perform(NSDictionary *request, NSError **error) {
         }
         return items;
     }
-    NSPasteboard *pb = NSPasteboard.generalPasteboard;
+    NSString *boardName = request[@"testPasteboard"];
+    if (boardName && ![boardName hasPrefix:@"com.rhfiles.test."])
+        @throw [NSException exceptionWithName:@"Clipboard" reason:@"Invalid test pasteboard" userInfo:nil];
+    NSPasteboard *pb = boardName ? [NSPasteboard pasteboardWithName:boardName] : NSPasteboard.generalPasteboard;
     NSPasteboardType cutType = @"com.rhfiles.cut-files";
+    if ([action isEqual:@"clipboard.release-test"] && boardName) { [pb releaseGlobally]; return @YES; }
     if ([action isEqual:@"clipboard.read"]) {
         NSArray *urls = [pb readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}] ?: @[];
         NSMutableArray *paths = [NSMutableArray array];
@@ -40,17 +44,25 @@ static id perform(NSDictionary *request, NSError **error) {
         [pb clearContents]; return @YES;
     }
     if ([action isEqual:@"clipboard.text"]) {
-        [pb clearContents]; return @([pb setString:request[@"text"] ?: @"" forType:NSPasteboardTypeString]);
+        NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+        [item setString:request[@"text"] ?: @"" forType:NSPasteboardTypeString];
+        [pb clearContents];
+        if (![pb writeObjects:@[item]]) @throw [NSException exceptionWithName:@"Clipboard" reason:@"Could not write clipboard text" userInfo:nil];
+        return @YES;
     }
     if ([action isEqual:@"clipboard.write"]) {
         NSMutableArray *urls = [NSMutableArray array];
         for (NSString *entry in request[@"paths"]) {
             if (![entry isAbsolutePath]) @throw [NSException exceptionWithName:@"Path" reason:@"Absolute file paths required" userInfo:nil];
-            [urls addObject:[NSURL fileURLWithPath:entry]];
+            NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+            [item setString:[NSURL fileURLWithPath:entry].absoluteString forType:NSPasteboardTypeFileURL];
+            // Declare the private type on the first item before publishing.
+            // NSPasteboard.stringForType concatenates values across all items.
+            if (!urls.count) [item setString:[request[@"cut"] boolValue] ? @"true" : @"false" forType:cutType];
+            [urls addObject:item];
         }
         [pb clearContents];
         if (![pb writeObjects:urls]) @throw [NSException exceptionWithName:@"Clipboard" reason:@"Could not write file URLs" userInfo:nil];
-        [pb setString:[request[@"cut"] boolValue] ? @"true" : @"false" forType:cutType];
         return @(pb.changeCount);
     }
     if ([action isEqual:@"share"]) {

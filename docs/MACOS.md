@@ -52,6 +52,6 @@ Updates are **manual** for now: quit RHFiles, replace the `.app`, reopen. Never 
 
 ## Verification / 验证
 
-CI runs the shipped frontend functions plus native Mac filesystem tests on both architectures: non-overwriting rename, case-only rename, batch rollback, byte-exact copies, tree copies, interrupted-transfer recovery, links, extended attributes, Trash/undo and permission preservation. Test fixtures are isolated; the Trash test trashes and restores only its own uniquely named file.
+CI runs the shipped frontend functions plus native Mac filesystem tests on both architectures: non-overwriting rename, case-only rename, batch rollback, byte-exact copies, tree copies, interrupted-transfer recovery, links, extended attributes, Trash/undo and permission preservation. The clipboard protocol test uses a private named pasteboard, never the user's system clipboard. Test fixtures are isolated; the Trash test trashes and restores only its own uniquely named file.
 
 Passing build/unit tests is not GUI certification. On a real Mac, still verify first-launch permissions, Finder clipboard/dragging, tab-hover switching, Retina drop coordinates, system Share/Open With, network mounts, playback and multi-monitor/Dock restore. SMB, cloud accounts and other third-party apps require the user's environment and are not claimed covered by CI.

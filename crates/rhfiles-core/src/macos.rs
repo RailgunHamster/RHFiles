@@ -177,6 +177,47 @@ mod tests {
         assert!(trash(Path::new("relative")).is_err());
     }
     #[test]
+    fn clipboard_file_urls_cut_marker_and_sequence_guard_use_an_isolated_pasteboard() {
+        let f = Fixture::new();
+        let board = format!(
+            "com.rhfiles.test.{}",
+            f.0.file_name().unwrap().to_string_lossy()
+        );
+        let paths = vec![f.0.join("中文 #%.txt"), f.0.join("folder")];
+        std::fs::write(&paths[0], b"test").unwrap();
+        std::fs::create_dir(&paths[1]).unwrap();
+        for cut in [true, false] {
+            let seq = request(
+                json!({"action":"clipboard.write","paths":paths,"cut":cut,"testPasteboard":board}),
+            )
+            .unwrap();
+            let info = request(json!({"action":"clipboard.read","testPasteboard":board})).unwrap();
+            assert_eq!(info["paths"], json!(paths));
+            assert_eq!(info["cut"], cut);
+            assert_eq!(info["sequence"], seq);
+            assert_eq!(
+                request(json!({"action":"clipboard.clear","sequence":-1,"testPasteboard":board}))
+                    .unwrap(),
+                false
+            );
+            assert_eq!(
+                request(json!({"action":"clipboard.clear","sequence":seq,"testPasteboard":board}))
+                    .unwrap(),
+                true
+            );
+        }
+        assert_eq!(
+            request(json!({"action":"clipboard.text","text":"copied path","testPasteboard":board}))
+                .unwrap(),
+            true
+        );
+        assert_eq!(
+            request(json!({"action":"clipboard.read","testPasteboard":board})).unwrap()["hasFiles"],
+            false
+        );
+        request(json!({"action":"clipboard.release-test","testPasteboard":board})).unwrap();
+    }
+    #[test]
     fn clearing_readonly_does_not_grant_write_to_other_users() {
         use std::os::unix::fs::PermissionsExt;
         let f = Fixture::new();
