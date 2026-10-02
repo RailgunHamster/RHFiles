@@ -12,7 +12,7 @@ RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、
 
 ## 主要功能
 
-Mac 版：从 [macOS 构建工作流](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) 的成功记录下载 Apple Silicon 或 Intel 对应的 `.app.zip` / `.dmg`，要求 macOS 12 或更高。当前为 ad-hoc 签名、**未经 Apple 公证**的预览构建，仍需 Mac 上的实际界面验收。功能差异、安装、权限与构建方式见 [Mac 版说明](docs/MACOS.md)。以下 Everything、Velopack、Explorer 集成等介绍仅适用于 Windows。
+Mac 版：从 [macOS 构建工作流](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) 的成功记录下载 Apple Silicon（M 系列、arm64）的 `.app.zip` / `.dmg`，要求 macOS 12 或更高。后续只提供 Apple Silicon 版本，不再构建 Intel 版本。当前为 ad-hoc 签名、**未经 Apple 公证**的预览构建，仍需 Mac 上的实际界面验收。功能差异、安装、权限与构建方式见 [Mac 版说明](docs/MACOS.md)。以下 Everything、Velopack、Explorer 集成等介绍仅适用于 Windows。
 
 - 带历史记录的标签页、左右独立标签的双窗格、可配置快捷键和多选操作。
 - 详细、卡片、缩略图和分栏布局，并可显示 Windows 默认打开程序的关联图标。

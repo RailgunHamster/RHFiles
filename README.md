@@ -33,7 +33,7 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 
 ### macOS preview
 
-Apple Silicon and Intel `.app.zip` / `.dmg` builds are produced by the [macOS workflow](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml). Choose a successful run and download its matching architecture artifact. Requires macOS 12 or later. These are ad-hoc-signed, **not Apple-notarized** preview builds; GUI acceptance testing on a user's Mac is still required. See [macOS setup, supported features, permissions and limitations](docs/MACOS.md).
+Apple Silicon (M-series, arm64) `.app.zip` / `.dmg` builds are produced by the [macOS workflow](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml). Choose a successful run and download its artifact. Intel builds are no longer produced. Requires macOS 12 or later. These are ad-hoc-signed, **not Apple-notarized** preview builds; GUI acceptance testing on a user's Mac is still required. See [macOS setup, supported features, permissions and limitations](docs/MACOS.md).
 
 ### Windows
 

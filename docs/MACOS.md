@@ -4,11 +4,13 @@ RHFiles shares its desktop UI and Rust file-operation engine between Windows and
 
 ## Download and build / 下载与构建
 
-The `macOS build and file business tests` workflow builds separate Apple Silicon (`macos-15`, arm64) and Intel (`macos-15-intel`, x86_64) artifacts. Download from a successful run: an application ZIP and a DMG. Put `RHFiles.app` in Applications. Minimum deployment target: macOS 12.
+The `macOS build and file business tests` workflow builds only Apple Silicon (`macos-15`, arm64) artifacts. Intel builds are no longer produced; existing historical Intel packages are left unchanged. Download from a successful run: an application ZIP and a DMG. Put `RHFiles.app` in Applications. Minimum deployment target: macOS 12.
+
+后续仅构建和提供 Apple Silicon（M 系列、arm64）版本，不再构建 Intel 版本；已发布的历史安装包保持不变。
 
 目前是开发预览构建：只有 ad-hoc 签名，没有 Developer ID / Apple 公证。Gatekeeper 可能阻止首次运行；仅在核实来源后使用系统的“隐私与安全性 → 仍要打开”。不要关闭系统全局安全检查。正式公证发行和签名自动更新需要另外配置 Apple 开发者证书。
 
-Build on a Mac with Xcode Command Line Tools, Rust and Node.js 22+:
+Build on an Apple Silicon Mac with Xcode Command Line Tools, Rust and Node.js 22+:
 
 ```sh
 npm ci --ignore-scripts
@@ -52,6 +54,6 @@ Updates are **manual** for now: quit RHFiles, replace the `.app`, reopen. Never 
 
 ## Verification / 验证
 
-CI runs the shipped frontend functions plus native Mac filesystem tests on both architectures: non-overwriting rename, case-only rename, batch rollback, byte-exact copies, tree copies, interrupted-transfer recovery, links, extended attributes, Trash/undo and permission preservation. The clipboard protocol test uses a private named pasteboard, never the user's system clipboard. Test fixtures are isolated; the Trash test trashes and restores only its own uniquely named file.
+CI runs the shipped frontend functions plus native Mac filesystem tests on Apple Silicon: non-overwriting rename, case-only rename, batch rollback, byte-exact copies, tree copies, interrupted-transfer recovery, links, extended attributes, Trash/undo and permission preservation. The clipboard protocol test uses a private named pasteboard, never the user's system clipboard. Test fixtures are isolated; the Trash test trashes and restores only its own uniquely named file.
 
 Passing build/unit tests is not GUI certification. On a real Mac, still verify first-launch permissions, Finder clipboard/dragging, tab-hover switching, Retina drop coordinates, system Share/Open With, network mounts, playback and multi-monitor/Dock restore. SMB, cloud accounts and other third-party apps require the user's environment and are not claimed covered by CI.

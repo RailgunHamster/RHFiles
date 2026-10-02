@@ -8,11 +8,7 @@ permissions:
   contents: read
 jobs:
   macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +19,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.runner }}
+          key: macos-15
           cache-on-failure: true
       - run: npm ci --ignore-scripts
       - run: npm test
@@ -33,7 +29,7 @@ jobs:
         run: bash scripts/build-macos.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: RHFiles-${{ matrix.runner }}
+          name: RHFiles-macos-15
           path: |
             target/release/bundle/*.app.zip
             target/release/bundle/dmg/*.dmg
