@@ -1,0 +1,21 @@
+# Rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Built APKs copied here by scripts/android-build.ps1 for convenience.
+dist/
+
+# UI-check output (screenshots are for eyeballing, not for version control).
+web/tests/__screenshots__/
+
+# The generated Gradle project is reproducible with
+#   cargo tauri android init
+#   pwsh -File ../scripts/android-sync.ps1
+# Keeping it out of the repository avoids committing the Gradle wrapper JAR and
+# template resources; the hand-maintained manifest and Gradle signing config live
+# in android/manifest/ and android/gradle/.
+src-tauri/gen/android/
+
+# Written by android-sync.ps1 into the generated project: it holds a machine-local
+# keystore path, so it is not portable and must not be committed.
+**/keystore.properties

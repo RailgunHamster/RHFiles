@@ -1,0 +1,52 @@
+[package]
+name = "rhfiles-android"
+version = "0.1.1"
+edition = "2021"
+description = "RHFiles for Android — an ad-free, telemetry-free file manager with full storage access"
+publish = false
+
+[lib]
+name = "rhfiles_android_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "rhfiles-android"
+path = "src/main.rs"
+test = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `protocol-asset` lets the WebView stream files straight off disk (image/video
+# preview) without copying bytes through the IPC bridge.
+tauri = { version = "2", features = ["protocol-asset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Thumbnails are decoded on a worker thread and shipped to the WebView as small
+# base64 JPEGs. The feature list is the set of formats `image` cannot decode
+# without extra C dependencies; JPEG is the output format, which keeps a 96 px
+# thumbnail near 4 KB and lets the WebView decode it natively.
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+    "bmp",
+    "tiff",
+] }
+# Thumbnails cross the IPC bridge as `data:` URLs, which the WebView can use
+# directly as an `<img src>` without touching the filesystem protocol.
+base64 = "0.22"
+
+[dev-dependencies]
+# `test` provides the MockRuntime used by tests/ipc.rs to drive the real command
+# layer over the IPC bridge — no device or emulator required.
+tauri = { version = "2", features = ["protocol-asset", "test"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

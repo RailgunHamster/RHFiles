@@ -4,3 +4,8 @@ members = [
     "crates/rhfiles-core",
     "src-tauri",
 ]
+# The Android app is built separately: it is cross-compiled against the NDK
+# toolchain and must not take part in desktop `cargo check --workspace`.
+exclude = [
+    "android/src-tauri",
+]

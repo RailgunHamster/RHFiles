@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>RHFiles</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <button class="icon-btn" id="btn-menu" aria-label="导航菜单" data-icon="menu"></button>
+    <div class="title" id="title">RHFiles</div>
+    <button class="icon-btn" id="btn-search" aria-label="搜索" data-icon="search"></button>
+    <button class="icon-btn" id="btn-overflow" aria-label="更多选项" data-icon="more"></button>
+  </header>
+  <div class="selection-head" id="selection-head" hidden>
+    <button class="icon-btn" id="sel-close" aria-label="退出多选" data-icon="close"></button>
+    <span id="sel-count"></span><button id="sel-all" class="text-btn">全选</button>
+  </div>
+  <nav class="pathbar" id="pathbar" aria-label="当前位置" hidden>
+    <button class="icon-btn" id="btn-home" aria-label="首页" data-icon="home"></button>
+    <div class="crumbs" id="crumbs"></div>
+    <button class="icon-btn" id="btn-up" aria-label="上一级" data-icon="up"></button>
+  </nav>
+  <div class="searchbar" id="searchbar" hidden>
+    <input id="search-input" type="search" placeholder="搜索文件名" autocomplete="off" spellcheck="false" aria-label="搜索文件名">
+    <button id="search-scope" class="text-btn">当前文件夹</button>
+    <button class="icon-btn" id="btn-search-close" aria-label="关闭搜索" data-icon="close"></button>
+  </div>
+  <div class="banner" id="banner" role="status" hidden></div>
+  <main id="content">
+    <section class="home" id="home" aria-label="文件分类" hidden></section>
+    <div class="placeholder" id="placeholder" role="status">正在加载…</div>
+    <div class="filelist" id="filelist" aria-label="文件列表" hidden></div>
+    <section class="tool-page" id="tool-page" hidden>
+      <section id="tool-settings" hidden>
+        <h2>浏览与显示</h2>
+        <button id="btn-theme" class="setting-row">主题：明亮</button>
+        <button id="btn-hidden" class="setting-row">显示隐藏文件：关</button>
+        <h2>搜索索引</h2><p class="muted">分类与全局搜索使用本机文件名索引，不上传文件。首次使用请建立索引。</p>
+        <div id="index-status" class="kv"></div>
+        <div class="button-row"><button id="btn-reindex" class="primary">更新索引</button><button id="btn-clear-index">清空索引</button></div>
+        <h2>存储权限</h2><div id="permissions" class="kv"></div><button id="btn-permission">打开系统设置</button>
+        <details><summary>诊断日志</summary><div class="button-row"><button id="btn-refresh-logs">刷新</button><button id="btn-copy-logs">复制日志</button><button id="btn-clear-logs">清空</button></div><pre id="log-view"></pre></details>
+        <p id="version" class="muted"></p>
+      </section>
+      <section id="tool-server" hidden>
+        <div class="tool-illustration" data-icon="computer"></div><h2>从电脑访问</h2>
+        <p class="muted">连接同一局域网，在电脑浏览器中打开下方地址，即可访问此手机的文件。</p>
+        <p class="warning">仅在可信网络使用。当前服务没有身份验证，开启后同网设备可以读取或写入所选存储。</p>
+        <div id="server-status" class="kv"></div><button id="btn-server-toggle" class="primary">启动文件服务</button>
+      </section>
+      <section id="tool-usage" hidden>
+        <div class="tool-illustration" data-icon="chart"></div><h2>存储空间分析</h2><p id="scan-root" class="muted"></p>
+        <button id="btn-scan" class="primary">开始分析</button><div id="scan-result" class="kv"></div>
+      </section>
+    </section>
+  </main>
+  <div id="list-status" class="list-status" hidden></div>
+  <nav class="browse-actions" id="browse-actions" aria-label="目录操作" hidden>
+    <button id="btn-new"><span data-icon="new"></span>新建</button>
+    <button id="btn-view"><span data-icon="grid"></span>视图</button>
+    <button id="btn-sort"><span data-icon="sort"></span>排序</button>
+    <button id="btn-refresh"><span data-icon="refresh"></span>刷新</button>
+  </nav>
+  <nav class="selection-bar" id="selection-bar" aria-label="已选文件操作" hidden>
+    <button data-action="copy"><span data-icon="copy"></span>复制</button>
+    <button data-action="cut"><span data-icon="cut"></span>移动</button>
+    <button data-action="rename"><span data-icon="rename"></span>重命名</button>
+    <button data-action="delete" class="danger"><span data-icon="trash"></span>删除</button>
+    <button data-action="more"><span data-icon="more"></span>更多</button>
+  </nav>
+  <div class="paste-bar" id="paste-bar" hidden>
+    <div><strong id="paste-label"></strong><small id="paste-destination"></small></div>
+    <button id="btn-paste" class="primary">粘贴</button><button id="btn-cancel-paste" class="icon-btn" aria-label="取消待粘贴操作" data-icon="close"></button>
+  </div>
+  <div class="task-bar" id="task-bar" role="status" hidden><span class="spinner"></span><span id="task-label"></span></div>
+</div>
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" aria-label="导航" hidden>
+  <div class="drawer-brand"><span data-icon="folder"></span><strong>RHFiles</strong><button id="drawer-close" class="icon-btn" aria-label="关闭导航" data-icon="close"></button></div>
+  <button id="nav-home" class="nav-item"><span data-icon="home"></span>首页</button>
+  <h2>存储位置</h2><div id="roots"></div>
+  <h2>快捷访问</h2><div id="nav-favorites"></div>
+  <button id="nav-settings" class="nav-item"><span data-icon="settings"></span>设置</button>
+</aside>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden><div class="sheet-panel" id="sheet-panel"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="js/api.js"></script><script src="js/format.js"></script><script src="js/ui.js"></script><script src="js/app.js"></script>
+</body>
+</html>
