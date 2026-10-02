@@ -133,7 +133,7 @@ async function deleteSelected(isRight) {
   try {
     const outcome = await call('delete_files', {paths: deletedPaths, operationId: taskId});
     const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
-    const recyclable = actuallyDeleted.filter(path => !isFtpPath(path));
+    const recyclable = actuallyDeleted.filter(path => !isFtpPath(path) && !String(path).startsWith('\\\\'));
     if (recyclable.length) trackDelete(recyclable);
     await refresh();
     if (outcome?.cancelled) {

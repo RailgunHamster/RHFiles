@@ -395,7 +395,7 @@ pub fn load_window_state(window_id: String) -> Result<Option<serde_json::Value>,
         let width: i32 = row.get(3)?;
         let height: i32 = row.get(4)?;
         let maximized: i32 = row.get(5)?;
-        let sort_order: i32 = row.get(6)?;
+        let sort_order = row.get::<_, Option<i32>>(6)?.unwrap_or(0);
         Ok(serde_json::json!({
             "state_json": state_json,
             "pos_x": pos_x,
@@ -427,7 +427,7 @@ pub fn get_all_window_states() -> Result<Vec<serde_json::Value>, String> {
             let width: i32 = row.get(4)?;
             let height: i32 = row.get(5)?;
             let maximized: i32 = row.get(6)?;
-            let sort_order: i32 = row.get(7)?;
+            let sort_order = row.get::<_, Option<i32>>(7)?.unwrap_or(0);
             Ok(serde_json::json!({
                 "window_id": window_id,
                 "state_json": state_json,
@@ -469,11 +469,15 @@ pub async fn save_current_window_geometry(
     let window_id = window.label().to_string();
     let conn = get_db()?;
     conn.execute(
-        "INSERT OR REPLACE INTO window_states (window_id, state_json, pos_x, pos_y, width, height, maximized, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT COALESCE(sort_order, 0) FROM window_states WHERE window_id = ?1))",
+        SAVE_CURRENT_WINDOW_SQL,
         rusqlite::params![window_id, state_json, pos.x, pos.y, size.width as i32, size.height as i32, is_maximized as i32],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// COALESCE must wrap the scalar subquery: a missing row returns NULL even if
+// COALESCE is used inside that subquery. Also repairs pre-existing NULL order.
+const SAVE_CURRENT_WINDOW_SQL: &str = "INSERT OR REPLACE INTO window_states (window_id, state_json, pos_x, pos_y, width, height, maximized, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE((SELECT sort_order FROM window_states WHERE window_id = ?1), 0))";
 
 #[tauri::command]
 pub async fn restore_window_geometry(window: tauri::WebviewWindow) -> Result<(), String> {
@@ -483,6 +487,19 @@ pub async fn restore_window_geometry(window: tauri::WebviewWindow) -> Result<(),
 #[cfg(test)]
 mod geometry_tests {
     use super::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, WindowRect, recover_window_rect};
+
+    #[test]
+    fn first_geometry_save_and_legacy_null_order_are_readable() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE window_states (window_id TEXT PRIMARY KEY, state_json TEXT, pos_x INTEGER, pos_y INTEGER, width INTEGER, height INTEGER, maximized INTEGER, sort_order INTEGER)").unwrap();
+        let save = || conn.execute(super::SAVE_CURRENT_WINDOW_SQL, rusqlite::params!["main", "{}", 1, 2, 1200, 800, 0]).unwrap();
+        let order = || conn.query_row("SELECT sort_order FROM window_states WHERE window_id='main'", [], |row| row.get::<_, i32>(0)).unwrap();
+        save(); assert_eq!(order(), 0);
+        conn.execute("UPDATE window_states SET sort_order = 37", []).unwrap();
+        save(); assert_eq!(order(), 37);
+        conn.execute("UPDATE window_states SET sort_order = NULL", []).unwrap();
+        save(); assert_eq!(order(), 0);
+    }
 
     const PRIMARY: WindowRect = WindowRect {
         x: 0,

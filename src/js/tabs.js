@@ -569,6 +569,9 @@ async function _refreshTabInBackground(tab) {
 }
 
 function _refreshTabMeta(tab, force) {
+  // A pending refresh may finish after the user switches tabs. Its entries can
+  // be cached, but the tree/status belong to the currently displayed tab.
+  if (tab.id !== G.activeTab) return;
   const now = Date.now();
   if (!force && tab._metaRefreshAt && now - tab._metaRefreshAt < 15000) {
     G._watchSnapshot = null;

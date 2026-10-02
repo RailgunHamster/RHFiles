@@ -815,6 +815,31 @@ mod tests {
     };
 
     #[test]
+    fn scoped_search_never_leaks_a_similarly_named_unc_share() {
+        assert!(is_path_in_scope(r"\\server\share\folder\a.txt", r"\\server\share\folder"));
+        assert!(!is_path_in_scope(r"\\server\share2\a.txt", r"\\server\share"));
+        assert!(!is_path_in_scope(r"\\server-other\share\a.txt", r"\\server\share"));
+    }
+
+    #[test]
+    fn fallback_search_matches_query_modes_and_enforces_result_limits() {
+        let temp = crate::test_support::TestDir::new("search-modes");
+        std::fs::create_dir_all(temp.0.join("nested")).unwrap();
+        for name in ["中国资料.txt", "annual-report-2026.PDF", "report-25.pdf", "图📁.png"] {
+            std::fs::write(temp.0.join("nested").join(name), b"bytes").unwrap();
+        }
+        for (query, expected) in [("zgzl", "中国资料.txt"), ("annual 2026", "annual-report-2026.PDF"), ("wildcards:report-??.pdf", "report-25.pdf"), ("regex:图.*\\.png$", "图📁.png")] {
+            let found = filesystem_search(&temp.0, query, 10).unwrap();
+            assert_eq!(found.len(), 1, "{query}"); assert_eq!(found[0].name, expected); assert_eq!(found[0].size, 5);
+        }
+        assert!(filesystem_search(&temp.0, "", 0).unwrap().is_empty());
+        assert_eq!(filesystem_search(&temp.0, "", 2).unwrap().len(), 2);
+        assert!(filesystem_search(&temp.0, "missing", 10).unwrap().is_empty());
+        assert!(filesystem_search(&temp.0, "regex:[", 10).err().expect("invalid regex").starts_with("INVALID_REGEX|"));
+        assert!(filesystem_search(&temp.0.join("missing"), "", 10).err().expect("missing folder").contains("not_found"));
+    }
+
+    #[test]
     fn folder_scope_accepts_direct_and_nested_children() {
         assert!(is_path_in_scope(r"D:\work\file.txt", r"D:\work"));
         assert!(is_path_in_scope(r"D:\work\src\main.rs", r"D:\work\"));

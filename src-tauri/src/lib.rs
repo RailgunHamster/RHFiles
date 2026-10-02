@@ -16,6 +16,8 @@ mod types;
 mod updates;
 mod vcs;
 mod window;
+#[cfg(test)]
+mod test_support;
 
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -85,7 +87,7 @@ pub fn run() {
                             row.get::<_, i32>(3)?,
                             row.get::<_, i32>(4)?,
                             row.get::<_, i32>(5)? != 0,
-                            row.get::<_, i32>(6)?,
+                            row.get::<_, Option<i32>>(6)?.unwrap_or(0),
                         ))
                     }).map_err(|e| e.to_string())?;
                     Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())

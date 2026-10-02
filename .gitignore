@@ -1,4 +1,6 @@
 /target
+/node_modules/
+/test-artifacts/
 /dist/
 /temp/
 .cache/

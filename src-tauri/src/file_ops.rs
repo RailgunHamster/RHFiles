@@ -27,6 +27,10 @@ fn tagged_fs_error(error: &std::io::Error) -> String {
 
 const TRANSFER_BUFFER_SIZE: usize = 1024 * 1024;
 
+#[cfg(all(test, target_os = "windows"))]
+#[path = "file_ops_business_tests.rs"]
+mod business_tests;
+
 #[derive(Clone, Copy, Default)]
 struct PathTotals {
     bytes: u64,
@@ -297,10 +301,36 @@ fn validate_target_name(name: &str) -> Result<(), String> {
         || name == ".."
         || name.contains(['\\', '/'])
         || name.chars().any(|character| "<>:\"|?*".contains(character))
+        || name.chars().any(|character| character <= '\u{1f}')
+        || name.ends_with([' ', '.'])
     {
         return Err(format!("Invalid destination name: {name}"));
     }
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_uppercase();
+    let reserved_number = |prefix: &str| stem.strip_prefix(prefix)
+        .is_some_and(|suffix| matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || reserved_number("COM") || reserved_number("LPT") {
+        return Err(format!("Reserved Windows destination name: {name}"));
+    }
     Ok(())
+}
+
+fn rename_without_replacing(source: &Path, target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        // Unlike std::fs::rename, MoveFileW never replaces a concurrently created
+        // destination. Copy fallback also uses create_new for the same reason.
+        windows::Win32::Storage::FileSystem::MoveFileW(
+            &windows::core::HSTRING::from(source.as_os_str()),
+            &windows::core::HSTRING::from(target.as_os_str()),
+        ).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if target.exists() { return Err("Destination already exists".into()); }
+        std::fs::rename(source, target).map_err(|e| e.to_string())
+    }
 }
 
 fn paths_resolve_to_same_entry(left: &Path, right: &Path) -> bool {
@@ -976,10 +1006,11 @@ pub fn restore_recycled_files(paths: Vec<String>) -> Result<(), String> {
 
 #[tauri::command(async)]
 pub fn rename_file(path: String, new_name: String) -> Result<(), String> {
+    validate_target_name(&new_name)?;
     let p = PathBuf::from(&path);
     let parent = p.parent().unwrap_or(&p);
     let new_path = parent.join(&new_name);
-    std::fs::rename(&p, &new_path).map_err(|e| e.to_string())
+    rename_without_replacing(&p, &new_path)
 }
 
 #[tauri::command(async)]
@@ -1103,7 +1134,7 @@ fn move_path_to_exact(source: &std::path::Path, target: &std::path::Path) -> Res
         ));
     }
 
-    match std::fs::rename(source, target) {
+    match rename_without_replacing(source, target) {
         Ok(()) => Ok(()),
         Err(rename_error) => {
             copy_path_to_exact(source, target).map_err(|copy_error| {

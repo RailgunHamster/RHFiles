@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::Emitter;
 
+#[cfg(test)]
+#[path = "archive_business_tests.rs"]
+mod business_tests;
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -643,6 +647,15 @@ mod tests {
     };
     use std::path::PathBuf;
 
+    fn require_7z() -> String {
+        find_7z().unwrap_or_else(|| {
+            let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("thirdparty");
+            assert!(dir.join("7z.exe").is_file() && dir.join("7z.dll").is_file(),
+                "7-Zip tests require the bundled 7z.exe/7z.dll or an installed 7-Zip");
+            dir.join("7z.exe").to_string_lossy().into_owned()
+        })
+    }
+
     fn test_dir(unique: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "rhfiles-archive-{}-{unique}",
@@ -690,7 +703,7 @@ mod tests {
 
     #[test]
     fn default_extraction_keeps_existing_file() {
-        let Some(exe) = find_7z() else { return; };
+        let exe = require_7z();
         let dir = test_dir("no-silent-overwrite");
         let source = dir.join("data.txt"); std::fs::write(&source, b"archive").unwrap();
         let zip = dir.join("data.zip");
@@ -823,9 +836,7 @@ mod tests {
 
     #[test]
     fn round_trips_zip_with_and_without_password() {
-        let Some(exe) = find_7z() else {
-            return;
-        };
+        let exe = require_7z();
         let dir = test_dir("roundtrip");
         round_trip_with_7z(&exe, &dir, "plain", None);
         round_trip_with_7z(&exe, &dir, "ascii-pw", Some("Secret Pass-1"));
@@ -836,19 +847,16 @@ mod tests {
     /// creates such archives in the first place) and must then be extractable
     /// through our 7-Zip argument vector. Skipped when Bandizip is absent.
     #[test]
+    #[ignore = "requires installed Bandizip and 7-Zip; run explicitly with --ignored"]
     fn round_trips_bandizip_chinese_password_zip() {
-        let Some(exe) = find_7z() else {
-            return;
-        };
+        let exe = require_7z();
         let bandizip = [
             r"C:\Program Files\Bandizip\bz.exe",
             r"C:\Program Files (x86)\Bandizip\bz.exe",
         ]
         .into_iter()
         .find(|candidate| std::path::Path::new(candidate).is_file());
-        let Some(bandizip) = bandizip else {
-            return;
-        };
+        let bandizip = bandizip.expect("Install Bandizip before running this integration test");
         let dir = test_dir("chinese-pw");
         let source = dir.join("payload.txt");
         let payload = "RHFiles chinese password probe";
@@ -945,9 +953,7 @@ mod tests {
 
     #[test]
     fn probes_plain_zip_without_password() {
-        let Some(exe) = find_7z() else {
-            return;
-        };
+        let exe = require_7z();
         let dir = test_dir("probe-plain");
         let archive = dir.join("plain.zip");
         let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).expect("create zip"));
@@ -956,16 +962,14 @@ mod tests {
             .expect("start entry");
         std::io::Write::write_all(&mut writer, b"probe").expect("write entry");
         writer.finish().expect("finish zip");
-        let probed = super::archive_encryption_probe(archive.to_string_lossy().into_owned())
-            .expect("probe plain archive");
+        let entries = list_archive_with_7z(&exe, &archive).expect("list plain archive");
+        let probed = super::smallest_encrypted_entry(&entries);
         assert_eq!(probed, None);
     }
 
     #[test]
     fn round_trips_split_zip_with_password() {
-        let Some(exe) = find_7z() else {
-            return;
-        };
+        let exe = require_7z();
         let dir = test_dir("split-encrypted");
         let source = dir.join("payload.txt");
         let payload = "RHFiles split encrypted probe";
@@ -1088,9 +1092,7 @@ mod tests {
 
     #[test]
     fn lists_plain_zip_with_7z() {
-        let Some(exe) = find_7z() else {
-            return;
-        };
+        let exe = require_7z();
         let dir = test_dir("plain-list");
         let archive = dir.join("plain.zip");
         let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).expect("create zip"));
@@ -1114,9 +1116,7 @@ mod tests {
 
     #[test]
     fn lists_split_zip_volumes_with_7z() {
-        let Some(exe) = find_7z() else {
-            return;
-        };
+        let exe = require_7z();
         let dir = test_dir("split-list");
         let full = dir.join("full.zip");
         let mut writer = zip::ZipWriter::new(std::fs::File::create(&full).expect("create zip"));

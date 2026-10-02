@@ -3,36 +3,63 @@
 const MAX_UNDO = 50;
 let undoStack = [];
 let redoStack = [];
+let historyBusy = false;
+let historyRevision = 0;
 
 function pushUndo(action) {
+  historyRevision++;
   undoStack.push(action);
   if (undoStack.length > MAX_UNDO) undoStack.shift();
   redoStack = [];
 }
 
 async function undo() {
-  if (!undoStack.length) return;
+  if (historyBusy || !undoStack.length) return;
+  historyBusy = true;
+  const revision = historyRevision;
   const action = undoStack.pop();
+  const originalIndex = undoStack.length;
   try {
     await action.undo();
-    redoStack.push(action);
+    // A new operation during the await has already invalidated redo history.
+    if (revision === historyRevision) redoStack.push(action);
+  } catch (e) {
+    undoStack.splice(Math.min(originalIndex, undoStack.length), 0, action);
+    historyBusy = false;
+    alert(t('alert.undoFailed', {error: e}));
+    return;
+  }
+  try {
     await refresh();
   } catch (e) {
-    undoStack.push(action);
-    alert(t('alert.undoFailed', {error: e}));
+    // The filesystem action succeeded. A failed listing must not make it run twice.
+    console.warn('Refresh after undo failed', e);
+  } finally {
+    historyBusy = false;
   }
 }
 
 async function redo() {
-  if (!redoStack.length) return;
+  if (historyBusy || !redoStack.length) return;
+  historyBusy = true;
+  const revision = historyRevision;
   const action = redoStack.pop();
   try {
     await action.redo();
     undoStack.push(action);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+  } catch (e) {
+    if (revision === historyRevision) redoStack.push(action);
+    historyBusy = false;
+    alert(t('alert.redoFailed', {error: e}));
+    return;
+  }
+  try {
     await refresh();
   } catch (e) {
-    redoStack.push(action);
-    alert(t('alert.redoFailed', {error: e}));
+    console.warn('Refresh after redo failed', e);
+  } finally {
+    historyBusy = false;
   }
 }
 

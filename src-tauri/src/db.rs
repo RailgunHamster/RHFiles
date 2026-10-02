@@ -1,11 +1,19 @@
 use crate::types::*;
 use std::collections::HashMap;
 
+#[cfg(test)]
+#[path = "db_business_tests.rs"]
+mod business_tests;
+
 pub fn get_db() -> Result<rusqlite::Connection, String> {
     let dir = crate::profile::data_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let db_path = dir.join("rhfiles.db");
-    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    open_db(&db_path)
+}
+
+fn open_db(db_path: &std::path::Path) -> Result<rusqlite::Connection, String> {
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
     let ver: u32 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap_or(0);
@@ -138,21 +146,30 @@ pub fn db_load_layout(path: String) -> Result<Option<String>, String> {
 #[tauri::command(async)]
 pub fn db_save_pinned(paths: Vec<(String, String)>) -> Result<(), String> {
     let conn = get_db()?;
-    conn.execute("DELETE FROM pinned", [])
+    save_pinned(&conn, &paths)
+}
+
+fn save_pinned(conn: &rusqlite::Connection, paths: &[(String, String)]) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM pinned", [])
         .map_err(|e| e.to_string())?;
     for (i, (path, name)) in paths.iter().enumerate() {
-        conn.execute(
+        tx.execute(
             "INSERT INTO pinned (path, name, ord) VALUES (?1, ?2, ?3)",
             rusqlite::params![path, name, i],
         )
         .map_err(|e| e.to_string())?;
     }
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 pub fn db_load_pinned() -> Result<Vec<(String, String)>, String> {
     let conn = get_db()?;
+    load_pinned(&conn)
+}
+
+fn load_pinned(conn: &rusqlite::Connection) -> Result<Vec<(String, String)>, String> {
     let mut stmt = conn
         .prepare("SELECT path, name FROM pinned ORDER BY ord")
         .map_err(|e| e.to_string())?;

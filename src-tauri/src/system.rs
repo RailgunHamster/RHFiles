@@ -1706,10 +1706,10 @@ mod compression_tests {
     }
 
     #[test]
+    #[ignore = "requires installed Bandizip; run explicitly with --ignored"]
     fn installed_bandizip_can_create_an_archive_with_the_default_template() {
-        let Ok(executable) = resolve_compression_executable("bandizip", None) else {
-            return;
-        };
+        let executable = resolve_compression_executable("bandizip", None)
+            .expect("Install Bandizip before running this integration test");
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after Unix epoch")

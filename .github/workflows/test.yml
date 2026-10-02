@@ -1,0 +1,43 @@
+name: File manager business tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-business:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci --ignore-scripts
+      - name: Frontend business scenarios and property tests
+        run: npm test
+      - name: Verify business tests catch deliberately broken behavior
+        run: npm run test:mutations
+      - name: Real filesystem, recovery, archive and persistence tests
+        run: cargo test --workspace --locked
+      - name: Build isolated test application
+        run: cargo build -p rhfiles-tauri --locked
+      - name: Stage bundled archive engine for the test application
+        shell: pwsh
+        run: Copy-Item -LiteralPath src-tauri/thirdparty/7z.exe, src-tauri/thirdparty/7z.dll -Destination target/debug
+      - name: Real WebView2 file workflows including tab drag and delete confirmations
+        run: npm run test:e2e
+      - name: Preserve failure evidence and workflow report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-manager-business-evidence
+          path: test-artifacts/
+          if-no-files-found: ignore

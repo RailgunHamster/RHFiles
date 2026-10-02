@@ -4,6 +4,7 @@
 (function () {
   const results = [];
   let currentSuite = "";
+  let currentSkipReason = null;
 
   function assert(cond, msg) {
     if (!cond) throw new Error(msg || "Assertion failed");
@@ -22,21 +23,28 @@
   }
 
   function log(msg) {
+    if (/^SKIP\b/.test(msg)) currentSkipReason = msg;
     console.log("[TEST] " + msg);
   }
 
   async function test(name, fn) {
     currentSuite = name;
+    currentSkipReason = null;
     // Surface progress through the window title so external watchdogs can see
     // which test is running (or hung) even when the window is hidden.
     document.title = "RHFiles ▸ " + name;
     try {
       await fn();
-      results.push({ name, status: "PASS" });
-      log("PASS: " + name);
+      if (currentSkipReason) {
+        results.push({ name, status: "SKIP", reason: currentSkipReason });
+      } else {
+        results.push({ name, status: "PASS" });
+        log("PASS: " + name);
+      }
     } catch (e) {
-      results.push({ name, status: "FAIL", error: e.message });
-      log("FAIL: " + name + " — " + e.message);
+      const error = e?.message || String(e);
+      results.push({ name, status: "FAIL", error });
+      log("FAIL: " + name + " — " + error);
     }
     writeProgress(name);
   }
@@ -52,9 +60,10 @@
     try {
       const passed = results.filter(r => r.status === "PASS").length;
       const failed = results.filter(r => r.status === "FAIL").length;
+      const skipped = results.filter(r => r.status === "SKIP").length;
       rawInvoke("write_test_results", {
         results: JSON.stringify({
-          passed, failed, total: results.length,
+          passed, failed, skipped, total: results.length,
           partial: true, running: current,
           results, version: "progress",
         }),
@@ -204,7 +213,7 @@
         if (el.dataset.path && el.dataset.path.toUpperCase().startsWith("D:")) dDrive = el;
       });
       if (!dDrive) {
-        log("SKIP: No D: drive, using first drive");
+        log("NOTE: No D: drive, using first drive");
         dDrive = $(".drive-item");
       }
       assert(dDrive, "No drive item found");
@@ -230,16 +239,12 @@
     });
 
     await test("[nav] Click Desktop quick access navigates", async () => {
-      const items = $$(".sidebar-item");
-      let desktopItem = null;
-      items.forEach(el => {
-        const span = el.querySelector("span");
-        if (span && span.textContent.trim() === "Desktop") desktopItem = el;
-      });
-      if (!desktopItem) { log("SKIP: Desktop quick access not found"); return; }
+      const desktopItem = $('.sidebar-item[data-nav="Desktop"]');
+      assert(desktopItem, "Desktop quick access not found");
+      const expected = normalizeWindowsPathInput(homeDir('Desktop'));
       simulateClick(desktopItem);
-      await waitForCondition(() => getTab().path.toLowerCase().includes("desktop"), 8000);
-      assertIncludes(getTab().path.toLowerCase(), "desktop", "Path after Desktop click");
+      await waitForCondition(() => windowsPathKey(getTab().path) === windowsPathKey(expected), 8000);
+      assertEqual(windowsPathKey(getTab().path), windowsPathKey(expected), "Path after Desktop click (including redirected folders)");
       await sleep(300);
     });
 
@@ -4093,16 +4098,19 @@
     // SECTION 26: RESPONSIVENESS & CLEANUP
     // ================================================================
 
-    await test("[perf] Shell verbs query completes", async () => {
+    await test("[perf] Program context menu builds without native executable probing", async () => {
+      // get_shell_verbs was removed from the product. The old test swallowed
+      // the resulting IPC error and claimed success without checking any menu.
+      const originalCall = call;
       try {
-        const start = Date.now();
-        const verbs = await call("get_shell_verbs", { path: "C:\\Windows\\notepad.exe" });
-        const elapsed = Date.now() - start;
-        assert(Array.isArray(verbs), "get_shell_verbs should return array");
-        log("Shell verbs for .exe: " + verbs.length + " items in " + elapsed + "ms");
-        assert(elapsed < 100, "Shell verbs should take < 100ms, took " + elapsed + "ms");
-      } catch (e) {
-        log("Shell verbs test: " + e.message);
+        call = () => { throw new Error('Building a menu must not probe installed programs'); };
+        const menu = buildProgramOpenMenu('C:\\Windows', {isDirectory:true, includeNewWindow:true});
+        assert(Array.isArray(menu), 'Program menu should be available synchronously');
+        for (const icon of ['vscode', 'visual-studio', 'cmd', 'powershell', 'git-bash']) {
+          assert(menu.some(item => item.icon === icon && typeof item.action === 'function'), 'Missing actionable program entry: ' + icon);
+        }
+      } finally {
+        call = originalCall;
       }
     });
 
@@ -4130,9 +4138,10 @@
     document.title = "RHFiles";
     const passed = results.filter(r => r.status === "PASS").length;
     const failed = results.filter(r => r.status === "FAIL").length;
-    log("Results: " + passed + " passed, " + failed + " failed, " + results.length + " total");
+    const skipped = results.filter(r => r.status === "SKIP").length;
+    log("Results: " + passed + " passed, " + failed + " failed, " + skipped + " skipped, " + results.length + " total");
 
-    return { passed, failed, total: results.length, results, version: "v2-2026-05-03" };
+    return { passed, failed, skipped, total: results.length, results, version: "v2-2026-05-03" };
   }
 
   // Register with Tauri event system
