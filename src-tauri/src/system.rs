@@ -317,7 +317,9 @@ pub fn open_in_windows_explorer(path: String, is_directory: Option<bool>) -> Res
     }
 
     #[cfg(target_os = "macos")]
-    { return rhfiles_core::macos::request(serde_json::json!({"action":"reveal","path":target})).map(|_| ()); }
+    { return if is_directory { rhfiles_core::macos::open(&target) } else {
+        rhfiles_core::macos::request(serde_json::json!({"action":"reveal","path":target})).map(|_| ())
+    }; }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (target, is_directory);
@@ -1458,7 +1460,8 @@ pub fn copy_file_path(path: String) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn show_open_with_dialog(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    return rhfiles_core::macos::request(serde_json::json!({"action":"open-with","path":path})).map(|_| ());
+    { let app = rhfiles_core::macos::request(serde_json::json!({"action":"open-with","path":path}))?;
+      return match app.as_str() { Some(app) => crate::macos::open_with(std::path::Path::new(&path),app), None => Ok(()) }; }
     std::process::Command::new("rundll32.exe")
         .args(["shell32.dll,OpenAs_RunDLL", &path])
         .spawn()
@@ -1547,6 +1550,10 @@ fn resolve_compression_executable(tool: &str, configured: Option<&str>) -> Resul
         ));
     }
 
+    #[cfg(target_os = "macos")]
+    { return if tool == "7zip" { crate::macos::executable("7zz").or_else(|| crate::macos::executable("7z"))
+        .ok_or_else(|| "Install 7-Zip (brew install sevenzip) or configure its executable in Settings".into())
+      } else { Err(format!("{tool} is not supported on macOS")) }; }
     let mut candidates = Vec::new();
     let (names, relative_paths): (&[&str], &[&str]) = match tool {
         "7zip" => (&["7z.exe"], &[r"7-Zip\7z.exe"]),
@@ -2000,6 +2007,8 @@ fn show_windows_share_ui(window: tauri::WebviewWindow, paths: Vec<String>) -> Re
 
 #[tauri::command]
 pub async fn share_files(window: tauri::WebviewWindow, paths: Vec<String>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { let _ = window; return rhfiles_core::macos::request(serde_json::json!({"action":"share","paths":paths})).map(|_| ()); }
     #[cfg(target_os = "windows")]
     {
         tauri::async_runtime::spawn_blocking(move || show_windows_share_ui(window, paths))

@@ -4,5 +4,6 @@ fn main() {
         cc::Build::new().file("src/macos.m").flag("-fobjc-arc").compile("rhfiles_macos");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rustc-link-lib=framework=UniformTypeIdentifiers");
     }
 }

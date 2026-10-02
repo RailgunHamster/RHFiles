@@ -65,3 +65,57 @@ pub fn open(path: &Path) -> Result<(), String> {
     let status = std::process::Command::new("/usr/bin/open").arg("--").arg(path).status().map_err(|e| e.to_string())?;
     if status.success() { Ok(()) } else { Err(format!("macOS could not open {}: {status}", path.display())) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let unique=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let path=std::env::temp_dir().join(format!("rhfiles-mac-{}-{unique}",std::process::id()));
+            std::fs::create_dir(&path).unwrap(); Self(path)
+        }
+    }
+    impl Drop for Fixture { fn drop(&mut self) { let _=std::fs::remove_dir_all(&self.0); } }
+    #[test]
+    fn exclusive_rename_never_overwrites_a_file_directory_or_dangling_link() {
+        let f=Fixture::new(); let source=f.0.join("中文 source.txt"); let target=f.0.join("target");
+        std::fs::write(&source,b"source").unwrap(); std::fs::write(&target,b"keep").unwrap();
+        assert!(rename_exclusive(&source,&target).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(),b"keep");
+        std::fs::remove_file(&target).unwrap(); std::fs::create_dir(&target).unwrap();
+        assert!(rename_exclusive(&source,&target).is_err());
+        std::fs::remove_dir(&target).unwrap();
+        std::os::unix::fs::symlink(f.0.join("missing"),&target).unwrap();
+        assert!(rename_exclusive(&source,&target).is_err());
+        assert!(source.is_file());
+        std::fs::remove_file(&target).unwrap(); rename_exclusive(&source,&target).unwrap();
+        assert!(!source.exists()); assert_eq!(std::fs::read(&target).unwrap(),b"source");
+    }
+    #[test]
+    fn trash_restore_preserves_data_and_refuses_collision() {
+        let f=Fixture::new(); let source=f.0.join("recover 中文.txt");
+        std::fs::write(&source,b"recover me").unwrap(); trash(&source).unwrap();
+        assert!(!source.exists());
+        // A failed second delete must not erase the first successful undo record.
+        assert!(trash(&source).is_err());
+        std::fs::write(&source,b"new occupant").unwrap(); assert!(restore(&source).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(),b"new occupant");
+        std::fs::remove_file(&source).unwrap(); restore(&source).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(),b"recover me");
+        assert!(!trash_journal(&source).unwrap().exists());
+    }
+    #[test]
+    fn roots_and_relative_paths_are_never_trashed() {
+        assert!(trash(Path::new("/")).is_err()); assert!(trash(Path::new("relative")).is_err());
+    }
+    #[test]
+    fn clearing_readonly_does_not_grant_write_to_other_users() {
+        use std::os::unix::fs::PermissionsExt;
+        let f=Fixture::new(); let source=f.0.join("private"); std::fs::write(&source,b"secret").unwrap();
+        std::fs::set_permissions(&source,std::fs::Permissions::from_mode(0o400)).unwrap();
+        crate::enumerator::set_file_readonly(&source,false).unwrap();
+        assert_eq!(std::fs::metadata(source).unwrap().permissions().mode() & 0o777,0o600);
+    }
+}

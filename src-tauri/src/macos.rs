@@ -1,4 +1,13 @@
 use std::path::{Path,PathBuf};
+#[tauri::command(async)]
+pub fn connect_macos_share(url: String) -> Result<(),String> {
+    let parsed=url::Url::parse(&url).map_err(|e|e.to_string())?;
+    if parsed.scheme() != "smb" || parsed.host_str().is_none() || parsed.password().is_some() {
+        return Err("Use smb://server/share without a password; the system dialog requests credentials.".into());
+    }
+    let status=std::process::Command::new("/usr/bin/open").arg(&url).status().map_err(|e|e.to_string())?;
+    if status.success(){Ok(())}else{Err(format!("Could not open SMB connection: {status}"))}
+}
 pub fn executable(name:&str)->Option<PathBuf> {
     let mut dirs=std::env::var_os("PATH").map(|p|std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
     // Finder-launched applications do not inherit the user's shell PATH.

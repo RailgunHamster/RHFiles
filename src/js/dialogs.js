@@ -279,7 +279,7 @@ function openSettings() {
     '<option value="' + l.code + '"' + (_lang===l.code?" selected":"") + '>' + esc(l.name) + '</option>'
   ).join("");
   nav.setAttribute('aria-label', t('settings.categories'));
-  nav.innerHTML = SETTINGS_SECTIONS.map(([id, labelKey]) =>
+  nav.innerHTML = SETTINGS_SECTIONS.filter(([id]) => !IS_MAC || id !== 'integration').map(([id, labelKey]) =>
     '<button type="button" class="settings-nav-item" id="settings-nav-' + id + '" role="tab" aria-controls="settings-page-' + id + '" data-settings-section="' + id + '" onclick="switchSettingsSection(\'' + id + '\')" onkeydown="handleSettingsNavKey(event,\'' + id + '\')">' +
       settingsSectionIcon(id) + '<span>' + esc(t(labelKey)) + '</span></button>'
   ).join('');
@@ -461,6 +461,7 @@ function openSettings() {
     settingsPage('shortcuts', 'settings.categoryShortcuts', 'settings.categoryShortcutsDesc', shortcuts) +
     settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data);
   dlg.style.display = "flex";
+  if (IS_MAC && typeof configureMacSettings === 'function') configureMacSettings();
   call('get_instance_profile', {}).then(profile => {
     const element = document.getElementById('settings-instance-profile');
     if (element && profile) element.textContent = t('settings.profileDetails', {

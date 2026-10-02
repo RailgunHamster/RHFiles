@@ -149,7 +149,7 @@ fn resolve_profile(root: PathBuf, local: PathBuf, desktop_id: String) -> Result<
             .join(&desktop_id)
             .join("WebView2")
     };
-    let account = stable_hash(&root.to_string_lossy().to_lowercase());
+    let account = stable_hash(&if cfg!(windows) { root.to_string_lossy().to_lowercase() } else { root.to_string_lossy().into_owned() });
     Ok(Profile {
         instance_id: format!(
             "com.rhfiles.app.u{account:x}.d{}",

@@ -24,6 +24,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.runner }}
+          cache-on-failure: true
       - run: npm ci --ignore-scripts
       - run: npm test
       - name: Native filesystem, Trash and business regression tests

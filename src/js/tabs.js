@@ -1409,6 +1409,13 @@ async function navigateAddressInput(value, isRight) {
   const path = normalizeWindowsPathInput(value);
   if (!path) return false;
   const navigate = isRight ? rpNavigateTo : navigateTo;
+  if (IS_MAC && /^smb:\/\//i.test(path)) {
+    try {
+      await call('connect_macos_share', {url:path});
+      showNotice(_lang.startsWith('zh') ? '请在系统窗口中连接共享；挂载后从 /Volumes 打开。' : 'Connect in the system dialog, then open the mounted share in /Volumes.');
+      return navigate('/Volumes');
+    } catch (error) { showNotice(String(error)); return false; }
+  }
 
   // Address bars can receive a file:/// URL or a normal filesystem path that
   // points at a file. In that case, mirror Explorer: show its parent folder and

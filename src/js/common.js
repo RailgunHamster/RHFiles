@@ -342,6 +342,13 @@ function t(key, params) {
     'settings.desktopIsolation': ['数据按 macOS 用户独立保存；暂不按 Spaces 自动隔离。','Data is isolated by macOS user; automatic Spaces isolation is not supported.'],
     'update.unmanaged': ['Mac 版请手动安装新版 .app；尚未配置签名自动更新。','Install the new macOS .app manually; signed automatic updates are not configured.'],
     'search.builtin': ['文件系统搜索','Filesystem search'],
+    'mac.downloads': ['下载 Mac 构建','Download Mac builds'],
+    'update.statusDisabled': ['Mac 版目前手动更新：安装新版 .app 即可保留用户数据。','macOS currently uses manual updates: replace the .app; user data is preserved.'],
+    'update.statusBootstrap': ['Mac 版请下载新的 .app，不使用 Windows 更新程序。','Download the new macOS .app; Windows updates are not used.'],
+    'settings.searchBehaviorBody': ['默认搜索当前文件夹。全局模式搜索用户主目录；支持拼音、通配符和正则，扫描最多 5 秒 / 100,000 项，结果可能不完整。','Search the current folder by default, or your home folder in global mode. Pinyin, wildcards and regex are supported; the 5-second / 100,000-entry scan limit may yield partial results.'],
+    'search.scopeGlobal': ['用户主目录','Home folder'],
+    'notice.certInstalled': ['已在钥匙串访问中打开，请按系统提示安装。','Opened in Keychain Access; follow the system installation prompts.'],
+    'notice.fontInstalled': ['已在字体册中打开，请按系统提示安装。','Opened in Font Book; follow the system installation prompts.'],
   } : {};
   const val = mac[key]?.[_lang.startsWith('zh') ? 0 : 1] || (I18N[_lang] && I18N[_lang][key]) || I18N.en[key] || key;
   if (!params) return val;

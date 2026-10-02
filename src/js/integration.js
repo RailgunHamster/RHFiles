@@ -130,6 +130,7 @@ function renderFileDialogIntegrationStatus() {
 }
 
 async function syncFileDialogIntegration(force = false) {
+  if (IS_MAC) return;
   if (!force && !document.hasFocus()) return G._fileDialogIntegrationStatus || null;
   const token = ++_fileDialogIntegrationRequestToken;
   try {

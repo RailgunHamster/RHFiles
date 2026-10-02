@@ -5,6 +5,7 @@ function resolveRightPane(isRight) {
 }
 
 function isCloudPath(isRight) {
+  if (IS_MAC) return false; // Windows Cloud Files pin/unpin commands have no macOS equivalent.
   const path = isRight ? G.rp.path : getTab().path;
   const pl = path.toLowerCase();
   return pl.includes("onedrive") || pl.includes("google drive") || pl.includes("my drive") || pl.includes("dropbox");
@@ -1332,7 +1333,7 @@ function clampMenuPosition(menu, anchorX, anchorY, { minVisible = 40 } = {}) {
 
 function renderMenuItems(parent, items, x, y) {
   const normalized = [];
-  items.filter(item => !item.hidden).forEach(item => {
+  items.filter(item => !item.hidden && (!IS_MAC || !['powershell','git-bash','visual-studio','potplayer','bandizip','winrar','shield'].includes(item.icon))).forEach(item => {
     const isSep = item === "-" || item.label === "-";
     if (isSep && (normalized.length === 0 || normalized[normalized.length - 1] === "-" || normalized[normalized.length - 1].label === "-")) return;
     normalized.push(item);
@@ -1379,7 +1380,7 @@ function renderMenuItems(parent, items, x, y) {
       lastWasSep = false;
       const mi = document.createElement("div");
       mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
-      mi.innerHTML = `${contextMenuLabelMarkup(item)}${item.shortcut ? `<span class="ctx-shortcut">${esc(item.shortcut)}</span>` : ""}`;
+      mi.innerHTML = `${contextMenuLabelMarkup(item)}${item.shortcut ? `<span class="ctx-shortcut">${esc(IS_MAC ? item.shortcut.replace('Ctrl+', '⌘').replace('Alt+', '⌥') : item.shortcut)}</span>` : ""}`;
       mi.addEventListener("click", e => {
         if (item.disabled) return;
         const actionFn = item.action;
@@ -2285,6 +2286,7 @@ function showCompatDialog(path) {
 
 // --- NTFS permissions dialog ---
 async function showPermissionsDialog(path) {
+  if (IS_MAC) return runContextCommand('show_properties', {path}, t('ctx.permissions'));
   const dlg = document.createElement("dialog");
   dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:420px;";
   dlg.innerHTML = `

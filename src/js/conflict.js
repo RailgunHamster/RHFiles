@@ -45,6 +45,7 @@ function closeConflict() {
 }
 
 function fileNameKey(name) {
+  if (IS_MAC) return String(name || '').normalize('NFC');
   return String(name || '').normalize('NFC').toLocaleLowerCase();
 }
 

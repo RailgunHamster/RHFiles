@@ -1,6 +1,7 @@
 // Native macOS services, statically linked: no shell interpolation or helper download.
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -51,6 +52,20 @@ static id perform(NSDictionary *request, NSError **error) {
         [pb setString:[request[@"cut"] boolValue] ? @"true" : @"false" forType:cutType];
         return @(pb.changeCount);
     }
+    if ([action isEqual:@"share"]) {
+        NSMutableArray *items = [NSMutableArray array];
+        for (NSString *entry in request[@"paths"]) {
+            if (![entry isAbsolutePath] || ![fm fileExistsAtPath:entry])
+                @throw [NSException exceptionWithName:@"Path" reason:@"Sharing requires existing absolute file paths" userInfo:nil];
+            [items addObject:[NSURL fileURLWithPath:entry]];
+        }
+        NSView *view = NSApp.keyWindow.contentView;
+        if (!view || !items.count) @throw [NSException exceptionWithName:@"Share" reason:@"No active window or selected files" userInfo:nil];
+        static NSSharingServicePicker *picker;
+        picker = [[NSSharingServicePicker alloc] initWithItems:items];
+        [picker showRelativeToRect:NSMakeRect(NSMidX(view.bounds), NSMidY(view.bounds), 1, 1) ofView:view preferredEdge:NSRectEdgeMinY];
+        return @YES;
+    }
     if (![path isAbsolutePath]) @throw [NSException exceptionWithName:@"Path" reason:@"Absolute file path required" userInfo:nil];
     NSURL *url = [NSURL fileURLWithPath:path];
     if ([action isEqual:@"trash"]) {
@@ -81,10 +96,10 @@ static id perform(NSDictionary *request, NSError **error) {
         NSOpenPanel *panel = [NSOpenPanel openPanel];
         panel.directoryURL = [NSURL fileURLWithPath:@"/Applications"];
         panel.canChooseDirectories = NO; panel.allowsMultipleSelection = NO;
-        panel.allowedFileTypes = @[@"app"]; panel.prompt = @"Open / 打开";
-        if ([panel runModal] != NSModalResponseOK) return @NO;
-        // The API reports launch errors synchronously and does not inject a command line.
-        return @([NSWorkspace.sharedWorkspace openURLs:@[url] withApplicationAtURL:panel.URL options:NSWorkspaceLaunchDefault configuration:@{} error:error] != nil);
+        panel.allowedContentTypes = @[UTTypeApplicationBundle]; panel.prompt = @"Open / 打开";
+        if ([panel runModal] != NSModalResponseOK) return NSNull.null;
+        // Rust invokes /usr/bin/open with separate arguments and reports launch errors.
+        return panel.URL.path;
     }
     if ([action isEqual:@"wallpaper"]) {
         for (NSScreen *screen in NSScreen.screens)
@@ -112,7 +127,7 @@ char *rhfiles_macos_request(const char *input) {
     };
     // Filesystem calls must also work in headless tests, without a GUI run loop.
     NSDictionary *request = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:input length:strlen(input)] options:0 error:nil];
-    BOOL gui = [@[@"icon", @"reveal", @"open-with", @"wallpaper"] containsObject:request[@"action"]];
+    BOOL gui = [@[@"icon", @"reveal", @"open-with", @"wallpaper", @"share"] containsObject:request[@"action"]];
     if (!gui || NSThread.isMainThread) work(); else dispatch_sync(dispatch_get_main_queue(), work);
     return result;
 }

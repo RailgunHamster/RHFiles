@@ -1557,6 +1557,11 @@ pub fn set_file_readonly(path: &Path, readonly: bool) -> Result<(), String> {
     let mut perms = std::fs::metadata(path)
         .map_err(|e| e.to_string())?
         .permissions();
+    #[cfg(unix)]
+    { use std::os::unix::fs::PermissionsExt;
+      let mode = perms.mode();
+      perms.set_mode(if readonly { mode & !0o222 } else { mode | 0o200 }); }
+    #[cfg(not(unix))]
     perms.set_readonly(readonly);
     std::fs::set_permissions(path, perms).map_err(|e| e.to_string())
 }

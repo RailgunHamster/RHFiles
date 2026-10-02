@@ -143,6 +143,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")]
+            macos::connect_macos_share,
             profile::get_instance_profile,
             file_ops::list_dir, file_ops::get_drives, file_ops::parent_path,
             file_ops::delete_file, file_ops::delete_files, file_ops::delete_files_permanently, file_ops::restore_recycled_files,
