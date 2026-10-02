@@ -86,6 +86,9 @@ function Sync-File {
 
 $appDir = Join-Path $generatedRoot 'app'
 Sync-File `
+    -Source (Join-Path $repoRoot 'android\gradle\app\proguard-rules.pro') `
+    -Target (Join-Path $appDir 'proguard-rules.pro')
+Sync-File `
     -Source (Join-Path $repoRoot 'android\gradle\app\build.gradle.kts') `
     -Target (Join-Path $appDir 'build.gradle.kts')
 
@@ -97,6 +100,18 @@ Sync-File `
 Sync-File `
     -Source (Join-Path $repoRoot 'android\gradle\app\src\main\java\com\railgunhamster\rhfiles\MainActivity.kt') `
     -Target (Join-Path $appDir 'src\main\java\com\railgunhamster\rhfiles\MainActivity.kt')
+
+# New native modules and JVM business tests are canonical inputs too.
+foreach ($sourceSet in @('main', 'test')) {
+    $canonical = Join-Path $repoRoot "android\gradle\app\src\$sourceSet\java\com\railgunhamster\rhfiles"
+    $destination = Join-Path $appDir "src\$sourceSet\java\com\railgunhamster\rhfiles"
+    if (Test-Path $canonical) {
+        New-Item -ItemType Directory -Force -Path $destination | Out-Null
+        foreach ($source in Get-ChildItem -LiteralPath $canonical -File -Filter '*.kt') {
+            Sync-File -Source $source.FullName -Target (Join-Path $destination $source.Name)
+        }
+    }
+}
 
 $targets = Get-ChildItem $generatedRoot -Recurse -File -Filter 'AndroidManifest.xml' |
     Where-Object { $_.FullName -notlike '*\build\*' }

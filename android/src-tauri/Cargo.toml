@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-android"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "RHFiles for Android — an ad-free, telemetry-free file manager with full storage access"
 publish = false
@@ -38,6 +38,7 @@ image = { version = "0.25", default-features = false, features = [
 # Thumbnails cross the IPC bridge as `data:` URLs, which the WebView can use
 # directly as an `<img src>` without touching the filesystem protocol.
 base64 = "0.22"
+getrandom = "0.3"
 
 [dev-dependencies]
 # `test` provides the MockRuntime used by tests/ipc.rs to drive the real command

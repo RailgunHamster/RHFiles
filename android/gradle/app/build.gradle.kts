@@ -83,6 +83,15 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    packaging {
+        resources.excludes += "META-INF/versions/**/OSGI-INF/MANIFEST.MF"
+        resources.merges += setOf("META-INF/LICENSE", "META-INF/NOTICE", "META-INF/LICENSE.txt", "META-INF/NOTICE.txt")
+    }
 }
 
 rust {
@@ -90,11 +99,23 @@ rust {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    implementation("androidx.documentfile:documentfile:1.1.0")
+    implementation("org.apache.commons:commons-compress:1.28.0")
+    implementation("org.tukaani:xz:1.10")
+    implementation("commons-net:commons-net:3.13.0")
+    implementation("com.hierynomus:smbj:0.14.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.83")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.apache.ftpserver:ftpserver-core:1.2.1")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
 }

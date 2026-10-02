@@ -27,7 +27,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await pw.chromium.launch({headless:true,executablePath});
 let checks=0;
 function check(value,label){assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);}
-function fixture({denied=false,partial=false}){
+function fixture({denied=false,partial=false,nativeV2=false}){
   const root='/storage/emulated/0';
   const file=(name,kind='document',size=10)=>({name,path:root+'/'+name,kind,isDir:kind==='folder',size,modifiedMs:1712345678000});
   const m=window.__model={calls:[],denied,partial,index:true,fs:{
@@ -81,6 +81,37 @@ function fixture({denied=false,partial=false}){
       default:throw 'Unstubbed command '+cmd;
     }
   }};
+  if(nativeV2){
+    m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
+    m.fs['content://test/tree/root/document/root']=[{name:'云端.txt',path:'content://test/tree/root/document/file',isDir:false,kind:'document',size:12}];
+    window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
+      const a=r.args;
+      switch(r.command){
+        case 'capabilities':return {version:2};case 'theme':return true;case 'permission':return !m.denied;
+        case 'roots':return [{path:root,label:'内部存储',removable:false,totalBytes:128*1024**3,freeBytes:80*1024**3},{path:'content://test/tree/root/document/root',label:'云端',removable:true,provider:true}];
+        case 'list':return {path:a.path,entries:m.fs[a.path]||[]};
+        case 'media.library':return {entries:Object.values(m.fs).flat().filter(e=>e.kind===a.category),total:1,truncated:false};
+        case 'connections':return m.connections;
+        case 'connection.save':m.connections.push({id:'server-1',path:'remote://server-1/',name:a.name,type:a.type});return 'server-1';
+        case 'connection.delete':m.connections=m.connections.filter(c=>c.id!==a.id);return true;
+        case 'tree.pick':return m.pickCancel?null:['content://test/tree/root/document/root'];
+        case 'document.pick':return m.pickCancel?null:['content://test/tree/root/document/file'];
+        case 'tree.forget':return true;
+        case 'open':case 'share':case 'app.action':case 'usage.settings':return true;
+        case 'shares':return m.shares;case 'shares.clear':m.shares=[];return true;
+        case 'apps':return [{name:'示例应用',package:'com.example.app',version:'2.0',system:false,apkBytes:12345,split:true},{name:'系统组件',package:'com.example.system',version:'1',system:true,apkBytes:100}];
+        case 'text.read':return {text:m.text,revision:m.revision};
+        case 'text.save':if(a.revision!==m.revision)throw new Error('文件已被其他程序修改');m.text=a.text;return true;
+        case 'archive.list':return [{name:'目录/中文.txt',size:20,isDir:false},{name:'<img onerror=alert(1)>.txt',size:1,isDir:false}];
+        case 'trash.list':return [{id:'trash-1',name:'已删除.txt',original:root+'/已删除.txt',path:root+'/.rhfiles-trash/trash-1',at:1712345678000}];
+        case 'job.start':{const id='job-'+(m.jobs.length+1);m.jobs.push({id,op:a.op,args:a.args,state:'running',bytes:25,total:100,files:2,done:0,current:'中文.txt',completed:[],outputs:[],failures:[],started:Date.now()});return id;}
+        case 'jobs':return m.jobs;
+        case 'job.status':return m.jobs.find(j=>j.id===a.id);
+        case 'job.control':{const j=m.jobs.find(j=>j.id===a.id);j.state=a.action==='pause'?'paused':a.action==='resume'?'running':'canceled';return true;}
+        default:throw new Error('Unstubbed native command '+r.command);
+      }
+    }).then(result=>this.onmessage({data:JSON.stringify({id:r.id,result})}),error=>this.onmessage({data:JSON.stringify({id:r.id,error:error.message})}));}};
+  }
 }
 async function pageFor(options={}){
   const context=await browser.newContext({viewport:options.viewport||{width:360,height:800},isMobile:true,hasTouch:true,locale:'zh-CN'});
@@ -216,6 +247,39 @@ try{
       }
     }
     check(errors.length===0,'Responsive/permission scenario has no errors');await context.close();
+  }
+  {
+    const {context,page:p,errors}=await pageFor({nativeV2:true});await tile(p,'remote').waitFor();
+    check(await p.locator('.home-tile').count()===18,'Native v2 exposes only wired feature pages');await capture(p,'features-home');
+    await tile(p,'image').click();await p.waitForSelector('#filelist .name');check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='media.library')),'Media categories use the live Android media query');
+    await home(p);await tile(p,'providers').click();await choose(p,'授权文件夹 / 外置存储');await row(p,'云端.txt').waitFor();
+    check((await p.locator('#crumbs').innerText()).includes('授权文件夹') || (await p.locator('#crumbs').innerText()).includes('云端'),'Provider URI is not split into fake filesystem breadcrumbs');
+    await row(p,'云端.txt').click();check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='open'&&c.args.path.startsWith('content:'))),'Content URI opens through Android without a guessed path');
+    await home(p);await tile(p,'remote').click();await choose(p,'添加网络位置');
+    await p.locator('[name=name]').fill('家庭服务器');await p.locator('[name=host]').fill('server-home');await p.locator('[name=share]').fill('Public');await p.locator('[name=password]').fill('fixture-secret');await choose(p,'保存连接');
+    await p.getByRole('button',{name:'家庭服务器 · smb',exact:true}).waitFor();
+    check(!await p.evaluate(()=>JSON.stringify(localStorage).includes('fixture-secret')),'Network password never enters frontend persistence');await capture(p,'features-network');
+    await home(p);await tile(p,'apps').click();await p.getByRole('button',{name:/示例应用/}).waitFor();
+    check(!(await p.locator('#tool-extra').innerText()).includes('系统组件'),'Application manager defaults to user apps');
+    await p.getByRole('button',{name:/示例应用/}).click();await choose(p,'卸载（系统确认）');check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='app.action'&&c.args.action==='uninstall'&&c.args.package==='com.example.app')),'Uninstall delegates exact package to system confirmation');
+    await storage(p);await more(p,'notes.txt');await choose(p,'编辑文本');await p.getByRole('textbox',{name:'文件文本'}).fill('修改后的文本');await choose(p,'保存');
+    check(await p.evaluate(()=>window.__model.text==='修改后的文本'),'Text editor sends full UTF-8 content and revision');
+    await more(p,'notes.txt');await choose(p,'编辑文本');await p.getByRole('textbox',{name:'文件文本'}).fill('未保存');await p.evaluate(()=>window.__model.revision='external-change');await choose(p,'保存');
+    check((await p.locator('.editor').innerText()).includes('未保存：文件已被其他程序修改'),'External text modification is reported, not overwritten');
+    await p.goBack();await p.getByRole('button',{name:'放弃修改',exact:true}).waitFor();check(true,'Back prompts before discarding dirty editor');await choose(p,'放弃修改');
+    await row(p,'photo.jpg').click();await p.waitForSelector('.viewer');await choose(p,'放大');
+    check((await p.locator('.full-media').getAttribute('style')).includes('scale(1.4)'),'Fullscreen image supports bounded zoom');await choose(p,'旋转');check((await p.locator('.full-media').getAttribute('style')).includes('rotate(90deg)'),'Image rotation is distinct from file mutation');await capture(p,'features-viewer');await choose(p,'关闭');
+    check(await p.locator('.viewer').count()===0,'Viewer closes and releases its container');
+    await more(p,'notes.txt');await choose(p,'压缩为 ZIP');await p.locator('[name=name]').fill('备份.zip');await choose(p,'开始压缩');
+    check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='job.start'&&c.args.op==='zip'&&c.args.args.level===6)),'ZIP form starts real background job with configured level');
+    await home(p);await tile(p,'tasks').click();await choose(p,'暂停');await p.getByRole('button',{name:'继续',exact:true}).waitFor();check(true,'Task pause updates native task state');await choose(p,'继续');await p.getByRole('button',{name:'暂停',exact:true}).waitFor();
+    check((await p.locator('#tool-extra').innerText()).includes('/s（平均）'),'Task details expose bytes and clearly labelled average speed');await capture(p,'features-tasks');
+    await choose(p,'取消');await choose(p,'取消任务');await p.getByRole('button',{name:'重试未完成项',exact:true}).waitFor();check(true,'Task cancellation is explicit and retryable');
+    await home(p);await tile(p,'trash').click();await p.getByRole('button',{name:/已删除.txt/}).click();await choose(p,'恢复原位置');
+    check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='job.start'&&c.args.op==='restore'&&c.args.args.id==='trash-1')),'Trash restore uses stored identity, not an arbitrary target path');
+    await home(p);await tile(p,'providers').click();await choose(p,'从系统网盘导入文件');await p.waitForSelector('#paste-bar:not([hidden])');
+    check((await p.locator('#paste-label').innerText()).includes('待复制 1 项'),'System picker returns a pending import, never silently copies');
+    check(errors.length===0,'New native-feature UI flows have no uncaught errors: '+errors.join(';'));await context.close();
   }
   console.log('PASS: '+checks+' assertions. IPC mocked. Screenshots: '+output);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

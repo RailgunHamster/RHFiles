@@ -1,130 +1,137 @@
 # RHFiles Android
 
-## 当前方向（0.1.1，2026-10）
+## 0.1.2：功能补齐（2026-10-02）
 
-按用户要求，以 [File Manager Plus 的官方商店页面与截图](https://play.google.com/store/apps/details?id=com.alphainventor.filemanager)作为信息架构和操作流程参考：
-三列分类首页、独立路径栏、紧凑文件列表、长按多选、明确的复制/移动目标操作栏。
-RHFiles 自行实现，未复制第三方图标、商标、源代码或宣传素材。
+以 [File Manager Plus 的官方介绍](https://play.google.com/store/apps/details?id=com.alphainventor.filemanager)
+为功能和信息架构参照，自行实现；不复制图标、商标、素材或源码。
+仍是 **Tauri 2 + WebView + Rust + Kotlin**，不是 Compose 迁移，不宣称完整功能等价。
+Android crate 与 Windows workspace 隔离；本次不修改桌面实现。
 
-本轮是现有 Android 应用的 UI/交互重构，**不是 Compose 原生 UI 迁移**。
-当前架构为 Tauri 2 + WebView + Rust；Kotlin 接入 Android 系统能力。
-未来可以用 Compose 替换 UI，通过 JNI/其他 FFI 继续复用合适的 Rust 代码；
-“Compose 必须放弃 Rust”不是技术限制。
+## 功能
 
-Android 是独立 crate，根 Cargo workspace 用 exclude 隔离。Windows 界面不改动。
+### 本机文件与存储
 
-## 已实现
+- 明暗主题、三列分类首页、列表/网格虚拟化、排序、隐藏文件、收藏、长按多选。
+- 新建、重命名、复制/移动、当前目录搜索和全局索引搜索；粘贴目标栏跨导航保留。
+- Kotlin `StatFs` 返回真实容量，无法读取时不编造数字。
+- SAF：授权 SD/USB/系统文件提供者的目录，持久权限、浏览/创建/重命名/复制/删除、撤销授权。
+- 系统文件选择器导入；接收 ACTION_SEND / SEND_MULTIPLE，用户选择目标后才复制。
+- 不把 content URI 猜成文件路径；文件提供者的权限、离线和不支持操作错误会显示出来。
+- 插拔存储广播、恢复前台、MediaStore 内容变化触发刷新；媒体分类使用系统实时查询。
+- 文档/归档/全局名称仍使用 Rust 索引；启动时过期自动更新，本应用任务完成后更新。
+  不是全盘实时监控；分类单页最多 2,000 项，目录最多 50,000 项，标明截断。
+- 系统打开方式/多文件分享；APK 安装和应用卸载始终经过 Android 确认。
 
-- 默认明亮，可切深色；中文主界面。
-- 首页：内部/外部存储、下载、图片、音频、视频、文档、压缩包、最近修改、
-  收藏、从电脑访问、空间分析、设置。仅展示已接通的功能，不放虚假的网盘/应用管理入口。
-- 可用容量由存储接口返回；无法取得时显示位置说明，不编造占用数字。
-- 目录标题使用“内部存储”等名称；可点路径面包屑、首页和上一级。
-- 列表与网格均虚拟化，选中项用完整路径标识；返回目录恢复滚动位置。
-- 长按选择，选择状态下点选/全选；操作栏提供复制、移动、重命名、删除、复制路径。
-- 复制/移动后常驻目标栏；跨目录、回首页、返回都不会丢失待处理来源。
-- 操作中的任务状态不随导航消失；完成后不会把用户拉回原目标目录。
-- 单次任务串行，部分失败列明每个文件的原因，并保留失败来源供重试。
-- 永久删除前明确确认；返回/点遮罩取消，不执行删除。
-- 分类查询使用现有文件名索引，单次返回最多 2,000 条，同时返回总数和截断状态；
-  隐藏目录内的文件默认不进入分类。最近修改按时间排序。
-- 目录搜索默认只过滤当前文件夹，显式切换到全局索引搜索。首次索引提供建立入口。
-- 收藏存入应用私有 WebView localStorage，重新打开后保留。
-- 图片/音视频使用 asset 协议预览，文本限制前 256 KB。预览不支持的格式明确报错。
-- Kotlin 原生桥提供打开方式、分享文件、精确权限设置入口、真实权限查询、状态栏配色。
-  PDF 等非文本文件优先交给 Android 的打开方式选择器，不当作文本读取。
-- 设置、局域网文件服务、空间分析分别为独立页面；诊断日志折叠在设置内。
-- 文件枚举、复制、移动、删除、文本读取、摘要、缩略图、空间分析在阻塞线程池执行。
-- 目录/搜索/预览使用请求代次，迟到响应不会覆盖新页面。
-- 写权限探针使用唯一名称和 create_new，不覆盖已有同名文件。
+### 压缩与文本
 
-## 原生桥与权限边界
+- ZIP 创建，可选 0/1/6/9 级；ZIP（Stored/Deflate）、TAR、GZ、XZ、TGZ、TXZ 浏览/解压。
+- 解压到新建文件夹，不合并/覆盖已有目标；拒绝路径越界、链接/设备节点、重复路径和 CRC 损坏。
+- 提交前使用独立临时目录/文件；取消或失败只清理本任务的临时内容。
+- 安全上限：解压 8 GiB / 100,000 条目；目录预览 2,000 条目 / 扫描 256 MiB；XZ 内存 64 MiB。
+- 暂不支持加密归档、RAR、7z、ZIP 中的其他压缩算法；错误明确显示，不声称支持。
+- UTF-8 文本编辑最大 1 MiB；保留 BOM/换行，拒绝二进制/非法编码和超限文件。
+- 保存用 SHA-256 修订校验，拒绝覆盖外部修改；临时文件写入后替换；退出未保存修改要确认。
+- 原有只读预览仍限制 256 KiB，截断预览不能直接当完整文件保存。
 
-MainActivity 在 onWebViewCreate 注册 AndroidX WebKit WebMessageListener，
-只允许 http://tauri.localhost 与 https://tauri.localhost，且只处理主 frame。
-不使用任意来源 JavascriptInterface，不把系统能力暴露给预览文件或网络页面。
+### 图片与媒体
 
-打开/分享先 canonicalize 路径，仅允许共享存储中的可读普通文件。
-FileProvider 生成 content URI，仅为此次 Intent 授予读权限；分享最终由系统选择器和用户完成。
-旧 WebView 不支持桥时不显示相应菜单，并保留内置预览。
+- 全屏查看区域、图片上一张/下一张、双击/双指/滚轮缩放、平移、旋转、适应窗口。
+- 音视频系统 WebView 控件，额外提供 ±10 秒、倍速和循环。
+- 关闭时释放媒体和事件监听；解码依赖设备 WebView。不支持的格式可交给系统应用。
+- 网络文件先下载，SAF 文件可交给原生打开方式；不是所有位置都内置流式预览。
 
-Android 11+ 原生查询 Environment.isExternalStorageManager。
-Rust 的可读/可写探测仍用于路径诊断，不能等同于正式权限状态。
-MANAGE_EXTERNAL_STORAGE 不赋予其他应用私有数据的任意访问能力；
-Android/data、Android/obb、不同厂商的 SD/OTG 行为仍需设备测试。
-目前未接入 SAF 文档提供者，因此不能声称支持所有 content URI 或云端位置。
+### 网络与网盘
 
-## 尚未完成 / 不能保证的部分
+- SMB2/3（用户名/密码 NTLM）、FTP、显式 FTPS、WebDAV/HTTPS。
+- 目录、上传/下载、新建、重命名、删除与本地共用文件任务；复制/移动可跨位置。
+- 网络密码使用 Android Keystore AES-GCM 加密，保存在应用私有配置中；不进入 URL、WebView localStorage 或任务日志。
+- FTPS/HTTPS 校验证书，不提供忽略证书开关。明文 FTP/HTTP 必须在添加连接时显式允许。
+- WebDAV 不跟随重定向，XML 禁用外部实体；SMB 不支持 SMB1 或 Kerberos。
+- **网盘目前通过 Android DocumentsProvider**：依赖设备中已安装并登录的提供者。
+  有的提供者不提供目录授权，只能选择文件导入。
+  **未内置 Google Drive/OneDrive/Dropbox 等独立 OAuth 登录**；这需要注册应用配置。
 
-- 本轮没有连接真机；浏览器 UI 断言使用桩 IPC，不等同于 APK 真机验收。
-- 当前不是完整 File Manager Plus 功能替代品：SMB/网盘、归档内容浏览与解压、
-  已安装应用管理、接收其他应用分享、SAF、回收站、前台服务仍未完成。
-- 后台任务仅保证应用进程存活期间执行；强制结束或系统杀进程后不会自动恢复。
-  当前只有任务状态，没有逐字节进度、速度、暂停或取消。
-- 图片/视频解码依赖设备 WebView；没有实现全屏画廊手势和自有音视频解码器。
-- 分类来自索引快照，外部变更需更新索引。索引主动跳过部分缓存与受限目录。
-- 前端当前以中文为主，尚未有完整多语言资源体系。
-- 标签页、平板双窗格等是后续产品选择，不能以“手机用户不需要”为理由永久排除。
-- 局域网 HTTP 服务当前没有认证，开启前提示同网设备的读写风险；只在可信网络使用。
-- 当前沿用开发签名供侧载迭代，不应当作正式公开发行的生产签名方案。
+### 应用管理和空间
 
-## 开发与验证
+- 应用名/包名搜索、用户/系统应用切换、启动、系统详情/权限、系统卸载确认。
+- 单 APK 备份为 APK；分包应用备份所有 APK 为 ZIP，不能把此 ZIP 当单 APK 直接安装。
+- 默认显示安装包占用。用户在系统设置授予用量访问后，通过 StorageStats 查询应用、数据与缓存。
+- 文件分类空间扫描与应用占用查看都已提供；不是重复文件清理器，也不擅自删除缓存。
 
-在仓库根目录执行：
+### 任务与恢复
+
+- 原生 dataSync 前台服务和通知，串行队列（最多 20 个活动任务）、真实字节进度、平均速度、暂停/继续/取消。
+- 暂停/取消在读写检查点生效，网络连接/读取超时后也会返回；不能强行中断不响应的外部文档提供者。
+- 独立任务页面；返回或切换目录不会丢失任务。任务参数、成功来源、输出位置和逐项失败存到私有日志。
+- 同名文件另存，不覆盖。复制先使用独立临时目标，完成后发布。
+- 移动在副本发布后重新核验来源摘要，再逐项删除已复制的路径，不递归删除后来新出现的文件。
+- 本机删除默认移入本卷 `.rhfiles-trash`；记录原位置，支持恢复；恢复冲突停止。
+- SAF/网络删除为永久删除且明确确认；回收站永久删除需要两次确认。
+- 进程被终止后显示“上次运行中断”；只允许用户显式重试，不自动重放移动/删除。
+  不提供逐字节断点续传。崩溃可能留下 `.rhfiles-part-*` 临时内容，来源不因此自动删除。
+- Android 15+ 前台服务有系统时限；onTimeout 取消并停止服务，不绕过系统限制。
+
+### 电脑访问
+
+- HTTP 浏览/下载/Range/上传服务，每次启动产生随机密码，用户名 `rhfiles`，默认只读。
+- 可显式允许上传新文件，不覆盖已有文件；身份验证失败 401，只读写请求 403。
+- 路径限制在所选目录，拒绝越界及符号链接逃逸；文件页面带 sandbox CSP。
+- **HTTP 不是加密通道，也不是 FTP 服务端**；仅用于可信局域网，不应暴露到公网。
+
+## 验证与限制
+
+自动化测试包括 Rust 业务/真实注册表 IPC、浏览器桩 IPC、JVM/Robolectric 原生业务，
+以及真实临时目录、回环 FTP 服务器和 WebDAV 测试服务器。不是全都用空返回 mock。
+
+**本机 adb 没有设备连接，尚未做本次 APK 的真机验收**：
+SAF/OTG 厂商差异、真实网盘提供者、Keystore、系统分享/安装/卸载、前台通知、
+Android 杀进程/系统超时、SMB NAS、真实 FTPS 服务器、媒体硬解码需设备验证。
+JVM 测试、编译成功和浏览器截图不能替代这些验收。
+
+目前仍使用开发签名用于覆盖侧载，不是公开商店发行的生产签名方案。
+未完成独立网盘 OAuth、FTP 服务端、多语言体系、原生电视/平板专门交互和多窗格。
+完整对照及外部前提见 [ANDROID-PARITY.md](ANDROID-PARITY.md)。
+
+## 测试和构建
+
+在仓库根目录：
 
 ~~~powershell
 cargo test --manifest-path android/src-tauri/Cargo.toml --lib --tests
 node --test android/web/tests/format.test.js
 node android/web/tests/ui-check.mjs
-~~~
-
-UI 测试入口转到 flow-check.mjs，覆盖首页/列表/网格、长按多选、复制/移动失败与重试、
-删除确认、重命名、新建、收藏持久化、局部/全局搜索、排序后选择、
-大目录滚动恢复、过期响应、任务过程中导航、权限拒绝/恢复、320/360/800 px 布局、
-主题与原生桥前端契约。原生桥在此仍是 mock，设备级 Intent 必须单独验收。
-
-测试截图在 android/web/tests/__screenshots__/，不提交 Git。
-所有浏览器测试必须实际运行；缺 Playwright 会失败，不静默算通过。
-
-2026-10-02 本轮验证：40 个 Rust 单元用例、8 个真实注册表 IPC 用例、
-11 个格式化用例、71 项浏览器交互/布局断言通过；arm64 release APK 编译及验签通过。
-APK 中的原生库 SHA-256 与本次生成的原生库一致。当前 adb 无连接设备，
-以下设备清单尚未执行；不能将上述结果表述为真机测试通过。
-
-真实 IPC 测试使用 Tauri MockRuntime 驱动生产命令注册表；
-Rust 文件操作测试在临时测试目录执行，不接触用户文件。
-
-### 设备验收清单（本轮待完成）
-
-1. 从旧版本覆盖安装，确认收藏/主题保留，首次授权可直达系统权限页。
-2. 系统返回手势：预览 → 关闭；多选 → 取消选择；目录 → 原位置并恢复滚动。
-3. 真文件跨目录复制/移动、同名冲突、部分失败、删除取消/确认。
-4. 图片/视频/音频预览；PDF 打开方式；微信等系统分享目标实际收到 content URI。
-5. 明暗主题下状态栏、手势导航栏、键盘弹出、横竖屏和字体缩放。
-6. SD 卡/OTG 授权与拔出、大目录、应用切后台、存储空间不足。
-7. 在可信局域网启动/停止文件服务，电脑端读写范围正确。
-
-## 构建
-
-JDK 17+、Android SDK/NDK、Rust Android targets 与 cargo-tauri 必须已安装。
-正常路径：
-
-~~~powershell
 pwsh -File scripts/android-sync.ps1
+android/src-tauri/gen/android/gradlew.bat --project-dir android/src-tauri/gen/android :app:testUniversalReleaseUnitTest
 pwsh -File scripts/android-build.ps1 -Target aarch64
 ~~~
 
-生成工程在 android/src-tauri/gen/android/，不提交。
-权威输入是 android/gradle/、android/manifest/、tauri.conf.json 和 Rust/Web 源码。
-重新 tauri android init 后必须运行同步脚本恢复 MainActivity、权限和 FileProvider roots。
+UI 截图输出在 `android/web/tests/__screenshots__/`（忽略）；浏览器测试缺运行时会失败，不静默跳过。
+原生权威输入在 `android/gradle/` 和 `android/manifest/`，同步脚本恢复 Kotlin、测试、R8 规则、权限与 Gradle 配置。
+Tauri 生成目录 `android/src-tauri/gen/android/` 不提交。
 
-本机 Java 曾在 Unix domain socket 的临时路径上报 Unable to establish loopback connection。
-使用已安装的 Android JDK 21.0.8 和独立短路径的 jdk.net.unixdomain.tmpdir 后，
-Gradle 编译恢复。这是构建环境设置，不修改系统网络/防火墙。
+构建需 JDK、Android SDK/NDK、Rust Android target、cargo-tauri。
+本机 JDK 临时 Unix socket 路径需设置：
 
-发布脚本现在同时要求：
-成功退出、APK 写入时间不早于本次构建、正确包名/版本/单 ABI，以及签名有效。
--SkipBuild 只用于已经明确成功的手工构建，不会绕过版本/ABI/签名检查。
-不能因为目录里存在一个旧 APK 就报告新版本构建成功。
+~~~powershell
+$env:JAVA_HOME='C:\Program Files\Android\openjdk\jdk-21.0.8'
+$env:JAVA_TOOL_OPTIONS='-Djdk.net.unixdomain.tmpdir=D:/git/RHFiles/temp/java-sockets -Djava.net.preferIPv4Stack=true'
+$env:ANDROID_HOME='C:\Users\Administrator\AppData\Local\Android\Sdk'
+~~~
 
-输出：android/dist/rhfiles-android-arm64-v8a-release.apk。
+以上只是本机进程环境，不修改全局 Java/网络配置。
+发布脚本要求构建成功、输出新鲜、包名/版本/单 ABI 正确并验签，才复制到：
+`android/dist/rhfiles-android-arm64-v8a-release.apk`。
+失败不会把目录里旧 APK 当作新发布物。
+
+## 实现依据和依赖
+
+- [SAF 与持久授权](https://developer.android.com/training/data-storage/shared/documents-files)
+- [前台服务时限](https://developer.android.com/develop/background-work/services/fgs/timeout)
+- [Apache Commons Compress](https://commons.apache.org/proper/commons-compress/) 1.28.0，Apache-2.0
+- [XZ for Java](https://tukaani.org/xz/java.html) 1.10，0BSD
+- [Apache Commons Net](https://commons.apache.org/proper/commons-net/) 3.13.0，Apache-2.0
+- [SMBJ](https://github.com/hierynomus/smbj) 0.14.0，Apache-2.0；Bouncy Castle 显式更新为 1.83
+- [OkHttp](https://square.github.io/okhttp/) 4.12.0，Apache-2.0
+
+保留依赖许可证/NOTICE 资源；只排除 Android 不使用的重复 OSGi 元数据。
+R8 只忽略已明确不使用的 JGSS/EL/Zstd 可选依赖，保留 SMB 事件订阅注解及方法。

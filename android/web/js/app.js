@@ -22,7 +22,7 @@
   let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0;
   const sameRoute = (a, b) => JSON.stringify([a.screen,a.path,a.category,a.tool]) === JSON.stringify([b.screen,b.path,b.category,b.tool]);
   const rootFor = (path) => state.roots.filter((root) => path === root.path || path.startsWith(root.path + '/')).sort((a,b) => b.path.length - a.path.length)[0];
-  const rootLabel = (root) => root?.removable ? '外部存储' : '内部存储';
+  const rootLabel = (root) => root?.provider ? root.label : root?.removable ? '外部存储' : '内部存储';
   const pathLabel = (path) => {
     const root = rootFor(path);
     return root ? rootLabel(root) + path.slice(root.path.length) : path;
@@ -51,11 +51,11 @@
   function renderShell() {
     const route = state.route, count = state.selected.size, pending = state.clipboard;
     const title = route.screen === 'home' ? 'RHFiles'
-      : route.screen === 'folder' ? (rootFor(route.path)?.path === route.path ? rootLabel(rootFor(route.path)) : fmt.baseName(route.path))
+      : route.screen === 'folder' ? (rootFor(route.path)?.path === route.path ? rootLabel(rootFor(route.path)) : route.label || fmt.baseName(route.path))
       : route.screen === 'library' ? labels[route.category]
       : route.screen === 'favorites' ? '收藏夹'
       : route.screen === 'search' ? '搜索'
-      : ({ settings: '设置', server: '从电脑访问', usage: '空间分析' })[route.tool] || 'RHFiles';
+      : ({ settings: '设置', server: '从电脑访问', usage: '空间分析', remote:'网络位置',providers:'外置存储与网盘',apps:'应用管理',tasks:'文件任务',trash:'回收站' })[route.tool] || 'RHFiles';
     $('title').textContent = title;
     document.querySelector('.topbar').hidden = count > 0;
     $('selection-head').hidden = count === 0;
@@ -81,7 +81,7 @@
     $('task-label').textContent = state.task?.label || '';
     if (route.screen === 'folder') {
       const root = rootFor(route.path);
-      const parts = root ? [{ name: rootLabel(root), path: root.path }, ...fmt.path2parts(route.path).filter(p => p.path.startsWith(root.path + '/'))] : fmt.path2parts(route.path);
+      const parts = api.isVirtual(route.path) ? [{name:route.label || root?.label || '网络 / 授权位置',path:route.path}] : root ? [{ name: rootLabel(root), path: root.path }, ...fmt.path2parts(route.path).filter(p => p.path.startsWith(root.path + '/'))] : fmt.path2parts(route.path);
       $('crumbs').replaceChildren();
       parts.forEach((part, i) => {
         if (i) $('crumbs').append(ui.el('span', 'sep', '›'));
@@ -91,7 +91,7 @@
       });
       requestAnimationFrame(() => { $('crumbs').scrollLeft = $('crumbs').scrollWidth; });
     }
-    $('banner').hidden = !state.permissions || state.permissions.manageExternalStorage || !state.permissions.sharedStorageReadable;
+    $('banner').hidden = !state.permissions || state.permissions.manageExternalStorage;
     if (!$('banner').hidden) {
       $('banner').replaceChildren(ui.el('span', '', '尚未获得所有文件访问权限，部分内容可能不可见。'));
       $('banner').append(button('去授权', 'open', () => api.openAppSettings(), 'text-btn'));
@@ -134,6 +134,7 @@
     tile(grid, 'server', '从电脑访问', 'computer', '#54877b', '局域网传输', () => go({ screen: 'tool', tool: 'server' }));
     tile(grid, 'usage', '空间分析', 'chart', '#8b739a', '查看文件占用', () => go({ screen: 'tool', tool: 'usage' }));
     tile(grid, 'settings', '设置', 'settings', '#748193', '显示与权限', () => go({ screen: 'tool', tool: 'settings' }));
+    if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>go({screen:'tool',tool:id}));
     const note = ui.el('div', 'home-note', state.index?.lastFinishedMs ? '分类基于文件名索引；新文件可通过更新索引加入。' : '图片、音频等分类需要先建立本机文件名索引。');
     note.append(button(state.index?.indexing ? '正在建立索引…' : '更新索引', 'refresh', rebuildIndex, 'text-btn'));
     home.append(note);
@@ -160,6 +161,8 @@
       else if (route.screen === 'tool') {
         $('tool-page').hidden = false;
         for (const tool of ['settings','server','usage']) $('tool-' + tool).hidden = route.tool !== tool;
+        $('tool-extra').hidden = ['settings','server','usage'].includes(route.tool);
+        if (!$('tool-extra').hidden) await androidFeatures.renderTool(route.tool);
         if (route.tool === 'settings') await refreshSettings();
         if (route.tool === 'server') await refreshServer();
         if (route.tool === 'usage') {
@@ -171,7 +174,7 @@
         const listing = await api.listDir({ path: route.path });
         if (id !== navigationId) return;
         state.route.path = listing.path; state.listing = listing; state.entries = listing.entries || [];
-        const root = rootFor(listing.path); if (root) state.root = root.path;
+        const root = rootFor(listing.path); if (root && !api.isVirtual(root.path)) state.root = root.path;
         showList(route.scroll);
       } else if (route.screen === 'favorites') {
         state.entries = state.favorites.map(item => ({ ...item, kind: item.isDir ? 'folder' : kindOf(item.name) }));
@@ -181,7 +184,7 @@
         const status = await api.indexStatus();
         if (id !== navigationId) return;
         state.index = status;
-        if (!status.lastFinishedMs && !status.entryCount) {
+        if (!status.lastFinishedMs && !status.entryCount && !(api.featuresAvailable() && ['image','audio','video'].includes(route.category))) {
           showPlaceholder(status.indexing ? '正在建立索引，完成后会自动刷新。' : '尚未建立文件索引。\n建立索引后即可按类型浏览。', rebuildIndex, '建立索引');
           if (status.indexing) pollIndex();
         } else {
@@ -309,7 +312,13 @@
   }
 
   async function activate(entry) {
-    if (entry.isDir) return go({ screen: 'folder', path: entry.path });
+    if (entry.isDir) return go({ screen: 'folder', path: entry.path, label:entry.name });
+    if (api.featuresAvailable() && api.isVirtual(entry.path)) {
+      if (entry.path.startsWith('content://')) return api.systemOpen(entry.path);
+      return androidFeatures.download(entry);
+    }
+    if (api.featuresAvailable() && entry.kind === 'archive' && /\.(zip|tar|gz|xz|tgz|txz)$/i.test(entry.name)) return androidFeatures.archive(entry);
+    if (['image','video','audio'].includes(entry.kind)) return androidFeatures.media(entry,currentEntries());
     if (api.nativeAvailable() && !['image','audio','video'].includes(entry.kind) && !/\.(txt|md|csv|log|json|xml|ini|cfg|toml|ya?ml|js|ts|rs|py|java|kt|c|h|cpp|css|html|sh)$/i.test(entry.name)) return api.systemOpen(entry.path);
     const nav = navigationId;
     ui.openSheet(entry.name, [action('关闭', 'close', () => {})], '正在读取…');
@@ -340,15 +349,16 @@
       action('复制', 'copy', () => setClipboard('copy',[entry.path])),
       action('移动', 'cut', () => setClipboard('cut',[entry.path])),
       action('重命名', 'rename', () => rename(entry)),
+      ...(api.featuresAvailable() ? androidFeatures.entryActions(entry) : []),
       action(state.favorites.some(e => e.path === entry.path) ? '取消收藏' : '添加到收藏', 'star', () => favorite(entry)),
       action('复制路径', 'copy', async () => { await ui.copyText(entry.path); ui.toast('路径已复制'); }),
-      ...(state.route.screen === 'folder' ? [] : [action('打开所在文件夹', 'folder', () => go({ screen: 'folder', path: fmt.parentOf(entry.path) }))]),
+      ...(state.route.screen === 'folder' || (api.isVirtual(entry.path)&&!entry.parentPath) ? [] : [action('打开所在文件夹', 'folder', () => go({ screen: 'folder', path: entry.parentPath || fmt.parentOf(entry.path) }))]),
       action('属性', 'info', () => ui.openSheet(entry.name, [action('关闭','close',()=>{})], '位置：' + entry.path + '\n类型：' + (entry.isDir ? '文件夹' : entry.kind) + '\n大小：' + fmt.size(entry.size) + '\n修改时间：' + fmt.date(entry.modifiedMs))),
       action('删除', 'trash', () => remove([entry.path]), true),
     ]);
   }
   function favorite(entry) {
-    const next = state.favorites.some(e => e.path === entry.path) ? state.favorites.filter(e => e.path !== entry.path) : [...state.favorites, { name: entry.name, path: entry.path, isDir: entry.isDir }];
+    const next = state.favorites.some(e => e.path === entry.path) ? state.favorites.filter(e => e.path !== entry.path) : [...state.favorites, { name: entry.name, path: entry.path, isDir: entry.isDir, parentPath:entry.parentPath }];
     const added = next.length > state.favorites.length;
     cache('rhfiles.favorites', JSON.stringify(next)); state.favorites = next;
     ui.toast(added ? '已添加收藏' : '已取消收藏');
@@ -387,11 +397,12 @@
   }
   async function remove(paths) {
     if (state.task || !paths.length) return;
-    const confirmed = await ui.confirm('删除 ' + paths.length + ' 项？', '本次为永久删除，无法撤销。\n' + paths.slice(0,3).map(fmt.baseName).join('\n'), '永久删除');
+      const recycle = api.featuresAvailable() && paths.every(p=>!api.isVirtual(p));
+      const confirmed = await ui.confirm('删除 ' + paths.length + ' 项？', (recycle ? '移入 RHFiles 回收站，可在首页恢复。\n' : '本次为永久删除，无法撤销。\n') + paths.slice(0,3).map(fmt.baseName).join('\n'), recycle ? '移入回收站' : '永久删除');
     if (!confirmed) return;
     const start = { ...state.route };
     await task('正在删除 ' + paths.length + ' 项', async () => {
-      const report = await api.deleteEntries({ paths, permanent: true });
+      const report = recycle ? await api.runJob('trash',{sources:paths}) : await api.deleteEntries({ paths, permanent: true });
       const deleted = new Set(report.deleted || []);
       state.entries = state.entries.filter(item => !deleted.has(item.path));
       state.selected.clear();
@@ -470,7 +481,7 @@
     if (status.indexing) pollIndex();
   }
   async function rebuildIndex() {
-    await api.indexStart({ roots: state.roots.map(root=>root.path) });
+    await api.indexStart({ roots: state.roots.filter(root=>!api.isVirtual(root.path)).map(root=>root.path) });
     state.index = { ...state.index, indexing: true }; ui.toast('开始建立索引，可继续浏览文件'); pollIndex();
     if (state.route.screen === 'home') renderHome();
   }
@@ -490,7 +501,8 @@
   }
   async function refreshServer() {
     const server = await api.serverStatus(); state.server=server;
-    $('server-status').textContent = server.running ? '共享位置：' + server.root + '\n' + ((server.urls || []).join('\n') || '未检测到局域网地址，请连接 Wi-Fi') : '文件服务未启动';
+    $('server-status').textContent = server.running ? '共享位置：' + server.root + '\n' + ((server.urls || []).join('\n') || '未检测到局域网地址，请连接 Wi-Fi') + (server.password ? '\n用户名：rhfiles\n密码：'+server.password+'\n'+(server.readOnly?'只读':'允许上传新文件') : '') : '文件服务未启动';
+    $('server-write').disabled=server.running;
     $('btn-server-toggle').textContent = server.running ? '停止文件服务' : '启动文件服务';
   }
   async function refreshLogs() {
@@ -519,7 +531,7 @@
   async function bootStorage() {
     showPlaceholder('正在读取存储位置…');
     const permissions = await api.permissionStatus(); state.permissions=permissions;
-    if(!permissions.sharedStorageReadable) {
+    if(!permissions.sharedStorageReadable && !api.featuresAvailable()) {
       const box=ui.el('div','blocked');
       box.append(ui.el('h2','','允许访问本机文件'),ui.el('p','','浏览和管理共享存储前，请在系统设置中允许 RHFiles 访问所有文件。其他应用的私有目录仍可能受到安卓限制。'),
         button('打开系统设置','open',()=>api.openAppSettings(),'primary'),button('重新检查','refresh',bootStorage,'text-btn'));
@@ -529,8 +541,14 @@
     if(state.roots.length) state.root=state.roots.find(r=>!r.removable)?.path || state.roots[0].path;
     try { state.index=await api.indexStatus(); } catch {}
     await go({screen:'home'},{replace:true});
+    if (api.featuresAvailable()) {
+      androidFeatures.receiveShares().catch(error);
+      if (permissions.manageExternalStorage && !state.index?.indexing && (!state.index?.lastFinishedMs || Date.now()-state.index.lastFinishedMs>3600000)) rebuildIndex().catch(error);
+    }
   }
   async function boot() {
+    await api.initNative();
+    androidFeatures.init({state,go,task,setClipboard,refresh:()=>go(state.route,{replace:true}),button,action,error});
     for(const node of document.querySelectorAll('[data-icon]')) node.innerHTML=ui.icon(node.dataset.icon);
     document.documentElement.dataset.theme=saved('rhfiles.theme','light')==='dark'?'dark':'light';
     api.systemTheme(document.documentElement.dataset.theme==='dark').catch(()=>{});
@@ -540,7 +558,7 @@
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
     on('nav-settings',()=>{closeDrawer();return go({screen:'tool',tool:'settings'});});
     on('btn-home',()=>go({screen:'home'}));
-    on('btn-up',()=>{ const path=state.route.path; return go(rootFor(path)?.path===path?{screen:'home'}:{screen:'folder',path:fmt.parentOf(path)}); });
+    on('btn-up',()=>{ const path=state.route.path; if(api.isVirtual(path))return back();return go(rootFor(path)?.path===path?{screen:'home'}:{screen:'folder',path:fmt.parentOf(path)}); });
     on('btn-search',()=>go({screen:'search',path:state.route.screen==='folder'?state.route.path:state.root,global:state.route.screen!=='folder'}));
     on('btn-search-close',()=>back());
     on('search-scope',()=>{ state.route.global=!state.route.global; $('search-scope').textContent=state.route.global?'全部文件':'当前文件夹'; return runSearch($('search-input').value); });
@@ -553,7 +571,7 @@
       if(which==='copy'||which==='cut') setClipboard(which,paths);
       if(which==='delete') remove(paths).catch(error);
       if(which==='rename'&&paths.length===1) rename(state.entries.find(item=>item.path===paths[0])).catch(error);
-      if(which==='more') ui.openSheet('已选 '+paths.length+' 项',[action('复制路径','copy',async()=>{await ui.copyText(paths.join('\n'));ui.toast('路径已复制');})]);
+      if(which==='more') ui.openSheet('已选 '+paths.length+' 项',[action('复制路径','copy',async()=>{await ui.copyText(paths.join('\n'));ui.toast('路径已复制');}),...(api.featuresAvailable()?androidFeatures.selectionActions(paths):[])]);
     });
     on('btn-paste',paste); on('btn-cancel-paste',()=>{state.clipboard=null;renderList();renderShell();});
     on('btn-reindex',rebuildIndex); on('btn-clear-index',async()=>{await api.indexClear();await refreshSettings();});
@@ -562,7 +580,7 @@
     on('btn-hidden',()=>{state.hidden=!state.hidden;cache('rhfiles.hidden',state.hidden?'1':'0');return refreshSettings();});
     on('btn-refresh-logs',refreshLogs); on('btn-copy-logs',async()=>{await refreshLogs();await ui.copyText($('log-view').textContent);ui.toast('日志已复制');});
     on('btn-clear-logs',async()=>{await api.clearLogs();await refreshLogs();});
-    on('btn-server-toggle',async()=>{ if(state.server?.running) await api.serverStop(); else if(await ui.confirm('启动局域网文件服务？','同一网络的设备将能读取和写入 '+pathLabel(state.root)+'。仅在可信网络使用。','启动')) await api.serverStart({options:{root:state.root}}); await refreshServer(); });
+    on('btn-server-toggle',async()=>{ if(state.server?.running) await api.serverStop(); else if(await ui.confirm('启动局域网文件服务？','持有密码的设备将能'+($('server-write').checked?'读取和上传新文件到 ':'读取 ')+pathLabel(state.root)+'。HTTP 不加密，仅在可信网络使用。','启动')) await api.serverStart({options:{root:state.root,readOnly:!$('server-write').checked}}); await refreshServer(); });
     on('btn-scan',scan);
     history.replaceState({rhfiles:true},'',location.href);
     history.pushState({rhfiles:true},'',location.href);
@@ -574,7 +592,7 @@
     document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();back();}});
     let width=0;
     new ResizeObserver(entries=>{const w=entries[0].contentRect.width;if(w!==width){width=w;renderList();}}).observe($('filelist'));
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden && state.permissions && !state.permissions.manageExternalStorage) bootStorage().catch(error);});
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(api.featuresAvailable())androidFeatures.onResume().catch(error);else if(state.permissions && !state.permissions.manageExternalStorage)bootStorage().catch(error);}});
     if(!api.available()) {showPlaceholder('此版本无法连接文件服务，请重新安装。');return;}
     try {await bootStorage();} catch(err){showPlaceholder('启动失败：'+err,bootStorage);}
   }

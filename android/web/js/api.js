@@ -8,6 +8,7 @@ const api = (() => {
   const listeners = new Set();
   let nativeId = 0;
   const nativePending = new Map();
+  let nativeVersion = 0;
   function nativeCall(command, args = {}) {
     const bridge = window.RHFilesNative;
     if (!bridge) return Promise.reject(new Error('本版本或系统 WebView 暂不支持此系统操作'));
@@ -21,7 +22,8 @@ const api = (() => {
     };
     return new Promise((resolve, reject) => {
       const id = ++nativeId;
-      const timer = setTimeout(() => { nativePending.delete(id); reject(new Error('系统操作未响应')); }, 8000);
+      const timeout = /\.pick$/.test(command) ? 300000 : 60000;
+      const timer = setTimeout(() => { nativePending.delete(id); reject(new Error('系统操作超时；后台任务可在任务列表查看，请勿重复提交')); }, timeout);
       nativePending.set(id, { resolve, reject, timer });
       try { bridge.postMessage(JSON.stringify({ id, command, args })); }
       catch (error) { clearTimeout(timer); nativePending.delete(id); reject(error); }
@@ -78,6 +80,22 @@ const api = (() => {
     });
   }
 
+  const virtual = path => /^(content|remote):\/\//.test(path || '');
+  async function job(op, args) {
+    const id = await nativeCall('job.start', { op, args });
+    while (true) {
+      const status = await nativeCall('job.status', { id });
+      window.dispatchEvent(new CustomEvent('rhfiles-task', { detail: status }));
+      if (!['queued','scanning','running','paused'].includes(status.state)) {
+        const failures = [...(status.failures || [])];
+        for (const path of args.sources || []) if (!status.completed.includes(path) && !failures.some(f => f.path === path)) failures.push({path,message:status.message || '任务未完成'});
+        if (status.message && !failures.length && status.state !== 'completed') throw new Error(status.message);
+        return { moved:status.outputs, deleted:status.completed, failures, bytes:status.bytes, jobId:id };
+      }
+      await new Promise(resolve => setTimeout(resolve, 650));
+    }
+  }
+
   /**
    * Android package id, hard-coded because it is also the value in
    * tauri.conf.json (`identifier`). Used to build `package:` intent URIs.
@@ -112,12 +130,17 @@ const api = (() => {
     appInfo: wrap('app_info'),
     openAppSettings,
     nativeAvailable: () => !!window.RHFilesNative,
+    featuresAvailable: () => nativeVersion >= 2,
+    async initNative() { if (window.RHFilesNative) { try { nativeVersion = (await nativeCall('capabilities')).version || 0; } catch {} } },
+    native: nativeCall,
+    runJob: job,
+    isVirtual: virtual,
     systemOpen: (path) => nativeCall('open', { path }),
     shareFile: (path) => nativeCall('share', { path }),
     systemTheme: (dark) => window.RHFilesNative ? nativeCall('theme', { dark }) : Promise.resolve(),
 
     // Device
-    storageRoots: wrap('get_storage_roots'),
+    storageRoots: () => nativeVersion >= 2 ? nativeCall('roots') : invoke('get_storage_roots'),
     async permissionStatus() {
       const status = await invoke('get_permission_status');
       if (window.RHFilesNative) status.manageExternalStorage = await nativeCall('permission');
@@ -126,13 +149,17 @@ const api = (() => {
     scanStorageSizes: wrap('scan_storage_sizes'),
 
     // Filesystem
-    listDir: wrap('list_dir'),
-    createDirectory: wrap('create_directory'),
-    createFile: wrap('create_file'),
-    renameEntry: wrap('rename_entry'),
-    deleteEntries: wrap('delete_entries'),
-    copyEntries: wrap('copy_entries'),
-    moveEntries: wrap('move_entries'),
+    listDir: async args => {
+      const result = await (virtual(args.path) ? nativeCall('list',args) : invoke('list_dir',args));
+      result.entries = result.entries.map(entry => ({...entry,parentPath:result.path}));
+      return result;
+    },
+    createDirectory: args => virtual(args.parent) ? nativeCall('create',{...args,directory:true}) : invoke('create_directory',args),
+    createFile: args => virtual(args.parent) ? nativeCall('create',{...args,directory:false}) : invoke('create_file',args),
+    renameEntry: args => virtual(args.path) ? nativeCall('rename',{path:args.path,name:args.newName}) : invoke('rename_entry',args),
+    deleteEntries: args => nativeVersion >= 2 ? job('delete',{sources:args.paths}) : invoke('delete_entries',args),
+    copyEntries: args => nativeVersion >= 2 ? job('copy',args) : invoke('copy_entries',args),
+    moveEntries: args => nativeVersion >= 2 ? job('move',args) : invoke('move_entries',args),
     entryExists: wrap('entry_exists'),
     readTextPreview: wrap('read_text_preview'),
     fileHash: wrap('file_hash'),
@@ -144,7 +171,7 @@ const api = (() => {
     indexClear: wrap('index_clear'),
     indexStatus: wrap('index_status'),
     searchFiles: wrap('search_files'),
-    browseLibrary: wrap('browse_library'),
+    browseLibrary: args => nativeVersion >= 2 && ['image','audio','video'].includes(args.category) ? nativeCall('media.library',{category:args.category}) : invoke('browse_library',args),
     assetUrl(path) {
       const convert = window.__TAURI_INTERNALS__?.convertFileSrc || window.__TAURI__?.core?.convertFileSrc;
       if (!convert) throw new Error('本版本未提供媒体文件访问接口');

@@ -6,6 +6,7 @@
 //! `std::net` only — no HTTP framework in the mobile binary.
 
 use serde::{Deserialize, Serialize};
+use base64::Engine;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -25,6 +26,8 @@ pub struct ReverseServerStatus {
     pub urls: Vec<String>,
     pub root: String,
     pub error: Option<String>,
+    pub password: String,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,6 +35,7 @@ pub struct ReverseServerStatus {
 pub struct StartServerRequest {
     pub port: Option<u16>,
     pub root: Option<String>,
+    pub read_only: Option<bool>,
 }
 
 /// Live state of the embedded file server.
@@ -43,6 +47,11 @@ pub struct ServerState {
     root: RwLock<String>,
     error: RwLock<Option<String>>,
     stop: AtomicBool,
+    password: RwLock<String>,
+    read_only: AtomicBool,
+    connections: std::sync::atomic::AtomicUsize,
+    generation: std::sync::atomic::AtomicU64,
+    lifecycle: std::sync::Mutex<()>,
     /// Lets the embedded server trigger an index rebuild (`POST /__index`)
     /// without going through the command layer. A boxed callback instead of an
     /// `AppHandle` so the HTTP thread — and `ServerState` itself — stay free of
@@ -138,7 +147,7 @@ fn resolve(root: &Path, request_path: &str) -> Option<PathBuf> {
         if segment.is_empty() || segment == "." {
             continue;
         }
-        if segment == ".." {
+        if segment == ".." || segment.contains(['\\', ':', '\0']) {
             return None;
         }
         target.push(segment);
@@ -203,12 +212,15 @@ struct Request {
     range: Option<String>,
     content_length: u64,
     is_index_post: bool,
+    authorization: Option<String>,
+    origin: Option<String>,
 }
 
 fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    Read::take(&mut reader, 8193).read_line(&mut line)?;
+    if line.len() > 8192 { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "request line too long")); }
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_string();
     let target = parts.next().unwrap_or("/").to_string();
@@ -216,11 +228,16 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
     let mut range = None;
     let mut content_length = 0u64;
     let mut content_type = String::new();
+    let mut authorization = None;
+    let mut origin = None;
+    let mut header_bytes = 0;
     loop {
         let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 {
+        if Read::take(&mut reader, 8193).read_line(&mut header)? == 0 {
             break;
         }
+        header_bytes += header.len();
+        if header.len() > 8192 || header_bytes > 32768 { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "headers too large")); }
         let trimmed = header.trim_end();
         if trimmed.is_empty() {
             break;
@@ -234,6 +251,8 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
             "range" => range = Some(value),
             "content-length" => content_length = value.parse().unwrap_or(0),
             "content-type" => content_type = value,
+            "authorization" => authorization = Some(value),
+            "origin" => origin = Some(value),
             _ => {}
         }
     }
@@ -250,6 +269,8 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
         range,
         content_length,
         is_index_post,
+        authorization,
+        origin,
     })
 }
 
@@ -409,9 +430,10 @@ fn upload_base(relative: &str) -> String {
     if segments.is_empty() { "/".into() } else { format!("/{}/", segments.join("/")) }
 }
 
-fn handle_get(stream: &mut TcpStream, path: &Path, relative: &str, range: Option<String>, status: &ReverseServerStatus) -> std::io::Result<()> {
+fn handle_get(stream: &mut TcpStream, path: &Path, relative: &str, range: Option<String>, status: &ReverseServerStatus, head_only: bool) -> std::io::Result<()> {
     if path.is_dir() {
         let body = listing_page(path, relative, status);
+        if head_only { return respond(stream, "200 OK", "text/html; charset=utf-8", &[], &[]); }
         return respond(stream, "200 OK", "text/html; charset=utf-8", &[], body.as_bytes());
     }
     if !path.is_file() {
@@ -435,9 +457,10 @@ fn handle_get(stream: &mut TcpStream, path: &Path, relative: &str, range: Option
                 let mut file = std::fs::File::open(path)?;
                 file.seek(SeekFrom::Start(start))?;
                 let head = format!(
-                    "HTTP/1.1 206 Partial Content\r\nContent-Type: {mime}\r\nContent-Length: {length}\r\nContent-Range: bytes {start}-{end}/{total}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+                    "HTTP/1.1 206 Partial Content\r\nContent-Type: {mime}\r\nContent-Length: {length}\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Security-Policy: sandbox; default-src 'none'\r\nX-Content-Type-Options: nosniff\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
                 );
                 stream.write_all(head.as_bytes())?;
+                if head_only { return stream.flush(); }
                 let mut remaining = length;
                 let mut buffer = vec![0u8; 256 * 1024];
                 while remaining > 0 {
@@ -457,9 +480,10 @@ fn handle_get(stream: &mut TcpStream, path: &Path, relative: &str, range: Option
 
     let mut file = std::fs::File::open(path)?;
     let head = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {total}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {total}\r\nContent-Security-Policy: sandbox; default-src 'none'\r\nX-Content-Type-Options: nosniff\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(head.as_bytes())?;
+    if head_only { return stream.flush(); }
     std::io::copy(&mut file, stream)?;
     stream.flush()
 }
@@ -492,6 +516,7 @@ fn handle_put(stream: &mut TcpStream, path: &Path, request: &Request) -> std::io
 }
 
 fn handle_connection(mut stream: TcpStream, state: SharedServer) {
+    let generation = state.generation.load(Ordering::SeqCst);
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
     let root = PathBuf::from(state.root.read().map(|v| v.clone()).unwrap_or_default());
@@ -500,8 +525,25 @@ fn handle_connection(mut stream: TcpStream, state: SharedServer) {
     let Ok(request) = read_request(&mut stream) else {
         return;
     };
+    if generation != state.generation.load(Ordering::SeqCst) { return; }
 
-    if request.is_index_post {
+    let expected = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("rhfiles:{}", status.password)));
+    if status.password.is_empty() || request.authorization.as_deref() != Some(expected.as_str()) {
+        let _ = respond(&mut stream, "401 Unauthorized", "text/plain", &["WWW-Authenticate: Basic realm=\"RHFiles\"".into(), "Cache-Control: no-store".into()], b"Sign in using the password shown on the phone.");
+        return;
+    }
+    // A file served as HTML must not use the browser's cached credentials to
+    // issue writes. Only same-origin requests or non-browser clients may write.
+    if request.method != "GET" && request.method != "HEAD" {
+        if status.read_only || request.origin.as_ref().is_some_and(|origin| {
+            let host = stream.local_addr().map(|a| format!("http://{}:{}", a.ip(), status.port)).unwrap_or_default();
+            origin != &host
+        }) {
+            let _ = respond_text(&mut stream, "403 Forbidden", "read-only or cross-origin request"); return;
+        }
+    }
+
+    if request.is_index_post && request.method == "POST" {
         state.trigger_reindex();
         let _ = respond_text(&mut stream, "200 OK", "reindex started");
         return;
@@ -512,6 +554,7 @@ fn handle_connection(mut stream: TcpStream, state: SharedServer) {
             let _ = respond_text(&mut stream, "400 Bad Request", "bad path");
             return;
         };
+        if !confined(&root, &target) { let _ = respond_text(&mut stream,"403 Forbidden","path outside shared root"); return; }
         if let Err(error) = handle_put(&mut stream, &target, &request) {
             let status = if error.kind() == std::io::ErrorKind::AlreadyExists { "409 Conflict" } else { "400 Bad Request" };
             let _ = respond_text(&mut stream, status, &error.to_string());
@@ -528,8 +571,16 @@ fn handle_connection(mut stream: TcpStream, state: SharedServer) {
         let _ = respond_text(&mut stream, "400 Bad Request", "bad path");
         return;
     };
+    if !confined(&root, &target) { let _ = respond_text(&mut stream,"403 Forbidden","path outside shared root"); return; }
     let relative = request.path.trim_matches('/').to_string();
-    let _ = handle_get(&mut stream, &target, &relative, request.range, &status);
+    let _ = handle_get(&mut stream, &target, &relative, request.range, &status, request.method == "HEAD");
+}
+
+fn confined(root: &Path, target: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else { return false; };
+    let mut ancestor = target;
+    while !ancestor.exists() { let Some(parent) = ancestor.parent() else { return false; }; ancestor = parent; }
+    ancestor.canonicalize().map(|real| real.starts_with(root)).unwrap_or(false)
 }
 
 impl ServerState {
@@ -560,6 +611,11 @@ impl Default for ServerState {
             root: RwLock::new(crate::device::SHARED_STORAGE.to_string()),
             error: RwLock::new(None),
             stop: AtomicBool::new(false),
+            password: RwLock::new(String::new()),
+            read_only: AtomicBool::new(true),
+            connections: std::sync::atomic::AtomicUsize::new(0),
+            generation: std::sync::atomic::AtomicU64::new(0),
+            lifecycle: std::sync::Mutex::new(()),
             reindex: RwLock::new(None),
         }
     }
@@ -587,6 +643,8 @@ pub fn status_of(state: &ServerState) -> ReverseServerStatus {
             .read()
             .map(|value| value.clone())
             .unwrap_or(None),
+        password: if running { state.password.read().map(|v|v.clone()).unwrap_or_default() } else { String::new() },
+        read_only: state.read_only.load(Ordering::Relaxed),
     }
 }
 
@@ -602,12 +660,14 @@ pub fn start_reverse_server<R: tauri::Runtime>(
     options: Option<StartServerRequest>,
 ) -> Result<ReverseServerStatus, String> {
     let server = Arc::clone(&state.server);
+    let _lifecycle = server.lifecycle.lock().map_err(|e|e.to_string())?;
     if server.is_running() {
         return Ok(status_of(&server));
     }
     let options = options.unwrap_or(StartServerRequest {
         port: None,
         root: None,
+        read_only: None,
     });
     let mut port = options.port.unwrap_or(DEFAULT_PORT);
     let root = PathBuf::from(
@@ -618,6 +678,10 @@ pub fn start_reverse_server<R: tauri::Runtime>(
     if !root.is_dir() {
         return Err(format!("root is not a directory: {}", root.display()));
     }
+    let mut secret = [0u8; 18];
+    getrandom::fill(&mut secret).map_err(|e| format!("could not generate server password: {e}"))?;
+    *server.password.write().unwrap_or_else(|e|e.into_inner()) = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret);
+    server.read_only.store(options.read_only.unwrap_or(true), Ordering::Relaxed);
 
     // Try the requested port, then the next few, so a second instance or a busy
     // port does not turn into a dead button.
@@ -644,6 +708,7 @@ pub fn start_reverse_server<R: tauri::Runtime>(
     server.port.store(port, Ordering::Relaxed);
     server.stop.store(false, Ordering::SeqCst);
     server.running.store(true, Ordering::SeqCst);
+    let generation = server.generation.fetch_add(1, Ordering::SeqCst) + 1;
     crate::log::info(
         "server",
         format!("file server listening on 0.0.0.0:{port} serving {}", root.display()),
@@ -655,18 +720,21 @@ pub fn start_reverse_server<R: tauri::Runtime>(
     let thread_state = Arc::clone(&server);
     std::thread::spawn(move || {
         for incoming in listener.incoming() {
-            if thread_state.stop.load(Ordering::SeqCst) {
+            if thread_state.stop.load(Ordering::SeqCst) || thread_state.generation.load(Ordering::SeqCst) != generation {
                 break;
             }
             match incoming {
                 Ok(stream) => {
+                    if thread_state.connections.fetch_add(1, Ordering::SeqCst) >= 8 {
+                        thread_state.connections.fetch_sub(1, Ordering::SeqCst); drop(stream); continue;
+                    }
                     let per_connection = Arc::clone(&thread_state);
-                    std::thread::spawn(move || handle_connection(stream, per_connection));
+                    std::thread::spawn(move || { handle_connection(stream, Arc::clone(&per_connection)); per_connection.connections.fetch_sub(1, Ordering::SeqCst); });
                 }
                 Err(_) => continue,
             }
         }
-        thread_state.running.store(false, Ordering::SeqCst);
+        if thread_state.generation.load(Ordering::SeqCst) == generation { thread_state.running.store(false, Ordering::SeqCst); }
     });
 
     Ok(status_of(&server))
@@ -675,10 +743,12 @@ pub fn start_reverse_server<R: tauri::Runtime>(
 #[tauri::command]
 pub fn stop_reverse_server(state: tauri::State<'_, crate::AppState>) -> ReverseServerStatus {
     let server = &state.server;
+    let _lifecycle = server.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
     if server.is_running() {
         crate::log::info("server", "file server stopped");
     }
     server.stop.store(true, Ordering::SeqCst);
+    server.generation.fetch_add(1, Ordering::SeqCst);
     server.running.store(false, Ordering::SeqCst);
     // Nudge the accept loop so it observes `stop` without waiting for traffic.
     let port = server.port.load(Ordering::Relaxed);
@@ -692,6 +762,50 @@ pub fn stop_reverse_server(state: tauri::State<'_, crate::AppState>) -> ReverseS
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exchange(state: SharedServer, message: Vec<u8>) -> String {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || { let (stream, _) = listener.accept().unwrap(); handle_connection(stream, state); });
+        let mut client = TcpStream::connect(address).unwrap(); client.write_all(&message).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut result = String::new(); client.read_to_string(&mut result).unwrap(); worker.join().unwrap(); result
+    }
+
+    #[test]
+    fn every_server_request_requires_authentication_and_read_only_blocks_writes() {
+        let state = Arc::new(ServerState::default());
+        *state.password.write().unwrap() = "test-secret".into();
+        state.running.store(true, Ordering::SeqCst);
+        for verb in ["GET", "HEAD", "PUT", "POST"] {
+            let response = exchange(Arc::clone(&state), format!("{verb} /__index HTTP/1.1\r\n\r\n").into_bytes());
+            assert!(response.starts_with("HTTP/1.1 401")); assert!(response.contains("WWW-Authenticate"));
+        }
+        let auth = base64::engine::general_purpose::STANDARD.encode("rhfiles:test-secret");
+        let response = exchange(state, format!("PUT /x HTTP/1.1\r\nAuthorization: Basic {auth}\r\nContent-Length: 0\r\n\r\n").into_bytes());
+        assert!(response.starts_with("HTTP/1.1 403"));
+    }
+
+    #[test]
+    fn authentication_allows_reads_without_leaking_password_in_page() {
+        let root = std::env::temp_dir().join(format!("rhfiles-server-auth-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap(); std::fs::write(root.join("test.txt"), b"hello").unwrap();
+        let state = Arc::new(ServerState::default());
+        *state.password.write().unwrap() = "test-secret".into();
+        *state.root.write().unwrap() = root.to_string_lossy().into_owned();
+        state.running.store(true, Ordering::SeqCst);
+        let auth = base64::engine::general_purpose::STANDARD.encode("rhfiles:test-secret");
+        let response = exchange(Arc::clone(&state), format!("GET /test.txt HTTP/1.1\r\nAuthorization: Basic {auth}\r\n\r\n").into_bytes());
+        assert!(response.ends_with("hello")); assert!(!response.contains("test-secret")); assert!(response.contains("Content-Security-Policy: sandbox"));
+        let response = exchange(state, format!("HEAD /test.txt HTTP/1.1\r\nAuthorization: Basic {auth}\r\n\r\n").into_bytes());
+        assert!(!response.ends_with("hello")); assert!(response.contains("Content-Length: 5"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn path_checks_reject_platform_separators_and_drive_prefixes() {
+        for name in ["/a%5c..%5csecret", "/C:/secret", "/file%00.txt"] { assert!(resolve(Path::new("/share"), name).is_none()); }
+    }
 
     #[test]
     fn upload_urls_stay_on_the_phone_and_in_the_selected_folder() {

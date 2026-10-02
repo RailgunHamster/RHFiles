@@ -69,15 +69,21 @@ const ui = (() => {
   const sheetPanel = () => document.getElementById('sheet-panel');
 
   let onDismiss = null;
+  let closeGuard = null, cleanup = null;
   let previousFocus = null;
   function closeSheet() {
+    if (closeGuard && !closeGuard()) return false;
+    const finish = cleanup; cleanup = null; closeGuard = null;
+    if (finish) finish();
     const dismiss = onDismiss;
     onDismiss = null;
     sheet().hidden = true;
     scrim().hidden = true;
     sheetPanel().innerHTML = '';
+    sheetPanel().classList.remove('viewer','editor');
     if (dismiss) dismiss();
     if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+    return true;
   }
 
   /**
@@ -85,7 +91,7 @@ const ui = (() => {
    * @param {Array<{label: string, icon?: string, danger?: boolean, note?: string, onSelect?: Function}>} actions
    */
   function openSheet(title, actions, note) {
-    closeSheet();
+    if (!closeSheet()) return;
     previousFocus = document.activeElement;
     const panel = sheetPanel();
     panel.innerHTML = '';
@@ -107,6 +113,7 @@ const ui = (() => {
     sheet().hidden = false;
     scrim().hidden = false;
     panel.querySelector('button')?.focus({ preventScroll: true });
+    return true;
   }
 
   /** True when a sheet is on screen. */
@@ -120,7 +127,7 @@ const ui = (() => {
    * Resolves with the entered string or null.
    */
   function prompt(title, initial, confirmLabel) {
-    closeSheet();
+    if (!closeSheet()) return Promise.resolve(null);
     return new Promise((resolve) => {
       onDismiss = () => resolve(null);
       const panel = sheetPanel();
@@ -195,7 +202,7 @@ const ui = (() => {
   /** A yes/no sheet. Resolves true only when the destructive action is chosen. */
   function confirm(title, message, confirmLabel) {
     return new Promise((resolve) => {
-      openSheet(
+      const opened = openSheet(
         title,
         [
           { label: confirmLabel || '确认', icon: 'trash', danger: true, onSelect: () => resolve(true) },
@@ -203,6 +210,7 @@ const ui = (() => {
         ],
         message,
       );
+      if (!opened) { resolve(false); return; }
       onDismiss = () => resolve(false);
     });
   }
@@ -240,5 +248,6 @@ const ui = (() => {
     return true;
   }
 
-  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, copyText, ICONS };
+  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, copyText, ICONS,
+    setCloseGuard: fn => { closeGuard = fn; }, onClosed: fn => { cleanup = fn; } };
 })();
