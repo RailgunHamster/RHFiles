@@ -94,7 +94,7 @@ async function home(p){await p.click('#btn-menu');await p.click('#nav-home');awa
 async function storage(p){await home(p);await tile(p,'storage-0').click();await p.waitForSelector('#filelist .name');}
 async function more(p,name){await row(p,name).locator('.entry-more').click();await p.waitForSelector('#sheet:not([hidden])');}
 async function choose(p,label){await p.getByRole('button',{name:label,exact:true}).click();}
-async function press(p,name){const b=await row(p,name).boundingBox();await p.mouse.move(b.x+80,b.y+25);await p.mouse.down();await p.waitForTimeout(510);await p.mouse.up();}
+async function press(p,name){await row(p,name).scrollIntoViewIfNeeded();const b=await row(p,name).boundingBox();await p.mouse.move(b.x+80,b.y+25);await p.mouse.down();await p.waitForTimeout(510);await p.mouse.up();await p.waitForSelector('#selection-bar:not([hidden])');}
 async function capture(p,name){await p.screenshot({path:path.join(output,name+'.png')});}
 try{
   const {context,page:p,errors}=await pageFor();await tile(p,'storage-0').waitFor();
@@ -212,7 +212,7 @@ try{
       else{
         check(await p.evaluate(()=>document.documentElement.scrollWidth===innerWidth),'No horizontal Home overflow at '+options.viewport.width);
         await tile(p,'storage-0').click();await p.waitForSelector('#filelist .name');await press(p,'notes.txt');
-        check(await p.locator('#selection-bar').evaluate(e=>e.scrollWidth<=e.clientWidth),'Selection fits '+options.viewport.width);await capture(p,'plus-'+options.viewport.width);
+        check(await p.locator('#selection-bar').isVisible()&&await p.locator('#selection-bar').evaluate(e=>e.scrollWidth<=e.clientWidth),'Visible selection toolbar fits '+options.viewport.width);await capture(p,'plus-'+options.viewport.width);
       }
     }
     check(errors.length===0,'Responsive/permission scenario has no errors');await context.close();
