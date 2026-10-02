@@ -122,7 +122,7 @@ test('archive preflight failures are visible rather than silently ignored',async
 
 test('FTP child navigation preserves encoded filenames and routes to the remote API',async()=>{
   const requests=[];
-  const ctx=context({G:{ftpConnections:new Map([['example.test',{user:'test',pass:''}]])},t:x=>x,
+  const ctx=context({IS_MAC:false,G:{ftpConnections:new Map([['example.test',{user:'test',pass:''}]])},t:x=>x,
     call:async(cmd,args)=>{requests.push({cmd,args});return [{name:'中文 #.txt',is_dir:false}];}});
   vm.runInContext(read('remote.js'),ctx);
   const result=await ctx.routeFtpCommand('list_dir',{path:'ftp://example.test/folder'});

@@ -1390,10 +1390,10 @@ mod program_discovery_tests {
 
     #[test]
     fn terminal_actions_on_a_file_use_its_containing_directory() {
-        let path = std::path::Path::new(r"C:\Projects\demo\notes.txt");
+        let path = std::path::Path::new(if cfg!(windows) { r"C:\Projects\demo\notes.txt" } else { "/Users/demo/Projects/notes.txt" });
         assert_eq!(
             terminal_working_directory(path),
-            std::path::PathBuf::from(r"C:\Projects\demo")
+            std::path::PathBuf::from(if cfg!(windows) { r"C:\Projects\demo" } else { "/Users/demo/Projects" })
         );
     }
 

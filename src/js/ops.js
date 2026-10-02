@@ -590,6 +590,10 @@ async function openFileHandler(path) {
 // else is handed to the system shell.
 async function activateEntry(file, isRight, index) {
   if (!file) return;
+  if (IS_MAC && file.is_dir && /\.app$/i.test(file.name) && !file.archive_entry) {
+    await openFileHandler(file.path);
+    return;
+  }
   if (file.archive_entry) {
     if (file.is_dir) {
       showNotice(t('alert.cannotNavArchive'));

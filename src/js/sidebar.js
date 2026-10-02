@@ -257,8 +257,8 @@ async function navigateToTagFiles(tag) {
     }
     if (!matchingPaths.length) return;
     const firstPath = matchingPaths[0];
-    const parentDir = firstPath.split("\\").slice(0, -1).join("\\") || firstPath;
-    const fileName = firstPath.split("\\").pop();
+    const parentDir = parentFolderPath(firstPath);
+    const fileName = pathLeaf(firstPath);
     await navigateTo(parentDir);
     const tab = getTab();
     const idx = tab.entries.findIndex(e => e.name === fileName);
@@ -296,8 +296,8 @@ async function loadRecentList() {
         if (item.is_dir) {
           navigateTo(item.path);
         } else {
-          const parentDir = item.path.split("\\").slice(0, -1).join("\\") || item.path;
-          const fileName = item.path.split("\\").pop();
+          const parentDir = parentFolderPath(item.path);
+          const fileName = pathLeaf(item.path);
           navigateTo(parentDir).then(() => {
             const tab = getTab();
             const idx = tab.entries.findIndex(e => e.name === fileName);
@@ -377,6 +377,7 @@ function updateSidebarSelection() {
 let _pinnedFolders = [];
 
 function favoritePathKey(path) {
+  if (IS_MAC) return String(path || '').replace(/\/+$/, '') || (path === '/' ? '/' : '');
   return String(path || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 

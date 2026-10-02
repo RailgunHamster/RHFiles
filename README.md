@@ -4,7 +4,7 @@
 
 <h1 align="center">RHFiles</h1>
 
-<p align="center">A fast, Windows-native file manager built with Rust, Tauri, and WebView2.</p>
+<p align="center">A Rust and Tauri file manager for Windows, with native macOS support in preview.</p>
 
 <p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
@@ -30,6 +30,12 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 - Multiple built-in color themes plus reloadable user theme packs—no recompilation required.
 
 ## Download
+
+### macOS preview
+
+Apple Silicon and Intel `.app.zip` / `.dmg` builds are produced by the [macOS workflow](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml). Choose a successful run and download its matching architecture artifact. Requires macOS 12 or later. These are ad-hoc-signed, **not Apple-notarized** preview builds; GUI acceptance testing on a user's Mac is still required. See [macOS setup, supported features, permissions and limitations](docs/MACOS.md).
+
+### Windows
 
 Download the latest portable archive or installer from [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest).
 

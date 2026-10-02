@@ -36,7 +36,7 @@ fn tagged_fs_error(error: &std::io::Error) -> String {
 
 const TRANSFER_BUFFER_SIZE: usize = 1024 * 1024;
 
-#[cfg(all(test, target_os = "windows"))]
+#[cfg(test)]
 #[path = "file_ops_business_tests.rs"]
 mod business_tests;
 
@@ -1071,6 +1071,10 @@ fn remove_partial_copy(path: &std::path::Path) {
 
 fn copy_path_to_exact(src: &Path, dest: &Path) -> Result<(), String> {
     let metadata = std::fs::symlink_metadata(src).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    if metadata.file_type().is_symlink() {
+        return std::os::unix::fs::symlink(std::fs::read_link(src).map_err(|e| e.to_string())?, dest).map_err(|e| e.to_string());
+    }
     if metadata.file_type().is_symlink() && src.is_dir() {
         return Err(format!("Directory links cannot be copied recursively: {}", src.display()));
     }
@@ -1095,6 +1099,11 @@ fn copy_path_to_exact(src: &Path, dest: &Path) -> Result<(), String> {
                 let entry = entry.map_err(|e| e.to_string())?;
                 let source = entry.path();
                 let target = dest.join(entry.file_name());
+                #[cfg(target_os = "macos")]
+                if entry.file_type().map_err(|e| e.to_string())?.is_symlink() {
+                    std::os::unix::fs::symlink(std::fs::read_link(&source).map_err(|e| e.to_string())?, &target).map_err(|e| e.to_string())?;
+                    continue;
+                }
                 if entry.file_type().map_err(|e| e.to_string())?.is_symlink() && source.is_dir() {
                     return Err(format!("Directory links cannot be copied recursively: {}", source.display()));
                 }
@@ -1218,6 +1227,13 @@ fn copy_path_streaming(
     }
     let metadata = std::fs::symlink_metadata(source)
         .map_err(|error| format!("Cannot read {}: {error}", source.display()))?;
+    #[cfg(target_os = "macos")]
+    if metadata.file_type().is_symlink() {
+        std::os::unix::fs::symlink(std::fs::read_link(source).map_err(|e| e.to_string())?, target).map_err(|e| e.to_string())?;
+        progress.complete_entry();
+        progress.emit("progress", Some(source), false);
+        return Ok(());
+    }
     if metadata.file_type().is_symlink()
         && std::fs::metadata(source).is_ok_and(|value| value.is_dir())
     {
@@ -1284,9 +1300,14 @@ fn copy_path_streaming(
 }
 
 fn preserve_copy_metadata(source: &Path, target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { return rhfiles_core::macos::request(serde_json::json!({"action":"metadata", "path":source, "target":target})).map(|_| ()); }
     let metadata = std::fs::metadata(source).map_err(|e| e.to_string())?;
     let mut options = std::fs::OpenOptions::new();
+    #[cfg(windows)]
     options.write(true);
+    #[cfg(not(windows))]
+    options.read(true); // Unix directories cannot be opened for writing; futimens accepts a read fd.
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -2025,7 +2046,7 @@ pub fn create_shortcut(target: String, name: String, dest: String) -> Result<(),
     }
 }
 
-#[cfg(all(test, target_os = "windows"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2059,6 +2080,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(windows)]
     #[test]
     fn same_file_is_detected_across_windows_path_casing() {
         let root = std::env::temp_dir().join(format!(
@@ -2077,6 +2099,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(windows)]
     #[test]
     #[ignore = "uses the Windows Recycle Bin"]
     fn deleted_file_can_be_restored_to_its_original_path() {

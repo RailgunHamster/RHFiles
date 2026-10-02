@@ -233,7 +233,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       try {
         const urls = event.payload && event.payload.urls ? event.payload.urls : [];
         if (urls.length > 0) {
-          let path = urls[0].replace(/^rhfiles:\/\//, '').replace(/\//g, '\\');
+          const rawPath = urls[0].replace(/^rhfiles:\/\//, '');
+          let path = IS_MAC ? '/' + rawPath.replace(/^\/+/, '') : rawPath.replace(/\//g, '\\');
           if (path) navigateAddressInput(path, false);
         }
       } catch (e) {}

@@ -502,6 +502,7 @@ document.addEventListener("keydown", async e => {
       const indices = [...sel];
       const focusedIndex = indices.length ? indices[indices.length - 1] : -1;
       if (indices.length === 1 && entries[focusedIndex]) {
+        if (IS_MAC) { await activateEntry(entries[focusedIndex], isRight, focusedIndex); return; }
         if (entries[focusedIndex].is_dir) {
           if (isRight) rpNavigateTo(entries[focusedIndex].path);
           else await navigateTo(entries[focusedIndex].path);

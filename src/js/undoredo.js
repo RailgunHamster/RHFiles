@@ -119,6 +119,6 @@ function trackNewFolder(path) {
   pushUndo({
     label: t('undo.newFolder', {path: path}),
     undo: async () => { await call("delete_file", { path }); },
-    redo: async () => { await call("new_folder", { parent: path.split("\\").slice(0, -1).join("\\") }); }
+    redo: async () => { await call("new_folder", { parent: parentFolderPath(path) }); }
   });
 }

@@ -4,13 +4,15 @@
 
 <h1 align="center">RHFiles</h1>
 
-<p align="center">使用 Rust、Tauri 与 WebView2 构建的 Windows 文件管理器。</p>
+<p align="center">使用 Rust、Tauri 构建的文件管理器，支持 Windows，并提供原生 macOS 预览版。</p>
 
 <p align="center"><a href="README.md">English</a> · <strong>简体中文</strong></p>
 
 RHFiles 在熟悉的 Windows 文件操作之上加入了标签页、双窗格、丰富预览、Everything 全局搜索、中文拼音匹配、空间占用分析、媒体格式转换和 portable 原地更新，主要面向 Windows 10 与 Windows 11。
 
 ## 主要功能
+
+Mac 版：从 [macOS 构建工作流](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) 的成功记录下载 Apple Silicon 或 Intel 对应的 `.app.zip` / `.dmg`，要求 macOS 12 或更高。当前为 ad-hoc 签名、**未经 Apple 公证**的预览构建，仍需 Mac 上的实际界面验收。功能差异、安装、权限与构建方式见 [Mac 版说明](docs/MACOS.md)。以下 Everything、Velopack、Explorer 集成等介绍仅适用于 Windows。
 
 - 带历史记录的标签页、左右独立标签的双窗格、可配置快捷键和多选操作。
 - 详细、卡片、缩略图和分栏布局，并可显示 Windows 默认打开程序的关联图标。

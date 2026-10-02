@@ -10,6 +10,7 @@ function ftpLocation(path) {
   return {...connection, host: url.host, path: decodeURIComponent(url.pathname || '/')};
 }
 function pathLeaf(path) {
+  if (IS_MAC && !isFtpPath(path)) return String(path).replace(/\/+$/, '').split('/').pop();
   const leaf = String(path).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
   return isFtpPath(path) ? decodeURIComponent(leaf) : leaf;
 }

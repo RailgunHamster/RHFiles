@@ -1332,7 +1332,7 @@ async function navigateTo(path, pushHistory) {
     tab._loaded = true;
     if (typeof syncDiskUsageWithActiveFolder === 'function') syncDiskUsageWithActiveFolder(path, false);
     renderTabs();
-    addRecentFile(path, path.split("\\").pop(), true, "");
+    addRecentFile(path, pathLeaf(path), true, "");
     // Refreshing the same folder must not change the layout. Re-running the
     // per-folder / adaptive detection here made F5 flip image folders between
     // thumbnails and cards on every reload, and the explicit folder layout was
@@ -1782,7 +1782,7 @@ async function renderHomeRecent(mode) {
         if (item.is_dir) {
           navigateTo(item.path);
         } else {
-          const parentDir = item.path.split("\\").slice(0, -1).join("\\") || item.path;
+          const parentDir = parentFolderPath(item.path);
           navigateTo(parentDir);
         }
       });
@@ -1820,7 +1820,7 @@ async function goUp() {
     const isRight = G.lastActivePane === 'right' && G.dualOn;
     const pane = isRight ? G.rp : getTab();
     if (pane.path === "home://") return;
-    const prevDirName = pane.path.split("\\").pop() || pane.path.split("/").pop();
+    const prevDirName = pathLeaf(pane.path);
     // Drive root has no parent — go to home
     const isDriveRoot = /^[A-Z]:\\$/i.test(pane.path);
     const parent = isDriveRoot ? "home://" : await call("parent_path", { path: pane.path });

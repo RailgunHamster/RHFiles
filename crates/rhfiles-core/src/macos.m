@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include <copyfile.h>
 
 static id perform(NSDictionary *request, NSError **error) {
     NSString *action = request[@"action"];
@@ -68,6 +69,14 @@ static id perform(NSDictionary *request, NSError **error) {
     }
     if (![path isAbsolutePath]) @throw [NSException exceptionWithName:@"Path" reason:@"Absolute file path required" userInfo:nil];
     NSURL *url = [NSURL fileURLWithPath:path];
+    if ([action isEqual:@"metadata"]) {
+        NSString *target = request[@"target"];
+        if (![target isAbsolutePath]) @throw [NSException exceptionWithName:@"Path" reason:@"Absolute destination required" userInfo:nil];
+        if (copyfile(path.fileSystemRepresentation, target.fileSystemRepresentation, NULL, COPYFILE_METADATA | COPYFILE_NOFOLLOW) != 0) {
+            *error = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil]; return nil;
+        }
+        return @YES;
+    }
     if ([action isEqual:@"trash"]) {
         NSURL *result = nil;
         if (![fm trashItemAtURL:url resultingItemURL:&result error:error]) return nil;

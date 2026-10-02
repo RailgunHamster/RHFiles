@@ -1,7 +1,48 @@
 // Scenario mapping and platform limitations: docs/TESTING.md.
 use super::*;
 use crate::test_support::TestDir;
-use std::{fs, os::windows::fs::OpenOptionsExt};
+use std::fs;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_copy_preserves_links_and_extended_attributes_without_following_a_cycle() {
+    let temp=TestDir::new("mac-links");
+    let source=temp.0.join("source"); let target=temp.0.join("copy");
+    fs::create_dir(&source).unwrap(); fs::write(source.join("data"),b"bytes").unwrap();
+    std::os::unix::fs::symlink(".",source.join("cycle")).unwrap();
+    std::os::unix::fs::symlink("missing",source.join("dangling")).unwrap();
+    assert!(std::process::Command::new("/usr/bin/xattr").args(["-w","com.rhfiles.test","kept"]).arg(source.join("data")).status().unwrap().success());
+    copy_path_to_exact(&source,&target).unwrap();
+    assert_eq!(fs::read_link(target.join("cycle")).unwrap(),PathBuf::from("."));
+    assert_eq!(fs::read_link(target.join("dangling")).unwrap(),PathBuf::from("missing"));
+    let result=std::process::Command::new("/usr/bin/xattr").args(["-p","com.rhfiles.test"]).arg(target.join("data")).output().unwrap();
+    assert!(result.status.success()); assert_eq!(String::from_utf8_lossy(&result.stdout).trim(),"kept");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_rename_accepts_posix_names_and_rejects_traversal_before_mutation() {
+    let temp=TestDir::new("mac-names"); let source=temp.0.join("source"); fs::write(&source,b"keep").unwrap();
+    for name in ["../escape","/absolute",".","..","","a\0b"] {
+        assert!(rename_file(source.to_string_lossy().into(),name.into()).is_err());
+        assert_eq!(fs::read(&source).unwrap(),b"keep");
+    }
+    rename_file(source.to_string_lossy().into(),"CON: back\\slash.".into()).unwrap();
+    assert_eq!(fs::read(temp.0.join("CON: back\\slash.")).unwrap(),b"keep");
+}
+
+#[test]
+fn batch_rename_conflict_rolls_back_without_overwriting_any_file() {
+    let temp=TestDir::new("batch-collision");
+    for (name,data) in [("a",b"a"),("b",b"b"),("taken",b"t")] { fs::write(temp.0.join(name),data).unwrap(); }
+    assert!(batch_rename(vec![(temp.0.join("a").to_string_lossy().into(),"renamed".into()),(temp.0.join("b").to_string_lossy().into(),"taken".into())]).is_err());
+    assert_eq!(fs::read(temp.0.join("a")).unwrap(),b"a");
+    assert_eq!(fs::read(temp.0.join("b")).unwrap(),b"b");
+    assert_eq!(fs::read(temp.0.join("taken")).unwrap(),b"t");
+    assert!(!temp.0.join("renamed").exists());
+}
 
 #[test]
 fn rename_never_replaces_an_existing_file() {
@@ -38,6 +79,7 @@ fn rename_accepts_case_only_change_and_unicode() {
     assert_eq!(fs::read(temp.0.join("中文 📁.txt")).unwrap(), b"bytes");
 }
 
+#[cfg(windows)]
 #[test]
 fn rename_rejects_path_traversal_and_windows_ambiguous_names_before_touching_disk() {
     let temp = TestDir::new("rename-invalid");
@@ -233,6 +275,7 @@ fn same_file_and_missing_parent_are_non_destructive_errors() {
     }
 }
 
+#[cfg(windows)]
 #[test]
 fn locked_source_removes_partial_copy_and_never_loses_source() {
     let temp = TestDir::new("locked");
@@ -252,6 +295,7 @@ fn locked_source_removes_partial_copy_and_never_loses_source() {
     assert_eq!(fs::read(source).unwrap(), b"keep");
 }
 
+#[cfg(windows)]
 #[test]
 fn locked_child_rolls_back_whole_directory_copy() {
     let temp = TestDir::new("locked-child");
