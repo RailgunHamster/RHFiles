@@ -1417,7 +1417,7 @@ fn transfer_with_progress(
     // A same-volume move without a conflict is an atomic metadata operation. It
     // is safer and much faster than needlessly copying every byte.
     if operation == "move" && !target.exists() {
-        match std::fs::rename(&source_path, &target) {
+        match rename_without_replacing(&source_path, &target) {
             Ok(()) => {
                 let mut progress = OperationProgress::new(
                     app,
@@ -1460,8 +1460,7 @@ fn transfer_with_progress(
     progress.emit("preparing", Some(&source_path), true);
 
     let staging = hidden_sibling(&destination_path, "partial", &operation_id);
-    let backup = target
-        .exists()
+    let backup = (overwrite && target.exists())
         .then(|| hidden_sibling(&destination_path, "backup", &operation_id));
     if staging.exists() || backup.as_ref().is_some_and(|path| path.exists()) {
         return Err(format!(
@@ -1525,14 +1524,14 @@ fn transfer_with_progress(
             progress.emit("failed", Some(&target), true);
             return Err(error);
         }
-        std::fs::rename(&target, backup_path).map_err(|error| {
+        rename_without_replacing(&target, backup_path).map_err(|error| {
             let _ = remove_path_if_present(&staging);
             let _ = std::fs::remove_file(&journal_file);
             format!("Cannot prepare destination {}: {error}", target.display())
         })?;
         journal.phase = "targetBackedUp".to_string();
         if let Err(error) = persist_json(&journal_file, &journal) {
-            let rollback = std::fs::rename(backup_path, &target);
+            let rollback = rename_without_replacing(backup_path, &target);
             let _ = remove_path_if_present(&staging);
             if rollback.is_ok() {
                 let _ = std::fs::remove_file(&journal_file);
@@ -1547,10 +1546,10 @@ fn transfer_with_progress(
         }
     }
 
-    if let Err(error) = std::fs::rename(&staging, &target) {
+    if let Err(error) = rename_without_replacing(&staging, &target) {
         let mut rollback_errors = Vec::new();
         if let Some(backup_path) = &backup {
-            if let Err(rollback_error) = std::fs::rename(backup_path, &target) {
+            if let Err(rollback_error) = rename_without_replacing(backup_path, &target) {
                 rollback_errors.push(format!(
                     "could not restore previous destination: {rollback_error}"
                 ));
@@ -1580,7 +1579,7 @@ fn transfer_with_progress(
                 rollback_errors.push(rollback_error);
             }
             if let Some(backup_path) = &backup {
-                if let Err(rollback_error) = std::fs::rename(backup_path, &target) {
+                if let Err(rollback_error) = rename_without_replacing(backup_path, &target) {
                     rollback_errors.push(format!(
                         "Cannot restore the previous destination: {rollback_error}"
                     ));
@@ -1745,13 +1744,14 @@ fn recover_transfer_journal(
     let staging = PathBuf::from(&journal.staging);
     let backup = journal.backup.as_deref().map(PathBuf::from);
     let mut errors = Vec::new();
+    // A missing staging file alone is not proof of commit: cleanup or another
+    // process could have removed it. Keep the backup on ambiguous recovery.
     let target_was_committed = target.exists()
-        && (!staging.exists()
-            || matches!(journal.phase.as_str(), "targetCommitted" | "sourceRemoved"));
+        && matches!(journal.phase.as_str(), "targetCommitted" | "sourceRemoved");
 
     if !target.exists() {
         if let Some(backup_path) = backup.as_ref().filter(|path| path.exists()) {
-            if let Err(error) = std::fs::rename(backup_path, &target) {
+            if let Err(error) = rename_without_replacing(backup_path, &target) {
                 errors.push(format!(
                     "Could not restore the previous destination {}: {error}",
                     target.display()
@@ -1766,7 +1766,9 @@ fn recover_transfer_journal(
     }
     if target.exists() {
         if let Some(backup_path) = backup.as_ref().filter(|path| path.exists()) {
-            if let Err(error) = remove_path_if_present(backup_path) {
+            if !target_was_committed {
+                errors.push(format!("Destination was occupied before commit; previous data retained at {}", backup_path.display()));
+            } else if let Err(error) = remove_path_if_present(backup_path) {
                 errors.push(error);
             }
         }

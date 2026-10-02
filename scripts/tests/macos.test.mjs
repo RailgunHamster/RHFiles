@@ -65,3 +65,23 @@ test('macOS never automatically consumes a Windows update feed',()=>{
   load(c,'main.js',['isAutomaticUpdateCheckEnabled']);
   assert.equal(c.isAutomaticUpdateCheckEnabled(),false);
 });
+
+test('Finder drop target follows the addressed tab and folder, and rejects archives or dialogs',()=>{
+  const pane={id:7,path:'/Users/demo',entries:[{path:'/Users/demo/target',is_dir:true}]};
+  const c=mac(); c.G.rp=pane; c.getTab=()=>pane; c.getRightTab=()=>pane; c.sidebarDropDestination=()=>null;
+  load(c,'macos.js',['macNativeDropTarget']);
+  const element=matches=>({closest:selector=>matches[selector]||null});
+  const tab={dataset:{tabId:'7',pane:'right'}};
+  const tabTarget=c.macNativeDropTarget(element({'.tab[data-tab-id]':tab}));
+  assert.equal(tabTarget.path,'/Users/demo'); assert.equal(tabTarget.isRight,true);
+  const row=c.macNativeDropTarget(element({'#file-list, #right-file-list':{},'[data-index]':{dataset:{index:'0'}}}));
+  assert.equal(row.path,'/Users/demo/target');
+  assert.equal(c.macNativeDropTarget(element({'.overlay, .dialog-overlay, dialog[open], .context-menu':{}})),null);
+  pane.archivePath='/Users/demo/archive.zip';
+  assert.equal(c.macNativeDropTarget(element({'.tab[data-tab-id]':tab})),null);
+});
+
+test('Mac custom icons keep separate cache entries for case-sensitive paths',()=>{
+  const c=mac(); load(c,'icons.js',['systemIconCacheKey']);
+  assert.notEqual(c.systemIconCacheKey({path:'/a/One.txt',extension:'txt'},32),c.systemIconCacheKey({path:'/a/one.txt',extension:'txt'},32));
+});

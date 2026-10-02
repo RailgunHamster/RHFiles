@@ -45,6 +45,23 @@ fn batch_rename_conflict_rolls_back_without_overwriting_any_file() {
 }
 
 #[test]
+fn recovery_never_discards_backup_when_another_file_occupies_an_uncommitted_target() {
+    let temp=TestDir::new("recovery-occupied");
+    let source=temp.0.join("source"); let target=temp.0.join("target");
+    let staging=temp.0.join("staging"); let backup=temp.0.join("backup"); let record=temp.0.join("record.json");
+    for (path,data) in [(&source,b"s"),(&target,b"t"),(&staging,b"p"),(&backup,b"b")] { fs::write(path,data).unwrap(); }
+    let journal=TransferJournal {schema_version:1,operation_id:"occupied".into(),operation:"move".into(),
+        source:source.to_string_lossy().into(),target:target.to_string_lossy().into(),staging:staging.to_string_lossy().into(),
+        backup:Some(backup.to_string_lossy().into()),phase:"targetBackedUp".into()};
+    fs::write(&record,serde_json::to_vec(&journal).unwrap()).unwrap();
+    for _ in 0..2 {
+        let report=recover_transfer_journal(&record,&journal); assert_eq!(report.outcome,"recoveryFailed");
+        assert_eq!(fs::read(&source).unwrap(),b"s"); assert_eq!(fs::read(&target).unwrap(),b"t");
+        assert_eq!(fs::read(&backup).unwrap(),b"b"); assert!(record.exists());
+    }
+}
+
+#[test]
 fn rename_never_replaces_an_existing_file() {
     let temp = TestDir::new("rename-conflict");
     let source = temp.0.join("source.txt");

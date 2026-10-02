@@ -1046,7 +1046,7 @@ async function runContextCommand(command, args, label, options = {}) {
 
 function openTerminalFromMenu(path) {
   const terminal = G.settings.terminal || 'wt';
-  const displayName = terminal === 'wt' ? 'Windows Terminal' : terminal === 'powershell' ? 'PowerShell' : 'CMD';
+  const displayName = IS_MAC ? (terminal === 'iterm' ? 'iTerm' : 'Terminal') : terminal === 'wt' ? 'Windows Terminal' : terminal === 'powershell' ? 'PowerShell' : 'CMD';
   return runContextCommand('open_terminal', { path, terminal }, displayName);
 }
 

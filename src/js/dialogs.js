@@ -141,7 +141,7 @@ const SETTINGS_SECTIONS = Object.freeze([
   ['files', 'settings.categoryFiles'],
   ['preview', 'settings.categoryPreview'],
   ['search', 'settings.categorySearch'],
-  ['integration', 'settings.categoryIntegration'],
+  ...(!IS_MAC ? [['integration', 'settings.categoryIntegration']] : []),
   ['updates', 'settings.categoryUpdates'],
   ['shortcuts', 'settings.categoryShortcuts'],
   ['data', 'settings.categoryData'],

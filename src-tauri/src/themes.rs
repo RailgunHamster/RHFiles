@@ -79,10 +79,7 @@ pub fn list_user_themes() -> Result<ThemeDiscovery, String> {
 pub fn open_theme_folder() -> Result<String, String> {
     let directory = theme_directory()?;
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    std::process::Command::new("explorer.exe")
-        .arg(&directory)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    rhfiles_core::enumerator::open_file(&directory)?;
     Ok(directory.to_string_lossy().into_owned())
 }
 

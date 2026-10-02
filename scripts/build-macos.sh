@@ -10,7 +10,9 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o src-tauri/icons/icon.icns
 npx --yes @tauri-apps/cli@2.10.1 build --bundles app,dmg
-binary=target/release/bundle/macos/RHFiles.app/Contents/MacOS/rhfiles
+app=target/release/bundle/macos/RHFiles.app
+executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+binary="$app/Contents/MacOS/$executable"
 test -x "$binary"
 codesign --verify --deep --strict target/release/bundle/macos/RHFiles.app
 # A build can link successfully on CI but fail to launch on a clean Mac.
