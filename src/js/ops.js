@@ -439,6 +439,15 @@ async function paste(isRight) {
   isRight = resolveRightPane(isRight);
   const destTab = isRight ? G.rp : getTab();
   const destPath = destTab.path;
+  if (IS_MAC && window.__TAURI_INTERNALS__ && !window.__rhfilesSuppressNativeClipboard) {
+    try {
+      const info = await call('read_macos_file_clipboard', {});
+      if (!info?.paths?.length) { G.clipboard = null; return; }
+      if (G.clipboard?.sequence !== Number(info.sequence)) {
+        G.clipboard = {op:info.cut ? 'cut' : 'copy', paths:new Set(info.paths), sequence:Number(info.sequence)};
+      }
+    } catch (error) { showNotice(String(error)); return; }
+  }
   if (G.clipboard?.sequence) {
     try {
       const info = await call('get_windows_file_clipboard_info', {});

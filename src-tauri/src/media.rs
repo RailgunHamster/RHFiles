@@ -162,7 +162,7 @@ fn resolve_ffmpeg(
     let path_command = PathBuf::from("ffmpeg");
     let version = ffmpeg_version(&path_command).map_err(|error| {
         format!(
-            "FFmpeg was not found beside RHFiles or in PATH. Configure ffmpeg.exe in Settings. {error}"
+            "FFmpeg was not found. Install a native FFmpeg build or configure its executable in Settings. {error}"
         )
     })?;
     Ok(FfmpegExecutable {

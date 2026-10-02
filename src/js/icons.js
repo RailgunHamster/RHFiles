@@ -8,6 +8,7 @@ const _PATH_SPECIFIC_ICON_EXT = new Set(['exe','dll','lnk','url','ico','cur','an
 
 function systemIconCacheKey(file, size) {
   const path = file?.path || '';
+  if (IS_MAC) return `${size || 16}:${path}`; // Finder custom icons can differ even for the same extension.
   const ext = (file?.extension || '').toLowerCase();
   const identity = !file?.is_dir && ext && !_PATH_SPECIFIC_ICON_EXT.has(ext)
     ? `*.${ext}`
@@ -97,6 +98,7 @@ function _systemIconSync(file, forPreview) {
 }
 
 function _mixedIcon(file, forPreview) {
+  if (IS_MAC && file.is_dir && /\.app$/i.test(file.name)) return _systemIconSync(file, forPreview);
   if (file.is_dir || _preferBuiltinOverSystem(file)) return _builtinIcon(file, forPreview);
   return _systemIconSync(file, forPreview);
 }

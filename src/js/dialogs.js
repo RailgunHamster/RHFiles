@@ -1218,7 +1218,7 @@ function renderShortcutConfig() {
   const container = document.getElementById("shortcut-config-list");
   if (!container) return;
   const bindings = getShortcutBindings();
-  const entries = Object.entries(SHORTCUT_LABEL_KEYS);
+  const entries = Object.entries(SHORTCUT_LABEL_KEYS).filter(([id]) => !IS_MAC || id !== 'integration.quickSwitch');
   container.innerHTML = entries.map(([actionId, labelKey]) => {
     const label = t(labelKey);
     const keys = bindings[actionId] || [];

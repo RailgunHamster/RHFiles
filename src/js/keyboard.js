@@ -402,6 +402,10 @@ function normalizeKey(e) {
   if (e.shiftKey) parts.push("Shift");
   if (e.altKey) parts.push("Alt");
   let key = e.key;
+  if (IS_MAC && (e.metaKey || e.ctrlKey || e.altKey)) {
+    if (/^Key[A-Z]$/.test(e.code || '')) key = e.code.slice(3);
+    else key = ({BracketLeft:'[', BracketRight:']', Period:'.', Comma:','})[e.code] || key;
+  }
   if (key === "Del") key = "Delete";
   if (key === " ") key = "Space";
   if (key === ",") key = ",";

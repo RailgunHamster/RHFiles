@@ -47,6 +47,9 @@ test('macOS keyboard bindings use Command without losing Control+Tab or typed-se
   assert.deepEqual(plain(c.bindings['typeSearch.next']),['Alt+]']);
   assert.equal(c.normalizeKey({key:'c',metaKey:true}),'Meta+C');
   assert.equal(c.normalizeKey({key:'Tab',ctrlKey:true}),'Ctrl+Tab');
+  assert.equal(c.normalizeKey({key:'“',code:'BracketLeft',altKey:true}),'Alt+[');
+  assert.equal(c.normalizeKey({key:'>',code:'Period',metaKey:true,shiftKey:true}),'Meta+Shift+.');
+  assert.equal(c.normalizeKey({key:'˜',code:'KeyN',metaKey:true,altKey:true}),'Meta+Alt+N');
   const keys=Object.values(c.bindings).flat();
   assert.equal(new Set(keys).size,keys.length,'Default shortcuts must not shadow each other');
 });

@@ -42,7 +42,9 @@ pub fn analyze_disk_usage(
         return Err(format!("Not a folder: {path}"));
     }
     let dust =
-        find_dust_executable().ok_or_else(|| "Bundled dust.exe was not found".to_string())?;
+        find_dust_executable().ok_or_else(|| if cfg!(target_os = "macos") {
+            "dust was not found. Install it with: brew install dust".to_string()
+        } else { "Bundled dust.exe was not found".to_string() })?;
     let depth = depth.clamp(1, 4).to_string();
     let max_entries = max_entries.clamp(20, 500).to_string();
     let mut command = std::process::Command::new(dust);

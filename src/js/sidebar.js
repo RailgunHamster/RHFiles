@@ -174,7 +174,7 @@ function showDriveContextMenu(e, path, label, letter) {
     { label: isFavoriteFolder(path) ? t('favorites.remove') : t('favorites.add'), icon: 'star', action: () => toggleFavoriteFolder(path, label) },
     { label: "-", action: null },
     { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },
-    { label: t('btn.format') + '...', icon: 'format', action: () => showFormatDialog(letter, label) },
+    { label: t('btn.format') + '...', icon: 'format', action: () => showFormatDialog(letter, label), hidden: IS_MAC },
   ];
   renderMenuItems(menu, items, e.clientX, e.clientY);
   document.body.appendChild(menu);
