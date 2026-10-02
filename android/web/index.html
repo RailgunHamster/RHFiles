@@ -53,6 +53,7 @@
         <p class="warning">每次启动生成新密码，默认只读。HTTP 不加密流量，仅在可信局域网使用；停止后密码失效。</p>
         <label class="server-write"><input id="server-write" type="checkbox"> 允许电脑上传新文件（不覆盖已有文件）</label>
         <div id="server-status" class="kv"></div><button id="btn-server-toggle" class="primary">启动文件服务</button>
+        <section id="ftp-access" hidden><h2>FTP 访问</h2><p class="warning">适用于 Windows Explorer / FTP 客户端。FTP 是明文协议，仅限可信局域网。默认只读，可允许上传新文件；不允许覆盖或删除手机文件。</p><div id="ftp-status" class="kv"></div><button id="btn-ftp-toggle">启动 FTP 服务</button></section>
       </section>
       <section id="tool-usage" hidden>
         <div class="tool-illustration" data-icon="chart"></div><h2>存储空间分析</h2><p id="scan-root" class="muted"></p>

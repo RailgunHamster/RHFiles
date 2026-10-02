@@ -15,7 +15,7 @@ const androidFeatures = (() => {
   const notice = (node, message) => node.append(ui.el('p','muted',message));
   const panel = () => $('sheet-panel');
   async function form(title, fields, submit, caption = '保存') {
-    ui.openSheet(title, [app.action('取消','close',()=>{})]);
+    if(!ui.openSheet(title, [app.action('取消','close',()=>{})]))return null;
     const root=ui.el('form','feature-form');
     for(const f of fields) {
       const label=ui.el('label','',f.label), input=document.createElement(f.options?'select':'input');
@@ -252,11 +252,28 @@ const androidFeatures = (() => {
       await app.refresh();
     }await pollJobs();
   }
+  async function refreshFtp() {
+    if(!api.featuresAvailable())return;
+    const status=await api.native('ftp.status');$('ftp-access').hidden=false;
+    $('ftp-status').textContent=status.running?'共享位置：'+status.root+'\n'+(status.urls.join('\n')||'未检测到局域网地址，请连接 Wi-Fi')+'\n用户名：'+status.username+'\n密码：'+status.password+'\n'+(status.readOnly?'只读':'允许上传新文件'):'FTP 服务未启动';
+    $('btn-ftp-toggle').textContent=status.running?'停止 FTP 服务':'启动 FTP 服务';
+  }
+  async function toggleFtp() {
+    const status=await api.native('ftp.status');
+    if(status.running){await api.native('ftp.stop');await refreshFtp();return;}
+    return form('启动 FTP 服务',[
+      {name:'root',label:'共享本地文件夹',value:app.state.root,required:true},
+      {name:'port',label:'端口',type:'number',value:2121,required:true},
+      {name:'readOnly',label:'只读访问（关闭后允许上传新文件）',type:'checkbox',value:true},
+      {name:'trustedNetwork',label:'我确认只在可信局域网使用，FTP 不加密',type:'checkbox',required:true},
+    ],async values=>{await api.native('ftp.start',{...values,port:Number(values.port)});await refreshFtp();},'启动 FTP');
+  }
   function init(context) {
     app=context;
     const chip=ui.el('button','native-task-chip');chip.id='native-task-chip';chip.hidden=true;chip.onclick=()=>app.go({screen:'tool',tool:'tasks'});$('app').append(chip);
     if(api.featuresAvailable()){pollJobs().catch(app.error);jobTimer=setInterval(()=>{if(!document.hidden)pollJobs().catch(()=>{});},1500);}
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume().catch(app.error);});
+    $('btn-ftp-toggle').addEventListener('click',()=>toggleFtp().catch(app.error));
   }
-  return {init,destinations,renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume};
+  return {init,destinations,renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
 })();

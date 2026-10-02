@@ -99,6 +99,9 @@ function fixture({denied=false,partial=false,nativeV2=false}){
         case 'tree.forget':return true;
         case 'open':case 'share':case 'app.action':case 'usage.settings':return true;
         case 'shares':return m.shares;case 'shares.clear':m.shares=[];return true;
+        case 'ftp.status':return m.ftp || {running:false,urls:[]};
+        case 'ftp.start':m.ftp={running:true,root:a.root,readOnly:a.readOnly,username:'rhfiles',password:'test-ftp',urls:['ftp://192.0.2.1:2121/']};return m.ftp;
+        case 'ftp.stop':m.ftp={running:false,urls:[]};return m.ftp;
         case 'apps':return [{name:'示例应用',package:'com.example.app',version:'2.0',system:false,apkBytes:12345,split:true},{name:'系统组件',package:'com.example.system',version:'1',system:true,apkBytes:100}];
         case 'text.read':return {text:m.text,revision:m.revision};
         case 'text.save':if(a.revision!==m.revision)throw new Error('文件已被其他程序修改');m.text=a.text;return true;
@@ -259,6 +262,11 @@ try{
     await p.locator('[name=name]').fill('家庭服务器');await p.locator('[name=host]').fill('server-home');await p.locator('[name=share]').fill('Public');await p.locator('[name=password]').fill('fixture-secret');await choose(p,'保存连接');
     await p.getByRole('button',{name:'家庭服务器 · smb',exact:true}).waitFor();
     check(!await p.evaluate(()=>JSON.stringify(localStorage).includes('fixture-secret')),'Network password never enters frontend persistence');await capture(p,'features-network');
+    await home(p);await tile(p,'server').click();await choose(p,'启动 FTP 服务');
+    check(await p.locator('[name=readOnly]').isChecked(),'FTP service defaults read-only');
+    await p.locator('[name=trustedNetwork]').check();await choose(p,'启动 FTP');await p.waitForFunction(()=>document.getElementById('ftp-status').textContent.includes('ftp://192.0.2.1:2121/'));
+    check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='ftp.start'&&c.args.trustedNetwork===true&&c.args.readOnly===true)),'FTP service requires explicit trusted-network consent');
+    await choose(p,'停止 FTP 服务');check(await p.evaluate(()=>!window.__model.ftp.running),'FTP stop is wired to native service');
     await home(p);await tile(p,'apps').click();await p.getByRole('button',{name:/示例应用/}).waitFor();
     check(!(await p.locator('#tool-extra').innerText()).includes('系统组件'),'Application manager defaults to user apps');
     await p.getByRole('button',{name:/示例应用/}).click();await choose(p,'卸载（系统确认）');check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='app.action'&&c.args.action==='uninstall'&&c.args.package==='com.example.app')),'Uninstall delegates exact package to system confirmation');

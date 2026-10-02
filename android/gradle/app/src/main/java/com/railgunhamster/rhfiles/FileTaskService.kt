@@ -19,6 +19,7 @@ import java.util.concurrent.Executors
 /** Foreground lifetime is owned by the service, not by a visible WebView or a JS timer. */
 class FileTaskService : Service() {
   private var wake: PowerManager.WakeLock? = null
+  private var ownedFtp: org.apache.ftpserver.FtpServer? = null
   override fun onBind(intent: Intent?): IBinder? = null
   override fun onCreate() {
     super.onCreate()
@@ -29,27 +30,37 @@ class FileTaskService : Service() {
     FileTasks.service=this
   }
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    ownedFtp=FtpAccess.instanceToken
     if (intent?.action == "cancel") FileTasks.cancelAll()
+    if (intent?.action == "stop-ftp") FtpAccess.stopAsync(ownedFtp)
     FileTasks.runQueued(this)
     finishIfIdle()
     return START_NOT_STICKY // Never replay a destructive operation after process death.
   }
   private fun notification(text: String): Notification {
     val open=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    val cancel=PendingIntent.getService(this,1,Intent(this,FileTaskService::class.java).setAction("cancel"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val ftpOnly=FtpAccess.running&&!FileTasks.hasActive()
+    val cancel=PendingIntent.getService(this,1,Intent(this,FileTaskService::class.java).setAction(if(ftpOnly)"stop-ftp" else "cancel"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     return NotificationCompat.Builder(this,"file-tasks").setSmallIcon(android.R.drawable.stat_sys_upload)
       .setContentTitle("RHFiles 文件任务").setContentText(text).setContentIntent(open).setOnlyAlertOnce(true)
-      .setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel,"取消任务",cancel).build()
+      .setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel,if(ftpOnly)"停止 FTP" else "取消任务",cancel).build()
   }
   fun update(text: String) { getSystemService(NotificationManager::class.java).notify(42,notification(text)) }
-  fun finishIfIdle() { if (!FileTasks.hasActive()) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() } }
+  fun finishIfIdle() {
+    if (!FileTasks.hasActive() && !FtpAccess.running) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
+    else if(!FileTasks.hasActive())update("FTP 文件服务运行中；点击打开 RHFiles 管理")
+  }
   override fun onTimeout(startId: Int, fgsType: Int) {
     FileTasks.cancelAll("系统限制后台任务运行时间，请回到应用重试未完成项")
     stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+    FtpAccess.stopAsync(ownedFtp)
   }
   override fun onDestroy() {
     if (wake?.isHeld == true) wake?.release()
-    FileTasks.service=null; super.onDestroy()
+    if(FileTasks.service===this)FileTasks.service=null
+    // Do not leave a listening server alive without its foreground notification.
+    FtpAccess.stopAsync(ownedFtp)
+    super.onDestroy()
   }
 }
 

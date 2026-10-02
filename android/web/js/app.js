@@ -164,7 +164,7 @@
         $('tool-extra').hidden = ['settings','server','usage'].includes(route.tool);
         if (!$('tool-extra').hidden) await androidFeatures.renderTool(route.tool);
         if (route.tool === 'settings') await refreshSettings();
-        if (route.tool === 'server') await refreshServer();
+        if (route.tool === 'server') {await refreshServer();await androidFeatures.refreshFtp();}
         if (route.tool === 'usage') {
           $('scan-root').textContent = pathLabel(state.root);
           $('scan-result').replaceChildren();

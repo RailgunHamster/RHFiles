@@ -90,7 +90,7 @@ android {
     }
     packaging {
         resources.excludes += "META-INF/versions/**/OSGI-INF/MANIFEST.MF"
-        resources.merges += setOf("META-INF/LICENSE", "META-INF/NOTICE", "META-INF/LICENSE.txt", "META-INF/NOTICE.txt")
+        resources.merges += setOf("META-INF/LICENSE", "META-INF/NOTICE", "META-INF/LICENSE.txt", "META-INF/NOTICE.txt", "META-INF/DEPENDENCIES")
     }
 }
 
@@ -107,6 +107,7 @@ dependencies {
     implementation("com.hierynomus:smbj:0.14.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.83")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.apache.ftpserver:ftpserver-core:1.2.1")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
@@ -115,7 +116,6 @@ dependencies {
     testImplementation("org.json:json:20250517")
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    testImplementation("org.apache.ftpserver:ftpserver-core:1.2.1")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
 }

@@ -134,6 +134,12 @@ class MainActivity : TauriActivity() {
     "create" -> storage.create(args.getString("parent"),args.getString("name"),args.optBoolean("directory"))
     "rename" -> storage.rename(args.getString("path"),args.getString("name"))
     "connections" -> storage.remote.connections()
+    "ftp.status" -> FtpAccess.status()
+    "ftp.start" -> {
+      if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)onUi{requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),11)}
+      FtpAccess.start(applicationContext,args)
+    }
+    "ftp.stop" -> FtpAccess.stop()
     "connection.save" -> storage.remote.save(args)
     "connection.delete" -> {storage.remote.remove(args.getString("id"));true}
     "open","share" -> {

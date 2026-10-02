@@ -76,12 +76,22 @@ Android crate 与 Windows workspace 隔离；本次不修改桌面实现。
 - HTTP 浏览/下载/Range/上传服务，每次启动产生随机密码，用户名 `rhfiles`，默认只读。
 - 可显式允许上传新文件，不覆盖已有文件；身份验证失败 401，只读写请求 403。
 - 路径限制在所选目录，拒绝越界及符号链接逃逸；文件页面带 sandbox CSP。
-- **HTTP 不是加密通道，也不是 FTP 服务端**；仅用于可信局域网，不应暴露到公网。
+- FTP 服务端：被动模式，每次启动随机密码、默认只读；可指定目录和端口，最多 4 个登录连接。
+- 可显式允许 FTP 上传新文件/创建目录，禁止覆盖、删除、重命名现有内容和断点追加；拒绝匿名登录。
+- FTP 运行期间保留前台通知，通知中可停止；受 Android 前台服务时限约束，不自动重启。
+- FTP 上传中断可能留下不完整的新文件，需客户端重新传输；不会覆盖已有文件。
+- **HTTP / FTP 均不加密**；仅用于可信局域网，不应暴露到公网。启动 FTP 需明确确认。
 
 ## 验证与限制
 
 自动化测试包括 Rust 业务/真实注册表 IPC、浏览器桩 IPC、JVM/Robolectric 原生业务，
 以及真实临时目录、回环 FTP 服务器和 WebDAV 测试服务器。不是全都用空返回 mock。
+
+2026-10-02 验证：Rust 单元 43 + 注册表 IPC 8、原生 JVM/Robolectric 31、
+浏览器交互断言 94、前端格式/排序单元 11，全部通过。
+FTP 测试包含真实登录/下载/上传、匿名和错误密码拒绝、并发连接上限、
+真实越界文件、禁止覆盖/删除，以及延迟的旧服务清理不得停止新服务。
+浏览器交互使用模拟 IPC；原生协议测试使用本机回环服务，不代表真实 NAS 兼容性。
 
 **本机 adb 没有设备连接，尚未做本次 APK 的真机验收**：
 SAF/OTG 厂商差异、真实网盘提供者、Keystore、系统分享/安装/卸载、前台通知、
@@ -89,7 +99,7 @@ Android 杀进程/系统超时、SMB NAS、真实 FTPS 服务器、媒体硬解�
 JVM 测试、编译成功和浏览器截图不能替代这些验收。
 
 目前仍使用开发签名用于覆盖侧载，不是公开商店发行的生产签名方案。
-未完成独立网盘 OAuth、FTP 服务端、多语言体系、原生电视/平板专门交互和多窗格。
+未完成独立网盘 OAuth、多语言体系、原生电视/平板专门交互和多窗格。
 完整对照及外部前提见 [ANDROID-PARITY.md](ANDROID-PARITY.md)。
 
 ## 测试和构建
@@ -130,6 +140,7 @@ $env:ANDROID_HOME='C:\Users\Administrator\AppData\Local\Android\Sdk'
 - [Apache Commons Compress](https://commons.apache.org/proper/commons-compress/) 1.28.0，Apache-2.0
 - [XZ for Java](https://tukaani.org/xz/java.html) 1.10，0BSD
 - [Apache Commons Net](https://commons.apache.org/proper/commons-net/) 3.13.0，Apache-2.0
+- [Apache FtpServer](https://mina.apache.org/ftpserver-project/) 1.2.1，Apache-2.0
 - [SMBJ](https://github.com/hierynomus/smbj) 0.14.0，Apache-2.0；Bouncy Castle 显式更新为 1.83
 - [OkHttp](https://square.github.io/okhttp/) 4.12.0，Apache-2.0
 
