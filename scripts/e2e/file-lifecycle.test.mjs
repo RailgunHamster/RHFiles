@@ -68,10 +68,60 @@ test('real file-manager business workflows in an isolated RHFiles instance',{tim
   await step('ZIP creation and extraction through the native commands preserves members',async()=>{
     if(!await invoke('is_7z_available'))throw Error('7-Zip required for this E2E case (install 7-Zip; do not count this as a pass)');
     const zip=path.join(app.directory,'bundle.zip'),out=path.join(app.directory,'extracted');
-    await invoke('create_archive',{sources:[source],dest:zip});
+    const nested=path.join(source,'one/two');fs.mkdirSync(nested,{recursive:true});
+    fs.writeFileSync(path.join(nested,'same.txt'),'nested payload');fs.writeFileSync(path.join(source,'same.txt'),'root payload');
+    await invoke('create_archive',{sources:[source,nested,path.join(nested,'same.txt')],dest:zip});
     const entries=await invoke('list_archive',{path:zip});assert.ok(entries.some(e=>e.path.replaceAll('\\','/').endsWith('source/中文 #1%.txt')));
+    assert.ok(entries.some(e=>e.path.replaceAll('\\','/').endsWith('source/one/two/same.txt')));
+    assert.ok(!entries.some(e=>e.path==='same.txt'),'a selected descendant must not be copied to ZIP root');
     await invoke('extract_archive',{path:zip,dest:out,entryPath:null,password:null,operationId:'e2e-extract',overwrite:'skip'});
     assert.deepEqual(fs.readFileSync(path.join(out,'source',path.basename(file))),bytes);assert.ok(fs.statSync(path.join(out,'source/empty')).isDirectory());
+    assert.equal(fs.readFileSync(path.join(out,'source/one/two/same.txt'),'utf8'),'nested payload');
+    await app.evaluate(`openArchive(${JSON.stringify(zip)},false)`);
+    assert.deepEqual(await app.evaluate('getTab().entries.map(e=>e.name)'),['source']);
+    await app.evaluate('activateEntry(getTab().entries[0],false,0)');
+    assert.ok(!(await app.evaluate('getTab().entries.map(e=>e.path)')).includes('source/one/two/same.txt'));
+    await app.evaluate('closeArchive(false)');
+  });
+  const mergeSourceParent=path.join(app.directory,'merge-source'),mergeDestParent=path.join(app.directory,'merge-destination');
+  const mergeSource=path.join(mergeSourceParent,'Shared'),mergeTarget=path.join(mergeDestParent,'Shared');
+  fs.mkdirSync(path.join(mergeSource,'common/deep'),{recursive:true});fs.mkdirSync(path.join(mergeTarget,'common/deep'),{recursive:true});
+  fs.mkdirSync(path.join(mergeSource,'new/empty'),{recursive:true});
+  fs.writeFileSync(path.join(mergeSource,'common/deep/same.txt'),'incoming');fs.writeFileSync(path.join(mergeTarget,'common/deep/same.txt'),'original');
+  fs.writeFileSync(path.join(mergeTarget,'keep.txt'),'target only');fs.writeFileSync(path.join(mergeSource,'.hidden'),'hidden payload');
+  await step('merged folder copy asks only about duplicate files and undo preserves the existing destination tree',async()=>{
+    await app.evaluate(`window.__mergeTest=performDroppedFileOperation([${JSON.stringify(mergeSource)}],${JSON.stringify(mergeDestParent)},[{name:'Shared',is_dir:true}],'copy');true`);
+    await until(()=>app.evaluate("document.getElementById('conflict-dialog').style.display==='flex'"),'leaf conflict dialog');
+    assert.equal(await app.evaluate("document.querySelector('#conflict-content .conflict-name').textContent"),'same.txt');
+    await app.click('#conflict-content .conflict-options button:nth-child(2)');await app.evaluate('window.__mergeTest');
+    assert.equal(fs.readFileSync(path.join(mergeTarget,'keep.txt'),'utf8'),'target only');
+    assert.equal(fs.readFileSync(path.join(mergeTarget,'common/deep/same.txt'),'utf8'),'original');
+    assert.ok(fs.statSync(path.join(mergeTarget,'new/empty')).isDirectory());
+    assert.equal(fs.readFileSync(path.join(mergeTarget,'.hidden'),'utf8'),'hidden payload');
+    await app.evaluate('undo()');assert.ok(!fs.existsSync(path.join(mergeTarget,'new')));
+    assert.ok(!fs.existsSync(path.join(mergeTarget,'.hidden')));assert.equal(fs.readFileSync(path.join(mergeTarget,'keep.txt'),'utf8'),'target only');
+  });
+  await step('folder paste merges nested directories and keep-both renames only the conflicting file',async()=>{
+    await app.evaluate(`navigateTo(${JSON.stringify(mergeDestParent)})`);
+    await app.evaluate(`G.clipboard={op:'copy',paths:new Set([${JSON.stringify(mergeSource)}]),sequence:0};window.__mergeTest=paste(false);true`);
+    await until(()=>app.evaluate("document.getElementById('conflict-dialog').style.display==='flex'"),'paste leaf conflict dialog');
+    await app.click('#conflict-content .conflict-options button:nth-child(3)');await app.evaluate('window.__mergeTest');
+    assert.equal(fs.readFileSync(path.join(mergeTarget,'common/deep/same.txt'),'utf8'),'original');
+    assert.equal(fs.readFileSync(path.join(mergeTarget,'common/deep/same (1).txt'),'utf8'),'incoming');
+    assert.equal(fs.readFileSync(path.join(mergeTarget,'keep.txt'),'utf8'),'target only');
+    assert.ok(!fs.existsSync(path.join(mergeDestParent,'Shared (1)')));
+    await app.evaluate('undo()');assert.ok(!fs.existsSync(path.join(mergeTarget,'common/deep/same (1).txt')));
+  });
+  await step('merged folder move removes empty source folders and undo/redo preserve unrelated destination files',async()=>{
+    const src=path.join(mergeSourceParent,'Moving'),dst=path.join(mergeDestParent,'Moving');
+    fs.mkdirSync(path.join(src,'common'),{recursive:true});fs.mkdirSync(path.join(dst,'common'),{recursive:true});
+    fs.writeFileSync(path.join(src,'common/new.txt'),bytes);fs.writeFileSync(path.join(dst,'keep.txt'),'keep moving destination');
+    await app.evaluate(`performDroppedFileOperation([${JSON.stringify(src)}],${JSON.stringify(mergeDestParent)},[{name:'Moving',is_dir:true}],'move')`);
+    assert.ok(!fs.existsSync(src));assert.deepEqual(fs.readFileSync(path.join(dst,'common/new.txt')),bytes);
+    await app.evaluate('undo()');assert.deepEqual(fs.readFileSync(path.join(src,'common/new.txt')),bytes);
+    assert.equal(fs.readFileSync(path.join(dst,'keep.txt'),'utf8'),'keep moving destination');
+    await app.evaluate('redo()');assert.ok(!fs.existsSync(src));assert.deepEqual(fs.readFileSync(path.join(dst,'common/new.txt')),bytes);
+    assert.equal(fs.readFileSync(path.join(dst,'keep.txt'),'utf8'),'keep moving destination');
   });
   await step('permanent delete can be cancelled at either confirmation before deleting multiple fixtures',async()=>{
     const a=path.join(dest,'a.txt'),b=path.join(dest,'b.txt');await app.evaluate(`navigateTo(${JSON.stringify(dest)})`);
@@ -92,6 +142,6 @@ test('real file-manager business workflows in an isolated RHFiles instance',{tim
     await app.click('.app-confirm-overlay .dialog-actions button:last-child');await app.evaluate('window.__deleteTest');
     assert.equal(fs.existsSync(a),false);assert.equal(fs.existsSync(b),false);assert.ok(fs.existsSync(file));
   });
-  validateReport({passed:results.length,failed:0,skipped:0,total:results.length,results},{minimum:8});
+  validateReport({passed:results.length,failed:0,skipped:0,total:results.length,results},{minimum:11});
   t.diagnostic('Isolated fixtures and evidence: '+app.directory+'; '+app.artifactDir);
 });

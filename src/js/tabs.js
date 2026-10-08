@@ -1819,6 +1819,7 @@ async function goUp() {
   try {
     const isRight = G.lastActivePane === 'right' && G.dualOn;
     const pane = isRight ? G.rp : getTab();
+    if (pane.archivePath) return goUpArchive(isRight);
     if (pane.path === "home://") return;
     const prevDirName = pathLeaf(pane.path);
     // Drive root has no parent — go to home

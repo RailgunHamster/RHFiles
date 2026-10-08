@@ -710,6 +710,7 @@ function paneGoForward(pane) {
 }
 function paneGoUp(pane) {
   if (pane === "right") {
+    if (G.rp.archivePath) return goUpArchive(true);
     try { call("parent_path", { path: G.rp.path }).then(parent => { if (parent) rpNavigateTo(parent); }); } catch (e) {}
   }
 }

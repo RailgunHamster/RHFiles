@@ -1,4 +1,5 @@
 {
+  "status.merging": "Merging folders...",
   "archive.readOnly": "Archive browsing is read-only. Extract the item before modifying or copying it.",
   "update.otherInstances": "Close RHFiles on other virtual desktops before installing this update.",
   "settings.desktopIsolation": "Each Windows account and virtual desktop has independent tabs, settings, favorites and history. Launch RHFiles on a desktop to open its instance. Moving an existing window does not change its profile.",

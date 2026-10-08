@@ -67,6 +67,7 @@ Object.assign(_builtinEn, {
   'status.openingProgram': 'Opening {name}...',
   'status.processingAction': '{name}...',
   'status.compressing': 'Compressing {name}...',
+  'status.merging': 'Merging folders...',
   'status.deleting': 'Deleting...',
   'alert.openProgramFailed': 'Failed to open {name}: {error}',
   'alert.openFileFailed': 'Failed to open file: {error}',

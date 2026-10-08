@@ -48,11 +48,12 @@ mod native {
             },
             UI::Shell::{
                 FILEDESCRIPTORW, FILEOPERATION_FLAGS, FOF_ALLOWUNDO,
-                FOF_NOCONFIRMMKDIR, FOF_RENAMEONCOLLISION, FOFX_ADDUNDORECORD,
+                FOF_NOCONFIRMMKDIR, FOFX_ADDUNDORECORD,
                 FOFX_SHOWELEVATIONPROMPT, FileOperation, IFileOperation, IOperationsProgressDialog,
                 IOperationsProgressDialog_Impl, IShellItem,
                 PropertiesSystem::{PDOPS_CANCELLED, PDOPS_PAUSED, PDOPS_RUNNING, PDOPSTATUS},
                 SHCreateItemFromParsingName, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY,
+                DragQueryFileW, HDROP,
                 SPACTION,
             },
         },
@@ -663,6 +664,32 @@ mod native {
         u32::from_le_bytes(bytes)
     }
 
+    fn read_drop_paths(drop: HDROP) -> Result<Vec<String>, String> {
+        let count = unsafe { DragQueryFileW(drop, u32::MAX, None) };
+        if count == 0 || count > 10_000 { return Err("Clipboard file count is out of range".into()); }
+        let mut paths = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let length = unsafe { DragQueryFileW(drop, index, None) };
+            if length == 0 || length > 32768 { return Err("Invalid clipboard file path".into()); }
+            let mut units = vec![0u16; length as usize + 1];
+            let copied = unsafe { DragQueryFileW(drop, index, Some(&mut units)) };
+            if copied != length { return Err("Clipboard file path could not be read completely".into()); }
+            paths.push(String::from_utf16(&units[..length as usize]).map_err(|error| error.to_string())?);
+        }
+        Ok(paths)
+    }
+
+    pub fn read_file_clipboard() -> Result<Option<serde_json::Value>, String> {
+        if unsafe { IsClipboardFormatAvailable(CF_HDROP.0 as u32) }.is_err() { return Ok(None); }
+        let sequence = unsafe { GetClipboardSequenceNumber() };
+        let cut = preferred_drop_effect() & DROPEFFECT_MOVE.0 != 0;
+        let _clipboard = ClipboardGuard::open()?;
+        if unsafe { GetClipboardSequenceNumber() } != sequence { return Err("Clipboard changed while reading files".into()); }
+        let handle = unsafe { GetClipboardData(CF_HDROP.0 as u32) }.map_err(|error| error.to_string())?;
+        let paths = read_drop_paths(HDROP(handle.0))?;
+        Ok(Some(serde_json::json!({"paths": paths, "cut": cut, "sequence": sequence})))
+    }
+
     unsafe fn set_global_clipboard_data(format: u32, bytes: &[u8]) -> Result<(), String> {
         let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) }
             .map_err(|error| format!("Unable to allocate clipboard memory: {error}"))?;
@@ -841,7 +868,6 @@ mod native {
         let flags = FILEOPERATION_FLAGS(
             FOF_ALLOWUNDO.0
                 | FOF_NOCONFIRMMKDIR.0
-                | FOF_RENAMEONCOLLISION.0
                 | FOFX_ADDUNDORECORD.0
                 | FOFX_SHOWELEVATIONPROMPT.0,
         );
@@ -946,6 +972,22 @@ mod native {
         }
 
         #[test]
+        fn native_drop_reader_preserves_all_paths_without_touching_the_system_clipboard() {
+            let expected = vec![r"C:\source\a.txt".to_owned(), r"\\server\共享\中文 📁\b.txt".to_owned()];
+            let bytes = file_drop_bytes(&expected);
+            let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) }.unwrap();
+            let pointer = unsafe { GlobalLock(memory) };
+            assert!(!pointer.is_null());
+            unsafe {
+                ptr::copy_nonoverlapping(bytes.as_ptr(), pointer.cast(), bytes.len());
+                let _ = GlobalUnlock(memory);
+            }
+            let result = read_drop_paths(HDROP(memory.0));
+            let _ = unsafe { GlobalFree(Some(memory)) };
+            assert_eq!(result.unwrap(), expected);
+        }
+
+        #[test]
         fn progress_prefers_bytes_then_work_points_then_items() {
             assert_eq!(progress_percentage(1, 4, 50, 100, 1, 8), 50);
             assert_eq!(progress_percentage(1, 4, 0, 0, 1, 8), 25);
@@ -1023,6 +1065,16 @@ pub fn get_windows_file_clipboard_info() -> WindowsFileClipboardInfo {
             has_files: false,
         }
     }
+}
+
+#[tauri::command(async)]
+pub fn read_native_file_clipboard() -> Result<Option<serde_json::Value>, String> {
+    #[cfg(target_os = "windows")]
+    { native::read_file_clipboard() }
+    #[cfg(target_os = "macos")]
+    { rhfiles_core::macos::request(serde_json::json!({"action":"clipboard.read"})).map(Some) }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    { Ok(None) }
 }
 
 #[tauri::command]

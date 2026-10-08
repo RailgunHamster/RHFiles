@@ -6,6 +6,7 @@ mod db;
 #[cfg_attr(target_os = "macos", path = "macos/integration.rs")]
 mod file_dialog_integration;
 mod file_ops;
+mod folder_merge;
 mod media;
 mod network;
 mod profile;
@@ -154,6 +155,7 @@ pub fn run() {
             file_ops::copy_path, file_ops::move_path_cmd,
             file_ops::copy_path_exact, file_ops::move_path_exact, file_ops::move_paths_exact,
             file_ops::path_exists,
+            folder_merge::plan_folder_merge, folder_merge::remove_empty_merge_folders, folder_merge::ensure_merge_folder,
             file_ops::copy_with_progress, file_ops::move_with_progress,
             file_ops::cancel_operation, file_ops::recover_interrupted_operations,
             file_ops::get_env, file_ops::get_known_folders, file_ops::get_dir_tree, file_ops::batch_rename, file_ops::get_file_info,
@@ -226,7 +228,7 @@ pub fn run() {
             cloud::cloud_pin_file, cloud::cloud_unpin_file, cloud::cloud_clear_pin,
             cloud::get_cloud_file_size,
 
-            clipboard::get_windows_file_clipboard_info,
+            clipboard::get_windows_file_clipboard_info, clipboard::read_native_file_clipboard,
             clipboard::set_windows_file_clipboard,
             clipboard::clear_windows_file_clipboard,
             clipboard::paste_windows_file_clipboard,

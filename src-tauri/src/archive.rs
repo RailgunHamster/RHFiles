@@ -142,6 +142,10 @@ pub fn create_archive(sources: Vec<String>, dest: String, cancel: tauri::State<'
 }
 
 fn write_archive(sources: Vec<String>, dest: String) -> Result<(), String> {
+    // A search/multi-folder selection can include a folder and one of its
+    // descendants. Archive that descendant only through its selected parent,
+    // rather than adding a second copy of the file at the ZIP root.
+    let sources = archive_sources(sources)?;
     let dest_path = PathBuf::from(&dest);
     let parent = dest_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
@@ -176,6 +180,21 @@ fn write_archive(sources: Vec<String>, dest: String) -> Result<(), String> {
     })();
     if result.is_err() { let _ = std::fs::remove_file(&dest_path); }
     result
+}
+
+fn archive_sources(sources: Vec<String>) -> Result<Vec<String>, String> {
+    if sources.is_empty() { return Err("No files were selected for compression".into()); }
+    let resolved = sources.iter().map(|source| {
+        std::fs::canonicalize(source).map_err(|error| format!("Cannot read {source}: {error}"))
+    }).collect::<Result<Vec<_>, _>>()?;
+    let directories: Vec<bool> = resolved.iter().map(|path| path.is_dir()).collect();
+    Ok(sources.into_iter().enumerate().filter_map(|(index, source)| {
+        let duplicate = resolved[..index].contains(&resolved[index]);
+        let contained = resolved.iter().enumerate().any(|(other, root)| {
+            other != index && directories[other] && resolved[index] != *root && resolved[index].starts_with(root)
+        });
+        (!duplicate && !contained).then_some(source)
+    }).collect())
 }
 
 fn add_dir_to_zip(

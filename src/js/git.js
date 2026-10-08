@@ -32,6 +32,54 @@ async function loadGitStatus(path) {
 // --- archive browsing: state belongs to the originating tab/pane ---
 function archivePane(isRight) { return isRight ? G.rp : getTab(); }
 
+function archiveDirectoryEntries(members, prefix = '') {
+  const children = new Map();
+  for (const member of members || []) {
+    const path = String(member.path || '').replace(/\\/g, '/').replace(/\/+$/, '');
+    if (!path.startsWith(prefix) || path === prefix.replace(/\/$/, '')) continue;
+    const remainder = path.slice(prefix.length);
+    const slash = remainder.indexOf('/');
+    const name = slash < 0 ? remainder : remainder.slice(0, slash);
+    if (!name || name === '.' || name === '..') continue;
+    const directory = slash >= 0 || member.is_dir;
+    const childPath = prefix + name;
+    const key = childPath + (directory ? '/' : '');
+    if (!children.has(key) || (slash < 0 && member.is_dir)) {
+      children.set(key, {
+        ...member, name, path: slash < 0 ? member.path : childPath,
+        extension: directory ? '' : (name.includes('.') ? name.split('.').pop() : ''),
+        is_dir: directory, is_hidden:false, is_system:false, is_dot:name.startsWith('.'),
+        size:directory ? 0 : member.size, size_display:directory ? '' : fmtSize(member.size),
+        created:'', encrypted:!!member.encrypted, archive_entry:true,
+      });
+    }
+  }
+  return [...children.values()];
+}
+
+function showArchiveDirectory(pane, prefix, isRight) {
+  pane.archivePrefix = prefix;
+  pane.entries = archiveDirectoryEntries(pane.archiveEntries, prefix);
+  pane.sel.clear(); pane.lastIdx = -1;
+  if (pane === archivePane(isRight)) renderFiles(pane, isRight ? 'right-file-list' : 'file-list',
+    isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection', isRight);
+}
+
+function enterArchiveDirectory(path, isRight = false) {
+  const pane = archivePane(isRight);
+  if (!pane?.archivePath) return;
+  const entry = pane.entries.find(entry => entry.is_dir && entry.path === path);
+  if (entry) showArchiveDirectory(pane, String(entry.path).replace(/\\/g, '/').replace(/\/+$/, '') + '/', isRight);
+}
+
+async function goUpArchive(isRight = false) {
+  const pane = archivePane(isRight);
+  if (!pane?.archivePath) return;
+  if (!pane.archivePrefix) return closeArchive(isRight);
+  const segments = pane.archivePrefix.replace(/\/$/, '').split('/'); segments.pop();
+  showArchiveDirectory(pane, segments.length ? segments.join('/') + '/' : '', isRight);
+}
+
 function renderArchiveHeader(pane, list, isRight) {
   const content = list.closest('.content');
   content?.querySelector('.archive-header')?.remove();
@@ -39,7 +87,10 @@ function renderArchiveHeader(pane, list, isRight) {
   const header = document.createElement('div');
   header.className = 'archive-header';
   const title = document.createElement('span');
-  title.textContent = t('archive.title') + ': ' + pane.archivePath.split(/[\\/]/).pop();
+  title.textContent = t('archive.title') + ': ' + pane.archivePath.split(/[\\/]/).pop() + (pane.archivePrefix ? ' / ' + pane.archivePrefix : '');
+  const up = document.createElement('button');
+  up.className = 'dialog-btn'; up.textContent = t('cmd.goUp');
+  up.onclick = () => goUpArchive(isRight);
   const close = document.createElement('button');
   close.className = 'archive-close';
   close.textContent = '×';
@@ -48,7 +99,7 @@ function renderArchiveHeader(pane, list, isRight) {
   extract.className = 'dialog-btn';
   extract.textContent = t('ctx.extractAll');
   extract.onclick = () => extractArchiveAll(isRight);
-  header.append(title, close, extract);
+  header.append(up, title, close, extract);
   (list.closest('.file-body') || list).before(header);
 }
 
@@ -61,23 +112,15 @@ async function openArchive(path, isRight = false) {
     const entries = await call('list_archive', { path });
     if (pane._archiveToken !== token || pane.path !== directory) return;
     pane.archivePath = path;
-    pane.entries = entries.map((e, i) => ({
-      name: e.name, path: e.path, extension: e.is_dir ? '' : (e.name.split('.').pop() || ''),
-      is_dir: e.is_dir, is_hidden: false, is_system: false, is_dot: String(e.name || '').startsWith('.'),
-      size: e.size, size_display: fmtSize(e.size), modified: e.modified, created: '',
-      encrypted: !!e.encrypted, archive_entry: true, archive_index: i,
-    }));
-    pane.sel.clear();
-    if (pane === archivePane(isRight)) {
-      renderFiles(pane, isRight ? 'right-file-list' : 'file-list',
-        isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection', isRight);
-    }
+    pane.archiveEntries = entries;
+    showArchiveDirectory(pane, '', isRight);
   } catch (error) { alert(t('alert.openArchiveFailed', {error})); }
 }
 
 async function closeArchive(isRight = false) {
   const pane = archivePane(isRight);
   pane.archivePath = null;
+  pane.archiveEntries = null; pane.archivePrefix = '';
   if (isRight) await rpNavigateTo(pane.path, false);
   else await navigateTo(pane.path, false);
 }

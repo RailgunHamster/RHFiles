@@ -71,6 +71,39 @@ function trackCopy(src, dest) {
   });
 }
 
+function trackMergedTransfer(operation, pairs, removedDirectories) {
+  const entries = pairs.map(pair => [...pair]);
+  const removed = [...removedDirectories];
+  let undoIndex = entries.length - 1, redoIndex = 0;
+  pushUndo({
+    label: t(operation === 'move' ? 'undo.move' : 'undo.copy', {path: entries[0]?.[0] || removed[0]}),
+    undo: async () => {
+      if (operation === 'move') {
+        for (const path of [...removed].reverse()) await call('ensure_merge_folder', {path});
+      }
+      while (undoIndex >= 0) {
+        const [src, dest] = entries[undoIndex];
+        if (operation === 'move') await call('move_path_exact', {src:dest, dest:src});
+        else await call('delete_file', {path:dest});
+        undoIndex--;
+      }
+      redoIndex = 0;
+    },
+    redo: async () => {
+      while (redoIndex < entries.length) {
+        const [src, dest] = entries[redoIndex];
+        await call(operation === 'move' ? 'move_path_exact' : 'copy_path_exact', {src, dest});
+        redoIndex++;
+      }
+      if (operation === 'move' && removed.length) {
+        const result = await call('remove_empty_merge_folders', {paths:removed});
+        if (result.errors.length) throw new Error(result.errors.join('\n'));
+      }
+      undoIndex = entries.length - 1;
+    },
+  });
+}
+
 function trackMove(src, dest) {
   pushUndo({
     label: t('undo.move', {path: src}),

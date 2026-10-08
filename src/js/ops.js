@@ -380,6 +380,58 @@ async function refreshPastedFolder(destPath, isRight, tabId) {
   else await _refreshTabInBackground(target);
 }
 
+async function mergeFoldersIfNeeded(src, target, operation, taskId, chooseConflict, startProgress) {
+  startProgress(src, 0, 0, false);
+  let plan;
+  try { plan = await call('plan_folder_merge', {src, dest: target, operation, operationId:taskId}); }
+  catch (error) {
+    if (/cancel/i.test(String(error))) return {changed:false, cancelled:true, errors:[], sourceRemoved:false};
+    throw error;
+  }
+  if (!plan) return null;
+  const completed = [], errors = [], removed = [];
+  let changed = false, cancelled = false;
+  startProgress(src, 0, plan.entries.length);
+  try {
+    for (let index = 0; index < plan.entries.length; index++) {
+      if (isOperationCancellationRequested(taskId)) { cancelled = true; break; }
+      const entry = plan.entries[index];
+      try {
+        const parent = parentFolderPath(entry.dest), name = pathLeaf(entry.dest);
+        const exists = await call('path_exists', {path: entry.dest});
+        const action = exists ? await chooseConflict(entry.src, entry.dest) : 'copy';
+        if (action === 'cancel') { cancelled = true; break; }
+        if (action === 'skip') continue;
+        if (isOperationCancellationRequested(taskId)) { cancelled = true; break; }
+        const targetName = action === 'rename' ? await allocateUniqueName(parent, name, new Set()) : name;
+        const dest = joinFolderPath(parent, targetName);
+        const overwrite = exists && action === 'replace';
+        startProgress(entry.src, index + 1, plan.entries.length);
+        await call(operation + '_with_progress', {
+          src: entry.src, dest: parent, overwrite,
+          targetName: targetName === pathLeaf(entry.src) ? null : targetName, operationId: taskId,
+        });
+        changed = true;
+        if (!overwrite) completed.push([entry.src, dest]);
+      } catch (error) {
+        if (/cancel/i.test(String(error))) { cancelled = true; break; }
+        errors.push(pathLeaf(entry.src) + ': ' + String(error));
+      }
+    }
+    if (operation === 'move' && !cancelled) {
+      const cleanup = await call('remove_empty_merge_folders', {paths: plan.sourceDirectories});
+      removed.push(...cleanup.removed);
+      errors.push(...cleanup.errors);
+      changed ||= removed.length > 0;
+    }
+  } catch (error) { errors.push(String(error)); }
+  finally {
+    // Never register the existing target root for undo: it belongs to the user.
+    if (completed.length || removed.length) trackMergedTransfer(operation, completed, removed);
+  }
+  return {changed, cancelled, errors, sourceRemoved: operation === 'move' && !errors.length && !await call('path_exists', {path: src})};
+}
+
 async function pasteWindowsFileClipboard(destPath, isRight, tabId) {
   const taskId = createOperationTaskId();
   showProgress(t('status.pastingWindowsClipboard'), {
@@ -456,6 +508,12 @@ async function paste(isRight) {
       }
     } catch (error) {}
   }
+  if (!G.clipboard && window.__TAURI_INTERNALS__ && !window.__rhfilesSuppressNativeClipboard) {
+    try {
+      const info = await call('read_native_file_clipboard', {});
+      if (info?.paths?.length) G.clipboard = {op:info.cut ? 'cut' : 'copy', paths:new Set(info.paths), sequence:Number(info.sequence)};
+    } catch (error) { console.warn('Read native file clipboard:', error); }
+  }
   if (!G.clipboard) return pasteWindowsFileClipboard(destPath, isRight, destTab.id);
   const destEntries = destTab.entries || [];
   const existingNames = new Set(destEntries.map(entry => fileNameKey(entry.name)));
@@ -466,6 +524,13 @@ async function paste(isRight) {
   const errors = [];
   let taskStarted = false;
   let userCancelled = false;
+  const chooseConflict = async (src, dest) => {
+    if (applyAllAction) return applyAllAction;
+    return new Promise(resolve => showConflictDialog(pathLeaf(src), pathLeaf(dest), src, dest, (action, applyAll) => {
+      if (applyAll) applyAllAction = action;
+      resolve(action);
+    }));
+  };
   try {
     for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
       if (taskStarted && isOperationCancellationRequested(taskId)) {
@@ -483,6 +548,17 @@ async function paste(isRight) {
       const conflict = sameTarget || existingNames.has(fileNameKey(srcName)) || await call('path_exists', { path:destFullPath });
       let action = sameTarget ? 'rename' : 'replace';
       if (conflict && !sameTarget) {
+        const merged = await mergeFoldersIfNeeded(srcPath, destFullPath, clipboard.op === 'cut' ? 'move' : 'copy', taskId, chooseConflict,
+          (path, index, total, merging = true) => {
+            taskStarted = true;
+            showProgress(t(merging ? 'status.merging' : 'tasks.preparing'), {taskId, indeterminate:true, cancellable:true, currentPath:path, currentName:pathLeaf(path), currentIndex:index, totalItems:total});
+          });
+        if (merged) {
+          errors.push(...merged.errors);
+          if (merged.sourceRemoved) clipboard.paths.delete(srcPath);
+          if (merged.cancelled) { userCancelled = true; break; }
+          continue;
+        }
         if (applyAllAction) {
           action = applyAllAction;
         } else {
@@ -605,7 +681,7 @@ async function activateEntry(file, isRight, index) {
   }
   if (file.archive_entry) {
     if (file.is_dir) {
-      showNotice(t('alert.cannotNavArchive'));
+      enterArchiveDirectory(file.path, isRight);
     } else {
       await extractArchiveEntry(index, isRight);
     }
@@ -1936,6 +2012,13 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
   const taskId = createOperationTaskId();
   const errors = [];
   let taskStarted = false;
+  const chooseConflict = async (src, dest) => {
+    if (applyAllAction) return applyAllAction;
+    return new Promise(resolve => showConflictDialog(pathLeaf(src), pathLeaf(dest), src, dest, (choice, applyAll) => {
+      if (applyAll) applyAllAction = choice;
+      resolve(choice);
+    }));
+  };
 
   try {
     for (let sourceIndex = 0; sourceIndex < paths.length; sourceIndex++) {
@@ -1954,6 +2037,18 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
         || await call('path_exists', {path: originalTarget});
       let conflictAction = sameTarget ? 'rename' : 'move';
       if (conflict && !sameTarget) {
+        const merged = await mergeFoldersIfNeeded(src, originalTarget, operation, taskId, chooseConflict,
+          (path, index, total, merging = true) => {
+            taskStarted = true;
+            showProgress(t(merging ? 'status.merging' : 'tasks.preparing'), {taskId, indeterminate:true, cancellable:true, currentPath:path, currentName:pathLeaf(path), currentIndex:index, totalItems:total});
+          });
+        if (merged) {
+          changed ||= merged.changed;
+          errors.push(...merged.errors);
+          if (operation === 'move' && merged.changed) changedFolders.push(parentFolderPath(src));
+          if (merged.cancelled) { userCancelled = true; break; }
+          continue;
+        }
         if (applyAllAction) {
           conflictAction = applyAllAction;
         } else {

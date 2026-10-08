@@ -88,10 +88,11 @@ function transfers({decision='rename',applyAll=false,exists=[],failName=null,can
     cancelOperationTask:()=>finished.push('cancel'),failOperationTask:(_,errors)=>finished.push(plain(errors)),
     trackCopy:(...args)=>tracked.push(['copy',...args]),trackMove:(...args)=>tracked.push(['move',...args]),
     call:async(cmd,args)=>{if(cmd==='path_exists')return exists.includes(args.path);
+      if(cmd==='plan_folder_merge')return null;
       commands.push([cmd,plain(args)]);if(args.src.endsWith(failName||'\0'))throw Error('file is locked');},
   });
   load(ctx,'common.js',['parentFolderPath']);load(ctx,'remote.js',['pathLeaf','isFtpPath','ftpUrl']);
-  load(ctx,'ops.js',['joinFolderPath','windowsPathKey','performDroppedFileOperation']);
+  load(ctx,'ops.js',['joinFolderPath','windowsPathKey','mergeFoldersIfNeeded','performDroppedFileOperation']);
   load(ctx,'conflict.js',['fileNameKey','generateUniqueName','allocateUniqueName']);
   return {ctx,commands,tracked,dialogs,progress,finished,alerts};
 }
@@ -116,7 +117,7 @@ test('apply-to-all conflict choice only prompts once and each copied target is d
   const h=transfers({decision:'rename',applyAll:true});
   await h.ctx.performDroppedFileOperation(['C:\\one\\a.txt','C:\\two\\a.txt'],'D:\\dest',[{name:'a.txt'}],'copy');
   assert.equal(h.dialogs.length,1);assert.deepEqual(h.commands.map(c=>c[1].targetName),['a (1).txt','a (2).txt']);
-  assert.deepEqual(h.progress.map(p=>[p.currentIndex,p.totalItems]),[[1,2],[2,2]]);
+  assert.deepEqual(h.progress.filter(p=>p.currentIndex>0).map(p=>[p.currentIndex,p.totalItems]),[[1,2],[2,2]]);
 });
 test('one failed transfer does not erase other successes or claim the whole task succeeded',async()=>{
   const h=transfers({failName:'bad.txt'});

@@ -4247,7 +4247,7 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-tauri"
-version = "0.1.64"
+version = "0.1.65"
 dependencies = [
  "base64 0.22.1",
  "chrono",
