@@ -94,6 +94,30 @@ struct ConfiguredWebSource {
     download_agent: ureq::Agent,
 }
 
+#[derive(Clone)]
+struct NetworkUpdateSource { root: PathBuf }
+
+impl UpdateSource for NetworkUpdateSource {
+    fn get_release_feed(&self, channel: &str, _app: &Manifest, _staged_user_id: &str) -> Result<VelopackAssetFeed, VelopackError> {
+        validate_asset_name(&format!("releases.{channel}.json"))?;
+        let path = self.root.join(format!("releases.{channel}.json"));
+        let json = crate::network_io::read_text(&path, 8 * 1024 * 1024).map_err(VelopackError::Other)?;
+        serde_json::from_str(&json).map_err(VelopackError::from)
+    }
+
+    fn download_release_entry(&self, asset: &VelopackAsset, local_file: &Path, progress_sender: Option<mpsc::Sender<i16>>) -> Result<(), VelopackError> {
+        validate_asset_name(&asset.FileName)?;
+        crate::network_io::copy_update(&self.root.join(&asset.FileName), local_file, progress_sender).map_err(VelopackError::Other)
+    }
+}
+
+fn validate_asset_name(name: &str) -> Result<(), VelopackError> {
+    if name.is_empty() || matches!(name, "." | "..") || name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '\0')) {
+        return Err(VelopackError::Other("Invalid update asset filename".into()));
+    }
+    Ok(())
+}
+
 impl ConfiguredWebSource {
     fn new(source: &str, proxy: Option<&str>) -> Result<Self, VelopackError> {
         let source_url = Url::parse(source)?;
@@ -363,7 +387,7 @@ fn read_remote_release_history(
             .map_err(|error| error.to_string())?
     } else {
         let path = PathBuf::from(source).join("release-history.json");
-        std::fs::read_to_string(&path)
+        crate::network_io::read_text(&path, MAX_RELEASE_HISTORY_BYTES)
             .map_err(|error| format!("Unable to read {}: {error}", path.display()))?
     };
     parse_release_history(&text)
@@ -546,6 +570,9 @@ fn manager_for(source: &str, proxy: Option<&str>) -> Result<UpdateManager, Velop
         .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
     {
         return UpdateManager::new(ConfiguredWebSource::new(source, proxy)?, None, None);
+    }
+    if crate::network_io::network_key(source).is_some() {
+        return UpdateManager::new(NetworkUpdateSource { root: PathBuf::from(source) }, None, None);
     }
     UpdateManager::new(AutoSource::new(source), None, None)
 }
@@ -750,6 +777,14 @@ pub fn apply_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_feed_cannot_download_outside_its_source_directory() {
+        for name in ["", ".", "..", "../other.nupkg", "C:\\other.nupkg", "\\\\server\\share\\other.nupkg", "file:stream"] {
+            assert!(validate_asset_name(name).is_err(), "{name}");
+        }
+        assert!(validate_asset_name("RHFiles-0.1.67-full.nupkg").is_ok());
+    }
 
     #[test]
     fn empty_source_uses_github() {

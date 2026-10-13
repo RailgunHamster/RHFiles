@@ -9,6 +9,8 @@ mod file_ops;
 mod folder_merge;
 mod media;
 mod network;
+#[cfg(windows)]
+pub mod network_io;
 mod profile;
 mod search;
 #[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]

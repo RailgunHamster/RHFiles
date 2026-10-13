@@ -475,6 +475,14 @@ pub async fn sftp_rename(
 #[cfg(target_os = "windows")]
 #[tauri::command(async)]
 pub fn browse_network() -> Result<Vec<FileInfo>, String> {
+    crate::network_io::execute(
+        "network-discovery", crate::network_io::Request::Browse,
+        std::time::Duration::from_secs(6), None,
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn browse_network_direct() -> Result<Vec<FileInfo>, String> {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::NetworkManagement::WNet::NETRESOURCEA;
     use windows::Win32::NetworkManagement::WNet::{
@@ -560,6 +568,19 @@ pub fn browse_network() -> Result<Vec<FileInfo>, String> {
 
 #[tauri::command(async)]
 pub fn list_shares(server: String) -> Result<Vec<FileInfo>, String> {
+    #[cfg(windows)]
+    {
+        let host = crate::network_io::network_key(&server).unwrap_or_else(|| server.to_lowercase());
+        return crate::network_io::execute(
+            &host, crate::network_io::Request::Shares(server),
+            std::time::Duration::from_secs(6), None,
+        );
+    }
+    #[cfg(not(windows))]
+    list_shares_direct(server)
+}
+
+pub(crate) fn list_shares_direct(server: String) -> Result<Vec<FileInfo>, String> {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::HANDLE;

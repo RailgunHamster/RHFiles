@@ -27,6 +27,10 @@ fn move_working_directory_out_of_version_folder() {
 }
 
 fn main() {
+    #[cfg(windows)]
+    if rhfiles_tauri_lib::network_io::run_if_requested() {
+        return;
+    }
     // Velopack must handle install/update lifecycle arguments before Tauri starts.
     #[cfg(windows)]
     velopack::VelopackApp::build().run();

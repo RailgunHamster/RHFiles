@@ -137,7 +137,7 @@ mod cancel_flag_tests {
     }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, serde::Deserialize, Clone)]
 pub struct FileInfo {
     pub name: String,
     pub path: String,
@@ -165,7 +165,7 @@ pub struct DriveInfoSer {
     pub total_bytes: u64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, serde::Deserialize, Clone)]
 pub struct TreeEntry {
     pub name: String,
     pub path: String,
@@ -193,7 +193,7 @@ pub struct FilePreview {
     pub size: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, serde::Deserialize)]
 pub struct FileDetailInfo {
     pub name: String,
     pub path: String,

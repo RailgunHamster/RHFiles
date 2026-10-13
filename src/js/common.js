@@ -798,6 +798,8 @@ async function call(cmd, args) {
       return await invoke(cmd, normalizeInvokeArgs(args));
     } catch (error) {
       logInvokeFailure(cmd, error);
+      const code = /^\[(timed_out|network_cooldown|network_busy)\]/.exec(String(error));
+      if (code) throw `[${code[1]}] ${t('network.' + code[1])}`;
       throw error;
     }
   }

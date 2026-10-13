@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-tauri"
-version = "0.1.66"
+version = "0.1.67"
 edition = "2024"
 
 [lib]
@@ -38,6 +38,8 @@ windows = { version = "0.62", features = [
     "Storage_Search",
     "Storage_Streams",
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",

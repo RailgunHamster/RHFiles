@@ -491,6 +491,14 @@ fn persist_delete_journal(
 
 #[tauri::command(async)]
 pub fn list_dir(path: String) -> Result<Vec<FileInfo>, String> {
+    #[cfg(windows)]
+    if let Some(result) = crate::network_io::remote(
+        &path, crate::network_io::Request::ListDir(path.clone()),
+    ) { return result; }
+    list_dir_direct(path)
+}
+
+pub(crate) fn list_dir_direct(path: String) -> Result<Vec<FileInfo>, String> {
     let p = PathBuf::from(&path);
     let entries = enumerator::list_dir(&p).map_err(|error| tagged_fs_error(&error))?;
     Ok(entries.iter().map(file_info_from_entry).collect())
@@ -1093,9 +1101,21 @@ pub fn move_path_cmd(src: String, dest: String, cancel: tauri::State<'_, CancelF
     move_path_to_exact(source, &target)
 }
 
-#[tauri::command]
-pub fn path_exists(path: String) -> bool {
-    std::fs::symlink_metadata(path).is_ok()
+#[tauri::command(async)]
+pub fn path_exists(path: String) -> Result<bool, String> {
+    #[cfg(windows)]
+    if let Some(result) = crate::network_io::remote(
+        &path, crate::network_io::Request::Exists(path.clone()),
+    ) { return result; }
+    path_exists_direct(&path)
+}
+
+pub(crate) fn path_exists_direct(path: &str) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn remove_partial_copy(path: &std::path::Path) {
@@ -1985,6 +2005,14 @@ pub fn cancel_operation(
 
 #[tauri::command(async)]
 pub fn get_dir_tree(path: String) -> Result<Vec<TreeEntry>, String> {
+    #[cfg(windows)]
+    if let Some(result) = crate::network_io::remote(
+        &path, crate::network_io::Request::Tree(path.clone()),
+    ) { return result; }
+    get_dir_tree_direct(path)
+}
+
+pub(crate) fn get_dir_tree_direct(path: String) -> Result<Vec<TreeEntry>, String> {
     let p = PathBuf::from(&path);
     let entries = enumerator::get_dir_tree(&p).map_err(|e| e.to_string())?;
     Ok(entries
@@ -2035,6 +2063,14 @@ pub fn batch_rename(renames: Vec<(String, String)>) -> Result<Vec<String>, Strin
 
 #[tauri::command(async)]
 pub fn get_file_info(path: String) -> Result<FileDetailInfo, String> {
+    #[cfg(windows)]
+    if let Some(result) = crate::network_io::remote(
+        &path, crate::network_io::Request::FileInfo(path.clone()),
+    ) { return result; }
+    get_file_info_direct(path)
+}
+
+pub(crate) fn get_file_info_direct(path: String) -> Result<FileDetailInfo, String> {
     let p = PathBuf::from(&path);
     let metadata = std::fs::metadata(&p).map_err(|e| e.to_string())?;
     let name = p

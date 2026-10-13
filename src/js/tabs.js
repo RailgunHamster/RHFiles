@@ -1206,6 +1206,8 @@ function describeNavigationError(error) {
   if (tagged) {
     code = tagged[1];
     raw = tagged[2];
+  } else if (/^\[(timed_out|network_cooldown|network_busy)\]/.test(raw)) {
+    code = 'timed_out';
   } else if (/access is denied|permission denied|拒绝访问|无权访问|os error 5/i.test(raw)) {
     code = 'permission_denied';
   } else if (/not found|cannot find|找不到|不存在|os error (2|3)\b/i.test(raw)) {
