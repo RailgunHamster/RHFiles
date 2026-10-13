@@ -89,11 +89,12 @@ function transfers({decision='rename',applyAll=false,exists=[],failName=null,can
     trackCopy:(...args)=>tracked.push(['copy',...args]),trackMove:(...args)=>tracked.push(['move',...args]),
     call:async(cmd,args)=>{if(cmd==='path_exists')return exists.includes(args.path);
       if(cmd==='plan_folder_merge')return null;
+      if(cmd==='get_file_info')return {is_dir:false};
       commands.push([cmd,plain(args)]);if(args.src.endsWith(failName||'\0'))throw Error('file is locked');},
   });
   load(ctx,'common.js',['parentFolderPath']);load(ctx,'remote.js',['pathLeaf','isFtpPath','ftpUrl']);
   load(ctx,'ops.js',['joinFolderPath','windowsPathKey','mergeFoldersIfNeeded','performDroppedFileOperation']);
-  load(ctx,'conflict.js',['fileNameKey','generateUniqueName','allocateUniqueName']);
+  load(ctx,'conflict.js',['fileNameKey','generateUniqueName','allocateUniqueName','chooseTransferConflict']);
   return {ctx,commands,tracked,dialogs,progress,finished,alerts};
 }
 for(const operation of ['copy','move']) for(const decision of ['replace','rename','skip','cancel']) {

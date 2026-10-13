@@ -35,6 +35,7 @@ function harness({operation='copy', decision='skip', applyAll=false, cancelAfter
       if(cmd==='get_windows_file_clipboard_info')return {sequence:5};
       if(cmd==='plan_folder_merge')return args.src===source ? plain(plan) : null;
       if(cmd==='path_exists')return disk.has(args.path);
+      if(cmd==='get_file_info')return {is_dir:disk.get(args.path)==='dir'};
       if(cmd==='remove_empty_merge_folders'){
         const removed=[];
         for(const path of [...args.paths].reverse()){
@@ -55,7 +56,7 @@ function harness({operation='copy', decision='skip', applyAll=false, cancelAfter
   });
   load(ctx,'common.js',['parentFolderPath','isBenignUserCancel','isSamePathTransferError']);
   load(ctx,'remote.js',['pathLeaf','isFtpPath','ftpUrl']);
-  load(ctx,'conflict.js',['fileNameKey','generateUniqueName','allocateUniqueName']);
+  load(ctx,'conflict.js',['fileNameKey','generateUniqueName','allocateUniqueName','chooseTransferConflict']);
   load(ctx,'ops.js',['joinFolderPath','windowsPathKey','mergeFoldersIfNeeded','performDroppedFileOperation','paste', 'reconcileCutClipboard']);
   return {ctx,disk,transfers,dialogs,histories,finished,calls,root,pane,plan};
 }

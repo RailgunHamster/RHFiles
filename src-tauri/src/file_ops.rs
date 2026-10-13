@@ -1030,6 +1030,39 @@ pub fn rename_file(path: String, new_name: String) -> Result<(), String> {
     rename_without_replacing(&p, &new_path)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameTarget {
+    path: String,
+    exists: bool,
+    same_entry: bool,
+    can_merge: bool,
+    is_directory: bool,
+}
+
+#[tauri::command(async)]
+pub fn inspect_rename_target(path: String, new_name: String) -> Result<RenameTarget, String> {
+    // Validate before the UI can plan a merge or replace anything. A name must
+    // never be interpreted as a path outside the source's parent directory.
+    validate_target_name(&new_name)?;
+    let source = Path::new(&path);
+    let source_meta = std::fs::symlink_metadata(source).map_err(|e| e.to_string())?;
+    let target = source.parent().ok_or("Cannot rename a filesystem root")?.join(new_name);
+    let target_meta = match std::fs::symlink_metadata(&target) {
+        Ok(meta) => Some(meta),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(RenameTarget {
+        exists: target_meta.is_some(),
+        same_entry: paths_resolve_to_same_entry(source, &target),
+        can_merge: source_meta.is_dir() && !source_meta.file_type().is_symlink()
+            && target_meta.as_ref().is_some_and(|m| m.is_dir() && !m.file_type().is_symlink()),
+        is_directory: target_meta.as_ref().is_some_and(|m| m.is_dir() || m.file_type().is_symlink()),
+        path: target.to_string_lossy().into_owned(),
+    })
+}
+
 #[tauri::command(async)]
 pub fn new_folder(parent: String) -> Result<String, String> {
     for index in 0u32.. {
@@ -1047,13 +1080,17 @@ pub fn new_folder(parent: String) -> Result<String, String> {
 #[tauri::command(async)]
 pub fn copy_path(src: String, dest: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
     let _operation = cancel.begin("copy")?;
-    enumerator::copy_path(&PathBuf::from(&src), &PathBuf::from(&dest))
+    let source = Path::new(&src);
+    let target = Path::new(&dest).join(source.file_name().ok_or("No source filename")?);
+    copy_path_to_exact(source, &target)
 }
 
 #[tauri::command(async)]
 pub fn move_path_cmd(src: String, dest: String, cancel: tauri::State<'_, CancelFlag>) -> Result<(), String> {
     let _operation = cancel.begin("move")?;
-    enumerator::move_path(&PathBuf::from(&src), &PathBuf::from(&dest))
+    let source = Path::new(&src);
+    let target = Path::new(&dest).join(source.file_name().ok_or("No source filename")?);
+    move_path_to_exact(source, &target)
 }
 
 #[tauri::command]
@@ -1349,11 +1386,27 @@ fn emit_initial_operation(
     );
 }
 
+fn check_target_replacement(target: &Path, overwrite: bool, replace_directory: bool) -> Result<bool, String> {
+    let metadata = match std::fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Cannot inspect destination {}: {error}", target.display())),
+    };
+    if !overwrite {
+        return Err(format!("Destination already exists: {}", target.display()));
+    }
+    if (metadata.is_dir() || metadata.file_type().is_symlink()) && !replace_directory {
+        return Err(format!("RHFILES_FOLDER_REPLACE_REQUIRES_CONFIRMATION: Merge the existing folder, or explicitly authorize replacing the entire directory: {}", target.display()));
+    }
+    Ok(true)
+}
+
 fn transfer_with_progress(
     source: String,
     destination: String,
     target_name: Option<String>,
     overwrite: bool,
+    replace_directory: bool,
     operation: &'static str,
     operation_id: String,
     app: &tauri::AppHandle,
@@ -1401,9 +1454,7 @@ fn transfer_with_progress(
     {
         return Err("A folder cannot be copied or moved into itself".to_string());
     }
-    if target.exists() && !overwrite {
-        return Err(format!("Destination already exists: {}", target.display()));
-    }
+    check_target_replacement(&target, overwrite, replace_directory)?;
 
     emit_initial_operation(
         app,
@@ -1460,7 +1511,7 @@ fn transfer_with_progress(
     progress.emit("preparing", Some(&source_path), true);
 
     let staging = hidden_sibling(&destination_path, "partial", &operation_id);
-    let backup = (overwrite && target.exists())
+    let backup = check_target_replacement(&target, overwrite, replace_directory)?
         .then(|| hidden_sibling(&destination_path, "backup", &operation_id));
     if staging.exists() || backup.as_ref().is_some_and(|path| path.exists()) {
         return Err(format!(
@@ -1529,6 +1580,17 @@ fn transfer_with_progress(
             let _ = std::fs::remove_file(&journal_file);
             format!("Cannot prepare destination {}: {error}", target.display())
         })?;
+        // The destination may have changed from a file into a directory while
+        // data was copied. Check the entry actually captured by the rename too.
+        if let Err(error) = check_target_replacement(backup_path, overwrite, replace_directory) {
+            let rollback = rename_without_replacing(backup_path, &target);
+            let _ = remove_path_if_present(&staging);
+            if rollback.is_ok() { let _ = std::fs::remove_file(&journal_file); }
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(restore) => format!("{error}; original destination retained at {}: {restore}", backup_path.display()),
+            });
+        }
         journal.phase = "targetBackedUp".to_string();
         if let Err(error) = persist_json(&journal_file, &journal) {
             let rollback = rename_without_replacing(backup_path, &target);
@@ -1637,6 +1699,7 @@ pub fn copy_with_progress(
     src: String,
     dest: String,
     overwrite: Option<bool>,
+    replace_directory: Option<bool>,
     target_name: Option<String>,
     operation_id: Option<String>,
     app: tauri::AppHandle,
@@ -1648,6 +1711,7 @@ pub fn copy_with_progress(
         dest,
         target_name,
         overwrite.unwrap_or(false),
+        replace_directory.unwrap_or(false),
         "copy",
         operation_id.clone(),
         &app,
@@ -1662,6 +1726,7 @@ pub fn move_with_progress(
     src: String,
     dest: String,
     overwrite: Option<bool>,
+    replace_directory: Option<bool>,
     target_name: Option<String>,
     operation_id: Option<String>,
     app: tauri::AppHandle,
@@ -1673,6 +1738,7 @@ pub fn move_with_progress(
         dest,
         target_name,
         overwrite.unwrap_or(false),
+        replace_directory.unwrap_or(false),
         "move",
         operation_id.clone(),
         &app,

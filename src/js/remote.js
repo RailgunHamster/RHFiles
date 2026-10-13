@@ -64,6 +64,17 @@ async function routeFtpCommand(cmd, args) {
     case 'list_dir': value = await ftpEntries(args.path); break;
     case 'parent_path': value = parentFolderPath(args.path); break;
     case 'get_file_info': value = await remoteInfo(args.path); break;
+    case 'inspect_rename_target': {
+      if (!args.newName || ['.', '..'].includes(args.newName) || /[\/\0]/.test(args.newName)) throw new Error('Invalid destination name');
+      const target = joinFolderPath(parentFolderPath(args.path), args.newName);
+      const source = await remoteInfo(args.path);
+      let existing;
+      try { existing = await remoteInfo(target); }
+      catch (error) { if (!String(error).includes('[not_found]')) throw error; }
+      value = {path:target, exists:!!existing, sameEntry:target === args.path,
+        canMerge:!!source.is_dir && !!existing?.is_dir, isDirectory:!!existing?.is_dir};
+      break;
+    }
     case 'path_exists':
       try { await remoteInfo(args.path); value = true; }
       catch (error) { if (!String(error).includes('[not_found]')) throw error; value = false; }
@@ -99,6 +110,8 @@ async function routeFtpCommand(cmd, args) {
       const target = joinFolderPath(args.dest, args.targetName || pathLeaf(args.src));
       if (isFtpPath(args.src) && isFtpPath(target)) throw new Error(t('ftp.serverCopyUnsupported'));
       if (args.overwrite && await call('path_exists', {path: target})) {
+        const existing = await remoteInfo(target);
+        if (existing.is_dir && !args.replaceDirectory) throw new Error('RHFILES_FOLDER_REPLACE_REQUIRES_CONFIRMATION: ' + target);
         if (isFtpPath(target)) await removeRemote(target); else await call('delete_file', {path: target});
       }
       await transferRemote(args.src, target);

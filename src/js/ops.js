@@ -217,6 +217,61 @@ async function deleteSelectedPermanently(isRight) {
   }
 }
 
+async function renameEntry(file, newName, isRight) {
+  const oldPath = file.path;
+  const parent = parentFolderPath(oldPath);
+  const target = await call('inspect_rename_target', {path: oldPath, newName});
+  let finalName = newName;
+  if (target.exists && !target.sameEntry) {
+    const action = await new Promise(resolve => showConflictDialog(file.name, newName, oldPath, target.path,
+      choice => resolve(choice), {canMerge: target.canMerge, replaceDirectory: target.isDirectory, allowApplyAll:false}));
+    if (action === 'cancel' || action === 'skip') return false;
+    if (action === 'rename') {
+      finalName = await allocateUniqueName(parent, newName, new Set());
+    } else {
+      const taskId = createOperationTaskId();
+      const state = {action:null};
+      try {
+        if (action === 'merge') {
+          const result = await mergeFoldersIfNeeded(oldPath, target.path, 'move', taskId,
+            (src, dest, options) => chooseTransferConflict(src, dest, state, options),
+            (path, index, total, merging = true) => showProgress(t(merging ? 'status.merging' : 'tasks.preparing'), {
+              taskId, indeterminate:true, cancellable:true, currentPath:path, currentName:pathLeaf(path), currentIndex:index, totalItems:total,
+            }));
+          if (!result) throw new Error(t('alert.mergeTargetChanged'));
+          if (result.errors.length) throw new Error(result.errors.join('\n'));
+          if (result.cancelled) cancelOperationTask(taskId);
+          else {
+            completeOperationTask(taskId);
+            if (!result.sourceRemoved) showNotice(t('status.mergeSourceRetained'));
+          }
+          return result.changed;
+        }
+        if (action !== 'replace' && action !== 'replace-directory') return false;
+        showProgress(t('status.moving'), {taskId, indeterminate:true, cancellable:true, currentPath:oldPath});
+        // The backend stages the incoming item and rolls back failed commits.
+        // Never pre-delete the existing destination just to make rename succeed.
+        await call('move_with_progress', {src:oldPath, dest:parent, targetName:newName,
+          overwrite:true, replaceDirectory:action === 'replace-directory', operationId:taskId});
+        completeOperationTask(taskId);
+        return true;
+      } catch (error) {
+        failOperationTask(taskId, error);
+        throw error;
+      } finally {
+        await refresh();
+        selectNavigatedPath(target.path, isRight);
+      }
+    }
+  }
+  await call('rename_file', {path:oldPath, newName:finalName});
+  const newPath = joinFolderPath(parent, finalName);
+  trackRename(oldPath, newPath);
+  await refresh();
+  selectNavigatedPath(newPath, isRight);
+  return true;
+}
+
 function startInlineRename(rowEl, file, isRight, onCancel) {
   const nameEl = rowEl.querySelector(".row-fname");
   if (!nameEl) return;
@@ -244,31 +299,7 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
     nameEl.textContent = file.name;
     if (!newName || newName === origName) return;
     try {
-      const oldPath = file.path;
-      const parent = parentFolderPath(oldPath);
-      const destPath = joinFolderPath(parent, newName);
-      let finalName = newName;
-      if (windowsPathKey(oldPath) !== windowsPathKey(destPath)) {
-        const pane = isRight ? G.rp : getTab();
-        const existingNames = new Set((pane?.entries || []).map(entry => fileNameKey(entry.name)));
-        const exists = existingNames.has(fileNameKey(newName)) || await call('path_exists', { path: destPath });
-        if (exists) {
-          const action = await new Promise(resolve => {
-            showConflictDialog(origName, newName, oldPath, destPath, (choice) => resolve(choice));
-          });
-          if (action === 'cancel' || action === 'skip') return;
-          if (action === 'rename') {
-            finalName = await allocateUniqueName(parent, newName, existingNames);
-          } else if (action === 'replace') {
-            try { await call('delete_file', { path: destPath }); } catch (error) {}
-          }
-        }
-      }
-      await call("rename_file", { path: oldPath, newName: finalName });
-      const newPath = joinFolderPath(parent, finalName);
-      trackRename(oldPath, newPath);
-      await refresh();
-      selectNavigatedPath(newPath, isRight);
+      await renameEntry(file, newName, isRight);
     } catch (e) { alert(t('alert.renameFailed', { error: e })); }
   };
   const cancel = async () => {
@@ -399,16 +430,16 @@ async function mergeFoldersIfNeeded(src, target, operation, taskId, chooseConfli
       try {
         const parent = parentFolderPath(entry.dest), name = pathLeaf(entry.dest);
         const exists = await call('path_exists', {path: entry.dest});
-        const action = exists ? await chooseConflict(entry.src, entry.dest) : 'copy';
+        const action = exists ? await chooseConflict(entry.src, entry.dest, {mergeContext:true}) : 'copy';
         if (action === 'cancel') { cancelled = true; break; }
         if (action === 'skip') continue;
         if (isOperationCancellationRequested(taskId)) { cancelled = true; break; }
         const targetName = action === 'rename' ? await allocateUniqueName(parent, name, new Set()) : name;
         const dest = joinFolderPath(parent, targetName);
-        const overwrite = exists && action === 'replace';
+        const overwrite = exists && (action === 'replace' || action === 'replace-directory');
         startProgress(entry.src, index + 1, plan.entries.length);
         await call(operation + '_with_progress', {
-          src: entry.src, dest: parent, overwrite,
+          src: entry.src, dest: parent, overwrite, replaceDirectory:action === 'replace-directory',
           targetName: targetName === pathLeaf(entry.src) ? null : targetName, operationId: taskId,
         });
         changed = true;
@@ -517,20 +548,14 @@ async function paste(isRight) {
   if (!G.clipboard) return pasteWindowsFileClipboard(destPath, isRight, destTab.id);
   const destEntries = destTab.entries || [];
   const existingNames = new Set(destEntries.map(entry => fileNameKey(entry.name)));
-  let applyAllAction = null;
+  const conflictState = {action:null};
   const clipboard = G.clipboard;
   const sources = Array.from(clipboard.paths);
   const taskId = createOperationTaskId();
   const errors = [];
   let taskStarted = false;
   let userCancelled = false;
-  const chooseConflict = async (src, dest) => {
-    if (applyAllAction) return applyAllAction;
-    return new Promise(resolve => showConflictDialog(pathLeaf(src), pathLeaf(dest), src, dest, (action, applyAll) => {
-      if (applyAll) applyAllAction = action;
-      resolve(action);
-    }));
-  };
+  const chooseConflict = (src, dest, options) => chooseTransferConflict(src, dest, conflictState, options);
   try {
     for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
       if (taskStarted && isOperationCancellationRequested(taskId)) {
@@ -559,16 +584,7 @@ async function paste(isRight) {
           if (merged.cancelled) { userCancelled = true; break; }
           continue;
         }
-        if (applyAllAction) {
-          action = applyAllAction;
-        } else {
-          action = await new Promise((resolve) => {
-            showConflictDialog(srcName, srcName, srcPath, destFullPath, (a, applyAll) => {
-              if (applyAll) applyAllAction = a;
-              resolve(a);
-            });
-          });
-        }
+        action = await chooseConflict(srcPath, destFullPath);
       }
       if (action === 'cancel') {
         userCancelled = true;
@@ -583,7 +599,7 @@ async function paste(isRight) {
         ? await allocateUniqueName(destPath, srcName, existingNames)
         : srcName;
       const targetPath = joinFolderPath(destPath, targetName);
-      const overwrites = conflict && action === 'replace';
+      const overwrites = conflict && (action === 'replace' || action === 'replace-directory');
       taskStarted = true;
       showProgress(clipboard.op === 'cut' ? t('status.moving') : t('status.copying'), {
         taskId,
@@ -603,6 +619,7 @@ async function paste(isRight) {
           src: srcPath,
           dest: destPath,
           overwrite: overwrites,
+          replaceDirectory: action === 'replace-directory',
           targetName: targetName === srcName ? null : targetName,
           operationId: taskId,
         };
@@ -2006,19 +2023,13 @@ async function broadcastFileDropChanges(paths) {
 async function performDroppedFileOperation(paths, destination, destinationEntries, operation) {
   const existingNames = new Set((destinationEntries || []).map(entry => fileNameKey(entry.name)));
   const changedFolders = [destination];
-  let applyAllAction = null;
+  const conflictState = {action:null};
   let changed = false;
   let userCancelled = false;
   const taskId = createOperationTaskId();
   const errors = [];
   let taskStarted = false;
-  const chooseConflict = async (src, dest) => {
-    if (applyAllAction) return applyAllAction;
-    return new Promise(resolve => showConflictDialog(pathLeaf(src), pathLeaf(dest), src, dest, (choice, applyAll) => {
-      if (applyAll) applyAllAction = choice;
-      resolve(choice);
-    }));
-  };
+  const chooseConflict = (src, dest, options) => chooseTransferConflict(src, dest, conflictState, options);
 
   try {
     for (let sourceIndex = 0; sourceIndex < paths.length; sourceIndex++) {
@@ -2049,16 +2060,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
           if (merged.cancelled) { userCancelled = true; break; }
           continue;
         }
-        if (applyAllAction) {
-          conflictAction = applyAllAction;
-        } else {
-          conflictAction = await new Promise(resolve => {
-            showConflictDialog(sourceName, sourceName, src, originalTarget, (choice, applyAll) => {
-              if (applyAll) applyAllAction = choice;
-              resolve(choice);
-            });
-          });
-        }
+        conflictAction = await chooseConflict(src, originalTarget);
       }
       if (conflictAction === 'cancel') {
         userCancelled = true;
@@ -2074,7 +2076,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
         ? await allocateUniqueName(destination, sourceName, existingNames)
         : sourceName;
       const targetPath = joinFolderPath(destination, targetName);
-      const overwrites = conflict && conflictAction === 'replace';
+      const overwrites = conflict && (conflictAction === 'replace' || conflictAction === 'replace-directory');
       taskStarted = true;
       showProgress(operation === 'copy' ? t('status.copying') : t('status.moving'), {
         taskId,
@@ -2094,6 +2096,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
           src,
           dest: destination,
           overwrite: overwrites,
+          replaceDirectory: conflictAction === 'replace-directory',
           targetName: targetName === sourceName ? null : targetName,
           operationId: taskId,
         };

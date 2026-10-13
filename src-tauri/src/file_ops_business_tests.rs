@@ -258,6 +258,46 @@ conflict_case!(move_directory_over_file_refused, true, false, true);
 conflict_case!(move_directory_over_directory_refused, true, true, true);
 
 #[test]
+fn directory_replacement_requires_separate_explicit_authorization() {
+    let temp = TestDir::new("directory-overwrite-policy");
+    let target = temp.0.join("target");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("keep"), b"original").unwrap();
+    for (overwrite, replace_directory) in [(false, false), (true, false), (false, true)] {
+        assert!(check_target_replacement(&target, overwrite, replace_directory).is_err());
+        assert_eq!(fs::read(target.join("keep")).unwrap(), b"original");
+    }
+    assert!(check_target_replacement(&target, true, true).unwrap());
+    // This check is also performed on the captured backup, after the atomic
+    // rename, so changing a target's type during copying cannot bypass it.
+    let backup = temp.0.join("captured-target");
+    fs::rename(&target, &backup).unwrap();
+    assert!(check_target_replacement(&backup, true, false).is_err());
+    assert_eq!(fs::read(backup.join("keep")).unwrap(), b"original");
+}
+
+#[test]
+fn rename_inspection_distinguishes_merge_and_type_conflicts_without_mutating() {
+    let temp = TestDir::new("rename-inspection");
+    let source = temp.0.join("source");
+    let target = temp.0.join("target");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&target).unwrap();
+    fs::write(source.join("new"), b"new").unwrap();
+    fs::write(target.join("keep"), b"old").unwrap();
+    let inspected = inspect_rename_target(source.to_string_lossy().into(), "target".into()).unwrap();
+    assert!(inspected.exists && inspected.can_merge && inspected.is_directory && !inspected.same_entry);
+    for name in ["../target", "", ".", ".."] {
+        assert!(inspect_rename_target(source.to_string_lossy().into(), name.into()).is_err());
+    }
+    assert!(rename_file(source.to_string_lossy().into(), "target".into()).is_err());
+    assert_eq!(fs::read(source.join("new")).unwrap(), b"new");
+    assert_eq!(fs::read(target.join("keep")).unwrap(), b"old");
+    let info = inspect_rename_target(source.join("new").to_string_lossy().into(), "new-name".into()).unwrap();
+    assert!(!info.exists && !info.can_merge && !info.same_entry);
+}
+
+#[test]
 fn directory_cannot_be_copied_or_moved_into_itself() {
     let temp = TestDir::new("recursive");
     let source = temp.0.join("source");

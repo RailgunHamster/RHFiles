@@ -53,7 +53,7 @@ export async function launchApp() {
     });
     const evaluate=async expression=>{
       const response=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});
-      if(response.exceptionDetails)throw Error(response.exceptionDetails.exception?.description||response.exceptionDetails.text);
+      if(response.exceptionDetails)throw Error(response.exceptionDetails.exception?.description||response.exceptionDetails.exception?.value||response.exceptionDetails.text);
       return response.result?.value;
     };
     await send('Runtime.enable');

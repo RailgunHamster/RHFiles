@@ -2,12 +2,20 @@
 
 let conflictCallback = null;
 
-function showConflictDialog(sourceName, destName, sourcePath, destPath, onResolve) {
+function showConflictDialog(sourceName, destName, sourcePath, destPath, onResolve, options = {}) {
   conflictCallback = onResolve;
   const dlg = document.getElementById("conflict-dialog");
   const content = document.getElementById("conflict-content");
+  const directory = options.canMerge || options.replaceDirectory;
+  dlg.querySelector('.dialog-title').textContent = t(directory ? 'dialog.folderConflictTitle' : 'dialog.conflictTitle');
+  const message = options.canMerge ? 'dialog.folderMergeMsg'
+    : options.replaceDirectory ? 'dialog.folderReplaceWarning'
+    : options.mergeContext ? 'dialog.mergeFileConflictMsg' : 'dialog.conflictMsg';
+  const primaryAction = options.canMerge ? 'merge' : options.replaceDirectory ? 'replace-directory' : 'replace';
+  const primaryLabel = options.canMerge ? 'dialog.conflictMerge'
+    : options.replaceDirectory ? 'dialog.conflictReplaceDirectory' : 'dialog.conflictReplace';
   content.innerHTML = `
-    <div class="conflict-message">${t('dialog.conflictMsg')}</div>
+    <div class="conflict-message">${t(message)}</div>
     <div class="conflict-files">
       <div class="conflict-file">
         <div class="conflict-label">${t('dialog.conflictSource')}</div>
@@ -21,14 +29,25 @@ function showConflictDialog(sourceName, destName, sourcePath, destPath, onResolv
       </div>
     </div>
     <div class="conflict-options">
-      <button class="dialog-btn" onclick="resolveConflict('replace')">${t('dialog.conflictReplace')}</button>
-      <button class="dialog-btn" onclick="resolveConflict('skip')">${t('dialog.conflictSkip')}</button>
-      <button class="dialog-btn" onclick="resolveConflict('rename')">${t('dialog.conflictKeepBoth')}</button>
-      <button class="dialog-btn" onclick="resolveConflict('cancel')">${t('btn.cancel')}</button>
+      <button class="dialog-btn" data-action="${primaryAction}" onclick="resolveConflict('${primaryAction}')">${t(primaryLabel)}</button>
+      <button class="dialog-btn" data-action="skip" onclick="resolveConflict('skip')">${t('dialog.conflictSkip')}</button>
+      <button class="dialog-btn" data-action="rename" onclick="resolveConflict('rename')">${t('dialog.conflictKeepBoth')}</button>
+      <button class="dialog-btn" data-action="cancel" onclick="resolveConflict('cancel')">${t('btn.cancel')}</button>
     </div>
-    <label class="conflict-apply-all"><input type="checkbox" id="conflict-apply-all"> ${t('dialog.conflictApplyAll')}</label>
+    ${options.allowApplyAll !== false && !directory ? `<label class="conflict-apply-all"><input type="checkbox" id="conflict-apply-all"> ${t('dialog.conflictApplyAll')}</label>` : ''}
   `;
   dlg.style.display = "flex";
+}
+
+async function chooseTransferConflict(src, dest, state, options = {}) {
+  const info = await call('get_file_info', {path: dest});
+  // Approval to overwrite files never implies approval to delete a directory.
+  const replaceDirectory = !!info.is_dir;
+  if (state.action && !replaceDirectory) return state.action;
+  return new Promise(resolve => showConflictDialog(pathLeaf(src), pathLeaf(dest), src, dest, (action, applyAll) => {
+    if (applyAll && !replaceDirectory && action !== 'replace-directory') state.action = action;
+    resolve(action);
+  }, {...options, replaceDirectory}));
 }
 
 function resolveConflict(action) {

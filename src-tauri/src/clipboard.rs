@@ -1123,8 +1123,8 @@ pub async fn paste_windows_file_clipboard(
         // Use the same staged, non-overwriting transfer engine as internal paste.
         for path in paths {
             let source=path.as_str().ok_or("Invalid clipboard file URL")?.to_owned();
-            if moved { crate::file_ops::move_with_progress(source,destination.clone(),Some(false),None,operation_id.clone(),app.clone(),cancel.clone())?; }
-            else { crate::file_ops::copy_with_progress(source,destination.clone(),Some(false),None,operation_id.clone(),app.clone(),cancel.clone())?; }
+            if moved { crate::file_ops::move_with_progress(source,destination.clone(),Some(false),None,None,operation_id.clone(),app.clone(),cancel.clone())?; }
+            else { crate::file_ops::copy_with_progress(source,destination.clone(),Some(false),None,None,operation_id.clone(),app.clone(),cancel.clone())?; }
         }
         if moved { clear_windows_file_clipboard(info["sequence"].as_u64().unwrap_or(0) as u32)?; }
         return Ok(WindowsFilePasteResult { aborted:false, moved });
