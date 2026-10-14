@@ -113,6 +113,7 @@ test('archive selection refuses destructive and clipboard actions',()=>{
 test('archive preflight failures are visible rather than silently ignored',async()=>{
   const notices=[];
   const ctx=context({call:async()=>{throw Error('access denied');},alert:message=>notices.push(message)});
+  vm.runInContext(section('ops.js','function isArchivePasswordError(', '// Promise-based password prompt'),ctx);
   vm.runInContext(section('ops.js','async function extractArchiveTo(', '// Extract several archives'),ctx);
   await ctx.extractArchiveTo({path:'a.zip'},'C:\\target');
   assert.match(notices[0],/access denied/);

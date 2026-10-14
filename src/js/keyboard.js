@@ -524,7 +524,7 @@ document.addEventListener("keydown", async e => {
   const gridLayout = G.layout === 'cards' || G.layout === 'thumbnails';
   if (e.key === "ArrowDown" || e.key === "ArrowUp" || (gridLayout && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) {
     e.preventDefault();
-    moveFileSelectionByArrow(e.key);
+    moveFileSelectionByArrow(e.key, { extend: e.shiftKey, additive: e.ctrlKey || (IS_MAC && e.metaKey) });
   }
 
   if (e.key === "Escape") {
@@ -575,7 +575,31 @@ function gridNavigationIndex(current, key, count, columns) {
   return current;
 }
 
-function moveFileSelectionByArrow(key) {
+function applyArrowFileSelection(pane, current, next, extend = false, additive = false) {
+  const sel = pane.sel ||= new Set();
+  if (extend) {
+    let range = pane._keyboardRange;
+    // Mouse selection, navigation, sorting and refresh must not reuse an old anchor.
+    if (!range || range.entries !== pane.entries || range.path !== pane.path || range.focus !== current ||
+        range.additive !== additive || range.selection.length !== sel.size || !range.selection.every(i => sel.has(i))) {
+      range = { entries: pane.entries, path: pane.path, anchor: current >= 0 && current < pane.entries.length ? current : next,
+        additive, base: additive ? [...sel] : [] };
+    }
+    sel.clear();
+    for (const index of range.base) sel.add(index);
+    for (let index = Math.min(range.anchor, next); index <= Math.max(range.anchor, next); index++) sel.add(index);
+    range.focus = next;
+    range.selection = [...sel];
+    pane._keyboardRange = range;
+  } else {
+    pane._keyboardRange = null;
+    sel.clear();
+    sel.add(next);
+  }
+  pane.lastIdx = next;
+}
+
+function moveFileSelectionByArrow(key, { extend = false, additive = false } = {}) {
   const isRight = G.dualOn && G.lastActivePane === 'right';
   const pane = isRight ? G.rp : getTab();
   const entries = pane.entries || [];
@@ -588,9 +612,7 @@ function moveFileSelectionByArrow(key) {
   const columns = isGrid ? visibleGridColumnCount(list) : 1;
   const next = gridNavigationIndex(current, key, entries.length, columns);
   if (next < 0) return;
-  pane.sel.clear();
-  pane.sel.add(next);
-  pane.lastIdx = next;
+  applyArrowFileSelection(pane, current, next, extend, additive);
   renderFiles(pane, listId, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection', isRight);
   scrollToVisible(next);
   updatePreviewForSelection();

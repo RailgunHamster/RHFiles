@@ -972,5 +972,11 @@
   "network.timed_out": "Network access timed out and its isolated worker was terminated. Check the server and DNS, or try its full host name.",
   "network.network_cooldown": "This server recently timed out. Retries are paused to prevent requests from piling up; try again in 30 seconds.",
   "network.network_busy": "The network request concurrency limit was reached. Please retry shortly.",
-  "archive.missingVolume": "Archive entry volume is missing: {path}. Keep all parts in the same folder; numbered volumes need .001, RAR needs its first volume, and z01/z02 sets need the final .zip file."
+  "archive.missingVolume": "Archive entry volume is missing: {path}. Keep all parts in the same folder; numbered volumes need .001, RAR needs its first volume, and z01/z02 sets need the final .zip file.",
+  "archive.actualConflicts": "Found {count} matching files. One is shown below; your choice applies to all matching files in this extraction. Other files and existing folders are kept.",
+  "archive.viewConflicts": "View all conflicting paths",
+  "archive.moreConflicts": "{count} more conflicts",
+  "archive.inputProtected": "A matching target is an input archive or volume. It cannot be replaced; choose Skip, Keep Both or Cancel.",
+  "archive.typeConflict": "An extraction path has an incompatible file/folder type or passes through a link: {path}. Resolve this path before retrying; existing folders will not be replaced or deleted.",
+  "archive.sourceConflict": "Cannot overwrite an input archive or volume: {path}. Choose Keep Both, Skip or a different destination."
 }

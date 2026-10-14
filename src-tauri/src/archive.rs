@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::Emitter;
 
+#[path = "archive_inspection.rs"]
+mod inspection;
+
 #[cfg(test)]
 #[path = "archive_business_tests.rs"]
 mod business_tests;
@@ -74,6 +77,22 @@ pub fn archive_encryption_probe(path: String) -> Result<Option<String>, String> 
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
     let entries = list_archive_with_7z(&exe, &p)?;
     Ok(smallest_encrypted_entry(&entries))
+}
+
+fn inspect_extraction(exe: &str, path: &Path, dest: &Path, entry: Option<&str>, password: Option<&str>, replace: bool) -> Result<inspection::ExtractionInspection, String> {
+    let entries = list_archive_with_7z_password(exe, path, password)?;
+    let selected = inspection::selected_entries(&entries, entry)?;
+    let password_entry = selected.iter().filter(|e| e.encrypted && !e.is_dir).min_by_key(|e| e.size).map(|e| e.path.clone());
+    let conflicts = inspection::inspect_targets(path, dest, &selected, replace)?;
+    Ok(inspection::ExtractionInspection {password_entry, conflicts})
+}
+
+#[tauri::command(async)]
+pub fn inspect_archive_extraction(path: String, dest: String, entry_path: Option<String>, password: Option<String>) -> Result<inspection::ExtractionInspection, String> {
+    let path = resolve_archive_volume(Path::new(&path))?;
+    let entry = entry_path.as_deref().map(sanitize_7z_entry).transpose()?;
+    let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
+    inspect_extraction(&exe, &path, Path::new(&dest), entry, password.as_deref(), false)
 }
 
 /// Test one archive member with the given password (`7z t`). Cheap because the
@@ -378,10 +397,15 @@ fn parse_7z_listing(text: &str) -> Result<Vec<ArchiveEntry>, String> {
 }
 
 fn list_archive_with_7z(exe: &str, path: &Path) -> Result<Vec<ArchiveEntry>, String> {
+    list_archive_with_7z_password(exe, path, None)
+}
+
+fn list_archive_with_7z_password(exe: &str, path: &Path, password: Option<&str>) -> Result<Vec<ArchiveEntry>, String> {
     let mut command = std::process::Command::new(exe);
     command
         .arg("l")
         .args(["-slt", "-ba", "-sccUTF-8"])
+        .arg(format!("-p{}", password.unwrap_or("")))
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -496,6 +520,9 @@ fn run_7z_extraction(
     cancel: &CancelFlag,
     overwrite: Option<&str>,
 ) -> Result<(), String> {
+    // Recheck immediately before extraction, including direct IPC callers and
+    // paths whose type changed while the user was answering the conflict dialog.
+    inspect_extraction(exe, Path::new(archive), Path::new(dest), entry, password, overwrite == Some("replace"))?;
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     emit_extract_progress(app, operation_id, archive, dest, 0, 0, 0, 0, "progress");
     let mut command = std::process::Command::new(exe);

@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | 地址栏和路径 | `scripts/tests/file-browser.test.mjs` | file URI、本地/UNC、空格/中文/emoji/#/%/+、只解码一次、规范化幂等 |
 | 排序、网格、选择 | 同上 | 五字段 × 两方向，文件夹优先，选中/焦点不漂移；自然数字排序；网格左右和上下移动边界 |
+| Shift 连续多选 | `scripts/tests/keyboard-range.test.mjs`；`scripts/e2e/keyboard-range.test.mjs` | 扩展/反向收缩/越过锚点、无初始选择、边界、Ctrl＋Shift保留离散选择；外部选中/排序/路径变更重置锚点；真实按键覆盖左右窗格的详情/卡片/缩略图 |
 | 标签页 | 同上；`scripts/e2e/file-lifecycle.test.mjs` | 拖动排序无丢失、固定分界不越界、关闭保护；实际文件拖到另一个标签后复制成功 |
 | 目录刷新 | `scripts/tests/navigation-search.test.mjs` | 乱序成功/失败不能覆盖新结果；离开目录作废旧请求；插入/删除后的选择；滚动保持；后台标签不能改变当前目录树 |
 | 键入搜索 | 同上；`src-tauri/src/search.rs` | 子串、拼音/首字母/多音字、全角、中文高亮；循环、无匹配、异步过期；递归搜索范围、结果上限、通配符/正则错误 |
@@ -30,7 +31,7 @@
 | 删除 | `scripts/tests/deletion.test.mjs` | 多选完整传递、取消、两次永久删除确认、禁用普通确认不绕过永久确认、部分成功和取消、压缩包只读、UNC/FTP 不承诺回收站撤销 |
 | 磁盘文件操作 | `src-tauri/src/file_ops_business_tests.rs` | 0/1 字节及 1 MiB 边界、完整内容、空目录/Unicode、元数据、文件锁、八种复制移动冲突、同路径/目录自身、重命名不覆盖及非法名称 |
 | 异常中断恢复 | 同上 | 11 个复制/移动持久化边界：临时写入、写完、备份前后、提交后、源删除后；恢复时验证新旧文件字节，重复恢复不破坏数据 |
-| 压缩包 | `src-tauri/src/archive_business_tests.rs`；原 `archive.rs` 测试 | 成员及目录保留、输出不可覆盖/位于自身内部、缺少源/重复成员失败清理；7-Zip、分卷、密码、保留原文件 |
+| 压缩包 | `src-tauri/src/archive_business_tests.rs`；`archive_inspection.rs`；`scripts/e2e/archive-volumes.test.mjs`、`archive-conflicts.test.mjs` | 成员及目录保留、输出不可覆盖/位于自身内部、缺少源/重复成员失败清理；分卷、密码；实际输出冲突与无关文件区分；替换/跳过/保留两者/取消、成员解压、加密头、输入分卷与目录类型保护 |
 | 收藏持久化 | `src-tauri/src/db_business_tests.rs` | 失败事务恢复旧列表；顺序/Unicode/清空/重启；不同配置数据库不串数据 |
 | 窗口恢复 | `src-tauri/src/window.rs`；端到端流程 | 全新配置首次保存可再次读取；保留排序、兼容旧 NULL 排序值 |
 | 有界预览 | `scripts/tests/file-browser.test.mjs`；原 `system.rs` 测试 | 超长单行、多行、CRLF 有界输出；原有二进制内容探测用例继续执行 |

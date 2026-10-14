@@ -858,6 +858,7 @@ function pumpThumbnailQueue() {
 }
 
 function handleRowClick(e, index, sel, tabOrPane, isRight) {
+  tabOrPane._keyboardRange = null;
   G.lastActivePane = isRight ? 'right' : 'left';
   if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
   const listId = isRight ? "right-file-list" : "file-list";

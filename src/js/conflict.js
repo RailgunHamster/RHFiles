@@ -29,7 +29,7 @@ function showConflictDialog(sourceName, destName, sourcePath, destPath, onResolv
       </div>
     </div>
     <div class="conflict-options">
-      <button class="dialog-btn" data-action="${primaryAction}" onclick="resolveConflict('${primaryAction}')">${t(primaryLabel)}</button>
+      <button class="dialog-btn" data-action="${primaryAction}" onclick="resolveConflict('${primaryAction}')" ${options.disableReplace ? 'disabled' : ''}>${t(primaryLabel)}</button>
       <button class="dialog-btn" data-action="skip" onclick="resolveConflict('skip')">${t('dialog.conflictSkip')}</button>
       <button class="dialog-btn" data-action="rename" onclick="resolveConflict('rename')">${t('dialog.conflictKeepBoth')}</button>
       <button class="dialog-btn" data-action="cancel" onclick="resolveConflict('cancel')">${t('btn.cancel')}</button>

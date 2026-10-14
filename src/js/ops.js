@@ -895,6 +895,25 @@ async function resolveArchivePassword(path, sample, label) {
   }
 }
 
+function chooseArchiveOverwrite(file, conflicts) {
+  const first = conflicts[0];
+  return new Promise(resolve => {
+    showConflictDialog(first.entryPath, pathLeaf(first.targetPath),
+      file.path + ' / ' + first.entryPath, first.targetPath, choice => resolve(choice),
+      {allowApplyAll:false, disableReplace:conflicts.some(conflict => conflict.protectedInput)});
+    const message = document.querySelector('#conflict-content .conflict-message');
+    if (message) {
+      message.innerHTML = esc(t('archive.actualConflicts', {count:conflicts.length}));
+      if (conflicts.some(conflict => conflict.protectedInput)) message.innerHTML += '<p>' + esc(t('archive.inputProtected')) + '</p>';
+      if (conflicts.length > 1) {
+        message.innerHTML += `<details style="margin-top:8px"><summary>${esc(t('archive.viewConflicts'))}</summary><div style="max-height:160px;overflow:auto;font-size:12px;word-break:break-all">` +
+          conflicts.slice(0,100).map(conflict => `<p>${esc(conflict.entryPath)} → ${esc(conflict.targetPath)}</p>`).join('') +
+          (conflicts.length > 100 ? esc(t('archive.moreConflicts', {count:conflicts.length-100})) : '') + '</div></details>';
+      }
+    }
+  });
+}
+
 // Extracts a single archive. With `options.silent` the failure is returned
 // instead of alerted, so a multi-archive run can report one summary; the
 // returned value is also the error text (null on success or user cancel).
@@ -908,35 +927,28 @@ async function extractArchiveTo(file, destination, password, options) {
     alert(String(error));
     return null;
   };
-  let overwrite = 'rename';
-  try {
-    if (await call('path_exists', { path: destination })) {
-      const existing = await listPathEntries(destination, '');
-      if (existing.length) {
-        overwrite = await new Promise(resolve => {
-          showConflictDialog(file.name, destination, file.path, destination, choice => resolve(choice));
-          const message = document.querySelector('#conflict-content .conflict-message');
-          if (message) message.textContent = t('archive.overwritePrompt');
-        });
-        if (overwrite === 'cancel') return null;
-      }
-    }
-  } catch (error) { return report(error); }
   let currentPassword = password || null;
   let passwordVerified = false;
-  if (!currentPassword) {
-    let sample = null;
+  let inspection;
+  for (let attempt = 0; ; attempt++) {
     try {
-      sample = await call('archive_encryption_probe', { path: file.path });
-    } catch (e) {
-      sample = null;
-    }
-    if (sample) {
-      currentPassword = await resolveArchivePassword(file.path, sample, file.name);
+      inspection = await call('inspect_archive_extraction', {
+        path:file.path, dest:destination, entryPath:opts.entryPath || null, password:currentPassword,
+      });
+      break;
+    } catch (error) {
+      if (!isArchivePasswordError(error)) return report(error);
+      currentPassword = await promptArchivePassword(file.name, attempt > 0);
       if (currentPassword === null) return null;
-      passwordVerified = true;
     }
   }
+  if (!currentPassword && inspection.passwordEntry) {
+    currentPassword = await resolveArchivePassword(file.path, inspection.passwordEntry, file.name);
+    if (currentPassword === null) return null;
+    passwordVerified = true;
+  }
+  const overwrite = inspection.conflicts.length ? await chooseArchiveOverwrite(file, inspection.conflicts) : 'rename';
+  if (overwrite === 'cancel') return null;
   for (let attempt = 0; ; attempt++) {
     const taskId = showProgress(t('status.extracting', { name: file.name }), {
       currentName: file.name,

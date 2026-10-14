@@ -288,6 +288,12 @@ Object.assign(_builtinEn, {
   'nav.folderEmpty': 'This folder is empty',
   'nav.startupTimedOutDetail': 'RHFiles startup did not finish. Try again; diagnostic details were written to the application log.',
   'settings.historyRefreshing': 'Offline history is ready; refreshing from the selected update source...',
+  'archive.actualConflicts': '{count} archive file(s) have the same name as existing destination files. Choose how to handle all matching files in this extraction.',
+  'archive.viewConflicts': 'View conflicting files',
+  'archive.moreConflicts': '{count} more conflicts',
+  'archive.inputProtected': 'A target is an input archive volume. Replace is disabled to avoid corrupting the archive; choose Skip or Keep Both.',
+  'archive.typeConflict': 'Extraction stopped: a file and a folder (or a linked path) conflict at {path}. Existing content was kept.',
+  'archive.sourceConflict': 'Extraction stopped to avoid overwriting an input archive volume: {path}. Choose Skip or Keep Both.',
 });
 const I18N = { en: _builtinEn };
 const BUNDLED_I18N_FILES = [
@@ -801,6 +807,9 @@ async function call(cmd, args) {
       logInvokeFailure(cmd, error);
       if (String(error).startsWith('ARCHIVE_VOLUME_MISSING|')) {
         throw t('archive.missingVolume', {path:String(error).slice('ARCHIVE_VOLUME_MISSING|'.length)});
+      }
+      for (const [prefix, key] of [['ARCHIVE_TYPE_CONFLICT|','archive.typeConflict'],['ARCHIVE_SOURCE_CONFLICT|','archive.sourceConflict']]) {
+        if (String(error).startsWith(prefix)) throw t(key, {path:String(error).slice(prefix.length)});
       }
       const code = /^\[(timed_out|network_cooldown|network_busy)\]/.exec(String(error));
       if (code) throw `[${code[1]}] ${t('network.' + code[1])}`;

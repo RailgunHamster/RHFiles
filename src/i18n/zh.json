@@ -972,5 +972,11 @@
   "network.timed_out": "网络操作超时，已终止独立工作进程。请检查服务器和 DNS，或尝试服务器的完整主机名。",
   "network.network_cooldown": "该服务器刚刚访问超时，已暂停重试以避免请求堆积。请在 30 秒后重试。",
   "network.network_busy": "网络请求已达到并发上限，请稍后重试。",
-  "archive.missingVolume": "缺少分卷解压入口：{path}。请把整组分卷放在同一个文件夹中；数字分卷需要 .001，RAR 需要首卷，z01/z02 格式需要最后的 .zip 文件。"
+  "archive.missingVolume": "缺少分卷解压入口：{path}。请把整组分卷放在同一个文件夹中；数字分卷需要 .001，RAR 需要首卷，z01/z02 格式需要最后的 .zip 文件。",
+  "archive.actualConflicts": "发现 {count} 个实际同名文件。下方显示其中一项；此选择将用于本次解压的全部同名文件。其他文件和已有文件夹会保留。",
+  "archive.viewConflicts": "查看全部冲突路径",
+  "archive.moreConflicts": "另有 {count} 项冲突",
+  "archive.inputProtected": "同名目标包含正在读取的压缩包或分卷，不能替换；请选择跳过、保留两者或取消。",
+  "archive.typeConflict": "解压路径与已有文件/文件夹类型冲突，或经过链接：{path}。请处理此路径后重试；不会替换或删除已有文件夹。",
+  "archive.sourceConflict": "不能覆盖正在读取的压缩包或分卷：{path}。请选择保留两者、跳过或换一个解压目录。"
 }
