@@ -51,7 +51,7 @@ fn emit_extract_progress(
 
 #[tauri::command(async)]
 pub fn list_archive(path: String) -> Result<Vec<ArchiveEntry>, String> {
-    let p = PathBuf::from(&path);
+    let p = resolve_archive_volume(Path::new(&path))?;
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
     list_archive_with_7z(&exe, &p)
 }
@@ -70,7 +70,7 @@ fn smallest_encrypted_entry(entries: &[ArchiveEntry]) -> Option<String> {
 /// extraction instead of failing after a full pass.
 #[tauri::command(async)]
 pub fn archive_encryption_probe(path: String) -> Result<Option<String>, String> {
-    let p = PathBuf::from(&path);
+    let p = resolve_archive_volume(Path::new(&path))?;
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
     let entries = list_archive_with_7z(&exe, &p)?;
     Ok(smallest_encrypted_entry(&entries))
@@ -86,6 +86,7 @@ pub fn verify_archive_password(
     password: String,
 ) -> Result<bool, String> {
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
+    let path = resolve_archive_volume(Path::new(&path))?;
     let entry = sanitize_7z_entry(&entry)?;
     let mut command = std::process::Command::new(&exe);
     command
@@ -122,9 +123,10 @@ pub fn extract_archive(
     };
     let entry = entry_path.as_deref().map(sanitize_7z_entry).transpose()?;
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
+    let path = resolve_archive_volume(Path::new(&path))?;
     run_7z_extraction(
         &exe,
-        &path,
+        &path.to_string_lossy(),
         &dest,
         entry,
         password.as_deref(),
@@ -235,6 +237,67 @@ fn add_dir_to_zip(
 /// and no system 7-Zip is installed.
 const ARCHIVE_7Z_REQUIRED: &str =
     "7-Zip not found. Keep the bundled 7z.exe beside RHFiles.exe, or install 7-Zip from 7-zip.org";
+
+/// Resolve a selected part to the archive entry volume. ZIP z01/z02 sets
+/// start at the final .zip central directory; numbered splits at .001;
+/// modern RAR at part1/part01, and old RAR at .rar rather than .r00.
+/// The source volumes are never concatenated or rewritten.
+fn resolve_archive_volume(path: &Path) -> Result<PathBuf, String> {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(path.to_path_buf());
+    };
+    static PART: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static OLD: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let part = PART.get_or_init(|| regex::Regex::new(r"(?i)^(.*)(\.part)([0-9]+)(\.rar)$").unwrap());
+    let number = NUMBER.get_or_init(|| regex::Regex::new(r"^(.+)\.([0-9]{3,})$").unwrap());
+    let old = OLD.get_or_init(|| regex::Regex::new(r"(?i)^(.+)\.([r-y][0-9]{2}|z[0-9]{2,})$").unwrap());
+    let names = if let Some(parts) = part.captures(name).filter(|p| p[3].bytes().any(|b| b != b'0')) {
+        vec![format!("{}{}{:0width$}{}", &parts[1], &parts[2], 1, &parts[4], width=parts[3].len())]
+    } else if let Some(parts) = number.captures(name).filter(|p| {
+        p[2].bytes().any(|b| b != b'0') && (p[2].len() == 3 || matches!(
+            p[1].rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
+            "zip"|"rar"|"7z"|"tar"|"gz"|"bz2"|"xz"|"zst"|"cab"|"iso"|"dmg"|"tgz"|"tbz2"|"txz"
+        ))
+    }) {
+        // 7-Zip retains .001 for the first part even after .999/.1000. Also
+        // accept custom splitters that pad every suffix to four or more digits.
+        let mut names = vec![format!("{}.001", &parts[1])];
+        if parts[2].len() > 3 {
+            names.push(format!("{}.{:0width$}", &parts[1], 1, width=parts[2].len()));
+        }
+        names
+    } else if let Some(parts) = old.captures(name) {
+        if parts[2].starts_with(['z','Z']) {
+            vec![format!("{}.zip", &parts[1]), format!("{}.rar", &parts[1])]
+        } else {
+            vec![format!("{}.rar", &parts[1])]
+        }
+    } else {
+        return Ok(path.to_path_buf());
+    };
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    for name in &names {
+        let candidate = parent.join(name);
+        match candidate.try_exists() {
+            Ok(true) => return Ok(candidate),
+            Ok(false) => {},
+            Err(error) => return Err(error.to_string()),
+        }
+        // Find existing names on case-sensitive filesystems as well, e.g.
+        // part01.RAR alongside PART02.rar. Do not guess between two matches.
+        let mut found = None;
+        for entry in std::fs::read_dir(parent).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if entry.file_name().to_str().is_some_and(|actual| actual.eq_ignore_ascii_case(name)) {
+                if found.is_some() { return Err(format!("Ambiguous archive entry volume: {name}")); }
+                found = Some(entry.path());
+            }
+        }
+        if let Some(found) = found { return Ok(found); }
+    }
+    Err(format!("ARCHIVE_VOLUME_MISSING|{}", parent.join(&names[0]).display()))
+}
 
 /// 7-Zip treats extract filters as wildcard patterns and leading `-`/`@` as
 /// switches, so refuse entry names that cannot be passed through literally.
@@ -626,9 +689,10 @@ pub fn extract_7z(
         operation_id: &operation_id,
     };
     let exe = find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
+    let archive = resolve_archive_volume(Path::new(&archive))?;
     run_7z_extraction(
         &exe,
-        &archive,
+        &archive.to_string_lossy(),
         &dest,
         None,
         password.as_deref(),

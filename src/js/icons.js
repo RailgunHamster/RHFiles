@@ -112,7 +112,7 @@ function _builtinIcon(file, forPreview) {
   if (_IMAGE_EXT.has(ext)) return _iconImage(ext);
   if (_AUDIO_EXT.has(ext)) return _iconAudio(ext);
   if (_VIDEO_EXT.has(ext)) return _iconVideo(ext);
-  if (_ARCHIVE_EXT.has(ext)) return _iconArchive(ext);
+  if (_ARCHIVE_EXT.has(ext) || (typeof isArchiveEntry === 'function' && isArchiveEntry(file))) return _iconArchive(ext);
   if (_CODE_EXT.has(ext)) return _iconCode(ext);
   if (_DOC_EXT.has(ext)) return _iconDoc(ext);
   if (_WEB_EXT.has(ext)) return _iconWeb(ext);
@@ -242,7 +242,7 @@ function _fluentIcon(file, forPreview) {
   if (_IMAGE_EXT.has(ext)) return _fluentImage();
   if (_AUDIO_EXT.has(ext)) return _fluentAudio();
   if (_VIDEO_EXT.has(ext)) return _fluentVideo();
-  if (_ARCHIVE_EXT.has(ext)) return _fluentArchive();
+  if (_ARCHIVE_EXT.has(ext) || (typeof isArchiveEntry === 'function' && isArchiveEntry(file))) return _fluentArchive();
   if (_CODE_EXT.has(ext)) return _fluentCode(ext);
   if (_DOC_EXT.has(ext)) return _fluentDoc();
   if (_WEB_EXT.has(ext)) return _fluentWeb();

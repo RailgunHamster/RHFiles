@@ -17,6 +17,7 @@ Object.assign(_builtinEn, {
   'ctx.preview': 'Preview',
   'ctx.extractHere': 'Extract directly into current folder',
   'ctx.extractTo': 'Extract into the "{name}" folder',
+  'archive.missingVolume': 'Archive entry volume is missing: {path}. Keep all parts in the same folder; numbered volumes need .001, RAR needs its first volume, and z01/z02 sets need the final .zip file.',
   'ctx.playFolderWithVlc': 'Play folder with VLC',
   'ctx.shareQQ': 'QQ',
   'ctx.shareWechat': 'WeChat',
@@ -798,6 +799,9 @@ async function call(cmd, args) {
       return await invoke(cmd, normalizeInvokeArgs(args));
     } catch (error) {
       logInvokeFailure(cmd, error);
+      if (String(error).startsWith('ARCHIVE_VOLUME_MISSING|')) {
+        throw t('archive.missingVolume', {path:String(error).slice('ARCHIVE_VOLUME_MISSING|'.length)});
+      }
       const code = /^\[(timed_out|network_cooldown|network_busy)\]/.exec(String(error));
       if (code) throw `[${code[1]}] ${t('network.' + code[1])}`;
       throw error;

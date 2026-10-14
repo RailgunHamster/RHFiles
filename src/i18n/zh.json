@@ -971,5 +971,6 @@
   "settings.archiveMissingSources": "{sources} 必须独占一行。",
   "network.timed_out": "网络操作超时，已终止独立工作进程。请检查服务器和 DNS，或尝试服务器的完整主机名。",
   "network.network_cooldown": "该服务器刚刚访问超时，已暂停重试以避免请求堆积。请在 30 秒后重试。",
-  "network.network_busy": "网络请求已达到并发上限，请稍后重试。"
+  "network.network_busy": "网络请求已达到并发上限，请稍后重试。",
+  "archive.missingVolume": "缺少分卷解压入口：{path}。请把整组分卷放在同一个文件夹中；数字分卷需要 .001，RAR 需要首卷，z01/z02 格式需要最后的 .zip 文件。"
 }

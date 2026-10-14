@@ -971,5 +971,6 @@
   "settings.archiveMissingSources": "{sources} must appear on its own line.",
   "network.timed_out": "Network access timed out and its isolated worker was terminated. Check the server and DNS, or try its full host name.",
   "network.network_cooldown": "This server recently timed out. Retries are paused to prevent requests from piling up; try again in 30 seconds.",
-  "network.network_busy": "The network request concurrency limit was reached. Please retry shortly."
+  "network.network_busy": "The network request concurrency limit was reached. Please retry shortly.",
+  "archive.missingVolume": "Archive entry volume is missing: {path}. Keep all parts in the same folder; numbered volumes need .001, RAR needs its first volume, and z01/z02 sets need the final .zip file."
 }

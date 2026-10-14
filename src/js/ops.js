@@ -710,7 +710,7 @@ async function activateEntry(file, isRight, index) {
     return;
   }
   const extension = (file.extension || "").toLowerCase();
-  if (extension === "zip") {
+  if (extension === "zip" || (isArchiveEntry(file) && archiveNameInfo(file.name || file.path).volume)) {
     await openArchive(file.path, isRight);
     return;
   }
@@ -744,14 +744,46 @@ async function quicklookSelected(isRight) {
 }
 
 function archiveFolderName(name) {
-  return String(name || 'archive').replace(/\.(tar\.(gz|bz2|xz)|zip|rar|7z|tar|gz|bz2|xz)$/i, '') || 'archive';
+  const folder = archiveNameInfo(name)?.folder || 'archive';
+  return folder === '.' || folder === '..' ? 'archive' : folder;
 }
 
-const ARCHIVE_EXTENSIONS = ["zip", "rar", "7z", "tar", "gz", "bz2"];
+const ARCHIVE_EXTENSIONS = ['zip','rar','7z','tar','gz','bz2','xz','zst','cab','iso','dmg','tgz','tbz2','txz'];
+
+// Several selected volumes are one archive. Keep numbered splits separate from
+// ordinary archives: foo.7z and foo.7z.001 may be two independent archives.
+function archiveNameInfo(name) {
+  const leaf = String(name || '').split(/[\\/]/).pop();
+  if (!leaf) return null;
+  const strip = value => value.replace(/\.(?:tar\.(?:gz|bz2|xz|zst)|zip|rar|7z|tar|gz|bz2|xz|zst|cab|iso|dmg|tgz|tbz2|txz)$/i, '') || 'archive';
+  let match = /^(.*)\.part(\d+)\.rar$/i.exec(leaf);
+  if (match && /[1-9]/.test(match[2])) return {folder:match[1] || 'archive', family:'rar-part:' + match[1], volume:true};
+  match = /^(.*)\.([r-y]\d{2}|z\d{2,})$/i.exec(leaf);
+  if (match) {
+    const format = /^z/i.test(match[2]) ? 'zip' : 'rar';
+    return {folder:match[1] || 'archive', family:'archive:' + match[1] + '.' + format, volume:true};
+  }
+  match = /^(.+)\.(\d{3,})$/.exec(leaf);
+  if (match && /[1-9]/.test(match[2]) && (match[2].length === 3 || ARCHIVE_EXTENSIONS.includes(match[1].split('.').pop().toLowerCase()))) {
+    return {folder:strip(match[1]), family:'split:' + match[1], volume:true};
+  }
+  if (!leaf.includes('.') || !ARCHIVE_EXTENSIONS.includes(leaf.split('.').pop().toLowerCase())) return null;
+  return {folder:strip(leaf), family:'archive:' + leaf, volume:false};
+}
 
 function isArchiveEntry(entry) {
-  return !!entry && !entry.is_dir
-    && ARCHIVE_EXTENSIONS.includes(String(entry.extension || '').toLowerCase());
+  return !!entry && !entry.is_dir && !!archiveNameInfo(entry.name || entry.path);
+}
+
+function selectedArchiveGroups(entries) {
+  const groups = new Map();
+  for (const entry of entries || []) {
+    if (!isArchiveEntry(entry)) continue;
+    const info = archiveNameInfo(entry.name || entry.path);
+    const key = windowsPathKey(parentFolderPath(entry.path || '') + '/' + info.family);
+    if (!groups.has(key)) groups.set(key, entry);
+  }
+  return [...groups.values()];
 }
 
 // Everything the multi-selection Properties sheet needs, derived from the
@@ -961,7 +993,7 @@ async function extractArchiveTo(file, destination, password, options) {
 // Extract several archives in turn. Each one keeps its own progress task and
 // password prompt, and a single failure must not abort the rest.
 async function extractArchives(archives, destinationFor) {
-  const list = (archives || []).filter(Boolean);
+  const list = selectedArchiveGroups(archives);
   if (!list.length) return;
   const failures = [];
   for (const file of list) {
@@ -1585,7 +1617,7 @@ function showContextMenu(x, y, isRight) {
   const isCert = ["cer","crt","p7b","pfx","p12"].includes(ext);
   const currentPath = isRight ? G.rp.path : getTab().path;
   const openTarget = singleSelection ? sel[0].path : currentPath;
-  const selectedArchives = sel.filter(isArchiveEntry);
+  const selectedArchives = selectedArchiveGroups(sel);
   // With several archives selected the two single-archive routes ("here" vs.
   // "into its own folder") no longer make sense, so they are replaced by the
   // merge-here and extract-each-into-its-own-folder pair.

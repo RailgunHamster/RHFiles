@@ -3,6 +3,41 @@ use crate::test_support::TestDir;
 use std::fs;
 
 #[test]
+fn selecting_any_archive_volume_resolves_to_its_existing_entry_without_touching_sources() {
+    for (selected, first) in [
+        ("资料.7z.002", "资料.7z.001"), ("a.zip.003", "a.zip.001"),
+        ("a.7z.1000", "a.7z.001"), ("a.7z.0002", "a.7z.0001"), ("generic.002", "generic.001"),
+        ("a.z01", "a.zip"), ("a.Z02", "a.ZIP"),
+        ("a.part2.rar", "a.part1.rar"), ("a.part002.rar", "a.part001.rar"),
+        ("a.PART02.RAR", "a.part01.rar"), ("a.r00", "a.rar"), ("a.s01", "a.rar"),
+    ] {
+        let temp = TestDir::new("archive-volume-name");
+        fs::write(temp.0.join(selected), b"selected part").unwrap();
+        fs::write(temp.0.join(first), b"entry part").unwrap();
+        let resolved = resolve_archive_volume(&temp.0.join(selected)).unwrap();
+        assert_eq!(fs::canonicalize(&resolved).unwrap(), fs::canonicalize(temp.0.join(first)).unwrap());
+        assert_eq!(fs::read(resolved).unwrap(), b"entry part");
+        assert_eq!(fs::read(temp.0.join(selected)).unwrap(), b"selected part");
+        assert_eq!(fs::read(temp.0.join(first)).unwrap(), b"entry part");
+    }
+}
+
+#[test]
+fn missing_entry_volume_is_explicit_and_does_not_create_a_replacement() {
+    let temp = TestDir::new("missing-archive-volume");
+    let path = temp.0.join("a.7z.002"); fs::write(&path, b"second part").unwrap();
+    let error = resolve_archive_volume(&path).unwrap_err();
+    assert!(error.starts_with("ARCHIVE_VOLUME_MISSING|"));
+    assert!(error.ends_with("a.7z.001"));
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    assert_eq!(fs::read(path).unwrap(), b"second part");
+    for name in ["ordinary.zip", "notes.2026", "zero.000"] {
+        let path = temp.0.join(name);
+        assert_eq!(resolve_archive_volume(&path).unwrap(), path);
+    }
+}
+
+#[test]
 fn zip_preserves_several_directory_levels_duplicate_names_and_empty_directories() {
     let temp = TestDir::new("zip-nested");
     let a = temp.0.join("资料 A"); let b = temp.0.join("B");
