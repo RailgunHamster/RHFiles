@@ -34,6 +34,20 @@ fn random() -> Result<String> {
 }
 pub const PORT: u16 = 54435;
 const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 168);
+fn interfaces() -> Vec<Ipv4Addr> {
+    let mut addresses = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|interface| match interface.ip() {
+            IpAddr::V4(ip) if !ip.is_loopback() && lan_address(ip.into()) => Some(ip),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    addresses.sort();
+    addresses.dedup();
+    addresses.truncate(16);
+    addresses
+}
 pub fn lan_address(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v) => v.is_private() || v.is_loopback() || v.is_link_local(),
@@ -102,7 +116,6 @@ struct Core {
     id: String,
     alias: String,
     port: u16,
-    addresses: Vec<String>,
     data: PathBuf,
     tls: Arc<rustls::ServerConfig>,
     stopped: AtomicBool,
@@ -159,21 +172,10 @@ impl Service {
             .map_err(failure)?;
         listener.set_nonblocking(true).map_err(failure)?;
         let port = listener.local_addr().map_err(failure)?.port();
-        let mut addresses = vec![];
-        if let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) {
-            if socket.connect((GROUP, PORT)).is_ok() {
-                if let Ok(addr) = socket.local_addr() {
-                    if lan_address(addr.ip()) && !addr.ip().is_loopback() {
-                        addresses.push(format!("{}:{port}", addr.ip()));
-                    }
-                }
-            }
-        }
         let core = Arc::new(Core {
             id,
             alias: label(&alias),
             port,
-            addresses,
             data,
             tls,
             stopped: AtomicBool::new(false),
@@ -222,14 +224,33 @@ impl Service {
     pub fn stop(&self) {
         self.0.stopped.store(true, Ordering::Relaxed);
         for job in self.0.jobs.lock().unwrap().values() {
-            if active(&job.state()) {
-                job.canceled.store(true, Ordering::Relaxed);
-                job.update(|v| {
+            job.update(|v| {
+                if active(&v.state) {
+                    job.canceled.store(true, Ordering::Relaxed);
                     v.state = "canceled".into();
-                    v.message = "互传已关闭；来源未删除".into()
-                });
-            }
+                    v.message = "互传已关闭；来源未删除".into();
+                }
+            });
         }
+    }
+    pub fn transferring(&self) -> bool {
+        self.0
+            .jobs
+            .try_lock()
+            .map(|jobs| {
+                jobs.values().any(|job| {
+                    job.view
+                        .try_lock()
+                        .map(|view| {
+                            matches!(
+                                view.state.as_str(),
+                                "scanning" | "sending" | "receiving" | "verifying"
+                            )
+                        })
+                        .unwrap_or(true)
+                })
+            })
+            .unwrap_or(true)
     }
     pub fn status(&self) -> Status {
         let core = &self.0;
@@ -265,6 +286,11 @@ impl Service {
             .map(|j| j.view.lock().unwrap().clone())
             .collect::<Vec<_>>();
         transfers.sort_by_key(|j| std::cmp::Reverse(j.started));
+        let live_ids = jobs
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        drop(jobs);
         let interrupted = fs::read_dir(core.data.join("receipts"))
             .into_iter()
             .flatten()
@@ -277,7 +303,7 @@ impl Service {
                 }
                 let value: Value = serde_json::from_slice(&bytes).ok()?;
                 let id = value["id"].as_str()?;
-                if jobs.contains_key(id) {
+                if live_ids.contains(id) {
                     return None;
                 }
                 Some(value["path"].as_str()?.to_string())
@@ -288,7 +314,10 @@ impl Service {
             id: core.id.clone(),
             alias: core.alias.clone(),
             code: core.id[..12].to_string(),
-            addresses: core.addresses.clone(),
+            addresses: interfaces()
+                .into_iter()
+                .map(|ip| format!("{ip}:{}", core.port))
+                .collect(),
             port: core.port,
             peers: peers.values().cloned().collect(),
             transfers,
@@ -532,7 +561,11 @@ fn handle(core: &Arc<Core>, socket: TcpStream, address: SocketAddr) -> Result<()
             if now_ms().saturating_sub(view.started) > 120000 {
                 return Err("接收请求已超时".into());
             }
-            tls::write_json(&mut stream, &json!({"state":view.state}))
+            let state = view.state.clone();
+            // Never retain a UI/service state lock across network I/O: a slow
+            // client must not block the Android service's stop callback.
+            drop(view);
+            tls::write_json(&mut stream, &json!({"state":state}))
         }
         Request::Upload { id, token } => {
             let job = authentication(core, &id, &token)?;
@@ -763,9 +796,6 @@ fn discover(core: &Arc<Core>) -> Result<()> {
         .bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, PORT)).into())
         .map_err(failure)?;
     let socket: UdpSocket = socket.into();
-    socket
-        .join_multicast_v4(&GROUP, &Ipv4Addr::UNSPECIFIED)
-        .map_err(failure)?;
     socket.set_multicast_ttl_v4(1).map_err(failure)?;
     socket
         .set_read_timeout(Some(Duration::from_millis(300)))
@@ -780,13 +810,32 @@ fn discover(core: &Arc<Core>) -> Result<()> {
         })
         .map_err(failure)
     };
+    let mut joined = std::collections::HashSet::new();
     let mut last = 0;
     let mut buffer = [0; 8192];
     while !core.stopped.load(Ordering::Relaxed) {
         if now_ms().saturating_sub(last) > 3000 {
-            socket
-                .send_to(&packet(true)?, (GROUP, PORT))
-                .map_err(failure)?;
+            let mut local = interfaces();
+            if local.is_empty() {
+                local.push(Ipv4Addr::UNSPECIFIED)
+            }
+            let mut sent = false;
+            for ip in local {
+                if !joined.contains(&ip) && socket.join_multicast_v4(&GROUP, &ip).is_ok() {
+                    joined.insert(ip);
+                }
+                let reference = socket2::SockRef::from(&socket);
+                if reference.set_multicast_if_v4(&ip).is_ok()
+                    && socket.send_to(&packet(true)?, (GROUP, PORT)).is_ok()
+                {
+                    sent = true;
+                }
+            }
+            *core.discovery_error.lock().unwrap() = if sent {
+                String::new()
+            } else {
+                "当前网络不允许自动发现，请使用 IP:端口手动连接".into()
+            };
             last = now_ms();
         }
         if let Ok((count, address)) = socket.recv_from(&mut buffer) {
@@ -805,7 +854,9 @@ fn discover(core: &Arc<Core>) -> Result<()> {
                 continue;
             }
             let mut peers = core.peers.lock().unwrap();
-            if peers.len() < 64 || peers.contains_key(&peer.id) {
+            if !peers.get(&peer.id).is_some_and(|p| p.manual)
+                && (peers.len() < 64 || peers.contains_key(&peer.id))
+            {
                 peers.insert(
                     peer.id.clone(),
                     Peer {

@@ -1090,6 +1090,7 @@ const TOOLBAR_BUTTONS = [
   { id: "btn-dual", labelKey: 'tb.dualPane' },
   { id: "btn-theme", labelKey: 'tb.theme' },
   { id: "btn-refresh", labelKey: 'tb.refresh' },
+  { id: "btn-nearby", labelKey: 'nearby.title' },
 ];
 
 function loadToolbarConfig() {
@@ -1106,10 +1107,14 @@ function loadToolbarConfig() {
         config.version = 3;
         localStorage.setItem('rhfiles-toolbar', JSON.stringify(config));
       }
+      if ((config.version || 1) < 4) {
+        if (!config.visible.includes('btn-nearby')) config.visible.push('btn-nearby');
+        config.version=4;localStorage.setItem('rhfiles-toolbar',JSON.stringify(config));
+      }
       return config;
     }
   } catch(e) {}
-  return { version: 3, visible: TOOLBAR_BUTTONS.map(b => b.id) };
+  return { version: 4, visible: TOOLBAR_BUTTONS.map(b => b.id) };
 }
 
 function applyToolbarConfig() {

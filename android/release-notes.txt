@@ -1,4 +1,13 @@
-RHFiles Android 0.1.9
+RHFiles Android 0.1.10
+
+新增 Windows / Android 局域网“附近互传”第一版：首页或文件多选的更多菜单打开。两端主动开启后自动发现设备，也可输入 IP:端口；发送前核对接收端完整十二位接收码，接收端每批确认目标文件夹。
+TLS 加密与完整证书指纹固定，逐文件 SHA-256 校验。文件夹、空目录、零字节文件保留层级；每批保存到独立新子文件夹，不覆盖已有内容，不删除来源。界面显示进度、平均速度、失败原因，支持拒绝和取消。
+默认不开网络监听，不共享整块磁盘，不使用云服务器；Android 前台通知可停止互传，系统超时也会关闭监听。多网卡会显示所有可用局域网地址并尝试各接口发现；手动连接不会被后续发现覆盖。
+首版支持本机普通文件，暂不直接发送 SMB、SAF、网盘或符号链接；最多 10,000 条目、64 层、1 TB。不做移动或断点续传；异常退出后列出未完成接收路径，不自动重做。
+
+First Windows / Android Nearby Transfer: opt-in LAN discovery or manual IP:port, compare the receiver's 12-character code, and approve every incoming batch. TLS certificate pinning, per-file SHA-256, progress/speed/errors, rejection and cancellation. Preserves nested/empty folders and zero-byte files; receives into a new batch folder without overwriting or deleting sources. No cloud relay, disk sharing or listener at startup. Android foreground notification stops the listener. Local files only initially; no SMB/SAF/symlinks or automatic replay/resume.
+
+此前版本改进 / Previous improvements (0.1.9):
 
 新增大屏双窗格：左右或上下分屏，每边有独立主页、目录导航、选择与滚动位置。中间布局按钮可切换自动、左右、上下、单窗格；空间不足时安全退回可用布局。
 无需拖拽：长按多选后点“复制到另一窗格”或“移动到另一窗格”，确认窗口显示完整目标路径。另一边是主页时会先提示打开目标文件夹。也可复制/移动后到另一边粘贴；文件夹继续合并，不会自动覆盖同名文件，任务有进度与失败信息。

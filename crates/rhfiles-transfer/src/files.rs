@@ -106,10 +106,17 @@ pub(crate) fn scan(paths: &[PathBuf], canceled: &AtomicBool) -> Result<Sources> 
         });
         out.paths.push(path.to_path_buf());
         if meta.is_dir() {
+            // Do not first allocate every entry in a huge directory just to
+            // discover later that the manifest exceeds the transfer limit.
+            let remaining = MAX_FILES - out.entries.len();
             let mut children = fs::read_dir(path)
                 .map_err(failure)?
+                .take(remaining + 1)
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(failure)?;
+            if children.len() > remaining {
+                return Err("超过 10,000 个条目上限".into());
+            }
             children.sort_by_key(|entry| entry.file_name());
             for child in children {
                 let child_name = child
@@ -247,5 +254,33 @@ fn publish_no_replace(source: &Path, target: &Path) -> Result<()> {
     {
         let _ = (source, target);
         Err("首版互传的安全接收仅支持 Windows / Android".into())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn oversized_directory_scan_is_bounded_and_does_not_modify_sources() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..MAX_FILES {
+            fs::File::create(root.path().join(format!("entry-{index}"))).unwrap();
+        }
+        let result = scan(&[root.path().to_path_buf()], &AtomicBool::new(false));
+        assert!(result.err().unwrap().contains("10,000"));
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), MAX_FILES);
+    }
+    #[test]
+    fn publishing_never_replaces_even_an_existing_empty_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&target).unwrap();
+        assert!(publish_no_replace(&source, &target).is_err());
+        assert!(source.exists());
+        assert!(target.exists());
+        fs::write(target.join("keep"), "old").unwrap();
+        assert!(publish_no_replace(&source, &target).is_err());
+        assert_eq!(fs::read_to_string(target.join("keep")).unwrap(), "old");
     }
 }

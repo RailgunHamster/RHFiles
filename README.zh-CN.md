@@ -30,8 +30,11 @@ Mac 版：从 [macOS 构建工作流](https://github.com/RailgunHamster/RHFiles/
 - 地址栏接受本地/UNC 路径及 `file:///` 地址；输入文件地址时会进入所在文件夹并选中它。
 - 使用 Velopack 从 GitHub Releases 或可配置的家庭服务器源进行 portable 自更新，并支持 HTTP/HTTPS 代理。
 - 内置多套配色，也可从配置目录加载用户主题包，无需重新编译。
+- Windows / Android 可选开启的加密[附近互传](docs/NEARBY.md)，逐批确认接收，不通过云中转。
 
 ## 下载
+
+Android APK 见 [Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v)。支持自适应独立双窗格、复制/移动到另一窗格、隔离的 EPUB/MOBI 阅读器及 GitHub/家庭服务器 APK 更新。功能与限制见 [Android 说明](docs/ANDROID.md)。
 
 请从 [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest) 下载最新版 portable 压缩包或安装程序。
 

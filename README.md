@@ -28,8 +28,13 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 - Address-bar support for local/UNC paths and `file:///` URLs; file addresses open the parent folder and select the target.
 - Velopack portable updates from GitHub Releases or a configurable home-server feed, with optional HTTP/HTTPS proxy support.
 - Multiple built-in color themes plus reloadable user theme packs—no recompilation required.
+- Opt-in encrypted [Nearby Transfer](docs/NEARBY.md) between Windows and Android, with per-batch receiver approval and no cloud relay.
 
 ## Download
+
+### Android
+
+Get the APK from [Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v). Includes independent adaptive panes with Copy/Move to Other Pane, an isolated EPUB/MOBI reader, and GitHub/home-server APK updates. See [Android features and limits](docs/ANDROID.md).
 
 ### macOS preview
 

@@ -40,6 +40,22 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         if(screenshot!=null)try(java.io.FileOutputStream output=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-Release-QA-reader.png")){screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output);screenshot.recycle();}
         result.putString("readerText",text.substring(0,Math.min(text.length(),1000)));result.putString("pass","true");finish(Activity.RESULT_OK,result);
     }
+    private void nearbyProbe(Bundle result) throws Exception {
+        String source=arguments.getString("source"),destination=arguments.getString("destination"),host=arguments.getString("host");
+        require(source!=null&&destination!=null&&source.startsWith("/storage/emulated/0/Download/RHFiles-")&&destination.startsWith("/storage/emulated/0/Download/RHFiles-")&&host!=null&&host.startsWith("10.0.2.2:"),"Only owned emulator fixtures and emulator host gateway allowed");
+        String script="void(async()=>{try{await api.native('nearby.keepAlive',{enabled:true});await api.raw('nearby_start',{alias:'Minified Android QA'});const status=await api.raw('nearby_status');window.__nearbyQa={phase:'listening',port:status.port};"+
+          "const peer=await api.raw('nearby_probe',{address:"+JSONObject.quote(host)+"});const sent=await api.raw('nearby_send',{peerId:peer.id,confirmedFingerprint:peer.id,sources:["+JSONObject.quote(source)+"]});"+
+          "const until=async check=>{const end=Date.now()+120000;while(Date.now()<end){const value=await check();if(value)return value;await new Promise(r=>setTimeout(r,200));}throw Error('Native Nearby probe timed out')};"+
+          "await until(async()=>{const job=(await api.raw('nearby_status')).transfers.find(t=>t.id===sent);if(['failed','canceled'].includes(job?.state))throw Error(job.message);return job?.state==='completed'});window.__nearbyQa.phase='sent';"+
+          "const incoming=await until(async()=>(await api.raw('nearby_status')).transfers.find(t=>t.direction==='receive'&&t.state==='waiting'));await api.raw('nearby_accept',{id:incoming.id,destination:"+JSONObject.quote(destination)+"});"+
+          "const received=await until(async()=>{const job=(await api.raw('nearby_status')).transfers.find(t=>t.id===incoming.id);if(['failed','canceled'].includes(job?.state))throw Error(job.message);return job?.state==='completed'&&job});"+
+          "await api.native('nearby.keepAlive',{enabled:false});await until(async()=>!(await api.raw('nearby_status')).running);window.__nearbyQa={phase:'completed',output:received.output};}catch(e){window.__nearbyQa={error:String(e)}}})();";
+        eval(script);long end=System.currentTimeMillis()+180000;boolean reported=false;
+        while(System.currentTimeMillis()<end){JSONObject marker=json("window.__nearbyQa || {}");require(!marker.has("error"),marker.optString("error"));
+            if(!reported&&marker.has("port")){Bundle listening=new Bundle();listening.putString("nearbyPort",String.valueOf(marker.getInt("port")));sendStatus(1,listening);reported=true;}
+            if(marker.optString("phase").equals("completed")){result.putString("pass","true");result.putString("nearbyOutput",marker.getString("output"));finish(Activity.RESULT_OK,result);return;}Thread.sleep(250);
+        }throw new Exception("Minified Nearby probe timed out");
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -49,6 +65,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             long deadline=System.currentTimeMillis()+60000;
             while(!eval("typeof api!=='undefined' && !!window.rhfilesHandleBack").equals("true")){require(System.currentTimeMillis()<deadline,"Frontend not ready");Thread.sleep(150);}
             if(arguments.getString("mode","").equals("ebook")){ebookProbe(result);return;}
+            if(arguments.getString("mode","").equals("nearby")){nearbyProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

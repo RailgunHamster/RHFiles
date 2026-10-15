@@ -120,6 +120,8 @@ fn actual_tls_transfer_preserves_tree_empty_files_and_source() {
     wait(|| !receiver.service.status().transfers.is_empty());
     let incoming = receiver.service.status().transfers[0].clone();
     assert_eq!(incoming.state, "waiting");
+    assert!(!sender.service.transferring(), "waiting does not hold a wake lock");
+    assert!(!receiver.service.transferring());
     let destination = receiver.dest();
     fs::write(destination.join("keep"), "untouched").unwrap();
     assert_eq!(
@@ -326,4 +328,96 @@ fn stop_cancels_pending_transfers_without_sending() {
         "canceled"
     );
     assert_eq!(fs::read_to_string(src).unwrap(), "source");
+}
+
+#[test]
+fn expired_approval_and_oversize_frames_are_refused() {
+    let receiver = Fixture::new("B");
+    let reply = request(
+        &receiver,
+        Request::Offer {
+            version: 1,
+            alias: "test".into(),
+            entries: vec![files::Entry {
+                path: "file".into(),
+                is_dir: false,
+                size: 0,
+            }],
+        },
+    );
+    let id = reply["id"].as_str().unwrap();
+    let job = receiver
+        .service
+        .0
+        .jobs
+        .lock()
+        .unwrap()
+        .get(id)
+        .unwrap()
+        .clone();
+    job.update(|v| v.started = now_ms() - 130000);
+    assert!(receiver.service.accept(id, receiver.dest()).is_err());
+    assert_eq!(receiver.service.status().transfers[0].state, "expired");
+    let mut frame = std::io::Cursor::new((4 * 1024 * 1024u32 + 1).to_be_bytes());
+    assert!(tls::read_json::<Value>(&mut frame).is_err());
+}
+
+#[test]
+fn interrupted_receipts_are_reported_without_automatically_deleting_data() {
+    let receiver = Fixture::new("B");
+    let dest = receiver.dest();
+    fs::write(dest.join("keep"), "original").unwrap();
+    let id = random().unwrap();
+    let stage = files::Staging::new(&dest, &receiver.service.0.data.join("receipts"), &id).unwrap();
+    let path = stage.path.clone();
+    fs::write(stage.child("partial").unwrap(), "part").unwrap();
+    std::mem::forget(stage);
+    assert_eq!(
+        receiver.service.status().interrupted,
+        vec![path.to_string_lossy().into_owned()]
+    );
+    assert!(path.join("partial").exists());
+    assert_eq!(fs::read_to_string(dest.join("keep")).unwrap(), "original");
+}
+
+#[test]
+#[ignore = "requires an available private interface and allowed local multicast; run explicitly"]
+fn multicast_discovers_two_local_instances_and_pins_the_discovered_device() {
+    assert!(
+        !interfaces().is_empty(),
+        "A private local network interface is required for this explicit discovery test"
+    );
+    let first = Fixture::new("Discovery A");
+    let second = Fixture::new("Discovery B");
+    for core in [first.service.0.clone(), second.service.0.clone()] {
+        std::thread::spawn(move || {
+            if let Err(error) = discover(&core) {
+                *core.discovery_error.lock().unwrap() = error;
+            }
+        });
+    }
+    wait(|| {
+        first
+            .service
+            .status()
+            .peers
+            .iter()
+            .any(|peer| peer.id == second.service.0.id)
+    });
+    wait(|| {
+        second
+            .service
+            .status()
+            .peers
+            .iter()
+            .any(|peer| peer.id == first.service.0.id)
+    });
+    let peer = first
+        .service
+        .status()
+        .peers
+        .into_iter()
+        .find(|peer| peer.id == second.service.0.id)
+        .unwrap();
+    assert_eq!(first.service.probe(&peer.address).unwrap().id, peer.id);
 }

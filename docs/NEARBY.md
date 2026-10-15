@@ -15,16 +15,22 @@ Windows：选择文件/文件夹，点工具栏双设备箭头按钮。Android�
 - 发送端先提交元数据，接收端确认后才允许上传；每批使用 256 位随机令牌，不进入 WebView、日志或发现消息。未确认/伪造令牌不能写文件。等待两分钟过期；最多四个并行连接/任务。
 - 消息有 4 MB 上限，清单最多 10,000 条目、64 层、1 TB。拒绝路径穿越、绝对路径、反斜杠、ADS、Windows 保留名、文件/目录冲突、大小写重名和符号链接。来源只读，64 KiB 有界流，逐文件 SHA-256；保留空目录和零字节文件，不承诺保留时间戳/ACL。
 - 接收到本次新建的 `.rhfiles-receive-ID.part` 目录；校验完才以 Windows `MoveFileW` / Linux-Android `renameat2(NOREPLACE)` 发布为独立批次，拒绝覆盖。错误/取消只清理本次暂存目录。异常进程退出不自动重传，私有接收日志会在下次开启时列出未完成路径供用户检查，不遍历删除未知目录。
-- Android 独立 `dataSync` 前台服务/通知持有 Wi-Fi MulticastLock 和有期限的 WakeLock；关闭、通知“停止”、系统超时都会通过保留的 JNI 入口停止 Rust 监听，不依赖 WebView 定时器续命；不自动重启任务。
+- Android 独立 `dataSync` 前台服务/通知持有 Wi-Fi MulticastLock；仅在实际扫描/传输/校验时持有有期限的 WakeLock，空闲发现和等待确认不持续唤醒 CPU。关闭、通知“停止”、系统超时都会通过保留的 JNI 入口停止 Rust 监听，不依赖 WebView 定时器续命；不自动重启任务。
 - 当前支持 Windows / Android **本机普通文件**；不直接发送 SMB、SAF、网盘、符号链接，不做移动/删除和断点续传。macOS 的安全接收尚未实现，不能当作已支持的平台。
 
 ## 验证
 
 ```powershell
 cargo test -p rhfiles-transfer -- --test-threads=1
+# Explicit environment-dependent integration test, not silently counted in CI:
+cargo test -p rhfiles-transfer multicast_discovers -- --ignored --test-threads=1
 node android/web/tests/nearby-check.mjs
 # Build Windows debug and emulator x86_64 debug APK; install only on emulator:
 node scripts/nearby-cross-platform-regression.mjs
+# After installing the minified arm64 APK and its release androidTest APK:
+node scripts/nearby-release-android-regression.mjs
 ```
 
 核心测试使用两个真实 TLS 节点，不把 mock 当实际网络。UI 流程测试模拟 IPC，覆盖启用/发送/接收确认、取消、错误、路径固定和触摸目标稳定。跨平台脚本另外验证 Windows ↔ Android 模拟器的原生 IPC 和实际文件字节；模拟器 NAT 使用手动地址，不替代物理 Wi-Fi 多播、折叠屏或用户手机验收。
+
+2026-10-16 本机验证：13 项默认核心测试通过，另显式运行 1 项真实本机多播发现通过；15 项 UI 流程通过，Windows ↔ x86_64 Android 调试 APK 10 项集成断言通过。开启 R8 的正式 arm64 APK 再次完成双向传输、实际字节/空目录/零字节文件检查，并通过原生服务停止入口关闭 Rust 监听。没有操作用户手机。

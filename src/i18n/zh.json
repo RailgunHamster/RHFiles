@@ -1,4 +1,5 @@
 {
+  "nearby.title": "附近互传",
   "status.merging": "正在合并文件夹…",
   "archive.readOnly": "压缩包浏览为只读，请先解压项目，再修改或复制。",
   "update.otherInstances": "请先关闭其他虚拟桌面上的 RHFiles 实例，再安装更新。",

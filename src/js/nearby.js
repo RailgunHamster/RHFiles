@@ -7,8 +7,9 @@ async function openNearby(){
   const close=document.createElement('button');close.className='dialog-btn';close.textContent=String(_lang||'').startsWith('zh')?'关闭（互传继续在后台运行）':'Close (transfers continue in background)';const dismiss=()=>{nearbyDialogController?.destroy();nearbyDialogController=null;overlay.remove()};close.onclick=backdrop.onclick=dismiss;
   const row=document.createElement('div');row.className='dialog-actions';row.append(close);box.append(content,row);overlay.append(backdrop,box);document.body.append(overlay);
   overlay.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(!nearbyDialogController?.back())dismiss();}},true);
+  const local=path=>!path.includes('://')&&(!path.startsWith('\\\\')||(path.startsWith('\\\\?\\')&&!path.toLowerCase().startsWith('\\\\?\\unc\\')));
   const folder=(G.dualOn&&G.lastActivePane==='right'?G.rp:getTab())?.path||'';let destination='';try{destination=(await call('get_known_folders',{})).downloads||''}catch{}
-  const paths=getSelectedPaths().map(entry=>entry.path).filter(path=>!path.includes('://')&&!path.startsWith('\\\\'));
+  const paths=getSelectedPaths().map(entry=>entry.path).filter(local);
   if(!overlay.isConnected)return;
-  nearbyDialogController=nearbyView.mount(content,{call,lang:String(_lang||'en'),paths,folder:folder&&!folder.includes('://')&&!folder.startsWith('\\\\')?folder:null,destination,defaultAlias:String(_lang||'').startsWith('zh')?'我的电脑':'My computer',formatSize:typeof formatSize==='function'?formatSize:undefined,open:path=>{dismiss();navigateTo(path);}});
+  nearbyDialogController=nearbyView.mount(content,{call,lang:String(_lang||'en'),paths,folder:folder&&local(folder)?folder:null,destination,defaultAlias:String(_lang||'').startsWith('zh')?'我的电脑':'My computer',formatSize:typeof formatSize==='function'?formatSize:undefined,open:path=>{dismiss();navigateTo(path);}});
 }

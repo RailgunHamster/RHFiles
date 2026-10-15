@@ -1,4 +1,5 @@
 {
+  "nearby.title": "Nearby Transfer",
   "status.merging": "Merging folders...",
   "archive.readOnly": "Archive browsing is read-only. Extract the item before modifying or copying it.",
   "update.otherInstances": "Close RHFiles on other virtual desktops before installing this update.",
