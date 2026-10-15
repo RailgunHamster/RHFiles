@@ -183,7 +183,14 @@ class RemoteStorage(private val context: Context, private val profileLookup: ((S
         val s=smb(l.c)
         try {
           val file=s.share.openFile(smbPath(l),EnumSet.of(AccessMask.GENERIC_READ),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null)
-          object: FilterInputStream(file.inputStream) { override fun close() { try { super.close(); file.close() } finally { s.close() } } }
+          object: FilterInputStream(file.inputStream) {
+            private var closed=false
+            @Synchronized override fun close() {
+              if(closed)return
+              closed=true
+              try { super.close() } finally { try { file.close() } finally { s.close() } }
+            }
+          }
         } catch(e:Exception) { s.close(); throw e }
       }
       "ftp", "ftps" -> {

@@ -118,12 +118,12 @@ Sync-File `
     -Target (Join-Path $appDir 'src\main\java\com\railgunhamster\rhfiles\MainActivity.kt')
 
 # New native modules and JVM business tests are canonical inputs too.
-foreach ($sourceSet in @('main', 'test')) {
+foreach ($sourceSet in @('main', 'test', 'androidTest')) {
     $canonical = Join-Path $repoRoot "android\gradle\app\src\$sourceSet\java\com\railgunhamster\rhfiles"
     $destination = Join-Path $appDir "src\$sourceSet\java\com\railgunhamster\rhfiles"
     if (Test-Path $canonical) {
         New-Item -ItemType Directory -Force -Path $destination | Out-Null
-        foreach ($source in Get-ChildItem -LiteralPath $canonical -File -Filter '*.kt') {
+        foreach ($source in Get-ChildItem -LiteralPath $canonical -File | Where-Object Extension -In @('.kt','.java')) {
             Sync-File -Source $source.FullName -Target (Join-Path $destination $source.Name)
         }
     }

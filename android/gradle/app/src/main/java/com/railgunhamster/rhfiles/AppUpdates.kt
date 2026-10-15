@@ -175,7 +175,9 @@ class AppUpdates private constructor(private val context: Context) {
     if(!response.isSuccessful){response.close();error(if(response.code==404)"服务器没有 Android 更新清单或安装包（HTTP 404）" else "更新服务器返回 HTTP ${response.code}")}
     return response
   }
-  private fun readJson(input: InputStream): String = input.use { it.readBytesBounded(2*1024*1024).toString(Charsets.UTF_8) }
+  // Ownership belongs to the surrounding response/stream.use. SMB sessions
+  // cannot be closed twice; a successful read must not become a close error.
+  private fun readJson(input: InputStream): String = input.readBytesBounded(2*1024*1024).toString(Charsets.UTF_8)
   private fun loadFeed(config: JSONObject): AndroidRelease? {
     if(config.getString("source")=="github") {
       val repository=AndroidUpdateFeed.githubRepository(config.getString("github"))

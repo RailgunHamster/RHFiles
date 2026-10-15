@@ -7,6 +7,12 @@
 -keepclassmembers class * {
     @net.engio.mbassy.listener.Handler <methods>;
 }
+# MBassador constructs the invocation class selected by @Handler through
+# getConstructor(SubscriptionContext.class), not a direct Java call. Keeping
+# only annotated listener methods leaves this constructor stripped in R8.
+-keep,includedescriptorclasses class * extends net.engio.mbassy.dispatch.HandlerInvocation {
+    public <init>(net.engio.mbassy.subscription.SubscriptionContext);
+}
 # ZIP method 93 is explicitly rejected before opening its stream. We ship
 # stored/deflate ZIP + gzip/xz/tar, not the optional zstd JNI codec.
 -dontwarn com.github.luben.zstd.ZstdInputStream

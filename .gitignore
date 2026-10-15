@@ -3,6 +3,8 @@
 /test-artifacts/
 /dist/
 /temp/
+/scripts/testing/smb-server/bin/
+/scripts/testing/smb-server/obj/
 .cache/
 *.slint_cache
 .sisyphus/

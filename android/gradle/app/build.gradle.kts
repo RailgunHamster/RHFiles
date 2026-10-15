@@ -29,6 +29,10 @@ val keystorePath = keystoreProperties.getProperty("storeFile")
 val hasSigningKey = !keystorePath.isNullOrBlank() && file(keystorePath).exists()
 
 android {
+    if (providers.gradleProperty("rhfilesReleaseProbe").isPresent) {
+        testBuildType = "release"
+        defaultConfig { testInstrumentationRunner = "com.railgunhamster.rhfiles.SmbUpdateInstrumentation" }
+    }
     compileSdk = 36
     namespace = "com.railgunhamster.rhfiles"
     defaultConfig {

@@ -1,4 +1,11 @@
-RHFiles Android 0.1.6
+RHFiles Android 0.1.7
+
+修复正式版家庭服务器 SMB 更新报错“the provided handler invocation did not specify the necessary constructor”：保留 SMB 事件组件反射调用的构造函数。更新目录读取和 APK 下载均使用开启混淆的正式 APK 回归验证。
+旧版 SMB 通道已损坏时，请先切换 GitHub 更新或手动覆盖安装本版 APK；不需要卸载，原数据与签名保持不变。
+
+Fix release-only SMB updater failure caused by stripped reflection constructors. Verified feed reads and full APK transfers using the minified signed release APK. If an older SMB updater cannot download this fix, update once via GitHub or install the APK over the existing app without uninstalling.
+
+此前版本改进 / Previous improvements:
 
 首页抽屉滑动时实时跟随手指，松手后平滑吸附，支持反向关闭和取消手势。
 修复长文件列表滚动反复跳到底/顶，取消已移除行的长按计时，避免滚动误入多选。
