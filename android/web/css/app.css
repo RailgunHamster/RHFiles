@@ -121,3 +121,10 @@ audio.full-media { height:64px; }
 .text-editor { flex:1; resize:none; margin:8px 16px; padding:12px; font:14px/1.6 ui-monospace,monospace; background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px; user-select:text; }
 .archive-entries { padding:0 20px; font-size:13px; overflow-wrap:anywhere; }
 button:focus-visible,[role=option]:focus-visible { outline:3px solid var(--accent); outline-offset:-3px; }
+.update-form { display:grid; gap:12px; }
+.update-form label { display:grid; gap:6px; font-size:13px; color:var(--muted); }
+.update-form select { width:100%; min-height:44px; padding:10px; border:1px solid var(--line); border-radius:7px; color:var(--text); background:var(--surface); }
+.update-form input[type=checkbox] { width:24px; min-height:24px; }
+#update-state { white-space:pre-line; padding-top:12px; }
+#update-progress { width:100%; accent-color:var(--accent); }
+.update-notes { max-height:280px; overflow:auto; }

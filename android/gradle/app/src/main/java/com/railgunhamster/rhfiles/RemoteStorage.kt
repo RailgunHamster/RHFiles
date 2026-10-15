@@ -35,6 +35,21 @@ import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 
 /** Credentials never enter URLs, logs, task journals, or localStorage. */
 class RemoteStorage(private val context: Context, private val profileLookup: ((String)->JSONObject)? = null) {
+  data class Unc(val host: String,val share: String,val parts: List<String>)
+  companion object {
+    fun parseUnc(value: String): Unc {
+      val path=value.trim().replace('\\','/').removePrefix("smb:")
+      require(path.startsWith("//")) { "家庭服务器请填写 \\\\服务器\\共享\\目录，或 HTTP/HTTPS 目录" }
+      val parts=path.removePrefix("//").trimEnd('/').split('/')
+      require(parts.size>=2 && parts[0].isNotBlank() && parts[0].none{it.isWhitespace() || it in "@:?#"}) { "SMB 地址必须包含服务器和共享名" }
+      parts.drop(1).forEach{SafeFiles.name(it)}
+      return Unc(parts[0],parts[1],parts.drop(2))
+    }
+  }
+  fun requireSmbConnection(id: String,host: String,share: String) {
+    val c=config(id)
+    require(c.getString("type")=="smb" && c.getString("host").equals(host,true) && c.getString("share").equals(share,true)) { "所选 SMB 登录配置的服务器或共享名与更新目录不一致，请在网络位置中添加对应连接" }
+  }
   private val preferences = context.getSharedPreferences("remote-v1", Context.MODE_PRIVATE)
   private val http = OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS)
     .writeTimeout(30,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()

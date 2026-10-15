@@ -32,6 +32,10 @@ import java.util.concurrent.Executors
 class MainActivity : TauriActivity() {
   private val io=Executors.newFixedThreadPool(3)
   private val storage by lazy {NativeStorage(applicationContext)}
+  private val updates by lazy {AppUpdates.get(this)}
+  private var pendingUpdateInstall:Boolean
+    get()=getSharedPreferences("updates-v1",Context.MODE_PRIVATE).getBoolean("pendingInstall",false)
+    set(value){getSharedPreferences("updates-v1",Context.MODE_PRIVATE).edit().putBoolean("pendingInstall",value).commit()}
   private var picker:((Any?,String?)->Unit)?=null
   private var shared=JSONArray()
   private var appWebView:WebView?=null
@@ -60,6 +64,29 @@ class MainActivity : TauriActivity() {
   }
   override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);appWebView=null;super.onDestroy()}
   override fun onNewIntent(intent:Intent) {super.onNewIntent(intent);setIntent(intent);receive(intent);mainHandler.post(changed)}
+  override fun onResume() {
+    super.onResume()
+    if(pendingUpdateInstall && (Build.VERSION.SDK_INT<26 || packageManager.canRequestPackageInstalls())) {
+      pendingUpdateInstall=false
+      mainHandler.post {io.execute {try{installUpdate()}catch(e:Exception){runOnUiThread{android.widget.Toast.makeText(this,e.message ?: "安装更新失败",android.widget.Toast.LENGTH_LONG).show()}}}}
+    }
+  }
+  private fun installUpdate():String {
+    val file=updates.installFile()
+    return onUi {
+      if(Build.VERSION.SDK_INT>=26 && !packageManager.canRequestPackageInstalls()) {
+        pendingUpdateInstall=true
+        try{startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:$packageName")))}catch(e:Exception){pendingUpdateInstall=false;throw e}
+        "permission"
+      } else {
+        pendingUpdateInstall=false
+        val uri=FileProvider.getUriForFile(this,"$packageName.fileprovider",file)
+        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive")
+          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).apply {clipData=ClipData.newRawUri("RHFiles 更新",uri)})
+        "installer"
+      }
+    }
+  }
   private fun <T> onUi(block:()->T):T {
     if(Looper.myLooper()==Looper.getMainLooper())return block()
     val task=java.util.concurrent.FutureTask<T>{block()};runOnUiThread(task);return task.get()
@@ -122,7 +149,13 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true)
+    "update.status" -> updates.status()
+    "update.save" -> updates.save(args)
+    "update.check" -> updates.check(args.optBoolean("manual"),args.optString("reason","manual"))
+    "update.download" -> onUi{updates.download()}
+    "update.cancel" -> updates.cancel()
+    "update.install" -> installUpdate()
     "theme" -> {setSystemTheme(args.optBoolean("dark"));true}
     "permission" -> if(Build.VERSION.SDK_INT>=30) Environment.isExternalStorageManager() else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)==PackageManager.PERMISSION_GRANTED
     "settings" -> {

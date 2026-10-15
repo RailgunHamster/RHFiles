@@ -27,7 +27,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await pw.chromium.launch({headless:true,executablePath});
 let checks=0;
 function check(value,label){assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);}
-function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false}){
+function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativeUpdates=false}){
   const root='/storage/emulated/0';
   const file=(name,kind='document',size=10)=>({name,path:root+'/'+name,kind,isDir:kind==='folder',size,modifiedMs:1712345678000});
   const m=window.__model={calls:[],denied,partial,index:true,fs:{
@@ -83,11 +83,18 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false}){
   }};
   if(nativeV2 || nativeV3){
     m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
+    m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'github',github:'https://github.com/RailgunHamster/RHFiles',family:'\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
     m.fs['content://test/tree/root/document/root']=[{name:'云端.txt',path:'content://test/tree/root/document/file',isDir:false,kind:'document',size:12}];
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
-        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3};case 'theme':return true;case 'permission':return !m.denied;
+        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates};case 'theme':return true;case 'permission':return !m.denied;
+        case 'update.status':return m.updates;
+        case 'update.save':m.updates={...m.updates,config:a,state:'idle',release:null};return m.updates;
+        case 'update.check':if(!a.manual&&!m.updates.config.autoCheck)return m.updates;m.updateRequests++;m.updates.state=m.updateFail?'failed':'available';m.updates.message=m.updateFail?'SMB 登录失败，请检查用户名和密码':'';m.updates.release=m.updateFail?null:{version:'0.1.4',versionCode:1004,notes:'第一行\n第二行 <img onerror=alert(1)>',size:2000};return m.updates;
+        case 'update.download':m.updates.state='downloading';m.updates.started=Date.now();m.updates.bytes=800;return m.updates;
+        case 'update.cancel':m.updates.state='canceled';return m.updates;
+        case 'update.install':return m.installPermission?'permission':'installer';
         case 'roots':return [{path:root,label:'内部存储',removable:false,totalBytes:128*1024**3,freeBytes:80*1024**3},{path:'content://test/tree/root/document/root',label:'云端',removable:true,provider:true}];
         case 'list':return {path:a.path,entries:m.fs[a.path]||[]};
         case 'media.library':return {entries:Object.values(m.fs).flat().filter(e=>e.kind===a.category),total:1,truncated:false};
@@ -293,6 +300,11 @@ try{
     const {context,page:p,errors}=await pageFor({nativeV3:true});await tile(p,'storage-0').waitFor();
     check(await p.evaluate(()=>api.nativeBackAvailable() && history.length===2),'Native Back mode does not add WebView history sentinels');
     check(await p.evaluate(()=>rhfilesHandleBack())===false,'Only Home permits native exit');
+    await p.evaluate(()=>{window.__homeTile=document.querySelector('[data-tile="storage-0"]');window.dispatchEvent(new Event('rhfiles-storage-changed'));});
+    await p.waitForTimeout(150);
+    check(await p.evaluate(()=>window.__homeTile===document.querySelector('[data-tile="storage-0"]')),'Unchanged Home refresh preserves touch targets instead of canceling drawer gestures');
+    await p.click('.home-note button');
+    check(await p.evaluate(()=>window.__homeTile===document.querySelector('[data-tile="storage-0"]')),'Index-state changes update Home captions without replacing gesture targets');
     const touch=await context.newCDPSession(p);
     async function swipe(x1,y1,x2,y2){
       await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:x1,y:y1}]});
@@ -328,6 +340,32 @@ try{
     await p.evaluate(()=>rhfilesHandleBack());await tile(p,'storage-0').waitFor();
     check(await p.evaluate(()=>rhfilesHandleBack())===false,'Settings returns to Home before another Back can exit');
     check(errors.length===0,'Gesture/back/refresh regressions have no uncaught errors');await context.close();
+  }
+  {
+    const {context,page:p,errors}=await pageFor({nativeV3:true,nativeUpdates:true});
+    await tile(p,'settings').click();await p.locator('#update-check').waitFor();
+    check(await p.evaluate(()=>__model.updateRequests===0),'Disabled auto-check makes no network request at startup or opening Settings');
+    await p.click('#update-check');await p.locator('#update-download:not([hidden])').waitFor();
+    check(await p.evaluate(()=>__model.updateRequests===1),'Manual check works even with automatic checking disabled');
+    check((await p.locator('#update-notes').innerText()).includes('\n第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes preserve line breaks and never inject HTML');
+    await p.click('#update-download');check(await p.locator('#update-progress').isVisible(),'Downloading exposes byte progress');
+    check(await p.locator('#update-state').innerText().then(t=>t.includes('/s')),'APK download shows speed');
+    await p.click('#update-cancel');await p.locator('#update-download:not([hidden])').waitFor();
+    check(await p.locator('#update-state').innerText().then(t=>t.includes('已取消')),'Cancel download is visible and retryable');
+    await p.selectOption('[name=source]','family');
+    check(await p.locator('#update-family-fields').isVisible() && !await p.locator('#update-github-field').isVisible(),'Family source exposes SMB directory and login selector');
+    await p.click('#update-save');await p.waitForFunction(()=>__model.updates.config.source==='family');
+    check(await p.evaluate(()=>__model.updates.config.family.startsWith('\\\\SERVER-HOME')),'Family source preserves both leading UNC slashes');
+    await p.evaluate(()=>__model.updateFail=true);await p.click('#update-check');
+    await p.waitForFunction(()=>document.getElementById('update-state').textContent.includes('SMB 登录失败'));
+    check(await p.locator('#update-state.danger').isVisible(),'Update failure cause is readable beside update controls');
+    await p.evaluate(()=>{__model.updateFail=false;__model.installPermission=true;});await p.click('#update-check');await p.click('#update-download');
+    await p.evaluate(()=>{__model.updates.state='ready';__model.updates.bytes=2000;});
+    await p.waitForFunction(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length===1);
+    await p.waitForTimeout(900);
+    check(await p.evaluate(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length===1),'Completed user-requested download opens installation once, not every poll');
+    await p.screenshot({path:path.join(output,'android-updates.png'),fullPage:true});
+    check(errors.length===0,'Android update UI has no uncaught errors');await context.close();
   }
   console.log('PASS: '+checks+' assertions. IPC mocked. Screenshots: '+output);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

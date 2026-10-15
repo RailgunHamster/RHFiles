@@ -1,5 +1,52 @@
 # RHFiles Android
 
+## 0.1.5：首次更新器发布与首页手势回归修复
+
+- 包含下方 0.1.4 更新器；0.1.4 已写入家庭服务器后发现首页刷新仍可能打断手势，因此不覆盖已发布字节，增加 Android 版本至 0.1.5。
+- 容量、收藏数量和索引通知只更新首页相应文字，不替换整张卡片/图标；后台容量和索引状态变化不再移除正在接收滑动的触摸目标。
+- 安装授权意图保存在应用私有配置；Android/OEM 在授权过程中回收进程时，完整 APK 和待安装状态仍能恢复。
+
+## 0.1.4：应用内更新（2026-10-15）
+
+- 设置 → 应用更新：GitHub 仓库 / 家庭服务器目录；Android 使用独立的 `releases.android.json`，不会使用 Velopack/Windows 版本。
+- GitHub 查找带 Android 清单的正式发行，跳过更新的 Windows-only 发行；不使用桌面的 latest 版本号来判断 Android 更新。
+- 家庭服务器支持 `\\SERVER-HOME\Public\Software\RHFiles-Releases`、`smb://server/share/path`，或 HTTP/HTTPS 目录。需要认证时先在“网络位置”添加相同主机/共享的 SMB 登录配置，再在更新设置中选择；凭据继续由 Keystore 加密，不进入清单、URL 或 WebView 持久存储。
+- HTTP 更新支持独立代理配置；手机上的 `127.0.0.1` 是手机自身，电脑代理应填写电脑的局域网 IP。SMB 不经过 HTTP 代理。
+- 自动检查（默认开启）：启动、进入设置、每小时；关闭后上述自动入口都不发网络请求，手动检查仍有效。自动检查绝不自动下载。
+- 点击“下载并安装”：独立前台下载服务/通知，显示大小、平均速度，可取消；不会抢占文件任务的通知。APK 保存在应用私有 `files/updates` 下，不需要所有文件权限。
+- 发布前验证签名；下载检查大小和 SHA-256；安装前再次校验包名、严格递增的 Android versionCode、versionName、最低系统版本、真实 APK 架构与现有签名。同名但不兼容/签名不同的 APK 不会卸载现有安装。
+- 首次跳转系统“允许安装未知应用”；授权返回后继续唤起系统 APK 安装确认，不绕过确认。未安装的完整 APK 可继续安装；下载中进程被杀只丢弃本次 `.part`，不把残包当成功，不自动重做。
+- 第一版更新器仍需要一次覆盖安装；此前的 APK 没有应用内更新入口，不能凭空更新自身。覆盖安装保留应用数据。
+
+### 发布 Android 更新
+
+构建同签名 APK 后执行：
+
+```powershell
+./scripts/publish-android.ps1 -NotesFile ./android/release-notes.txt
+./scripts/publish-android.ps1 -NotesFile ./android/release-notes.txt -OutputDirectory '\\SERVER-HOME\Public\Software\RHFiles-Releases'
+```
+
+将输出的 APK 和 `releases.android.json` 一起上传为 GitHub 正式发行附件（例如 `android-v0.1.4`）。
+创建 Android 发行时必须设置 GitHub 的 `make_latest: "false"`，保留 Windows 发行的 latest 指向，避免桌面端取不到 `releases.win.json`。不要标成 prerelease（客户端默认只读取正式发行）。
+可用 `scripts/publish-android-github.ps1 -Directory <清单和APK所在目录>` 自动完成：从 Git 凭据管理器读取现有登录、创建非 latest 正式发行、上传并校验 GitHub SHA-256、确认 Windows latest 未改变；可通过 `-Proxy http://127.0.0.1:7890` 指定发布机代理。脚本不替换已有的不同字节附件。
+家庭服务器中先提交 APK、最后原子替换 Android 清单；不改 `releases.win.json`。不同 CPU 架构可逐个发布到同一清单；同版本/架构不能悄悄替换不同字节的 APK，需增加版本号。
+
+```json
+{
+  "schemaVersion": 1,
+  "packageId": "com.railgunhamster.rhfiles",
+  "releases": [{
+    "version": "0.1.4", "versionCode": 1004, "minSdk": 24,
+    "notes": "更新日志\n支持多行",
+    "assets": [{
+      "abi": "arm64-v8a", "fileName": "RHFiles-Android-0.1.4-arm64-v8a.apk",
+      "size": 123456, "sha256": "填写实际 APK 的 64 位 SHA-256"
+    }]
+  }]
+}
+```
+
 ## 0.1.3：触屏导航与闪烁修复（2026-10-15）
 
 - APK 同步桌面版橙绿文件夹图标，包含传统、圆形与自适应启动图标；资源成为受版本控制的构建输入，重新生成 Gradle 工程后也会恢复。

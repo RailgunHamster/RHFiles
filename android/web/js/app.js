@@ -22,6 +22,7 @@
   let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0;
   let refreshPromise = null, refreshAgain = false;
   const folderParents = new Map();
+  let homeSnapshot='';
   const sameRoute = (a, b) => JSON.stringify([a.screen,a.path,a.category,a.tool]) === JSON.stringify([b.screen,b.path,b.category,b.tool]);
   const rootFor = (path) => state.roots.filter((root) => path === root.path || path.startsWith(root.path + '/')).sort((a,b) => b.path.length - a.path.length)[0];
   const rootLabel = (root) => root?.provider ? root.label : root?.removable ? '外部存储' : '内部存储';
@@ -123,11 +124,24 @@
     grid.append(node);
   }
   function renderHome() {
+    // Capacity/index notifications must not replace nodes receiving an active
+    // touch. Rebuild only when the navigation layout itself changes.
+    const snapshot=JSON.stringify([state.roots.map(({path,label,removable,provider})=>({path,label,removable,provider})),state.root,api.featuresAvailable()]);
+    const capacityOf=root=>Number.isFinite(root.totalBytes) && Number.isFinite(root.freeBytes)
+      ? fmt.size(root.totalBytes-root.freeBytes)+' / '+fmt.size(root.totalBytes) : root.removable ? fmt.baseName(root.path) : '本机文件';
+    const noteText=state.index?.lastFinishedMs ? '分类基于文件名索引；新文件可通过更新索引加入。' : '图片、音频等分类需要先建立本机文件名索引。';
+    const indexText=state.index?.indexing ? '正在建立索引…' : '更新索引';
+    if(snapshot===homeSnapshot && $('home').childElementCount){
+      state.roots.forEach((root,i)=>{$('home').querySelector(`[data-tile="storage-${i}"] small`).textContent=capacityOf(root);});
+      $('home').querySelector('[data-tile="favorites"] small').textContent=state.favorites.length+' 个位置';
+      const note=$('home').querySelector('.home-note');note.firstChild.textContent=noteText;note.querySelector('button span').textContent=indexText;
+      return;
+    }
+    homeSnapshot=snapshot;
     const home = $('home'), grid = ui.el('div', 'home-grid');
     home.replaceChildren(grid);
     for (const [i, root] of state.roots.entries()) {
-      const capacity = Number.isFinite(root.totalBytes) && Number.isFinite(root.freeBytes)
-        ? fmt.size(root.totalBytes - root.freeBytes) + ' / ' + fmt.size(root.totalBytes) : root.removable ? fmt.baseName(root.path) : '本机文件';
+      const capacity = capacityOf(root);
       tile(grid, 'storage-' + i, rootLabel(root), root.removable ? 'sd' : 'storage', '#768896', capacity, () => go({ screen: 'folder', path: root.path }));
     }
     tile(grid, 'downloads', '下载', 'download', '#b78a41', 'Download', () => go({ screen: 'folder', path: state.root + '/Download' }));
@@ -137,8 +151,8 @@
     tile(grid, 'usage', '空间分析', 'chart', '#8b739a', '查看文件占用', () => go({ screen: 'tool', tool: 'usage' }));
     tile(grid, 'settings', '设置', 'settings', '#748193', '显示与权限', () => go({ screen: 'tool', tool: 'settings' }));
     if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>go({screen:'tool',tool:id}));
-    const note = ui.el('div', 'home-note', state.index?.lastFinishedMs ? '分类基于文件名索引；新文件可通过更新索引加入。' : '图片、音频等分类需要先建立本机文件名索引。');
-    note.append(button(state.index?.indexing ? '正在建立索引…' : '更新索引', 'refresh', rebuildIndex, 'text-btn'));
+    const note = ui.el('div', 'home-note', noteText);
+    note.append(button(indexText, 'refresh', rebuildIndex, 'text-btn'));
     home.append(note);
   }
   function renderDrawer() {
@@ -514,6 +528,7 @@
     $('version').textContent = 'RHFiles Android ' + info.version;
     $('btn-theme').textContent = '主题：' + (document.documentElement.dataset.theme === 'dark' ? '深色' : '明亮');
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
+    if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if (status.indexing) pollIndex();
   }
   async function rebuildIndex() {
@@ -596,6 +611,7 @@
   async function boot() {
     await api.initNative();
     androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,button,action,error});
+    androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     for(const node of document.querySelectorAll('[data-icon]')) node.innerHTML=ui.icon(node.dataset.icon);
     document.documentElement.dataset.theme=saved('rhfiles.theme','light')==='dark'?'dark':'light';

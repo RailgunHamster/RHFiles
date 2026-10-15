@@ -1,0 +1,13 @@
+RHFiles Android 0.1.5
+
+新增应用内更新：支持 GitHub 和家庭服务器（SMB / HTTP / HTTPS），在设置中选择更新源。
+点击“下载并安装”后下载 APK，显示字节数、平均速度和取消按钮；校验大小、SHA-256、包名、版本、CPU 架构和现有签名后交给 Android 系统安装。
+首次安装需允许 RHFiles 安装未知来源应用；授权返回后继续安装。安装仍需系统确认，不会卸载或清空已有数据。
+自动检查可关闭；开启时在启动、进入设置及每小时检查，绝不自动下载。关闭后仅手动检查有效。
+家庭服务器复用网络位置中的 SMB 登录配置，密码使用 Android Keystore 加密。HTTP 更新和 GitHub 支持配置 HTTP 代理。
+包含 0.1.3 的橙绿图标、首页抽屉滑动、存储列表闪烁和系统返回手势修复。
+首页容量和索引状态更新保留原有卡片，避免后台刷新打断抽屉滑动。
+
+In-app updates now support GitHub and a home server (SMB / HTTP / HTTPS).
+Download progress, speed, cancellation, APK integrity/identity checks, and Android's installation confirmation are included. Existing app data is preserved.
+Automatic checking is optional and never downloads without your request.

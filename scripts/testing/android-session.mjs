@@ -57,6 +57,9 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
     };
     await send('Runtime.enable');
     await until(()=>evaluate('typeof api!=="undefined" && typeof ui!=="undefined" && document.readyState==="complete"'),'frontend ready');
+    // DOMContentLoaded precedes the async native capabilities/storage bootstrap.
+    // Testing before handlers exist produces false gesture/feature failures.
+    await until(()=>evaluate('typeof window.rhfilesHandleBack==="function" && ["home","filelist","tool-page"].some(id=>!document.getElementById(id).hidden)'),'native bridge and initial navigation ready',70000);
     const click=async selector=>{
       const point=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing element');e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();if(!r.width||!r.height)throw Error('Hidden element');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
       await send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
