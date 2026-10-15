@@ -167,7 +167,15 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true)
+    "nearby.keepAlive"->{onUi{
+      val intent=Intent(this,NearbyService::class.java)
+      if(args.optBoolean("enabled")){
+        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),11)
+        androidx.core.content.ContextCompat.startForegroundService(this,intent)
+      }else stopService(intent)
+      true
+    }}
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true)
     "ebook.open" -> {
       val path=args.getString("path");require(!storage.isRemote(path)){"网络电子书请先下载到本机"}
       if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile&&it.canRead()}){"电子书不存在或无法读取"}

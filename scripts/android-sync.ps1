@@ -141,3 +141,4 @@ foreach ($target in $targets) {
 }
 
 Write-Host 'Android project sync complete.'
+Sync-File -Source (Join-Path $repoRoot 'src\js\nearby-ui.js') -Target (Join-Path $repoRoot 'android\web\js\nearby-ui.js')

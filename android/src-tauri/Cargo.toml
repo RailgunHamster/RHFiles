@@ -1,9 +1,13 @@
 [package]
 name = "rhfiles-android"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "RHFiles for Android — an ad-free, telemetry-free file manager with full storage access"
 publish = false
+
+[features]
+default = ["android-shell"]
+android-shell = []
 
 [lib]
 name = "rhfiles_android_lib"
@@ -39,6 +43,7 @@ image = { version = "0.25", default-features = false, features = [
 # directly as an `<img src>` without touching the filesystem protocol.
 base64 = "0.22"
 getrandom = "0.3"
+rhfiles-transfer = { path = "../../crates/rhfiles-transfer" }
 
 [dev-dependencies]
 # `test` provides the MockRuntime used by tests/ipc.rs to drive the real command

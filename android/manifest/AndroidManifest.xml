@@ -18,6 +18,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!--
       All-files access. On Android 11+ this is the only way to enumerate and
@@ -78,6 +79,7 @@
 
         <!-- Books get a separate read-only origin/renderer, never Tauri file IPC. -->
         <activity android:name=".EbookActivity" android:exported="false" android:resizeableActivity="true" android:process=":ebook" />
+        <service android:name=".NearbyService" android:exported="false" android:foregroundServiceType="dataSync" />
 
         <service android:name=".FileTaskService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".AppUpdateService" android:exported="false" android:foregroundServiceType="dataSync" />

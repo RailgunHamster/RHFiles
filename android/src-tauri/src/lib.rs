@@ -7,6 +7,8 @@ pub mod index;
 pub mod log;
 pub mod server;
 pub mod thumbnail;
+#[path="../../../src-tauri/src/nearby.rs"]
+pub mod nearby;
 
 use serde::Serialize;
 use std::path::PathBuf;
@@ -99,6 +101,7 @@ pub fn build_app_generic<R: tauri::Runtime>() -> tauri::Builder<R> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            nearby::nearby_start,nearby::nearby_stop,nearby::nearby_status,nearby::nearby_probe,nearby::nearby_send,nearby::nearby_accept,nearby::nearby_cancel,
             app::app_info,
             device::get_storage_roots,
             device::get_permission_status,

@@ -87,6 +87,7 @@ const androidFeatures = (() => {
     const generation=++toolGeneration,node=$('tool-extra');node.replaceChildren(ui.el('p','','正在读取…'));
     const valid=()=>generation===toolGeneration && app.state.route.tool===tool;
     if(tool==='tasks'){await pollJobs();return;}
+    if(tool==='nearby'){androidNearby.render(node);return;}
     if(tool==='remote') {
       const connections=await api.native('connections');if(!valid())return;
       node.replaceChildren(button('添加网络位置',addRemote,'primary'));notice(node,'密码由 Android Keystore 加密保存。FTPS / HTTPS 验证服务器证书；不提供忽略证书开关。');
@@ -236,6 +237,7 @@ const androidFeatures = (() => {
   }
   function entryActions(entry) {
     const options=[];
+    if(api.nearbyAvailable()&&!api.isVirtual(entry.path))options.push(app.action('发送到附近设备','computer',()=>androidNearby.open([entry.path])));
     if(!api.isVirtual(entry.path)) {
       options.push(app.action('压缩为 ZIP','archive',()=>compress([entry.path])));
       if(!entry.isDir&&/\.(zip|tar|gz|xz|tgz|txz)$/i.test(entry.name))options.push(app.action('解压到新文件夹','archive',()=>extract(entry)));
@@ -246,6 +248,7 @@ const androidFeatures = (() => {
   }
   function selectionActions(paths) {
     const options=[];
+    if(api.nearbyAvailable()&&paths.every(path=>!api.isVirtual(path)))options.push(app.action('发送到附近设备','computer',()=>androidNearby.open(paths)));
     if(paths.every(p=>!api.isVirtual(p))) options.push(app.action('压缩为 ZIP','archive',()=>compress(paths)));
     if(paths.every(p=>!p.startsWith('remote://')&&!app.state.entries.find(e=>e.path===p)?.isDir))options.push(app.action('系统分享','share',()=>api.native('share',{paths})));
     return options;
@@ -289,10 +292,11 @@ const androidFeatures = (() => {
   }
   function init(context) {
     app=context;
+    androidNearby.init(context);
     const chip=ui.el('button','native-task-chip');chip.id='native-task-chip';chip.hidden=true;chip.onclick=()=>app.go({screen:'tool',tool:'tasks'});$('app').append(chip);
     if(api.featuresAvailable()){pollJobs().catch(app.error);jobTimer=setInterval(()=>{if(!document.hidden)pollJobs().catch(()=>{});},1500);}
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
     $('btn-ftp-toggle').addEventListener('click',()=>toggleFtp().catch(app.error));
   }
-  return {init,destinations,renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
+  return {init,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','computer','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
 })();

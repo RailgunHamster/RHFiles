@@ -82,7 +82,7 @@
       : route.screen === 'library' ? labels[route.category] + (route.folder ? ' · ' + fmt.baseName(route.folder) : '')
       : route.screen === 'favorites' ? '收藏夹'
       : route.screen === 'search' ? '搜索'
-      : ({ settings: '设置', server: '从电脑访问', usage: '空间分析', remote:'网络位置',providers:'外置存储与网盘',apps:'应用管理',tasks:'文件任务',trash:'回收站' })[route.tool] || 'RHFiles';
+      : ({ settings: '设置', server: '从电脑访问', usage: '空间分析', remote:'网络位置',providers:'外置存储与网盘',apps:'应用管理',tasks:'文件任务',trash:'回收站',nearby:'附近互传' })[route.tool] || 'RHFiles';
     $('title').textContent = title;
     document.querySelector('.topbar').hidden = count > 0;
     $('selection-head').hidden = count === 0;
@@ -178,7 +178,7 @@
     tile(grid, 'server', '从电脑访问', 'computer', '#54877b', '局域网传输', () => go({ screen: 'tool', tool: 'server' }));
     tile(grid, 'usage', '空间分析', 'chart', '#8b739a', '查看文件占用', () => go({ screen: 'tool', tool: 'usage' }));
     tile(grid, 'settings', '设置', 'settings', '#748193', '显示与权限', () => go({ screen: 'tool', tool: 'settings' }));
-    if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>go({screen:'tool',tool:id}));
+    if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>id==='nearby'?androidNearby.open():go({screen:'tool',tool:id}));
     const note=ui.el('section','home-note index-card'),symbol=ui.el('div','index-symbol');symbol.innerHTML=ui.icon('search');
     const copy=ui.el('div','index-copy');copy.append(ui.el('strong','index-caption',state.index?.indexing?'正在更新索引…':fmt.count(state.index?.entryCount || 0)+' 个已索引项目'),ui.el('p','index-description',noteText));
     const update=button('更新','refresh',rebuildIndex,'index-update');update.setAttribute('aria-label',indexText);update.disabled=!!state.index?.indexing;note.append(symbol,copy,update);
@@ -197,6 +197,7 @@
   // Request IDs make old directory/search/preview responses unable to replace a
   // newer screen. The in-app back stack is independent of WebView history.
   async function go(route, options = {}) {
+    if(route.screen!=='tool'||route.tool!=='nearby')androidNearby.leave();
     if (route.screen === 'home') state.stack = [];
     else if (!options.replace && !sameRoute(route, state.route)) state.stack.push({ ...state.route, scroll: $('filelist').scrollTop });
     if (route.screen === 'folder' && route.parentPath && route.path !== route.parentPath) folderParents.set(route.path,route.parentPath);
@@ -263,6 +264,7 @@
   // Storage notifications must not perform navigation or hide a usable listing.
   // Coalesce bursts, keep the existing DOM when unchanged, and discard late replies.
   async function refreshCurrent() {
+    if(state.route.screen==='tool'&&state.route.tool==='nearby')return;
     if (refreshPromise) { refreshAgain = true; return refreshPromise; }
     refreshPromise = (async () => {
       do {
@@ -619,6 +621,7 @@
     } catch(err) { $('scan-result').textContent='分析失败：'+err; } finally { $('btn-scan').disabled=false; }
   }
   function back() {
+    if(androidNearby.back())return true;
     if(ui.isSheetOpen()) { ui.closeSheet(); return true; }
     if(!$('drawer').hidden&&!document.body.classList.contains('wide-layout')) { closeDrawer(); return true; }
     if(state.selected.size) { clearSelection(); return true; }
