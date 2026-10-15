@@ -32,7 +32,10 @@ if ($Proxy) { $requestOptions.Proxy=$Proxy }
 $api = "https://api.github.com/repos/$Repository"
 $latestBefore = Invoke-RestMethod "$api/releases/latest" @requestOptions
 $tag = "android-v$version"
-$existing = @(Invoke-RestMethod "$api/releases?per_page=100" @requestOptions) | Where-Object tag_name -eq $tag | Select-Object -First 1
+# Invoke-RestMethod emits a JSON array as one pipeline object; assign it first
+# so Where-Object filters individual releases on a retry (including drafts).
+$allReleases = Invoke-RestMethod "$api/releases?per_page=100" @requestOptions
+$existing = $allReleases | Where-Object tag_name -eq $tag | Select-Object -First 1
 if ($existing) { $remoteRelease=$existing } else {
     $body = @{tag_name=$tag; target_commitish=$Commit; name="RHFiles Android $version"; body=$release.notes; draft=$true; prerelease=$false; make_latest='false'} | ConvertTo-Json -Depth 8
     $remoteRelease=Invoke-RestMethod "$api/releases" -Method Post -Body $body -ContentType 'application/json; charset=utf-8' @requestOptions
