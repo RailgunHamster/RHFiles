@@ -338,6 +338,7 @@ function openPreviewedFile() {
 
 function previewRequestIsCurrent(token, path, isRight) {
   if (token !== _previewRequestToken || !G.previewOn || G.inspectorTab !== 'preview') return false;
+  if ((G.lastActivePane === 'right') !== isRight) return false;
   const selected = getSelectedPaths(isRight);
   return selected.length === 1 && selected[0].path === path;
 }

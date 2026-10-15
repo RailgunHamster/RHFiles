@@ -920,6 +920,8 @@
   "pane.rightFiles": "Files in the right pane",
   "ctx.convertFormat": "Convert format…",
   "pdf.title": "Markdown to PDF…",
+  "ctx.generateAs": "Generate as",
+  "pdf.temporaryHelp": "Temporary conversion files are cleaned automatically. Interrupted jobs are recovered at next startup.",
   "pdf.provider": "Converter",
   "pdf.start": "Generate PDF",
   "pdf.help": "Existing PDFs are never overwritten. Local images within the Markdown folder are embedded; scripts and remote resources are blocked.",

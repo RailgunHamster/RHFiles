@@ -1,6 +1,8 @@
 # Markdown → PDF（Windows）
 
-选中一个 `.md` / `.markdown` 文件，右键选择“Markdown 转 PDF”。默认在原目录生成同名 PDF，可修改输出文件名和转换器。默认引擎是本地 Markdown 渲染 + Windows WebView2 PDF 打印，不上传内容、不需要另外安装 Office。
+选中一个 `.md` / `.markdown` 文件，右键选择“生成为 → PDF”。默认在原目录生成同名 PDF，可修改输出文件名和转换器。默认引擎是本地 Markdown 渲染 + Windows WebView2 PDF 打印，不上传内容、不需要另外安装 Office。
+
+转换的 HTML、暂存 PDF 位于当前实例数据目录的 `cache/document-conversions/job-*`，不放在原文件旁。成功、失败、取消后自动清理；异常退出的任务下次启动时回收，正在转换的任务通过锁保护。WebView2 使用实例自身的浏览器缓存，不再为每次转换创建临时浏览器配置。旧版本在用户文件夹留下的未知 `.rhfiles-pdf-*` 不会自动删除，以免误删。
 
 支持 UTF-8 中文、表格、任务列表、代码块、分页和同目录及子目录中的图片。原始 HTML 作为文字显示，网络图片不会下载，图片不能越出 Markdown 所在目录。内置限制：Markdown 16 MiB、单张图片 8 MiB、图片合计 20 MiB、PDF 100 MiB。已有 PDF 不会被覆盖；请改名后再转换。
 
@@ -43,6 +45,6 @@
 
 ## English
 
-Windows: right-click a single Markdown file → **Convert Markdown to PDF**. The default local renderer uses WebView2, with no document upload. Existing output files are never overwritten.
+Windows: right-click a single Markdown file → **Generate as → PDF**. The default local renderer uses WebView2, with no document upload. Existing output files are never overwritten. Staging is private to the instance cache and cleaned after success, failure or cancellation; startup recovers marked abandoned jobs without deleting active tasks or unknown files in user folders.
 
 Edit the per-profile `document-converters.json` from Settings → Files or the conversion dialog. Command providers use an absolute executable and an argument array, not shell concatenation. `{input}`, `{output}`, `{html}` and `{directory}` are substituted once; output is staged, checked for a bounded PDF header, then published with exclusive creation. Dependencies for custom converters are user-managed.

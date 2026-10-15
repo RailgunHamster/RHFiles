@@ -11,6 +11,149 @@ use std::{
     time::{Duration, Instant},
 };
 
+const WORKSPACE_MARKER: &[u8] = b"RHFiles PDF workspace v1\n";
+
+fn cache_root() -> Result<PathBuf, String> {
+    Ok(crate::profile::data_dir()?
+        .join("cache")
+        .join("document-conversions"))
+}
+fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
+
+// Only marked task directories inside this profile's exact cache root are
+// eligible. Locks protect live conversions in other windows/processes. Never
+// scan Markdown folders or delete old unmarked .rhfiles-pdf-* directories.
+fn cleanup_workspaces(root: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(root) else {
+        return;
+    };
+    if !metadata.is_dir() || is_link(&metadata) {
+        return;
+    }
+    let Ok(root) = root.canonicalize() else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(&root) else {
+        return;
+    };
+    for entry in entries.take(256).flatten() {
+        let path = entry.path();
+        if !entry.file_name().to_string_lossy().starts_with("job-") {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.is_dir() || is_link(&meta) {
+            continue;
+        }
+        if path
+            .canonicalize()
+            .ok()
+            .as_ref()
+            .is_none_or(|p| p.parent() != Some(root.as_path()))
+        {
+            continue;
+        }
+        let marker = path.join("owner");
+        let lease_path = path.join("lease");
+        if [&marker, &lease_path]
+            .iter()
+            .any(|p| fs::symlink_metadata(p).map_or(true, |m| !m.is_file() || is_link(&m)))
+        {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        let Ok(file) = fs::File::open(marker) else {
+            continue;
+        };
+        if file.take(64).read_to_end(&mut bytes).is_err() || bytes != WORKSPACE_MARKER {
+            continue;
+        }
+        let Ok(lease) = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lease_path)
+        else {
+            continue;
+        };
+        if lease.try_lock().is_err() {
+            continue;
+        }
+        // Canonical target was checked above and remains guarded by this lease.
+        // remove_dir_all removes links inside the directory, not their targets.
+        let _ = fs::remove_dir_all(&path);
+    }
+}
+
+pub fn cleanup_stale_workspaces() {
+    if let Ok(root) = cache_root() {
+        cleanup_workspaces(&root);
+    }
+}
+
+struct Workspace {
+    directory: Option<tempfile::TempDir>,
+    lease: Option<fs::File>,
+    root: PathBuf,
+}
+impl Workspace {
+    fn new(root: &Path) -> Result<Self, String> {
+        fs::create_dir_all(root).map_err(|e| e.to_string())?;
+        if is_link(&fs::symlink_metadata(root).map_err(|e| e.to_string())?) {
+            return Err("PDF cache cannot be a link".into());
+        }
+        cleanup_workspaces(root);
+        let directory = tempfile::Builder::new()
+            .prefix("job-")
+            .tempdir_in(root)
+            .map_err(|e| e.to_string())?;
+        let lease = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(directory.path().join("lease"))
+            .map_err(|e| e.to_string())?;
+        lease.try_lock().map_err(|e| e.to_string())?;
+        fs::write(directory.path().join("owner"), WORKSPACE_MARKER).map_err(|e| e.to_string())?;
+        Ok(Self {
+            directory: Some(directory),
+            lease: Some(lease),
+            root: root.to_path_buf(),
+        })
+    }
+    fn path(&self) -> &Path {
+        self.directory.as_ref().unwrap().path()
+    }
+}
+impl Drop for Workspace {
+    fn drop(&mut self) {
+        self.lease.take();
+        if let Some(directory) = self.directory.take() {
+            if directory.close().is_err() {
+                // Antivirus/printing can briefly hold the PDF after cancellation.
+                // Retry outside the UI thread; crashes are recovered at startup.
+                let root = self.root.clone();
+                std::thread::spawn(move || {
+                    for delay in [250, 1000, 3000] {
+                        std::thread::sleep(Duration::from_millis(delay));
+                        cleanup_workspaces(&root);
+                    }
+                });
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Converter {
@@ -114,7 +257,9 @@ fn config_path() -> Result<PathBuf, String> {
 pub fn document_converters() -> Result<serde_json::Value, String> {
     let path = config_path()?;
     let r = read_registry(&path)?;
-    Ok(serde_json::json!({"path":path,"default":r.default,"converters":r.converters}))
+    Ok(
+        serde_json::json!({"path":path,"cachePath":cache_root()?,"default":r.default,"converters":r.converters}),
+    )
 }
 
 fn local_image(root: &Path, source: &str, budget: &mut u64) -> Option<String> {
@@ -327,13 +472,20 @@ fn builtin_convert(
         std::process::id(),
         PRINT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
-    let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(document))
+    let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(document))
         .title("RHFiles PDF")
         .visible(false)
         .focused(false)
         .skip_taskbar(true)
-        .inner_size(900., 1100.)
-        .data_directory(html.parent().unwrap().join("webview-profile"))
+        .inner_size(900., 1100.);
+    // Reuse the app's WebView2 environment. A per-job browser profile keeps
+    // locked browser/cache files alive after destroy and defeats TempDir cleanup.
+    let builder = if let Some(directory) = crate::profile::webview_dir() {
+        builder.data_directory(directory)
+    } else {
+        builder
+    };
+    let window = builder
         .on_page_load(move |window, event| {
             if event.event() != tauri::webview::PageLoadEvent::Finished
                 || event.url() != &expected
@@ -393,8 +545,10 @@ fn builtin_convert(
         .map_err(|e| format!("Unable to start WebView2 PDF engine: {e}"))?;
     let deadline = Instant::now() + Duration::from_secs(120);
     let result = loop {
-        if cancel.is_cancelled(Some(id))? {
-            break Err("Conversion cancelled".into());
+        match cancel.is_cancelled(Some(id)) {
+            Ok(true) => break Err("Conversion cancelled".into()),
+            Err(error) => break Err(error),
+            _ => {}
         }
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(r) => break r,
@@ -476,11 +630,8 @@ pub fn convert_markdown_pdf(
         return Err("Markdown exceeds 16 MiB".into());
     }
     let markdown = String::from_utf8(bytes).map_err(|_| "Markdown must be UTF-8")?;
-    let folder = output.parent().ok_or("Output needs a parent directory")?;
-    let temporary = tempfile::Builder::new()
-        .prefix(".rhfiles-pdf-")
-        .tempdir_in(folder)
-        .map_err(|e| e.to_string())?;
+    output.parent().ok_or("Output needs a parent directory")?;
+    let temporary = Workspace::new(&cache_root()?)?;
     let html = temporary.path().join("document.html");
     let pdf = temporary.path().join("document.pdf");
     fs::write(
@@ -523,6 +674,37 @@ pub fn convert_markdown_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workspace_drop_removes_task_content() {
+        let root = tempfile::tempdir().unwrap();
+        let path;
+        {
+            let task = Workspace::new(root.path()).unwrap();
+            path = task.path().to_path_buf();
+            fs::write(path.join("document.html"), "private content").unwrap();
+        }
+        assert!(!path.exists());
+    }
+    #[test]
+    fn recovery_preserves_live_and_unowned_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let active = Workspace::new(root.path()).unwrap();
+        let unowned = root.path().join("job-user-data");
+        fs::create_dir(&unowned).unwrap();
+        fs::write(unowned.join("important"), "keep").unwrap();
+        let abandoned = tempfile::Builder::new()
+            .prefix("job-")
+            .tempdir_in(root.path())
+            .unwrap()
+            .keep();
+        fs::write(abandoned.join("owner"), WORKSPACE_MARKER).unwrap();
+        fs::write(abandoned.join("lease"), "").unwrap();
+        fs::write(abandoned.join("document.html"), "abandoned").unwrap();
+        cleanup_workspaces(root.path());
+        assert!(active.path().exists());
+        assert!(unowned.join("important").exists());
+        assert!(!abandoned.exists());
+    }
     #[test]
     fn scripts_and_remote_resources_are_not_executed() {
         let html=markdown_html("# 中文\n<script>alert(1)</script>\n![remote](https://evil.invalid/x.png)\n[bad](javascript:alert(1))",Path::new("."));

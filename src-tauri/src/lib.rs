@@ -75,6 +75,7 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            std::thread::spawn(documents::cleanup_stale_workspaces);
             file_dialog_integration::initialize(app.handle().clone())?;
             tray::install(app)?;
 

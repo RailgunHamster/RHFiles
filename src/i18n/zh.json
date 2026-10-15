@@ -920,6 +920,8 @@
   "pane.rightFiles": "右窗格文件列表",
   "ctx.convertFormat": "转换格式…",
   "pdf.title": "Markdown 生成 PDF…",
+  "ctx.generateAs": "生成为",
+  "pdf.temporaryHelp": "临时转换文件会自动清理；异常退出的任务将在下次启动时回收。",
   "pdf.provider": "转换器",
   "pdf.start": "生成 PDF",
   "pdf.help": "不会覆盖已有 PDF。支持嵌入 Markdown 所在目录内的本地图片；不执行脚本，不加载网络资源。",

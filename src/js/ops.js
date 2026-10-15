@@ -1666,7 +1666,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.newTab'), icon:"tab", action: () => addTab(singleDir.path), hidden: !singleDir },
     { label: t('ctx.openWith'), icon:"window", submenu: openWithSubmenu, disabled: !singleSelection },
     { label: t('ctx.convertFormat'), icon:"convert", action: () => showMediaConvertDialog(singleFile, isRight), hidden: !conversionKind },
-    { label:t('pdf.title'),icon:"document",action:()=>showMarkdownPdfDialog(singleFile),hidden:IS_MAC || !singleFile || !['md','markdown'].includes(ext) },
+    { label:t('ctx.generateAs'),icon:"document",submenu:[{label:'PDF',icon:'document',action:()=>showMarkdownPdfDialog(singleFile)}],hidden:IS_MAC || !singleFile || !['md','markdown'].includes(ext) },
     { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), icon:"explorer", action: () => runContextCommand('open_in_windows_explorer', {path: sel[0].path, isDirectory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')), disabled: !singleSelection },
     { label: isFavoriteFolder(singleDir?.path) ? t('favorites.remove') : t('favorites.add'), icon:"star", action: () => toggleFavoriteFolder(singleDir.path, singleDir.name), hidden: !singleDir },
     { label: "-", action: null },

@@ -598,6 +598,7 @@
         <label for="markdown-pdf-name" data-i18n="convert.outputName">Output filename</label><input id="markdown-pdf-name" spellcheck="false">
       </div>
       <p class="settings-card-description" data-i18n="pdf.help">Existing PDFs are never overwritten. Local images within the Markdown folder are embedded; scripts and remote resources are blocked.</p>
+      <p class="dialog-help" data-i18n="pdf.temporaryHelp">Temporary conversion files are cleaned automatically.</p>
       <details><summary data-i18n="pdf.custom">Use another converter</summary><p data-i18n="pdf.configHelp">Edit the JSON registry, then reopen this dialog. Command providers receive separate input/output arguments; no shell command concatenation.</p><pre id="markdown-pdf-config"></pre><button class="dialog-btn" onclick="editDocumentConverterConfig()" data-i18n="pdf.editConfig">Open converter configuration</button></details>
       <p id="markdown-pdf-error" class="media-convert-error" role="alert" hidden></p>
     </div>

@@ -12,13 +12,18 @@ try{
   const info=await app.evaluate("call('document_converters')");assert.ok(info.converters.some(c=>c.kind==='builtin'));
   await app.evaluate(`navigateAddressInput(${JSON.stringify(pathToFileURL(input).href)},false)`);
   await app.evaluate('showContextMenu(120,120,false)');
-  assert.equal(await app.evaluate("document.querySelectorAll('.context-menu .ctx-icon-document').length"),1);
-  await app.click('.context-menu .ctx-item:has(.ctx-icon-document)');
+  assert.equal(await app.evaluate("document.querySelectorAll('.context-menu > .ctx-item:has(> .ctx-item-main > .ctx-icon-document)').length"),1);
+  await app.click('.context-menu > .ctx-item:has(> .ctx-item-main > .ctx-icon-document)');
+  const submenuPoint=await app.evaluate("(()=>{const r=document.querySelector('.context-menu > .ctx-item:has(> .ctx-item-main > .ctx-icon-document)').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+  await app.send('Input.dispatchMouseEvent',{type:'mouseMoved',...submenuPoint});
+  await app.click('.ctx-submenu .ctx-item:has(.ctx-icon-document)');
   await until(()=>app.evaluate("!document.getElementById('markdown-pdf-start').disabled"),'converter dialog ready');
   assert.equal(await app.evaluate("document.getElementById('markdown-pdf-name').value"),path.basename(output));
   await app.screenshot('markdown-pdf-dialog');
   await app.evaluate('startMarkdownPdf()');
   assert.equal(fs.readFileSync(output).subarray(0,5).toString(),'%PDF-');
+  const noStaging=async()=>{await until(()=>!fs.existsSync(info.cachePath)||fs.readdirSync(info.cachePath).length===0,'staging cleanup');assert.ok(!fs.readdirSync(app.directory).some(name=>name.startsWith('.rhfiles-pdf-')));};
+  await noStaging();
   const digest=()=>crypto.createHash('sha256').update(fs.readFileSync(output)).digest('hex');const before=digest();
   const error=await app.evaluate(`call('convert_markdown_pdf',${JSON.stringify({inputPath:input,outputPath:output,converterId:'builtin',operationId:'pdf-collision-qa'})}).then(()=>null,e=>String(e))`);
   assert.ok(error?.includes('never overwritten'));assert.equal(digest(),before);
@@ -32,11 +37,18 @@ try{
   const custom=path.join(app.directory,'external 中文.pdf');
   await app.evaluate(`call('convert_markdown_pdf',${JSON.stringify({inputPath:input,outputPath:custom,converterId:command.id,operationId:'pdf-command-qa'})})`);
   assert.equal(crypto.createHash('sha256').update(fs.readFileSync(custom)).digest('hex'),before);
+  await noStaging();
   for(const mode of ['fail','invalid']){
     save(mode);const destination=path.join(app.directory,mode+'.pdf');
     const failure=await app.evaluate(`call('convert_markdown_pdf',${JSON.stringify({inputPath:input,outputPath:destination,converterId:command.id,operationId:'pdf-'+mode+'-qa'})}).then(()=>null,e=>String(e))`);
     assert.ok(failure?.includes(mode==='fail'?'fixture-converter-error':'not a valid'));assert.ok(!fs.existsSync(destination),'Failed conversion must not publish an output');
+    await noStaging();
   }
+  save('wait');const canceledOutput=path.join(app.directory,'canceled.pdf');
+  await app.evaluate(`window.__pdfCancel=call('convert_markdown_pdf',${JSON.stringify({inputPath:input,outputPath:canceledOutput,converterId:command.id,operationId:'pdf-cancel-qa'})}).then(()=>null,e=>String(e));true`);
+  await until(()=>fs.existsSync(info.cachePath)&&fs.readdirSync(info.cachePath).some(name=>fs.existsSync(path.join(info.cachePath,name,'document.html'))),'cancel conversion started');
+  await app.evaluate("call('cancel_operation',{operationId:'pdf-cancel-qa'})");
+  assert.match(await app.evaluate('window.__pdfCancel'),/cancelled/i);assert.ok(!fs.existsSync(canceledOutput));await noStaging();
   fs.copyFileSync(output,path.join(app.artifactDir,'markdown-output.pdf'));fs.copyFileSync(input,path.join(app.artifactDir,'source.md'));
   console.log(JSON.stringify({pass:true,pdf:path.join(app.artifactDir,'markdown-output.pdf'),bytes:fs.statSync(output).size,configPath:info.path,collisionProtected:true,commandProvider:true,errorAndInvalidOutput:true},null,2));
 }finally{app.close();}

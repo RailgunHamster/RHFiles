@@ -379,6 +379,7 @@ function focusFilePane(listOrId) {
 }
 
 function renderFiles(tabOrPane, listId, countId, selId, isRight) {
+  delete tabOrPane._columnSelection;
   const list = document.getElementById(listId);
   list._thumbnailObserver?.disconnect();
   const entries = tabOrPane.entries || [];
@@ -500,7 +501,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
     row.addEventListener("contextmenu", e => {
       e.preventDefault();
       e.stopPropagation();
-      if (!sel.has(fileIdx)) { sel.clear(); sel.add(fileIdx); tabOrPane.lastIdx = fileIdx; renderFiles(tabOrPane, listId, null, null, isRight); }
+      selectContextTarget(fileIdx, tabOrPane, listId, isRight);
       showContextMenu(e.clientX, e.clientY, isRight);
     });
     row.draggable = !file.archive_entry;
@@ -610,7 +611,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.dataset.index = i;
     item.dataset.path = file.path;
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); selectContextTarget(i, tabOrPane, listId, isRight); showContextMenu(e.clientX, e.clientY, isRight); });
     item.addEventListener("mouseenter", () => { if (!sel.has(i)) item.style.borderColor = "var(--accent)"; });
     item.addEventListener("mouseleave", () => { if (!sel.has(i)) item.style.borderColor = "var(--border)"; });
     item.addEventListener("dragstart", e => {
@@ -666,14 +667,17 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
         item.addEventListener("click", async () => {
           G.lastActivePane = isRight ? 'right' : 'left';
           if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
-          col.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
+          browser.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
           item.classList.add('selected');
           if (rootIndex >= 0) {
+            delete tabOrPane._columnSelection;
             sel.clear();
             sel.add(rootIndex);
             tabOrPane.lastIdx = rootIndex;
             updateStatus(tabOrPane, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection');
             updatePreviewForSelection();
+          } else {
+            selectColumnTarget(entry, tabOrPane, listId, isRight);
           }
           if (entry.is_dir) {
             await renderColumn(colIdx + 1, entry.path);
@@ -696,12 +700,15 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
           event.preventDefault();
           event.stopPropagation();
           if (rootIndex >= 0) {
-            sel.clear();
-            sel.add(rootIndex);
-            tabOrPane.lastIdx = rootIndex;
+            selectContextTarget(rootIndex, tabOrPane, listId, isRight, false);
+            browser.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
+            item.classList.add('selected');
             showContextMenu(event.clientX, event.clientY, isRight);
-          } else if (typeof showPathContextMenu === 'function') {
-            showPathContextMenu(event.clientX, event.clientY, entry.path, entry.is_dir);
+          } else {
+            browser.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
+            item.classList.add('selected');
+            selectColumnTarget(entry, tabOrPane, listId, isRight);
+            showContextMenu(event.clientX, event.clientY, isRight);
           }
         });
         item.draggable = !entry.archive_entry;
@@ -759,7 +766,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.dataset.path = file.path;
 
     item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); if (!sel.has(i)) { sel.clear(); sel.add(i); tabOrPane.lastIdx = i; renderFiles(tabOrPane, listId, null, null, isRight); } showContextMenu(e.clientX, e.clientY, isRight); });
+    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); selectContextTarget(i, tabOrPane, listId, isRight); showContextMenu(e.clientX, e.clientY, isRight); });
     item.addEventListener("dragstart", e => {
       prepareFileDragSelection(item, i, sel, tabOrPane, listId, isRight);
       setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item);
@@ -857,7 +864,38 @@ function pumpThumbnailQueue() {
   }
 }
 
+function selectContextTarget(index, pane, listId, isRight, repaint = true) {
+  delete pane._columnSelection;
+  pane._keyboardRange = null;
+  G.lastActivePane = isRight ? 'right' : 'left';
+  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+  focusFilePane(document.getElementById(listId));
+  if (!pane.sel.has(index)) {
+    pane.sel.clear(); pane.sel.add(index); pane.lastIdx = index;
+    if (repaint) renderFiles(pane, listId, null, null, isRight);
+  }
+  updateStatus(pane, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection');
+  updatePreviewForSelection();
+  if (typeof fileChoiceRefreshSelection === 'function') fileChoiceRefreshSelection();
+}
+
+function selectColumnTarget(entry, pane, listId, isRight) {
+  pane.sel.clear(); pane.lastIdx = -1; pane._keyboardRange = null;
+  pane._columnSelection = {root:pane.path, entry};
+  G.lastActivePane = isRight ? 'right' : 'left';
+  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+  focusFilePane(document.getElementById(listId));
+  updateStatus(pane, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection');
+  updatePreviewForSelection();
+}
+
+function selectedEntriesForPane(pane) {
+  if (G.layout === 'columns' && pane._columnSelection?.root === pane.path) return [pane._columnSelection.entry];
+  return [...(pane.sel || [])].map(index => pane.entries?.[index]).filter(Boolean);
+}
+
 function handleRowClick(e, index, sel, tabOrPane, isRight) {
+  delete tabOrPane._columnSelection;
   tabOrPane._keyboardRange = null;
   G.lastActivePane = isRight ? 'right' : 'left';
   if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
@@ -895,8 +933,8 @@ function updateStatus(tabOrPane, countId, selId) {
   const sel = tabOrPane.sel || new Set();
   const count = entries.length;
   let txt = count === 1 ? t('status.item', {count: count}) : t('status.items', {count: count});
-  if (sel.size > 0) {
-    const selected = [...sel].map(i => entries[i]).filter(Boolean);
+  const selected = selectedEntriesForPane(tabOrPane);
+  if (selected.length > 0) {
     const dirs = selected.filter(f => f.is_dir).length;
     const files = selected.filter(f => !f.is_dir).length;
     const totalSize = selected.reduce((s, f) => s + (f.size||0), 0);
@@ -913,14 +951,13 @@ function updateStatus(tabOrPane, countId, selId) {
 function getSelectedPaths(isRight) {
   if (typeof isRight !== 'boolean') isRight = G.dualOn && G.lastActivePane === 'right';
   const tabOrPane = isRight ? G.rp : getTab();
-  const entries = tabOrPane.entries || [];
-  const sel = tabOrPane.sel || new Set();
-  return [...sel].map(i => entries[i]).filter(Boolean);
+  return selectedEntriesForPane(tabOrPane);
 }
 
 function selectAll(isRight) {
   if (typeof isRight !== 'boolean') isRight = G.dualOn && G.lastActivePane === 'right';
   const tabOrPane = isRight ? G.rp : getTab();
+  delete tabOrPane._columnSelection;
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
   sel.clear();
