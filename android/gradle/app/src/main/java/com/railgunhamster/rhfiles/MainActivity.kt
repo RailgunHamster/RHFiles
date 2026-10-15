@@ -22,6 +22,7 @@ import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONArray
@@ -124,6 +125,7 @@ class MainActivity : TauriActivity() {
     // Honor the responsive viewport instead of WebView's fixed layout width.
     webView.settings.useWideViewPort=true
     webView.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->adaptiveWindow.publish()}
+    ViewCompat.setOnApplyWindowInsetsListener(webView){_,insets->webView.post{if(appWebView===webView)adaptiveWindow.publish()};insets}
     if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
     WebViewCompat.addWebMessageListener(webView,"RHFilesNative",setOf("http://tauri.localhost","https://tauri.localhost")) {sourceView,message,_,mainFrame,reply->
       if(mainFrame && appWebView===sourceView && !io.isShutdown) {
@@ -165,7 +167,13 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true)
+    "ebook.open" -> {
+      val path=args.getString("path");require(!storage.isRemote(path)){"网络电子书请先下载到本机"}
+      if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile&&it.canRead()}){"电子书不存在或无法读取"}
+      require(EbookSource.supported(args.getString("name"))){"不支持的电子书格式"}
+      onUi{startActivity(Intent(this,EbookActivity::class.java).putExtra("path",path).putExtra("name",args.getString("name")).putExtra("theme",args.optString("theme","light")));true}
+    }
     "media.thumbnail" -> thumbnails.read(args.getString("path"),args.optInt("maxEdge",160))
     "window.layout" -> onUi{adaptiveWindow.current()}
     "media.play" -> {

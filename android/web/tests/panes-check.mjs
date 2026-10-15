@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';import path from 'node:path';import {fileURLToPath} from 'node:url';import {browserFixture} from './browser-fixture.mjs';
+const test=await browserFixture(path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'));let checks=0;
+const check=(condition,label)=>{assert.ok(condition,label);console.log('ok '+(++checks)+' - '+label);};
+const context=await test.browser.newContext({viewport:{width:1280,height:1000},hasTouch:true});const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await context.addInitScript(()=>{
+  if(window.parent!==window)return;
+  const root='/storage/emulated/0',entry=(name,isDir=false)=>({name,path:root+'/'+name,isDir,kind:isDir?'folder':'document',size:12});
+  const model=window.__model={calls:[],fs:{[root]:[entry('Download',true),entry('Music',true),entry('notes.txt'),entry('other.txt')],[root+'/Download']:[],[root+'/Music']:[]}};
+  window.__TAURI_INTERNALS__={invoke:async(cmd,args={})=>{model.calls.push({cmd,args});switch(cmd){
+    case 'get_permission_status':return {manageExternalStorage:true,sharedStorageReadable:true};case 'index_status':return {entryCount:4,indexing:false,lastFinishedMs:Date.now()};case 'debug_note':return;case 'app_info':return {version:'0.1.9-test'};
+    case 'list_dir':return {path:args.path,entries:structuredClone(model.fs[args.path]||[])};
+    default:throw Error('Unmocked Rust '+cmd);
+  }}};
+  window.RHFilesNative={postMessage(message){const {id,command,args}=JSON.parse(message);model.calls.push({cmd:command,args});Promise.resolve().then(async()=>{switch(command){
+    case 'capabilities':return {version:3,nativeBack:true,dualPane:true,adaptiveLayout:true};case 'theme':return true;case 'permission':return true;
+    case 'window.layout':return {hinge:null};case 'roots':return [{path:root,label:'内部存储'}];case 'shares':case 'jobs':return [];case 'shares.clear':return true;
+    case 'job.start':{model.job={id:'job',state:'completed',outputs:[],completed:[],failures:[]};for(const source of args.args.sources){const parent=source.slice(0,source.lastIndexOf('/')),e=model.fs[parent].find(e=>e.path===source);assertEntry:if(e){const target=args.args.destination+'/'+e.name;model.fs[args.args.destination].push({...e,path:target});model.job.outputs.push(target);model.job.completed.push(source);if(args.op==='move')model.fs[parent]=model.fs[parent].filter(e=>e.path!==source);}}return 'job';}
+    case 'job.status':if(model.hold)await new Promise(resolve=>model.release=resolve);return model.job;
+    default:throw Error('Unmocked Native '+command);
+  }}).then(result=>window.RHFilesNative.onmessage({data:JSON.stringify({id,result})}),error=>window.RHFilesNative.onmessage({data:JSON.stringify({id,error:error.message})}));}};
+});
+const pane=which=>page.frames().find(f=>new URL(f.url()).searchParams.get('pane')===which);
+const ready=async()=>{await page.waitForFunction(()=>[...document.querySelectorAll('.file-pane')].length===2&&[...document.querySelectorAll('.file-pane')].every(f=>!!f.contentWindow.rhfilesPane&&!f.contentWindow.document.getElementById('home').hidden));};
+const select=async(frame,name)=>{await frame.locator('#task-bar').waitFor({state:'hidden'});const row=frame.locator(`[data-path="/storage/emulated/0/${name}"]`);await row.dispatchEvent('pointerdown',{pointerId:1,pointerType:'touch',button:0,clientX:80,clientY:200});await new Promise(resolve=>setTimeout(resolve,550));await row.dispatchEvent('pointerup',{pointerId:1,pointerType:'touch'});};
+try{
+  await page.goto(test.url);await ready();let first=pane('first'),second=pane('second');
+  check(await first.locator('#home').isVisible()&&await second.locator('#home').isVisible(),'two independent homes');
+  await first.locator('[data-tile="storage-0"]').click();await first.locator('[data-path$="notes.txt"]').waitFor();
+  check(await second.locator('#home').isVisible(),'first navigation does not change second');
+  await second.locator('[data-tile="downloads"]').click();
+  await select(first,'notes.txt');await first.locator('#copy-to-pane').click();
+  await first.locator('#sheet .sheet-note').waitFor();check((await first.locator('#sheet').innerText()).includes('/storage/emulated/0/Download'),'copy confirmation identifies exact peer destination');
+  await first.locator('#sheet').getByRole('button',{name:'复制',exact:true}).click();await second.locator('[data-path$="notes.txt"]').waitFor();
+  check(await first.locator('[data-path$="notes.txt"]').isVisible(),'copy preserves source, refreshes destination');
+  await select(first,'other.txt');await first.locator('#move-to-pane').click();await first.locator('#sheet').getByRole('button',{name:'移动',exact:true}).click();await second.locator('[data-path$="other.txt"]').waitFor();
+  check(await first.locator('[data-path$="other.txt"]').count()===0,'move removes only successful source and refreshes both panes');
+  await page.locator('.pane-divider button').click();await page.locator('[data-layout=rows]').click();
+  check(await page.locator('#workbench').getAttribute('data-mode')==='rows','divider switches to vertical stack');
+  check((await first.locator('#title').innerText())==='内部存储'&&(await second.locator('#title').innerText())==='下载','switch preserves both routes');
+  await second.locator('#btn-home').click();await select(first,'notes.txt');await first.locator('#copy-to-pane').click();
+  check((await first.locator('#toast').innerText()).includes('目标文件夹'),'Home cannot be silently used as transfer destination');
+  await first.locator('#sel-close').click();await select(first,'notes.txt');await first.locator('[data-action=copy]').click();
+  await second.locator('[data-tile="storage-0"]').click();await second.locator('[data-path$="Music"]').click();
+  check(await second.locator('#paste-bar').isVisible(),'shared clipboard is available in peer pane');
+  await second.locator('#btn-paste').click();await second.locator('[data-path$="notes.txt"]').waitFor();
+  check(!await first.locator('#paste-bar').isVisible(),'completed shared paste clears both clipboard bars');
+  await page.setViewportSize({width:412,height:892});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='single');check(await page.locator('.file-pane:visible').count()===1,'narrow phone shows only active pane');
+  await page.setViewportSize({width:1280,height:1000});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='rows');check(await page.locator('.file-pane:visible').count()===2,'expanding restores both panes without recreating them');
+  check((await second.locator('#title').innerText())==='Music','inactive pane route survived resize');
+  check(errors.length===0,'no JavaScript errors: '+errors.join(';'));
+  console.log('PASS '+checks+' dual-pane browser checks');
+}finally{await context.close();await test.close();}

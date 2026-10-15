@@ -129,7 +129,7 @@ class AppUpdates private constructor(private val context: Context) {
     require(state !in listOf("checking","downloading","verifying")) { "请等待当前更新任务结束或取消后再修改配置" }
     require(value.getString("source") in listOf("github","family")) { "更新源无效" }
     AndroidUpdateFeed.githubRepository(value.getString("github"))
-    val inline=value.optString("smbUsername").isNotBlank()||value.optString("smbPassword").isNotEmpty()
+    val inline=value.getString("source")=="family"&&(value.optString("smbUsername").isNotBlank()||value.optString("smbPassword").isNotEmpty())
     familyInput(value.getString("family"),if(inline)"" else value.optString("connectionId"),UPDATE_FEED,false)
     proxy(value)
     if(inline){val unc=RemoteStorage.parseUnc(value.getString("family"));SmbHosts.credentials(value.optString("smbUsername"),value.optString("smbDomain"))

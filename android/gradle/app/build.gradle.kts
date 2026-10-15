@@ -35,6 +35,7 @@ android {
     }
     compileSdk = 36
     namespace = "com.railgunhamster.rhfiles"
+    sourceSets.getByName("main").assets.srcDir(rootProject.file("../../../reader"))
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.railgunhamster.rhfiles"

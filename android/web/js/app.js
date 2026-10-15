@@ -5,6 +5,11 @@
   const $ = (id) => document.getElementById(id);
   const saved = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
   const cache = (key, value) => localStorage.setItem(key, value);
+  const navigationKey='rhfiles.navigation'+(workbench.id==='second'?'.second':'');
+  let peerTask=null;
+  const paneHost=()=>workbench.parentHost();
+  const dual=()=>!!paneHost()?.dual(window);
+  const blocked=()=>!!state.task||!!peerTask;
   const categories = [
     ['image', '图片', '#9662b7'], ['audio', '音频', '#27877f'], ['video', '视频', '#c36268'],
     ['document', '文档', '#528bc1'], ['archive', '压缩包', '#b08451'], ['recent', '最近修改', '#63879a'],
@@ -26,11 +31,11 @@
     if(!state.permissions||document.hidden)return;
     try{
       const value={version:1,root:state.root,route:{...state.route,scroll:$('filelist').scrollTop},stack:state.stack.slice(-128),selected:[...state.selected],clipboard:state.clipboard};
-      const json=JSON.stringify(value);if(json!==lastNavigationSnapshot){cache('rhfiles.navigation',json);lastNavigationSnapshot=json;}
+      const json=JSON.stringify(value);if(json!==lastNavigationSnapshot){cache(navigationKey,json);lastNavigationSnapshot=json;}
     }catch{} // A full/disabled cache never prevents browsing or file operations.
   }
   function savedNavigation(){
-    try{const value=JSON.parse(saved('rhfiles.navigation','null'));return value?.version===1&&['home','folder','library','favorites','search','tool'].includes(value.route?.screen)?value:null;}catch{return null;}
+    try{const value=JSON.parse(saved(navigationKey,'null'));return value?.version===1&&['home','folder','library','favorites','search','tool'].includes(value.route?.screen)?value:null;}catch{return null;}
   }
   const folderParents = new Map();
   let homeSnapshot='';
@@ -83,24 +88,26 @@
     $('selection-head').hidden = count === 0;
     $('sel-count').textContent = '已选择 ' + count + ' 项';
     $('selection-bar').hidden = count === 0;
-    $('selection-bar').querySelector('[data-action="rename"]').disabled = count !== 1 || !!state.task;
-    for (const node of $('selection-bar').querySelectorAll('button')) if (node.dataset.action !== 'rename') node.disabled = !!state.task;
+    $('selection-bar').querySelector('[data-action="rename"]').disabled = count !== 1 || blocked();
+    for (const node of $('selection-bar').querySelectorAll('button')) if (node.dataset.action !== 'rename') node.disabled = blocked();
+    $('pane-transfer-actions').hidden=!count||!dual();
+    $('copy-to-pane').disabled=$('move-to-pane').disabled=blocked();
     $('filelist').classList.toggle('selecting', count > 0);
     $('browse-actions').hidden = !isList() || count > 0 || !!pending;
-    $('btn-new').disabled = route.screen !== 'folder' || !!state.task || state.busy;
+    $('btn-new').disabled = route.screen !== 'folder' || blocked() || state.busy;
     $('list-status').hidden = !isList() || state.busy;
     $('btn-search').hidden = route.screen === 'tool';
     $('pathbar').hidden = route.screen !== 'folder';
     $('searchbar').hidden = route.screen !== 'search';
-    $('paste-bar').hidden = !pending || !!count || !!state.task;
+    $('paste-bar').hidden = !pending || !!count || blocked();
     if (pending) {
       $('paste-label').textContent = (pending.mode === 'cut' ? '待移动 ' : '待复制 ') + pending.paths.length + ' 项';
       $('paste-destination').textContent = route.screen === 'folder' ? '目标：' + pathLabel(route.path) : '请打开目标文件夹';
       $('btn-paste').textContent = pending.mode === 'cut' ? '移动到这里' : '粘贴到这里';
       $('btn-paste').disabled = route.screen !== 'folder' || state.busy;
     }
-    $('task-bar').hidden = !state.task;
-    $('task-label').textContent = state.task?.label || '';
+    $('task-bar').hidden = !blocked();
+    $('task-label').textContent = state.task?.label || peerTask || '';
     if (route.screen === 'folder') {
       const root = rootFor(route.path), boundary=route.boundary;
       const parts = boundary ? [{name:route.boundaryLabel,path:boundary},...fmt.path2parts(route.path).filter(p=>p.path.startsWith(boundary+'/'))] : api.isVirtual(route.path) ? [{name:route.label || root?.label || '网络 / 授权位置',path:route.path}] : root ? [{ name: rootLabel(root), path: root.path }, ...fmt.path2parts(route.path).filter(p => p.path.startsWith(root.path + '/'))] : fmt.path2parts(route.path);
@@ -123,6 +130,7 @@
     renderShell();
     for (const node of $('filelist').querySelectorAll('[data-path]')) {
       node.classList.toggle('selected', state.selected.has(node.dataset.path));
+      node.classList.toggle('pending-cut',state.clipboard?.mode==='cut'&&state.clipboard.paths.includes(node.dataset.path));
       node.setAttribute('aria-selected', String(state.selected.has(node.dataset.path)));
     }
   }
@@ -297,6 +305,8 @@
   function renderList(scrollOverride) {
     if (!isList() || $('filelist').hidden) return;
     const container = $('filelist'), list = currentEntries();
+    const existing=new Map([...container.querySelectorAll('[data-path]')].map(node=>[node.dataset.path,node]));
+    const rowFor=entry=>{const old=existing.get(entry.path);return old?.dataset.signature===JSON.stringify(entry)&&old.classList.contains(state.view==='grid'?'cell':'row')?old:buildNode(entry);};
     let scroll = typeof scrollOverride === 'number' ? scrollOverride : container.scrollTop;
     container.classList.toggle('grid', state.view === 'grid');
     container.replaceChildren();
@@ -322,7 +332,7 @@
       const {first,last}=mobileList.range(container.scrollTop,container.clientHeight,height,columns,list.length);
       const rangeKey=first+':'+last;if(previousRange===rangeKey)return;previousRange=rangeKey;
       windowNode.style.transform=`translateY(${first/columns*height}px)`;
-      mobileList.reconcile(windowNode,list.slice(first,last),buildNode);thumbnails.prune();
+      mobileList.reconcile(windowNode,list.slice(first,last),rowFor);thumbnails.prune();
     }
     container.onscroll = () => { if (!scheduled) { scheduled = true; requestAnimationFrame(paint); } clearTimeout(navigationTimer);navigationTimer=setTimeout(rememberNavigation,100); };
     paint(); paintSelection();
@@ -330,6 +340,7 @@
   function buildNode(entry) {
     const node = ui.el('div', state.view === 'grid' ? 'cell' : 'row');
     node.dataset.path = entry.path; node.dataset.kind = entry.isDir ? 'folder' : entry.kind;
+    node.dataset.signature=JSON.stringify(entry);
     node.tabIndex = 0; node.setAttribute('role', 'option'); node.setAttribute('aria-label', entry.name);
     node.classList.toggle('selected',state.selected.has(entry.path));node.setAttribute('aria-selected',String(state.selected.has(entry.path)));
     if (state.clipboard?.mode === 'cut' && state.clipboard.paths.includes(entry.path)) node.classList.add('pending-cut');
@@ -365,6 +376,7 @@
     if(entry.libraryAlbum)return go({screen:'library',category:state.route.category,folder:entry.path});
     if (entry.isDir) return go(folderRoute(entry.path,entry.name,
       entry.parentPath || (state.route.screen==='folder' ? state.route.path : null)));
+    if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&!entry.path.startsWith('remote://'))return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});
     if(api.playbackAvailable() && ['video','audio'].includes(entry.kind) && !entry.path.startsWith('remote://'))return api.native('media.play',{path:entry.path,name:entry.name,kind:entry.kind});
     if (api.featuresAvailable() && api.isVirtual(entry.path)) {
       if (entry.path.startsWith('content://')) return api.systemOpen(entry.path);
@@ -402,6 +414,7 @@
       ...(!entry.isDir && api.nativeAvailable() ? [action('打开方式', 'open', () => api.systemOpen(entry.path)), action('分享', 'share', () => api.shareFile(entry.path))] : []),
       action('复制', 'copy', () => setClipboard('copy',[entry.path])),
       action('移动', 'cut', () => setClipboard('cut',[entry.path])),
+      ...(dual()?[action('复制到另一窗格','copy',()=>transferToPane('copy',[entry.path])),action('移动到另一窗格','cut',()=>transferToPane('cut',[entry.path]))]:[]),
       action('重命名', 'rename', () => rename(entry)),
       ...(api.featuresAvailable() ? androidFeatures.entryActions(entry) : []),
       action(state.favorites.some(e => e.path === entry.path) ? '取消收藏' : '添加到收藏', 'star', () => favorite(entry)),
@@ -419,16 +432,36 @@
     if (state.route.screen === 'favorites') go(state.route, { replace: true });
   }
   function setClipboard(mode, paths) {
-    if (state.task) return ui.toast('请等待当前文件任务完成');
+    if (blocked()) return ui.toast('请等待当前文件任务完成');
     if (!paths.length) return;
     state.clipboard = { mode, paths: [...new Set(paths)] }; state.selected.clear();
+    paneHost()?.clipboard(window,state.clipboard);
     renderList(); renderShell();
   }
   async function task(label, work) {
-    if (state.task) { ui.toast('请等待当前文件任务完成'); return; }
+    if (blocked()||(paneHost()&&!paneHost().acquire(window,label))) { ui.toast('请等待当前文件任务完成'); return; }
     state.task = { label }; renderShell();
     try { await work(); } catch (err) { error(err); }
-    finally { state.task = null; renderShell(); }
+    finally { state.task = null; paneHost()?.release(window); renderShell(); }
+  }
+  async function transferToPane(mode,paths) {
+    if(blocked()||!paths.length)return;
+    const other=paneHost()?.other(window);
+    if(!other)return ui.toast('请先开启双窗格');
+    if(other.route.screen!=='folder')return ui.toast('请先在另一窗格打开目标文件夹');
+    if(other.busy)return ui.toast('另一窗格正在读取，请稍后再试');
+    const destination=other.route.path;
+    if(!await ui.confirm(mode==='cut'?'移动到另一窗格？':'复制到另一窗格？',paths.length+' 项 → '+destination+'\n文件夹会合并；不会自动覆盖同名文件。',mode==='cut'?'移动':'复制',{danger:false,icon:mode==='cut'?'cut':'copy'}))return;
+    const start={...state.route};
+    // Capture the displayed destination before confirmation; never silently
+    // follow the other pane to a different folder during an async dialog.
+    await task((mode==='cut'?'正在移动到 ':'正在复制到 ')+pathLabel(destination),async()=>{
+      const report=await(mode==='cut'?api.moveEntries:api.copyEntries)({sources:paths,destination});
+      const failed=new Set((report.failures||[]).map(item=>item.path));state.selected=new Set(paths.filter(path=>failed.has(path)));
+      ui.toast('已完成 '+(report.moved?.length||0)+' 项'+(failed.size?'，失败 '+failed.size+' 项':''));
+      if(sameRoute(state.route,start))await go(start,{replace:true});
+      failures('部分文件未完成',report);
+    });
   }
   function failures(title, report) {
     if (report.failures?.length) ui.openSheet(title, [action('关闭','close',()=>{})], report.failures.map(item => item.path + '\n' + item.message).join('\n\n'));
@@ -443,6 +476,7 @@
         const failed = new Set((report.failures || []).map(item => item.path));
         const remaining = pending.paths.filter(path => failed.has(path));
         state.clipboard = remaining.length ? { ...pending, paths: remaining } : null;
+        paneHost()?.clipboard(window,state.clipboard,pending.revision);
       }
       ui.toast('已完成 ' + (report.moved?.length || 0) + ' 项' + (report.failures?.length ? '，失败 ' + report.failures.length + ' 项，可重试' : ''));
       if (sameRoute(state.route,start)) await go(start, { replace: true });
@@ -450,7 +484,7 @@
     });
   }
   async function remove(paths) {
-    if (state.task || !paths.length) return;
+    if (blocked() || !paths.length) return;
       const recycle = api.featuresAvailable() && paths.every(p=>!api.isVirtual(p));
       const confirmed = await ui.confirm('删除 ' + paths.length + ' 项？', (recycle ? '移入 RHFiles 回收站，可在首页恢复。\n' : '本次为永久删除，无法撤销。\n') + paths.slice(0,3).map(fmt.baseName).join('\n'), recycle ? '移入回收站' : '永久删除');
     if (!confirmed) return;
@@ -468,7 +502,7 @@
     });
   }
   async function rename(entry) {
-    if (state.task) return;
+    if (blocked()) return;
     const name = await ui.prompt('重命名', entry.name, '保存');
     if (!name || name === entry.name) return;
     const start = { ...state.route };
@@ -618,15 +652,26 @@
     try { state.index=await api.indexStatus(); } catch {}
     await go({screen:'home'},{replace:true});
     if (api.featuresAvailable()) {
-      androidFeatures.receiveShares().catch(error);
-      if (permissions.manageExternalStorage && !state.index?.indexing && (!state.index?.lastFinishedMs || Date.now()-state.index.lastFinishedMs>3600000)) rebuildIndex().catch(error);
+      if(workbench.primary())androidFeatures.receiveShares().catch(error);
+      if (workbench.primary()&&permissions.manageExternalStorage && !state.index?.indexing && (!state.index?.lastFinishedMs || Date.now()-state.index.lastFinishedMs>3600000)) rebuildIndex().catch(error);
     }
   }
   async function boot() {
     await api.initNative();
+    if(await workbench.boot())return;
     androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,button,action,error});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
+    window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy}),refresh:()=>refreshCurrent().catch(error)};
+    window.addEventListener('rhfiles-panes-changed',renderShell);
+    window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
+    window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
+    window.addEventListener('rhfiles-files-changed',()=>{if(!document.hidden)refreshCurrent().catch(error);});
+    window.addEventListener('storage',event=>{
+      if(event.key==='rhfiles.theme'){document.documentElement.dataset.theme=event.newValue==='dark'?'dark':'light';}
+      if(event.key==='rhfiles.favorites'){try{state.favorites=JSON.parse(event.newValue||'[]');renderDrawer();if(state.route.screen==='home')renderHome();}catch{}}
+      if(event.key==='rhfiles.hidden'){state.hidden=event.newValue==='1';if(isList())renderList();}
+    });
     for(const node of document.querySelectorAll('[data-icon]')) node.innerHTML=ui.icon(node.dataset.icon);
     document.documentElement.dataset.theme=saved('rhfiles.theme','light')==='dark'?'dark':'light';
     api.systemTheme(document.documentElement.dataset.theme==='dark').catch(()=>{});
@@ -654,9 +699,10 @@
       if(which==='copy'||which==='cut') setClipboard(which,paths);
       if(which==='delete') remove(paths).catch(error);
       if(which==='rename'&&paths.length===1) rename(state.entries.find(item=>item.path===paths[0])).catch(error);
-      if(which==='more') ui.openSheet('已选 '+paths.length+' 项',[action('复制路径','copy',async()=>{await ui.copyText(paths.join('\n'));ui.toast('路径已复制');}),...(api.featuresAvailable()?androidFeatures.selectionActions(paths):[])]);
+      if(which==='more') ui.openSheet('已选 '+paths.length+' 项',[...(dual()?[action('复制到另一窗格','copy',()=>transferToPane('copy',paths)),action('移动到另一窗格','cut',()=>transferToPane('cut',paths))]:[]),action('复制路径','copy',async()=>{await ui.copyText(paths.join('\n'));ui.toast('路径已复制');}),...(api.featuresAvailable()?androidFeatures.selectionActions(paths):[])]);
     });
-    on('btn-paste',paste); on('btn-cancel-paste',()=>{state.clipboard=null;renderList();renderShell();});
+    on('copy-to-pane',()=>transferToPane('copy',[...state.selected]));on('move-to-pane',()=>transferToPane('cut',[...state.selected]));
+    on('btn-paste',paste); on('btn-cancel-paste',()=>{state.clipboard=null;paneHost()?.clipboard(window,null);renderList();renderShell();});
     on('btn-reindex',rebuildIndex); on('btn-clear-index',async()=>{await api.indexClear();await refreshSettings();});
     on('btn-permission',()=>api.openAppSettings());
     on('btn-theme',async()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';cache('rhfiles.theme',document.documentElement.dataset.theme);await api.systemTheme(document.documentElement.dataset.theme==='dark');return refreshSettings();});
@@ -686,10 +732,11 @@
         if(state.roots.some(root=>root.path===resume.root))state.root=resume.root;
         await go(resume.route,{replace:true});
         state.stack=Array.isArray(resume.stack)?resume.stack:[];
-        state.clipboard=resume.clipboard;
+        state.clipboard=paneHost()?paneHost().currentClipboard(window):resume.clipboard;
         state.selected=new Set((resume.selected||[]).filter(path=>state.entries.some(entry=>entry.path===path)));
         if(isList()&&!$('filelist').hidden)renderList(resume.route.scroll||0);else renderShell();
       }
+      if(paneHost())state.clipboard=paneHost().currentClipboard(window);
     } catch(err){showPlaceholder('启动失败：'+err,bootStorage);}
   }
   document.addEventListener('DOMContentLoaded',boot);

@@ -11,7 +11,7 @@ export async function until(check,label,timeout=20000){
   while(Date.now()<end){try{const result=await check();if(result)return result;}catch(error){last=error;}await pause(100);}
   throw Error(`Timed out: ${label}${last?' — '+last.message:''}`);
 }
-export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR || 'emulator-5582') {
+export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR || 'emulator-5582',display={}) {
   if(!/^emulator-\d+$/.test(serial))throw Error('Android test harness accepts only an explicit emulator serial, never a phone.');
   const sdk=process.env.ANDROID_SDK_ROOT || process.env.ANDROID_HOME;
   if(!sdk)throw Error('ANDROID_SDK_ROOT / ANDROID_HOME is required.');
@@ -27,6 +27,9 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
   // second MainActivity then connecting to the old background CDP page gives
   // false gesture failures. Restart only this emulator's app, preserving data.
   adb('shell','am','force-stop',packageId);
+  if(display.size)adb('shell','wm','size',display.size);
+  if(display.density)adb('shell','wm','density',String(display.density));
+  if(display.notifications)adb('shell','pm','grant',packageId,'android.permission.POST_NOTIFICATIONS');
   adb('shell','am','start','-W','-n',packageId+'/.MainActivity');
   if(adb('shell','dumpsys','window').includes('Application Not Responding'))throw Error('The emulator has an Android ANR dialog; recover the emulator before UI assertions.');
   const pid=await until(()=>adb('shell','pidof',packageId),'app process');
@@ -87,7 +90,7 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
     await until(()=>evaluate('typeof api!=="undefined" && typeof ui!=="undefined" && document.readyState==="complete"'),'frontend ready');
     // DOMContentLoaded precedes the async native capabilities/storage bootstrap.
     // Testing before handlers exist produces false gesture/feature failures.
-    await until(()=>evaluate('typeof window.rhfilesHandleBack==="function" && ["home","filelist","tool-page"].some(id=>!document.getElementById(id).hidden)'),'native bridge and initial navigation ready',70000);
+    await until(()=>evaluate('typeof window.rhfilesHandleBack==="function" && (document.body.classList.contains("workbench-host") ? [...document.querySelectorAll(".file-pane")].some(f=>f.contentWindow.rhfilesPane&&!f.contentWindow.document.getElementById("home").hidden) : ["home","filelist","tool-page"].some(id=>!document.getElementById(id).hidden))'),'native bridge and initial navigation ready',70000);
     const click=async selector=>{
       const point=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing element');e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();if(!r.width||!r.height)throw Error('Hidden element');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
       await send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});

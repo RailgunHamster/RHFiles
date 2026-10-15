@@ -1,5 +1,26 @@
 # RHFiles Android
 
+## 0.1.9：独立双窗格与电子书
+
+- 按可用窗口尺寸（不是设备型号）选择左右或上下双窗格。每边保留独立主页、目录、选择和滚动；中间 44 px 触摸按钮切换布局，手动偏好保存在 `rhfiles.panes`。普通窄手机保持单窗格，折叠/缩窗不会销毁另一边状态。
+- 多选底部直接提供“复制到另一窗格 / 移动到另一窗格”，确认时固定显示目标；目标还在主页时不猜测目录。共享待粘贴列表可跨窗格使用。原生文件任务继续负责递归合并、拒绝静默覆盖、进度、取消和逐项失败；不依赖手机拖拽。
+- 两个可信应用 iframe 由主页面代理 IPC，主页面验证调用方窗口身份；系统 Back 只作用于活动窗格。设置/凭据是全应用共享，文件浏览状态分别保存。自动更新、首次索引和外部分享导入只由主窗格触发一次。
+- 阅读器使用单独 `:ebook` 进程、WebView 数据目录及 HTTPS 本地资源域名；不装入 Tauri/文件管理 IPC。仅能读取用户选中的书；禁用书内脚本、表单、外部链接和网络资源，不解压到用户目录。SAF 临时副本位于私有缓存，关闭阅读器清理，异常残留按时清理。
+- EPUB/CBZ 使用受限原生 ZIP 资源流，MOBI/AZW3/FB2 使用固定版本 foliate-js 解析。支持字号、目录、翻页/滚动、明暗/护眼、每书书签和 CFI 位置恢复。64 MB 文件、20 MB 资源、8 MB 文本、256 MB 展开总量、5,000 条目是首版明确上限；拒绝 DRM，PDF 继续用系统阅读器。
+- 第三方来源/许可证和补丁见 `android/reader/vendor/UPSTREAM.txt`；固定 foliate-js `78914aef4466eb960965702401634c2cb348e9b1`，MIT。其 API 不稳定，升级必须重跑阅读器安全与真实格式测试，不盲目跟随 latest。
+
+```powershell
+node --test android/web/tests/*.test.* android/web/tests/*.test.cjs
+node android/web/tests/flow-check.mjs
+node android/web/tests/panes-check.mjs
+node android/reader/tests/reader-check.mjs
+# Install debug APK on the dedicated emulator first. Never select a phone:
+$env:RHFILES_TEST_EMULATOR='emulator-5582'
+node scripts/android-dualpane-ebook-regression.mjs
+```
+
+浏览器用例模拟文件管理桥，但阅读器调用真实 vendored 解析器；模拟器用例另行验证原生文件字节、文件夹合并和独立阅读进程。物理折叠铰链、特定书籍/字体/DRM、手机厂商 WebView 仍需真机验证。
+
 ## 0.1.6：跟手手势、稳定滚动和原生播放器
 
 - 抽屉在松手前实时显示中间位置，按距离/速度平滑吸附，取消手势恢复原状态。

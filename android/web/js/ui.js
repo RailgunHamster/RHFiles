@@ -206,12 +206,12 @@ const ui = (() => {
   }
 
   /** A yes/no sheet. Resolves true only when the destructive action is chosen. */
-  function confirm(title, message, confirmLabel) {
+  function confirm(title, message, confirmLabel,options={}) {
     return new Promise((resolve) => {
       const opened = openSheet(
         title,
         [
-          { label: confirmLabel || '确认', icon: 'trash', danger: true, onSelect: () => resolve(true) },
+          { label: confirmLabel || '确认', icon: options.icon||'trash', danger: options.danger!==false, onSelect: () => resolve(true) },
           { label: '取消', icon: 'close', onSelect: () => resolve(false) },
         ],
         message,

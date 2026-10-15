@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' blob: 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self' blob:; frame-src blob:; object-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
+<title>RHFiles 电子书</title>
+<link rel="stylesheet" href="reader.css">
+</head>
+<body>
+<nav class="toolbar" aria-label="阅读工具">
+  <button id="toc-toggle" aria-label="目录和书签" data-icon="contents"></button>
+  <button id="font-minus" aria-label="缩小字号">A−</button>
+  <button id="font-plus" aria-label="放大字号">A+</button>
+  <button id="theme-toggle" aria-label="切换阅读配色" data-icon="theme"></button>
+  <button id="bookmark-toggle" aria-label="添加书签" data-icon="bookmark"></button>
+  <button id="flow-toggle" aria-label="切换滚动阅读" data-icon="flow"></button>
+</nav>
+<main id="canvas"><div id="status" role="status">正在打开电子书…</div></main>
+<footer>
+  <div class="progress-row"><button id="previous" aria-label="上一页" data-icon="previous" disabled></button><span id="location" aria-live="polite">正在加载</span><button id="next" aria-label="下一页" data-icon="next" disabled></button></div>
+  <input id="progress" type="range" min="0" max="1000" value="0" aria-label="阅读进度" disabled>
+</footer>
+<div id="scrim" hidden></div>
+<aside id="contents" aria-label="目录和书签" hidden>
+  <header><button id="toc-tab" class="active">目录</button><button id="bookmarks-tab">书签</button><button id="toc-close" aria-label="关闭目录" data-icon="close"></button></header>
+  <div id="toc"></div><div id="bookmarks" hidden></div>
+</aside>
+<div id="notice" role="status" hidden></div>
+<script type="module" src="reader.js"></script>
+</body>
+</html>

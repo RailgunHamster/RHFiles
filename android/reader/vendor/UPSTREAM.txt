@@ -1,0 +1,14 @@
+foliate-js: https://github.com/johnfactotum/foliate-js
+Pinned commit: 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
+License: MIT, included in foliate/LICENSE.
+The shipped parser/rendering modules are unchanged except for these small patches:
+paginator.js and fixed-layout.js omit allow-scripts on Android Chromium.
+comic-book.js matches image extensions case-insensitively.
+Scripted book content and remote resources are deliberately unsupported.
+The demo reader is not included; RHFiles has its own controls and native host.
+PDF.js is not bundled and PDF is not routed into this reader.
+
+fflate 0.8.2: https://github.com/101arrowz/fflate (MIT).
+zip.js 2.8.22: https://github.com/gildas-lormeau/zip.js (BSD-3-Clause).
+Their license texts are included next to the bundled vendor modules.
+EPUB/CBZ entries are normally read through RHFiles' bounded native ZIP adapter.

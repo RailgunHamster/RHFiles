@@ -1,4 +1,15 @@
-RHFiles Android 0.1.8
+RHFiles Android 0.1.9
+
+新增大屏双窗格：左右或上下分屏，每边有独立主页、目录导航、选择与滚动位置。中间布局按钮可切换自动、左右、上下、单窗格；空间不足时安全退回可用布局。
+无需拖拽：长按多选后点“复制到另一窗格”或“移动到另一窗格”，确认窗口显示完整目标路径。另一边是主页时会先提示打开目标文件夹。也可复制/移动后到另一边粘贴；文件夹继续合并，不会自动覆盖同名文件，任务有进度与失败信息。
+新增电子书阅读器：未加密 EPUB、MOBI/AZW3、FB2、CBZ，支持目录、翻页/滚动、字号、明亮/护眼/夜间配色、书签与阅读位置恢复。基于固定版本的 foliate-js；书内脚本和联网资源禁用，阅读器不获得文件管理接口。
+首版电子书限制：本机或已授权文件，最大 64 MB，单个 ZIP 资源 20 MB、章节文本 8 MB；网络书籍先下载，DRM 书籍请使用授权阅读器，PDF 继续由系统应用打开。
+修正 Android 系统状态栏/手势导航栏避让，避免分屏底部文件操作被系统手势区遮挡。后台目录更新保留未改变的行和缩略图，减少打断长按选择。
+
+Independent large-screen panes with automatic/side-by-side/stacked/single layouts. Select files and use Copy/Move to Other Pane, review the exact destination, or paste via the shared clipboard. Folder merging and non-overwrite protections remain in the native file-task engine.
+Read unencrypted EPUB, MOBI/AZW3, FB2 and CBZ with contents, paging/scrolling, font size, three reading palettes, bookmarks and resume. The isolated reader has no file-manager IPC; book scripts/network resources are disabled. Initial limits: 64 MB book, 20 MB ZIP resource, 8 MB chapter text. Download remote books first; DRM and internal PDF rendering are not supported.
+
+此前版本改进 / Previous improvements (0.1.8):
 
 修复列表滚动/拖动时缩略图消失：保留可见行和已解码图片，合并重复请求，限制并发与缓存；不支持的文件保留类型图标。
 首页抽屉开关的拖动吸附阈值都降至约五分之一，短距离拖动更容易完成。

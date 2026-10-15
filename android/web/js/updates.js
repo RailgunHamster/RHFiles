@@ -81,9 +81,9 @@ const androidUpdates=(()=>{
   function init(context){
     app=context;if(!api.updatesAvailable())return;
     const chip=button('app-update-chip','',()=>app.go({screen:'tool',tool:'settings',section:'updates'}));chip.className='native-task-chip';chip.hidden=true;$('app').append(chip);
-    load().then(()=>{lastAuto=Date.now();return check(false,'startup');}).catch(app.error);
-    hourTimer=setInterval(()=>{if(!document.hidden){lastAuto=Date.now();check(false,'hour').catch(app.error);}},3600000);
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().then(()=>{if(Date.now()-lastAuto>=3600000){lastAuto=Date.now();return check(false,'hour');}}).catch(app.error);});
+    load().then(()=>{lastAuto=Date.now();if(workbench.primary())return check(false,'startup');}).catch(app.error);
+    if(workbench.primary())hourTimer=setInterval(()=>{if(!document.hidden){lastAuto=Date.now();check(false,'hour').catch(app.error);}},3600000);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().then(()=>{if(workbench.primary()&&Date.now()-lastAuto>=3600000){lastAuto=Date.now();return check(false,'hour');}}).catch(app.error);});
   }
   return {init,onSettings};
 })();

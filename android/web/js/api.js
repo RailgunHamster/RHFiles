@@ -12,8 +12,10 @@ const api = (() => {
   let nativeBack = false;
   let appUpdates = false;
   let nativePlayback = false;
-  let nativeThumbnails=false,adaptiveLayout=false,restoreNavigation=false;
+  let nativeThumbnails=false,adaptiveLayout=false,restoreNavigation=false,nativeEbooks=false,dualPane=false,initPromise;
+  const host=()=>window.parent!==window?window.parent.RHFilesWorkbench:null;
   function nativeCall(command, args = {}) {
+    if(host())return Promise.resolve().then(()=>host().call(window,'native',command,args));
     const bridge = window.RHFilesNative;
     if (!bridge) return Promise.reject(new Error('本版本或系统 WebView 暂不支持此系统操作'));
     bridge.onmessage = (event) => {
@@ -56,10 +58,11 @@ const api = (() => {
 
   /** `true` when a backend is reachable at all; used by the boot screen. */
   function available() {
-    return bridge() !== null;
+    return !!host()||bridge() !== null;
   }
 
   function invoke(command, args) {
+    if(host())return Promise.resolve().then(()=>host().call(window,'rust',command,args));
     const call = bridge();
     if (!call) {
       return Promise.reject(new Error('the app backend is not reachable from this page'));
@@ -116,7 +119,7 @@ const api = (() => {
    * API level this app supports and always contains the permission toggles.
    */
   function openAppSettings() {
-    if (window.RHFilesNative) return nativeCall('settings');
+    if (host()||window.RHFilesNative) return nativeCall('settings');
     const uri = `intent:#Intent;action=android.settings.APPLICATION_DETAILS_SETTINGS;` +
       `data=package:${ANDROID_PACKAGE};end`;
     try {
@@ -133,12 +136,14 @@ const api = (() => {
     available,
     appInfo: wrap('app_info'),
     openAppSettings,
-    nativeAvailable: () => !!window.RHFilesNative,
+    nativeAvailable: () => !!host()||!!window.RHFilesNative,
     featuresAvailable: () => nativeVersion >= 2,
     nativeBackAvailable: () => nativeBack,
     updatesAvailable: () => appUpdates,
     playbackAvailable: () => nativePlayback,
-    async initNative() { if (window.RHFilesNative) { try { const capabilities=await nativeCall('capabilities');nativeVersion=capabilities.version || 0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true;nativePlayback=capabilities.nativePlayback===true;nativeThumbnails=capabilities.nativeThumbnails===true;adaptiveLayout=capabilities.adaptiveLayout===true;restoreNavigation=capabilities.restoreNavigation===true; } catch {} } },
+    initNative() { return initPromise||=(async()=>{if(host()||window.RHFilesNative){try{const capabilities=host()?host().capabilities(window):await nativeCall('capabilities');nativeVersion=capabilities.version||0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true;nativePlayback=capabilities.nativePlayback===true;nativeThumbnails=capabilities.nativeThumbnails===true;adaptiveLayout=capabilities.adaptiveLayout===true;restoreNavigation=capabilities.restoreNavigation===true;nativeEbooks=capabilities.nativeEbooks===true;dualPane=capabilities.dualPane===true;}catch{}}})();},
+    dualPaneAvailable:()=>dualPane,
+    ebooksAvailable:()=>nativeEbooks,
     shouldRestoreNavigation:()=>restoreNavigation,
     adaptiveAvailable:()=>adaptiveLayout,
     native: nativeCall,
@@ -146,13 +151,13 @@ const api = (() => {
     isVirtual: virtual,
     systemOpen: (path) => nativeCall('open', { path }),
     shareFile: (path) => nativeCall('share', { path }),
-    systemTheme: (dark) => window.RHFilesNative ? nativeCall('theme', { dark }) : Promise.resolve(),
+    systemTheme: (dark) => host()||window.RHFilesNative ? nativeCall('theme', { dark }) : Promise.resolve(),
 
     // Device
     storageRoots: () => nativeVersion >= 2 ? nativeCall('roots') : invoke('get_storage_roots'),
     async permissionStatus() {
       const status = await invoke('get_permission_status');
-      if (window.RHFilesNative) status.manageExternalStorage = await nativeCall('permission');
+      if (host()||window.RHFilesNative) status.manageExternalStorage = await nativeCall('permission');
       return status;
     },
     scanStorageSizes: wrap('scan_storage_sizes'),
@@ -182,6 +187,7 @@ const api = (() => {
     searchFiles: wrap('search_files'),
     browseLibrary: args => nativeVersion >= 2 && ['image','audio','video'].includes(args.category) ? nativeCall('media.library',args) : invoke(args.albums||args.folder?'browse_library_folders':'browse_library',args),
     assetUrl(path) {
+      if(host())return host().call(window,'asset',path);
       const convert = window.__TAURI_INTERNALS__?.convertFileSrc || window.__TAURI__?.core?.convertFileSrc;
       if (!convert) throw new Error('本版本未提供媒体文件访问接口');
       return convert(path, 'asset');

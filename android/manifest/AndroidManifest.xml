@@ -76,6 +76,9 @@
             </intent-filter>
         </activity>
 
+        <!-- Books get a separate read-only origin/renderer, never Tauri file IPC. -->
+        <activity android:name=".EbookActivity" android:exported="false" android:resizeableActivity="true" android:process=":ebook" />
+
         <service android:name=".FileTaskService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".AppUpdateService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name=".PlaybackActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|density|fontScale" />

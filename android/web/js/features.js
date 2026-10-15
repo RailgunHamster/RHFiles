@@ -252,6 +252,7 @@ const androidFeatures = (() => {
   }
   async function download(entry) {app.setClipboard('copy',[entry.path]);await app.go({screen:'folder',path:app.state.root});ui.toast('请选择本机目标文件夹，然后粘贴');}
   async function receiveShares() {
+    if(!workbench.primary())return;
     if(!api.featuresAvailable())return;
     const paths=await api.native('shares');const key=JSON.stringify(paths);if(!paths.length||key===lastShare)return;lastShare=key;
     if(await ui.confirm('接收 '+paths.length+' 个分享文件？','选择目标文件夹后点击粘贴；不会删除来源。','选择目标')){app.setClipboard('copy',paths);await app.go({screen:'folder',path:app.state.root});}

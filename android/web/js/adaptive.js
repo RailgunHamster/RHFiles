@@ -9,7 +9,7 @@ const adaptive=(()=>{
     if(box.rail){prepare();ui.setDrawerOpen(true);}else if(wasWide)ui.setDrawerOpen(false);
   }
   function init(renderDrawer){prepare=renderDrawer;window.addEventListener('resize',apply);window.addEventListener('rhfiles-window-layout',event=>{hinge=event.detail?.hinge;apply();});apply();
-    if(api.adaptiveAvailable())api.native('window.layout').then(info=>{hinge=info.hinge;apply();}).catch(()=>{});
+    if(api.adaptiveAvailable())(workbench.child()?Promise.resolve(workbench.parentHost().windowLayout(window)):api.native('window.layout')).then(info=>{hinge=info.hinge;apply();}).catch(()=>{});
   }
   return {init,apply};
 })();
