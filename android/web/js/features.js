@@ -1,6 +1,6 @@
 /* Android capability pages. Every visible operation reaches a real native command. */
 const androidFeatures = (() => {
-  let app, jobTimer, toolGeneration = 0, mediaController, lastShare = '', lastJobs = [];
+  let app, jobTimer, toolGeneration = 0, mediaController, lastShare = '', lastJobs = [], resumePromise;
   const refreshedJobs = new Set();
   const $ = id => document.getElementById(id);
   const textFile = name => /\.(txt|md|csv|log|json|xml|ini|cfg|toml|ya?ml|js|ts|rs|py|java|kt|c|h|cpp|css|html|sh)$/i.test(name);
@@ -245,12 +245,18 @@ const androidFeatures = (() => {
     if(await ui.confirm('接收 '+paths.length+' 个分享文件？','选择目标文件夹后点击粘贴；不会删除来源。','选择目标')){app.setClipboard('copy',paths);await app.go({screen:'folder',path:app.state.root});}
     await api.native('shares.clear');lastShare='';
   }
-  async function onResume() {
-    app.state.roots=await api.storageRoots();app.state.permissions=await api.permissionStatus();await receiveShares();
-    if(['home','library','folder'].includes(app.state.route.screen)&&!app.state.selected.size&&!ui.isSheetOpen()) {
-      if(app.state.route.screen==='folder')app.state.route.scroll=$('filelist').scrollTop;
-      await app.refresh();
-    }await pollJobs();
+  async function onResume({checkPermissions=true} = {}) {
+    if (resumePromise) return resumePromise;
+    resumePromise=(async()=>{
+      app.state.roots=await api.storageRoots();
+      // The legacy permission probe writes/removes a shared-storage test file.
+      // Running it in response to MediaStore changes feeds its own observer forever.
+      if(checkPermissions)app.state.permissions=await api.permissionStatus();
+      await receiveShares();
+      if(['home','library','folder'].includes(app.state.route.screen)&&!ui.isSheetOpen()) await app.refresh();
+      await pollJobs();
+    })();
+    try {await resumePromise;} finally {resumePromise=null;}
   }
   async function refreshFtp() {
     if(!api.featuresAvailable())return;
@@ -272,7 +278,7 @@ const androidFeatures = (() => {
     app=context;
     const chip=ui.el('button','native-task-chip');chip.id='native-task-chip';chip.hidden=true;chip.onclick=()=>app.go({screen:'tool',tool:'tasks'});$('app').append(chip);
     if(api.featuresAvailable()){pollJobs().catch(app.error);jobTimer=setInterval(()=>{if(!document.hidden)pollJobs().catch(()=>{});},1500);}
-    window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume().catch(app.error);});
+    window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
     $('btn-ftp-toggle').addEventListener('click',()=>toggleFtp().catch(app.error));
   }
   return {init,destinations,renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};

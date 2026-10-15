@@ -9,6 +9,7 @@ const api = (() => {
   let nativeId = 0;
   const nativePending = new Map();
   let nativeVersion = 0;
+  let nativeBack = false;
   function nativeCall(command, args = {}) {
     const bridge = window.RHFilesNative;
     if (!bridge) return Promise.reject(new Error('本版本或系统 WebView 暂不支持此系统操作'));
@@ -131,7 +132,8 @@ const api = (() => {
     openAppSettings,
     nativeAvailable: () => !!window.RHFilesNative,
     featuresAvailable: () => nativeVersion >= 2,
-    async initNative() { if (window.RHFilesNative) { try { nativeVersion = (await nativeCall('capabilities')).version || 0; } catch {} } },
+    nativeBackAvailable: () => nativeBack,
+    async initNative() { if (window.RHFilesNative) { try { const capabilities=await nativeCall('capabilities');nativeVersion=capabilities.version || 0;nativeBack=capabilities.nativeBack===true; } catch {} } },
     native: nativeCall,
     runJob: job,
     isVirtual: virtual,

@@ -97,6 +97,21 @@ Sync-File `
     -Source (Join-Path $repoRoot 'android\manifest\file_paths.xml') `
     -Target (Join-Path $appDir 'src\main\res\xml\file_paths.xml')
 
+# Launcher bitmaps and adaptive/round resources are canonical inputs too. Updating
+# src-tauri/icons alone does not replace the generated Gradle launcher's resources.
+$resourceSource = Join-Path $repoRoot 'android\gradle\app\src\main\res'
+$resourceTarget = Join-Path $appDir 'src\main\res'
+foreach ($resource in Get-ChildItem -LiteralPath $resourceSource -Recurse -File) {
+    $relative = [IO.Path]::GetRelativePath($resourceSource, $resource.FullName)
+    $target = Join-Path $resourceTarget $relative
+    New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $target) -or
+        (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $resource.FullName -Algorithm SHA256).Hash) {
+        Copy-Item -LiteralPath $resource.FullName -Destination $target
+        Write-Host "updated resource: $relative"
+    }
+}
+
 Sync-File `
     -Source (Join-Path $repoRoot 'android\gradle\app\src\main\java\com\railgunhamster\rhfiles\MainActivity.kt') `
     -Target (Join-Path $appDir 'src\main\java\com\railgunhamster\rhfiles\MainActivity.kt')

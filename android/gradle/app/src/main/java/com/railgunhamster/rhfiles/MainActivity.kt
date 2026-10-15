@@ -18,6 +18,7 @@ import android.provider.Settings
 import android.provider.MediaStore
 import android.provider.DocumentsContract
 import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.webkit.WebViewCompat
@@ -39,8 +40,17 @@ class MainActivity : TauriActivity() {
   private val changed=Runnable {appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-storage-changed'))",null)}
   private val storageReceiver=object:BroadcastReceiver(){override fun onReceive(context:Context?,intent:Intent?){mainHandler.removeCallbacks(changed);mainHandler.postDelayed(changed,400)}}
   private val mediaObserver=object:android.database.ContentObserver(mainHandler){override fun onChange(selfChange:Boolean){mainHandler.removeCallbacks(changed);mainHandler.postDelayed(changed,800)}}
+  private val backNavigation by lazy {
+    AppBackNavigation({ script, reply ->
+      val webView=appWebView
+      if(webView==null) reply("true") else webView.evaluateJavascript(script) { result -> reply(result) }
+    }, { moveTaskToBack(true) })
+  }
   override fun onCreate(savedInstanceState:Bundle?) {
     super.onCreate(savedInstanceState)
+    onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){
+      override fun handleOnBackPressed(){backNavigation.back()}
+    })
     if(BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
     setSystemTheme(false);receive(intent)
     val filter=IntentFilter().apply{addAction(Intent.ACTION_MEDIA_MOUNTED);addAction(Intent.ACTION_MEDIA_UNMOUNTED);addAction(Intent.ACTION_MEDIA_REMOVED);addAction(Intent.ACTION_MEDIA_BAD_REMOVAL);addDataScheme("file")}
@@ -112,7 +122,7 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "capabilities" -> JSONObject().put("version",2)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true)
     "theme" -> {setSystemTheme(args.optBoolean("dark"));true}
     "permission" -> if(Build.VERSION.SDK_INT>=30) Environment.isExternalStorageManager() else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)==PackageManager.PERMISSION_GRANTED
     "settings" -> {

@@ -219,6 +219,35 @@ const ui = (() => {
     scrim().addEventListener('click', closeSheet);
   }
 
+  function bindDrawerSwipe({canOpen, isOpen, open, close}) {
+    let gesture = null;
+    document.addEventListener('touchstart', event => {
+      gesture = null;
+      if (event.touches.length !== 1 || isSheetOpen()) return;
+      const closing = isOpen();
+      if (closing ? !event.target.closest('#drawer') : !canOpen() || !event.target.closest('#home')) return;
+      const touch = event.touches[0];
+      gesture = {x:touch.clientX, y:touch.clientY, closing, horizontal:false};
+    }, {passive:true});
+    document.addEventListener('touchmove', event => {
+      if (!gesture) return;
+      if (event.touches.length !== 1) { gesture = null; return; }
+      const touch = event.touches[0], dx = touch.clientX-gesture.x, dy = touch.clientY-gesture.y;
+      if (!gesture.horizontal && Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) { gesture = null; return; }
+      if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy)*1.5) gesture.horizontal = true;
+      if (gesture.horizontal && event.cancelable) event.preventDefault();
+    }, {passive:false});
+    document.addEventListener('touchend', event => {
+      const current = gesture; gesture = null;
+      if (!current?.horizontal || event.changedTouches.length !== 1) return;
+      const dx = event.changedTouches[0].clientX-current.x;
+      if (current.closing ? dx > -64 : dx < 64) return;
+      if (event.cancelable) event.preventDefault();
+      current.closing ? close() : open();
+    }, {passive:false});
+    document.addEventListener('touchcancel', () => { gesture = null; }, {passive:true});
+  }
+
   /**
    * Copies text to the clipboard.
    *
@@ -248,6 +277,6 @@ const ui = (() => {
     return true;
   }
 
-  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, copyText, ICONS,
+  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, bindDrawerSwipe, copyText, ICONS,
     setCloseGuard: fn => { closeGuard = fn; }, onClosed: fn => { cleanup = fn; } };
 })();

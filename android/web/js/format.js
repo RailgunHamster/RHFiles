@@ -101,5 +101,11 @@
       });
   }
 
-  return { size, date, relative, count, path2parts, parentOf, baseName, shapeEntries };
+  function sameEntries(a, b) {
+    if (a.length !== b.length) return false;
+    const keys = ['path','name','isDir','size','modifiedMs','kind','parentPath'];
+    return a.every((entry, index) => keys.every(key => entry[key] === b[index][key]));
+  }
+
+  return { size, date, relative, count, path2parts, parentOf, baseName, shapeEntries, sameEntries };
 });

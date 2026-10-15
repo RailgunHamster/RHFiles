@@ -124,3 +124,12 @@ test('count uses locale grouping', () => {
   assert.equal(fmt.count(0), '0');
   assert.equal(fmt.count(1234567), (1234567).toLocaleString());
 });
+
+test('unchanged listing snapshots do not require a redraw', () => {
+  const entries=[entry('a.txt',false,{size:12,modifiedMs:1234,kind:'document'})];
+  assert.equal(fmt.sameEntries(entries,structuredClone(entries)),true);
+  for (const change of [{size:13},{modifiedMs:1235},{path:'/different'},{name:'b.txt'},{isDir:true},{kind:'image'}]) {
+    assert.equal(fmt.sameEntries(entries,[{...entries[0],...change}]),false);
+  }
+  assert.equal(fmt.sameEntries(entries,[]),false);
+});

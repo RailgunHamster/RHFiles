@@ -27,7 +27,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await pw.chromium.launch({headless:true,executablePath});
 let checks=0;
 function check(value,label){assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);}
-function fixture({denied=false,partial=false,nativeV2=false}){
+function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false}){
   const root='/storage/emulated/0';
   const file=(name,kind='document',size=10)=>({name,path:root+'/'+name,kind,isDir:kind==='folder',size,modifiedMs:1712345678000});
   const m=window.__model={calls:[],denied,partial,index:true,fs:{
@@ -81,13 +81,13 @@ function fixture({denied=false,partial=false,nativeV2=false}){
       default:throw 'Unstubbed command '+cmd;
     }
   }};
-  if(nativeV2){
+  if(nativeV2 || nativeV3){
     m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
     m.fs['content://test/tree/root/document/root']=[{name:'云端.txt',path:'content://test/tree/root/document/file',isDir:false,kind:'document',size:12}];
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
-        case 'capabilities':return {version:2};case 'theme':return true;case 'permission':return !m.denied;
+        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3};case 'theme':return true;case 'permission':return !m.denied;
         case 'roots':return [{path:root,label:'内部存储',removable:false,totalBytes:128*1024**3,freeBytes:80*1024**3},{path:'content://test/tree/root/document/root',label:'云端',removable:true,provider:true}];
         case 'list':return {path:a.path,entries:m.fs[a.path]||[]};
         case 'media.library':return {entries:Object.values(m.fs).flat().filter(e=>e.kind===a.category),total:1,truncated:false};
@@ -190,8 +190,8 @@ try{
   check(cells[3].y>=cells[0].y+cells[0].h,'Grid row height matches virtualization');
   check(await p.locator('.cell').count()<80,'1000-entry directory is virtualized');
   await p.locator('#filelist').evaluate(e=>{e.scrollTop=12000;});await p.waitForTimeout(120);check(await p.locator('.cell').count()<80,'Scrolling stays bounded');
-  await home(p);await p.goBack();await p.waitForSelector('.cell');
-  check(await p.locator('#filelist').evaluate(e=>e.scrollTop>10000),'Returning to a large directory restores scroll position');
+  await p.click('#btn-overflow');await choose(p,'设置');await p.waitForSelector('#tool-settings:not([hidden])');await p.goBack();await p.waitForSelector('.cell');
+  check(await p.locator('#filelist').evaluate(e=>e.scrollTop>10000),'Returning from Settings to a large directory restores scroll position');
   await p.locator('#filelist').evaluate(e=>{e.scrollTop=0;});await p.waitForTimeout(80);await capture(p,'plus-grid');
   await home(p);await tile(p,'image').click();await p.waitForSelector('#filelist .name');check(await p.evaluate(()=>window.__model.calls.some(c=>c.cmd==='browse_library'&&c.args.category==='image')),'Image category invokes bounded library');
   await home(p);await p.evaluate(()=>window.__model.index=false);await tile(p,'audio').click();await p.getByRole('button',{name:'建立索引',exact:true}).waitFor();check(true,'No index has actionable empty state');
@@ -288,6 +288,46 @@ try{
     await home(p);await tile(p,'providers').click();await choose(p,'从系统网盘导入文件');await p.waitForSelector('#paste-bar:not([hidden])');
     check((await p.locator('#paste-label').innerText()).includes('待复制 1 项'),'System picker returns a pending import, never silently copies');
     check(errors.length===0,'New native-feature UI flows have no uncaught errors: '+errors.join(';'));await context.close();
+  }
+  {
+    const {context,page:p,errors}=await pageFor({nativeV3:true});await tile(p,'storage-0').waitFor();
+    check(await p.evaluate(()=>api.nativeBackAvailable() && history.length===2),'Native Back mode does not add WebView history sentinels');
+    check(await p.evaluate(()=>rhfilesHandleBack())===false,'Only Home permits native exit');
+    const touch=await context.newCDPSession(p);
+    async function swipe(x1,y1,x2,y2){
+      await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:x1,y:y1}]});
+      for(let i=1;i<=8;i++)await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x1+(x2-x1)*i/8,y:y1+(y2-y1)*i/8}]});
+      await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    }
+    await swipe(45,270,260,275);check(await p.locator('#drawer').isVisible(),'Right swipe opens Home drawer');
+    check(await p.evaluate(()=>rhfilesHandleBack())===true && !await p.locator('#drawer').isVisible(),'Back closes drawer without exiting Home');
+    await swipe(45,270,260,275);await swipe(250,270,50,275);check(!await p.locator('#drawer').isVisible(),'Left swipe closes drawer');
+    await swipe(70,600,75,350);check(!await p.locator('#drawer').isVisible(),'Vertical Home scrolling never opens drawer');
+    await tile(p,'storage-0').click();await row(p,'notes.txt').waitFor();
+    await p.evaluate(()=>{
+      window.__redraws=0;window.__hides=0;window.__permissionsBefore=window.__model.calls.filter(c=>c.cmd==='get_permission_status').length;
+      new MutationObserver(records=>{for(const r of records){if(r.type==='childList')window.__redraws++;if(r.type==='attributes'&&r.oldValue===null)window.__hides++;}})
+        .observe(document.getElementById('filelist'),{childList:true,attributes:true,attributeFilter:['hidden'],attributeOldValue:true});
+    });
+    for(let i=0;i<5;i++){await p.evaluate(()=>window.dispatchEvent(new Event('rhfiles-storage-changed')));await p.waitForTimeout(100);}
+    check(await p.evaluate(()=>window.__hides===0&&window.__redraws===0),'Unchanged storage notifications keep the existing list DOM');
+    check(await p.evaluate(()=>window.__model.calls.filter(c=>c.cmd==='get_permission_status').length===window.__permissionsBefore),'Storage notification never re-enters the write-based permission probe');
+    await press(p,'notes.txt');
+    await p.evaluate(()=>{window.__model.fs['/storage/emulated/0'].push({name:'added.txt',path:'/storage/emulated/0/added.txt',kind:'document',isDir:false,size:17});window.dispatchEvent(new Event('rhfiles-storage-changed'));});
+    await row(p,'added.txt').waitFor();check((await p.locator('.selected .name').innerText())==='notes.txt','Changed listing preserves selected paths');
+    check(await p.evaluate(()=>window.__hides===0),'Changed listing refresh never displays a blank loading screen');
+    await p.evaluate(async()=>{window.__model.denied=true;await androidFeatures.onResume();});
+    check(await p.locator('#banner').isVisible() && await p.locator('#filelist').isVisible(),'Real resume updates permission warning without hiding the listing');
+    await p.evaluate(async()=>{window.__model.denied=false;await androidFeatures.onResume();});
+    check(!await p.locator('#banner').isVisible(),'Restored permission clears the warning');
+    await p.click('#sel-close');await row(p,'DCIM').click();await p.waitForSelector('#filelist .name');
+    check(await p.evaluate(()=>rhfilesHandleBack())===true,'Folder Back is consumed by the app');await row(p,'DCIM').waitFor();
+    check(await p.locator('#title').innerText()==='内部存储','Folder Back follows the actual parent');
+    await p.evaluate(()=>rhfilesHandleBack());await tile(p,'settings').waitFor();
+    await tile(p,'settings').click();await p.waitForSelector('#tool-settings:not([hidden])');
+    await p.evaluate(()=>rhfilesHandleBack());await tile(p,'storage-0').waitFor();
+    check(await p.evaluate(()=>rhfilesHandleBack())===false,'Settings returns to Home before another Back can exit');
+    check(errors.length===0,'Gesture/back/refresh regressions have no uncaught errors');await context.close();
   }
   console.log('PASS: '+checks+' assertions. IPC mocked. Screenshots: '+output);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

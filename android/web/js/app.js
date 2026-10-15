@@ -20,6 +20,8 @@
     permissions: null, index: null, server: null, busy: false,
   };
   let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0;
+  let refreshPromise = null, refreshAgain = false;
+  const folderParents = new Map();
   const sameRoute = (a, b) => JSON.stringify([a.screen,a.path,a.category,a.tool]) === JSON.stringify([b.screen,b.path,b.category,b.tool]);
   const rootFor = (path) => state.roots.filter((root) => path === root.path || path.startsWith(root.path + '/')).sort((a,b) => b.path.length - a.path.length)[0];
   const rootLabel = (root) => root?.provider ? root.label : root?.removable ? '外部存储' : '内部存储';
@@ -150,7 +152,9 @@
   // Request IDs make old directory/search/preview responses unable to replace a
   // newer screen. The in-app back stack is independent of WebView history.
   async function go(route, options = {}) {
-    if (!options.replace && !sameRoute(route, state.route)) state.stack.push({ ...state.route, scroll: $('filelist').scrollTop });
+    if (route.screen === 'home') state.stack = [];
+    else if (!options.replace && !sameRoute(route, state.route)) state.stack.push({ ...state.route, scroll: $('filelist').scrollTop });
+    if (route.screen === 'folder' && route.parentPath && route.path !== route.parentPath) folderParents.set(route.path,route.parentPath);
     const id = ++navigationId;
     ++searchId; clearTimeout(searchTimer);
     state.route = { ...route }; state.selected.clear(); state.entries = []; state.listing = null; state.busy = true;
@@ -209,6 +213,37 @@
   function showList(scroll = 0) {
     $('placeholder').hidden = true; $('filelist').hidden = false;
     renderList(scroll || 0);
+  }
+
+  // Storage notifications must not perform navigation or hide a usable listing.
+  // Coalesce bursts, keep the existing DOM when unchanged, and discard late replies.
+  async function refreshCurrent() {
+    if (refreshPromise) { refreshAgain = true; return refreshPromise; }
+    refreshPromise = (async () => {
+      do {
+        refreshAgain = false;
+        const route = state.route, token = navigationId;
+        if (route.screen === 'home') { renderHome(); renderShell(); continue; }
+        if (route.screen !== 'folder' && route.screen !== 'library') { await go(route,{replace:true}); continue; }
+        if (state.busy) continue;
+        try {
+          const listing = route.screen === 'folder' ? await api.listDir({path:route.path})
+            : await api.browseLibrary({category:route.category,root:state.root,showHidden:state.hidden,limit:2000});
+          if (token !== navigationId || state.route !== route) continue;
+          const entries = listing.entries || [], changed = !fmt.sameEntries(state.entries,entries);
+          state.listing = listing;
+          if (changed) {
+            const scroll = $('filelist').scrollTop, paths = new Set(entries.map(entry=>entry.path));
+            state.entries = entries;
+            state.selected = new Set([...state.selected].filter(path=>paths.has(path)));
+            renderList(scroll);
+          }
+        } catch (err) {
+          if (token === navigationId && state.route === route) error('刷新失败，已保留当前列表：'+(err?.message || err));
+        }
+      } while (refreshAgain);
+    })();
+    try { await refreshPromise; } finally { refreshPromise = null; renderShell(); }
   }
   function currentEntries() {
     const list = fmt.shapeEntries(state.entries, { sort: state.route.screen === 'library' && state.route.category === 'recent' ? 'date' : state.sort, showHidden: state.hidden });
@@ -312,7 +347,8 @@
   }
 
   async function activate(entry) {
-    if (entry.isDir) return go({ screen: 'folder', path: entry.path, label:entry.name });
+    if (entry.isDir) return go({ screen: 'folder', path: entry.path, label:entry.name,
+      parentPath:entry.parentPath || (state.route.screen==='folder' ? state.route.path : null) });
     if (api.featuresAvailable() && api.isVirtual(entry.path)) {
       if (entry.path.startsWith('content://')) return api.systemOpen(entry.path);
       return androidFeatures.download(entry);
@@ -524,6 +560,17 @@
     if(ui.isSheetOpen()) { ui.closeSheet(); return true; }
     if(!$('drawer').hidden) { closeDrawer(); return true; }
     if(state.selected.size) { clearSelection(); return true; }
+    if(state.route.screen==='folder') {
+      const path=state.route.path, root=rootFor(path);
+      const parent = api.isVirtual(path) ? folderParents.get(path) : root?.path===path ? null : fmt.parentOf(path);
+      if(parent && parent!==path) {
+        const index=state.stack.findLastIndex(route=>route.screen==='folder' && route.path===parent);
+        const route=index>=0 ? state.stack[index] : {screen:'folder',path:parent};
+        if(index>=0)state.stack.length=index;
+        go(route,{replace:true});return true;
+      }
+      if(!api.isVirtual(path) || root?.path===path) {go({screen:'home'},{replace:true});return true;}
+    }
     if(state.stack.length) { go(state.stack.pop(),{replace:true}); return true; }
     if(state.route.screen!=='home') { go({screen:'home'},{replace:true}); return true; }
     return false;
@@ -548,11 +595,14 @@
   }
   async function boot() {
     await api.initNative();
-    androidFeatures.init({state,go,task,setClipboard,refresh:()=>go(state.route,{replace:true}),button,action,error});
+    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,button,action,error});
+    window.rhfilesHandleBack = () => state.permissions ? back() : true;
     for(const node of document.querySelectorAll('[data-icon]')) node.innerHTML=ui.icon(node.dataset.icon);
     document.documentElement.dataset.theme=saved('rhfiles.theme','light')==='dark'?'dark':'light';
     api.systemTheme(document.documentElement.dataset.theme==='dark').catch(()=>{});
     ui.bindScrim();
+    ui.bindDrawerSwipe({canOpen:()=>state.route.screen==='home' && !state.selected.size,
+      isOpen:()=>!$('drawer').hidden,open:openDrawer,close:closeDrawer});
     $('scrim').addEventListener('click',closeDrawer);
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
@@ -582,13 +632,15 @@
     on('btn-clear-logs',async()=>{await api.clearLogs();await refreshLogs();});
     on('btn-server-toggle',async()=>{ if(state.server?.running) await api.serverStop(); else if(await ui.confirm('启动局域网文件服务？','持有密码的设备将能'+($('server-write').checked?'读取和上传新文件到 ':'读取 ')+pathLabel(state.root)+'。HTTP 不加密，仅在可信网络使用。','启动')) await api.serverStart({options:{root:state.root,readOnly:!$('server-write').checked}}); await refreshServer(); });
     on('btn-scan',scan);
-    history.replaceState({rhfiles:true},'',location.href);
-    history.pushState({rhfiles:true},'',location.href);
-    window.addEventListener('popstate',()=>{
-      if(back()) {history.pushState({rhfiles:true},'',location.href);return;}
-      if(Date.now()-quitArmedAt<2000) return;
-      quitArmedAt=Date.now(); ui.toast('再按一次返回键退出');history.pushState({rhfiles:true},'',location.href);
-    });
+    if (!api.nativeBackAvailable()) {
+      history.replaceState({rhfiles:true},'',location.href);
+      history.pushState({rhfiles:true},'',location.href);
+      window.addEventListener('popstate',()=>{
+        if(back()) {history.pushState({rhfiles:true},'',location.href);return;}
+        if(Date.now()-quitArmedAt<2000) return;
+        quitArmedAt=Date.now(); ui.toast('再按一次返回键退出');history.pushState({rhfiles:true},'',location.href);
+      });
+    }
     document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();back();}});
     let width=0;
     new ResizeObserver(entries=>{const w=entries[0].contentRect.width;if(w!==width){width=w;renderList();}}).observe($('filelist'));
