@@ -10,7 +10,7 @@
 - 第三方来源/许可证和补丁见 `android/reader/vendor/UPSTREAM.txt`；固定 foliate-js `78914aef4466eb960965702401634c2cb348e9b1`，MIT。其 API 不稳定，升级必须重跑阅读器安全与真实格式测试，不盲目跟随 latest。
 
 ```powershell
-node --test android/web/tests/*.test.* android/web/tests/*.test.cjs
+node --test android/web/tests/*.test.*
 node android/web/tests/flow-check.mjs
 node android/web/tests/panes-check.mjs
 node android/reader/tests/reader-check.mjs
@@ -20,6 +20,8 @@ node scripts/android-dualpane-ebook-regression.mjs
 ```
 
 浏览器用例模拟文件管理桥，但阅读器调用真实 vendored 解析器；模拟器用例另行验证原生文件字节、文件夹合并和独立阅读进程。物理折叠铰链、特定书籍/字体/DRM、手机厂商 WebView 仍需真机验证。
+
+本版已通过：153 项原有浏览器业务、18 项双窗格流程、22 项列表/格式/布局单元测试、15 项真实解析器阅读、安全与损坏文件用例；71 项 JVM/Robolectric；专用 Android 16 模拟器 13 项实际文件字节与独立阅读进程验证。模拟器使用原生 x86_64 调试构建避免 ARM 转译的冷启动开销；发布 APK 仍为 arm64-v8a，不发布模拟器包。正式版另用 Android instrumentation / 无障碍文本检查真实阅读页面。
 
 ## 0.1.6：跟手手势、稳定滚动和原生播放器
 

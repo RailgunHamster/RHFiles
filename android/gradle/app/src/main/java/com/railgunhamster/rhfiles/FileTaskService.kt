@@ -206,6 +206,38 @@ object FileTasks {
         j.done++;return output
       } catch(e:Exception) {cleanup(output);throw e}
     }
+    val conflict=j.args.optString("conflict","merge")
+    require(conflict in setOf("merge","rename","skip")){"未知冲突处理方式"}
+    fun samePath(first:String,second:String):Boolean {
+      if(first==second)return true
+      if(!storage.isDocument(first)&&!storage.isRemote(first)&&!storage.isDocument(second)&&!storage.isRemote(second))return storage.local(first)==storage.local(second)
+      if(storage.isDocument(first)&&storage.isDocument(second)) {
+        val a=storage.document(first);val b=storage.document(second)
+        return a.authority==b.authority&&android.provider.DocumentsContract.getDocumentId(a)==android.provider.DocumentsContract.getDocumentId(b)
+      }
+      return false
+    }
+    fun publishTree(source:String,parent:String,wanted:String,depth:Int=0):String {
+      checkpoint(j);require(depth<128){"目录过深"}
+      val entry=storage.stat(source);val existing=storage.list(parent);val match=existing.firstOrNull{it.name==wanted}
+      require(j.op!="move"||match==null||!samePath(source,match.path)){"来源已在目标文件夹中，未移动"}
+      if(conflict=="merge"&&entry.isDir&&match?.isDir==true&&!samePath(source,match.path)) {
+        // This target is existing user data, never a cleanup/rollback target.
+        // Record partial outputs before publishing the first child. On any
+        // failure/cancellation all sources remain, committed children survive.
+        if(depth==0){j.outputs.add(match.path);persist(context,j)}
+        captured.add(Captured(entry,null))
+        val children=storage.list(source);require(children.size<50000){"单目录超过安全上限"}
+        for(child in children)publishTree(child.path,match.path,child.name,depth+1)
+        j.done++;return match.path
+      }
+      val names=existing.map{it.name}.toSet();var name=wanted;var suffix=1
+      val stem=if(entry.isDir)wanted else wanted.substringBeforeLast('.',wanted)
+      val ext=if(!entry.isDir&&'.' in wanted)"."+wanted.substringAfterLast('.') else ""
+      while(name in names){name="$stem (${suffix++})$ext";require(suffix<10000){"同名文件过多"}}
+      val temporary=copyTree(source,parent,".rhfiles-part-${j.id}-${UUID.randomUUID()}",depth)
+      return try{storage.rename(temporary,name)}catch(error:Exception){cleanup(temporary);throw error}
+    }
     if(j.op in listOf("copy","move","delete","zip")) {
       for(p in sources) try {measure(p)} catch(e:Exception) {j.failures.add(p to (e.message ?: "扫描失败"))}
       require(j.files>0 || sources.isNotEmpty()) { "未选择文件" }
@@ -242,17 +274,10 @@ object FileTasks {
                   require(did!=sid && !did.startsWith(sid+"/")) { "不能复制到自身或子目录" }}
               }
             }
-            val existing=storage.list(destination).map{it.name}.toSet()
-            var name=e.name
-            if(name in existing) {
-              if(j.args.optString("conflict","rename")=="skip") {j.completed.add(source);persist(context,j);continue}
-              var suffix=1;val stem=e.name.substringBeforeLast('.',e.name);val ext=if(!e.isDir && '.' in e.name) "."+e.name.substringAfterLast('.') else ""
-              while(name in existing) {name="${if(e.isDir) e.name else stem} (${suffix++})$ext";require(suffix<10000)}
-            }
+            if(conflict=="skip"&&storage.list(destination).any{it.name==e.name}){j.completed.add(source);persist(context,j);continue}
             captured.clear()
-            val temp=copyTree(source,destination,".rhfiles-part-${j.id}-${UUID.randomUUID()}")
-            val output=try {storage.rename(temp,name)} catch(e:Exception){cleanup(temp);throw e}
-            j.outputs.add(output)
+            val output=publishTree(source,destination,e.name)
+            if(!j.outputs.contains(output))j.outputs.add(output)
             // Persist before deleting the source. After interruption a user sees the committed output.
             persist(context,j)
             if(j.op=="move") {

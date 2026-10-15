@@ -12,7 +12,7 @@ await context.addInitScript(()=>{
     default:throw Error('Unmocked Rust '+cmd);
   }}};
   window.RHFilesNative={postMessage(message){const {id,command,args}=JSON.parse(message);model.calls.push({cmd:command,args});Promise.resolve().then(async()=>{switch(command){
-    case 'capabilities':return {version:3,nativeBack:true,dualPane:true,adaptiveLayout:true};case 'theme':return true;case 'permission':return true;
+    case 'capabilities':return {version:3,nativeBack:true,dualPane:true,adaptiveLayout:true,restoreNavigation:localStorage.getItem('qa-restore')==='1'};case 'theme':return true;case 'permission':return true;
     case 'window.layout':return {hinge:null};case 'roots':return [{path:root,label:'内部存储'}];case 'shares':case 'jobs':return [];case 'shares.clear':return true;
     case 'job.start':{model.job={id:'job',state:'completed',outputs:[],completed:[],failures:[]};for(const source of args.args.sources){const parent=source.slice(0,source.lastIndexOf('/')),e=model.fs[parent].find(e=>e.path===source);assertEntry:if(e){const target=args.args.destination+'/'+e.name;model.fs[args.args.destination].push({...e,path:target});model.job.outputs.push(target);model.job.completed.push(source);if(args.op==='move')model.fs[parent]=model.fs[parent].filter(e=>e.path!==source);}}return 'job';}
     case 'job.status':if(model.hold)await new Promise(resolve=>model.release=resolve);return model.job;
@@ -47,6 +47,14 @@ try{
   await page.setViewportSize({width:412,height:892});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='single');check(await page.locator('.file-pane:visible').count()===1,'narrow phone shows only active pane');
   await page.setViewportSize({width:1280,height:1000});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='rows');check(await page.locator('.file-pane:visible').count()===2,'expanding restores both panes without recreating them');
   check((await second.locator('#title').innerText())==='Music','inactive pane route survived resize');
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:{insets:{top:.024,bottom:.032}}})));await page.waitForFunction(()=>document.getElementById('workbench').getBoundingClientRect().y===24);
+  check((await page.locator('#workbench').boundingBox()).height===944,'system bar insets reserve space for touch controls');
+  await select(first,'notes.txt');await first.locator('[data-action=copy]').click();await second.locator('#title').click();await page.evaluate(()=>localStorage.setItem('qa-restore','1'));await page.reload();
+  await page.waitForFunction(()=>[...document.querySelectorAll('.file-pane')].length===2&&[...document.querySelectorAll('.file-pane')].every(f=>!!f.contentWindow.rhfilesPane&&f.contentWindow.document.getElementById('title').textContent!=='RHFiles'));
+  first=pane('first');second=pane('second');
+  check((await second.locator('#title').innerText())==='Music'&&await second.locator('#paste-bar').isVisible(),'Activity recreation restores both route and shared pending clipboard');
+  check(await page.locator('.file-pane').nth(1).evaluate(node=>node.classList.contains('active-pane')),'Activity recreation restores active pane');
+  check(await page.evaluate(()=>!window.__model.calls.some(call=>call.cmd==='job.start')),'restoring a clipboard never automatically repeats a file operation');
   check(errors.length===0,'no JavaScript errors: '+errors.join(';'));
   console.log('PASS '+checks+' dual-pane browser checks');
 }finally{await context.close();await test.close();}
