@@ -9,7 +9,7 @@ function Adb { $value=& $adb -s $Serial @args; if($LASTEXITCODE -ne 0){throw 'AD
 if ((Adb shell getprop ro.kernel.qemu) -ne '1') { throw 'Not an emulator' }
 $evidence=Join-Path $PSScriptRoot ('..\test-artifacts\android-release-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $evidence | Out-Null
-function TapText([string]$Text) {
+function TapText([string]$Text,[switch]$Up) {
     for($attempt=0;$attempt -lt 6;$attempt++) {
         $dump=Adb shell uiautomator dump /sdcard/rhfiles-release.xml
         if ($dump -notmatch 'dumped') { throw 'Android accessibility did not become idle' }
@@ -18,9 +18,9 @@ function TapText([string]$Text) {
         if($node){
             $null=$node.bounds -match '^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$'
             $x=[int](([int]$Matches[1]+[int]$Matches[3])/2);$y=[int](([int]$Matches[2]+[int]$Matches[4])/2)
-            Adb shell input tap $x $y | Out-Null;return
+            Adb shell input tap $x $y | Out-Null;Write-Host "Tapped: $Text";return
         }
-        Adb shell input swipe 360 1300 360 500 350 | Out-Null
+        if($Up){Adb shell input swipe 360 450 360 1400 450 | Out-Null}else{Adb shell input swipe 360 1300 360 500 350 | Out-Null}
     }
     throw "Missing accessibility label: $Text"
 }
@@ -28,7 +28,11 @@ Adb install -r $Apk | Out-Host
 Adb shell am force-stop com.railgunhamster.rhfiles | Out-Null
 Adb shell am start -W -n com.railgunhamster.rhfiles/.MainActivity | Out-Null
 Start-Sleep -Seconds 3
-TapText '下载'
+# Android WebView may restore Home's previous scroll offset across APK updates.
+# Start from a visible first row instead of searching only downward from bottom.
+Adb shell input swipe 360 450 360 1400 450 | Out-Null
+Adb shell input swipe 360 450 360 1400 450 | Out-Null
+TapText '下载' -Up
 TapText 'sample-h264-aac.mp4'
 Start-Sleep -Seconds 4
 $state=(Adb shell dumpsys activity activities) -join "`n"
@@ -39,5 +43,7 @@ Adb shell input keyevent 4 | Out-Null
 Start-Sleep -Seconds 2
 if(((Adb shell dumpsys activity activities) -join "`n") -notmatch 'topResumedActivity=.*MainActivity') { throw 'Release player did not return to file list' }
 $identity=(Adb shell dumpsys package com.railgunhamster.rhfiles) -join "`n"
-if($identity -notmatch 'versionName=0.1.6') { throw 'Wrong installed release version' }
+$expected=(Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\android\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
+if($identity -notmatch ('versionName='+[regex]::Escape($expected)+'(?:\s|$)')) { throw 'Wrong installed release version' }
+if($identity -match 'pkgFlags=\[[^\]]*DEBUGGABLE') { throw 'Smoke test requires the non-debuggable release APK' }
 Write-Host "PASS: release APK launch, Download navigation, native player and one-Back return. Evidence: $evidence"
