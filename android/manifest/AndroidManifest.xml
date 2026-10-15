@@ -58,6 +58,7 @@
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"
+            android:resizeableActivity="true"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
             android:exported="true">
@@ -77,7 +78,7 @@
 
         <service android:name=".FileTaskService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".AppUpdateService" android:exported="false" android:foregroundServiceType="dataSync" />
-        <activity android:name=".PlaybackActivity" android:exported="false" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".PlaybackActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|density|fontScale" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

@@ -12,6 +12,7 @@ const api = (() => {
   let nativeBack = false;
   let appUpdates = false;
   let nativePlayback = false;
+  let nativeThumbnails=false,adaptiveLayout=false,restoreNavigation=false;
   function nativeCall(command, args = {}) {
     const bridge = window.RHFilesNative;
     if (!bridge) return Promise.reject(new Error('本版本或系统 WebView 暂不支持此系统操作'));
@@ -137,7 +138,9 @@ const api = (() => {
     nativeBackAvailable: () => nativeBack,
     updatesAvailable: () => appUpdates,
     playbackAvailable: () => nativePlayback,
-    async initNative() { if (window.RHFilesNative) { try { const capabilities=await nativeCall('capabilities');nativeVersion=capabilities.version || 0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true;nativePlayback=capabilities.nativePlayback===true; } catch {} } },
+    async initNative() { if (window.RHFilesNative) { try { const capabilities=await nativeCall('capabilities');nativeVersion=capabilities.version || 0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true;nativePlayback=capabilities.nativePlayback===true;nativeThumbnails=capabilities.nativeThumbnails===true;adaptiveLayout=capabilities.adaptiveLayout===true;restoreNavigation=capabilities.restoreNavigation===true; } catch {} } },
+    shouldRestoreNavigation:()=>restoreNavigation,
+    adaptiveAvailable:()=>adaptiveLayout,
     native: nativeCall,
     runJob: job,
     isVirtual: virtual,
@@ -169,7 +172,7 @@ const api = (() => {
     entryExists: wrap('entry_exists'),
     readTextPreview: wrap('read_text_preview'),
     fileHash: wrap('file_hash'),
-    readThumbnail: wrap('read_thumbnail'),
+    readThumbnail: args=>nativeThumbnails?nativeCall('media.thumbnail',args):wrap('read_thumbnail')(args),
 
     // Index
     indexStart: wrap('index_start'),
@@ -177,7 +180,7 @@ const api = (() => {
     indexClear: wrap('index_clear'),
     indexStatus: wrap('index_status'),
     searchFiles: wrap('search_files'),
-    browseLibrary: args => nativeVersion >= 2 && ['image','audio','video'].includes(args.category) ? nativeCall('media.library',{category:args.category}) : invoke('browse_library',args),
+    browseLibrary: args => nativeVersion >= 2 && ['image','audio','video'].includes(args.category) ? nativeCall('media.library',args) : invoke(args.albums||args.folder?'browse_library_folders':'browse_library',args),
     assetUrl(path) {
       const convert = window.__TAURI_INTERNALS__?.convertFileSrc || window.__TAURI__?.core?.convertFileSrc;
       if (!convert) throw new Error('本版本未提供媒体文件访问接口');

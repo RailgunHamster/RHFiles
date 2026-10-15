@@ -27,12 +27,13 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await pw.chromium.launch({headless:true,executablePath});
 let checks=0;
 function check(value,label){assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);}
-function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativeUpdates=false,nativePlayback=false}){
+function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativeUpdates=false,nativePlayback=false,restoreNavigation=false}){
   const root='/storage/emulated/0';
   const file=(name,kind='document',size=10)=>({name,path:root+'/'+name,kind,isDir:kind==='folder',size,modifiedMs:1712345678000});
   const m=window.__model={calls:[],denied,partial,index:true,fs:{
     [root]:[file('DCIM','folder'),file('Download','folder'),file('Music','folder'),file('备份','folder'),file('notes.txt'),file('photo.jpg','image',2048),file('movie.mp4','video',5000),file('empty.txt','document',0),file('中文 文件.txt'),file('<img onerror=alert(1)>.txt'),file('.secret')],
-    [root+'/Download']:[{...file('report.pdf'),path:root+'/Download/report.pdf'}],
+    [root+'/Download']:[{...file('report.pdf'),path:root+'/Download/report.pdf'},{...file('Nested','folder'),path:root+'/Download/Nested'}],
+    [root+'/Download/Nested']:[],
     [root+'/DCIM']:Array.from({length:1000},(_,i)=>({...file('photo'+i+'.jpg','image',i*100),path:root+'/DCIM/photo'+i+'.jpg'})),
     [root+'/Music']:[],[root+'/备份']:[]
   }};
@@ -49,7 +50,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
       case 'index_start':m.index=true;return {};
       case 'index_clear':m.index=false;return {};
       case 'list_dir':if(!m.fs[args.path])throw 'folder not found';return {path:args.path,parent:args.path.slice(0,args.path.lastIndexOf('/')),entries:structuredClone(m.fs[args.path]),dirCount:4,fileCount:6};
-      case 'browse_library':{const entries=Object.values(m.fs).flat().filter(e=>!e.isDir&&(args.category==='recent'||e.kind===args.category)).slice(0,args.limit);return {entries,total:entries.length,totalBytes:1234,truncated:false};}
+      case 'browse_library':case 'browse_library_folders':{const entries=Object.values(m.fs).flat().filter(e=>!e.isDir&&(args.category==='recent'||e.kind===args.category)).slice(0,args.limit);return {entries,total:entries.length,totalBytes:1234,truncated:false};}
       case 'search_files':return Object.values(m.fs).flat().filter(e=>e.name.toLowerCase().includes(args.query.toLowerCase()));
       case 'app_info':return {version:'0.1.0-test',platform:'android'};
       case 'get_reverse_server_status':return {running:!!m.server,root,urls:m.server?['http://192.0.2.1:8765/']:[]};
@@ -88,7 +89,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
-        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates,nativePlayback};case 'theme':return true;case 'permission':return !m.denied;
+        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates,nativePlayback,restoreNavigation};case 'theme':return true;case 'permission':return !m.denied;
         case 'media.play':return true;
         case 'update.status':return m.updates;
         case 'update.save':m.updates={...m.updates,config:a,state:'idle',release:null};return m.updates;
@@ -139,12 +140,25 @@ async function choose(p,label){await p.getByRole('button',{name:label,exact:true
 async function press(p,name){await row(p,name).scrollIntoViewIfNeeded();const b=await row(p,name).boundingBox();await p.mouse.move(b.x+80,b.y+25);await p.mouse.down();await p.waitForTimeout(510);await p.mouse.up();await p.waitForSelector('#selection-bar:not([hidden])');}
 async function capture(p,name){await p.screenshot({path:path.join(output,name+'.png')});}
 try{
+  if(!process.argv.includes('--updates-only')){
   const {context,page:p,errors}=await pageFor();await tile(p,'storage-0').waitFor();
   check(await p.locator('.home-tile').count()===13,'Home exposes working destinations');
   check(await p.locator('.home-grid').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length)===3,'Phone home has three columns');
   check((await tile(p,'storage-0').innerText()).includes('48 GB / 128 GB'),'Capacity uses actual root metadata');
   check(!await p.locator('#btn-reindex').isVisible(),'Index maintenance is outside navigation');
-  await capture(p,'plus-home');await tile(p,'storage-0').click();await p.waitForSelector('#filelist .name');
+  check(await p.locator('.tile-icon').first().evaluate(e=>getComputedStyle(e).borderTopWidth==='1px'&&getComputedStyle(e).borderTopStyle==='solid'),'Home icon backgrounds have visible outlines');
+  await capture(p,'plus-home');
+  await tile(p,'downloads').click();await row(p,'report.pdf').waitFor();
+  check(await p.locator('#title').innerText()==='下载'&&await p.locator('#crumbs .crumb').count()===1,'Home Downloads uses its own named navigation root');
+  await p.evaluate(()=>rhfilesHandleBack());await p.waitForSelector('#home:not([hidden])');check(true,'One Back from Home Downloads returns directly Home');
+  await tile(p,'downloads').click();await row(p,'Nested').click();await p.waitForFunction(()=>document.getElementById('title').textContent==='Nested');
+  await p.evaluate(()=>rhfilesHandleBack());await row(p,'report.pdf').waitFor();check(await p.locator('#title').innerText()==='下载','Downloads child Back returns to the shortcut root');
+  await row(p,'Nested').click();await p.locator('#crumbs .crumb').first().click();await row(p,'report.pdf').waitFor();
+  await p.click('#btn-search');await p.click('#btn-search-close');await row(p,'report.pdf').waitFor();
+  await p.click('#btn-up');await p.waitForSelector('#home:not([hidden])');check(true,'Breadcrumb and search preserve Downloads boundary, and Up returns Home');
+  await tile(p,'storage-0').click();await row(p,'Download').click();await row(p,'report.pdf').waitFor();
+  check(await p.locator('#crumbs .crumb').count()===2,'The same Download path opened through storage keeps physical breadcrumbs');
+  await p.evaluate(()=>rhfilesHandleBack());await row(p,'Download').waitFor();check(await p.locator('#title').innerText()==='内部存储','Storage Download Back returns to storage, not Home');
   check(await p.locator('#title').innerText()==='内部存储','Friendly storage title');
   check(!(await p.locator('#crumbs').innerText()).includes('emulated'),'Named breadcrumb root');
   check(await p.locator('#filelist .name').count()===10,'Hidden filtering preserves zero-byte/Unicode files');
@@ -198,14 +212,19 @@ try{
   check(cells[3].y>=cells[0].y+cells[0].h,'Grid row height matches virtualization');
   check(await p.locator('.cell').count()<80,'1000-entry directory is virtualized');
   await p.locator('#filelist').evaluate(e=>{e.scrollTop=12000;});await p.waitForTimeout(120);check(await p.locator('.cell').count()<80,'Scrolling stays bounded');
+  await p.evaluate(()=>{window.__retainedRow=document.querySelector('.cell:nth-child(10)');document.getElementById('filelist').scrollTop+=4;});await p.waitForTimeout(80);
+  check(await p.evaluate(()=>window.__retainedRow.isConnected),'Scrolling retains existing rows and decoded thumbnails');
   await p.click('#btn-overflow');await choose(p,'设置');await p.waitForSelector('#tool-settings:not([hidden])');await p.goBack();await p.waitForSelector('.cell');
   check(await p.locator('#filelist').evaluate(e=>e.scrollTop>10000),'Returning from Settings to a large directory restores scroll position');
   await p.locator('#filelist').evaluate(e=>{e.scrollTop=0;});await p.waitForTimeout(80);await capture(p,'plus-grid');
-  await home(p);await tile(p,'image').click();await p.waitForSelector('#filelist .name');check(await p.evaluate(()=>window.__model.calls.some(c=>c.cmd==='browse_library'&&c.args.category==='image')),'Image category invokes bounded library');
+  await home(p);await tile(p,'image').click();await p.waitForSelector('#filelist .name');check(await p.evaluate(()=>window.__model.calls.some(c=>c.cmd==='browse_library_folders'&&c.args.category==='image')),'Image category invokes folder-grouped library');
+  check(await row(p,'DCIM').count()===1 && await row(p,'photo.jpg').count()===0,'Image category starts with actual parent folders, not a flat file list');
+  await row(p,'DCIM').click();await p.locator('#filelist [data-kind="image"]').first().waitFor();check(await p.locator('#title').innerText()==='图片 · DCIM','Album opens the same media type within one folder');
+  await p.evaluate(()=>rhfilesHandleBack());await row(p,'DCIM').waitFor();
   await home(p);await p.evaluate(()=>window.__model.index=false);await tile(p,'audio').click();await p.getByRole('button',{name:'建立索引',exact:true}).waitFor();check(true,'No index has actionable empty state');
   await home(p);await tile(p,'settings').click();await p.waitForSelector('#tool-settings:not([hidden])');check((await p.locator('#permissions').innerText()).includes('已获得'),'Settings reports permissions');
-  await p.click('summary');await p.click('#btn-refresh-logs');await p.waitForFunction(()=>document.getElementById('log-view').textContent.includes('fixture ready'));check(true,'Diagnostics work inside settings');
-  await p.click('#btn-theme');await p.waitForFunction(()=>document.documentElement.dataset.theme==='dark');check(true,'Theme can change');
+  await p.click('[data-settings-section="about"]');await p.click('[data-settings-panel="about"] summary');await p.click('#btn-refresh-logs');await p.waitForFunction(()=>document.getElementById('log-view').textContent.includes('fixture ready'));check(true,'Diagnostics work inside the About settings category');
+  await p.click('[data-settings-section="display"]');await p.click('#btn-theme');await p.waitForFunction(()=>document.documentElement.dataset.theme==='dark');check(true,'Theme can change');
   await home(p);await capture(p,'plus-dark');await tile(p,'server').click();await p.click('#btn-server-toggle');await choose(p,'取消');check(await p.evaluate(()=>!window.__model.server),'LAN server requires confirmation');
   await p.click('#btn-server-toggle');await choose(p,'启动');await p.waitForFunction(()=>document.getElementById('server-status').textContent.includes('192.0.2.1'));check(true,'Server address visible');
   await p.click('#btn-server-toggle');check(await p.evaluate(()=>!window.__model.server),'Server can stop');
@@ -316,6 +335,9 @@ try{
     check(await p.evaluate(()=>rhfilesHandleBack())===true,'Back consumes the drawer close');await p.locator('#drawer').waitFor({state:'hidden'});check(true,'Back closes drawer without exiting Home');
     await swipe(45,270,260,275);await swipe(250,270,50,275);await p.locator('#drawer').waitFor({state:'hidden'});check(true,'Left swipe closes drawer');
     await swipe(70,600,75,350);check(!await p.locator('#drawer').isVisible(),'Vertical Home scrolling never opens drawer');
+    async function shortSlowSwipe(x1,x2){await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:x1,y:270}]});for(let i=1;i<=8;i++){await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x1+(x2-x1)*i/8,y:270}]});await p.waitForTimeout(50);}await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await p.waitForTimeout(230);}
+    await shortSlowSwipe(30,100);check(await p.locator('#drawer').isVisible(),'Slow drag past one fifth snaps drawer fully open');
+    await shortSlowSwipe(240,170);check(!await p.locator('#drawer').isVisible(),'Slow drag past one fifth snaps drawer fully closed');
     await tile(p,'storage-0').click();await row(p,'notes.txt').waitFor();
     await p.evaluate(()=>{
       window.__redraws=0;window.__hides=0;window.__permissionsBefore=window.__model.calls.filter(c=>c.cmd==='get_permission_status').length;
@@ -342,9 +364,10 @@ try{
     check(await p.evaluate(()=>rhfilesHandleBack())===false,'Settings returns to Home before another Back can exit');
     check(errors.length===0,'Gesture/back/refresh regressions have no uncaught errors');await context.close();
   }
+  }
   {
     const {context,page:p,errors}=await pageFor({nativeV3:true,nativeUpdates:true});
-    await tile(p,'settings').click();await p.locator('#update-check').waitFor();
+    await tile(p,'settings').click();await p.click('[data-settings-section="updates"]');await p.locator('#update-check').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===0),'Disabled auto-check makes no network request at startup or opening Settings');
     await p.click('#update-check');await p.locator('#update-download:not([hidden])').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===1),'Manual check works even with automatic checking disabled');
@@ -362,7 +385,7 @@ try{
     check(await p.locator('#update-state.danger').isVisible(),'Update failure cause is readable beside update controls');
     await p.evaluate(()=>{__model.updateFail=false;__model.installPermission=true;});await p.click('#update-check');await p.click('#update-download');
     await p.evaluate(()=>{__model.updates.state='ready';__model.updates.bytes=2000;});
-    await p.waitForFunction(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length===1);
+    try{await p.waitForFunction(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length>=1);}catch(error){console.error(await p.evaluate(()=>({state:__model.updates,calls:__model.nativeCalls.slice(-10),toast:document.getElementById('toast').textContent,ui:document.getElementById('update-state').textContent})));throw error;}
     await p.waitForTimeout(900);
     check(await p.evaluate(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length===1),'Completed user-requested download opens installation once, not every poll');
     await p.screenshot({path:path.join(output,'android-updates.png'),fullPage:true});
@@ -383,6 +406,27 @@ try{
     await p.setViewportSize({width:275,height:610});
     check(await p.locator('.viewer-toolbar .media-icon-btn').evaluateAll(nodes=>{const r=nodes.map(n=>n.getBoundingClientRect());return r.length===6&&r.every(n=>Math.abs(n.y-r[0].y)<2 && n.right<=innerWidth);}), 'Photo controls stay in one row at 275 CSS pixels');
     await capture(p,'immersive-image-viewer');check(errors.length===0,'Native playback routing has no frontend exceptions');await context.close();
+  }
+  {
+    const {context,page:p,errors}=await pageFor({viewport:{width:1280,height:900}});await tile(p,'storage-0').waitFor();
+    check(await p.locator('body.wide-layout').count()===1&&await p.locator('#drawer').isVisible(),'Tablet uses persistent navigation');
+    check(await p.locator('#app').evaluate(e=>e.getBoundingClientRect().left>=232),'Tablet content does not overlap navigation');
+    await tile(p,'settings').click();await p.click('[data-settings-section="storage"]');check(await p.locator('#btn-permission').isVisible()&&!await p.locator('#btn-theme').isVisible(),'Settings categories expose only their own controls');await capture(p,'tablet-settings');
+    await p.evaluate(()=>window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:{hinge:{separating:true,orientation:'vertical',bounds:{left:.48,right:.52,top:0,bottom:1}}}})));
+    check(await p.locator('#app').evaluate(e=>e.getBoundingClientRect().left>=innerWidth*.52),'Unfolded display keeps interactive content clear of a vertical hinge');await capture(p,'folded-settings');
+    await p.evaluate(()=>window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:{}})));await p.setViewportSize({width:360,height:800});
+    await p.waitForFunction(()=>!document.body.classList.contains('wide-layout'));
+    check(await p.locator('body.wide-layout').count()===0&&await p.locator('#btn-menu').isVisible(),'Folding or split-screen returns to compact navigation without resetting route');
+    check(await p.locator('[data-settings-panel="storage"]').isVisible(),'Adaptive resize retains active settings category');
+    check(errors.length===0,'Adaptive geometry has no frontend errors');await context.close();
+  }
+  {
+    const {context,page:p,errors}=await pageFor({nativeV3:true,restoreNavigation:true});await tile(p,'downloads').click();await row(p,'report.pdf').waitFor();
+    await more(p,'report.pdf');await choose(p,'复制');await p.reload();await row(p,'report.pdf').waitFor();
+    check(await p.locator('#title').innerText()==='下载'&&await p.locator('#paste-bar').isVisible(),'Android recreation restores shortcut boundary and pending clipboard without replaying an operation');
+    await p.click('#btn-cancel-paste');await p.evaluate(()=>rhfilesHandleBack());await tile(p,'settings').click();await p.click('[data-settings-section="storage"]');await p.reload();
+    await p.waitForFunction(()=>document.getElementById('title').textContent==='设置'&&!document.querySelector('[data-settings-panel=storage]').hidden);
+    check(true,'Android recreation restores active Settings category');check(errors.length===0,'Restored navigation has no uncaught errors');await context.close();
   }
   console.log('PASS: '+checks+' assertions. IPC mocked. Screenshots: '+output);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

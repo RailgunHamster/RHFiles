@@ -237,6 +237,7 @@ const ui = (() => {
     }
     setDrawerOpen=(opened)=>{
       clearTimeout(settleTimer);
+      if(document.body.classList.contains('wide-layout')){prepare();drawer.hidden=false;drawer.setAttribute('aria-hidden','false');drawer.style.removeProperty('transform');overlay.hidden=!isSheetOpen();overlay.style.removeProperty('opacity');return;}
       if(opened && drawer.hidden){prepare();position(0,true);drawer.getBoundingClientRect();}
       if(!opened && drawer.hidden)return;
       drawer.setAttribute('aria-hidden',String(!opened));
@@ -249,6 +250,7 @@ const ui = (() => {
       gesture = null;
       suppressClick=false;
       if (event.touches.length !== 1 || isSheetOpen()) return;
+      if(document.body.classList.contains('wide-layout'))return;
       const closing = isOpen();
       if (closing ? !event.target.closest('#drawer') && event.target!==overlay : !canOpen() || !event.target.closest('#home')) return;
       const touch = event.touches[0];
@@ -278,10 +280,13 @@ const ui = (() => {
       if (event.cancelable) event.preventDefault();
       suppressClick=true;
       const fast=performance.now()-current.lastTime<120 && Math.abs(current.velocity)>.45 && Math.abs(dx)>20;
-      setDrawerOpen(fast?current.velocity>0:progress>=.5);
+      setDrawerOpen(fast?current.velocity>0:current.closing?progress>.8:progress>=.2);
     }, {passive:false});
     document.addEventListener('touchcancel', () => {if(gesture?.horizontal)setDrawerOpen(gesture.closing);gesture=null;}, {passive:true});
     document.addEventListener('click',event=>{if(suppressClick){suppressClick=false;event.preventDefault();event.stopImmediatePropagation();}},{capture:true});
+    // A real mouse/trackpad click after a touch swipe is a new action, not the
+    // touch gesture's compatibility click (important on tablets and in DeX).
+    document.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse')suppressClick=false;},{capture:true});
   }
 
   // One delegated long-press owner. Virtualized rows can disappear during a

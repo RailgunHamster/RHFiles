@@ -7,6 +7,7 @@ import android.content.ClipData
 import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.res.Configuration
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
@@ -33,12 +34,16 @@ class MainActivity : TauriActivity() {
   private val io=Executors.newFixedThreadPool(3)
   private val storage by lazy {NativeStorage(applicationContext)}
   private val updates by lazy {AppUpdates.get(this)}
+  private val thumbnailDelegate=lazy {MediaThumbnails(storage)}
+  private val thumbnails by thumbnailDelegate
+  private val adaptiveWindow by lazy {AdaptiveWindow(this){appWebView}}
   private var pendingUpdateInstall:Boolean
     get()=getSharedPreferences("updates-v1",Context.MODE_PRIVATE).getBoolean("pendingInstall",false)
     set(value){getSharedPreferences("updates-v1",Context.MODE_PRIVATE).edit().putBoolean("pendingInstall",value).commit()}
   private var picker:((Any?,String?)->Unit)?=null
   private var shared=JSONArray()
   private var appWebView:WebView?=null
+  private var restoreNavigation=false
   private var watching=false
   private val mainHandler=Handler(Looper.getMainLooper())
   private val changed=Runnable {appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-storage-changed'))",null)}
@@ -51,6 +56,7 @@ class MainActivity : TauriActivity() {
     }, { moveTaskToBack(true) })
   }
   override fun onCreate(savedInstanceState:Bundle?) {
+    restoreNavigation=savedInstanceState?.getBoolean("rhfilesRestoreNavigation",false)==true
     super.onCreate(savedInstanceState)
     onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){
       override fun handleOnBackPressed(){backNavigation.back()}
@@ -62,13 +68,20 @@ class MainActivity : TauriActivity() {
     watching=true
     try{contentResolver.registerContentObserver(MediaStore.Files.getContentUri("external"),true,mediaObserver)}catch(_:Exception){}
   }
-  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);appWebView=null;super.onDestroy()}
+  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();io.shutdown();appWebView=null;super.onDestroy()}
+  override fun onSaveInstanceState(outState:Bundle){outState.putBoolean("rhfilesRestoreNavigation",true);super.onSaveInstanceState(outState)}
+  override fun onStart(){super.onStart();adaptiveWindow.start()}
+  override fun onStop(){adaptiveWindow.stop();super.onStop()}
+  override fun onConfigurationChanged(newConfig:Configuration){
+    super.onConfigurationChanged(newConfig)
+    appWebView?.post{adaptiveWindow.publish()}
+  }
   override fun onNewIntent(intent:Intent) {super.onNewIntent(intent);setIntent(intent);receive(intent);mainHandler.post(changed)}
   override fun onResume() {
     super.onResume()
     if(pendingUpdateInstall && (Build.VERSION.SDK_INT<26 || packageManager.canRequestPackageInstalls())) {
       pendingUpdateInstall=false
-      mainHandler.post {io.execute {try{installUpdate()}catch(e:Exception){runOnUiThread{android.widget.Toast.makeText(this,e.message ?: "安装更新失败",android.widget.Toast.LENGTH_LONG).show()}}}}
+      mainHandler.post {if(!io.isShutdown)io.execute {try{installUpdate()}catch(e:Exception){runOnUiThread{android.widget.Toast.makeText(this,e.message ?: "安装更新失败",android.widget.Toast.LENGTH_LONG).show()}}}}
     }
   }
   private fun installUpdate():String {
@@ -108,9 +121,12 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView:WebView) {
     super.onWebViewCreate(webView)
     appWebView=webView
+    // Honor the responsive viewport instead of WebView's fixed layout width.
+    webView.settings.useWideViewPort=true
+    webView.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->adaptiveWindow.publish()}
     if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
-    WebViewCompat.addWebMessageListener(webView,"RHFilesNative",setOf("http://tauri.localhost","https://tauri.localhost")) {_,message,_,mainFrame,reply->
-      if(mainFrame) {
+    WebViewCompat.addWebMessageListener(webView,"RHFilesNative",setOf("http://tauri.localhost","https://tauri.localhost")) {sourceView,message,_,mainFrame,reply->
+      if(mainFrame && appWebView===sourceView && !io.isShutdown) {
         val request=try{JSONObject(message.data ?: "{}")}catch(_:Exception){null}
         if(request!=null) {
           val id=request.optInt("id");val command=request.optString("command");val args=request.optJSONObject("args") ?: JSONObject()
@@ -149,7 +165,9 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation)
+    "media.thumbnail" -> thumbnails.read(args.getString("path"),args.optInt("maxEdge",160))
+    "window.layout" -> onUi{adaptiveWindow.current()}
     "media.play" -> {
       val path=args.getString("path");require(!storage.isRemote(path)){"请先将网络媒体下载到本机"}
       if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile && it.canRead()}){"媒体文件不存在或无法读取"}
@@ -235,7 +253,7 @@ class MainActivity : TauriActivity() {
       }};true
     }
     "usage.settings" -> {startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));true}
-    "media.library" -> media(args.getString("category"))
+    "media.library" -> media(args)
     else -> error("未知系统操作：$command")
   }
   @Suppress("DEPRECATION") private fun apps():JSONArray {
@@ -254,17 +272,22 @@ class MainActivity : TauriActivity() {
       array.put(item)
     };return array
   }
-  private fun media(category:String):JSONObject {
+  private fun media(args:JSONObject):JSONObject {
+    val category=args.getString("category");val folder=args.optString("folder");val albums=args.optBoolean("albums");val groups=linkedMapOf<String,JSONObject>()
     require(category in listOf("image","video","audio"))
     val type=when(category){"image"->MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE;"audio"->MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO;else->MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO}
     val entries=JSONArray();var total=0;var bytes=0L
     contentResolver.query(MediaStore.Files.getContentUri("external"),arrayOf(MediaStore.MediaColumns.DATA,MediaStore.MediaColumns.DISPLAY_NAME,MediaStore.MediaColumns.SIZE,MediaStore.MediaColumns.DATE_MODIFIED),
       "${MediaStore.Files.FileColumns.MEDIA_TYPE}=?",arrayOf(type.toString()),"${MediaStore.MediaColumns.DATE_MODIFIED} DESC")?.use{cursor->
       while(cursor.moveToNext()){
-        val path=cursor.getString(0) ?: continue;if(path.split('/').any{it.startsWith('.')})continue
+        val path=cursor.getString(0) ?: continue;if(!args.optBoolean("showHidden")&&path.split('/').any{it.startsWith('.')})continue
+        val parent=File(path).parent?:continue;if(folder.isNotBlank()&&parent!=folder)continue
         val size=cursor.getLong(2);total++;bytes+=size
-        if(entries.length()<2000)entries.put(NativeEntry(path,cursor.getString(1),false,size,cursor.getLong(3)*1000).json())
+        val entry=NativeEntry(path,cursor.getString(1),false,size,cursor.getLong(3)*1000).json()
+        if(albums){val group=groups[parent];if(group!=null){group.put("count",group.getInt("count")+1);group.put("size",group.getLong("size")+size)}else groups[parent]=NativeEntry(parent,File(parent).name,true,size,cursor.getLong(3)*1000).json().put("libraryAlbum",true).put("count",1).put("cover",entry)}
+        else if(entries.length()<2000)entries.put(entry)
       }
-    };return JSONObject().put("entries",entries).put("total",total).put("totalBytes",bytes).put("truncated",total>2000)
+    };val result=if(albums)JSONArray(groups.values.take(2000))else entries
+    return JSONObject().put("entries",result).put("total",if(albums)groups.size else total).put("totalBytes",bytes).put("truncated",if(albums)groups.size>2000 else total>2000)
   }
 }

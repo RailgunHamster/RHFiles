@@ -583,6 +583,24 @@ pub fn browse_library(
     library_in(&entries, &category, &root, show_hidden.unwrap_or(false), limit.unwrap_or(1000))
 }
 
+#[tauri::command]
+pub fn browse_library_folders(category:String,root:String,show_hidden:Option<bool>,limit:Option<usize>,folder:Option<String>,state:tauri::State<'_,crate::AppState>)->Result<serde_json::Value,String>{
+    let entries=state.index.entries.read().map_err(|_|"index unavailable")?;
+    library_folders_in(&entries,&category,&root,show_hidden.unwrap_or(false),limit.unwrap_or(2000),folder.as_deref())
+}
+fn library_folders_in(entries:&[IndexEntry],category:&str,root:&str,hidden:bool,limit:usize,folder:Option<&str>)->Result<serde_json::Value,String>{
+    if !matches!(category,"image"|"audio"|"video"|"document"|"archive"|"recent"){return Err("unknown library category".into())}
+    if let Some(folder)=folder{let subset:Vec<_>=entries.iter().filter(|e|std::path::Path::new(&e.path).parent()==Some(std::path::Path::new(folder))).cloned().collect();return serde_json::to_value(library_in(&subset,category,root,hidden,limit)?).map_err(|e|e.to_string())}
+    let prefix=format!("{}/",root.trim_end_matches('/'));let mut groups=std::collections::BTreeMap::<String,serde_json::Value>::new();let mut bytes=0u64;
+    for entry in entries{if entry.is_dir||!entry.path.starts_with(&prefix)||(!hidden&&entry.path[prefix.len()..].split('/').any(|p|p.starts_with('.'))){continue}
+        let kind=crate::fs_ops::kind_of(&entry.name,false);if kind!=category&&!(category=="document"&&kind=="code"){continue}
+        let parent=std::path::Path::new(&entry.path).parent().ok_or("file has no parent")?;let path=parent.to_string_lossy().into_owned();bytes=bytes.saturating_add(entry.size);
+        let group=groups.entry(path.clone()).or_insert_with(||serde_json::json!({"path":path,"name":parent.file_name().unwrap_or_default().to_string_lossy(),"isDir":true,"kind":"folder","libraryAlbum":true,"count":0,"size":0,"modifiedMs":0,"cover":{"path":entry.path,"name":entry.name,"kind":kind,"size":entry.size,"modifiedMs":entry.modified_ms}}));
+        if entry.modified_ms>group["modifiedMs"].as_u64().unwrap_or(0)||(entry.modified_ms==group["modifiedMs"].as_u64().unwrap_or(0)&&Some(entry.path.as_str())<group["cover"]["path"].as_str()){group["cover"]=serde_json::json!({"path":entry.path,"name":entry.name,"kind":kind,"size":entry.size,"modifiedMs":entry.modified_ms});}
+        group["count"]=serde_json::json!(group["count"].as_u64().unwrap_or(0)+1);group["size"]=serde_json::json!(group["size"].as_u64().unwrap_or(0).saturating_add(entry.size));group["modifiedMs"]=serde_json::json!(group["modifiedMs"].as_u64().unwrap_or(0).max(entry.modified_ms));
+    }
+    let total=groups.len();let list:Vec<_>=groups.into_values().take(limit.clamp(1,2000)).collect();Ok(serde_json::json!({"entries":list,"total":total,"totalBytes":bytes,"truncated":total>limit.clamp(1,2000)}))
+}
 fn library_in(entries: &[IndexEntry], category: &str, root: &str, show_hidden: bool, limit: usize) -> Result<LibraryPage, String> {
     if !matches!(category, "image" | "audio" | "video" | "document" | "archive" | "recent") {
         return Err("unknown library category".into());
@@ -618,6 +636,14 @@ fn library_in(entries: &[IndexEntry], category: &str, root: &str, show_hidden: b
 mod tests {
     use super::*;
     use std::io::Write;
+    #[test]
+    fn folder_albums_include_older_folders_beyond_the_file_page_limit(){
+        let mut entries:Vec<_>=(0..2100).map(|i|entry(&format!("/s/new/{i}.jpg"),&format!("{i}.jpg"),false)).collect();
+        entries.push(entry("/s/old/last.jpg","last.jpg",false));
+        let page=library_folders_in(&entries,"image","/s",false,2000,None).unwrap();assert_eq!(page["entries"].as_array().unwrap().len(),2);assert_eq!(page["total"],2);
+        let old=library_folders_in(&entries,"image","/s",false,2000,Some("/s/old")).unwrap();assert_eq!(old["total"],1);assert_eq!(old["entries"][0]["path"],"/s/old/last.jpg");
+        entries[3].modified_ms=1_900_000_000_000;let updated=library_folders_in(&entries,"image","/s",false,2000,None).unwrap();let album=updated["entries"].as_array().unwrap().iter().find(|e|e["path"]=="/s/new").unwrap();assert_eq!(album["cover"]["path"],"/s/new/3.jpg");
+    }
 
     #[test]
     fn library_respects_category_root_boundary_and_hidden_ancestors() {

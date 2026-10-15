@@ -119,11 +119,12 @@ class RemoteStorage(private val context: Context, private val profileLookup: ((S
     val client=SMBClient(SmbConfig.builder().withAuthenticators(listOf(com.hierynomus.smbj.auth.NtlmAuthenticator.Factory()))
       .withTimeout(30,TimeUnit.SECONDS).withSoTimeout(30000).build())
     try {
-      val connection=client.connect(c.getString("host"),c.optInt("port",445))
-      val session=connection.authenticate(AuthenticationContext(c.optString("username"),c.optString("password").toCharArray(),c.optString("domain")))
+      val connection=client.connect(SmbHosts.resolve(c.getString("host")),c.optInt("port",445))
+      val (username,domain)=SmbHosts.credentials(c.optString("username"),c.optString("domain"))
+      val session=connection.authenticate(AuthenticationContext(username,c.optString("password").toCharArray(),domain))
       val share=session.connectShare(c.getString("share")) as? DiskShare ?: error("不是文件共享")
       return Smb(client,share)
-    } catch (e: Exception) { client.close(); throw e }
+    } catch (e: Exception) { try{client.close()}catch(close:Exception){e.addSuppressed(close)}; throw e }
   }
   private fun smbPath(l: Location) = l.relative.replace('/','\\')
   private fun url(l: Location): HttpUrl {

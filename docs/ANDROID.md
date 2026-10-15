@@ -153,22 +153,29 @@ Android crate 与 Windows workspace 隔离；本次不修改桌面实现。
 
 ## 验证与限制
 
+Android 0.1.8 新增：分类按真实父目录分组，图片/视频文件夹取修改时间最新的媒体作封面；视频缩略图由系统媒体接口生成，不把整段视频传给 WebView。列表滚动复用可见行，缩略图请求去重、限流并有容量上限。首页下载有独立导航边界，不改动实际路径或文件权限；从内部存储进入 Download 的父级仍是内部存储。抽屉开关慢拖阈值均为约五分之一。
+
+设置分成浏览显示、搜索索引、存储权限、更新网络、关于诊断。宽屏有常驻导航，折叠窗口通过 Jetpack WindowManager 读取铰链信息；这是自适应单内容区，不是双窗格文件管理。物理折叠屏仍需真机验证。
+
+SMB 更新可直接保存账号密码，也可选择已有连接。`域\\用户名` 会拆成对应的登录字段；密码仍由 Android Keystore 加密保存，不写进更新配置或复制诊断。短主机名先走系统 DNS，再尝试 `.local` 和本地网段 NBNS；不修改系统 DNS 或共享权限。无法仅凭旧版“更新失败”确定手机故障，新版会显示异常链与针对性提示。
+
 自动化测试包括 Rust 业务/真实注册表 IPC、浏览器桩 IPC、JVM/Robolectric 原生业务，
 以及真实临时目录、回环 FTP 服务器和 WebDAV 测试服务器。不是全都用空返回 mock。
 
-2026-10-02 验证：Rust 单元 43 + 注册表 IPC 8、原生 JVM/Robolectric 31、
-浏览器交互断言 94、前端格式/排序单元 11，全部通过。
+2026-10-16 验证：Rust 单元 44 + 注册表 IPC 8、原生 JVM/Robolectric 57、
+浏览器交互断言 153、前端格式/排序/列表单元 18，全部通过。
+独立 Android 模拟器实际 APK 回归 16 项通过（缩略图、最新分类封面、滚动与手势、下载边界、设置分类、窗口变化及恢复）；铰链部分使用合成几何。开启 R8 混淆的正式 APK 通过回环 SMB 服务的域账号登录、更新清单读取与完整 APK 下载，故意不匹配的版本元数据在安装前被拒绝。
 FTP 测试包含真实登录/下载/上传、匿名和错误密码拒绝、并发连接上限、
 真实越界文件、禁止覆盖/删除，以及延迟的旧服务清理不得停止新服务。
 浏览器交互使用模拟 IPC；原生协议测试使用本机回环服务，不代表真实 NAS 兼容性。
 
-**本机 adb 没有设备连接，尚未做本次 APK 的真机验收**：
+**日常验收优先使用独立模拟器，不操作用户正在使用的手机；本轮尚未做真机验收**：
 SAF/OTG 厂商差异、真实网盘提供者、Keystore、系统分享/安装/卸载、前台通知、
 Android 杀进程/系统超时、SMB NAS、真实 FTPS 服务器、媒体硬解码需设备验证。
 JVM 测试、编译成功和浏览器截图不能替代这些验收。
 
 目前仍使用开发签名用于覆盖侧载，不是公开商店发行的生产签名方案。
-未完成独立网盘 OAuth、多语言体系、原生电视/平板专门交互和多窗格。
+未完成独立网盘 OAuth、多语言体系、原生电视专门交互和多窗格；平板/折叠屏目前为自适应单内容区。
 完整对照及外部前提见 [ANDROID-PARITY.md](ANDROID-PARITY.md)。
 
 ## 测试和构建
@@ -177,7 +184,8 @@ JVM 测试、编译成功和浏览器截图不能替代这些验收。
 
 ~~~powershell
 cargo test --manifest-path android/src-tauri/Cargo.toml --lib --tests
-node --test android/web/tests/format.test.js
+node --test android/web/tests/*.test.cjs android/web/tests/format.test.js
+node android/web/tests/flow-check.mjs
 node android/web/tests/ui-check.mjs
 pwsh -File scripts/android-sync.ps1
 android/src-tauri/gen/android/gradlew.bat --project-dir android/src-tauri/gen/android :app:testUniversalReleaseUnitTest
@@ -185,6 +193,7 @@ pwsh -File scripts/android-build.ps1 -Target aarch64
 ~~~
 
 UI 截图输出在 `android/web/tests/__screenshots__/`（忽略）；浏览器测试缺运行时会失败，不静默跳过。
+`scripts/android-thumbnails-layout-regression.mjs` 仅接受明确的模拟器序列号（默认 emulator-5582），检查真实图片/视频缩略图、最新分类封面、滚动中的图片保留、下载导航边界、五分之一抽屉手势和窗口缩放。运行前在模拟器 Download 中准备 `rhfiles-sample.png` 和 `sample-h264-aac.mp4`；会在专用 QA 目录创建媒体并在退出时恢复窗口尺寸和密度。模拟的铰链数据只能验证布局几何，不能代替真实折叠屏硬件。
 原生权威输入在 `android/gradle/` 和 `android/manifest/`，同步脚本恢复 Kotlin、测试、R8 规则、权限与 Gradle 配置。
 Tauri 生成目录 `android/src-tauri/gen/android/` 不提交。
 
@@ -209,6 +218,7 @@ Android 0.1.6：本机/SAF 视频和音频使用未导出的 `PlaybackActivity` 
 图片使用沉浸式查看器；长列表使用固定总高度和绝对定位窗口，禁用浏览器滚动锚定，触摸滚动取消委托式长按，避免回收行计时器误选。主页抽屉按触点位置更新 transform/scrim，结束后吸附。内置索引操作改为中性卡片。
 
 - [Android Media3 1.11.1](https://developer.android.com/jetpack/androidx/releases/media3)、[PlayerView](https://developer.android.com/media/media3/ui/playerview)、[支持的容器与编码](https://developer.android.com/media/media3/exoplayer/supported-formats)，Apache-2.0。Gradle Kotlin 插件更新为 2.2.10 以兼容其 Kotlin 元数据。
+- [Jetpack WindowManager 1.5.1](https://developer.android.com/jetpack/androidx/releases/window)，Apache-2.0；使用窗口布局信息读取分隔铰链，不以设备型号猜测折叠状态。
 
 - [SAF 与持久授权](https://developer.android.com/training/data-storage/shared/documents-files)
 - [前台服务时限](https://developer.android.com/develop/background-work/services/fgs/timeout)

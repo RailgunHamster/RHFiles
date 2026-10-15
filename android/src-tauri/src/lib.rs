@@ -117,6 +117,7 @@ pub fn build_app_generic<R: tauri::Runtime>() -> tauri::Builder<R> {
             commands::read_text_preview,
             commands::file_hash,
             commands::read_thumbnail,
+            index::browse_library_folders,
             index::index_status,
             index::index_start,
             index::index_stop,

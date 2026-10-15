@@ -1,4 +1,17 @@
-RHFiles Android 0.1.7
+RHFiles Android 0.1.8
+
+修复列表滚动/拖动时缩略图消失：保留可见行和已解码图片，合并重复请求，限制并发与缓存；不支持的文件保留类型图标。
+首页抽屉开关的拖动吸附阈值都降至约五分之一，短距离拖动更容易完成。
+首页“下载”有独立导航边界，下载根目录返回主页；从内部存储进入 Download 仍返回真实父目录。主页图标底框增加明暗主题细描边。
+加入本机视频真实封面，使用 Android 系统缩略图接口，图片与视频都不把原文件整块加载到 WebView。
+图片、视频、音频、文档等分类先按所在文件夹分组，再进入该类型的文件列表；图片文件夹使用最新图片作封面，视频文件夹使用最新视频帧作封面（按修改时间）。同名不同路径的文件夹分开。
+设置分为浏览显示、搜索索引、存储权限、更新网络、关于诊断五类。
+加入宽屏常驻导航、可用宽度网格和设置布局、窗口大小变化与折叠铰链避让；Android 因密度变化重建界面时恢复导航状态。模拟器和布局测试不替代折叠屏真机验证。
+家庭服务器支持在更新页直接保存 SMB 账号密码，兼容 域\\用户名；增加 .local / 局域网短名称查询。失败显示具体异常与建议，可复制不含密码的诊断。手机实际故障仍需用具体错误确认，不能仅凭“更新失败”保证解决。
+
+Stable thumbnails during scrolling, native video frame thumbnails, folder-grouped libraries with newest image/video covers, categorized Settings, adaptive wide/fold layouts and authenticated SMB update configuration with actionable diagnostics. Home Downloads now has its own navigation boundary, and Home icons have clearer outlines. Phone-specific SMB connectivity and physical foldable behavior still require device verification.
+
+此前版本修复 / Previous fixes:
 
 修复正式版家庭服务器 SMB 更新报错“the provided handler invocation did not specify the necessary constructor”：保留 SMB 事件组件反射调用的构造函数。更新目录读取和 APK 下载均使用开启混淆的正式 APK 回归验证。
 旧版 SMB 通道已损坏时，请先切换 GitHub 更新或手动覆盖安装本版 APK；不需要卸载，原数据与签名保持不变。

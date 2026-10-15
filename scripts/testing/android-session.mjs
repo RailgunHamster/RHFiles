@@ -31,29 +31,53 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
   if(adb('shell','dumpsys','window').includes('Application Not Responding'))throw Error('The emulator has an Android ANR dialog; recover the emulator before UI assertions.');
   const pid=await until(()=>adb('shell','pidof',packageId),'app process');
   const port=adb('forward','tcp:0','localabstract:webview_devtools_remote_'+pid);
-  let socket;
+  let socket,connecting,closed=false,targetId,lastTargetCheck=0;
   const pending=new Map(),events=[];let requestId=0;
   const artifactDir=fs.mkdtempSync(path.join(root,'test-artifacts','android-'));
   const close=()=>{
+    closed=true;
     socket?.close();for(const item of pending.values()){clearTimeout(item.timer);item.reject(Error('Android session closed'));}pending.clear();
     adb('forward','--remove','tcp:'+port);
     fs.writeFileSync(path.join(artifactDir,'events.json'),JSON.stringify(events,null,2));
   };
   try {
-    const target=await until(async()=>{
-      const targets=await (await fetch(`http://127.0.0.1:${port}/json`,{signal:AbortSignal.timeout(1500)})).json();
-      return targets.find(t=>t.type==='page' && /^https?:\/\/tauri\.localhost\//.test(t.url));
-    },'debug WebView (install a debug APK)');
-    socket=new WebSocket(target.webSocketDebuggerUrl);await once(socket,'open');
-    socket.addEventListener('message',event=>{
-      const message=JSON.parse(event.data);if(message.method)events.push(message);
-      const item=pending.get(message.id);if(!item)return;pending.delete(message.id);clearTimeout(item.timer);
-      message.error?item.reject(Error(JSON.stringify(message.error))):item.resolve(message.result);
-    });
-    const send=(method,params={})=>new Promise((resolve,reject)=>{
+    const sendRaw=(method,params={})=>new Promise((resolve,reject)=>{
       const id=++requestId,timer=setTimeout(()=>{pending.delete(id);reject(Error('CDP timeout: '+method));},20000);
       pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));
     });
+    async function connect(){
+      if(closed)throw Error('Android session closed');
+      if(socket?.readyState===WebSocket.OPEN&&Date.now()-lastTargetCheck<200)return;
+      if(connecting)return connecting;
+      connecting=(async()=>{
+        const target=await until(async()=>{
+          if(closed)throw Error('Android session closed');
+          const targets=await (await fetch(`http://127.0.0.1:${port}/json`,{signal:AbortSignal.timeout(1500)})).json();
+          const pages=targets.filter(t=>t.type==='page' && /^https?:\/\/tauri\.localhost\//.test(t.url));
+          const info=t=>{try{return JSON.parse(t.description)}catch{return {}}};
+          return pages.find(t=>info(t).attached&&info(t).visible)||pages.find(t=>info(t).attached)||pages[0];
+        },'debug WebView (install a debug APK)',60000);
+        lastTargetCheck=Date.now();
+        if(socket?.readyState===WebSocket.OPEN&&targetId===target.id)return;
+        for(const item of pending.values()){clearTimeout(item.timer);item.reject(Error('Android WebView changed; command was not replayed'));}pending.clear();
+        socket?.close();targetId=target.id;
+        const current=socket=new WebSocket(target.webSocketDebuggerUrl);await once(current,'open');
+        current.addEventListener('message',event=>{
+          const message=JSON.parse(event.data);if(message.method)events.push(message);
+          const item=pending.get(message.id);if(!item)return;pending.delete(message.id);clearTimeout(item.timer);
+          message.error?item.reject(Error(JSON.stringify(message.error))):item.resolve(message.result);
+        });
+        current.addEventListener('close',()=>{
+          if(socket!==current)return;socket=null;
+          for(const item of pending.values()){clearTimeout(item.timer);item.reject(Error('Android WebView recreated; command was not replayed'));}pending.clear();
+        });
+        await sendRaw('Runtime.enable');
+      })();
+      try{await connecting;}finally{connecting=null;}
+    }
+    // Reconnect after a normal Activity recreation, never restart the app or
+    // replay a click/write. Read-only `until` assertions can retry explicitly.
+    const send=async(method,params={})=>{await connect();return sendRaw(method,params);};
     const evaluate=async expression=>{
       const result=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});
       if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
@@ -79,7 +103,10 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
       await pause(200);
     };
     const screenshot=async name=>{
-      const data=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(artifactDir,name+'.png'),Buffer.from(data.data,'base64'));
+      // Chrome's offscreen capture can distort composited layers after an
+      // Android density switch. Capture the actual device screen for visual QA.
+      adb('shell','screencap','-p','/data/local/tmp/rhfiles-qa-screen.png');
+      adb('pull','/data/local/tmp/rhfiles-qa-screen.png',path.join(artifactDir,name+'.png'));
     };
     return {adb,evaluate,send,click,swipe,screenshot,events,artifactDir,serial,close};
   }catch(error){close();throw error;}

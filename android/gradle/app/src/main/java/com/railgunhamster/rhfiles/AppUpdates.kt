@@ -129,8 +129,12 @@ class AppUpdates private constructor(private val context: Context) {
     require(state !in listOf("checking","downloading","verifying")) { "请等待当前更新任务结束或取消后再修改配置" }
     require(value.getString("source") in listOf("github","family")) { "更新源无效" }
     AndroidUpdateFeed.githubRepository(value.getString("github"))
-    familyInput(value.getString("family"),value.optString("connectionId"),UPDATE_FEED,false)
+    val inline=value.optString("smbUsername").isNotBlank()||value.optString("smbPassword").isNotEmpty()
+    familyInput(value.getString("family"),if(inline)"" else value.optString("connectionId"),UPDATE_FEED,false)
     proxy(value)
+    if(inline){val unc=RemoteStorage.parseUnc(value.getString("family"));SmbHosts.credentials(value.optString("smbUsername"),value.optString("smbDomain"))
+      value.put("connectionId",remote.save(JSONObject().put("type","smb").put("name","更新 · "+unc.host).put("host",unc.host).put("share",unc.share).put("port",445)
+        .put("username",value.optString("smbUsername")).put("password",value.optString("smbPassword")).put("domain",value.optString("smbDomain"))))}
     val editor=prefs.edit()
     for(key in listOf("source","github","family","connectionId","proxy"))editor.putString(key,value.optString(key).trim())
     editor.putBoolean("autoCheck",value.optBoolean("autoCheck",true)).putBoolean("proxyEnabled",value.optBoolean("proxyEnabled")).putBoolean("pendingInstall",false)
@@ -252,7 +256,7 @@ class AppUpdates private constructor(private val context: Context) {
     }
   }
   @Synchronized fun cancel(): JSONObject {canceled=true;call?.cancel();return status()}
-  @Synchronized private fun failed(e:Exception) {state=if(canceled)"canceled" else "failed";message=e.message ?: e.javaClass.simpleName}
+  @Synchronized private fun failed(e:Exception) {state=if(canceled)"canceled" else "failed";message=updateFailure(e)}
   @Suppress("DEPRECATION") internal fun verifyApk(file: File, release: AndroidRelease) {
     require(file.isFile && file.length()==release.size) { "已下载的 APK 不完整，请重新下载" }
     val hash=file.inputStream().use {input->val md=MessageDigest.getInstance("SHA-256");val buffer=ByteArray(128*1024);while(true){val n=input.read(buffer);if(n<0)break;md.update(buffer,0,n)};md.digest().joinToString(""){"%02x".format(it)}}
