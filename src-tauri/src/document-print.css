@@ -1,0 +1,14 @@
+@page { size:A4; margin:16mm; }
+* { box-sizing:border-box; }
+body { margin:0; color:#242930; font:11pt/1.65 "Segoe UI","Microsoft YaHei","Noto Sans CJK SC",sans-serif; overflow-wrap:anywhere; }
+h1,h2,h3,h4,h5,h6 { line-height:1.35; break-after:avoid; margin:1.1em 0 .5em; color:#172c3b; }
+h1 { font-size:25pt; border-bottom:1px solid #dde4e9; padding-bottom:.3em; }
+h2 { font-size:19pt; } h3 { font-size:14pt; }
+p,ul,ol,blockquote,pre,table { margin:.65em 0; }
+img { max-width:100%; height:auto; max-height:230mm; object-fit:contain; }
+pre { padding:12px; border:1px solid #e1e6eb; border-radius:5px; background:#f5f7f9; white-space:pre-wrap; overflow-wrap:anywhere; }
+code { font:9pt/1.6 Consolas,"Microsoft YaHei",monospace; } :not(pre)>code { background:#eef2f5; padding:1px 4px; border-radius:3px; }
+blockquote { border-left:3px solid #769caa; padding:3px 14px; margin-left:0; color:#53616c; }
+table { width:100%; border-collapse:collapse; font-size:10pt; } th,td { border:1px solid #d9e1e7; padding:6px 9px; text-align:left; }
+th { background:#edf2f6; } thead { display:table-header-group; } tr { break-inside:avoid; }
+a { color:#246a87; text-decoration:none; } hr { border:0; border-top:1px solid #dce4e9; margin:1.3em 0; }

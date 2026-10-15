@@ -149,7 +149,12 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true)
+    "media.play" -> {
+      val path=args.getString("path");require(!storage.isRemote(path)){"请先将网络媒体下载到本机"}
+      if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile && it.canRead()}){"媒体文件不存在或无法读取"}
+      onUi{startActivity(Intent(this,PlaybackActivity::class.java).putExtra("path",path).putExtra("name",args.optString("name")).putExtra("kind",args.optString("kind","video")))};true
+    }
     "update.status" -> updates.status()
     "update.save" -> updates.save(args)
     "update.check" -> updates.check(args.optBoolean("manual"),args.optString("reason","manual"))

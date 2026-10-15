@@ -18,6 +18,10 @@
 
 ## 已自动化的业务矩阵
 
+2026-10-15 新增：`scripts/markdown-pdf-regression.mjs` 使用独立配置的真实 Windows 实例，覆盖中文多页内置打印、同名输出保护、外部命令提供器、工作目录/Unicode 参数、失败退出和无效 PDF 不发布。`src-tauri/src/documents.rs` 另有安全渲染、配置校验和单次占位符替换测试。默认排版用 Poppler 渲染检查，不把 PDF 文件存在视为排版正确。
+
+`scripts/android-gesture-media-regression.mjs` 只接受专用模拟器，验证松手前抽屉中间位置、取消手势、2,000 文件上下滑动稳定性、回收行长按不误选、真实 H.264/AAC 首帧、图片控件、无效视频错误。先准备 `/sdcard/RHFiles-Scroll-QA` 中 2,000 个文件、`/sdcard/Download/sample-h264-aac.mp4` 和 `rhfiles-sample.png`。它不是手机测试，也不代表所有设备/编码都通过。测试会重启该模拟器中的 RHFiles（不清空数据），避免误连到旧后台 WebView。`android/web/tests/flow-check.mjs` 的 IPC 模拟断言与此分开计数。
+
 | 业务 | 测试位置 | 核心断言 |
 | --- | --- | --- |
 | 地址栏和路径 | `scripts/tests/file-browser.test.mjs` | file URI、本地/UNC、空格/中文/emoji/#/%/+、只解码一次、规范化幂等 |

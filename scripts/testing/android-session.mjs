@@ -23,6 +23,10 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
   };
   if(adb('shell','getprop','ro.kernel.qemu')!=='1')throw Error('Refusing to mutate a non-emulator device.');
   const packageId='com.railgunhamster.rhfiles';
+  // A standard Android Activity can have multiple live WebViews. Starting a
+  // second MainActivity then connecting to the old background CDP page gives
+  // false gesture failures. Restart only this emulator's app, preserving data.
+  adb('shell','am','force-stop',packageId);
   adb('shell','am','start','-W','-n',packageId+'/.MainActivity');
   if(adb('shell','dumpsys','window').includes('Application Not Responding'))throw Error('The emulator has an Android ANR dialog; recover the emulator before UI assertions.');
   const pid=await until(()=>adb('shell','pidof',packageId),'app process');

@@ -365,6 +365,7 @@ function openSettings() {
     '<input id="settings-ffmpeg-path" type="text" spellcheck="false" placeholder="C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe" value="' + esc(String(G.settings.ffmpegPath || '')) + '" onchange="setFfmpegPath(this.value,this)"></div>' +
     '<div class="settings-inline-actions"><button class="dialog-btn" type="button" onclick="refreshFfmpegSettingsStatus()">' + t('settings.ffmpegDetect') + '</button></div>' +
     '<div id="settings-ffmpeg-status" class="media-convert-engine" role="status"></div></div>' +
+    '<div class="settings-card"><div class="settings-card-title">'+t('pdf.title')+'</div><p class="settings-card-description">'+t('pdf.configHelp')+'</p><button class="dialog-btn" onclick="editDocumentConverterConfig()">'+t('pdf.editConfig')+'</button></div>' +
     '<div class="settings-card archive-tools-card"><div class="settings-card-title">' + t('settings.archiveToolsTitle') + '</div>' +
     '<p class="settings-card-description">' + t('settings.archiveToolsHelp') + '</p>' +
     '<div class="archive-tool-list">' +

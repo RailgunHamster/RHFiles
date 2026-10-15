@@ -85,6 +85,7 @@ function Sync-File {
 }
 
 $appDir = Join-Path $generatedRoot 'app'
+Sync-File -Source (Join-Path $repoRoot 'android\gradle\build.gradle.kts') -Target (Join-Path $generatedRoot 'build.gradle.kts')
 Sync-File `
     -Source (Join-Path $repoRoot 'android\gradle\app\proguard-rules.pro') `
     -Target (Join-Path $appDir 'proguard-rules.pro')

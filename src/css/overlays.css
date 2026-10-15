@@ -79,6 +79,7 @@
 .media-convert-grid > select:focus { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent); }
 .media-convert-overwrite { display:flex; align-items:center; gap:8px; margin:14px 0 4px 164px; color:var(--text-3); font-size:11px; }
 .media-convert-error { margin:10px 0 4px; padding:9px 11px; border-radius:7px; color:#c62f2f; background:color-mix(in srgb, #d83a3a 8%, var(--bg)); white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; }
+#markdown-pdf-config { font-size:11px; white-space:pre-wrap; overflow-wrap:anywhere; }
 @media (max-width:640px) {
   .media-convert-grid { grid-template-columns:1fr; gap:5px; }
   .media-convert-grid > label:not(:first-child) { margin-top:5px; }

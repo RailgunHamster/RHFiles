@@ -6,6 +6,7 @@
     "test": "node --test scripts/tests/*.test.mjs",
     "test:mutations": "node scripts/testing/mutation-check.mjs",
     "test:gui": "node scripts/testing/gui-check.mjs",
+    "test:pdf": "node scripts/markdown-pdf-regression.mjs",
     "test:e2e": "node --test --test-concurrency=1 scripts/e2e/*.test.mjs"
   },
   "devDependencies": {

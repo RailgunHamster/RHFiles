@@ -1,13 +1,12 @@
-RHFiles Android 0.1.5
+RHFiles Android 0.1.6
 
-新增应用内更新：支持 GitHub 和家庭服务器（SMB / HTTP / HTTPS），在设置中选择更新源。
-点击“下载并安装”后下载 APK，显示字节数、平均速度和取消按钮；校验大小、SHA-256、包名、版本、CPU 架构和现有签名后交给 Android 系统安装。
-首次安装需允许 RHFiles 安装未知来源应用；授权返回后继续安装。安装仍需系统确认，不会卸载或清空已有数据。
-自动检查可关闭；开启时在启动、进入设置及每小时检查，绝不自动下载。关闭后仅手动检查有效。
-家庭服务器复用网络位置中的 SMB 登录配置，密码使用 Android Keystore 加密。HTTP 更新和 GitHub 支持配置 HTTP 代理。
-包含 0.1.3 的橙绿图标、首页抽屉滑动、存储列表闪烁和系统返回手势修复。
-首页容量和索引状态更新保留原有卡片，避免后台刷新打断抽屉滑动。
+首页抽屉滑动时实时跟随手指，松手后平滑吸附，支持反向关闭和取消手势。
+修复长文件列表滚动反复跳到底/顶，取消已移除行的长按计时，避免滚动误入多选。
+视频和音频改用 Media3 原生播放器：真实视频画面、进度条、图标控制、横屏、倍速、适应/填满和循环。兼容性取决于设备支持的实际编码，不只是 MP4 后缀；失败显示原因并提供其他播放器入口。
+图片查看器改为沉浸式画布和图标工具栏，支持双击、双指缩放、拖动、左右切图、旋转和分享。
+首页索引改为中性状态卡片，区分索引数量、扫描状态和刷新操作。
+保留 GitHub/家庭服务器应用内更新和现有签名，覆盖更新不清空数据。
 
-In-app updates now support GitHub and a home server (SMB / HTTP / HTTPS).
-Download progress, speed, cancellation, APK integrity/identity checks, and Android's installation confirmation are included. Existing app data is preserved.
-Automatic checking is optional and never downloads without your request.
+Finger-tracking drawer with animated settling; stable large-directory scrolling and canceled stale long-press timers.
+Native Media3 video/audio playback, progress, fullscreen, speed, fit/fill, looping and actionable codec errors.
+Immersive photo viewer and redesigned Home index card. Existing data and in-app update sources are preserved.

@@ -587,6 +587,23 @@
   <div class="operation-task-list" id="operation-task-list"></div>
 </section>
 
+<div class="overlay" id="markdown-pdf-dialog" style="display:none">
+  <div class="dialog-backdrop" onclick="closeMarkdownPdfDialog()"></div>
+  <div class="dialog-box dialog-wide media-convert-box" role="dialog" aria-modal="true" aria-labelledby="markdown-pdf-title">
+    <div class="dialog-title" id="markdown-pdf-title" data-i18n="pdf.title">Markdown to PDF</div>
+    <div class="dialog-scroll media-convert-content">
+      <p id="markdown-pdf-source" class="media-convert-source"></p>
+      <div class="media-convert-grid">
+        <label for="markdown-pdf-provider" data-i18n="pdf.provider">Converter</label><select id="markdown-pdf-provider"></select>
+        <label for="markdown-pdf-name" data-i18n="convert.outputName">Output filename</label><input id="markdown-pdf-name" spellcheck="false">
+      </div>
+      <p class="settings-card-description" data-i18n="pdf.help">Existing PDFs are never overwritten. Local images within the Markdown folder are embedded; scripts and remote resources are blocked.</p>
+      <details><summary data-i18n="pdf.custom">Use another converter</summary><p data-i18n="pdf.configHelp">Edit the JSON registry, then reopen this dialog. Command providers receive separate input/output arguments; no shell command concatenation.</p><pre id="markdown-pdf-config"></pre><button class="dialog-btn" onclick="editDocumentConverterConfig()" data-i18n="pdf.editConfig">Open converter configuration</button></details>
+      <p id="markdown-pdf-error" class="media-convert-error" role="alert" hidden></p>
+    </div>
+    <div class="dialog-actions"><button class="dialog-btn" onclick="closeMarkdownPdfDialog()" data-i18n="btn.cancel">Cancel</button><button class="dialog-btn primary" id="markdown-pdf-start" onclick="startMarkdownPdf()" data-i18n="pdf.start">Generate PDF</button></div>
+  </div>
+</div>
 <script src="js/common.js"></script>
 <script src="js/remote.js"></script>
 <script src="js/theme.js"></script>
@@ -607,6 +624,7 @@
 <script src="js/grouping.js"></script>
 <script src="js/selection.js"></script>
 <script src="js/media.js"></script>
+<script src="js/documents.js"></script>
 <script src="js/conflict.js"></script>
 <script src="js/macos.js"></script>
 <script src="js/main.js"></script>

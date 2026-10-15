@@ -36,6 +36,12 @@ const ui = (() => {
     info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 8h.01"/>',
     open: '<path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M18 14v4.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/>',
     share: '<path d="M12 3v11"/><path d="M8.5 6.5L12 3l3.5 3.5"/><path d="M5 13v6.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V13"/>',
+    back:'<path d="m14 5-7 7 7 7M7 12h14"/>',
+    previous:'<path d="m15 5-7 7 7 7"/>',next:'<path d="m9 5 7 7-7 7"/>',
+    zoomIn:'<circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6M7 10h6M10 7v6"/>',
+    zoomOut:'<circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6M7 10h6"/>',
+    fit:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/><rect x="7" y="7" width="10" height="10" rx="1"/>',
+    rotate:'<path d="M4 9a8 8 0 1 1 0 7M4 3v6h6"/>',
   };
 
   function icon(kind, extra) {
@@ -80,7 +86,7 @@ const ui = (() => {
     sheet().hidden = true;
     scrim().hidden = true;
     sheetPanel().innerHTML = '';
-    sheetPanel().classList.remove('viewer','editor');
+    sheetPanel().classList.remove('viewer','editor','image-viewer','chrome-hidden');
     if (dismiss) dismiss();
     if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
     return true;
@@ -219,33 +225,99 @@ const ui = (() => {
     scrim().addEventListener('click', closeSheet);
   }
 
-  function bindDrawerSwipe({canOpen, isOpen, open, close}) {
-    let gesture = null;
+  let setDrawerOpen=()=>{};
+  function bindDrawerSwipe({canOpen, isOpen, prepare}) {
+    const drawer=document.getElementById('drawer'),overlay=scrim();
+    let gesture=null,progress=0,settleTimer,suppressClick=false;
+    const width=()=>drawer.getBoundingClientRect().width || Math.min(innerWidth*.84,320);
+    function position(value,dragging=false){
+      progress=Math.max(0,Math.min(1,value));drawer.hidden=false;overlay.hidden=false;
+      drawer.classList.toggle('dragging',dragging);overlay.classList.toggle('dragging',dragging);
+      drawer.style.transform=`translateX(${(progress-1)*width()}px)`;overlay.style.opacity=String(progress);
+    }
+    setDrawerOpen=(opened)=>{
+      clearTimeout(settleTimer);
+      if(opened && drawer.hidden){prepare();position(0,true);drawer.getBoundingClientRect();}
+      if(!opened && drawer.hidden)return;
+      drawer.setAttribute('aria-hidden',String(!opened));
+      position(opened?1:0);
+      settleTimer=setTimeout(()=>{
+        if(!opened){drawer.hidden=true;overlay.hidden=!isSheetOpen();overlay.style.removeProperty('opacity');}
+      },matchMedia('(prefers-reduced-motion: reduce)').matches?0:200);
+    };
     document.addEventListener('touchstart', event => {
       gesture = null;
+      suppressClick=false;
       if (event.touches.length !== 1 || isSheetOpen()) return;
       const closing = isOpen();
-      if (closing ? !event.target.closest('#drawer') : !canOpen() || !event.target.closest('#home')) return;
+      if (closing ? !event.target.closest('#drawer') && event.target!==overlay : !canOpen() || !event.target.closest('#home')) return;
       const touch = event.touches[0];
-      gesture = {x:touch.clientX, y:touch.clientY, closing, horizontal:false};
+      const visual=closing?Math.max(0,Math.min(1,1+drawer.getBoundingClientRect().left/width())):0;
+      gesture = {x:touch.clientX,y:touch.clientY,closing,horizontal:false,base:visual,lastX:touch.clientX,lastTime:performance.now(),velocity:0};
     }, {passive:true});
     document.addEventListener('touchmove', event => {
       if (!gesture) return;
-      if (event.touches.length !== 1) { gesture = null; return; }
+      if (event.touches.length !== 1) {if(gesture.horizontal)setDrawerOpen(gesture.closing);gesture=null;return;}
       const touch = event.touches[0], dx = touch.clientX-gesture.x, dy = touch.clientY-gesture.y;
       if (!gesture.horizontal && Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) { gesture = null; return; }
-      if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy)*1.5) gesture.horizontal = true;
-      if (gesture.horizontal && event.cancelable) event.preventDefault();
+      if(!gesture.horizontal && Math.abs(dx)>8 && Math.abs(dx)>Math.abs(dy)*1.5 && (gesture.closing?dx<0:dx>0)){
+        gesture.horizontal=true;clearTimeout(settleTimer);if(!gesture.closing)prepare();
+      }
+      if(gesture.horizontal){
+        if(event.cancelable)event.preventDefault();
+        const now=performance.now(),elapsed=now-gesture.lastTime;
+        if(elapsed>0)gesture.velocity=(touch.clientX-gesture.lastX)/elapsed;
+        gesture.lastTime=now;gesture.lastX=touch.clientX;
+        position(gesture.base+dx/width(),true);
+      }
     }, {passive:false});
     document.addEventListener('touchend', event => {
       const current = gesture; gesture = null;
       if (!current?.horizontal || event.changedTouches.length !== 1) return;
       const dx = event.changedTouches[0].clientX-current.x;
-      if (current.closing ? dx > -64 : dx < 64) return;
       if (event.cancelable) event.preventDefault();
-      current.closing ? close() : open();
+      suppressClick=true;
+      const fast=performance.now()-current.lastTime<120 && Math.abs(current.velocity)>.45 && Math.abs(dx)>20;
+      setDrawerOpen(fast?current.velocity>0:progress>=.5);
     }, {passive:false});
-    document.addEventListener('touchcancel', () => { gesture = null; }, {passive:true});
+    document.addEventListener('touchcancel', () => {if(gesture?.horizontal)setDrawerOpen(gesture.closing);gesture=null;}, {passive:true});
+    document.addEventListener('click',event=>{if(suppressClick){suppressClick=false;event.preventDefault();event.stopImmediatePropagation();}},{capture:true});
+  }
+
+  // One delegated long-press owner. Virtualized rows can disappear during a
+  // scroll; their detached timers must never turn scrolling into selection.
+  function bindFileGestures(container,{find,select,toggle,activate,hasSelection}){
+    let pointer=null,timer,blockClick=false,lastScroll=-Infinity;
+    const cancel=()=>{clearTimeout(timer);timer=null;};
+    const rowFor=target=>target.closest('[data-path]');
+    container.addEventListener('pointerdown',event=>{
+      cancel();blockClick=false;pointer=null;
+      if(event.button!==0 || event.target.closest('.entry-more'))return;
+      const row=rowFor(event.target);if(!row)return;
+      pointer={id:event.pointerId,x:event.clientX,y:event.clientY,row,path:row.dataset.path,moved:false,held:false};
+      timer=setTimeout(()=>{
+        const p=pointer;if(!p || p.moved || !p.row.isConnected || performance.now()-lastScroll<140)return;
+        p.held=true;blockClick=true;select(p.path);navigator.vibrate?.(10);
+      },500);
+    });
+    container.addEventListener('pointermove',event=>{if(pointer && (event.pointerId!==pointer.id || Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)>8)){pointer.moved=true;blockClick=true;cancel();}});
+    container.addEventListener('pointerup',()=>{cancel();if(pointer?.moved||pointer?.held)blockClick=true;pointer=null;});
+    container.addEventListener('pointercancel',()=>{cancel();blockClick=true;pointer=null;});
+    container.addEventListener('scroll',()=>{lastScroll=performance.now();cancel();if(pointer){pointer.moved=true;blockClick=true;}},{passive:true});
+    container.addEventListener('click',event=>{
+      if(event.target.closest('.entry-more'))return;
+      const row=rowFor(event.target);if(!row)return;
+      if(blockClick){blockClick=false;event.preventDefault();return;}
+      const entry=find(row.dataset.path);if(!entry)return;
+      if(hasSelection())toggle(entry.path);else activate(entry);
+    });
+    container.addEventListener('contextmenu',event=>{
+      event.preventDefault();cancel();const row=rowFor(event.target);if(!row)return;
+      if(pointer?.moved || performance.now()-lastScroll<200 || blockClick)return;
+      blockClick=true;select(row.dataset.path);
+    });
+    document.addEventListener('visibilitychange',()=>{if(document.hidden){cancel();pointer=null;}});
+    return cancel;
   }
 
   /**
@@ -277,6 +349,6 @@ const ui = (() => {
     return true;
   }
 
-  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, bindDrawerSwipe, copyText, ICONS,
+  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, bindDrawerSwipe, bindFileGestures, setDrawerOpen:opened=>setDrawerOpen(opened), copyText, ICONS,
     setCloseGuard: fn => { closeGuard = fn; }, onClosed: fn => { cleanup = fn; } };
 })();

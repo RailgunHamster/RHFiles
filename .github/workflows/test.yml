@@ -34,6 +34,8 @@ jobs:
         run: Copy-Item -LiteralPath src-tauri/thirdparty/7z.exe, src-tauri/thirdparty/7z.dll -Destination target/debug
       - name: Real WebView2 file workflows including tab drag and delete confirmations
         run: npm run test:e2e
+      - name: Markdown PDF built-in and external converter workflows
+        run: npm run test:pdf
       - name: Preserve failure evidence and workflow report
         if: always()
         uses: actions/upload-artifact@v4

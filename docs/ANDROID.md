@@ -195,6 +195,12 @@ $env:ANDROID_HOME='C:\Users\Administrator\AppData\Local\Android\Sdk'
 
 ## 实现依据和依赖
 
+Android 0.1.6：本机/SAF 视频和音频使用未导出的 `PlaybackActivity` + Media3 `PlayerView`，不再通过 WebView 文件协议播放；支持图标控制、横屏、倍速、适应/裁切、循环与失败后的外部播放器入口。仅在前台播放，离开即释放播放器，返回保留位置。MP4 是容器，实际可播放编码仍受设备解码器限制，不能承诺任何 MP4 都可播放；不捆绑停止维护的播放库或未知来源解码器。
+
+图片使用沉浸式查看器；长列表使用固定总高度和绝对定位窗口，禁用浏览器滚动锚定，触摸滚动取消委托式长按，避免回收行计时器误选。主页抽屉按触点位置更新 transform/scrim，结束后吸附。内置索引操作改为中性卡片。
+
+- [Android Media3 1.11.1](https://developer.android.com/jetpack/androidx/releases/media3)、[PlayerView](https://developer.android.com/media/media3/ui/playerview)、[支持的容器与编码](https://developer.android.com/media/media3/exoplayer/supported-formats)，Apache-2.0。Gradle Kotlin 插件更新为 2.2.10 以兼容其 Kotlin 元数据。
+
 - [SAF 与持久授权](https://developer.android.com/training/data-storage/shared/documents-files)
 - [前台服务时限](https://developer.android.com/develop/background-work/services/fgs/timeout)
 - [Apache Commons Compress](https://commons.apache.org/proper/commons-compress/) 1.28.0，Apache-2.0

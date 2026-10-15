@@ -11,6 +11,7 @@ const api = (() => {
   let nativeVersion = 0;
   let nativeBack = false;
   let appUpdates = false;
+  let nativePlayback = false;
   function nativeCall(command, args = {}) {
     const bridge = window.RHFilesNative;
     if (!bridge) return Promise.reject(new Error('本版本或系统 WebView 暂不支持此系统操作'));
@@ -135,7 +136,8 @@ const api = (() => {
     featuresAvailable: () => nativeVersion >= 2,
     nativeBackAvailable: () => nativeBack,
     updatesAvailable: () => appUpdates,
-    async initNative() { if (window.RHFilesNative) { try { const capabilities=await nativeCall('capabilities');nativeVersion=capabilities.version || 0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true; } catch {} } },
+    playbackAvailable: () => nativePlayback,
+    async initNative() { if (window.RHFilesNative) { try { const capabilities=await nativeCall('capabilities');nativeVersion=capabilities.version || 0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true;nativePlayback=capabilities.nativePlayback===true; } catch {} } },
     native: nativeCall,
     runJob: job,
     isVirtual: virtual,

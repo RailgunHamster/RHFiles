@@ -27,7 +27,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await pw.chromium.launch({headless:true,executablePath});
 let checks=0;
 function check(value,label){assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);}
-function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativeUpdates=false}){
+function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativeUpdates=false,nativePlayback=false}){
   const root='/storage/emulated/0';
   const file=(name,kind='document',size=10)=>({name,path:root+'/'+name,kind,isDir:kind==='folder',size,modifiedMs:1712345678000});
   const m=window.__model={calls:[],denied,partial,index:true,fs:{
@@ -88,7 +88,8 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
-        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates};case 'theme':return true;case 'permission':return !m.denied;
+        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates,nativePlayback};case 'theme':return true;case 'permission':return !m.denied;
+        case 'media.play':return true;
         case 'update.status':return m.updates;
         case 'update.save':m.updates={...m.updates,config:a,state:'idle',release:null};return m.updates;
         case 'update.check':if(!a.manual&&!m.updates.config.autoCheck)return m.updates;m.updateRequests++;m.updates.state=m.updateFail?'failed':'available';m.updates.message=m.updateFail?'SMB 登录失败，请检查用户名和密码':'';m.updates.release=m.updateFail?null:{version:'0.1.4',versionCode:1004,notes:'第一行\n第二行 <img onerror=alert(1)>',size:2000};return m.updates;
@@ -283,7 +284,7 @@ try{
     check((await p.locator('.editor').innerText()).includes('未保存：文件已被其他程序修改'),'External text modification is reported, not overwritten');
     await p.goBack();await p.getByRole('button',{name:'放弃修改',exact:true}).waitFor();check(true,'Back prompts before discarding dirty editor');await choose(p,'放弃修改');
     await row(p,'photo.jpg').click();await p.waitForSelector('.viewer');await choose(p,'放大');
-    check((await p.locator('.full-media').getAttribute('style')).includes('scale(1.4)'),'Fullscreen image supports bounded zoom');await choose(p,'旋转');check((await p.locator('.full-media').getAttribute('style')).includes('rotate(90deg)'),'Image rotation is distinct from file mutation');await capture(p,'features-viewer');await choose(p,'关闭');
+    check((await p.locator('.full-media').getAttribute('style')).includes('scale(1.4)'),'Fullscreen image supports bounded zoom');await choose(p,'旋转');check((await p.locator('.full-media').getAttribute('style')).includes('rotate(90deg)'),'Image rotation is distinct from file mutation');await capture(p,'features-viewer');await choose(p,'返回文件列表');
     check(await p.locator('.viewer').count()===0,'Viewer closes and releases its container');
     await more(p,'notes.txt');await choose(p,'压缩为 ZIP');await p.locator('[name=name]').fill('备份.zip');await choose(p,'开始压缩');
     check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='job.start'&&c.args.op==='zip'&&c.args.args.level===6)),'ZIP form starts real background job with configured level');
@@ -312,8 +313,8 @@ try{
       await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
     }
     await swipe(45,270,260,275);check(await p.locator('#drawer').isVisible(),'Right swipe opens Home drawer');
-    check(await p.evaluate(()=>rhfilesHandleBack())===true && !await p.locator('#drawer').isVisible(),'Back closes drawer without exiting Home');
-    await swipe(45,270,260,275);await swipe(250,270,50,275);check(!await p.locator('#drawer').isVisible(),'Left swipe closes drawer');
+    check(await p.evaluate(()=>rhfilesHandleBack())===true,'Back consumes the drawer close');await p.locator('#drawer').waitFor({state:'hidden'});check(true,'Back closes drawer without exiting Home');
+    await swipe(45,270,260,275);await swipe(250,270,50,275);await p.locator('#drawer').waitFor({state:'hidden'});check(true,'Left swipe closes drawer');
     await swipe(70,600,75,350);check(!await p.locator('#drawer').isVisible(),'Vertical Home scrolling never opens drawer');
     await tile(p,'storage-0').click();await row(p,'notes.txt').waitFor();
     await p.evaluate(()=>{
@@ -366,6 +367,22 @@ try{
     check(await p.evaluate(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length===1),'Completed user-requested download opens installation once, not every poll');
     await p.screenshot({path:path.join(output,'android-updates.png'),fullPage:true});
     check(errors.length===0,'Android update UI has no uncaught errors');await context.close();
+  }
+  {
+    const {context,page:p,errors}=await pageFor({nativeV3:true,nativePlayback:true});
+    await tile(p,'storage-0').click();await row(p,'movie.mp4').click();
+    await p.waitForFunction(()=>__model.nativeCalls.some(c=>c.command==='media.play'));
+    check(await p.evaluate(()=>__model.nativeCalls.find(c=>c.command==='media.play').args.path.endsWith('/movie.mp4')),'Video taps use the native Media3 player when available');
+    check(await p.locator('#sheet video').count()===0,'Native playback never stretches a WebView fallback play icon');
+    await row(p,'photo.jpg').click();await p.locator('.image-viewer').waitFor();
+    check(await p.locator('.image-viewer .media-icon-btn svg').count()===8,'Image viewer provides accessible icon controls');
+    await p.getByRole('button',{name:'放大',exact:true}).click();
+    check((await p.locator('.full-media').getAttribute('style')).includes('scale(1.4)'),'Photo zoom is independent of its toolbar');
+    await p.getByRole('button',{name:'适应',exact:true}).click();
+    check((await p.locator('.full-media').getAttribute('style')).includes('scale(1)'),'Fit resets image zoom');
+    await p.setViewportSize({width:275,height:610});
+    check(await p.locator('.viewer-toolbar .media-icon-btn').evaluateAll(nodes=>{const r=nodes.map(n=>n.getBoundingClientRect());return r.length===6&&r.every(n=>Math.abs(n.y-r[0].y)<2 && n.right<=innerWidth);}), 'Photo controls stay in one row at 275 CSS pixels');
+    await capture(p,'immersive-image-viewer');check(errors.length===0,'Native playback routing has no frontend exceptions');await context.close();
   }
   console.log('PASS: '+checks+' assertions. IPC mocked. Screenshots: '+output);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

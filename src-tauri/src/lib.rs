@@ -8,6 +8,7 @@ mod file_dialog_integration;
 mod file_ops;
 mod folder_merge;
 mod media;
+mod documents;
 mod network;
 #[cfg(windows)]
 pub mod network_io;
@@ -197,6 +198,7 @@ pub fn run() {
             system::analyze_disk_usage,
 
             media::detect_ffmpeg, media::convert_media,
+            documents::document_converters, documents::convert_markdown_pdf,
 
             vcs::git_status, vcs::git_branches, vcs::git_checkout,
             vcs::git_create_branch, vcs::git_init, vcs::git_clone,
@@ -259,7 +261,7 @@ pub fn run() {
             {
                 let _ = crate::window::ensure_window_visible(&main_window);
             }
-            if window.label() == "integration-picker" {
+            if window.label() == "integration-picker" || window.label().starts_with("pdf-") {
                 return;
             }
             let tauri::WindowEvent::CloseRequested { api, .. } = event else {
@@ -269,7 +271,7 @@ pub fn run() {
             let user_window_count = app
                 .webview_windows()
                 .keys()
-                .filter(|label| label.as_str() != "integration-picker")
+                .filter(|label| label.as_str() != "integration-picker" && !label.starts_with("pdf-"))
                 .count();
             if user_window_count <= 1
                 && let Some(picker) = app.get_webview_window("integration-picker")

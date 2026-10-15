@@ -134,7 +134,7 @@
     if(snapshot===homeSnapshot && $('home').childElementCount){
       state.roots.forEach((root,i)=>{$('home').querySelector(`[data-tile="storage-${i}"] small`).textContent=capacityOf(root);});
       $('home').querySelector('[data-tile="favorites"] small').textContent=state.favorites.length+' 个位置';
-      const note=$('home').querySelector('.home-note');note.firstChild.textContent=noteText;note.querySelector('button span').textContent=indexText;
+      const note=$('home').querySelector('.home-note');note.querySelector('.index-description').textContent=noteText;note.querySelector('button').setAttribute('aria-label',indexText);note.querySelector('button').disabled=!!state.index?.indexing;note.querySelector('.index-caption').textContent=state.index?.indexing?'正在更新索引…':fmt.count(state.index?.entryCount || 0)+' 个已索引项目';
       return;
     }
     homeSnapshot=snapshot;
@@ -151,8 +151,9 @@
     tile(grid, 'usage', '空间分析', 'chart', '#8b739a', '查看文件占用', () => go({ screen: 'tool', tool: 'usage' }));
     tile(grid, 'settings', '设置', 'settings', '#748193', '显示与权限', () => go({ screen: 'tool', tool: 'settings' }));
     if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>go({screen:'tool',tool:id}));
-    const note = ui.el('div', 'home-note', noteText);
-    note.append(button(indexText, 'refresh', rebuildIndex, 'text-btn'));
+    const note=ui.el('section','home-note index-card'),symbol=ui.el('div','index-symbol');symbol.innerHTML=ui.icon('search');
+    const copy=ui.el('div','index-copy');copy.append(ui.el('strong','index-caption',state.index?.indexing?'正在更新索引…':fmt.count(state.index?.entryCount || 0)+' 个已索引项目'),ui.el('p','index-description',noteText));
+    const update=button('更新','refresh',rebuildIndex,'index-update');update.setAttribute('aria-label',indexText);update.disabled=!!state.index?.indexing;note.append(symbol,copy,update);
     home.append(note);
   }
   function renderDrawer() {
@@ -160,8 +161,8 @@
     $('nav-favorites').replaceChildren(...state.favorites.map(entry => button(entry.name, 'star', () => { closeDrawer(); return activate(entry); })));
     if (!state.favorites.length) $('nav-favorites').append(ui.el('p', 'muted', '在文件的更多菜单中添加收藏'));
   }
-  function openDrawer() { renderDrawer(); $('drawer').hidden = false; $('scrim').hidden = false; }
-  function closeDrawer() { $('drawer').hidden = true; if (!ui.isSheetOpen()) $('scrim').hidden = true; }
+  function openDrawer() { renderDrawer(); ui.setDrawerOpen(true); }
+  function closeDrawer() { ui.setDrawerOpen(false); }
 
   // Request IDs make old directory/search/preview responses unable to replace a
   // newer screen. The in-app back stack is independent of WebView history.
@@ -276,11 +277,11 @@
     }
     const height = state.view === 'grid' ? 136 : 64;
     const columns = state.view === 'grid' ? Math.max(2, Math.floor(container.clientWidth / 112)) : 1;
-    const top = ui.el('div'), bottom = ui.el('div'), windowNode = ui.el('div', 'file-window');
+    const space=ui.el('div','file-space'),windowNode=ui.el('div','file-window');
     container.style.setProperty('--columns', columns);
-    container.append(top, windowNode, bottom);
+    container.append(space);space.append(windowNode);
     // Establish the full scroll extent before restoring a saved offset.
-    bottom.style.height = Math.ceil(list.length / columns) * height + 'px';
+    space.style.height = Math.ceil(list.length / columns) * height + 'px';
     container.scrollTop = scroll;
     let scheduled = false;
     function paint() {
@@ -288,8 +289,7 @@
       thumbQueue.length = 0;
       const firstRow = Math.max(0, Math.floor(container.scrollTop / height) - 3);
       const lastRow = Math.min(Math.ceil(list.length / columns), Math.ceil((container.scrollTop + container.clientHeight) / height) + 3);
-      top.style.height = firstRow * height + 'px';
-      bottom.style.height = (Math.ceil(list.length / columns) - lastRow) * height + 'px';
+      windowNode.style.transform=`translateY(${firstRow*height}px)`;
       windowNode.replaceChildren(...list.slice(firstRow * columns, lastRow * columns).map(buildNode));
     }
     container.onscroll = () => { if (!scheduled) { scheduled = true; requestAnimationFrame(paint); } };
@@ -299,6 +299,7 @@
     const node = ui.el('div', state.view === 'grid' ? 'cell' : 'row');
     node.dataset.path = entry.path; node.dataset.kind = entry.isDir ? 'folder' : entry.kind;
     node.tabIndex = 0; node.setAttribute('role', 'option'); node.setAttribute('aria-label', entry.name);
+    node.classList.toggle('selected',state.selected.has(entry.path));node.setAttribute('aria-selected',String(state.selected.has(entry.path)));
     if (state.clipboard?.mode === 'cut' && state.clipboard.paths.includes(entry.path)) node.classList.add('pending-cut');
     const thumb = ui.el('div', 'thumb'); thumb.innerHTML = ui.icon(entry.isDir ? 'folder' : entry.kind);
     node.append(thumb);
@@ -310,17 +311,6 @@
     more.setAttribute('aria-label', entry.name + ' 的更多操作'); more.querySelector('span').remove();
     more.addEventListener('pointerdown', e => e.stopPropagation());
     more.addEventListener('click', e => e.stopPropagation()); node.append(more);
-    let timer, origin, held = false;
-    const cancel = () => { clearTimeout(timer); timer = null; };
-    node.addEventListener('pointerdown', e => {
-      if (e.button !== 0) return;
-      origin = [e.clientX,e.clientY]; held = false;
-      timer = setTimeout(() => { held = true; state.selected.add(entry.path); paintSelection(); if (navigator.vibrate) navigator.vibrate(10); }, 450);
-    });
-    node.addEventListener('pointermove', e => { if (origin && Math.hypot(e.clientX-origin[0],e.clientY-origin[1]) > 10) cancel(); });
-    for (const name of ['pointerup','pointercancel','pointerleave']) node.addEventListener(name, cancel);
-    node.addEventListener('contextmenu', e => { e.preventDefault(); cancel(); state.selected.add(entry.path); held = true; paintSelection(); });
-    node.addEventListener('click', () => { cancel(); if (held) { held = false; return; } if (state.selected.size) toggleSelection(entry.path); else activate(entry).catch(error); });
     node.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); activate(entry).catch(error); } else if (e.key === ' ') { e.preventDefault(); toggleSelection(entry.path); } });
     return node;
   }
@@ -363,6 +353,7 @@
   async function activate(entry) {
     if (entry.isDir) return go({ screen: 'folder', path: entry.path, label:entry.name,
       parentPath:entry.parentPath || (state.route.screen==='folder' ? state.route.path : null) });
+    if(api.playbackAvailable() && ['video','audio'].includes(entry.kind) && !entry.path.startsWith('remote://'))return api.native('media.play',{path:entry.path,name:entry.name,kind:entry.kind});
     if (api.featuresAvailable() && api.isVirtual(entry.path)) {
       if (entry.path.startsWith('content://')) return api.systemOpen(entry.path);
       return androidFeatures.download(entry);
@@ -618,7 +609,8 @@
     api.systemTheme(document.documentElement.dataset.theme==='dark').catch(()=>{});
     ui.bindScrim();
     ui.bindDrawerSwipe({canOpen:()=>state.route.screen==='home' && !state.selected.size,
-      isOpen:()=>!$('drawer').hidden,open:openDrawer,close:closeDrawer});
+      isOpen:()=>!$('drawer').hidden,prepare:renderDrawer});
+    ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path),select:path=>{state.selected.add(path);paintSelection();},toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
     $('scrim').addEventListener('click',closeDrawer);
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
