@@ -28,9 +28,10 @@ class SettingsBackupTest {
   }
   @Test fun allSettingsAndCredentialsSurviveMigrationToADifferentDeviceKey(){
     val first=remote(1);val id=first.save(profile());ReaderSettings.replace(context,JSONObject().put("rhfiles.reader.options","{\"font\":24}").put("rhfiles.reader.book.abc","{\"cfi\":\"epubcfi(/6)\",\"bookmarks\":[]}"))
-    val web=JSONObject().put("rhfiles.theme","dark").put("rhfiles.panes","rows").put("rhfiles.favorites","[{\"name\":\"网络\",\"path\":\"remote://$id/\"}]")
+    val screens="{\"version\":1,\"screens\":{\"screen-1080x2092\":\"single\",\"screen-1840x2208\":\"columns\"}}"
+    val web=JSONObject().put("rhfiles.theme","dark").put("rhfiles.panes","rows").put("rhfiles.panes.screens",screens).put("rhfiles.favorites","[{\"name\":\"网络\",\"path\":\"remote://$id/\"}]")
     val exported=SettingsBackup(context,first).snapshot(web,updates().put("connectionId",id))
-    val next=remote(2);val store=SettingsBackup(context,next);store.apply(exported,JSONObject().put("rhfiles.theme","light"));val pending=store.pending()!!;assertEquals("dark",pending.getJSONObject("web").getString("rhfiles.theme"));store.acknowledge(pending.getString("id"))
+    val next=remote(2);val store=SettingsBackup(context,next);store.apply(exported,JSONObject().put("rhfiles.theme","light"));val pending=store.pending()!!;assertEquals("dark",pending.getJSONObject("web").getString("rhfiles.theme"));assertEquals(screens,pending.getJSONObject("web").getString("rhfiles.panes.screens"));store.acknowledge(pending.getString("id"))
     assertEquals(id,next.backupProfiles().getJSONObject(0).getString("id"));assertEquals("fixture-secret",next.backupProfiles().getJSONObject(0).getJSONObject("config").getString("password"));assertTrue(ReaderSettings.state(context).toString().contains("epubcfi"));assertNull(store.pending());assertTrue(context.getSharedPreferences("updates-v1",Context.MODE_PRIVATE).getBoolean("proxyEnabled",false))
   }
   @Test fun crashBeforeFrontendAcknowledgementRestoresNativeAndWebSettings(){
@@ -46,6 +47,14 @@ class SettingsBackupTest {
   @Test fun readerStoreRejectsNonReaderKeysAndKeepsOtherBooks(){
     ReaderSettings.replace(context,JSONObject().put("rhfiles.reader.book.abc","{}"));ReaderSettings.update(context,"rhfiles.reader.options","{\"font\":18}")
     assertEquals(2,ReaderSettings.state(context).getJSONObject("values").length());try{ReaderSettings.update(context,"../../files","{}");fail()}catch(_:Exception){};assertEquals(2,ReaderSettings.state(context).getJSONObject("values").length())
+  }
+  @Test fun invalidScreenMapsAreRejectedAndLegacyBackupsRemainCompatible(){
+    SettingsBackup.validateWeb(JSONObject().put("rhfiles.panes","rows"))
+    for(text in listOf("null","[]","{\"version\":\"1\",\"screens\":{}}","{\"version\":1,\"screens\":[]}","{\"version\":1,\"screens\":{\"__proto__\":\"rows\"}}","{\"version\":1,\"screens\":{\"screen-1080x2092\":false}}","{\"version\":1,\"screens\":{},\"extra\":1}")){
+      try{SettingsBackup.validateWeb(JSONObject().put("rhfiles.panes.screens",text));fail("Accepted $text")}catch(_:Exception){}
+    }
+    val tooMany=JSONObject();for(i in 10..42)tooMany.put("screen-${i}x100","rows")
+    try{SettingsBackup.validateWeb(JSONObject().put("rhfiles.panes.screens",JSONObject().put("version",1).put("screens",tooMany).toString()));fail("Accepted too many screens")}catch(_:Exception){}
   }
   @Test fun motionRelayIncludesBothPointerIdsAndNormalizesCoordinates(){
     val relay=PaneTouchRelay();val down=MotionEvent.obtain(0,1,MotionEvent.ACTION_DOWN,20f,30f,0);assertNull(relay.sample(down,100,100));relay.enabled=true;assertEquals("start",relay.sample(down,100,100)!!.getString("phase"));down.recycle()

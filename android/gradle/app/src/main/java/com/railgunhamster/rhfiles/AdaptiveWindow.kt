@@ -10,6 +10,7 @@ import androidx.window.java.layout.WindowInfoTrackerCallbackAdapter
 import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowLayoutInfo
 import androidx.window.layout.FoldingFeature
+import androidx.window.layout.WindowMetricsCalculator
 import org.json.JSONObject
 
 class AdaptiveWindow(private val activity:Activity,private val web:()->WebView?){
@@ -19,9 +20,14 @@ class AdaptiveWindow(private val activity:Activity,private val web:()->WebView?)
   fun start(){tracker.addWindowLayoutInfoListener(activity,ContextCompat.getMainExecutor(activity),listener)}
   fun stop(){tracker.removeWindowLayoutInfoListener(listener)}
   fun current():JSONObject {
-    val view=web()?:return JSONObject();if(view.width<=0||view.height<=0)return JSONObject()
+    val result=JSONObject()
+    // Maximum bounds identify the active screen, not the resizable app window.
+    // Normalize rotation; IME/system bars/split-window sizes must not change it.
+    val bounds=WindowMetricsCalculator.getOrCreate().computeMaximumWindowMetrics(activity).bounds
+    ScreenLayoutProfile.key(bounds.width(),bounds.height())?.let{result.put("screenKey",it)}
+    val view=web()?:return result;if(view.width<=0||view.height<=0)return result
     val origin=IntArray(2);view.getLocationInWindow(origin)
-    val result=JSONObject();val bars=ViewCompat.getRootWindowInsets(view)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+    val bars=ViewCompat.getRootWindowInsets(view)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
     if(bars!=null){val decor=activity.window.decorView;result.put("insets",JSONObject()
       .put("left",((bars.left-origin[0]).coerceAtLeast(0).toDouble()/view.width).coerceIn(0.0,1.0))
       .put("top",((bars.top-origin[1]).coerceAtLeast(0).toDouble()/view.height).coerceIn(0.0,1.0))

@@ -1,8 +1,15 @@
 const{test}=require('node:test'),assert=require('node:assert/strict'),data=require('../js/settings-data.js');
 const memory=initial=>{const values=new Map(Object.entries(initial||{}));return{getItem:k=>values.has(k)?values.get(k):null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)}};
 test('all configurable web keys round-trip; unrelated data and pending tasks are not exported',()=>{
- const store=memory({'rhfiles.theme':'dark','rhfiles.view':'grid','rhfiles.sort':'size','rhfiles.hidden':'1','rhfiles.panes':'rows','rhfiles.nearby.alias':'手机','rhfiles.favorites':'[{"name":"中文","path":"remote://server/a"}]','rhfiles.panes.clipboard':'pending','other-app-key':'secret'});
- const exported=data.snapshot(store);assert.equal(Object.keys(exported).length,7);data.apply(store,exported);assert.equal(store.getItem('other-app-key'),'secret');assert.equal(store.getItem('rhfiles.panes.clipboard'),null);assert.deepEqual(data.snapshot(store),exported);
+ const store=memory({'rhfiles.theme':'dark','rhfiles.view':'grid','rhfiles.sort':'size','rhfiles.hidden':'1','rhfiles.panes':'rows','rhfiles.panes.screens':'{"version":1,"screens":{"screen-1080x2092":"single","screen-1840x2208":"columns"}}','rhfiles.nearby.alias':'手机','rhfiles.favorites':'[{"name":"中文","path":"remote://server/a"}]','rhfiles.panes.clipboard':'pending','other-app-key':'secret'});
+ const exported=data.snapshot(store);assert.equal(Object.keys(exported).length,8);data.apply(store,exported);assert.equal(store.getItem('other-app-key'),'secret');assert.equal(store.getItem('rhfiles.panes.clipboard'),null);assert.deepEqual(data.snapshot(store),exported);
+});
+
+test('old backups still import, while invalid screen maps fail before mutation',()=>{
+ const store=memory({'rhfiles.theme':'light'});data.apply(store,{'rhfiles.panes':'rows'});assert.equal(store.getItem('rhfiles.panes.screens'),null);
+ for(const invalid of [null,[],{version:'1',screens:{}},{version:1,screens:null},{version:1,screens:{'__other':'single'}},{version:1,screens:{'screen-1080x2092':false}},{version:1,screens:{},extra:1},{version:1,screens:Object.fromEntries(Array.from({length:33},(_,i)=>[`screen-${i+10}x100`,'rows']))}]){
+  assert.throws(()=>data.apply(store,{'rhfiles.theme':'dark','rhfiles.panes.screens':JSON.stringify(invalid)}));assert.equal(store.getItem('rhfiles.theme'),null);assert.equal(store.getItem('rhfiles.panes'),'rows');
+ }
 });
 test('invalid/unknown fields are rejected before any existing setting is changed',()=>{
  const store=memory({'rhfiles.theme':'light'});for(const invalid of [null,[],{'other':'value'},{'rhfiles.theme':'bad'},{'rhfiles.favorites':'null'},{'rhfiles.nearby.alias':'x'.repeat(81)}]){assert.throws(()=>data.apply(store,invalid));assert.equal(store.getItem('rhfiles.theme'),'light');}

@@ -47,6 +47,11 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
       val enums=mapOf("rhfiles.theme" to listOf("light","dark"),"rhfiles.view" to listOf("list","grid"),"rhfiles.sort" to listOf("name","date","size","kind"),"rhfiles.hidden" to listOf("0","1"),"rhfiles.panes" to listOf("auto","single","columns","rows"))
       web.keys().forEach{key->val text=web.getString(key);require(text.length<=65536){"配置字段过长"};when(key){
         in enums->require(text in enums.getValue(key)){"配置选项无效"}
+        "rhfiles.panes.screens"->{
+          val value=JSONObject(text);val version=value.get("version");require(value.length()==2&&version is Number&&version.toDouble()==1.0){"屏幕分屏配置无效"}
+          val screens=value.getJSONObject("screens");require(screens.length()<=32){"屏幕分屏配置过多"}
+          screens.keys().forEach{screen->require(Regex("^(default|screen-[1-9][0-9]{1,4}x[1-9][0-9]{1,4})$").matches(screen)&&screens.get(screen) in enums.getValue("rhfiles.panes")){"屏幕分屏配置无效"}}
+        }
         "rhfiles.nearby.alias"->require(text.length<=80){"设备名称过长"}
         "rhfiles.favorites"->{val items=JSONArray(text);require(items.length()<=100){"收藏夹过大"};for(i in 0 until items.length()){val item=items.getJSONObject(i);require(item.getString("name").length<=1024&&item.getString("path").length<=8192){"收藏夹项目无效"}}}
         else->error("配置包含未知字段")

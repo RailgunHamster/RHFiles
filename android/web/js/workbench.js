@@ -5,6 +5,7 @@ const workbench=(()=>{
   const parentHost=()=>window.parent!==window?window.parent.RHFilesWorkbench:null;
   let frames=[],active=0,mode='single',preference='auto',clipboard=null,revision=0,lock=null,hinge=null,insets={},capabilities;
   let host,divider,touch,touchEnabled;
+  let screen='default',screenMemory,screenSettings=null;
   const child=()=>!!parentHost();
   const primary=()=>!child()||id==='first';
   const send=(frame,name,detail)=>frame.contentWindow?.dispatchEvent(new frame.contentWindow.CustomEvent(name,{detail}));
@@ -23,10 +24,20 @@ const workbench=(()=>{
     return {hinge:localHinge};
   }
   const layouts=[['auto','自动布局','layoutAuto'],['columns','左右分屏','layoutColumns'],['rows','上下分屏','layoutRows'],['single','单窗格','layoutSingle']];
+  function saveScreens(){const next=screenMemory.serialize();if(next!==screenSettings)try{localStorage.setItem('rhfiles.panes.screens',next);screenSettings=next;}catch{}}
+  function windowLayout(value){
+    const next=paneLayout.validScreen(value?.screenKey)?value.screenKey:screen;
+    if(next!==screen&&document.getElementById('sheet-panel')?.classList.contains('pane-layout-sheet'))ui.closeSheet();
+    screen=next;preference=screenMemory.select(screen);saveScreens();
+    hinge=value?.hinge||null;insets=value?.insets||{};
+    if(host)layout();
+  }
   function openLayout(keyboard=false){
+    const openedScreen=screen;
     if(!ui.openSheet('分屏布局',layouts.map(([value,label,icon])=>({label,icon,onSelect:()=>{
-      preference=value;try{localStorage.setItem('rhfiles.panes',value)}catch{}layout();
-    }})),'每个窗格独立浏览；切换布局不会丢失已打开的位置。'))return;
+      if(openedScreen!==screen)return;
+      preference=value;screenMemory.set(screen,value);saveScreens();try{localStorage.setItem('rhfiles.panes',value)}catch{}layout();
+    }})),'内屏、外屏分别记住布局；展开或折叠后自动恢复。切换布局不会丢失已打开的位置。'))return;
     const panel=document.getElementById('sheet-panel');panel.classList.add('pane-layout-sheet');panel.classList.toggle('keyboard-navigation',keyboard);
     panel.querySelectorAll('.sheet-item').forEach((button,index)=>{
       button.dataset.layout=layouts[index][0];const selected=layouts[index][0]===preference;
@@ -68,7 +79,15 @@ const workbench=(()=>{
     document.body.classList.add('workbench-host');
     document.documentElement.dataset.theme=localStorage.getItem('rhfiles.theme')==='dark'?'dark':'light';
     window.addEventListener('storage',event=>{if(event.key==='rhfiles.theme')document.documentElement.dataset.theme=event.newValue==='dark'?'dark':'light';});
-    try{preference=localStorage.getItem('rhfiles.panes')||'auto';if(!['auto','single','columns','rows'].includes(preference))preference='auto';}catch{}
+    let legacy='auto';try{legacy=localStorage.getItem('rhfiles.panes')||'auto';screenSettings=localStorage.getItem('rhfiles.panes.screens');}catch{}
+    screenMemory=paneLayout.screenMemory(screenSettings,legacy);
+    // Read the native full-display identity BEFORE migrating the global choice.
+    // WebView resize/IME/insets are layout changes, not different screens.
+    let windowEvents=0;
+    window.addEventListener('rhfiles-window-layout',event=>{windowEvents++;windowLayout(event.detail);});
+    const beforeWindowRead=windowEvents;
+    const initialWindow=await api.native('window.layout').catch(()=>({}));
+    if(beforeWindowRead===windowEvents)windowLayout(initialWindow);
     host=document.createElement('main');host.id='workbench';document.body.append(host);
     touch=paneTouch.bind({frames:()=>frames,native:!!capabilities.paneTouch,enabled:()=>mode!=='single'&&!ui.isSheetOpen(),onInteract:frame=>setActive(frames.indexOf(frame)),onScroll:()=>broadcast('rhfiles-pan-scroll')});
     divider=document.createElement('div');divider.className='pane-divider';host.append(divider);
@@ -102,9 +121,7 @@ const workbench=(()=>{
     addFrame('first');if(active===1)addFrame('second');layout();setActive(active);
     window.rhfilesHandleBack=()=>{if(ui.isSheetOpen()){ui.closeSheet();return true;}return frames[active]?.contentWindow?.rhfilesHandleBack?.()??true;};
     window.addEventListener('resize',layout);
-    window.addEventListener('rhfiles-window-layout',event=>{hinge=event.detail?.hinge||null;insets=event.detail?.insets||{};layout();});
     window.addEventListener('rhfiles-storage-changed',()=>broadcast('rhfiles-storage-changed'));
-    api.native('window.layout').then(value=>{hinge=value.hinge;insets=value.insets||{};layout();}).catch(()=>{});
     return true;
   }
   return {boot,child,primary,id,parentHost};

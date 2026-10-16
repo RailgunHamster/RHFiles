@@ -1,4 +1,11 @@
-RHFiles Android 0.1.13
+RHFiles Android 0.1.14
+
+折叠屏内屏、外屏分别记住单窗格 / 左右分屏 / 上下分屏 / 自动布局；展开或折叠时恢复当前屏幕上次选择，不再被另一块屏幕覆盖。以原生完整屏幕尺寸识别屏幕，横竖屏旋转、软键盘与普通窗口缩放不另建配置。两个窗格的目录与运行状态保留，不重建文件浏览器或重复执行文件任务。
+旧版全局布局仅迁移到升级后首次使用的屏幕，首次切换到另一屏幕使用自动布局；仍允许小屏幕手动分屏。布局选择面板遇到屏幕切换自动关闭，避免误改另一块屏幕。内外屏配置一起纳入加密配置备份，兼容没有此字段的旧备份。
+
+Remember Single / Side-by-side / Stacked / Auto independently for folded and unfolded displays. Restore the active screen's preference on fold/unfold without overwriting the other screen. Native full-display geometry keeps rotation, keyboard changes and normal window resizing within the same screen profile. Preserve both browsing panes and do not replay file tasks. Migrate the old global preference to the first active screen only; a new screen defaults to Auto, with manual split still available. Dismiss stale layout pickers on display switches. Include screen profiles in encrypted settings backups while accepting older backups.
+
+此前版本改进 / Previous improvements (0.1.13):
 
 新增 Gitee 应用更新源，未配置过更新源/新安装默认使用 https://gitee.com/railgunhamster/RHFiles；保留已保存的 GitHub/家庭服务器选择，可在设置 → 更新与网络切换。无需登录检查或下载，保留自动检查总开关、手动检查、代理及 APK 大小/哈希/包名/版本/架构/同签名验证。检查所有正式发行，按 Android versionCode 选最高兼容版本，异常或未完整读取不能误报“最新”。
 项目原创代码采用标准 Apache License 2.0，随附 LICENSE / NOTICE 保留 RailgunHamster / RHFiles 来源声明；第三方组件仍使用各自许可。设置 → 关于与诊断可离线查看项目许可与署名。
