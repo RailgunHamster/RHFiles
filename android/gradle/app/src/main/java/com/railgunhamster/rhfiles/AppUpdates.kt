@@ -65,6 +65,40 @@ internal object AndroidUpdateFeed {
     // release. Only resolve the selected candidate, never every historical APK.
     return candidates.maxByOrNull{it.code}?.let{it.copy(location=resolve(it.fileName))}
   }
+  /** GitHub's release order is not Android version order. In particular an
+   * installed first feed must not hide an upgrade in a later release/page. */
+  fun github(repository: String, abis: List<String>, sdk: Int, installed: Long, fetch: (String)->String): AndroidRelease? {
+    var found=false
+    var best:AndroidRelease?=null
+    fun location(asset:JSONObject):String {
+      val url=asset.getString("browser_download_url").toHttpUrl()
+      require(url.isHttps && url.host=="github.com" && url.username.isEmpty() && url.password.isEmpty() && url.encodedPath.startsWith("/$repository/releases/download/")) { "GitHub 更新资源地址无效" }
+      return url.toString()
+    }
+    for(page in 1..5) {
+      val releases=JSONArray(fetch("https://api.github.com/repos/$repository/releases?per_page=100&page=$page"))
+      require(releases.length()<=100) { "GitHub 发行列表过大" }
+      for(i in 0 until releases.length()) {
+        val release=releases.getJSONObject(i)
+        if(release.optBoolean("draft") || release.optBoolean("prerelease"))continue
+        val assets=release.getJSONArray("assets")
+        val byName=(0 until assets.length()).map{assets.getJSONObject(it)}.associateBy{it.getString("name")}
+        val feed=byName[UPDATE_FEED] ?: continue
+        found=true
+        val candidate=select(fetch(location(feed)),abis,sdk,installed) { name -> location(byName[name] ?: error("GitHub 发行中缺少 $name")) } ?: continue
+        val previous=best
+        if(previous!=null && candidate.code==previous.code) {
+          require(candidate.version==previous.version && candidate.abi==previous.abi && candidate.size==previous.size && candidate.sha256==previous.sha256 && candidate.fileName==previous.fileName) { "GitHub 同一 Android 版本存在不一致的更新包；已拒绝安装" }
+        }
+        if(previous==null || candidate.code>previous.code)best=candidate
+      }
+      if(releases.length()<100) {
+        require(found) { "GitHub 正式发行中没有 Android 更新清单；请检查仓库或改用家庭服务器" }
+        return best
+      }
+    }
+    error("GitHub 发行超过 500 条，未能完整核对 Android 最新版本；请改用家庭服务器")
+  }
   fun copy(input: InputStream, output: File, expected: AndroidRelease, canceled: ()->Boolean, progress: (Long)->Unit) {
     val digest=MessageDigest.getInstance("SHA-256");var bytes=0L
     try {
@@ -169,6 +203,7 @@ class AppUpdates private constructor(private val context: Context) {
     .connectTimeout(10,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS)
     .callTimeout(if(metadata)45 else 1800,TimeUnit.SECONDS).proxy(proxy(config)).build()
   private fun request(config: JSONObject, url: String, metadata: Boolean): Response {
+    check(!canceled) { "更新任务已取消" }
     val target=url.toHttpUrl();require(target.username.isEmpty() && target.password.isEmpty()) { "更新地址不能包含用户名或密码" }
     val client=http(config,metadata).newBuilder().addNetworkInterceptor { chain ->
       require(!target.isHttps || chain.request().url.isHttps) { "拒绝将 HTTPS 更新降级到 HTTP" };chain.proceed(chain.request())
@@ -186,21 +221,11 @@ class AppUpdates private constructor(private val context: Context) {
     if(config.getString("source")=="github") {
       val repository=AndroidUpdateFeed.githubRepository(config.getString("github"))
       // Don't use /releases/latest: a newer Windows-only release is not an Android update.
-      val releases=JSONArray(request(config,"https://api.github.com/repos/$repository/releases?per_page=100",true).use{readJson(it.body!!.byteStream())})
-      for(i in 0 until releases.length()) {
-        val release=releases.getJSONObject(i);if(release.optBoolean("draft") || release.optBoolean("prerelease"))continue
-        val assets=release.getJSONArray("assets")
-        val byName=(0 until assets.length()).map{assets.getJSONObject(it)}.associateBy{it.getString("name")}
-        val feed=byName[UPDATE_FEED] ?: continue
-        fun location(asset: JSONObject): String {
-          val url=asset.getString("browser_download_url").toHttpUrl()
-          require(url.isHttps && url.host=="github.com" && url.encodedPath.startsWith("/$repository/releases/download/")) { "GitHub 更新资源地址无效" }
-          return url.toString()
-        }
-        val text=request(config,location(feed),true).use{readJson(it.body!!.byteStream())}
-        return AndroidUpdateFeed.select(text,Build.SUPPORTED_ABIS.toList(),Build.VERSION.SDK_INT,installedCode()) {name -> location(byName[name] ?: error("GitHub 发行中缺少 $name"))}
+      val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(120)
+      return AndroidUpdateFeed.github(repository,Build.SUPPORTED_ABIS.toList(),Build.VERSION.SDK_INT,installedCode()) { url ->
+        check(System.nanoTime()<deadline) { "检查 GitHub 更新超时，不能确认是否为最新版本；请稍后重试" }
+        request(config,url,true).use{readJson(it.body!!.byteStream())}
       }
-      error("GitHub 最近 100 个正式发行中没有 Android 更新清单；请检查仓库或改用家庭服务器")
     }
     val root=config.getString("family");val connection=config.optString("connectionId")
     val text=familyInput(root,connection,UPDATE_FEED,true,config)!!.use{readJson(it)}

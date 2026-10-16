@@ -40,21 +40,57 @@ if ($existing) { $remoteRelease=$existing } else {
     $body = @{tag_name=$tag; target_commitish=$Commit; name="RHFiles Android $version"; body=$release.notes; draft=$true; prerelease=$false; make_latest='false'} | ConvertTo-Json -Depth 8
     $remoteRelease=Invoke-RestMethod "$api/releases" -Method Post -Body $body -ContentType 'application/json; charset=utf-8' @requestOptions
 }
+function Publish-Assets($TargetRelease, [switch]$CompatibilityMirror) {
 foreach ($file in $files) {
     $name=Split-Path -Leaf $file
-    $already=@($remoteRelease.assets | Where-Object name -eq $name) | Select-Object -First 1
+    $already=@($TargetRelease.assets | Where-Object name -eq $name) | Select-Object -First 1
     $digest=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+    $previousFeed=$null
     if ($already) {
-        if ($already.digest -ne "sha256:$digest") { throw "Existing GitHub asset differs: $name; will not overwrite it" }
-        continue
+        if ($already.digest -eq "sha256:$digest") { continue }
+        if (-not $CompatibilityMirror -or $name -ne 'releases.android.json') { throw "Existing GitHub asset differs: $name; will not overwrite it" }
+        $oldFeed=Invoke-RestMethod $already.browser_download_url @requestOptions
+        if ($oldFeed -is [string]) { $oldFeed=$oldFeed | ConvertFrom-Json }
+        if ($oldFeed.schemaVersion -ne 1 -or $oldFeed.packageId -ne $manifest.packageId) { throw 'Unexpected compatibility feed' }
+        $oldCode=($oldFeed.releases | Measure-Object versionCode -Maximum).Maximum
+        if ($oldCode -ge $release.versionCode) { throw 'Refusing to replace an equal/newer compatibility feed with different bytes' }
+        # Preserve the old index for recovery. APK assets are always immutable;
+        # upload new APKs first, then switch only this mutable compatibility index.
+        $previousFeed=Invoke-RestMethod "$api/releases/assets/$($already.id)" -Method Patch -Body (@{name="releases.android.previous-$($already.id).json"}|ConvertTo-Json) -ContentType 'application/json; charset=utf-8' @requestOptions
     }
-    $upload="https://uploads.github.com/repos/$Repository/releases/$($remoteRelease.id)/assets?name=$([uri]::EscapeDataString($name))"
-    $uploaded=Invoke-RestMethod $upload -Method Post -InFile $file -ContentType 'application/octet-stream' @requestOptions
-    if ($uploaded.digest -ne "sha256:$digest") { throw "GitHub upload checksum mismatch: $name" }
+    try {
+        $upload="https://uploads.github.com/repos/$Repository/releases/$($TargetRelease.id)/assets?name=$([uri]::EscapeDataString($name))"
+        $uploaded=Invoke-RestMethod $upload -Method Post -InFile $file -ContentType 'application/octet-stream' @requestOptions
+        if ($uploaded.digest -ne "sha256:$digest") { throw "GitHub upload checksum mismatch: $name" }
+    } catch {
+        $failure=$_
+        if ($previousFeed) {
+            $current=Invoke-RestMethod "$api/releases/$($TargetRelease.id)" @requestOptions
+            if (-not ($current.assets | Where-Object name -eq $name)) {
+                $null=Invoke-RestMethod "$api/releases/assets/$($previousFeed.id)" -Method Patch -Body (@{name=$name}|ConvertTo-Json) -ContentType 'application/json; charset=utf-8' @requestOptions
+            }
+        }
+        throw $failure
+    }
     Write-Host "Verified GitHub asset: $name"
 }
+}
+Publish-Assets $remoteRelease
 if ($remoteRelease.draft) {
     $remoteRelease=Invoke-RestMethod "$api/releases/$($remoteRelease.id)" -Method Patch -Body (@{draft=$false;make_latest='false'} | ConvertTo-Json) -ContentType 'application/json; charset=utf-8' @requestOptions
+}
+# Old APKs stop at the first Android feed in GitHub's non-version-sorted list.
+# Keep an Android sidecar on Windows Latest so those APKs can update themselves.
+# Never change Windows assets, tag, notes, or its Latest designation.
+if ($latestBefore.tag_name -match '^v\d+\.\d+\.\d+$') {
+    $windowsHashes=@{}
+    foreach ($asset in $latestBefore.assets | Where-Object name -NotLike '*android*' | Where-Object name -NotLike 'RHFiles-Android-*') { $windowsHashes[$asset.name]=$asset.digest }
+    Publish-Assets $latestBefore -CompatibilityMirror
+    $verified=Invoke-RestMethod "$api/releases/$($latestBefore.id)" @requestOptions
+    foreach ($name in $windowsHashes.Keys) {
+        if (($verified.assets | Where-Object name -eq $name | Select-Object -First 1).digest -ne $windowsHashes[$name]) { throw "Windows asset changed unexpectedly: $name" }
+    }
+    Write-Host "Legacy Android update bridge verified on $($latestBefore.tag_name)"
 }
 $latestAfter=Invoke-RestMethod "$api/releases/latest" @requestOptions
 if ($latestBefore.id -ne $latestAfter.id) { throw 'GitHub latest changed unexpectedly; verify desktop update feed before proceeding' }

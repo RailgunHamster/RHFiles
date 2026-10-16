@@ -56,6 +56,61 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(marker.optString("phase").equals("completed")){result.putString("pass","true");result.putString("nearbyOutput",marker.getString("output"));finish(Activity.RESULT_OK,result);return;}Thread.sleep(250);
         }throw new Exception("Minified Nearby probe timed out");
     }
+    private void githubProbe(Bundle result) throws Exception {
+        String expected=arguments.getString("expect","available"),version=arguments.getString("version",""),proxy=arguments.getString("proxy","");
+        require(expected.equals("available")||expected.equals("latest"),"Unexpected GitHub probe state");
+        eval("void(async()=>{try{const end=Date.now()+60000;while(true){await api.native('update.cancel');try{"+
+          "await api.native('update.save',{source:'github',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://SERVER-HOME/Public/Software/RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:"+(!proxy.isEmpty())+",proxy:"+JSONObject.quote(proxy)+"});break;}catch(e){if(Date.now()>end)throw e;await new Promise(r=>setTimeout(r,200));}}"+
+          "await api.native('update.check',{manual:true,reason:'release-github-probe'});window.__githubQa={started:true};}catch(e){window.__githubQa={error:String(e)}}})();");
+        long end=System.currentTimeMillis()+180000;JSONObject status=new JSONObject();
+        while(System.currentTimeMillis()<end){JSONObject marker=json("window.__githubQa || {}");require(!marker.has("error"),marker.optString("error"));
+            if(marker.optBoolean("started")){eval("void api.native('update.status').then(s=>window.__githubStatus=s)");Thread.sleep(150);status=json("window.__githubStatus || {}");String state=status.optString("state");if(!state.isEmpty()&&!state.equals("checking"))break;}Thread.sleep(200);}
+        require(status.optString("state").equals(expected),"GitHub update state: "+status);
+        result.putString("state",status.getString("state"));
+        if(expected.equals("available")){
+            JSONObject release=status.getJSONObject("release");require(version.equals(release.getString("version")),"Unexpected version: "+release);result.putString("version",release.getString("version"));
+            eval("void api.native('update.download').catch(e=>window.__githubDownloadError=String(e))");end=System.currentTimeMillis()+180000;
+            while(System.currentTimeMillis()<end){eval("void api.native('update.status').then(s=>window.__githubStatus=s)");Thread.sleep(250);status=json("window.__githubStatus || {}");if(status.optString("state").equals("ready")||status.optString("state").equals("failed"))break;Thread.sleep(250);}
+            require(status.optString("state").equals("ready"),"APK download/verification failed: "+status);require(status.getLong("bytes")==release.getLong("size"),"APK byte count mismatch");result.putString("downloadState","ready");result.putString("bytes",String.valueOf(status.getLong("bytes")));
+        }
+        result.putString("pass","true");finish(Activity.RESULT_OK,result);
+    }
+    private void awaitScript(String script) throws Exception {
+        long end=System.currentTimeMillis()+45000;
+        while(!eval(script).equals("true")){require(System.currentTimeMillis()<end,"UI condition timed out: "+script);Thread.sleep(150);}
+    }
+    private void tapCss(String selector) throws Exception {
+        JSONObject point=json("(()=>{const n=document.querySelector("+JSONObject.quote(selector)+");if(!n)throw Error('Missing touch target');const r=n.getBoundingClientRect();if(!r.width||!r.height)throw Error('Hidden touch target');return{x:r.x+r.width/2,y:r.y+r.height/2,width:innerWidth};})()");
+        int[] offset=new int[2],width=new int[1];runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.getLocationOnScreen(offset);width[0]=web.getWidth();});
+        float scale=(float)(width[0]/point.getDouble("width")),x=offset[0]+(float)point.getDouble("x")*scale,y=offset[1]+(float)point.getDouble("y")*scale;
+        long now=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,x,y,0),up=MotionEvent.obtain(now,now+80,MotionEvent.ACTION_UP,x,y,0);
+        down.setSource(InputDevice.SOURCE_TOUCHSCREEN);up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        try{require(getUiAutomation().injectInputEvent(down,true),"Touch down rejected");Thread.sleep(80);require(getUiAutomation().injectInputEvent(up,true),"Touch up rejected");}finally{down.recycle();up.recycle();}Thread.sleep(200);
+    }
+    private void screenshot(String name) throws Exception {
+        CountDownLatch painted=new CountDownLatch(1);
+        runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.postVisualStateCallback(1,new WebView.VisualStateCallback(){@Override public void onComplete(long id){painted.countDown();}});});
+        require(painted.await(10,TimeUnit.SECONDS),"WebView paint did not settle");Thread.sleep(400);
+        android.graphics.Bitmap image=getUiAutomation().takeScreenshot();require(image!=null,"Screenshot unavailable");
+        try(java.io.FileOutputStream stream=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-Release-QA-phone-"+name+".png")){image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,stream);}finally{image.recycle();}
+    }
+    private void panesProbe(Bundle result) throws Exception {
+        awaitScript("!!document.querySelector('[data-layout=single]')");
+        require(json("({width:innerWidth})").getInt("width")<480,"Ordinary narrow phone viewport required");
+        eval("document.querySelector('[data-layout=single]').click()");
+        awaitScript("document.getElementById('workbench').dataset.mode==='single'");
+        tapCss(".single-layout-toggle");tapCss("[data-layout=rows]");
+        awaitScript("document.getElementById('workbench').dataset.mode==='rows'&&document.querySelectorAll('.file-pane').length===2&&[...document.querySelectorAll('.file-pane')].every(f=>!!f.contentWindow.rhfilesPane)");
+        awaitScript("!!document.querySelectorAll('.file-pane')[0].contentDocument.querySelector('[data-tile=downloads]')");
+        eval("document.querySelectorAll('.file-pane')[0].contentDocument.querySelector('[data-tile=downloads]').click()");
+        awaitScript("document.querySelectorAll('.file-pane')[0].contentWindow.rhfilesPane.snapshot().route.screen==='folder'&&!document.querySelectorAll('.file-pane')[0].contentWindow.rhfilesPane.snapshot().busy&&!document.querySelectorAll('.file-pane')[0].contentDocument.getElementById('filelist').hidden&&!!document.querySelectorAll('.file-pane')[1].contentDocument.querySelector('[data-tile=downloads]')");
+        screenshot("rows");tapCss(".pane-divider button");tapCss("[data-layout=columns]");
+        awaitScript("document.getElementById('workbench').dataset.mode==='columns'&&(()=>{const frames=[...document.querySelectorAll('.file-pane')].map(f=>f.getBoundingClientRect());return frames[0].width<innerWidth*.6&&frames[1].left>=frames[0].right;})()");
+        require(eval("document.querySelectorAll('.file-pane')[0].contentWindow.rhfilesPane.snapshot().route.screen==='folder'&&document.querySelectorAll('.file-pane')[1].contentWindow.rhfilesPane.snapshot().route.screen==='home'").equals("true"),"Switching layout lost independent routes");
+        screenshot("columns");tapCss(".pane-divider button");tapCss("[data-layout=single]");
+        awaitScript("document.getElementById('workbench').dataset.mode==='single'&&!document.querySelector('.single-layout-toggle').hidden");
+        result.putString("layouts","narrow-phone rows, columns, single; independent routes; real taps");result.putString("pass","true");finish(Activity.RESULT_OK,result);
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -66,6 +121,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             while(!eval("typeof api!=='undefined' && !!window.rhfilesHandleBack").equals("true")){require(System.currentTimeMillis()<deadline,"Frontend not ready");Thread.sleep(150);}
             if(arguments.getString("mode","").equals("ebook")){ebookProbe(result);return;}
             if(arguments.getString("mode","").equals("nearby")){nearbyProbe(result);return;}
+            if(arguments.getString("mode","").equals("github")){githubProbe(result);return;}
+            if(arguments.getString("mode","").equals("panes")){panesProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");
@@ -95,6 +152,6 @@ public class SmbUpdateInstrumentation extends Instrumentation {
                 result.putString("downloadStatus",status.toString());
             }
             result.putString("pass","true");finish(Activity.RESULT_OK,result);
-        }catch(Throwable error){result.putString("pass","false");result.putString("error",android.util.Log.getStackTraceString(error));finish(Activity.RESULT_CANCELED,result);}
+        }catch(Throwable error){try{screenshot("failure");}catch(Throwable ignored){}result.putString("pass","false");result.putString("error",android.util.Log.getStackTraceString(error));finish(Activity.RESULT_CANCELED,result);}
     }
 }

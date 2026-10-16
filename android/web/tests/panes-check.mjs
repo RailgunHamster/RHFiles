@@ -44,8 +44,12 @@ try{
   check(await second.locator('#paste-bar').isVisible(),'shared clipboard is available in peer pane');
   await second.locator('#btn-paste').click();await second.locator('[data-path$="notes.txt"]').waitFor();
   check(!await first.locator('#paste-bar').isVisible(),'completed shared paste clears both clipboard bars');
-  await page.setViewportSize({width:412,height:892});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='single');check(await page.locator('.file-pane:visible').count()===1,'narrow phone shows only active pane');
-  await page.setViewportSize({width:1280,height:1000});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='rows');check(await page.locator('.file-pane:visible').count()===2,'expanding restores both panes without recreating them');
+  await page.setViewportSize({width:412,height:892});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='rows');check(await page.locator('.file-pane:visible').count()===2,'manual stacked panes remain enabled on an ordinary phone');
+  await page.locator('.pane-divider button').click();await page.locator('[data-layout=columns]').click();check(await page.locator('#workbench').getAttribute('data-mode')==='columns','ordinary phone can also choose side-by-side');
+  await page.locator('.pane-divider button').click();await page.locator('[data-layout=auto]').click();await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='single');check(await page.locator('.single-layout-toggle').isVisible(),'single phone always has a visible labeled split control');
+  await page.locator('.single-layout-toggle').click();check(await page.locator('[data-layout=columns]:enabled').count()===1&&await page.locator('[data-layout=rows]:enabled').count()===1,'both directions are selectable without size gates');await page.locator('[data-layout=rows]').click();
+  await page.setViewportSize({width:892,height:412});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='rows');check(await page.locator('.file-pane:visible').count()===2,'manual direction survives phone rotation');
+  await page.setViewportSize({width:1280,height:1000});await page.waitForFunction(()=>document.getElementById('workbench').dataset.mode==='rows');check(await page.locator('.file-pane:visible').count()===2,'expanding retains both panes without recreating them');
   check((await second.locator('#title').innerText())==='Music','inactive pane route survived resize');
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:{insets:{top:.024,bottom:.032}}})));await page.waitForFunction(()=>document.getElementById('workbench').getBoundingClientRect().y===24);
   check((await page.locator('#workbench').boundingBox()).height===944,'system bar insets reserve space for touch controls');

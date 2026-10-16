@@ -26,7 +26,7 @@ const workbench=(()=>{
     const left=(insets.left||0)*innerWidth,right=(insets.right||0)*innerWidth,top=(insets.top||0)*innerHeight,bottom=(insets.bottom||0)*innerHeight;
     Object.assign(host.style,{left:left+'px',right:right+'px',top:top+'px',bottom:bottom+'px'});
     const resolved=paneLayout.resolve(innerWidth-left-right,innerHeight-top-bottom,preference);mode=resolved.mode;host.dataset.mode=mode;
-    frames.forEach((frame,index)=>{frame.hidden=mode==='single'&&index!==active;});divider.hidden=mode==='single';layoutButton.hidden=!resolved.options.columns&&!resolved.options.rows;
+    frames.forEach((frame,index)=>{frame.hidden=mode==='single'&&index!==active;});divider.hidden=mode==='single';layoutButton.hidden=false;
     if(mode!=='single'&&frames.length===1)addFrame('second');
     // A separating physical hinge becomes the divider, not covered content.
     host.style.removeProperty('--first-size');host.style.setProperty('--divider-size','12px');
@@ -53,7 +53,7 @@ const workbench=(()=>{
     host=document.createElement('main');host.id='workbench';document.body.append(host);
     divider=document.createElement('div');divider.className='pane-divider';host.append(divider);
     const toggle=document.createElement('button');toggle.className='pane-layout-toggle';toggle.textContent='⋮';toggle.setAttribute('aria-label','切换分屏布局');divider.append(toggle);
-    layoutButton=document.createElement('button');layoutButton.className='pane-layout-toggle single-layout-toggle';layoutButton.textContent='▥';layoutButton.setAttribute('aria-label','分屏布局');host.append(layoutButton);
+    layoutButton=document.createElement('button');layoutButton.className='pane-layout-toggle single-layout-toggle';layoutButton.textContent='分屏';layoutButton.setAttribute('aria-label','分屏布局');host.append(layoutButton);
     chooser=document.createElement('nav');chooser.className='pane-layout-chooser';chooser.setAttribute('aria-label','分屏方向');chooser.hidden=true;host.append(chooser);
     for(const [value,label] of [['auto','自动布局'],['columns','左右分屏'],['rows','上下分屏'],['single','单窗格']]){const button=document.createElement('button');button.dataset.layout=value;button.textContent=label;button.setAttribute('role','menuitemradio');button.onclick=()=>{preference=value;try{localStorage.setItem('rhfiles.panes',value)}catch{}chooser.hidden=true;layout();};chooser.append(button);}
     toggle.onclick=layoutButton.onclick=()=>{chooser.hidden=!chooser.hidden;};
