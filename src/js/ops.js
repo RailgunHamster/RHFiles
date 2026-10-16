@@ -914,11 +914,27 @@ function chooseArchiveOverwrite(file, conflicts) {
   });
 }
 
+function captureArchiveRefresh() {
+  const isRight = !!G.dualOn && G.lastActivePane === 'right';
+  const pane = isRight ? G.rp : getTab();
+  return {pane, isRight, path:pane.path, archiveToken:pane._archiveToken || 0};
+}
+
+async function refreshArchiveOrigin(origin) {
+  const {pane, isRight, path, archiveToken} = origin;
+  if (G.searchActive || pane !== (isRight ? G.rp : getTab()) || pane.path !== path ||
+      (pane._archiveToken || 0) !== archiveToken || pane.archivePath || pane._archiveOpening) return;
+  // Background listing keeps selection/scroll and cannot cancel a later
+  // archive request. Never navigate whichever tab happens to be active now.
+  await _refreshTabInBackground(pane, isRight);
+}
+
 // Extracts a single archive. With `options.silent` the failure is returned
 // instead of alerted, so a multi-archive run can report one summary; the
 // returned value is also the error text (null on success or user cancel).
 async function extractArchiveTo(file, destination, password, options) {
   if (!file) return null;
+  const origin = captureArchiveRefresh();
   const opts = options || {};
   const silent = opts.silent === true;
   const refreshAfter = opts.refreshAfter !== false;
@@ -975,7 +991,7 @@ async function extractArchiveTo(file, destination, password, options) {
         });
       }
       completeOperationTask(taskId);
-      if (refreshAfter) await refresh();
+      if (refreshAfter) await refreshArchiveOrigin(origin);
       return null;
     } catch (e) {
       if (/cancel/i.test(String(e))) {
@@ -1007,12 +1023,13 @@ async function extractArchiveTo(file, destination, password, options) {
 async function extractArchives(archives, destinationFor) {
   const list = selectedArchiveGroups(archives);
   if (!list.length) return;
+  const origin = captureArchiveRefresh();
   const failures = [];
   for (const file of list) {
     const error = await extractArchiveTo(file, destinationFor(file), null, { silent: true, refreshAfter: false });
     if (error) failures.push(file.name);
   }
-  await refresh();
+  await refreshArchiveOrigin(origin);
   if (failures.length) {
     alert(t('alert.extractSomeFailed', {
       failed: failures.length,

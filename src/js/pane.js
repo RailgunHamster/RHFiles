@@ -661,6 +661,8 @@ async function rpNavigateTo(path, pushHistory) {
   G.searchActive = false;
   G.searchQuery = '';
   pane._archiveToken = (pane._archiveToken || 0) + 1;
+  pane._refreshToken = (pane._refreshToken || 0) + 1;
+  pane._archiveOpening = null;
   pane.archivePath = null;
   const navigationToken = ++_rpNavigationToken;
   if (pushHistory === undefined) pushHistory = true;

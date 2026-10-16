@@ -1243,16 +1243,18 @@ function startFileWatch() {
         return changedPaths.includes(windowsPathKey(String(path).replace(/[\\/]+$/, '')));
       };
       if (G._watchDebounce) clearTimeout(G._watchDebounce);
-      const debounceNavigationToken = _navigationToken;
+      const contexts = [[getTab(), false], ...(G.dualOn ? [[G.rp, true]] : [])].map(([pane,isRight]) => ({
+        pane, isRight, path:pane?.path, archiveToken:pane?._archiveToken || 0,
+        navigationToken:isRight ? _rpNavigationToken : _navigationToken,
+      }));
       G._watchDebounce = setTimeout(async () => {
-        // A navigation that started while this debounce was pending already
-        // renders the freshest state; refreshing the stale path here would
-        // bump the navigation token and silently cancel it.
-        if (debounceNavigationToken !== _navigationToken) return;
-        const tab = getTab();
         const refreshes = [];
-        if (tab?.path && isAffected(tab.path)) refreshes.push(navigateTo(tab.path, false));
-        if (G.dualOn && G.rp?.path && isAffected(G.rp.path)) refreshes.push(rpNavigateTo(G.rp.path, false));
+        for (const {pane,isRight,path,archiveToken,navigationToken} of contexts) {
+          if (!path || G.searchActive || pane !== (isRight ? G.rp : getTab()) || pane.path !== path ||
+              pane.archivePath || pane._archiveOpening || (pane._archiveToken || 0) !== archiveToken ||
+              navigationToken !== (isRight ? _rpNavigationToken : _navigationToken) || !isAffected(path)) continue;
+          refreshes.push(_refreshTabInBackground(pane, isRight));
+        }
         try {
           await Promise.allSettled(refreshes);
         } finally {
@@ -1269,11 +1271,13 @@ function startFileWatch() {
     const pairs = [[getTab(), false], ...(G.dualOn ? [[G.rp, true]] : [])];
     try {
       await Promise.allSettled(pairs.map(async ([pane, isRight]) => {
-        if (!pane?.path || pane.path === 'home://' || pane.archivePath) return;
+        if (!pane?.path || pane.path === 'home://' || pane.archivePath || pane._archiveOpening) return;
         const path = pane.path;
+        const archiveToken = pane._archiveToken || 0;
         const token = isRight ? _rpNavigationToken : _navigationToken;
         const entries = await listPathEntries(path, '');
-        if (pane.path !== path || pane !== (isRight ? G.rp : getTab()) ||
+        if (pane.path !== path || pane !== (isRight ? G.rp : getTab()) || pane.archivePath || pane._archiveOpening ||
+            archiveToken !== (pane._archiveToken || 0) ||
             token !== (isRight ? _rpNavigationToken : _navigationToken)) return;
         const snapshot = JSON.stringify(entries.map(e =>
           [e.path, e.name, e.size, e.modified_ts, e.modified, e.is_dir]).sort((a,b) =>
@@ -1281,14 +1285,14 @@ function startFileWatch() {
         const previous = snapshots.get(pane);
         snapshots.set(pane, {path, snapshot});
         if (previous?.path === path && previous.snapshot !== snapshot) {
-          if (isRight) await rpNavigateTo(path, false);
-          else await navigateTo(path, false);
+          await _refreshTabInBackground(pane, isRight);
         }
       }));
     } finally { polling = false; }
   }, 2000);
 }
 function stopFileWatch() {
+  if (G._watchDebounce) { clearTimeout(G._watchDebounce); G._watchDebounce = null; }
   if (G._watchTimer) { clearInterval(G._watchTimer); G._watchTimer = null; }
   if (G._watchTauriUnlisten) { G._watchTauriUnlisten(); G._watchTauriUnlisten = null; }
 }

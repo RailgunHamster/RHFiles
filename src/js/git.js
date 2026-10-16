@@ -107,6 +107,7 @@ async function openArchive(path, isRight = false) {
   const pane = archivePane(isRight);
   const directory = pane.path;
   const token = pane._archiveToken = (pane._archiveToken || 0) + 1;
+  pane._archiveOpening = token;
   pane._refreshToken = (pane._refreshToken || 0) + 1;
   try {
     const entries = await call('list_archive', { path });
@@ -114,7 +115,11 @@ async function openArchive(path, isRight = false) {
     pane.archivePath = path;
     pane.archiveEntries = entries;
     showArchiveDirectory(pane, '', isRight);
-  } catch (error) { alert(t('alert.openArchiveFailed', {error})); }
+  } catch (error) {
+    if (pane._archiveToken === token && pane.path === directory) alert(t('alert.openArchiveFailed', {error}));
+  } finally {
+    if (pane._archiveOpening === token) pane._archiveOpening = null;
+  }
 }
 
 async function closeArchive(isRight = false) {

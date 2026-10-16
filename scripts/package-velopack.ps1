@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'release-policy.ps1')
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $stageDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot "dist\velopack-stage"))
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -121,9 +122,13 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\MESHOPTIM
 Copy-Item -LiteralPath (Join-Path $repoRoot "docs\PORTABLE_README.zh-CN.txt") -Destination (Join-Path $stageDirectory "使用说明.txt")
 
 if (-not $SkipPreviousRelease -and $UpdateSource -match '^https://github\.com/') {
+    # Download outside the pack input. A rerun may encounter the exact version
+    # being built (or a newer release); neither is a valid delta base.
+    $previousDirectory = Join-Path $repoRoot ('dist\previous-release-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $previousDirectory | Out-Null
     $downloadExitCode = 0
     try {
-        & $vpk.Source download github --outputDir $OutputDirectory --channel win --repoUrl $UpdateSource
+        & $vpk.Source download github --outputDir $previousDirectory --channel win --repoUrl $UpdateSource
         $downloadExitCode = $LASTEXITCODE
     } catch {
         $downloadExitCode = 1
@@ -132,6 +137,14 @@ if (-not $SkipPreviousRelease -and $UpdateSource -match '^https://github\.com/')
     if ($downloadExitCode -ne 0) {
         Write-Warning "No previous GitHub release could be downloaded; a full package will be created."
         $global:LASTEXITCODE = 0
+    } else {
+        $previousPackage = Select-RHFilesPreviousPackage $previousDirectory $Version
+        if ($previousPackage) {
+            Copy-Item -LiteralPath $previousPackage.FullName -Destination (Join-Path $OutputDirectory $previousPackage.Name)
+            Write-Host "Using strictly older delta base: $($previousPackage.Name)"
+        } else {
+            Write-Host "No strictly older downloaded package; creating a full package without replacing an existing version."
+        }
     }
 }
 

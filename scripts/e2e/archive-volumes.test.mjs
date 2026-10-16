@@ -58,6 +58,23 @@ test('split archive context menus extract real volume sets and report incomplete
     assert.equal(info.path,selected);assert.equal(info.entries.find(e=>e.name==='payload.bin').size,payload.length);
     await app.evaluate('closeArchive(false)');
   });
+  await t.test('late extraction completion must not close a newly opened archive', async () => {
+    const selected=path.join(volumes,'资料.7z.002'),destination=path.join(app.directory,'late-extraction');
+    await app.evaluate(`(()=>{window.__lateCall=call;window.__lateReady=false;window.__lateDone=false;window.__lateError=null;call=async(cmd,args)=>{const result=await __lateCall(cmd,args);if(cmd==='extract_7z'&&args.dest===${JSON.stringify(destination)}){window.__lateReady=true;await new Promise(resolve=>window.__releaseExtraction=resolve);}return result;};extractArchiveTo({name:'资料.7z.002',path:${JSON.stringify(selected)},extension:'002'},${JSON.stringify(destination)}).then(()=>window.__lateDone=true).catch(e=>window.__lateError=String(e));})()`);
+    try {
+      await until(()=>app.evaluate('window.__lateReady'),'hold completed extraction response');
+      await app.evaluate(`activateEntry({name:'资料.7z.002',path:${JSON.stringify(selected)},extension:'002',is_dir:false},false,0)`);
+      assert.equal(await app.evaluate('getTab().archivePath'),selected);
+      await app.evaluate('window.__releaseExtraction();true');
+      await until(()=>app.evaluate('window.__lateDone || window.__lateError'),'late extraction task settled');
+      assert.equal(await app.evaluate('window.__lateError'),null);
+      assert.equal(await app.evaluate('getTab().archivePath'),selected,'a completed file task cannot navigate the user out of an archive');
+      assert.deepEqual(fs.readFileSync(path.join(destination,'payload.bin')),payload);
+    } finally {
+      await app.evaluate('call=window.__lateCall;window.__releaseExtraction?.();true');
+      await app.evaluate('closeArchive(false)');
+    }
+  });
   await t.test('whole-set selection offers one named destination and one extraction task in the right pane', async () => {
     const names=fs.readdirSync(volumes).filter(name=>/^资料\.7z\.\d+$/.test(name));
     const labels=await chooseMenu(names,true);

@@ -516,13 +516,18 @@ function _applySavedScroll(tab) {
 }
 
 // --- background refresh (keeps cached entries fresh without blocking UI) ---
-async function _refreshTabInBackground(tab) {
-  if (tab.path === "home://" || tab.archivePath) return;
+async function _refreshTabInBackground(tab, isRight = false) {
+  if (tab.path === "home://" || tab.archivePath || tab._archiveOpening) return;
+  const isActive = () => isRight ? G.dualOn && G.rp === tab : tab.id === G.activeTab;
+  const listId = isRight ? 'right-file-list' : 'file-list';
+  const statusId = isRight ? 'right-status-count' : 'status-count';
+  const selectionId = isRight ? null : 'status-selection';
+  const refreshMeta = force => { if (!isRight) _refreshTabMeta(tab, force); };
   const requestedPath = tab.path;
   const token = (tab._refreshToken || 0) + 1;
   tab._refreshToken = token;
-  if (tab.id === G.activeTab && tab._loaded !== true && !(tab.entries || []).length) {
-    renderNavigationLoading(tab.path, false);
+  if (isActive() && tab._loaded !== true && !(tab.entries || []).length) {
+    renderNavigationLoading(tab.path, isRight);
   }
   try {
     let entries = await withTimeout(
@@ -531,17 +536,18 @@ async function _refreshTabInBackground(tab) {
       t('nav.folderLoadTimedOut'),
     );
     if (token !== tab._refreshToken || tab.path !== requestedPath) return;
+    if (G.searchActive || tab.archivePath || tab._archiveOpening) return;
     entries = entries.filter(entryVisible);
     entries = sortEntriesList(entries, tab.sortF, tab.sortAsc);
     const wasLoaded = tab._loaded === true;
     tab._loaded = true;
     if (!_entriesChanged(tab.entries, entries)) {
       tab.entries = entries;
-      if (tab.id === G.activeTab && !wasLoaded) {
-        renderFiles(tab, "file-list", "status-count", "status-selection");
-        updateStatus(tab, "status-count", "status-selection");
+      if (isActive() && !wasLoaded) {
+        renderFiles(tab, listId, statusId, selectionId, isRight);
+        updateStatus(tab, statusId, selectionId);
       }
-      _refreshTabMeta(tab);
+      refreshMeta();
       return;
     }
     const selPaths = [...(tab.sel || [])].map(i => tab.entries[i]?.path).filter(Boolean);
@@ -552,18 +558,18 @@ async function _refreshTabInBackground(tab) {
       if (idx >= 0) tab.sel.add(idx);
     });
     tab.lastIdx = tab.sel.size > 0 ? [...tab.sel].pop() : -1;
-    if (tab.id === G.activeTab) {
-      const listEl = document.getElementById("file-list");
+    if (isActive()) {
+      const listEl = document.getElementById(listId);
       const savedScroll = listEl ? listEl.scrollTop : 0;
-      renderFiles(tab, "file-list", "status-count", "status-selection");
-      updateStatus(tab, "status-count", "status-selection");
+      renderFiles(tab, listId, statusId, selectionId, isRight);
+      updateStatus(tab, statusId, selectionId);
       if (listEl) listEl.scrollTop = savedScroll;
     }
-    _refreshTabMeta(tab, true);
+    refreshMeta(true);
   } catch (error) {
     if (token !== tab._refreshToken || tab.path !== requestedPath) return;
     tab._loaded = false;
-    if (tab.id === G.activeTab) renderNavigationError(tab.path, error, false);
+    if (isActive()) renderNavigationError(tab.path, error, isRight);
     if (typeof reportStartupIssue === 'function') reportStartupIssue('tab-background-refresh', error);
   }
 }
@@ -1273,6 +1279,7 @@ async function navigateTo(path, pushHistory) {
   const navigatingTab = getTab();
   navigatingTab._refreshToken = (navigatingTab._refreshToken || 0) + 1;
   navigatingTab._archiveToken = (navigatingTab._archiveToken || 0) + 1;
+  navigatingTab._archiveOpening = null;
   navigatingTab.archivePath = null;
   if (typeof resetTypeSearch === 'function') resetTypeSearch();
   const navigationToken = ++_navigationToken;

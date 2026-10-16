@@ -32,6 +32,24 @@ Keep the version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` align
 
 The first Velopack portable build is a bootstrap release: users of the old hand-made ZIP must replace it once. Every Velopack release after that can update itself.
 
+### CI reruns and packaging validation
+
+`Velopack release` can be run manually against `main` to test the complete
+Windows build/package path. Manual runs **never publish or change a tag**;
+artifacts are marked `validation-only` and must not be used to replace an
+already-published version with different bytes. Tag pushes still publish new
+versions normally. Before rebuilding an existing tag, a read-only gate verifies
+the stable release, required assets and full-package hash/size against its feed;
+a complete release is a successful no-op. An incomplete/conflicting release
+stops for explicit recovery rather than overwriting existing user downloads.
+
+Previous packages download to a separate cache. Only a strictly older full
+package can seed a delta; an equal/newer download is never placed into `vpk pack`
+input, so rerunning packaging does not collide with the version being built.
+Windows/macOS business workflows use per-ref concurrency to cancel superseded
+runs, record public trigger identifiers, and ignore mobile-only/docs-only
+changes that do not affect the desktop applications.
+
 ## Android: Gitee, GitHub and LAN
 
 Android uses a separate version and `releases.android.json`, not the Windows

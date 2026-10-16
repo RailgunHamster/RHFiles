@@ -70,8 +70,14 @@ export async function launchApp() {
       fs.writeFileSync(path.join(artifactDir,name+'.png'),Buffer.from(result.data,'base64'));
     };
     const point=selector=>evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Element missing');const r=el.getBoundingClientRect();if(!r.width||!r.height)throw Error('Element hidden');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    const hover=async selector=>{
+      const p=await until(()=>point(selector),'visible pointer target '+selector);
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',...p});
+      await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      return point(selector);
+    };
     const click=async selector=>{
-      const p=await point(selector);await send('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',buttons:1,clickCount:1});
+      const p=await hover(selector);await send('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',buttons:1,clickCount:1});
       await send('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1});
     };
     const drag=async(source,target,drop)=>{
@@ -95,6 +101,6 @@ export async function launchApp() {
         await send('Input.setInterceptDrags',{enabled:false});
       }
     };
-    return {directory,artifactDir,profile,close,evaluate,send,events,screenshot,click,drag};
+    return {directory,artifactDir,profile,close,evaluate,send,events,screenshot,hover,click,drag};
   } catch(e){close();throw e;}
 }

@@ -13,9 +13,8 @@ try{
   await app.evaluate(`navigateAddressInput(${JSON.stringify(pathToFileURL(input).href)},false)`);
   await app.evaluate('showContextMenu(120,120,false)');
   assert.equal(await app.evaluate("document.querySelectorAll('.context-menu > .ctx-item:has(> .ctx-item-main > .ctx-icon-document)').length"),1);
-  await app.click('.context-menu > .ctx-item:has(> .ctx-item-main > .ctx-icon-document)');
-  const submenuPoint=await app.evaluate("(()=>{const r=document.querySelector('.context-menu > .ctx-item:has(> .ctx-item-main > .ctx-icon-document)').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
-  await app.send('Input.dispatchMouseEvent',{type:'mouseMoved',...submenuPoint});
+  await app.hover('.context-menu > .ctx-item:has(> .ctx-item-main > .ctx-icon-document)');
+  await until(()=>app.evaluate("(()=>{const item=document.querySelector('.ctx-submenu .ctx-item:has(.ctx-icon-document)');return !!item?.getBoundingClientRect().width})()"),'PDF submenu visible after hover');
   await app.click('.ctx-submenu .ctx-item:has(.ctx-icon-document)');
   await until(()=>app.evaluate("!document.getElementById('markdown-pdf-start').disabled"),'converter dialog ready');
   assert.equal(await app.evaluate("document.getElementById('markdown-pdf-name').value"),path.basename(output));

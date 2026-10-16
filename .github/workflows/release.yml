@@ -4,13 +4,60 @@ on:
   push:
     tags:
       - "v*"
+  # Explicitly exercises the full release build/package path without publishing
+  # or changing a tag, a GitHub asset, the Windows feed or users' installations.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  windows-release:
+  plan:
     runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.decision.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate tag and manifest version
+        id: version
+        shell: pwsh
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_REF_NAME: ${{ github.ref_name }}
+        run: |
+          $manifest = Get-Content src-tauri/Cargo.toml -Raw
+          $version = [regex]::Match($manifest, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid stable manifest version' }
+          if ($env:CI_EVENT -eq 'push' -and $env:CI_REF_NAME -cne "v$version") { throw 'Tag and manifest version differ' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Verify whether this immutable version is already published
+        if: github.event_name == 'push'
+        id: existing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-github-release.ps1 -Version '${{ steps.version.outputs.version }}'
+      - name: Plan build or verified no-op
+        id: decision
+        shell: pwsh
+        env:
+          CI_PUBLISHED: ${{ steps.existing.outputs.published }}
+        run: |
+          $build = if ($env:CI_PUBLISHED -eq 'true') { 'false' } else { 'true' }
+          "build=$build" >> $env:GITHUB_OUTPUT
+          "Build required: $build. Manual runs only validate packaging; they never publish." >> $env:GITHUB_STEP_SUMMARY
+  windows-release:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -34,27 +81,16 @@ jobs:
         shell: pwsh
         run: dotnet tool install --global vpk --version 1.2.0
 
-      - name: Validate tag and manifest version
-        id: version
-        shell: pwsh
-        run: |
-          $tagVersion = '${{ github.ref_name }}' -replace '^v', ''
-          $manifest = Get-Content src-tauri/Cargo.toml -Raw
-          $manifestVersion = [regex]::Match($manifest, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
-          if ($tagVersion -ne $manifestVersion) {
-            throw "Tag version $tagVersion does not match Cargo version $manifestVersion"
-          }
-          "version=$tagVersion" >> $env:GITHUB_OUTPUT
-
       - name: Test
         shell: pwsh
         run: cargo test --workspace --locked
 
       - name: Build and package
         shell: pwsh
-        run: .\scripts\package-velopack.ps1 -Version '${{ steps.version.outputs.version }}'
+        run: .\scripts\package-velopack.ps1 -Version '${{ needs.plan.outputs.version }}'
 
       - name: Publish GitHub release
+        if: github.event_name == 'push'
         shell: pwsh
         env:
           VPK_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,9 +102,10 @@ jobs:
             --token $env:VPK_TOKEN `
             --publish true `
             --tag '${{ github.ref_name }}' `
-            --releaseName 'RHFiles ${{ steps.version.outputs.version }}'
+            --releaseName 'RHFiles ${{ needs.plan.outputs.version }}'
 
       - name: Publish cumulative release history
+        if: github.event_name == 'push'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -79,7 +116,9 @@ jobs:
             --clobber
 
       - name: Save release artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: RHFiles-${{ steps.version.outputs.version }}-velopack
+          name: RHFiles-${{ needs.plan.outputs.version }}-${{ github.event_name == 'workflow_dispatch' && 'validation-only' || 'release' }}-${{ github.run_id }}
           path: dist/velopack-releases/*
+          if-no-files-found: ignore

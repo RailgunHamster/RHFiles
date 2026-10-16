@@ -53,6 +53,13 @@ test('refreshing an inactive tab must not replace the active tree or VCS metadat
   ctx._refreshTabMeta({id:1,path:'C:\\active'},true);assert.deepEqual(calls,['C:\\active','C:\\active','C:\\active']);
 });
 
+test('right-pane background refresh preserves selected paths/scroll without repainting the left pane',async()=>{
+  const h=refreshFixture();h.ctx.G.dualOn=true;h.ctx.G.rp=h.tab;
+  const rendered=[];h.ctx.renderFiles=(_,id)=>rendered.push(id);
+  const pending=h.ctx._refreshTabInBackground(h.tab,true);h.requests[0].resolve([row('a'),row('b'),row('c')]);await pending;
+  assert.deepEqual([...h.tab.sel],[2]);assert.deepEqual(rendered,['right-file-list']);assert.deepEqual(h.metadata,[]);assert.equal(h.scroll.scrollTop,148);
+});
+
 function searchFixture() {
   const left={entries:[row('report-one'),row('other'),row('report-two')],sel:new Set([1]),lastIdx:1};
   const right={entries:[row('重庆.txt'),row('annual-report'),row('报告.txt')],sel:new Set(),lastIdx:-1};

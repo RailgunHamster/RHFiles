@@ -3,11 +3,17 @@ name: File manager business tests
 on:
   push:
     branches: [main]
+    paths-ignore: ['android/**', 'docs/**', 'README*']
   pull_request:
+    paths-ignore: ['android/**', 'docs/**', 'README*']
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows-business:
@@ -15,6 +21,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Record workflow trigger (no credentials)
+        run: node scripts/testing/ci-trigger.mjs
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

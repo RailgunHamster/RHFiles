@@ -40,7 +40,7 @@ test('volume deduplication follows Windows and Mac case-sensitive path rules', (
 });
 test('batch extraction receives each volume family once and retains unrelated archives', async () => {
   const calls=[];
-  const ctx=harness({extractArchiveTo:async file => {calls.push(file.name);return null;},refresh:async () => {},alert:() => {}});
+  const ctx=harness({extractArchiveTo:async file => {calls.push(file.name);return null;},captureArchiveRefresh:()=>({}),refreshArchiveOrigin:async () => {},alert:() => {}});
   load(ctx,'ops.js',['extractArchives']);
   await ctx.extractArchives([file('a.zip.002'),file('a.zip.001'),file('b.part02.rar'),file('b.part01.rar')], entry => entry.name);
   assert.deepEqual(calls,['a.zip.002','b.part02.rar']);

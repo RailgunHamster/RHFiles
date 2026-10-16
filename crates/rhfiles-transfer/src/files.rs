@@ -250,10 +250,38 @@ fn publish_no_replace(source: &Path, target: &Path) -> Result<()> {
             Ok(())
         }
     }
-    #[cfg(not(any(windows, target_os = "android", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        unsafe extern "C" {
+            fn renamex_np(
+                from: *const std::ffi::c_char,
+                to: *const std::ffi::c_char,
+                flags: u32,
+            ) -> std::ffi::c_int;
+        }
+        // Darwin's RENAME_EXCL fails atomically when ANY target node exists,
+        // including an empty directory or dangling symlink. A prior exists()
+        // check plus std::fs::rename would allow replacing that directory.
+        // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/stdio.h
+        const RENAME_EXCL: u32 = 0x00000004;
+        let source = CString::new(source.as_os_str().as_bytes()).map_err(failure)?;
+        let target = CString::new(target.as_os_str().as_bytes()).map_err(failure)?;
+        if unsafe { renamex_np(source.as_ptr(), target.as_ptr(), RENAME_EXCL) } != 0 {
+            Err(failure(std::io::Error::last_os_error()))
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(not(any(
+        windows,
+        target_os = "android",
+        target_os = "linux",
+        target_os = "macos"
+    )))]
     {
         let _ = (source, target);
-        Err("首版互传的安全接收仅支持 Windows / Android".into())
+        Err("此平台尚未实现互传目录的安全发布".into())
     }
 }
 #[cfg(test)]
@@ -282,5 +310,75 @@ mod tests {
         fs::write(target.join("keep"), "old").unwrap();
         assert!(publish_no_replace(&source, &target).is_err());
         assert_eq!(fs::read_to_string(target.join("keep")).unwrap(), "old");
+    }
+    #[test]
+    fn publishing_preserves_tree_and_refuses_an_existing_file() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        fs::create_dir_all(source.join("nested/empty")).unwrap();
+        fs::write(source.join("nested/file"), "payload").unwrap();
+        fs::write(&target, "do not replace").unwrap();
+        assert!(publish_no_replace(&source, &target).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "do not replace");
+        let output = root.path().join("new-target");
+        publish_no_replace(&source, &output).unwrap();
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read_to_string(output.join("nested/file")).unwrap(),
+            "payload"
+        );
+        assert!(output.join("nested/empty").is_dir());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn publishing_refuses_a_dangling_destination_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        let missing = root.path().join("missing");
+        fs::create_dir(&source).unwrap();
+        std::os::unix::fs::symlink(&missing, &target).unwrap();
+        assert!(publish_no_replace(&source, &target).is_err());
+        assert_eq!(fs::read_link(&target).unwrap(), missing);
+        assert!(source.is_dir());
+    }
+    #[test]
+    fn concurrent_publishers_never_replace_the_winner() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|index| {
+                let source = root.path().join(format!("source-{index}"));
+                fs::create_dir(&source).unwrap();
+                fs::write(source.join("payload"), index.to_string()).unwrap();
+                let target = target.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let won = publish_no_replace(&source, &target).is_ok();
+                    (index, source, won)
+                })
+            })
+            .collect();
+        let results: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        let winners: Vec<_> = results.iter().filter(|(_, _, won)| *won).collect();
+        assert_eq!(winners.len(), 1);
+        assert_eq!(
+            fs::read_to_string(target.join("payload")).unwrap(),
+            winners[0].0.to_string()
+        );
+        for (index, source, won) in results {
+            if !won {
+                assert_eq!(
+                    fs::read_to_string(source.join("payload")).unwrap(),
+                    index.to_string()
+                );
+            }
+        }
     }
 }
