@@ -76,6 +76,15 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         }
         result.putString("pass","true");finish(Activity.RESULT_OK,result);
     }
+    private void attributionProbe(Bundle result) throws Exception {
+        awaitScript("!!document.querySelector('.file-pane:not([hidden])')?.contentWindow?.rhfilesPane");
+        eval("window.__licenseFrame=document.querySelector('.file-pane:not([hidden])').contentWindow;__licenseFrame.document.getElementById('nav-settings').click()");
+        awaitScript("!__licenseFrame.document.getElementById('tool-settings').hidden");
+        eval("__licenseFrame.document.querySelector('[data-settings-section=about]').click();__licenseFrame.document.getElementById('project-license').open=true");
+        awaitScript("__licenseFrame.document.getElementById('project-license-text').textContent.includes('END OF TERMS AND CONDITIONS')");
+        require(eval("__licenseFrame.document.getElementById('project-notice-text').textContent.includes('RailgunHamster')").equals("true"),"APK attribution is missing");
+        screenshot("licenses");result.putString("license","Apache-2.0");result.putString("attribution","RHFiles / RailgunHamster");result.putString("pass","true");finish(Activity.RESULT_OK,result);
+    }
     private void awaitScript(String script) throws Exception {
         long end=System.currentTimeMillis()+45000;
         while(!eval(script).equals("true")){require(System.currentTimeMillis()<end,"UI condition timed out: "+script);Thread.sleep(150);}
@@ -207,6 +216,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("nearby")){nearbyProbe(result);return;}
             if(arguments.getString("mode","").equals("github")){releaseProbe(result,"github");return;}
             if(arguments.getString("mode","").equals("gitee")){releaseProbe(result,"gitee");return;}
+            if(arguments.getString("mode","").equals("attribution")){attributionProbe(result);return;}
             if(arguments.getString("mode","").equals("panes")){panesProbe(result);return;}
             if(arguments.getString("mode","").equals("concurrent-panes")){concurrentPanesProbe(result);return;}
             if(arguments.getString("mode","").equals("backup")){backupProbe(result);return;}
