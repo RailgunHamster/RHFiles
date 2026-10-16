@@ -84,7 +84,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
   }};
   if(nativeV2 || nativeV3){
     m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
-    m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'github',github:'https://github.com/RailgunHamster/RHFiles',family:'\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
+    m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'gitee',gitee:'https://gitee.com/railgunhamster/RHFiles',github:'https://github.com/RailgunHamster/RHFiles',family:'\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
     m.fs['content://test/tree/root/document/root']=[{name:'云端.txt',path:'content://test/tree/root/document/file',isDir:false,kind:'document',size:12}];
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
@@ -223,7 +223,11 @@ try{
   await p.evaluate(()=>rhfilesHandleBack());await row(p,'DCIM').waitFor();
   await home(p);await p.evaluate(()=>window.__model.index=false);await tile(p,'audio').click();await p.getByRole('button',{name:'建立索引',exact:true}).waitFor();check(true,'No index has actionable empty state');
   await home(p);await tile(p,'settings').click();await p.waitForSelector('#tool-settings:not([hidden])');check((await p.locator('#permissions').innerText()).includes('已获得'),'Settings reports permissions');
-  await p.click('[data-settings-section="about"]');await p.click('[data-settings-panel="about"] summary');await p.click('#btn-refresh-logs');await p.waitForFunction(()=>document.getElementById('log-view').textContent.includes('fixture ready'));check(true,'Diagnostics work inside the About settings category');
+  await p.click('[data-settings-section="about"]');await p.click('#project-license summary');
+  await p.waitForFunction(()=>document.getElementById('project-license-text').textContent.includes('END OF TERMS AND CONDITIONS'));
+  check((await p.locator('#project-notice-text').innerText()).includes('RailgunHamster')&&(await p.locator('#project-notice-text').innerText()).includes('RHFiles'),'About displays bundled original-project attribution');
+  check((await p.locator('#project-license-text').innerText()).includes('Version 2.0, January 2004'),'The full standard Apache-2.0 license is readable offline');
+  await p.locator('[data-settings-panel="about"] details').filter({has:p.locator('#btn-refresh-logs')}).locator('summary').click();await p.click('#btn-refresh-logs');await p.waitForFunction(()=>document.getElementById('log-view').textContent.includes('fixture ready'));check(true,'Diagnostics work inside the About settings category');
   await p.click('[data-settings-section="display"]');await p.click('#btn-theme');await p.waitForFunction(()=>document.documentElement.dataset.theme==='dark');check(true,'Theme can change');
   await home(p);await capture(p,'plus-dark');await tile(p,'server').click();await p.click('#btn-server-toggle');await choose(p,'取消');check(await p.evaluate(()=>!window.__model.server),'LAN server requires confirmation');
   await p.click('#btn-server-toggle');await choose(p,'启动');await p.waitForFunction(()=>document.getElementById('server-status').textContent.includes('192.0.2.1'));check(true,'Server address visible');
@@ -369,6 +373,10 @@ try{
     const {context,page:p,errors}=await pageFor({nativeV3:true,nativeUpdates:true});
     await tile(p,'settings').click();await p.click('[data-settings-section="updates"]');await p.locator('#update-check').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===0),'Disabled auto-check makes no network request at startup or opening Settings');
+    check(await p.locator('[name=source]').inputValue()==='gitee'&&await p.locator('#update-gitee-field').isVisible()&&!await p.locator('#update-github-field').isVisible()&&!await p.locator('#update-family-fields').isVisible(),'Gitee is the default provider and only its repository field is visible');
+    await p.selectOption('[name=source]','github');check(await p.locator('#update-github-field').isVisible()&&!await p.locator('#update-gitee-field').isVisible(),'GitHub remains independently selectable');
+    await p.selectOption('[name=source]','gitee');await p.click('#update-save');await p.waitForFunction(()=>__model.updates.config.source==='gitee');
+    check(await p.evaluate(()=>__model.updates.config.gitee==='https://gitee.com/railgunhamster/RHFiles'),'Gitee repository is included when saving update settings');
     await p.click('#update-check');await p.locator('#update-download:not([hidden])').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===1),'Manual check works even with automatic checking disabled');
     check((await p.locator('#update-notes').innerText()).includes('\n第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes preserve line breaks and never inject HTML');

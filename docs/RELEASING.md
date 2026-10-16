@@ -31,3 +31,34 @@ dotnet tool install --global vpk --version 1.2.0
 Keep the version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` aligned, add `docs/release-notes/<version>.md`, then push an annotated `v<version>` tag. `.github/workflows/release.yml` packages and publishes the release, including the cumulative history asset used by the Settings client. It downloads the previous package first so Velopack can generate a delta when possible.
 
 The first Velopack portable build is a bootstrap release: users of the old hand-made ZIP must replace it once. Every Velopack release after that can update itself.
+
+## Android: Gitee, GitHub and LAN
+
+Android uses a separate version and `releases.android.json`, not the Windows
+Velopack feed. Build with `scripts/android-build.ps1`, then stage the signed APK
+with `scripts/publish-android.ps1 -OutputDirectory <local-staging>` and
+`-NotesFile android/release-notes.txt`. Seed staging with the existing cumulative
+Android feed to preserve history. The publisher verifies package/ABI/version and
+the existing signing certificate, publishes the APK first and the feed last.
+
+Push the release source commit to both remotes, then publish the same bytes:
+
+```powershell
+./scripts/publish-android-gitee.ps1 -Directory <local-staging> -Commit <full-sha>
+./scripts/publish-android-github.ps1 -Directory <local-staging> -Commit <full-sha>
+./scripts/publish-android.ps1 -OutputDirectory '\\SERVER-HOME\Public\Software\RHFiles-Releases' -NotesFile android/release-notes.txt
+```
+
+Gitee defaults to `railgunhamster/RHFiles`; its repository must be public.
+Store the publishing token outside the repository, encrypted with Windows
+DPAPI, at `%USERPROFILE%\.rhfiles-gitee-token.xml` (a PowerShell SecureString
+export). The script never puts it in client code or download URLs. Gitee
+publishing uses a temporary prerelease, immutable APK/feed attachments and
+anonymous download/hash checks before promoting to stable. A failed upload can
+be retried; do not overwrite same-version bytes. GitHub retains its older-client
+compatibility sidecar on Windows Latest without modifying Windows packages.
+
+New/unconfigured Android installations default to Gitee. Explicitly saved source
+choices are preserved. The three sources can be changed in Android Settings;
+none requires a publishing token on the phone. All released distributions must
+retain project LICENSE/NOTICE and the separate third-party notices.

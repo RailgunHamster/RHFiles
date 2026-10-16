@@ -1,5 +1,10 @@
 RHFiles Android 0.1.13
 
+新增 Gitee 应用更新源，未配置过更新源/新安装默认使用 https://gitee.com/railgunhamster/RHFiles；保留已保存的 GitHub/家庭服务器选择，可在设置 → 更新与网络切换。无需登录检查或下载，保留自动检查总开关、手动检查、代理及 APK 大小/哈希/包名/版本/架构/同签名验证。检查所有正式发行，按 Android versionCode 选最高兼容版本，异常或未完整读取不能误报“最新”。
+项目原创代码采用标准 Apache License 2.0，随附 LICENSE / NOTICE 保留 RailgunHamster / RHFiles 来源声明；第三方组件仍使用各自许可。设置 → 关于与诊断可离线查看项目许可与署名。
+
+Add anonymous Gitee APK updates, defaulting to the project Gitee repository on new/unconfigured installations while preserving explicitly saved sources. Retain GitHub/home-server, the automatic-check switch, manual checks, proxy and package integrity/signature verification. Scan stable releases by Android versionCode; errors never masquerade as latest. License original project code under standard Apache-2.0 with LICENSE/NOTICE attribution, viewable offline in About; third-party licenses remain unchanged.
+
 分隔条由 24 缩窄到 8 CSS 像素，移除“活动窗格”整圈描边。两边无需先激活：原生触摸中继保留每个手指的坐标，分别滚动起始窗格；支持两边同时滑动、一边滑动另一边点击，避免浏览器把跨 iframe 多指触摸合并为一组手势。单窗格原生滚动与预览缩放保留；文件写入仍使用现有冲突保护。
 设置新增“配置备份”，通过系统文件选择器导出/导入本地 .rhconfig 文件。包含浏览显示、收藏、分屏、设备名称、更新源与代理、网络位置和账号密码、电子书显示/书签/阅读位置（含旧版阅读存储迁移）。密码派生密钥与 AES-256-GCM 加密，密码至少 8 字符；密码、网络凭据不进入前端配置或明文备份。
 导入先解密、验证并二次确认，再替换配置；跨设备重新加密网络凭据并保持连接 ID。事务日志与前端确认共同保护中断恢复，导入后回主页，不自动重做文件任务。系统权限/授权目录需重新授予；不备份文件本体、缓存、索引或待粘贴任务。备份密码遗失无法恢复。

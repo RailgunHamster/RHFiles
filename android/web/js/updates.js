@@ -14,7 +14,7 @@ const androidUpdates=(()=>{
   }
   async function check(manual,reason){mutate();const current=generation,next=await api.native('update.check',{manual,reason});if(current!==generation)return;status=next;paint();schedule();}
   function values(){return Object.fromEntries([...form.elements].filter(e=>e.name).map(e=>[e.name,e.type==='checkbox'?e.checked:e.value]));}
-  function showSource(){if(!form)return;const family=form.elements.source.value==='family';$('update-family-fields').hidden=!family;$('update-github-field').hidden=family;$('update-proxy-field').hidden=!form.elements.proxyEnabled.checked;}
+  function showSource(){if(!form)return;const source=form.elements.source.value;$('update-family-fields').hidden=source!=='family';$('update-github-field').hidden=source!=='github';$('update-gitee-field').hidden=source!=='gitee';$('update-proxy-field').hidden=!form.elements.proxyEnabled.checked;}
   async function build(){
     const node=$('app-updates');node.hidden=false;node.replaceChildren(ui.el('h2','','应用更新'));
     const note=ui.el('p','muted','检查更新不会自动下载。点击下载并安装后，会先校验 APK，再打开系统安装确认；不会卸载应用或清空数据。');node.append(note);
@@ -24,14 +24,15 @@ const androidUpdates=(()=>{
       if(options)for(const [value,text] of options){const option=ui.el('option','',text);option.value=value;input.append(option);}else input.type=type || 'text';
       input.autocomplete='off';input.spellcheck=false;row.append(input);return row;
     }
-    form.append(field('autoCheck','自动检查（启动、进入设置、每小时）','checkbox'),field('source','更新源',null,[['github','GitHub'],['family','家庭服务器（局域网）']]));
+    form.append(field('autoCheck','自动检查（启动、进入设置、每小时）','checkbox'),field('source','更新源',null,[['gitee','Gitee（默认）'],['github','GitHub'],['family','家庭服务器（局域网）']]));
+    const gitee=field('gitee','Gitee 仓库地址');gitee.id='update-gitee-field';form.append(gitee);
     const github=field('github','GitHub 仓库地址');github.id='update-github-field';form.append(github);
     const family=ui.el('div','update-form');family.id='update-family-fields';family.append(field('family','家庭服务器目录（SMB 或 HTTP/HTTPS）'));
     const connections=await api.native('connections');
     family.append(field('connectionId','SMB 登录配置',null,[['','匿名访问'],...connections.filter(c=>c.type==='smb'&&c.path).map(c=>[c.id,c.name])]));
     const credentials=ui.el('details');credentials.append(ui.el('summary','','新增 / 更换 SMB 登录'),field('smbUsername','用户名（支持 SERVER-HOME\\Administrator）'),field('smbPassword','密码','password'),field('smbDomain','域（可选）'));family.append(credentials);
     family.append(ui.el('p','muted','需登录的共享：可在上方直接填写账号密码并保存，也可选择“网络位置”中已有的 SMB 连接。密码由 Android Keystore 加密保存。目录中需有 releases.android.json；不会读取 Windows 更新清单。'));
-    form.append(family,field('proxyEnabled','使用 HTTP 网络代理（GitHub / HTTP 下载）','checkbox'));
+    form.append(family,field('proxyEnabled','使用 HTTP 网络代理（Gitee / GitHub / HTTP 下载）','checkbox'));
     const proxy=field('proxy','代理地址，例如 http://192.168.0.10:7890');proxy.id='update-proxy-field';form.append(proxy);
     form.append(ui.el('p','muted','手机上的 127.0.0.1 指手机本身；使用电脑代理请填电脑的局域网 IP。SMB 不经过 HTTP 代理。'));
     const save=ui.el('button','','保存更新设置');save.id='update-save';save.type='submit';form.append(save);
@@ -44,10 +45,10 @@ const androidUpdates=(()=>{
       button('update-check','立即检查',()=>check(true,'manual')),
       button('update-download','下载并安装',async()=>{mutate();wantInstall=true;try{status=await api.native('update.download');paint();schedule();}catch(e){wantInstall=false;throw e;}},true),
       button('update-install','继续安装',install,true),
-      button('update-copy-diagnostics','复制更新诊断',async()=>{await ui.copyText('RHFiles Android code '+status.currentCode+'\n更新源：'+status.config.source+'\n目录：'+(status.config.source==='family'?status.config.family:status.config.github)+'\n状态：'+status.state+'\n'+(status.message?.trim()||'系统没有提供具体原因'));ui.toast('更新诊断已复制（不含密码）');}),
+      button('update-copy-diagnostics','复制更新诊断',async()=>{await ui.copyText('RHFiles Android code '+status.currentCode+'\n更新源：'+status.config.source+'\n目录：'+status.config[status.config.source]+'\n状态：'+status.state+'\n'+(status.message?.trim()||'系统没有提供具体原因'));ui.toast('更新诊断已复制（不含密码）');}),
       button('update-cancel','取消',async()=>{mutate();wantInstall=false;status=await api.native('update.cancel');paint();schedule();}));
     node.append(info,progress,notes,actions);
-    for(const e of form.elements)if(e.name){const value=status.config[e.name];if(e.type==='checkbox')e.checked=!!value;else e.value=value ?? '';}
+    for(const e of form.elements)if(e.name){const value=status.config[e.name] ?? ({source:'gitee',gitee:'https://gitee.com/railgunhamster/RHFiles'})[e.name];if(e.type==='checkbox')e.checked=!!value;else e.value=value ?? '';}
     showSource();paint();
   }
   async function install(){

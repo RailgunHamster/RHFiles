@@ -34,7 +34,7 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 
 ### Android
 
-Get the APK from [Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v). Includes independent adaptive panes with Copy/Move to Other Pane, an isolated EPUB/MOBI reader, and GitHub/home-server APK updates. See [Android features and limits](docs/ANDROID.md).
+Get the APK from [Gitee Android releases](https://gitee.com/railgunhamster/RHFiles/releases) or [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v). Includes independent adaptive panes with Copy/Move to Other Pane, an isolated EPUB/MOBI reader, and Gitee/GitHub/home-server APK updates. Gitee is the default for new/unconfigured installations; existing saved source choices are preserved. See [Android features and limits](docs/ANDROID.md).
 
 ### macOS preview
 
@@ -150,6 +150,19 @@ cd android
 cargo test --lib                                    # backend logic tests
 cargo tauri android build --apk --target aarch64    # release APK
 ```
+
+## License
+
+RHFiles original code is licensed under the [Apache License 2.0](LICENSE),
+copyright 2026 RailgunHamster. Use, modification and commercial redistribution
+are allowed subject to that standard license. Redistributions must include the
+license and preserve applicable copyright/attribution notices; derivative
+distributions must carry the relevant attribution from [NOTICE](NOTICE) in a
+NOTICE file, accompanying source/documentation, or the usual notices display
+(Section 4). UI-only credit is not mandatory; private use requires no public
+announcement. Modified files must be identified as changed. Third-party
+components retain their own licenses; this does not replace their notices or
+grant rights to their names or trademarks.
 
 ## Third-party components
 

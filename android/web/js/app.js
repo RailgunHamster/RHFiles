@@ -686,6 +686,11 @@
       isOpen:()=>!$('drawer').hidden,prepare:renderDrawer});
     adaptive.init(renderDrawer);
     for(const tab of document.querySelectorAll('[data-settings-section]')){tab.onclick=()=>setSettingsSection(tab.dataset.settingsSection);tab.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();const tabs=[...tab.parentNode.children],delta=['ArrowLeft','ArrowUp'].includes(e.key)?-1:1,next=tabs[(tabs.indexOf(tab)+delta+tabs.length)%tabs.length];next.click();next.focus();};}
+    $('project-license').addEventListener('toggle',async()=>{
+      const details=$('project-license');if(!details.open||details.dataset.loaded)return;
+      try{const texts=await Promise.all(['NOTICE.txt','LICENSE.txt'].map(async name=>{const response=await fetch(name);if(!response.ok)throw Error('License unavailable');return response.text();}));$('project-notice-text').textContent=texts[0];$('project-license-text').textContent=texts[1];details.dataset.loaded='1';}
+      catch{$('project-license-text').textContent='许可文件未能加载，请查看 RHFiles 源码仓库中的 LICENSE / NOTICE。';}
+    });
     ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path),select:path=>{if(state.entries.find(e=>e.path===path)?.libraryAlbum)return;state.selected.add(path);paintSelection();},toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
     $('scrim').addEventListener('click',closeDrawer);
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);

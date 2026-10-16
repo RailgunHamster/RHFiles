@@ -27,6 +27,12 @@ val keystoreProperties = Properties().apply {
 }
 val keystorePath = keystoreProperties.getProperty("storeFile")
 val hasSigningKey = !keystorePath.isNullOrBlank() && file(keystorePath).exists()
+// A lower manifest version lets an emulator exercise a real upgrade using the
+// identical minified runtime. Never enabled by the production build/publisher.
+val updateProbeCode = providers.gradleProperty("rhfilesUpdateProbeCode").orNull?.toInt()
+require(updateProbeCode == null || (providers.gradleProperty("rhfilesReleaseProbe").isPresent && updateProbeCode > 0)) {
+    "Update probe versions require rhfilesReleaseProbe and a positive code"
+}
 
 android {
     if (providers.gradleProperty("rhfilesReleaseProbe").isPresent) {
@@ -41,8 +47,8 @@ android {
         applicationId = "com.railgunhamster.rhfiles"
         minSdk = 24
         targetSdk = 36
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
-        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        versionCode = updateProbeCode ?: tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0") + if (updateProbeCode != null) "-update-probe" else ""
     }
     signingConfigs {
         if (hasSigningKey) {

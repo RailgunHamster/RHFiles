@@ -34,7 +34,7 @@ Mac 版：从 [macOS 构建工作流](https://github.com/RailgunHamster/RHFiles/
 
 ## 下载
 
-Android APK 见 [Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v)。支持自适应独立双窗格、复制/移动到另一窗格、隔离的 EPUB/MOBI 阅读器及 GitHub/家庭服务器 APK 更新。功能与限制见 [Android 说明](docs/ANDROID.md)。
+Android APK 见 [Gitee 发布记录](https://gitee.com/railgunhamster/RHFiles/releases)或 [GitHub 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v)。支持自适应独立双窗格、复制/移动到另一窗格、隔离的 EPUB/MOBI 阅读器及 Gitee/GitHub/家庭服务器 APK 更新。新安装或未配置来源时默认使用 Gitee，已有保存的来源保持不变。功能与限制见 [Android 说明](docs/ANDROID.md)。
 
 请从 [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest) 下载最新版 portable 压缩包或安装程序。
 
@@ -129,6 +129,15 @@ cargo build --release --locked --package rhfiles-tauri
 ```
 
 版本号、标签、GitHub Release 与局域网发布方式见[发布说明](docs/RELEASING.md)。
+
+## 开源许可
+
+RHFiles 的原创代码采用标准 [Apache License 2.0](LICENSE)，版权所有者为 RailgunHamster（2026）。
+允许使用、修改、再分发和商用，但再分发时必须附上许可证并保留适用的版权和署名声明；
+衍生发行版必须按第 4 条保留 [NOTICE](NOTICE) 中相关的 RHFiles / RailgunHamster 来源声明，
+可放在随附 NOTICE、源码/文档或通常展示第三方声明的界面，不强制只能放在软件界面。
+修改过的文件须注明改动，个人自用不要求额外公开声明。这里没有添加自定义许可条件。
+第三方组件继续遵循各自许可证，本项目授权不替代它们的许可，也不授权第三方名称或商标。
 
 ## 第三方组件
 

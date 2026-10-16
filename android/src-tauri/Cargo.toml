@@ -2,6 +2,7 @@
 name = "rhfiles-android"
 version = "0.1.13"
 edition = "2021"
+license = "Apache-2.0"
 description = "RHFiles for Android — an ad-free, telemetry-free file manager with full storage access"
 publish = false
 

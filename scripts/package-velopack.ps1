@@ -100,6 +100,8 @@ Reset-WorkspaceDirectory $stageDirectory "Velopack staging directory"
 Reset-WorkspaceDirectory $OutputDirectory "Velopack output directory"
 
 Copy-Item -LiteralPath $releaseExe -Destination (Join-Path $stageDirectory "RHFiles.exe")
+Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $stageDirectory "RHFiles-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot "NOTICE") -Destination (Join-Path $stageDirectory "RHFiles-NOTICE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\everything.exe") -Destination (Join-Path $stageDirectory "Everything.exe")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\everything\dll\Everything64.dll") -Destination (Join-Path $stageDirectory "Everything64.dll")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\Everything.lng") -Destination (Join-Path $stageDirectory "Everything.lng")

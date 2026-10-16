@@ -1,6 +1,12 @@
 # RHFiles Android
 
-## 0.1.13：独立多指双窗格、本地加密配置备份（待发布）
+## 0.1.13：Gitee 更新、独立多指双窗格、本地加密配置备份（待发布）
+
+更新源新增 Gitee，默认仓库为 `https://gitee.com/railgunhamster/RHFiles`。新安装或此前没有保存过来源时默认使用 Gitee；已有明确保存的 GitHub/家庭服务器选择不覆盖。设置 → 更新与网络可切换三个来源、修改仓库、保存 HTTP 代理；关闭自动检查后启动/进入设置/每小时都不会联网检查，手动检查仍可用。
+
+客户端不保存或分发 Gitee 发布令牌；直接读取公开 v5 正式发行列表和 `releases.android.json`，每页 100 条、最多 5 页，按 Android versionCode 取最高兼容包。源代码归档不是 APK，草稿/预发布不参与；缺清单、错误 JSON、请求失败、重名附件、版本冲突、目录截断均明确失败。Gitee 下载复用现有后台任务与大小/SHA-256/包名/版本/ABI/签名校验，用户确认后才交给系统安装。
+
+发布使用 `scripts/publish-android-gitee.ps1`，从仓库外 Windows DPAPI 加密文件读取令牌；先上传不可变 APK，再上传该版不可变清单，匿名下载逐字节校验，最后从预发布转正式。脚本不会替换同版本不同内容。项目原创代码采用标准 Apache-2.0，打包 LICENSE / NOTICE 并在关于页离线展示；第三方许可证不变。
 
 分隔轨道缩到 8 CSS px，把手仍居中；移除整圈活动窗格描边。“活动”只记录系统 Back 的去向，不作为另一窗格的输入许可。Chromium 的 iframe touch-active document 会丢弃另一文档中的触点，仅在 JavaScript 里监听两边不够；Android `MotionEvent` 中继在过滤前保留全部 pointer ID 和坐标，滚动分别绑定起始容器。第二触点点击通过命中的可信窗格控件分发；单窗格保留原生滚动，预览缩放不经过此路由。多指移动会取消长按计时，惯性有速度上限和衰减。
 

@@ -23,6 +23,7 @@ import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 internal const val UPDATE_FEED = "releases.android.json"
 internal const val MAX_APK_BYTES = 1024L * 1024 * 1024
 internal const val APP_PACKAGE = "com.railgunhamster.rhfiles"
+internal const val DEFAULT_GITEE = "https://gitee.com/railgunhamster/RHFiles"
 
 internal data class AndroidRelease(val version: String, val code: Long, val notes: String,
   val abi: String, val fileName: String, val size: Long, val sha256: String, val location: String) {
@@ -36,11 +37,13 @@ internal object AndroidUpdateFeed {
     require(value.isNotBlank() && value.length<=180 && value !in listOf(".","..") && value.none { it in "/\\:\u0000" || it.isISOControl() }) { "更新包文件名无效" }
     return value
   }
-  fun githubRepository(value: String): String {
+  fun githubRepository(value: String): String = repository(value,"github.com","GitHub")
+  fun giteeRepository(value: String): String = repository(value,"gitee.com","Gitee")
+  private fun repository(value: String,host:String,label:String): String {
     val url=value.trim().trimEnd('/').toHttpUrl()
-    require(url.isHttps && url.host=="github.com" && url.username.isEmpty() && url.password.isEmpty() && url.query==null && url.fragment==null) { "请填写 https://github.com/所有者/仓库" }
+    require(url.isHttps && url.host==host && url.port==443 && url.username.isEmpty() && url.password.isEmpty() && url.query==null && url.fragment==null) { "请填写 https://$host/所有者/仓库" }
     val parts=url.pathSegments.filter{it.isNotEmpty()}
-    require(parts.size==2 && parts.all{it.matches(Regex("[A-Za-z0-9_.-]+"))}) { "请填写 GitHub 仓库地址，不要填写发行页或安装包地址" }
+    require(parts.size==2 && parts.all{it.matches(Regex("[A-Za-z0-9_.-]+"))&&it !in listOf(".","..")} && parts[1].removeSuffix(".git").isNotEmpty()) { "请填写 $label 仓库地址，不要填写发行页或安装包地址" }
     return parts[0]+"/"+parts[1].removeSuffix(".git")
   }
   fun select(json: String, abis: List<String>, sdk: Int, installed: Long, resolve: (String)->String): AndroidRelease? {
@@ -153,7 +156,8 @@ class AppUpdates private constructor(private val context: Context) {
     return if(Build.VERSION.SDK_INT>=28)info.longVersionCode else info.versionCode.toLong()
   }
   @Synchronized fun config(): JSONObject = JSONObject()
-    .put("source",prefs.getString("source","github"))
+    .put("source",prefs.getString("source","gitee"))
+    .put("gitee",prefs.getString("gitee",DEFAULT_GITEE))
     .put("github",prefs.getString("github","https://github.com/RailgunHamster/RHFiles"))
     .put("family",prefs.getString("family","\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases"))
     .put("connectionId",prefs.getString("connectionId",""))
@@ -161,7 +165,10 @@ class AppUpdates private constructor(private val context: Context) {
     .put("proxyEnabled",prefs.getBoolean("proxyEnabled",false)).put("proxy",prefs.getString("proxy",""))
   @Synchronized fun save(value: JSONObject): JSONObject {
     require(state !in listOf("checking","downloading","verifying")) { "请等待当前更新任务结束或取消后再修改配置" }
-    require(value.getString("source") in listOf("github","family")) { "更新源无效" }
+    require(value.getString("source") in listOf("gitee","github","family")) { "更新源无效" }
+    // Old clients and old backups do not have this optional provider field.
+    value.put("gitee",value.optString("gitee",DEFAULT_GITEE))
+    AndroidUpdateFeed.giteeRepository(value.getString("gitee"))
     AndroidUpdateFeed.githubRepository(value.getString("github"))
     val inline=value.getString("source")=="family"&&(value.optString("smbUsername").isNotBlank()||value.optString("smbPassword").isNotEmpty())
     familyInput(value.getString("family"),if(inline)"" else value.optString("connectionId"),UPDATE_FEED,false)
@@ -170,16 +177,16 @@ class AppUpdates private constructor(private val context: Context) {
       value.put("connectionId",remote.save(JSONObject().put("type","smb").put("name","更新 · "+unc.host).put("host",unc.host).put("share",unc.share).put("port",445)
         .put("username",value.optString("smbUsername")).put("password",value.optString("smbPassword")).put("domain",value.optString("smbDomain"))))}
     val editor=prefs.edit()
-    for(key in listOf("source","github","family","connectionId","proxy"))editor.putString(key,value.optString(key).trim())
+    for(key in listOf("source","gitee","github","family","connectionId","proxy"))editor.putString(key,value.optString(key).trim())
     editor.putBoolean("autoCheck",value.optBoolean("autoCheck",true)).putBoolean("proxyEnabled",value.optBoolean("proxyEnabled")).putBoolean("pendingInstall",false)
     require(editor.commit()) { "更新配置保存失败" }
     available=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
     return status()
   }
   @Synchronized fun validateBackup(value:JSONObject){
-    require(value.getString("source") in listOf("github","family")){"更新源无效"};AndroidUpdateFeed.githubRepository(value.getString("github"));familyInput(value.getString("family"),"",UPDATE_FEED,false);proxy(value)
+    require(value.getString("source") in listOf("gitee","github","family")){"更新源无效"};AndroidUpdateFeed.giteeRepository(value.optString("gitee",DEFAULT_GITEE));AndroidUpdateFeed.githubRepository(value.getString("github"));familyInput(value.getString("family"),"",UPDATE_FEED,false);proxy(value)
     require(value.get("autoCheck") is Boolean&&value.get("proxyEnabled") is Boolean){"更新开关无效"}
-    require(value.keys().asSequence().all{it in listOf("source","github","family","connectionId","proxy","autoCheck","proxyEnabled")}){"未知更新配置字段"}
+    require(value.keys().asSequence().all{it in listOf("source","gitee","github","family","connectionId","proxy","autoCheck","proxyEnabled")}){"未知更新配置字段"}
   }
   @Synchronized fun restoreSettings(apply:()->Unit){
     require(state !in listOf("checking","downloading","verifying")){"请先结束或取消更新任务"};apply();available=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
@@ -226,6 +233,14 @@ class AppUpdates private constructor(private val context: Context) {
   // cannot be closed twice; a successful read must not become a close error.
   private fun readJson(input: InputStream): String = input.readBytesBounded(2*1024*1024).toString(Charsets.UTF_8)
   private fun loadFeed(config: JSONObject): AndroidRelease? {
+    if(config.getString("source")=="gitee") {
+      val repository=AndroidUpdateFeed.giteeRepository(config.getString("gitee"))
+      val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(120)
+      return GiteeAndroidUpdates.select(repository,Build.SUPPORTED_ABIS.toList(),Build.VERSION.SDK_INT,installedCode()) { url ->
+        check(System.nanoTime()<deadline) { "检查 Gitee 更新超时，不能确认是否为最新版本；请稍后重试" }
+        request(config,url,true).use{readJson(it.body!!.byteStream())}
+      }
+    }
     if(config.getString("source")=="github") {
       val repository=AndroidUpdateFeed.githubRepository(config.getString("github"))
       // Don't use /releases/latest: a newer Windows-only release is not an Android update.
@@ -272,7 +287,7 @@ class AppUpdates private constructor(private val context: Context) {
       try {
         synchronized(this){state="downloading"}
         require(directory.usableSpace>release.size+16*1024*1024) { "手机可用空间不足，无法下载 APK" }
-        val input=if(config.getString("source")=="github") request(config,release.location,false).body!!.byteStream()
+        val input=if(config.getString("source") in listOf("github","gitee")) request(config,release.location,false).body!!.byteStream()
           else familyInput(config.getString("family"),config.optString("connectionId"),release.fileName,true,config)!!
         var notified=0L
         input.use {AndroidUpdateFeed.copy(it,partial,release,{canceled}) {n -> synchronized(this){bytes=n}
@@ -289,7 +304,7 @@ class AppUpdates private constructor(private val context: Context) {
     }
   }
   @Synchronized fun cancel(): JSONObject {canceled=true;call?.cancel();return status()}
-  @Synchronized private fun failed(e:Exception) {state=if(canceled)"canceled" else "failed";message=updateFailure(e)}
+  @Synchronized private fun failed(e:Exception) {state=if(canceled)"canceled" else "failed";message=updateFailure(e,config().getString("source"))}
   @Suppress("DEPRECATION") internal fun verifyApk(file: File, release: AndroidRelease) {
     require(file.isFile && file.length()==release.size) { "已下载的 APK 不完整，请重新下载" }
     val hash=file.inputStream().use {input->val md=MessageDigest.getInstance("SHA-256");val buffer=ByteArray(128*1024);while(true){val n=input.read(buffer);if(n<0)break;md.update(buffer,0,n)};md.digest().joinToString(""){"%02x".format(it)}}

@@ -3,6 +3,8 @@
 /test-artifacts/
 /dist/
 /temp/
+/android/web/LICENSE.txt
+/android/web/NOTICE.txt
 /scripts/testing/smb-server/bin/
 /scripts/testing/smb-server/obj/
 .cache/

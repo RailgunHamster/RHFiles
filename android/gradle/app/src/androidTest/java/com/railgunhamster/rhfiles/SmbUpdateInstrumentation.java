@@ -56,16 +56,17 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(marker.optString("phase").equals("completed")){result.putString("pass","true");result.putString("nearbyOutput",marker.getString("output"));finish(Activity.RESULT_OK,result);return;}Thread.sleep(250);
         }throw new Exception("Minified Nearby probe timed out");
     }
-    private void githubProbe(Bundle result) throws Exception {
+    private void releaseProbe(Bundle result,String source) throws Exception {
         String expected=arguments.getString("expect","available"),version=arguments.getString("version",""),proxy=arguments.getString("proxy","");
-        require(expected.equals("available")||expected.equals("latest"),"Unexpected GitHub probe state");
+        require(expected.equals("available")||expected.equals("latest"),"Unexpected public-release probe state");
         eval("void(async()=>{try{const end=Date.now()+60000;while(true){await api.native('update.cancel');try{"+
-          "await api.native('update.save',{source:'github',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://SERVER-HOME/Public/Software/RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:"+(!proxy.isEmpty())+",proxy:"+JSONObject.quote(proxy)+"});break;}catch(e){if(Date.now()>end)throw e;await new Promise(r=>setTimeout(r,200));}}"+
+          "await api.native('update.save',{source:"+JSONObject.quote(source)+",gitee:'https://gitee.com/railgunhamster/RHFiles',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://SERVER-HOME/Public/Software/RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:"+(!proxy.isEmpty())+",proxy:"+JSONObject.quote(proxy)+"});break;}catch(e){if(Date.now()>end)throw e;await new Promise(r=>setTimeout(r,200));}}"+
           "await api.native('update.check',{manual:true,reason:'release-github-probe'});window.__githubQa={started:true};}catch(e){window.__githubQa={error:String(e)}}})();");
         long end=System.currentTimeMillis()+180000;JSONObject status=new JSONObject();
         while(System.currentTimeMillis()<end){JSONObject marker=json("window.__githubQa || {}");require(!marker.has("error"),marker.optString("error"));
             if(marker.optBoolean("started")){eval("void api.native('update.status').then(s=>window.__githubStatus=s)");Thread.sleep(150);status=json("window.__githubStatus || {}");String state=status.optString("state");if(!state.isEmpty()&&!state.equals("checking"))break;}Thread.sleep(200);}
-        require(status.optString("state").equals(expected),"GitHub update state: "+status);
+        require(status.optString("state").equals(expected),source+" update state: "+status);
+        result.putString("source",source);
         result.putString("state",status.getString("state"));
         if(expected.equals("available")){
             JSONObject release=status.getJSONObject("release");require(version.equals(release.getString("version")),"Unexpected version: "+release);result.putString("version",release.getString("version"));
@@ -204,7 +205,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             while(!eval("typeof api!=='undefined' && !!window.rhfilesHandleBack").equals("true")){require(System.currentTimeMillis()<deadline,"Frontend not ready");Thread.sleep(150);}
             if(arguments.getString("mode","").equals("ebook")){ebookProbe(result);return;}
             if(arguments.getString("mode","").equals("nearby")){nearbyProbe(result);return;}
-            if(arguments.getString("mode","").equals("github")){githubProbe(result);return;}
+            if(arguments.getString("mode","").equals("github")){releaseProbe(result,"github");return;}
+            if(arguments.getString("mode","").equals("gitee")){releaseProbe(result,"gitee");return;}
             if(arguments.getString("mode","").equals("panes")){panesProbe(result);return;}
             if(arguments.getString("mode","").equals("concurrent-panes")){concurrentPanesProbe(result);return;}
             if(arguments.getString("mode","").equals("backup")){backupProbe(result);return;}
