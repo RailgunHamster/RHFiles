@@ -80,7 +80,10 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         while(!eval(script).equals("true")){require(System.currentTimeMillis()<end,"UI condition timed out: "+script);Thread.sleep(150);}
     }
     private void tapCss(String selector) throws Exception {
-        JSONObject point=json("(()=>{const n=document.querySelector("+JSONObject.quote(selector)+");if(!n)throw Error('Missing touch target');const r=n.getBoundingClientRect();if(!r.width||!r.height)throw Error('Hidden touch target');return{x:r.x+r.width/2,y:r.y+r.height/2,width:innerWidth};})()");
+        tapCss(selector,false);
+    }
+    private void tapCss(String selector,boolean inPane) throws Exception {
+        JSONObject point=json("(()=>{const f="+(inPane?"document.querySelector('.file-pane:not([hidden])')":"null")+",n=(f?f.contentDocument:document).querySelector("+JSONObject.quote(selector)+");if(!n)throw Error('Missing touch target');const r=n.getBoundingClientRect(),o=f?f.getBoundingClientRect():{x:0,y:0};if(!r.width||!r.height)throw Error('Hidden touch target');return{x:o.x+r.x+r.width/2,y:o.y+r.y+r.height/2,width:innerWidth};})()");
         int[] offset=new int[2],width=new int[1];runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.getLocationOnScreen(offset);width[0]=web.getWidth();});
         float scale=(float)(width[0]/point.getDouble("width")),x=offset[0]+(float)point.getDouble("x")*scale,y=offset[1]+(float)point.getDouble("y")*scale;
         long now=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,x,y,0),up=MotionEvent.obtain(now,now+80,MotionEvent.ACTION_UP,x,y,0);
@@ -95,21 +98,28 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         try(java.io.FileOutputStream stream=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-Release-QA-phone-"+name+".png")){image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,stream);}finally{image.recycle();}
     }
     private void panesProbe(Bundle result) throws Exception {
-        awaitScript("!!document.querySelector('[data-layout=single]')");
+        awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane')?.contentWindow.rhfilesPane");
         require(json("({width:innerWidth})").getInt("width")<480,"Ordinary narrow phone viewport required");
-        eval("document.querySelector('[data-layout=single]').click()");
+        eval("window.RHFilesWorkbench.openLayout(document.querySelector('.file-pane').contentWindow);document.querySelector('[data-layout=single]').click()");
         awaitScript("document.getElementById('workbench').dataset.mode==='single'");
-        tapCss(".single-layout-toggle");tapCss("[data-layout=rows]");
+        require(eval("!document.querySelector('.single-layout-toggle')").equals("true"),"Floating split control must be removed");
+        tapCss("#btn-overflow",true);tapCss("[data-command=pane-layout]",true);
+        awaitScript("!document.getElementById('sheet').hidden&&!!document.querySelector('[data-layout=rows]')");
+        require(eval("getComputedStyle(document.querySelector('#sheet-panel button')).outlineStyle==='none'").equals("true"),"Touch-opened layout sheet must not show a keyboard focus rectangle");
+        screenshot("layout-menu");tapCss("[data-layout=rows]");
         awaitScript("document.getElementById('workbench').dataset.mode==='rows'&&document.querySelectorAll('.file-pane').length===2&&[...document.querySelectorAll('.file-pane')].every(f=>!!f.contentWindow.rhfilesPane)");
         awaitScript("!!document.querySelectorAll('.file-pane')[0].contentDocument.querySelector('[data-tile=downloads]')");
         eval("document.querySelectorAll('.file-pane')[0].contentDocument.querySelector('[data-tile=downloads]').click()");
         awaitScript("document.querySelectorAll('.file-pane')[0].contentWindow.rhfilesPane.snapshot().route.screen==='folder'&&!document.querySelectorAll('.file-pane')[0].contentWindow.rhfilesPane.snapshot().busy&&!document.querySelectorAll('.file-pane')[0].contentDocument.getElementById('filelist').hidden&&!!document.querySelectorAll('.file-pane')[1].contentDocument.querySelector('[data-tile=downloads]')");
-        screenshot("rows");tapCss(".pane-divider button");tapCss("[data-layout=columns]");
+        requireCenteredDivider();screenshot("rows");tapCss(".pane-divider button");tapCss("[data-layout=columns]");
         awaitScript("document.getElementById('workbench').dataset.mode==='columns'&&(()=>{const frames=[...document.querySelectorAll('.file-pane')].map(f=>f.getBoundingClientRect());return frames[0].width<innerWidth*.6&&frames[1].left>=frames[0].right;})()");
         require(eval("document.querySelectorAll('.file-pane')[0].contentWindow.rhfilesPane.snapshot().route.screen==='folder'&&document.querySelectorAll('.file-pane')[1].contentWindow.rhfilesPane.snapshot().route.screen==='home'").equals("true"),"Switching layout lost independent routes");
-        screenshot("columns");tapCss(".pane-divider button");tapCss("[data-layout=single]");
-        awaitScript("document.getElementById('workbench').dataset.mode==='single'&&!document.querySelector('.single-layout-toggle').hidden");
-        result.putString("layouts","narrow-phone rows, columns, single; independent routes; real taps");result.putString("pass","true");finish(Activity.RESULT_OK,result);
+        requireCenteredDivider();screenshot("columns");tapCss(".pane-divider button");tapCss("[data-layout=single]");
+        awaitScript("document.getElementById('workbench').dataset.mode==='single'&&document.querySelector('.pane-divider').hidden");
+        screenshot("single");result.putString("layouts","toolbar layout sheet; centered non-overlapping grips; narrow-phone rows, columns, single; independent routes; real taps");result.putString("pass","true");finish(Activity.RESULT_OK,result);
+    }
+    private void requireCenteredDivider() throws Exception {
+        require(eval("(()=>{const b=document.querySelector('.pane-divider button'),r=b.getBoundingClientRect(),d=b.parentNode.getBoundingClientRect(),g=getComputedStyle(b,'::before');return Math.abs(r.x+r.width/2-d.x-d.width/2)<.5&&Math.abs(r.y+r.height/2-d.y-d.height/2)<.5&&Math.abs(parseFloat(g.left)-r.width/2)<.5&&Math.abs(parseFloat(g.top)-r.height/2)<.5&&parseFloat(g.width)<=d.width&&parseFloat(g.height)<=d.height;})()").equals("true"),"Divider grip must be centered and contained in its reserved strip");
     }
     @Override public void onStart() {
         Bundle result=new Bundle();

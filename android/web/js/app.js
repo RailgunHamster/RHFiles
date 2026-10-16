@@ -535,6 +535,7 @@
   }
   function moreMenu() {
     const options = [action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
+    if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
     if (state.route.screen === 'folder') options.unshift(action('收藏此文件夹','star',()=>favorite({path:state.route.path,name:fmt.baseName(state.route.path),isDir:true})));
     ui.openSheet('更多选项', options);

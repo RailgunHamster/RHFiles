@@ -1,4 +1,11 @@
-RHFiles Android 0.1.11
+RHFiles Android 0.1.12
+
+分屏入口移入每个窗格右上角“更多 → 分屏布局”，移除遮挡文件内容的悬浮按钮。中间圆形三点按钮改为分隔条内严格居中的细把手，不再溢出到某一边；点分隔条任意位置即可打开布局选项。
+布局选项改用全应用一致的底部操作面板、线条图标、主题色和当前项勾选，支持点空白或系统返回关闭，并避让状态栏、手势区与屏幕缺口。所有手机仍可手动选择上下或左右分屏，切换保留两个窗格的浏览位置。
+
+Move Split Layout into each pane's top-right More menu, removing the floating overlay. Replace the overflowing circular divider button with a precisely centered grip inside a dedicated strip; tap anywhere on the strip for layout options. Reuse the standard themed bottom action sheet, line icons, selected-state checkmark and Back/outside dismissal, respecting system insets. Manual stacked/side-by-side layouts remain available on every phone and preserve both browsing locations.
+
+此前版本改进 / Previous improvements (0.1.11):
 
 所有手机均可手动选择上下或左右分屏，不再按尺寸隐藏入口或禁用方向。单窗格右上方始终显示“分屏”按钮，分屏后点中间按钮切换；手动选择会保存，旋转/缩窗不会擅自退出分屏。“自动布局”保留尺寸推荐。较窄窗格使用紧凑标题栏、两列首页和更紧凑的文件操作区。
 修复 GitHub 更新误报“0.1.9 已是最新版本”：不再遇到第一份 Android 清单就停止，而是检查正式发行、必要时翻页，按 Android versionCode 选择最高的兼容版本。Windows 发行、草稿、预发布、ABI/系统不兼容的版本不参与选择；未完整读取、下载失败或同一版本校验信息冲突时明确报错，不冒充“最新”。
