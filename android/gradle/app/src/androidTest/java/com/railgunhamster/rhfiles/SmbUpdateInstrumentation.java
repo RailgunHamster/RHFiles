@@ -121,6 +121,79 @@ public class SmbUpdateInstrumentation extends Instrumentation {
     private void requireCenteredDivider() throws Exception {
         require(eval("(()=>{const b=document.querySelector('.pane-divider button'),r=b.getBoundingClientRect(),d=b.parentNode.getBoundingClientRect(),g=getComputedStyle(b,'::before');return Math.abs(r.x+r.width/2-d.x-d.width/2)<.5&&Math.abs(r.y+r.height/2-d.y-d.height/2)<.5&&Math.abs(parseFloat(g.left)-r.width/2)<.5&&Math.abs(parseFloat(g.top)-r.height/2)<.5&&parseFloat(g.width)<=d.width&&parseFloat(g.height)<=d.height;})()").equals("true"),"Divider grip must be centered and contained in its reserved strip");
     }
+    private void injectContacts(long down,int action,int[] ids,float[][] xy) throws Exception {
+        MotionEvent.PointerProperties[] properties=new MotionEvent.PointerProperties[ids.length];MotionEvent.PointerCoords[] coords=new MotionEvent.PointerCoords[ids.length];
+        for(int i=0;i<ids.length;i++){properties[i]=new MotionEvent.PointerProperties();properties[i].id=ids[i];properties[i].toolType=MotionEvent.TOOL_TYPE_FINGER;coords[i]=new MotionEvent.PointerCoords();coords[i].x=xy[i][0];coords[i].y=xy[i][1];coords[i].pressure=1;coords[i].size=1;}
+        MotionEvent event=MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,ids.length,properties,coords,0,0,1,1,0,0,InputDevice.SOURCE_TOUCHSCREEN,0);
+        try{require(getUiAutomation().injectInputEvent(event,true),"Concurrent touch injection rejected");}finally{event.recycle();}
+    }
+    private void concurrentPanesProbe(Bundle result) throws Exception {
+        awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane')?.contentWindow.rhfilesPane");
+        java.io.File folder=new java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),"000-RHFiles-PaneTouch-QA");require(folder.isDirectory()||folder.mkdirs(),"QA folder unavailable");
+        for(int i=0;i<250;i++)new java.io.File(folder,String.format(java.util.Locale.ROOT,"file-%03d.txt",i)).createNewFile();
+        eval("window.RHFilesWorkbench.openLayout(document.querySelector('.file-pane').contentWindow);document.querySelector('[data-layout=columns]').click()");
+        awaitScript("document.querySelectorAll('.file-pane').length===2&&[...document.querySelectorAll('.file-pane')].every(f=>!!f.contentWindow.rhfilesPane)");
+        for(int i=0;i<2;i++){
+            eval("document.querySelectorAll('.file-pane')["+i+"].contentDocument.getElementById('nav-home').click()");
+            awaitScript("!!document.querySelectorAll('.file-pane')["+i+"].contentDocument.querySelector('[data-tile=downloads]')");
+            eval("document.querySelectorAll('.file-pane')["+i+"].contentDocument.querySelector('[data-tile=downloads]').click()");
+            awaitScript("!!document.querySelectorAll('.file-pane')["+i+"].contentDocument.querySelector('[data-path$=\"000-RHFiles-PaneTouch-QA\"]')");
+            eval("document.querySelectorAll('.file-pane')["+i+"].contentDocument.querySelector('[data-path$=\"000-RHFiles-PaneTouch-QA\"]').click()");
+            awaitScript("document.querySelectorAll('.file-pane')["+i+"].contentWindow.rhfilesPane.snapshot().route.path?.endsWith('000-RHFiles-PaneTouch-QA')&&!document.querySelectorAll('.file-pane')["+i+"].contentWindow.rhfilesPane.snapshot().busy");
+        }
+        requireCenteredDivider();require(eval("document.querySelector('.pane-divider').getBoundingClientRect().width===8").equals("true"),"Divider must occupy only 8 CSS pixels");
+        JSONObject geometry=json("({width:innerWidth,points:[...document.querySelectorAll('.file-pane')].map(f=>{const a=f.getBoundingClientRect(),b=f.contentDocument.getElementById('filelist').getBoundingClientRect();return{x:a.x+b.x+b.width*.5,y:a.y+b.y+b.height*.7}})})");
+        int[] offset=new int[2],width=new int[1];runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.getLocationOnScreen(offset);width[0]=web.getWidth();});float scale=(float)(width[0]/geometry.getDouble("width"));float[][] xy=new float[2][2];
+        for(int i=0;i<2;i++){JSONObject p=geometry.getJSONArray("points").getJSONObject(i);xy[i][0]=offset[0]+(float)p.getDouble("x")*scale;xy[i][1]=offset[1]+(float)p.getDouble("y")*scale;}
+        long down=android.os.SystemClock.uptimeMillis();injectContacts(down,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{xy[0]});injectContacts(down,MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),new int[]{0,1},xy);
+        for(int step=0;step<14;step++){for(float[] p:xy)p[1]-=12*scale;injectContacts(down,MotionEvent.ACTION_MOVE,new int[]{0,1},xy);Thread.sleep(16);}
+        awaitScript("[...document.querySelectorAll('.file-pane')].every(f=>f.contentDocument.getElementById('filelist').scrollTop>80)");
+        injectContacts(down,MotionEvent.ACTION_POINTER_UP,new int[]{0,1},xy);double before=json("({top:document.querySelectorAll('.file-pane')[1].contentDocument.getElementById('filelist').scrollTop})").getDouble("top");
+        for(int i=0;i<5;i++){xy[1][1]-=10*scale;injectContacts(down,MotionEvent.ACTION_MOVE,new int[]{1},new float[][]{xy[1]});Thread.sleep(16);}injectContacts(down,MotionEvent.ACTION_UP,new int[]{1},new float[][]{xy[1]});
+        require(json("({top:document.querySelectorAll('.file-pane')[1].contentDocument.getElementById('filelist').scrollTop})").getDouble("top")>before+20,"Second pane must keep scrolling after the first contact is lifted");
+        require(eval("[...document.querySelectorAll('.file-pane')].every(f=>f.contentDocument.getElementById('sel-count').textContent==='已选择 0 项')").equals("true"),"Concurrent scrolling must not enter selection");
+        screenshot("concurrent-panes");result.putString("pass","true");result.putString("gestures","real two-contact simultaneous scroll; lift first and continue second; no selection; 8px divider");finish(Activity.RESULT_OK,result);
+    }
+    private android.view.accessibility.AccessibilityNodeInfo textNode(android.view.accessibility.AccessibilityNodeInfo node,String text){
+        if(node==null)return null;if(text.contentEquals(node.getText()==null?"":node.getText()))return android.view.accessibility.AccessibilityNodeInfo.obtain(node);
+        for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo child=node.getChild(i),found=textNode(child,text);if(child!=null)child.recycle();if(found!=null)return found;}return null;
+    }
+    private void clickText(String text) throws Exception {
+        long end=System.currentTimeMillis()+45000;
+        while(System.currentTimeMillis()<end){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow(),node=textNode(root,text);if(root!=null)root.recycle();if(node!=null){try{require(node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK),"Click failed: "+text);return;}finally{node.recycle();}}Thread.sleep(150);}throw new Exception("Missing dialog: "+text);
+    }
+    private void editNodes(android.view.accessibility.AccessibilityNodeInfo node,java.util.List<android.view.accessibility.AccessibilityNodeInfo> out){if(node==null)return;if("android.widget.EditText".contentEquals(node.getClassName()))out.add(android.view.accessibility.AccessibilityNodeInfo.obtain(node));for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo child=node.getChild(i);editNodes(child,out);if(child!=null)child.recycle();}}
+    private void password(String title,String value,int count) throws Exception {
+        long end=System.currentTimeMillis()+45000;
+        while(System.currentTimeMillis()<end){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow(),heading=textNode(root,title);java.util.List<android.view.accessibility.AccessibilityNodeInfo> fields=new java.util.ArrayList<>();editNodes(root,fields);if(root!=null)root.recycle();boolean ready=heading!=null&&fields.size()==count;if(heading!=null)heading.recycle();
+            if(ready){for(android.view.accessibility.AccessibilityNodeInfo field:fields){Bundle args=new Bundle();args.putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,value);require(field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,args),"Unable to fill QA password");field.recycle();}clickText("继续");return;}for(android.view.accessibility.AccessibilityNodeInfo field:fields)field.recycle();Thread.sleep(150);
+        }throw new Exception("Missing password dialog: "+title);
+    }
+    private ActivityMonitor documentMonitor(String action,android.net.Uri uri) throws Exception {
+        android.content.IntentFilter filter=new android.content.IntentFilter(action);filter.addCategory(Intent.CATEGORY_OPENABLE);filter.addDataType("*/*");return addMonitor(filter,new ActivityResult(Activity.RESULT_OK,new Intent().setData(uri)),true);
+    }
+    private void backupProbe(Bundle result) throws Exception {
+        awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane')?.contentWindow.rhfilesPane");
+        eval("void api.native('update.cancel')");awaitScript("(()=>{void api.native('update.status').then(s=>window.__qaUpdate=s);return !!window.__qaUpdate&&window.__qaUpdate.state!=='checking';})()");
+        eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'RHFiles Backup QA',host:'qa-server',share:'Share',username:'qa',password:'fixture-secret'});window.__qaProfile=id;await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'\\\\\\\\qa-server\\\\Share',connectionId:id,autoCheck:false,proxyEnabled:true,proxy:'http://127.0.0.1:7890'});localStorage.setItem('rhfiles.theme','dark');localStorage.setItem('rhfiles.panes','rows');localStorage.setItem('rhfiles.view','grid');window.__backupReady=true;}catch(e){window.__backupError=String(e)}})()");
+        awaitScript("window.__backupReady||!!window.__backupError");require(eval("!window.__backupError").equals("true"),"Backup setup failed: "+eval("window.__backupError"));String profile=new JSONTokener(eval("window.__qaProfile")).nextValue().toString();
+        android.content.ContentValues values=new android.content.ContentValues();values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,"RHFiles-Backup-QA-"+System.currentTimeMillis()+".rhconfig");values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE,"application/octet-stream");values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,android.os.Environment.DIRECTORY_DOWNLOADS);
+        android.net.Uri uri=getTargetContext().getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);require(uri!=null,"QA backup URI unavailable");ActivityMonitor save=documentMonitor(Intent.ACTION_CREATE_DOCUMENT,uri);
+        eval("void api.native('config.export.pick',{web:settingsData.snapshot(localStorage)}).then(r=>window.__backupSaved=r).catch(e=>window.__backupError=String(e))");password("加密导出配置","RHFiles-QA-Backup1",2);awaitScript("window.__backupSaved?.saved||!!window.__backupError");require(eval("window.__backupSaved?.saved===true").equals("true"),"Export failed: "+eval("window.__backupError"));require(save.getHits()==1,"Export did not request a system document");removeMonitor(save);
+        byte[] bytes;try(java.io.InputStream input=getTargetContext().getContentResolver().openInputStream(uri)){java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[8192];int n;while((n=input.read(buffer))>=0)output.write(buffer,0,n);bytes=output.toByteArray();}String envelope=new String(bytes,java.nio.charset.StandardCharsets.UTF_8);require(envelope.contains("AES-256-GCM")&&!envelope.contains("fixture-secret")&&!envelope.contains("qa-server"),"Backup contains plaintext credentials/configuration");
+        eval("void api.native('connection.delete',{id:window.__qaProfile}).then(()=>{localStorage.setItem('rhfiles.theme','light');window.__backupChanged=true})");awaitScript("window.__backupChanged===true");
+        for(boolean correct:new boolean[]{false,true}){
+            ActivityMonitor open=documentMonitor(Intent.ACTION_OPEN_DOCUMENT,uri);eval("window.__backupError=null;void api.native('config.import.pick',{web:settingsData.snapshot(localStorage)}).then(r=>window.__backupApplied=r).catch(e=>window.__backupError=String(e))");password("解密配置备份",correct?"RHFiles-QA-Backup1":"RHFiles-QA-WrongPass",1);
+            if(!correct){awaitScript("!!window.__backupError");require(eval("window.__backupError.includes('密码')&&localStorage.getItem('rhfiles.theme')==='light'").equals("true"),"Wrong password changed settings or lacked useful error");}
+            else{clickText("导入");awaitScript("window.__backupApplied?.applied||!!window.__backupError");require(eval("window.__backupApplied?.applied===true").equals("true"),"Import failed: "+eval("window.__backupError"));}
+            require(open.getHits()==1,"Import did not request a system document");removeMonitor(open);
+        }
+        eval("location.reload()");awaitScript("!!window.RHFilesWorkbench&&document.documentElement.dataset.theme==='dark'&&document.getElementById('workbench').dataset.mode==='rows'&&!!document.querySelector('.file-pane').contentWindow.rhfilesPane");
+        eval("void Promise.all([api.native('connections'),api.native('update.status'),api.native('config.pending')]).then(v=>window.__restored=v)");awaitScript("!!window.__restored");
+        require(eval("window.__restored[0].some(p=>p.id==="+JSONObject.quote(profile)+")&&window.__restored[1].config.source==='family'&&window.__restored[1].config.proxyEnabled&&window.__restored[2]===null&&localStorage.getItem('rhfiles.view')==='grid'").equals("true"),"Full settings/connection identity not restored or unacknowledged");
+        eval("document.querySelector('.file-pane').contentDocument.getElementById('nav-settings').click()");awaitScript("!document.querySelector('.file-pane').contentDocument.getElementById('tool-settings').hidden");eval("document.querySelector('.file-pane').contentDocument.querySelector('[data-settings-section=backup]').click()");
+        awaitScript("!document.querySelector('.file-pane').contentDocument.querySelector('[data-settings-panel=backup]').hidden");screenshot("config-backup");result.putString("pass","true");result.putString("backup","native password dialogs; SAF intent monitors with real Downloads provider; encryption; wrong password; import confirmation; full settings and stable connection ID; frontend acknowledgement");finish(Activity.RESULT_OK,result);
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -133,6 +206,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("nearby")){nearbyProbe(result);return;}
             if(arguments.getString("mode","").equals("github")){githubProbe(result);return;}
             if(arguments.getString("mode","").equals("panes")){panesProbe(result);return;}
+            if(arguments.getString("mode","").equals("concurrent-panes")){concurrentPanesProbe(result);return;}
+            if(arguments.getString("mode","").equals("backup")){backupProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

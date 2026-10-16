@@ -45,6 +45,13 @@ class MainActivity : TauriActivity() {
   private var shared=JSONArray()
   private var appWebView:WebView?=null
   private var restoreNavigation=false
+  private val paneTouch=PaneTouchRelay()
+  private val settingsLock=Any()
+  private val backup by lazy {SettingsBackup(applicationContext,storage.remote){updates.validateBackup(it)}}
+  private val backupUi by lazy {SettingsBackupUi(this,io,backup,{updates.config()}){payload,currentWeb->synchronized(settingsLock){
+    val jobs=FileTasks.list(this);require((0 until jobs.length()).none{jobs.getJSONObject(it).optString("state") in listOf("queued","scanning","running","paused")}){"请先结束当前文件任务再导入配置"}
+    updates.restoreSettings{backup.apply(payload,currentWeb)}
+  }}}
   private var watching=false
   private val mainHandler=Handler(Looper.getMainLooper())
   private val changed=Runnable {appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-storage-changed'))",null)}
@@ -59,6 +66,7 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState:Bundle?) {
     restoreNavigation=savedInstanceState?.getBoolean("rhfilesRestoreNavigation",false)==true
     super.onCreate(savedInstanceState)
+    backup.recover()
     onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){
       override fun handleOnBackPressed(){backNavigation.back()}
     })
@@ -122,6 +130,7 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView:WebView) {
     super.onWebViewCreate(webView)
     appWebView=webView
+    webView.setOnTouchListener{_,event->paneTouch.sample(event,webView.width,webView.height)?.let{webView.evaluateJavascript("window.RHFilesWorkbench?.touch($it)",null)};false}
     // Honor the responsive viewport instead of WebView's fixed layout width.
     webView.settings.useWideViewPort=true
     webView.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->adaptiveWindow.publish()}
@@ -137,15 +146,15 @@ class MainActivity : TauriActivity() {
             if(error!=null) response.put("error",error) else response.put("result",value ?: JSONObject.NULL)
             try{reply.postMessage(response.toString())}catch(_:Exception){}
           }}
-          val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear")
-          val work={try{if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
+          val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick")
+          val work={try{if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
           if(command in uiCommands) work() else io.execute(work)
         }
       }
     }
   }
   @Suppress("DEPRECATION") private fun pick(tree:Boolean,respond:(Any?,String?)->Unit) {
-    require(picker==null){"已有存储选择器打开"};picker=respond
+    require(picker==null&&!backupUi.busy){"已有系统选择器打开"};picker=respond
     val intent=Intent(if(tree) Intent.ACTION_OPEN_DOCUMENT_TREE else Intent.ACTION_OPEN_DOCUMENT).apply {
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
       if(!tree) {type="*/*";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true)}
@@ -154,6 +163,7 @@ class MainActivity : TauriActivity() {
   }
   @Deprecated("Android result bridge") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
     super.onActivityResult(requestCode,resultCode,data)
+    if(backupUi.result(requestCode,resultCode,data))return
     if(requestCode !in listOf(101,102))return
     val callback=picker;picker=null
     if(resultCode!=RESULT_OK || data==null){callback?.invoke(null,null);return}
@@ -175,7 +185,11 @@ class MainActivity : TauriActivity() {
       }else stopService(intent)
       true
     }}
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true)
+    "panes.touch" -> {paneTouch.enabled=args.optBoolean("enabled");true}
+    "config.pending" -> backup.pending() ?: JSONObject.NULL
+    "config.ack" -> {backup.acknowledge(args.getString("id"));true}
+    "config.rollback" -> synchronized(settingsLock){updates.restoreSettings{backup.recover()};true}
     "ebook.open" -> {
       val path=args.getString("path");require(!storage.isRemote(path)){"网络电子书请先下载到本机"}
       if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile&&it.canRead()}){"电子书不存在或无法读取"}
@@ -190,7 +204,7 @@ class MainActivity : TauriActivity() {
       onUi{startActivity(Intent(this,PlaybackActivity::class.java).putExtra("path",path).putExtra("name",args.optString("name")).putExtra("kind",args.optString("kind","video")))};true
     }
     "update.status" -> updates.status()
-    "update.save" -> updates.save(args)
+    "update.save" -> synchronized(settingsLock){updates.save(args)}
     "update.check" -> updates.check(args.optBoolean("manual"),args.optString("reason","manual"))
     "update.download" -> onUi{updates.download()}
     "update.cancel" -> updates.cancel()
@@ -222,8 +236,8 @@ class MainActivity : TauriActivity() {
       FtpAccess.start(applicationContext,args)
     }
     "ftp.stop" -> FtpAccess.stop()
-    "connection.save" -> storage.remote.save(args)
-    "connection.delete" -> {storage.remote.remove(args.getString("id"));true}
+    "connection.save" -> synchronized(settingsLock){storage.remote.save(args)}
+    "connection.delete" -> synchronized(settingsLock){storage.remote.remove(args.getString("id"));true}
     "open","share" -> {
       val paths=args.optJSONArray("paths") ?: JSONArray().put(args.getString("path"))
       require(paths.length() in 1..1000){"分享数量无效"}
@@ -246,7 +260,7 @@ class MainActivity : TauriActivity() {
     "job.start" -> {
       if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
         onUi{requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),11)}
-      FileTasks.start(this,args.getString("op"),args.getJSONObject("args"))
+      synchronized(settingsLock){FileTasks.start(this,args.getString("op"),args.getJSONObject("args"))}
     }
     "jobs" -> FileTasks.list(this)
     "job.status" -> FileTasks.status(this,args.getString("id"))

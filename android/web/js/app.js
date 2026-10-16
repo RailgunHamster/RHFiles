@@ -575,7 +575,7 @@
   }
   let settingsSection='display';
   function setSettingsSection(section){
-    settingsSection=['display','index','storage','updates','about'].includes(section)?section:'display';
+    settingsSection=['display','index','storage','updates','backup','about'].includes(section)?section:'display';
     if(state.route.tool==='settings')state.route.section=settingsSection;
     for(const panel of document.querySelectorAll('[data-settings-panel]'))panel.hidden=panel.dataset.settingsPanel!==settingsSection;
     for(const tab of document.querySelectorAll('[data-settings-section]')){const active=tab.dataset.settingsSection===settingsSection;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;tab.classList.toggle('active',active);}
@@ -662,7 +662,9 @@
   }
   async function boot() {
     await api.initNative();
+    await configBackup.boot();
     if(await workbench.boot())return;
+    configBackup.init(error);
     androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,button,action,error});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;

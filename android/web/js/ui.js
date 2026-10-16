@@ -328,6 +328,7 @@ const ui = (() => {
       blockClick=true;select(row.dataset.path);
     });
     document.addEventListener('visibilitychange',()=>{if(document.hidden){cancel();pointer=null;}});
+    window.addEventListener('rhfiles-pan-scroll',()=>{cancel();pointer=null;blockClick=true;});
     return cancel;
   }
 

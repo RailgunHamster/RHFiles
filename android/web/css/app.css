@@ -168,10 +168,10 @@ button:focus-visible,[role=option]:focus-visible { outline:3px solid var(--accen
 .workbench-host>#app,.workbench-host>#drawer { display:none!important; }
 .workbench-host>.sheet,.workbench-host>.scrim { width:calc(100% - var(--app-left,0px) - var(--app-right,0px)); }
 #workbench { position:fixed; inset:0; display:grid; background:var(--bg); }
-#workbench[data-mode=columns] { grid-template-columns:var(--first-size,minmax(0,1fr)) var(--divider-size,24px) minmax(0,1fr); }
-#workbench[data-mode=rows] { grid-template-rows:var(--first-size,minmax(0,1fr)) var(--divider-size,24px) minmax(0,1fr); }
+#workbench[data-mode=columns] { grid-template-columns:var(--first-size,minmax(0,1fr)) var(--divider-size,8px) minmax(0,1fr); }
+#workbench[data-mode=rows] { grid-template-rows:var(--first-size,minmax(0,1fr)) var(--divider-size,8px) minmax(0,1fr); }
 .file-pane { border:0; width:100%; height:100%; min-width:0; min-height:0; background:var(--bg); grid-column:1; grid-row:1; }
-.file-pane.active-pane { outline:2px solid color-mix(in srgb,var(--accent) 50%,transparent); outline-offset:-2px; }
+.concurrent-panes .filelist,.concurrent-panes .home,.concurrent-panes .tool-page,.concurrent-panes .drawer { touch-action:none; }
 .file-pane:nth-of-type(1) { grid-column:1; grid-row:1; }
 [data-mode=columns] .file-pane:nth-of-type(2) { grid-column:3; grid-row:1; }
 [data-mode=rows] .file-pane:nth-of-type(2) { grid-column:1; grid-row:3; }
@@ -179,8 +179,8 @@ button:focus-visible,[role=option]:focus-visible { outline:3px solid var(--accen
 [data-mode=columns] .pane-divider { grid-column:2; grid-row:1; }
 [data-mode=rows] .pane-divider { grid-column:1; grid-row:2; }
 .pane-layout-toggle { position:absolute; inset:0; width:100%; height:100%; padding:0; border:0; background:transparent; touch-action:manipulation; }
-.pane-layout-toggle::before { content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:4px; height:32px; border-radius:4px; background:var(--muted); }
-[data-mode=rows] .pane-layout-toggle::before { width:32px; height:4px; }
+.pane-layout-toggle::before { content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:3px; height:28px; border-radius:4px; background:var(--muted); }
+[data-mode=rows] .pane-layout-toggle::before { width:28px; height:3px; }
 .pane-layout-sheet .sheet-item[aria-pressed=true],.pane-layout-sheet .sheet-item[aria-pressed=true] svg { color:var(--accent); }
 .pane-layout-sheet .layout-check { margin-left:auto; display:flex; }
 .pane-layout-sheet:not(.keyboard-navigation) .sheet-item:focus { outline:none; }

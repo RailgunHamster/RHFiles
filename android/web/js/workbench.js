@@ -4,7 +4,7 @@ const workbench=(()=>{
   const id=new URLSearchParams(location.search).get('pane');
   const parentHost=()=>window.parent!==window?window.parent.RHFilesWorkbench:null;
   let frames=[],active=0,mode='single',preference='auto',clipboard=null,revision=0,lock=null,hinge=null,insets={},capabilities;
-  let host,divider;
+  let host,divider,touch,touchEnabled;
   const child=()=>!!parentHost();
   const primary=()=>!child()||id==='first';
   const send=(frame,name,detail)=>frame.contentWindow?.dispatchEvent(new frame.contentWindow.CustomEvent(name,{detail}));
@@ -47,16 +47,18 @@ const workbench=(()=>{
     document.body.style.setProperty('--app-right',right+'px');
     if(mode!=='single'&&frames.length===1)addFrame('second');
     // A separating physical hinge becomes the divider, not covered content.
-    host.style.removeProperty('--first-size');host.style.setProperty('--divider-size','24px');
+    host.style.removeProperty('--first-size');host.style.setProperty('--divider-size','8px');
     if(hinge?.separating&&((mode==='columns'&&hinge.orientation==='vertical')||(mode==='rows'&&hinge.orientation==='horizontal'))){
       const vertical=mode==='columns',viewport=vertical?innerWidth:innerHeight,offset=vertical?left:top,length=viewport-offset-(vertical?right:bottom),b=hinge.bounds,start=(vertical?b.left:b.top)*viewport-offset,end=(vertical?b.right:b.bottom)*viewport-offset;
-      if(start>= (vertical?480:420)&&length-end>=(vertical?480:420)){host.style.setProperty('--first-size',start+'px');host.style.setProperty('--divider-size',Math.max(24,end-start)+'px');}
+      if(start>= (vertical?480:420)&&length-end>=(vertical?480:420)){host.style.setProperty('--first-size',start+'px');host.style.setProperty('--divider-size',Math.max(8,end-start)+'px');}
     }
+    frames.forEach(frame=>frame.contentDocument?.body?.classList.toggle('concurrent-panes',mode!=='single'));touch?.reset();
+    if(capabilities.paneTouch&&touchEnabled!==(mode!=='single')){touchEnabled=mode!=='single';api.native('panes.touch',{enabled:touchEnabled}).catch(()=>{});}
     broadcast('rhfiles-panes-changed',{mode});requestAnimationFrame(()=>frames.forEach(frame=>{if(!frame.hidden&&frame.dataset.ready==='true')send(frame,'rhfiles-window-layout',detailFor(frame))}));
   }
   function addFrame(pane){
     const frame=document.createElement('iframe');frame.className='file-pane';frame.title=pane==='first'?'第一窗格':'第二窗格';frame.src='index.html?pane='+pane;frames.push(frame);host.append(frame);
-    frame.onload=()=>{frame.dataset.ready='true';frame.contentWindow.addEventListener('pointerdown',()=>setActive(frames.indexOf(frame)),true);frame.contentWindow.addEventListener('focusin',()=>setActive(frames.indexOf(frame)));send(frame,'rhfiles-clipboard',getClipboard());send(frame,'rhfiles-pane-task',lock?.label||null);layout();};
+    frame.onload=()=>{frame.dataset.ready='true';touch.attach(frame);frame.contentWindow.addEventListener('pointerdown',()=>setActive(frames.indexOf(frame)),true);frame.contentWindow.addEventListener('focusin',()=>setActive(frames.indexOf(frame)));send(frame,'rhfiles-clipboard',getClipboard());send(frame,'rhfiles-pane-task',lock?.label||null);layout();};
     return frame;
   }
   async function boot(){
@@ -68,6 +70,7 @@ const workbench=(()=>{
     window.addEventListener('storage',event=>{if(event.key==='rhfiles.theme')document.documentElement.dataset.theme=event.newValue==='dark'?'dark':'light';});
     try{preference=localStorage.getItem('rhfiles.panes')||'auto';if(!['auto','single','columns','rows'].includes(preference))preference='auto';}catch{}
     host=document.createElement('main');host.id='workbench';document.body.append(host);
+    touch=paneTouch.bind({frames:()=>frames,native:!!capabilities.paneTouch,enabled:()=>mode!=='single'&&!ui.isSheetOpen(),onInteract:frame=>setActive(frames.indexOf(frame)),onScroll:()=>broadcast('rhfiles-pan-scroll')});
     divider=document.createElement('div');divider.className='pane-divider';host.append(divider);
     const toggle=document.createElement('button');toggle.type='button';toggle.className='pane-layout-toggle';toggle.setAttribute('aria-label','分屏布局');toggle.setAttribute('aria-haspopup','dialog');toggle.title='分屏布局';divider.append(toggle);
     toggle.onclick=event=>openLayout(event.detail===0);ui.bindScrim();
@@ -82,6 +85,7 @@ const workbench=(()=>{
       }
     });
     window.RHFilesWorkbench={
+      touch(sample){touch.relay(sample);},
       call(source,kind,command,args){trusted(source);return kind==='native'?api.native(command,args):kind==='asset'?api.assetUrl(command):api.raw(command,args);},
       capabilities(source){trusted(source);return {...capabilities,nativeBack:true};},
       select(source){trusted(source);setActive(indexOf(source));},

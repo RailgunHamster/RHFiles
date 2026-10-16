@@ -176,6 +176,14 @@ class AppUpdates private constructor(private val context: Context) {
     available=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
     return status()
   }
+  @Synchronized fun validateBackup(value:JSONObject){
+    require(value.getString("source") in listOf("github","family")){"更新源无效"};AndroidUpdateFeed.githubRepository(value.getString("github"));familyInput(value.getString("family"),"",UPDATE_FEED,false);proxy(value)
+    require(value.get("autoCheck") is Boolean&&value.get("proxyEnabled") is Boolean){"更新开关无效"}
+    require(value.keys().asSequence().all{it in listOf("source","github","family","connectionId","proxy","autoCheck","proxyEnabled")}){"未知更新配置字段"}
+  }
+  @Synchronized fun restoreSettings(apply:()->Unit){
+    require(state !in listOf("checking","downloading","verifying")){"请先结束或取消更新任务"};apply();available=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
+  }
   @Synchronized fun status(): JSONObject = JSONObject().put("state",state).put("message",message).put("bytes",bytes)
     .put("started",started).put("lastCheck",lastCheck).put("currentCode",installedCode())
     .put("release",available?.json() ?: JSONObject.NULL).put("config",config())

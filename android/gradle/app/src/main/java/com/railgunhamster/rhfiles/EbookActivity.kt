@@ -40,13 +40,15 @@ class EbookActivity:AppCompatActivity(){
   private lateinit var header:LinearLayout
   private var path=""
   private var theme="light"
+  private var settingsOnly=false
   private fun dp(value:Int)=(value*resources.displayMetrics.density+.5f).toInt()
-  private fun closeReader(){setResult(RESULT_OK);finish()}
+  private fun closeReader(){setResult(if(settingsOnly)RESULT_CANCELED else RESULT_OK);finish()}
   @SuppressLint("SetJavaScriptEnabled")
   override fun onCreate(savedInstanceState:Bundle?){
     if(Build.VERSION.SDK_INT>=28&&!dataDirectoryReady){WebView.setDataDirectorySuffix("ebook");dataDirectoryReady=true}
     super.onCreate(savedInstanceState)
-    path=intent.getStringExtra("path")?:run{finish();return};theme=intent.getStringExtra("theme")?:"light"
+    settingsOnly=intent.getBooleanExtra("settingsOnly",false)
+    path=intent.getStringExtra("path")?:if(settingsOnly)""else run{finish();return};theme=intent.getStringExtra("theme")?:"light"
     root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
     header=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(dp(4),0,dp(4),0)}
     val close=ImageButton(this).apply{setImageResource(android.R.drawable.ic_menu_close_clear_cancel);contentDescription="关闭电子书";setBackgroundColor(Color.TRANSPARENT);setOnClickListener{closeReader()}}
@@ -56,7 +58,7 @@ class EbookActivity:AppCompatActivity(){
     content=FrameLayout(this);root.addView(header,LinearLayout.LayoutParams(-1,dp(56)));root.addView(content,LinearLayout.LayoutParams(-1,0,1f));setContentView(root)
     ViewCompat.setOnApplyWindowInsetsListener(root){view,insets->val bars=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout());view.setPadding(bars.left,bars.top,bars.right,bars.bottom);insets}
     setThemeColors(theme)
-    future=worker.submit<EbookSource>{
+    if(!settingsOnly)future=worker.submit<EbookSource>{
       val book=EbookSource(applicationContext,path){closing.get()}
       synchronized(closing){if(closing.get()){book.close();error("阅读已关闭")};source=book};book
     }
@@ -71,6 +73,7 @@ class EbookActivity:AppCompatActivity(){
         if(request.method!="GET"||uri.scheme!="https"||uri.authority!=DOMAIN)return response(403,"禁止的阅读请求")
         return try{
           when(uri.path){
+            "/book/settings"->jsonResponse(200,ReaderSettings.state(applicationContext).toString())
             "/book/meta"->{val data=future.get(25,TimeUnit.SECONDS).metadata(theme).toString();jsonResponse(200,data)}
             "/book/raw"->WebResourceResponse("application/octet-stream",null,future.get(25,TimeUnit.SECONDS).raw()).apply{responseHeaders=mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff")}
             "/book/resource"->WebResourceResponse("application/octet-stream",null,future.get(25,TimeUnit.SECONDS).resource(uri.getQueryParameter("name")?:"",uri.getQueryParameter("text")=="1")).apply{responseHeaders=mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff")}
@@ -83,12 +86,19 @@ class EbookActivity:AppCompatActivity(){
       }
     }
     if(BuildConfig.DEBUG)WebView.setWebContentsDebuggingEnabled(true)
-    if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))WebViewCompat.addWebMessageListener(view,"RHFilesReader",setOf("https://$DOMAIN")){owner,message,origin,mainFrame,_->
+    if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))WebViewCompat.addWebMessageListener(view,"RHFilesReader",setOf("https://$DOMAIN")){owner,message,origin,mainFrame,reply->
       if(owner===web&&mainFrame&&origin.host==DOMAIN&&!closing.get())try{val command=JSONObject(message.data?:"{}");when(command.optString("action")){
         "close"->closeReader();"other"->openOther();"theme"->setThemeColors(command.optString("theme"));"title"->title.text=command.optString("title").take(150)
+        "settings"->worker.execute{val response=JSONObject().put("id",command.optInt("id"));try{
+          if(command.has("values"))ReaderSettings.replace(applicationContext,command.getJSONObject("values"))else ReaderSettings.update(applicationContext,command.getString("key"),command.getString("value"))
+          response.put("saved",true)
+        }catch(e:Exception){response.put("error",e.message?:"阅读配置保存失败")}
+          runOnUiThread{try{reply.postMessage(response.toString());if(settingsOnly&&command.optBoolean("finish")&&!response.has("error")){setResult(RESULT_OK);finish()}}catch(_:Exception){}}
+        }
+        "settingsFailed"->if(settingsOnly){setResult(RESULT_CANCELED,Intent().putExtra("error",command.optString("message")));finish()}
       }}catch(_:Exception){}
     }
-    content.addView(view,FrameLayout.LayoutParams(-1,-1));view.loadUrl("https://$DOMAIN/assets/index.html")
+    content.addView(view,FrameLayout.LayoutParams(-1,-1));view.loadUrl("https://$DOMAIN/assets/"+if(settingsOnly)"settings.html"else "index.html")
     onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){override fun handleOnBackPressed(){
       val current=web?:run{closeReader();return};var replied=false
       val fallback=Runnable{if(!replied&&!isFinishing)closeReader()};root.postDelayed(fallback,500)

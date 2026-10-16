@@ -34,7 +34,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 
 /** Credentials never enter URLs, logs, task journals, or localStorage. */
-class RemoteStorage(private val context: Context, private val profileLookup: ((String)->JSONObject)? = null) {
+class RemoteStorage(private val context: Context, private val credentialKey: (() -> SecretKey)? = null, private val profileLookup: ((String)->JSONObject)? = null) {
   data class Unc(val host: String,val share: String,val parts: List<String>)
   companion object {
     fun parseUnc(value: String): Unc {
@@ -54,6 +54,7 @@ class RemoteStorage(private val context: Context, private val profileLookup: ((S
   private val http = OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS)
     .writeTimeout(30,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
   private fun key(): SecretKey {
+    credentialKey?.let{return it()}
     val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     (store.getKey("rhfiles-remotes",null) as? SecretKey)?.let { return it }
     return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore").apply {
@@ -61,7 +62,8 @@ class RemoteStorage(private val context: Context, private val profileLookup: ((S
         .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
     }.generateKey()
   }
-  @Synchronized fun save(config: JSONObject): String {
+  internal fun validate(config:JSONObject) {
+    require(config.toString().length<=65536){"网络配置过长"}
     val type = config.getString("type")
     require(type in listOf("smb","ftp","ftps","webdav")) { "未知网络协议" }
     SafeFiles.name(config.getString("name"))
@@ -76,11 +78,24 @@ class RemoteStorage(private val context: Context, private val profileLookup: ((S
       if (type == "ftp") require(config.optBoolean("insecure")) { "FTP 会明文传输密码，请明确允许或选择 FTPS" }
       if (type == "smb") SafeFiles.name(config.getString("share"))
     }
-    val id = UUID.randomUUID().toString()
+  }
+  private fun encrypt(config:JSONObject):String {
     val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE,key())
     val encrypted = cipher.iv + cipher.doFinal(config.toString().toByteArray())
-    require(preferences.edit().putString(id,Base64.encodeToString(encrypted,Base64.NO_WRAP)).commit()) { "连接配置保存失败" }
+    return Base64.encodeToString(encrypted,Base64.NO_WRAP)
+  }
+  @Synchronized fun save(config: JSONObject): String {
+    validate(config);val id=UUID.randomUUID().toString()
+    require(preferences.edit().putString(id,encrypt(config)).commit()) { "连接配置保存失败" }
     return id
+  }
+  internal fun backupProfiles()=JSONArray().also{out->preferences.all.keys.sorted().forEach{id->out.put(JSONObject().put("id",id).put("config",config(id)))}}
+  internal fun prepareProfiles(profiles:JSONArray):JSONObject=JSONObject().also{out->
+    require(profiles.length()<=200){"网络位置过多"}
+    for(i in 0 until profiles.length()){
+      val item=profiles.getJSONObject(i);val id=item.getString("id");require(UUID.fromString(id).toString()==id&&!out.has(id)){"网络位置 ID 无效或重复"}
+      val value=item.getJSONObject("config");validate(value);out.put(id,encrypt(value))
+    }
   }
   fun remove(id: String) { require(preferences.edit().remove(id).commit()) { "删除连接失败" } }
   private fun config(id: String): JSONObject {

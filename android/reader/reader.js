@@ -4,6 +4,7 @@ import {MOBI,isMOBI} from './vendor/foliate/mobi.js';
 import {makeFB2} from './vendor/foliate/fb2.js';
 import {makeComicBook} from './vendor/foliate/comic-book.js';
 import {unzlibSync} from './vendor/foliate/vendor/fflate.js';
+import {syncReaderSettings,saveReaderSetting} from './settings-sync.js';
 
 const $=id=>document.getElementById(id),abort=new AbortController();
 const icons={contents:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',theme:'<path d="M20 14a8 8 0 0 1-10-10A8 8 0 1 0 20 14z"/>',bookmark:'<path d="M6 3h12v18l-6-4-6 4z"/>',flow:'<path d="M5 5h14M5 10h14M5 15h9M5 20h9m3-5 3 3 3-3M20 12v6"/>',previous:'<path d="m15 5-7 7 7 7"/>',next:'<path d="m9 5 7 7-7 7"/>',close:'<path d="m6 6 12 12M6 18 18 6"/>',trash:'<path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/>'};
@@ -16,7 +17,7 @@ try{options={...options,...JSON.parse(localStorage.getItem('rhfiles.reader.optio
 options.font=Math.max(12,Math.min(30,Number(options.font)||18));
 options.theme=['light','sepia','dark'].includes(options.theme)?options.theme:'light';options.flow=options.flow==='scrolled'?'scrolled':'paginated';
 function toast(message){$('notice').textContent=message;$('notice').hidden=false;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>$('notice').hidden=true,2600)}
-function store(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch{toast('无法保存阅读设置或位置，存储空间可能不足')}}
+function store(key,value){try{const json=JSON.stringify(value);localStorage.setItem(key,json);saveReaderSetting(key,json).catch(()=>toast('阅读配置保存失败，请重试'))}catch{toast('无法保存阅读设置或位置，存储空间可能不足')}}
 function saveBook(){if(meta&&!restoring)store('rhfiles.reader.book.'+meta.key,bookState)}
 function text(value){if(typeof value==='string')return value;if(Array.isArray(value))return value.map(text).join('、');if(value&&typeof value==='object')return text(value['zh-CN']||value.zh||value.name||Object.values(value)[0]);return ''}
 function openContents(show){$('contents').hidden=!show;$('scrim').hidden=!show}
@@ -52,6 +53,9 @@ function renderTOC(items,depth=0){
   for(const item of items||[]){const button=document.createElement('button');button.textContent=text(item.label)||'未命名章节';button.style.paddingLeft=(12+Math.min(depth,8)*14)+'px';button.onclick=()=>{openContents(false);navigate(()=>view.goTo(item.href))};$('toc').append(button);if(depth<24)renderTOC(item.subitems,depth+1)}
 }
 async function open(){
+  await syncReaderSettings();
+  try{options={...options,...JSON.parse(localStorage.getItem('rhfiles.reader.options')||'{}')}}catch{}
+  options.font=Math.max(12,Math.min(30,Number(options.font)||18));options.theme=['light','sepia','dark'].includes(options.theme)?options.theme:'light';options.flow=options.flow==='scrolled'?'scrolled':'paginated';
   meta=await(await request('/book/meta')).json();
   if(!localStorage.getItem('rhfiles.reader.options')&&meta.theme==='dark')options.theme='dark';applyOptions();
   try{bookState=JSON.parse(localStorage.getItem('rhfiles.reader.book.'+meta.key)||'{}')}catch{}

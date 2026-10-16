@@ -1,4 +1,12 @@
-RHFiles Android 0.1.12
+RHFiles Android 0.1.13
+
+分隔条由 24 缩窄到 8 CSS 像素，移除“活动窗格”整圈描边。两边无需先激活：原生触摸中继保留每个手指的坐标，分别滚动起始窗格；支持两边同时滑动、一边滑动另一边点击，避免浏览器把跨 iframe 多指触摸合并为一组手势。单窗格原生滚动与预览缩放保留；文件写入仍使用现有冲突保护。
+设置新增“配置备份”，通过系统文件选择器导出/导入本地 .rhconfig 文件。包含浏览显示、收藏、分屏、设备名称、更新源与代理、网络位置和账号密码、电子书显示/书签/阅读位置（含旧版阅读存储迁移）。密码派生密钥与 AES-256-GCM 加密，密码至少 8 字符；密码、网络凭据不进入前端配置或明文备份。
+导入先解密、验证并二次确认，再替换配置；跨设备重新加密网络凭据并保持连接 ID。事务日志与前端确认共同保护中断恢复，导入后回主页，不自动重做文件任务。系统权限/授权目录需重新授予；不备份文件本体、缓存、索引或待粘贴任务。备份密码遗失无法恢复。
+
+Narrow the divider to 8 CSS px and remove the active-pane outline. Relay Android contact coordinates before Chromium's iframe touch filtering so panes scroll concurrently and accept independent taps; retain single-pane native scrolling, viewer pinch and file-conflict protection. Add local encrypted .rhconfig import/export under Settings → Configuration Backup, including appearance, favorites, split preference, device alias, updater/proxy, network profiles/passwords and reader preferences/bookmarks/progress with legacy migration. Password-derived AES-256-GCM, validation, confirmation, stable connection IDs and re-encryption on the destination device. Journal plus frontend acknowledgement enables rollback after interrupted imports. System storage grants must be re-authorized; file contents/caches/indexes/pending tasks are not restored. Lost backup passwords cannot be recovered.
+
+此前版本改进 / Previous improvements (0.1.12):
 
 分屏入口移入每个窗格右上角“更多 → 分屏布局”，移除遮挡文件内容的悬浮按钮。中间圆形三点按钮改为分隔条内严格居中的细把手，不再溢出到某一边；点分隔条任意位置即可打开布局选项。
 布局选项改用全应用一致的底部操作面板、线条图标、主题色和当前项勾选，支持点空白或系统返回关闭，并避让状态栏、手势区与屏幕缺口。所有手机仍可手动选择上下或左右分屏，切换保留两个窗格的浏览位置。
