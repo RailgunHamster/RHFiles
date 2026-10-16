@@ -1523,23 +1523,16 @@ function renderMenuItems(parent, items, x, y) {
       sub.className = "ctx-submenu";
       renderMenuItems(sub, item.submenu, x, y);
       mi.appendChild(sub);
-      mi.addEventListener("mouseenter", () => {
+      const positionSubmenu = () => {
         const rect = mi.getBoundingClientRect();
         const subRect = sub.getBoundingClientRect();
-        sub.style.top = "0";
-        sub.style.left = "100%";
+        sub.style.top = Math.max(4, Math.min(rect.top, window.innerHeight - subRect.height - 4)) + "px";
+        sub.style.left = Math.max(4, rect.right + subRect.width > window.innerWidth ? rect.left - subRect.width : rect.right) + "px";
         sub.style.right = "auto";
-        if (rect.right + subRect.width > window.innerWidth) {
-          sub.style.left = "auto";
-          sub.style.right = "100%";
-        }
-        requestAnimationFrame(() => {
-          const visibleRect = sub.getBoundingClientRect();
-          if (visibleRect.bottom > window.innerHeight - 4) {
-            sub.style.top = Math.min(0, window.innerHeight - 4 - visibleRect.bottom) + "px";
-          }
-        });
-      });
+      };
+      mi.addEventListener("mouseenter", positionSubmenu);
+      // The parent menu may clamp/scroll after the pointer first entered it.
+      mi.addEventListener("mousemove", e => { if (!sub.contains(e.target)) positionSubmenu(); });
       mi.addEventListener("click", e => {
         if (e.target.closest('.ctx-submenu')) return;
       });

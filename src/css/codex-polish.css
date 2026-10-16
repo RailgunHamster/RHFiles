@@ -1053,6 +1053,12 @@ body.preview-fullscreen-active::before {
   padding: 5px;
 }
 
+/* Keep fixed-position submenus outside a scrolling menu's clipping context. */
+.context-menu,
+.ctx-submenu {
+  backdrop-filter: none;
+}
+
 .ctx-item {
   min-height: 30px;
   padding: 6px 10px;

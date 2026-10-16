@@ -13,7 +13,7 @@ export async function until(check,label,timeout=15000) {
   while(Date.now()<end){try{const value=await check();if(value)return value;}catch(e){last=e;}await sleep(100);}
   throw Error(`Timed out: ${label}${last?' — '+last.message:''}`);
 }
-export async function launchApp() {
+export async function launchApp({emulateFocus=false}={}) {
   if(process.platform!=='win32')throw Error('Real RHFiles E2E requires Windows and WebView2');
   const executable=path.join(root,'target/debug/rhfiles.exe');
   if(!fs.existsSync(executable))throw Error('Build first: cargo build -p rhfiles-tauri --locked');
@@ -57,6 +57,11 @@ export async function launchApp() {
       return response.result?.value;
     };
     await send('Runtime.enable');
+    // Test only this private WebView. Other native windows/CI desktop helpers
+    // must not steal its page focus and dismiss an in-progress context menu.
+    // Native drag interception needs real OS focus; do not emulate it for drag
+    // suites. Menu/PDF suites explicitly opt in to isolated page-focus testing.
+    if(emulateFocus)await send('Emulation.setFocusEmulationEnabled',{enabled:true});
     await until(()=>evaluate('typeof getTab === "function" && typeof call === "function" && typeof G !== "undefined" && G.startupReady===true'),'frontend ready',30000);
     const profile=await evaluate("call('get_instance_profile')");
     // Abort before any test mutations if a release binary ignored test isolation.
@@ -71,10 +76,19 @@ export async function launchApp() {
     };
     const point=selector=>evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Element missing');const r=el.getBoundingClientRect();if(!r.width||!r.height)throw Error('Element hidden');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     const hover=async selector=>{
-      const p=await until(()=>point(selector),'visible pointer target '+selector);
-      await send('Input.dispatchMouseEvent',{type:'mouseMoved',...p});
-      await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-      return point(selector);
+      // Menus clamp to the viewport on the next frame and animate into place.
+      // A single move can consequently land on a DIFFERENT row after layout.
+      // Follow the actual target until hit-testing and CSS hover both agree.
+      let previous=null;
+      return until(async()=>{
+        const p=await point(selector);
+        await send('Input.dispatchMouseEvent',{type:'mouseMoved',...p});
+        await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        const hit=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)return false;const r=el.getBoundingClientRect(),hit=document.elementFromPoint(${p.x},${p.y});return el.matches(':hover')&&el.contains(hit)&&Math.abs(r.x+r.width/2-${p.x})<1&&Math.abs(r.y+r.height/2-${p.y})<1;})()`);
+        const stable=hit&&previous&&Math.abs(previous.x-p.x)<1&&Math.abs(previous.y-p.y)<1;
+        previous=hit?p:null;
+        return stable?p:null;
+      },'stable hovered pointer target '+selector);
     };
     const click=async selector=>{
       const p=await hover(selector);await send('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',buttons:1,clickCount:1});

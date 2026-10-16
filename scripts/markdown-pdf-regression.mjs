@@ -3,7 +3,7 @@ import fs from 'node:fs';import path from 'node:path';import assert from 'node:a
 import {launchApp} from './testing/app-session.mjs';
 import {until} from './testing/app-session.mjs';
 import {pathToFileURL} from 'node:url';
-const app=await launchApp();
+const app=await launchApp({emulateFocus:true});
 try{
   const input=path.join(app.directory,'中文 Markdown.md'),output=path.join(app.directory,'中文 Markdown.pdf');
   fs.copyFileSync('android/src-tauri/icons/128x128.png',path.join(app.directory,'图标.png'));
@@ -50,4 +50,9 @@ try{
   assert.match(await app.evaluate('window.__pdfCancel'),/cancelled/i);assert.ok(!fs.existsSync(canceledOutput));await noStaging();
   fs.copyFileSync(output,path.join(app.artifactDir,'markdown-output.pdf'));fs.copyFileSync(input,path.join(app.artifactDir,'source.md'));
   console.log(JSON.stringify({pass:true,pdf:path.join(app.artifactDir,'markdown-output.pdf'),bytes:fs.statSync(output).size,configPath:info.path,collisionProtected:true,commandProvider:true,errorAndInvalidOutput:true},null,2));
+}catch(error){
+  await app.screenshot('markdown-pdf-failure').catch(()=>{});
+  const state=await app.evaluate(`({width:innerWidth,height:innerHeight,menus:[...document.querySelectorAll('.context-menu,.ctx-submenu')].map(el=>({className:el.className,rect:el.getBoundingClientRect().toJSON(),display:getComputedStyle(el).display,html:el.outerHTML}))})`).catch(()=>null);
+  fs.writeFileSync(path.join(app.artifactDir,'markdown-pdf-failure.json'),JSON.stringify(state,null,2));
+  throw error;
 }finally{app.close();}
