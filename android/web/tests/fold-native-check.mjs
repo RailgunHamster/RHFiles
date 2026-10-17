@@ -16,14 +16,20 @@ const originalRotation=device.adb('shell','wm','user-rotation');
 async function rotate(rotation,screenKey,orientation,expectedMode){
  device.adb('shell','wm','user-rotation','lock',String(rotation));
  await until(async()=>{const current=await layout();return current.screenKey===screenKey&&current.orientation===orientation;},'native rotation '+rotation+' '+orientation,60000);
+ // Display metrics can arrive before Android resizes/animates the WebView.
+ // Wait for the real viewport too, so the next touch is not sent to old bounds.
+ await until(()=>device.evaluate(`innerWidth${orientation==='landscape'?'>':'<'}innerHeight`),'rotated WebView viewport',60000);await pause(400);
  if(expectedMode)await until(async()=>(await mode())===expectedMode,'restored '+orientation+' '+expectedMode,60000);
 }
 async function tapPane(selector,label){
- const point=await device.evaluate(`(()=>{const frame=[...document.querySelectorAll('.file-pane')].find(f=>!f.hidden),doc=frame?.contentDocument;const node=${label?`[...doc.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim()===${JSON.stringify(label)})`:`doc?.querySelector(${JSON.stringify(selector)})`};if(!node)throw Error('Missing pane control');const a=frame.getBoundingClientRect(),r=node.getBoundingClientRect();return {x:a.x+r.x+r.width/2,y:a.y+r.y+r.height/2};})()`);
+ const point=await device.evaluate(`(()=>{const frame=[...document.querySelectorAll('.file-pane')].find(f=>!f.hidden),doc=frame?.contentDocument;const node=${label?`[...doc.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim()===${JSON.stringify(label)})`:`doc?.querySelector(${JSON.stringify(selector)})`};if(!node)throw Error('Missing pane control');node.scrollIntoView({block:'center',inline:'nearest'});const a=frame.getBoundingClientRect(),r=node.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;if(!r.width||!r.height||x<0||x>=frame.contentWindow.innerWidth||y<0||y>=frame.contentWindow.innerHeight)throw Error('Pane control center is clipped: '+JSON.stringify({rect:r.toJSON(),height:frame.contentWindow.innerHeight}));return {x:a.x+x,y:a.y+y};})()`);
  await device.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});await device.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await pause(200);
 }
 async function choose(value){
- await tapPane('#btn-overflow');await tapPane('#sheet .sheet-item','分屏布局');
+ if(device.adb('shell','dumpsys','window').includes('Application Not Responding'))throw Error('Emulator has an Android ANR dialog; native touch assertions are blocked.');
+ await tapPane('#btn-overflow');
+ await until(()=>device.evaluate("[...document.querySelectorAll('.file-pane')].some(f=>!f.hidden&&!f.contentDocument.getElementById('sheet').hidden)"),'pane overflow sheet');
+ await tapPane('#sheet .sheet-item','分屏布局');
  await until(()=>device.evaluate("!document.getElementById('sheet').hidden"),'native layout sheet');
  await device.click(`[data-layout=${value}]`);await until(async()=>(await mode())===value,'native selected layout '+value);
 }
