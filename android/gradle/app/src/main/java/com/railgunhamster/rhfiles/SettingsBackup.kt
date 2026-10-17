@@ -48,9 +48,16 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
       web.keys().forEach{key->val text=web.getString(key);require(text.length<=65536){"配置字段过长"};when(key){
         in enums->require(text in enums.getValue(key)){"配置选项无效"}
         "rhfiles.panes.screens"->{
-          val value=JSONObject(text);val version=value.get("version");require(value.length()==2&&version is Number&&version.toDouble()==1.0){"屏幕分屏配置无效"}
+          val value=JSONObject(text);val version=value.get("version");require(value.length()==2&&version is Number&&version.toDouble() in listOf(1.0,2.0)){"屏幕分屏配置无效"}
           val screens=value.getJSONObject("screens");require(screens.length()<=32){"屏幕分屏配置过多"}
-          screens.keys().forEach{screen->require(Regex("^(default|screen-[1-9][0-9]{1,4}x[1-9][0-9]{1,4})$").matches(screen)&&screens.get(screen) in enums.getValue("rhfiles.panes")){"屏幕分屏配置无效"}}
+          screens.keys().forEach{screen->
+            require(Regex("^(default|screen-[1-9][0-9]{1,4}x[1-9][0-9]{1,4})$").matches(screen)){"屏幕分屏配置无效"}
+            if((version as Number).toDouble()==1.0)require(screens.get(screen) in enums.getValue("rhfiles.panes")){"屏幕分屏配置无效"}
+            else {
+              val profile=screens.getJSONObject(screen);require(profile.length() in 1..2){"屏幕方向配置无效"}
+              profile.keys().forEach{direction->require(direction in listOf("portrait","landscape")&&profile.get(direction) in enums.getValue("rhfiles.panes")){"屏幕方向配置无效"}}
+            }
+          }
         }
         "rhfiles.nearby.alias"->require(text.length<=80){"设备名称过长"}
         "rhfiles.favorites"->{val items=JSONArray(text);require(items.length()<=100){"收藏夹过大"};for(i in 0 until items.length()){val item=items.getJSONObject(i);require(item.getString("name").length<=1024&&item.getString("path").length<=8192){"收藏夹项目无效"}}}

@@ -1,4 +1,4 @@
-(function(root,factory){const value=factory();if(typeof module==='object'&&module.exports)module.exports=value;else root.settingsData=value;})(globalThis,()=>{
+(function(root,factory){const common=typeof module==='object'&&module.exports;const value=factory(common?require('./pane-model.js'):root.paneLayout);if(common)module.exports=value;else root.settingsData=value;})(globalThis,paneLayout=>{
   const keys=['rhfiles.theme','rhfiles.view','rhfiles.sort','rhfiles.hidden','rhfiles.favorites','rhfiles.panes','rhfiles.panes.screens','rhfiles.nearby.alias'];
   const enums={'rhfiles.theme':['light','dark'],'rhfiles.view':['list','grid'],'rhfiles.sort':['name','date','size','kind'],'rhfiles.hidden':['0','1'],'rhfiles.panes':['auto','single','columns','rows']};
   function validate(value){
@@ -8,8 +8,7 @@
       if(!keys.includes(key)||typeof text!=='string'||text.length>65536)throw Error('配置包含无效字段');
       if(enums[key]&&!enums[key].includes(text))throw Error('配置选项无效');
       if(key==='rhfiles.panes.screens'){
-        const value=JSON.parse(text),modes=['auto','single','columns','rows'];
-        if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==1||Object.keys(value).length!==2||!value.screens||typeof value.screens!=='object'||Array.isArray(value.screens)||Object.keys(value.screens).length>32||Object.entries(value.screens).some(([key,mode])=>!/^(default|screen-[1-9][0-9]{1,4}x[1-9][0-9]{1,4})$/.test(key)||!modes.includes(mode)))throw Error('屏幕分屏配置无效');
+        paneLayout.validateScreens(JSON.parse(text));
       }
       if(key==='rhfiles.nearby.alias'&&text.length>80)throw Error('设备名称过长');
       if(key==='rhfiles.favorites'){

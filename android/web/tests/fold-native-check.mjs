@@ -12,6 +12,12 @@ const resize=closed=>{if(geometry)device.adb('shell','wm','size',geometry[closed
 const check=(value,label)=>{assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);};
 const layout=()=>device.evaluate("api.native('window.layout')");
 const mode=()=>device.evaluate("document.getElementById('workbench')?.dataset.mode");
+const originalRotation=device.adb('shell','wm','user-rotation');
+async function rotate(rotation,screenKey,orientation,expectedMode){
+ device.adb('shell','wm','user-rotation','lock',String(rotation));
+ await until(async()=>{const current=await layout();return current.screenKey===screenKey&&current.orientation===orientation;},'native rotation '+rotation+' '+orientation,60000);
+ if(expectedMode)await until(async()=>(await mode())===expectedMode,'restored '+orientation+' '+expectedMode,60000);
+}
 async function tapPane(selector,label){
  const point=await device.evaluate(`(()=>{const frame=[...document.querySelectorAll('.file-pane')].find(f=>!f.hidden),doc=frame?.contentDocument;const node=${label?`[...doc.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim()===${JSON.stringify(label)})`:`doc?.querySelector(${JSON.stringify(selector)})`};if(!node)throw Error('Missing pane control');const a=frame.getBoundingClientRect(),r=node.getBoundingClientRect();return {x:a.x+r.x+r.width/2,y:a.y+r.y+r.height/2};})()`);
  await device.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});await device.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await pause(200);
@@ -28,6 +34,7 @@ async function fold(closed,expectedKey,expectedMode){
  await until(async()=>(await mode())===expectedMode,'remembered '+expectedMode+' layout',60000);
 }
 try {
+ device.adb('shell','wm','user-rotation','lock','0');
  device.adb('emu','unfold');device.adb('shell','input','keyevent','KEYCODE_WAKEUP');await pause(1000);
  resize(false);await pause(1000);
  const inner=(await layout()).screenKey;check(/^screen-/.test(inner),'native maximum-window screen identity is available');
@@ -48,8 +55,19 @@ try {
  check(restored.length===2&&restored.every((route,i)=>route.screen===routes[i].screen&&route.path===routes[i].path&&route.boundary===routes[i].boundary),'repeated native display changes preserve both pane routes');
  await choose('rows');await fold(true,outer,'single');await fold(false,inner,'rows');
  check(await mode()==='rows','changing the inner direction does not overwrite outer single-pane');
+ await rotate(1,inner,'landscape');await choose('columns');await device.screenshot('inner-landscape-columns');
+ await rotate(0,inner,'portrait','rows');
+ check(await mode()==='rows','native inner-screen rotation restores portrait without replacing landscape');
+ await fold(true,outer,'single');await rotate(1,outer,'landscape');await choose('rows');await device.screenshot('outer-landscape-rows');
+ await rotate(3,outer,'landscape','rows');await rotate(2,outer,'portrait','single');
+ check(await mode()==='single','outer reverse portrait/landscape rotations share the matching orientation profile');
+ await fold(false,inner,'rows');await rotate(3,inner,'landscape','columns');await rotate(0,inner,'portrait','rows');
+ check(await mode()==='rows','folding at a rotated orientation restores all four independent configurations');
  const saved=await device.evaluate("JSON.parse(localStorage.getItem('rhfiles.panes.screens'))");
- check(saved.screens[inner]==='rows'&&saved.screens[outer]==='single','both preferences are durably stored');
+ check(saved.version===2&&saved.screens[inner].portrait==='rows'&&saved.screens[inner].landscape==='columns'&&saved.screens[outer].portrait==='single'&&saved.screens[outer].landscape==='rows','all four preferences are durably stored');
  fs.writeFileSync(path.join(device.artifactDir,'fold-result.json'),JSON.stringify({inner,outer,saved,checks,geometryOverride:geometry||null},null,2));
  console.log('PASS '+checks+' native fold checks. Evidence: '+device.artifactDir);
-} catch(error){await device.screenshot('fold-failure').catch(()=>{});throw error;}finally{try{if(geometry)device.adb('shell','wm','size','reset');}finally{device.close();}}
+} catch(error){await device.screenshot('fold-failure').catch(()=>{});throw error;}finally{try{
+ if(geometry)device.adb('shell','wm','size','reset');
+ const rotation=originalRotation.match(/^lock\s+([0-3])$/);device.adb('shell','wm','user-rotation',...(rotation?['lock',rotation[1]]:['free']));
+}finally{device.close();}}

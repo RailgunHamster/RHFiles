@@ -1,6 +1,10 @@
 package com.railgunhamster.rhfiles
 
 import android.app.Activity
+import android.hardware.display.DisplayManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.webkit.WebView
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
@@ -16,15 +20,30 @@ import org.json.JSONObject
 class AdaptiveWindow(private val activity:Activity,private val web:()->WebView?){
   private val tracker=WindowInfoTrackerCallbackAdapter(WindowInfoTracker.getOrCreate(activity))
   private var features=listOf<FoldingFeature>()
+  private var lastDisplayProfile:String?=null
+  private fun profile(value:JSONObject)="${value.optString("screenKey")}:${value.optString("orientation")}"
+  private val displays=activity.getSystemService(DisplayManager::class.java)
+  @Suppress("DEPRECATION")
+  private fun display()=if(Build.VERSION.SDK_INT>=30)activity.display else activity.windowManager.defaultDisplay
+  private val displayListener=object:DisplayManager.DisplayListener {
+    override fun onDisplayAdded(id:Int){}
+    override fun onDisplayRemoved(id:Int){}
+    override fun onDisplayChanged(id:Int){
+      // Refresh-rate/brightness updates are display events too. Do not reset
+      // pane touch gestures unless the screen/orientation really changed.
+      if(display()?.displayId==id&&profile(current())!=lastDisplayProfile)publish()
+    }
+  }
   private val listener=Consumer<WindowLayoutInfo>{info->features=info.displayFeatures.filterIsInstance<FoldingFeature>();publish()}
-  fun start(){tracker.addWindowLayoutInfoListener(activity,ContextCompat.getMainExecutor(activity),listener)}
-  fun stop(){tracker.removeWindowLayoutInfoListener(listener)}
+  fun start(){tracker.addWindowLayoutInfoListener(activity,ContextCompat.getMainExecutor(activity),listener);displays.registerDisplayListener(displayListener,Handler(Looper.getMainLooper()))}
+  fun stop(){tracker.removeWindowLayoutInfoListener(listener);displays.unregisterDisplayListener(displayListener)}
   fun current():JSONObject {
     val result=JSONObject()
     // Maximum bounds identify the active screen, not the resizable app window.
     // Normalize rotation; IME/system bars/split-window sizes must not change it.
     val bounds=WindowMetricsCalculator.getOrCreate().computeMaximumWindowMetrics(activity).bounds
     ScreenLayoutProfile.key(bounds.width(),bounds.height())?.let{result.put("screenKey",it)}
+    ScreenLayoutProfile.orientation(bounds.width(),bounds.height(),display()?.rotation?:0)?.let{result.put("orientation",it)}
     val view=web()?:return result;if(view.width<=0||view.height<=0)return result
     val origin=IntArray(2);view.getLocationInWindow(origin)
     val bars=ViewCompat.getRootWindowInsets(view)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -39,5 +58,5 @@ class AdaptiveWindow(private val activity:Activity,private val web:()->WebView?)
         .put("top",((b.top-origin[1]).toDouble()/view.height).coerceIn(0.0,1.0)).put("bottom",((b.bottom-origin[1]).toDouble()/view.height).coerceIn(0.0,1.0))))}
     return result
   }
-  fun publish(){web()?.evaluateJavascript("window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:${current()}}))",null)}
+  fun publish(){val value=current();lastDisplayProfile=profile(value);web()?.evaluateJavascript("window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:$value}))",null)}
 }

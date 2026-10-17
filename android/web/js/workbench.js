@@ -5,7 +5,7 @@ const workbench=(()=>{
   const parentHost=()=>window.parent!==window?window.parent.RHFilesWorkbench:null;
   let frames=[],active=0,mode='single',preference='auto',clipboard=null,revision=0,lock=null,hinge=null,insets={},capabilities;
   let host,divider,touch,touchEnabled;
-  let screen='default',screenMemory,screenSettings=null;
+  let screen='default',orientation='portrait',screenMemory,screenSettings=null;
   const child=()=>!!parentHost();
   const primary=()=>!child()||id==='first';
   const send=(frame,name,detail)=>frame.contentWindow?.dispatchEvent(new frame.contentWindow.CustomEvent(name,{detail}));
@@ -27,17 +27,18 @@ const workbench=(()=>{
   function saveScreens(){const next=screenMemory.serialize();if(next!==screenSettings)try{localStorage.setItem('rhfiles.panes.screens',next);screenSettings=next;}catch{}}
   function windowLayout(value){
     const next=paneLayout.validScreen(value?.screenKey)?value.screenKey:screen;
-    if(next!==screen&&document.getElementById('sheet-panel')?.classList.contains('pane-layout-sheet'))ui.closeSheet();
-    screen=next;preference=screenMemory.select(screen);saveScreens();
+    const direction=paneLayout.validOrientation(value?.orientation)?value.orientation:orientation;
+    if((next!==screen||direction!==orientation)&&document.getElementById('sheet-panel')?.classList.contains('pane-layout-sheet'))ui.closeSheet();
+    screen=next;orientation=direction;preference=screenMemory.select(screen,orientation);saveScreens();
     hinge=value?.hinge||null;insets=value?.insets||{};
     if(host)layout();
   }
   function openLayout(keyboard=false){
-    const openedScreen=screen;
+    const openedScreen=screen,openedOrientation=orientation;
     if(!ui.openSheet('分屏布局',layouts.map(([value,label,icon])=>({label,icon,onSelect:()=>{
-      if(openedScreen!==screen)return;
-      preference=value;screenMemory.set(screen,value);saveScreens();try{localStorage.setItem('rhfiles.panes',value)}catch{}layout();
-    }})),'内屏、外屏分别记住布局；展开或折叠后自动恢复。切换布局不会丢失已打开的位置。'))return;
+      if(openedScreen!==screen||openedOrientation!==orientation)return;
+      preference=value;screenMemory.set(screen,value,orientation);saveScreens();try{localStorage.setItem('rhfiles.panes',value)}catch{}layout();
+    }})),`当前为${orientation==='landscape'?'横屏':'竖屏'}。内屏、外屏的横竖屏分别记住布局，折叠、展开或旋转时自动恢复；不会丢失已打开的位置。`))return;
     const panel=document.getElementById('sheet-panel');panel.classList.add('pane-layout-sheet');panel.classList.toggle('keyboard-navigation',keyboard);
     panel.querySelectorAll('.sheet-item').forEach((button,index)=>{
       button.dataset.layout=layouts[index][0];const selected=layouts[index][0]===preference;

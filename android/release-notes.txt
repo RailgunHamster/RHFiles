@@ -1,4 +1,11 @@
-RHFiles Android 0.1.14
+RHFiles Android 0.1.15
+
+内屏竖屏、内屏横屏、外屏竖屏、外屏横屏分别保存单窗格 / 左右分屏 / 上下分屏 / 自动布局。旋转、展开或折叠时自动恢复对应选择，普通窗口缩放与软键盘不会误切配置。保留两个窗格的目录和任务；旋转时关闭过时的布局菜单，避免误改其他方向。
+升级时旧版每屏布局作为该屏幕横竖屏的初始值，之后独立修改互不覆盖；四份布局同时纳入加密配置导入导出，兼容旧备份。
+
+Remember portrait and landscape independently on each folded/unfolded screen. Automatically restore the matching layout on rotation and fold/unfold, without confusing keyboard or ordinary window resizing with a display change. Preserve pane locations and tasks. Migrate old per-screen choices to initial values for both orientations, then save them independently. Include all orientation profiles in encrypted configuration backups, accepting older backups.
+
+此前版本改进 / Previous improvements (0.1.14):
 
 折叠屏内屏、外屏分别记住单窗格 / 左右分屏 / 上下分屏 / 自动布局；展开或折叠时恢复当前屏幕上次选择，不再被另一块屏幕覆盖。以原生完整屏幕尺寸识别屏幕，横竖屏旋转、软键盘与普通窗口缩放不另建配置。两个窗格的目录与运行状态保留，不重建文件浏览器或重复执行文件任务。
 旧版全局布局仅迁移到升级后首次使用的屏幕，首次切换到另一屏幕使用自动布局；仍允许小屏幕手动分屏。布局选择面板遇到屏幕切换自动关闭，避免误改另一块屏幕。内外屏配置一起纳入加密配置备份，兼容没有此字段的旧备份。

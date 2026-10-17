@@ -28,7 +28,7 @@ class SettingsBackupTest {
   }
   @Test fun allSettingsAndCredentialsSurviveMigrationToADifferentDeviceKey(){
     val first=remote(1);val id=first.save(profile());ReaderSettings.replace(context,JSONObject().put("rhfiles.reader.options","{\"font\":24}").put("rhfiles.reader.book.abc","{\"cfi\":\"epubcfi(/6)\",\"bookmarks\":[]}"))
-    val screens="{\"version\":1,\"screens\":{\"screen-1080x2092\":\"single\",\"screen-1840x2208\":\"columns\"}}"
+    val screens="""{"version":2,"screens":{"screen-1080x2092":{"portrait":"single","landscape":"columns"},"screen-1840x2208":{"portrait":"rows","landscape":"auto"}}}"""
     val web=JSONObject().put("rhfiles.theme","dark").put("rhfiles.panes","rows").put("rhfiles.panes.screens",screens).put("rhfiles.favorites","[{\"name\":\"网络\",\"path\":\"remote://$id/\"}]")
     val exported=SettingsBackup(context,first).snapshot(web,updates().put("connectionId",id))
     val next=remote(2);val store=SettingsBackup(context,next);store.apply(exported,JSONObject().put("rhfiles.theme","light"));val pending=store.pending()!!;assertEquals("dark",pending.getJSONObject("web").getString("rhfiles.theme"));assertEquals(screens,pending.getJSONObject("web").getString("rhfiles.panes.screens"));store.acknowledge(pending.getString("id"))
@@ -50,11 +50,21 @@ class SettingsBackupTest {
   }
   @Test fun invalidScreenMapsAreRejectedAndLegacyBackupsRemainCompatible(){
     SettingsBackup.validateWeb(JSONObject().put("rhfiles.panes","rows"))
+    SettingsBackup.validateWeb(JSONObject().put("rhfiles.panes.screens","""{"version":1,"screens":{"screen-1080x2092":"rows"}}"""))
     for(text in listOf("null","[]","{\"version\":\"1\",\"screens\":{}}","{\"version\":1,\"screens\":[]}","{\"version\":1,\"screens\":{\"__proto__\":\"rows\"}}","{\"version\":1,\"screens\":{\"screen-1080x2092\":false}}","{\"version\":1,\"screens\":{},\"extra\":1}")){
       try{SettingsBackup.validateWeb(JSONObject().put("rhfiles.panes.screens",text));fail("Accepted $text")}catch(_:Exception){}
     }
     val tooMany=JSONObject();for(i in 10..42)tooMany.put("screen-${i}x100","rows")
     try{SettingsBackup.validateWeb(JSONObject().put("rhfiles.panes.screens",JSONObject().put("version",1).put("screens",tooMany).toString()));fail("Accepted too many screens")}catch(_:Exception){}
+  }
+  @Test fun invalidOrientationProfilesAreRejectedWithoutMutatingAnySettings(){
+    val remotes=remote(1);val id=remotes.save(profile());val store=SettingsBackup(context,remotes)
+    for(profile in listOf("null","[]","{}","\"rows\"","{\"portrait\":false}","{\"portrait\":\"rows\",\"other\":\"single\"}","{\"landscape\":\"bad\"}")){
+      val web=JSONObject().put("rhfiles.panes.screens","""{"version":2,"screens":{"screen-1080x2092":$profile}}""")
+      val payload=store.snapshot(JSONObject(),updates()).put("web",web)
+      try{store.apply(payload);fail("Accepted $profile")}catch(_:Exception){}
+      assertEquals(id,remotes.connections().getJSONObject(0).getString("id"));assertNull(store.pending())
+    }
   }
   @Test fun motionRelayIncludesBothPointerIdsAndNormalizesCoordinates(){
     val relay=PaneTouchRelay();val down=MotionEvent.obtain(0,1,MotionEvent.ACTION_DOWN,20f,30f,0);assertNull(relay.sample(down,100,100));relay.enabled=true;assertEquals("start",relay.sample(down,100,100)!!.getString("phase"));down.recycle()
