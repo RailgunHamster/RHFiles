@@ -13,6 +13,8 @@ import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.SmbConfig
 import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.share.DiskShare
+import com.hierynomus.smbj.session.Session
+import com.rapid7.client.dcerpc.transport.SMBTransportFactories
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -35,8 +37,20 @@ import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 
 /** Credentials never enter URLs, logs, task journals, or localStorage. */
 class RemoteStorage(private val context: Context, private val credentialKey: (() -> SecretKey)? = null, private val profileLookup: ((String)->JSONObject)? = null) {
+  data class SmbShare(val name:String,val type:Int)
+  internal var shareReader:((JSONObject)->List<SmbShare>)?=null
   data class Unc(val host: String,val share: String,val parts: List<String>)
   companion object {
+    internal fun requireIdle(jobs:JSONArray,id:String) {
+      fun references(value:Any?,depth:Int=0):Boolean=when {
+        depth>64->true
+        value is String->value.startsWith("remote://$id/")
+        value is JSONObject->value.keys().asSequence().any{references(value.get(it),depth+1)}
+        value is JSONArray->(0 until value.length()).any{references(value.get(it),depth+1)}
+        else->false
+      }
+      require((0 until jobs.length()).none{val job=jobs.getJSONObject(it);job.optString("state") in listOf("queued","running","paused","scanning")&&references(job.opt("args"))}){"此网络位置有未完成的文件任务，请先结束任务再修改或移除连接"}
+    }
     fun parseUnc(value: String): Unc {
       val path=value.trim().replace('\\','/').removePrefix("smb:")
       require(path.startsWith("//")) { "家庭服务器请填写 \\\\服务器\\共享\\目录，或 HTTP/HTTPS 目录" }
@@ -46,9 +60,10 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       return Unc(parts[0],parts[1],parts.drop(2))
     }
   }
-  fun requireSmbConnection(id: String,host: String,share: String) {
+  fun requireSmbConnection(id: String,host: String,share: String):Boolean {
     val c=config(id)
-    require(c.getString("type")=="smb" && c.getString("host").equals(host,true) && c.getString("share").equals(share,true)) { "所选 SMB 登录配置的服务器或共享名与更新目录不一致，请在网络位置中添加对应连接" }
+    require(c.getString("type")=="smb" && c.getString("host").equals(host,true) && (c.optString("share").isBlank()||c.optString("share").equals(share,true))) { "所选 SMB 登录配置的服务器或共享名与更新目录不一致，请在网络位置中添加对应连接" }
+    return c.optString("share").isBlank()
   }
   private val preferences = context.getSharedPreferences("remote-v1", Context.MODE_PRIVATE)
   private val http = OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS)
@@ -73,10 +88,10 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       require(u.isHttps || config.optBoolean("insecure")) { "HTTP 为明文连接，请明确允许或使用 HTTPS" }
     } else {
       val host = config.getString("host")
-      require(host.isNotBlank() && host.none { it == '/' || it == '@' || it.isWhitespace() }) { "请填写主机名或 IP，不要带协议和路径" }
+      require(host.isNotBlank() && host.length<=253 && host.none { it in "/\\@?#" || it.isWhitespace() || it.code<32 }) { "请填写主机名或 IP，不要带协议和路径" }
       require(config.optInt("port",if (type=="smb") 445 else 21) in 1..65535) { "端口无效" }
       if (type == "ftp") require(config.optBoolean("insecure")) { "FTP 会明文传输密码，请明确允许或选择 FTPS" }
-      if (type == "smb") SafeFiles.name(config.getString("share"))
+      if (type == "smb" && config.optString("share").isNotBlank()) SafeFiles.name(config.getString("share"))
     }
   }
   private fun encrypt(config:JSONObject):String {
@@ -85,9 +100,26 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     return Base64.encodeToString(encrypted,Base64.NO_WRAP)
   }
   @Synchronized fun save(config: JSONObject): String {
-    validate(config);val id=UUID.randomUUID().toString()
-    require(preferences.edit().putString(id,encrypt(config)).commit()) { "连接配置保存失败" }
+    val value=JSONObject(config.toString());val requested=value.optString("id")
+    require(requested.isNotBlank()||preferences.all.size<200){"网络位置最多保存 200 项，请先移除不再使用的连接"}
+    val id=if(requested.isBlank())UUID.randomUUID().toString() else {
+      require(UUID.fromString(requested).toString()==requested&&preferences.contains(requested)){"网络位置已删除，请重新添加"};requested
+    }
+    if(requested.isNotBlank()&&!value.optBoolean("clearPassword")&&value.optString("password").isEmpty()){
+      val old=this.config(id)
+      fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"))
+      require(old.optString("password").isEmpty()||identity(old)==identity(value)){"更换服务器、协议或账号时请重新填写密码，或勾选清除密码"}
+      value.put("password",old.optString("password"))
+    }
+    if(value.optBoolean("clearPassword"))value.put("password","")
+    value.remove("id");value.remove("clearPassword");value.remove("hasPassword");validate(value)
+    require(preferences.edit().putString(id,encrypt(value)).commit()) { "连接配置保存失败" }
     return id
+  }
+  fun editable(id:String):JSONObject {
+    val c=config(id);val result=JSONObject().put("id",id).put("hasPassword",c.optString("password").isNotEmpty())
+    for(field in listOf("name","type","host","port","share","domain","url","username","insecure"))if(c.has(field))result.put(field,c.get(field))
+    return result
   }
   internal fun backupProfiles()=JSONArray().also{out->preferences.all.keys.sorted().forEach{id->out.put(JSONObject().put("id",id).put("config",config(id)))}}
   internal fun prepareProfiles(profiles:JSONArray):JSONObject=JSONObject().also{out->
@@ -105,15 +137,20 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     return JSONObject(String(cipher.doFinal(encrypted.copyOfRange(12,encrypted.size)),Charsets.UTF_8))
   }
   fun connections(): JSONArray = JSONArray().also { result -> preferences.all.keys.sorted().forEach { id ->
-    try { val c = config(id); result.put(JSONObject().put("id",id).put("name",c.getString("name")).put("type",c.getString("type")).put("path","remote://$id/")) }
+    try { val c = config(id); result.put(JSONObject().put("id",id).put("name",c.getString("name")).put("type",c.getString("type")).put("host",c.optString("host")).put("port",c.optInt("port",445)).put("share",c.optString("share")).put("path","remote://$id/")) }
     catch (_: Exception) { result.put(JSONObject().put("id",id).put("name","密钥失效，请删除并重新添加").put("type","unavailable")) }
   } }
-  private data class Location(val id: String, val relative: String, val c: JSONObject)
+  private data class Location(val id: String, val relative: String, val c: JSONObject,val serverRoot:Boolean=false)
   private fun location(path: String): Location {
     val uri = Uri.parse(path); require(uri.scheme == "remote" && uri.query == null && uri.fragment == null) { "网络路径无效" }
     val id = uri.host ?: error("网络位置无效"); val segments = uri.pathSegments
     segments.forEach { SafeFiles.name(it) }
-    return Location(id,segments.joinToString("/"),config(id))
+    val c=config(id)
+    if(c.optString("type")=="smb"&&c.optString("share").isBlank()) {
+      if(segments.isEmpty())return Location(id,"",c,true)
+      return Location(id,segments.drop(1).joinToString("/"),c.put("share",segments.first()))
+    }
+    return Location(id,segments.joinToString("/"),c)
   }
   private fun child(path: String, name: String) = path.trimEnd('/') + "/" + Uri.encode(SafeFiles.name(name))
   private fun parent(path: String) = path.trimEnd('/').substringBeforeLast('/') + "/"
@@ -130,13 +167,23 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   private fun ftpPath(l: Location) = "/" + l.relative
   private inline fun <T> withFtp(c: JSONObject, block: (FTPClient) -> T): T { val f=ftp(c); try { return block(f) } finally { try { f.disconnect() } catch (_: Exception) {} } }
   private class Smb(val client: SMBClient, val share: DiskShare): Closeable { override fun close() { try { share.close() } finally { client.close() } } }
+  private fun smbClient(timeout:Long=30)=SMBClient(SmbConfig.builder().withAuthenticators(listOf(com.hierynomus.smbj.auth.NtlmAuthenticator.Factory()))
+    .withTimeout(timeout,TimeUnit.SECONDS).withSoTimeout((timeout*1000).toInt()).build())
+  private fun authenticate(client:SMBClient,c:JSONObject):Session {
+    val connection=client.connect(SmbHosts.resolve(c.getString("host")),c.optInt("port",445))
+    val (username,domain)=SmbHosts.credentials(c.optString("username"),c.optString("domain"))
+    return connection.authenticate(if(username.isBlank()&&c.optString("password").isEmpty())AuthenticationContext.anonymous() else AuthenticationContext(username,c.optString("password").toCharArray(),domain))
+  }
+  private fun smbShares(c:JSONObject):List<SmbShare> = smbClient(15).use{client->
+    // RPCTransport is not Closeable; the owning SMB client closes its session,
+    // IPC$ tree and named pipe on success as well as on authentication/RPC errors.
+    val transport=SMBTransportFactories.SRVSVC.getTransport(authenticate(client,c))
+    SmbShares(transport).list()
+  }
   private fun smb(c: JSONObject): Smb {
-    val client=SMBClient(SmbConfig.builder().withAuthenticators(listOf(com.hierynomus.smbj.auth.NtlmAuthenticator.Factory()))
-      .withTimeout(30,TimeUnit.SECONDS).withSoTimeout(30000).build())
+    val client=smbClient()
     try {
-      val connection=client.connect(SmbHosts.resolve(c.getString("host")),c.optInt("port",445))
-      val (username,domain)=SmbHosts.credentials(c.optString("username"),c.optString("domain"))
-      val session=connection.authenticate(AuthenticationContext(username,c.optString("password").toCharArray(),domain))
+      val session=authenticate(client,c)
       val share=session.connectShare(c.getString("share")) as? DiskShare ?: error("不是文件共享")
       return Smb(client,share)
     } catch (e: Exception) { try{client.close()}catch(close:Exception){e.addSuppressed(close)}; throw e }
@@ -154,6 +201,13 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   fun list(path: String): List<NativeEntry> {
     val l=location(path)
+    if(l.serverRoot)try {
+      val shares=(shareReader?: ::smbShares)(l.c);require(shares.size<=4096){"服务器返回的共享过多，请指定共享名"}
+      return shares.filter{it.type and 0xffff==0}.distinctBy{it.name.lowercase()}.map{
+        NativeEntry(child(path,SafeFiles.name(it.name)),it.name,true)
+      }.sortedBy{it.name.lowercase()}
+    }catch(e:LinkageError){throw IOException("共享枚举组件不兼容，请更新应用；仍可编辑网络位置直接填写共享名称。",e)}
+    catch(e:Exception){throw IOException("无法列出服务器共享：${e.message?:e.javaClass.simpleName}。请编辑网络位置填写账号/密码；如果服务器禁止枚举，也可直接填写共享名称。",e)}
     return when(l.c.getString("type")) {
       "smb" -> smb(l.c).use { s -> s.share.list(smbPath(l)).filter { it.fileName!="." && it.fileName!=".." }.take(50000).map {
         NativeEntry(child(path,it.fileName),it.fileName,it.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L,it.endOfFile,it.lastWriteTime.toEpochMillis())
@@ -189,11 +243,12 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   fun stat(path: String): NativeEntry {
     val l=location(path)
-    if(l.relative.isEmpty()) return NativeEntry(path,l.c.getString("name"),true)
+    if(l.relative.isEmpty()) return NativeEntry(path,Uri.parse(path).pathSegments.lastOrNull()?:l.c.getString("name"),true)
     return list(parent(path)).find { it.name==l.relative.substringAfterLast('/') } ?: error("远程文件已不存在")
   }
   fun input(path: String): InputStream {
     val l=location(path)
+    require(!l.serverRoot&&l.relative.isNotEmpty()){ "不能把服务器或共享根目录当作文件读取" }
     return when(l.c.getString("type")) {
       "smb" -> {
         val s=smb(l.c)
@@ -220,6 +275,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     }
   }
   fun create(parent: String, name: String, dir: Boolean): String {
+    require(!location(parent).serverRoot){"服务器列表不是文件目录，请先打开一个共享文件夹"}
     val path=child(parent,name); val l=location(path)
     when(l.c.getString("type")) {
       "smb" -> smb(l.c).use { s -> if(dir) s.share.mkdir(smbPath(l)) else s.share.openFile(smbPath(l),EnumSet.of(AccessMask.GENERIC_WRITE),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_CREATE,null).close() }
@@ -229,6 +285,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   fun write(path: String, input: InputStream, progress: (Int)->Unit) {
     val l=location(path)
+    require(!l.serverRoot&&l.relative.isNotEmpty()){ "不能写入服务器或共享根目录" }
     when(l.c.getString("type")) {
       "smb" -> smb(l.c).use { s -> s.share.openFile(smbPath(l),EnumSet.of(AccessMask.GENERIC_WRITE),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OVERWRITE,null).use { file -> file.outputStream.use { SafeFiles.pump(input,it,progress) } } }
       "ftp", "ftps" -> withFtp(l.c) { f ->

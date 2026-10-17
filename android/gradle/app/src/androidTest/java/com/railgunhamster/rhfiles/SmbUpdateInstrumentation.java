@@ -30,6 +30,19 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         if(node==null)return "";StringBuilder text=new StringBuilder();if(node.getText()!=null)text.append(node.getText()).append('\n');
         for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo child=node.getChild(i);text.append(accessible(child));if(child!=null)child.recycle();}return text.toString();
     }
+    private void networkProfileProbe(Bundle result) throws Exception {
+        eval("void(async()=>{let id,scan;try{const p={type:'smb',name:'QA host profile',host:'192.0.2.20',share:'',username:'qa',password:'fixture-only'};"+
+          "id=await api.native('connection.save',p);let edit=await api.native('connection.get',{id});if('password' in edit||!edit.hasPassword)throw Error('Password disclosure or missing password');"+
+          "if(edit.share!=='')throw Error('Host-only profile rejected');edit.name='QA edited profile';edit.password='';if(await api.native('connection.save',edit)!==id)throw Error('Identity changed');"+
+          "edit=await api.native('connection.get',{id});if(edit.name!=='QA edited profile'||!edit.hasPassword)throw Error('Edit did not preserve encrypted password');"+
+          "edit.clearPassword=true;await api.native('connection.save',edit);if((await api.native('connection.get',{id})).hasPassword)throw Error('Password clear failed');"+
+          "scan=await api.native('lan.start');await api.native('lan.stop',{id:scan});const end=Date.now()+12000;while((await api.native('lan.state',{id:scan})).running){if(Date.now()>end)throw Error('Discovery cancellation timed out');await new Promise(r=>setTimeout(r,100));}"+
+          "const license=await(await fetch('SMBJ-RPC-LICENSE.txt')).text();if(!license.includes('Rapid7')||!license.includes('BSD-3-clause'))throw Error('Offline RPC notice missing');"+
+          "window.__networkQa={pass:true};}catch(e){window.__networkQa={error:String(e)}}finally{if(scan)await api.native('lan.stop',{id:scan}).catch(()=>{});if(id)await api.native('connection.delete',{id}).catch(()=>{});}})();");
+        long end=System.currentTimeMillis()+45000;
+        while(System.currentTimeMillis()<end){JSONObject marker=json("window.__networkQa || {}");require(!marker.has("error"),marker.optString("error"));if(marker.optBoolean("pass")){result.putString("pass","true");result.putString("checks","host-only profile, edit identity/password retention, clear password, cancel native discovery, offline RPC notice");finish(Activity.RESULT_OK,result);return;}Thread.sleep(150);}
+        throw new Exception("Minified network-profile probe timed out");
+    }
     private void ebookProbe(Bundle result) throws Exception {
         String path=arguments.getString("book");require(path!=null&&path.startsWith("/storage/emulated/0/Download/RHFiles-"),"Only owned emulator fixtures allowed");
         eval("void api.native('ebook.open',{path:"+JSONObject.quote(path)+",name:'test.epub',theme:'light'}).catch(e=>window.__ebookQaError=String(e))");
@@ -220,6 +233,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("panes")){panesProbe(result);return;}
             if(arguments.getString("mode","").equals("concurrent-panes")){concurrentPanesProbe(result);return;}
             if(arguments.getString("mode","").equals("backup")){backupProbe(result);return;}
+            if(arguments.getString("mode","").equals("network-profile")){networkProfileProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

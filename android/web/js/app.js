@@ -427,10 +427,12 @@
     ]);
   }
   function favorite(entry) {
+    if(!state.favorites.some(e=>e.path===entry.path)&&state.favorites.length>=100)return ui.toast('常用 / 收藏位置最多保存 100 项，请先移除不再使用的项目');
     const next = state.favorites.some(e => e.path === entry.path) ? state.favorites.filter(e => e.path !== entry.path) : [...state.favorites, { name: entry.name, path: entry.path, isDir: entry.isDir, parentPath:entry.parentPath }];
     const added = next.length > state.favorites.length;
     cache('rhfiles.favorites', JSON.stringify(next)); state.favorites = next;
     ui.toast(added ? '已添加收藏' : '已取消收藏');
+    renderDrawer();
     if (state.route.screen === 'favorites') go(state.route, { replace: true });
   }
   function setClipboard(mode, paths) {
@@ -665,7 +667,7 @@
     await configBackup.boot();
     if(await workbench.boot())return;
     configBackup.init(error);
-    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,button,action,error});
+    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,button,action,error,favorite});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy}),refresh:()=>refreshCurrent().catch(error)};
@@ -690,6 +692,11 @@
       const details=$('project-license');if(!details.open||details.dataset.loaded)return;
       try{const texts=await Promise.all(['NOTICE.txt','LICENSE.txt'].map(async name=>{const response=await fetch(name);if(!response.ok)throw Error('License unavailable');return response.text();}));$('project-notice-text').textContent=texts[0];$('project-license-text').textContent=texts[1];details.dataset.loaded='1';}
       catch{$('project-license-text').textContent='许可文件未能加载，请查看 RHFiles 源码仓库中的 LICENSE / NOTICE。';}
+    });
+    $('smb-rpc-license').addEventListener('toggle',async()=>{
+      const details=$('smb-rpc-license');if(!details.open||details.dataset.loaded)return;
+      try{const response=await fetch('SMBJ-RPC-LICENSE.txt');if(!response.ok)throw Error('License unavailable');$('smb-rpc-license-text').textContent=await response.text();details.dataset.loaded='1';}
+      catch{$('smb-rpc-license-text').textContent='请查看源码包内 SMBJ-RPC-LICENSE.txt。';}
     });
     ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path),select:path=>{if(state.entries.find(e=>e.path===path)?.libraryAlbum)return;state.selected.add(path);paintSelection();},toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
     $('scrim').addEventListener('click',closeDrawer);

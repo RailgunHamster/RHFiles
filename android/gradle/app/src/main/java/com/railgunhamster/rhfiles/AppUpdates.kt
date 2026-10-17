@@ -263,8 +263,9 @@ class AppUpdates private constructor(private val context: Context) {
     val unc=RemoteStorage.parseUnc(root)
     val path=unc.parts.plus(name).joinToString("/"){android.net.Uri.encode(it)}
     if(connection.isNotBlank()) {
-      remote.requireSmbConnection(connection,unc.host,unc.share)
-      return if(open)remote.input("remote://$connection/$path") else null
+      val serverRoot=remote.requireSmbConnection(connection,unc.host,unc.share)
+      val relative=if(serverRoot)android.net.Uri.encode(unc.share)+"/"+path else path
+      return if(open)remote.input("remote://$connection/$relative") else null
     }
     val store=RemoteStorage(context) {JSONObject().put("type","smb").put("host",unc.host).put("share",unc.share)}
     return if(open)store.input("remote://update/$path") else null

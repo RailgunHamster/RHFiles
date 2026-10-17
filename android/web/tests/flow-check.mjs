@@ -101,6 +101,9 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
         case 'list':return {path:a.path,entries:m.fs[a.path]||[]};
         case 'media.library':return {entries:Object.values(m.fs).flat().filter(e=>e.kind===a.category),total:1,truncated:false};
         case 'connections':return m.connections;
+        case 'lan.start':return 'scan-1';
+        case 'lan.state':return {running:false,devices:[],warnings:[]};
+        case 'lan.stop':return true;
         case 'connection.save':m.connections.push({id:'server-1',path:'remote://server-1/',name:a.name,type:a.type});return 'server-1';
         case 'connection.delete':m.connections=m.connections.filter(c=>c.id!==a.id);return true;
         case 'tree.pick':return m.pickCancel?null:['content://test/tree/root/document/root'];

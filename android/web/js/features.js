@@ -90,11 +90,17 @@ const androidFeatures = (() => {
     if(tool==='nearby'){androidNearby.render(node);return;}
     if(tool==='remote') {
       const connections=await api.native('connections');if(!valid())return;
-      node.replaceChildren(button('添加网络位置',addRemote,'primary'));notice(node,'密码由 Android Keystore 加密保存。FTPS / HTTPS 验证服务器证书；不提供忽略证书开关。');
+      node.replaceChildren(button('添加网络位置',()=>addRemote(),'primary'));notice(node,'SMB 只填主机名即可浏览该主机的共享文件夹；共享名可留空。添加为常用项后可从首页收藏夹或侧栏进入。密码由 Android Keystore 加密保存。');
       for(const c of connections) {
         const row=ui.el('article','task-card');row.append(button(c.name+' · '+c.type,()=>c.path?app.go({screen:'folder',path:c.path,label:c.name}):undefined));
-        row.append(button('移除连接',async()=>{if(await ui.confirm('移除此连接？','只删除登录配置，不会删除服务器文件。','移除')){await api.native('connection.delete',{id:c.id});await renderTool(tool);}}));node.append(row);
+        if(c.path){
+          row.append(button('编辑连接',async()=>{const value=await api.native('connection.get',{id:c.id});if(valid())addRemote(value);}));
+          const saved=app.state.favorites.some(entry=>entry.path===c.path);
+          row.append(button(saved?'取消常用':'添加为常用项',()=>{app.favorite({name:c.name,path:c.path,isDir:true});return renderTool(tool);}));
+        }
+        row.append(button('移除连接',async()=>{if(await ui.confirm('移除此连接？','只删除登录配置，不会删除服务器文件。','移除')){await api.native('connection.delete',{id:c.id});if(app.state.favorites.some(entry=>entry.path===c.path))app.favorite({name:c.name,path:c.path,isDir:true});await renderTool(tool);}}));node.append(row);
       }
+      const discovery=ui.el('section','task-card');node.append(discovery);networkDiscovery(discovery,valid,connections);
       return;
     }
     if(tool==='providers') {
@@ -142,15 +148,50 @@ const androidFeatures = (() => {
       ],fmt.date(item.at))));return;
     }
   }
-  function addRemote() {
-    return form('添加网络位置',[
+  function addRemote(existing={},common=false) {
+    const fields=[
       {name:'name',label:'名称',required:true},
       {name:'type',label:'协议',options:[['smb','SMB2 / SMB3'],['ftps','FTPS（显式 TLS）'],['ftp','FTP（明文）'],['webdav','WebDAV / HTTPS']]},
       {name:'host',label:'主机名 / IP（SMB、FTP）'}, {name:'port',label:'端口（留空使用协议默认值）',type:'number'},
-      {name:'share',label:'SMB 共享名称（例如 Public）'}, {name:'domain',label:'SMB 域（可选）'},
+      {name:'share',label:'SMB 共享名称（可选；留空列出全部共享）'}, {name:'domain',label:'SMB 域（可选）'},
       {name:'url',label:'WebDAV 地址（完整 HTTPS URL）'}, {name:'username',label:'用户名'}, {name:'password',label:'密码',type:'password'},
       {name:'insecure',label:'我允许此连接使用明文 FTP / HTTP，仅在可信网络使用',type:'checkbox'},
-    ],async values=>{if(!values.port)delete values.port;else values.port=Number(values.port);await api.native('connection.save',values);await renderTool('remote');},'保存连接');
+    ];
+    if(existing.hasPassword){fields.find(f=>f.name==='password').label='密码（留空保留；更换服务器或账号需重填）';fields.push({name:'clearPassword',label:'清除已保存的密码（匿名访问还需清空用户名）',type:'checkbox'});}
+    const pending=form(existing.id?'编辑网络位置':'添加网络位置',fields.map(f=>({...f,...(existing[f.name]!==undefined?{value:existing[f.name]}:{})})),async values=>{
+      if(!values.port)delete values.port;else values.port=Number(values.port);if(existing.id)values.id=existing.id;
+      const id=await api.native('connection.save',values),path='remote://'+id+'/';
+      if(common&&!app.state.favorites.some(entry=>entry.path===path))app.favorite({name:values.name,path,isDir:true});
+      if(existing.id&&existing.name!==values.name){const saved=app.state.favorites.find(entry=>entry.path===path);if(saved){saved.name=values.name;localStorage.setItem('rhfiles.favorites',JSON.stringify(app.state.favorites));}}
+      await renderTool('remote');
+    },'保存连接');
+    pending.then(root=>{if(!root)return;const type=root.elements.type;function update(){for(const name of ['host','port','share','domain','url','insecure']){const input=root.elements[name];input.closest('label').hidden=name==='url'?type.value!=='webdav':name==='host'||name==='port'?type.value==='webdav':name==='insecure'?!['ftp','webdav'].includes(type.value):type.value!=='smb';}root.elements.host.required=type.value!=='webdav';root.elements.url.required=type.value==='webdav';}type.onchange=update;update();});return pending;
+  }
+  let discoverySerial=0;
+  async function networkDiscovery(node,valid,connections){
+    const serial=++discoverySerial,status=ui.el('p','muted','正在发现同一局域网中的 SMB 主机…'),results=ui.el('div'),warnings=ui.el('p','muted');
+    const actions=ui.el('div','button-row');let id,stopped=false,lastDevices='';
+    const stop=button('停止发现',()=>{stopped=true;if(id)api.native('lan.stop',{id}).catch(()=>{});status.textContent='已停止发现';stop.disabled=true;});
+    const retry=button('重新发现',()=>networkDiscovery(node,valid,connections));actions.append(stop,retry);
+    node.replaceChildren(ui.el('h2','','局域网发现'),status,actions,results,warnings);
+    notice(node,'通过 mDNS / WS-Discovery 自动发现，不尝试登录、不扫描公网、不自动保存设备。发现结果仅供参考，不代表服务器可信。发现不到时仍可手动添加；服务器需要开启网络发现，且 Wi-Fi 不能启用设备隔离。');
+    try{
+      id=await api.native('lan.start');
+      const poll=async()=>{
+        if(stopped||!valid()||serial!==discoverySerial){await api.native('lan.stop',{id}).catch(()=>{});return;}
+        const state=await api.native('lan.state',{id});
+        if(!valid()||serial!==discoverySerial||stopped){await api.native('lan.stop',{id}).catch(()=>{});return;}
+        const signature=JSON.stringify(state.devices);if(signature!==lastDevices){lastDevices=signature;results.replaceChildren();for(const device of state.devices){
+          const card=ui.el('article','task-card');card.append(ui.el('strong','',device.name),ui.el('p','muted',device.host+':'+device.port+' · '+device.source));
+          const saved=connections.find(c=>c.type==='smb'&&c.host?.toLowerCase()===device.host.toLowerCase()&&c.port===device.port);
+          card.append(saved?button('打开已保存位置：'+saved.name,()=>app.go({screen:'folder',path:saved.path,label:saved.name})):button('添加为常用项',()=>addRemote({name:device.name||device.host,type:'smb',host:device.host,port:device.port,share:''},true)));results.append(card);
+        }}
+        warnings.textContent=(state.warnings||[]).join('\n');status.textContent=state.running?'正在发现… 已找到 '+state.devices.length+' 台主机':state.devices.length?'发现完成，共 '+state.devices.length+' 台主机':'未发现主机。可重新发现，或手动填写主机名 / IP。';
+        if(state.running)setTimeout(()=>poll().catch(failed),700);else stop.disabled=true;
+      };
+      function failed(error){if(valid()&&serial===discoverySerial){status.textContent='局域网发现失败：'+(error.message||String(error));stop.disabled=true;}if(id)api.native('lan.stop',{id}).catch(()=>{});}
+      await poll();
+    }catch(error){if(valid()&&serial===discoverySerial){status.textContent='局域网发现失败：'+(error.message||String(error));stop.disabled=true;}}
   }
   async function archive(entry) {
     ui.openSheet(entry.name,[app.action('关闭','close',()=>{}),app.action('解压到新文件夹','archive',()=>extract(entry))],'正在读取压缩包目录…');

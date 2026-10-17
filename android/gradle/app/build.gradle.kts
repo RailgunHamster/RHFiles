@@ -116,6 +116,7 @@ dependencies {
     implementation("org.tukaani:xz:1.10")
     implementation("commons-net:commons-net:3.13.0")
     implementation("com.hierynomus:smbj:0.14.0")
+    implementation("com.rapid7.client:dcerpc:0.12.13") { exclude(group="org.bouncycastle") }
     implementation("org.bouncycastle:bcprov-jdk18on:1.83")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.apache.ftpserver:ftpserver-core:1.2.1")
@@ -128,6 +129,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.ow2.asm:asm:9.8")
     testImplementation("org.json:json:20250517")
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

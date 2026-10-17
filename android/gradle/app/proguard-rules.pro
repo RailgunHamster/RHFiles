@@ -18,3 +18,5 @@
 -dontwarn com.github.luben.zstd.ZstdInputStream
 # JNI lifetime stop is callable even while both browsing panes are hidden.
 -keep class com.railgunhamster.rhfiles.NearbyService { *; }
+# NDR structures and union arms are instantiated reflectively by the RPC codec.
+-keep class com.rapid7.client.dcerpc.** { *; }

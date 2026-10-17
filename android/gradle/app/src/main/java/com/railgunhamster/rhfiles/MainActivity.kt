@@ -38,6 +38,7 @@ class MainActivity : TauriActivity() {
   private val thumbnailDelegate=lazy {MediaThumbnails(storage)}
   private val thumbnails by thumbnailDelegate
   private val adaptiveWindow by lazy {AdaptiveWindow(this){appWebView}}
+  private val lanDiscovery by lazy {LanDiscovery(applicationContext)}
   private var pendingUpdateInstall:Boolean
     get()=getSharedPreferences("updates-v1",Context.MODE_PRIVATE).getBoolean("pendingInstall",false)
     set(value){getSharedPreferences("updates-v1",Context.MODE_PRIVATE).edit().putBoolean("pendingInstall",value).commit()}
@@ -77,7 +78,7 @@ class MainActivity : TauriActivity() {
     watching=true
     try{contentResolver.registerContentObserver(MediaStore.Files.getContentUri("external"),true,mediaObserver)}catch(_:Exception){}
   }
-  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();io.shutdown();appWebView=null;super.onDestroy()}
+  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();lanDiscovery.close();io.shutdown();appWebView=null;super.onDestroy()}
   override fun onSaveInstanceState(outState:Bundle){outState.putBoolean("rhfilesRestoreNavigation",true);super.onSaveInstanceState(outState)}
   override fun onStart(){super.onStart();adaptiveWindow.start()}
   override fun onStop(){adaptiveWindow.stop();super.onStop()}
@@ -230,14 +231,18 @@ class MainActivity : TauriActivity() {
     "create" -> storage.create(args.getString("parent"),args.getString("name"),args.optBoolean("directory"))
     "rename" -> storage.rename(args.getString("path"),args.getString("name"))
     "connections" -> storage.remote.connections()
+    "connection.get" -> storage.remote.editable(args.getString("id"))
+    "lan.start" -> lanDiscovery.start()
+    "lan.state" -> lanDiscovery.state(args.getString("id"))
+    "lan.stop" -> {lanDiscovery.stop(args.getString("id"));true}
     "ftp.status" -> FtpAccess.status()
     "ftp.start" -> {
       if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)onUi{requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),11)}
       FtpAccess.start(applicationContext,args)
     }
     "ftp.stop" -> FtpAccess.stop()
-    "connection.save" -> synchronized(settingsLock){storage.remote.save(args)}
-    "connection.delete" -> synchronized(settingsLock){storage.remote.remove(args.getString("id"));true}
+    "connection.save" -> synchronized(settingsLock){if(args.optString("id").isNotBlank())RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.save(args)}
+    "connection.delete" -> synchronized(settingsLock){RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));true}
     "open","share" -> {
       val paths=args.optJSONArray("paths") ?: JSONArray().put(args.getString("path"))
       require(paths.length() in 1..1000){"分享数量无效"}
