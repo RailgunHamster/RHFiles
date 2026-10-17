@@ -1,9 +1,28 @@
 import java.util.Properties
+import com.android.build.api.instrumentation.*
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.commons.ClassRemapper
+import org.objectweb.asm.commons.Remapper
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("rust")
+}
+
+// SMBJ-RPC uses RMI's IOException subclasses as codec errors, not RMI itself.
+// Android has no java.rmi: relocate those two types before D8/R8, preserving
+// constructor descriptors and catch clauses instead of hiding missing classes.
+abstract class RpcAndroidExceptions:AsmClassVisitorFactory<InstrumentationParameters.None> {
+    override fun isInstrumentable(classData:ClassData)=classData.className.startsWith("com.rapid7.")
+    override fun createClassVisitor(classContext:ClassContext,nextClassVisitor:ClassVisitor):ClassVisitor =
+        ClassRemapper(nextClassVisitor,object:Remapper(){
+            override fun map(name:String):String=when(name){
+                "java/rmi/MarshalException"->"com/railgunhamster/rhfiles/RpcMarshalException"
+                "java/rmi/UnmarshalException"->"com/railgunhamster/rhfiles/RpcUnmarshalException"
+                else->name
+            }
+        })
 }
 
 val tauriProperties = Properties().apply {
@@ -107,6 +126,10 @@ android {
 
 rust {
     rootDirRel = "../../../"
+}
+
+androidComponents.onVariants { variant ->
+    variant.instrumentation.transformClassesWith(RpcAndroidExceptions::class.java,InstrumentationScope.ALL){}
 }
 
 dependencies {

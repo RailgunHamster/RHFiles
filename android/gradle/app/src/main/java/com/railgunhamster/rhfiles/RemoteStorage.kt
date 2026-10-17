@@ -41,6 +41,14 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   internal var shareReader:((JSONObject)->List<SmbShare>)?=null
   data class Unc(val host: String,val share: String,val parts: List<String>)
   companion object {
+    // Directory/RPC reads have no buffered writes. Once their responses and
+    // explicit tree-close complete, disconnect this one-shot transport without
+    // waiting another 15/30 seconds for an optional LOGOFF reply. TCP teardown
+    // releases the server's remaining read-only handles (including IPC$).
+    // Write/transfer sessions retain their normal acknowledged close sequence.
+    private fun closeReadSession(client:SMBClient,session:Session) {
+      try{session.connection.close(true)}finally{client.close()}
+    }
     internal fun requireIdle(jobs:JSONArray,id:String) {
       fun references(value:Any?,depth:Int=0):Boolean=when {
         depth>64->true
@@ -166,7 +174,9 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   private fun ftpPath(l: Location) = "/" + l.relative
   private inline fun <T> withFtp(c: JSONObject, block: (FTPClient) -> T): T { val f=ftp(c); try { return block(f) } finally { try { f.disconnect() } catch (_: Exception) {} } }
-  private class Smb(val client: SMBClient, val share: DiskShare): Closeable { override fun close() { try { share.close() } finally { client.close() } } }
+  private class Smb(val client: SMBClient, val share: DiskShare,val readOnlySession:Session?=null): Closeable {
+    override fun close() { try { share.close() } finally { if(readOnlySession!=null)closeReadSession(client,readOnlySession) else client.close() } }
+  }
   private fun smbClient(timeout:Long=30)=SMBClient(SmbConfig.builder().withAuthenticators(listOf(com.hierynomus.smbj.auth.NtlmAuthenticator.Factory()))
     .withTimeout(timeout,TimeUnit.SECONDS).withSoTimeout((timeout*1000).toInt()).build())
   private fun authenticate(client:SMBClient,c:JSONObject):Session {
@@ -174,18 +184,20 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val (username,domain)=SmbHosts.credentials(c.optString("username"),c.optString("domain"))
     return connection.authenticate(if(username.isBlank()&&c.optString("password").isEmpty())AuthenticationContext.anonymous() else AuthenticationContext(username,c.optString("password").toCharArray(),domain))
   }
-  private fun smbShares(c:JSONObject):List<SmbShare> = smbClient(15).use{client->
-    // RPCTransport is not Closeable; the owning SMB client closes its session,
-    // IPC$ tree and named pipe on success as well as on authentication/RPC errors.
-    val transport=SMBTransportFactories.SRVSVC.getTransport(authenticate(client,c))
-    SmbShares(transport).list()
+  private fun smbShares(c:JSONObject):List<SmbShare> {
+    val client=smbClient(15);var session:Session?=null
+    try {
+      session=authenticate(client,c)
+      val transport=SMBTransportFactories.SRVSVC.getTransport(session)
+      return SmbShares(transport).list()
+    }finally{if(session!=null)closeReadSession(client,session) else client.close()}
   }
-  private fun smb(c: JSONObject): Smb {
+  private fun smb(c: JSONObject,readOnly:Boolean=false): Smb {
     val client=smbClient()
     try {
       val session=authenticate(client,c)
       val share=session.connectShare(c.getString("share")) as? DiskShare ?: error("不是文件共享")
-      return Smb(client,share)
+      return Smb(client,share,if(readOnly)session else null)
     } catch (e: Exception) { try{client.close()}catch(close:Exception){e.addSuppressed(close)}; throw e }
   }
   private fun smbPath(l: Location) = l.relative.replace('/','\\')
@@ -209,7 +221,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     }catch(e:LinkageError){throw IOException("共享枚举组件不兼容，请更新应用；仍可编辑网络位置直接填写共享名称。",e)}
     catch(e:Exception){throw IOException("无法列出服务器共享：${e.message?:e.javaClass.simpleName}。请编辑网络位置填写账号/密码；如果服务器禁止枚举，也可直接填写共享名称。",e)}
     return when(l.c.getString("type")) {
-      "smb" -> smb(l.c).use { s -> s.share.list(smbPath(l)).filter { it.fileName!="." && it.fileName!=".." }.take(50000).map {
+      "smb" -> smb(l.c,readOnly=true).use { s -> s.share.list(smbPath(l)).filter { it.fileName!="." && it.fileName!=".." }.take(50000).map {
         NativeEntry(child(path,it.fileName),it.fileName,it.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L,it.endOfFile,it.lastWriteTime.toEpochMillis())
       } }
       "ftp", "ftps" -> withFtp(l.c) { f ->

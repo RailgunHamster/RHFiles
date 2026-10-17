@@ -31,6 +31,10 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo child=node.getChild(i);text.append(accessible(child));if(child!=null)child.recycle();}return text.toString();
     }
     private void networkProfileProbe(Bundle result) throws Exception {
+        Class<?> packet=Class.forName("com.rapid7.client.dcerpc.io.PacketInput",true,getTargetContext().getClassLoader());
+        Object input=packet.getConstructor(java.io.InputStream.class).newInstance(new java.io.ByteArrayInputStream(new byte[]{-1,-1,-1,-1}));
+        try{packet.getMethod("readIndex",String.class).invoke(input,"QA");throw new Exception("RPC codec accepted a negative index");}
+        catch(java.lang.reflect.InvocationTargetException error){require(error.getCause() instanceof java.io.IOException,"Android RPC codec error type missing: "+error.getCause());}
         eval("void(async()=>{let id,scan;try{const p={type:'smb',name:'QA host profile',host:'192.0.2.20',share:'',username:'qa',password:'fixture-only'};"+
           "id=await api.native('connection.save',p);let edit=await api.native('connection.get',{id});if('password' in edit||!edit.hasPassword)throw Error('Password disclosure or missing password');"+
           "if(edit.share!=='')throw Error('Host-only profile rejected');edit.name='QA edited profile';edit.password='';if(await api.native('connection.save',edit)!==id)throw Error('Identity changed');"+
@@ -40,8 +44,26 @@ public class SmbUpdateInstrumentation extends Instrumentation {
           "const license=await(await fetch('SMBJ-RPC-LICENSE.txt')).text();if(!license.includes('Rapid7')||!license.includes('BSD-3-clause'))throw Error('Offline RPC notice missing');"+
           "window.__networkQa={pass:true};}catch(e){window.__networkQa={error:String(e)}}finally{if(scan)await api.native('lan.stop',{id:scan}).catch(()=>{});if(id)await api.native('connection.delete',{id}).catch(()=>{});}})();");
         long end=System.currentTimeMillis()+45000;
-        while(System.currentTimeMillis()<end){JSONObject marker=json("window.__networkQa || {}");require(!marker.has("error"),marker.optString("error"));if(marker.optBoolean("pass")){result.putString("pass","true");result.putString("checks","host-only profile, edit identity/password retention, clear password, cancel native discovery, offline RPC notice");finish(Activity.RESULT_OK,result);return;}Thread.sleep(150);}
+        while(System.currentTimeMillis()<end){JSONObject marker=json("window.__networkQa || {}");require(!marker.has("error"),marker.optString("error"));if(marker.optBoolean("pass")){result.putString("pass","true");result.putString("checks","Android RPC codec error, host-only profile, edit identity/password retention, clear password, cancel native discovery, offline RPC notice");finish(Activity.RESULT_OK,result);return;}Thread.sleep(150);}
         throw new Exception("Minified network-profile probe timed out");
+    }
+    private void networkSmbProbe(Bundle result) throws Exception {
+        // adb reverse points this emulator loopback port at the read-only .NET
+        // fixture. Never take an arbitrary host or real account from arguments.
+        eval("void(async()=>{const ids=[],times=[];const list=async(phase,path)=>{window.__networkSmbQa={phase};const start=Date.now();try{return await api.native('list',{path});}finally{times.push({phase,ms:Date.now()-start});}};try{const profile={type:'smb',name:'QA SMB host',host:'127.0.0.1',port:1445,share:'',username:'qa',password:'qa-pass'};"+
+          "const id=await api.native('connection.save',profile);ids.push(id);const root='remote://'+id+'/';const shares=(await list('enumerate',root)).entries;"+
+          "const qa=shares.find(e=>e.name==='QA');if(!qa?.isDir||shares.some(e=>e.name==='IPC$'))throw Error('Missing disk share or exposed IPC$: '+JSON.stringify(shares));"+
+          "const files=(await list('share',qa.path)).entries;const folder=files.find(e=>e.name==='子目录');if(!folder?.isDir)throw Error('Unicode folder missing');"+
+          "if(!(await list('nested',folder.path)).entries.some(e=>e.name==='测试.txt'&&!e.isDir))throw Error('Nested Unicode file missing');"+
+          "const pinned=await api.native('connection.save',{...profile,name:'QA pinned share',share:'QA'});ids.push(pinned);if(!(await list('pinned','remote://'+pinned+'/')).entries.some(e=>e.name==='子目录'))throw Error('Pinned-share compatibility failed');"+
+          "const denied=await api.native('connection.save',{...profile,name:'QA wrong password',password:'wrong-fixture-password'});ids.push(denied);let rejected=false;try{await list('denied','remote://'+denied+'/');}catch(e){rejected=true;}if(!rejected)throw Error('Authentication failure returned an empty/successful listing');"+
+          "if(times.some(t=>t.ms>=8000))throw Error('Loopback browse/logout latency regression');window.__networkSmbQa={pass:true,times};}catch(e){window.__networkSmbQa={error:String(e),times}}finally{for(const id of ids)await api.native('connection.delete',{id}).catch(()=>{});}})();");
+        long end=System.currentTimeMillis()+90000,phaseStart=0;String phase="";boolean diagnosed=false;
+        while(System.currentTimeMillis()<end){JSONObject marker=json("window.__networkSmbQa || {}");require(!marker.has("error"),marker.toString());if(marker.optBoolean("pass")){result.putString("pass","true");result.putString("timings",marker.optJSONArray("times").toString());result.putString("checks","real SMB2 SRVSVC share enumeration, IPC filtering, nested Unicode folder/file, pinned-share compatibility, wrong-password rejection");finish(Activity.RESULT_OK,result);return;}
+            if(!marker.optString("phase").equals(phase)){phase=marker.optString("phase");phaseStart=System.currentTimeMillis();diagnosed=false;Bundle progress=new Bundle();progress.putString("phase",phase);sendStatus(1,progress);}
+            if(arguments.getString("diagnose","").equals("true")&&!phase.isEmpty()&&!diagnosed&&System.currentTimeMillis()-phaseStart>8000){diagnosed=true;StringBuilder stacks=new StringBuilder();for(java.util.Map.Entry<Thread,StackTraceElement[]> entry:Thread.getAllStackTraces().entrySet())if(entry.getKey().getName().contains("pool")||entry.getKey().getName().contains("Packet")){stacks.append(entry.getKey().getName()).append('\n');for(int i=0;i<Math.min(12,entry.getValue().length);i++)stacks.append(entry.getValue()[i]).append('\n');}Bundle progress=new Bundle();progress.putString("waiting",phase);progress.putString("stacks",stacks.toString());sendStatus(1,progress);}
+            Thread.sleep(150);}
+        throw new Exception("Minified live SMB fixture probe timed out");
     }
     private void ebookProbe(Bundle result) throws Exception {
         String path=arguments.getString("book");require(path!=null&&path.startsWith("/storage/emulated/0/Download/RHFiles-"),"Only owned emulator fixtures allowed");
@@ -234,6 +256,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("concurrent-panes")){concurrentPanesProbe(result);return;}
             if(arguments.getString("mode","").equals("backup")){backupProbe(result);return;}
             if(arguments.getString("mode","").equals("network-profile")){networkProfileProbe(result);return;}
+            if(arguments.getString("mode","").equals("network-smb")){networkSmbProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

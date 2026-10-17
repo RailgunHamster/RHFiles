@@ -45,9 +45,12 @@ class LanDiscovery(private val context:Context):Closeable {
       fun add(host:InetAddress,port:Int,name:String,source:String){
         if(!alive()||!addresses.any{sameSubnet(it.address.address,host.address,it.networkPrefixLength.toInt())}||port !in 1..65535)return
         val address=host.hostAddress?:return;val key="$address:$port"
-        scan.devices.compute(key){_,previous->JSONObject().put("host",address).put("port",port)
-          .put("name",if(source=="mDNS"||previous==null)name.take(100) else previous.optString("name"))
-          .put("source",if(previous==null)source else (previous.optString("source")+" / "+source).split(" / ").distinct().joinToString(" / "))}
+        synchronized(scan){
+          if(scan.devices.size>=256&&!scan.devices.containsKey(key)){scan.errors.addIfAbsent("发现结果达到 256 项上限，请缩小局域网范围或手动添加");return}
+          scan.devices.compute(key){_,previous->JSONObject().put("host",address).put("port",port)
+            .put("name",if(source=="mDNS"||previous==null)name.take(100) else previous.optString("name"))
+            .put("source",if(previous==null)source else (previous.optString("source")+" / "+source).split(" / ").distinct().joinToString(" / "))}
+        }
       }
       val ipv4=interfaces.flatMap{iface->iface.interfaceAddresses.filter{it.address is Inet4Address}.map{iface to it}}.take(4)
       workers=Executors.newFixedThreadPool(1+ipv4.size)

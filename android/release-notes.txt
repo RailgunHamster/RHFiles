@@ -3,6 +3,7 @@ RHFiles Android 0.1.16
 SMB 网络位置的共享名称改为可选，只填写主机名 / IP 即可先列出主机共享，再进入文件夹；保留直接固定到某个共享的方式。仅显示文件共享，不显示打印机或 IPC$；服务器拒绝匿名枚举时说明登录 / 权限原因，可编辑账号，或直接指定共享。
 网络位置页新增局域网自动发现（mDNS / WS-Discovery），支持停止、重新发现，将发现的主机保存为常用项。只在进入该页面时短时发现，不尝试登录、不扫描公网、不自动保存结果；服务器需启用发现且 Wi-Fi 不隔离设备。
 已保存位置支持修改名称、主机、共享、端口、协议与账号；保留连接 ID 和原密码（不会回传显示），可明确清除密码。更换服务器或账号需重新填写或清除密码，避免把旧密码发往其他主机。有未完成文件任务时不能修改或删除对应连接。常用项使用现有收藏机制，纳入加密配置备份；SMB 主机级账号也可用于家庭服务器更新。
+修复只读 SMB 浏览在读取完成后仍等待注销回复、额外卡住 15/30 秒的情况；不改变复制/写入的确认流程。
 
 Browse SMB servers without specifying a share. Discover local SMB hosts via mDNS / WS-Discovery and save them as favorites. Edit saved network profiles in place, keeping connection IDs and encrypted passwords without revealing them. Prevent credential reuse on a different server/account and changes while a file task is using the connection. Preserve explicit-share profiles and encrypted backups; support host-level credentials for home-server updates.
 

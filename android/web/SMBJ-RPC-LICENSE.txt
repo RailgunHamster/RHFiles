@@ -1,5 +1,7 @@
 SMBJ-RPC / com.rapid7.client:dcerpc 0.12.13
 https://github.com/rapid7/smbj-rpc
+Android integration adapts two java.rmi codec exception references to RHFiles
+IOException subclasses at build time; no RMI implementation is included.
 Upstream LICENSE.txt (dcerpc-0.12.13):
 
 Copyright 2017-2021, Rapid7, Inc.
