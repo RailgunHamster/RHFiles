@@ -5,14 +5,14 @@ RHFiles Android 0.1.22
 3. 为键盘遮挡计算、文件排序变化、批量删除、网格列数变化及异步文件操作补充回归测试。
 4. 分类中的具体文件夹支持粘贴、移动和双窗格传入，直接读取真实目录后过滤，不再等索引刷新才显示新文件；分类聚合页不猜测写入位置。增加返回分类按钮及可点击的真实路径面包屑，并可打开实际文件夹。
 5. 将交给系统安装器的更新 APK 改为按版本码及校验值命名的独立、不可变快照，不再让不同版本共用 update.apk 的内容地址；安装前再次验证版本、签名、大小和校验和，保留系统确认。
-6. 已下载但未安装的更新也能重新检查或取消，不再锁定 ready 状态。复制诊断包含已安装版本、待安装版本及安装文件名，版本拒绝原因明确列出双方版本码。
+6. 已下载但未安装的更新也能重新检查或取消，不再锁定 ready 状态。安装前复核或启动安装器失败会保存原因并刷新更新面板；复制诊断包含已安装版本、待安装版本及安装文件名，版本拒绝原因明确列出双方版本码。
 
 1. Keep rename and other input sheets within the software-keyboard-safe viewport, without subtracting IME space twice from windows already resized by Android.
 2. Preserve visible-file anchors and row offsets after rename, deletion and refresh in list/grid views. Fall back to neighboring survivors and honor scrolling performed while an operation is pending.
 3. Add regression coverage for IME geometry, reordered/removed anchors, grid column changes and delayed file mutations.
 4. Allow paste/move and cross-pane transfers into concrete category folders, read/filter live directory contents, and expose category-up and clickable real-path navigation. Never guess a destination for aggregate categories.
 5. Hand system installers an immutable, version/code/digest-specific APK snapshot instead of reusing one content URI for different versions. Revalidate integrity, package, version and signing identity before requesting system confirmation.
-6. Permit manual recheck/cancellation from ready state; include installed/candidate versions and installer filenames in diagnostics, with explicit version-mismatch details.
+6. Permit manual recheck/cancellation from ready state. Persist installation-stage errors and refresh the update panel; include installed/candidate versions and installer filenames in diagnostics, with explicit version-mismatch details.
 
 此前版本改进 / Previous improvements (0.1.21):
 

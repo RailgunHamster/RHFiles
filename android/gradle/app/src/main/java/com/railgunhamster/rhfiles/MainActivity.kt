@@ -102,9 +102,9 @@ class MainActivity : TauriActivity() {
       mainHandler.post {if(!io.isShutdown)io.execute {try{installUpdate()}catch(e:Exception){runOnUiThread{android.widget.Toast.makeText(this,e.message ?: "安装更新失败",android.widget.Toast.LENGTH_LONG).show()}}}}
     }
   }
-  private fun installUpdate():String {
+  private fun installUpdate():String = try {
     val file=updates.installFile()
-    return onUi {
+    onUi {
       if(Build.VERSION.SDK_INT>=26 && !packageManager.canRequestPackageInstalls()) {
         pendingUpdateInstall=true
         try{startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:$packageName")))}catch(e:Exception){pendingUpdateInstall=false;throw e}
@@ -117,7 +117,7 @@ class MainActivity : TauriActivity() {
         "installer"
       }
     }
-  }
+  }catch(e:Exception){updates.installationFailed(e);throw e}
   private fun <T> onUi(block:()->T):T {
     if(Looper.myLooper()==Looper.getMainLooper())return block()
     val task=java.util.concurrent.FutureTask<T>{block()};runOnUiThread(task);return task.get()

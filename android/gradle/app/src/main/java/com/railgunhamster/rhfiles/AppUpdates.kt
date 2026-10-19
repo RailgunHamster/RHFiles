@@ -311,6 +311,7 @@ class AppUpdates private constructor(private val context: Context) {
   }
   @Synchronized fun cancel(): JSONObject {canceled=true;call?.cancel();if(state=="ready"){state="canceled";message="已取消待安装更新";receipt.delete();apk.delete();installArtifact=null};return status()}
   @Synchronized private fun failed(e:Exception) {state=if(canceled)"canceled" else "failed";message=updateFailure(e,config().getString("source"))}
+  @Synchronized fun installationFailed(e:Exception){canceled=false;state="failed";message=updateFailure(e,config().getString("source"),true)}
   @Suppress("DEPRECATION") internal fun verifyApk(file: File, release: AndroidRelease) {
     require(file.isFile && file.length()==release.size) { "已下载的 APK 不完整，请重新下载" }
     val hash=file.inputStream().use {input->val md=MessageDigest.getInstance("SHA-256");val buffer=ByteArray(128*1024);while(true){val n=input.read(buffer);if(n<0)break;md.update(buffer,0,n)};md.digest().joinToString(""){"%02x".format(it)}}

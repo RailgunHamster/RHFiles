@@ -440,8 +440,10 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         eval("(()=>{const n=__qa.document.querySelector("+JSONObject.quote(selector)+");if(!n)throw Error('Missing fixture control');for(const type of ['pointerdown','pointerup'])n.dispatchEvent(new __qa.PointerEvent(type,{bubbles:true,pointerId:1,pointerType:'touch',button:0}));n.click()})()");
     }
     private void renameViewportProbe(Bundle result) throws Exception {
-        String root=arguments.getString("usageRoot","");java.io.File photos=new java.io.File(root,"照片");
-        require(photos.getCanonicalPath().startsWith("/storage/emulated/0/Download/RHFiles-Usage-QA-")&&photos.isDirectory(),"Owned synthetic fixture required");
+        String root=arguments.getString("usageRoot","");boolean create=root.isEmpty();if(create)root="/storage/emulated/0/Download/RHFiles-Usage-QA-ime-"+System.currentTimeMillis();java.io.File photos=new java.io.File(root,"照片");
+        if(create){require(photos.mkdirs(),"Cannot create synthetic viewport fixture");for(int i=0;i<200;i++)try(java.io.FileOutputStream output=new java.io.FileOutputStream(new java.io.File(photos,"图片-"+i+".jpg"))){output.write(new byte[17]);}}
+        java.io.File fixture=new java.io.File(root),downloads=new java.io.File("/storage/emulated/0/Download");
+        require(fixture.getName().startsWith("RHFiles-Usage-QA-")&&fixture.getParentFile()!=null&&fixture.getParentFile().getCanonicalFile().equals(downloads.getCanonicalFile())&&photos.isDirectory(),"Owned synthetic fixture required: argument="+root+", canonical="+photos.getCanonicalPath()+", directory="+photos.isDirectory()+", allFiles="+android.os.Environment.isExternalStorageManager());
         awaitScript("!!document.querySelector('.file-pane:not([hidden])')?.contentWindow.rhfilesPane");
         eval("window.__qa=document.querySelector('.file-pane:not([hidden])').contentWindow");awaitScript("__qa.rhfilesPane.snapshot().ready===true");eval("RHFilesWorkbench.openLayout(__qa)");awaitScript("!!document.querySelector('[data-layout=single]')");eval("document.querySelector('[data-layout=single]').click();__qa.document.getElementById('nav-home').click()");
         awaitScript("!__qa.document.getElementById('home').hidden&&!__qa.rhfilesPane.snapshot().busy");paneClick("[data-tile=downloads]");awaitScript("__qa.rhfilesPane.snapshot().route.path==='/storage/emulated/0/Download'&&!__qa.rhfilesPane.snapshot().busy");
@@ -452,7 +454,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         eval("__qa.document.getElementById('btn-view').click()");awaitScript("[...__qa.document.querySelectorAll('#sheet button')].some(b=>b.textContent.trim().endsWith('列表'))");eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim().endsWith('列表')).click()");
         eval("__qa.document.getElementById('filelist').scrollTop=6407");awaitScript("[...__qa.document.querySelectorAll('#filelist [data-path]')].some(n=>n.getBoundingClientRect().top>100)");
         eval("window.__beforeHeight=__qa.innerHeight;window.__layoutMemory=localStorage.getItem('rhfiles.panes.screens');window.__renameRow=[...__qa.document.querySelectorAll('#filelist [data-path]')].find(n=>n.getBoundingClientRect().top>140);__renameRow.querySelector('.entry-more').click()");
-        awaitScript("[...__qa.document.querySelectorAll('#sheet button')].some(b=>b.textContent.trim()==='重命名')");eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='重命名').click()");Thread.sleep(250);
+        awaitScript("[...__qa.document.querySelectorAll('#sheet button')].some(b=>b.textContent.trim()==='重命名')");eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='重命名').click()");Thread.sleep(250);tapCss("#sheet input",true);
         runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.requestFocus();((android.view.inputmethod.InputMethodManager)activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)).showSoftInput(web,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});
         long end=System.currentTimeMillis()+15000;while(!imeVisible()&&System.currentTimeMillis()<end)Thread.sleep(100);require(imeVisible(),"Real software keyboard did not open");Thread.sleep(900);
         final int[] geometry=new int[4];runOnMainSync(()->{View decor=activity.getWindow().getDecorView();WebView web=find(decor);int[] origin=new int[2];web.getLocationOnScreen(origin);geometry[0]=origin[1];geometry[1]=web.getWidth();geometry[2]=decor.getRootWindowInsets().getInsets(WindowInsets.Type.ime()).bottom;geometry[3]=activity.getWindowManager().getCurrentWindowMetrics().getBounds().bottom;});
@@ -483,6 +485,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("update-handoff"))getTargetContext().getSharedPreferences("updates-v1",0).edit().putBoolean("autoCheck",false).commit();
             Intent intent=getTargetContext().getPackageManager().getLaunchIntentForPackage(getTargetContext().getPackageName());
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);activity=startActivitySync(intent);
+            if(arguments.getString("forceEdge","").equals("true"))runOnMainSync(()->{activity.getWindow().setDecorFitsSystemWindows(false);activity.getWindow().getDecorView().requestApplyInsets();});
             long deadline=System.currentTimeMillis()+60000;
             while(!eval("typeof api!=='undefined' && !!window.rhfilesHandleBack").equals("true")){require(System.currentTimeMillis()<deadline,"Frontend not ready");Thread.sleep(150);}
             if(arguments.getString("mode","").equals("ebook")){ebookProbe(result);return;}

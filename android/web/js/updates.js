@@ -66,6 +66,7 @@ const androidUpdates=(()=>{
   async function install(){
     if(installing)return;installing=true;wantInstall=false;
     try{const result=await api.native('update.install');ui.toast(result==='permission'?'请允许 RHFiles 安装应用；返回后继续系统安装确认':'请在系统安装窗口确认更新');}
+    catch(error){try{await load()}catch{}throw error;}
     finally{installing=false;}
   }
   function paint(){

@@ -98,7 +98,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
         case 'update.check':if(!a.manual&&!m.updates.config.autoCheck)return m.updates;m.updateRequests++;m.updates.state=m.updateFail?'failed':'available';m.updates.message=m.updateFail?'SMB 登录失败，请检查用户名和密码':'';m.updates.release=m.updateFail?null:{version:'0.1.4',versionCode:1004,notes:'第一行\n第二行 <img onerror=alert(1)>\n\n此前版本改进 / Previous improvements (0.1.3):\n旧版不应在外层展示',size:2000};return m.updates;
         case 'update.download':m.updates.state='downloading';m.updates.started=Date.now();m.updates.bytes=800;return m.updates;
         case 'update.cancel':m.updates.state='canceled';return m.updates;
-        case 'update.install':return m.installPermission?'permission':'installer';
+        case 'update.install':if(m.installFail){m.updates.state='failed';m.updates.message='安装更新失败：APK 0.1.20 (1020)，清单 0.1.21 (1021)';throw Error(m.updates.message)}return m.installPermission?'permission':'installer';
         case 'roots':return [{path:root,label:'内部存储',removable:false,totalBytes:128*1024**3,freeBytes:80*1024**3},{path:'content://test/tree/root/document/root',label:'云端',removable:true,provider:true}];
         case 'list':return {path:a.path,entries:m.fs[a.path]||[]};
         case 'media.library':return {entries:Object.values(m.fs).flat().filter(e=>e.kind===a.category),total:1,truncated:false};
@@ -409,6 +409,8 @@ try{
     check(!await p.locator('#update-check').isDisabled(),'Ready APK does not lock manual update checking');
     check(await p.locator('#update-cancel').isVisible(),'Ready APK can be canceled after returning from an installer');
     await p.click('#update-cancel');await p.locator('#update-download:not([hidden])').waitFor();check(await p.locator('#update-state').innerText().then(t=>t.includes('已取消')),'Canceling ready state restores an explicit retry path');
+    await p.evaluate(()=>__model.installFail=true);await p.click('#update-download');await p.evaluate(()=>__model.updates.state='ready');await p.waitForFunction(()=>document.getElementById('update-state').textContent.includes('1020'));
+    check(await p.locator('#update-state.danger').isVisible(),'Native install failure refreshes persisted status instead of leaving Ready without a reason');await p.waitForTimeout(900);check(await p.evaluate(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length===2),'Failed installation does not loop automatic retries');
     await p.screenshot({path:path.join(output,'android-updates.png'),fullPage:true});
     check(errors.length===0,'Android update UI has no uncaught errors');await context.close();
   }
@@ -527,7 +529,8 @@ try{
     await p.click('#btn-theme');await home(p);check(await p.evaluate(()=>document.documentElement.dataset.theme==='dark'),'The common visual system retains dark mode');await capture(p,'018-home-dark');
     await p.setViewportSize({width:1100,height:900});await p.waitForSelector('body.wide-layout');await p.locator('#drawer').waitFor();
     await p.evaluate(()=>{const raw=JSON.stringify([{name:'photo.jpg',label:'旅行收藏',path:'/storage/emulated/0/photo.jpg',isDir:false}]);localStorage.setItem('rhfiles.favorites',raw);window.dispatchEvent(new StorageEvent('storage',{key:'rhfiles.favorites',newValue:raw}));});
-    check(await p.locator('.favorite-location>button:first-child').evaluate(e=>e.getBoundingClientRect().width>100)&&await p.locator('.favorite-more').evaluate(e=>e.getBoundingClientRect().width===44),'Persistent tablet drawer keeps favorite text visible next to the fixed-size menu');
+    await capture(p,'022-tablet-favorite');
+    check(await p.locator('.favorite-location>button:first-child').evaluate(e=>e.getBoundingClientRect().width>100)&&await p.locator('.favorite-more').evaluate(e=>Math.abs(e.getBoundingClientRect().width-44)<.5),'Persistent tablet drawer keeps favorite text visible next to the fixed-size menu');
     await context.close();
     const narrow=await pageFor({nativeV3:true,nativeUpdates:true,viewport:{width:275,height:760}});await tile(narrow.page,'storage-0').waitFor();await narrow.page.evaluate(()=>{__model.updates.state='available';__model.updates.release={version:'0.1.99',size:1024};return androidUpdates.onSettings()});
     check(await narrow.page.locator('.topbar').evaluate(e=>e.scrollWidth<=e.clientWidth)&&await narrow.page.evaluate(()=>document.documentElement.scrollWidth===innerWidth),'Toolbar update indicator and card fit a 275px pane');
