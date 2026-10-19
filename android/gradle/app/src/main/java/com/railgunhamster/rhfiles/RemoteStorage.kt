@@ -45,6 +45,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     private class ReadSmb(val client:SMBClient,val session:Session):Closeable {
       private val shares=linkedMapOf<String,DiskShare>()
       val serverShares by lazy {SmbShares(SMBTransportFactories.SRVSVC.getTransport(session))}
+      val alive get()=session.connection.isConnected&&shares.values.all{it.isConnected}
       fun share(name:String):DiskShare {
         shares[name]?.let{return it}
         if(shares.size>=4){val key=shares.keys.first();shares.remove(key)?.close()}
@@ -52,9 +53,14 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       }
       override fun close(){closeReadSession(client,session);shares.clear()}
     }
-    private val readSessions=IdleReadPool<ReadKey,ReadSmb>()
+    private val readSessions=IdleReadPool<ReadKey,ReadSmb>(reusable={it.alive})
     private val readReaper by lazy {java.util.concurrent.Executors.newSingleThreadScheduledExecutor{task->Thread(task,"RHFiles-SMB-idle").apply{isDaemon=true}}.apply{scheduleWithFixedDelay({readSessions.reap()},15,15,TimeUnit.SECONDS)}}
     internal fun discardReadSessions(){readSessions.invalidate{true}}
+    // SMBJ wraps transport IOExceptions in SMBRuntimeException; a closed Share
+    // may have no cause at all. Preserve permission/protocol errors on a live
+    // resource, rather than retrying every server rejection.
+    internal fun readFailure(error:Exception,alive:Boolean):Exception =
+      if(!alive||generateSequence<Throwable>(error){it.cause}.take(8).any{it is IOException})IOException("SMB 只读连接已断开：${error.message}",error)else error
     // Directory/RPC reads have no buffered writes. Once their responses and
     // explicit tree-close complete, disconnect this one-shot transport without
     // waiting another 15/30 seconds for an optional LOGOFF reply. TCP teardown
@@ -209,7 +215,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     fun attempt()=readSessions.use(key,{
       created=true;val client=smbClient(15)
       try{ReadSmb(client,authenticate(client,c))}catch(error:Exception){client.close();throw error}
-    },block)
+    }){connection->try{block(connection)}catch(error:Exception){throw readFailure(error,connection.alive)}}
     return try{attempt()}catch(error:IOException){
       if(created)throw error
       // A server may silently expire an idle socket. Retry an idempotent read

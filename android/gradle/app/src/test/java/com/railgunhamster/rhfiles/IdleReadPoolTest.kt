@@ -26,6 +26,11 @@ class IdleReadPoolTest {
     try{pool.use("a",{broken}){throw IOException("closed socket")};fail()}catch(_:IOException){}
     assertEquals(1,broken.closes);val fresh=Resource();pool.use("a",{fresh}){assertSame(fresh,it)}
   }
+  @Test fun externallyClosedResourcesAreReplacedBeforeTheNextRead(){
+    val pool=IdleReadPool<String,Resource>(reusable={it.closes==0},now={0L});val old=Resource();val fresh=Resource()
+    pool.use("a",{old}){};old.close();pool.use("a",{fresh}){assertSame(fresh,it)}
+    pool.use("a",{error("must reuse replacement")}){assertSame(fresh,it)}
+  }
   @Test fun invalidationWaitsForBorrowerAndDoesNotCloseReplacement(){
     val pool=IdleReadPool<String,Resource>(now={0L});val a=Resource();val b=Resource();val entered=CountDownLatch(1);val release=CountDownLatch(1)
     val executor=java.util.concurrent.Executors.newSingleThreadExecutor()

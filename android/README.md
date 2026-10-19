@@ -42,6 +42,11 @@ including distinct package icons, SMB image decoding, repeated folder reads,
 decoded local/SMB video frames, initially hidden controls, seeking and Next. Run
 only on an owned emulator, with `adb -s <serial> reverse tcp:1445 tcp:1445` and the
 owned `RHFiles-Media-QA-1.mp4` / `RHFiles-Media-QA-2.mp4` fixtures in Downloads.
+`scripts/testing/prepare-android-media.ps1 -EmulatorSerial emulator-5582` creates
+these synthetic fixtures with ffmpeg and transfers them only after verifying an
+emulator. Start the read-only .NET fixture server with its printed directory.
+The second video is blue rather than the first test pattern, so preserving an old
+surface frame cannot pass the Next test. The image fixtures include EXIF rotation.
 Build the test APK with `-PrhfilesReleaseProbe` and require both `pass=true` and
 `INSTRUMENTATION_CODE: -1`; an adb exit code alone is not success.
 

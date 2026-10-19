@@ -65,9 +65,16 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             Thread.sleep(150);}
         throw new Exception("Minified live SMB fixture probe timed out");
     }
-    private boolean hasVideoFrame() {
+    private boolean hasVideoFrame() {return hasVideoFrame(false);}
+    private boolean hasVideoFrame(boolean blueOnly) {
         android.graphics.Bitmap image=getUiAutomation().takeScreenshot();if(image==null)return false;
-        int colorful=0;try{for(int y=image.getHeight()/3;y<image.getHeight()*2/3;y+=6)for(int x=image.getWidth()/8;x<image.getWidth()*7/8;x+=6){int c=image.getPixel(x,y),r=android.graphics.Color.red(c),g=android.graphics.Color.green(c),b=android.graphics.Color.blue(c);if(Math.max(r,Math.max(g,b))-Math.min(r,Math.min(g,b))>60)colorful++;}}finally{image.recycle();}return colorful>150;
+        // The testsrc pattern remains saturated beneath Media3's 60%-black
+        // control scrim (channel delta about 102); the OS tutorial is below 70.
+        int colorful=0,blue=0,total=0;try{for(int y=image.getHeight()/3;y<image.getHeight()*2/3;y+=6)for(int x=image.getWidth()/8;x<image.getWidth()*7/8;x+=6){int c=image.getPixel(x,y),r=android.graphics.Color.red(c),g=android.graphics.Color.green(c),b=android.graphics.Color.blue(c);total++;if(b>80&&r<50&&g<60)blue++;if(Math.max(r,Math.max(g,b))-Math.min(r,Math.min(g,b))>90)colorful++;}}finally{image.recycle();}return blueOnly?blue>total*.65:colorful>150;
+    }
+    private void dismissSystemFullscreenEducation() {
+        android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();if(root==null)return;
+        try{for(android.view.accessibility.AccessibilityNodeInfo node:root.findAccessibilityNodeInfosByText("Got it"))try{String owner=String.valueOf(node.getPackageName());if((owner.equals("android")||owner.equals("com.android.systemui"))&&String.valueOf(node.getText()).equals("Got it"))node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);}finally{node.recycle();}}finally{root.recycle();}
     }
     private void playbackProbe(String path,String second) throws Exception {
         ActivityMonitor monitor=addMonitor("com.railgunhamster.rhfiles.PlaybackActivity",null,false);
@@ -75,17 +82,21 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         try {
             eval("void api.native('media.play',{path:"+JSONObject.quote(path)+",name:'QA video 1',kind:'video',queue:[{path:"+JSONObject.quote(path)+",name:'QA video 1'},{path:"+JSONObject.quote(second)+",name:'QA video 2'}]}).catch(e=>window.__mediaError=String(e))");
             playerActivity=waitForMonitorWithTimeout(monitor,30000);require(playerActivity!=null,"Native player failed to open: "+eval("window.__mediaError"));
-            final Activity screen=playerActivity;long until=System.currentTimeMillis()+30000;while(!hasVideoFrame()&&System.currentTimeMillis()<until)Thread.sleep(250);
+            final Activity screen=playerActivity;long until=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<until){dismissSystemFullscreenEducation();if(hasVideoFrame())break;Thread.sleep(250);}
             require(hasVideoFrame(),"No decoded video frame (error page is not playback)");
             int progressId=getTargetContext().getResources().getIdentifier("exo_progress","id",getTargetContext().getPackageName()),nextId=getTargetContext().getResources().getIdentifier("exo_next","id",getTargetContext().getPackageName());
             boolean[] hidden={false};runOnMainSync(()->{View progress=screen.findViewById(progressId);hidden[0]=progress!=null&&!progress.isShown();});require(hidden[0],"Playback controls must start hidden");
             int[] dimensions=new int[2];runOnMainSync(()->{dimensions[0]=screen.getWindow().getDecorView().getWidth();dimensions[1]=screen.getWindow().getDecorView().getHeight();});
             long now=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,dimensions[0]/2f,dimensions[1]/2f,0),up=MotionEvent.obtain(now,now+60,MotionEvent.ACTION_UP,dimensions[0]/2f,dimensions[1]/2f,0);down.setSource(InputDevice.SOURCE_TOUCHSCREEN);up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-            try{getUiAutomation().injectInputEvent(down,true);Thread.sleep(60);getUiAutomation().injectInputEvent(up,true);}finally{down.recycle();up.recycle();}Thread.sleep(250);
-            boolean[] enabled={false};runOnMainSync(()->{View progress=screen.findViewById(progressId),next=screen.findViewById(nextId);enabled[0]=progress!=null&&progress.isShown()&&next!=null&&next.isShown()&&next.isEnabled();if(enabled[0]){progress.requestFocus();progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));}});require(enabled[0],"Tap did not reveal seek/next controls");
-            Thread.sleep(1200);require(hasVideoFrame(),"Video seek stopped decoding");runOnMainSync(()->screen.findViewById(nextId).performClick());
+            try{getUiAutomation().injectInputEvent(down,true);Thread.sleep(60);getUiAutomation().injectInputEvent(up,true);}finally{down.recycle();up.recycle();}Thread.sleep(700);
+            boolean[] enabled={false};String[] detail={""};runOnMainSync(()->{View progress=screen.findViewById(progressId),next=screen.findViewById(nextId);detail[0]="focus="+screen.hasWindowFocus()+", progress="+(progress==null?"missing":progress.isShown())+", next="+(next==null?"missing":next.isShown()+"/enabled="+next.isEnabled());enabled[0]=progress!=null&&progress.isShown()&&next!=null&&next.isShown()&&next.isEnabled();if(enabled[0]){progress.requestFocus();progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));}});
+            if(!enabled[0]){android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-QA-player-controls.png")){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}finally{shot.recycle();}}
+            require(enabled[0],"Tap did not reveal seek/next controls: "+detail[0]);
+            until=System.currentTimeMillis()+15000;while(!hasVideoFrame()&&System.currentTimeMillis()<until)Thread.sleep(250);require(hasVideoFrame(),"Video seek stopped decoding");runOnMainSync(()->screen.findViewById(nextId).performClick());
             until=System.currentTimeMillis()+15000;while(!String.valueOf(screen.getTitle()).equals("QA video 2")&&System.currentTimeMillis()<until)Thread.sleep(150);require(String.valueOf(screen.getTitle()).equals("QA video 2"),"Next did not change the active queue item");
-            Thread.sleep(1200);require(hasVideoFrame(),"Next queue item has no decoded frame");
+            // The second fixture is solid blue, unlike the first test pattern.
+            // Keeping the previous SurfaceView frame cannot satisfy this check.
+            until=System.currentTimeMillis()+15000;while(!hasVideoFrame(true)&&System.currentTimeMillis()<until)Thread.sleep(250);require(hasVideoFrame(true),"Next queue item has no new decoded frame");
         }finally{removeMonitor(monitor);if(playerActivity!=null){final Activity closing=playerActivity;runOnMainSync(closing::finish);waitForIdleSync();}}
     }
     private void mediaProbe(Bundle result) throws Exception {

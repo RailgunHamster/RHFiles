@@ -4,7 +4,7 @@ import java.io.Closeable
 
 /** Bounded, expiring read-only resources. Network work never holds the map lock.
  * A retired resource remains alive until its last borrower returns. */
-internal class IdleReadPool<K,T:Closeable>(private val capacity:Int=4,private val idleMs:Long=45000,private val now:()->Long={android.os.SystemClock.elapsedRealtime()}) {
+internal class IdleReadPool<K,T:Closeable>(private val capacity:Int=4,private val idleMs:Long=45000,private val reusable:(T)->Boolean={true},private val now:()->Long={android.os.SystemClock.elapsedRealtime()}) {
   private class Slot<T>(var touched:Long){var value:T?=null;var users=0;var retired=false}
   private val slots=linkedMapOf<K,Slot<T>>()
   private fun close(slot:Slot<T>)=synchronized(slot){val value=slot.value;slot.value=null;try{(value as? Closeable)?.close()}catch(_:Exception){}}
@@ -20,6 +20,7 @@ internal class IdleReadPool<K,T:Closeable>(private val capacity:Int=4,private va
     }
     evicted.forEach(::close)
     try{return synchronized(slot){
+      slot.value?.let{if(!reusable(it))close(slot)}
       val resource=slot.value?:create().also{slot.value=it}
       try{block(resource)}catch(error:Throwable){slot.value=null;try{resource.close()}catch(_:Exception){};throw error}
     }}finally{
