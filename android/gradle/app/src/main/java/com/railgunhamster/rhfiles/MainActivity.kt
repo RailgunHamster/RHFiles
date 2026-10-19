@@ -33,10 +33,13 @@ import java.util.concurrent.Executors
 /** Only the trusted main frame gets this bridge. I/O never runs on Android's UI thread. */
 class MainActivity : TauriActivity() {
   private val io=Executors.newFixedThreadPool(3)
+  private val mediaIo=Executors.newFixedThreadPool(2)
   private val storage by lazy {NativeStorage(applicationContext)}
   private val updates by lazy {AppUpdates.get(this)}
   private val thumbnailDelegate=lazy {MediaThumbnails(storage)}
   private val thumbnails by thumbnailDelegate
+  private val appIcons by lazy {AppIcons(applicationContext)}
+  private val remoteImages by lazy {RemoteImages(storage.remote)}
   private val adaptiveWindow by lazy {AdaptiveWindow(this){appWebView}}
   private val lanDiscovery by lazy {LanDiscovery(applicationContext)}
   private var pendingUpdateInstall:Boolean
@@ -51,11 +54,12 @@ class MainActivity : TauriActivity() {
   private val backup by lazy {SettingsBackup(applicationContext,storage.remote){updates.validateBackup(it)}}
   private val backupUi by lazy {SettingsBackupUi(this,io,backup,{updates.config()}){payload,currentWeb->synchronized(settingsLock){
     val jobs=FileTasks.list(this);require((0 until jobs.length()).none{jobs.getJSONObject(it).optString("state") in listOf("queued","scanning","running","paused")}){"请先结束当前文件任务再导入配置"}
-    updates.restoreSettings{backup.apply(payload,currentWeb)}
+    updates.restoreSettings{val result=backup.apply(payload,currentWeb);RemoteStorage.discardReadSessions();result}
   }}}
   private var watching=false
   private val mainHandler=Handler(Looper.getMainLooper())
   private val changed=Runnable {appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-storage-changed'))",null)}
+  private fun locationsChanged(){mainHandler.post{appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-locations-changed'))",null)}}
   private val storageReceiver=object:BroadcastReceiver(){override fun onReceive(context:Context?,intent:Intent?){mainHandler.removeCallbacks(changed);mainHandler.postDelayed(changed,400)}}
   private val mediaObserver=object:android.database.ContentObserver(mainHandler){override fun onChange(selfChange:Boolean){mainHandler.removeCallbacks(changed);mainHandler.postDelayed(changed,800)}}
   private val backNavigation by lazy {
@@ -78,7 +82,7 @@ class MainActivity : TauriActivity() {
     watching=true
     try{contentResolver.registerContentObserver(MediaStore.Files.getContentUri("external"),true,mediaObserver)}catch(_:Exception){}
   }
-  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();lanDiscovery.close();io.shutdown();appWebView=null;super.onDestroy()}
+  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();RemoteStorage.discardReadSessions();lanDiscovery.close();io.shutdown();mediaIo.shutdown();appWebView=null;super.onDestroy()}
   override fun onSaveInstanceState(outState:Bundle){outState.putBoolean("rhfilesRestoreNavigation",true);super.onSaveInstanceState(outState)}
   override fun onStart(){super.onStart();adaptiveWindow.start()}
   override fun onStop(){adaptiveWindow.stop();super.onStop()}
@@ -149,7 +153,7 @@ class MainActivity : TauriActivity() {
           }}
           val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick")
           val work={try{if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
-          if(command in uiCommands) work() else io.execute(work)
+          if(command in uiCommands) work() else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
       }
     }
@@ -198,11 +202,14 @@ class MainActivity : TauriActivity() {
       onUi{startActivity(Intent(this,EbookActivity::class.java).putExtra("path",path).putExtra("name",args.getString("name")).putExtra("theme",args.optString("theme","light")));true}
     }
     "media.thumbnail" -> thumbnails.read(args.getString("path"),args.optInt("maxEdge",160))
+    "media.image" -> remoteImages.read(args.getString("path"),args.optInt("maxEdge",1920))
     "window.layout" -> onUi{adaptiveWindow.current()}
     "media.play" -> {
-      val path=args.getString("path");require(!storage.isRemote(path)){"请先将网络媒体下载到本机"}
-      if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile && it.canRead()}){"媒体文件不存在或无法读取"}
-      onUi{startActivity(Intent(this,PlaybackActivity::class.java).putExtra("path",path).putExtra("name",args.optString("name")).putExtra("kind",args.optString("kind","video")))};true
+      val path=args.getString("path")
+      if(storage.isRemote(path))require(!storage.remote.stat(path).isDir){"不是媒体文件"}
+      else if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile && it.canRead()}){"媒体文件不存在或无法读取"}
+      val queue=PlaybackQueue.parse(args).filter{item->try{if(storage.isDocument(item.path))storage.docUri(item.path)else if(!storage.isRemote(item.path))storage.local(item.path);true}catch(_:Exception){false}}
+      onUi{startActivity(Intent(this,PlaybackActivity::class.java).putExtra("path",path).putExtra("name",args.optString("name")).putExtra("kind",args.optString("kind","video")).putExtra("queue",PlaybackQueue.json(queue)))};true
     }
     "update.status" -> updates.status()
     "update.save" -> synchronized(settingsLock){updates.save(args)}
@@ -231,6 +238,7 @@ class MainActivity : TauriActivity() {
     "create" -> storage.create(args.getString("parent"),args.getString("name"),args.optBoolean("directory"))
     "rename" -> storage.rename(args.getString("path"),args.getString("name"))
     "connections" -> storage.remote.connections()
+    "app.icon" -> appIcons.read(args.getString("package"),args.optInt("maxEdge",64))
     "connection.get" -> storage.remote.editable(args.getString("id"))
     "lan.start" -> lanDiscovery.start()
     "lan.state" -> lanDiscovery.state(args.getString("id"))
@@ -241,8 +249,8 @@ class MainActivity : TauriActivity() {
       FtpAccess.start(applicationContext,args)
     }
     "ftp.stop" -> FtpAccess.stop()
-    "connection.save" -> synchronized(settingsLock){if(args.optString("id").isNotBlank())RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.save(args)}
-    "connection.delete" -> synchronized(settingsLock){RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));true}
+    "connection.save" -> synchronized(settingsLock){if(args.optString("id").isNotBlank())RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.save(args).also{locationsChanged()}}
+    "connection.delete" -> synchronized(settingsLock){RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));locationsChanged();true}
     "open","share" -> {
       val paths=args.optJSONArray("paths") ?: JSONArray().put(args.getString("path"))
       require(paths.length() in 1..1000){"分享数量无效"}
@@ -299,7 +307,7 @@ class MainActivity : TauriActivity() {
       val apkBytes=(listOf(app.sourceDir)+ (app.splitSourceDirs?.toList() ?: emptyList())).sumOf{File(it).length()}
       val item=JSONObject().put("package",app.packageName).put("name",app.loadLabel(packageManager).toString())
         .put("version",info.versionName ?: "").put("system",app.flags and ApplicationInfo.FLAG_SYSTEM != 0).put("apkBytes",apkBytes)
-        .put("split",app.splitSourceDirs?.isNotEmpty()==true)
+        .put("split",app.splitSourceDirs?.isNotEmpty()==true).put("updatedMs",info.lastUpdateTime)
       if(usage && Build.VERSION.SDK_INT>=26)try{
         val stats=getSystemService(StorageStatsManager::class.java).queryStatsForPackage(StorageManager.UUID_DEFAULT,app.packageName,android.os.Process.myUserHandle())
         item.put("appBytes",stats.appBytes).put("dataBytes",stats.dataBytes).put("cacheBytes",stats.cacheBytes)

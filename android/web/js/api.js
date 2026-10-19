@@ -149,6 +149,8 @@ const api = (() => {
     shouldRestoreNavigation:()=>restoreNavigation,
     adaptiveAvailable:()=>adaptiveLayout,
     native: nativeCall,
+    playMedia:(entry,entries)=>nativeCall('media.play',mobileMedia.playback(entry,entries)),
+    imageUrl:entry=>entry.path.startsWith('remote://')?nativeCall('media.image',{path:entry.path,maxEdge:1920}).then(value=>value.dataUrl):Promise.resolve(api.assetUrl(entry.path)),
     runJob: job,
     isVirtual: virtual,
     systemOpen: (path) => nativeCall('open', { path }),
@@ -179,7 +181,7 @@ const api = (() => {
     entryExists: wrap('entry_exists'),
     readTextPreview: wrap('read_text_preview'),
     fileHash: wrap('file_hash'),
-    readThumbnail: args=>nativeThumbnails?nativeCall('media.thumbnail',args):wrap('read_thumbnail')(args),
+    readThumbnail: args=>args.path.startsWith('remote://')&&args.kind==='image'?nativeCall('media.image',{path:args.path,maxEdge:192}):nativeThumbnails?nativeCall('media.thumbnail',args):wrap('read_thumbnail')(args),
 
     // Index
     indexStart: wrap('index_start'),

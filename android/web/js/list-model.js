@@ -14,18 +14,19 @@
     entries.forEach((entry,index)=>{const node=old.get(key(entry))||build(entry);if(container.children[index]!==node)container.insertBefore(node,container.children[index]||null);});
   }
   function thumbnailLoader(read,{limit=2,capacity=256,now=Date.now}={}){
-    const cache=new Map(),pending=new Map();let active=0;const queue=[];
+    const cache=new Map(),pending=new Map();let active=0,generation=0;const queue=[];
     function remember(key,value){cache.delete(key);cache.set(key,{value,at:now()});while(cache.size>capacity)cache.delete(cache.keys().next().value);}
     function pump(){while(active<limit&&queue.length){const job=queue.shift();job.targets=job.targets.filter(t=>t.alive());if(!job.targets.length){pending.delete(job.key);continue;}active++;
-      Promise.resolve().then(()=>read(job.entry)).then(result=>{const value=typeof result==='string'?result:result?.dataUrl;remember(job.key,value||'');for(const target of job.targets)if(target.alive()&&value)target.apply(value);},()=>remember(job.key,'')).finally(()=>{pending.delete(job.key);active--;pump();});
+      Promise.resolve().then(()=>read(job.entry)).then(result=>{if(job.generation!==generation)return;const value=typeof result==='string'?result:result?.dataUrl;remember(job.key,value||'');for(const target of job.targets)if(target.alive()&&value)target.apply(value);},()=>{if(job.generation===generation)remember(job.key,'');}).finally(()=>{if(pending.get(job.key)===job)pending.delete(job.key);active--;pump();});
     }}
     function request(entry,apply,alive){const key=[entry.path,entry.modifiedMs,entry.size].join(':');const hit=cache.get(key);
       if(hit&&(hit.value||now()-hit.at<60000)){cache.delete(key);cache.set(key,hit);if(hit.value)apply(hit.value);return;}
       const target={apply,alive};const existing=pending.get(key);if(existing){existing.targets.push(target);return;}
-      const job={key,entry,targets:[target]};pending.set(key,job);queue.push(job);queueMicrotask(pump);
+      const job={key,entry,targets:[target],generation};pending.set(key,job);queue.push(job);queueMicrotask(pump);
     }
     function prune(){for(let i=queue.length-1;i>=0;i--){queue[i].targets=queue[i].targets.filter(t=>t.alive());if(!queue[i].targets.length){pending.delete(queue[i].key);queue.splice(i,1);}}}
-    return {request,prune};
+    function clear(){generation++;cache.clear();pending.clear();queue.length=0;}
+    return {request,prune,clear};
   }
   function layout(width,height,hinge){
     let left=0,top=0,right=width,bottom=height,rail=width>=840?232:0;

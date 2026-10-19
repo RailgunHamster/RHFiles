@@ -1,6 +1,7 @@
 /* Android capability pages. Every visible operation reaches a real native command. */
 const androidFeatures = (() => {
-  let app, jobTimer, toolGeneration = 0, mediaController, lastShare = '', lastJobs = [], resumePromise;
+  let app, jobTimer, toolGeneration = 0, mediaController, lastShare = '', lastJobs = [], resumePromise,appIconObserver;
+  const appIconLoader=mobileList.thumbnailLoader(entry=>api.native('app.icon',{package:entry.path,maxEdge:64}));
   const refreshedJobs = new Set();
   const $ = id => document.getElementById(id);
   const textFile = name => /\.(txt|md|csv|log|json|xml|ini|cfg|toml|ya?ml|js|ts|rs|py|java|kt|c|h|cpp|css|html|sh)$/i.test(name);
@@ -84,6 +85,7 @@ const androidFeatures = (() => {
     node.parentElement.scrollTop=scroll;
   }
   async function renderTool(tool) {
+    appIconObserver?.disconnect();appIconObserver=null;
     const generation=++toolGeneration,node=$('tool-extra');node.replaceChildren(ui.el('p','','正在读取…'));
     const valid=()=>generation===toolGeneration && app.state.route.tool===tool;
     if(tool==='tasks'){await pollJobs();return;}
@@ -98,7 +100,7 @@ const androidFeatures = (() => {
           const saved=app.state.favorites.some(entry=>entry.path===c.path);
           row.append(button(saved?'取消常用':'添加为常用项',()=>{app.favorite({name:c.name,path:c.path,isDir:true});return renderTool(tool);}));
         }
-        row.append(button('移除连接',async()=>{if(await ui.confirm('移除此连接？','只删除登录配置，不会删除服务器文件。','移除')){await api.native('connection.delete',{id:c.id});if(app.state.favorites.some(entry=>entry.path===c.path))app.favorite({name:c.name,path:c.path,isDir:true});await renderTool(tool);}}));node.append(row);
+        row.append(button('移除连接',async()=>{if(await ui.confirm('移除此连接？','移除登录配置和对应快捷访问，不会删除服务器文件。','移除')){await api.native('connection.delete',{id:c.id});app.removeFavoritePrefix(c.path||'remote://'+c.id+'/');await app.refreshLocations();await renderTool(tool);}}));node.append(row);
       }
       const discovery=ui.el('section','task-card');node.append(discovery);networkDiscovery(discovery,valid,connections);
       return;
@@ -109,7 +111,7 @@ const androidFeatures = (() => {
       notice(node,'在系统选择器中选择 SD 卡、USB 或网盘。网盘需要安装已登录的系统文件提供者；部分网盘只允许选择文件，不能授权整个目录。');
       node.append(button('授权文件夹 / 外置存储',async()=>{const paths=await api.native('tree.pick');app.state.roots=await api.storageRoots();if(paths?.length)await app.go({screen:'folder',path:paths[0],label:'授权文件夹'});}),
         button('从系统网盘导入文件',async()=>{const paths=await api.native('document.pick');if(paths?.length){app.setClipboard('copy',paths);await app.go({screen:'folder',path:app.state.root});}}));
-      for(const root of roots.filter(r=>r.provider)) {
+      for(const root of roots.filter(r=>r.provider&&!r.network)) {
         node.append(button(root.label,()=>app.go({screen:'folder',path:root.path,label:root.label})),button('撤销授权：'+root.label,async()=>{
           if(await ui.confirm('撤销此存储授权？','不会删除其中的文件。','撤销')){await api.native('tree.forget',{path:root.path});app.state.roots=await api.storageRoots();await renderTool(tool);}
         }));
@@ -124,9 +126,12 @@ const androidFeatures = (() => {
       let system=false;const toggle=button('显示系统应用：关',()=>{system=!system;toggle.querySelector('span').textContent='显示系统应用：'+(system?'开':'关');paint();});node.append(toggle);
       const list=ui.el('div');node.append(list);
       function paint(){
+        appIconObserver?.disconnect();
+        const loadIcon=node=>{const entry=node.iconEntry;appIconLoader.request(entry,data=>{const image=new Image();image.alt='';image.src=data;node.replaceChildren(image);},()=>node.isConnected);};
+        appIconObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(items=>{for(const item of items)if(item.isIntersecting){appIconObserver.unobserve(item.target);loadIcon(item.target);}},{rootMargin:'160px'}):null;
         list.replaceChildren();for(const a of apps.filter(a=>(system||!a.system)&&(a.name+' '+a.package).toLocaleLowerCase().includes(query.value.toLocaleLowerCase())).sort((a,b)=>a.name.localeCompare(b.name,'zh-CN'))) {
           const size=Number.isFinite(a.appBytes)?'占用 '+fmt.size(a.appBytes+a.dataBytes)+' · 缓存 '+fmt.size(a.cacheBytes):'安装包 '+fmt.size(a.apkBytes);
-          list.append(button(a.name+' · '+a.version+'\n'+size,()=>ui.openSheet(a.name,[
+          const row=button(a.name+' · '+a.version+'\n'+size,()=>ui.openSheet(a.name,[
             app.action('启动','open',()=>api.native('app.action',{package:a.package,action:'launch'})),
             app.action('应用信息 / 权限','settings',()=>api.native('app.action',{package:a.package,action:'settings'})),
             app.action('备份 '+(a.split?'全部分包 APK':'APK'),'archive',async()=>{
@@ -134,7 +139,10 @@ const androidFeatures = (() => {
               if(destination)await enqueue('backup',{package:a.package,destination});
             }),
             app.action('卸载（系统确认）','trash',()=>api.native('app.action',{package:a.package,action:'uninstall'}),true),
-          ],a.package)));
+          ],a.package));row.classList.add('application-row');row.dataset.package=a.package;
+          const icon=ui.el('span','application-icon');icon.innerHTML=ui.icon('grid');icon.iconEntry={path:a.package,modifiedMs:a.updatedMs||0,size:a.apkBytes};
+          const copy=ui.el('span','application-copy');copy.append(ui.el('strong','',a.name+' · '+a.version),ui.el('small','',size));row.replaceChildren(icon,copy);list.append(row);
+          if(appIconObserver)appIconObserver.observe(icon);else loadIcon(icon);
         }
       }query.addEventListener('input',paint);paint();return;
     }
@@ -163,6 +171,7 @@ const androidFeatures = (() => {
       const id=await api.native('connection.save',values),path='remote://'+id+'/';
       if(common&&!app.state.favorites.some(entry=>entry.path===path))app.favorite({name:values.name,path,isDir:true});
       if(existing.id&&existing.name!==values.name){const saved=app.state.favorites.find(entry=>entry.path===path);if(saved){saved.name=values.name;localStorage.setItem('rhfiles.favorites',JSON.stringify(app.state.favorites));}}
+      await app.refreshLocations();
       await renderTool('remote');
     },'保存连接');
     pending.then(root=>{if(!root)return;const type=root.elements.type;function update(){for(const name of ['host','port','share','domain','url','insecure']){const input=root.elements[name];input.closest('label').hidden=name==='url'?type.value!=='webdav':name==='host'||name==='port'?type.value==='webdav':name==='insecure'?!['ftp','webdav'].includes(type.value):type.value!=='smb';}root.elements.host.required=type.value!=='webdav';root.elements.url.required=type.value==='webdav';}type.onchange=update;update();});return pending;
@@ -234,7 +243,8 @@ const androidFeatures = (() => {
     });
   }
   function media(entry,entries) {
-    if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.native('media.play',{path:entry.path,name:entry.name,kind:entry.kind});
+    if(entry.kind==='image')return androidGallery.open(entry,entries,app);
+    if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.playMedia(entry,entries);
     ui.openSheet(entry.name,[]);panel().classList.add('viewer');
     const controller=new AbortController();mediaController=controller;
     let zoom=1,rotation=0,x=0,y=0,index=entries.findIndex(e=>e.path===entry.path),current=entry;

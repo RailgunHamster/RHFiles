@@ -258,7 +258,7 @@ const ui = (() => {
       if (event.touches.length !== 1 || isSheetOpen()) return;
       if(document.body.classList.contains('wide-layout'))return;
       const closing = isOpen();
-      if (closing ? !event.target.closest('#drawer') && event.target!==overlay : !canOpen() || !event.target.closest('#home')) return;
+      if (closing ? !event.target.closest('#drawer') && event.target!==overlay : !canOpen() || event.target.closest('input,textarea,select,[contenteditable=true]')) return;
       const touch = event.touches[0];
       const visual=closing?Math.max(0,Math.min(1,1+drawer.getBoundingClientRect().left/width())):0;
       gesture = {x:touch.clientX,y:touch.clientY,closing,horizontal:false,base:visual,lastX:touch.clientX,lastTime:performance.now(),velocity:0};

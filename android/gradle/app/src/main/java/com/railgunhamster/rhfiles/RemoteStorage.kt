@@ -41,6 +41,20 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   internal var shareReader:((JSONObject)->List<SmbShare>)?=null
   data class Unc(val host: String,val share: String,val parts: List<String>)
   companion object {
+    private data class ReadKey(val id:String,val fingerprint:String)
+    private class ReadSmb(val client:SMBClient,val session:Session):Closeable {
+      private val shares=linkedMapOf<String,DiskShare>()
+      val serverShares by lazy {SmbShares(SMBTransportFactories.SRVSVC.getTransport(session))}
+      fun share(name:String):DiskShare {
+        shares[name]?.let{return it}
+        if(shares.size>=4){val key=shares.keys.first();shares.remove(key)?.close()}
+        return (session.connectShare(name) as? DiskShare ?: error("不是文件共享")).also{shares[name]=it}
+      }
+      override fun close(){closeReadSession(client,session);shares.clear()}
+    }
+    private val readSessions=IdleReadPool<ReadKey,ReadSmb>()
+    private val readReaper by lazy {java.util.concurrent.Executors.newSingleThreadScheduledExecutor{task->Thread(task,"RHFiles-SMB-idle").apply{isDaemon=true}}.apply{scheduleWithFixedDelay({readSessions.reap()},15,15,TimeUnit.SECONDS)}}
+    internal fun discardReadSessions(){readSessions.invalidate{true}}
     // Directory/RPC reads have no buffered writes. Once their responses and
     // explicit tree-close complete, disconnect this one-shot transport without
     // waiting another 15/30 seconds for an optional LOGOFF reply. TCP teardown
@@ -122,6 +136,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     if(value.optBoolean("clearPassword"))value.put("password","")
     value.remove("id");value.remove("clearPassword");value.remove("hasPassword");validate(value)
     require(preferences.edit().putString(id,encrypt(value)).commit()) { "连接配置保存失败" }
+    readSessions.invalidate{it.id==id}
     return id
   }
   fun editable(id:String):JSONObject {
@@ -137,7 +152,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       val value=item.getJSONObject("config");validate(value);out.put(id,encrypt(value))
     }
   }
-  fun remove(id: String) { require(preferences.edit().remove(id).commit()) { "删除连接失败" } }
+  fun remove(id: String) { require(preferences.edit().remove(id).commit()) { "删除连接失败" };readSessions.invalidate{it.id==id} }
   private fun config(id: String): JSONObject {
     profileLookup?.let { return JSONObject(it(id).toString()) }
     val encrypted = Base64.decode(preferences.getString(id,null) ?: error("网络位置已删除"),Base64.NO_WRAP)
@@ -174,8 +189,8 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   private fun ftpPath(l: Location) = "/" + l.relative
   private inline fun <T> withFtp(c: JSONObject, block: (FTPClient) -> T): T { val f=ftp(c); try { return block(f) } finally { try { f.disconnect() } catch (_: Exception) {} } }
-  private class Smb(val client: SMBClient, val share: DiskShare,val readOnlySession:Session?=null): Closeable {
-    override fun close() { try { share.close() } finally { if(readOnlySession!=null)closeReadSession(client,readOnlySession) else client.close() } }
+  private class Smb(val client: SMBClient, val share: DiskShare,val session:Session): Closeable {
+    override fun close() { try { share.close() } finally { client.close() } }
   }
   private fun smbClient(timeout:Long=30)=SMBClient(SmbConfig.builder().withAuthenticators(listOf(com.hierynomus.smbj.auth.NtlmAuthenticator.Factory()))
     .withTimeout(timeout,TimeUnit.SECONDS).withSoTimeout((timeout*1000).toInt()).build())
@@ -184,20 +199,33 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val (username,domain)=SmbHosts.credentials(c.optString("username"),c.optString("domain"))
     return connection.authenticate(if(username.isBlank()&&c.optString("password").isEmpty())AuthenticationContext.anonymous() else AuthenticationContext(username,c.optString("password").toCharArray(),domain))
   }
-  private fun smbShares(c:JSONObject):List<SmbShare> {
-    val client=smbClient(15);var session:Session?=null
-    try {
-      session=authenticate(client,c)
-      val transport=SMBTransportFactories.SRVSVC.getTransport(session)
-      return SmbShares(transport).list()
-    }finally{if(session!=null)closeReadSession(client,session) else client.close()}
+  private fun <T> readSmb(id:String,c:JSONObject,block:(ReadSmb)->T):T {
+    readReaper
+    // Include the entire credential/config snapshot, but never retain/log a
+    // clear-text password in the pool key. A concurrent edit cannot reuse it.
+    val digest=java.security.MessageDigest.getInstance("SHA-256").digest(c.toString().toByteArray()).joinToString(""){"%02x".format(it)}
+    val key=ReadKey(id,digest)
+    var created=false
+    fun attempt()=readSessions.use(key,{
+      created=true;val client=smbClient(15)
+      try{ReadSmb(client,authenticate(client,c))}catch(error:Exception){client.close();throw error}
+    },block)
+    return try{attempt()}catch(error:IOException){
+      if(created)throw error
+      // A server may silently expire an idle socket. Retry an idempotent read
+      // once with fresh authentication; never replay a write or an auth denial.
+      readSessions.invalidate{it==key};attempt()
+    }
   }
-  private fun smb(c: JSONObject,readOnly:Boolean=false): Smb {
+  private fun smbShares(id:String,c:JSONObject):List<SmbShare> = readSmb(id,c){connection->
+    connection.serverShares.list()
+  }
+  private fun smb(c: JSONObject): Smb {
     val client=smbClient()
     try {
       val session=authenticate(client,c)
       val share=session.connectShare(c.getString("share")) as? DiskShare ?: error("不是文件共享")
-      return Smb(client,share,if(readOnly)session else null)
+      return Smb(client,share,session)
     } catch (e: Exception) { try{client.close()}catch(close:Exception){e.addSuppressed(close)}; throw e }
   }
   private fun smbPath(l: Location) = l.relative.replace('/','\\')
@@ -214,14 +242,14 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   fun list(path: String): List<NativeEntry> {
     val l=location(path)
     if(l.serverRoot)try {
-      val shares=(shareReader?: ::smbShares)(l.c);require(shares.size<=4096){"服务器返回的共享过多，请指定共享名"}
+      val shares=shareReader?.invoke(l.c) ?: smbShares(l.id,l.c);require(shares.size<=4096){"服务器返回的共享过多，请指定共享名"}
       return shares.filter{it.type and 0xffff==0}.distinctBy{it.name.lowercase()}.map{
         NativeEntry(child(path,SafeFiles.name(it.name)),it.name,true)
       }.sortedBy{it.name.lowercase()}
     }catch(e:LinkageError){throw IOException("共享枚举组件不兼容，请更新应用；仍可编辑网络位置直接填写共享名称。",e)}
     catch(e:Exception){throw IOException("无法列出服务器共享：${e.message?:e.javaClass.simpleName}。请编辑网络位置填写账号/密码；如果服务器禁止枚举，也可直接填写共享名称。",e)}
     return when(l.c.getString("type")) {
-      "smb" -> smb(l.c,readOnly=true).use { s -> s.share.list(smbPath(l)).filter { it.fileName!="." && it.fileName!=".." }.take(50000).map {
+      "smb" -> readSmb(l.id,l.c) { connection -> connection.share(l.c.getString("share")).list(smbPath(l)).filter { it.fileName!="." && it.fileName!=".." }.take(50000).map {
         NativeEntry(child(path,it.fileName),it.fileName,it.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L,it.endOfFile,it.lastWriteTime.toEpochMillis())
       } }
       "ftp", "ftps" -> withFtp(l.c) { f ->
@@ -256,7 +284,62 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   fun stat(path: String): NativeEntry {
     val l=location(path)
     if(l.relative.isEmpty()) return NativeEntry(path,Uri.parse(path).pathSegments.lastOrNull()?:l.c.getString("name"),true)
+    if(l.c.getString("type")=="smb")return readSmb(l.id,l.c){connection->
+      val info=connection.share(l.c.getString("share")).getFileInformation(smbPath(l))
+      NativeEntry(path,Uri.parse(path).lastPathSegment?:"",info.standardInformation.isDirectory,info.standardInformation.endOfFile,info.basicInformation.lastWriteTime.toEpochMillis())
+    }
     return list(parent(path)).find { it.name==l.relative.substringAfterLast('/') } ?: error("远程文件已不存在")
+  }
+  class MediaInput(val stream:InputStream,val totalLength:Long):Closeable {override fun close()=stream.close()}
+  /** Streaming/range access for viewing only. Never creates a local file/task. */
+  fun mediaInput(path:String,position:Long=0):MediaInput {
+    require(position>=0){"媒体偏移无效"};val l=location(path)
+    require(!l.serverRoot&&l.relative.isNotEmpty()){"不是媒体文件"}
+    return when(l.c.getString("type")) {
+      "smb"->{
+        val s=smb(l.c)
+        try {
+          val file=s.share.openFile(smbPath(l),EnumSet.of(AccessMask.GENERIC_READ),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null)
+          try {
+            val size=s.share.getFileInformation(smbPath(l)).standardInformation.endOfFile
+            require(position<=size){"媒体偏移超出文件长度"}
+            val stream=object:InputStream(){var at=position;val closed=java.util.concurrent.atomic.AtomicBoolean(false)
+              override fun read():Int {val byte=ByteArray(1);return if(read(byte,0,1)<0)-1 else byte[0].toInt() and 255}
+              @Synchronized override fun read(buffer:ByteArray,offset:Int,length:Int):Int {
+                check(!closed.get()){"媒体流已关闭"};if(length==0)return 0;if(at>=size)return -1
+                val count=file.read(buffer,at,offset,minOf(length.toLong(),size-at).toInt());if(count<=0)throw EOFException("远程媒体在读取期间发生改变或提前结束");at+=count;return count
+              }
+              // Closing must interrupt a blocked read, not wait on its monitor.
+              // This exclusive read-only transport has no pending writes; TCP
+              // teardown also releases the file handle at the server.
+              override fun close(){if(closed.compareAndSet(false,true))closeReadSession(s.client,s.session)}
+            }
+            MediaInput(stream,size)
+          }catch(error:Exception){file.close();throw error}
+        }catch(error:Exception){closeReadSession(s.client,s.session);throw error}
+      }
+      "ftp","ftps"->{
+        val f=ftp(l.c)
+        try {
+          if(position>0)f.restartOffset=position
+          val stream=f.retrieveFileStream(ftpPath(l))?:throw IOException("服务器无法开始媒体读取或不支持拖动：${f.replyCode}")
+          MediaInput(object:FilterInputStream(stream){override fun close(){try{super.close()}finally{f.disconnect()}}},-1)
+        }catch(error:Exception){f.disconnect();throw error}
+      }
+      else->{
+        val response=request(l,"GET",headers=mapOf("Range" to "bytes=$position-","Accept-Encoding" to "identity"))
+        try {
+          val range=response.header("Content-Range")
+          val total=if(response.code==206){
+            val match=Regex("bytes (\\d+)-(\\d+)/(\\d+)").matchEntire(range?:"")?:throw IOException("服务器返回了无效的媒体分段")
+            val start=match.groupValues[1].toLong();val end=match.groupValues[2].toLong();val size=match.groupValues[3].toLong()
+            require(start==position&&end>=start&&end<size){"服务器媒体偏移不一致"}
+            require(response.header("Content-Encoding").let{it==null||it.equals("identity",true)}){"服务器返回了不支持的媒体编码"};size
+          }else{require(position==0L){"此服务器不支持拖动媒体进度（HTTP Range）"};response.body!!.contentLength()}
+          MediaInput(object:FilterInputStream(response.body!!.byteStream()){override fun close(){try{super.close()}finally{response.close()}}},total)
+        }catch(error:Exception){response.close();throw error}
+      }
+    }
   }
   fun input(path: String): InputStream {
     val l=location(path)

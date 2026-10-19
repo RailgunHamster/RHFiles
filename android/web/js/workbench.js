@@ -123,6 +123,7 @@ const workbench=(()=>{
     window.rhfilesHandleBack=()=>{if(ui.isSheetOpen()){ui.closeSheet();return true;}return frames[active]?.contentWindow?.rhfilesHandleBack?.()??true;};
     window.addEventListener('resize',layout);
     window.addEventListener('rhfiles-storage-changed',()=>broadcast('rhfiles-storage-changed'));
+      window.addEventListener('rhfiles-locations-changed',()=>broadcast('rhfiles-locations-changed'));
     return true;
   }
   return {boot,child,primary,id,parentHost};

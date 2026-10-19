@@ -133,6 +133,12 @@ class NativeStorage(val context: Context) {
         array.put(JSONObject().put("path",path).put("label",e.name).put("removable",true).put("provider",true))
       } catch (_: Exception) { array.put(JSONObject().put("path",grant.uri.toString()).put("label","授权失效 / 设备离线").put("removable",true).put("provider",true)) }
     }
+    val connections=remote.connections()
+    for(i in 0 until connections.length()){
+      val item=connections.getJSONObject(i);if(!item.has("path"))continue
+      array.put(JSONObject().put("path",item.getString("path")).put("label",item.getString("name"))
+        .put("provider",true).put("network",true).put("protocol",item.getString("type")).put("removable",false))
+    }
     return array
   }
   companion object { fun mime(name: String) = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream" }

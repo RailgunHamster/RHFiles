@@ -24,13 +24,34 @@ current functionality, limitations and device acceptance steps.
 
 ```powershell
 cargo test --manifest-path android/src-tauri/Cargo.toml --lib --tests
-node --test android/web/tests/format.test.js
+node --test android/web/tests/*.test.cjs android/web/tests/format.test.js
 node android/web/tests/ui-check.mjs
+node android/web/tests/flow-check.mjs
+node android/web/tests/network-check.mjs
+node android/web/tests/media-check.mjs
 pwsh -File scripts/android-build.ps1 -Target aarch64
 ```
 
 The APK is written to `android/src-tauri/gen/android/app/build/outputs/apk/`
 and verified before copying to `android/dist/`.
+
+Browser suites mock IPC; they do not establish that a device can decode or stream
+media. `SmbUpdateInstrumentation` mode `media` exercises the minified release APK
+against the read-only loopback fixture (`scripts/testing/smb-server`, port 1445),
+including distinct package icons, SMB image decoding, repeated folder reads,
+decoded local/SMB video frames, initially hidden controls, seeking and Next. Run
+only on an owned emulator, with `adb -s <serial> reverse tcp:1445 tcp:1445` and the
+owned `RHFiles-Media-QA-1.mp4` / `RHFiles-Media-QA-2.mp4` fixtures in Downloads.
+Build the test APK with `-PrhfilesReleaseProbe` and require both `pass=true` and
+`INSTRUMENTATION_CODE: -1`; an adb exit code alone is not success.
+
+Network image previews are memory-only, capped at 24 MiB and downsampled to a
+maximum 1920-pixel edge (192 for list thumbnails). Device image codecs apply;
+animated images currently show a still frame. Remote videos/audio stream through
+Media3 with SMB positional reads, FTP REST or WebDAV HTTP Range. A server without
+range support reports a seek error rather than silently downloading from byte 0.
+Manual download remains available. Read-only SMB browsing reuses bounded idle
+sessions but never caches directory contents or changes write-task close rules.
 
 ## Layout
 

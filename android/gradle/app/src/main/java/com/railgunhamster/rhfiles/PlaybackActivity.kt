@@ -22,10 +22,15 @@ import androidx.media3.common.*
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DataSource
+import org.json.JSONObject
+import org.json.JSONArray
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 
-/** Native local/content playback: no WebView asset protocol, MIME guess or stretched icon. */
+/** Native local/content/remote playback with a real Media3 queue and range reads. */
 @UnstableApi
 class PlaybackActivity:AppCompatActivity() {
   private lateinit var playerView:PlayerView
@@ -33,6 +38,11 @@ class PlaybackActivity:AppCompatActivity() {
   private lateinit var failure:LinearLayout
   private lateinit var source:Uri
   private lateinit var path:String
+  private lateinit var titleView:TextView
+  private var queue=listOf<PlaybackQueue.Item>()
+  private var sources=listOf<Uri>()
+  private var index=0
+  private lateinit var storage:NativeStorage
   private var player:ExoPlayer?=null
   private var position=0L
   private var play=true
@@ -42,32 +52,38 @@ class PlaybackActivity:AppCompatActivity() {
     super.onCreate(savedInstanceState)
     onBackPressedDispatcher.addCallback(this){finish()}
     path=intent.getStringExtra("path") ?: run{finish();return}
-    val storage=NativeStorage(this)
+    storage=NativeStorage(applicationContext)
     try {
-      source=if(storage.isDocument(path))storage.docUri(path) else {
+      source=if(storage.isRemote(path))Uri.parse(path) else if(storage.isDocument(path))storage.docUri(path) else {
         val file=storage.local(path);require(file.isFile && file.canRead()) {"文件不存在或没有读取权限"};Uri.fromFile(file)
       }
+      queue=PlaybackQueue.parse(JSONObject().put("path",path).put("name",intent.getStringExtra("name")).put("queue",JSONArray(intent.getStringExtra("queue")?:"[]")))
+      sources=queue.map{item->if(storage.isRemote(item.path))Uri.parse(item.path)else if(storage.isDocument(item.path))storage.docUri(item.path)else Uri.fromFile(storage.local(item.path))}
+      index=(savedInstanceState?.getInt("index")?:queue.indexOfFirst{it.path==path}).coerceIn(0,queue.lastIndex)
+      path=queue[index].path;source=sources[index];title=queue[index].name
     }catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish();return}
     position=savedInstanceState?.getLong("position") ?: 0;play=savedInstanceState?.getBoolean("play",true) ?: true
     WindowCompat.setDecorFitsSystemWindows(window,false)
     WindowInsetsControllerCompat(window,window.decorView).apply{hide(WindowInsetsCompat.Type.systemBars());systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE}
     val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK)}
     playerView=PlayerView(this).apply {
-      setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);setShowNextButton(false);setShowPreviousButton(false)
+      setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);setShowNextButton(queue.size>1);setShowPreviousButton(queue.size>1)
       setShowSubtitleButton(true);setShowRewindButton(true);setShowFastForwardButton(true)
       controllerShowTimeoutMs=3500;setKeepContentOnPlayerReset(true);resizeMode=resize
+      controllerAutoShow=false
       setFullscreenButtonClickListener {full->landscape=full;requestedOrientation=if(full)ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
     }
     root.addView(playerView,FrameLayout.LayoutParams(-1,-1))
     header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(18),dp(8),dp(10));background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0xBB000000.toInt(),0x00000000))}
     val back=ImageButton(this).apply{contentDescription="返回";setImageResource(R.drawable.ic_player_back);setColorFilter(Color.WHITE);setBackgroundColor(Color.TRANSPARENT);setOnClickListener{finish()}}
-    val title=TextView(this).apply{text=intent.getStringExtra("name") ?: path.substringAfterLast('/');setTextColor(Color.WHITE);textSize=16f;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
+    titleView=TextView(this).apply{text=queue[index].name;setTextColor(Color.WHITE);textSize=16f;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
     val more=ImageButton(this).apply{contentDescription="播放选项";setImageResource(R.drawable.ic_player_more);setColorFilter(Color.WHITE);setBackgroundColor(Color.TRANSPARENT);setOnClickListener{options(this)}}
-    header.addView(back,LinearLayout.LayoutParams(dp(48),dp(48)));header.addView(title,LinearLayout.LayoutParams(0,dp(48),1f));title.gravity=Gravity.CENTER_VERTICAL;header.addView(more,LinearLayout.LayoutParams(dp(48),dp(48)))
+    header.addView(back,LinearLayout.LayoutParams(dp(48),dp(48)));header.addView(titleView,LinearLayout.LayoutParams(0,dp(48),1f));titleView.gravity=Gravity.CENTER_VERTICAL;header.addView(more,LinearLayout.LayoutParams(dp(48),dp(48)))
     root.addView(header,FrameLayout.LayoutParams(-1,-2,Gravity.TOP))
     failure=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(24),dp(24),dp(24),dp(24));setBackgroundColor(0xEE111318.toInt());visibility=View.GONE}
     root.addView(failure,FrameLayout.LayoutParams(-1,-1));setContentView(root)
     playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener{visibility->header.visibility=if(failure.visibility==View.VISIBLE)View.VISIBLE else visibility})
+    playerView.hideController();header.visibility=View.GONE
   }
   private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
   // PlayerView otherwise consumes the first hardware Back to hide controls.
@@ -79,17 +95,22 @@ class PlaybackActivity:AppCompatActivity() {
   override fun onStart(){super.onStart();if(::source.isInitialized)startPlayer()}
   private fun startPlayer(){
     val engine=ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+      .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{RemoteMediaDataSource(storage.remote)})))
       .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000).build()
     player=engine;playerView.player=engine
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
     engine.setHandleAudioBecomingNoisy(true)
     engine.addListener(object:Player.Listener {
+      override fun onMediaItemTransition(item:MediaItem?,reason:Int){
+        index=engine.currentMediaItemIndex.coerceIn(0,queue.lastIndex);path=queue[index].path;source=sources[index];titleView.text=queue[index].name;title=queue[index].name
+        failure.visibility=View.GONE
+      }
       override fun onRenderedFirstFrame(){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","First video frame rendered")}
       override fun onPlaybackStateChanged(state:Int){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","Playback state=$state")}
       override fun onIsPlayingChanged(isPlaying:Boolean){if(isPlaying)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
       override fun onPlayerError(error:PlaybackException){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback",error.errorCodeName);showError(error)}
     })
-    engine.setMediaItem(MediaItem.fromUri(source));engine.seekTo(position);engine.prepare();engine.playWhenReady=play
+    engine.setMediaItems(sources.mapIndexed{i,uri->MediaItem.Builder().setUri(uri).setMediaId(queue[i].path).build()},index,position);engine.prepare();engine.playWhenReady=play;playerView.hideController()
   }
   private fun showError(error:PlaybackException){
     failure.removeAllViews();failure.visibility=View.VISIBLE;header.visibility=View.VISIBLE
@@ -97,7 +118,8 @@ class PlaybackActivity:AppCompatActivity() {
     val title=TextView(this).apply{text="暂时无法播放";textSize=21f;setTextColor(Color.WHITE);gravity=Gravity.CENTER}
     val detail=TextView(this).apply{text="MP4 等后缀表示容器，不代表内部编码一定受设备支持。\n"+codecs+"\n"+error.errorCodeName+"\n"+(error.cause?.message ?: error.message ?: "读取失败");setTextColor(0xFFB9BEC8.toInt());textSize=13f;setPadding(0,dp(16),0,dp(16));setTextIsSelectable(true)}
     failure.addView(title);failure.addView(detail)
-    failure.addView(Button(this).apply{text="用其他播放器打开";setOnClickListener{external()}})
+    if(source.scheme!="remote")failure.addView(Button(this).apply{text="用其他播放器打开";setOnClickListener{external()}})
+    if(player?.hasNextMediaItem()==true)failure.addView(Button(this).apply{text="下一个";setOnClickListener{failure.visibility=View.GONE;player?.seekToNextMediaItem();player?.play()}})
     failure.addView(Button(this).apply{text="重试";setOnClickListener{failure.visibility=View.GONE;player?.prepare();player?.play()}})
     failure.addView(Button(this).apply{text="返回文件列表";setOnClickListener{finish()}})
   }
@@ -110,6 +132,7 @@ class PlaybackActivity:AppCompatActivity() {
   private fun options(anchor:View){
     val menu=PopupMenu(this,anchor)
     listOf("适应画面","填满画面（可能裁切）","播放速度","循环播放","用其他播放器打开").forEachIndexed{i,label->menu.menu.add(0,i,i,label)}
+    menu.menu.findItem(4).isVisible=source.scheme!="remote"
     menu.setOnMenuItemClickListener{item->when(item.itemId){
       0->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
       1->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
@@ -118,6 +141,6 @@ class PlaybackActivity:AppCompatActivity() {
       4->external()
     };true};menu.show()
   }
-  override fun onSaveInstanceState(outState:Bundle){outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
-  override fun onStop(){player?.let{position=it.currentPosition;play=it.playWhenReady;it.release()};if(::playerView.isInitialized)playerView.player=null;player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
+  override fun onSaveInstanceState(outState:Bundle){outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
+  override fun onStop(){player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;play=it.playWhenReady;it.release()};if(::playerView.isInitialized)playerView.player=null;player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
 }

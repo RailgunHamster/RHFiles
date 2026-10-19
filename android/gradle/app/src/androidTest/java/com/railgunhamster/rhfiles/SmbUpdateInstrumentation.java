@@ -65,6 +65,42 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             Thread.sleep(150);}
         throw new Exception("Minified live SMB fixture probe timed out");
     }
+    private boolean hasVideoFrame() {
+        android.graphics.Bitmap image=getUiAutomation().takeScreenshot();if(image==null)return false;
+        int colorful=0;try{for(int y=image.getHeight()/3;y<image.getHeight()*2/3;y+=6)for(int x=image.getWidth()/8;x<image.getWidth()*7/8;x+=6){int c=image.getPixel(x,y),r=android.graphics.Color.red(c),g=android.graphics.Color.green(c),b=android.graphics.Color.blue(c);if(Math.max(r,Math.max(g,b))-Math.min(r,Math.min(g,b))>60)colorful++;}}finally{image.recycle();}return colorful>150;
+    }
+    private void playbackProbe(String path,String second) throws Exception {
+        ActivityMonitor monitor=addMonitor("com.railgunhamster.rhfiles.PlaybackActivity",null,false);
+        Activity playerActivity=null;
+        try {
+            eval("void api.native('media.play',{path:"+JSONObject.quote(path)+",name:'QA video 1',kind:'video',queue:[{path:"+JSONObject.quote(path)+",name:'QA video 1'},{path:"+JSONObject.quote(second)+",name:'QA video 2'}]}).catch(e=>window.__mediaError=String(e))");
+            playerActivity=waitForMonitorWithTimeout(monitor,30000);require(playerActivity!=null,"Native player failed to open: "+eval("window.__mediaError"));
+            final Activity screen=playerActivity;long until=System.currentTimeMillis()+30000;while(!hasVideoFrame()&&System.currentTimeMillis()<until)Thread.sleep(250);
+            require(hasVideoFrame(),"No decoded video frame (error page is not playback)");
+            int progressId=getTargetContext().getResources().getIdentifier("exo_progress","id",getTargetContext().getPackageName()),nextId=getTargetContext().getResources().getIdentifier("exo_next","id",getTargetContext().getPackageName());
+            boolean[] hidden={false};runOnMainSync(()->{View progress=screen.findViewById(progressId);hidden[0]=progress!=null&&!progress.isShown();});require(hidden[0],"Playback controls must start hidden");
+            int[] dimensions=new int[2];runOnMainSync(()->{dimensions[0]=screen.getWindow().getDecorView().getWidth();dimensions[1]=screen.getWindow().getDecorView().getHeight();});
+            long now=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,dimensions[0]/2f,dimensions[1]/2f,0),up=MotionEvent.obtain(now,now+60,MotionEvent.ACTION_UP,dimensions[0]/2f,dimensions[1]/2f,0);down.setSource(InputDevice.SOURCE_TOUCHSCREEN);up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+            try{getUiAutomation().injectInputEvent(down,true);Thread.sleep(60);getUiAutomation().injectInputEvent(up,true);}finally{down.recycle();up.recycle();}Thread.sleep(250);
+            boolean[] enabled={false};runOnMainSync(()->{View progress=screen.findViewById(progressId),next=screen.findViewById(nextId);enabled[0]=progress!=null&&progress.isShown()&&next!=null&&next.isShown()&&next.isEnabled();if(enabled[0]){progress.requestFocus();progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));}});require(enabled[0],"Tap did not reveal seek/next controls");
+            Thread.sleep(1200);require(hasVideoFrame(),"Video seek stopped decoding");runOnMainSync(()->screen.findViewById(nextId).performClick());
+            until=System.currentTimeMillis()+15000;while(!String.valueOf(screen.getTitle()).equals("QA video 2")&&System.currentTimeMillis()<until)Thread.sleep(150);require(String.valueOf(screen.getTitle()).equals("QA video 2"),"Next did not change the active queue item");
+            Thread.sleep(1200);require(hasVideoFrame(),"Next queue item has no decoded frame");
+        }finally{removeMonitor(monitor);if(playerActivity!=null){final Activity closing=playerActivity;runOnMainSync(closing::finish);waitForIdleSync();}}
+    }
+    private void mediaProbe(Bundle result) throws Exception {
+        eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA media',host:'127.0.0.1',port:1445,share:'QA',username:'qa',password:'qa-pass'});window.__mediaId=id;const root='remote://'+id+'/';const start=Date.now();for(let i=0;i<4;i++)await api.native('list',{path:root+'子目录'});const ms=Date.now()-start;if(ms>8000)throw Error('Repeated SMB listing stalled: '+ms);"+
+          "const image=await api.native('media.image',{path:root+'photo.png',maxEdge:192});if(image.width!==32||image.height!==20||!image.dataUrl.startsWith('data:image/'))throw Error('Native SMB image decode failed');const rotated=await api.native('media.image',{path:root+'photo-rotated.jpg',maxEdge:192});if(rotated.width!==20||rotated.height!==32)throw Error('Remote JPEG orientation ignored');"+
+          "const a=await api.native('app.icon',{package:'com.railgunhamster.rhfiles',maxEdge:64}),b=await api.native('app.icon',{package:'com.android.settings',maxEdge:64});if(a.width!==64||a.dataUrl===b.dataUrl)throw Error('App icons are generic/missing');"+
+          "if(!(await api.native('roots')).some(r=>r.network&&r.path===root))throw Error('SMB storage root missing');window.__mediaQa={pass:true,ms};}catch(e){window.__mediaQa={error:String(e)}}})();");
+        long end=System.currentTimeMillis()+45000;JSONObject marker=new JSONObject();
+        while(System.currentTimeMillis()<end){marker=json("window.__mediaQa||{}");require(!marker.has("error"),marker.toString());if(marker.optBoolean("pass"))break;Thread.sleep(150);}require(marker.optBoolean("pass"),"Native media setup timed out");
+        try {
+            playbackProbe("/storage/emulated/0/Download/RHFiles-Media-QA-1.mp4","/storage/emulated/0/Download/RHFiles-Media-QA-2.mp4");
+            String id=new JSONTokener(eval("window.__mediaId")).nextValue().toString();playbackProbe("remote://"+id+"/movie.mp4","remote://"+id+"/movie2.mp4");
+            result.putString("pass","true");result.putString("repeatedBrowseMs",String.valueOf(marker.getLong("ms")));result.putString("checks","minified APK: real SMB image decoding, reused folder sessions, network storage roots, distinct package icons; local and SMB decoded video frames, initially hidden controls, tap, seek and next queue item");finish(Activity.RESULT_OK,result);
+        }finally{eval("void api.native('connection.delete',{id:window.__mediaId})");}
+    }
     private void ebookProbe(Bundle result) throws Exception {
         String path=arguments.getString("book");require(path!=null&&path.startsWith("/storage/emulated/0/Download/RHFiles-"),"Only owned emulator fixtures allowed");
         eval("void api.native('ebook.open',{path:"+JSONObject.quote(path)+",name:'test.epub',theme:'light'}).catch(e=>window.__ebookQaError=String(e))");
@@ -257,6 +293,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("backup")){backupProbe(result);return;}
             if(arguments.getString("mode","").equals("network-profile")){networkProfileProbe(result);return;}
             if(arguments.getString("mode","").equals("network-smb")){networkSmbProbe(result);return;}
+            if(arguments.getString("mode","").equals("media")){mediaProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

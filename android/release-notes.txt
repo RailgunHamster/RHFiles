@@ -1,4 +1,12 @@
-RHFiles Android 0.1.16
+RHFiles Android 0.1.17
+
+直接播放视频 / 音频时带入当前文件列表的播放队列，支持上一项、下一项。初次播放默认隐藏控制栏，轻点显示。网络位置里的常见图片和音视频可以直接查看 / 播放，不再点击就进入复制流程；SMB 使用按偏移读取，支持拖动进度，不必从头下载。图片预览按需读取到内存并缩小显示，单张限制 24 MB，超限或设备无法解码时明确报错，仍可手动下载后用其他应用打开。
+网络存储与内部存储并列出现在侧栏和首页；SMB 的具体子文件夹可加入快捷访问。只读 SMB 浏览复用有上限、会过期的认证会话，每次仍读取实时目录，修改连接或导入配置后清理旧会话，避免反复连接 / 认证 / 注销拖慢子目录浏览。
+应用管理按需加载各应用自己的图标。图片切换增加跟手、相邻图片衔接的过渡，放大时拖动平移而非切换文件。正常文件夹、分类、应用管理和设置等页面均可右滑呼出侧栏，输入控件和纵向滚动不会误触。
+
+Play videos/audio as a queue from the current file list, with previous/next controls initially hidden until tapped. View common network images and stream media directly without starting copy jobs. SMB uses positional reads for seeking. Remote images are memory-only, bounded to 24 MB and downsampled; unsupported formats/oversized images report an error and remain manually downloadable. List network profiles alongside local storage, bookmark SMB subfolders, reuse bounded expiring read-only sessions without caching directory contents, and clear sessions when credentials/configuration change. Load real per-app icons lazily, add finger-following adjacent-image transitions, and make the drawer available throughout normal app pages without stealing vertical scroll or text-input gestures.
+
+此前版本改进 / Previous improvements (0.1.16):
 
 SMB 网络位置的共享名称改为可选，只填写主机名 / IP 即可先列出主机共享，再进入文件夹；保留直接固定到某个共享的方式。仅显示文件共享，不显示打印机或 IPC$；服务器拒绝匿名枚举时说明登录 / 权限原因，可编辑账号，或直接指定共享。
 网络位置页新增局域网自动发现（mDNS / WS-Discovery），支持停止、重新发现，将发现的主机保存为常用项。只在进入该页面时短时发现，不尝试登录、不扫描公网、不自动保存结果；服务器需启用发现且 Wi-Fi 不隔离设备。

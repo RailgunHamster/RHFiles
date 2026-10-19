@@ -40,7 +40,7 @@
   const folderParents = new Map();
   let homeSnapshot='';
   const sameRoute = (a, b) => JSON.stringify([a.screen,a.path,a.category,a.folder,a.tool,a.boundary]) === JSON.stringify([b.screen,b.path,b.category,b.folder,b.tool,b.boundary]);
-  const rootFor = (path) => state.roots.filter((root) => path === root.path || path.startsWith(root.path + '/')).sort((a,b) => b.path.length - a.path.length)[0];
+  const rootFor = (path) => state.roots.filter((root) => path.replace(/\/+$/,'') === root.path.replace(/\/+$/,'') || path.startsWith(root.path.replace(/\/+$/,'') + '/')).sort((a,b) => b.path.length - a.path.length)[0];
   // A Home shortcut has a navigation root, not a different filesystem path.
   // Carry it only within that subtree; ordinary storage/favorite routes stay real.
   const folderRoute = (path, label, parentPath) => {
@@ -50,7 +50,7 @@
   const rootLabel = (root) => root?.provider ? root.label : root?.removable ? '外部存储' : '内部存储';
   const pathLabel = (path) => {
     const root = rootFor(path);
-    return root ? rootLabel(root) + path.slice(root.path.length) : path;
+    return root ? rootLabel(root) + path.slice(root.path.replace(/\/+$/,'').length) : path;
   };
   const isList = () => ['folder', 'library', 'favorites', 'search'].includes(state.route.screen);
   const action = (label, icon, onSelect, danger = false) => ({ label, icon, onSelect, danger });
@@ -156,7 +156,7 @@
     // touch. Rebuild only when the navigation layout itself changes.
     const snapshot=JSON.stringify([state.roots.map(({path,label,removable,provider})=>({path,label,removable,provider})),state.root,api.featuresAvailable()]);
     const capacityOf=root=>Number.isFinite(root.totalBytes) && Number.isFinite(root.freeBytes)
-      ? fmt.size(root.totalBytes-root.freeBytes)+' / '+fmt.size(root.totalBytes) : root.removable ? fmt.baseName(root.path) : '本机文件';
+      ? fmt.size(root.totalBytes-root.freeBytes)+' / '+fmt.size(root.totalBytes) : root.network ? '网络存储 · '+String(root.protocol||'SMB').toUpperCase() : root.removable ? fmt.baseName(root.path) : '本机文件';
     const noteText=state.index?.lastFinishedMs ? '分类基于文件名索引；新文件可通过更新索引加入。' : '图片、音频等分类需要先建立本机文件名索引。';
     const indexText=state.index?.indexing ? '正在建立索引…' : '更新索引';
     if(snapshot===homeSnapshot && $('home').childElementCount){
@@ -170,7 +170,7 @@
     home.replaceChildren(grid);
     for (const [i, root] of state.roots.entries()) {
       const capacity = capacityOf(root);
-      tile(grid, 'storage-' + i, rootLabel(root), root.removable ? 'sd' : 'storage', '#768896', capacity, () => go({ screen: 'folder', path: root.path }));
+      tile(grid, 'storage-' + i, rootLabel(root), root.network ? 'computer' : root.removable ? 'sd' : 'storage', '#768896', capacity, () => go({ screen: 'folder', path: root.path,label:rootLabel(root) }));
     }
     tile(grid, 'downloads', '下载', 'download', '#b78a41', 'Download', () => go({ screen: 'folder', path: state.root + '/Download', boundary:state.root+'/Download', boundaryLabel:'下载' }));
     for (const [id, label, color] of categories) tile(grid, id, label, id, color, id === 'recent' ? '按修改时间' : '按文件类型', () => go({ screen: 'library', category: id }));
@@ -187,12 +187,14 @@
   let drawerSignature='';
   function renderDrawer() {
     const signature=JSON.stringify([state.roots,state.favorites]);if(signature===drawerSignature)return;drawerSignature=signature;
-    $('roots').replaceChildren(...state.roots.map(root => button(rootLabel(root), root.removable ? 'sd' : 'storage', () => { closeDrawer(); return go({ screen: 'folder', path: root.path }); })));
+    $('roots').replaceChildren(...state.roots.map(root => button(rootLabel(root), root.network ? 'computer' : root.removable ? 'sd' : 'storage', () => { closeDrawer(); return go({ screen: 'folder', path: root.path,label:rootLabel(root) }); })));
     $('nav-favorites').replaceChildren(...state.favorites.map(entry => button(entry.name, 'star', () => { closeDrawer(); return activate(entry); })));
     if (!state.favorites.length) $('nav-favorites').append(ui.el('p', 'muted', '在文件的更多菜单中添加收藏'));
   }
   function openDrawer() { renderDrawer(); ui.setDrawerOpen(true); }
   function closeDrawer() { ui.setDrawerOpen(false); }
+  async function refreshLocations(){state.roots=await api.storageRoots();thumbnails.clear();renderDrawer();if(state.route.screen==='home')renderHome();}
+  function removeFavoritePrefix(prefix){state.favorites=state.favorites.filter(e=>!e.path.startsWith(prefix));cache('rhfiles.favorites',JSON.stringify(state.favorites));renderDrawer();}
 
   // Request IDs make old directory/search/preview responses unable to replace a
   // newer screen. The in-app back stack is independent of WebView history.
@@ -361,7 +363,7 @@
     node.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); activate(entry).catch(error); } else if (e.key === ' ') { e.preventDefault(); toggleSelection(entry.path); } });
     return node;
   }
-  const thumbnails=mobileList.thumbnailLoader(entry=>api.readThumbnail({path:entry.path,maxEdge:160}));
+  const thumbnails=mobileList.thumbnailLoader(entry=>api.readThumbnail({path:entry.path,kind:entry.kind,maxEdge:160}));
   function thumbnail(node, entry) {
     thumbnails.request(entry,data=>{const image=new Image();image.alt='';image.decoding='async';image.onerror=()=>{if(image.isConnected)node.innerHTML=ui.icon(entry.kind);};image.src=data;node.replaceChildren(image);},()=>node.isConnected);
   }
@@ -379,7 +381,8 @@
     if (entry.isDir) return go(folderRoute(entry.path,entry.name,
       entry.parentPath || (state.route.screen==='folder' ? state.route.path : null)));
     if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&!entry.path.startsWith('remote://'))return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});
-    if(api.playbackAvailable() && ['video','audio'].includes(entry.kind) && !entry.path.startsWith('remote://'))return api.native('media.play',{path:entry.path,name:entry.name,kind:entry.kind});
+    if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.playMedia(entry,currentEntries());
+    if(api.featuresAvailable()&&entry.kind==='image')return androidFeatures.media(entry,currentEntries());
     if (api.featuresAvailable() && api.isVirtual(entry.path)) {
       if (entry.path.startsWith('content://')) return api.systemOpen(entry.path);
       return androidFeatures.download(entry);
@@ -539,7 +542,7 @@
     const options = [action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
-    if (state.route.screen === 'folder') options.unshift(action('收藏此文件夹','star',()=>favorite({path:state.route.path,name:fmt.baseName(state.route.path),isDir:true})));
+    if (state.route.screen === 'folder') options.unshift(action(state.favorites.some(e=>e.path===state.route.path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path:state.route.path,name:state.route.label||fmt.baseName(state.route.path),isDir:true})));
     ui.openSheet('更多选项', options);
   }
   async function runSearch(query) {
@@ -667,7 +670,7 @@
     await configBackup.boot();
     if(await workbench.boot())return;
     configBackup.init(error);
-    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,button,action,error,favorite});
+    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,refreshLocations,removeFavoritePrefix,button,action,error,favorite});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy}),refresh:()=>refreshCurrent().catch(error)};
@@ -684,9 +687,10 @@
     document.documentElement.dataset.theme=saved('rhfiles.theme','light')==='dark'?'dark':'light';
     api.systemTheme(document.documentElement.dataset.theme==='dark').catch(()=>{});
     ui.bindScrim();
-    ui.bindDrawerSwipe({canOpen:()=>state.route.screen==='home' && !state.selected.size,
+    ui.bindDrawerSwipe({canOpen:()=>true,
       isOpen:()=>!$('drawer').hidden,prepare:renderDrawer});
     adaptive.init(renderDrawer);
+    window.addEventListener('rhfiles-locations-changed',()=>refreshLocations().catch(error));
     for(const tab of document.querySelectorAll('[data-settings-section]')){tab.onclick=()=>setSettingsSection(tab.dataset.settingsSection);tab.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();const tabs=[...tab.parentNode.children],delta=['ArrowLeft','ArrowUp'].includes(e.key)?-1:1,next=tabs[(tabs.indexOf(tab)+delta+tabs.length)%tabs.length];next.click();next.focus();};}
     $('project-license').addEventListener('toggle',async()=>{
       const details=$('project-license');if(!details.open||details.dataset.loaded)return;
