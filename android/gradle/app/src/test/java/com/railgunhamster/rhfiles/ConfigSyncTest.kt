@@ -61,6 +61,12 @@ class ConfigSyncTest {
       sync.run(web(),false);assertEquals(0,server.requestCount);val w=web();finish(sync,w);cloud.doc=null;finish(sync,w);assertEquals(1,r.connections().length());assertEquals(2,cloud.writes)
     }
   }
+  @Test fun webdavCredentialsUseUtf8LikeTheNetworkStorageClient(){
+    MockWebServer().use{server->server.dispatcher=Cloud();server.start();val c=device("unicode-login");val sync=ConfigSync(c,remotes(c,10))
+      sync.save(JSONObject().put("enabled",false).put("url",server.url("/dav/").toString()).put("insecure",true).put("username","用户").put("password","中文密码"));finish(sync,web())
+      assertEquals(okhttp3.Credentials.basic("用户","中文密码",Charsets.UTF_8),server.takeRequest().getHeader("Authorization"))
+    }
+  }
   @Test fun conflictingEditsRequireExplicitChoiceAndConditionalWritesAreRetriedWithoutBlindOverwrite(){
     MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start();val a=device("ca");val b=device("cb");val ra=remotes(a,1);val rb=remotes(b,2);val id=ra.save(profile());val sa=ConfigSync(a,ra);val sb=ConfigSync(b,rb);configure(sa,server);configure(sb,server);val wa=web(favorite(id));val wb=web();finish(sa,wa);finish(sb,wb)
       fun label(w:JSONObject,text:String){val f=JSONArray(w.getString("rhfiles.favorites")).getJSONObject(0);f.put("label",text);w.put("rhfiles.favorites",JSONArray().put(f).toString())}

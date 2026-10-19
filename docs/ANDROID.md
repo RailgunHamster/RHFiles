@@ -21,6 +21,10 @@
 
 新增测试：`node android/web/tests/config-sync-check.mjs` 覆盖自动开关、启动/定时/修改触发、冲突确认和跨窗格并发；原生 `ConfigSyncTest` 使用真实回环 WebDAV HTTP 请求与独立设备密钥，检查条件写入、密码隔离、凭据变更、损坏响应、上传回执及回滚。模拟器专项 `SmbUpdateInstrumentation` 的 `config-sync` 使用 `scripts/testing/config-sync-fixture.mjs`，`external-video` 使用测试包独立 UID 的非导出 ContentProvider 和临时只读授权，验证没有全盘文件权限时仍能解码真实视频帧。仅限指定自有模拟器，不在用户手机上运行。
 
+外部视频专项准备：先用 `scripts/testing/prepare-android-media.ps1` 生成合成素材，将 `test-artifacts/network-smb-fixture/movie2.mp4` 复制到生成工程的 `app/src/androidTest/assets/external-qa.mp4`（测试资产目录按需创建），再构建测试 APK。必须在启动 instrumentation **之前**将指定模拟器 RHFiles 的 `MANAGE_EXTERNAL_STORAGE` app-op 设为 `deny`，结束后恢复 `allow`；在运行中切换会被 Android 终止，不是播放器崩溃。视频素材只打进测试包，不进入发布 APK。
+
+0.1.19 验证：前端单元 44 项、文件管理交互 202 项、同步界面/调度 12 项、网络 21 项、媒体 18 项、双窗格 34 项、屏幕方向 19 项和并发触摸通过；Debug / Release 原生单元各 155 项、根项目业务测试 235 项通过。专用 `emulator-5582` 的签名混淆正式包实际完成 WebDAV 条件 GET/PUT、KeyStore 凭据、云端/本机收藏合并，服务端记录 1 次写入且秘密/本机字段泄漏 0 项；外部测试包临时授权视频在没有全盘权限时解码出真实蓝色视频帧，两个原生专项均为 `pass=true / INSTRUMENTATION_CODE: -1`。第一轮页面测试未等待首页就绪、第一轮权限测试在运行中修改 app-op 均未计为通过，修正测试方式后重跑。ARM64 与 x86_64 两份 DEX 逐字节一致。证据：`test-artifacts/android-019-config-sync-native2.log`、`android-019-external-video-native2.log`、`android-019-final-flow.log`、`android-019-units-and-probe2.log`。没有操作用户手机，也没有连接用户的真实 WebDAV。
+
 ## 0.1.16：SMB 主机浏览、局域网发现、网络位置编辑
 
 网络位置的 SMB 共享名可留空：`remote://连接ID/` 列出主机文件共享，`remote://连接ID/共享/相对路径` 进入文件。指定共享的旧连接仍保留原路径语义。使用 SMBJ 0.14.0 + SMBJ-RPC 0.12.13 的 SRVSVC/NetrShareEnum level 1；分页最多 64 页 / 4096 项，每页请求 64 KiB，检查重复继续标识与时间上限。过滤打印机与 IPC$，保留服务器返回的隐藏磁盘共享，是否可进入仍由服务器权限决定。失败不返回伪空目录；可填写登录信息或直接指定禁止枚举服务器的共享名。服务器列表不是普通文件目录，不能创建/覆盖/删除共享本身。

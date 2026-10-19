@@ -113,28 +113,30 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         }finally{eval("void api.native('connection.delete',{id:window.__mediaId})");}
     }
     private void externalVideoProbe(Bundle result) throws Exception {
-        String path=arguments.getString("video","/storage/emulated/0/Download/RHFiles-Media-QA-2.mp4");
-        require(path.equals("/storage/emulated/0/Download/RHFiles-Media-QA-2.mp4"),"Owned synthetic fixture only");
-        java.io.File file=new java.io.File(path);require(file.isFile()&&file.length()<=512*1024,"Prepare the bounded blue-video fixture first");byte[] bytes=java.nio.file.Files.readAllBytes(file.toPath());
+        // Change app-ops BEFORE instrumentation: changing it in-process makes
+        // Android kill the target. The test APK owns the bounded blue fixture.
+        require(!android.os.Environment.isExternalStorageManager(),"Disable all-files app-op before this probe");
+        byte[] bytes;try(java.io.InputStream asset=getContext().getAssets().open("external-qa.mp4")){bytes=asset.readAllBytes();}require(bytes.length<=512*1024,"Bounded synthetic fixture required");
         Intent view=new Intent(Intent.ACTION_VIEW).setDataAndType(android.net.Uri.parse("content://qa.provider/video"),"video/mp4");
         boolean found=false;for(android.content.pm.ResolveInfo match:getTargetContext().getPackageManager().queryIntentActivities(view,android.content.pm.PackageManager.MATCH_DEFAULT_ONLY))if(match.activityInfo.name.equals("com.railgunhamster.rhfiles.ExternalPlaybackActivity"))found=true;
         require(found,"RHFiles is absent from the system video Open With candidates");
         ActivityMonitor monitor=addMonitor("com.railgunhamster.rhfiles.PlaybackActivity",null,false);Activity player=null;
         try{
-            try(java.io.InputStream command=new android.os.ParcelFileDescriptor.AutoCloseInputStream(getUiAutomation().executeShellCommand("appops set com.railgunhamster.rhfiles MANAGE_EXTERNAL_STORAGE deny"))){command.readAllBytes();}
             Intent caller=new Intent().setClassName("com.railgunhamster.rhfiles.test","com.railgunhamster.rhfiles.ExternalVideoTestCaller").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("video",bytes);getContext().startActivity(caller);
             player=waitForMonitorWithTimeout(monitor,30000);require(player!=null,"External video did not enter the native player");
             long until=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<until){dismissSystemFullscreenEducation();if(hasVideoFrame(true))break;Thread.sleep(250);}
             require(hasVideoFrame(true),"External content URI did not decode after caller/router finished (temporary read grant lost)");
             require(player.getIntent().getData().getAuthority().equals("com.railgunhamster.rhfiles.test.media"),"Player lost the original external content URI");capture("external-video");
             result.putString("pass","true");result.putString("checks","system video resolver, separate-UID non-exported provider, temporary read grant forwarding, real decoded blue frame without all-files permission");finish(Activity.RESULT_OK,result);
-        }finally{removeMonitor(monitor);if(player!=null){final Activity closing=player;runOnMainSync(closing::finish);}try(java.io.InputStream command=new android.os.ParcelFileDescriptor.AutoCloseInputStream(getUiAutomation().executeShellCommand("appops set com.railgunhamster.rhfiles MANAGE_EXTERNAL_STORAGE allow"))){command.readAllBytes();}}
+        }finally{removeMonitor(monitor);if(player!=null){final Activity closing=player;runOnMainSync(closing::finish);}}
     }
     private void configSyncProbe(Bundle result) throws Exception {
         String endpoint=arguments.getString("endpoint","");require(endpoint.matches("http://10\\.0\\.2\\.2:[0-9]+/sync/"),"Emulator loopback fixture required");
         awaitScript("!!document.querySelector('.file-pane:not([hidden])')?.contentWindow.rhfilesPane");
+        awaitScript("(()=>{const w=document.querySelector('.file-pane:not([hidden])').contentWindow;return !w.rhfilesPane.snapshot().busy&&!!w.document.querySelector('#home [data-tile=settings]')&&w.document.querySelector('#home').getBoundingClientRect().height>0;})()");
         eval("window.__syncPane=document.querySelector('.file-pane:not([hidden])').contentWindow;void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'Local Sync QA',host:'qa.invalid',share:'Public',username:'qa-local',password:'must-stay-local'});window.__syncProfile=id;const favorites=JSON.stringify([{name:'QA folder',path:'remote://'+id+'/folder',isDir:true,label:'QA local alias'},{name:'Local only',path:'/storage/emulated/0/Download',isDir:true}]);__syncPane.localStorage.setItem('rhfiles.favorites',favorites);__syncPane.document.getElementById('nav-settings').click();window.__syncReady=true;}catch(e){window.__syncError=String(e)}})()");
         awaitScript("!!window.__syncReady||!!window.__syncError");require(eval("!window.__syncError").equals("true"),"Sync setup: "+eval("window.__syncError"));
+        awaitScript("!__syncPane.document.getElementById('tool-settings').hidden");
         eval("__syncPane.document.querySelector('[data-settings-section=sync]').scrollIntoView({inline:'center'})");tapCss("[data-settings-section=sync]",true);
         awaitScript("!!__syncPane.document.querySelector('#config-sync form')");
         eval("(()=>{const form=__syncPane.document.querySelector('#config-sync form');for(const [key,value] of Object.entries({url:"+JSONObject.quote(endpoint)+",username:'sync-user',password:'qa-sync-password',enabled:false,insecure:true})){const input=form.elements[key];if(input.type==='checkbox')input.checked=value;else input.value=value;}form.dispatchEvent(new __syncPane.Event('input',{bubbles:true}));})()");
@@ -203,7 +205,10 @@ public class SmbUpdateInstrumentation extends Instrumentation {
     }
     private void awaitScript(String script) throws Exception {
         long end=System.currentTimeMillis()+45000;
-        while(!eval(script).equals("true")){require(System.currentTimeMillis()<end,"UI condition timed out: "+script);Thread.sleep(150);}
+        while(!eval(script).equals("true")){
+            if(System.currentTimeMillis()>=end)throw new Exception("UI condition timed out: "+script+"; "+eval("JSON.stringify([...document.querySelectorAll('.file-pane:not([hidden])')].map(f=>({route:f.contentWindow.rhfilesPane?.snapshot(),settingsHidden:f.contentDocument.getElementById('tool-settings')?.hidden,syncTabHidden:f.contentDocument.querySelector('[data-settings-section=sync]')?.hidden,toast:f.contentDocument.getElementById('toast')?.textContent})))"));
+            Thread.sleep(150);
+        }
     }
     private void tapCss(String selector) throws Exception {
         tapCss(selector,false);

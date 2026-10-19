@@ -53,7 +53,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
   private fun request(c:JSONObject,etag:String?=null,bytes:ByteArray?=null):Response {
     val folder=c.getString("url").toHttpUrl();val url=folder.newBuilder().apply{if(!folder.encodedPath.endsWith('/'))addPathSegment("")}.addPathSegment("rhfiles-settings-v1.json").build()
     val b=Request.Builder().url(url).header("Accept","application/json")
-    if(c.getString("username").isNotEmpty()||c.getString("password").isNotEmpty())b.header("Authorization",Credentials.basic(c.getString("username"),c.getString("password")))
+    if(c.getString("username").isNotEmpty()||c.getString("password").isNotEmpty())b.header("Authorization",Credentials.basic(c.getString("username"),c.getString("password"),Charsets.UTF_8))
     if(bytes!=null){if(etag==null)b.header("If-None-Match","*")else b.header("If-Match",etag);b.put(bytes.toRequestBody("application/json; charset=utf-8".toMediaType()))}
     return http.newCall(b.build()).also{call=it}.execute()
   }
