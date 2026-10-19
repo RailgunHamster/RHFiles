@@ -30,6 +30,7 @@ node android/web/tests/flow-check.mjs
 node android/web/tests/network-check.mjs
 node android/web/tests/media-check.mjs
 node android/web/tests/config-sync-check.mjs
+node android/web/tests/transfer-display-check.mjs
 pwsh -File scripts/android-build.ps1 -Target aarch64
 ```
 
@@ -37,7 +38,11 @@ The APK is written to `android/src-tauri/gen/android/app/build/outputs/apk/`
 and verified before copying to `android/dist/`.
 
 Browser suites mock IPC; they do not establish that a device can decode or stream
-media. `SmbUpdateInstrumentation` mode `media` exercises the minified release APK
+media. The transfer-display suite checks readable Chinese in move/task UI while
+asserting backend destinations remain byte-for-byte original URIs. Instrumentation
+mode `wallpaper` validates a real image snapshot, FileProvider MIME and the system
+crop intent in the minified APK, intercepting launch so no wallpaper is changed.
+`SmbUpdateInstrumentation` mode `media` exercises the minified release APK
 against the read-only loopback fixture (`scripts/testing/smb-server`, port 1445),
 including distinct package icons, SMB image decoding, repeated folder reads,
 decoded local/SMB video frames, initially hidden controls, seeking and Next. Run

@@ -50,7 +50,7 @@
   const rootLabel = (root) => root?.provider ? root.label : root?.removable ? '外部存储' : '内部存储';
   const pathLabel = (path) => {
     const root = rootFor(path);
-    return root ? rootLabel(root) + path.slice(root.path.replace(/\/+$/,'').length) : path;
+    return root ? rootLabel(root) + fmt.displayPath(path).slice(fmt.displayPath(root.path.replace(/\/+$/,'')).length) : fmt.displayPath(path);
   };
   const isList = () => ['folder', 'library', 'favorites', 'search'].includes(state.route.screen);
   const action = (label, icon, onSelect, danger = false) => ({ label, icon, onSelect, danger });
@@ -461,17 +461,17 @@
     // The toolbar owns common operations; the remaining single-file operations
     // come from exactly the same source as that file's overflow menu.
     if(paths.length===1&&entries.length===1)return ui.openSheet('已选 1 项',entryActions(entries[0]).filter(item=>!['复制','移动','重命名','删除','选择','取消选择'].includes(item.label)));
+    const removeFavorites=entries.every(e=>state.favorites.some(f=>f.path===e.path));
     ui.openSheet('已选 '+paths.length+' 项',[
       ...(dual()?[action('复制到另一窗格','copy',()=>transferToPane('copy',paths)),action('移动到另一窗格','cut',()=>transferToPane('cut',paths))]:[]),
       action('复制路径','copy',async()=>{await ui.copyText(paths.join('\n'));ui.toast('路径已复制');}),
       ...(api.featuresAvailable()?androidFeatures.selectionActions(paths):[]),
-      ...(entries.length===paths.length?[action(entries.every(e=>state.favorites.some(f=>f.path===e.path))?'取消收藏':'添加到收藏','star',()=>favoriteMany(entries))]:[]),
+      ...(entries.length===paths.length?[action(removeFavorites?'取消收藏':'添加到收藏','star',()=>favoriteMany(entries,removeFavorites))]:[]),
       action('属性','info',()=>ui.openSheet('已选 '+paths.length+' 项',[action('关闭','close',()=>{})],paths.join('\n')+'\n已知文件大小：'+fmt.size(entries.reduce((n,e)=>n+(!e.isDir?e.size||0:0),0))+'（不统计文件夹内容）'))
     ]);
   }
-  function favoriteMany(entries){
+  function favoriteMany(entries,removeAll){
     const previous=JSON.parse(saved('rhfiles.favorites','[]')),selected=new Set(entries.map(e=>e.path));
-    const removeAll=entries.every(e=>previous.some(f=>f.path===e.path));
     const next=removeAll?previous.filter(f=>!selected.has(f.path)):[...previous,...entries.filter(e=>!previous.some(f=>f.path===e.path)).map(e=>({name:e.name,path:e.path,isDir:e.isDir,parentPath:e.parentPath}))];
     if(next.length>100)return ui.toast('常用 / 收藏位置最多保存 100 项，未更改收藏');
     cache('rhfiles.favorites',JSON.stringify(next));state.favorites=next;renderDrawer();if(state.route.screen==='favorites')go(state.route,{replace:true}).catch(error);ui.toast(removeAll?'已取消收藏':'已添加收藏');
@@ -519,7 +519,7 @@
     if(other.route.screen!=='folder')return ui.toast('请先在另一窗格打开目标文件夹');
     if(other.busy)return ui.toast('另一窗格正在读取，请稍后再试');
     const destination=other.route.path;
-    if(!await ui.confirm(mode==='cut'?'移动到另一窗格？':'复制到另一窗格？',paths.length+' 项 → '+destination+'\n文件夹会合并；不会自动覆盖同名文件。',mode==='cut'?'移动':'复制',{danger:false,icon:mode==='cut'?'cut':'copy'}))return;
+    if(!await ui.confirm(mode==='cut'?'移动到另一窗格？':'复制到另一窗格？',paths.length+' 项 → '+fmt.displayPath(destination)+'\n文件夹会合并；不会自动覆盖同名文件。',mode==='cut'?'移动':'复制',{danger:false,icon:mode==='cut'?'cut':'copy'}))return;
     const start={...state.route};
     // Capture the displayed destination before confirmation; never silently
     // follow the other pane to a different folder during an async dialog.
@@ -532,7 +532,7 @@
     });
   }
   function failures(title, report) {
-    if (report.failures?.length) ui.openSheet(title, [action('关闭','close',()=>{})], report.failures.map(item => item.path + '\n' + item.message).join('\n\n'));
+    if (report.failures?.length) ui.openSheet(title, [action('关闭','close',()=>{})], report.failures.map(item => fmt.displayPath(item.path) + '\n' + fmt.displayPathText(item.message)).join('\n\n'));
   }
   async function paste() {
     if (!state.clipboard || state.route.screen !== 'folder' || state.busy) return;

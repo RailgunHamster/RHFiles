@@ -4,11 +4,15 @@ RHFiles Android 0.1.20
 2. 快捷访问的更多菜单按钮改为统一的无边框图标按钮，保留 44px 点击范围，适配抽屉、平板侧栏及深色主题。
 3. WebDAV 同步网络收藏的排列顺序，不再按路径排序或保留各设备旧顺序；独立新增自动合并，冲突的重排要求明确选择。本地路径收藏仍留在本机。
 4. 长按文件直接进入多选，不再弹出菜单；右侧三个点保留单文件菜单。选中后的工具栏与更多菜单复用同一操作来源，补齐打开方式、编辑、解压、收藏、属性等适用功能；重复长按已选项不取消选择。
+5. 复制、移动的目标及文件任务详情显示可读的中文路径，不再直接显示百分号编码；仅转换显示，实际文件操作保留原始 URI。
+6. 图片菜单及单选更多操作新增“设为壁纸”，本机、授权存储和网络图片均可交给系统裁剪并确认；网络图片先存入限量临时缓存，失败清理，24 小时后再次使用功能时清理过期图片，不直接修改壁纸。
 
 1. Avoid Gitee anonymous release-API throttling by fetching one public latest index. Resolve APKs through immutable version tags and verify the exact client endpoint during publication.
 2. Use the common unframed Quick Access overflow icon with a 44px touch target in compact, tablet and dark layouts.
 3. Synchronize network bookmark order with three-way ordering, deterministic concurrent insertions and explicit reorder conflicts, while retaining device-local bookmarks.
 4. Long-press to select without a popup. Keep file overflow separate and retain applicable operations through the selection toolbar and More; support batch favorites.
+5. Decode URI paths for human-readable transfer/task displays only, without changing filesystem arguments or literal local filenames.
+6. Set an image as wallpaper via the system crop/confirmation UI, including granted-provider and network images, with bounded temporary snapshots and no automatic wallpaper changes.
 
 此前版本改进 / Previous improvements (0.1.19):
 

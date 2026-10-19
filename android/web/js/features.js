@@ -65,12 +65,12 @@ const androidFeatures = (() => {
     for(const j of lastJobs.slice(0,100)) {
       const card=ui.el('article','task-card');card.append(ui.el('strong','',(names[j.op]||j.op)+' · '+states[j.state]));
       const seconds=Math.max(1,((j.finished || Date.now())-j.started)/1000);
-      card.append(ui.el('p','muted',j.current || ''),ui.el('p','',fmt.size(j.bytes)+(j.total?' / '+fmt.size(j.total):'')+' · '+(j.state==='paused'?'已暂停':fmt.size(j.bytes/seconds)+'/s（平均）')+' · '+j.done+'/'+j.files+' 项'));
+      card.append(ui.el('p','muted',fmt.displayPathText(j.current)),ui.el('p','',fmt.size(j.bytes)+(j.total?' / '+fmt.size(j.total):'')+' · '+(j.state==='paused'?'已暂停':fmt.size(j.bytes/seconds)+'/s（平均）')+' · '+j.done+'/'+j.files+' 项'));
       const progress=document.createElement('progress');progress.max=Math.max(j.total,j.bytes,1);
       if(j.total>0)progress.value=j.bytes;else if(!active(j))progress.value=j.state==='completed'?1:0;
       card.append(progress);
-      if(j.message)notice(card,j.message);
-      for(const failure of j.failures || [])notice(card,failure.path+'\n'+failure.message);
+      if(j.message)notice(card,fmt.displayPathText(j.message));
+      for(const failure of j.failures || [])notice(card,fmt.displayPath(failure.path)+'\n'+fmt.displayPathText(failure.message));
       const actions=ui.el('div','button-row');
       if(active(j)) {
         actions.append(button(j.state==='paused'?'继续':'暂停',async()=>{await api.native('job.control',{id:j.id,action:j.state==='paused'?'resume':'pause'});await pollJobs();}),
@@ -81,7 +81,7 @@ const androidFeatures = (() => {
         if(args.sources && !args.sources.length)return ui.toast('没有剩余来源');await enqueue(j.op,args);
       }));
       if(j.outputs?.length) {
-        const details=ui.el('details');details.append(ui.el('summary','','输出位置'),ui.el('pre','',j.outputs.join('\n')));card.append(details);
+        const details=ui.el('details');details.append(ui.el('summary','','输出位置'),ui.el('pre','',j.outputs.map(fmt.displayPath).join('\n')));card.append(details);
       }
       card.append(actions);node.append(card);
     }
@@ -295,6 +295,10 @@ const androidFeatures = (() => {
   }
   function entryActions(entry) {
     const options=[];
+    if(!entry.isDir&&entry.kind==='image')options.push(app.action('设为壁纸','image',async()=>{
+      ui.toast(entry.path.startsWith('remote://')?'正在读取网络图片…':'正在准备壁纸…');
+      await api.native('image.wallpaper',{path:entry.path});
+    }));
     if(api.nearbyAvailable()&&!api.isVirtual(entry.path))options.push(app.action('发送到附近设备','nearby',()=>androidNearby.open([entry.path])));
     if(!api.isVirtual(entry.path)) {
       options.push(app.action('压缩为 ZIP','archive',()=>compress([entry.path])));

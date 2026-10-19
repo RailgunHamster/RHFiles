@@ -148,6 +148,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         java.net.HttpURLConnection edit=(java.net.HttpURLConnection)new java.net.URL(endpoint.replace("/sync/","/qa-reverse")).openConnection();edit.setRequestMethod("POST");edit.setConnectTimeout(5000);edit.setReadTimeout(5000);try{require(edit.getResponseCode()==204,"Cannot simulate second-device reorder");}finally{edit.disconnect();}
         tapCss("#sync-now",true);awaitScript("__syncPane.document.getElementById('sync-state').textContent.includes('同步完成')&&JSON.parse(__syncPane.localStorage.getItem('rhfiles.favorites')).filter(f=>f.path.startsWith('remote://11111111-1111-4111-8111-111111111111/')).map(f=>f.name).join(',')==='M,A,Z'");
         eval("__syncPane.document.getElementById('btn-menu').click()");awaitScript("!__syncPane.document.getElementById('drawer').hidden");
+        require(eval("[...__syncPane.document.querySelectorAll('#nav-favorites .favorite-location>button:first-child')].map(b=>b.textContent.trim()).filter(s=>['M','A','QA cloud alias'].includes(s)).join('|')==='M|A|QA cloud alias'").equals("true"),"Drawer did not display the synchronized bookmark order");
         require(eval("(()=>{const b=__syncPane.document.querySelector('.favorite-more'),s=__syncPane.getComputedStyle(b);return b.classList.contains('icon-btn')&&s.borderTopWidth==='0px'&&s.backgroundColor==='rgba(0, 0, 0, 0)'&&Math.round(b.getBoundingClientRect().height)===44;})()").equals("true"),"Quick Access overflow is not the shared unframed icon button");
         screenshot("quick-access");eval("__syncPane.rhfilesHandleBack()");
         eval("__syncPane.document.getElementById('sync-state').scrollIntoView({block:'center'})");screenshot("webdav-sync");eval("void api.native('sync.status').then(s=>window.__syncFinal=s)");awaitScript("!!window.__syncFinal");require(json("window.__syncFinal").getLong("lastSuccess")>0,"Native sync did not commit");
@@ -245,6 +246,19 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         long down=android.os.SystemClock.uptimeMillis();injectContacts(down,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{x,y}});Thread.sleep(hold);
         if(dx!=0)for(int i=1;i<=12;i++){injectContacts(down,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{x+dx*i/12,y}});Thread.sleep(25);}
         injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x+dx,y}});Thread.sleep(300);
+    }
+    private void wallpaperProbe(Bundle result) throws Exception {
+        java.io.File file=new java.io.File("/storage/emulated/0/Download/RHFiles-wallpaper-QA.png");
+        android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(32,24,android.graphics.Bitmap.Config.ARGB_8888);bitmap.eraseColor(android.graphics.Color.BLUE);
+        try(java.io.FileOutputStream output=new java.io.FileOutputStream(file)){require(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output),"Fixture encoding failed");}finally{bitmap.recycle();}
+        android.content.IntentFilter filter=new android.content.IntentFilter("android.service.wallpaper.CROP_AND_SET_WALLPAPER");filter.addDataScheme("content");filter.addDataType("image/*");
+        // Intercept before launch, so this test can never change the wallpaper.
+        ActivityMonitor monitor=addMonitor(filter,new ActivityResult(Activity.RESULT_CANCELED,null),true);
+        try{
+            eval("void api.native('image.wallpaper',{path:"+JSONObject.quote(file.getPath())+"}).then(()=>window.__wallpaperQa={pass:true}).catch(e=>window.__wallpaperQa={error:String(e)})");
+            awaitScript("!!window.__wallpaperQa");require(!json("window.__wallpaperQa").has("error"),eval("window.__wallpaperQa.error"));require(monitor.getHits()==1,"System wallpaper intent was not launched exactly once");
+            result.putString("pass","true");result.putString("checks","minified APK image snapshot, FileProvider MIME resolution, standard system crop handoff intercepted before launch; wallpaper unchanged");finish(Activity.RESULT_OK,result);
+        }finally{removeMonitor(monitor);file.delete();}
     }
     private void fileGesturesProbe(Bundle result) throws Exception {
         awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane')?.contentWindow.rhfilesPane");
@@ -383,6 +397,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("network-smb")){networkSmbProbe(result);return;}
             if(arguments.getString("mode","").equals("media")){mediaProbe(result);return;}
             if(arguments.getString("mode","").equals("file-gestures")){fileGesturesProbe(result);return;}
+            if(arguments.getString("mode","").equals("wallpaper")){wallpaperProbe(result);return;}
             if(arguments.getString("mode","").equals("external-video")){externalVideoProbe(result);return;}
             if(arguments.getString("mode","").equals("config-sync")){configSyncProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+

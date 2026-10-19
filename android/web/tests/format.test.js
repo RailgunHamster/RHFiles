@@ -56,6 +56,18 @@ test('parent and basename handle trailing slashes and roots', () => {
   assert.equal(fmt.baseName('plain.txt'), 'plain.txt');
 });
 
+test('URI path display decodes Chinese once without changing local literal percent names', () => {
+  const raw='remote://nas/'+encodeURIComponent('中文 文件 + #.jpg');
+  assert.equal(fmt.displayPath(raw),'remote://nas/中文 文件 + #.jpg');
+  assert.equal(fmt.displayPath('content://provider/document/'+encodeURIComponent('primary:图片/壁纸')),'content://provider/document/primary:图片%2F壁纸');
+  assert.equal(fmt.displayPath('file:///storage/'+encodeURIComponent('下载')),'file:///storage/下载');
+  assert.equal(fmt.displayPath('/storage/emulated/0/%E4%B8%AD.txt'),'/storage/emulated/0/%E4%B8%AD.txt');
+  assert.equal(fmt.displayPath('remote://id/%25E4%25B8%25AD+name'),'remote://id/%E4%B8%AD+name');
+  assert.equal(fmt.displayPath('remote://id/%E4%ZZ/%2F%5C%0A%00%E2%80%AE'),'remote://id/%E4%ZZ/%2F%5C%0A%00%E2%80%AE');
+  assert.equal(fmt.displayPathText('正在核验来源：'+raw),'正在核验来源：remote://nas/中文 文件 + #.jpg');
+  assert.equal(raw,'remote://nas/%E4%B8%AD%E6%96%87%20%E6%96%87%E4%BB%B6%20%2B%20%23.jpg');
+});
+
 const entry = (name, isDir, extra) =>
   Object.assign({ name, isDir, size: 0, modifiedMs: 0, kind: isDir ? 'folder' : 'other' }, extra || {});
 

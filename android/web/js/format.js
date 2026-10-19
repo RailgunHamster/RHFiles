@@ -75,6 +75,21 @@
     return index < 0 ? trimmed : trimmed.slice(index + 1);
   }
 
+  // Presentation only: never pass this back to a filesystem/provider command.
+  // Decode once, retaining encoded separators and control/bidi characters so a
+  // filename cannot invent a directory or a misleading extra line in the UI.
+  function displayPath(value) {
+    const path = String(value ?? '');
+    return path.replace(/^(remote|content|file):\/\/([^/]*)([^?#]*)/i, (all, scheme, authority, rest) =>
+      scheme + '://' + authority + rest.replace(/(?:%[0-9a-f]{2})+/gi, encoded => {
+        try { return decodeURIComponent(encoded).replace(/[/\\\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, c => encodeURIComponent(c)); }
+        catch { return encoded; }
+      }));
+  }
+  function displayPathText(value) {
+    return String(value ?? '').replace(/(?:remote|content|file):\/\/[^\s]+/gi, displayPath);
+  }
+
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
   const COMPARATORS = {
@@ -107,5 +122,5 @@
     return a.every((entry, index) => keys.every(key => entry[key] === b[index][key]));
   }
 
-  return { size, date, relative, count, path2parts, parentOf, baseName, shapeEntries, sameEntries };
+  return { size, date, relative, count, path2parts, parentOf, baseName, displayPath, displayPathText, shapeEntries, sameEntries };
 });

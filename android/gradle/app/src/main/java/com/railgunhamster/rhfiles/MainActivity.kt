@@ -217,6 +217,10 @@ class MainActivity : TauriActivity() {
     }
     "media.thumbnail" -> thumbnails.read(args.getString("path"),args.optInt("maxEdge",160))
     "media.image" -> remoteImages.read(args.getString("path"),args.optInt("maxEdge",1920))
+    "image.wallpaper" -> {
+      val uri=ImageWallpaper.prepare(this,storage,args.getString("path"))
+      onUi{try{startActivity(ImageWallpaper.intent(this,uri))}catch(_:android.content.ActivityNotFoundException){error("当前系统没有可用的壁纸设置界面，请用系统图库设置")};true}
+    }
     "window.layout" -> onUi{adaptiveWindow.current()}
     "media.play" -> {
       val path=args.getString("path")
