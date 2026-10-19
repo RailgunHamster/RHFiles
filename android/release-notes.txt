@@ -1,4 +1,20 @@
-RHFiles Android 0.1.18
+RHFiles Android 0.1.19
+
+1. WebDAV 配置同步：在设置 → 配置同步填写已存在的 WebDAV 文件夹、账号与密码，可手动同步或开启自动同步。启动、回到应用、共享配置修改后及前台每 5 分钟触发；关闭后只有“立即同步”会连接服务器。
+2. 仅同步网络位置、网络路径收藏及收藏别名，默认不上传密码；本地路径收藏、主题、分屏、系统授权、缓存和任务留在本机。新设备可编辑网络位置补填密码；WebDAV 凭据使用 Android Keystore 加密保存在本机。
+3. 按条目三方合并；同项冲突明确选择本机或云端。ETag 条件写入防止覆盖其他设备的修改，异常文件、无强 ETag、登录失败和网络错误明确报错；应用同步配置使用事务及确认，未完成时回滚，不覆盖同步期间新改的收藏。
+4. 完整加密备份独立保留，并包含 WebDAV 设置；导入后自动同步保持关闭，检查后手动开启，避免将旧备份直接同步到其他设备。
+5. RHFiles 可在 Android 的视频“打开方式”中选择；支持外部应用的 content:// 视频和本机 file:// 视频，转发临时只读授权到原生播放器，不经过复制流程。公开入口不接收内部播放路径、网络账号或任意队列，不允许访问应用私有文件。
+6. 更新页外层只展示最新版本日志，旧版本从“历史日志”查看；待更新说明同样只显示该版本，不再混入累计历史。
+
+1. Add WebDAV configuration sync under Settings, with manual sync and opt-in startup/resume/change/five-minute foreground synchronization.
+2. Share network profiles and network bookmark labels only. Never upload passwords, local bookmarks, device layouts, permissions, tasks or caches. Keep WebDAV credentials encrypted locally.
+3. Merge individual entries against a common baseline, explicitly resolve same-item conflicts, protect writes with strong ETags, and journal/acknowledge local application with rollback.
+4. Keep full encrypted backups separate, include WebDAV settings and leave automatic sync disabled after restoration.
+5. Register as an Android video Open With candidate. Forward temporary content-URI read grants to the native player without copying, while keeping internal playback extras private.
+6. Show only latest release notes in the outer update page, with older versions in a separate History menu.
+
+此前版本改进 / Previous improvements (0.1.18):
 
 1. 网络存储只显示在左侧抽屉的存储位置，不再重复出现在首页；网络位置列表改为单行，编辑、添加常用、移除统一收到更多菜单中。
 2. 文件和文件夹左滑跟手露出删除按钮，点击后与更多菜单共用删除确认及回收站流程；滑动本身不删除，纵向滚动、多选和取消触摸不会误删。

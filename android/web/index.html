@@ -39,7 +39,7 @@
       <section id="tool-extra" hidden></section>
       <section id="tool-settings" hidden>
         <nav class="settings-nav" aria-label="设置分类" role="tablist">
-          <button role="tab" data-settings-section="display">浏览与显示</button><button role="tab" data-settings-section="index">搜索索引</button><button role="tab" data-settings-section="storage">存储与权限</button><button role="tab" data-settings-section="updates">更新与网络</button><button role="tab" data-settings-section="backup">配置备份</button><button role="tab" data-settings-section="about">关于与诊断</button>
+          <button role="tab" data-settings-section="display">浏览与显示</button><button role="tab" data-settings-section="index">搜索索引</button><button role="tab" data-settings-section="storage">存储与权限</button><button role="tab" data-settings-section="updates">更新与网络</button><button role="tab" data-settings-section="sync" hidden>配置同步</button><button role="tab" data-settings-section="backup">配置备份</button><button role="tab" data-settings-section="about">关于与诊断</button>
         </nav>
         <div class="settings-content">
         <section data-settings-panel="display" role="tabpanel"><h2>浏览与显示</h2>
@@ -47,6 +47,7 @@
         <button id="btn-hidden" class="setting-row">显示隐藏文件：关</button>
         <p class="muted">列表和网格均显示图片、视频缩略图。平板与展开的大屏会显示常驻导航；分屏、旋转或折叠时按可用空间调整。</p></section>
         <section data-settings-panel="updates" role="tabpanel" hidden><section id="app-updates" hidden></section></section>
+        <section data-settings-panel="sync" role="tabpanel" hidden><section id="config-sync"></section></section>
         <section data-settings-panel="backup" role="tabpanel" hidden><h2>本地配置备份</h2><p class="muted">备份浏览显示、收藏、分屏、设备名称、更新源与代理、网络位置和账号密码、电子书设置/书签/阅读位置。备份使用密码加密，可在另一台 Android 设备导入。</p><div class="button-row"><button id="btn-config-export">导出配置</button><button id="btn-config-import">导入配置</button></div><p class="muted">系统权限与授权目录需要在新设备重新授权；不备份文件内容、索引缓存、任务或待粘贴列表。请妥善保管备份密码，遗失后无法恢复。</p></section>
         <section data-settings-panel="index" role="tabpanel" hidden><h2>搜索索引</h2><p class="muted">分类与全局搜索使用本机文件名索引，不上传文件。首次使用请建立索引。</p>
         <div id="index-status" class="kv"></div>
@@ -108,6 +109,6 @@
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden><div class="sheet-panel" id="sheet-panel"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="js/media-model.js"></script><script src="js/gallery.js"></script>
-<script src="js/api.js"></script><script src="js/format.js"></script><script src="js/list-model.js"></script><script src="js/pane-model.js"></script><script src="js/ui.js"></script><script src="js/nearby-ui.js"></script><script src="js/nearby.js"></script><script src="js/features.js"></script><script src="js/changelog.js"></script><script src="js/updates.js"></script><script src="js/adaptive.js"></script><script src="js/pane-touch.js"></script><script src="js/workbench.js"></script><script src="js/settings-data.js"></script><script src="js/config-backup.js"></script><script src="js/app.js"></script>
+<script src="js/api.js"></script><script src="js/format.js"></script><script src="js/list-model.js"></script><script src="js/pane-model.js"></script><script src="js/ui.js"></script><script src="js/nearby-ui.js"></script><script src="js/nearby.js"></script><script src="js/features.js"></script><script src="js/changelog.js"></script><script src="js/updates.js"></script><script src="js/adaptive.js"></script><script src="js/pane-touch.js"></script><script src="js/workbench.js"></script><script src="js/settings-data.js"></script><script src="js/config-backup.js"></script><script src="js/config-sync.js"></script><script src="js/app.js"></script>
 </body>
 </html>

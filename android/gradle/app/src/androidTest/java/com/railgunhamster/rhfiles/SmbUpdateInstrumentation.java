@@ -112,6 +112,40 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             result.putString("pass","true");result.putString("repeatedBrowseMs",String.valueOf(marker.getLong("ms")));result.putString("checks","minified APK: real SMB image decoding, reused folder sessions, network storage roots, distinct package icons; local and SMB decoded video frames, initially hidden controls, tap, seek and next queue item");finish(Activity.RESULT_OK,result);
         }finally{eval("void api.native('connection.delete',{id:window.__mediaId})");}
     }
+    private void externalVideoProbe(Bundle result) throws Exception {
+        String path=arguments.getString("video","/storage/emulated/0/Download/RHFiles-Media-QA-2.mp4");
+        require(path.equals("/storage/emulated/0/Download/RHFiles-Media-QA-2.mp4"),"Owned synthetic fixture only");
+        java.io.File file=new java.io.File(path);require(file.isFile()&&file.length()<=512*1024,"Prepare the bounded blue-video fixture first");byte[] bytes=java.nio.file.Files.readAllBytes(file.toPath());
+        Intent view=new Intent(Intent.ACTION_VIEW).setDataAndType(android.net.Uri.parse("content://qa.provider/video"),"video/mp4");
+        boolean found=false;for(android.content.pm.ResolveInfo match:getTargetContext().getPackageManager().queryIntentActivities(view,android.content.pm.PackageManager.MATCH_DEFAULT_ONLY))if(match.activityInfo.name.equals("com.railgunhamster.rhfiles.ExternalPlaybackActivity"))found=true;
+        require(found,"RHFiles is absent from the system video Open With candidates");
+        ActivityMonitor monitor=addMonitor("com.railgunhamster.rhfiles.PlaybackActivity",null,false);Activity player=null;
+        try{
+            try(java.io.InputStream command=new android.os.ParcelFileDescriptor.AutoCloseInputStream(getUiAutomation().executeShellCommand("appops set com.railgunhamster.rhfiles MANAGE_EXTERNAL_STORAGE deny"))){command.readAllBytes();}
+            Intent caller=new Intent().setClassName("com.railgunhamster.rhfiles.test","com.railgunhamster.rhfiles.ExternalVideoTestCaller").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("video",bytes);getContext().startActivity(caller);
+            player=waitForMonitorWithTimeout(monitor,30000);require(player!=null,"External video did not enter the native player");
+            long until=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<until){dismissSystemFullscreenEducation();if(hasVideoFrame(true))break;Thread.sleep(250);}
+            require(hasVideoFrame(true),"External content URI did not decode after caller/router finished (temporary read grant lost)");
+            require(player.getIntent().getData().getAuthority().equals("com.railgunhamster.rhfiles.test.media"),"Player lost the original external content URI");capture("external-video");
+            result.putString("pass","true");result.putString("checks","system video resolver, separate-UID non-exported provider, temporary read grant forwarding, real decoded blue frame without all-files permission");finish(Activity.RESULT_OK,result);
+        }finally{removeMonitor(monitor);if(player!=null){final Activity closing=player;runOnMainSync(closing::finish);}try(java.io.InputStream command=new android.os.ParcelFileDescriptor.AutoCloseInputStream(getUiAutomation().executeShellCommand("appops set com.railgunhamster.rhfiles MANAGE_EXTERNAL_STORAGE allow"))){command.readAllBytes();}}
+    }
+    private void configSyncProbe(Bundle result) throws Exception {
+        String endpoint=arguments.getString("endpoint","");require(endpoint.matches("http://10\\.0\\.2\\.2:[0-9]+/sync/"),"Emulator loopback fixture required");
+        awaitScript("!!document.querySelector('.file-pane:not([hidden])')?.contentWindow.rhfilesPane");
+        eval("window.__syncPane=document.querySelector('.file-pane:not([hidden])').contentWindow;void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'Local Sync QA',host:'qa.invalid',share:'Public',username:'qa-local',password:'must-stay-local'});window.__syncProfile=id;const favorites=JSON.stringify([{name:'QA folder',path:'remote://'+id+'/folder',isDir:true,label:'QA local alias'},{name:'Local only',path:'/storage/emulated/0/Download',isDir:true}]);__syncPane.localStorage.setItem('rhfiles.favorites',favorites);__syncPane.document.getElementById('nav-settings').click();window.__syncReady=true;}catch(e){window.__syncError=String(e)}})()");
+        awaitScript("!!window.__syncReady||!!window.__syncError");require(eval("!window.__syncError").equals("true"),"Sync setup: "+eval("window.__syncError"));
+        eval("__syncPane.document.querySelector('[data-settings-section=sync]').scrollIntoView({inline:'center'})");tapCss("[data-settings-section=sync]",true);
+        awaitScript("!!__syncPane.document.querySelector('#config-sync form')");
+        eval("(()=>{const form=__syncPane.document.querySelector('#config-sync form');for(const [key,value] of Object.entries({url:"+JSONObject.quote(endpoint)+",username:'sync-user',password:'qa-sync-password',enabled:false,insecure:true})){const input=form.elements[key];if(input.type==='checkbox')input.checked=value;else input.value=value;}form.dispatchEvent(new __syncPane.Event('input',{bubbles:true}));})()");
+        eval("__syncPane.document.querySelector('#config-sync button[type=submit]').scrollIntoView({block:'center'})");tapCss("#config-sync button[type=submit]",true);awaitScript("__syncPane.document.querySelector('#config-sync input[name=password]').value===''");
+        eval("__syncPane.document.getElementById('sync-now').scrollIntoView({block:'center'})");tapCss("#sync-now",true);
+        awaitScript("__syncPane.document.getElementById('sync-state').textContent.includes('同步完成')");
+        require(eval("(()=>{const f=JSON.parse(__syncPane.localStorage.getItem('rhfiles.favorites'));return f.some(e=>e.label==='QA cloud alias')&&f.some(e=>e.path==='/storage/emulated/0/Download')&&!JSON.stringify(__syncPane.localStorage).includes('must-stay-local')&&!JSON.stringify(__syncPane.localStorage).includes('qa-sync-password');})()").equals("true"),"Shared config or local-only data/password isolation failed");
+        eval("__syncPane.document.getElementById('sync-state').scrollIntoView({block:'center'})");screenshot("webdav-sync");eval("void api.native('sync.status').then(s=>window.__syncFinal=s)");awaitScript("!!window.__syncFinal");require(json("window.__syncFinal").getLong("lastSuccess")>0,"Native sync did not commit");
+        eval("void(async()=>{const s=await api.native('sync.status');await api.native('sync.save',{...s.config,enabled:false});})();");
+        result.putString("pass","true");result.putString("checks","real WebDAV conditional GET/PUT, minified native encryption, UI settings/save/manual sync, remote bookmark merge, local-only preservation, password isolation");finish(Activity.RESULT_OK,result);
+    }
     private void ebookProbe(Bundle result) throws Exception {
         String path=arguments.getString("book");require(path!=null&&path.startsWith("/storage/emulated/0/Download/RHFiles-"),"Only owned emulator fixtures allowed");
         eval("void api.native('ebook.open',{path:"+JSONObject.quote(path)+",name:'test.epub',theme:'light'}).catch(e=>window.__ebookQaError=String(e))");
@@ -187,6 +221,9 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         CountDownLatch painted=new CountDownLatch(1);
         runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.postVisualStateCallback(1,new WebView.VisualStateCallback(){@Override public void onComplete(long id){painted.countDown();}});});
         require(painted.await(10,TimeUnit.SECONDS),"WebView paint did not settle");Thread.sleep(400);
+        capture(name);
+    }
+    private void capture(String name) throws Exception {
         android.graphics.Bitmap image=getUiAutomation().takeScreenshot();require(image!=null,"Screenshot unavailable");
         try(java.io.FileOutputStream stream=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-Release-QA-phone-"+name+".png")){image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,stream);}finally{image.recycle();}
     }
@@ -212,7 +249,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         eval("__qa.document.getElementById('nav-settings').click()");awaitScript("!__qa.document.getElementById('tool-settings').hidden");eval("__qa.document.querySelector('.settings-nav').scrollLeft=9999");Thread.sleep(250);
         int before=json("({x:__qa.document.querySelector('.settings-nav').scrollLeft})").getInt("x");gestureCss(".settings-nav",.4f,30);
         require(eval("__qa.document.getElementById('drawer').hidden&&__qa.document.querySelector('.settings-nav').scrollLeft<"+before).equals("true"),"Settings pan opened drawer or failed to scroll tabs");
-        eval("__qa.document.querySelector('[data-settings-section=updates]').click()");awaitScript("__qa.document.querySelectorAll('#app-changelog details').length>10");require(eval("__qa.document.getElementById('app-changelog').textContent.includes('0.1.18')").equals("true"),"Installed history missing from minified APK");screenshot("installed-history");
+        eval("__qa.document.querySelector('[data-settings-section=updates]').click()");awaitScript("__qa.document.querySelectorAll('#app-changelog details').length===1&&!!__qa.document.getElementById('update-history')");require(eval("__qa.document.getElementById('app-changelog').textContent.includes('0.1.19')").equals("true"),"Installed latest notes missing from minified APK");screenshot("installed-history");
+        eval("__qa.document.getElementById('update-history').click()");awaitScript("__qa.document.querySelectorAll('.release-history details').length>10");eval("__qa.rhfilesHandleBack()");
         eval("void api.raw('delete_entries',{paths:['/storage/emulated/0/Download/RHFiles-018-QA.txt'],permanent:true})");
         result.putString("pass","true");result.putString("checks","real MotionEvent long press/overflow parity, file swipe Delete confirmation, settings tab scrolling, bundled installed history in minified APK");finish(Activity.RESULT_OK,result);
     }
@@ -333,6 +371,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("network-smb")){networkSmbProbe(result);return;}
             if(arguments.getString("mode","").equals("media")){mediaProbe(result);return;}
             if(arguments.getString("mode","").equals("file-gestures")){fileGesturesProbe(result);return;}
+            if(arguments.getString("mode","").equals("external-video")){externalVideoProbe(result);return;}
+            if(arguments.getString("mode","").equals("config-sync")){configSyncProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

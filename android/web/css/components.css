@@ -64,6 +64,12 @@ body { background:var(--page); -webkit-font-smoothing:antialiased; }
 .service-symbol { display:flex; }
 .service-action svg { width:19px; height:19px; }
 .tool-page .service-action[data-running=true] { color:var(--danger); background:var(--surface); }
+.release-history { padding:0 20px 16px; }
+.release-history details { margin:8px 0; border-top:1px solid var(--line); }
+.release-history pre { font:14px/1.8 system-ui,sans-serif; }
+.sync-attention { color:var(--danger); background:var(--surface); }
+.sync-attention::after { content:''; position:absolute; width:6px; height:6px; border-radius:50%; right:8px; top:8px; background:var(--danger); }
+#sync-state:not(:empty) { border:1px solid var(--line); border-radius:12px; padding:14px; background:var(--surface); white-space:pre-line; line-height:1.75; }
 .tool-page .application-row { background:transparent; border-color:var(--line); }
 .settings-nav { background:var(--bg); border:1px solid var(--line); border-radius:14px; padding:5px; margin-bottom:12px; gap:4px; box-shadow:var(--shadow); }
 .tool-page .settings-nav button { border-radius:9px; font-size:13px; padding:10px 13px; }

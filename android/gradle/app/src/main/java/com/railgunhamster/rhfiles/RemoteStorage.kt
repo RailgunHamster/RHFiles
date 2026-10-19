@@ -127,6 +127,12 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val encrypted = cipher.iv + cipher.doFinal(config.toString().toByteArray())
     return Base64.encodeToString(encrypted,Base64.NO_WRAP)
   }
+  internal fun sealLocal(value:JSONObject)=encrypt(value)
+  internal fun unsealLocal(value:String):JSONObject {
+    val encrypted=Base64.decode(value,Base64.NO_WRAP);require(encrypted.size>=28){"本机凭据已损坏"}
+    val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,encrypted.copyOfRange(0,12)))
+    return JSONObject(String(cipher.doFinal(encrypted.copyOfRange(12,encrypted.size)),Charsets.UTF_8))
+  }
   @Synchronized fun save(config: JSONObject): String {
     val value=JSONObject(config.toString());val requested=value.optString("id")
     require(requested.isNotBlank()||preferences.all.size<200){"网络位置最多保存 200 项，请先移除不再使用的连接"}

@@ -51,9 +51,11 @@ class MainActivity : TauriActivity() {
   private var restoreNavigation=false
   private val paneTouch=PaneTouchRelay()
   private val settingsLock=Any()
+  private val sharedConfig by lazy {ConfigSync(applicationContext,storage.remote,settingsLock)}
   private val backup by lazy {SettingsBackup(applicationContext,storage.remote){updates.validateBackup(it)}}
   private val backupUi by lazy {SettingsBackupUi(this,io,backup,{updates.config()}){payload,currentWeb->synchronized(settingsLock){
     val jobs=FileTasks.list(this);require((0 until jobs.length()).none{jobs.getJSONObject(it).optString("state") in listOf("queued","scanning","running","paused")}){"请先结束当前文件任务再导入配置"}
+    sharedConfig.invalidate()
     updates.restoreSettings{val result=backup.apply(payload,currentWeb);RemoteStorage.discardReadSessions();result}
   }}}
   private var watching=false
@@ -72,6 +74,7 @@ class MainActivity : TauriActivity() {
     restoreNavigation=savedInstanceState?.getBoolean("rhfilesRestoreNavigation",false)==true
     super.onCreate(savedInstanceState)
     backup.recover()
+    sharedConfig.recover()
     onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){
       override fun handleOnBackPressed(){backNavigation.back()}
     })
@@ -82,7 +85,7 @@ class MainActivity : TauriActivity() {
     watching=true
     try{contentResolver.registerContentObserver(MediaStore.Files.getContentUri("external"),true,mediaObserver)}catch(_:Exception){}
   }
-  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();RemoteStorage.discardReadSessions();lanDiscovery.close();io.shutdown();mediaIo.shutdown();appWebView=null;super.onDestroy()}
+  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();RemoteStorage.discardReadSessions();sharedConfig.close();lanDiscovery.close();io.shutdown();mediaIo.shutdown();appWebView=null;super.onDestroy()}
   override fun onSaveInstanceState(outState:Bundle){outState.putBoolean("rhfilesRestoreNavigation",true);super.onSaveInstanceState(outState)}
   override fun onStart(){super.onStart();adaptiveWindow.start()}
   override fun onStop(){adaptiveWindow.stop();super.onStop()}
@@ -190,7 +193,18 @@ class MainActivity : TauriActivity() {
       }else stopService(intent)
       true
     }}
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true)
+    "sync.status" -> sharedConfig.status()
+    "sync.save" -> sharedConfig.save(args).also{mainHandler.post{appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-sync-changed'))",null)}}
+    "sync.run" -> {require(backup.pending()==null){"请先完成配置导入"};sharedConfig.run(args.getJSONObject("web"),args.optBoolean("manual"),args.optString("token"),args.optString("choice"))}
+    "sync.apply" -> synchronized(settingsLock){
+      val jobs=FileTasks.list(this);require((0 until jobs.length()).none{jobs.getJSONObject(it).optString("state") in listOf("queued","scanning","running","paused")}){"请先结束文件任务，再应用同步配置"}
+      sharedConfig.apply(args.getString("id"),args.getJSONObject("web")).also{locationsChanged()}
+    }
+    "sync.ack" -> sharedConfig.acknowledge(args.getString("id"))
+    "sync.rollback" -> sharedConfig.recover()?:JSONObject.NULL
+    "sync.rollbackWeb" -> sharedConfig.rollbackWeb()?:JSONObject.NULL
+    "sync.rollbackAck" -> {sharedConfig.clearRollback();true}
     "panes.touch" -> {paneTouch.enabled=args.optBoolean("enabled");true}
     "config.pending" -> backup.pending() ?: JSONObject.NULL
     "config.ack" -> {backup.acknowledge(args.getString("id"));true}
@@ -249,8 +263,8 @@ class MainActivity : TauriActivity() {
       FtpAccess.start(applicationContext,args)
     }
     "ftp.stop" -> FtpAccess.stop()
-    "connection.save" -> synchronized(settingsLock){if(args.optString("id").isNotBlank())RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.save(args).also{locationsChanged()}}
-    "connection.delete" -> synchronized(settingsLock){RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));locationsChanged();true}
+    "connection.save" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};if(args.optString("id").isNotBlank())RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.save(args).also{locationsChanged()}}
+    "connection.delete" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));locationsChanged();true}
     "open","share" -> {
       val paths=args.optJSONArray("paths") ?: JSONArray().put(args.getString("path"))
       require(paths.length() in 1..1000){"分享数量无效"}
@@ -273,7 +287,7 @@ class MainActivity : TauriActivity() {
     "job.start" -> {
       if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
         onUi{requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),11)}
-      synchronized(settingsLock){FileTasks.start(this,args.getString("op"),args.getJSONObject("args"))}
+      synchronized(settingsLock){require(!sharedConfig.isApplying()){"正在应用同步配置，请稍后再启动文件任务"};FileTasks.start(this,args.getString("op"),args.getJSONObject("args"))}
     }
     "jobs" -> FileTasks.list(this)
     "job.status" -> FileTasks.status(this,args.getString("id"))

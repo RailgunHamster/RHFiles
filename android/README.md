@@ -29,6 +29,7 @@ node android/web/tests/ui-check.mjs
 node android/web/tests/flow-check.mjs
 node android/web/tests/network-check.mjs
 node android/web/tests/media-check.mjs
+node android/web/tests/config-sync-check.mjs
 pwsh -File scripts/android-build.ps1 -Target aarch64
 ```
 

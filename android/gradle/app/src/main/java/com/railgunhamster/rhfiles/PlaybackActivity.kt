@@ -127,7 +127,7 @@ class PlaybackActivity:AppCompatActivity() {
     val uri=if(source.scheme=="file")FileProvider.getUriForFile(this,"$packageName.fileprovider",java.io.File(source.path!!)) else source
     val intent=Intent(Intent.ACTION_VIEW).setDataAndType(uri,if(this.intent.getStringExtra("kind")=="audio")"audio/*" else "video/*")
       .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).apply{clipData=ClipData.newRawUri("媒体文件",uri)}
-    startActivity(Intent.createChooser(intent,"选择播放器"))
+    startActivity(Intent.createChooser(intent,"选择播放器").putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS,arrayOf(android.content.ComponentName(this,ExternalPlaybackActivity::class.java))))
   }catch(e:Exception){Toast.makeText(this,"打开播放器失败：${e.message}",Toast.LENGTH_LONG).show()}}
   private fun options(anchor:View){
     val menu=PopupMenu(this,anchor)

@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Separate test UID owns this provider and explicitly grants a video. -->
+        <provider android:name="com.railgunhamster.rhfiles.ExternalVideoTestProvider" android:authorities="com.railgunhamster.rhfiles.test.media" android:exported="false" android:grantUriPermissions="true" />
+        <activity android:name="com.railgunhamster.rhfiles.ExternalVideoTestCaller" android:exported="true" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

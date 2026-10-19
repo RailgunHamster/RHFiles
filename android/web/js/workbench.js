@@ -124,6 +124,7 @@ const workbench=(()=>{
     window.addEventListener('resize',layout);
     window.addEventListener('rhfiles-storage-changed',()=>broadcast('rhfiles-storage-changed'));
       window.addEventListener('rhfiles-locations-changed',()=>broadcast('rhfiles-locations-changed'));
+    window.addEventListener('rhfiles-sync-changed',()=>broadcast('rhfiles-sync-changed'));
     return true;
   }
   return {boot,child,primary,id,parentHost};

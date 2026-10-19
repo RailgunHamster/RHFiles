@@ -85,6 +85,8 @@ function Sync-File {
 }
 
 $appDir = Join-Path $generatedRoot 'app'
+$testManifest=Join-Path $repoRoot 'android\gradle\app\src\androidTest\AndroidManifest.xml'
+if(Test-Path -LiteralPath $testManifest){New-Item -ItemType Directory -Path (Join-Path $appDir 'src\androidTest') -Force | Out-Null;Sync-File -Source $testManifest -Target (Join-Path $appDir 'src\androidTest\AndroidManifest.xml')}
 Sync-File -Source (Join-Path $repoRoot 'android\gradle\build.gradle.kts') -Target (Join-Path $generatedRoot 'build.gradle.kts')
 Sync-File `
     -Source (Join-Path $repoRoot 'android\gradle\app\proguard-rules.pro') `
@@ -130,7 +132,7 @@ foreach ($sourceSet in @('main', 'test', 'androidTest')) {
 }
 
 $targets = Get-ChildItem $generatedRoot -Recurse -File -Filter 'AndroidManifest.xml' |
-    Where-Object { $_.FullName -notlike '*\build\*' }
+    Where-Object { $_.FullName -notlike '*\build\*' -and $_.FullName -notlike '*\src\androidTest\*' }
 if (-not $targets) {
     throw "no AndroidManifest.xml found under $generatedRoot"
 }

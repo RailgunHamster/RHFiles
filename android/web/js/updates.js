@@ -52,9 +52,13 @@ const androidUpdates=(()=>{
     const history=ui.el('section','installed-changelog');history.id='app-changelog';history.append(ui.el('h3','','更新日志'),ui.el('p','muted','随应用保存的历次更新记录；离线、更新完成后也可以查看。'));node.append(history);
     try{
       const response=await fetch('CHANGELOG.txt');if(!response.ok)throw Error('HTTP '+response.status);
-      for(const [i,item] of releaseNotes.sections(await response.text()).entries()){
-        const details=ui.el('details');details.open=i===0;details.append(ui.el('summary','',item.title),ui.el('pre','update-notes',item.text));history.append(details);
-      }
+      const versions=releaseNotes.sections(await response.text());
+      const versionCard=(item,opened=false)=>{const details=ui.el('details');details.open=opened;details.append(ui.el('summary','',item.title),ui.el('pre','update-notes',item.text));return details;};
+      if(versions[0])history.append(versionCard(versions[0],true));
+      if(versions.length>1)history.append(button('update-history','历史日志',()=>{
+        ui.openSheet('历史日志',[{label:'关闭',icon:'close'}]);const list=ui.el('section','release-history');
+        for(const item of versions.slice(1))list.append(versionCard(item));$('sheet-panel').append(list);
+      }));
     }catch{history.append(ui.el('p','muted','本地更新记录读取失败，请重新打开设置。'));}
     for(const e of form.elements)if(e.name){const value=status.config[e.name] ?? ({source:'gitee',gitee:'https://gitee.com/railgunhamster/RHFiles'})[e.name];if(e.type==='checkbox')e.checked=!!value;else e.value=value ?? '';}
     showSource();paint();
@@ -72,7 +76,7 @@ const androidUpdates=(()=>{
       $('update-state').textContent=labels[status.state]+(r?' · '+r.version:'')+(status.state==='downloading'?'\n'+fmt.size(status.bytes)+' / '+fmt.size(r.size)+' · '+fmt.size(status.bytes/Math.max(1,(Date.now()-status.started)/1000))+'/s（平均）':'')+(status.message?'\n'+status.message:status.state==='failed'?'\n系统未提供具体原因，请复制更新诊断。':'');
       $('update-state').classList.toggle('danger',status.state==='failed');
       $('update-pending-notes').hidden=!r?.notes;
-      $('update-notes').textContent=releaseNotes.format(r?.notes);
+      $('update-notes').textContent=releaseNotes.sections(r?.notes)[0]?.text||'';
       progress.hidden=!['downloading','verifying'].includes(status.state);progress.max=r?.size || 1;progress.value=status.bytes || 0;
       $('update-check').disabled=running || status.state==='ready';
       $('update-download').hidden=!r || !['available','failed','canceled'].includes(status.state);

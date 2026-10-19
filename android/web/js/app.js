@@ -4,7 +4,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const saved = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
-  const cache = (key, value) => localStorage.setItem(key, value);
+  const cache = (key, value) => {localStorage.setItem(key, value);if(key==='rhfiles.favorites')window.dispatchEvent(new Event('rhfiles-config-changed'));};
   const navigationKey='rhfiles.navigation'+(workbench.id==='second'?'.second':'');
   let peerTask=null;
   const paneHost=()=>workbench.parentHost();
@@ -609,11 +609,12 @@
     $('btn-theme').textContent = '主题：' + (document.documentElement.dataset.theme === 'dark' ? '深色' : '明亮');
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
+    if(api.syncAvailable())configSync.refresh().catch(error);
     if (status.indexing) pollIndex();
   }
   let settingsSection='display';
   function setSettingsSection(section){
-    settingsSection=['display','index','storage','updates','backup','about'].includes(section)?section:'display';
+    settingsSection=['display','index','storage','updates','sync','backup','about'].includes(section)?section:'display';
     if(state.route.tool==='settings')state.route.section=settingsSection;
     for(const panel of document.querySelectorAll('[data-settings-panel]'))panel.hidden=panel.dataset.settingsPanel!==settingsSection;
     for(const tab of document.querySelectorAll('[data-settings-section]')){const active=tab.dataset.settingsSection===settingsSection;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;tab.classList.toggle('active',active);}
@@ -701,8 +702,10 @@
   async function boot() {
     await api.initNative();
     await configBackup.boot();
+    await configSync.boot();
     if(await workbench.boot())return;
     configBackup.init(error);
+    configSync.init({error,go});
     androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,refreshLocations,removeFavoritePrefix,button,action,error,favorite});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
