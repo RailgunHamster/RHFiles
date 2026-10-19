@@ -406,6 +406,9 @@ try{
     try{await p.waitForFunction(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length>=1);}catch(error){console.error(await p.evaluate(()=>({state:__model.updates,calls:__model.nativeCalls.slice(-10),toast:document.getElementById('toast').textContent,ui:document.getElementById('update-state').textContent})));throw error;}
     await p.waitForTimeout(900);
     check(await p.evaluate(()=>__model.nativeCalls.filter(c=>c.command==='update.install').length===1),'Completed user-requested download opens installation once, not every poll');
+    check(!await p.locator('#update-check').isDisabled(),'Ready APK does not lock manual update checking');
+    check(await p.locator('#update-cancel').isVisible(),'Ready APK can be canceled after returning from an installer');
+    await p.click('#update-cancel');await p.locator('#update-download:not([hidden])').waitFor();check(await p.locator('#update-state').innerText().then(t=>t.includes('已取消')),'Canceling ready state restores an explicit retry path');
     await p.screenshot({path:path.join(output,'android-updates.png'),fullPage:true});
     check(errors.length===0,'Android update UI has no uncaught errors');await context.close();
   }

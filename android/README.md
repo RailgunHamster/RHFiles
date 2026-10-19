@@ -27,6 +27,8 @@ cargo test --manifest-path android/src-tauri/Cargo.toml --lib --tests
 node --test android/web/tests/*.test.cjs android/web/tests/format.test.js
 node android/web/tests/ui-check.mjs
 node android/web/tests/flow-check.mjs
+node android/web/tests/mutation-scroll-check.mjs
+node android/web/tests/category-folder-check.mjs
 node android/web/tests/network-check.mjs
 node android/web/tests/usage-check.mjs
 node android/web/tests/media-check.mjs

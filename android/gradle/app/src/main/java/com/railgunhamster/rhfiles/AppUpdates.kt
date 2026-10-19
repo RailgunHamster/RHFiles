@@ -133,6 +133,7 @@ class AppUpdates private constructor(private val context: Context) {
   private val directory=File(context.filesDir,"updates").apply{mkdirs()}
   private val apk=File(directory,"update.apk")
   private val receipt=File(directory,"ready.json")
+  private var installArtifact:String?=null
   private var available: AndroidRelease?=null
   private var state="idle"
   private var message=""
@@ -150,6 +151,9 @@ class AppUpdates private constructor(private val context: Context) {
       if(release.code>installedCode() && apk.length()==release.size) {available=release;state="ready"}
       else {receipt.delete();apk.delete()}
     }catch(_:Exception){receipt.delete();apk.delete()}
+    // Retire only versions older than the installed app, not the APK currently
+    // being handed to a system installer or an unconfirmed newer candidate.
+    File(directory,"installers").listFiles()?.forEach{file->val match=Regex("RHFiles-Android-[0-9]+\\.[0-9]+\\.[0-9]+-([0-9]+)-[0-9a-f]{16}\\.apk").matchEntire(file.name);if(match!=null&&(match.groupValues[1].toLongOrNull()?:Long.MAX_VALUE)<installedCode())file.delete()}
   }
   @Suppress("DEPRECATION") private fun installedCode(): Long {
     val info=context.packageManager.getPackageInfo(context.packageName,0)
@@ -180,7 +184,7 @@ class AppUpdates private constructor(private val context: Context) {
     for(key in listOf("source","gitee","github","family","connectionId","proxy"))editor.putString(key,value.optString(key).trim())
     editor.putBoolean("autoCheck",value.optBoolean("autoCheck",true)).putBoolean("proxyEnabled",value.optBoolean("proxyEnabled")).putBoolean("pendingInstall",false)
     require(editor.commit()) { "更新配置保存失败" }
-    available=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
+    available=null;installArtifact=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
     return status()
   }
   @Synchronized fun validateBackup(value:JSONObject){
@@ -189,17 +193,18 @@ class AppUpdates private constructor(private val context: Context) {
     require(value.keys().asSequence().all{it in listOf("source","gitee","github","family","connectionId","proxy","autoCheck","proxyEnabled")}){"未知更新配置字段"}
   }
   @Synchronized fun restoreSettings(apply:()->Unit){
-    require(state !in listOf("checking","downloading","verifying")){"请先结束或取消更新任务"};apply();available=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
+    require(state !in listOf("checking","downloading","verifying")){"请先结束或取消更新任务"};apply();available=null;installArtifact=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
   }
   @Synchronized fun status(): JSONObject = JSONObject().put("state",state).put("message",message).put("bytes",bytes)
     .put("started",started).put("lastCheck",lastCheck).put("currentCode",installedCode())
+    .put("currentVersion",context.packageManager.getPackageInfo(context.packageName,0).versionName).put("installArtifact",installArtifact?:JSONObject.NULL)
     .put("release",available?.json() ?: JSONObject.NULL).put("config",config())
   @Synchronized fun check(manual: Boolean, reason: String): JSONObject {
     val config=config()
     if(!manual && !config.getBoolean("autoCheck"))return status()
-    if(state in listOf("checking","downloading","verifying","ready"))return status()
+    if(state in listOf("checking","downloading","verifying")||state=="ready"&&!manual)return status()
     if(!manual && lastCheck>0 && System.currentTimeMillis()-lastCheck<(if(reason=="hour")3600000 else 10000))return status()
-    state="checking";message="";lastCheck=System.currentTimeMillis();available=null;canceled=false
+    state="checking";message="";lastCheck=System.currentTimeMillis();available=null;installArtifact=null;canceled=false;receipt.delete()
     worker.execute {
       try {
         val r=loadFeed(config)
@@ -304,7 +309,7 @@ class AppUpdates private constructor(private val context: Context) {
       }catch(e:Exception){partial.delete();failed(e)}finally{call=null;service?.done()}
     }
   }
-  @Synchronized fun cancel(): JSONObject {canceled=true;call?.cancel();return status()}
+  @Synchronized fun cancel(): JSONObject {canceled=true;call?.cancel();if(state=="ready"){state="canceled";message="已取消待安装更新";receipt.delete();apk.delete();installArtifact=null};return status()}
   @Synchronized private fun failed(e:Exception) {state=if(canceled)"canceled" else "failed";message=updateFailure(e,config().getString("source"))}
   @Suppress("DEPRECATION") internal fun verifyApk(file: File, release: AndroidRelease) {
     require(file.isFile && file.length()==release.size) { "已下载的 APK 不完整，请重新下载" }
@@ -316,7 +321,9 @@ class AppUpdates private constructor(private val context: Context) {
     val current=pm.getPackageInfo(context.packageName,flags)
     require(candidate.packageName==context.packageName && candidate.packageName==APP_PACKAGE) { "APK 包名不匹配，已拒绝安装" }
     val code=if(Build.VERSION.SDK_INT>=28)candidate.longVersionCode else candidate.versionCode.toLong()
-    require(code==release.code && code>installedCode() && candidate.versionName==release.version) { "APK 版本不匹配或不是新版本，已拒绝安装" }
+    val installed=installedCode()
+    require(code==release.code && candidate.versionName==release.version) { "APK 版本不匹配：更新清单 ${release.version} (${release.code})，APK ${candidate.versionName} ($code)，已拒绝安装" }
+    require(code>installed) { "APK 不是更新版本：已安装版本码 $installed，待安装 ${candidate.versionName} ($code)，已拒绝降级或重复安装" }
     require(Build.VERSION.SDK_INT<24 || candidate.applicationInfo!!.minSdkVersion<=Build.VERSION.SDK_INT) { "新版本不支持当前 Android 系统" }
     val expected=if(Build.VERSION.SDK_INT>=28)current.signingInfo?.apkContentsSigners else current.signatures
     val actual=if(Build.VERSION.SDK_INT>=28)candidate.signingInfo?.apkContentsSigners else candidate.signatures
@@ -328,7 +335,10 @@ class AppUpdates private constructor(private val context: Context) {
   }
   @Synchronized fun installFile(): File {
     require(state=="ready" && available!=null) { "请先完成 APK 下载" }
-    verifyApk(apk,available!!);return apk
+    val release=available!!;verifyApk(apk,release)
+    // Some system installers keep parsed metadata/streams for a content URI.
+    // Keep the handoff immutable even when a later download replaces update.apk.
+    return UpdateInstallArtifact.prepare(File(directory,"installers"),apk,release.version,release.code,release.sha256){verifyApk(it,release)}.also{installArtifact=it.name}
   }
 }
 

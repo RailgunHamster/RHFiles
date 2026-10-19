@@ -212,7 +212,8 @@ const ui = (() => {
       sheet().hidden = false;
       scrim().hidden = false;
       setTimeout(() => {
-        input.focus();
+        if (!input.isConnected) return;
+        input.focus({preventScroll:true});
         const dot = input.value.lastIndexOf('.');
         if (dot > 0) input.setSelectionRange(0, dot);
         else input.select();

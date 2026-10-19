@@ -37,7 +37,7 @@ class AdaptiveWindow(private val activity:Activity,private val web:()->WebView?)
   private val listener=Consumer<WindowLayoutInfo>{info->features=info.displayFeatures.filterIsInstance<FoldingFeature>();publish()}
   fun start(){tracker.addWindowLayoutInfoListener(activity,ContextCompat.getMainExecutor(activity),listener);displays.registerDisplayListener(displayListener,Handler(Looper.getMainLooper()))}
   fun stop(){tracker.removeWindowLayoutInfoListener(listener);displays.unregisterDisplayListener(displayListener)}
-  fun current():JSONObject {
+  fun current(animatedInsets:WindowInsetsCompat?=null):JSONObject {
     val result=JSONObject()
     // Maximum bounds identify the active screen, not the resizable app window.
     // Normalize rotation; IME/system bars/split-window sizes must not change it.
@@ -46,17 +46,20 @@ class AdaptiveWindow(private val activity:Activity,private val web:()->WebView?)
     ScreenLayoutProfile.orientation(bounds.width(),bounds.height(),display()?.rotation?:0)?.let{result.put("orientation",it)}
     val view=web()?:return result;if(view.width<=0||view.height<=0)return result
     val origin=IntArray(2);view.getLocationInWindow(origin)
-    val bars=ViewCompat.getRootWindowInsets(view)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+    val rootInsets=animatedInsets?:ViewCompat.getRootWindowInsets(view)
+    val bars=rootInsets?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+    val ime=rootInsets?.getInsets(WindowInsetsCompat.Type.ime())?.bottom?:0
+    val windowHeight=WindowMetricsCalculator.getOrCreate().computeCurrentWindowMetrics(activity).bounds.height()
     if(bars!=null){val decor=activity.window.decorView;result.put("insets",JSONObject()
       .put("left",((bars.left-origin[0]).coerceAtLeast(0).toDouble()/view.width).coerceIn(0.0,1.0))
       .put("top",((bars.top-origin[1]).coerceAtLeast(0).toDouble()/view.height).coerceIn(0.0,1.0))
       .put("right",((bars.right-(decor.width-origin[0]-view.width)).coerceAtLeast(0).toDouble()/view.width).coerceIn(0.0,1.0))
-      .put("bottom",((bars.bottom-(decor.height-origin[1]-view.height)).coerceAtLeast(0).toDouble()/view.height).coerceIn(0.0,1.0)))}
+      .put("bottom",ViewportInsets.bottom(windowHeight,origin[1],view.height,bars.bottom,ime).toDouble()/view.height))}
     val fold=features.firstOrNull{it.isSeparating||it.occlusionType==FoldingFeature.OcclusionType.FULL}
     if(fold!=null){val b=fold.bounds;result.put("hinge",JSONObject().put("separating",true).put("orientation",if(fold.orientation==FoldingFeature.Orientation.VERTICAL)"vertical" else "horizontal")
       .put("bounds",JSONObject().put("left",((b.left-origin[0]).toDouble()/view.width).coerceIn(0.0,1.0)).put("right",((b.right-origin[0]).toDouble()/view.width).coerceIn(0.0,1.0))
         .put("top",((b.top-origin[1]).toDouble()/view.height).coerceIn(0.0,1.0)).put("bottom",((b.bottom-origin[1]).toDouble()/view.height).coerceIn(0.0,1.0))))}
     return result
   }
-  fun publish(){val value=current();lastDisplayProfile=profile(value);web()?.evaluateJavascript("window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:$value}))",null)}
+  fun publish(insets:WindowInsetsCompat?=null){val value=current(insets);lastDisplayProfile=profile(value);web()?.evaluateJavascript("window.dispatchEvent(new CustomEvent('rhfiles-window-layout',{detail:$value}))",null)}
 }

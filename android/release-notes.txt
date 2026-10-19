@@ -1,4 +1,20 @@
-RHFiles Android 0.1.21
+RHFiles Android 0.1.22
+
+1. 重命名等输入表单跟随软键盘调整可用高度，输入框及保存按钮保持在键盘上方；已由系统缩小的窗口不会重复扣除键盘高度。
+2. 重命名、删除和刷新列表后，按可见文件及其屏幕偏移恢复位置，不再回到开头。删除定位项时选择邻近剩余项；异步操作期间继续滚动，也保留操作完成时的位置。列表和网格均适用。
+3. 为键盘遮挡计算、文件排序变化、批量删除、网格列数变化及异步文件操作补充回归测试。
+4. 分类中的具体文件夹支持粘贴、移动和双窗格传入，直接读取真实目录后过滤，不再等索引刷新才显示新文件；分类聚合页不猜测写入位置。增加返回分类按钮及可点击的真实路径面包屑，并可打开实际文件夹。
+5. 将交给系统安装器的更新 APK 改为按版本码及校验值命名的独立、不可变快照，不再让不同版本共用 update.apk 的内容地址；安装前再次验证版本、签名、大小和校验和，保留系统确认。
+6. 已下载但未安装的更新也能重新检查或取消，不再锁定 ready 状态。复制诊断包含已安装版本、待安装版本及安装文件名，版本拒绝原因明确列出双方版本码。
+
+1. Keep rename and other input sheets within the software-keyboard-safe viewport, without subtracting IME space twice from windows already resized by Android.
+2. Preserve visible-file anchors and row offsets after rename, deletion and refresh in list/grid views. Fall back to neighboring survivors and honor scrolling performed while an operation is pending.
+3. Add regression coverage for IME geometry, reordered/removed anchors, grid column changes and delayed file mutations.
+4. Allow paste/move and cross-pane transfers into concrete category folders, read/filter live directory contents, and expose category-up and clickable real-path navigation. Never guess a destination for aggregate categories.
+5. Hand system installers an immutable, version/code/digest-specific APK snapshot instead of reusing one content URI for different versions. Revalidate integrity, package, version and signing identity before requesting system confirmation.
+6. Permit manual recheck/cancellation from ready state; include installed/candidate versions and installer filenames in diagnostics, with explicit version-mismatch details.
+
+此前版本改进 / Previous improvements (0.1.21):
 
 1. 有新版本时，将“立即检查、复制更新诊断、下载并更新、取消”按钮放在待更新日志之前，下载期间保持同样顺序，不再先滚过整段日志才能操作。
 2. 重做空间分析：可选择位置或从文件夹菜单分析，先预扫描统计总量，再显示汇总百分比。报告提供逐层文件夹排行、大文件、类型分布、读取异常与分页明细，支持取消、后台分析和返回后查看报告；两个窗格各有独立分析任务。

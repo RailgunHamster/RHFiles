@@ -143,7 +143,10 @@ class MainActivity : TauriActivity() {
     // Honor the responsive viewport instead of WebView's fixed layout width.
     webView.settings.useWideViewPort=true
     webView.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->adaptiveWindow.publish()}
-    ViewCompat.setOnApplyWindowInsetsListener(webView){_,insets->webView.post{if(appWebView===webView)adaptiveWindow.publish()};insets}
+    ViewCompat.setOnApplyWindowInsetsListener(webView){_,insets->webView.post{if(appWebView===webView)adaptiveWindow.publish(insets)};insets}
+    ViewCompat.setWindowInsetsAnimationCallback(webView,object:androidx.core.view.WindowInsetsAnimationCompat.Callback(androidx.core.view.WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE){
+      override fun onProgress(insets:androidx.core.view.WindowInsetsCompat,running:MutableList<androidx.core.view.WindowInsetsAnimationCompat>):androidx.core.view.WindowInsetsCompat {if(appWebView===webView)adaptiveWindow.publish(insets);return insets}
+    })
     if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
     WebViewCompat.addWebMessageListener(webView,"RHFilesNative",setOf("http://tauri.localhost","https://tauri.localhost")) {sourceView,message,_,mainFrame,reply->
       if(mainFrame && appWebView===sourceView && !io.isShutdown) {

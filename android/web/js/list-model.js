@@ -1,6 +1,20 @@
 /* Shared, testable list geometry, album grouping and bounded thumbnail work. */
 (function(root,factory){const value=factory();if(typeof module==='object'&&module.exports)module.exports=value;else root.mobileList=value;})(globalThis,()=>{
   function range(scroll,viewport,height,columns,count){return {first:Math.max(0,Math.floor(scroll/height)-3)*columns,last:Math.min(count,(Math.ceil((scroll+viewport)/height)+3)*columns)};}
+  function directoryFor(route){return route?.screen==='folder'?route.path:route?.screen==='library'?route.folder:null;}
+  function categoryFiles(entries,category){return entries.filter(e=>!e.isDir&&(category==='recent'||e.kind===category||category==='document'&&e.kind==='code'));}
+  function capturePosition(entries,scroll,viewport,height,columns,exclude=[]){
+    const ignored=new Set(exclude),first=Math.floor(scroll/height)*columns,visibleEnd=Math.ceil((scroll+viewport)/height)*columns,anchors=[];
+    function add(i){const entry=entries[i];if(!entry||ignored.has(entry.path))return;const top=i>=first&&i<visibleEnd?Math.floor(i/columns)*height-scroll:-(scroll%height);anchors.push({path:entry.path,top});}
+    for(let i=first;i<entries.length&&anchors.length<16;i++)add(i);
+    for(let i=Math.min(first-1,entries.length-1);i>=0&&anchors.length<16;i--)add(i);
+    return {scroll,anchors};
+  }
+  function restorePosition(entries,position,height,columns){
+    const indexes=new Map(entries.map((e,i)=>[e.path,i]));
+    for(const a of position?.anchors||[]){const i=indexes.get(a.path);if(i!==undefined)return Math.max(0,Math.floor(i/columns)*height-a.top);}
+    return Math.max(0,position?.scroll||0);
+  }
   function albums(entries,parentOf,baseName){
     const groups=new Map();
     for(const entry of entries){if(entry.isDir)continue;const path=entry.parentPath||parentOf(entry.path);let album=groups.get(path);
@@ -36,5 +50,5 @@
     }
     return {left:Math.max(left,rail),top,width:Math.max(1,right-Math.max(left,rail)),height:Math.max(1,bottom-top),rail,railWidth:rail?Math.min(280,rail):0};
   }
-  return {range,albums,reconcile,thumbnailLoader,layout};
+  return {range,directoryFor,categoryFiles,capturePosition,restorePosition,albums,reconcile,thumbnailLoader,layout};
 });

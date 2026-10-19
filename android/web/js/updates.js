@@ -44,7 +44,7 @@ const androidUpdates=(()=>{
     const notes=ui.el('pre','update-notes');notes.id='update-notes';pending.append(notes);
     const actions=ui.el('div','button-row');actions.id='update-actions';actions.append(
       button('update-check','立即检查',()=>check(true,'manual')),
-      button('update-copy-diagnostics','复制更新诊断',async()=>{await ui.copyText('RHFiles Android code '+status.currentCode+'\n更新源：'+status.config.source+'\n目录：'+status.config[status.config.source]+'\n状态：'+status.state+'\n'+(status.message?.trim()||'系统没有提供具体原因'));ui.toast('更新诊断已复制（不含密码）');}),
+      button('update-copy-diagnostics','复制更新诊断',async()=>{await ui.copyText('RHFiles Android '+(status.currentVersion||'')+' code '+status.currentCode+'\n更新源：'+status.config.source+'\n目录：'+status.config[status.config.source]+'\n待安装：'+(status.release?status.release.version+' ('+status.release.versionCode+')':'未选择')+'\n安装文件：'+(status.installArtifact||status.release?.fileName||'未准备')+'\n状态：'+status.state+'\n'+(status.message?.trim()||'系统没有提供具体原因'));ui.toast('更新诊断已复制（不含密码）');}),
       button('update-download','下载并安装',async()=>{mutate();wantInstall=true;try{status=await api.native('update.download');paint();schedule();}catch(e){wantInstall=false;throw e;}},true),
       button('update-install','继续安装',install,true),
       button('update-cancel','取消',async()=>{mutate();wantInstall=false;status=await api.native('update.cancel');paint();schedule();}));
@@ -78,9 +78,9 @@ const androidUpdates=(()=>{
       $('update-pending-notes').hidden=!r?.notes;
       $('update-notes').textContent=releaseNotes.sections(r?.notes)[0]?.text||'';
       progress.hidden=!['downloading','verifying'].includes(status.state);progress.max=r?.size || 1;progress.value=status.bytes || 0;
-      $('update-check').disabled=running || status.state==='ready';
+      $('update-check').disabled=running;
       $('update-download').hidden=!r || !['available','failed','canceled'].includes(status.state);
-      $('update-install').hidden=status.state!=='ready';$('update-cancel').hidden=!running;
+      $('update-install').hidden=status.state!=='ready';$('update-cancel').hidden=!running&&status.state!=='ready';
       for(const e of form.elements)e.disabled=running;
     }
     if(status.state==='ready' && wantInstall && !document.hidden)install().catch(app.error);

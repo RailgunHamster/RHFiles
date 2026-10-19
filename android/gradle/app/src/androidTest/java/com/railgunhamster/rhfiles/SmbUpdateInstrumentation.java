@@ -414,10 +414,73 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         eval("void(async()=>{try{const second=await api.native('analysis.start',{root:"+JSONObject.quote(root.getPath())+",owner:'second'});await api.native('analysis.cancel',{id:second.id});window.__usageCanceled=second.id;}catch(e){window.__usageError=String(e)}})()");awaitScript("!!window.__usageCanceled||!!window.__usageError");require(eval("!window.__usageError").equals("true"),"Second pane scan: "+eval("window.__usageError"));
         result.putString("pass","true");result.putString("checks","minified APK, real filesystem 1001 files, disk-backed tree, exact totals, monotonic percentage, 100-row pagination, types, WebView report, independent second-pane cancellation");finish(Activity.RESULT_OK,result);
     }
+    private boolean imeVisible() throws Exception {
+        final boolean[] value={false};runOnMainSync(()->{WindowInsets insets=activity.getWindow().getDecorView().getRootWindowInsets();value[0]=insets!=null&&insets.isVisible(WindowInsets.Type.ime());});return value[0];
+    }
+    private void updateHandoffProbe(Bundle result) throws Exception {
+        android.content.pm.PackageInfo installed=getTargetContext().getPackageManager().getPackageInfo(getTargetContext().getPackageName(),0);
+        require(installed.versionName.endsWith("-update-probe"),"A lower-version owned test installation is required, never a real user install");
+        String endpoint=arguments.getString("endpoint","");require(endpoint.matches("http://127\\.0\\.0\\.1:[0-9]{2,5}"),"Loopback fixture endpoint required");
+        eval("void(async()=>{try{await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',gitee:'https://gitee.com/railgunhamster/RHFiles',family:"+JSONObject.quote(endpoint)+",connectionId:'',autoCheck:false,proxyEnabled:false,proxy:''});await api.native('update.check',{manual:true,reason:'owned-positive-upgrade'});window.__upgradeStarted=true}catch(e){window.__upgradeError=String(e)}})()");awaitScript("!!window.__upgradeStarted||!!window.__upgradeError");require(eval("!window.__upgradeError").equals("true"),eval("window.__upgradeError"));
+        long deadline=System.currentTimeMillis()+120000;JSONObject status=new JSONObject();
+        while(System.currentTimeMillis()<deadline){eval("void api.native('update.status').then(s=>window.__upgradeStatus=s)");Thread.sleep(100);status=json("window.__upgradeStatus||{}");if(status.optString("state").equals("available")||status.optString("state").equals("failed"))break;}
+        require(status.optString("state").equals("available"),"Positive upgrade check: "+status);JSONObject release=status.getJSONObject("release");require(release.getLong("versionCode")>status.getLong("currentCode"),"Fixture is not an upgrade");
+        eval("void api.native('update.download').catch(e=>window.__upgradeError=String(e))");
+        while(System.currentTimeMillis()<deadline){eval("void api.native('update.status').then(s=>window.__upgradeStatus=s)");Thread.sleep(150);status=json("window.__upgradeStatus||{}");if(status.optString("state").equals("ready")||status.optString("state").equals("failed"))break;}
+        require(status.optString("state").equals("ready"),"Positive APK download/signature/version verification: "+status);
+        final Intent[] handoff={null};ActivityMonitor monitor=new ActivityMonitor(){@Override public ActivityResult onStartActivity(Intent intent){if("application/vnd.android.package-archive".equals(intent.getType())){handoff[0]=new Intent(intent);return new ActivityResult(Activity.RESULT_CANCELED,null);}return null;}};addMonitor(monitor);
+        try{eval("void api.native('update.install').then(r=>window.__upgradeInstall=r,e=>window.__upgradeError=String(e))");awaitScript("!!window.__upgradeInstall||!!window.__upgradeError");require(eval("window.__upgradeInstall==='installer'").equals("true"),"Install was not handed to system: "+eval("window.__upgradeError||__upgradeInstall"));require(handoff[0]!=null&&handoff[0].getData()!=null,"No APK install intent captured");
+            android.net.Uri uri=handoff[0].getData();require(uri.getLastPathSegment().startsWith("RHFiles-Android-"+release.getString("version")+"-"+release.getLong("versionCode")+"-")&&!uri.getLastPathSegment().equals("update.apk"),"Installer URI reused across different versions: "+uri);require((handoff[0].getFlags()&Intent.FLAG_GRANT_READ_URI_PERMISSION)!=0&&handoff[0].getClipData()!=null,"Missing temporary URI read grant");
+            java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");try(java.io.InputStream input=getTargetContext().getContentResolver().openInputStream(uri)){byte[] buffer=new byte[131072];int n;while((n=input.read(buffer))!=-1)digest.update(buffer,0,n);}StringBuilder hash=new StringBuilder();for(byte b:digest.digest())hash.append(String.format("%02x",b&255));require(hash.toString().equals(release.getString("sha256")),"Installer received different bytes than the verified download");
+            eval("void api.native('update.cancel').then(s=>window.__upgradeCanceled=s)");awaitScript("window.__upgradeCanceled?.state==='canceled'");try(java.io.InputStream input=getTargetContext().getContentResolver().openInputStream(uri)){require(input.read()!=-1,"Cancel invalidated the immutable installer handoff");}
+            result.putString("uri",uri.toString());result.putString("pass","true");result.putString("checks","real positive version upgrade download, hash/signature/manifest validation, version-specific FileProvider URI, temporary grant, exact installer bytes, cancel preserves handed-off snapshot; system installation deliberately intercepted");finish(Activity.RESULT_OK,result);
+        }finally{removeMonitor(monitor);}
+    }
+    private void paneClick(String selector) throws Exception {
+        eval("(()=>{const n=__qa.document.querySelector("+JSONObject.quote(selector)+");if(!n)throw Error('Missing fixture control');for(const type of ['pointerdown','pointerup'])n.dispatchEvent(new __qa.PointerEvent(type,{bubbles:true,pointerId:1,pointerType:'touch',button:0}));n.click()})()");
+    }
+    private void renameViewportProbe(Bundle result) throws Exception {
+        String root=arguments.getString("usageRoot","");java.io.File photos=new java.io.File(root,"照片");
+        require(photos.getCanonicalPath().startsWith("/storage/emulated/0/Download/RHFiles-Usage-QA-")&&photos.isDirectory(),"Owned synthetic fixture required");
+        awaitScript("!!document.querySelector('.file-pane:not([hidden])')?.contentWindow.rhfilesPane");
+        eval("window.__qa=document.querySelector('.file-pane:not([hidden])').contentWindow");awaitScript("__qa.rhfilesPane.snapshot().ready===true");eval("RHFilesWorkbench.openLayout(__qa)");awaitScript("!!document.querySelector('[data-layout=single]')");eval("document.querySelector('[data-layout=single]').click();__qa.document.getElementById('nav-home').click()");
+        awaitScript("!__qa.document.getElementById('home').hidden&&!__qa.rhfilesPane.snapshot().busy");paneClick("[data-tile=downloads]");awaitScript("__qa.rhfilesPane.snapshot().route.path==='/storage/emulated/0/Download'&&!__qa.rhfilesPane.snapshot().busy");
+        String selectRoot="[...__qa.document.querySelectorAll('#filelist [data-path]')].find(n=>n.dataset.path==="+JSONObject.quote(root)+")";
+        awaitScript("!!"+selectRoot);paneClick("[data-path="+JSONObject.quote(root)+"] .entry-content");awaitScript("__qa.rhfilesPane.snapshot().route.path==="+JSONObject.quote(root)+"&&!__qa.rhfilesPane.snapshot().busy");
+        paneClick("[data-path="+JSONObject.quote(photos.getPath())+"] .entry-content");
+        awaitScript("__qa.rhfilesPane.snapshot().route.path==="+JSONObject.quote(photos.getPath())+"&&!__qa.rhfilesPane.snapshot().busy");
+        eval("__qa.document.getElementById('btn-view').click()");awaitScript("[...__qa.document.querySelectorAll('#sheet button')].some(b=>b.textContent.trim().endsWith('列表'))");eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim().endsWith('列表')).click()");
+        eval("__qa.document.getElementById('filelist').scrollTop=6407");awaitScript("[...__qa.document.querySelectorAll('#filelist [data-path]')].some(n=>n.getBoundingClientRect().top>100)");
+        eval("window.__beforeHeight=__qa.innerHeight;window.__layoutMemory=localStorage.getItem('rhfiles.panes.screens');window.__renameRow=[...__qa.document.querySelectorAll('#filelist [data-path]')].find(n=>n.getBoundingClientRect().top>140);__renameRow.querySelector('.entry-more').click()");
+        awaitScript("[...__qa.document.querySelectorAll('#sheet button')].some(b=>b.textContent.trim()==='重命名')");eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='重命名').click()");Thread.sleep(250);
+        runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.requestFocus();((android.view.inputmethod.InputMethodManager)activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)).showSoftInput(web,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});
+        long end=System.currentTimeMillis()+15000;while(!imeVisible()&&System.currentTimeMillis()<end)Thread.sleep(100);require(imeVisible(),"Real software keyboard did not open");Thread.sleep(900);
+        final int[] geometry=new int[4];runOnMainSync(()->{View decor=activity.getWindow().getDecorView();WebView web=find(decor);int[] origin=new int[2];web.getLocationOnScreen(origin);geometry[0]=origin[1];geometry[1]=web.getWidth();geometry[2]=decor.getRootWindowInsets().getInsets(WindowInsets.Type.ime()).bottom;geometry[3]=activity.getWindowManager().getCurrentWindowMetrics().getBounds().bottom;});
+        JSONObject box=json("(()=>{const f=document.querySelector('.file-pane:not([hidden])'),d=f.contentDocument,r=f.getBoundingClientRect(),input=d.querySelector('#sheet input').getBoundingClientRect(),save=d.querySelector('#sheet button[type=submit]').getBoundingClientRect();return{width:innerWidth,input:r.top+input.bottom,save:r.top+save.bottom,height:f.contentWindow.innerHeight,before:__beforeHeight,memory:localStorage.getItem('rhfiles.panes.screens')===__layoutMemory};})()");
+        double scale=geometry[1]/box.getDouble("width"),keyboardTop=geometry[3]-geometry[2];screenshot("rename-keyboard");
+        require(geometry[0]+box.getDouble("input")*scale<=keyboardTop+4&&geometry[0]+box.getDouble("save")*scale<=keyboardTop+4,"Rename form is covered by real IME: "+box+", keyboardTop="+keyboardTop+", geometry="+java.util.Arrays.toString(geometry));
+        require(box.getBoolean("memory"),"IME changed screen/orientation split preference");
+        sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);Thread.sleep(700);require(!imeVisible(),"Keyboard did not dismiss");eval("__qa.rhfilesHandleBack()");
+        awaitScript("__qa.innerHeight===__beforeHeight");require(eval("__qa.document.getElementById('filelist').scrollTop>5000").equals("true"),"Closing rename moved the file list to the start");
+        eval("window.__visibleRows=[...__qa.document.querySelectorAll('#filelist [data-path]')].filter(n=>n.getBoundingClientRect().top>140);window.__keep={path:__visibleRows[2].dataset.path,top:__visibleRows[2].getBoundingClientRect().top};window.__oldPath=__visibleRows[0].dataset.path;__visibleRows[0].querySelector('.entry-more').click()");
+        String original=(String)new JSONTokener(eval("__oldPath")).nextValue();java.io.File before=new java.io.File(original),renamed=new java.io.File(photos,"zzzz-viewport-QA.jpg");require(before.getCanonicalPath().startsWith(photos.getCanonicalPath()+"/")&&!renamed.exists(),"Rename target must be owned fixture");
+        java.io.File deleted=null;byte[] deletedBytes=null;
+        try{
+            eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='重命名').click();__qa.document.querySelector('#sheet input').value='zzzz-viewport-QA.jpg';__qa.document.querySelector('#sheet form').requestSubmit()");
+            awaitScript("__qa.document.getElementById('toast').textContent==='已重命名'&&!__qa.rhfilesPane.snapshot().busy");
+            awaitScript("(()=>{const n=[...__qa.document.querySelectorAll('#filelist [data-path]')].find(n=>n.dataset.path===__keep.path);return n&&Math.abs(n.getBoundingClientRect().top-__keep.top)<2&&__qa.document.getElementById('filelist').scrollTop>5000})()");require(renamed.isFile()&&!before.exists(),"UI rename did not reach filesystem");
+            eval("window.__deleteRow=[...__qa.document.querySelectorAll('#filelist [data-path]')].find(n=>n.getBoundingClientRect().top>140&&n.dataset.path!==__keep.path);window.__deletePath=__deleteRow.dataset.path");deleted=new java.io.File((String)new JSONTokener(eval("__deletePath")).nextValue());require(deleted.getCanonicalPath().startsWith(photos.getCanonicalPath()+"/")&&deleted.length()<=32,"Delete must target tiny synthetic fixture");deletedBytes=java.nio.file.Files.readAllBytes(deleted.toPath());
+            eval("__deleteRow.querySelector('.entry-more').click();[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='删除').click();[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='移入回收站').click()");
+            awaitScript("__qa.document.getElementById('toast').textContent==='已删除 1 项'&&!__qa.rhfilesPane.snapshot().busy");
+            awaitScript("(()=>{const n=[...__qa.document.querySelectorAll('#filelist [data-path]')].find(n=>n.dataset.path===__keep.path);return n&&Math.abs(n.getBoundingClientRect().top-__keep.top)<2&&__qa.document.getElementById('filelist').scrollTop>5000})()");require(!deleted.exists(),"UI deletion did not reach filesystem");screenshot("mutation-position");
+        }finally{if(renamed.exists()&&!before.exists())require(renamed.renameTo(before),"Cannot restore QA filename");if(deleted!=null&&deletedBytes!=null&&!deleted.exists())try(java.io.FileOutputStream output=new java.io.FileOutputStream(deleted)){output.write(deletedBytes);}}
+        result.putString("pass","true");result.putString("checks","real IME, input and save above keyboard, dismissal restores viewport, split memory unchanged, real sorted rename and trash retain visible-file offsets");result.putString("geometry",box.toString());finish(Activity.RESULT_OK,result);
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
             require(android.os.Build.FINGERPRINT.contains("generic") || android.os.Build.MODEL.contains("sdk"),"Emulator required");
+            if(arguments.getString("mode","").equals("update-handoff"))getTargetContext().getSharedPreferences("updates-v1",0).edit().putBoolean("autoCheck",false).commit();
             Intent intent=getTargetContext().getPackageManager().getLaunchIntentForPackage(getTargetContext().getPackageName());
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);activity=startActivitySync(intent);
             long deadline=System.currentTimeMillis()+60000;
@@ -438,6 +501,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("external-video")){externalVideoProbe(result);return;}
             if(arguments.getString("mode","").equals("config-sync")){configSyncProbe(result);return;}
             if(arguments.getString("mode","").equals("usage")){usageProbe(result);return;}
+            if(arguments.getString("mode","").equals("rename-viewport")){renameViewportProbe(result);return;}
+            if(arguments.getString("mode","").equals("update-handoff")){updateHandoffProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

@@ -103,7 +103,7 @@ svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.7;
 .nav-item { display:flex; align-items:center; gap:18px; min-height:52px; border:0; background:transparent; width:100%; padding:12px 16px; text-align:left; border-radius:8px; }
 .nav-item span { display:flex; color:var(--muted); }
 .sheet { position:fixed; inset:0; z-index:22; display:flex; align-items:flex-end; pointer-events:none; }
-.sheet-panel { pointer-events:auto; width:100%; max-height:85dvh; overflow:auto; background:var(--bg); border-radius:18px 18px 0 0; padding:8px 0 calc(12px + env(safe-area-inset-bottom)); box-shadow:var(--shadow); }
+.sheet-panel { pointer-events:auto; width:100%; max-height:min(85dvh,calc(var(--app-height,100dvh) - 12px)); overflow:auto; background:var(--bg); border-radius:18px 18px 0 0; padding:8px 0 calc(12px + env(safe-area-inset-bottom)); box-shadow:var(--shadow); }
 .sheet-panel::before { content:""; display:block; width:32px; height:4px; border-radius:4px; background:var(--line); margin:0 auto 4px; }
 .sheet-title { padding:12px 20px; font-size:17px; font-weight:550; overflow-wrap:anywhere; }
 .sheet-item { display:flex; align-items:center; gap:18px; width:100%; min-height:54px; padding:12px 20px; border:0; background:transparent; text-align:left; }

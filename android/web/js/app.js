@@ -24,7 +24,7 @@
     sort: saved('rhfiles.sort', 'name'), hidden: saved('rhfiles.hidden', '0') === '1',
     permissions: null, index: null, server: null, busy: false,
   };
-  let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0;
+  let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0,bootReady=false;
   let refreshPromise = null, refreshAgain = false;
   let navigationTimer,lastNavigationSnapshot='';
   function rememberNavigation(){
@@ -53,6 +53,8 @@
     return root ? rootLabel(root) + fmt.displayPath(path).slice(fmt.displayPath(root.path.replace(/\/+$/,'')).length) : fmt.displayPath(path);
   };
   const isList = () => ['folder', 'library', 'favorites', 'search'].includes(state.route.screen);
+  const currentDirectory=(route=state.route)=>mobileList.directoryFor(route);
+  async function categoryPage(route){if(!route.folder)return api.browseLibrary({category:route.category,root:state.root,showHidden:state.hidden,limit:2000,albums:route.category!=='recent'});try{const listing=await api.listDir({path:route.folder});return {...listing,entries:mobileList.categoryFiles(listing.entries||[],route.category)};}catch(err){if(!state.permissions?.manageExternalStorage&&api.featuresAvailable()&&['image','video','audio'].includes(route.category))return api.browseLibrary({category:route.category,root:state.root,folder:route.folder,showHidden:state.hidden,limit:2000});throw err;}}
   const action = (label, icon, onSelect, danger = false) => ({ label, icon, onSelect, danger });
   function on(id, handler) {
     $(id).addEventListener('click', () => Promise.resolve().then(handler).catch(error));
@@ -97,23 +99,25 @@
     $('btn-new').disabled = route.screen !== 'folder' || blocked() || state.busy;
     $('list-status').hidden = !isList() || state.busy;
     $('btn-search').hidden = route.screen === 'tool';
-    $('pathbar').hidden = route.screen !== 'folder';
+    $('pathbar').hidden = route.screen !== 'folder'&&route.screen!=='library';
+    $('btn-up').setAttribute('aria-label',route.screen==='library'?(route.folder?'返回'+labels[route.category]+'分类':'返回首页'):'上一级');
     $('searchbar').hidden = route.screen !== 'search';
     $('paste-bar').hidden = !pending || !!count || blocked();
     if (pending) {
       $('paste-label').textContent = (pending.mode === 'cut' ? '待移动 ' : '待复制 ') + pending.paths.length + ' 项';
-      $('paste-destination').textContent = route.screen === 'folder' ? '目标：' + pathLabel(route.path) : '请打开目标文件夹';
+      $('paste-destination').textContent = currentDirectory() ? '目标：' + pathLabel(currentDirectory()) : '请打开目标文件夹';
       $('btn-paste').textContent = pending.mode === 'cut' ? '移动到这里' : '粘贴到这里';
-      $('btn-paste').disabled = route.screen !== 'folder' || state.busy;
+      $('btn-paste').disabled = !currentDirectory() || state.busy;
     }
     $('task-bar').hidden = !blocked();
     $('task-label').textContent = state.task?.label || peerTask || '';
-    if (route.screen === 'folder') {
-      const root = rootFor(route.path), boundary=route.boundary;
-      const parts = boundary ? [{name:route.boundaryLabel,path:boundary},...fmt.path2parts(route.path).filter(p=>p.path.startsWith(boundary+'/'))] : api.isVirtual(route.path) ? [{name:route.label || root?.label || '网络 / 授权位置',path:route.path}] : root ? [{ name: rootLabel(root), path: root.path }, ...fmt.path2parts(route.path).filter(p => p.path.startsWith(root.path + '/'))] : fmt.path2parts(route.path);
+    if (route.screen === 'folder'||route.screen==='library') {
+      const path=currentDirectory(),root=path&&rootFor(path),boundary=route.screen==='folder'?route.boundary:null;
+      const parts = !path?[]:boundary ? [{name:route.boundaryLabel,path:boundary},...fmt.path2parts(path).filter(p=>p.path.startsWith(boundary+'/'))] : api.isVirtual(path) ? [{name:route.label || root?.label || '网络 / 授权位置',path}] : root ? [{ name: rootLabel(root), path: root.path }, ...fmt.path2parts(path).filter(p => p.path.startsWith(root.path + '/'))] : fmt.path2parts(path);
       $('crumbs').replaceChildren();
+      if(route.screen==='library')$('crumbs').append(button(labels[route.category],'folder',()=>libraryUp(false),'crumb category-crumb'));
       parts.forEach((part, i) => {
-        if (i) $('crumbs').append(ui.el('span', 'sep', '›'));
+        if (i||route.screen==='library') $('crumbs').append(ui.el('span', 'sep', '›'));
         const b = button(part.name, 'folder', () => go(folderRoute(part.path)), 'crumb' + (i === parts.length - 1 ? ' current' : ''));
         b.querySelector('svg').remove();
         $('crumbs').append(b);
@@ -212,6 +216,7 @@
   // Request IDs make old directory/search/preview responses unable to replace a
   // newer screen. The in-app back stack is independent of WebView history.
   async function go(route, options = {}) {
+    const position=options.position||(options.replace&&sameRoute(route,state.route)?captureListPosition():null);
     if(route.screen!=='tool'||route.tool!=='nearby')androidNearby.leave();
     if(route.screen!=='tool'||route.tool!=='usage')androidUsage.leave();
     if (route.screen === 'home') state.stack = [];
@@ -245,22 +250,22 @@
         if (id !== navigationId) return;
         state.route.path = listing.path; state.listing = listing; state.entries = listing.entries || [];
         const root = rootFor(listing.path); if (root && !api.isVirtual(root.path)) state.root = root.path;
-        showList(route.scroll);
+        showList(route.scroll,position);
       } else if (route.screen === 'favorites') {
         state.entries = state.favorites.map(item => ({ ...item, kind: item.isDir ? 'folder' : kindOf(item.name) }));
-        showList(route.scroll);
+        showList(route.scroll,position);
       } else if (route.screen === 'library') {
         showPlaceholder('正在读取分类…');
-        const status = await api.indexStatus();
+        const status = route.folder?{entryCount:1}:await api.indexStatus();
         if (id !== navigationId) return;
-        state.index = status;
+        if(!route.folder)state.index = status;
         if (!status.lastFinishedMs && !status.entryCount && !(api.featuresAvailable() && ['image','audio','video'].includes(route.category))) {
           showPlaceholder(status.indexing ? '正在建立索引，完成后会自动刷新。' : '尚未建立文件索引。\n建立索引后即可按类型浏览。', rebuildIndex, '建立索引');
           if (status.indexing) pollIndex();
         } else {
-          const page = await api.browseLibrary({ category: route.category, root: state.root, showHidden: state.hidden, limit: 2000,albums:route.category!=='recent'&&!route.folder,folder:route.folder });
+          const page = await categoryPage(route);
           if (id !== navigationId) return;
-          state.entries = libraryEntries(page.entries,route); state.listing = page; showList(route.scroll);
+          state.entries = libraryEntries(page.entries,route); state.listing = page; showList(route.scroll,position);
         }
       } else if (route.screen === 'search') {
         $('search-input').value = route.query || '';
@@ -276,9 +281,9 @@
       if (id === navigationId) { state.busy = false; renderShell(); }
     }
   }
-  function showList(scroll = 0) {
+  function showList(scroll = 0,position=null) {
     $('placeholder').hidden = true; $('filelist').hidden = false;
-    renderList(scroll || 0);
+    renderList(scroll || 0,position);
   }
 
   // Storage notifications must not perform navigation or hide a usable listing.
@@ -295,15 +300,15 @@
         if (state.busy) continue;
         try {
           const listing = route.screen === 'folder' ? await api.listDir({path:route.path})
-            : await api.browseLibrary({category:route.category,root:state.root,showHidden:state.hidden,limit:2000,albums:route.category!=='recent'&&!route.folder,folder:route.folder});
+            : await categoryPage(route);
           if (token !== navigationId || state.route !== route) continue;
           const entries = route.screen==='library'?libraryEntries(listing.entries||[],route):listing.entries||[], changed = !fmt.sameEntries(state.entries,entries) || entries.some((e,i)=>e.count!==state.entries[i]?.count||e.cover?.path!==state.entries[i]?.cover?.path);
           state.listing = listing;
           if (changed) {
-            const scroll = $('filelist').scrollTop, paths = new Set(entries.map(entry=>entry.path));
+            const position=captureListPosition(), paths = new Set(entries.map(entry=>entry.path));
             state.entries = entries;
             state.selected = new Set([...state.selected].filter(path=>paths.has(path)));
-            renderList(scroll);
+            renderList(undefined,position);
           }
         } catch (err) {
           if (token === navigationId && state.route === route) error('刷新失败，已保留当前列表：'+(err?.message || err));
@@ -324,7 +329,8 @@
     return mobileList.albums(visible,fmt.parentOf,fmt.baseName);
   }
   let listGeometry;
-  function renderList(scrollOverride) {
+  function captureListPosition(exclude=[]){const node=$('filelist');if(!isList()||node.hidden)return null;return mobileList.capturePosition(currentEntries(),node.scrollTop,node.clientHeight,state.view==='grid'?136:64,state.view==='grid'?Math.max(2,Math.floor(node.clientWidth/112)):1,exclude);}
+  function renderList(scrollOverride,position=null) {
     if (!isList() || $('filelist').hidden) return;
     const container = $('filelist'), list = currentEntries();
     container.dispatchEvent(new Event('rhfiles-list-reset'));
@@ -341,7 +347,8 @@
     const height = state.view === 'grid' ? 136 : 64;
     const columns = state.view === 'grid' ? Math.max(2, Math.floor(container.clientWidth / 112)) : 1;
     const routeKey=JSON.stringify(state.route);
-    if(listGeometry?.route===routeKey&&listGeometry.columns!==columns){const index=Math.floor(scroll/listGeometry.height)*listGeometry.columns;scroll=Math.floor(index/columns)*height;}
+    if(position)scroll=mobileList.restorePosition(list,position,height,columns);
+    else if(listGeometry?.route===routeKey&&listGeometry.columns!==columns){const index=Math.floor(scroll/listGeometry.height)*listGeometry.columns;scroll=Math.floor(index/columns)*height;}
     listGeometry={route:routeKey,columns,height};
     const space=ui.el('div','file-space'),windowNode=ui.el('div','file-window');
     container.style.setProperty('--columns', columns);
@@ -523,9 +530,9 @@
     if(blocked()||!paths.length)return;
     const other=paneHost()?.other(window);
     if(!other)return ui.toast('请先开启双窗格');
-    if(other.route.screen!=='folder')return ui.toast('请先在另一窗格打开目标文件夹');
+    if(!currentDirectory(other.route))return ui.toast('请先在另一窗格打开目标文件夹');
     if(other.busy)return ui.toast('另一窗格正在读取，请稍后再试');
-    const destination=other.route.path;
+    const destination=currentDirectory(other.route);
     if(!await ui.confirm(mode==='cut'?'移动到另一窗格？':'复制到另一窗格？',paths.length+' 项 → '+fmt.displayPath(destination)+'\n文件夹会合并；不会自动覆盖同名文件。',mode==='cut'?'移动':'复制',{danger:false,icon:mode==='cut'?'cut':'copy'}))return;
     const start={...state.route};
     // Capture the displayed destination before confirmation; never silently
@@ -542,8 +549,8 @@
     if (report.failures?.length) ui.openSheet(title, [action('关闭','close',()=>{})], report.failures.map(item => fmt.displayPath(item.path) + '\n' + fmt.displayPathText(item.message)).join('\n\n'));
   }
   async function paste() {
-    if (!state.clipboard || state.route.screen !== 'folder' || state.busy) return;
-    const pending = state.clipboard, destination = state.route.path;
+    if (!state.clipboard || !currentDirectory() || state.busy) return;
+    const pending = state.clipboard, destination = currentDirectory();
     const start = { ...state.route };
     await task(pending.mode === 'cut' ? '正在移动到 ' + pathLabel(destination) : '正在复制到 ' + pathLabel(destination), async () => {
       const report = await (pending.mode === 'cut' ? api.moveEntries : api.copyEntries)({ sources: pending.paths, destination });
@@ -567,11 +574,12 @@
     await task('正在删除 ' + paths.length + ' 项', async () => {
       const report = recycle ? await api.runJob('trash',{sources:paths}) : await api.deleteEntries({ paths, permanent: true });
       const deleted = new Set(report.deleted || []);
+      const position=captureListPosition(deleted);
       state.entries = state.entries.filter(item => !deleted.has(item.path));
       state.selected.clear();
       ui.toast('已删除 ' + deleted.size + ' 项');
       if (sameRoute(state.route,start)) {
-        if (start.screen === 'folder') await go(start, { replace: true }); else renderList();
+        if (start.screen === 'folder') await go(start, { replace: true,position }); else renderList(undefined,position);
       }
       failures('部分文件未删除', report);
     });
@@ -610,7 +618,7 @@
     const options = [action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
-    if (state.route.screen === 'folder') options.unshift(action('分析当前文件夹','chart',()=>go({screen:'tool',tool:'usage',path:state.route.path})),action(state.favorites.some(e=>e.path===state.route.path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path:state.route.path,name:state.route.label||fmt.baseName(state.route.path),isDir:true})));
+    if (currentDirectory()) {const path=currentDirectory();options.unshift(action('分析当前文件夹','chart',()=>go({screen:'tool',tool:'usage',path})),action(state.favorites.some(e=>e.path===path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path,name:state.route.label||fmt.baseName(path),isDir:true})));if(state.route.screen==='library')options.unshift(action('打开实际文件夹','folder',()=>go(folderRoute(path))));}
     ui.openSheet('更多选项', options);
   }
   async function runSearch(query) {
@@ -684,12 +692,14 @@
     const page = await api.logs({limit:200});
     $('log-view').textContent = page.entries.map(e=>fmt.date(e.atMs)+' ['+e.level+'] '+e.scope+': '+e.message).join('\n') || '暂无日志';
   }
+  function libraryUp(home=true){const category=state.route.category;if(!state.route.folder&&home){go({screen:'home'},{replace:true});return true;}const index=state.stack.findLastIndex(r=>r.screen==='library'&&r.category===category&&!r.folder),route=index>=0?state.stack[index]:{screen:'library',category};if(index>=0)state.stack.length=index;go(route,{replace:true});return true;}
   function back() {
     if(androidNearby.back())return true;
     if(ui.isSheetOpen()) { ui.closeSheet(); return true; }
     if(!$('drawer').hidden&&!document.body.classList.contains('wide-layout')) { closeDrawer(); return true; }
     if(state.selected.size) { clearSelection(); return true; }
     if(androidUsage.back())return true;
+    if(state.route.screen==='library'&&state.route.folder)return libraryUp();
     if(state.route.screen==='folder') {
       const path=state.route.path, root=rootFor(path), boundary=state.route.boundary;
       if(boundary===path) {go({screen:'home'},{replace:true});return true;}
@@ -735,7 +745,7 @@
     androidUsage.init({state,go,button,action,error,pathLabel});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
-    window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy}),refresh:()=>refreshCurrent().catch(error)};
+    window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -770,13 +780,13 @@
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
     on('nav-settings',()=>{closeDrawer();return go({screen:'tool',tool:'settings'});});
     on('btn-home',()=>go({screen:'home'}));
-    on('btn-up',back);
-    on('btn-search',()=>go({screen:'search',path:state.route.screen==='folder'?state.route.path:state.root,global:state.route.screen!=='folder',boundary:state.route.boundary,boundaryLabel:state.route.boundaryLabel}));
+    on('btn-up',()=>state.route.screen==='library'?libraryUp():back());
+    on('btn-search',()=>go({screen:'search',path:currentDirectory()||state.root,global:!currentDirectory(),boundary:state.route.boundary,boundaryLabel:state.route.boundaryLabel}));
     on('btn-search-close',()=>back());
     on('search-scope',()=>{ state.route.global=!state.route.global; $('search-scope').textContent=state.route.global?'全部文件':'当前文件夹'; return runSearch($('search-input').value); });
     $('search-input').addEventListener('input',()=>{clearTimeout(searchTimer);++searchId;searchTimer=setTimeout(()=>runSearch($('search-input').value),160);});
     on('btn-overflow',moreMenu); on('btn-view',viewMenu); on('btn-sort',sortMenu); on('btn-new',newMenu);
-    on('btn-refresh',()=>go(state.route,{replace:true})); on('sel-close',clearSelection);
+    on('btn-refresh',refreshCurrent); on('sel-close',clearSelection);
     on('sel-all',()=>{ const entries=currentEntries(); state.selected=state.selected.size===entries.length?new Set():new Set(entries.map(e=>e.path)); paintSelection(); });
     $('selection-bar').addEventListener('click',e=>{
       const which=e.target.closest('[data-action]')?.dataset.action, paths=[...state.selected];
@@ -820,7 +830,7 @@
         if(isList()&&!$('filelist').hidden)renderList(resume.route.scroll||0);else renderShell();
       }
       if(paneHost())state.clipboard=paneHost().currentClipboard(window);
-    } catch(err){showPlaceholder('启动失败：'+err,bootStorage);}
+    } catch(err){showPlaceholder('启动失败：'+err,bootStorage);}finally{bootReady=true;}
   }
   document.addEventListener('DOMContentLoaded',boot);
 })();
