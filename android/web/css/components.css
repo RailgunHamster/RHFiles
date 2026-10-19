@@ -102,6 +102,9 @@ body { background:var(--page); -webkit-font-smoothing:antialiased; }
 .update-indicator svg { width:21px; height:21px; }
 .drawer { border-right:1px solid var(--line); border-radius:0 20px 20px 0; }
 .wide-layout .drawer { border-radius:0; }
+#nav-favorites .favorite-more { display:grid; place-items:center; width:44px; height:44px; flex:0 0 44px; padding:0; border:0; border-radius:10px; background:transparent; color:var(--muted); box-shadow:none; }
+#nav-favorites .favorite-more svg { width:20px; height:20px; stroke-width:1.7; }
+#nav-favorites .favorite-more:active { background:var(--selected); color:var(--accent); }
 .wide-layout #nav-favorites .favorite-more { width:44px; flex:0 0 44px; }
 .wide-layout #nav-favorites .favorite-location>button:first-child { width:auto; }
 .drawer-brand { margin-bottom:8px; border-bottom:1px solid var(--line); }

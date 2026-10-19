@@ -54,6 +54,26 @@ internal object SharedConfig {
     }
   }
   private fun records(doc:JSONObject,key:String,id:String)=(0 until doc.getJSONArray(key).length()).associate{val item=doc.getJSONArray(key).getJSONObject(it);item.getString(id) to item}
+  private fun favoritePaths(doc:JSONObject)=(0 until doc.getJSONArray("favorites").length()).map{doc.getJSONArray("favorites").getJSONObject(it).getString("path")}
+  /** Merge pairwise order changes, not filenames. Independent insertions get a
+   * deterministic tie-break; incompatible reorder cycles require a choice. */
+  private fun favoriteOrder(keys:Set<String>,base:JSONObject,local:JSONObject,remote:JSONObject,choice:String?,conflicts:JSONArray):List<String> {
+    val b=favoritePaths(base);val l=favoritePaths(local);val r=favoritePaths(remote)
+    val positions=listOf(b,l,r).map{it.withIndex().associate{v->v.value to v.index}}
+    fun before(p:Map<String,Int>,x:String,y:String):Boolean? {val a=p[x]?:return null;val z=p[y]?:return null;return a<z}
+    val nodes=keys.sorted();val edges=nodes.associateWith{mutableSetOf<String>()};val degree=nodes.associateWith{0}.toMutableMap();var ambiguous=false
+    for(i in nodes.indices)for(j in i+1 until nodes.size){
+      val x=nodes[i];val y=nodes[j];val bv=before(positions[0],x,y);val lv=before(positions[1],x,y);val rv=before(positions[2],x,y)
+      val selected=when{lv==null->rv?:bv;rv==null->lv;lv==rv->lv;lv==bv->rv;rv==bv->lv;else->{ambiguous=true;if(choice=="remote")rv else lv}}
+      if(selected!=null){val from=if(selected)x else y;val to=if(selected)y else x;if(edges.getValue(from).add(to))degree[to]=degree.getValue(to)+1}
+    }
+    val ready=java.util.PriorityQueue<String>();degree.filterValues{it==0}.keys.forEach(ready::add);val result=mutableListOf<String>()
+    while(ready.isNotEmpty()){val next=ready.remove();result.add(next);for(to in edges.getValue(next)){degree[to]=degree.getValue(to)-1;if(degree[to]==0)ready.add(to)}}
+    if(!ambiguous&&result.size==keys.size)return result
+    conflicts.put(JSONObject().put("kind","favoriteOrder").put("id","favorites").put("local",JSONArray(l)).put("remote",JSONArray(r)))
+    val primary=if(choice=="remote")r else l;val secondary=if(choice=="remote")l else r
+    return (primary+secondary+b+nodes).filter{it in keys}.distinct()
+  }
   data class Merged(val document:JSONObject,val conflicts:JSONArray)
   fun merge(base:JSONObject,local:JSONObject,remote:JSONObject,choice:String?=null):Merged {
     require(choice==null||choice in listOf("local","remote")){"冲突选项无效"}
@@ -76,12 +96,13 @@ internal object SharedConfig {
         if(choice!=null){val id=Uri.parse(f.getString("path")).host;val selected=records(if(choice=="remote")remote else local,"profiles","id")[id];if(selected!=null){if(ids.add(id!!))out.getJSONArray("profiles").put(selected);kept.put(f)}}
       }
     }
-    out.put("favorites",kept);return Merged(out,conflicts)
+    out.put("favorites",kept);val byPath=records(out,"favorites","path")
+    out.put("favorites",JSONArray(favoriteOrder(byPath.keys,base,local,remote,choice,conflicts).map{byPath.getValue(it)}));return Merged(out,conflicts)
   }
   fun localFavorites(current:JSONArray,shared:JSONArray):JSONArray {
-    val byPath=(0 until shared.length()).associate{val f=shared.getJSONObject(it);f.getString("path") to f}.toMutableMap();val out=JSONArray()
-    for(i in 0 until current.length()){val f=current.getJSONObject(i);if(!f.getString("path").startsWith("remote://"))out.put(f)else byPath.remove(f.getString("path"))?.let(out::put)}
-    byPath.values.forEach(out::put);require(out.length()<=100){"合并后收藏超过 100 项，请先整理收藏"};return out
+    val out=JSONArray();var next=0
+    for(i in 0 until current.length()){val f=current.getJSONObject(i);if(!f.getString("path").startsWith("remote://"))out.put(f)else if(next<shared.length())out.put(shared.getJSONObject(next++))}
+    while(next<shared.length())out.put(shared.getJSONObject(next++));require(out.length()<=100){"合并后收藏超过 100 项，请先整理收藏"};return out
   }
   // Remember only successfully uploaded LOCAL deltas before UI acknowledgement.
   // Remote-only additions remain unacknowledged, so a crash cannot turn them
@@ -91,7 +112,11 @@ internal object SharedConfig {
     for((key,id) in listOf("profiles" to "id","favorites" to "path")){
       val b=records(base,key,id).toMutableMap();val l=records(local,key,id);val m=records(merged,key,id)
       for(k in (b.keys+l.keys).toSet())if(!same(l[k],b[k])&&same(m[k],l[k])){if(l[k]==null)b.remove(k)else b[k]=l.getValue(k)}
-      b.toSortedMap().values.forEach(out.getJSONArray(key)::put)
+      val order=if(key=="favorites"){
+        val localOrder=favoritePaths(local).filter{it in b};val committedOrder=favoritePaths(merged).filter{it in b}
+        if(localOrder==committedOrder)localOrder else (favoritePaths(base)+localOrder+b.keys.sorted()).filter{it in b}.distinct()
+      }else b.keys.sorted()
+      order.forEach{out.getJSONArray(key).put(b.getValue(it))}
     }
     return out
   }

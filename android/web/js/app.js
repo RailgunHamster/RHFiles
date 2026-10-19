@@ -140,6 +140,10 @@
     if (state.selected.has(path)) state.selected.delete(path); else state.selected.add(path);
     paintSelection();
   }
+  function startSelection(entry){
+    if(entry.libraryAlbum)return ui.toast('请先打开分类，再长按选择文件');
+    state.selected.add(entry.path);paintSelection();
+  }
   function clearSelection() { state.selected.clear(); paintSelection(); }
 
   function tile(grid, id, label, icon, color, note, handler) {
@@ -194,7 +198,7 @@
     $('nav-favorites').replaceChildren(...state.favorites.map(entry => {
       const row=ui.el('div','favorite-location');
       const open=button(favoriteLabel(entry),'star',()=>{closeDrawer();return activate(entry);});
-      const more=button('收藏操作','more',()=>{closeDrawer();favoriteMenu(entry);},'favorite-more');
+      const more=button('收藏操作','more',()=>{closeDrawer();favoriteMenu(entry);},'icon-btn favorite-more');
       more.setAttribute('aria-label',favoriteLabel(entry)+' 的收藏操作');more.querySelector('span').remove();
       row.append(open,more);return row;
     }));
@@ -430,8 +434,11 @@
   }
   function entryMenu(entry) {
     $('filelist').dispatchEvent(new Event('rhfiles-list-reset'));
-    if(entry.libraryAlbum)return ui.openSheet(entry.name,[action('查看此分类','folder',()=>activate(entry)),action('打开实际文件夹','open',()=>go({screen:'folder',path:entry.path})),action('复制路径','copy',()=>ui.copyText(entry.path))],entry.path+'\n'+entry.count+' 项');
-    ui.openSheet(entry.name, [
+    ui.openSheet(entry.name,entryActions(entry),entry.libraryAlbum?entry.path+'\n'+entry.count+' 项':undefined);
+  }
+  function entryActions(entry){
+    if(entry.libraryAlbum)return [action('查看此分类','folder',()=>activate(entry)),action('打开实际文件夹','open',()=>go({screen:'folder',path:entry.path})),action('复制路径','copy',()=>ui.copyText(entry.path))];
+    return [
       action(entry.isDir ? '打开文件夹' : '打开 / 预览', 'open', () => activate(entry)),
       action(state.selected.has(entry.path)?'取消选择':'选择','check',()=>toggleSelection(entry.path)),
       ...(!entry.isDir && api.nativeAvailable() ? [action('打开方式', 'open', () => api.systemOpen(entry.path)), action('分享', 'share', () => api.shareFile(entry.path))] : []),
@@ -446,7 +453,28 @@
       ...(state.route.screen === 'folder' || (api.isVirtual(entry.path)&&!entry.parentPath) ? [] : [action('打开所在文件夹', 'folder', () => go(folderRoute(entry.parentPath || fmt.parentOf(entry.path))))]),
       action('属性', 'info', () => ui.openSheet(entry.name, [action('关闭','close',()=>{})], '位置：' + entry.path + '\n类型：' + (entry.isDir ? '文件夹' : entry.kind) + '\n大小：' + fmt.size(entry.size) + '\n修改时间：' + fmt.date(entry.modifiedMs))),
       action('删除', 'trash', () => remove([entry.path]), true),
+    ];
+  }
+  function selectionMenu(){
+    const paths=[...state.selected];if(!paths.length)return;
+    const entries=paths.map(path=>state.entries.find(e=>e.path===path)||currentEntries().find(e=>e.path===path)).filter(Boolean);
+    // The toolbar owns common operations; the remaining single-file operations
+    // come from exactly the same source as that file's overflow menu.
+    if(paths.length===1&&entries.length===1)return ui.openSheet('已选 1 项',entryActions(entries[0]).filter(item=>!['复制','移动','重命名','删除','选择','取消选择'].includes(item.label)));
+    ui.openSheet('已选 '+paths.length+' 项',[
+      ...(dual()?[action('复制到另一窗格','copy',()=>transferToPane('copy',paths)),action('移动到另一窗格','cut',()=>transferToPane('cut',paths))]:[]),
+      action('复制路径','copy',async()=>{await ui.copyText(paths.join('\n'));ui.toast('路径已复制');}),
+      ...(api.featuresAvailable()?androidFeatures.selectionActions(paths):[]),
+      ...(entries.length===paths.length?[action(entries.every(e=>state.favorites.some(f=>f.path===e.path))?'取消收藏':'添加到收藏','star',()=>favoriteMany(entries))]:[]),
+      action('属性','info',()=>ui.openSheet('已选 '+paths.length+' 项',[action('关闭','close',()=>{})],paths.join('\n')+'\n已知文件大小：'+fmt.size(entries.reduce((n,e)=>n+(!e.isDir?e.size||0:0),0))+'（不统计文件夹内容）'))
     ]);
+  }
+  function favoriteMany(entries){
+    const previous=JSON.parse(saved('rhfiles.favorites','[]')),selected=new Set(entries.map(e=>e.path));
+    const removeAll=entries.every(e=>previous.some(f=>f.path===e.path));
+    const next=removeAll?previous.filter(f=>!selected.has(f.path)):[...previous,...entries.filter(e=>!previous.some(f=>f.path===e.path)).map(e=>({name:e.name,path:e.path,isDir:e.isDir,parentPath:e.parentPath}))];
+    if(next.length>100)return ui.toast('常用 / 收藏位置最多保存 100 项，未更改收藏');
+    cache('rhfiles.favorites',JSON.stringify(next));state.favorites=next;renderDrawer();if(state.route.screen==='favorites')go(state.route,{replace:true}).catch(error);ui.toast(removeAll?'已取消收藏':'已添加收藏');
   }
   const favoriteLabel=entry=>typeof entry.label==='string'&&entry.label.trim()?entry.label:entry.name;
   function favoriteMenu(entry){ui.openSheet(favoriteLabel(entry),[
@@ -738,7 +766,7 @@
       try{const response=await fetch('SMBJ-RPC-LICENSE.txt');if(!response.ok)throw Error('License unavailable');$('smb-rpc-license-text').textContent=await response.text();details.dataset.loaded='1';}
       catch{$('smb-rpc-license-text').textContent='请查看源码包内 SMBJ-RPC-LICENSE.txt。';}
     });
-    ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path)||currentEntries().find(entry=>entry.path===path),menu:entryMenu,toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
+    ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path)||currentEntries().find(entry=>entry.path===path),select:startSelection,toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
     $('scrim').addEventListener('click',closeDrawer);
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
@@ -757,7 +785,7 @@
       if(which==='copy'||which==='cut') setClipboard(which,paths);
       if(which==='delete') remove(paths).catch(error);
       if(which==='rename'&&paths.length===1) rename(state.entries.find(item=>item.path===paths[0])).catch(error);
-      if(which==='more') ui.openSheet('已选 '+paths.length+' 项',[...(dual()?[action('复制到另一窗格','copy',()=>transferToPane('copy',paths)),action('移动到另一窗格','cut',()=>transferToPane('cut',paths))]:[]),action('复制路径','copy',async()=>{await ui.copyText(paths.join('\n'));ui.toast('路径已复制');}),...(api.featuresAvailable()?androidFeatures.selectionActions(paths):[])]);
+      if(which==='more') selectionMenu();
     });
     on('copy-to-pane',()=>transferToPane('copy',[...state.selected]));on('move-to-pane',()=>transferToPane('cut',[...state.selected]));
     on('btn-paste',paste); on('btn-cancel-paste',()=>{state.clipboard=null;paneHost()?.clipboard(window,null);renderList();renderShell();});

@@ -43,7 +43,7 @@ if ($same) {
     if ($previous -and $previous.sha256 -ne $hash) { throw 'This version/ABI already exists with different bytes; bump the Android version' }
 }
 $otherAssets = if ($same) { @($same.assets | Where-Object abi -ne $abi) } else { @() }
-$release = [ordered]@{ version=$version; versionCode=$code; minSdk=$minSdk; notes=$notes; assets=@($otherAssets)+@($asset) }
+$release = [ordered]@{ version=$version; versionCode=$code; minSdk=$minSdk; giteeTag="android-v$version"; prerelease=$false; notes=$notes; assets=@($otherAssets)+@($asset) }
 $releases = @($history | Where-Object versionCode -ne $code)+@($release)
 $feed = [ordered]@{ schemaVersion=1; packageId='com.railgunhamster.rhfiles'; releases=@($releases | Sort-Object { [long]$_.versionCode } -Descending) }
 $target = Join-Path $OutputDirectory $name

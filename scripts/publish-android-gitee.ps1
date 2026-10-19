@@ -62,8 +62,18 @@ try{
         $body=@{tag_name=$tag;target_commitish=$Commit;name=('RHFiles Android '+$release.version);body=$release.notes;prerelease=$false}|ConvertTo-Json -Depth 8
         $null=Invoke-RestMethod "$api/releases/$($remote.id)" -Method Patch -ContentType 'application/json; charset=utf-8' -Body $body @options
     }
-    $public=Invoke-RestMethod "$api/releases/tags/$tag" -TimeoutSec 30
+    # Administrative state uses the publisher credential; anonymous v5 API
+    # calls are rate limited independently of the public download channel.
+    $public=Invoke-RestMethod "$api/releases/tags/$tag" @options
     if($public.prerelease){throw 'Gitee release is not public stable yet'}
+    # Verify the exact API-free route used by clients, not only the upload.
+    $channel=Invoke-RestMethod "https://gitee.com/$Repository/releases/download/latest/releases.android.json" -Headers @{'User-Agent'='RHFiles-Android';'Cache-Control'='no-cache'} -TimeoutSec 45
+    if($channel -is [string]){$channel=$channel|ConvertFrom-Json}
+    if($channel.schemaVersion -ne 1 -or $channel.packageId -ne $manifest.packageId){throw 'Gitee latest route is not an Android update feed'}
+    $latestEntry=@($channel.releases|Sort-Object {[long]$_.versionCode} -Descending)[0]
+    if($latestEntry.versionCode -ne $release.versionCode -or $latestEntry.version -ne $release.version){throw 'Gitee latest download route points at an older/different release'}
+    foreach($asset in $release.assets){$selected=@($latestEntry.assets|Where-Object abi -eq $asset.abi);if($selected.Count -ne 1 -or $selected[0].sha256 -ne $asset.sha256){throw 'Gitee latest feed APK checksum does not match the published release'}}
+    Write-Host 'Verified API-free Gitee latest Android update channel'
     Write-Host "Published https://gitee.com/$Repository/releases/tag/$tag"
 }catch{
     # Avoid emitting HTTP request objects or token-bearing error details.

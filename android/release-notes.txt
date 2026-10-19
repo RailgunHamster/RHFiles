@@ -1,4 +1,16 @@
-RHFiles Android 0.1.19
+RHFiles Android 0.1.20
+
+1. 修复 Gitee 检查更新返回 HTTP 403：不再遍历匿名发行 API，改为一次读取 latest 下载清单；APK 始终使用明确的版本标签下载，不随 latest 变化。发布时增加对客户端实际入口的匿名验证，错误显示清单/安装包阶段及服务器状态。
+2. 快捷访问的更多菜单按钮改为统一的无边框图标按钮，保留 44px 点击范围，适配抽屉、平板侧栏及深色主题。
+3. WebDAV 同步网络收藏的排列顺序，不再按路径排序或保留各设备旧顺序；独立新增自动合并，冲突的重排要求明确选择。本地路径收藏仍留在本机。
+4. 长按文件直接进入多选，不再弹出菜单；右侧三个点保留单文件菜单。选中后的工具栏与更多菜单复用同一操作来源，补齐打开方式、编辑、解压、收藏、属性等适用功能；重复长按已选项不取消选择。
+
+1. Avoid Gitee anonymous release-API throttling by fetching one public latest index. Resolve APKs through immutable version tags and verify the exact client endpoint during publication.
+2. Use the common unframed Quick Access overflow icon with a 44px touch target in compact, tablet and dark layouts.
+3. Synchronize network bookmark order with three-way ordering, deterministic concurrent insertions and explicit reorder conflicts, while retaining device-local bookmarks.
+4. Long-press to select without a popup. Keep file overflow separate and retain applicable operations through the selection toolbar and More; support batch favorites.
+
+此前版本改进 / Previous improvements (0.1.19):
 
 1. WebDAV 配置同步：在设置 → 配置同步填写已存在的 WebDAV 文件夹、账号与密码，可手动同步或开启自动同步。启动、回到应用、共享配置修改后及前台每 5 分钟触发；关闭后只有“立即同步”会连接服务器。
 2. 仅同步网络位置、网络路径收藏及收藏别名，默认不上传密码；本地路径收藏、主题、分屏、系统授权、缓存和任务留在本机。新设备可编辑网络位置补填密码；WebDAV 凭据使用 Android Keystore 加密保存在本机。

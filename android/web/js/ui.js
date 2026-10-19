@@ -306,7 +306,7 @@ const ui = (() => {
 
   // One delegated long-press owner. Virtualized rows can disappear during a
   // scroll; their detached timers must never turn scrolling into selection.
-  function bindFileGestures(container,{find,menu,toggle,activate,hasSelection}){
+  function bindFileGestures(container,{find,select,toggle,activate,hasSelection}){
     let pointer=null,timer,blockClick=false,lastScroll=-Infinity,opened=null;
     const cancel=()=>{clearTimeout(timer);timer=null;};
     const rowFor=target=>target.closest('[data-path]');
@@ -329,7 +329,7 @@ const ui = (() => {
       pointer={id:event.pointerId,x:event.clientX,y:event.clientY,row,path:row.dataset.path,moved:false,held:false,horizontal:false,base:opened===row?-72:0,dismiss};
       timer=setTimeout(()=>{
         const p=pointer;if(!p || p.moved || !p.row.isConnected || performance.now()-lastScroll<140)return;
-        p.held=true;blockClick=true;const entry=find(p.path);if(entry)menu(entry);navigator.vibrate?.(10);
+        p.held=true;blockClick=true;close();const entry=find(p.path);if(entry)select(entry);navigator.vibrate?.(10);
       },500);
     });
     container.addEventListener('pointermove',event=>{
@@ -361,7 +361,7 @@ const ui = (() => {
     container.addEventListener('contextmenu',event=>{
       event.preventDefault();cancel();const row=rowFor(event.target);if(!row)return;
       if(pointer?.moved || performance.now()-lastScroll<200 || blockClick)return;
-      blockClick=true;const entry=find(row.dataset.path);if(entry)menu(entry);
+      blockClick=true;close();const entry=find(row.dataset.path);if(entry)select(entry);
     });
     container.addEventListener('keydown',event=>{if(event.key==='Escape')close();});
     document.addEventListener('visibilitychange',()=>{if(document.hidden)reset();});

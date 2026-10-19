@@ -22,7 +22,7 @@ const configSync=(()=>{
     for(const control of form.elements)control.disabled=busy;
     $('sync-now').disabled=busy;$('sync-local').hidden=$('sync-remote').hidden=status.state!=='conflict';
     const list=$('sync-conflicts');list.replaceChildren();
-    for(const item of status.conflicts||[]){const value=item.local||item.remote;list.append(ui.el('li','',item.kind==='profiles'?'网络位置：'+(value?.config?.name||item.id):'收藏：'+(value?.label||value?.name||item.id)));}
+    for(const item of status.conflicts||[]){const value=item.local||item.remote;list.append(ui.el('li','',item.kind==='favoriteOrder'?'快捷访问排列顺序（两端顺序不同）':item.kind==='profiles'?'网络位置：'+(value?.config?.name||item.id):'收藏：'+(value?.label||value?.name||item.id)));}
   }
   async function refresh(){if(!api.syncAvailable())return;status=await api.native('sync.status');if(form&&!dirty){for(const e of form.elements)if(e.name&&e.name!=='password'&&e.name!=='clearPassword'){if(e.type==='checkbox')e.checked=!!status.config[e.name];else e.value=status.config[e.name]||'';}form.elements.password.placeholder=status.config.hasPassword?'已保存；留空保留原密码':'密码（仅保存在本机）';}paint();return status;}
   function schedule(delay=1800){if(!workbench.primary()||applying)return;clearTimeout(timer);timer=setTimeout(()=>{if(!document.hidden)refresh().then(()=>run(false)).catch(app.error);},delay);}

@@ -141,7 +141,7 @@ async function home(p){await p.click('#btn-menu');await p.click('#nav-home');awa
 async function storage(p){await home(p);await tile(p,'storage-0').click();await p.waitForSelector('#filelist .name');}
 async function more(p,name){await row(p,name).locator('.entry-more').click();await p.waitForSelector('#sheet:not([hidden])');}
 async function choose(p,label){await p.getByRole('button',{name:label,exact:true}).click();}
-async function press(p,name){await row(p,name).scrollIntoViewIfNeeded();const b=await row(p,name).boundingBox();await p.mouse.move(b.x+80,b.y+25);await p.mouse.down();await p.waitForTimeout(510);await p.mouse.up();await choose(p,'选择');await p.waitForSelector('#selection-bar:not([hidden])');}
+async function press(p,name){await row(p,name).scrollIntoViewIfNeeded();const b=await row(p,name).boundingBox();await p.mouse.move(b.x+80,b.y+25);await p.mouse.down();await p.waitForTimeout(530);await p.mouse.up();await p.waitForSelector('#selection-bar:not([hidden])');}
 async function capture(p,name){await p.screenshot({path:path.join(output,name+'.png')});}
 try{
   if(!process.argv.includes('--updates-only')&&!process.argv.includes('--gestures-only')){
@@ -449,8 +449,18 @@ try{
     await more(p,'notes.txt');const viaMore=await p.locator('#sheet .sheet-item').allTextContents();await p.evaluate(()=>rhfilesHandleBack());
     await row(p,'notes.txt').scrollIntoViewIfNeeded();await p.waitForTimeout(180);
     const bounds=await row(p,'notes.txt').boundingBox();await p.mouse.move(bounds.x+80,bounds.y+25);await p.mouse.down();await p.waitForTimeout(530);await p.mouse.up();
-    check(JSON.stringify(await p.locator('#sheet .sheet-item').allTextContents())===JSON.stringify(viaMore),'Long press and overflow expose exactly the same file action menu');
-    await p.evaluate(()=>rhfilesHandleBack());
+    check(await p.locator('#sheet').isHidden()&&(await p.locator('#sel-count').innerText())==='已选择 1 项','Long press enters selection directly without an action popup');
+    await p.locator('[data-action=more]').click();const selectedActions=[...await p.locator('#sheet .sheet-item').allTextContents(),...await p.locator('#selection-bar button').allTextContents()].map(s=>s.trim());
+    check(viaMore.filter(s=>!['选择','取消选择'].includes(s.trim())).every(s=>selectedActions.includes(s.trim())),'Selected-file toolbar plus More retain every applicable overflow operation');
+    await p.evaluate(()=>rhfilesHandleBack());await p.locator('#sel-close').click();
+    for(const name of ['photo.jpg','Download']){
+      await more(p,name);const expected=(await p.locator('#sheet .sheet-item').allTextContents()).map(s=>s.trim()).filter(s=>!['选择','取消选择'].includes(s));await p.evaluate(()=>rhfilesHandleBack());await press(p,name);
+      check(await p.locator('#sheet').isHidden(),'Long-press '+name+' selects without opening a menu');
+      await p.locator('[data-action=more]').click();const available=[...await p.locator('#sheet .sheet-item').allTextContents(),...await p.locator('#selection-bar button').allTextContents()].map(s=>s.trim());check(expected.every(s=>available.includes(s)),'Selection keeps all applicable '+name+' operations');await p.evaluate(()=>rhfilesHandleBack());await p.locator('#sel-close').click();
+    }
+    await press(p,'notes.txt');await press(p,'notes.txt');check((await p.locator('#sel-count').innerText())==='已选择 1 项'&&await p.locator('#sheet').isHidden(),'Long-pressing an already-selected file keeps it selected');
+    await row(p,'photo.jpg').click();await p.locator('[data-action=more]').click();await choose(p,'添加到收藏');check(await p.evaluate(()=>{const f=JSON.parse(localStorage.getItem('rhfiles.favorites'));return f.some(x=>x.name==='notes.txt')&&f.some(x=>x.name==='photo.jpg')}),'Multi-selection can add every selected file to favorites');
+    await p.locator('[data-action=more]').click();await choose(p,'取消收藏');await p.locator('#sel-close').click();
     const touch=await context.newCDPSession(p);
     async function drag(target,dx,{cancel=false,dy=0}={}){
       if(!await target.getAttribute('data-swipe-open'))await target.scrollIntoViewIfNeeded();await p.waitForTimeout(180);const b=await target.boundingBox(),x=b.x+Math.min(dx>0?180:240,b.width-45),y=b.y+(b.height>100?70:25);
@@ -474,13 +484,13 @@ try{
     await more(p,'photo.jpg');await choose(p,'添加到收藏');await more(p,'photo.jpg');await choose(p,'修改收藏名称');await p.locator('#sheet input').fill('旅行收藏.txt');await choose(p,'保存');
     check(await p.evaluate(()=>{const f=JSON.parse(localStorage.getItem('rhfiles.favorites'))[0];return f.name==='photo.jpg'&&f.label==='旅行收藏.txt'&&f.path==='/storage/emulated/0/photo.jpg'&&!__model.calls.some(c=>c.cmd==='rename_entry')}),'Favorite label changes never call filesystem Rename or alter original identity');
     await home(p);await tile(p,'favorites').click();await row(p,'旅行收藏.txt').waitFor();check(await row(p,'旅行收藏.txt').getAttribute('data-kind')==='image','Alias extension never changes the real file type');
-    await p.click('#btn-menu');await p.getByRole('button',{name:'旅行收藏.txt 的收藏操作',exact:true}).click();await choose(p,'修改收藏名称');await p.locator('#sheet input').fill('另一名称');await choose(p,'保存');await row(p,'另一名称').waitFor();check(true,'Drawer also supports favorite label editing');
+    await p.click('#btn-menu');check(await p.locator('.favorite-more').evaluate(e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return e.classList.contains('icon-btn')&&s.borderTopWidth==='0px'&&s.backgroundColor==='rgba(0, 0, 0, 0)'&&s.boxShadow==='none'&&r.width===44&&r.height===44;}),'Quick Access overflow uses an unframed shared icon button with a 44px touch target');await p.screenshot({path:path.join(output,'quick-access-overflow.png')});await p.getByRole('button',{name:'旅行收藏.txt 的收藏操作',exact:true}).click();await choose(p,'修改收藏名称');await p.locator('#sheet input').fill('另一名称');await choose(p,'保存');await row(p,'另一名称').waitFor();check(true,'Drawer also supports favorite label editing');
     await p.reload();await tile(p,'favorites').click();await row(p,'另一名称').waitFor();check(true,'Favorite labels survive restart');
     await home(p);await tile(p,'settings').click();const tabs=p.locator('.settings-nav');await tabs.evaluate(e=>e.scrollLeft=e.scrollWidth);await p.waitForTimeout(150);const before=await tabs.evaluate(e=>e.scrollLeft);const b=await tabs.boundingBox();
     await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:b.x+40,y:b.y+20}]});for(let i=1;i<=10;i++)await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:b.x+40+i*20,y:b.y+20}]});await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await p.waitForTimeout(260);
     check(before>0&&await tabs.evaluate(e=>e.scrollLeft)<before&&await p.locator('#drawer').isHidden(),'Real rightward settings-tab pan scrolls tabs and never opens the drawer');
     await p.click('[data-settings-section=updates]');await p.locator('#app-changelog details').first().waitFor();
-    const history=await p.locator('#app-changelog').innerText();check(history.includes('0.1.19')&&history.includes('1. WebDAV')&&!history.includes('0.1.18')&&await p.evaluate(()=>__model.updateRequests===0),'Installed numbered latest log works offline; older versions stay inside History');
+    const history=await p.locator('#app-changelog').innerText();check(history.includes('0.1.20')&&history.includes('1. 修复 Gitee')&&!history.includes('0.1.19')&&await p.evaluate(()=>__model.updateRequests===0),'Installed numbered latest log works offline; older versions stay inside History');
     await p.evaluate(()=>{__model.updates.state='latest';__model.updates.release=null;return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Latest/installed state never erases release history');
     await p.evaluate(()=>{__model.updates.state='failed';__model.updates.message='offline';return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Failed update checks never erase release history');
     check(errors.length===0,'New gesture, favorite and history regressions have no frontend errors');await capture(p,'018-permanent-history');await context.close();

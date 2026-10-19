@@ -44,4 +44,10 @@ class AppUpdateNetworkTest {
       assertEquals("latest",await(u).getString("state"))
     }
   }
+  @Test fun publicSourceDnsAndTimeoutErrorsNeverSuggestSmbCredentials(){
+    for(source in listOf("gitee","github")){
+      val dns=updateFailure(java.net.UnknownHostException("gitee.com"),source);assertTrue(dns.contains("DNS"));assertFalse(dns.contains("家庭 Wi-Fi"))
+      val timeout=updateFailure(java.net.SocketTimeoutException("fixture"),source);assertTrue(timeout.contains("HTTP 代理"));assertFalse(timeout.contains("SMB 端口"))
+    }
+  }
 }

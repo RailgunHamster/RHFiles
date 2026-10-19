@@ -54,7 +54,7 @@ internal object AndroidUpdateFeed {
     val candidates=mutableListOf<AndroidRelease>()
     for(i in 0 until releases.length()) {
       val r=releases.getJSONObject(i);val code=r.getLong("versionCode")
-      if(code<=installed || r.optInt("minSdk",24)>sdk)continue
+      if(r.optBoolean("prerelease")||r.optBoolean("draft")||code<=installed || r.optInt("minSdk",24)>sdk)continue
       val assets=r.getJSONArray("assets")
       val eligible=(0 until assets.length()).map{assets.getJSONObject(it)}.filter{it.optString("abi") in abis || it.optString("abi")=="universal"}
       val asset=eligible.minByOrNull { val index=abis.indexOf(it.optString("abi"));if(index<0)1000 else index } ?: continue
@@ -226,7 +226,7 @@ class AppUpdates private constructor(private val context: Context) {
     val c=client.newCall(Request.Builder().url(target).header("Accept",if(metadata)"application/json" else "application/octet-stream")
       .header("User-Agent","RHFiles-Android").header("Cache-Control","no-cache").build());call=c
     val response=c.execute()
-    if(!response.isSuccessful){response.close();error(if(response.code==404)"服务器没有 Android 更新清单或安装包（HTTP 404）" else "更新服务器返回 HTTP ${response.code}")}
+    if(!response.isSuccessful){response.close();error((if(metadata)"读取更新清单" else "下载安装包")+"失败：${target.host} 返回 HTTP ${response.code}")}
     return response
   }
   // Ownership belongs to the surrounding response/stream.use. SMB sessions

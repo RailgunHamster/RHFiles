@@ -1,10 +1,11 @@
 // Loopback-only, synthetic WebDAV config service for APK business tests.
 import http from 'node:http';
-let version=1,writes=0,violations=[];
+let version=1,writes=0,remoteEdits=0,violations=[];
 const id='11111111-1111-4111-8111-111111111111';
-let doc={schemaVersion:1,profiles:[{id,config:{type:'smb',name:'Cloud Sync QA',host:'qa-cloud.invalid',share:'Public',username:'qa-cloud'}}],favorites:[{name:'Cloud folder',path:`remote://${id}/folder`,isDir:true,label:'QA cloud alias'}]};
+let doc={schemaVersion:1,profiles:[{id,config:{type:'smb',name:'Cloud Sync QA',host:'qa-cloud.invalid',share:'Public',username:'qa-cloud'}}],favorites:['Z','A','M'].map(name=>({name,path:`remote://${id}/${name}`,isDir:true,label:name==='Z'?'QA cloud alias':name}))};
 const server=http.createServer(async(req,res)=>{
- if(req.url==='/qa-state')return res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({version,writes,violations,doc}));
+ if(req.url==='/qa-state')return res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({version,writes,remoteEdits,violations,doc}));
+ if(req.url==='/qa-reverse'&&req.method==='POST'){doc.favorites.reverse();version++;remoteEdits++;return res.writeHead(204).end();}
  if(req.url!=='/sync/rhfiles-settings-v1.json')return res.writeHead(404).end();
  if(req.headers.authorization!=='Basic '+Buffer.from('sync-user:qa-sync-password').toString('base64'))return res.writeHead(401).end();
  if(req.method==='GET')return res.writeHead(200,{'Content-Type':'application/json',ETag:`"qa-${version}"`}).end(JSON.stringify(doc));

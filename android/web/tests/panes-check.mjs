@@ -30,7 +30,7 @@ const centeredDivider=async()=>page.locator('.pane-divider button').evaluate(but
   const reserved=document.getElementById('workbench').dataset.mode==='columns'?frames[0].right<=d.left+.5&&frames[1].left>=d.right-.5:frames[0].bottom<=d.top+.5&&frames[1].top>=d.bottom-.5;
   return centered&&fits&&reserved;
 });
-const select=async(frame,name)=>{await frame.locator('#task-bar').waitFor({state:'hidden'});const row=frame.locator(`[data-path="/storage/emulated/0/${name}"]`);await row.dispatchEvent('pointerdown',{pointerId:1,pointerType:'touch',button:0,clientX:80,clientY:200});await new Promise(resolve=>setTimeout(resolve,550));await row.dispatchEvent('pointerup',{pointerId:1,pointerType:'touch'});await frame.getByRole('button',{name:'选择',exact:true}).click();};
+const select=async(frame,name)=>{await frame.locator('#task-bar').waitFor({state:'hidden'});const row=frame.locator(`[data-path="/storage/emulated/0/${name}"]`);await row.dispatchEvent('pointerdown',{pointerId:1,pointerType:'touch',button:0,clientX:80,clientY:200});await new Promise(resolve=>setTimeout(resolve,550));await row.dispatchEvent('pointerup',{pointerId:1,pointerType:'touch'});await frame.locator('#selection-bar').waitFor();};
 try{
   await page.goto(test.url);await ready();let first=pane('first'),second=pane('second');
   check(await first.locator('#home').isVisible()&&await second.locator('#home').isVisible(),'two independent homes');

@@ -132,4 +132,13 @@ class ConfigSyncTest {
       finish(sync,w);assertFalse(r.editable(id).getBoolean("hasPassword"));assertEquals("another-user",r.editable(id).getString("username"))
     }
   }
+  @Test fun networkFavoriteOrderConvergesAcrossTwoDevicesAndBothDirections(){
+    MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start();val a=device("order-a");val b=device("order-b");val ra=remotes(a,11);val rb=remotes(b,12);val sa=ConfigSync(a,ra);val sb=ConfigSync(b,rb);configure(sa,server);configure(sb,server);val id=ra.save(profile())
+      fun bookmarks(vararg names:String)=names.map{favorite(id,it).put("name",it).put("path","remote://$id/$it")}.toTypedArray()
+      fun order(w:JSONObject)=JSONArray(w.getString("rhfiles.favorites")).let{f->(0 until f.length()).map{f.getJSONObject(it).getString("name")}}
+      val wa=web(*bookmarks("Z","A","M"));val wb=web();finish(sa,wa);finish(sb,wb);assertEquals(listOf("Z","A","M"),order(wb))
+      wb.put("rhfiles.favorites",JSONArray(bookmarks("M","Z","A").toList()).toString());finish(sb,wb);finish(sa,wa);assertEquals(order(wb),order(wa));assertEquals(listOf("M","Z","A"),order(wa))
+      wa.put("rhfiles.favorites",JSONArray(bookmarks("Z","M","A").toList()).toString());finish(sa,wa);finish(sb,wb);assertEquals(order(wa),order(wb));assertEquals(listOf("Z","M","A"),order(wb))
+    }
+  }
 }
