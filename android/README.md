@@ -28,6 +28,7 @@ node --test android/web/tests/*.test.cjs android/web/tests/format.test.js
 node android/web/tests/ui-check.mjs
 node android/web/tests/flow-check.mjs
 node android/web/tests/network-check.mjs
+node android/web/tests/usage-check.mjs
 node android/web/tests/media-check.mjs
 node android/web/tests/config-sync-check.mjs
 node android/web/tests/transfer-display-check.mjs
@@ -55,6 +56,14 @@ The second video is blue rather than the first test pattern, so preserving an ol
 surface frame cannot pass the Next test. The image fixtures include EXIF rotation.
 Build the test APK with `-PrhfilesReleaseProbe` and require both `pass=true` and
 `INSTRUMENTATION_CODE: -1`; an adb exit code alone is not success.
+
+Instrumentation mode `usage` creates a uniquely named `RHFiles-Usage-QA-*`
+folder in the owned emulator's Downloads (1,001 synthetic files). It verifies
+exact logical size/file/directory totals, monotonic aggregation progress,
+100-row pagination, type grouping, the actual WebView report, and independent
+second-pane cancellation. Never run instrumentation on a physical phone.
+The `config-sync` probe also checks that imported credentials are marked missing,
+rejected before network I/O, and prompted when opening a synchronized bookmark.
 
 Network image previews are memory-only, capped at 24 MiB and downsampled to a
 maximum 1920-pixel edge (192 for list thumbnails). Device image codecs apply;

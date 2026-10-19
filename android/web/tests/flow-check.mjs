@@ -384,11 +384,13 @@ try{
     check(await p.evaluate(()=>__model.updates.config.gitee==='https://gitee.com/railgunhamster/RHFiles'),'Gitee repository is included when saving update settings');
     await p.click('#update-check');await p.locator('#update-download:not([hidden])').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===1),'Manual check works even with automatic checking disabled');
+    check(await p.evaluate(()=>{const a=document.getElementById('update-actions'),n=document.getElementById('update-pending-notes');return !!(a.compareDocumentPosition(n)&Node.DOCUMENT_POSITION_FOLLOWING)&&a.getBoundingClientRect().bottom<=n.getBoundingClientRect().top;}),'Update actions stay visually and structurally above pending notes when an update exists');
     check((await p.locator('#update-notes').innerText()).includes('\n2. 第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes number entries, preserve line breaks and never inject HTML');
     check(!(await p.locator('#update-notes').innerText()).includes('旧版不应'),'Pending update notes do not expand accumulated historical releases');
     check(await p.locator('#app-changelog details').count()===1,'Only the installed latest version appears in the outer release log');
     await p.click('#update-history');check(await p.locator('.release-history details').count()>10,'Older release notes are available from the separate History menu');await p.evaluate(()=>rhfilesHandleBack());
     await p.click('#update-download');check(await p.locator('#update-progress').isVisible(),'Downloading exposes byte progress');
+    check(await p.evaluate(()=>!!(document.getElementById('update-actions').compareDocumentPosition(document.getElementById('update-pending-notes'))&Node.DOCUMENT_POSITION_FOLLOWING)),'Downloading never moves actions below release notes');
     check(await p.locator('#update-state').innerText().then(t=>t.includes('/s')),'APK download shows speed');
     await p.click('#update-cancel');await p.locator('#update-download:not([hidden])').waitFor();
     check(await p.locator('#update-state').innerText().then(t=>t.includes('已取消')),'Cancel download is visible and retryable');
@@ -493,7 +495,8 @@ try{
     await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:b.x+40,y:b.y+20}]});for(let i=1;i<=10;i++)await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:b.x+40+i*20,y:b.y+20}]});await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await p.waitForTimeout(260);
     check(before>0&&await tabs.evaluate(e=>e.scrollLeft)<before&&await p.locator('#drawer').isHidden(),'Real rightward settings-tab pan scrolls tabs and never opens the drawer');
     await p.click('[data-settings-section=updates]');await p.locator('#app-changelog details').first().waitFor();
-    const history=await p.locator('#app-changelog').innerText();check(history.includes('0.1.20')&&history.includes('1. 修复 Gitee')&&!history.includes('0.1.19')&&await p.evaluate(()=>__model.updateRequests===0),'Installed numbered latest log works offline; older versions stay inside History');
+    const bundled=fs.readFileSync(path.join(web,'CHANGELOG.txt'),'utf8'),latest=require('../js/changelog.js').sections(bundled)[0];
+    const history=await p.locator('#app-changelog').innerText();check(history.includes(latest.title)&&history.includes(latest.text.split('\n').find(line=>/^1\./.test(line)))&&await p.locator('#update-history').count()===1&&await p.evaluate(()=>__model.updateRequests===0),'Installed numbered latest log works offline; older versions stay inside History');
     await p.evaluate(()=>{__model.updates.state='latest';__model.updates.release=null;return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Latest/installed state never erases release history');
     await p.evaluate(()=>{__model.updates.state='failed';__model.updates.message='offline';return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Failed update checks never erase release history');
     check(errors.length===0,'New gesture, favorite and history regressions have no frontend errors');await capture(p,'018-permanent-history');await context.close();

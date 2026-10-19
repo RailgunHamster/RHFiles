@@ -56,6 +56,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     private val readSessions=IdleReadPool<ReadKey,ReadSmb>(reusable={it.alive})
     private val readReaper by lazy {java.util.concurrent.Executors.newSingleThreadScheduledExecutor{task->Thread(task,"RHFiles-SMB-idle").apply{isDaemon=true}}.apply{scheduleWithFixedDelay({readSessions.reap()},15,15,TimeUnit.SECONDS)}}
     internal fun discardReadSessions(){readSessions.invalidate{true}}
+    internal fun requireCredentials(c:JSONObject){require(!c.optBoolean("needsPassword")){"此网络位置的密码未同步，请先补填密码（网络位置 → 编辑连接）"}}
     // SMBJ wraps transport IOExceptions in SMBRuntimeException; a closed Share
     // may have no cause at all. Preserve permission/protocol errors on a live
     // resource, rather than retrying every server rejection.
@@ -90,6 +91,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   fun requireSmbConnection(id: String,host: String,share: String):Boolean {
     val c=config(id)
+    requireCredentials(c)
     require(c.getString("type")=="smb" && c.getString("host").equals(host,true) && (c.optString("share").isBlank()||c.optString("share").equals(share,true))) { "所选 SMB 登录配置的服务器或共享名与更新目录不一致，请在网络位置中添加对应连接" }
     return c.optString("share").isBlank()
   }
@@ -139,20 +141,24 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val id=if(requested.isBlank())UUID.randomUUID().toString() else {
       require(UUID.fromString(requested).toString()==requested&&preferences.contains(requested)){"网络位置已删除，请重新添加"};requested
     }
-    if(requested.isNotBlank()&&!value.optBoolean("clearPassword")&&value.optString("password").isEmpty()){
-      val old=this.config(id)
+    val old=if(requested.isNotBlank())this.config(id)else null
+    if(old!=null&&!value.optBoolean("clearPassword")&&value.optString("password").isEmpty()){
       fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"))
       require(old.optString("password").isEmpty()||identity(old)==identity(value)){"更换服务器、协议或账号时请重新填写密码，或勾选清除密码"}
       value.put("password",old.optString("password"))
     }
     if(value.optBoolean("clearPassword"))value.put("password","")
+    val emptyConfirmed=value.optBoolean("allowEmptyPassword")||(old?.optBoolean("needsPassword")!=true&&value.optString("password").isEmpty())
+    require(old?.optBoolean("needsPassword")!=true||value.optString("password").isNotEmpty()||value.optString("username").isBlank()||emptyConfirmed){"密码未同步，请补填密码；若此账号确实不需要密码，请明确勾选使用空密码"}
+    value.put("needsPassword",false).put("emptyPasswordConfirmed",emptyConfirmed&&value.optString("password").isEmpty())
+    value.remove("allowEmptyPassword")
     value.remove("id");value.remove("clearPassword");value.remove("hasPassword");validate(value)
     require(preferences.edit().putString(id,encrypt(value)).commit()) { "连接配置保存失败" }
     readSessions.invalidate{it.id==id}
     return id
   }
   fun editable(id:String):JSONObject {
-    val c=config(id);val result=JSONObject().put("id",id).put("hasPassword",c.optString("password").isNotEmpty())
+    val c=config(id);val result=JSONObject().put("id",id).put("hasPassword",c.optString("password").isNotEmpty()).put("needsPassword",c.optBoolean("needsPassword"))
     for(field in listOf("name","type","host","port","share","domain","url","username","insecure"))if(c.has(field))result.put(field,c.get(field))
     return result
   }
@@ -172,7 +178,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     return JSONObject(String(cipher.doFinal(encrypted.copyOfRange(12,encrypted.size)),Charsets.UTF_8))
   }
   fun connections(): JSONArray = JSONArray().also { result -> preferences.all.keys.sorted().forEach { id ->
-    try { val c = config(id); result.put(JSONObject().put("id",id).put("name",c.getString("name")).put("type",c.getString("type")).put("host",c.optString("host")).put("port",c.optInt("port",445)).put("share",c.optString("share")).put("path","remote://$id/")) }
+    try { val c = config(id); result.put(JSONObject().put("id",id).put("name",c.getString("name")).put("type",c.getString("type")).put("host",c.optString("host")).put("port",c.optInt("port",445)).put("share",c.optString("share")).put("needsPassword",c.optBoolean("needsPassword")).put("path","remote://$id/")) }
     catch (_: Exception) { result.put(JSONObject().put("id",id).put("name","密钥失效，请删除并重新添加").put("type","unavailable")) }
   } }
   private data class Location(val id: String, val relative: String, val c: JSONObject,val serverRoot:Boolean=false)
@@ -181,6 +187,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val id = uri.host ?: error("网络位置无效"); val segments = uri.pathSegments
     segments.forEach { SafeFiles.name(it) }
     val c=config(id)
+    requireCredentials(c)
     if(c.optString("type")=="smb"&&c.optString("share").isBlank()) {
       if(segments.isEmpty())return Location(id,"",c,true)
       return Location(id,segments.drop(1).joinToString("/"),c.put("share",segments.first()))

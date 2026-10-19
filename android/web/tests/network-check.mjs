@@ -11,7 +11,7 @@ await context.addInitScript(()=>{
   case 'roots':return [{path:root,label:'内部存储'}];case 'shares':case 'jobs':return [];
   case 'connections':return m.connections.map(publicConnection);
   case 'connection.get':{const c=m.connections.find(c=>c.id===a.id);return {...publicConnection(c),hasPassword:!!c.password}}
-  case 'connection.save':{if(m.failSave)throw Error('文件任务正在使用此连接');let c=a.id?m.connections.find(c=>c.id===a.id):null;if(!c){c={id:'id-'+(m.connections.length+1)};m.connections.push(c)}const oldPassword=c.password;Object.assign(c,a);if(a.id&&!a.password&&!a.clearPassword)c.password=oldPassword;if(a.clearPassword)c.password='';return c.id}
+  case 'connection.save':{if(m.failSave)throw Error('文件任务正在使用此连接');let c=a.id?m.connections.find(c=>c.id===a.id):null;if(!c){c={id:'id-'+(m.connections.length+1)};m.connections.push(c)}const oldPassword=c.password;Object.assign(c,a);if(a.id&&!a.password&&!a.clearPassword)c.password=oldPassword;if(a.clearPassword)c.password='';c.needsPassword=false;return c.id}
   case 'connection.delete':m.connections=m.connections.filter(c=>c.id!==a.id);return true;
   case 'lan.start':m.scan++;return 'scan-'+m.scan;
   case 'lan.state':if(m.holdDiscovery)await new Promise(resolve=>m.releaseDiscovery=resolve);return {running:m.running,devices:m.devices,warnings:[]};
@@ -55,5 +55,15 @@ try{
  await page.evaluate(()=>{__model.running=true;__model.devices=[{name:'late',host:'192.168.1.30',port:445,source:'WS-Discovery'}];__model.holdDiscovery=true});await button('重新发现').click();await page.waitForFunction(()=>!!__model.releaseDiscovery);await home();await page.evaluate(()=>{__model.holdDiscovery=false;__model.releaseDiscovery()});await page.waitForTimeout(900);
  check(await page.locator('#home').isVisible()&&!await page.getByText('late',{exact:true}).isVisible(),'late discovery results cannot replace navigation');
  check(await page.evaluate(()=>__model.calls.some(c=>c.command==='lan.stop')),'leaving Network cancels discovery');
+ await page.evaluate(()=>{__model.denied=false;__model.connections[0].needsPassword=true;__model.connections[0].password='';});await remote();
+ check(await page.locator('.credential-badge').innerText()==='待补填密码','synced password omission is explicitly labeled, not a generic connection failure');
+ const before=await page.evaluate(()=>__model.calls.filter(c=>c.command==='list').length);await button('改名 NAS').click();await page.locator('[name=password]').waitFor();
+ check(await page.evaluate(()=>__model.calls.filter(c=>c.command==='list').length)===before,'missing credentials are requested before any network listing');
+ await button('取消').click();await page.getByText(/此网络位置待补填密码/).waitFor();check(true,'canceling password input leaves a clear completion action, without retrying login');
+ await button('补填密码').click();await button('保存连接').click();await page.locator('.feature-form [role=alert]').getByText(/请补填密码/).waitFor();
+ check(await page.evaluate(()=>__model.calls.filter(c=>c.command==='list').length)===before,'empty submit cannot silently attempt login');
+ await page.locator('[name=password]').fill('only-this-device');await button('保存连接').click();await page.locator('#filelist').waitFor({state:'visible'});
+ check(await page.evaluate(()=>!__model.connections[0].needsPassword&&__model.connections[0].password==='only-this-device'),'saving the missing secret resumes the original navigation');
+ check(!await page.evaluate(()=>JSON.stringify(localStorage).includes('only-this-device')),'the completed password never enters web preferences');
  check(errors.length===0,'no unhandled frontend errors: '+errors.join(';'));console.log('PASS '+checks+' network UI checks (native bridge mocked)');
 }finally{await context.close();await fixture.close()}

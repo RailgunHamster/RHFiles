@@ -194,7 +194,7 @@
   let drawerSignature='';
   function renderDrawer() {
     const signature=JSON.stringify([state.roots,state.favorites]);if(signature===drawerSignature)return;drawerSignature=signature;
-    $('roots').replaceChildren(...state.roots.map(root => button(rootLabel(root), ui.storageSymbol(root), () => { closeDrawer(); return go({ screen: 'folder', path: root.path,label:rootLabel(root) }); })));
+    $('roots').replaceChildren(...state.roots.map(root => {const row=button(rootLabel(root), ui.storageSymbol(root), () => { closeDrawer(); return go({ screen: 'folder', path: root.path,label:rootLabel(root) }); });if(root.needsPassword)row.append(ui.el('small','credential-badge','待补填密码'));return row;}));
     $('nav-favorites').replaceChildren(...state.favorites.map(entry => {
       const row=ui.el('div','favorite-location');
       const open=button(favoriteLabel(entry),'star',()=>{closeDrawer();return activate(entry);});
@@ -213,6 +213,7 @@
   // newer screen. The in-app back stack is independent of WebView history.
   async function go(route, options = {}) {
     if(route.screen!=='tool'||route.tool!=='nearby')androidNearby.leave();
+    if(route.screen!=='tool'||route.tool!=='usage')androidUsage.leave();
     if (route.screen === 'home') state.stack = [];
     else if (!options.replace && !sameRoute(route, state.route)) state.stack.push({ ...state.route, scroll: $('filelist').scrollTop });
     if (route.screen === 'folder' && route.parentPath && route.path !== route.parentPath) folderParents.set(route.path,route.parentPath);
@@ -231,11 +232,15 @@
         if (route.tool === 'settings') await refreshSettings();
         if (route.tool === 'server') {await refreshServer();await androidFeatures.refreshFtp();}
         if (route.tool === 'usage') {
-          $('scan-root').textContent = pathLabel(state.root);
-          $('scan-result').replaceChildren();
+          await androidUsage.enter(route.path||state.root);
         }
       } else if (route.screen === 'folder') {
         showPlaceholder('正在读取文件夹…');
+        if(api.featuresAvailable()&&route.path.startsWith('remote://')&&!await androidFeatures.beforeRemoteNavigate(route.path,()=>id===navigationId)){
+          if(id===navigationId)showPlaceholder('此网络位置待补填密码\n密码不会随配置同步，请在本机补填后连接。',()=>go(route,{replace:true}),'补填密码');
+          return;
+        }
+        if(id!==navigationId)return;
         const listing = await api.listDir({ path: route.path });
         if (id !== navigationId) return;
         state.route.path = listing.path; state.listing = listing; state.entries = listing.entries || [];
@@ -400,6 +405,7 @@
     if(entry.libraryAlbum)return go({screen:'library',category:state.route.category,folder:entry.path});
     if (entry.isDir) return go(folderRoute(entry.path,favoriteLabel(entry),
       entry.parentPath || (state.route.screen==='folder' ? state.route.path : null)));
+    if(api.featuresAvailable()&&entry.path.startsWith('remote://')){const nav=navigationId;if(!await androidFeatures.beforeRemoteNavigate(entry.path,()=>navigationId===nav)||navigationId!==nav)return;}
     if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&!entry.path.startsWith('remote://'))return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});
     if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.playMedia(entry,currentEntries());
     if(api.featuresAvailable()&&entry.kind==='image')return androidFeatures.media(entry,currentEntries());
@@ -440,6 +446,7 @@
     if(entry.libraryAlbum)return [action('查看此分类','folder',()=>activate(entry)),action('打开实际文件夹','open',()=>go({screen:'folder',path:entry.path})),action('复制路径','copy',()=>ui.copyText(entry.path))];
     return [
       action(entry.isDir ? '打开文件夹' : '打开 / 预览', 'open', () => activate(entry)),
+      ...(entry.isDir?[action('分析空间','chart',()=>go({screen:'tool',tool:'usage',path:entry.path}))]:[]),
       action(state.selected.has(entry.path)?'取消选择':'选择','check',()=>toggleSelection(entry.path)),
       ...(!entry.isDir && api.nativeAvailable() ? [action('打开方式', 'open', () => api.systemOpen(entry.path)), action('分享', 'share', () => api.shareFile(entry.path))] : []),
       action('复制', 'copy', () => setClipboard('copy',[entry.path])),
@@ -603,7 +610,7 @@
     const options = [action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
-    if (state.route.screen === 'folder') options.unshift(action(state.favorites.some(e=>e.path===state.route.path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path:state.route.path,name:state.route.label||fmt.baseName(state.route.path),isDir:true})));
+    if (state.route.screen === 'folder') options.unshift(action('分析当前文件夹','chart',()=>go({screen:'tool',tool:'usage',path:state.route.path})),action(state.favorites.some(e=>e.path===state.route.path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path:state.route.path,name:state.route.label||fmt.baseName(state.route.path),isDir:true})));
     ui.openSheet('更多选项', options);
   }
   async function runSearch(query) {
@@ -677,22 +684,12 @@
     const page = await api.logs({limit:200});
     $('log-view').textContent = page.entries.map(e=>fmt.date(e.atMs)+' ['+e.level+'] '+e.scope+': '+e.message).join('\n') || '暂无日志';
   }
-  async function scan() {
-    const root = state.root;
-    $('btn-scan').disabled=true; $('scan-result').textContent='正在分析…';
-    try {
-      const report = await api.scanStorageSizes({root,maxEntries:400000});
-      if (state.route.tool !== 'usage' || state.root !== root) return;
-      $('scan-result').replaceChildren(ui.el('div','','总计 '+fmt.size(report.totalBytes)+' · '+fmt.count(report.files)+' 个文件'));
-      for (const c of report.categories) $('scan-result').append(ui.el('div','',({Images:'图片',Audio:'音频',Videos:'视频',Documents:'文档',Archives:'压缩包',Other:'其他'})[c.name] || c.name), ui.el('div','',fmt.size(c.bytes)+' · '+fmt.count(c.files)+' 项'));
-      if(report.truncated) $('scan-result').append(ui.el('p','','已达到扫描上限，结果不完整。'));
-    } catch(err) { $('scan-result').textContent='分析失败：'+err; } finally { $('btn-scan').disabled=false; }
-  }
   function back() {
     if(androidNearby.back())return true;
     if(ui.isSheetOpen()) { ui.closeSheet(); return true; }
     if(!$('drawer').hidden&&!document.body.classList.contains('wide-layout')) { closeDrawer(); return true; }
     if(state.selected.size) { clearSelection(); return true; }
+    if(androidUsage.back())return true;
     if(state.route.screen==='folder') {
       const path=state.route.path, root=rootFor(path), boundary=state.route.boundary;
       if(boundary===path) {go({screen:'home'},{replace:true});return true;}
@@ -735,6 +732,7 @@
     configBackup.init(error);
     configSync.init({error,go});
     androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,refreshLocations,removeFavoritePrefix,button,action,error,favorite});
+    androidUsage.init({state,go,button,action,error,pathLabel});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy}),refresh:()=>refreshCurrent().catch(error)};
@@ -796,7 +794,6 @@
     on('btn-refresh-logs',refreshLogs); on('btn-copy-logs',async()=>{await refreshLogs();await ui.copyText($('log-view').textContent);ui.toast('日志已复制');});
     on('btn-clear-logs',async()=>{await api.clearLogs();await refreshLogs();});
     on('btn-server-toggle',async()=>{ if(state.server?.running) await api.serverStop(); else if(await ui.confirm('启动局域网文件服务？','持有密码的设备将能'+($('server-write').checked?'读取和上传新文件到 ':'读取 ')+pathLabel(state.root)+'。HTTP 不加密，仅在可信网络使用。','启动')) await api.serverStart({options:{root:state.root,readOnly:!$('server-write').checked}}); await refreshServer(); });
-    on('btn-scan',scan);
     if (!api.nativeBackAvailable()) {
       history.replaceState({rhfiles:true},'',location.href);
       history.pushState({rhfiles:true},'',location.href);

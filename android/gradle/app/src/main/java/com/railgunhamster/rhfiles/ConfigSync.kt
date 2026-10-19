@@ -26,8 +26,35 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
       require(u.isHttps||value.getBoolean("insecure")){"请使用 HTTPS，或明确允许可信局域网的明文 HTTP"}
     }
     internal fun restoredPrefs(context:Context,remotes:RemoteStorage,value:JSONObject):JSONObject {validateConfig(value,true);return JSONObject().put("config",remotes.sealLocal(JSONObject(value.toString()).put("enabled",false)))}
+    private fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"))
+    internal fun credentials(config:JSONObject,prior:JSONObject?):JSONObject {
+      val same=prior!=null&&identity(prior)==identity(config)
+      val password=if(same)prior!!.optString("password")else ""
+      val emptyConfirmed=same&&prior!!.optBoolean("emptyPasswordConfirmed")
+      return config.put("password",password).put("emptyPasswordConfirmed",emptyConfirmed)
+        .put("needsPassword",config.optString("username").isNotBlank()&&password.isEmpty()&&!emptyConfirmed)
+    }
   }
   private val prefs=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
+  init {
+    // Migrate profiles imported by older versions too. Only previously synced,
+    // unchanged identities qualify; never flag unrelated local/anonymous entries.
+    if(!prefs.getBoolean("credentialPromptV1",false))runCatching { synchronized(settingsLock){
+      val base=runCatching{JSONObject(prefs.getString("base",null)?:"{}").optJSONArray("profiles")}.getOrNull()
+      if(base!=null){
+        val synced=(0 until base.length()).associate{val p=base.getJSONObject(it);p.getString("id") to p.getJSONObject("config")}
+        val profiles=remotes.backupProfiles();var changed=false
+        for(i in 0 until profiles.length()){
+          val p=profiles.getJSONObject(i);val c=p.getJSONObject("config");val shared=synced[p.getString("id")]
+          if(!c.has("needsPassword")&&shared!=null&&identity(c)==identity(shared)&&c.optString("password").isEmpty()&&c.optString("username").isNotBlank()){
+            credentials(c,c);changed=true
+          }
+        }
+        if(changed){val prepared=remotes.prepareProfiles(profiles);val edit=context.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).edit();for(id in prepared.keys())edit.putString(id,prepared.getString(id));check(edit.commit()){"网络登录状态保存失败"}}
+      }
+      check(prefs.edit().putBoolean("credentialPromptV1",true).commit())
+    } } // A damaged old key/profile must remain removable, not prevent startup.
+  }
   private val journal=AtomicFile(File(context.filesDir,"shared-config-apply.json"))
   private val http=OkHttpClient.Builder().connectTimeout(5,TimeUnit.SECONDS).readTimeout(10,TimeUnit.SECONDS).writeTimeout(10,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
   @Volatile var busy=false;private set
@@ -103,8 +130,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
     val doc=p.getJSONObject("document");val incoming=doc.getJSONArray("profiles");val old=remotes.backupProfiles();val secrets=(0 until old.length()).associate{old.getJSONObject(it).getString("id") to old.getJSONObject(it).getJSONObject("config")}
     val prepared=JSONArray();for(i in 0 until incoming.length()){
       val item=incoming.getJSONObject(i);val config=JSONObject(item.getJSONObject("config").toString());val prior=secrets[item.getString("id")]
-      fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"))
-      config.put("password",if(prior!=null&&identity(prior)==identity(config))prior.optString("password")else"");prepared.put(JSONObject().put("id",item.getString("id")).put("config",config))
+      credentials(config,prior);prepared.put(JSONObject().put("id",item.getString("id")).put("config",config))
     }
     val favorites=SharedConfig.localFavorites(JSONArray(web.optString("rhfiles.favorites","[]")),doc.getJSONArray("favorites"));val encrypted=remotes.prepareProfiles(prepared)
     val before=JSONObject().put("remote",raw("remote-v1")).put("sync",raw(PREFS)).put("favorites",web.optString("rhfiles.favorites","[]")).put("after",favorites.toString())

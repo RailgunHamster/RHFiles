@@ -54,6 +54,7 @@ class MainActivity : TauriActivity() {
   private val sharedConfig by lazy {ConfigSync(applicationContext,storage.remote,settingsLock)}
   private val backup by lazy {SettingsBackup(applicationContext,storage.remote){updates.validateBackup(it)}}
   private val backupUi by lazy {SettingsBackupUi(this,io,backup,{updates.config()}){payload,currentWeb->synchronized(settingsLock){
+    UsageAnalysis.requireConnectionsIdle()
     val jobs=FileTasks.list(this);require((0 until jobs.length()).none{jobs.getJSONObject(it).optString("state") in listOf("queued","scanning","running","paused")}){"请先结束当前文件任务再导入配置"}
     sharedConfig.invalidate()
     updates.restoreSettings{val result=backup.apply(payload,currentWeb);RemoteStorage.discardReadSessions();result}
@@ -193,11 +194,17 @@ class MainActivity : TauriActivity() {
       }else stopService(intent)
       true
     }}
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true)
+    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true).put("storageAnalysis",true)
+    "analysis.start" -> synchronized(settingsLock){require(!sharedConfig.isApplying()){"正在应用同步配置，请稍后再分析"};UsageAnalysis.get(this).start(args.getString("root"),args.optString("owner","first"))}
+    "analysis.latest" -> UsageAnalysis.get(this).latest(args.optString("owner","first"),args.getString("root"))
+    "analysis.status" -> UsageAnalysis.get(this).status(args.getString("id"))
+    "analysis.page" -> UsageAnalysis.get(this).page(args)
+    "analysis.cancel" -> UsageAnalysis.get(this).cancel(args.getString("id"))
     "sync.status" -> sharedConfig.status()
     "sync.save" -> sharedConfig.save(args).also{mainHandler.post{appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-sync-changed'))",null)}}
     "sync.run" -> {require(backup.pending()==null){"请先完成配置导入"};sharedConfig.run(args.getJSONObject("web"),args.optBoolean("manual"),args.optString("token"),args.optString("choice"))}
     "sync.apply" -> synchronized(settingsLock){
+      UsageAnalysis.requireConnectionsIdle()
       val jobs=FileTasks.list(this);require((0 until jobs.length()).none{jobs.getJSONObject(it).optString("state") in listOf("queued","scanning","running","paused")}){"请先结束文件任务，再应用同步配置"}
       sharedConfig.apply(args.getString("id"),args.getJSONObject("web")).also{locationsChanged()}
     }
@@ -267,8 +274,8 @@ class MainActivity : TauriActivity() {
       FtpAccess.start(applicationContext,args)
     }
     "ftp.stop" -> FtpAccess.stop()
-    "connection.save" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};if(args.optString("id").isNotBlank())RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.save(args).also{locationsChanged()}}
-    "connection.delete" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));locationsChanged();true}
+    "connection.save" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};if(args.optString("id").isNotBlank()){UsageAnalysis.requireConnectionsIdle(args.getString("id"));RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"))};storage.remote.save(args).also{locationsChanged()}}
+    "connection.delete" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};UsageAnalysis.requireConnectionsIdle(args.getString("id"));RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));locationsChanged();true}
     "open","share" -> {
       val paths=args.optJSONArray("paths") ?: JSONArray().put(args.getString("path"))
       require(paths.length() in 1..1000){"分享数量无效"}

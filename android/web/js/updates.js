@@ -42,13 +42,13 @@ const androidUpdates=(()=>{
     const info=ui.el('p','kv');info.id='update-state';info.setAttribute('role','status');const progress=document.createElement('progress');progress.id='update-progress';progress.hidden=true;
     const pending=ui.el('section');pending.id='update-pending-notes';pending.append(ui.el('h3','','待更新版本日志'));
     const notes=ui.el('pre','update-notes');notes.id='update-notes';pending.append(notes);
-    const actions=ui.el('div','button-row');actions.append(
+    const actions=ui.el('div','button-row');actions.id='update-actions';actions.append(
       button('update-check','立即检查',()=>check(true,'manual')),
+      button('update-copy-diagnostics','复制更新诊断',async()=>{await ui.copyText('RHFiles Android code '+status.currentCode+'\n更新源：'+status.config.source+'\n目录：'+status.config[status.config.source]+'\n状态：'+status.state+'\n'+(status.message?.trim()||'系统没有提供具体原因'));ui.toast('更新诊断已复制（不含密码）');}),
       button('update-download','下载并安装',async()=>{mutate();wantInstall=true;try{status=await api.native('update.download');paint();schedule();}catch(e){wantInstall=false;throw e;}},true),
       button('update-install','继续安装',install,true),
-      button('update-copy-diagnostics','复制更新诊断',async()=>{await ui.copyText('RHFiles Android code '+status.currentCode+'\n更新源：'+status.config.source+'\n目录：'+status.config[status.config.source]+'\n状态：'+status.state+'\n'+(status.message?.trim()||'系统没有提供具体原因'));ui.toast('更新诊断已复制（不含密码）');}),
       button('update-cancel','取消',async()=>{mutate();wantInstall=false;status=await api.native('update.cancel');paint();schedule();}));
-    node.append(info,progress,pending,actions);
+    node.append(info,progress,actions,pending);
     const history=ui.el('section','installed-changelog');history.id='app-changelog';history.append(ui.el('h3','','更新日志'),ui.el('p','muted','随应用保存的历次更新记录；离线、更新完成后也可以查看。'));node.append(history);
     try{
       const response=await fetch('CHANGELOG.txt');if(!response.ok)throw Error('HTTP '+response.status);

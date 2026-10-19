@@ -1,4 +1,16 @@
-RHFiles Android 0.1.20
+RHFiles Android 0.1.21
+
+1. 有新版本时，将“立即检查、复制更新诊断、下载并更新、取消”按钮放在待更新日志之前，下载期间保持同样顺序，不再先滚过整段日志才能操作。
+2. 重做空间分析：可选择位置或从文件夹菜单分析，先预扫描统计总量，再显示汇总百分比。报告提供逐层文件夹排行、大文件、类型分布、读取异常与分页明细，支持取消、后台分析和返回后查看报告；两个窗格各有独立分析任务。
+3. 分析树写入限量私有缓存，不把海量文件一次性载入内存或页面。不跟随符号链接，明确列出权限、提供者和安全上限问题；被取消或中断的分析不冒充完整结果。统计的是文件大小而非磁盘实际占用，不读取文件内容。
+4. 同步网络位置后明确显示“待补填密码”，从网络位置、侧栏和收藏进入时先引导本机补填，再继续原路径；支持确认使用空密码的账号和匿名访问。旧版已同步的缺密配置也会迁移提示，密码始终只加密保存在本机。
+
+1. Keep update actions above pending release notes, including while downloading.
+2. Replace coarse storage totals with a background, disk-backed folder report: pre-scan, measured aggregation percentage, drill-down, largest files, type distribution, issues, bounded pagination, cancellation and independent pane ownership.
+3. Make inaccessible, capped, canceled and interrupted scans explicit. Do not follow symlinks or read file contents; report logical file sizes rather than pretending to measure complete physical disk usage.
+4. Mark synchronized connections with missing passwords, prompt locally before browsing from any folder entry, and resume the original destination after saving. Support anonymous and explicitly confirmed empty-password accounts, migrate older synchronized profiles, and never upload local secrets.
+
+此前版本改进 / Previous improvements (0.1.20):
 
 1. 修复 Gitee 检查更新返回 HTTP 403：不再遍历匿名发行 API，改为一次读取 latest 下载清单；APK 始终使用明确的版本标签下载，不随 latest 变化。发布时增加对客户端实际入口的匿名验证，错误显示清单/安装包阶段及服务器状态。
 2. 快捷访问的更多菜单按钮改为统一的无边框图标按钮，保留 44px 点击范围，适配抽屉、平板侧栏及深色主题。

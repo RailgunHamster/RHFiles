@@ -137,7 +137,7 @@ class NativeStorage(val context: Context) {
     for(i in 0 until connections.length()){
       val item=connections.getJSONObject(i);if(!item.has("path"))continue
       array.put(JSONObject().put("path",item.getString("path")).put("label",item.getString("name"))
-        .put("provider",true).put("network",true).put("protocol",item.getString("type")).put("removable",false))
+        .put("provider",true).put("network",true).put("needsPassword",item.optBoolean("needsPassword")).put("protocol",item.getString("type")).put("removable",false))
     }
     return array
   }

@@ -99,7 +99,7 @@ const androidFeatures = (() => {
       for(const c of connections) {
         const row=ui.el('article','network-location');
         const open=button(c.name,()=>c.path?app.go({screen:'folder',path:c.path,label:c.name}):undefined);open.className='network-open';open.setAttribute('aria-label',c.name);
-        const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small','',c.type.toUpperCase());open.replaceChildren(symbol,name,type);row.append(open);
+        const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small',c.needsPassword?'credential-badge':'',c.needsPassword?'待补填密码':c.type.toUpperCase());open.replaceChildren(symbol,name,type);row.append(open);
         const actions=[];
         if(c.path){
           actions.push(app.action('编辑连接','rename',async()=>{const value=await api.native('connection.get',{id:c.id});if(valid())addRemote(value);}));
@@ -163,7 +163,7 @@ const androidFeatures = (() => {
       ],fmt.date(item.at))));return;
     }
   }
-  function addRemote(existing={},common=false) {
+  function addRemote(existing={},common=false,onSaved=null) {
     const fields=[
       {name:'name',label:'名称',required:true},
       {name:'type',label:'协议',options:[['smb','SMB2 / SMB3'],['ftps','FTPS（显式 TLS）'],['ftp','FTP（明文）'],['webdav','WebDAV / HTTPS']]},
@@ -173,15 +173,28 @@ const androidFeatures = (() => {
       {name:'insecure',label:'我允许此连接使用明文 FTP / HTTP，仅在可信网络使用',type:'checkbox'},
     ];
     if(existing.hasPassword){fields.find(f=>f.name==='password').label='密码（留空保留；更换服务器或账号需重填）';fields.push({name:'clearPassword',label:'清除已保存的密码（匿名访问还需清空用户名）',type:'checkbox'});}
-    const pending=form(existing.id?'编辑网络位置':'添加网络位置',fields.map(f=>({...f,...(existing[f.name]!==undefined?{value:existing[f.name]}:{})})),async values=>{
+    if(existing.needsPassword)fields.push({name:'allowEmptyPassword',label:'此账号确实不需要密码，使用空密码连接',type:'checkbox'});
+    const pending=form(existing.needsPassword?'补填网络位置密码':existing.id?'编辑网络位置':'添加网络位置',fields.map(f=>({...f,...(existing[f.name]!==undefined?{value:existing[f.name]}:{})})),async values=>{
+      if(existing.needsPassword&&!values.password&&values.username.trim()&&!values.allowEmptyPassword)throw Error('密码不会随配置同步。请补填密码，或确认此账号使用空密码。');
       if(!values.port)delete values.port;else values.port=Number(values.port);if(existing.id)values.id=existing.id;
       const id=await api.native('connection.save',values),path='remote://'+id+'/';
       if(common&&!app.state.favorites.some(entry=>entry.path===path))app.favorite({name:values.name,path,isDir:true});
       if(existing.id&&existing.name!==values.name){const saved=app.state.favorites.find(entry=>entry.path===path);if(saved){saved.name=values.name;localStorage.setItem('rhfiles.favorites',JSON.stringify(app.state.favorites));}}
       await app.refreshLocations();
-      await renderTool('remote');
+      if(app.state.route.tool==='remote')await renderTool('remote');
+      onSaved?.();
     },'保存连接');
-    pending.then(root=>{if(!root)return;const type=root.elements.type;function update(){for(const name of ['host','port','share','domain','url','insecure']){const input=root.elements[name];input.closest('label').hidden=name==='url'?type.value!=='webdav':name==='host'||name==='port'?type.value==='webdav':name==='insecure'?!['ftp','webdav'].includes(type.value):type.value!=='smb';}root.elements.host.required=type.value!=='webdav';root.elements.url.required=type.value==='webdav';}type.onchange=update;update();});return pending;
+    pending.then(root=>{if(!root)return;const type=root.elements.type;function update(){for(const name of ['host','port','share','domain','url','insecure']){const input=root.elements[name];input.closest('label').hidden=name==='url'?type.value!=='webdav':name==='host'||name==='port'?type.value==='webdav':name==='insecure'?!['ftp','webdav'].includes(type.value):type.value!=='smb';}root.elements.host.required=type.value!=='webdav';root.elements.url.required=type.value==='webdav';}type.onchange=update;update();if(existing.needsPassword){root.prepend(ui.el('p','credential-notice','此连接来自配置同步，密码未同步。请在本机补填一次，密码只加密保存在本机。'));root.elements.password.focus();}});return pending;
+  }
+  async function beforeRemoteNavigate(path,valid=()=>true){
+    if(!path?.startsWith('remote://'))return true;
+    const id=new URL(path).hostname,value=await api.native('connection.get',{id});
+    if(!valid())return false;
+    if(!value.needsPassword)return true;
+    return new Promise((resolve,reject)=>{
+      let saved=false;
+      addRemote(value,false,()=>{saved=true;}).then(root=>{if(!root)return resolve(false);ui.onClosed(()=>resolve(saved));}).catch(reject);
+    });
   }
   let discoverySerial=0;
   async function networkDiscovery(node,valid,connections){
@@ -360,5 +373,5 @@ const androidFeatures = (() => {
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
     $('btn-ftp-toggle').addEventListener('click',()=>toggleFtp().catch(app.error));
   }
-  return {init,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
+  return {init,beforeRemoteNavigate,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
 })();

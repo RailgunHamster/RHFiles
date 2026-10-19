@@ -50,11 +50,33 @@ class ConfigSyncTest {
       val a=device("a");val b=device("b");val ra=remotes(a,1);val rb=remotes(b,2);val sa=ConfigSync(a,ra);val sb=ConfigSync(b,rb);configure(sa,server);configure(sb,server)
       val id=ra.save(profile());val wa=web(favorite(id),JSONObject().put("name","本机目录").put("path","/storage/local-only").put("isDir",true));val wb=web()
       assertEquals("success",finish(sa,wa).getString("state"));assertFalse(cloud.doc.toString().contains("local-secret"));assertFalse(cloud.doc.toString().contains("webdav-secret"));assertFalse(cloud.doc.toString().contains("/storage/"));assertFalse(cloud.doc.toString().contains("rhfiles.theme"))
-      assertEquals("success",finish(sb,wb).getString("state"));assertEquals(id,rb.connections().getJSONObject(0).getString("id"));assertFalse(rb.editable(id).getBoolean("hasPassword"));assertEquals("dark",wb.getString("rhfiles.theme"));assertEquals("rows",wb.getString("rhfiles.panes"))
+      assertEquals("success",finish(sb,wb).getString("state"));assertEquals(id,rb.connections().getJSONObject(0).getString("id"));assertFalse(rb.editable(id).getBoolean("hasPassword"));assertTrue(rb.editable(id).getBoolean("needsPassword"));assertEquals("dark",wb.getString("rhfiles.theme"));assertEquals("rows",wb.getString("rhfiles.panes"))
+      try{rb.list("remote://$id/");fail()}catch(e:Exception){assertTrue(e.message!!.contains("补填密码"))}
       rb.save(rb.editable(id).put("password","phone-b-secret"));val f=JSONArray(wb.getString("rhfiles.favorites")).getJSONObject(0);f.put("label","B 的别名");wb.put("rhfiles.favorites",JSONArray().put(f).toString());finish(sb,wb);finish(sa,wa)
       assertEquals("B 的别名",JSONArray(wa.getString("rhfiles.favorites")).getJSONObject(0).getString("label"));assertEquals(2,JSONArray(wa.getString("rhfiles.favorites")).length());assertEquals("local-secret",ra.backupProfiles().getJSONObject(0).getJSONObject("config").getString("password"));assertFalse(cloud.doc.toString().contains("phone-b-secret"))
       val first=server.takeRequest();assertEquals("/dav/RHFiles/rhfiles-settings-v1.json",first.path);assertTrue(first.getHeader("Authorization")!!.startsWith("Basic "))
     }
+  }
+  @Test fun syncedCredentialsNeedExplicitCompletionButAnonymousAndConfirmedEmptyAccountsWork(){
+    val c=device("missing-secret");val r=remotes(c,15)
+    val imported=ConfigSync.credentials(profile().apply{remove("password")},null)
+    assertTrue(imported.getBoolean("needsPassword"));assertFalse(SharedConfig.profile(imported).has("needsPassword"));assertFalse(SharedConfig.profile(imported).has("password"))
+    val id=UUID.randomUUID().toString();val prepared=r.prepareProfiles(JSONArray().put(JSONObject().put("id",id).put("config",imported)))
+    c.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).edit().putString(id,prepared.getString(id)).commit()
+    try{r.save(r.editable(id));fail()}catch(e:Exception){assertTrue(e.message!!.contains("补填密码"))}
+    r.save(r.editable(id).put("allowEmptyPassword",true));assertFalse(r.editable(id).getBoolean("needsPassword"))
+    val prior=r.backupProfiles().getJSONObject(0).getJSONObject("config");assertFalse(ConfigSync.credentials(SharedConfig.profile(prior),prior).getBoolean("needsPassword"))
+    assertFalse(ConfigSync.credentials(profile().put("username",""),null).getBoolean("needsPassword"))
+    assertTrue(ConfigSync.credentials(profile().put("host","different"),prior).getBoolean("needsPassword"))
+  }
+  @Test fun olderSyncedMissingSecretsMigrateOnceWithoutFlaggingUnrelatedLocalProfiles(){
+    val c=device("legacy-missing");val r=remotes(c,16);val id=r.save(profile(password=""));val unrelated=r.save(profile("本机空密码",password=""));val profiles=r.backupProfiles()
+    for(i in 0 until profiles.length()){val config=profiles.getJSONObject(i).getJSONObject("config");config.remove("needsPassword");config.remove("emptyPasswordConfirmed")}
+    val encrypted=r.prepareProfiles(profiles);for(key in encrypted.keys())c.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).edit().putString(key,encrypted.getString(key)).commit()
+    val base=SharedConfig.empty().put("profiles",JSONArray().put(JSONObject().put("id",id).put("config",SharedConfig.profile(profile(password="")))))
+    c.getSharedPreferences(ConfigSync.PREFS,Context.MODE_PRIVATE).edit().putString("base",base.toString()).commit();ConfigSync(c,r)
+    assertTrue(r.editable(id).getBoolean("needsPassword"));assertFalse(r.editable(unrelated).getBoolean("needsPassword"));assertTrue(c.getSharedPreferences(ConfigSync.PREFS,Context.MODE_PRIVATE).getBoolean("credentialPromptV1",false))
+    r.save(r.editable(id).put("allowEmptyPassword",true));ConfigSync(c,r);assertFalse(r.editable(id).getBoolean("needsPassword"))
   }
   @Test fun disabledAutomaticSyncDoesNoIoAndMissingCloudNeverDeletesLocalConfiguration(){
     MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start();val c=device("off");val r=remotes(c,3);r.save(profile());val sync=ConfigSync(c,r);configure(sync,server)

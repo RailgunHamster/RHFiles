@@ -153,6 +153,11 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         screenshot("quick-access");eval("__syncPane.rhfilesHandleBack()");
         eval("__syncPane.document.getElementById('sync-state').scrollIntoView({block:'center'})");screenshot("webdav-sync");eval("void api.native('sync.status').then(s=>window.__syncFinal=s)");awaitScript("!!window.__syncFinal");require(json("window.__syncFinal").getLong("lastSuccess")>0,"Native sync did not commit");
         eval("void(async()=>{const s=await api.native('sync.status');await api.native('sync.save',{...s.config,enabled:false});})();");
+        eval("void(async()=>{try{const id='11111111-1111-4111-8111-111111111111',c=await api.native('connection.get',{id});if(!c.needsPassword||c.hasPassword||'password' in c)throw Error('Missing-secret state absent or password disclosed');try{await api.native('list',{path:'remote://'+id+'/'});throw Error('Missing-secret profile attempted network access');}catch(e){if(!String(e).includes('补填密码'))throw e;}window.__credentialReady=true;}catch(e){window.__credentialError=String(e)}})()");
+        awaitScript("window.__credentialReady||!!window.__credentialError");require(eval("!window.__credentialError").equals("true"),"Synced credentials: "+eval("window.__credentialError"));
+        eval("__syncPane.document.getElementById('btn-menu').click()");awaitScript("!__syncPane.document.getElementById('drawer').hidden");
+        eval("[...__syncPane.document.querySelectorAll('#nav-favorites .favorite-location>button:first-child')].find(b=>b.textContent.trim()==='M').click()");awaitScript("!!__syncPane.document.querySelector('.credential-notice')");screenshot("missing-password");
+        require(eval("__syncPane.document.querySelector('.feature-form input[name=password]').value===''").equals("true"),"Credential prompt prefilled a secret");eval("__syncPane.rhfilesHandleBack()");awaitScript("__syncPane.document.getElementById('placeholder').textContent.includes('待补填密码')");
         result.putString("pass","true");result.putString("checks","real WebDAV conditional GET/PUT, minified encryption, initial and second-device bookmark order, unframed drawer overflow, local-only preservation, password isolation");finish(Activity.RESULT_OK,result);
     }
     private void ebookProbe(Bundle result) throws Exception {
@@ -377,6 +382,38 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         eval("document.querySelector('.file-pane').contentDocument.getElementById('nav-settings').click()");awaitScript("!document.querySelector('.file-pane').contentDocument.getElementById('tool-settings').hidden");eval("document.querySelector('.file-pane').contentDocument.querySelector('[data-settings-section=backup]').click()");
         awaitScript("!document.querySelector('.file-pane').contentDocument.querySelector('[data-settings-panel=backup]').hidden");screenshot("config-backup");result.putString("pass","true");result.putString("backup","native password dialogs; SAF intent monitors with real Downloads provider; encryption; wrong password; import confirmation; full settings and stable connection ID; frontend acknowledgement");finish(Activity.RESULT_OK,result);
     }
+    private void usageProbe(Bundle result) throws Exception {
+        String existing=arguments.getString("usageRoot","");boolean reuse=!existing.isEmpty();
+        java.io.File root=new java.io.File(reuse?existing:"/storage/emulated/0/Download/RHFiles-Usage-QA-"+System.currentTimeMillis());require(root.getCanonicalPath().startsWith("/storage/emulated/0/Download/RHFiles-Usage-QA-"),"Owned synthetic fixture required");
+        java.io.File photos=new java.io.File(root,"照片"),empty=new java.io.File(root,"空文件夹");
+        if(!reuse){require(root.mkdirs()&&photos.mkdir()&&empty.mkdir(),"Cannot create owned QA folder");
+          try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(root,"电影.mp4"))){out.write(new byte[1024*1024]);}
+          for(int i=0;i<1000;i++)try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(photos,"图片-"+i+".jpg"))){out.write(new byte[17]);}
+        }else require(photos.list()!=null&&photos.list().length==1000&&new java.io.File(root,"电影.mp4").length()==1048576,"Synthetic fixture is incomplete");
+        eval("void(async()=>{try{window.__usageReport=await api.native('analysis.start',{root:"+JSONObject.quote(root.getPath())+",owner:'first'});}catch(e){window.__usageError=String(e)}})()");awaitScript("!!window.__usageReport||!!window.__usageError");require(eval("!window.__usageError").equals("true"),"Start analysis: "+eval("window.__usageError"));
+        String id=json("window.__usageReport").getString("id");long end=System.currentTimeMillis()+45000;JSONObject status=new JSONObject();int previous=-1;
+        while(System.currentTimeMillis()<end){eval("void api.native('analysis.status',{id:"+JSONObject.quote(id)+"}).then(s=>window.__usageStatus=s)");Thread.sleep(100);status=json("window.__usageStatus||{}");if(!status.isNull("percent")){int percent=status.optInt("percent",-1);require(percent>=previous,"Progress went backward");previous=percent;}if(status.optBoolean("ready")||status.optString("state").equals("failed"))break;}
+        require(status.optString("state").equals("completed"),"Analysis not completed: "+status);require(status.getInt("percent")==100,"Final progress missing");
+        eval("void api.native('analysis.page',{id:"+JSONObject.quote(id)+",view:'folders',parentId:1,limit:100}).then(p=>window.__usagePage=p)");awaitScript("!!window.__usagePage");JSONObject page=json("window.__usagePage"),summary=page.getJSONObject("root");
+        require(summary.getLong("size")==1048576+17000&&summary.getLong("files")==1001&&summary.getLong("directories")==2,"Incorrect totals: "+summary);
+        require(page.getJSONArray("entries").getJSONObject(0).getString("name").equals("电影.mp4"),"Children not sorted by size");
+        long photosId=page.getJSONArray("entries").getJSONObject(1).getLong("id");
+        eval("void api.native('analysis.page',{id:"+JSONObject.quote(id)+",view:'folders',parentId:"+photosId+",limit:100}).then(p=>window.__usageChild=p)");awaitScript("!!window.__usageChild");JSONObject child=json("window.__usageChild");require(child.getJSONArray("entries").length()==100&&child.getBoolean("hasMore")&&child.getJSONArray("breadcrumbs").length()==2,"Pagination/tree scope incorrect");
+        eval("void api.native('analysis.page',{id:"+JSONObject.quote(id)+",view:'types',parentId:1}).then(p=>window.__usageTypes=p)");awaitScript("!!window.__usageTypes");require(json("window.__usageTypes").getJSONArray("groups").length()==2,"Type grouping incorrect");
+        awaitScript("!!document.querySelector('.file-pane:not([hidden])')?.contentWindow.rhfilesPane");
+        eval("window.__usagePane=document.querySelector('.file-pane:not([hidden])').contentWindow;__usagePane.document.getElementById('nav-home').click()");awaitScript("!__usagePane.document.getElementById('home').hidden");
+        // Use actual navigation/menu handlers; do not bypass the release CSP
+        // with eval in the child frame (unsafe-eval is intentionally disabled).
+        eval("__usagePane.document.querySelector('[data-tile=downloads]').click()");
+        awaitScript("!![...__usagePane.document.querySelectorAll('#filelist [data-path]')].find(n=>n.dataset.path==="+JSONObject.quote(root.getPath())+")");
+        eval("[...__usagePane.document.querySelectorAll('#filelist [data-path]')].find(n=>n.dataset.path==="+JSONObject.quote(root.getPath())+").querySelector('.entry-content').click()");
+        awaitScript("__usagePane.rhfilesPane.snapshot().route.path==="+JSONObject.quote(root.getPath())+"&&!__usagePane.rhfilesPane.snapshot().busy");
+        eval("__usagePane.document.getElementById('btn-overflow').click()");awaitScript("[...__usagePane.document.querySelectorAll('#sheet button')].some(b=>b.textContent.trim()==='分析当前文件夹')");
+        eval("[...__usagePane.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='分析当前文件夹').click()");awaitScript("!!__usagePane.document.querySelector('.usage-metrics')");
+        require(eval("__usagePane.document.querySelector('.usage-metrics').textContent.includes('1,001')").equals("true"),"Native report not rendered in frontend");screenshot("usage-report");
+        eval("void(async()=>{try{const second=await api.native('analysis.start',{root:"+JSONObject.quote(root.getPath())+",owner:'second'});await api.native('analysis.cancel',{id:second.id});window.__usageCanceled=second.id;}catch(e){window.__usageError=String(e)}})()");awaitScript("!!window.__usageCanceled||!!window.__usageError");require(eval("!window.__usageError").equals("true"),"Second pane scan: "+eval("window.__usageError"));
+        result.putString("pass","true");result.putString("checks","minified APK, real filesystem 1001 files, disk-backed tree, exact totals, monotonic percentage, 100-row pagination, types, WebView report, independent second-pane cancellation");finish(Activity.RESULT_OK,result);
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -400,6 +437,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("wallpaper")){wallpaperProbe(result);return;}
             if(arguments.getString("mode","").equals("external-video")){externalVideoProbe(result);return;}
             if(arguments.getString("mode","").equals("config-sync")){configSyncProbe(result);return;}
+            if(arguments.getString("mode","").equals("usage")){usageProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");
