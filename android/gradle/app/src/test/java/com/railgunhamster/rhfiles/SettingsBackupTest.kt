@@ -14,6 +14,17 @@ import javax.crypto.spec.SecretKeySpec
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest=Config.NONE,sdk=[28])
 class SettingsBackupTest {
+  @Test fun favoriteLabelsArePortableButNeverRenameTheirPaths(){
+    val item=JSONObject().put("name","原始.jpg").put("path","remote://qa/photos/原始.jpg").put("label","家庭照片")
+    val text=org.json.JSONArray().put(item).toString();val web=JSONObject().put("rhfiles.favorites",text)
+    SettingsBackup.validateWeb(web)
+    val restored=SettingsBackup.unseal(SettingsBackup.seal(web,"qa-password".toCharArray()),"qa-password".toCharArray())
+    assertEquals(text,restored.getString("rhfiles.favorites"))
+    for(label in listOf<Any>("", " ", JSONObject.NULL, 123, false, "x".repeat(1025))){
+      item.put("label",label)
+      try{SettingsBackup.validateWeb(JSONObject().put("rhfiles.favorites",org.json.JSONArray().put(item).toString()));fail("Accepted invalid alias")}catch(_:IllegalArgumentException){}
+    }
+  }
   private val context get()=RuntimeEnvironment.getApplication()
   private fun remote(byte:Byte)=RemoteStorage(context,credentialKey={SecretKeySpec(ByteArray(32){byte},"AES")})
   private fun updates()=JSONObject().put("source","github").put("github","https://github.com/RailgunHamster/RHFiles").put("family","\\\\server\\share").put("connectionId","").put("proxy","http://127.0.0.1:7890").put("autoCheck",false).put("proxyEnabled",true)

@@ -145,3 +145,4 @@ Sync-File -Source (Join-Path $repoRoot 'src\js\nearby-ui.js') -Target (Join-Path
 # Include the unmodified project license and source attribution in every APK.
 Sync-File -Source (Join-Path $repoRoot 'LICENSE') -Target (Join-Path $repoRoot 'android\web\LICENSE.txt')
 Sync-File -Source (Join-Path $repoRoot 'NOTICE') -Target (Join-Path $repoRoot 'android\web\NOTICE.txt')
+Sync-File -Source (Join-Path $repoRoot 'android\release-notes.txt') -Target (Join-Path $repoRoot 'android\web\CHANGELOG.txt')

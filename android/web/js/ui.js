@@ -18,7 +18,11 @@ const ui = (() => {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
     sort: '<path d="M4 6h16M4 12h11M4 18h6"/>',
     refresh: '<path d="M20 10a8 8 0 1 0-1 7M20 4v6h-6"/>',
-    storage: '<rect x="5" y="2" width="14" height="20" rx="3"/><path d="M10 18h4"/>',
+    storage: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 12h18M6.5 8h6M7 16h.01M17 16h.01"/><circle cx="17" cy="8" r="1"/>',
+    network: '<rect x="8" y="2.5" width="8" height="6" rx="1.5"/><rect x="2" y="16" width="7" height="5.5" rx="1.5"/><rect x="15" y="16" width="7" height="5.5" rx="1.5"/><path d="M12 8.5V12M5.5 16v-4h13v4"/>',
+    server: '<rect x="2.5" y="4" width="13" height="11" rx="2"/><path d="M9 15v4M5.5 19h7M18 9l3 3-3 3M12 12h9"/>',
+    nearby: '<path d="M3 8h15l-3-3M21 16H6l3 3M3 4v8M21 12v8"/><circle cx="3" cy="16" r="1.5"/><circle cx="21" cy="8" r="1.5"/>',
+    external: '<path d="M12 3v13m-3-10 3-3 3 3M7 10v3l5 3 5-3V9M5 8h4M15 7h4v4h-4z"/><circle cx="12" cy="19" r="2.5"/>',
     sd: '<path d="M8 2h10v20H4V6zM9 5v4M13 5v4M16 5v4"/>',
     download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
     star: '<path d="m12 3 2.8 5.8 6.4.9-4.6 4.5 1.1 6.3-5.7-3-5.7 3 1.1-6.3L2.8 9.7l6.4-.9z"/>',
@@ -50,8 +54,8 @@ const ui = (() => {
   };
 
   function icon(kind, extra) {
-    const path = ICONS[kind] || ICONS.other;
-    return `<svg viewBox="0 0 24 24" class="${extra || ''}" aria-hidden="true">${path}</svg>`;
+    const symbol=Object.hasOwn(ICONS,kind)?kind:'other';
+    return `<svg viewBox="0 0 24 24" data-symbol="${symbol}" class="${extra || ''}" aria-hidden="true">${ICONS[symbol]}</svg>`;
   }
 
   function el(tag, className, text) {
@@ -258,7 +262,7 @@ const ui = (() => {
       if (event.touches.length !== 1 || isSheetOpen()) return;
       if(document.body.classList.contains('wide-layout'))return;
       const closing = isOpen();
-      if (closing ? !event.target.closest('#drawer') && event.target!==overlay : !canOpen() || event.target.closest('input,textarea,select,[contenteditable=true]')) return;
+      if (closing ? !event.target.closest('#drawer') && event.target!==overlay : !canOpen() || event.target.closest('input,textarea,select,[contenteditable=true],[role=tablist],[data-horizontal-scroll],[data-swipe-open]')) return;
       const touch = event.touches[0];
       const visual=closing?Math.max(0,Math.min(1,1+drawer.getBoundingClientRect().left/width())):0;
       gesture = {x:touch.clientX,y:touch.clientY,closing,horizontal:false,base:visual,lastX:touch.clientX,lastTime:performance.now(),velocity:0};
@@ -297,26 +301,53 @@ const ui = (() => {
 
   // One delegated long-press owner. Virtualized rows can disappear during a
   // scroll; their detached timers must never turn scrolling into selection.
-  function bindFileGestures(container,{find,select,toggle,activate,hasSelection}){
-    let pointer=null,timer,blockClick=false,lastScroll=-Infinity;
+  function bindFileGestures(container,{find,menu,toggle,activate,hasSelection}){
+    let pointer=null,timer,blockClick=false,lastScroll=-Infinity,opened=null;
     const cancel=()=>{clearTimeout(timer);timer=null;};
     const rowFor=target=>target.closest('[data-path]');
+    function position(row,offset,dragging=false){
+      const del=row.querySelector('.entry-delete');if(!del)return;
+      row.style.setProperty('--swipe-offset',offset+'px');row.classList.toggle('swipe-dragging',dragging);
+      del.hidden=offset===0;del.tabIndex=offset<0&&!dragging?0:-1;
+      if(offset<0)row.dataset.swipeOpen='true';else delete row.dataset.swipeOpen;
+    }
+    function close(){if(opened)position(opened,0);opened=null;}
+    const reset=()=>{cancel();if(pointer?.horizontal)position(pointer.row,0);pointer=null;close();};
+    container.addEventListener('rhfiles-list-reset',reset);
+    container.addEventListener('rhfiles-close-swipe',reset);
     container.addEventListener('pointerdown',event=>{
+      if(pointer && event.pointerId!==pointer.id){reset();blockClick=true;return;}
       cancel();blockClick=false;pointer=null;
-      if(event.button!==0 || event.target.closest('.entry-more'))return;
+      if(event.button!==0 || event.target.closest('.entry-more,.entry-delete'))return;
       const row=rowFor(event.target);if(!row)return;
-      pointer={id:event.pointerId,x:event.clientX,y:event.clientY,row,path:row.dataset.path,moved:false,held:false};
+      const dismiss=!!opened&&opened!==row;if(dismiss)close();
+      pointer={id:event.pointerId,x:event.clientX,y:event.clientY,row,path:row.dataset.path,moved:false,held:false,horizontal:false,base:opened===row?-72:0,dismiss};
       timer=setTimeout(()=>{
         const p=pointer;if(!p || p.moved || !p.row.isConnected || performance.now()-lastScroll<140)return;
-        p.held=true;blockClick=true;select(p.path);navigator.vibrate?.(10);
+        p.held=true;blockClick=true;const entry=find(p.path);if(entry)menu(entry);navigator.vibrate?.(10);
       },500);
     });
-    container.addEventListener('pointermove',event=>{if(pointer && (event.pointerId!==pointer.id || Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)>8)){pointer.moved=true;blockClick=true;cancel();}});
-    container.addEventListener('pointerup',()=>{cancel();if(pointer?.moved||pointer?.held)blockClick=true;pointer=null;});
-    container.addEventListener('pointercancel',()=>{cancel();blockClick=true;pointer=null;});
-    container.addEventListener('scroll',()=>{lastScroll=performance.now();cancel();if(pointer){pointer.moved=true;blockClick=true;}},{passive:true});
+    container.addEventListener('pointermove',event=>{
+      const p=pointer;if(!p||p.id!==event.pointerId)return;
+      const dx=event.clientX-p.x,dy=event.clientY-p.y;
+      if(Math.hypot(dx,dy)>8){p.moved=true;blockClick=true;cancel();}
+      if(!p.horizontal&&!p.vertical&&!p.held&&Math.abs(dy)>8&&Math.abs(dy)>=Math.abs(dx))p.vertical=true;
+      if(!p.horizontal&&!p.vertical&&!p.held&&!hasSelection()&&p.row.querySelector('.entry-delete')&&Math.abs(dx)>12&&Math.abs(dx)>Math.abs(dy)*1.5&&(dx<0||p.base<0)){
+        p.horizontal=true;close();opened=p.row;
+        if(p.row.hasPointerCapture?.(event.pointerId)===false)try{p.row.setPointerCapture(event.pointerId);}catch{}
+      }
+      if(p.horizontal){event.preventDefault();position(p.row,Math.max(-72,Math.min(0,p.base+dx)),true);}
+    });
+    container.addEventListener('pointerup',event=>{
+      const p=pointer;if(!p||p.id!==event.pointerId)return;cancel();
+      if(p.horizontal){const offset=Math.max(-72,Math.min(0,p.base+event.clientX-p.x));if(offset<-24){opened=p.row;position(opened,-72);}else close();}
+      if(p.moved||p.held||p.dismiss||p.base<0)blockClick=true;
+      if(!p.moved&&p.base<0)close();pointer=null;
+    });
+    container.addEventListener('pointercancel',()=>{reset();blockClick=true;});
+    container.addEventListener('scroll',()=>{lastScroll=performance.now();reset();blockClick=true;},{passive:true});
     container.addEventListener('click',event=>{
-      if(event.target.closest('.entry-more'))return;
+      if(event.target.closest('.entry-more,.entry-delete'))return;
       const row=rowFor(event.target);if(!row)return;
       if(blockClick){blockClick=false;event.preventDefault();return;}
       const entry=find(row.dataset.path);if(!entry)return;
@@ -325,11 +356,12 @@ const ui = (() => {
     container.addEventListener('contextmenu',event=>{
       event.preventDefault();cancel();const row=rowFor(event.target);if(!row)return;
       if(pointer?.moved || performance.now()-lastScroll<200 || blockClick)return;
-      blockClick=true;select(row.dataset.path);
+      blockClick=true;const entry=find(row.dataset.path);if(entry)menu(entry);
     });
-    document.addEventListener('visibilitychange',()=>{if(document.hidden){cancel();pointer=null;}});
-    window.addEventListener('rhfiles-pan-scroll',()=>{cancel();pointer=null;blockClick=true;});
-    return cancel;
+    container.addEventListener('keydown',event=>{if(event.key==='Escape')close();});
+    document.addEventListener('visibilitychange',()=>{if(document.hidden)reset();});
+    window.addEventListener('rhfiles-pan-scroll',()=>{reset();blockClick=true;});
+    return reset;
   }
 
   /**

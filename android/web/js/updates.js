@@ -40,14 +40,22 @@ const androidUpdates=(()=>{
     form.onsubmit=async e=>{e.preventDefault();save.disabled=true;mutate();try{status=await api.native('update.save',values());for(const name of ['smbUsername','smbPassword','smbDomain'])form.elements[name].value='';wantInstall=false;form=null;ui.toast('更新设置已保存');await onSettings();}catch(error){app.error(error);}finally{save.disabled=false;}};
     node.append(form);
     const info=ui.el('p','kv');info.id='update-state';info.setAttribute('role','status');const progress=document.createElement('progress');progress.id='update-progress';progress.hidden=true;
-    const notes=ui.el('pre','update-notes');notes.id='update-notes';
+    const pending=ui.el('section');pending.id='update-pending-notes';pending.append(ui.el('h3','','待更新版本日志'));
+    const notes=ui.el('pre','update-notes');notes.id='update-notes';pending.append(notes);
     const actions=ui.el('div','button-row');actions.append(
       button('update-check','立即检查',()=>check(true,'manual')),
       button('update-download','下载并安装',async()=>{mutate();wantInstall=true;try{status=await api.native('update.download');paint();schedule();}catch(e){wantInstall=false;throw e;}},true),
       button('update-install','继续安装',install,true),
       button('update-copy-diagnostics','复制更新诊断',async()=>{await ui.copyText('RHFiles Android code '+status.currentCode+'\n更新源：'+status.config.source+'\n目录：'+status.config[status.config.source]+'\n状态：'+status.state+'\n'+(status.message?.trim()||'系统没有提供具体原因'));ui.toast('更新诊断已复制（不含密码）');}),
       button('update-cancel','取消',async()=>{mutate();wantInstall=false;status=await api.native('update.cancel');paint();schedule();}));
-    node.append(info,progress,notes,actions);
+    node.append(info,progress,pending,actions);
+    const history=ui.el('section','installed-changelog');history.id='app-changelog';history.append(ui.el('h3','','更新日志'),ui.el('p','muted','随应用保存的历次更新记录；离线、更新完成后也可以查看。'));node.append(history);
+    try{
+      const response=await fetch('CHANGELOG.txt');if(!response.ok)throw Error('HTTP '+response.status);
+      for(const [i,item] of releaseNotes.sections(await response.text()).entries()){
+        const details=ui.el('details');details.open=i===0;details.append(ui.el('summary','',item.title),ui.el('pre','update-notes',item.text));history.append(details);
+      }
+    }catch{history.append(ui.el('p','muted','本地更新记录读取失败，请重新打开设置。'));}
     for(const e of form.elements)if(e.name){const value=status.config[e.name] ?? ({source:'gitee',gitee:'https://gitee.com/railgunhamster/RHFiles'})[e.name];if(e.type==='checkbox')e.checked=!!value;else e.value=value ?? '';}
     showSource();paint();
   }
@@ -58,12 +66,13 @@ const androidUpdates=(()=>{
   }
   function paint(){
     if(!status)return;
-    const chip=$('app-update-chip');if(chip){chip.hidden=!['available','downloading','verifying','ready'].includes(status.state);chip.textContent=status.state==='available'?'发现 RHFiles '+status.release?.version+' · 点此更新':status.state==='ready'?'更新已下载 · 点此安装':labels[status.state];}
+    const chip=$('app-update-chip');if(chip){chip.hidden=!['available','downloading','verifying','ready'].includes(status.state);chip.dataset.state=status.state;chip.setAttribute('aria-label',status.state==='available'?'发现 RHFiles '+status.release?.version+'，查看更新':status.state==='ready'?'更新已下载，继续安装':labels[status.state]);chip.title=chip.getAttribute('aria-label');}paintHome();
     if($('update-state')&&form){
       const r=status.release,progress=$('update-progress'),running=active(status.state);
       $('update-state').textContent=labels[status.state]+(r?' · '+r.version:'')+(status.state==='downloading'?'\n'+fmt.size(status.bytes)+' / '+fmt.size(r.size)+' · '+fmt.size(status.bytes/Math.max(1,(Date.now()-status.started)/1000))+'/s（平均）':'')+(status.message?'\n'+status.message:status.state==='failed'?'\n系统未提供具体原因，请复制更新诊断。':'');
       $('update-state').classList.toggle('danger',status.state==='failed');
-      $('update-notes').textContent=r?.notes || '';
+      $('update-pending-notes').hidden=!r?.notes;
+      $('update-notes').textContent=releaseNotes.format(r?.notes);
       progress.hidden=!['downloading','verifying'].includes(status.state);progress.max=r?.size || 1;progress.value=status.bytes || 0;
       $('update-check').disabled=running || status.state==='ready';
       $('update-download').hidden=!r || !['available','failed','canceled'].includes(status.state);
@@ -73,6 +82,17 @@ const androidUpdates=(()=>{
     if(status.state==='ready' && wantInstall && !document.hidden)install().catch(app.error);
     if(['failed','canceled','latest'].includes(status.state))wantInstall=false;
   }
+  function paintHome(){
+    const home=$('home');if(!home)return;
+    let card=$('home-update-card');
+    if(!status||!['available','downloading','verifying','ready'].includes(status.state)){card?.remove();return;}
+    if(!card){
+      card=button('home-update-card','',()=>app.go({screen:'tool',tool:'settings',section:'updates'}));card.className='home-update-card';
+      const mark=ui.el('span','update-mark');mark.innerHTML=ui.icon('download');const copy=ui.el('span','update-copy');copy.append(ui.el('strong'),ui.el('small'));const arrow=ui.el('span','update-arrow');arrow.innerHTML=ui.icon('next');card.append(mark,copy,arrow);home.prepend(card);
+    }
+    card.querySelector('strong').textContent=status.state==='available'?'发现新版本 '+status.release?.version:labels[status.state];
+    card.querySelector('small').textContent=status.state==='available'?'查看更新内容，再选择下载':status.state==='ready'?'已完成校验，轻点继续安装':'后台处理，不影响浏览文件';
+  }
   async function onSettings(){
     await load();if(!form)await build();
     // Refresh connection choices without erasing unsaved settings.
@@ -81,10 +101,10 @@ const androidUpdates=(()=>{
   }
   function init(context){
     app=context;if(!api.updatesAvailable())return;
-    const chip=button('app-update-chip','',()=>app.go({screen:'tool',tool:'settings',section:'updates'}));chip.className='native-task-chip';chip.hidden=true;$('app').append(chip);
+    const chip=button('app-update-chip','',()=>app.go({screen:'tool',tool:'settings',section:'updates'}));chip.className='icon-btn update-indicator';chip.innerHTML=ui.icon('download');chip.hidden=true;document.querySelector('.topbar').insertBefore(chip,$('btn-overflow'));
     load().then(()=>{lastAuto=Date.now();if(workbench.primary())return check(false,'startup');}).catch(app.error);
     if(workbench.primary())hourTimer=setInterval(()=>{if(!document.hidden){lastAuto=Date.now();check(false,'hour').catch(app.error);}},3600000);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().then(()=>{if(workbench.primary()&&Date.now()-lastAuto>=3600000){lastAuto=Date.now();return check(false,'hour');}}).catch(app.error);});
   }
-  return {init,onSettings};
+  return {init,onSettings,paintHome};
 })();

@@ -60,7 +60,7 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
           }
         }
         "rhfiles.nearby.alias"->require(text.length<=80){"设备名称过长"}
-        "rhfiles.favorites"->{val items=JSONArray(text);require(items.length()<=100){"收藏夹过大"};for(i in 0 until items.length()){val item=items.getJSONObject(i);require(item.getString("name").length<=1024&&item.getString("path").length<=8192){"收藏夹项目无效"}}}
+        "rhfiles.favorites"->{val items=JSONArray(text);require(items.length()<=100){"收藏夹过大"};for(i in 0 until items.length()){val item=items.getJSONObject(i);require(item.getString("name").length<=1024&&item.getString("path").length<=8192){"收藏夹项目无效"};if(item.has("label"))require(item.get("label") is String&&item.getString("label").isNotBlank()&&item.getString("label").length<=1024){"收藏名称无效"}}}
         else->error("配置包含未知字段")
       }}
     }

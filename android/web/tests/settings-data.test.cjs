@@ -1,5 +1,10 @@
 const{test}=require('node:test'),assert=require('node:assert/strict'),data=require('../js/settings-data.js');
 const memory=initial=>{const values=new Map(Object.entries(initial||{}));return{getItem:k=>values.has(k)?values.get(k):null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)}};
+test('favorite aliases survive backups without changing file identity; invalid labels are rejected',()=>{
+ const favorite={name:'photo.jpg',label:'家庭相册',path:'remote://server/photo.jpg',isDir:false},text=JSON.stringify([favorite]);
+ const store=memory({'rhfiles.favorites':text});const backup=data.snapshot(store);data.apply(store,backup);assert.deepEqual(JSON.parse(store.getItem('rhfiles.favorites')),[favorite]);
+ for(const label of ['', ' ', null, false, 123, 'x'.repeat(1025)])assert.throws(()=>data.validate({'rhfiles.favorites':JSON.stringify([{...favorite,label}])}));
+});
 test('all configurable web keys round-trip; unrelated data and pending tasks are not exported',()=>{
  const store=memory({'rhfiles.theme':'dark','rhfiles.view':'grid','rhfiles.sort':'size','rhfiles.hidden':'1','rhfiles.panes':'rows','rhfiles.panes.screens':'{"version":2,"screens":{"screen-1080x2092":{"portrait":"single","landscape":"columns"},"screen-1840x2208":{"portrait":"rows","landscape":"auto"}}}','rhfiles.nearby.alias':'手机','rhfiles.favorites':'[{"name":"中文","path":"remote://server/a"}]','rhfiles.panes.clipboard':'pending','other-app-key':'secret'});
  const exported=data.snapshot(store);assert.equal(Object.keys(exported).length,8);data.apply(store,exported);assert.equal(store.getItem('other-app-key'),'secret');assert.equal(store.getItem('rhfiles.panes.clipboard'),null);assert.deepEqual(data.snapshot(store),exported);

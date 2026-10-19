@@ -27,7 +27,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await pw.chromium.launch({headless:true,executablePath});
 let checks=0;
 function check(value,label){assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);}
-function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativeUpdates=false,nativePlayback=false,restoreNavigation=false}){
+function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativeUpdates=false,nativePlayback=false,restoreNavigation=false,nearby=false}){
   const root='/storage/emulated/0';
   const file=(name,kind='document',size=10)=>({name,path:root+'/'+name,kind,isDir:kind==='folder',size,modifiedMs:1712345678000});
   const m=window.__model={calls:[],denied,partial,index:true,fs:{
@@ -60,6 +60,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
       case 'clear_logs':return;
       case 'scan_storage_sizes':return {totalBytes:1024,files:2,categories:[{name:'Images',bytes:1024,files:2}]};
       case 'read_thumbnail':return {dataUrl:pixel};
+      case 'nearby_status':return {running:false,peers:[],transfers:[],interrupted:[]};
       case 'read_text_preview':return {text:'hello 中文',bytes:12,truncated:false};
       case 'copy_entries':case 'move_entries':{
         const moved=[],failures=[];
@@ -89,7 +90,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
-        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates,nativePlayback,restoreNavigation};case 'theme':return true;case 'permission':return !m.denied;
+        case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates,nativePlayback,restoreNavigation,nearby};case 'theme':return true;case 'permission':return !m.denied;
         case 'media.play':return true;
         case 'update.status':return m.updates;
         case 'update.save':m.updates={...m.updates,config:a,state:'idle',release:null};return m.updates;
@@ -140,10 +141,10 @@ async function home(p){await p.click('#btn-menu');await p.click('#nav-home');awa
 async function storage(p){await home(p);await tile(p,'storage-0').click();await p.waitForSelector('#filelist .name');}
 async function more(p,name){await row(p,name).locator('.entry-more').click();await p.waitForSelector('#sheet:not([hidden])');}
 async function choose(p,label){await p.getByRole('button',{name:label,exact:true}).click();}
-async function press(p,name){await row(p,name).scrollIntoViewIfNeeded();const b=await row(p,name).boundingBox();await p.mouse.move(b.x+80,b.y+25);await p.mouse.down();await p.waitForTimeout(510);await p.mouse.up();await p.waitForSelector('#selection-bar:not([hidden])');}
+async function press(p,name){await row(p,name).scrollIntoViewIfNeeded();const b=await row(p,name).boundingBox();await p.mouse.move(b.x+80,b.y+25);await p.mouse.down();await p.waitForTimeout(510);await p.mouse.up();await choose(p,'选择');await p.waitForSelector('#selection-bar:not([hidden])');}
 async function capture(p,name){await p.screenshot({path:path.join(output,name+'.png')});}
 try{
-  if(!process.argv.includes('--updates-only')){
+  if(!process.argv.includes('--updates-only')&&!process.argv.includes('--gestures-only')){
   const {context,page:p,errors}=await pageFor();await tile(p,'storage-0').waitFor();
   check(await p.locator('.home-tile').count()===13,'Home exposes working destinations');
   check(await p.locator('.home-grid').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length)===3,'Phone home has three columns');
@@ -294,7 +295,7 @@ try{
     await row(p,'云端.txt').click();check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='open'&&c.args.path.startsWith('content:'))),'Content URI opens through Android without a guessed path');
     await home(p);await tile(p,'remote').click();await choose(p,'添加网络位置');
     await p.locator('[name=name]').fill('家庭服务器');await p.locator('[name=host]').fill('server-home');await p.locator('[name=share]').fill('Public');await p.locator('[name=password]').fill('fixture-secret');await choose(p,'保存连接');
-    await p.getByRole('button',{name:'家庭服务器 · smb',exact:true}).waitFor();
+    await p.getByRole('button',{name:'家庭服务器',exact:true}).waitFor();
     check(!await p.evaluate(()=>JSON.stringify(localStorage).includes('fixture-secret')),'Network password never enters frontend persistence');await capture(p,'features-network');
     await home(p);await tile(p,'server').click();await choose(p,'启动 FTP 服务');
     check(await p.locator('[name=readOnly]').isChecked(),'FTP service defaults read-only');
@@ -382,7 +383,8 @@ try{
     check(await p.evaluate(()=>__model.updates.config.gitee==='https://gitee.com/railgunhamster/RHFiles'),'Gitee repository is included when saving update settings');
     await p.click('#update-check');await p.locator('#update-download:not([hidden])').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===1),'Manual check works even with automatic checking disabled');
-    check((await p.locator('#update-notes').innerText()).includes('\n第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes preserve line breaks and never inject HTML');
+    check((await p.locator('#update-notes').innerText()).includes('\n2. 第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes number entries, preserve line breaks and never inject HTML');
+    check(await p.locator('#app-changelog details').count()>10,'Bundled history is always available, including older versions');
     await p.click('#update-download');check(await p.locator('#update-progress').isVisible(),'Downloading exposes byte progress');
     check(await p.locator('#update-state').innerText().then(t=>t.includes('/s')),'APK download shows speed');
     await p.click('#update-cancel');await p.locator('#update-download:not([hidden])').waitFor();
@@ -438,6 +440,71 @@ try{
     await p.click('#btn-cancel-paste');await p.evaluate(()=>rhfilesHandleBack());await tile(p,'settings').click();await p.click('[data-settings-section="storage"]');await p.reload();
     await p.waitForFunction(()=>document.getElementById('title').textContent==='设置'&&!document.querySelector('[data-settings-panel=storage]').hidden);
     check(true,'Android recreation restores active Settings category');check(errors.length===0,'Restored navigation has no uncaught errors');await context.close();
+  }
+  if(!process.argv.includes('--updates-only')){
+    const {context,page:p,errors}=await pageFor({nativeV3:true,nativeUpdates:true});
+    await tile(p,'storage-0').click();await row(p,'notes.txt').waitFor();
+    await more(p,'notes.txt');const viaMore=await p.locator('#sheet .sheet-item').allTextContents();await p.evaluate(()=>rhfilesHandleBack());
+    await row(p,'notes.txt').scrollIntoViewIfNeeded();await p.waitForTimeout(180);
+    const bounds=await row(p,'notes.txt').boundingBox();await p.mouse.move(bounds.x+80,bounds.y+25);await p.mouse.down();await p.waitForTimeout(530);await p.mouse.up();
+    check(JSON.stringify(await p.locator('#sheet .sheet-item').allTextContents())===JSON.stringify(viaMore),'Long press and overflow expose exactly the same file action menu');
+    await p.evaluate(()=>rhfilesHandleBack());
+    const touch=await context.newCDPSession(p);
+    async function drag(target,dx,{cancel=false,dy=0}={}){
+      if(!await target.getAttribute('data-swipe-open'))await target.scrollIntoViewIfNeeded();await p.waitForTimeout(180);const b=await target.boundingBox(),x=b.x+Math.min(dx>0?180:240,b.width-45),y=b.y+(b.height>100?70:25);
+      await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+      for(let i=1;i<=8;i++){await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx*i/8,y:y+dy*i/8}]});await p.waitForTimeout(18);}
+      await touch.send('Input.dispatchTouchEvent',{type:cancel?'touchCancel':'touchEnd',touchPoints:[]});await p.waitForTimeout(220);
+    }
+    await drag(row(p,'notes.txt'),-145);
+    check(await row(p,'notes.txt').getAttribute('data-swipe-open')==='true'&&await row(p,'notes.txt').locator('.entry-delete').isVisible(),'Real touchscreen left swipe reveals Delete without opening the file');
+    check(await p.evaluate(()=>__model.jobs.length===0)&&await p.locator('#sheet').isHidden(),'Even a full left swipe never deletes or bypasses confirmation');
+    await row(p,'notes.txt').locator('.entry-delete').click();const swipeConfirmation=await p.locator('#sheet-panel').innerText();await choose(p,'取消');
+    check(await p.evaluate(()=>__model.jobs.length===0),'Canceling swipe Delete never starts a file task');
+    await more(p,'notes.txt');await choose(p,'删除');check(await p.locator('#sheet-panel').innerText()===swipeConfirmation,'Swipe Delete and overflow Delete use identical confirmation');await choose(p,'取消');
+    await drag(row(p,'notes.txt'),-100,{cancel:true});check(await row(p,'notes.txt').locator('.entry-delete').isHidden(),'Canceled touch closes the reveal without deleting');
+    await drag(row(p,'notes.txt'),-145);check(await row(p,'notes.txt').getAttribute('data-swipe-open')==='true','Second left swipe reveals the action again');await drag(row(p,'notes.txt'),100);check(await row(p,'notes.txt').locator('.entry-delete').isHidden()&&await p.locator('#drawer').isHidden(),'Right swipe closes a revealed action instead of opening the drawer');
+    await p.click('#btn-view');await choose(p,'网格');await drag(row(p,'notes.txt'),-100);
+    check(await row(p,'notes.txt').locator('.entry-delete').isVisible(),'Grid files support the same swipe reveal');
+    await row(p,'notes.txt').locator('.entry-delete').click();await choose(p,'移入回收站');await p.waitForFunction(()=>__model.jobs.length===1);
+    check(await p.evaluate(()=>__model.jobs[0].op==='trash'&&__model.jobs[0].args.sources[0]==='/storage/emulated/0/notes.txt'),'Confirmed swipe Delete delegates to the existing native trash task');
+    await p.evaluate(()=>{const j=__model.jobs[0];j.state='completed';j.completed=j.args.sources;j.outputs=[];__model.fs['/storage/emulated/0']=__model.fs['/storage/emulated/0'].filter(e=>!j.completed.includes(e.path));});await row(p,'notes.txt').waitFor({state:'detached'});
+    await more(p,'photo.jpg');await choose(p,'添加到收藏');await more(p,'photo.jpg');await choose(p,'修改收藏名称');await p.locator('#sheet input').fill('旅行收藏.txt');await choose(p,'保存');
+    check(await p.evaluate(()=>{const f=JSON.parse(localStorage.getItem('rhfiles.favorites'))[0];return f.name==='photo.jpg'&&f.label==='旅行收藏.txt'&&f.path==='/storage/emulated/0/photo.jpg'&&!__model.calls.some(c=>c.cmd==='rename_entry')}),'Favorite label changes never call filesystem Rename or alter original identity');
+    await home(p);await tile(p,'favorites').click();await row(p,'旅行收藏.txt').waitFor();check(await row(p,'旅行收藏.txt').getAttribute('data-kind')==='image','Alias extension never changes the real file type');
+    await p.click('#btn-menu');await p.getByRole('button',{name:'旅行收藏.txt 的收藏操作',exact:true}).click();await choose(p,'修改收藏名称');await p.locator('#sheet input').fill('另一名称');await choose(p,'保存');await row(p,'另一名称').waitFor();check(true,'Drawer also supports favorite label editing');
+    await p.reload();await tile(p,'favorites').click();await row(p,'另一名称').waitFor();check(true,'Favorite labels survive restart');
+    await home(p);await tile(p,'settings').click();const tabs=p.locator('.settings-nav');await tabs.evaluate(e=>e.scrollLeft=e.scrollWidth);await p.waitForTimeout(150);const before=await tabs.evaluate(e=>e.scrollLeft);const b=await tabs.boundingBox();
+    await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:b.x+40,y:b.y+20}]});for(let i=1;i<=10;i++)await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:b.x+40+i*20,y:b.y+20}]});await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await p.waitForTimeout(260);
+    check(before>0&&await tabs.evaluate(e=>e.scrollLeft)<before&&await p.locator('#drawer').isHidden(),'Real rightward settings-tab pan scrolls tabs and never opens the drawer');
+    await p.click('[data-settings-section=updates]');await p.locator('#app-changelog details').first().waitFor();
+    const history=await p.locator('#app-changelog').innerText();check(history.includes('0.1.18')&&history.includes('1. 网络存储')&&await p.evaluate(()=>__model.updateRequests===0),'Installed numbered history works offline with automatic checks disabled');
+    await p.evaluate(()=>{__model.updates.state='latest';__model.updates.release=null;return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Latest/installed state never erases release history');
+    await p.evaluate(()=>{__model.updates.state='failed';__model.updates.message='offline';return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Failed update checks never erase release history');
+    check(errors.length===0,'New gesture, favorite and history regressions have no frontend errors');await capture(p,'018-permanent-history');await context.close();
+  }
+  if(!process.argv.includes('--updates-only')){
+    const {context,page:p,errors}=await pageFor({nativeV3:true,nativeUpdates:true,nearby:true});await tile(p,'storage-0').waitFor();
+    const symbols=await Promise.all(['storage-0','remote','server','nearby'].map(id=>tile(p,id).locator('svg').getAttribute('data-symbol')));
+    check(new Set(symbols).size===4&&symbols[0]==='storage','Storage, network, computer access and Nearby have distinct purpose-drawn symbols');
+    await capture(p,'018-home-light');
+    await p.evaluate(()=>{__model.updates.state='available';__model.updates.release={version:'0.1.99',notes:'第一项。第二项。',size:1024};return androidUpdates.onSettings()});
+    check(await p.locator('.topbar #app-update-chip').isVisible()&&await p.locator('#app-update-chip').locator('svg').count()===1&&!await p.locator('#app>.native-task-chip#app-update-chip').count(),'Available update is a toolbar icon, not a bottom text strip');
+    check(await p.locator('#home-update-card').isVisible()&&await p.locator('#home').evaluate(e=>e.firstElementChild.id==='home-update-card'),'Home shows an actionable update card above the category grid');await capture(p,'018-home-update');
+    await p.locator('#home-update-card').click();await p.locator('#update-state').waitFor();check(await p.locator('[data-settings-panel=updates]').isVisible(),'Update card opens the real update settings');
+    const surfaces=[];
+    for(const id of ['remote','server','usage','apps','tasks','providers','trash','nearby','settings']){
+      await home(p);await tile(p,id).click();if(id==='settings')await p.click('[data-settings-section=display]');const panel=p.locator(id==='settings'?'[data-settings-panel=display]':id==='server'?'#tool-server':id==='usage'?'#tool-usage':'#tool-extra');await panel.waitFor();
+      surfaces.push(await panel.evaluate(e=>{const s=getComputedStyle(e);return [s.backgroundColor,s.borderTopColor,s.borderTopLeftRadius].join('|')}));
+      check(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'No horizontal overflow in styled '+id+' page');
+      if(['remote','server','nearby','settings'].includes(id))await capture(p,'018-'+id+'-light');
+    }
+    check(new Set(surfaces).size===1,'All feature interiors share the same card surface, outline and corner tokens');
+    await p.click('#btn-theme');await home(p);check(await p.evaluate(()=>document.documentElement.dataset.theme==='dark'),'The common visual system retains dark mode');await capture(p,'018-home-dark');
+    await context.close();
+    const narrow=await pageFor({nativeV3:true,nativeUpdates:true,viewport:{width:275,height:760}});await tile(narrow.page,'storage-0').waitFor();await narrow.page.evaluate(()=>{__model.updates.state='available';__model.updates.release={version:'0.1.99',size:1024};return androidUpdates.onSettings()});
+    check(await narrow.page.locator('.topbar').evaluate(e=>e.scrollWidth<=e.clientWidth)&&await narrow.page.evaluate(()=>document.documentElement.scrollWidth===innerWidth),'Toolbar update indicator and card fit a 275px pane');
+    check(errors.length===0&&narrow.errors.length===0,'Visual-system and update-reminder scenarios have no frontend exceptions');await narrow.context.close();
   }
   console.log('PASS: '+checks+' assertions. IPC mocked. Screenshots: '+output);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

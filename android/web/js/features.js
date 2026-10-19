@@ -9,10 +9,13 @@ const androidFeatures = (() => {
   const names = {copy:'复制',move:'移动',delete:'永久删除',trash:'移入回收站',restore:'恢复',zip:'压缩',extract:'解压',backup:'备份应用'};
   const states = {queued:'排队',scanning:'计算大小',running:'进行中',paused:'已暂停',completed:'完成',failed:'失败',canceled:'已取消',interrupted:'上次运行中断'};
   const destinations = [
-    ['remote','网络位置','computer','SMB / FTP / WebDAV'], ['providers','外置存储与网盘','sd','系统授权与文件提供者'],
+    ['remote','网络位置','network','SMB / FTP / WebDAV'], ['providers','外置存储与网盘','external','系统授权与文件提供者'],
     ['apps','应用管理','grid','启动、卸载与备份'], ['tasks','文件任务','recent','进度、失败与重试'], ['trash','回收站','trash','恢复本机文件'],
   ];
-  const button = (label, fn, cls = '') => app.button(label,'',fn,cls || 'setting-row');
+  const button = (label, fn, cls = '') => {
+    const symbol=({'添加网络位置':'network','授权文件夹 / 外置存储':'external','从系统网盘导入文件':'download','重新发现':'refresh','停止发现':'close','授权应用占用统计':'chart'})[label];
+    const node=app.button(label,symbol||'other',fn,cls||'setting-row');if(!symbol)node.querySelector('svg')?.remove();return node;
+  };
   const notice = (node, message) => node.append(ui.el('p','muted',message));
   const panel = () => $('sheet-panel');
   async function form(title, fields, submit, caption = '保存') {
@@ -94,13 +97,17 @@ const androidFeatures = (() => {
       const connections=await api.native('connections');if(!valid())return;
       node.replaceChildren(button('添加网络位置',()=>addRemote(),'primary'));notice(node,'SMB 只填主机名即可浏览该主机的共享文件夹；共享名可留空。添加为常用项后可从首页收藏夹或侧栏进入。密码由 Android Keystore 加密保存。');
       for(const c of connections) {
-        const row=ui.el('article','task-card');row.append(button(c.name+' · '+c.type,()=>c.path?app.go({screen:'folder',path:c.path,label:c.name}):undefined));
+        const row=ui.el('article','network-location');
+        const open=button(c.name,()=>c.path?app.go({screen:'folder',path:c.path,label:c.name}):undefined);open.className='network-open';open.setAttribute('aria-label',c.name);
+        const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small','',c.type.toUpperCase());open.replaceChildren(symbol,name,type);row.append(open);
+        const actions=[];
         if(c.path){
-          row.append(button('编辑连接',async()=>{const value=await api.native('connection.get',{id:c.id});if(valid())addRemote(value);}));
+          actions.push(app.action('编辑连接','rename',async()=>{const value=await api.native('connection.get',{id:c.id});if(valid())addRemote(value);}));
           const saved=app.state.favorites.some(entry=>entry.path===c.path);
-          row.append(button(saved?'取消常用':'添加为常用项',()=>{app.favorite({name:c.name,path:c.path,isDir:true});return renderTool(tool);}));
+          actions.push(app.action(saved?'取消常用':'添加为常用项','star',()=>{app.favorite({name:c.name,path:c.path,isDir:true});return renderTool(tool);}));
         }
-        row.append(button('移除连接',async()=>{if(await ui.confirm('移除此连接？','移除登录配置和对应快捷访问，不会删除服务器文件。','移除')){await api.native('connection.delete',{id:c.id});app.removeFavoritePrefix(c.path||'remote://'+c.id+'/');await app.refreshLocations();await renderTool(tool);}}));node.append(row);
+        actions.push(app.action('移除连接','trash',async()=>{if(await ui.confirm('移除此连接？','移除登录配置和对应快捷访问，不会删除服务器文件。','移除')){await api.native('connection.delete',{id:c.id});app.removeFavoritePrefix(c.path||'remote://'+c.id+'/');await app.refreshLocations();await renderTool(tool);}},true));
+        const more=button('更多',()=>ui.openSheet(c.name,actions));more.className='network-more';more.setAttribute('aria-label',c.name+' 的更多操作');more.innerHTML=ui.icon('more');row.append(more);node.append(row);
       }
       const discovery=ui.el('section','task-card');node.append(discovery);networkDiscovery(discovery,valid,connections);
       return;
@@ -288,7 +295,7 @@ const androidFeatures = (() => {
   }
   function entryActions(entry) {
     const options=[];
-    if(api.nearbyAvailable()&&!api.isVirtual(entry.path))options.push(app.action('发送到附近设备','computer',()=>androidNearby.open([entry.path])));
+    if(api.nearbyAvailable()&&!api.isVirtual(entry.path))options.push(app.action('发送到附近设备','nearby',()=>androidNearby.open([entry.path])));
     if(!api.isVirtual(entry.path)) {
       options.push(app.action('压缩为 ZIP','archive',()=>compress([entry.path])));
       if(!entry.isDir&&/\.(zip|tar|gz|xz|tgz|txz)$/i.test(entry.name))options.push(app.action('解压到新文件夹','archive',()=>extract(entry)));
@@ -299,7 +306,7 @@ const androidFeatures = (() => {
   }
   function selectionActions(paths) {
     const options=[];
-    if(api.nearbyAvailable()&&paths.every(path=>!api.isVirtual(path)))options.push(app.action('发送到附近设备','computer',()=>androidNearby.open(paths)));
+    if(api.nearbyAvailable()&&paths.every(path=>!api.isVirtual(path)))options.push(app.action('发送到附近设备','nearby',()=>androidNearby.open(paths)));
     if(paths.every(p=>!api.isVirtual(p))) options.push(app.action('压缩为 ZIP','archive',()=>compress(paths)));
     if(paths.every(p=>!p.startsWith('remote://')&&!app.state.entries.find(e=>e.path===p)?.isDir))options.push(app.action('系统分享','share',()=>api.native('share',{paths})));
     return options;
@@ -349,5 +356,5 @@ const androidFeatures = (() => {
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
     $('btn-ftp-toggle').addEventListener('click',()=>toggleFtp().catch(app.error));
   }
-  return {init,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','computer','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
+  return {init,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
 })();

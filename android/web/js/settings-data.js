@@ -12,7 +12,7 @@
       }
       if(key==='rhfiles.nearby.alias'&&text.length>80)throw Error('设备名称过长');
       if(key==='rhfiles.favorites'){
-        const items=JSON.parse(text);if(!Array.isArray(items)||items.length>100||items.some(i=>!i||typeof i.name!=='string'||typeof i.path!=='string'||i.name.length>1024||i.path.length>8192))throw Error('收藏夹配置无效');
+        const items=JSON.parse(text);if(!Array.isArray(items)||items.length>100||items.some(i=>!i||typeof i.name!=='string'||typeof i.path!=='string'||i.name.length>1024||i.path.length>8192||('label' in i&&(typeof i.label!=='string'||!i.label.trim()||i.label.length>1024))))throw Error('收藏夹配置无效');
       }
       result[key]=text;
     }

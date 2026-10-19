@@ -128,7 +128,7 @@ class MainActivity : TauriActivity() {
     shared=JSONArray(uris.distinct().filter{it.scheme=="content"}.take(1000).map{it.toString()})
   }
   @Suppress("DEPRECATION") private fun setSystemTheme(dark:Boolean) {
-    val color=if(dark) Color.rgb(28,32,38) else Color.WHITE
+    val color=if(dark) Color.rgb(23,29,41) else Color.rgb(244,247,252)
     window.statusBarColor=color;window.navigationBarColor=color
     WindowCompat.getInsetsController(window,window.decorView).apply{isAppearanceLightStatusBars=!dark;isAppearanceLightNavigationBars=!dark}
   }

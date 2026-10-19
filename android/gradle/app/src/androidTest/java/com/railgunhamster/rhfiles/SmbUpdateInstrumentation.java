@@ -189,6 +189,32 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         android.graphics.Bitmap image=getUiAutomation().takeScreenshot();require(image!=null,"Screenshot unavailable");
         try(java.io.FileOutputStream stream=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-Release-QA-phone-"+name+".png")){image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,stream);}finally{image.recycle();}
     }
+    private void gestureCss(String selector,float dxFraction,long hold) throws Exception {
+        JSONObject point=json("(()=>{const f=document.querySelector('.file-pane:not([hidden])'),n=f.contentDocument.querySelector("+JSONObject.quote(selector)+");if(!n)throw Error('Missing gesture target');const r=n.getBoundingClientRect(),o=f.getBoundingClientRect();return{x:o.x+r.x+r.width*.45,y:o.y+r.y+Math.min(24,r.height/2),width:innerWidth,travel:r.width*"+dxFraction+"};})()");
+        int[] offset=new int[2],width=new int[1];runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.getLocationOnScreen(offset);width[0]=web.getWidth();});
+        float scale=(float)(width[0]/point.getDouble("width")),x=offset[0]+(float)point.getDouble("x")*scale,y=offset[1]+(float)point.getDouble("y")*scale,dx=(float)point.getDouble("travel")*scale;
+        long down=android.os.SystemClock.uptimeMillis();injectContacts(down,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{x,y}});Thread.sleep(hold);
+        if(dx!=0)for(int i=1;i<=12;i++){injectContacts(down,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{x+dx*i/12,y}});Thread.sleep(25);}
+        injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x+dx,y}});Thread.sleep(300);
+    }
+    private void fileGesturesProbe(Bundle result) throws Exception {
+        awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane')?.contentWindow.rhfilesPane");
+        eval("window.RHFilesWorkbench.openLayout(document.querySelector('.file-pane').contentWindow);document.querySelector('[data-layout=single]').click();window.__qa=document.querySelector('.file-pane:not([hidden])').contentWindow;void(async()=>{try{const list=await __qa.api.raw('list_dir',{path:'/storage/emulated/0/Download'});if(!list.entries.some(e=>e.name==='RHFiles-018-QA.txt'))await __qa.api.raw('create_file',{parent:'/storage/emulated/0/Download',name:'RHFiles-018-QA.txt'});__qa.document.getElementById('nav-home').click();window.__fixtureReady=true;}catch(e){window.__fixtureError=String(e)}})()");
+        awaitScript("!!window.__fixtureReady||!!window.__fixtureError");require(eval("!window.__fixtureError").equals("true"),"Fixture creation failed: "+eval("window.__fixtureError"));
+        awaitScript("!!__qa.document.querySelector('[data-tile=downloads]')");tapCss("[data-tile=downloads]",true);
+        String row="[data-path='/storage/emulated/0/Download/RHFiles-018-QA.txt']";
+        awaitScript("!!__qa.document.querySelector("+JSONObject.quote(row)+")");eval("__qa.document.querySelector("+JSONObject.quote(row)+").scrollIntoView({block:'center'})");Thread.sleep(250);
+        tapCss(row+" .entry-more",true);String menu=eval("[...__qa.document.querySelectorAll('#sheet .sheet-item')].map(n=>n.textContent).join('|')");eval("__qa.rhfilesHandleBack()");
+        gestureCss(row,0,650);require(eval("[...__qa.document.querySelectorAll('#sheet .sheet-item')].map(n=>n.textContent).join('|')").equals(menu),"Long press and overflow differ");eval("__qa.rhfilesHandleBack()");
+        gestureCss(row,-.4f,30);require(eval("__qa.document.querySelector("+JSONObject.quote(row)+").dataset.swipeOpen==='true'").equals("true"),"Real MotionEvent swipe did not reveal Delete");
+        tapCss(row+" .entry-delete",true);require(eval("__qa.document.getElementById('sheet-panel').textContent.includes('移入回收站')").equals("true"),"Swipe Delete bypassed existing trash confirmation");eval("__qa.rhfilesHandleBack()");screenshot("file-swipe");
+        eval("__qa.document.getElementById('nav-settings').click()");awaitScript("!__qa.document.getElementById('tool-settings').hidden");eval("__qa.document.querySelector('.settings-nav').scrollLeft=9999");Thread.sleep(250);
+        int before=json("({x:__qa.document.querySelector('.settings-nav').scrollLeft})").getInt("x");gestureCss(".settings-nav",.4f,30);
+        require(eval("__qa.document.getElementById('drawer').hidden&&__qa.document.querySelector('.settings-nav').scrollLeft<"+before).equals("true"),"Settings pan opened drawer or failed to scroll tabs");
+        eval("__qa.document.querySelector('[data-settings-section=updates]').click()");awaitScript("__qa.document.querySelectorAll('#app-changelog details').length>10");require(eval("__qa.document.getElementById('app-changelog').textContent.includes('0.1.18')").equals("true"),"Installed history missing from minified APK");screenshot("installed-history");
+        eval("void __qa.api.raw('delete_entries',{paths:['/storage/emulated/0/Download/RHFiles-018-QA.txt'],permanent:true})");
+        result.putString("pass","true");result.putString("checks","real MotionEvent long press/overflow parity, file swipe Delete confirmation, settings tab scrolling, bundled installed history in minified APK");finish(Activity.RESULT_OK,result);
+    }
     private void panesProbe(Bundle result) throws Exception {
         awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane')?.contentWindow.rhfilesPane");
         require(json("({width:innerWidth})").getInt("width")<480,"Ordinary narrow phone viewport required");
@@ -305,6 +331,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("network-profile")){networkProfileProbe(result);return;}
             if(arguments.getString("mode","").equals("network-smb")){networkSmbProbe(result);return;}
             if(arguments.getString("mode","").equals("media")){mediaProbe(result);return;}
+            if(arguments.getString("mode","").equals("file-gestures")){fileGesturesProbe(result);return;}
             eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA loopback fixture',host:'127.0.0.1',port:1445,share:'QA',username:'QA\\\\qa',password:'qa-pass',domain:''});"+
                 "await api.native('update.save',{source:'family',github:'https://github.com/RailgunHamster/RHFiles',family:'smb://127.0.0.1/QA',connectionId:id,autoCheck:false,proxyEnabled:false,proxy:''});"+
                 "await api.native('update.check',{manual:true,reason:'release-smb-probe'});window.__smbQa={started:true};}catch(e){window.__smbQa={error:String(e)}}})();");

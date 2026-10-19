@@ -5,6 +5,7 @@
 /temp/
 /android/web/LICENSE.txt
 /android/web/NOTICE.txt
+/android/web/CHANGELOG.txt
 /scripts/testing/smb-server/bin/
 /scripts/testing/smb-server/obj/
 .cache/

@@ -127,6 +127,7 @@
     }
   }
   function paintSelection() {
+    if(state.selected.size)$('filelist').dispatchEvent(new Event('rhfiles-list-reset'));
     renderShell();
     for (const node of $('filelist').querySelectorAll('[data-path]')) {
       node.classList.toggle('selected', state.selected.has(node.dataset.path));
@@ -152,6 +153,7 @@
     grid.append(node);
   }
   function renderHome() {
+    const homeRoots=state.roots.filter(root=>!root.network);
     // Capacity/index notifications must not replace nodes receiving an active
     // touch. Rebuild only when the navigation layout itself changes.
     const snapshot=JSON.stringify([state.roots.map(({path,label,removable,provider})=>({path,label,removable,provider})),state.root,api.featuresAvailable()]);
@@ -160,22 +162,22 @@
     const noteText=state.index?.lastFinishedMs ? '分类基于文件名索引；新文件可通过更新索引加入。' : '图片、音频等分类需要先建立本机文件名索引。';
     const indexText=state.index?.indexing ? '正在建立索引…' : '更新索引';
     if(snapshot===homeSnapshot && $('home').childElementCount){
-      state.roots.forEach((root,i)=>{$('home').querySelector(`[data-tile="storage-${i}"] small`).textContent=capacityOf(root);});
+      homeRoots.forEach((root,i)=>{$('home').querySelector(`[data-tile="storage-${i}"] small`).textContent=capacityOf(root);});
       $('home').querySelector('[data-tile="favorites"] small').textContent=state.favorites.length+' 个位置';
       const note=$('home').querySelector('.home-note');note.querySelector('.index-description').textContent=noteText;note.querySelector('button').setAttribute('aria-label',indexText);note.querySelector('button').disabled=!!state.index?.indexing;note.querySelector('.index-caption').textContent=state.index?.indexing?'正在更新索引…':fmt.count(state.index?.entryCount || 0)+' 个已索引项目';
-      return;
+      androidUpdates.paintHome();return;
     }
     homeSnapshot=snapshot;
     const home = $('home'), grid = ui.el('div', 'home-grid');
     home.replaceChildren(grid);
-    for (const [i, root] of state.roots.entries()) {
+    for (const [i, root] of homeRoots.entries()) {
       const capacity = capacityOf(root);
       tile(grid, 'storage-' + i, rootLabel(root), root.network ? 'computer' : root.removable ? 'sd' : 'storage', '#768896', capacity, () => go({ screen: 'folder', path: root.path,label:rootLabel(root) }));
     }
     tile(grid, 'downloads', '下载', 'download', '#b78a41', 'Download', () => go({ screen: 'folder', path: state.root + '/Download', boundary:state.root+'/Download', boundaryLabel:'下载' }));
     for (const [id, label, color] of categories) tile(grid, id, label, id, color, id === 'recent' ? '按修改时间' : '按文件类型', () => go({ screen: 'library', category: id }));
     tile(grid, 'favorites', '收藏夹', 'star', '#ca9940', state.favorites.length + ' 个位置', () => go({ screen: 'favorites' }));
-    tile(grid, 'server', '从电脑访问', 'computer', '#54877b', '局域网传输', () => go({ screen: 'tool', tool: 'server' }));
+    tile(grid, 'server', '从电脑访问', 'server', '#54877b', '局域网传输', () => go({ screen: 'tool', tool: 'server' }));
     tile(grid, 'usage', '空间分析', 'chart', '#8b739a', '查看文件占用', () => go({ screen: 'tool', tool: 'usage' }));
     tile(grid, 'settings', '设置', 'settings', '#748193', '显示与权限', () => go({ screen: 'tool', tool: 'settings' }));
     if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>id==='nearby'?androidNearby.open():go({screen:'tool',tool:id}));
@@ -183,12 +185,19 @@
     const copy=ui.el('div','index-copy');copy.append(ui.el('strong','index-caption',state.index?.indexing?'正在更新索引…':fmt.count(state.index?.entryCount || 0)+' 个已索引项目'),ui.el('p','index-description',noteText));
     const update=button('更新','refresh',rebuildIndex,'index-update');update.setAttribute('aria-label',indexText);update.disabled=!!state.index?.indexing;note.append(symbol,copy,update);
     home.append(note);
+    androidUpdates.paintHome();
   }
   let drawerSignature='';
   function renderDrawer() {
     const signature=JSON.stringify([state.roots,state.favorites]);if(signature===drawerSignature)return;drawerSignature=signature;
-    $('roots').replaceChildren(...state.roots.map(root => button(rootLabel(root), root.network ? 'computer' : root.removable ? 'sd' : 'storage', () => { closeDrawer(); return go({ screen: 'folder', path: root.path,label:rootLabel(root) }); })));
-    $('nav-favorites').replaceChildren(...state.favorites.map(entry => button(entry.name, 'star', () => { closeDrawer(); return activate(entry); })));
+    $('roots').replaceChildren(...state.roots.map(root => button(rootLabel(root), root.network ? 'network' : root.removable ? 'sd' : 'storage', () => { closeDrawer(); return go({ screen: 'folder', path: root.path,label:rootLabel(root) }); })));
+    $('nav-favorites').replaceChildren(...state.favorites.map(entry => {
+      const row=ui.el('div','favorite-location');
+      const open=button(favoriteLabel(entry),'star',()=>{closeDrawer();return activate(entry);});
+      const more=button('收藏操作','more',()=>{closeDrawer();favoriteMenu(entry);},'favorite-more');
+      more.setAttribute('aria-label',favoriteLabel(entry)+' 的收藏操作');more.querySelector('span').remove();
+      row.append(open,more);return row;
+    }));
     if (!state.favorites.length) $('nav-favorites').append(ui.el('p', 'muted', '在文件的更多菜单中添加收藏'));
   }
   function openDrawer() { renderDrawer(); ui.setDrawerOpen(true); }
@@ -309,6 +318,7 @@
   function renderList(scrollOverride) {
     if (!isList() || $('filelist').hidden) return;
     const container = $('filelist'), list = currentEntries();
+    container.dispatchEvent(new Event('rhfiles-list-reset'));
     const existing=new Map([...container.querySelectorAll('[data-path]')].map(node=>[node.dataset.path,node]));
     const rowFor=entry=>{const old=existing.get(entry.path);return old?.dataset.signature===JSON.stringify(entry)&&old.classList.contains(state.view==='grid'?'cell':'row')?old:buildNode(entry);};
     let scroll = typeof scrollOverride === 'number' ? scrollOverride : container.scrollTop;
@@ -345,22 +355,28 @@
     const node = ui.el('div', state.view === 'grid' ? 'cell' : 'row');
     node.dataset.path = entry.path; node.dataset.kind = entry.isDir ? 'folder' : entry.kind;
     node.dataset.signature=JSON.stringify(entry);
-    node.tabIndex = 0; node.setAttribute('role', 'option'); node.setAttribute('aria-label', entry.name);
+    const displayName=state.route.screen==='favorites'?favoriteLabel(entry):entry.name;
+    node.tabIndex = 0; node.setAttribute('role', 'option'); node.setAttribute('aria-label', displayName);
     node.classList.toggle('selected',state.selected.has(entry.path));node.setAttribute('aria-selected',String(state.selected.has(entry.path)));
     if (state.clipboard?.mode === 'cut' && state.clipboard.paths.includes(entry.path)) node.classList.add('pending-cut');
     const thumb = ui.el('div', 'thumb'); thumb.innerHTML = ui.icon(entry.isDir ? 'folder' : entry.kind);
-    node.append(thumb);
+    const content=ui.el('div','entry-content');node.append(content);content.append(thumb);
     if (['image','video'].includes(entry.kind)) thumbnail(thumb, entry);
     else if(entry.libraryAlbum&&['image','video'].includes(entry.cover.kind))thumbnail(thumb,entry.cover);
     if(entry.kind==='video')thumb.classList.add('video-thumb');
-    const meta = ui.el('div', 'meta'); meta.append(ui.el('div', 'name', entry.name));
+    const meta = ui.el('div', 'meta'); meta.append(ui.el('div', 'name', displayName));
     if (state.view !== 'grid' || entry.libraryAlbum) meta.append(ui.el('div', 'sub',entry.libraryAlbum?entry.count+' 项 · '+pathLabel(entry.path):(entry.isDir ? '文件夹' : fmt.size(entry.size)) + (entry.modifiedMs ? ' · ' + fmt.date(entry.modifiedMs).split(' ')[0] : '') + (state.route.screen !== 'folder' ? ' · ' + pathLabel(fmt.parentOf(entry.path)) : '')));
-    node.append(meta, ui.el('div', 'check'));
+    content.append(meta, ui.el('div', 'check'));
     const more = button('更多操作', 'more', () => entryMenu(entry), 'entry-more');
     more.setAttribute('aria-label', entry.name + ' 的更多操作'); more.querySelector('span').remove();
     more.addEventListener('pointerdown', e => e.stopPropagation());
-    more.addEventListener('click', e => e.stopPropagation()); node.append(more);
-    node.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); activate(entry).catch(error); } else if (e.key === ' ') { e.preventDefault(); toggleSelection(entry.path); } });
+    more.addEventListener('click', e => e.stopPropagation()); content.append(more);
+    if(!entry.libraryAlbum){
+      const del=button('删除','trash',()=>{node.dispatchEvent(new Event('rhfiles-close-swipe',{bubbles:true}));return remove([entry.path]);},'entry-delete');
+      del.setAttribute('aria-label','删除 '+displayName);del.hidden=true;del.tabIndex=-1;
+      del.addEventListener('pointerdown',e=>e.stopPropagation());del.addEventListener('click',e=>e.stopPropagation());node.prepend(del);
+    }
+    node.addEventListener('keydown', e => { if(e.target!==node)return;if (e.key === 'Enter') { e.preventDefault(); activate(entry).catch(error); } else if (e.key === ' ') { e.preventDefault(); toggleSelection(entry.path); } });
     return node;
   }
   const thumbnails=mobileList.thumbnailLoader(entry=>api.readThumbnail({path:entry.path,kind:entry.kind,maxEdge:160}));
@@ -378,7 +394,7 @@
 
   async function activate(entry) {
     if(entry.libraryAlbum)return go({screen:'library',category:state.route.category,folder:entry.path});
-    if (entry.isDir) return go(folderRoute(entry.path,entry.name,
+    if (entry.isDir) return go(folderRoute(entry.path,favoriteLabel(entry),
       entry.parentPath || (state.route.screen==='folder' ? state.route.path : null)));
     if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&!entry.path.startsWith('remote://'))return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});
     if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.playMedia(entry,currentEntries());
@@ -413,9 +429,11 @@
     } catch (err) { if (stillOpen()) panel.querySelector('.sheet-note').textContent = '无法预览：' + (err?.message || err); }
   }
   function entryMenu(entry) {
+    $('filelist').dispatchEvent(new Event('rhfiles-list-reset'));
     if(entry.libraryAlbum)return ui.openSheet(entry.name,[action('查看此分类','folder',()=>activate(entry)),action('打开实际文件夹','open',()=>go({screen:'folder',path:entry.path})),action('复制路径','copy',()=>ui.copyText(entry.path))],entry.path+'\n'+entry.count+' 项');
     ui.openSheet(entry.name, [
       action(entry.isDir ? '打开文件夹' : '打开 / 预览', 'open', () => activate(entry)),
+      action(state.selected.has(entry.path)?'取消选择':'选择','check',()=>toggleSelection(entry.path)),
       ...(!entry.isDir && api.nativeAvailable() ? [action('打开方式', 'open', () => api.systemOpen(entry.path)), action('分享', 'share', () => api.shareFile(entry.path))] : []),
       action('复制', 'copy', () => setClipboard('copy',[entry.path])),
       action('移动', 'cut', () => setClipboard('cut',[entry.path])),
@@ -423,11 +441,26 @@
       action('重命名', 'rename', () => rename(entry)),
       ...(api.featuresAvailable() ? androidFeatures.entryActions(entry) : []),
       action(state.favorites.some(e => e.path === entry.path) ? '取消收藏' : '添加到收藏', 'star', () => favorite(entry)),
+      ...(state.favorites.some(e=>e.path===entry.path)?[action('修改收藏名称','rename',()=>renameFavorite(entry))]:[]),
       action('复制路径', 'copy', async () => { await ui.copyText(entry.path); ui.toast('路径已复制'); }),
       ...(state.route.screen === 'folder' || (api.isVirtual(entry.path)&&!entry.parentPath) ? [] : [action('打开所在文件夹', 'folder', () => go(folderRoute(entry.parentPath || fmt.parentOf(entry.path))))]),
       action('属性', 'info', () => ui.openSheet(entry.name, [action('关闭','close',()=>{})], '位置：' + entry.path + '\n类型：' + (entry.isDir ? '文件夹' : entry.kind) + '\n大小：' + fmt.size(entry.size) + '\n修改时间：' + fmt.date(entry.modifiedMs))),
       action('删除', 'trash', () => remove([entry.path]), true),
     ]);
+  }
+  const favoriteLabel=entry=>typeof entry.label==='string'&&entry.label.trim()?entry.label:entry.name;
+  function favoriteMenu(entry){ui.openSheet(favoriteLabel(entry),[
+    action('打开','open',()=>activate(entry)),action('修改收藏名称','rename',()=>renameFavorite(entry)),
+    action('取消收藏','star',()=>favorite(entry)),action('复制路径','copy',()=>ui.copyText(entry.path))
+  ],entry.path);}
+  async function renameFavorite(entry){
+    const value=await ui.prompt('修改收藏名称（不改变文件或路径）',favoriteLabel(entry),'保存');
+    if(value===null)return;const label=value.trim();if(!label||label.length>1024)return ui.toast('名称需为 1–1024 个字符');
+    // Re-read after the dialog: the other pane may have changed favorites.
+    const next=JSON.parse(saved('rhfiles.favorites','[]')),found=next.find(item=>item.path===entry.path);
+    if(!found)return ui.toast('此收藏已被移除');found.label=label;
+    cache('rhfiles.favorites',JSON.stringify(next));state.favorites=next;renderDrawer();
+    if(state.route.screen==='favorites')await go(state.route,{replace:true});ui.toast('收藏名称已保存，实际路径未改变');
   }
   function favorite(entry) {
     if(!state.favorites.some(e=>e.path===entry.path)&&state.favorites.length>=100)return ui.toast('常用 / 收藏位置最多保存 100 项，请先移除不再使用的项目');
@@ -680,7 +713,7 @@
     window.addEventListener('rhfiles-files-changed',()=>{if(!document.hidden)refreshCurrent().catch(error);});
     window.addEventListener('storage',event=>{
       if(event.key==='rhfiles.theme'){document.documentElement.dataset.theme=event.newValue==='dark'?'dark':'light';}
-      if(event.key==='rhfiles.favorites'){try{state.favorites=JSON.parse(event.newValue||'[]');renderDrawer();if(state.route.screen==='home')renderHome();}catch{}}
+      if(event.key==='rhfiles.favorites'){try{state.favorites=JSON.parse(event.newValue||'[]');renderDrawer();if(state.route.screen==='home')renderHome();if(state.route.screen==='favorites')go(state.route,{replace:true}).catch(error);}catch{}}
       if(event.key==='rhfiles.hidden'){state.hidden=event.newValue==='1';if(isList())renderList();}
     });
     for(const node of document.querySelectorAll('[data-icon]')) node.innerHTML=ui.icon(node.dataset.icon);
@@ -702,7 +735,7 @@
       try{const response=await fetch('SMBJ-RPC-LICENSE.txt');if(!response.ok)throw Error('License unavailable');$('smb-rpc-license-text').textContent=await response.text();details.dataset.loaded='1';}
       catch{$('smb-rpc-license-text').textContent='请查看源码包内 SMBJ-RPC-LICENSE.txt。';}
     });
-    ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path),select:path=>{if(state.entries.find(e=>e.path===path)?.libraryAlbum)return;state.selected.add(path);paintSelection();},toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
+    ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path)||currentEntries().find(entry=>entry.path===path),menu:entryMenu,toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
     $('scrim').addEventListener('click',closeDrawer);
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});

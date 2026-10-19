@@ -1,4 +1,22 @@
-RHFiles Android 0.1.17
+RHFiles Android 0.1.18
+
+1. 网络存储只显示在左侧抽屉的存储位置，不再重复出现在首页；网络位置列表改为单行，编辑、添加常用、移除统一收到更多菜单中。
+2. 文件和文件夹左滑跟手露出删除按钮，点击后与更多菜单共用删除确认及回收站流程；滑动本身不删除，纵向滚动、多选和取消触摸不会误删。
+3. 收藏可修改显示名称，仅保存 label，不重命名文件、不改变路径；支持抽屉及文件菜单修改，包含在加密配置备份中。
+4. 设置中常驻本地完整更新日志，离线、已是最新及安装更新后都可查阅；按版本展开，条目自动编号并换行，更新失败也不会清空历史。
+5. 设置顶部分类标签独占横向滑动，不再被右滑抽屉拦截；其他正常页面仍可右滑打开抽屉。
+6. 长按文件与点击三个点共用同一操作菜单；菜单增加选择 / 取消选择入口，保留多选及原有文件操作。
+7. 参考 RHVideo 的柔和蓝紫配色、细描边和卡片层级，统一主页、设置、网络、互传、任务等功能页的控件风格；重绘内部存储、网络位置、从电脑访问及附近互传图标。更新提醒移至顶部图标和首页卡片，不再占用底部文字栏。
+
+1. Keep network storage in the drawer only. Use compact single-line network locations with an overflow menu for editing, favorites and removal.
+2. Swipe files/folders left to reveal Delete. Explicit taps use the same confirmation and trash flow as the overflow menu; swipes never delete automatically.
+3. Rename favorite labels without changing actual filenames or paths. Preserve aliases in encrypted configuration backups.
+4. Bundle permanent offline version history with numbered, line-separated entries. Updating, latest status or failed checks never remove installed history.
+5. Let settings tabs own horizontal scrolling instead of opening the drawer.
+6. Reuse the exact same file action menu for long press and overflow, including an explicit Select / Deselect action.
+7. Adapt RHVideo's soft palette, outlined cards and controls across mobile features. Draw distinct storage/network/PC access/nearby icons. Show updates as a header indicator and a Home card, not a bottom text strip.
+
+此前版本改进 / Previous improvements (0.1.17):
 
 直接播放视频 / 音频时带入当前文件列表的播放队列，支持上一项、下一项。初次播放默认隐藏控制栏，轻点显示。网络位置里的常见图片和音视频可以直接查看 / 播放，不再点击就进入复制流程；SMB 使用按偏移读取，支持拖动进度，不必从头下载。图片预览按需读取到内存并缩小显示，单张限制 24 MB，超限或设备无法解码时明确报错，仍可手动下载后用其他应用打开。
 网络存储与内部存储并列出现在侧栏和首页；SMB 的具体子文件夹可加入快捷访问。只读 SMB 浏览复用有上限、会过期的认证会话，每次仍读取实时目录，修改连接或导入配置后清理旧会话，避免反复连接 / 认证 / 注销拖慢子目录浏览。复用前检查共享是否已关闭；只读网络错误有限重连，权限拒绝不掩盖，不自动重试写入任务。

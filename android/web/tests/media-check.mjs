@@ -14,8 +14,8 @@ const name=(text)=>page.locator('#filelist .name').getByText(text,{exact:true});
 async function drawer(){await page.locator('#btn-menu').click();await page.locator('#drawer').waitFor()}
 async function touch(type,x,y){await page.evaluate(({type,x,y})=>{const target=document.querySelector('#content');const t=new Touch({identifier:9,target,clientX:x,clientY:y});target.dispatchEvent(new TouchEvent(type,{touches:type==='touchend'?[]:[t],changedTouches:[t],bubbles:true,cancelable:true}))},{type,x,y})}
 try{
- await page.goto(fixture.url);await page.locator('[data-tile=storage-1]').waitFor();
- check((await page.locator('[data-tile=storage-1] small').innerText()).includes('SMB'),'network storage has an honest network caption, not local capacity');
+ await page.goto(fixture.url);await page.locator('[data-tile=storage-0]').waitFor();
+ check(await page.locator('[data-tile^=storage-]').count()===1&&!((await page.locator('#home').innerText()).includes('家用 NAS')),'network storage is not duplicated on Home');
  await drawer();check(await page.locator('#roots button').allTextContents().then(a=>a.some(t=>t.includes('内部存储'))&&a.some(t=>t.includes('家用 NAS'))),'saved SMB sits alongside internal storage');
  await page.locator('#roots button').filter({hasText:'家用 NAS'}).click();await name('相册').click();await name('photo.jpg').waitFor();
  await page.locator('#btn-overflow').click();await page.getByRole('button',{name:'收藏此文件夹',exact:true}).click();
