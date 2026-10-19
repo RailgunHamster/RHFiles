@@ -5,12 +5,21 @@
   --line:#e5eaf4; --accent:#4d6edb; --selected:#edf2ff; --danger:#b84b61;
   --purple:#8b5be2; --purple-soft:#f4efff; --accent-ink:#fff;
   --shadow:0 5px 22px #2f44700c; --card-radius:16px; --control-radius:10px;
+  --symbol-blue:#5572d8; --symbol-sky:#3984bb; --symbol-teal:#278a83; --symbol-purple:#9062bf; --symbol-amber:#b57c2f; --symbol-rose:#be5b74;
 }
 [data-theme=dark] {
   --page:#171d29; --bg:#202838; --surface:#252f42; --text:#e6ebf6; --muted:#a5b1c9;
   --line:#354159; --accent:#a2b7ff; --selected:#303f65; --danger:#ff9eb4;
   --purple:#c3a8fa; --purple-soft:#352e4e; --accent-ink:#17213c; --shadow:0 5px 22px #0002;
+  --symbol-blue:#a7baff; --symbol-sky:#87c2f0; --symbol-teal:#73cdc1; --symbol-purple:#c9a3f2; --symbol-amber:#e6bc79; --symbol-rose:#eea0b5;
 }
+svg[data-symbol=storage],svg[data-symbol=document] { --symbol-color:var(--symbol-blue); }
+svg[data-symbol=cloud],svg[data-symbol=network],svg[data-symbol=download] { --symbol-color:var(--symbol-sky); }
+svg[data-symbol=server],svg[data-symbol=audio],svg[data-symbol=apps] { --symbol-color:var(--symbol-teal); }
+svg[data-symbol=nearby],svg[data-symbol=image],svg[data-symbol=settings],svg[data-symbol=chart],svg[data-symbol=external] { --symbol-color:var(--symbol-purple); }
+svg[data-symbol=star],svg[data-symbol=sd],svg[data-symbol=archive],svg[data-symbol=tasks],svg[data-symbol=recent] { --symbol-color:var(--symbol-amber); }
+svg[data-symbol=video],svg[data-symbol=trash] { --symbol-color:var(--symbol-rose); }
+.tile-icon svg,.tool-illustration svg,.drawer .nav-item svg,.network-open svg { color:var(--symbol-color,var(--accent)); }
 body { background:var(--page); -webkit-font-smoothing:antialiased; }
 #app,#workbench { background:var(--page); }
 .topbar { background:var(--page); min-height:58px; }
@@ -51,6 +60,10 @@ body { background:var(--page); -webkit-font-smoothing:antialiased; }
 .tool-page .setting-row { display:flex; align-items:center; gap:10px; background:var(--surface); text-align:left; }
 .tool-page .setting-row svg { display:block; width:20px; height:20px; color:var(--muted); }
 .tool-page .setting-row.primary svg { color:inherit; }
+.tool-page .service-action { display:inline-flex; align-items:center; justify-content:center; gap:9px; min-height:44px; padding:10px 14px; border:1px solid var(--line); border-radius:var(--control-radius); background:var(--selected); color:var(--accent); font-weight:550; }
+.service-symbol { display:flex; }
+.service-action svg { width:19px; height:19px; }
+.tool-page .service-action[data-running=true] { color:var(--danger); background:var(--surface); }
 .tool-page .application-row { background:transparent; border-color:var(--line); }
 .settings-nav { background:var(--bg); border:1px solid var(--line); border-radius:14px; padding:5px; margin-bottom:12px; gap:4px; box-shadow:var(--shadow); }
 .tool-page .settings-nav button { border-radius:9px; font-size:13px; padding:10px 13px; }
@@ -82,6 +95,9 @@ body { background:var(--page); -webkit-font-smoothing:antialiased; }
 .update-indicator::after { content:''; position:absolute; right:8px; top:7px; width:6px; height:6px; border-radius:50%; background:var(--purple); border:1px solid var(--bg); }
 .update-indicator svg { width:21px; height:21px; }
 .drawer { border-right:1px solid var(--line); border-radius:0 20px 20px 0; }
+.wide-layout .drawer { border-radius:0; }
+.wide-layout #nav-favorites .favorite-more { width:44px; flex:0 0 44px; }
+.wide-layout #nav-favorites .favorite-location>button:first-child { width:auto; }
 .drawer-brand { margin-bottom:8px; border-bottom:1px solid var(--line); }
 .nav-item { border-radius:10px; }
 .sheet-panel { border:1px solid var(--line); border-radius:22px 22px 0 0; }
@@ -100,5 +116,5 @@ body { background:var(--page); -webkit-font-smoothing:antialiased; }
 .tool-page .nearby-ui>label,.tool-page .nearby-ui>h2,.tool-page .nearby-ui>p { padding-inline:4px; }
 .tool-page .nearby-ui button,.tool-page .nearby-ui input { border-radius:var(--control-radius); background:var(--bg); }
 .tool-page .nearby-ui .n-primary { background:var(--accent); color:var(--accent-ink); }
-@container layout (min-width:720px) { .settings-nav { margin:0; align-self:start; } .wide-layout .drawer { border-radius:0; } }
+@container layout (min-width:720px) { .settings-nav { margin:0; align-self:start; touch-action:pan-y; } }
 @media(max-width:320px) { .home-grid { gap:6px; } .tool-page { padding:8px; } #tool-extra:not(.nearby-ui),#tool-server,#tool-usage,.settings-content>[data-settings-panel] { padding:14px; } }

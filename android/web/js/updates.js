@@ -91,7 +91,7 @@ const androidUpdates=(()=>{
       const mark=ui.el('span','update-mark');mark.innerHTML=ui.icon('download');const copy=ui.el('span','update-copy');copy.append(ui.el('strong'),ui.el('small'));const arrow=ui.el('span','update-arrow');arrow.innerHTML=ui.icon('next');card.append(mark,copy,arrow);home.prepend(card);
     }
     card.querySelector('strong').textContent=status.state==='available'?'发现新版本 '+status.release?.version:labels[status.state];
-    card.querySelector('small').textContent=status.state==='available'?'查看更新内容，再选择下载':status.state==='ready'?'已完成校验，轻点继续安装':'后台处理，不影响浏览文件';
+    card.querySelector('small').textContent=status.state==='available'?'查看更新内容':status.state==='ready'?'已完成校验，轻点继续安装':'后台处理，不影响浏览文件';
   }
   async function onSettings(){
     await load();if(!form)await build();

@@ -487,20 +487,26 @@ try{
     const {context,page:p,errors}=await pageFor({nativeV3:true,nativeUpdates:true,nearby:true});await tile(p,'storage-0').waitFor();
     const symbols=await Promise.all(['storage-0','remote','server','nearby'].map(id=>tile(p,id).locator('svg').getAttribute('data-symbol')));
     check(new Set(symbols).size===4&&symbols[0]==='storage','Storage, network, computer access and Nearby have distinct purpose-drawn symbols');
+    check(await tile(p,'storage-1').locator('svg').getAttribute('data-symbol')==='cloud','A cloud document-provider root uses a cloud, not an SD-card glyph');
+    check(await p.locator('.home-tile .tile-icon svg').evaluateAll(nodes=>nodes.every(n=>getComputedStyle(n).color!==getComputedStyle(document.body).getPropertyValue('--muted').trim()&&getComputedStyle(n).getPropertyValue('--symbol-color').trim()!=='')),'Every Home destination uses the shared colored-symbol palette');
     await capture(p,'018-home-light');
     await p.evaluate(()=>{__model.updates.state='available';__model.updates.release={version:'0.1.99',notes:'第一项。第二项。',size:1024};return androidUpdates.onSettings()});
     check(await p.locator('.topbar #app-update-chip').isVisible()&&await p.locator('#app-update-chip').locator('svg').count()===1&&!await p.locator('#app>.native-task-chip#app-update-chip').count(),'Available update is a toolbar icon, not a bottom text strip');
-    check(await p.locator('#home-update-card').isVisible()&&await p.locator('#home').evaluate(e=>e.firstElementChild.id==='home-update-card'),'Home shows an actionable update card above the category grid');await capture(p,'018-home-update');
+    check(await p.locator('#home-update-card').isVisible()&&await p.locator('#home').evaluate(e=>e.firstElementChild.id==='home-update-card'),'Home shows an actionable update card above the category grid');check(await p.locator('#home-update-card small').innerText()==='查看更新内容','Update card keeps its caption concise');await capture(p,'018-home-update');
     await p.locator('#home-update-card').click();await p.locator('#update-state').waitFor();check(await p.locator('[data-settings-panel=updates]').isVisible(),'Update card opens the real update settings');
     const surfaces=[];
     for(const id of ['remote','server','usage','apps','tasks','providers','trash','nearby','settings']){
       await home(p);await tile(p,id).click();if(id==='settings')await p.click('[data-settings-section=display]');const panel=p.locator(id==='settings'?'[data-settings-panel=display]':id==='server'?'#tool-server':id==='usage'?'#tool-usage':'#tool-extra');await panel.waitFor();
       surfaces.push(await panel.evaluate(e=>{const s=getComputedStyle(e);return [s.backgroundColor,s.borderTopColor,s.borderTopLeftRadius].join('|')}));
       check(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'No horizontal overflow in styled '+id+' page');
+      if(id==='server')check(await p.locator('.service-action').count()===2&&await p.locator('#btn-server-toggle svg[data-symbol=play]').count()===1&&!await p.locator('#btn-server-toggle').evaluate(e=>e.classList.contains('primary')),'File and FTP service actions share a soft outlined icon-button component');
       if(['remote','server','nearby','settings'].includes(id))await capture(p,'018-'+id+'-light');
     }
     check(new Set(surfaces).size===1,'All feature interiors share the same card surface, outline and corner tokens');
     await p.click('#btn-theme');await home(p);check(await p.evaluate(()=>document.documentElement.dataset.theme==='dark'),'The common visual system retains dark mode');await capture(p,'018-home-dark');
+    await p.setViewportSize({width:1100,height:900});await p.waitForSelector('body.wide-layout');await p.locator('#drawer').waitFor();
+    await p.evaluate(()=>{const raw=JSON.stringify([{name:'photo.jpg',label:'旅行收藏',path:'/storage/emulated/0/photo.jpg',isDir:false}]);localStorage.setItem('rhfiles.favorites',raw);window.dispatchEvent(new StorageEvent('storage',{key:'rhfiles.favorites',newValue:raw}));});
+    check(await p.locator('.favorite-location>button:first-child').evaluate(e=>e.getBoundingClientRect().width>100)&&await p.locator('.favorite-more').evaluate(e=>e.getBoundingClientRect().width===44),'Persistent tablet drawer keeps favorite text visible next to the fixed-size menu');
     await context.close();
     const narrow=await pageFor({nativeV3:true,nativeUpdates:true,viewport:{width:275,height:760}});await tile(narrow.page,'storage-0').waitFor();await narrow.page.evaluate(()=>{__model.updates.state='available';__model.updates.release={version:'0.1.99',size:1024};return androidUpdates.onSettings()});
     check(await narrow.page.locator('.topbar').evaluate(e=>e.scrollWidth<=e.clientWidth)&&await narrow.page.evaluate(()=>document.documentElement.scrollWidth===innerWidth),'Toolbar update indicator and card fit a 275px pane');

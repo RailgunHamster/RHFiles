@@ -175,6 +175,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         tapCss(selector,false);
     }
     private void tapCss(String selector,boolean inPane) throws Exception {
+        awaitScript("(()=>{const f="+(inPane?"document.querySelector('.file-pane:not([hidden])')":"null")+",n=(f?f.contentDocument:document).querySelector("+JSONObject.quote(selector)+");return !!n&&n.getBoundingClientRect().width>0&&n.getBoundingClientRect().height>0;})()");
         JSONObject point=json("(()=>{const f="+(inPane?"document.querySelector('.file-pane:not([hidden])')":"null")+",n=(f?f.contentDocument:document).querySelector("+JSONObject.quote(selector)+");if(!n)throw Error('Missing touch target');const r=n.getBoundingClientRect(),o=f?f.getBoundingClientRect():{x:0,y:0};if(!r.width||!r.height)throw Error('Hidden touch target');return{x:o.x+r.x+r.width/2,y:o.y+r.y+r.height/2,width:innerWidth};})()");
         int[] offset=new int[2],width=new int[1];runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.getLocationOnScreen(offset);width[0]=web.getWidth();});
         float scale=(float)(width[0]/point.getDouble("width")),x=offset[0]+(float)point.getDouble("x")*scale,y=offset[1]+(float)point.getDouble("y")*scale;
@@ -199,9 +200,9 @@ public class SmbUpdateInstrumentation extends Instrumentation {
     }
     private void fileGesturesProbe(Bundle result) throws Exception {
         awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane')?.contentWindow.rhfilesPane");
-        eval("window.RHFilesWorkbench.openLayout(document.querySelector('.file-pane').contentWindow);document.querySelector('[data-layout=single]').click();window.__qa=document.querySelector('.file-pane:not([hidden])').contentWindow;void(async()=>{try{const list=await __qa.api.raw('list_dir',{path:'/storage/emulated/0/Download'});if(!list.entries.some(e=>e.name==='RHFiles-018-QA.txt'))await __qa.api.raw('create_file',{parent:'/storage/emulated/0/Download',name:'RHFiles-018-QA.txt'});__qa.document.getElementById('nav-home').click();window.__fixtureReady=true;}catch(e){window.__fixtureError=String(e)}})()");
+        eval("window.RHFilesWorkbench.openLayout(document.querySelector('.file-pane').contentWindow);document.querySelector('[data-layout=single]').click();window.__qa=document.querySelector('.file-pane:not([hidden])').contentWindow;void(async()=>{try{const list=await api.raw('list_dir',{path:'/storage/emulated/0/Download'});if(!list.entries.some(e=>e.name==='RHFiles-018-QA.txt'))await api.raw('create_file',{parent:'/storage/emulated/0/Download',name:'RHFiles-018-QA.txt'});__qa.document.getElementById('nav-home').click();window.__fixtureReady=true;}catch(e){window.__fixtureError=String(e)}})()");
         awaitScript("!!window.__fixtureReady||!!window.__fixtureError");require(eval("!window.__fixtureError").equals("true"),"Fixture creation failed: "+eval("window.__fixtureError"));
-        awaitScript("!!__qa.document.querySelector('[data-tile=downloads]')");tapCss("[data-tile=downloads]",true);
+        awaitScript("__qa.rhfilesPane.snapshot().route.screen==='home'&&!__qa.rhfilesPane.snapshot().busy&&__qa.document.querySelector('[data-tile=downloads]')?.getBoundingClientRect().height>0");tapCss("[data-tile=downloads]",true);
         String row="[data-path='/storage/emulated/0/Download/RHFiles-018-QA.txt']";
         awaitScript("!!__qa.document.querySelector("+JSONObject.quote(row)+")");eval("__qa.document.querySelector("+JSONObject.quote(row)+").scrollIntoView({block:'center'})");Thread.sleep(250);
         tapCss(row+" .entry-more",true);String menu=eval("[...__qa.document.querySelectorAll('#sheet .sheet-item')].map(n=>n.textContent).join('|')");eval("__qa.rhfilesHandleBack()");
@@ -212,7 +213,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         int before=json("({x:__qa.document.querySelector('.settings-nav').scrollLeft})").getInt("x");gestureCss(".settings-nav",.4f,30);
         require(eval("__qa.document.getElementById('drawer').hidden&&__qa.document.querySelector('.settings-nav').scrollLeft<"+before).equals("true"),"Settings pan opened drawer or failed to scroll tabs");
         eval("__qa.document.querySelector('[data-settings-section=updates]').click()");awaitScript("__qa.document.querySelectorAll('#app-changelog details').length>10");require(eval("__qa.document.getElementById('app-changelog').textContent.includes('0.1.18')").equals("true"),"Installed history missing from minified APK");screenshot("installed-history");
-        eval("void __qa.api.raw('delete_entries',{paths:['/storage/emulated/0/Download/RHFiles-018-QA.txt'],permanent:true})");
+        eval("void api.raw('delete_entries',{paths:['/storage/emulated/0/Download/RHFiles-018-QA.txt'],permanent:true})");
         result.putString("pass","true");result.putString("checks","real MotionEvent long press/overflow parity, file swipe Delete confirmation, settings tab scrolling, bundled installed history in minified APK");finish(Activity.RESULT_OK,result);
     }
     private void panesProbe(Bundle result) throws Exception {

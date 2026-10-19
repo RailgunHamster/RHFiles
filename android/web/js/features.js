@@ -10,7 +10,7 @@ const androidFeatures = (() => {
   const states = {queued:'排队',scanning:'计算大小',running:'进行中',paused:'已暂停',completed:'完成',failed:'失败',canceled:'已取消',interrupted:'上次运行中断'};
   const destinations = [
     ['remote','网络位置','network','SMB / FTP / WebDAV'], ['providers','外置存储与网盘','external','系统授权与文件提供者'],
-    ['apps','应用管理','grid','启动、卸载与备份'], ['tasks','文件任务','recent','进度、失败与重试'], ['trash','回收站','trash','恢复本机文件'],
+    ['apps','应用管理','apps','启动、卸载与备份'], ['tasks','文件任务','tasks','进度、失败与重试'], ['trash','回收站','trash','恢复本机文件'],
   ];
   const button = (label, fn, cls = '') => {
     const symbol=({'添加网络位置':'network','授权文件夹 / 外置存储':'external','从系统网盘导入文件':'download','重新发现':'refresh','停止发现':'close','授权应用占用统计':'chart'})[label];
@@ -336,7 +336,7 @@ const androidFeatures = (() => {
     if(!api.featuresAvailable())return;
     const status=await api.native('ftp.status');$('ftp-access').hidden=false;
     $('ftp-status').textContent=status.running?'共享位置：'+status.root+'\n'+(status.urls.join('\n')||'未检测到局域网地址，请连接 Wi-Fi')+'\n用户名：'+status.username+'\n密码：'+status.password+'\n'+(status.readOnly?'只读':'允许上传新文件'):'FTP 服务未启动';
-    $('btn-ftp-toggle').textContent=status.running?'停止 FTP 服务':'启动 FTP 服务';
+    ui.serviceAction($('btn-ftp-toggle'),status.running?'停止 FTP 服务':'启动 FTP 服务',status.running);
   }
   async function toggleFtp() {
     const status=await api.native('ftp.status');

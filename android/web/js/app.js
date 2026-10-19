@@ -158,7 +158,7 @@
     // touch. Rebuild only when the navigation layout itself changes.
     const snapshot=JSON.stringify([state.roots.map(({path,label,removable,provider})=>({path,label,removable,provider})),state.root,api.featuresAvailable()]);
     const capacityOf=root=>Number.isFinite(root.totalBytes) && Number.isFinite(root.freeBytes)
-      ? fmt.size(root.totalBytes-root.freeBytes)+' / '+fmt.size(root.totalBytes) : root.network ? '网络存储 · '+String(root.protocol||'SMB').toUpperCase() : root.removable ? fmt.baseName(root.path) : '本机文件';
+      ? fmt.size(root.totalBytes-root.freeBytes)+' / '+fmt.size(root.totalBytes) : root.network ? '网络存储 · '+String(root.protocol||'SMB').toUpperCase() : root.provider ? '已授权存储' : root.removable ? fmt.baseName(root.path) : '本机文件';
     const noteText=state.index?.lastFinishedMs ? '分类基于文件名索引；新文件可通过更新索引加入。' : '图片、音频等分类需要先建立本机文件名索引。';
     const indexText=state.index?.indexing ? '正在建立索引…' : '更新索引';
     if(snapshot===homeSnapshot && $('home').childElementCount){
@@ -172,7 +172,7 @@
     home.replaceChildren(grid);
     for (const [i, root] of homeRoots.entries()) {
       const capacity = capacityOf(root);
-      tile(grid, 'storage-' + i, rootLabel(root), root.network ? 'computer' : root.removable ? 'sd' : 'storage', '#768896', capacity, () => go({ screen: 'folder', path: root.path,label:rootLabel(root) }));
+      tile(grid, 'storage-' + i, rootLabel(root), ui.storageSymbol(root), '#5572d8', capacity, () => go({ screen: 'folder', path: root.path,label:rootLabel(root) }));
     }
     tile(grid, 'downloads', '下载', 'download', '#b78a41', 'Download', () => go({ screen: 'folder', path: state.root + '/Download', boundary:state.root+'/Download', boundaryLabel:'下载' }));
     for (const [id, label, color] of categories) tile(grid, id, label, id, color, id === 'recent' ? '按修改时间' : '按文件类型', () => go({ screen: 'library', category: id }));
@@ -190,7 +190,7 @@
   let drawerSignature='';
   function renderDrawer() {
     const signature=JSON.stringify([state.roots,state.favorites]);if(signature===drawerSignature)return;drawerSignature=signature;
-    $('roots').replaceChildren(...state.roots.map(root => button(rootLabel(root), root.network ? 'network' : root.removable ? 'sd' : 'storage', () => { closeDrawer(); return go({ screen: 'folder', path: root.path,label:rootLabel(root) }); })));
+    $('roots').replaceChildren(...state.roots.map(root => button(rootLabel(root), ui.storageSymbol(root), () => { closeDrawer(); return go({ screen: 'folder', path: root.path,label:rootLabel(root) }); })));
     $('nav-favorites').replaceChildren(...state.favorites.map(entry => {
       const row=ui.el('div','favorite-location');
       const open=button(favoriteLabel(entry),'star',()=>{closeDrawer();return activate(entry);});
@@ -642,7 +642,7 @@
     const server = await api.serverStatus(); state.server=server;
     $('server-status').textContent = server.running ? '共享位置：' + server.root + '\n' + ((server.urls || []).join('\n') || '未检测到局域网地址，请连接 Wi-Fi') + (server.password ? '\n用户名：rhfiles\n密码：'+server.password+'\n'+(server.readOnly?'只读':'允许上传新文件') : '') : '文件服务未启动';
     $('server-write').disabled=server.running;
-    $('btn-server-toggle').textContent = server.running ? '停止文件服务' : '启动文件服务';
+    ui.serviceAction($('btn-server-toggle'),server.running?'停止文件服务':'启动文件服务',server.running);
   }
   async function refreshLogs() {
     const page = await api.logs({limit:200});

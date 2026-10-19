@@ -14,6 +14,8 @@ const ui = (() => {
     layoutSingle:'<rect x="3" y="4" width="18" height="16" rx="2"/>',
     layoutAuto:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16M12 12h9"/>',
     check:'<path d="m5 12 4 4L19 6"/>',
+    play:'<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4z"/>',
+    stop:'<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 9h6v6H9z"/>',
     new: '<path d="M12 4v16M4 12h16"/>',
     grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
     sort: '<path d="M4 6h16M4 12h11M4 18h6"/>',
@@ -23,6 +25,9 @@ const ui = (() => {
     server: '<rect x="2.5" y="4" width="13" height="11" rx="2"/><path d="M9 15v4M5.5 19h7M18 9l3 3-3 3M12 12h9"/>',
     nearby: '<path d="M3 8h15l-3-3M21 16H6l3 3M3 4v8M21 12v8"/><circle cx="3" cy="16" r="1.5"/><circle cx="21" cy="8" r="1.5"/>',
     external: '<path d="M12 3v13m-3-10 3-3 3 3M7 10v3l5 3 5-3V9M5 8h4M15 7h4v4h-4z"/><circle cx="12" cy="19" r="2.5"/>',
+    cloud:'<path d="M7 19a5 5 0 0 1-.8-9.9A6.5 6.5 0 0 1 18.7 8a5.5 5.5 0 0 1-.2 11z"/>',
+    tasks:'<rect x="5" y="4" width="14" height="17" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="m8 11 1.5 1.5L12 10M14 11h2M8 17h8"/>',
+    apps:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M17.5 14v7M14 17.5h7"/>',
     sd: '<path d="M8 2h10v20H4V6zM9 5v4M13 5v4M16 5v4"/>',
     download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
     star: '<path d="m12 3 2.8 5.8 6.4.9-4.6 4.5 1.1 6.3-5.7-3-5.7 3 1.1-6.3L2.8 9.7l6.4-.9z"/>',
@@ -393,6 +398,15 @@ const ui = (() => {
     return true;
   }
 
-  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, bindDrawerSwipe, bindFileGestures, setDrawerOpen:opened=>setDrawerOpen(opened), copyText, ICONS,
+  function serviceAction(node,label,running){node.replaceChildren();const mark=el('span','service-symbol');mark.innerHTML=icon(running?'stop':'play');node.append(mark,el('span','',label));node.dataset.running=String(running);node.setAttribute('aria-pressed',String(running));}
+  function storageSymbol(root){
+    if(root.network)return 'network';
+    if(root.provider){
+      if(/^content:\/\/com\.android\.(externalstorage|downloads|media)\.documents\//i.test(root.path))return /(?:tree|document)\/primary(?:%3a|:)/i.test(root.path)?'storage':'external';
+      return 'cloud';
+    }
+    return root.removable?'sd':'storage';
+  }
+  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, bindDrawerSwipe, bindFileGestures, serviceAction, storageSymbol, setDrawerOpen:opened=>setDrawerOpen(opened), copyText, ICONS,
     setCloseGuard: fn => { closeGuard = fn; }, onClosed: fn => { cleanup = fn; } };
 })();
