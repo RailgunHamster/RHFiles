@@ -9,6 +9,7 @@ param(
     [string]$TokenFile="$env:USERPROFILE\.rhfiles-gitee-token.xml"
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'gitee-channels.ps1')
 $manifest=Get-Content -LiteralPath (Join-Path $Directory 'releases.android.json') -Raw | ConvertFrom-Json
 if($manifest.schemaVersion -ne 1 -or $manifest.packageId -ne 'com.railgunhamster.rhfiles'){throw 'Invalid Android feed'}
 $release=@($manifest.releases | Sort-Object { [long]$_.versionCode } -Descending)[0]
@@ -30,6 +31,8 @@ $scratch=Join-Path ([IO.Path]::GetTempPath()) ('rhfiles-gitee-verify-'+[guid]::N
 New-Item -ItemType Directory -Path $scratch | Out-Null
 try{
     $token=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+    $companion=@(Save-RHFilesGiteeCompanionChannels Android $Repository $scratch)
+    $files+=$companion
     $api="https://gitee.com/api/v5/repos/$Repository"
     $options=@{Headers=@{Authorization="Bearer $token";Accept='application/json'};TimeoutSec=120;MaximumRedirection=0}
     $repo=Invoke-RestMethod $api @options
@@ -59,6 +62,7 @@ try{
         Write-Host "Verified anonymous Gitee asset: $name"
     }
     if($remote.prerelease){
+        Assert-RHFilesGiteeCompanionsUnchanged $Repository $companion
         $body=@{tag_name=$tag;target_commitish=$Commit;name=('RHFiles Android '+$release.version);body=$release.notes;prerelease=$false}|ConvertTo-Json -Depth 8
         $null=Invoke-RestMethod "$api/releases/$($remote.id)" -Method Patch -ContentType 'application/json; charset=utf-8' -Body $body @options
     }
@@ -73,6 +77,7 @@ try{
     $latestEntry=@($channel.releases|Sort-Object {[long]$_.versionCode} -Descending)[0]
     if($latestEntry.versionCode -ne $release.versionCode -or $latestEntry.version -ne $release.version){throw 'Gitee latest download route points at an older/different release'}
     foreach($asset in $release.assets){$selected=@($latestEntry.assets|Where-Object abi -eq $asset.abi);if($selected.Count -ne 1 -or $selected[0].sha256 -ne $asset.sha256){throw 'Gitee latest feed APK checksum does not match the published release'}}
+    foreach($file in $companion){if((Read-RHFilesPublicGiteeFile $Repository $file.Name) -cne [IO.File]::ReadAllText($file.FullName)){throw 'Windows latest index was not preserved'}}
     Write-Host 'Verified API-free Gitee latest Android update channel'
     Write-Host "Published https://gitee.com/$Repository/releases/tag/$tag"
 }catch{

@@ -1171,6 +1171,8 @@
       assert($("#settings-proxy-enabled"), "Proxy enable setting is missing");
       assert($("#settings-proxy-url"), "Proxy address setting is missing");
       assert($("#settings-update-source"), "Update-source setting is missing");
+      assert($("#settings-update-gitee"), "Configurable Gitee update location is missing");
+      assertEqual($("#settings-update-gitee").value, getGiteeUpdateSource(), "Gitee source input is out of sync");
       assert($("#settings-update-github"), "Configurable GitHub update location is missing");
       assert($("#settings-update-server"), "Configurable home-server update location is missing");
       assertEqual($("#settings-update-github").value, getGithubUpdateSource(), "GitHub source input is out of sync");
@@ -1489,10 +1491,13 @@
       applyTheme(previousTheme, false);
     });
 
-    await test("[updates] GitHub and home-server locations are independently configurable", async () => {
+    await test("[updates] Gitee, GitHub and home-server locations are independently configurable", async () => {
       const savedSettings = { ...G.settings };
       const savedStorage = localStorage.getItem('rhfiles-settings');
       try {
+        G.settings.giteeUpdateSource = 'https://gitee.com/example/custom-files';
+        G.settings.updateSourceMode = 'gitee';
+        assertEqual(getUpdateSource(), 'https://gitee.com/example/custom-files', "Custom Gitee source was not selected");
         G.settings.githubUpdateSource = 'https://github.com/example/custom-files';
         G.settings.serverUpdateSource = '\\\\HOME-NAS\\Apps\\RHFiles-Releases';
         G.settings.updateSourceMode = 'github';

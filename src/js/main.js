@@ -207,6 +207,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   const ftpBtn = document.getElementById("ftp-connect-btn");
   if (ftpBtn) ftpBtn.addEventListener("click", showFtpDialog);
   loadRecentList();
+  call('get_instance_profile', {}).then(profile => {
+    if (profile?.desktopIdentified === false) showNotice(t('settings.desktopFallback'));
+  }).catch(() => {});
 
   initQuickSearch();
   scheduleOptionalDiscovery();
@@ -361,7 +364,11 @@ window.addEventListener('unhandledrejection', (e) => {
 function getUpdateSource() {
   return G.settings.updateSourceMode === 'server'
     ? getServerUpdateSource()
-    : getGithubUpdateSource();
+    : G.settings.updateSourceMode === 'github' ? getGithubUpdateSource() : getGiteeUpdateSource();
+}
+
+function getGiteeUpdateSource() {
+  return String(G.settings.giteeUpdateSource || '').trim() || DEFAULT_GITEE_UPDATE_SOURCE;
 }
 
 function getGithubUpdateSource() {

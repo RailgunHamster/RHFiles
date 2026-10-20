@@ -4,6 +4,7 @@ const invoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.inv
 const IS_MAC = /Mac/i.test(globalThis.navigator?.platform || '');
 const FS_ROOT = IS_MAC ? '/' : 'C:\\';
 const DEFAULT_GITHUB_UPDATE_SOURCE = 'https://github.com/RailgunHamster/RHFiles';
+const DEFAULT_GITEE_UPDATE_SOURCE = 'https://gitee.com/railgunhamster/RHFiles';
 const DEFAULT_SERVER_UPDATE_SOURCE = '\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases';
 
 // --- i18n ---
@@ -1127,10 +1128,12 @@ function loadSettings() {
     autoUpdateEnabled: true,
     proxyEnabled: false,
     proxyUrl: '',
-    updateSourceMode: 'github',
+    updateSourceMode: 'gitee',
+    updateSourceChoiceVersion: 1,
+    giteeUpdateSource: DEFAULT_GITEE_UPDATE_SOURCE,
     githubUpdateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
     serverUpdateSource: DEFAULT_SERVER_UPDATE_SOURCE,
-    updateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
+    updateSource: DEFAULT_GITEE_UPDATE_SOURCE,
     fileDialogIntegrationEnabled: false,
     fileDialogIntegrationExplorer: false,
     fileDialogIntegrationFileDialog: false,
@@ -1167,7 +1170,10 @@ function loadSettings() {
     settings.fileDialogIntegrationEnabled = settings.fileDialogIntegrationExplorer || settings.fileDialogIntegrationFileDialog;
     const legacySource = String(stored.updateSource || '').trim();
     if (!stored.updateSourceMode && legacySource) {
-      if (/^https?:\/\/github\.com\//i.test(legacySource)) {
+      if (/^https?:\/\/gitee\.com\//i.test(legacySource)) {
+        settings.updateSourceMode = 'gitee';
+        settings.giteeUpdateSource = legacySource;
+      } else if (/^https?:\/\/github\.com\//i.test(legacySource)) {
         settings.updateSourceMode = 'github';
         settings.githubUpdateSource = legacySource;
       } else {
@@ -1175,12 +1181,20 @@ function loadSettings() {
         settings.serverUpdateSource = legacySource;
       }
     }
-    if (settings.updateSourceMode !== 'server') settings.updateSourceMode = 'github';
+    if (!['gitee','github','server'].includes(settings.updateSourceMode)) settings.updateSourceMode = 'gitee';
+    // Migrate only the old bundled default. Custom repositories/LAN choices
+    // survive; a subsequent explicit GitHub choice is never migrated again.
+    if (!stored.updateSourceChoiceVersion && settings.updateSourceMode === 'github'
+      && String(settings.githubUpdateSource || '').replace(/\/+$/, '').toLowerCase() === DEFAULT_GITHUB_UPDATE_SOURCE.toLowerCase()) {
+      settings.updateSourceMode = 'gitee';
+    }
+    settings.updateSourceChoiceVersion = 1;
+    settings.giteeUpdateSource = String(settings.giteeUpdateSource || '').trim() || DEFAULT_GITEE_UPDATE_SOURCE;
     settings.githubUpdateSource = String(settings.githubUpdateSource || '').trim() || DEFAULT_GITHUB_UPDATE_SOURCE;
     settings.serverUpdateSource = String(settings.serverUpdateSource || '').trim() || DEFAULT_SERVER_UPDATE_SOURCE;
     settings.updateSource = settings.updateSourceMode === 'server'
       ? settings.serverUpdateSource
-      : settings.githubUpdateSource;
+      : settings.updateSourceMode === 'github' ? settings.githubUpdateSource : settings.giteeUpdateSource;
     return settings;
   } catch (e) { return defaults; }
 }

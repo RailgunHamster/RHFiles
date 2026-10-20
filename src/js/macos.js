@@ -6,7 +6,7 @@ function configureMacSettings() {
     terminal.value = G.settings.terminal === 'iterm' ? 'iterm' : 'terminal';
   }
   document.getElementById('settings-page-integration')?.remove();
-  for (const id of ['settings-auto-update','settings-update-source','settings-update-github','settings-update-server']) {
+  for (const id of ['settings-auto-update','settings-update-source','settings-update-gitee','settings-update-github','settings-update-server']) {
     document.getElementById(id)?.closest('.settings-row')?.remove();
   }
   document.querySelectorAll('[data-archive-tool="bandizip"], [data-archive-tool="winrar"]').forEach(el => el.remove());

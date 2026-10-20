@@ -13,7 +13,7 @@ export async function until(check,label,timeout=15000) {
   while(Date.now()<end){try{const value=await check();if(value)return value;}catch(e){last=e;}await sleep(100);}
   throw Error(`Timed out: ${label}${last?' — '+last.message:''}`);
 }
-export async function launchApp({emulateFocus=false}={}) {
+export async function launchApp({emulateFocus=false,desktopId='e2e-isolated'}={}) {
   if(process.platform!=='win32')throw Error('Real RHFiles E2E requires Windows and WebView2');
   const executable=path.join(root,'target/debug/rhfiles.exe');
   if(!fs.existsSync(executable))throw Error('Build first: cargo build -p rhfiles-tauri --locked');
@@ -23,7 +23,7 @@ export async function launchApp({emulateFocus=false}={}) {
   const server=net.createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
   const port=server.address().port;await new Promise(resolve=>server.close(resolve));
   const child=spawn(executable,[],{cwd:directory,windowsHide:true,env:{...process.env,
-    RHFILES_TEST_PROFILE_ROOT:profileRoot,RHFILES_TEST_DESKTOP_ID:'e2e-isolated',RHFILES_CDP_PORT:String(port),RHFILES_AUTORUN_TESTS:'0'}});
+    RHFILES_TEST_PROFILE_ROOT:profileRoot,RHFILES_TEST_DESKTOP_ID:desktopId,RHFILES_CDP_PORT:String(port),RHFILES_AUTORUN_TESTS:'0'}});
   let output='';child.stdout.on('data',x=>output+=x);child.stderr.on('data',x=>output+=x);
   let spawnError;child.on('error',e=>spawnError=e);
   let socket;let next=0;const pending=new Map(),events=[];

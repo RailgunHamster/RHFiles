@@ -30,7 +30,7 @@ Windows Latest 中的 Android 清单/附件只是兼容旧手机版，不能混�
    its Cargo package/lock entry and Tauri configuration together; add its own
    release notes. Before 1.0, patches remain sequential; meaningful incompatible
    changes may advance minor, without resetting Android's installation counter.
-2. Android explicitly stores `bundle.android.versionCode` (currently 1022) in
+2. Android explicitly stores `bundle.android.versionCode` (initial explicit baseline: 1022) in
    its Tauri configuration. Increment this integer for every new published APK
    version. Do not derive it from the desktop version, dates or a developer's
    local build count. All ABIs for one release share the same version/code/key.
@@ -96,6 +96,33 @@ dotnet tool install --global vpk --version 1.2.0
 Keep the version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` aligned, add `docs/release-notes/<version>.md`, then push an annotated `v<version>` tag. `.github/workflows/release.yml` packages and publishes the release, including the cumulative history asset used by the Settings client. It downloads the previous package first so Velopack can generate a delta when possible.
 
 The first Velopack portable build is a bootstrap release: users of the old hand-made ZIP must replace it once. Every Velopack release after that can update itself.
+
+## Gitee Windows / Windows 的 Gitee 更新
+
+Windows 0.1.73+ supports Gitee directly and defaults to
+`https://gitee.com/railgunhamster/RHFiles`. The old bundled GitHub default migrates
+once; custom repositories, LAN sources, disabled auto-checks and later explicit
+GitHub choices are preserved. Client checks and downloads require neither a
+GitHub connection nor a publishing token.
+
+按用户选择，Gitee 与 GitHub 在本地分别发布，不将 Gitee 令牌放入 GitHub。
+本地 Windows 打包后执行（`Commit` 必须是构建所用的完整 SHA）：
+
+```powershell
+./scripts/publish-windows-gitee.ps1 -Directory ./dist/production-<version> -Commit <full-sha>
+```
+
+The Gitee publisher reads its existing DPAPI-encrypted token outside Git, or an
+explicit `GITEE_TOKEN` environment variable. It uploads immutable `v<version>`
+payloads, verifies anonymous hashes, and only then marks the release stable.
+Windows metadata uses `releases/download/latest/releases.win.json` and
+`release-history.json`; package downloads use `releases/download/v<version>/…`.
+No anonymous Gitee v5 API is required by clients.
+
+Gitee 的仓库级 Latest 由两端共用。因此 Windows 新发行版附带当前 Android
+清单；`publish-android-gitee.ps1` 同样附带当前 Windows 清单和累计日志。
+`gitee-channels.ps1` 校验平台，不混入另一端安装包，也不改变版本标签。
+发布期间发现另一端已更新时停止晋升，避免旧清单覆盖新入口。两端不要同时发布。
 
 ### CI reruns and packaging validation
 

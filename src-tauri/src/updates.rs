@@ -16,7 +16,7 @@ use velopack::{
     sources::{AutoSource, UpdateSource},
 };
 
-const DEFAULT_UPDATE_SOURCE: &str = "https://github.com/RailgunHamster/RHFiles";
+const DEFAULT_UPDATE_SOURCE: &str = "https://gitee.com/railgunhamster/RHFiles";
 const FEED_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -80,6 +80,7 @@ pub struct UpdateFailureInfo {
 #[derive(Clone)]
 enum WebSourceKind {
     Github { download_base: Url },
+    Gitee { repository_base: Url },
     Static { base_url: Url },
 }
 
@@ -95,24 +96,45 @@ struct ConfiguredWebSource {
 }
 
 #[derive(Clone)]
-struct NetworkUpdateSource { root: PathBuf }
+struct NetworkUpdateSource {
+    root: PathBuf,
+}
 
 impl UpdateSource for NetworkUpdateSource {
-    fn get_release_feed(&self, channel: &str, _app: &Manifest, _staged_user_id: &str) -> Result<VelopackAssetFeed, VelopackError> {
+    fn get_release_feed(
+        &self,
+        channel: &str,
+        _app: &Manifest,
+        _staged_user_id: &str,
+    ) -> Result<VelopackAssetFeed, VelopackError> {
         validate_asset_name(&format!("releases.{channel}.json"))?;
         let path = self.root.join(format!("releases.{channel}.json"));
-        let json = crate::network_io::read_text(&path, 8 * 1024 * 1024).map_err(VelopackError::Other)?;
+        let json =
+            crate::network_io::read_text(&path, 8 * 1024 * 1024).map_err(VelopackError::Other)?;
         serde_json::from_str(&json).map_err(VelopackError::from)
     }
 
-    fn download_release_entry(&self, asset: &VelopackAsset, local_file: &Path, progress_sender: Option<mpsc::Sender<i16>>) -> Result<(), VelopackError> {
+    fn download_release_entry(
+        &self,
+        asset: &VelopackAsset,
+        local_file: &Path,
+        progress_sender: Option<mpsc::Sender<i16>>,
+    ) -> Result<(), VelopackError> {
         validate_asset_name(&asset.FileName)?;
-        crate::network_io::copy_update(&self.root.join(&asset.FileName), local_file, progress_sender).map_err(VelopackError::Other)
+        crate::network_io::copy_update(
+            &self.root.join(&asset.FileName),
+            local_file,
+            progress_sender,
+        )
+        .map_err(VelopackError::Other)
     }
 }
 
 fn validate_asset_name(name: &str) -> Result<(), VelopackError> {
-    if name.is_empty() || matches!(name, "." | "..") || name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '\0')) {
+    if name.is_empty()
+        || matches!(name, "." | "..")
+        || name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '\0'))
+    {
         return Err(VelopackError::Other("Invalid update asset filename".into()));
     }
     Ok(())
@@ -152,6 +174,37 @@ impl ConfiguredWebSource {
                     "https://github.com/{owner}/{repository}/releases/latest/download/"
                 ))?,
             }
+        } else if source_url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("gitee.com"))
+        {
+            if source_url.scheme() != "https"
+                || source_url.port().is_some()
+                || !source_url.username().is_empty()
+                || source_url.password().is_some()
+                || source_url.query().is_some()
+                || source_url.fragment().is_some()
+            {
+                return Err(VelopackError::Other("Gitee update source must be a public HTTPS repository URL without credentials or query parameters".into()));
+            }
+            let parts: Vec<_> = source_url
+                .path_segments()
+                .unwrap_or_else(|| unreachable!())
+                .filter(|part| !part.is_empty())
+                .collect();
+            if parts.len() != 2 || parts.iter().any(|part| !repository_component(part)) {
+                return Err(VelopackError::Other("Gitee update source must be a repository URL, for example https://gitee.com/owner/repository".into()));
+            }
+            let repository = parts[1].strip_suffix(".git").unwrap_or(parts[1]);
+            if !repository_component(repository) {
+                return Err(VelopackError::Other("Invalid Gitee repository name".into()));
+            }
+            WebSourceKind::Gitee {
+                repository_base: Url::parse(&format!(
+                    "https://gitee.com/{}/{repository}/releases/download/",
+                    parts[0]
+                ))?,
+            }
         } else {
             let base = format!("{}/", source.trim_end_matches('/'));
             WebSourceKind::Static {
@@ -171,6 +224,7 @@ impl ConfiguredWebSource {
             .feed_agent
             .get(url)
             .header("Accept", accept)
+            .header("Cache-Control", "no-cache")
             .call()
             .map_err(|error| web_error("Unable to retrieve update metadata", error))?;
         response
@@ -185,6 +239,9 @@ impl ConfiguredWebSource {
                 download_base.join("release-history.json")?
             }
             WebSourceKind::Static { base_url } => base_url.join("release-history.json")?,
+            WebSourceKind::Gitee { repository_base } => {
+                repository_base.join("latest/release-history.json")?
+            }
         };
         self.get_text(url.as_str(), "application/json")
     }
@@ -238,6 +295,28 @@ impl ConfiguredWebSource {
     }
 }
 
+fn repository_component(value: &str) -> bool {
+    !value.is_empty()
+        && !matches!(value, "." | "..")
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+}
+
+fn gitee_asset_url(repository_base: &Url, asset: &VelopackAsset) -> Result<Url, VelopackError> {
+    validate_asset_name(&asset.FileName)?;
+    // Latest is a cross-platform index only. Resolve payloads from their immutable
+    // Windows tag, never from an Android release or a moving "latest" URL.
+    let version = Version::parse(&asset.Version)?;
+    let mut url = repository_base.clone();
+    url.path_segments_mut()
+        .map_err(|_| VelopackError::Other("Invalid Gitee download URL".into()))?
+        .pop_if_empty()
+        .push(&format!("v{version}"))
+        .push(&asset.FileName);
+    Ok(url)
+}
+
 impl UpdateSource for ConfiguredWebSource {
     fn get_release_feed(
         &self,
@@ -246,10 +325,17 @@ impl UpdateSource for ConfiguredWebSource {
         staged_user_id: &str,
     ) -> Result<VelopackAssetFeed, VelopackError> {
         let feed_name = format!("releases.{channel}.json");
+        validate_asset_name(&feed_name)?;
         let json = match &self.kind {
             WebSourceKind::Github { download_base } => self.get_text(
                 download_base.join(&feed_name)?.as_str(),
                 "application/octet-stream",
+            )?,
+            WebSourceKind::Gitee { repository_base } => self.get_text(
+                repository_base
+                    .join(&format!("latest/{feed_name}"))?
+                    .as_str(),
+                "application/json",
             )?,
             WebSourceKind::Static { base_url } => {
                 let mut url = base_url.join(&feed_name)?;
@@ -261,7 +347,11 @@ impl UpdateSource for ConfiguredWebSource {
                 self.get_text(url.as_str(), "application/json")?
             }
         };
-        serde_json::from_str(&json).map_err(VelopackError::from)
+        let feed: VelopackAssetFeed = serde_json::from_str(&json)?;
+        if matches!(self.kind, WebSourceKind::Gitee { .. }) && feed.Assets.is_empty() {
+            return Err(VelopackError::Other("Gitee release has no Windows update assets; cannot confirm whether this is the latest version".into()));
+        }
+        Ok(feed)
     }
 
     fn download_release_entry(
@@ -270,11 +360,15 @@ impl UpdateSource for ConfiguredWebSource {
         local_file: &Path,
         progress_sender: Option<mpsc::Sender<i16>>,
     ) -> Result<(), VelopackError> {
+        validate_asset_name(&asset.FileName)?;
         let url = match &self.kind {
             WebSourceKind::Github { download_base } => {
                 download_base.join(&asset.FileName)?.to_string()
             }
             WebSourceKind::Static { base_url } => base_url.join(&asset.FileName)?.to_string(),
+            WebSourceKind::Gitee { repository_base } => {
+                gitee_asset_url(repository_base, asset)?.to_string()
+            }
         };
         self.download_to_file(&url, local_file, progress_sender)
     }
@@ -572,7 +666,13 @@ fn manager_for(source: &str, proxy: Option<&str>) -> Result<UpdateManager, Velop
         return UpdateManager::new(ConfiguredWebSource::new(source, proxy)?, None, None);
     }
     if crate::network_io::network_key(source).is_some() {
-        return UpdateManager::new(NetworkUpdateSource { root: PathBuf::from(source) }, None, None);
+        return UpdateManager::new(
+            NetworkUpdateSource {
+                root: PathBuf::from(source),
+            },
+            None,
+            None,
+        );
     }
     UpdateManager::new(AutoSource::new(source), None, None)
 }
@@ -764,7 +864,9 @@ pub fn apply_update(
         .get_update_pending_restart()
         .ok_or_else(|| "No downloaded update is waiting to be applied".to_string())?;
     cancel.begin_update()?;
-    if let Err(error) = manager.wait_exit_then_apply_updates(pending, false, true, Vec::<String>::new()) {
+    if let Err(error) =
+        manager.wait_exit_then_apply_updates(pending, false, true, Vec::<String>::new())
+    {
         cancel.abort_update();
         return Err(error.to_string());
     }
@@ -780,16 +882,174 @@ mod tests {
 
     #[test]
     fn network_feed_cannot_download_outside_its_source_directory() {
-        for name in ["", ".", "..", "../other.nupkg", "C:\\other.nupkg", "\\\\server\\share\\other.nupkg", "file:stream"] {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../other.nupkg",
+            "C:\\other.nupkg",
+            "\\\\server\\share\\other.nupkg",
+            "file:stream",
+        ] {
             assert!(validate_asset_name(name).is_err(), "{name}");
         }
         assert!(validate_asset_name("RHFiles-0.1.67-full.nupkg").is_ok());
     }
 
     #[test]
-    fn empty_source_uses_github() {
+    fn empty_source_uses_gitee() {
         assert_eq!(effective_source(None), DEFAULT_UPDATE_SOURCE);
         assert_eq!(effective_source(Some("   ".into())), DEFAULT_UPDATE_SOURCE);
+    }
+
+    #[test]
+    fn gitee_repository_is_not_treated_as_a_static_directory_or_api_endpoint() {
+        for url in [
+            DEFAULT_UPDATE_SOURCE,
+            "https://gitee.com/railgunhamster/RHFiles.git/",
+        ] {
+            let source = ConfiguredWebSource::new(url, None).unwrap();
+            match source.kind {
+                WebSourceKind::Gitee { repository_base } => assert_eq!(
+                    repository_base.as_str(),
+                    "https://gitee.com/railgunhamster/RHFiles/releases/download/"
+                ),
+                _ => panic!("Wrong Gitee provider"),
+            }
+        }
+        for url in [
+            "https://gitee.com/owner",
+            "https://gitee.com/owner/repo/releases",
+            "http://gitee.com/owner/repo",
+            "https://user:password@gitee.com/owner/repo",
+            "https://gitee.com/owner/repo?token=x",
+            "https://gitee.com/owner/repo#fragment",
+            "https://gitee.com:444/owner/repo",
+            "https://gitee.com/owner/%2Fother",
+        ] {
+            assert!(ConfiguredWebSource::new(url, None).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn gitee_packages_are_version_pinned_even_when_android_is_latest() {
+        let base = Url::parse("https://gitee.com/example/files/releases/download/").unwrap();
+        let asset = VelopackAsset {
+            Version: "0.1.73".into(),
+            FileName: "RHFiles-0.1.73-full.nupkg".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            gitee_asset_url(&base, &asset).unwrap().as_str(),
+            "https://gitee.com/example/files/releases/download/v0.1.73/RHFiles-0.1.73-full.nupkg"
+        );
+        let escaped = VelopackAsset {
+            FileName: "file?#%.nupkg".into(),
+            ..asset.clone()
+        };
+        let url = gitee_asset_url(&base, &escaped).unwrap();
+        assert!(url.query().is_none() && url.fragment().is_none());
+        assert!(url.path().ends_with("file%3F%23%25.nupkg"));
+        assert!(
+            gitee_asset_url(
+                &base,
+                &VelopackAsset {
+                    Version: "../android-v0.1.22".into(),
+                    ..asset.clone()
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            gitee_asset_url(
+                &base,
+                &VelopackAsset {
+                    FileName: "../secret".into(),
+                    ..asset
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn gitee_feed_history_and_payload_use_separate_expected_routes() {
+        use std::net::TcpListener;
+        let asset = VelopackAsset {
+            PackageId: "RHFiles".into(),
+            Version: "0.1.73".into(),
+            Type: "Full".into(),
+            FileName: "RHFiles-0.1.73-full.nupkg".into(),
+            Size: 3,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&VelopackAssetFeed {
+            Assets: vec![asset.clone()],
+        })
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for (route, body) in [
+                ("/latest/releases.win.json", json),
+                (
+                    "/latest/release-history.json",
+                    "{\"schemaVersion\":1,\"releases\":[]}".into(),
+                ),
+                ("/v0.1.73/RHFiles-0.1.73-full.nupkg", "abc".into()),
+            ] {
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(10))
+                        }
+                        Err(error) => panic!("No bounded update request: {error}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    assert_eq!(stream.read(&mut byte).unwrap(), 1);
+                    request.push(byte[0]);
+                    assert!(request.len() < 8192);
+                }
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(&format!("GET {route} HTTP/1.1"))
+                );
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).unwrap();
+            }
+        });
+        let mut source = ConfiguredWebSource::new(&format!("http://{address}"), None).unwrap();
+        // A loopback fixture only. Production Gitee sources require HTTPS.
+        source.kind = WebSourceKind::Gitee {
+            repository_base: Url::parse(&format!("http://{address}/")).unwrap(),
+        };
+        let feed = source
+            .get_release_feed("win", &Manifest::default(), "")
+            .unwrap();
+        assert_eq!(feed.Assets[0].Version, "0.1.73");
+        assert!(
+            source
+                .get_release_history_text()
+                .unwrap()
+                .contains("schemaVersion")
+        );
+        let directory = crate::test_support::TestDir::new("gitee-download");
+        let target = directory.0.join("update.nupkg");
+        source
+            .download_release_entry(&asset, &target, None)
+            .unwrap();
+        assert_eq!(std::fs::read(target).unwrap(), b"abc");
+        server.join().unwrap();
     }
 
     #[test]

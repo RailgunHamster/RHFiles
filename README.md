@@ -41,7 +41,7 @@ RHFiles 是无广告、无遥测的文件管理器，提供 **Windows 桌面版�
 
 | 平台 | 下载入口 | 说明 |
 | --- | --- | --- |
-| Windows 10 / 11 | [最新版 portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | 正式标签 `v…`，支持 portable 原地更新 |
+| Windows 10 / 11 | [Gitee 下载](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | 正式标签 `v…`，支持 portable 原地更新 |
 | Android 7.0+ | [Gitee APK](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | 正式标签 `android-v…`；普通手机选择 ARM64 APK |
 | macOS 12+ / Apple Silicon | [macOS 预览构建](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | 从成功的运行记录下载 `.app.zip` / `.dmg`，不提供 Intel 版本 |
 
@@ -74,7 +74,7 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 - 随包 FFmpeg 转换常见视频、音频与图片，可配置编码、质量、分辨率、码率等参数，并查看进度、速度和错误。
 - 地址栏支持本地、UNC / SMB 路径及 `file:///` 地址；文件地址会打开所在目录并选中文件。
 - 可选的 Windows 资源管理器与原生打开/保存框伴随列表；也能从右键菜单打开 Explorer 或定位文件。
-- 主题包、每个虚拟桌面的独立数据，以及 GitHub / 家庭服务器 Velopack portable 自更新。
+- 主题包、每个虚拟桌面的独立数据，以及 Gitee / GitHub / 家庭服务器 Velopack portable 自更新；Windows 0.1.73 起默认使用 Gitee。
 
 **安装：** portable 包必须完整解压，再运行 `RHFiles.exe`；保留同目录下的 `Everything.exe`、`Everything64.dll`、`dust.exe`、`ffmpeg.exe`、`7z.exe`、`7z.dll` 等文件。Windows 当前构建未进行代码签名，可能显示“未知发布者”。
 
@@ -87,6 +87,8 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 **Windows 集成（实验性）：** 设置中开启后，资源管理器或标准打开/保存框旁显示 RHFiles 已打开的位置列表。点击只跳转当前目标窗口，默认快捷键 `Ctrl+G` 仅重新聚焦列表。浏览器的原生文件选择框可用，但自绘选择器和管理员权限窗口可能不支持。“用 RHFiles 选文件”提供按对话框类型过滤的缩略图网格、多选与预览，确认后写回仍打开的原生对话框；取消不影响原选择框，也不改写剪贴板。
 
 **更新：** 启动后、打开设置时及运行期间每小时检查；关闭自动检查后仅手动检查生效。可读取累计更新日志，离线保留随包日志。Windows 专属的 Everything、Velopack、Explorer 集成和高级主题能力，不代表 Android / macOS 都具备。
+
+**虚拟桌面识别失败：** 不再阻止启动，而使用当前账号、登录会话的独立备用配置；原有各桌面数据不会被覆盖或混用。备用配置在设置中明确标识，并暂停 Explorer / 原生选文件窗口联动。系统恢复识别后重新启动会使用正常桌面配置，不自动合并备用数据。
 
 ### macOS 预览版
 
@@ -132,7 +134,7 @@ RHFiles is an ad-free, telemetry-free file manager with a **Windows desktop appl
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| Windows 10 / 11 | [Latest portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | Stable tags `v…`; portable in-place updates |
+| Windows 10 / 11 | [Gitee downloads](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | Stable tags `v…`; portable in-place updates |
 | Android 7.0+ | [Gitee APKs](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | Tags `android-v…`; use ARM64 for ordinary phones |
 | macOS 12+ / Apple Silicon | [macOS preview artifacts](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | Download `.app.zip` / `.dmg` from a successful run; no Intel builds |
 
@@ -164,7 +166,7 @@ The unified task center, external image opening, remembered per-type openers and
 - Bundled 7-Zip for browsing/extracting ZIP (including split volumes), 7z, RAR and more, with progress/cancellation; ZIP creation remains built-in.
 - Bundled FFmpeg for configurable video/audio/image conversion with progress, speed, cancellation and detailed errors.
 - Local/UNC/SMB paths and `file:///` URLs; file addresses reveal and select the file in its containing folder.
-- Optional File Explorer / native Open/Save dialog integration, reloadable theme packs, per-virtual-desktop profiles, and GitHub/home-server Velopack portable updates.
+- Optional File Explorer / native Open/Save dialog integration, reloadable theme packs, per-virtual-desktop profiles, and Gitee/GitHub/home-server Velopack portable updates. Windows defaults to Gitee from 0.1.73 onward.
 
 **Installation:** extract the entire portable ZIP and run `RHFiles.exe`. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, `ffmpeg.exe`, `7z.exe`, `7z.dll` and the other bundled files beside it. Current Windows builds are not code-signed and may show an “Unknown publisher” warning.
 
@@ -177,6 +179,8 @@ The unified task center, external image opening, remembered per-type openers and
 **Windows integration (experimental):** an opt-in companion list beside File Explorer or standard Open/Save dialogs shows RHFiles locations. Clicking affects only the target Windows window; the default `Ctrl+G` shortcut merely refocuses the list. Native browser file pickers are supported; custom or elevated pickers may not be. **Choose files in RHFiles** offers a type-filtered thumbnail grid, multi-selection and preview, then returns selected files to the still-open native dialog. Cancellation preserves the original picker; the integration does not replace the clipboard.
 
 **Updates:** automatic checks run after startup, on opening Settings and hourly. Disabling them leaves only manual checks. Cumulative notes are available with bundled offline history. Everything, Velopack, Explorer integration and advanced desktop themes are Windows-specific, not promises of identical Android/macOS functionality.
+
+**Unavailable virtual-desktop identity:** startup uses an isolated account/session fallback instead of exiting. Existing desktop profiles remain untouched. Settings identifies the fallback, and Explorer/file-dialog integration is disabled there. Restarting after Windows identity detection recovers uses the normal desktop profile; fallback data is not automatically merged.
 
 ### macOS preview
 

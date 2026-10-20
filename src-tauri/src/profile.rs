@@ -12,6 +12,7 @@ pub struct Profile {
     pub webview_directory: PathBuf,
     pub instance_id: String,
     pub legacy: bool,
+    pub desktop_identified: bool,
 }
 
 static PROFILE: OnceLock<Profile> = OnceLock::new();
@@ -23,7 +24,8 @@ pub fn user_root() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(root));
     }
     #[cfg(target_os = "macos")]
-    return std::env::var_os("HOME").filter(|p| !p.is_empty())
+    return std::env::var_os("HOME")
+        .filter(|p| !p.is_empty())
         .map(|p| PathBuf::from(p).join("Library/Application Support/RHFiles"))
         .ok_or_else(|| "Cannot locate this macOS user's home directory".into());
     #[cfg(not(target_os = "macos"))]
@@ -47,7 +49,9 @@ fn guid_key(id: windows::core::GUID) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-pub fn current_desktop_id() -> Option<String> { Some("default".into()) }
+pub fn current_desktop_id() -> Option<String> {
+    Some("default".into())
+}
 
 #[cfg(windows)]
 pub fn current_desktop_id() -> Option<String> {
@@ -97,8 +101,16 @@ pub fn current_desktop_id() -> Option<String> {
     keys.push(r"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops".into());
     keys.into_iter().find_map(|path| {
         let key = explorer.open_subkey(path).ok()?;
-        let raw = key.get_raw_value("CurrentVirtualDesktop").ok()?;
-        desktop_guid_bytes(&raw.bytes)
+        key.get_raw_value("CurrentVirtualDesktop")
+            .ok()
+            .and_then(|raw| desktop_guid_bytes(&raw.bytes))
+            // Systems using only one desktop may not have CurrentVirtualDesktop.
+            // A single registered GUID is unambiguous; never guess among many.
+            .or_else(|| {
+                key.get_raw_value("VirtualDesktopIDs")
+                    .ok()
+                    .and_then(|raw| desktop_guid_bytes(&raw.bytes))
+            })
     })
 }
 
@@ -113,28 +125,59 @@ fn desktop_guid_bytes(bytes: &[u8]) -> Option<String> {
     ))
 }
 
+fn launch_desktop_id(detected: Option<String>, session: Option<u32>) -> String {
+    detected.unwrap_or_else(|| {
+        format!(
+            "unidentified-session-{}",
+            session
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        )
+    })
+}
+
+#[cfg(windows)]
+fn interactive_session_id() -> Option<u32> {
+    let mut session = 0;
+    unsafe {
+        windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+            std::process::id(),
+            &mut session,
+        )
+    }
+    .ok()
+    .map(|_| session)
+}
+
 fn resolve_profile(root: PathBuf, local: PathBuf, desktop_id: String) -> Result<Profile, String> {
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let mut owner = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join("legacy-desktop.txt"))
-        .map_err(|e| e.to_string())?;
-    owner.lock().map_err(|e| e.to_string())?;
-    let mut first = String::new();
-    owner
-        .read_to_string(&mut first)
-        .map_err(|e| e.to_string())?;
-    if first.trim().is_empty() {
-        owner
-            .write_all(desktop_id.as_bytes())
+    let identified = !desktop_id.starts_with("unidentified-session-");
+    let legacy = if identified {
+        let mut owner = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join("legacy-desktop.txt"))
             .map_err(|e| e.to_string())?;
-        owner.sync_all().map_err(|e| e.to_string())?;
-        first = desktop_id.clone();
-    }
-    let legacy = first.trim() == desktop_id;
+        owner.lock().map_err(|e| e.to_string())?;
+        let mut first = String::new();
+        owner
+            .read_to_string(&mut first)
+            .map_err(|e| e.to_string())?;
+        if first.trim().is_empty() {
+            owner
+                .write_all(desktop_id.as_bytes())
+                .map_err(|e| e.to_string())?;
+            owner.sync_all().map_err(|e| e.to_string())?;
+            first = desktop_id.clone();
+        }
+        first.trim() == desktop_id
+    } else {
+        // Unknown desktop identity must neither claim nor reuse the legacy
+        // profile. Keep prior desktop data and WebView storage untouched.
+        false
+    };
     let data_directory = if legacy {
         root.clone()
     } else {
@@ -149,7 +192,11 @@ fn resolve_profile(root: PathBuf, local: PathBuf, desktop_id: String) -> Result<
             .join(&desktop_id)
             .join("WebView2")
     };
-    let account = stable_hash(&if cfg!(windows) { root.to_string_lossy().to_lowercase() } else { root.to_string_lossy().into_owned() });
+    let account = stable_hash(&if cfg!(windows) {
+        root.to_string_lossy().to_lowercase()
+    } else {
+        root.to_string_lossy().into_owned()
+    });
     Ok(Profile {
         instance_id: format!(
             "com.rhfiles.app.u{account:x}.d{}",
@@ -160,6 +207,7 @@ fn resolve_profile(root: PathBuf, local: PathBuf, desktop_id: String) -> Result<
         data_directory,
         webview_directory,
         legacy,
+        desktop_identified: identified,
     })
 }
 
@@ -179,10 +227,17 @@ pub fn initialize() -> Result<&'static Profile, String> {
     if std::env::var_os("RHFILES_TEST_PROFILE_ROOT").is_some() {
         local = root.join("test-webview");
         if let Ok(override_id) = std::env::var("RHFILES_TEST_DESKTOP_ID") {
-            desktop = Some(override_id);
+            desktop = if override_id == "unavailable" {
+                None
+            } else {
+                Some(override_id)
+            };
         }
     }
-    let desktop = desktop.ok_or("Cannot identify the current Windows virtual desktop. Try launching RHFiles from an Explorer window on that desktop.")?;
+    #[cfg(windows)]
+    let desktop = launch_desktop_id(desktop, interactive_session_id());
+    #[cfg(not(windows))]
+    let desktop = launch_desktop_id(desktop, None);
     let profile = resolve_profile(root, local, desktop)?;
     let gate = coordination_file("instance-gate.lock")?;
     gate.lock().map_err(|e| e.to_string())?;
@@ -207,9 +262,9 @@ pub fn webview_dir() -> Option<PathBuf> {
 }
 
 pub fn owns_current_desktop() -> bool {
-    PROFILE
-        .get()
-        .is_none_or(|p| current_desktop_id().as_deref() == Some(&p.desktop_id))
+    PROFILE.get().is_none_or(|p| {
+        p.desktop_identified && current_desktop_id().as_deref() == Some(&p.desktop_id)
+    })
 }
 
 pub fn journal_dir() -> Result<PathBuf, String> {
@@ -312,6 +367,75 @@ mod tests {
         assert_ne!(a.webview_directory, b.webview_directory);
         assert_ne!(a.instance_id, b.instance_id);
         assert_ne!(a.instance_id, other.instance_id);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_desktop_uses_stable_session_fallback_not_a_startup_error() {
+        assert_eq!(launch_desktop_id(None, Some(3)), "unidentified-session-3");
+        assert_eq!(
+            launch_desktop_id(None, None),
+            "unidentified-session-unknown"
+        );
+        assert_eq!(
+            launch_desktop_id(Some("desktop-a".into()), Some(3)),
+            "desktop-a"
+        );
+    }
+
+    #[test]
+    fn fallback_never_claims_legacy_or_mixes_other_desktops_sessions_and_accounts() {
+        let root = std::env::temp_dir().join(format!(
+            "rhfiles-fallback-{}-{:x}",
+            std::process::id(),
+            stable_hash(&format!("{:?}", std::time::SystemTime::now()))
+        ));
+        let user = root.join("user");
+        let local = root.join("local");
+        let fallback = resolve_profile(
+            user.clone(),
+            local.clone(),
+            launch_desktop_id(None, Some(1)),
+        )
+        .unwrap();
+        assert!(!user.join("legacy-desktop.txt").exists());
+        assert!(!fallback.legacy && !fallback.desktop_identified);
+        assert!(fallback.data_directory.starts_with(user.join("desktops")));
+        let desktop = resolve_profile(user.clone(), local.clone(), "desktop-a".into()).unwrap();
+        assert!(desktop.legacy && desktop.desktop_identified);
+        std::fs::write(user.join("settings-sentinel"), "original").unwrap();
+        let again = resolve_profile(
+            user.clone(),
+            local.clone(),
+            launch_desktop_id(None, Some(1)),
+        )
+        .unwrap();
+        let other = resolve_profile(
+            user.clone(),
+            local.clone(),
+            launch_desktop_id(None, Some(2)),
+        )
+        .unwrap();
+        let account = resolve_profile(
+            root.join("other-user"),
+            root.join("other-local"),
+            launch_desktop_id(None, Some(1)),
+        )
+        .unwrap();
+        assert_eq!(fallback.data_directory, again.data_directory);
+        assert_eq!(fallback.instance_id, again.instance_id);
+        assert_ne!(fallback.data_directory, desktop.data_directory);
+        assert_ne!(fallback.webview_directory, other.webview_directory);
+        assert_ne!(fallback.instance_id, other.instance_id);
+        assert_ne!(fallback.instance_id, account.instance_id);
+        assert_eq!(
+            std::fs::read_to_string(user.join("legacy-desktop.txt")).unwrap(),
+            "desktop-a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(user.join("settings-sentinel")).unwrap(),
+            "original"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -413,9 +413,12 @@ function openSettings() {
     '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-update-source">' + t('settings.updateSource') + '</label>' +
     '<select id="settings-update-source" onchange="setUpdateSourceMode(this.value)">' +
-      '<option value="github"' + (G.settings.updateSourceMode!=='server'?' selected':'') + '>' + t('settings.updateSourceGithub') + '</option>' +
+      '<option value="gitee"' + (G.settings.updateSourceMode==='gitee'?' selected':'') + '>' + t('settings.updateSourceGitee') + '</option>' +
+      '<option value="github"' + (G.settings.updateSourceMode==='github'?' selected':'') + '>' + t('settings.updateSourceGithub') + '</option>' +
       '<option value="server"' + (G.settings.updateSourceMode==='server'?' selected':'') + '>' + t('settings.updateSourceServer') + '</option>' +
     '</select></div>' +
+    '<div class="settings-row update-location-row"><label for="settings-update-gitee">' + t('settings.giteeUpdateSource') + '</label>' +
+    '<input id="settings-update-gitee" type="text" spellcheck="false" value="' + esc(getGiteeUpdateSource()) + '" onchange="setUpdateSourceLocation(\'gitee\',this.value,this)"></div>' +
     '<div class="settings-row update-location-row"><label for="settings-update-github">' + t('settings.githubUpdateSource') + '</label>' +
     '<input id="settings-update-github" type="text" spellcheck="false" value="' + esc(getGithubUpdateSource()) + '" onchange="setUpdateSourceLocation(\'github\',this.value,this)"></div>' +
     '<div class="settings-row update-location-row"><label for="settings-update-server">' + t('settings.serverUpdateSource') + '</label>' +
@@ -465,7 +468,7 @@ function openSettings() {
   if (IS_MAC && typeof configureMacSettings === 'function') configureMacSettings();
   call('get_instance_profile', {}).then(profile => {
     const element = document.getElementById('settings-instance-profile');
-    if (element && profile) element.textContent = t('settings.profileDetails', {
+    if (element && profile) element.textContent = (profile.desktopIdentified === false ? t('settings.desktopFallback') + '\n\n' : '') + t('settings.profileDetails', {
       desktop: profile.desktopId, data: profile.dataDirectory, webview: profile.webviewDirectory,
     });
   }).catch(() => {});
@@ -488,7 +491,8 @@ function setAutoUpdateEnabled(enabled) {
 }
 
 function setUpdateSourceMode(mode) {
-  G.settings.updateSourceMode = mode === 'server' ? 'server' : 'github';
+  G.settings.updateSourceMode = ['gitee','github','server'].includes(mode) ? mode : 'gitee';
+  G.settings.updateSourceChoiceVersion = 1;
   G.settings.updateSource = getUpdateSource();
   saveSettings();
   G._updateStatus = null;
@@ -497,15 +501,14 @@ function setUpdateSourceMode(mode) {
 }
 
 function setUpdateSourceLocation(kind, value, input) {
-  const isServer = kind === 'server';
-  const fallback = isServer ? DEFAULT_SERVER_UPDATE_SOURCE : DEFAULT_GITHUB_UPDATE_SOURCE;
+  if (!['gitee','github','server'].includes(kind)) return;
+  const fallback = {server:DEFAULT_SERVER_UPDATE_SOURCE,github:DEFAULT_GITHUB_UPDATE_SOURCE,gitee:DEFAULT_GITEE_UPDATE_SOURCE}[kind];
   const normalized = String(value || '').trim() || fallback;
-  if (isServer) G.settings.serverUpdateSource = normalized;
-  else G.settings.githubUpdateSource = normalized;
+  G.settings[{server:'serverUpdateSource',github:'githubUpdateSource',gitee:'giteeUpdateSource'}[kind]] = normalized;
   if (input) input.value = normalized;
   G.settings.updateSource = getUpdateSource();
   saveSettings();
-  if ((isServer && G.settings.updateSourceMode === 'server') || (!isServer && G.settings.updateSourceMode !== 'server')) {
+  if (kind === G.settings.updateSourceMode) {
     G._updateStatus = null;
     refreshUpdateSettingsStatus();
     loadReleaseHistory(false);
