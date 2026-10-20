@@ -26,6 +26,8 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $androidDir = Join-Path $repoRoot 'android'
+. (Join-Path $PSScriptRoot 'platform-version.ps1')
+$platformVersion=Get-RHFilesPlatformVersion -Platform Android -Root $repoRoot
 
 & (Join-Path $PSScriptRoot 'android-sync.ps1')
 
@@ -100,7 +102,7 @@ if ($buildRelease) {
 
 $seen = @{}
 $failures = @()
-$expectedVersion = (Get-Content (Join-Path $androidDir 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
+$expectedVersion = $platformVersion.Version
 $aapt = Join-Path $apksigner.Directory.FullName 'aapt.exe'
 if (-not (Test-Path -LiteralPath $aapt)) { throw 'aapt.exe is required to verify APK package/version/ABI' }
 foreach ($candidate in $candidates) {
@@ -113,7 +115,7 @@ foreach ($candidate in $candidates) {
         continue
     }
     $badging = (& $aapt dump badging $candidate.Path 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='com.railgunhamster.rhfiles'" -or $badging -notmatch "versionName='$([regex]::Escape($expectedVersion))'" -or $badging -notmatch "native-code: '$([regex]::Escape($abi))'\s*(?:`n|$)") {
+    if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='com.railgunhamster.rhfiles'" -or $badging -notmatch "versionName='$([regex]::Escape($expectedVersion))'" -or $badging -notmatch "versionCode='$($platformVersion.VersionCode)'" -or $badging -notmatch "native-code: '$([regex]::Escape($abi))'\s*(?:`n|$)") {
         $failures += "$($candidate.Kind): APK package, version or ABI does not match this build ($expectedVersion / $abi)"
         continue
     }

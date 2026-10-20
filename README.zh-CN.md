@@ -34,6 +34,15 @@ Mac 版：从 [macOS 构建工作流](https://github.com/RailgunHamster/RHFiles/
 
 ## 下载
 
+| 平台 | 下载入口 | 版本标签 |
+| --- | --- | --- |
+| Windows | [最新版 portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | `v…` |
+| Android | [手机版发布记录（新版本在前）](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) · [Gitee](https://gitee.com/railgunhamster/RHFiles/releases) | `android-v…` |
+| macOS Apple Silicon | [预览构建下载](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | 共用桌面源码版本 |
+
+桌面版和 Android 独立递增版本号。GitHub 的 **Latest** 标记留给 Windows，
+不代表手机版没有更新。详见[平台版本与不可覆盖发布规则](docs/RELEASING.md)。
+
 Android APK 见 [Gitee 发布记录](https://gitee.com/railgunhamster/RHFiles/releases)或 [GitHub 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v)。支持自适应独立双窗格、复制/移动到另一窗格、隔离的 EPUB/MOBI 阅读器及 Gitee/GitHub/家庭服务器 APK 更新。新安装或未配置来源时默认使用 Gitee，已有保存的来源保持不变。功能与限制见 [Android 说明](docs/ANDROID.md)。
 
 请从 [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest) 下载最新版 portable 压缩包或安装程序。

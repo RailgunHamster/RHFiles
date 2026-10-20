@@ -6,6 +6,8 @@ param(
     [string]$NotesFile
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'platform-version.ps1')
+$platformVersion=Get-RHFilesPlatformVersion -Platform Android
 $sdk = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $env:ANDROID_HOME }
 $buildTools = Get-ChildItem (Join-Path $sdk 'build-tools') -Directory | Sort-Object Name -Descending | Select-Object -First 1
 $aapt = Join-Path $buildTools.FullName 'aapt.exe'
@@ -14,6 +16,7 @@ $badging = (& $aapt dump badging $Apk) -join "`n"
 if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='com.railgunhamster.rhfiles' versionCode='(\d+)' versionName='([^']+)'") { throw 'Invalid RHFiles APK' }
 $code = [long]$Matches[1]
 $version = $Matches[2]
+if($version -cne $platformVersion.Version -or $code -ne $platformVersion.VersionCode){throw 'APK versionName/versionCode differs from the Android source manifest; refusing stale/probe APK'}
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Only stable Android versions can be published' }
 if ($badging -notmatch "native-code: '([^']+)'\s*(?:`n|$)") { throw 'Publish a single-ABI APK' }
 $abi = $Matches[1]
@@ -37,6 +40,7 @@ if (Test-Path -LiteralPath $feedPath) {
     $history = @($existing.releases)
 }
 $same = $history | Where-Object versionCode -eq $code | Select-Object -First 1
+Assert-RHFilesAndroidHistory -Version $version -Code $code -History $history
 if ($same) {
     if ($same.version -ne $version) { throw 'Version-code collision' }
     $previous = $same.assets | Where-Object abi -eq $abi | Select-Object -First 1

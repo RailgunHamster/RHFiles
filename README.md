@@ -32,6 +32,16 @@ RHFiles combines familiar Windows file operations with tabs, dual panes, rich pr
 
 ## Download
 
+| Platform | Download | Release tags |
+| --- | --- | --- |
+| Windows | [Latest stable portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | `v…` |
+| Android | [Android releases (newest first)](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) · [Gitee](https://gitee.com/railgunhamster/RHFiles/releases) | `android-v…` |
+| macOS Apple Silicon | [Preview build artifacts](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | Desktop source version |
+
+Desktop and Android versions advance independently. GitHub's **Latest** marker
+is reserved for Windows; it does not mean the Android release is older or missing.
+See [platform version and immutable release rules](docs/RELEASING.md).
+
 ### Android
 
 Get the APK from [Gitee Android releases](https://gitee.com/railgunhamster/RHFiles/releases) or [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v). Includes independent adaptive panes with Copy/Move to Other Pane, an isolated EPUB/MOBI reader, and Gitee/GitHub/home-server APK updates. Gitee is the default for new/unconfigured installations; existing saved source choices are preserved. See [Android features and limits](docs/ANDROID.md).
