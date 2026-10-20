@@ -7,6 +7,32 @@
 <p align="center">Windows 桌面版 · Android 手机版 · macOS Apple Silicon 预览版</p>
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a></p>
 
+## 界面预览 / Screenshots
+
+Windows · 文件浏览与代码预览
+
+![Windows 文件浏览、标签页与语法高亮预览](docs/screenshots/windows-preview.png)
+
+<table>
+  <tr>
+    <th>Android · 首页</th>
+    <th>Android · 文件浏览</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/android-home.png" width="320" alt="Android 分类首页"></td>
+    <td align="center"><img src="docs/screenshots/android-files.png" width="320" alt="Android 文件列表与路径导航"></td>
+  </tr>
+</table>
+
+<details>
+  <summary>Android · 展开查看大屏双窗格</summary>
+
+![Android 大屏双窗格，左侧列表与右侧网格独立浏览](docs/screenshots/android-dual-pane.png)
+
+</details>
+
+<sub>截图使用示例数据，由已发布版本的界面在浏览器中渲染，不包含私人文件。</sub>
+
 ## 中文
 
 RHFiles 是无广告、无遥测的文件管理器，提供 **Windows 桌面版与 Android 手机版**，另有 **macOS Apple Silicon 预览版**。桌面端使用 Rust / Tauri；手机版拥有面向触控、平板与折叠屏的独立界面和 Android 原生能力。各平台功能不完全相同，桌面版与 Android 的版本号独立维护。

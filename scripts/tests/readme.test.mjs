@@ -17,3 +17,18 @@ test('both language sections expose distinct mobile/desktop downloads and previe
 test('README local documentation and license links resolve',()=>{
   for(const [,target] of readme.matchAll(/\]\(([^)]+)\)/g)){if(/^(https?:|#)/.test(target))continue;assert.ok(fs.existsSync(path.resolve(root,target.split('#')[0])),'Broken README target: '+target);}
 });
+test('README shares one screenshot gallery before both language sections',()=>{
+  const gallery=readme.indexOf('## 界面预览 / Screenshots');
+  assert.ok(gallery>0&&gallery<readme.indexOf('## 中文'));
+  assert.equal((readme.match(/^## 界面预览 \/ Screenshots$/gm)||[]).length,1);
+  const images=[...readme.matchAll(/(?:\]\(|\bsrc=")(docs\/screenshots\/[^)"]+\.png)/g)].map(match=>match[1]);
+  assert.equal(images.length,4);assert.equal(new Set(images).size,4);
+  assert.match(readme,/截图使用示例数据/);
+  for(const image of images){
+    const bytes=fs.readFileSync(path.join(root,image));
+    assert.equal(bytes.subarray(0,8).toString('hex'),'89504e470d0a1a0a',image+' must be a real PNG');
+    assert.ok(bytes.readUInt32BE(16)>=800&&bytes.readUInt32BE(20)>=800,image+' needs readable resolution');
+    assert.ok(bytes.length<600_000,image+' should remain lightweight');
+    assert.ok(readme.indexOf(image)<readme.indexOf('## 中文'),'Do not repeat screenshots per language');
+  }
+});
