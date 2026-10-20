@@ -1,179 +1,187 @@
 <p align="center">
-  <img src="src-tauri/icons/rhfiles-icon-v4-128.png" width="96" height="96" alt="RHFiles icon">
+  <img src="src-tauri/icons/rhfiles-icon-v4-128.png" width="96" height="96" alt="RHFiles">
 </p>
 
 <h1 align="center">RHFiles</h1>
 
-<p align="center">A Rust and Tauri file manager for Windows, with native macOS support in preview.</p>
+<p align="center">Windows 桌面版 · Android 手机版 · macOS Apple Silicon 预览版</p>
+<p align="center"><a href="#中文">中文</a> · <a href="#english">English</a></p>
 
-<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
+## 中文
 
-RHFiles combines familiar Windows file operations with tabs, dual panes, rich previews, Everything-powered global search, Pinyin matching, disk-usage analysis, media conversion, and portable in-place updates. It is designed primarily for Windows 10 and Windows 11.
+RHFiles 是无广告、无遥测的文件管理器，提供 **Windows 桌面版与 Android 手机版**，另有 **macOS Apple Silicon 预览版**。桌面端使用 Rust / Tauri；手机版拥有面向触控、平板与折叠屏的独立界面和 Android 原生能力。各平台功能不完全相同，桌面版与 Android 的版本号独立维护。
 
-## Highlights
+### 下载
 
-- Tabs with history, independent dual-pane tabs, configurable shortcuts, and multi-selection.
-- Details, Cards, Thumbnails, and Columns layouts with Windows file-association icons.
-- Current-folder search with a bounded built-in fallback; global search powered by the bundled Everything engine.
-- Chinese Pinyin and initial-letter matching, including matches inside a filename.
-- Preview inspector for folders, images, text/source code, Markdown, PDF, audio, video, RTF, DOCX text, Windows shortcuts, and common 3D models.
-- Syntax-aware colors with strict preview limits so unusually large files do not freeze the UI.
-- `dust`-powered folder-size analysis with actionable results in the same inspector area as Preview.
-- Reversible delete, rename, and non-overwriting move operations.
-- Git/SVN status, favorites, tags, archives, SMB paths, FTP/SFTP, and cloud-file states.
-- Archive extraction and browsing run on the bundled 7-Zip console executable (ZIP including split volumes, 7z, RAR, and more) with progress and cancellation; creating ZIP archives stays built-in.
-- Context-menu actions can open a folder—or reveal a selected file—in Windows File Explorer.
-- Optional Windows integration shows every open RHFiles window, tab, and dual-pane location in a companion list beside standard Open/Save dialogs and File Explorer.
-- Right-click conversion for common video, audio, and image formats, powered by the bundled FFmpeg executable with progress, cancellation, configurable profiles, and detailed errors.
-- Address-bar support for local/UNC paths and `file:///` URLs; file addresses open the parent folder and select the target.
-- Velopack portable updates from GitHub Releases or a configurable home-server feed, with optional HTTP/HTTPS proxy support.
-- Multiple built-in color themes plus reloadable user theme packs—no recompilation required.
-- Opt-in encrypted [Nearby Transfer](docs/NEARBY.md) between Windows and Android, with per-batch receiver approval and no cloud relay.
-
-## Download
-
-| Platform | Download | Release tags |
+| 平台 | 下载入口 | 说明 |
 | --- | --- | --- |
-| Windows | [Latest stable portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | `v…` |
-| Android | [Android releases (newest first)](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) · [Gitee](https://gitee.com/railgunhamster/RHFiles/releases) | `android-v…` |
-| macOS Apple Silicon | [Preview build artifacts](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | Desktop source version |
+| Windows 10 / 11 | [最新版 portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | 正式标签 `v…`，支持 portable 原地更新 |
+| Android 7.0+ | [Gitee APK](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | 正式标签 `android-v…`；普通手机选择 ARM64 APK |
+| macOS 12+ / Apple Silicon | [macOS 预览构建](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | 从成功的运行记录下载 `.app.zip` / `.dmg`，不提供 Intel 版本 |
 
-Desktop and Android versions advance independently. GitHub's **Latest** marker
-is reserved for Windows; it does not mean the Android release is older or missing.
-See [platform version and immutable release rules](docs/RELEASING.md).
+GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本。两个平台使用独立的更新清单与日志；已发布安装包不覆盖，修复使用新版本。详见[版本与发布规则](docs/RELEASING.md)。
 
-### Android
+### Android 手机版
 
-Get the APK from [Gitee Android releases](https://gitee.com/railgunhamster/RHFiles/releases) or [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v). Includes independent adaptive panes with Copy/Move to Other Pane, an isolated EPUB/MOBI reader, and Gitee/GitHub/home-server APK updates. Gitee is the default for new/unconfigured installations; existing saved source choices are preserved. See [Android features and limits](docs/ANDROID.md).
+- 本机存储、SD 卡、USB 与系统授权的文档提供者；所有文件访问权限由用户在 Android 设置中授予，系统受限目录不会因此解除限制。
+- 图片、视频、音频、文档、压缩包与最近修改分类；图片、视频按实际文件夹分组，并显示最新媒体的缩略图。
+- 触控多选、文件复制/移动/删除、文件夹合并、回收站、ZIP/TAR/GZ/XZ 压缩包相关操作与文本编辑。网络/授权位置的能力取决于协议和提供者，不与本机操作完全等同。
+- 独立双窗格，可选择左右或上下布局，复制/移动到另一窗格；按内外屏、横竖屏分别记忆布局，平板宽屏可显示常驻侧栏。
+- 图片缩放与滑动浏览，音视频播放、定位与相邻视频切换；设备编解码能力仍有限制，MP4 扩展名不保证其中的编码一定可播放。
+- 隔离的 EPUB / MOBI 等电子书阅读器；书籍内容不获得文件管理器的系统操作接口。
+- SMB、FTP、WebDAV 网络位置；SMB 可只填主机以枚举共享，支持局域网发现、编辑连接与收藏子文件夹；可直接查看网络图片和播放支持的媒体。
+- 文件名索引与搜索、应用管理及 APK 备份、文件夹空间分析与详细报告；复制、移动等文件任务由后台服务执行，可查看进度、失败与中断记录。
+- 向电脑提供受密码保护的 HTTP / FTP 文件服务；与 Windows 加密[附近互传](docs/NEARBY.md)，接收端逐批确认，不经过云中转。
+- 本地加密配置备份，以及可选的 WebDAV 配置同步。同步收藏、网络连接等可共享配置，默认不上传登录密码，新设备需要补填。
+- APK 自动更新支持 Gitee、GitHub 和家庭服务器；新安装默认 Gitee，已保存的来源保持不变。下载后验证包名、版本、签名及校验和，再由 Android 系统确认安装。
 
-### macOS preview
+统一任务中心、外部图片打开、按类型记住打开方式和侧栏访问历史正在开发，不能把界面方案当作已发布功能。当前能力、权限、测试范围和限制见 [Android 说明](docs/ANDROID.md)。
 
-Apple Silicon (M-series, arm64) `.app.zip` / `.dmg` builds are produced by the [macOS workflow](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml). Choose a successful run and download its artifact. Intel builds are no longer produced. Requires macOS 12 or later. These are ad-hoc-signed, **not Apple-notarized** preview builds; GUI acceptance testing on a user's Mac is still required. See [macOS setup, supported features, permissions and limitations](docs/MACOS.md).
+### Windows 桌面版
 
-### Windows
+- 标签页、固定与排序、独立双窗格、可配置快捷键、多选，以及可撤销的删除、重命名和不覆盖移动。
+- 详细、卡片、缩略图和分栏视图，显示 Windows 文件关联图标；支持收藏、标签、Git/SVN 状态、SMB 路径、FTP/SFTP 和云文件状态。
+- 默认当前文件夹搜索；可切换 Everything 全局搜索。支持中文汉字、完整拼音、首字母、文件名中段匹配、通配符与正则表达式。
+- 文件夹、图片、文本/源码、Markdown、PDF、音视频、RTF、DOCX 文本、Windows 快捷方式和常见 3D 模型预览；文本带语法颜色和读取/渲染上限。
+- 预览与 `dust` 空间分析互斥使用同一检查器区域，可放大预览并操作分析结果。
+- 随包 7-Zip 浏览/解压 ZIP（含分卷）、7z、RAR 等格式，提供进度与取消；ZIP 创建为内置实现。
+- 随包 FFmpeg 转换常见视频、音频与图片，可配置编码、质量、分辨率、码率等参数，并查看进度、速度和错误。
+- 地址栏支持本地、UNC / SMB 路径及 `file:///` 地址；文件地址会打开所在目录并选中文件。
+- 可选的 Windows 资源管理器与原生打开/保存框伴随列表；也能从右键菜单打开 Explorer 或定位文件。
+- 主题包、每个虚拟桌面的独立数据，以及 GitHub / 家庭服务器 Velopack portable 自更新。
 
-Download the latest portable archive or installer from [GitHub Releases](https://github.com/RailgunHamster/RHFiles/releases/latest).
+**安装：** portable 包必须完整解压，再运行 `RHFiles.exe`；保留同目录下的 `Everything.exe`、`Everything64.dll`、`dust.exe`、`ffmpeg.exe`、`7z.exe`、`7z.dll` 等文件。Windows 当前构建未进行代码签名，可能显示“未知发布者”。
 
-For the portable build, extract the complete ZIP and launch `RHFiles.exe` from the extracted directory. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, `ffmpeg.exe`, `7z.exe`, `7z.dll`, and the other bundled files beside it. A Velopack portable installation can download, replace, and restart itself for later updates.
+**搜索与预览：** Everything 不可用时，当前文件夹搜索使用限时、限量的文件系统兜底；全局搜索需要 Everything 索引和可用的 IPC。普通账号索引全部 NTFS 卷可能需要 Everything 服务。媒体播放依赖 WebView2 / Windows 编解码器；DOCX、RTF 当前为文本型预览，不完整还原排版。离线 3D 支持 glTF/GLB（含 Draco / Meshopt）、OBJ/MTL、FBX、STL、PLY、3MF，提供旋转、缩放、平移、线框与动画；自动预览限制为 128 MiB、三百万三角面，暂不处理 CAD。
 
-Windows may show an “Unknown publisher” warning because current builds are not code-signed.
+**格式转换：** 右键选择“转换格式”，任务面板显示输出大小、速度、进度、取消及 FFmpeg 错误。随包 FFmpeg 9.0.1 Essentials 可在设置中替换。先写同目录临时文件，失败或取消不覆盖已有目标，成功后才替换。
 
-## Search behavior
+**主题与隔离：** 内置纸白、深色、暖沙、薄雾、森林和石板主题。自定义 JSON 主题包位于 `%APPDATA%\RHFiles\themes\*.json`，设置中可重新加载，见[主题文档](docs/THEMES.md)。在另一 Windows 虚拟桌面启动时使用独立实例与配置；移动已有窗口不会中途切换数据目录。额外配置位于 `%APPDATA%\RHFiles\desktops\<桌面 ID>`，WebView 缓存另存在 LocalAppData；不同 Windows 账号也独立。安装更新前需结束文件任务并退出其他桌面的实例；检查/下载不会强退它们。
 
-Search starts in the active folder. Use the scope button or the configurable shortcut to switch to global search.
+**Windows 集成（实验性）：** 设置中开启后，资源管理器或标准打开/保存框旁显示 RHFiles 已打开的位置列表。点击只跳转当前目标窗口，默认快捷键 `Ctrl+G` 仅重新聚焦列表。浏览器的原生文件选择框可用，但自绘选择器和管理员权限窗口可能不支持。“用 RHFiles 选文件”提供按对话框类型过滤的缩略图网格、多选与预览，确认后写回仍打开的原生对话框；取消不影响原选择框，也不改写剪贴板。
 
-- Folder scope keeps working when Everything is unavailable by using a time- and result-bounded filesystem search.
-- Global scope uses Everything's index for fast machine-wide results.
-- Plain queries match any part of a filename and support Chinese text, full Pinyin, and Pinyin initials.
-- Regex and wildcard modes are available from the search toolbar.
+**更新：** 启动后、打开设置时及运行期间每小时检查；关闭自动检查后仅手动检查生效。可读取累计更新日志，离线保留随包日志。Windows 专属的 Everything、Velopack、Explorer 集成和高级主题能力，不代表 Android / macOS 都具备。
 
-Everything may need its service enabled on a standard Windows account before it can index all NTFS volumes. RHFiles reports IPC and index readiness failures instead of leaving the search UI waiting indefinitely.
+### macOS 预览版
 
-## Preview and disk usage
+支持 Apple Silicon（M 系列、arm64），与桌面源码共用版本。当前为 ad-hoc 签名、**未经 Apple 公证**的预览构建，不宣称与 Windows 功能完全一致，仍需 Mac 实机界面验收。安装、权限和平台差异见 [macOS 说明](docs/MACOS.md)。
 
-Preview and Disk usage share one inspector surface and are mutually exclusive: opening one replaces the other. Preview can be opened by default from Settings and can be expanded to fullscreen.
+### 开发与测试
 
-Media playback depends on codecs supported by the installed WebView2/Windows media stack. DOCX and RTF currently use safe text-oriented previews rather than reproducing the original page layout.
-
-The offline 3D viewer supports glTF/GLB (including Draco and Meshopt compression), OBJ/MTL, FBX, STL, PLY, and 3MF. It provides orbit, zoom, pan, reset, wireframe, automatic rotation, and animation playback. Automatic preview is capped at 128 MiB and three million triangles; CAD formats are intentionally outside the current scope.
-
-## Media conversion
-
-Right-click a supported video, audio, or image and choose **Convert format**. RHFiles offers common output formats plus the relevant quality, codec, encoding speed, resolution, bitrate, sample-rate, channel, and image-width controls. Conversions run in the File operations panel, where progress, current output size, speed, cancellation, and the complete FFmpeg error are available.
-
-The portable package includes a pinned Windows x64 FFmpeg 9.0.1 Essentials executable. Settings can override it with another `ffmpeg.exe`. RHFiles writes to a same-folder temporary file first; cancelling or failing leaves an existing output untouched, and overwrite replacement happens only after conversion succeeds.
-
-## Themes
-
-RHFiles includes Paper, Dark, Sand, Mist, Forest, and Slate themes. User theme packs are JSON files placed in:
-
-```text
-%APPDATA%\RHFiles\themes\*.json
-```
-
-Settings can open this folder and reload changed themes immediately. Theme packs define a light/dark base and a validated set of CSS variables; an independent advanced-CSS override remains available for users who deliberately need unrestricted styling. See [Theme packs](docs/THEMES.md).
-
-## Virtual desktops and Windows accounts
-
-RHFiles binds each process to the Windows virtual desktop where it starts. Launching it again on that desktop activates its existing instance; launching it on another desktop starts an independent instance. Settings, tabs/window state, favorites, tags, recent items, user themes, and the WebView cache are isolated. Moving an existing window between desktops does not switch its profile underneath running tasks; open RHFiles on the destination desktop for that desktop's profile.
-
-The first desktop retains existing user data. Additional profiles use `%APPDATA%\RHFiles\desktops\<desktop-id>` and a separate WebView directory under `%LOCALAPPDATA%\RHFiles\desktops`. Settings → Data shows the exact directories for the current instance. Windows accounts already have separate AppData directories; the instance identifier is now account-specific as well. This isolates application state, not access to shared filesystem folders.
-
-The installation is shared across profiles. Installing an update requires all file tasks to finish and RHFiles instances on other desktops to exit; failures explain what must be closed. Checking/downloading an update does not force those instances to exit.
-
-## Updates and release history
-
-Automatic checks run after startup, when Settings is opened, and hourly while the app remains open. Disabling automatic checks prevents those requests; manual checks still work. The client can display cumulative release notes from either GitHub or the selected home-server feed and retains bundled notes for offline use.
-
-## Windows integration (experimental)
-
-Enable **Windows integration** in Settings and activate a standard Windows Open/Save dialog or File Explorer. A compact companion list appears beside it with the filesystem locations from every open RHFiles window, tab, and visible dual pane. Click a location to send only that exact Windows window there. Active and pinned tabs are identified, long paths reveal their trailing components, and the list scales with the target monitor's DPI.
-
-The configurable shortcut (default: `Ctrl+G`) is now optional and only brings the list back into focus—it never navigates by itself. The integration is opt-in, created lazily, and does not replace the clipboard. Browser uploads that use the native Windows picker are supported; custom in-app pickers and elevated windows may not accept navigation yet.
-
-### Choosing upload files inside RHFiles
-
-When a browser asks for a file—an image upload, for example—the companion list offers **Choose files in RHFiles**. RHFiles then opens its own picker: a thumbnail grid filtered to the types that dialog actually accepts, a live preview pane, multi-selection, and keyboard navigation. The browser's own dialog stays open the whole time, so confirming writes the chosen files back into it and the upload completes as usual.
-
-The filter is read from the dialog itself rather than guessed, so it works on any UI language and follows whatever the user changed the file-type dropdown to. Cancelling returns focus to the original dialog, and the browser's dialog remains fully usable if you would rather pick there.
-
-## Development
-
-Prerequisites:
-
-- Windows 10/11
-- Rust toolchain specified by `rust-toolchain.toml`
-- Microsoft WebView2 Runtime
-- .NET 8 and Velopack CLI 1.2.0 for release packaging
+Windows 需要 `rust-toolchain.toml` 指定的 Rust、WebView2；发布打包还需要 .NET 8 与 Velopack CLI 1.2.0。
 
 ```powershell
 cargo check --workspace
 cargo test --workspace --locked
+npm ci --ignore-scripts
+npm test
 ./scripts/test-gui.ps1 -Timeout 120
-```
-
-Build a release executable:
-
-```powershell
 cargo build --release --locked --package rhfiles-tauri
-```
-
-Create the portable/update feed:
-
-```powershell
 ./scripts/package-velopack.ps1
 ```
 
-See [Release process](docs/RELEASING.md) for versioning, tags, GitHub Releases, and LAN publishing.
-
-## RHFiles for Android
-
-A separate mobile application lives in [`android/`](android/). It is not a port of this codebase — the
-desktop backend is Win32/COM bound — but it targets the same goal from the other side: an ad-free,
-telemetry-free file manager with full storage access, built to replace File Manager Plus. It browses
-local, SD-card and USB storage, searches a self-built file-name index, and can serve the phone's files
-to a computer over HTTP. Its feature boundary, permission model and milestones are in
-[docs/ANDROID.md](docs/ANDROID.md).
+Android 需要 Android SDK / NDK、JDK 与 Rust Android target。请使用构建脚本同步原生源码、清单和签名，并验证最终 APK：
 
 ```powershell
-cd android
-cargo test --lib                                    # backend logic tests
-cargo tauri android build --apk --target aarch64    # release APK
+cargo test --manifest-path android/src-tauri/Cargo.toml --lib --tests
+node --test android/web/tests/*.test.cjs android/web/tests/format.test.js
+./scripts/android-build.ps1 -Target aarch64
 ```
 
-## License
+详见 [Android 开发与测试](android/README.md)、[macOS 构建](docs/MACOS.md)、[测试说明](docs/TESTING.md)和[发布说明](docs/RELEASING.md)。浏览器测试使用模拟 IPC，不等于真机媒体播放、系统权限或安装流程验证。
 
-RHFiles original code is licensed under the [Apache License 2.0](LICENSE),
-copyright 2026 RailgunHamster. Use, modification and commercial redistribution
-are allowed subject to that standard license. Redistributions must include the
-license and preserve applicable copyright/attribution notices; derivative
-distributions must carry the relevant attribution from [NOTICE](NOTICE) in a
-NOTICE file, accompanying source/documentation, or the usual notices display
-(Section 4). UI-only credit is not mandatory; private use requires no public
-announcement. Modified files must be identified as changed. Third-party
-components retain their own licenses; this does not replace their notices or
-grant rights to their names or trademarks.
+### 开源许可与第三方组件
 
-## Third-party components
+原创代码采用标准 [Apache License 2.0](LICENSE)，版权所有者为 RailgunHamster（2026）。允许使用、修改、再分发与商用；再分发须附许可证并保留适用的版权、署名与 [NOTICE](NOTICE) 来源声明，修改文件须注明改动。署名可放在 NOTICE、源码/文档或通常的声明展示处，不强制只能放在软件界面；私人自用不要求公开声明。没有添加自定义许可条件。第三方组件遵循各自许可，不授予其名称或商标权利。
 
-Portable packages bundle Everything, `dust`, a separate unmodified FFmpeg command-line executable, and the unmodified 7-Zip console executable `7z.exe` with `7z.dll` taken from the official 7-Zip 26.03 x64 installer (source: [7-zip.org](https://www.7-zip.org/); LGPL with the unRAR restriction, see `7zip-LICENSE.txt`). Their accompanying notices and licenses must remain with the distribution. FFmpeg build/source details are recorded in `FFmpeg-NOTICE.txt`; see also [FFmpeg's legal information](https://ffmpeg.org/legal.html) and the [Gyan Windows builds](https://www.gyan.dev/ffmpeg/builds/). The offline 3D viewer vendors a pinned subset of Three.js 0.185.1 under its MIT license. RHFiles also uses the Rust and JavaScript dependencies recorded in `Cargo.lock` and the source tree.
+Windows portable 随附 Everything、`dust`、未修改的独立 FFmpeg 程序，以及官方 7-Zip 26.03 x64 的 `7z.exe` / `7z.dll`（LGPL 及 unRAR 限制，见 `7zip-LICENSE.txt`）。FFmpeg 构建与源码信息见随包 `FFmpeg-NOTICE.txt`、[FFmpeg 许可说明](https://ffmpeg.org/legal.html)与 [Gyan 构建](https://www.gyan.dev/ffmpeg/builds/)。离线 3D 预览使用 Three.js 0.185.1 的 MIT 许可子集。分发须保留组件许可证和声明；其他依赖记录在各平台 `Cargo.lock` 及源码中。
+
+---
+
+## English
+
+RHFiles is an ad-free, telemetry-free file manager with a **Windows desktop application**, a separate **Android mobile application**, and a **macOS Apple Silicon preview**. Desktop uses Rust / Tauri; Android has its own touch-oriented interface and native platform integration. Platform features are not identical, and desktop and Android versions advance independently.
+
+### Download
+
+| Platform | Download | Notes |
+| --- | --- | --- |
+| Windows 10 / 11 | [Latest portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | Stable tags `v…`; portable in-place updates |
+| Android 7.0+ | [Gitee APKs](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | Tags `android-v…`; use ARM64 for ordinary phones |
+| macOS 12+ / Apple Silicon | [macOS preview artifacts](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | Download `.app.zip` / `.dmg` from a successful run; no Intel builds |
+
+GitHub **Latest** is reserved for Windows; it does not indicate whether Android has an update. Each platform uses its own update feed and release notes. Published package bytes are immutable; corrections receive a new version. See [version and release policy](docs/RELEASING.md).
+
+### Android
+
+- Local, SD-card, USB and system-authorized document-provider storage. Users grant all-files access through Android settings; protected system directories remain restricted.
+- Image, video, audio, document, archive and recently modified categories. Image/video albums group real folders and use their newest media as thumbnails.
+- Touch multi-selection, copy/move/delete, folder merging, local trash, ZIP/TAR/GZ/XZ archive operations and text editing. Remote/provider capabilities differ from local storage.
+- Independent horizontal or vertical panes with Copy/Move to Other Pane. Layout choices are remembered separately for inner/outer displays and portrait/landscape; wide layouts can keep the drawer visible.
+- Image zoom/swipe browsing, media playback, seeking and adjacent-video navigation. Codec support depends on the device; an MP4 extension alone does not guarantee playback.
+- An isolated EPUB / MOBI and other ebook reader; book content does not receive file-manager system APIs.
+- SMB, FTP and WebDAV connections, host-only SMB share enumeration, LAN discovery, editable connections and bookmarked subfolders. Browse remote images and stream supported media directly.
+- A local filename index/search, application management/APK backup, and detailed folder space reports. File operations run in background services with progress, failure and interruption records.
+- Password-protected HTTP / FTP access from a computer, plus encrypted [Nearby Transfer](docs/NEARBY.md) with Windows, per-batch receiver approval and no cloud relay.
+- Encrypted local configuration backups and optional WebDAV configuration sync. Shared favorites/connections sync without login passwords by default; new devices request the missing credentials.
+- APK updates from Gitee, GitHub or a home server. Gitee is the default for new installations; saved choices remain unchanged. Package identity, version, signing certificate and checksum are verified before Android requests installation confirmation.
+
+The unified task center, external image opening, remembered per-type openers and sidebar visit history are in development, not features already shipped by the interface proposal. See [Android features, permissions and limits](docs/ANDROID.md).
+
+### Windows
+
+- Tabs with pinning/reordering, independent dual panes, configurable shortcuts, multi-selection and undo for delete, rename and non-overwriting move operations.
+- Details, Cards, Thumbnails and Columns views with Windows association icons; favorites, tags, Git/SVN status, SMB paths, FTP/SFTP and cloud-file states.
+- Current-folder search by default, optional Everything global search, Chinese/Pinyin/initials and substring matching, wildcards and regular expressions.
+- Bounded previews for folders, images, source/text with syntax colors, Markdown, PDF, audio/video, RTF, DOCX text, Windows shortcuts and common 3D models.
+- Mutually exclusive Preview / `dust` disk-usage inspection, expandable preview and actionable usage results.
+- Bundled 7-Zip for browsing/extracting ZIP (including split volumes), 7z, RAR and more, with progress/cancellation; ZIP creation remains built-in.
+- Bundled FFmpeg for configurable video/audio/image conversion with progress, speed, cancellation and detailed errors.
+- Local/UNC/SMB paths and `file:///` URLs; file addresses reveal and select the file in its containing folder.
+- Optional File Explorer / native Open/Save dialog integration, reloadable theme packs, per-virtual-desktop profiles, and GitHub/home-server Velopack portable updates.
+
+**Installation:** extract the entire portable ZIP and run `RHFiles.exe`. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, `ffmpeg.exe`, `7z.exe`, `7z.dll` and the other bundled files beside it. Current Windows builds are not code-signed and may show an “Unknown publisher” warning.
+
+**Search and previews:** when Everything is unavailable, folder search has a time/result-bounded filesystem fallback. Global search needs a working Everything index/IPC; standard accounts may need the Everything service for all NTFS volumes. Media playback uses WebView2/Windows codecs. DOCX/RTF previews are text-oriented, not full layout rendering. The offline 3D viewer supports glTF/GLB (Draco/Meshopt), OBJ/MTL, FBX, STL, PLY and 3MF, with orbit/zoom/pan, wireframe and animation. Automatic preview is capped at 128 MiB and three million triangles; CAD is out of scope.
+
+**Conversion:** choose **Convert format** from the context menu. The file-operations panel shows output size, speed, progress, cancellation and FFmpeg errors. FFmpeg 9.0.1 Essentials is bundled and can be overridden in Settings. Output is staged beside the destination; cancellation/failure leaves existing files untouched, and replacement occurs only after success.
+
+**Themes and profiles:** Paper, Dark, Sand, Mist, Forest and Slate themes are included. User JSON packs live in `%APPDATA%\RHFiles\themes\*.json` and can be reloaded; see [theme packs](docs/THEMES.md). Starting RHFiles on another Windows virtual desktop creates an independent instance/profile; moving an existing window does not change its data mid-task. Additional profiles use `%APPDATA%\RHFiles\desktops\<desktop-id>` and a separate LocalAppData WebView cache. Windows accounts are isolated too. Installing an update requires completed tasks and other desktop instances to exit; checking/downloading does not force them to exit.
+
+**Windows integration (experimental):** an opt-in companion list beside File Explorer or standard Open/Save dialogs shows RHFiles locations. Clicking affects only the target Windows window; the default `Ctrl+G` shortcut merely refocuses the list. Native browser file pickers are supported; custom or elevated pickers may not be. **Choose files in RHFiles** offers a type-filtered thumbnail grid, multi-selection and preview, then returns selected files to the still-open native dialog. Cancellation preserves the original picker; the integration does not replace the clipboard.
+
+**Updates:** automatic checks run after startup, on opening Settings and hourly. Disabling them leaves only manual checks. Cumulative notes are available with bundled offline history. Everything, Velopack, Explorer integration and advanced desktop themes are Windows-specific, not promises of identical Android/macOS functionality.
+
+### macOS preview
+
+Apple Silicon (M-series, arm64) builds share the desktop source version. They are ad-hoc-signed, **not Apple-notarized** previews, not a claim of Windows feature parity. GUI acceptance testing on a Mac is still needed. See [macOS setup, permissions and limits](docs/MACOS.md).
+
+### Development and tests
+
+Windows needs the Rust toolchain in `rust-toolchain.toml` and WebView2; packaging additionally requires .NET 8 and Velopack CLI 1.2.0.
+
+```powershell
+cargo check --workspace
+cargo test --workspace --locked
+npm ci --ignore-scripts
+npm test
+./scripts/test-gui.ps1 -Timeout 120
+cargo build --release --locked --package rhfiles-tauri
+./scripts/package-velopack.ps1
+```
+
+Android needs the Android SDK/NDK, JDK and Rust Android target. Use the build helper to synchronize native sources, manifest/signing inputs and verify the APK:
+
+```powershell
+cargo test --manifest-path android/src-tauri/Cargo.toml --lib --tests
+node --test android/web/tests/*.test.cjs android/web/tests/format.test.js
+./scripts/android-build.ps1 -Target aarch64
+```
+
+See [Android development](android/README.md), [macOS builds](docs/MACOS.md), [testing](docs/TESTING.md) and [release instructions](docs/RELEASING.md). Browser suites mock IPC; they do not establish device codec support, permission handling or successful system installation.
+
+### License and third-party components
+
+Original code is under the standard [Apache License 2.0](LICENSE), copyright 2026 RailgunHamster. Use, modification and commercial redistribution are allowed subject to that license. Redistribute the license and preserve applicable copyright, attribution and [NOTICE](NOTICE) statements; identify modified files. Attribution may appear in NOTICE, accompanying source/docs or the usual notices display, rather than necessarily in the UI. Private use requires no public announcement. No custom license conditions are added; third-party components retain their own licenses and trademark rights.
+
+Windows portable packages include Everything, `dust`, a separate unmodified FFmpeg executable, and official 7-Zip 26.03 x64 `7z.exe` / `7z.dll` (LGPL with the unRAR restriction; see `7zip-LICENSE.txt`). FFmpeg build/source information is in the bundled `FFmpeg-NOTICE.txt`, [FFmpeg legal information](https://ffmpeg.org/legal.html) and [Gyan builds](https://www.gyan.dev/ffmpeg/builds/). The offline viewer vendors an MIT-licensed subset of Three.js 0.185.1. Preserve accompanying licenses/notices; other dependencies are recorded in each platform's `Cargo.lock` and source tree.
