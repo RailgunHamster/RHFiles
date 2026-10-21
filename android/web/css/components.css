@@ -15,7 +15,7 @@
 }
 svg[data-symbol=storage],svg[data-symbol=document] { --symbol-color:var(--symbol-blue); }
 svg[data-symbol=cloud],svg[data-symbol=network],svg[data-symbol=download] { --symbol-color:var(--symbol-sky); }
-svg[data-symbol=server],svg[data-symbol=audio],svg[data-symbol=apps] { --symbol-color:var(--symbol-teal); }
+svg[data-symbol=server],svg[data-symbol=audio],svg[data-symbol=apps],svg[data-symbol=apk] { --symbol-color:var(--symbol-teal); }
 svg[data-symbol=nearby],svg[data-symbol=image],svg[data-symbol=settings],svg[data-symbol=chart],svg[data-symbol=external] { --symbol-color:var(--symbol-purple); }
 svg[data-symbol=star],svg[data-symbol=sd],svg[data-symbol=archive],svg[data-symbol=tasks],svg[data-symbol=recent] { --symbol-color:var(--symbol-amber); }
 svg[data-symbol=video],svg[data-symbol=trash] { --symbol-color:var(--symbol-rose); }

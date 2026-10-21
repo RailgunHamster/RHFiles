@@ -1,3 +1,17 @@
+RHFiles Android 0.1.23
+
+1. 回收站支持全选、多选恢复、批量永久删除和清空全部，统一文件列表、图标、按钮和空状态的视觉风格。
+2. 批量操作进入后台文件任务，显示已处理项目数，完成后自动刷新。恢复冲突不会覆盖已有文件；单项失败不阻止其他项目，并保留失败原因。
+3. 永久删除需两次确认，只处理确认时的回收站项目；校验记录和负载路径，不跟随链接删除外部文件，取消后保留未完成内容。
+4. 首页增加独立“安装包”分类，识别 APK / APKS / XAPK / APKM，按实际所在文件夹分组，不再归入压缩包；已建索引无需重建即可使用。
+
+1. Add select-all, batch restore, batch permanent deletion and Empty All to the recycle bin, using the app's shared file-list visual language.
+2. Run batches as background file tasks with item progress and automatic refresh. Keep conflicting originals untouched, continue independent items and retain failure details.
+3. Require two confirmations for permanent deletion; only remove the confirmed snapshot. Validate record/payload ownership, never traverse links, and retain unfinished content on cancellation.
+4. Add an Installation Packages category for APK / APKS / XAPK / APKM, grouped by real folders and separate from archives. Existing indexes work without rebuilding.
+
+此前版本改进 / Previous improvements (0.1.22):
+
 RHFiles Android 0.1.22
 
 1. 重命名等输入表单跟随软键盘调整可用高度，输入框及保存按钮保持在键盘上方；已由系统缩小的窗口不会重复扣除键盘高度。

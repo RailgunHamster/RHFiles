@@ -6,7 +6,7 @@ const androidFeatures = (() => {
   const $ = id => document.getElementById(id);
   const textFile = name => /\.(txt|md|csv|log|json|xml|ini|cfg|toml|ya?ml|js|ts|rs|py|java|kt|c|h|cpp|css|html|sh)$/i.test(name);
   const active = j => ['queued','scanning','running','paused'].includes(j.state);
-  const names = {copy:'复制',move:'移动',delete:'永久删除',trash:'移入回收站',restore:'恢复',zip:'压缩',extract:'解压',backup:'备份应用'};
+  const names = {copy:'复制',move:'移动',delete:'永久删除','trash-delete':'清理回收站',trash:'移入回收站',restore:'恢复',zip:'压缩',extract:'解压',backup:'备份应用'};
   const states = {queued:'排队',scanning:'计算大小',running:'进行中',paused:'已暂停',completed:'完成',failed:'失败',canceled:'已取消',interrupted:'上次运行中断'};
   const destinations = [
     ['remote','网络位置','network','SMB / FTP / WebDAV'], ['providers','外置存储与网盘','external','系统授权与文件提供者'],
@@ -78,6 +78,7 @@ const androidFeatures = (() => {
       } else if(['failed','canceled','interrupted'].includes(j.state)) actions.append(button('重试未完成项',async()=>{
         if(!await ui.confirm('重试未完成项？','已完成的项目不会重复执行。中断时已经发布的副本会保留；同名文件将另存，不会覆盖。请先检查下方输出位置。','重试'))return;
         const args={...j.args};if(args.sources)args.sources=args.sources.filter(p=>!j.completed.includes(p));
+        if(args.ids){args.ids=args.ids.filter(id=>!j.completed.includes(id));if(!args.ids.length)return ui.toast('没有剩余回收站项目');}
         if(args.sources && !args.sources.length)return ui.toast('没有剩余来源');await enqueue(j.op,args);
       }));
       if(j.outputs?.length) {
@@ -154,13 +155,7 @@ const androidFeatures = (() => {
       }query.addEventListener('input',paint);paint();return;
     }
     if(tool==='trash') {
-      const items=await api.native('trash.list');if(!valid())return;
-      node.replaceChildren(ui.el('h2','','RHFiles 回收站'));notice(node,'这里只包含通过 RHFiles 移入回收站的本地文件。不会自动清空。恢复遇到同名文件会停止，不覆盖。');
-      if(!items.length)notice(node,'回收站为空');
-      for(const item of items)node.append(button(item.name+'\n'+item.original,()=>ui.openSheet(item.name,[
-        app.action('恢复原位置','refresh',()=>enqueue('restore',{id:item.id})),
-        app.action('永久删除','trash',async()=>{if(await ui.confirm('永久删除？','无法恢复：'+item.name,'继续') && await ui.confirm('最后确认','永久删除回收站中的这项内容。','永久删除'))await enqueue('delete',{sources:[item.path]});},true),
-      ],fmt.date(item.at))));return;
+      await androidTrash.enter(node,app,valid);return;
     }
   }
   function addRemote(existing={},common=false,onSaved=null) {

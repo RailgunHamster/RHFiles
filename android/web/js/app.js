@@ -12,7 +12,7 @@
   const blocked=()=>!!state.task||!!peerTask;
   const categories = [
     ['image', '图片', '#9662b7'], ['audio', '音频', '#27877f'], ['video', '视频', '#c36268'],
-    ['document', '文档', '#528bc1'], ['archive', '压缩包', '#b08451'], ['recent', '最近修改', '#63879a'],
+    ['document', '文档', '#528bc1'], ['archive', '压缩包', '#b08451'], ['apk', '安装包', '#27877f'], ['recent', '最近修改', '#63879a'],
   ];
   const labels = Object.fromEntries(categories.map(([id, label]) => [id, label]));
   let favorites = [];
@@ -404,7 +404,8 @@
     if (/^(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif|svg|tiff|ico)$/.test(ext)) return 'image';
     if (/^(mp4|mkv|avi|mov|webm|m4v|3gp|wmv|flv|m2ts|mts)$/.test(ext)) return 'video';
     if (/^(mp3|flac|wav|aac|ogg|opus|m4a|amr|wma)$/.test(ext)) return 'audio';
-    if (/^(zip|rar|7z|tar|gz|xz|bz2|zst|apk|apks|xapk|iso)$/.test(ext)) return 'archive';
+    if (/^(apk|apks|xapk|apkm)$/.test(ext)) return 'apk';
+    if (/^(zip|rar|7z|tar|gz|xz|bz2|zst|iso)$/.test(ext)) return 'archive';
     return 'document';
   }
 
@@ -698,6 +699,7 @@
     if(ui.isSheetOpen()) { ui.closeSheet(); return true; }
     if(!$('drawer').hidden&&!document.body.classList.contains('wide-layout')) { closeDrawer(); return true; }
     if(state.selected.size) { clearSelection(); return true; }
+    if(state.route.tool==='trash'&&androidTrash.back())return true;
     if(androidUsage.back())return true;
     if(state.route.screen==='library'&&state.route.folder)return libraryUp();
     if(state.route.screen==='folder') {

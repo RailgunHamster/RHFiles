@@ -1,0 +1,29 @@
+/* Reuse the browser's palette, file symbols and touch-sized controls. */
+.trash-heading { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+.trash-heading .tool-illustration { margin:0; flex:none; }
+.tool-page .trash-heading h2 { margin:0; }
+.tool-page .trash-heading p { margin:4px 0 0; font-size:12px; }
+.trash-toolbar { display:flex; align-items:center; gap:4px; flex-wrap:wrap; border-block:1px solid var(--line); padding:8px 0; }
+.tool-page .trash-action { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:0; background:transparent; padding:8px; font-size:12px; }
+.trash-action svg { width:19px; height:19px; }
+.trash-count { color:var(--muted); font-size:12px; flex:1; min-width:64px; }
+.trash-list { padding:4px 0; }
+.trash-row { display:flex; align-items:center; border-bottom:1px solid var(--line); min-width:0; }
+.trash-row.selected { background:var(--selected); border-radius:10px; }
+.tool-page .trash-file { display:flex; align-items:center; gap:10px; padding:12px 4px; border:0; border-radius:10px; background:transparent; text-align:left; flex:1; min-width:0; }
+.trash-file .meta,.trash-file .name,.trash-file .sub { display:block; }
+.trash-file .name { font-size:14px; }
+.trash-file .sub { font-size:11px; }
+.trash-check { display:grid; place-items:center; flex:none; width:20px; height:20px; border:1.5px solid var(--line); border-radius:6px; }
+.selected .trash-check { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+.trash-check svg { width:16px; height:16px; }
+.tool-page .trash-more { width:44px; height:44px; flex:none; padding:0; color:var(--muted); }
+.trash-selection { position:sticky; bottom:-12px; display:flex; gap:4px; flex-wrap:wrap; background:var(--bg); border-top:1px solid var(--line); padding:12px 0 0; margin-top:8px; box-shadow:0 -8px 16px var(--bg); }
+.trash-selection .trash-action { flex:1; min-width:72px; min-height:44px; }
+.trash-progress { display:grid; gap:8px; padding:14px; margin-top:12px; background:var(--surface); border:1px solid var(--line); border-radius:12px; }
+.trash-progress progress { width:100%; accent-color:var(--accent); }
+.trash-progress .trash-action { justify-self:start; }
+.tool-page .trash-error { padding:12px; white-space:pre-line; background:var(--surface); color:var(--danger); border-radius:10px; font-size:13px; }
+.trash-empty { display:grid; justify-items:center; gap:10px; padding:40px 8px; text-align:center; }
+.trash-empty .tool-illustration,.trash-empty p { margin:0; }
+@media(max-width:360px) { .trash-file .thumb { width:28px; }.trash-file .thumb svg { width:26px; }.trash-toolbar .trash-count { order:3; flex-basis:100%; padding:4px; } }

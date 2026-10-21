@@ -589,7 +589,7 @@ pub fn browse_library_folders(category:String,root:String,show_hidden:Option<boo
     library_folders_in(&entries,&category,&root,show_hidden.unwrap_or(false),limit.unwrap_or(2000),folder.as_deref())
 }
 fn library_folders_in(entries:&[IndexEntry],category:&str,root:&str,hidden:bool,limit:usize,folder:Option<&str>)->Result<serde_json::Value,String>{
-    if !matches!(category,"image"|"audio"|"video"|"document"|"archive"|"recent"){return Err("unknown library category".into())}
+    if !matches!(category,"image"|"audio"|"video"|"document"|"archive"|"apk"|"recent"){return Err("unknown library category".into())}
     if let Some(folder)=folder{let subset:Vec<_>=entries.iter().filter(|e|std::path::Path::new(&e.path).parent()==Some(std::path::Path::new(folder))).cloned().collect();return serde_json::to_value(library_in(&subset,category,root,hidden,limit)?).map_err(|e|e.to_string())}
     let prefix=format!("{}/",root.trim_end_matches('/'));let mut groups=std::collections::BTreeMap::<String,serde_json::Value>::new();let mut bytes=0u64;
     for entry in entries{if entry.is_dir||!entry.path.starts_with(&prefix)||(!hidden&&entry.path[prefix.len()..].split('/').any(|p|p.starts_with('.'))){continue}
@@ -602,7 +602,7 @@ fn library_folders_in(entries:&[IndexEntry],category:&str,root:&str,hidden:bool,
     let total=groups.len();let list:Vec<_>=groups.into_values().take(limit.clamp(1,2000)).collect();Ok(serde_json::json!({"entries":list,"total":total,"totalBytes":bytes,"truncated":total>limit.clamp(1,2000)}))
 }
 fn library_in(entries: &[IndexEntry], category: &str, root: &str, show_hidden: bool, limit: usize) -> Result<LibraryPage, String> {
-    if !matches!(category, "image" | "audio" | "video" | "document" | "archive" | "recent") {
+    if !matches!(category, "image" | "audio" | "video" | "document" | "archive" | "apk" | "recent") {
         return Err("unknown library category".into());
     }
     let prefix = format!("{}/", root.trim_end_matches('/'));
@@ -658,6 +658,30 @@ mod tests {
         assert_eq!(library_in(&entries, "image", "/s", true, 100).unwrap().total, 2);
         assert_eq!(library_in(&entries, "document", "/s", false, 100).unwrap().total, 2);
         assert!(library_in(&entries, "unknown", "/s", false, 100).is_err());
+    }
+
+    #[test]
+    fn apk_library_is_separate_from_archives_and_groups_real_folders() {
+        let entries=vec![
+            entry("/s/Download/app.APK","app.APK",false),
+            entry("/s/Download/split.apks","split.apks",false),
+            entry("/s/Other/game.xapk","game.xapk",false),
+            entry("/s/Other/bundle.apkm","bundle.apkm",false),
+            entry("/s/Download/backup.zip","backup.zip",false),
+            entry("/s/.hidden/secret.apk","secret.apk",false),
+            entry("/sibling/outside.apk","outside.apk",false),
+            entry("/s/folder.apk","folder.apk",true),
+        ];
+        let apks=library_in(&entries,"apk","/s/",false,100).unwrap();
+        assert_eq!(apks.total,4);assert!(apks.entries.iter().all(|e|e.kind=="apk"));
+        assert_eq!(library_in(&entries,"archive","/s",false,100).unwrap().total,1);
+        assert_eq!(library_in(&entries,"apk","/s",true,100).unwrap().total,5);
+        let albums=library_folders_in(&entries,"apk","/s",false,100,None).unwrap();
+        assert_eq!(albums["total"],2);assert_eq!(albums["totalBytes"],40);
+        let folder=library_folders_in(&entries,"apk","/s",false,100,Some("/s/Download")).unwrap();
+        assert_eq!(folder["total"],2);
+        let limited=library_in(&entries,"apk","/s",false,1).unwrap();
+        assert_eq!(limited.total,4);assert!(limited.truncated);
     }
 
     #[test]

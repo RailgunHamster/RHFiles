@@ -147,7 +147,7 @@ async function capture(p,name){await p.screenshot({path:path.join(output,name+'.
 try{
   if(!process.argv.includes('--updates-only')&&!process.argv.includes('--gestures-only')){
   const {context,page:p,errors}=await pageFor();await tile(p,'storage-0').waitFor();
-  check(await p.locator('.home-tile').count()===13,'Home exposes working destinations');
+  check(await p.locator('.home-tile').count()===14&&await tile(p,'apk').locator('strong').innerText()==='安装包','Home exposes working destinations including a separate APK category');
   check(await p.locator('.home-grid').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length)===3,'Phone home has three columns');
   check((await tile(p,'storage-0').innerText()).includes('48 GB / 128 GB'),'Capacity uses actual root metadata');
   check(!await p.locator('#btn-reindex').isVisible(),'Index maintenance is outside navigation');
@@ -289,7 +289,7 @@ try{
   }
   {
     const {context,page:p,errors}=await pageFor({nativeV2:true});await tile(p,'remote').waitFor();
-    check(await p.locator('.home-tile').count()===18,'Native v2 exposes only wired feature pages');await capture(p,'features-home');
+    check(await p.locator('.home-tile').count()===19,'Native v2 exposes only wired feature pages including APK packages');await capture(p,'features-home');
     await tile(p,'image').click();await p.waitForSelector('#filelist .name');check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='media.library')),'Media categories use the live Android media query');
     await home(p);await tile(p,'providers').click();await choose(p,'授权文件夹 / 外置存储');await row(p,'云端.txt').waitFor();
     check((await p.locator('#crumbs').innerText()).includes('授权文件夹') || (await p.locator('#crumbs').innerText()).includes('云端'),'Provider URI is not split into fake filesystem breadcrumbs');
@@ -319,8 +319,8 @@ try{
     await home(p);await tile(p,'tasks').click();await choose(p,'暂停');await p.getByRole('button',{name:'继续',exact:true}).waitFor();check(true,'Task pause updates native task state');await choose(p,'继续');await p.getByRole('button',{name:'暂停',exact:true}).waitFor();
     check((await p.locator('#tool-extra').innerText()).includes('/s（平均）'),'Task details expose bytes and clearly labelled average speed');await capture(p,'features-tasks');
     await choose(p,'取消');await choose(p,'取消任务');await p.getByRole('button',{name:'重试未完成项',exact:true}).waitFor();check(true,'Task cancellation is explicit and retryable');
-    await home(p);await tile(p,'trash').click();await p.getByRole('button',{name:/已删除.txt/}).click();await choose(p,'恢复原位置');
-    check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='job.start'&&c.args.op==='restore'&&c.args.args.id==='trash-1')),'Trash restore uses stored identity, not an arbitrary target path');
+    await home(p);await tile(p,'trash').click();await p.getByRole('button',{name:'已删除.txt 的更多操作',exact:true}).click();await choose(p,'恢复原位置');
+    check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='job.start'&&c.args.op==='restore'&&c.args.args.ids[0]==='trash-1')),'Trash restore uses stored identity, not an arbitrary target path');
     await home(p);await tile(p,'providers').click();await choose(p,'从系统网盘导入文件');await p.waitForSelector('#paste-bar:not([hidden])');
     check((await p.locator('#paste-label').innerText()).includes('待复制 1 项'),'System picker returns a pending import, never silently copies');
     check(errors.length===0,'New native-feature UI flows have no uncaught errors: '+errors.join(';'));await context.close();

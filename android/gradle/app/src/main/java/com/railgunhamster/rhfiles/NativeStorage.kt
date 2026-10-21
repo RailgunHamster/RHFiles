@@ -20,7 +20,8 @@ data class NativeEntry(val path: String, val name: String, val isDir: Boolean, v
       "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg" -> "image"
       "mp4", "mkv", "avi", "mov", "webm", "3gp", "m4v" -> "video"
       "mp3", "flac", "wav", "aac", "ogg", "opus", "m4a", "amr" -> "audio"
-      "zip", "tar", "gz", "xz", "tgz", "txz", "7z", "rar", "apk", "apks" -> "archive"
+      "apk", "apks", "xapk", "apkm" -> "apk"
+      "zip", "tar", "gz", "xz", "tgz", "txz", "7z", "rar" -> "archive"
       else -> "document"
     }
   }

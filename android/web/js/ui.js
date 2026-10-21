@@ -40,6 +40,7 @@ const ui = (() => {
     video: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10.5 9.5l4.5 2.5-4.5 2.5z"/>',
     audio: '<path d="M9 18V7l10-2v11"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
     archive: '<path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M3 4.5h18V8H3z"/><path d="M10.5 12h3"/>',
+    apk: '<path d="m3 7 9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10M7.5 5l9 4"/><path d="M8 13v3M6.5 14.5h3"/>',
     document: '<path d="M6 3.5h8l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1-1.5z"/><path d="M14 3.5V8h4"/>',
     code: '<path d="M9 7l-5 5 5 5"/><path d="M15 7l5 5-5 5"/>',
     other: '<path d="M6 3.5h8l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1-1.5z"/>',

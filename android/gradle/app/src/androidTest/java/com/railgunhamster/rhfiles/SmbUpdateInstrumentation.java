@@ -478,6 +478,68 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         }finally{if(renamed.exists()&&!before.exists())require(renamed.renameTo(before),"Cannot restore QA filename");if(deleted!=null&&deletedBytes!=null&&!deleted.exists())try(java.io.FileOutputStream output=new java.io.FileOutputStream(deleted)){output.write(deletedBytes);}}
         result.putString("pass","true");result.putString("checks","real IME, input and save above keyboard, dismissal restores viewport, split memory unchanged, real sorted rename and trash retain visible-file offsets");result.putString("geometry",box.toString());finish(Activity.RESULT_OK,result);
     }
+    private void trashApkProbe(Bundle result,boolean baseline) throws Exception {
+        awaitScript("!!document.querySelector('.file-pane:not([hidden])')?.contentWindow?.rhfilesPane?.snapshot().ready");
+        eval("window.__qa=document.querySelector('.file-pane:not([hidden])').contentWindow;__qa.document.getElementById('nav-home').click()");
+        awaitScript("!__qa.document.getElementById('home').hidden");
+        if(baseline){
+            require(eval("!__qa.document.querySelector('[data-tile=apk]')").equals("true"),"Baseline unexpectedly has APK category");
+            eval("__qa.document.querySelector('[data-tile=trash]').click()");
+            awaitScript("__qa.document.getElementById('tool-extra').textContent.includes('RHFiles 回收站')");
+            require(eval("!__qa.document.getElementById('tool-extra').textContent.includes('清空全部')").equals("true"),"Baseline unexpectedly supports empty-all");
+            screenshot("trash-baseline");result.putString("pass","true");result.putString("checks","Reproduced production 0.1.22: no APK category, no empty-all or multi-restore toolbar");finish(Activity.RESULT_OK,result);return;
+        }
+        require(eval("!!__qa.document.querySelector('[data-tile=apk]')").equals("true"),"APK category absent");
+        java.io.File root=new java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),"RHFiles-TrashQA-"+System.currentTimeMillis());
+        require(root.mkdirs(),"Cannot create owned trash fixture");
+        java.io.File first=new java.io.File(root,"恢复.txt"),folder=new java.io.File(root,"文件夹"),conflict=new java.io.File(root,"同名.txt");
+        java.nio.file.Files.write(first.toPath(),"first".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        require(folder.mkdir(),"Cannot create fixture folder");java.nio.file.Files.write(new java.io.File(folder,"nested.txt").toPath(),"nested".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        java.nio.file.Files.write(conflict.toPath(),"original".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        for(String name:new String[]{"test.APK","split.apks","game.xapk","bundle.apkm","backup.zip"})java.nio.file.Files.write(new java.io.File(root,name).toPath(),new byte[]{1,2,3});
+        eval("void(async()=>{try{if((await api.native('trash.list')).length)throw Error('Refuse to empty pre-existing emulator trash');const j=await api.native('job.start',{op:'trash',args:{sources:"+new JSONArray(java.util.Arrays.asList(first.getPath(),folder.getPath(),conflict.getPath()))+"}});window.__trashJob=j;}catch(e){window.__trashError=String(e)}})()");
+        awaitScript("!!window.__trashJob||!!window.__trashError");require(eval("!window.__trashError").equals("true"),eval("window.__trashError"));
+        awaitScript("!!window.__trashJob");
+        eval("void(async()=>{while(true){const j=await api.native('job.status',{id:window.__trashJob});if(!['running','scanning','queued'].includes(j.state)){window.__trashDone=j;break;}await new Promise(r=>setTimeout(r,100));}})()");
+        awaitScript("!!window.__trashDone");require(json("window.__trashDone").getString("state").equals("completed"),"Fixture trash failed");
+        java.nio.file.Files.write(conflict.toPath(),"keep external".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        eval("__qa.document.querySelector('[data-tile=trash]').click()");
+        awaitScript("__qa.document.querySelectorAll('.trash-row').length===3");
+        eval("[...__qa.document.querySelectorAll('.trash-toolbar button')].find(b=>b.textContent.trim()==='全选').click()");
+        require(eval("__qa.document.querySelector('.trash-count').textContent==='已选 3 项'").equals("true"),"Native multi-selection failed");
+        screenshot("trash-selected");paneClick(".trash-selection .primary");
+        awaitScript("__qa.document.querySelectorAll('.trash-row').length===1&&!!__qa.document.querySelector('.trash-error')");
+        require(first.isFile()&&new java.io.File(folder,"nested.txt").isFile(),"Batch restore did not restore real files/folder");
+        require(new String(java.nio.file.Files.readAllBytes(conflict.toPath()),java.nio.charset.StandardCharsets.UTF_8).equals("keep external"),"Restore overwrote external conflict");
+        screenshot("trash-conflict");
+        eval("[...__qa.document.querySelectorAll('.trash-toolbar button')].find(b=>b.textContent.trim()==='清空全部').click()");
+        awaitScript("__qa.document.getElementById('sheet-panel').textContent.includes('清空全部回收站')");
+        eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='继续').click()");
+        awaitScript("__qa.document.getElementById('sheet-panel').textContent.includes('最后确认')");
+        eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='取消').click()");
+        require(eval("__qa.document.querySelectorAll('.trash-row').length===1").equals("true"),"Cancel emptied trash");
+        eval("[...__qa.document.querySelectorAll('.trash-toolbar button')].find(b=>b.textContent.trim()==='清空全部').click()");
+        awaitScript("__qa.document.getElementById('sheet-panel').textContent.includes('清空全部回收站')");
+        eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='继续').click()");
+        awaitScript("__qa.document.getElementById('sheet-panel').textContent.includes('最后确认')");
+        eval("[...__qa.document.querySelectorAll('#sheet button')].find(b=>b.textContent.trim()==='永久删除').click()");
+        awaitScript("!!__qa.document.querySelector('.trash-empty')");
+        require(first.isFile()&&conflict.isFile(),"Clear trash deleted original/restored files");screenshot("trash-empty");
+        eval("void api.indexStart({roots:["+JSONObject.quote(root.getPath())+"]}).then(()=>window.__indexQueued=true)");
+        awaitScript("window.__indexQueued===true");
+        eval("void(async()=>{while((await api.indexStatus()).indexing)await new Promise(r=>setTimeout(r,100));window.__apkIndexReady=true;})()");
+        awaitScript("window.__apkIndexReady===true");
+        eval("__qa.document.getElementById('nav-home').click()");
+        awaitScript("!__qa.document.getElementById('home').hidden");paneClick("[data-tile=apk]");
+        awaitScript("__qa.document.querySelectorAll('#filelist [data-path]').length===1");
+        screenshot("apk-album");paneClick("#filelist [data-path] .entry-content");
+        awaitScript("__qa.document.querySelectorAll('#filelist [data-path]').length===4");
+        require(eval("[...__qa.document.querySelectorAll('#filelist [data-path]')].every(e=>e.dataset.kind==='apk')").equals("true"),"APK variants mixed with other file types");screenshot("apk-files");
+        eval("__qa.document.getElementById('nav-home').click()");awaitScript("!__qa.document.getElementById('home').hidden");paneClick("[data-tile=archive]");awaitScript("__qa.document.querySelectorAll('#filelist [data-path]').length===1");
+        paneClick("#filelist [data-path] .entry-content");awaitScript("__qa.document.querySelectorAll('#filelist [data-path]').length===1");
+        require(eval("__qa.document.querySelector('#filelist .name').textContent==='backup.zip'").equals("true"),"Archives still include APK packages");
+        result.putString("pass","true");result.putString("checks","Minified APK: real batch restore, nested bytes, conflict preservation, cancel second confirmation, empty-all refresh, native index, all four APK variants, real album navigation and archive separation");finish(Activity.RESULT_OK,result);
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -488,6 +550,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("forceEdge","").equals("true"))runOnMainSync(()->{activity.getWindow().setDecorFitsSystemWindows(false);activity.getWindow().getDecorView().requestApplyInsets();});
             long deadline=System.currentTimeMillis()+60000;
             while(!eval("typeof api!=='undefined' && !!window.rhfilesHandleBack").equals("true")){require(System.currentTimeMillis()<deadline,"Frontend not ready");Thread.sleep(150);}
+            if(arguments.getString("mode","").equals("trash-apk")){trashApkProbe(result,false);return;}
+            if(arguments.getString("mode","").equals("trash-apk-baseline")){trashApkProbe(result,true);return;}
             if(arguments.getString("mode","").equals("ebook")){ebookProbe(result);return;}
             if(arguments.getString("mode","").equals("nearby")){nearbyProbe(result);return;}
             if(arguments.getString("mode","").equals("github")){releaseProbe(result,"github");return;}

@@ -118,7 +118,11 @@ object FileTasks {
   fun status(context:Context,id:String):JSONObject { load(context);return jobs[id]?.json() ?: error("任务不存在") }
   fun hasActive()=jobs.values.any { it.state in listOf("queued","running","paused","scanning") }
   @Synchronized fun start(context:Context,op:String,args:JSONObject):String {
-    load(context);require(op in listOf("copy","move","delete","zip","extract","trash","restore","backup")) { "未知文件操作" }
+    load(context);require(op in listOf("copy","move","delete","zip","extract","trash","restore","trash-delete","backup")) { "未知文件操作" }
+    if(op in listOf("restore","trash-delete")){
+      require(args.toString().toByteArray().size<=6*1024*1024){"回收站任务过大，请分批处理"}
+      Trash.ids(args)
+    }
     require(jobs.values.count { it.state in listOf("queued","running","paused","scanning") }<20) { "任务队列已满" }
     val job=Job(UUID.randomUUID().toString(),op,JSONObject(args.toString()));job.started=System.currentTimeMillis()
     persist(context,job);jobs[job.id]=job
@@ -159,6 +163,20 @@ object FileTasks {
   }
   internal fun execute(context:Context,j:Job) {
     val storage=NativeStorage(context)
+    if(j.op in listOf("restore","trash-delete")) {
+      val ids=Trash.ids(j.args);j.files=ids.size.toLong();j.state="running"
+      for(id in ids) {
+        checkpoint(j);j.current=id
+        try {
+          val record=Trash.record(context,id);j.current=record.getString("original")
+          if(j.op=="restore")j.outputs.add(Trash.restore(context,id))
+          else Trash.purge(context,id){checkpoint(j)}
+          j.done++;j.completed.add(id)
+        }catch(error:Exception){if(j.canceled)throw error;j.failures.add(j.current to (error.message?:"回收站操作失败"))}
+        persist(context,j)
+      }
+      return
+    }
     val paths=j.args.optJSONArray("sources") ?: JSONArray()
     val sources=(0 until paths.length()).map {paths.getString(it)}.distinct()
     val destination=j.args.optString("destination")
@@ -254,7 +272,6 @@ object FileTasks {
       Archives.zip(sources.map{storage.local(it)},target,j.args.optInt("level",6)){checkpoint(j,it)}
       j.outputs.add(target.path);j.completed.addAll(sources);j.done=j.files;persist(context,j);return
     }
-    if(j.op=="restore") {j.outputs.add(Trash.restore(context,j.args.getString("id")));return}
     for(source in sources) {
       checkpoint(j);if(j.failures.any{it.first==source}) continue
       j.current=source
@@ -321,11 +338,45 @@ object Trash {
     try{stream.write(JSONObject().put("id",id).put("original",source.path).put("path",target.path).put("name",source.name).put("at",System.currentTimeMillis()).toString().toByteArray());atomic.finishWrite(stream)}catch(e:Exception){atomic.failWrite(stream);throw e}
     try {SafeFiles.publish(source,target)} catch(e:Exception){record.delete();throw e}
   }
-  fun list(c:Context)=JSONArray().also { a ->journal(c).listFiles()?.filter{it.extension=="json"}?.forEach {f->try {val j=JSONObject(f.readText());if(File(j.getString("path")).exists())a.put(j)}catch(_:Exception){}} }
+  fun ids(args:JSONObject):List<String> {
+    val array=args.optJSONArray("ids")?:JSONArray().put(args.getString("id"))
+    require(array.length() in 1..100000){"请选择 1–100000 个回收站项目"}
+    return (0 until array.length()).map{array.getString(it).also(::checkId)}.distinct()
+  }
+  private fun checkId(id:String){require(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").matches(id)){"无效的回收站标识"}}
+  internal fun record(c:Context,id:String):JSONObject {
+    checkId(id);val file=File(journal(c),"$id.json")
+    require(file.isFile&&file.length()<=65536){"回收站记录不存在或已损坏"}
+    val record=JSONObject(file.readText());require(record.getString("id")==id){"回收站记录标识不匹配"}
+    val original=File(record.getString("original"));val payload=File(record.getString("path"))
+    require(original.isAbsolute&&payload.isAbsolute&&original.parentFile!=null){"回收站路径无效"}
+    val expected=File(File(original.parentFile,".rhfiles-trash"),id)
+    require(payload.absoluteFile==expected.absoluteFile&&expected.canonicalFile==expected.absoluteFile){"回收站路径已变更；未操作任何文件"}
+    val storage=NativeStorage(c);storage.local(original.path);storage.local(payload.path)
+    SafeFiles.noLink(payload.parentFile!!)
+    return record
+  }
+  fun list(c:Context)=JSONArray().also { a ->journal(c).listFiles()?.filter{it.extension=="json"}?.forEach {f->try {
+    val j=record(c,f.nameWithoutExtension);val payload=File(j.getString("path"))
+    if(payload.exists())a.put(j.put("isDir",payload.isDirectory).put("kind",if(payload.isDirectory)"folder" else NativeEntry.kind(j.getString("name"))))
+  }catch(_:Exception){}} }
   @Synchronized fun restore(c:Context,id:String):String {
-    require(Regex("[0-9a-f-]{36}").matches(id))
-    val record=File(journal(c),"$id.json");val j=JSONObject(record.readText());val storage=NativeStorage(c)
+    val j=record(c,id);val record=File(journal(c),"$id.json");val storage=NativeStorage(c)
     val source=storage.local(j.getString("path"));val target=storage.local(j.getString("original"))
     SafeFiles.publish(source,target);record.delete();return target.path
+  }
+  @Synchronized fun purge(c:Context,id:String,checkpoint:()->Unit={}) {
+    val j=record(c,id);val payload=File(j.getString("path"))
+    fun remove(file:File,depth:Int) {
+      checkpoint();require(depth<128){"目录过深，保留未删除内容"}
+      // Unlink links themselves; never traverse a link into user data.
+      if(!SafeFiles.isLink(file)&&file.isDirectory){
+        val children=file.listFiles()?:throw IOException("无法读取回收站文件夹：${file.name}")
+        children.forEach{remove(it,depth+1)}
+      }
+      require(file.delete()){"无法删除：${file.name}；其余内容保留在回收站"}
+    }
+    remove(payload,0)
+    require(File(journal(c),"$id.json").delete()){"内容已删除，但无法清理回收站记录"}
   }
 }

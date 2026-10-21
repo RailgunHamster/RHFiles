@@ -65,7 +65,8 @@ pub(crate) fn kind_of(name: &str, is_dir: bool) -> &'static str {
         | "tiff" | "ico" => "image",
         "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "3gp" | "wmv" | "flv" | "m2ts" | "mts" => "video",
         "mp3" | "flac" | "wav" | "aac" | "ogg" | "opus" | "m4a" | "amr" | "wma" => "audio",
-        "zip" | "rar" | "7z" | "tar" | "gz" | "xz" | "bz2" | "zst" | "apk" | "apks" | "xapk"
+        "apk" | "apks" | "xapk" | "apkm" => "apk",
+        "zip" | "rar" | "7z" | "tar" | "gz" | "xz" | "bz2" | "zst"
         | "iso" => "archive",
         "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "md" | "rtf"
         | "epub" => "document",
@@ -655,7 +656,10 @@ mod tests {
         // phone, so it stays in `code`; `.m2ts` covers the media case.
         assert_eq!(kind_of("notes.ts", false), "code");
         assert_eq!(kind_of("movie.m2ts", false), "video");
-        assert_eq!(kind_of("app.apk", false), "archive");
+        for name in ["app.apk", "APP.APK", "split.apks", "game.xapk", "bundle.apkm"] {
+            assert_eq!(kind_of(name, false), "apk");
+        }
+        assert_eq!(kind_of("backup.zip", false), "archive");
         assert_eq!(kind_of("anything", true), "folder");
     }
 
