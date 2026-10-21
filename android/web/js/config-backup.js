@@ -8,14 +8,14 @@ const configBackup=(()=>{
   function init(error){
     const panel=document.querySelector('[data-settings-panel=backup]');panel.hidden=true;
     document.querySelector('[data-settings-section=backup]').hidden=!api.backupAvailable();
-    for(const kind of ['export','import'])document.getElementById('btn-config-'+kind).addEventListener('click',async()=>{
+    for(const kind of ['export','import'])RHFilesUI.listen(document.getElementById('btn-config-'+kind),'click',async()=>{
       const buttons=[...panel.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);
       try{
         const result=await api.native('config.'+kind+'.pick',{web:settingsData.snapshot(localStorage)});
         if(result?.applied){(window.parent!==window?window.parent:window).location.reload();return;}
         ui.toast(result?.saved?'配置已加密导出':'已取消');
       }catch(e){error(e);}finally{buttons.forEach(b=>b.disabled=false);}
-    });
+    },undefined,"android.web.js.config-backup.init.a33f54a9927d");
   }
   return {boot,init};
 })();

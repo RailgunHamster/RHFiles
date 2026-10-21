@@ -118,7 +118,7 @@ function renderPicker(state) {
       path.textContent = location.path;
       copy.append(name, path);
       button.append(copy);
-      button.addEventListener('click', async () => {
+      RHFilesUI.listen(button,'click', async () => {
         button.disabled = true;
         try {
           await pickerInvoke('navigate_file_dialog_location', { path: location.path });
@@ -127,14 +127,14 @@ function renderPicker(state) {
         } finally {
           button.disabled = false;
         }
-      });
+      },undefined,"src.js.integration-picker.renderPicker.22e7aa3eb9d4");
       group.append(button);
     });
     list.append(group);
   });
 }
 
-document.getElementById('picker-compact').addEventListener('click', async () => {
+RHFilesUI.listen(document.getElementById('picker-compact'),'click', async () => {
   const compact = pickerState.compact !== true;
   localStorage.setItem('rhfiles-integration-picker-compact', String(compact));
   try {
@@ -143,7 +143,7 @@ document.getElementById('picker-compact').addEventListener('click', async () => 
   } catch (error) {
     document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
   }
-});
+},undefined,"src.js.integration-picker.top.d8322aa9592b");
 
 /** Offer RHFiles as the picker for dialogs that are choosing a file. */
 function renderPickerChoice(state) {
@@ -186,7 +186,7 @@ async function chooseWithRhfiles() {
     button.disabled = false;
   }
 }
-document.getElementById('picker-choose-rhfiles').addEventListener('click', chooseWithRhfiles);
+RHFilesUI.listen(document.getElementById('picker-choose-rhfiles'),'click', chooseWithRhfiles,undefined,"src.js.integration-picker.top.202a7a6cfe7f");
 
 function renderPickerPreview(state) {
   const preview = document.getElementById('picker-preview');
@@ -228,11 +228,11 @@ function renderPickerPreview(state) {
   }
 }
 
-document.getElementById('picker-disable').addEventListener('click', () => {
+RHFilesUI.listen(document.getElementById('picker-disable'),'click', () => {
   pickerInvoke('disable_file_dialog_integration', { targetKind: pickerState.targetKind }).catch(error => {
     document.getElementById('picker-subtitle').textContent = tr('failed', { error: String(error) });
   });
-});
+},undefined,"src.js.integration-picker.top.25ccd07d8a42");
 async function openExplorerLocation(event) {
   const buttons = [
     document.getElementById('picker-open-rhfiles'),
@@ -247,12 +247,12 @@ async function openExplorerLocation(event) {
     buttons.forEach(button => { button.disabled = false; });
   }
 }
-document.getElementById('picker-open-rhfiles').addEventListener('click', openExplorerLocation);
-document.getElementById('picker-open-rhfiles-compact').addEventListener('click', openExplorerLocation);
-document.getElementById('picker-close').addEventListener('click', () => pickerInvoke('hide_file_dialog_picker'));
-document.addEventListener('keydown', event => {
+RHFilesUI.listen(document.getElementById('picker-open-rhfiles'),'click', openExplorerLocation,undefined,"src.js.integration-picker.top.f6bb7d38f603");
+RHFilesUI.listen(document.getElementById('picker-open-rhfiles-compact'),'click', openExplorerLocation,undefined,"src.js.integration-picker.top.bc2a270f92a1");
+RHFilesUI.listen(document.getElementById('picker-close'),'click', () => pickerInvoke('hide_file_dialog_picker'),undefined,"src.js.integration-picker.top.95b8c936f691");
+RHFilesUI.listen(document,'keydown', event => {
   if (event.key === 'Escape') pickerInvoke('hide_file_dialog_picker');
-});
+},undefined,"src.js.integration-picker.top.ea5a60ea371d");
 
 if (pickerListen) {
   pickerListen('file-dialog-picker-state', event => renderPicker(event.payload)).catch(() => {});

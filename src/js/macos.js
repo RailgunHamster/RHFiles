@@ -17,7 +17,7 @@ function configureMacSettings() {
   const check = document.getElementById('settings-check-update');
   if (check) {
     check.textContent = t('mac.downloads');
-    check.onclick = () => window.__TAURI__?.shell?.open('https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml');
+    RHFilesUI.assign(check,"click",() => window.__TAURI__?.shell?.open('https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml'),"src.js.macos.configureMacSettings.cf86eeeeef16");
   }
 }
 

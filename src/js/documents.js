@@ -7,7 +7,7 @@ async function showMarkdownPdfDialog(file){
   document.getElementById('markdown-pdf-source').textContent=file.path;
   document.getElementById('markdown-pdf-name').value=file.name.replace(/\.(md|markdown)$/i,'')+'.pdf';
   markdownPdfError('');document.getElementById('markdown-pdf-start').disabled=true;
-  dialog.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeMarkdownPdfDialog();}else if(event.key==='Enter' && event.target.id==='markdown-pdf-name' && !document.getElementById('markdown-pdf-start').disabled){event.preventDefault();startMarkdownPdf();}};
+  RHFilesUI.assign(dialog,"keydown",event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeMarkdownPdfDialog();}else if(event.key==='Enter' && event.target.id==='markdown-pdf-name' && !document.getElementById('markdown-pdf-start').disabled){event.preventDefault();startMarkdownPdf();}},"src.js.documents.showMarkdownPdfDialog.38773c978419");
   try{
     const info=await call('document_converters'),select=document.getElementById('markdown-pdf-provider');select.replaceChildren();
     for(const provider of info.converters){const option=document.createElement('option');option.value=provider.id;option.textContent=provider.name;select.append(option);}

@@ -497,18 +497,18 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
     row.dataset.virtualIndex = itemIndex;
     row.style.position = "relative";
 
-    row.addEventListener("click", e => handleRowClick(e, fileIdx, sel, tabOrPane, isRight));
-    row.addEventListener("contextmenu", e => {
+    RHFilesUI.listen(row,"click", e => handleRowClick(e, fileIdx, sel, tabOrPane, isRight),undefined,"src.js.filelist.createItemNode.c95e56ada845");
+    RHFilesUI.listen(row,"contextmenu", e => {
       e.preventDefault();
       e.stopPropagation();
       selectContextTarget(fileIdx, tabOrPane, listId, isRight);
       showContextMenu(e.clientX, e.clientY, isRight);
-    });
+    },undefined,"src.js.filelist.createItemNode.d38c3f50deda");
     row.draggable = !file.archive_entry;
-    row.addEventListener("dragstart", e => {
+    RHFilesUI.listen(row,"dragstart", e => {
       prepareFileDragSelection(row, fileIdx, sel, tabOrPane, listId, isRight);
       setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, row);
-    });
+    },undefined,"src.js.filelist.createItemNode.2c41ca1e736d");
 
     let tagsHtml = "";
     const tags = G.tagCache[file.path];
@@ -610,14 +610,14 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.className = "file-row card-item" + (file.is_dir ? " dir" : "") + (isSelected ? " selected" : "") + (isCut ? " cut-item" : "") + typeSearchRowClass(i, isRight);
     item.dataset.index = i;
     item.dataset.path = file.path;
-    item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); selectContextTarget(i, tabOrPane, listId, isRight); showContextMenu(e.clientX, e.clientY, isRight); });
-    item.addEventListener("mouseenter", () => { if (!sel.has(i)) item.style.borderColor = "var(--accent)"; });
-    item.addEventListener("mouseleave", () => { if (!sel.has(i)) item.style.borderColor = "var(--border)"; });
-    item.addEventListener("dragstart", e => {
+    RHFilesUI.listen(item,"click", e => handleRowClick(e, i, sel, tabOrPane, isRight),undefined,"src.js.filelist.renderCardLayout.e5eec7d6e6da");
+    RHFilesUI.listen(item,"contextmenu", e => { e.preventDefault(); e.stopPropagation(); selectContextTarget(i, tabOrPane, listId, isRight); showContextMenu(e.clientX, e.clientY, isRight); },undefined,"src.js.filelist.renderCardLayout.cb705f80e3fd");
+    RHFilesUI.listen(item,"mouseenter", () => { if (!sel.has(i)) item.style.borderColor = "var(--accent)"; },undefined,"src.js.filelist.renderCardLayout.75245ff0b5c0");
+    RHFilesUI.listen(item,"mouseleave", () => { if (!sel.has(i)) item.style.borderColor = "var(--border)"; },undefined,"src.js.filelist.renderCardLayout.ec4ce7d31d37");
+    RHFilesUI.listen(item,"dragstart", e => {
       prepareFileDragSelection(item, i, sel, tabOrPane, listId, isRight);
       setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item);
-    });
+    },undefined,"src.js.filelist.renderCardLayout.c42bbe9889d2");
     item.draggable = !file.archive_entry;
 
     let pathHtml = "";
@@ -664,7 +664,7 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
         item.innerHTML = `<span class="column-item-icon">${fileIcon(entry)}</span>
           <span class="column-item-name" title="${esc(entry.name)}">${rootIndex >= 0 ? fileNameHtmlForView(entry, rootIndex, isRight) : esc(entry.name)}</span>
           ${entry.is_dir ? '<span class="ci-arrow">\u203a</span>' : ''}`;
-        item.addEventListener("click", async () => {
+        RHFilesUI.listen(item,"click", async () => {
           G.lastActivePane = isRight ? 'right' : 'left';
           if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
           browser.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
@@ -686,8 +686,8 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
               if (index > colIdx) column.remove();
             });
           }
-        });
-        item.addEventListener("dblclick", event => {
+        },undefined,"src.js.filelist.renderColumn.e5eec7d6e6da");
+        RHFilesUI.listen(item,"dblclick", event => {
           event.preventDefault();
           event.stopPropagation();
           if (entry.is_dir) {
@@ -695,8 +695,8 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
           } else {
             openFileHandler(entry.path);
           }
-        });
-        item.addEventListener("contextmenu", event => {
+        },undefined,"src.js.filelist.renderColumn.bfe7f14b53ee");
+        RHFilesUI.listen(item,"contextmenu", event => {
           event.preventDefault();
           event.stopPropagation();
           if (rootIndex >= 0) {
@@ -710,16 +710,16 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
             selectColumnTarget(entry, tabOrPane, listId, isRight);
             showContextMenu(event.clientX, event.clientY, isRight);
           }
-        });
+        },undefined,"src.js.filelist.renderColumn.cb705f80e3fd");
         item.draggable = !entry.archive_entry;
-        item.addEventListener('dragstart', event => {
+        RHFilesUI.listen(item,'dragstart', event => {
           if (rootIndex >= 0) {
             prepareFileDragSelection(item, rootIndex, sel, tabOrPane, listId, isRight);
             setRhfilesFileDragData(event.dataTransfer, [...sel].map(index => entries[index]?.path).filter(Boolean), isRight, item);
           } else {
             setRhfilesFileDragData(event.dataTransfer, [entry.path], isRight, item);
           }
-        });
+        },undefined,"src.js.filelist.renderColumn.cd42d3f76edb");
         col.appendChild(item);
       });
     } catch (e) {
@@ -765,12 +765,12 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     item.dataset.index = i;
     item.dataset.path = file.path;
 
-    item.addEventListener("click", e => handleRowClick(e, i, sel, tabOrPane, isRight));
-    item.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); selectContextTarget(i, tabOrPane, listId, isRight); showContextMenu(e.clientX, e.clientY, isRight); });
-    item.addEventListener("dragstart", e => {
+    RHFilesUI.listen(item,"click", e => handleRowClick(e, i, sel, tabOrPane, isRight),undefined,"src.js.filelist.renderThumbnailLayout.e5eec7d6e6da");
+    RHFilesUI.listen(item,"contextmenu", e => { e.preventDefault(); e.stopPropagation(); selectContextTarget(i, tabOrPane, listId, isRight); showContextMenu(e.clientX, e.clientY, isRight); },undefined,"src.js.filelist.renderThumbnailLayout.cb705f80e3fd");
+    RHFilesUI.listen(item,"dragstart", e => {
       prepareFileDragSelection(item, i, sel, tabOrPane, listId, isRight);
       setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item);
-    });
+    },undefined,"src.js.filelist.renderThumbnailLayout.c42bbe9889d2");
     item.draggable = !file.archive_entry;
 
     const ext = (file.extension || '').toLowerCase();

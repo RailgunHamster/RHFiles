@@ -90,15 +90,15 @@ function renderArchiveHeader(pane, list, isRight) {
   title.textContent = t('archive.title') + ': ' + pane.archivePath.split(/[\\/]/).pop() + (pane.archivePrefix ? ' / ' + pane.archivePrefix : '');
   const up = document.createElement('button');
   up.className = 'dialog-btn'; up.textContent = t('cmd.goUp');
-  up.onclick = () => goUpArchive(isRight);
+  RHFilesUI.assign(up,"click",() => goUpArchive(isRight),"src.js.git.renderArchiveHeader.3cf0eb6c4edc");
   const close = document.createElement('button');
   close.className = 'archive-close';
   close.textContent = '×';
-  close.onclick = () => closeArchive(isRight);
+  RHFilesUI.assign(close,"click",() => closeArchive(isRight),"src.js.git.renderArchiveHeader.60ff1ccb78ed");
   const extract = document.createElement('button');
   extract.className = 'dialog-btn';
   extract.textContent = t('ctx.extractAll');
-  extract.onclick = () => extractArchiveAll(isRight);
+  RHFilesUI.assign(extract,"click",() => extractArchiveAll(isRight),"src.js.git.renderArchiveHeader.dd81a87670cb");
   header.append(up, title, close, extract);
   (list.closest('.file-body') || list).before(header);
 }
@@ -232,8 +232,8 @@ function showGitCloneDialog() {
       <button class="dialog-btn primary" id="git-clone-ok">${t('btn.clone')}</button>
     </div>`;
   document.body.appendChild(dlg);
-  dlg.querySelector("#git-clone-cancel").onclick = () => { dlg.close(); dlg.remove(); };
-  dlg.querySelector("#git-clone-ok").onclick = async () => {
+  RHFilesUI.assign(dlg.querySelector("#git-clone-cancel"),"click",() => { dlg.close(); dlg.remove(); },"src.js.git.showGitCloneDialog.fcc6f6fee9ae");
+  RHFilesUI.assign(dlg.querySelector("#git-clone-ok"),"click",async () => {
     const url = dlg.querySelector("#git-clone-url").value.trim();
     const dest = dlg.querySelector("#git-clone-dest").value.trim();
     if (!url) { alert(t('alert.enterUrl')); return; }
@@ -253,7 +253,7 @@ function showGitCloneDialog() {
       statusEl.textContent = t('alert.cloneFailed', {error: e});
       statusEl.style.color = "var(--git-deleted)";
     }
-  };
+  },"src.js.git.showGitCloneDialog.fa3517024dfb");
   dlg.showModal();
   dlg.onclose = () => dlg.remove();
 }

@@ -42,6 +42,7 @@
 .ctx-item .ctx-arrow { color:var(--text-4); font-size:10px; margin-left:12px; flex-shrink:0; }
 .ctx-submenu { position:fixed; min-width:200px; max-height:calc(100vh - 8px); overflow-y:auto; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:4px; box-shadow:0 4px 12px var(--shadow); display:none; z-index:10001; }
 .ctx-item:hover > .ctx-submenu { display:block; }
+.ctx-item.automation-expanded > .ctx-submenu { display:block; }
 .ctx-item:hover { background:var(--select-bg); color:var(--text); }
 .ctx-item.disabled { color:var(--text-4); pointer-events:none; }
 .ctx-item.ctx-firing { background:var(--accent); color:#fff; pointer-events:none; }

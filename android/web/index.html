@@ -56,6 +56,7 @@
         <div class="button-row"><button id="btn-reindex" class="primary">更新索引</button><button id="btn-clear-index">清空索引</button></div>
         </section><section data-settings-panel="storage" role="tabpanel" hidden><h2>存储权限</h2><div id="permissions" class="kv"></div><button id="btn-permission">打开系统设置</button></section>
         <section data-settings-panel="about" role="tabpanel" hidden><h2>关于 RHFiles</h2>
+        <button id="btn-automation" class="setting-row" hidden>ADB 自动化：关</button><p id="automation-help" class="muted" hidden>仅供本机命令行脚本和测试使用，需要已授权的 ADB 连接。开启后可通过调试接口读取和操作应用，请只信任自己的电脑。此开关不参与配置备份或同步。</p>
         <p class="muted">Copyright 2026 RailgunHamster · Apache License 2.0</p>
         <details id="project-license"><summary>开源许可证与署名</summary><p>本项目原创代码采用 Apache License 2.0。再分发须保留适用的版权与来源声明，第三方组件遵循各自许可。</p><pre id="project-notice-text" class="update-notes"></pre><pre id="project-license-text" class="update-notes"></pre></details>
         <details id="smb-rpc-license"><summary>SMB 共享枚举组件许可</summary><pre id="smb-rpc-license-text" class="update-notes"></pre></details>
@@ -110,6 +111,8 @@
 </aside>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden><div class="sheet-panel" id="sheet-panel"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
+<script src="js/automation-core.js"></script>
+<script src="js/automation-android.js"></script>
 <script src="js/trash.js"></script>
 <script src="js/media-model.js"></script><script src="js/gallery.js"></script>
 <script src="js/api.js"></script><script src="js/format.js"></script><script src="js/list-model.js"></script><script src="js/pane-model.js"></script><script src="js/ui.js"></script><script src="js/nearby-ui.js"></script><script src="js/nearby.js"></script><script src="js/features.js"></script><script src="js/changelog.js"></script><script src="js/updates.js"></script><script src="js/adaptive.js"></script><script src="js/pane-touch.js"></script><script src="js/workbench.js"></script><script src="js/settings-data.js"></script><script src="js/config-backup.js"></script><script src="js/config-sync.js"></script><script src="js/usage.js"></script><script src="js/app.js"></script>

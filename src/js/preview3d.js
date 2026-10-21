@@ -15,6 +15,16 @@ export const MODEL_PREVIEW_MAX_BYTES = 128 * 1024 * 1024;
 export const MODEL_PREVIEW_MAX_TRIANGLES = 3_000_000;
 
 let activeViewer = null;
+if(globalThis.RHFilesAPI){
+  const vector={type:'array',items:{type:'number'},minItems:3,maxItems:3};
+  RHFilesAPI.register('preview3d.camera',params=>{
+    const viewer=activeViewer;if(!viewer?.camera||viewer.disposed)throw new RHFilesAutomationCore.ActionError('NOT_READY','No 3D preview is ready');
+    if(params.position)viewer.camera.position.fromArray(params.position);
+    if(params.target)viewer.controls.target.fromArray(params.target);
+    viewer.controls.update();viewer.invalidate();
+    return {position:viewer.camera.position.toArray(),target:viewer.controls.target.toArray()};
+  },{params:{type:'object',properties:{position:vector,target:vector},additionalProperties:false},description:'Orbit/pan/zoom through the same 3D camera/controls; returns current vectors'});
+}
 
 function makeError(code, message) {
   const error = new Error(message || code);
@@ -294,6 +304,7 @@ export async function render3DPreview(options) {
   viewer.scene = scene;
   const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 10000);
   const controls = new OrbitControls(camera, renderer.domElement);
+  viewer.camera=camera;
   viewer.controls = controls;
   controls.enableDamping = false;
   controls.screenSpacePanning = true;
@@ -379,17 +390,18 @@ export async function render3DPreview(options) {
     invalidate();
   }
 
-  controls.addEventListener('change', invalidate);
+  viewer.invalidate=invalidate;
+  RHFilesUI.listen(controls,'change', invalidate,undefined,"src.js.preview3d.render3DPreview.075b4ae2b06f");
   viewer.resizeObserver = new ResizeObserver(resize);
   viewer.resizeObserver.observe(stage);
 
-  resetButton.addEventListener('click', () => {
+  RHFilesUI.listen(resetButton,'click', () => {
     camera.position.copy(initialCamera);
     controls.target.copy(initialTarget);
     controls.update();
     invalidate();
-  });
-  wireframeButton.addEventListener('click', () => {
+  },undefined,"src.js.preview3d.render3DPreview.c4cd8e7d5554");
+  RHFilesUI.listen(wireframeButton,'click', () => {
     wireframe = !wireframe;
     result.object.traverse(node => {
       if (!node.isMesh) return;
@@ -403,14 +415,14 @@ export async function render3DPreview(options) {
     });
     wireframeButton.classList.toggle('active', wireframe);
     invalidate();
-  });
-  rotateButton.addEventListener('click', () => {
+  },undefined,"src.js.preview3d.render3DPreview.bea38d5c9dde");
+  RHFilesUI.listen(rotateButton,'click', () => {
     controls.autoRotate = !controls.autoRotate;
     controls.autoRotateSpeed = 2;
     rotateButton.classList.toggle('active', controls.autoRotate);
     lastFrame = performance.now();
     invalidate();
-  });
+  },undefined,"src.js.preview3d.render3DPreview.683f127b5908");
 
   if (result.animations?.length) {
     viewer.mixer = new THREE.AnimationMixer(result.object);
@@ -419,14 +431,14 @@ export async function render3DPreview(options) {
     animationButton.hidden = false;
     setButton(animationButton, labels.pause || 'Pause', labels.animationTitle);
     animationButton.classList.add('active');
-    animationButton.addEventListener('click', () => {
+    RHFilesUI.listen(animationButton,'click', () => {
       animationPlaying = !animationPlaying;
       viewer.mixer.timeScale = animationPlaying ? 1 : 0;
       setButton(animationButton, animationPlaying ? (labels.pause || 'Pause') : (labels.play || 'Play'), labels.animationTitle);
       animationButton.classList.toggle('active', animationPlaying);
       lastFrame = performance.now();
       invalidate();
-    });
+    },undefined,"src.js.preview3d.render3DPreview.1bf81b99d7f5");
   }
 
   const statParts = [

@@ -85,10 +85,11 @@ class EbookActivity:AppCompatActivity(){
         content.removeView(view);view.destroy();web=null;showFailure("阅读页面已停止，可能是文件损坏或内存不足。文件管理器和原文件不受影响。");return true
       }
     }
-    if(BuildConfig.DEBUG)WebView.setWebContentsDebuggingEnabled(true)
+    NativeAutomation.install(this);NativeAutomation.debugging(this)
     if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))WebViewCompat.addWebMessageListener(view,"RHFilesReader",setOf("https://$DOMAIN")){owner,message,origin,mainFrame,reply->
       if(owner===web&&mainFrame&&origin.host==DOMAIN&&!closing.get())try{val command=JSONObject(message.data?:"{}");when(command.optString("action")){
         "close"->closeReader();"other"->openOther();"theme"->setThemeColors(command.optString("theme"));"title"->title.text=command.optString("title").take(150)
+        "automation"->{val response=JSONObject().put("id",command.optInt("id"));try{response.put("result",NativeAutomation.dispatch(this,command.getString("command"),command.optJSONObject("args")?:JSONObject()))}catch(e:Exception){response.put("error",e.message?:"原生自动化操作失败")};reply.postMessage(response.toString())}
         "settings"->worker.execute{val response=JSONObject().put("id",command.optInt("id"));try{
           if(command.has("values"))ReaderSettings.replace(applicationContext,command.getJSONObject("values"))else ReaderSettings.update(applicationContext,command.getString("key"),command.getString("value"))
           response.put("saved",true)

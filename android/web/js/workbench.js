@@ -33,11 +33,15 @@ const workbench=(()=>{
     hinge=value?.hinge||null;insets=value?.insets||{};
     if(host)layout();
   }
+  function chooseLayout(value){
+    if(!layouts.some(entry=>entry[0]===value))throw new RHFilesAutomationCore.ActionError('INVALID_PARAMS','Unknown pane layout');
+    preference=value;screenMemory.set(screen,value,orientation);saveScreens();try{localStorage.setItem('rhfiles.panes',value)}catch{}layout();
+  }
   function openLayout(keyboard=false){
     const openedScreen=screen,openedOrientation=orientation;
     if(!ui.openSheet('分屏布局',layouts.map(([value,label,icon])=>({label,icon,onSelect:()=>{
       if(openedScreen!==screen||openedOrientation!==orientation)return;
-      preference=value;screenMemory.set(screen,value,orientation);saveScreens();try{localStorage.setItem('rhfiles.panes',value)}catch{}layout();
+      chooseLayout(value);
     }})),`当前为${orientation==='landscape'?'横屏':'竖屏'}。内屏、外屏的横竖屏分别记住布局，折叠、展开或旋转时自动恢复；不会丢失已打开的位置。`))return;
     const panel=document.getElementById('sheet-panel');panel.classList.add('pane-layout-sheet');panel.classList.toggle('keyboard-navigation',keyboard);
     panel.querySelectorAll('.sheet-item').forEach((button,index)=>{
@@ -70,7 +74,7 @@ const workbench=(()=>{
   }
   function addFrame(pane){
     const frame=document.createElement('iframe');frame.className='file-pane';frame.title=pane==='first'?'第一窗格':'第二窗格';frame.src='index.html?pane='+pane;frames.push(frame);host.append(frame);
-    frame.onload=()=>{frame.dataset.ready='true';touch.attach(frame);frame.contentWindow.addEventListener('pointerdown',()=>setActive(frames.indexOf(frame)),true);frame.contentWindow.addEventListener('focusin',()=>setActive(frames.indexOf(frame)));send(frame,'rhfiles-clipboard',getClipboard());send(frame,'rhfiles-pane-task',lock?.label||null);layout();};
+    frame.onload=()=>{frame.dataset.ready='true';touch.attach(frame);RHFilesUI.listen(frame.contentWindow,'pointerdown',()=>setActive(frames.indexOf(frame)),true,"android.web.js.workbench.addFrame.612a4fa683f6");RHFilesUI.listen(frame.contentWindow,'focusin',()=>setActive(frames.indexOf(frame)),undefined,"android.web.js.workbench.addFrame.77b3f2c350ef");send(frame,'rhfiles-clipboard',getClipboard());send(frame,'rhfiles-pane-task',lock?.label||null);layout();};
     return frame;
   }
   async function boot(){
@@ -93,9 +97,9 @@ const workbench=(()=>{
     touch=paneTouch.bind({frames:()=>frames,native:!!capabilities.paneTouch,enabled:()=>mode!=='single'&&!ui.isSheetOpen(),onInteract:frame=>setActive(frames.indexOf(frame)),onScroll:()=>broadcast('rhfiles-pan-scroll')});
     divider=document.createElement('div');divider.className='pane-divider';host.append(divider);
     const toggle=document.createElement('button');toggle.type='button';toggle.className='pane-layout-toggle';toggle.setAttribute('aria-label','分屏布局');toggle.setAttribute('aria-haspopup','dialog');toggle.title='分屏布局';divider.append(toggle);
-    toggle.onclick=event=>openLayout(event.detail===0);ui.bindScrim();
-    document.addEventListener('pointerdown',()=>document.getElementById('sheet-panel').classList.remove('keyboard-navigation'),true);
-    document.addEventListener('keydown',event=>{
+    RHFilesUI.assign(toggle,"click",event=>openLayout(event.detail===0),"android.web.js.workbench.boot.e1c1dc1b0c50");ui.bindScrim();
+    RHFilesUI.listen(document,'pointerdown',()=>document.getElementById('sheet-panel').classList.remove('keyboard-navigation'),true,"android.web.js.workbench.boot.7fda541cbd6d");
+    RHFilesUI.listen(document,'keydown',event=>{
       if(!ui.isSheetOpen())return;
       if(event.key==='Escape'){event.preventDefault();ui.closeSheet();}
       if(event.key==='Tab'){
@@ -103,7 +107,7 @@ const workbench=(()=>{
         const index=buttons.indexOf(document.activeElement);
         if(buttons.length&&(index<0||event.shiftKey&&index===0||!event.shiftKey&&index===buttons.length-1)){event.preventDefault();buttons[event.shiftKey?buttons.length-1:0].focus();}
       }
-    });
+    },undefined,"android.web.js.workbench.boot.ea5a60ea371d");
     window.RHFilesWorkbench={
       touch(sample){touch.relay(sample);},
       call(source,kind,command,args){trusted(source);return kind==='native'?api.native(command,args):kind==='asset'?api.assetUrl(command):api.raw(command,args);},
@@ -120,6 +124,7 @@ const workbench=(()=>{
       windowLayout(source){trusted(source);return detailFor(frames[indexOf(source)]);},
     };
     addFrame('first');if(active===1)addFrame('second');layout();setActive(active);
+    androidAutomation.host({frames:()=>frames,active:()=>active,layout:()=>({mode,preference,screen,orientation}),setLayout:chooseLayout});
     window.rhfilesHandleBack=()=>{if(ui.isSheetOpen()){ui.closeSheet();return true;}return frames[active]?.contentWindow?.rhfilesHandleBack?.()??true;};
     window.addEventListener('resize',layout);
     window.addEventListener('rhfiles-storage-changed',()=>broadcast('rhfiles-storage-changed'));

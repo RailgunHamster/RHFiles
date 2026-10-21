@@ -6,7 +6,7 @@ const androidUpdates=(()=>{
   const $=id=>document.getElementById(id);
   const active=s=>['checking','downloading','verifying'].includes(s);
   const labels={idle:'尚未检查更新',checking:'正在检查更新…',latest:'当前已是最新版本',available:'发现新版本',downloading:'正在下载 APK…',verifying:'正在校验 APK…',ready:'APK 已下载并校验，可以安装',failed:'更新失败',canceled:'更新已取消'};
-  function button(id,label,handler,primary=false){const b=ui.el('button',primary?'primary':'',label);b.id=id;b.type='button';b.onclick=()=>Promise.resolve().then(handler).catch(app.error);return b;}
+  function button(id,label,handler,primary=false){const b=ui.el('button',primary?'primary':'',label);b.id=id;b.type='button';RHFilesUI.assign(b,"click",()=>Promise.resolve().then(handler).catch(app.error),"android.web.js.updates.button.cdbfd49f3fbf");return b;}
   async function load(){const current=generation,sequence=++readSequence,next=await api.native('update.status');if(current!==generation||sequence<appliedRead)return status;appliedRead=sequence;status=next;paint();schedule();return status;}
   function schedule(){
     clearTimeout(pollTimer);
@@ -36,8 +36,8 @@ const androidUpdates=(()=>{
     const proxy=field('proxy','代理地址，例如 http://192.168.0.10:7890');proxy.id='update-proxy-field';form.append(proxy);
     form.append(ui.el('p','muted','手机上的 127.0.0.1 指手机本身；使用电脑代理请填电脑的局域网 IP。SMB 不经过 HTTP 代理。'));
     const save=ui.el('button','','保存更新设置');save.id='update-save';save.type='submit';form.append(save);
-    form.addEventListener('change',showSource);
-    form.onsubmit=async e=>{e.preventDefault();save.disabled=true;mutate();try{status=await api.native('update.save',values());for(const name of ['smbUsername','smbPassword','smbDomain'])form.elements[name].value='';wantInstall=false;form=null;ui.toast('更新设置已保存');await onSettings();}catch(error){app.error(error);}finally{save.disabled=false;}};
+    RHFilesUI.listen(form,'change',showSource,undefined,"android.web.js.updates.build.93ed1f3ca9a6");
+    RHFilesUI.assign(form,"submit",async e=>{e.preventDefault();save.disabled=true;mutate();try{status=await api.native('update.save',values());for(const name of ['smbUsername','smbPassword','smbDomain'])form.elements[name].value='';wantInstall=false;form=null;ui.toast('更新设置已保存');await onSettings();}catch(error){app.error(error);}finally{save.disabled=false;}},"android.web.js.updates.build.8d3ac035151b");
     node.append(form);
     const info=ui.el('p','kv');info.id='update-state';info.setAttribute('role','status');const progress=document.createElement('progress');progress.id='update-progress';progress.hidden=true;
     const pending=ui.el('section');pending.id='update-pending-notes';pending.append(ui.el('h3','','待更新版本日志'));

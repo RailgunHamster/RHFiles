@@ -38,7 +38,7 @@ const androidTrash = (() => {
         const check=ui.el('span','trash-check');check.innerHTML=view.selected.has(item.id)?ui.icon('check'):'';
         const icon=ui.el('span','thumb');icon.innerHTML=ui.icon(item.isDir?'folder':item.kind||'other');
         const meta=ui.el('span','meta');meta.append(ui.el('span','name',item.name),ui.el('span','sub',fmt.displayPath(item.original)),ui.el('span','sub','删除于 '+fmt.date(item.at)));
-        select.append(check,icon,meta);select.onclick=()=>{view.selected.has(item.id)?view.selected.delete(item.id):view.selected.add(item.id);paint();};
+        select.append(check,icon,meta);RHFilesUI.assign(select,"click",()=>{view.selected.has(item.id)?view.selected.delete(item.id):view.selected.add(item.id);paint();},"android.web.js.trash.paint.e6b547aff4ef");
         const more=control(item.name+' 的更多操作','more',()=>ui.openSheet(item.name,[
           app.action('恢复原位置','refresh',()=>submit('restore',[item.id])),
           app.action('永久删除','trash',()=>submit('trash-delete',[item.id]),true),

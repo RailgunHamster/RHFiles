@@ -103,7 +103,7 @@ async function renderCurrentTags() {
     const remove = document.createElement("span");
     remove.className = "tag-remove";
     remove.textContent = "\u00d7";
-    remove.addEventListener("click", () => removeTag(tag));
+    RHFilesUI.listen(remove,"click", () => removeTag(tag),undefined,"src.js.dialogs.renderCurrentTags.389eaa401506");
     span.appendChild(remove);
     container.appendChild(span);
   });
@@ -574,7 +574,7 @@ function renderReleaseHistory(response) {
       </details>`;
     }).join('');
   container.querySelectorAll('.settings-release-item').forEach(details => {
-    details.addEventListener('toggle', () => { if (details.open) hydrateReleaseHistoryItem(details); });
+    RHFilesUI.listen(details,'toggle', () => { if (details.open) hydrateReleaseHistoryItem(details); },undefined,"src.js.dialogs.renderReleaseHistory.67b494dd017d");
     if (details.open) hydrateReleaseHistoryItem(details);
   });
 }
@@ -655,7 +655,7 @@ function uploadThemeFile() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = ".css";
-  input.onchange = () => {
+  RHFilesUI.assign(input,"change",() => {
     const file = input.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -666,7 +666,7 @@ function uploadThemeFile() {
       applyCustomTheme();
     };
     reader.readAsText(file);
-  };
+  },"src.js.dialogs.uploadThemeFile.184c403be692");
   input.click();
 }
 
@@ -727,10 +727,10 @@ async function showNewFileDialog(isRight) {
     return `<div class="newfile-template${i === 0 ? " selected" : ""}" data-idx="${i}" onclick="selectNewFileTemplate(${i})"><span class="nft-icon">${icon}</span><span class="nft-name">${esc(newFileTemplateLabel(tpl))}</span></div>`;
   }).join("");
   nameInput.value = t('dialog.newFileDefault') + (templates.length ? "." + newFileTemplateExt(templates[0]) : ".txt");
-  nameInput.onkeydown = e => {
+  RHFilesUI.assign(nameInput,"keydown",e => {
     if (e.key === "Enter") { e.preventDefault(); createNewFileFromDialog(); }
     else if (e.key === "Escape") { e.preventDefault(); closeNewFile(); }
-  };
+  },"src.js.dialogs.showNewFileDialog.79e39b3377a3");
   dialogEl.style.display = "flex";
   nameInput.focus();
 }
@@ -978,12 +978,12 @@ function renderDiskUsage(data) {
   }).join('');
   results.querySelectorAll('.disk-usage-row').forEach((row, index) => {
     const node = rows[index]?.node;
-    row.addEventListener('click', () => selectDiskUsageRow(row, node));
-    row.addEventListener('dblclick', () => openDiskUsageNode(node));
-    row.addEventListener('contextmenu', event => {
+    RHFilesUI.listen(row,'click', () => selectDiskUsageRow(row, node),undefined,"src.js.dialogs.renderDiskUsage.d988c3899b0a");
+    RHFilesUI.listen(row,'dblclick', () => openDiskUsageNode(node),undefined,"src.js.dialogs.renderDiskUsage.b4c862e1b939");
+    RHFilesUI.listen(row,'contextmenu', event => {
       selectDiskUsageRow(row, node);
       showDiskUsageNodeContextMenu(event, node);
-    });
+    },undefined,"src.js.dialogs.renderDiskUsage.72cc46291a76");
   });
 }
 
@@ -1050,7 +1050,7 @@ function showSelectedDiskUsageProperties() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('disk-usage-results')?.addEventListener('keydown', event => {
+  RHFilesUI.listen(document.getElementById('disk-usage-results'),'keydown', event => {
     const row = event.target.closest('.disk-usage-row');
     if (!row) return;
     const index = Number(row.dataset.index);
@@ -1070,7 +1070,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const rect = row.getBoundingClientRect();
       showDiskUsageNodeContextMenu({preventDefault(){}, stopPropagation(){}, clientX:rect.left + 18, clientY:rect.bottom}, _diskUsageRows[index]?.node);
     }
-  });
+  },undefined,"src.js.dialogs.top.2774774f09a1");
 });
 
 // --- toolbar customization ---
@@ -1330,7 +1330,7 @@ function importAllData() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = ".json";
-  input.onchange = () => {
+  RHFilesUI.assign(input,"change",() => {
     const file = input.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -1364,7 +1364,7 @@ function importAllData() {
       }
     };
     reader.readAsText(file);
-  };
+  },"src.js.dialogs.importAllData.184c403be692");
   input.click();
 }
 

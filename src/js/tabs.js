@@ -679,7 +679,7 @@ function initTabDragDrop(bar, isRight) {
   bar = bar || document.getElementById("tab-bar");
   if (!bar) return;
   bar.querySelectorAll(".tab").forEach(tabEl => {
-    tabEl.addEventListener("dragstart", e => {
+    RHFilesUI.listen(tabEl,"dragstart", e => {
       _dragTabId = parseInt(tabEl.dataset.tabId);
       _dragTabPane = isRight ? 'right' : 'left';
       tabEl.classList.add("dragging");
@@ -689,15 +689,15 @@ function initTabDragDrop(bar, isRight) {
         tabId: _dragTabId,
         pane: _dragTabPane,
       }));
-    });
-    tabEl.addEventListener("dragend", () => {
+    },undefined,"src.js.tabs.initTabDragDrop.ef9830216525");
+    RHFilesUI.listen(tabEl,"dragend", () => {
       _dragTabId = null;
       _dragTabPane = null;
       clearFileDragTabHover();
       tabEl.classList.remove("dragging");
       clearTabReorderIndicators(bar);
-    });
-    tabEl.addEventListener("dragover", e => {
+    },undefined,"src.js.tabs.initTabDragDrop.36ecc4657f81");
+    RHFilesUI.listen(tabEl,"dragover", e => {
       if (isRhfilesFileDrag(e.dataTransfer)) {
         e.preventDefault();
         e.stopPropagation();
@@ -720,8 +720,8 @@ function initTabDragDrop(bar, isRight) {
       clearTabReorderIndicators(bar);
       const rect = tabEl.getBoundingClientRect();
       tabEl.classList.add(e.clientX >= rect.left + rect.width / 2 ? 'drag-over-after' : 'drag-over-before');
-    });
-    tabEl.addEventListener("dragleave", e => {
+    },undefined,"src.js.tabs.initTabDragDrop.01f81eb4b44d");
+    RHFilesUI.listen(tabEl,"dragleave", e => {
       // Child elements (label, pin, close button) emit their own bubbling
       // dragleave events while the pointer is still inside the tab.
       if (e.target !== tabEl) return;
@@ -732,8 +732,8 @@ function initTabDragDrop(bar, isRight) {
         _fileDragTabLeaveTimer = null;
         clearFileDragTabHover(tabEl);
       }, 180);
-    });
-    tabEl.addEventListener("drop", async e => {
+    },undefined,"src.js.tabs.initTabDragDrop.de5965b8f949");
+    RHFilesUI.listen(tabEl,"drop", async e => {
       if (isRhfilesFileDrag(e.dataTransfer)) {
         e.preventDefault();
         e.stopPropagation();
@@ -769,7 +769,7 @@ function initTabDragDrop(bar, isRight) {
       _dragTabPane = null;
       if (isRight) renderRightTabs(); else renderTabs();
       saveTabState();
-    });
+    },undefined,"src.js.tabs.initTabDragDrop.7b5da02de11a");
   });
 }
 
@@ -784,30 +784,30 @@ function initTabPreview() {
   bars.forEach(bar => bar.querySelectorAll(".tab").forEach(tabEl => {
     if (tabEl.dataset.previewBound === 'true') return;
     tabEl.dataset.previewBound = 'true';
-    tabEl.addEventListener("mouseenter", () => {
+    RHFilesUI.listen(tabEl,"mouseenter", () => {
       if (_fileDragTabHoverTarget || _dragTabId !== null) return;
       hideTabPreview();
       _previewTimer = setTimeout(() => showTabPreview(tabEl), 300);
-    });
-    tabEl.addEventListener("mouseleave", () => {
+    },undefined,"src.js.tabs.initTabPreview.925363532b88");
+    RHFilesUI.listen(tabEl,"mouseleave", () => {
       if (_previewTimer) clearTimeout(_previewTimer);
       hideTabPreview();
-    });
+    },undefined,"src.js.tabs.initTabPreview.9d4727d78191");
   }));
 }
 
-document.addEventListener('dragover', event => {
+RHFilesUI.listen(document,'dragover', event => {
   if (!_fileDragTabHoverTarget || !isRhfilesFileDrag(event.dataTransfer)) return;
   if (!event.target.closest?.('.tab')) clearFileDragTabHover();
-});
-document.addEventListener('dragend', () => {
+},undefined,"src.js.tabs.top.bad28af00d29");
+RHFilesUI.listen(document,'dragend', () => {
   clearFileDragTabHover();
   clearRhfilesFileDragSession();
-});
-document.addEventListener('drop', () => {
+},undefined,"src.js.tabs.top.fb1153cf3078");
+RHFilesUI.listen(document,'drop', () => {
   clearFileDragTabHover();
   setTimeout(clearRhfilesFileDragSession, 0);
-});
+},undefined,"src.js.tabs.top.e4bcd070fb82");
 
 let _previewFetchToken = 0;
 
@@ -822,8 +822,8 @@ async function showTabPreview(tabEl) {
   if (!_previewEl) {
     _previewEl = document.createElement("div");
     _previewEl.className = "tab-preview";
-    _previewEl.addEventListener("mouseenter", () => { if (_previewTimer) clearTimeout(_previewTimer); });
-    _previewEl.addEventListener("mouseleave", hideTabPreview);
+    RHFilesUI.listen(_previewEl,"mouseenter", () => { if (_previewTimer) clearTimeout(_previewTimer); },undefined,"src.js.tabs.showTabPreview.048bfae1d319");
+    RHFilesUI.listen(_previewEl,"mouseleave", hideTabPreview,undefined,"src.js.tabs.showTabPreview.9a03c08a79eb");
     document.body.appendChild(_previewEl);
   }
 
@@ -886,7 +886,7 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
       const item = document.createElement('span');
       item.className = 'bc-item';
       item.textContent = index ? decodeURIComponent(segment) : 'FTP: ' + segment;
-      item.onclick = () => isRight ? rpNavigateTo(destination) : navigateTo(destination);
+      RHFilesUI.assign(item,"click",() => isRight ? rpNavigateTo(destination) : navigateTo(destination),"src.js.tabs.renderBreadcrumb.d5c6c81cce64");
       bc.appendChild(item);
     });
     return;
@@ -894,7 +894,7 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   if (path === "home://") {
     bc.innerHTML = `<span class="bc-item" data-path="home://">${t('nav.home')}</span><span class="breadcrumb-spacer"></span>`;
     const spacer = bc.querySelector(".breadcrumb-spacer");
-    if (spacer) spacer.addEventListener("click", () => enterEditMode(isRight));
+    if (spacer) RHFilesUI.listen(spacer,"click", () => enterEditMode(isRight),undefined,"src.js.tabs.renderBreadcrumb.cf84863cd66c");
     revealBreadcrumbTail(bc);
     return;
   }
@@ -937,14 +937,14 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   bc.innerHTML = html;
 
   bc.querySelectorAll(".bc-item").forEach(el => {
-    el.addEventListener("click", () => { if (isRight) rpNavigateTo(el.dataset.path); else navigateTo(el.dataset.path); });
+    RHFilesUI.listen(el,"click", () => { if (isRight) rpNavigateTo(el.dataset.path); else navigateTo(el.dataset.path); },undefined,"src.js.tabs.renderBreadcrumb.73d98c22b5d6");
   });
   bc.querySelectorAll(".bc-sep").forEach(el => {
-    el.addEventListener("click", e => { e.stopPropagation(); showBcDropdown(el.dataset.path, el, dropdownId, isRight); });
+    RHFilesUI.listen(el,"click", e => { e.stopPropagation(); showBcDropdown(el.dataset.path, el, dropdownId, isRight); },undefined,"src.js.tabs.renderBreadcrumb.73d98c22b5d6");
   });
   const spacer = bc.querySelector(".breadcrumb-spacer");
   if (spacer) {
-    spacer.addEventListener("click", () => enterEditMode(isRight));
+    RHFilesUI.listen(spacer,"click", () => enterEditMode(isRight),undefined,"src.js.tabs.renderBreadcrumb.cf84863cd66c");
   }
   revealBreadcrumbTail(bc);
 }
@@ -962,11 +962,11 @@ async function showBcDropdown(parentPath, sepEl, dropdownId, isRight) {
       `<div class="bc-dropdown-item" data-path="${esc(d.path)}">${esc(d.name)}</div>`
     ).join("");
     dropdown.querySelectorAll(".bc-dropdown-item").forEach(el => {
-      el.addEventListener("click", () => { hideDropdown(dropdownId); if (isRight) rpNavigateTo(el.dataset.path); else navigateTo(el.dataset.path); });
+      RHFilesUI.listen(el,"click", () => { hideDropdown(dropdownId); if (isRight) rpNavigateTo(el.dataset.path); else navigateTo(el.dataset.path); },undefined,"src.js.tabs.showBcDropdown.73d98c22b5d6");
     });
     dropdown.classList.add("show");
     dropdown._lastPath = parentPath;
-    setTimeout(() => document.addEventListener("click", () => hideDropdown(dropdownId), { once: true }), 50);
+    setTimeout(() => RHFilesUI.listen(document,"click", () => hideDropdown(dropdownId), { once: true },"src.js.tabs.showBcDropdown.c606b76ba4e8"), 50);
   } catch (e) {}
 }
 
@@ -1079,11 +1079,11 @@ function renderAddressSuggestions(isRight, items, activeIndex) {
     return `<div class="address-suggest-item${index === el._index ? ' active' : ''}" role="option" data-index="${index}" aria-selected="${index === el._index ? 'true' : 'false'}"><span class="address-suggest-kind">${esc(kind)}</span><span class="address-suggest-path">${esc(item.path)}</span></div>`;
   }).join('');
   el.querySelectorAll('.address-suggest-item').forEach(node => {
-    node.addEventListener('mousedown', event => event.preventDefault());
-    node.addEventListener('click', () => {
+    RHFilesUI.listen(node,'mousedown', event => event.preventDefault(),undefined,"src.js.tabs.renderAddressSuggestions.0ec88e22d35e");
+    RHFilesUI.listen(node,'click', () => {
       const item = list[Number(node.dataset.index)];
       if (item) applyAddressSuggestion(item.path, isRight);
-    });
+    },undefined,"src.js.tabs.renderAddressSuggestions.0cdafb83897b");
   });
 }
 
@@ -1267,9 +1267,9 @@ function renderNavigationError(path, error, isRight) {
   const retry = document.createElement('button');
   retry.className = 'dialog-btn primary';
   retry.textContent = t('nav.retry');
-  retry.addEventListener('click', () => {
+  RHFilesUI.listen(retry,'click', () => {
     if (isRight) rpNavigateTo(path, false); else navigateTo(path, false);
-  });
+  },undefined,"src.js.tabs.renderNavigationError.831d415d6df2");
   actions.appendChild(retry);
   panel.appendChild(actions);
   list.appendChild(panel);
@@ -1568,7 +1568,7 @@ function hideSearchHelp() {
 
 function initDoubleCtrlSearch() {
   let lastCtrlTime = 0;
-  document.addEventListener('keydown', e => {
+  RHFilesUI.listen(document,'keydown', e => {
     if (e.key === 'Control' && !e.shiftKey && !e.altKey) {
       const now = Date.now();
       if (now - lastCtrlTime < 350) {
@@ -1582,7 +1582,7 @@ function initDoubleCtrlSearch() {
         lastCtrlTime = now;
       }
     }
-  });
+  },undefined,"src.js.tabs.initDoubleCtrlSearch.ea5a60ea371d");
 }
 
 async function initQuickSearch() {
@@ -1594,13 +1594,13 @@ async function initQuickSearch() {
         _everythingAvailable = await call("is_everything_available", {});
         const input = document.getElementById("filter-input");
         if (input) {
-            input.addEventListener('keydown', e => {
+            RHFilesUI.listen(input,'keydown', e => {
               if (e.key === 'Escape') {
                 document.getElementById("filter-input").value = '';
                 applyFilter();
                 hideSearchHelp();
               }
-            });
+            },undefined,"src.js.tabs.initQuickSearch.5801b44cd747");
         }
         updateSearchScopeUI();
         initDoubleCtrlSearch();
@@ -1644,16 +1644,16 @@ function renderSearchFailure(query, error, isRight) {
   const retry = document.createElement('button');
   retry.className = 'dialog-btn primary';
   retry.textContent = t('nav.retry');
-  retry.addEventListener('click', () => runSearch(query));
+  RHFilesUI.listen(retry,'click', () => runSearch(query),undefined,"src.js.tabs.renderSearchFailure.831d415d6df2");
   actions.appendChild(retry);
   if (info.key === 'ipcUnavailable' || info.key === 'indexNotReady' || info.key === 'startTimeout') {
     const openEverything = document.createElement('button');
     openEverything.className = 'dialog-btn';
     openEverything.textContent = t('search.openEverything');
-    openEverything.addEventListener('click', async () => {
+    RHFilesUI.listen(openEverything,'click', async () => {
       try { await call('open_everything', {}); }
       catch (openError) { showNotice(t('status.searchError', { error: openError })); }
-    });
+    },undefined,"src.js.tabs.renderSearchFailure.adcdee34990a");
     actions.appendChild(openEverything);
   }
   panel.appendChild(actions);
@@ -1750,7 +1750,7 @@ function showHomePage() {
     const card = document.createElement("div");
     card.className = "home-card";
     card.innerHTML = `<svg class="home-card-icon" viewBox="0 0 16 16" fill="none"><path d="${f.icon}" stroke="currentColor" stroke-width="1"/></svg><div class="home-card-name">${esc(f.name)}</div>`;
-    card.addEventListener("click", () => navigateTo(f.path));
+    RHFilesUI.listen(card,"click", () => navigateTo(f.path),undefined,"src.js.tabs.showHomePage.35ed463e143e");
     quickAccess.appendChild(card);
   }
   renderHomeDrives();
@@ -1787,14 +1787,14 @@ async function renderHomeRecent(mode) {
         '<div class="hri-info"><span class="hri-name">' + esc(item.name) + '</span>' +
         '<span class="hri-meta">' + esc(item.path) + (timeStr ? ' \u00b7 ' + esc(timeStr) : '') + '</span></div>' +
         (item.access_count > 1 ? '<span class="hri-count">' + item.access_count + 'x</span>' : '');
-      div.addEventListener("click", () => {
+      RHFilesUI.listen(div,"click", () => {
         if (item.is_dir) {
           navigateTo(item.path);
         } else {
           const parentDir = parentFolderPath(item.path);
           navigateTo(parentDir);
         }
-      });
+      },undefined,"src.js.tabs.renderHomeRecent.fada4b9e6db8");
       homeRecent.appendChild(div);
     }
   } catch (e) {
@@ -1814,7 +1814,7 @@ async function renderHomeDrives() {
       const card = document.createElement("div");
       card.className = "home-drive-card";
       card.innerHTML = `<div class="home-drive-letter">${esc(d.letter)}</div><div class="home-drive-label">${esc(d.label)}</div><div class="home-drive-bar"><div class="home-drive-bar-fill" style="width:${usedPct}%;background:${color}"></div></div><div style="font-size:11px;color:var(--text-4);margin-top:4px">${esc(d.free)}</div>`;
-      card.addEventListener("click", () => navigateTo(d.path));
+      RHFilesUI.listen(card,"click", () => navigateTo(d.path),undefined,"src.js.tabs.renderHomeDrives.35ed463e143e");
       container.appendChild(card);
     }
   } catch (e) {}
@@ -1901,7 +1901,7 @@ document.addEventListener("DOMContentLoaded", () => {
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('autocorrect', 'off');
     input.setAttribute('autocapitalize', 'off');
-    input.addEventListener("keydown", e => {
+    RHFilesUI.listen(input,"keydown", e => {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         moveAddressSuggestion(isRight, 1);
@@ -1935,14 +1935,14 @@ document.addEventListener("DOMContentLoaded", () => {
         exitEditMode(isRight);
         input.blur();
       }
-    });
-    input.addEventListener("input", () => {
+    },undefined,"src.js.tabs.setupEditInput.b139a679e52e");
+    RHFilesUI.listen(input,"input", () => {
       input._suggestToken = (input._suggestToken || 0) + 1;
       const token = input._suggestToken;
       clearTimeout(input._suggestTimer);
       input._suggestTimer = setTimeout(() => refreshAddressSuggestions(input.value, isRight, token), 80);
-    });
-    input.addEventListener("blur", () => exitEditMode(isRight));
+    },undefined,"src.js.tabs.setupEditInput.64bf8562d4ff");
+    RHFilesUI.listen(input,"blur", () => exitEditMode(isRight),undefined,"src.js.tabs.setupEditInput.1a8f1cf4d832");
   }
   setupEditInput("path-input", false);
   setupEditInput("right-path-input", true);

@@ -10,7 +10,7 @@ const nearbyView=(()=>{
     const message=el('p','n-error');message.setAttribute('role','alert');
     const fail=error=>{message.textContent=String(error?.message||error)};
     const run=handler=>Promise.resolve().then(()=>{message.textContent='';return handler();}).catch(fail);
-    const button=(text,handler,primary=false)=>{const node=el('button',primary?'n-primary':'',text);node.type='button';node.onclick=()=>run(handler);return node;};
+    const button=(text,handler,primary=false)=>{const node=el('button',primary?'n-primary':'',text);node.type='button';RHFilesUI.assign(node,"click",()=>run(handler),"src.js.nearby-ui.button.94baa9ef3d0a");return node;};
     function confirm(title,text,caption){if(confirmDismiss)return Promise.resolve(false);return new Promise(resolve=>{const layer=el('div','n-confirm'),box=el('div'),row=el('div','n-row');box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');box.append(el('h3','',title),el('p','',text),row);const finish=value=>{confirmDismiss=null;layer.remove();resolve(value)};confirmDismiss=()=>finish(false);row.append(button(tr('取消','Cancel'),()=>finish(false)),button(caption,()=>finish(true),true));layer.append(box);root.append(layer);row.lastChild.focus();});}
     const title=el('h2','',tr('附近互传','Nearby Transfer'));root.append(title,el('p','n-muted',tr('同一局域网 · TLS 加密 · 接收端每次确认','Same LAN · TLS encrypted · Receiver approval required')));
     const aliasLabel=el('label','',tr('本机名称','Device name')),alias=el('input');alias.value=localStorage.getItem('rhfiles.nearby.alias')||config.defaultAlias||tr('我的设备','My device');alias.maxLength=80;aliasLabel.append(alias);
@@ -57,7 +57,7 @@ const nearbyView=(()=>{
     }
     async function refresh(){if(disposed||!root.isConnected)return;status=await call('nearby_status');if(!disposed)paint();}
     async function poll(){clearTimeout(timer);try{await refresh();}catch(error){if(!disposed)fail(error)}finally{if(!disposed&&root.isConnected)timer=setTimeout(poll,1000);}}
-    root.addEventListener('keydown',event=>{if(event.key==='Escape'&&confirmDismiss){event.stopImmediatePropagation();event.preventDefault();confirmDismiss();}},true);
+    RHFilesUI.listen(root,'keydown',event=>{if(event.key==='Escape'&&confirmDismiss){event.stopImmediatePropagation();event.preventDefault();confirmDismiss();}},true,"src.js.nearby-ui.mount.1021fd4b01d9");
     poll();return {refresh,back(){if(confirmDismiss){confirmDismiss();return true}return false},destroy(){disposed=true;clearTimeout(timer);confirmDismiss?.();root.classList.remove('nearby-ui');}};
   }
   return {mount};

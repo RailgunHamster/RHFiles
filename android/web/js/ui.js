@@ -123,11 +123,11 @@ const ui = (() => {
       if(action.id)item.dataset.command=action.id;
       item.innerHTML = `${icon(action.icon || 'other')}<span></span>`;
       item.querySelector('span').textContent = action.label;
-      item.addEventListener('click', () => {
+      RHFilesUI.listen(item,'click', () => {
         onDismiss = null;
         closeSheet();
         if (action.onSelect) Promise.resolve().then(action.onSelect).catch((error) => toast(`操作失败：${error}`));
-      });
+      },undefined,"android.web.js.ui.openSheet.0bed9d47c1ee");
       panel.appendChild(item);
     }
     if (note) panel.appendChild(el('div', 'sheet-note', note));
@@ -182,7 +182,7 @@ const ui = (() => {
       const cancel = el('button', '', '取消');
       cancel.type = 'button';
       cancel.style.cssText = 'padding:12px 18px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text);font:inherit';
-      cancel.addEventListener('click', () => finish(null));
+      RHFilesUI.listen(cancel,'click', () => finish(null),undefined,"android.web.js.ui.prompt.6c6d1843e1da");
 
       const confirm = el('button', '', confirmLabel || '确定');
       confirm.type = 'submit';
@@ -200,7 +200,7 @@ const ui = (() => {
         resolve(value);
       }
 
-      form.addEventListener('submit', (event) => {
+      RHFilesUI.listen(form,'submit', (event) => {
         event.preventDefault();
         const value = input.value.trim();
         if (!value) {
@@ -208,7 +208,7 @@ const ui = (() => {
           return;
         }
         finish(value);
-      });
+      },undefined,"android.web.js.ui.prompt.0c1b1f65f1e4");
 
       sheet().hidden = false;
       scrim().hidden = false;
@@ -239,7 +239,7 @@ const ui = (() => {
   }
 
   function bindScrim() {
-    scrim().addEventListener('click', closeSheet);
+    RHFilesUI.listen(scrim(),'click', closeSheet,undefined,"android.web.js.ui.bindScrim.e7cb7a58e144");
   }
 
   let setDrawerOpen=()=>{};
@@ -263,7 +263,7 @@ const ui = (() => {
         if(!opened){drawer.hidden=true;overlay.hidden=!isSheetOpen();overlay.style.removeProperty('opacity');}
       },matchMedia('(prefers-reduced-motion: reduce)').matches?0:200);
     };
-    document.addEventListener('touchstart', event => {
+    RHFilesUI.listen(document,'touchstart', event => {
       gesture = null;
       suppressClick=false;
       if (event.touches.length !== 1 || isSheetOpen()) return;
@@ -273,8 +273,8 @@ const ui = (() => {
       const touch = event.touches[0];
       const visual=closing?Math.max(0,Math.min(1,1+drawer.getBoundingClientRect().left/width())):0;
       gesture = {x:touch.clientX,y:touch.clientY,closing,horizontal:false,base:visual,lastX:touch.clientX,lastTime:performance.now(),velocity:0};
-    }, {passive:true});
-    document.addEventListener('touchmove', event => {
+    }, {passive:true},"android.web.js.ui.bindDrawerSwipe.af8fde23db2f");
+    RHFilesUI.listen(document,'touchmove', event => {
       if (!gesture) return;
       if (event.touches.length !== 1) {if(gesture.horizontal)setDrawerOpen(gesture.closing);gesture=null;return;}
       const touch = event.touches[0], dx = touch.clientX-gesture.x, dy = touch.clientY-gesture.y;
@@ -289,8 +289,8 @@ const ui = (() => {
         gesture.lastTime=now;gesture.lastX=touch.clientX;
         position(gesture.base+dx/width(),true);
       }
-    }, {passive:false});
-    document.addEventListener('touchend', event => {
+    }, {passive:false},"android.web.js.ui.bindDrawerSwipe.39c7e8050137");
+    RHFilesUI.listen(document,'touchend', event => {
       const current = gesture; gesture = null;
       if (!current?.horizontal || event.changedTouches.length !== 1) return;
       const dx = event.changedTouches[0].clientX-current.x;
@@ -298,12 +298,12 @@ const ui = (() => {
       suppressClick=true;
       const fast=performance.now()-current.lastTime<120 && Math.abs(current.velocity)>.45 && Math.abs(dx)>20;
       setDrawerOpen(fast?current.velocity>0:current.closing?progress>.8:progress>=.2);
-    }, {passive:false});
-    document.addEventListener('touchcancel', () => {if(gesture?.horizontal)setDrawerOpen(gesture.closing);gesture=null;}, {passive:true});
-    document.addEventListener('click',event=>{if(suppressClick){suppressClick=false;event.preventDefault();event.stopImmediatePropagation();}},{capture:true});
+    }, {passive:false},"android.web.js.ui.bindDrawerSwipe.35d8499c54a0");
+    RHFilesUI.listen(document,'touchcancel', () => {if(gesture?.horizontal)setDrawerOpen(gesture.closing);gesture=null;}, {passive:true},"android.web.js.ui.bindDrawerSwipe.758cf78135a0");
+    RHFilesUI.listen(document,'click',event=>{if(suppressClick){suppressClick=false;event.preventDefault();event.stopImmediatePropagation();}},{capture:true},"android.web.js.ui.bindDrawerSwipe.bfe5feccd472");
     // A real mouse/trackpad click after a touch swipe is a new action, not the
     // touch gesture's compatibility click (important on tablets and in DeX).
-    document.addEventListener('pointerdown',event=>{if(event.pointerType==='mouse')suppressClick=false;},{capture:true});
+    RHFilesUI.listen(document,'pointerdown',event=>{if(event.pointerType==='mouse')suppressClick=false;},{capture:true},"android.web.js.ui.bindDrawerSwipe.7fda541cbd6d");
   }
 
   // One delegated long-press owner. Virtualized rows can disappear during a
@@ -322,7 +322,7 @@ const ui = (() => {
     const reset=()=>{cancel();if(pointer?.horizontal)position(pointer.row,0);pointer=null;close();};
     container.addEventListener('rhfiles-list-reset',reset);
     container.addEventListener('rhfiles-close-swipe',reset);
-    container.addEventListener('pointerdown',event=>{
+    RHFilesUI.listen(container,'pointerdown',event=>{
       if(pointer && event.pointerId!==pointer.id){reset();blockClick=true;return;}
       cancel();blockClick=false;pointer=null;
       if(event.button!==0 || event.target.closest('.entry-more,.entry-delete'))return;
@@ -333,8 +333,8 @@ const ui = (() => {
         const p=pointer;if(!p || p.moved || !p.row.isConnected || performance.now()-lastScroll<140)return;
         p.held=true;blockClick=true;close();const entry=find(p.path);if(entry)select(entry);navigator.vibrate?.(10);
       },500);
-    });
-    container.addEventListener('pointermove',event=>{
+    },undefined,"android.web.js.ui.bindFileGestures.b4ead5f35a19");
+    RHFilesUI.listen(container,'pointermove',event=>{
       const p=pointer;if(!p||p.id!==event.pointerId)return;
       const dx=event.clientX-p.x,dy=event.clientY-p.y;
       if(Math.hypot(dx,dy)>8){p.moved=true;blockClick=true;cancel();}
@@ -344,28 +344,28 @@ const ui = (() => {
         if(p.row.hasPointerCapture?.(event.pointerId)===false)try{p.row.setPointerCapture(event.pointerId);}catch{}
       }
       if(p.horizontal){event.preventDefault();position(p.row,Math.max(-72,Math.min(0,p.base+dx)),true);}
-    });
-    container.addEventListener('pointerup',event=>{
+    },undefined,"android.web.js.ui.bindFileGestures.21fc5ccb042f");
+    RHFilesUI.listen(container,'pointerup',event=>{
       const p=pointer;if(!p||p.id!==event.pointerId)return;cancel();
       if(p.horizontal){const offset=Math.max(-72,Math.min(0,p.base+event.clientX-p.x));if(offset<-24){opened=p.row;position(opened,-72);}else close();}
       if(p.moved||p.held||p.dismiss||p.base<0)blockClick=true;
       if(!p.moved&&p.base<0)close();pointer=null;
-    });
-    container.addEventListener('pointercancel',()=>{reset();blockClick=true;});
+    },undefined,"android.web.js.ui.bindFileGestures.7c60b86e964f");
+    RHFilesUI.listen(container,'pointercancel',()=>{reset();blockClick=true;},undefined,"android.web.js.ui.bindFileGestures.5d649e9868dc");
     container.addEventListener('scroll',()=>{lastScroll=performance.now();reset();blockClick=true;},{passive:true});
-    container.addEventListener('click',event=>{
+    RHFilesUI.listen(container,'click',event=>{
       if(event.target.closest('.entry-more,.entry-delete'))return;
       const row=rowFor(event.target);if(!row)return;
       if(blockClick){blockClick=false;event.preventDefault();return;}
       const entry=find(row.dataset.path);if(!entry)return;
       if(hasSelection())toggle(entry.path);else activate(entry);
-    });
-    container.addEventListener('contextmenu',event=>{
+    },undefined,"android.web.js.ui.bindFileGestures.1dd80fbc2ff6");
+    RHFilesUI.listen(container,'contextmenu',event=>{
       event.preventDefault();cancel();const row=rowFor(event.target);if(!row)return;
       if(pointer?.moved || performance.now()-lastScroll<200 || blockClick)return;
       blockClick=true;close();const entry=find(row.dataset.path);if(entry)select(entry);
-    });
-    container.addEventListener('keydown',event=>{if(event.key==='Escape')close();});
+    },undefined,"android.web.js.ui.bindFileGestures.a2811b7fcae1");
+    RHFilesUI.listen(container,'keydown',event=>{if(event.key==='Escape')close();},undefined,"android.web.js.ui.bindFileGestures.5301098200db");
     document.addEventListener('visibilitychange',()=>{if(document.hidden)reset();});
     window.addEventListener('rhfiles-pan-scroll',()=>{reset();blockClick=true;});
     return reset;

@@ -9,7 +9,8 @@ export const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)
 export const sourceRoot = process.env.RHFILES_TEST_SOURCE_ROOT || root;
 export const readSource = file => fs.readFileSync(path.join(sourceRoot, 'src/js', file), 'utf8');
 export function context(extra = {}) {
-  return vm.createContext({console, URL, Set, Map, setTimeout, clearTimeout, queueMicrotask, IS_MAC:false, FS_ROOT:'C:\\', ...extra});
+  const RHFilesUI={listen:(node,...args)=>node?.addEventListener?.(...args.slice(0,3)),remove:(node,...args)=>node?.removeEventListener?.(...args.slice(0,3)),assign:(node,type,handler)=>node['on'+type]=handler};
+  return vm.createContext({console, URL, Set, Map, setTimeout, clearTimeout, queueMicrotask, RHFilesUI, IS_MAC:false, FS_ROOT:'C:\\', ...extra});
 }
 export function load(ctx, file, names) {
   const source = readSource(file);

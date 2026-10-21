@@ -33,11 +33,11 @@ const androidFeatures = (() => {
     }
     const error=ui.el('p','danger');error.setAttribute('role','alert');
     const send=ui.el('button','primary',caption);send.type='submit';root.append(error,send);
-    root.addEventListener('submit',async e=>{
+    RHFilesUI.listen(root,'submit',async e=>{
       e.preventDefault();send.disabled=true;error.textContent='';
       const values=Object.fromEntries([...root.elements].filter(e=>e.name).map(e=>[e.name,e.type==='checkbox'?e.checked:e.value]));
       try {await submit(values);if(root.isConnected)ui.closeSheet();}catch(err){error.textContent=err.message || String(err);}finally{send.disabled=false;}
-    });panel().append(root);return root;
+    },undefined,"android.web.js.features.form.79df2d74496f");panel().append(root);return root;
   }
   async function enqueue(op,args) {
     const id=await api.native('job.start',{op,args});ui.toast('已加入文件任务');await pollJobs();return id;
@@ -152,7 +152,7 @@ const androidFeatures = (() => {
           const copy=ui.el('span','application-copy');copy.append(ui.el('strong','',a.name+' · '+a.version),ui.el('small','',size));row.replaceChildren(icon,copy);list.append(row);
           if(appIconObserver)appIconObserver.observe(icon);else loadIcon(icon);
         }
-      }query.addEventListener('input',paint);paint();return;
+      }RHFilesUI.listen(query,'input',paint,undefined,"android.web.js.features.renderTool.207c2c7e9eb1");paint();return;
     }
     if(tool==='trash') {
       await androidTrash.enter(node,app,valid);return;
@@ -179,7 +179,7 @@ const androidFeatures = (() => {
       if(app.state.route.tool==='remote')await renderTool('remote');
       onSaved?.();
     },'保存连接');
-    pending.then(root=>{if(!root)return;const type=root.elements.type;function update(){for(const name of ['host','port','share','domain','url','insecure']){const input=root.elements[name];input.closest('label').hidden=name==='url'?type.value!=='webdav':name==='host'||name==='port'?type.value==='webdav':name==='insecure'?!['ftp','webdav'].includes(type.value):type.value!=='smb';}root.elements.host.required=type.value!=='webdav';root.elements.url.required=type.value==='webdav';}type.onchange=update;update();if(existing.needsPassword){root.prepend(ui.el('p','credential-notice','此连接来自配置同步，密码未同步。请在本机补填一次，密码只加密保存在本机。'));root.elements.password.focus();}});return pending;
+    pending.then(root=>{if(!root)return;const type=root.elements.type;function update(){for(const name of ['host','port','share','domain','url','insecure']){const input=root.elements[name];input.closest('label').hidden=name==='url'?type.value!=='webdav':name==='host'||name==='port'?type.value==='webdav':name==='insecure'?!['ftp','webdav'].includes(type.value):type.value!=='smb';}root.elements.host.required=type.value!=='webdav';root.elements.url.required=type.value==='webdav';}RHFilesUI.assign(type,"change",update,"android.web.js.features.addRemote.fc87159338e5");update();if(existing.needsPassword){root.prepend(ui.el('p','credential-notice','此连接来自配置同步，密码未同步。请在本机补填一次，密码只加密保存在本机。'));root.elements.password.focus();}});return pending;
   }
   async function beforeRemoteNavigate(path,valid=()=>true){
     if(!path?.startsWith('remote://'))return true;
@@ -285,18 +285,18 @@ const androidFeatures = (() => {
         iconButton('旋转','rotate',()=>{rotation=(rotation+90)%360;transform();}),iconButton('放大','zoomIn',()=>{zoom=Math.min(8,zoom*1.4);transform();}),iconButton('下一张','next',()=>next(1)));
       panel().append(toolbar);
       const points=new Map();let origin,distance=0,moved=false,tapTimer;
-      viewport.addEventListener('pointerdown',e=>{moved=false;points.set(e.pointerId,[e.clientX,e.clientY]);viewport.setPointerCapture(e.pointerId);origin=[e.clientX,e.clientY,x,y];if(points.size===2){const [a,b]=[...points.values()];distance=Math.hypot(a[0]-b[0],a[1]-b[1]);}});
-      viewport.addEventListener('pointermove',e=>{if(!points.has(e.pointerId))return;if(origin&&Math.hypot(e.clientX-origin[0],e.clientY-origin[1])>8)moved=true;points.set(e.pointerId,[e.clientX,e.clientY]);if(points.size===2){moved=true;const [a,b]=[...points.values()],d=Math.hypot(a[0]-b[0],a[1]-b[1]);if(distance>0)zoom=Math.max(.25,Math.min(8,zoom*d/distance));distance=d;transform();}else if(zoom>1&&origin){x=origin[2]+e.clientX-origin[0];y=origin[3]+e.clientY-origin[1];transform();}});
+      RHFilesUI.listen(viewport,'pointerdown',e=>{moved=false;points.set(e.pointerId,[e.clientX,e.clientY]);viewport.setPointerCapture(e.pointerId);origin=[e.clientX,e.clientY,x,y];if(points.size===2){const [a,b]=[...points.values()];distance=Math.hypot(a[0]-b[0],a[1]-b[1]);}},undefined,"android.web.js.features.media.c3786814889e");
+      RHFilesUI.listen(viewport,'pointermove',e=>{if(!points.has(e.pointerId))return;if(origin&&Math.hypot(e.clientX-origin[0],e.clientY-origin[1])>8)moved=true;points.set(e.pointerId,[e.clientX,e.clientY]);if(points.size===2){moved=true;const [a,b]=[...points.values()],d=Math.hypot(a[0]-b[0],a[1]-b[1]);if(distance>0)zoom=Math.max(.25,Math.min(8,zoom*d/distance));distance=d;transform();}else if(zoom>1&&origin){x=origin[2]+e.clientX-origin[0];y=origin[3]+e.clientY-origin[1];transform();}},undefined,"android.web.js.features.media.1cd6d22ede11");
       const release=e=>{if(points.size===1&&zoom===1&&origin&&Math.abs(e.clientX-origin[0])>70&&Math.abs(e.clientY-origin[1])<70)next(e.clientX>origin[0]?-1:1);points.delete(e.pointerId);origin=null;distance=0;};
-      viewport.addEventListener('pointerup',release);viewport.addEventListener('pointercancel',()=>{points.clear();origin=null;distance=0;});
-      viewport.addEventListener('click',()=>{if(moved)return;clearTimeout(tapTimer);tapTimer=setTimeout(()=>panel().classList.toggle('chrome-hidden'),230);});
-      viewport.addEventListener('dblclick',()=>{clearTimeout(tapTimer);zoom=zoom===1?2:1;x=0;y=0;transform();});
+      RHFilesUI.listen(viewport,'pointerup',release,undefined,"android.web.js.features.media.6d581fa355c0");RHFilesUI.listen(viewport,'pointercancel',()=>{points.clear();origin=null;distance=0;},undefined,"android.web.js.features.media.c03e4ba4678a");
+      RHFilesUI.listen(viewport,'click',()=>{if(moved)return;clearTimeout(tapTimer);tapTimer=setTimeout(()=>panel().classList.toggle('chrome-hidden'),230);},undefined,"android.web.js.features.media.f057c1e4f451");
+      RHFilesUI.listen(viewport,'dblclick',()=>{clearTimeout(tapTimer);zoom=zoom===1?2:1;x=0;y=0;transform();},undefined,"android.web.js.features.media.ecc9bd5c139a");
       controller.signal.addEventListener('abort',()=>clearTimeout(tapTimer));
-      viewport.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.25,Math.min(8,zoom*(e.deltaY>0?.9:1.1)));transform();},{passive:false});
-      document.addEventListener('keydown',e=>{if(e.key==='ArrowRight')next(1);if(e.key==='ArrowLeft')next(-1);},{signal:controller.signal});
+      RHFilesUI.listen(viewport,'wheel',e=>{e.preventDefault();zoom=Math.max(.25,Math.min(8,zoom*(e.deltaY>0?.9:1.1)));transform();},{passive:false},"android.web.js.features.media.eb6ce9fd7939");
+      RHFilesUI.listen(document,'keydown',e=>{if(e.key==='ArrowRight')next(1);if(e.key==='ArrowLeft')next(-1);},{signal:controller.signal},"android.web.js.features.media.ea5a60ea371d");
     } else {
       toolbar.append(button('后退 10 秒',()=>{element.currentTime=Math.max(0,element.currentTime-10);}),button('前进 10 秒',()=>{element.currentTime=Math.min(element.duration || Infinity,element.currentTime+10);}),button('循环：关',()=>{element.loop=!element.loop;ui.toast('循环播放：'+(element.loop?'开':'关'));}));
-      const rate=document.createElement('select');rate.setAttribute('aria-label','播放速度');for(const value of [.5,1,1.25,1.5,2]){const o=ui.el('option','',value+'×');o.value=value;rate.append(o);}rate.value='1';rate.onchange=()=>{element.playbackRate=Number(rate.value);};toolbar.append(rate);
+      const rate=document.createElement('select');rate.setAttribute('aria-label','播放速度');for(const value of [.5,1,1.25,1.5,2]){const o=ui.el('option','',value+'×');o.value=value;rate.append(o);}rate.value='1';RHFilesUI.assign(rate,"change",()=>{element.playbackRate=Number(rate.value);},"android.web.js.features.media.fbceb811c5a7");toolbar.append(rate);
     }
     element.addEventListener('error',()=>{info.textContent='设备不支持此格式或无法读取。可返回文件菜单选择“打开方式”。';});
     ui.onClosed(()=>{controller.abort();if(entry.kind!=='image'){element.pause();element.removeAttribute('src');element.load();}else element.removeAttribute('src');mediaController=null;});load();
@@ -363,10 +363,10 @@ const androidFeatures = (() => {
   function init(context) {
     app=context;
     androidNearby.init(context);
-    const chip=ui.el('button','native-task-chip');chip.id='native-task-chip';chip.hidden=true;chip.onclick=()=>app.go({screen:'tool',tool:'tasks'});$('app').append(chip);
+    const chip=ui.el('button','native-task-chip');chip.id='native-task-chip';chip.hidden=true;RHFilesUI.assign(chip,"click",()=>app.go({screen:'tool',tool:'tasks'}),"android.web.js.features.init.586523348202");$('app').append(chip);
     if(api.featuresAvailable()){pollJobs().catch(app.error);jobTimer=setInterval(()=>{if(!document.hidden)pollJobs().catch(()=>{});},1500);}
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
-    $('btn-ftp-toggle').addEventListener('click',()=>toggleFtp().catch(app.error));
+    RHFilesUI.listen($('btn-ftp-toggle'),'click',()=>toggleFtp().catch(app.error),undefined,"android.web.js.features.init.56ed6d2140c2");
   }
   return {init,beforeRemoteNavigate,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
 })();

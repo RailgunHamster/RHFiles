@@ -153,9 +153,9 @@ function fileChoiceEnsureDom() {
     cancel: bar.querySelector('#file-choice-cancel'),
     confirm: bar.querySelector('#file-choice-confirm'),
   };
-  nodes.clear.addEventListener('click', () => fileChoiceClearSelection());
-  nodes.cancel.addEventListener('click', () => fileChoiceCancel());
-  nodes.confirm.addEventListener('click', () => fileChoiceConfirm());
+  RHFilesUI.listen(nodes.clear,'click', () => fileChoiceClearSelection(),undefined,"src.js.file-choice.fileChoiceEnsureDom.5f65f8772ceb");
+  RHFilesUI.listen(nodes.cancel,'click', () => fileChoiceCancel(),undefined,"src.js.file-choice.fileChoiceEnsureDom.fc695f5b4e52");
+  RHFilesUI.listen(nodes.confirm,'click', () => fileChoiceConfirm(),undefined,"src.js.file-choice.fileChoiceEnsureDom.be865870fe97");
   fileChoiceState.nodes = nodes;
   return nodes;
 }

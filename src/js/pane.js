@@ -421,7 +421,7 @@ async function updatePreviewForSelection() {
     openBtn.className = "dialog-btn";
     openBtn.style.marginTop = "8px";
     openBtn.textContent = t('btn.openPdf');
-    openBtn.addEventListener("click", () => call('open_file', { path: file.path }));
+    RHFilesUI.listen(openBtn,"click", () => call('open_file', { path: file.path }),undefined,"src.js.pane.updatePreviewForSelection.0ea8088fba4a");
     const container = document.createElement("div");
     container.style.cssText = "text-align:center;padding:12px;";
     container.innerHTML = `<div style="font-size:36px;color:#d32f2f">&#128196;</div>
@@ -729,10 +729,10 @@ function paneSortBy(pane, field) {
 }
 
 // --- resizable panes ---
-document.addEventListener("mousedown", e => {
+RHFilesUI.listen(document,"mousedown", e => {
   if (e.target.id === "pane-divider") startResize(e, "pane-container", "pane-left", "pane-right");
   if (e.target.id === "preview-divider") startResize(e, "main-area", "pane-container", "preview-pane");
-});
+},undefined,"src.js.pane.top.62456ff266d1");
 
 function startResize(e, containerId, leftId, rightId) {
   e.preventDefault();
@@ -751,26 +751,26 @@ function startResize(e, containerId, leftId, rightId) {
     else rightEl.style.width = newRightSize + 'px';
   };
   const onUp = () => {
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
+    RHFilesUI.remove(document,"mousemove", onMove);
+    RHFilesUI.remove(document,"mouseup", onUp);
     if (rightId === 'preview-pane') localStorage.setItem('rhfiles-preview-width', String(Math.round(rightEl.getBoundingClientRect().width)));
     if (rightId === 'pane-right') {
       const size = horizontal ? rightEl.getBoundingClientRect().height : rightEl.getBoundingClientRect().width;
       localStorage.setItem('rhfiles-dual-split', String(size / containerSize));
     }
   };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
+  RHFilesUI.listen(document,"mousemove", onMove,undefined,"src.js.pane.startResize.9f7eeb060c8c");
+  RHFilesUI.listen(document,"mouseup", onUp,undefined,"src.js.pane.startResize.d9d1488ee569");
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('pane-left')?.addEventListener('pointerdown', () => activatePane('left'));
-  document.getElementById('pane-right')?.addEventListener('pointerdown', () => activatePane('right'));
-  document.getElementById('pane-divider')?.addEventListener('dblclick', () => {
+  RHFilesUI.listen(document.getElementById('pane-left'),'pointerdown', () => activatePane('left'),undefined,"src.js.pane.top.2e48d7a86df0");
+  RHFilesUI.listen(document.getElementById('pane-right'),'pointerdown', () => activatePane('right'),undefined,"src.js.pane.top.40b247cebe41");
+  RHFilesUI.listen(document.getElementById('pane-divider'),'dblclick', () => {
     localStorage.setItem('rhfiles-dual-split', '.5');
     restoreDualPaneSplit();
-  });
-  document.getElementById('btn-dual')?.addEventListener('contextmenu', event => {
+  },undefined,"src.js.pane.top.19d323ce63a3");
+  RHFilesUI.listen(document.getElementById('btn-dual'),'contextmenu', event => {
     event.preventDefault();
     event.stopPropagation();
     showMenuAt(event.clientX, event.clientY, [
@@ -779,10 +779,10 @@ document.addEventListener('DOMContentLoaded', () => {
       {label:'-'},
       {label:t('pane.resetSplit'), action:() => { localStorage.setItem('rhfiles-dual-split', '.5'); restoreDualPaneSplit(); }},
     ]);
-  });
-  document.getElementById('preview-content')?.addEventListener('dblclick', event => {
+  },undefined,"src.js.pane.top.e5513f8167b3");
+  RHFilesUI.listen(document.getElementById('preview-content'),'dblclick', event => {
     if (event.target.closest('.preview-image-stage, video, iframe')) togglePreviewFullscreen();
-  });
+  },undefined,"src.js.pane.top.c5dc209be627");
 });
 
 // --- lightweight, dependency-free syntax highlighting ---

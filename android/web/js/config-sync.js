@@ -47,17 +47,17 @@ const configSync=(()=>{
   }
   function init(context){
     app=context;const tab=document.querySelector('[data-settings-section=sync]');tab.hidden=!api.syncAvailable();if(!api.syncAvailable())return;
-    const alert=ui.el('button','icon-btn update-indicator sync-attention');alert.id='config-sync-alert';alert.hidden=true;alert.innerHTML=ui.icon('cloud');alert.onclick=()=>app.go({screen:'tool',tool:'settings',section:'sync'}).catch(app.error);document.querySelector('.topbar').insertBefore(alert,$('btn-overflow'));
+    const alert=ui.el('button','icon-btn update-indicator sync-attention');alert.id='config-sync-alert';alert.hidden=true;alert.innerHTML=ui.icon('cloud');RHFilesUI.assign(alert,"click",()=>app.go({screen:'tool',tool:'settings',section:'sync'}).catch(app.error),"android.web.js.config-sync.init.1487afb6d96d");document.querySelector('.topbar').insertBefore(alert,$('btn-overflow'));
     const panel=$('config-sync');panel.replaceChildren(ui.el('h2','','WebDAV 配置同步'),ui.el('p','muted','同步网络位置、网络路径收藏和收藏名称；不上传任何登录密码。本地路径收藏、主题、分屏、系统授权、缓存和任务留在各设备。'));
     form=ui.el('form','update-form');
     for(const [name,label,type] of [['enabled','自动同步','checkbox'],['url','WebDAV 文件夹地址（已存在的目录）','url'],['username','WebDAV 用户名','text'],['password','WebDAV 密码（仅本机使用）','password'],['clearPassword','清除已保存的 WebDAV 密码','checkbox'],['insecure','允许明文 HTTP（仅限可信局域网）','checkbox']]){
       const row=ui.el('label','',label),input=document.createElement('input');input.name=name;input.type=type;input.autocomplete='off';if(name==='url')input.placeholder='https://nas.example/dav/RHFiles/';row.append(input);form.append(row);
     }
-    const save=ui.el('button','service-action','保存同步设置');save.type='submit';form.append(save);form.oninput=()=>dirty=true;
-    form.onsubmit=async event=>{event.preventDefault();try{const values=Object.fromEntries([...form.elements].filter(e=>e.name).map(e=>[e.name,e.type==='checkbox'?e.checked:e.value]));status=await api.native('sync.save',values);form.elements.password.value='';form.elements.clearPassword.checked=false;dirty=false;await refresh();ui.toast('同步设置已保存');schedule(100);}catch(error){app.error(error);}};
+    const save=ui.el('button','service-action','保存同步设置');save.type='submit';form.append(save);RHFilesUI.assign(form,"input",()=>dirty=true,"android.web.js.config-sync.init.6d1ec8a2a4f2");
+    RHFilesUI.assign(form,"submit",async event=>{event.preventDefault();try{const values=Object.fromEntries([...form.elements].filter(e=>e.name).map(e=>[e.name,e.type==='checkbox'?e.checked:e.value]));status=await api.native('sync.save',values);form.elements.password.value='';form.elements.clearPassword.checked=false;dirty=false;await refresh();ui.toast('同步设置已保存');schedule(100);}catch(error){app.error(error);}},"android.web.js.config-sync.init.8d3ac035151b");
     panel.append(form,ui.el('p','muted','启用后：启动、回到应用、修改共享配置后，以及应用在前台时每 5 分钟同步。关闭后只在点击“立即同步”时连接服务器。'));
     const info=ui.el('p','kv');info.id='sync-state';info.setAttribute('role','status');const actions=ui.el('div','button-row');
-    const make=(id,label,handler)=>{const b=ui.el('button','',label);b.id=id;b.type='button';b.onclick=()=>Promise.resolve().then(handler).catch(app.error);return b;};
+    const make=(id,label,handler)=>{const b=ui.el('button','',label);b.id=id;b.type='button';RHFilesUI.assign(b,"click",()=>Promise.resolve().then(handler).catch(app.error),"android.web.js.config-sync.make.cdbfd49f3fbf");return b;};
     actions.append(make('sync-now','立即同步',()=>run(true)),make('sync-local','冲突项使用本机更改',()=>resolve('local')),make('sync-remote','冲突项使用云端更改',()=>resolve('remote')));const conflicts=ui.el('ul','muted');conflicts.id='sync-conflicts';panel.append(info,conflicts,actions,
       ui.el('p','muted','同步文件固定为 rhfiles-settings-v1.json，含服务器地址、账号名及网络收藏路径，请使用私有目录。新设备请在“网络位置 → 编辑连接”补填密码。写入前检查云端版本，冲突时由你选择；不会改动实际文件。'),
       ui.el('p','muted','完整加密备份仍在“配置备份”：包含所有可备份配置及密码。导入备份后自动同步保持关闭，检查后再开启，避免把旧配置直接推送到其他设备。'));

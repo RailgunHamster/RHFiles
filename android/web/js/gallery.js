@@ -32,12 +32,12 @@ const androidGallery=(()=>{
       track.style.transition=`transform ${duration}ms cubic-bezier(.2,.7,.3,1)`;track.style.transform=`translateX(${-delta*viewport.clientWidth}px)`;
       settleTimer=setTimeout(()=>{settling=false;if(delta){index+=delta;render();}else{track.style.transition='none';dx=dy=0;}},duration+20);
     }
-    viewport.addEventListener('pointerdown',event=>{
+    RHFilesUI.listen(viewport,'pointerdown',event=>{
       if(settling)return;points.set(event.pointerId,[event.clientX,event.clientY]);try{viewport.setPointerCapture(event.pointerId);}catch{}
       moved=false;origin=[event.clientX,event.clientY,x,y];lastX=event.clientX;lastTime=performance.now();velocity=0;
       if(points.size===2){sliding=false;track.style.transform='translateX(0px)';const [a,b]=[...points.values()];origin.distance=Math.hypot(a[0]-b[0],a[1]-b[1]);}
-    },{signal});
-    viewport.addEventListener('pointermove',event=>{
+    },{signal},"android.web.js.gallery.open.c3786814889e");
+    RHFilesUI.listen(viewport,'pointermove',event=>{
       if(!points.has(event.pointerId)||settling||!origin)return;
       points.set(event.pointerId,[event.clientX,event.clientY]);dx=event.clientX-origin[0];dy=event.clientY-origin[1];if(Math.hypot(dx,dy)>8)moved=true;
       if(points.size===2){moved=true;const [a,b]=[...points.values()],distance=Math.hypot(a[0]-b[0],a[1]-b[1]);if(origin.distance)zoom=Math.max(.25,Math.min(8,zoom*distance/origin.distance));origin.distance=distance;transform();return;}
@@ -45,18 +45,18 @@ const androidGallery=(()=>{
       const now=performance.now();if(now>lastTime)velocity=(event.clientX-lastX)/(now-lastTime);lastX=event.clientX;lastTime=now;
       if(Math.abs(dx)>8&&Math.abs(dx)>Math.abs(dy)*1.25)sliding=true;
       if(sliding){const edge=(index===0&&dx>0)||(index===images.length-1&&dx<0);track.style.transition='none';track.style.transform=`translateX(${edge?dx*.22:dx}px)`;}
-    },{signal});
-    viewport.addEventListener('pointerup',event=>{
+    },{signal},"android.web.js.gallery.open.1cd6d22ede11");
+    RHFilesUI.listen(viewport,'pointerup',event=>{
       if(!points.has(event.pointerId))return;
       const single=points.size===1;points.delete(event.pointerId);
       if(single&&sliding&&origin){const speed=performance.now()-lastTime<120?velocity:0;animate(mobileMedia.swipe(event.clientX-origin[0],event.clientY-origin[1],viewport.clientWidth,speed));}
       origin=null;
-    },{signal});
-    viewport.addEventListener('pointercancel',()=>{points.clear();origin=null;if(sliding)animate(0);},{signal});
-    viewport.addEventListener('click',()=>{if(moved||settling)return;clearTimeout(tapTimer);tapTimer=setTimeout(()=>panel.classList.toggle('chrome-hidden'),230);},{signal});
-    viewport.addEventListener('dblclick',()=>{clearTimeout(tapTimer);zoom=zoom===1?2:1;x=y=0;transform();},{signal});
-    viewport.addEventListener('wheel',event=>{event.preventDefault();zoom=Math.max(.25,Math.min(8,zoom*(event.deltaY>0?.9:1.1)));transform();},{passive:false,signal});
-    document.addEventListener('keydown',event=>{if(event.key==='ArrowRight')animate(1);if(event.key==='ArrowLeft')animate(-1);},{signal});
+    },{signal},"android.web.js.gallery.open.6d581fa355c0");
+    RHFilesUI.listen(viewport,'pointercancel',()=>{points.clear();origin=null;if(sliding)animate(0);},{signal},"android.web.js.gallery.open.c03e4ba4678a");
+    RHFilesUI.listen(viewport,'click',()=>{if(moved||settling)return;clearTimeout(tapTimer);tapTimer=setTimeout(()=>panel.classList.toggle('chrome-hidden'),230);},{signal},"android.web.js.gallery.open.f057c1e4f451");
+    RHFilesUI.listen(viewport,'dblclick',()=>{clearTimeout(tapTimer);zoom=zoom===1?2:1;x=y=0;transform();},{signal},"android.web.js.gallery.open.ecc9bd5c139a");
+    RHFilesUI.listen(viewport,'wheel',event=>{event.preventDefault();zoom=Math.max(.25,Math.min(8,zoom*(event.deltaY>0?.9:1.1)));transform();},{passive:false,signal},"android.web.js.gallery.open.eb6ce9fd7939");
+    RHFilesUI.listen(document,'keydown',event=>{if(event.key==='ArrowRight')animate(1);if(event.key==='ArrowLeft')animate(-1);},{signal},"android.web.js.gallery.open.ea5a60ea371d");
     ui.onClosed(()=>{controller.abort();clearTimeout(tapTimer);clearTimeout(settleTimer);epoch++;for(const image of track.querySelectorAll('img'))image.removeAttribute('src');cache.clear();});
     render();
   }

@@ -168,7 +168,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       3000,
       'Windows integration startup timed out',
     ).catch(error => reportStartupIssue('windows-integration', error));
-    window.addEventListener('focus', () => scheduleFileDialogIntegrationSync(true));
+    RHFilesUI.listen(window,'focus', () => scheduleFileDialogIntegrationSync(true),undefined,"src.js.main.top.e202c1fc48a3");
   }
 
   // restore selection and scroll position after navigation
@@ -202,10 +202,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Expose the real folder so sidebar drag & drop (and hover spring-loading)
     // can resolve Quick access rows, which only carry a data-nav name.
     if (navPath) el.dataset.path = navPath;
-    el.addEventListener("click", () => navigateTo(navPath || homeDir(el.dataset.nav)));
+    RHFilesUI.listen(el,"click", () => navigateTo(navPath || homeDir(el.dataset.nav)),undefined,"src.js.main.top.73d98c22b5d6");
   });
   const ftpBtn = document.getElementById("ftp-connect-btn");
-  if (ftpBtn) ftpBtn.addEventListener("click", showFtpDialog);
+  if (ftpBtn) RHFilesUI.listen(ftpBtn,"click", showFtpDialog,undefined,"src.js.main.top.935942adbe7b");
   loadRecentList();
   call('get_instance_profile', {}).then(profile => {
     if (profile?.desktopIdentified === false) showNotice(t('settings.desktopFallback'));
@@ -245,39 +245,39 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // double-click handling for left pane
-  document.getElementById("file-list").addEventListener("dblclick", async e => {
+  RHFilesUI.listen(document.getElementById("file-list"),"dblclick", async e => {
     const row = e.target.closest(".file-row");
     if (!row) return;
     const idx = parseInt(row.dataset.index);
     const file = getTab().entries[idx];
     if (!file) return;
     await activateEntry(file, false, idx);
-  });
+  },undefined,"src.js.main.top.ad9cb772e8f2");
 
   // double-click handling for right pane
-  document.getElementById("right-file-list").addEventListener("dblclick", async e => {
+  RHFilesUI.listen(document.getElementById("right-file-list"),"dblclick", async e => {
     const row = e.target.closest(".file-row");
     if (!row) return;
     const idx = parseInt(row.dataset.index);
     const file = G.rp.entries[idx];
     if (!file) return;
     await activateEntry(file, true, idx);
-  });
+  },undefined,"src.js.main.top.09a073bc322b");
 
   // Close overlays on backdrop click
   document.querySelectorAll(".dialog-backdrop, .palette-backdrop").forEach(el => {
-    el.addEventListener("click", () => {
+    RHFilesUI.listen(el,"click", () => {
       closeCommandPalette();
       closeBatchRename();
       closeProperties();
       closeTagDialog();
       closeSettings();
       closeConflict();
-    });
+    },undefined,"src.js.main.top.73d98c22b5d6");
   });
 
   // ESC closes all overlays
-  document.addEventListener("keydown", e => {
+  RHFilesUI.listen(document,"keydown", e => {
     if (e.key === "Escape") {
       if (document.body.classList.contains('preview-fullscreen-active')) {
         togglePreviewFullscreen(false);
@@ -293,7 +293,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       closeConflict();
       if (typeof closeMediaConvertDialog === 'function') closeMediaConvertDialog();
     }
-  });
+  },undefined,"src.js.main.top.1ed4e9f445ad");
 
   if (G.windowLabel === "main") {
     const runAutomaticUpdateCheck = () => {
@@ -341,9 +341,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   completeStartup();
 });
 
-document.addEventListener("contextmenu", e => {
+RHFilesUI.listen(document,"contextmenu", e => {
   showApplicationContextMenu(e);
-});
+},undefined,"src.js.main.top.758bd09f74b7");
 
 window.addEventListener('error', (e) => {
     call("log_error", {

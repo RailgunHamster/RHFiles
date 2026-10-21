@@ -1,0 +1,82 @@
+# RHFiles 命令行自动化 / Command-line automation
+
+Windows 和 Android 使用同一套 JSON 动作协议（`apiVersion: 1.0`）。接口调用业务函数或控件原有回调，不依赖鼠标坐标、屏幕尺寸或翻译文本。动作名称和参数可在运行时查询。桌面网页动作表也适用于 macOS，但本命令行传输尚不支持 WKWebView。
+
+## 开启与调用
+
+需要 Node.js 22 或更新版本。默认没有自动化网络监听器；调试接口仅供受信任的本机脚本使用。调试本身拥有很高权限，不能向局域网转发端口，也不要给不可信网页或程序访问。
+
+Windows PowerShell：
+
+```powershell
+$env:RHFILES_CDP_PORT='9222'
+& 'C:\path\to\RHFiles.exe'
+node scripts/rhfiles-api.mjs --port 9222 info
+node scripts/rhfiles-api.mjs --port 9222 list
+node scripts/rhfiles-api.mjs describe navigation.open
+node scripts/rhfiles-api.mjs --wait run navigation.open '{"path":"D:\\Data"}'
+node scripts/rhfiles-api.mjs --wait run files.list '{"limit":100}'
+```
+
+关闭应用并移除变量后恢复正常启动。已运行的实例不会因为再启动一次而自动开放调试端口。
+
+Android：在“设置 → 关于与诊断”开启“ADB 自动化”，授权自己的电脑连接 ADB，并保持 RHFiles 已打开。这个开关默认关闭，既不进入配置备份也不参与 WebDAV 同步。
+
+```powershell
+node scripts/rhfiles-api.mjs --android emulator-5584 info
+node scripts/rhfiles-api.mjs --android emulator-5584 --pane left --wait run files.list '{}'
+node scripts/rhfiles-api.mjs --android emulator-5584 --pane host --wait run panes.layout '{"mode":"rows"}'
+node scripts/rhfiles-api.mjs --android emulator-5584 --wait run native.media.state '{}'
+node scripts/rhfiles-api.mjs --android emulator-5584 --scope reader state
+```
+
+客户端只转发指定设备的 WebView 调试 socket，退出后删除自己创建的转发。它不安装 APK、不启动手机应用、不操作手机屏幕。播放器在主进程中，通过 `native.media.*` 调用；电子书有独立的受限 `reader` scope，不向书籍内容提供文件管理器权限。
+
+## 查找与调用操作
+
+- `list` / `describe ACTION`：列出动作及 JSON 参数 schema。
+- `state`：窗口、窗格、当前位置、选择状态，以及当前可见弹窗；密码类字段不返回明文。
+- `run ACTION JSON`：返回运行 ID。耗时任务继续执行；`status ID` / `wait ID` 查询结果。
+- `ui`：列出当前控件，包括 `controlId`、程序 ID、目标路径、事件、启用状态和来源绑定。动态控件要在当前界面重新查询，旧 ID 不可跨重启保存。
+- `batch`：从标准输入逐行读取 JSON-RPC 2.0 请求，每行输出一个响应。
+
+常见语义动作：`navigation.*`、`selection.*`、`files.*`；桌面还有 `tabs.*`、`command.*`、`tasks.*`，Android 的双窗格使用 `--pane`。具体平台支持的名称以 `list` 为准，不存在的动作返回错误，不会悄悄当作成功。
+
+界面层：`ui.invoke` 直接调用控件已登记的事件回调；`ui.set` 设置字段并走输入/变更处理；`ui.scroll`、`ui.focus`、`ui.media` 对应滚动、聚焦和播放控件。原生 Android 窗口使用 `native.ui.*`。第三方 3D 相机提供 `preview3d.camera`（预览打开后可查询）。CSS 子菜单可通过 `ui.submenu` 展开。
+
+系统自己的安装器、权限授权、文件选择器、分享目标窗口不属于 RHFiles 接口，不会绕过系统授权。Android 7–9 的原生枚举仅覆盖 Activity；Android 10+ 也可枚举本应用进程的弹窗。接口不注入其他应用。
+
+“回调结束”不总等于文件任务结束：某些 UI 按钮仅打开弹窗或提交后台任务。生产脚本优先使用语义动作，并核对返回的状态、文件任务结果及最终目录，不能把 `accepted: true` 当成复制成功。
+
+## 确认、超时与错误
+
+复制/移动/重命名沿用应用的文件夹合并、冲突和确认流程。删除不跳过正常确认。永久删除按钮还要求本次 `ui` 返回的 `confirmationToken` 和 `acknowledge:true`；令牌一次性使用。
+
+调用 `run` 时建议指定业务唯一 `--key`。同一应用实例中，同一个 key 和参数只执行一次；相同 key 不同参数报冲突。已过期结果不会自动重做。key 只在当前进程保留，不能作为跨崩溃的事务保证。
+
+若提交时断线、没有拿到运行 ID，可用 `lookup KEY` 查询当前实例中的记录；客户端提交失败会在错误详情中附上 key，不包含原始参数。
+
+```powershell
+node scripts/rhfiles-api.mjs --key my-copy-20261022 run files.transfer '{"paths":["D:\\Data\\a.txt"],"destination":"D:\\Backup","operation":"copy"}'
+node scripts/rhfiles-api.mjs status 'INSTANCE:RUN'
+```
+
+JSON 输出包含 `result` 或结构化 `error`，失败返回非零退出码。`--wait` 最多等一次 30 秒；仍在运行就继续查询运行 ID。客户端断线或超时不会取消已经提交的工作，更不能自动重复写操作。多窗口必须用 `--target` 或桌面的 `--window` 明确选择，避免修改错误窗口。
+
+## 接口覆盖与测试
+
+`npm test` 先检查第一方网页 UI 绑定是否全部使用动作表，再跑业务测试。新增按钮、快捷键、菜单和手势须通过 `RHFilesUI.listen/assign` 接入，不能直接另写未登记的监听器。HTML 内联回调在查询时登记；第三方组件、系统 UI、生命周期通知不机械改写。
+
+`npm run test:automation-ui` 在真实浏览器中核对接口/物理点击的回调一致性、顺序、输入校验、禁用/隐藏状态、一次性监听、动态控件失效和删除确认。Android 原生入口另有 JVM/模拟器验证。
+
+---
+
+## English
+
+RHFiles exposes a versioned JSON action registry for desktop and Android. Use Node.js 22+ and `scripts/rhfiles-api.mjs`; discover available actions and parameter schemas with `list` and `describe`.
+
+Desktop requires an explicit `RHFILES_CDP_PORT` launch environment variable. Android requires the device-local ADB automation setting and an authorized, explicitly selected ADB device. No LAN listener is added. Treat debugging access as highly privileged; never expose it to untrusted programs.
+
+Actions call existing business functions or registered UI callbacks, not coordinate-based clicking. Long operations return run IDs. Query their results instead of retrying writes after a timeout. Idempotency keys prevent duplicate submission only within the current app process, not across crashes.
+
+Use semantic actions for production scripts. UI callback completion may only mean that a dialog opened or a background job was submitted. Confirm task results and filesystem state. Destructive confirmations remain in place; system-owned permission, installer and chooser windows cannot be bypassed.

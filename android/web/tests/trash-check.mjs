@@ -6,7 +6,7 @@ import {browserFixture} from './browser-fixture.mjs';
 const web=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const fixture=await browserFixture(web,(req,res)=>{
   if(req.url!=='/trash-fixture')return false;
-  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}).end('<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="stylesheet" href="css/components.css"><link rel="stylesheet" href="css/trash.css"><div style="height:100dvh;overflow:auto" class="tool-page"><div id="tool-extra"></div></div><div id="scrim" hidden></div><div id="sheet" class="sheet" hidden><div id="sheet-panel" class="sheet-panel"></div></div><div id="toast" hidden></div><script src="js/ui.js"></script><script src="js/format.js"></script><script src="js/trash.js"></script></html>');return true;
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}).end('<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="stylesheet" href="css/components.css"><link rel="stylesheet" href="css/trash.css"><div style="height:100dvh;overflow:auto" class="tool-page"><div id="tool-extra"></div></div><div id="scrim" hidden></div><div id="sheet" class="sheet" hidden><div id="sheet-panel" class="sheet-panel"></div></div><div id="toast" hidden></div><script src="js/automation-core.js"></script><script src="js/ui.js"></script><script src="js/format.js"></script><script src="js/trash.js"></script></html>');return true;
 });
 const errors=[];
 try{

@@ -73,12 +73,12 @@ function showConfirmDialog(options) {
       overlay.remove();
       resolve(value);
     };
-    cancel.addEventListener('click', () => finish(false));
-    confirm.addEventListener('click', () => finish(true));
-    backdrop.addEventListener('click', () => finish(false));
-    overlay.addEventListener('keydown', event => {
+    RHFilesUI.listen(cancel,'click', () => finish(false),undefined,"src.js.ops.showConfirmDialog.6c6d1843e1da");
+    RHFilesUI.listen(confirm,'click', () => finish(true),undefined,"src.js.ops.showConfirmDialog.a741b6cfd265");
+    RHFilesUI.listen(backdrop,'click', () => finish(false),undefined,"src.js.ops.showConfirmDialog.e8769f2da61b");
+    RHFilesUI.listen(overlay,'keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); finish(false); }
-    });
+    },undefined,"src.js.ops.showConfirmDialog.ab0cc42416e2");
     document.body.appendChild(overlay);
     requestAnimationFrame(() => { overlay.focus(); cancel.focus(); });
   });
@@ -311,11 +311,11 @@ function startInlineRename(rowEl, file, isRight, onCancel) {
     if (onCancel) { try { await onCancel(); } catch(e) {} }
   };
 
-  input.addEventListener("keydown", e => {
+  RHFilesUI.listen(input,"keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); commit(); }
     if (e.key === "Escape") { e.preventDefault(); cancel(); }
-  });
-  input.addEventListener("blur", () => commit());
+  },undefined,"src.js.ops.startInlineRename.b139a679e52e");
+  RHFilesUI.listen(input,"blur", () => commit(),undefined,"src.js.ops.startInlineRename.1a8f1cf4d832");
 }
 
 async function renamePrompt(isRight) {
@@ -865,11 +865,11 @@ function promptArchivePassword(label, retry) {
       resolve(value);
     };
     const submit = () => finish(input.value === "" ? null : input.value);
-    dlg.querySelector('[data-act="cancel"]').onclick = () => finish(null);
-    dlg.querySelector('[data-act="ok"]').onclick = submit;
-    input.addEventListener("keydown", event => {
+    RHFilesUI.assign(dlg.querySelector('[data-act="cancel"]'),"click",() => finish(null),"src.js.ops.promptArchivePassword.2b1c51edc245");
+    RHFilesUI.assign(dlg.querySelector('[data-act="ok"]'),"click",submit,"src.js.ops.promptArchivePassword.e20bc3882c91");
+    RHFilesUI.listen(input,"keydown", event => {
       if (event.key === "Enter") { event.preventDefault(); submit(); }
-    });
+    },undefined,"src.js.ops.promptArchivePassword.b139a679e52e");
     dlg.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
     document.body.appendChild(dlg);
     dlg.showModal();
@@ -1304,8 +1304,8 @@ function showCustomProperties(info) {
   content.innerHTML = html;
   const md5Btn = content.querySelector("#hash-md5-btn");
   const sha256Btn = content.querySelector("#hash-sha256-btn");
-  if (md5Btn) md5Btn.addEventListener("click", () => computeAndShowHash('md5', info.path));
-  if (sha256Btn) sha256Btn.addEventListener("click", () => computeAndShowHash('sha256', info.path));
+  if (md5Btn) RHFilesUI.listen(md5Btn,"click", () => computeAndShowHash('md5', info.path),undefined,"src.js.ops.showCustomProperties.a0b00f29da88");
+  if (sha256Btn) RHFilesUI.listen(sha256Btn,"click", () => computeAndShowHash('sha256', info.path),undefined,"src.js.ops.showCustomProperties.3ffaa447081e");
   dlg.style.display = "flex";
 
   if (isDir) {
@@ -1530,19 +1530,19 @@ function renderMenuItems(parent, items, x, y) {
         sub.style.left = Math.max(4, rect.right + subRect.width > window.innerWidth ? rect.left - subRect.width : rect.right) + "px";
         sub.style.right = "auto";
       };
-      mi.addEventListener("mouseenter", positionSubmenu);
+      RHFilesUI.listen(mi,"mouseenter", positionSubmenu,undefined,"src.js.ops.renderMenuItems.4556174086f1");
       // The parent menu may clamp/scroll after the pointer first entered it.
-      mi.addEventListener("mousemove", e => { if (!sub.contains(e.target)) positionSubmenu(); });
-      mi.addEventListener("click", e => {
+      RHFilesUI.listen(mi,"mousemove", e => { if (!sub.contains(e.target)) positionSubmenu(); },undefined,"src.js.ops.renderMenuItems.775756d0945d");
+      RHFilesUI.listen(mi,"click", e => {
         if (e.target.closest('.ctx-submenu')) return;
-      });
+      },undefined,"src.js.ops.renderMenuItems.53031fa66cf5");
       parent.appendChild(mi);
     } else {
       lastWasSep = false;
       const mi = document.createElement("div");
       mi.className = "ctx-item" + (item.disabled ? " disabled" : "");
       mi.innerHTML = `${contextMenuLabelMarkup(item)}${item.shortcut ? `<span class="ctx-shortcut">${esc(IS_MAC ? item.shortcut.replace('Ctrl+', '⌘').replace('Alt+', '⌥') : item.shortcut)}</span>` : ""}`;
-      mi.addEventListener("click", e => {
+      RHFilesUI.listen(mi,"click", e => {
         if (item.disabled) return;
         const actionFn = item.action;
         if (item._flash) {
@@ -1556,7 +1556,7 @@ function renderMenuItems(parent, items, x, y) {
           removeContextMenu();
           if (actionFn) actionFn();
         }
-      });
+      },undefined,"src.js.ops.renderMenuItems.53031fa66cf5");
       parent.appendChild(mi);
     }
   });
@@ -1741,7 +1741,7 @@ function showContextMenu(x, y, isRight) {
 
   let ctxMeta = { x, y, isRight, singleSelection, sel, singleFile, isDir, items };
 
-  menu.addEventListener("keydown", e => {
+  RHFilesUI.listen(menu,"keydown", e => {
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); removeContextMenu(); return; }
     if (e.key === "Enter" && e.altKey) {
       e.preventDefault();
@@ -1780,7 +1780,7 @@ function showContextMenu(x, y, isRight) {
       }
       return;
     }
-  });
+  },undefined,"src.js.ops.showContextMenu.10db00d9c0e5");
   menu.tabIndex = -1;
   menu.focus();
 
@@ -1796,8 +1796,8 @@ function removeContextMenu() {
   document.querySelectorAll(".context-menu").forEach(el => {
     el.remove();
   });
-  document.removeEventListener("pointerdown", _ctxClosePtr, true);
-  window.removeEventListener("blur", _ctxCloseBlur);
+  RHFilesUI.remove(document,"pointerdown", _ctxClosePtr, true);
+  RHFilesUI.remove(window,"blur", _ctxCloseBlur);
 }
 function _ctxClosePtr(e) {
   if (contextMenu && !contextMenu.contains(e.target) && !e.target.closest('.ctx-submenu')) removeContextMenu();
@@ -1807,8 +1807,8 @@ function _ctxCloseBlur() {
 }
 function _ctxShow(menu) {
   contextMenu = menu;
-  document.addEventListener("pointerdown", _ctxClosePtr, true);
-  window.addEventListener("blur", _ctxCloseBlur);
+  RHFilesUI.listen(document,"pointerdown", _ctxClosePtr, true,"src.js.ops._ctxShow.39082eac571c");
+  RHFilesUI.listen(window,"blur", _ctxCloseBlur,undefined,"src.js.ops._ctxShow.4e004454fa02");
 }
 
 function showMenuAt(x, y, items, className) {
@@ -1991,12 +1991,12 @@ function showApplicationContextMenu(event) {
     { label: t('cmd.settings'), icon: 'settings', shortcut: 'Ctrl+,', action: openSettings },
   ], 'app-context-menu');
 }
-document.addEventListener("keydown", e => {
+RHFilesUI.listen(document,"keydown", e => {
   if (e.key === "Escape" && contextMenu) removeContextMenu();
-});
-document.addEventListener("contextmenu", e => {
+},undefined,"src.js.ops.top.1ed4e9f445ad");
+RHFilesUI.listen(document,"contextmenu", e => {
   if (contextMenu && !contextMenu.contains(e.target)) removeContextMenu();
-});
+},undefined,"src.js.ops.top.758bd09f74b7");
 
 // --- drag & drop ---
 function showFileDropOperationDialog(paths, destination) {
@@ -2052,16 +2052,16 @@ function showFileDropOperationDialog(paths, destination) {
       overlay.remove();
       resolve(choice);
     };
-    cancel.addEventListener('click', () => finish('cancel'));
-    copyButton.addEventListener('click', () => finish('copy'));
-    moveButton.addEventListener('click', () => finish('move'));
-    backdrop.addEventListener('click', () => finish('cancel'));
-    overlay.addEventListener('keydown', event => {
+    RHFilesUI.listen(cancel,'click', () => finish('cancel'),undefined,"src.js.ops.showFileDropOperationDialog.6c6d1843e1da");
+    RHFilesUI.listen(copyButton,'click', () => finish('copy'),undefined,"src.js.ops.showFileDropOperationDialog.907cf7574b4f");
+    RHFilesUI.listen(moveButton,'click', () => finish('move'),undefined,"src.js.ops.showFileDropOperationDialog.3c174fd99905");
+    RHFilesUI.listen(backdrop,'click', () => finish('cancel'),undefined,"src.js.ops.showFileDropOperationDialog.e8769f2da61b");
+    RHFilesUI.listen(overlay,'keydown', event => {
       if (event.key === 'Escape') {
         event.preventDefault();
         finish('cancel');
       }
-    });
+    },undefined,"src.js.ops.showFileDropOperationDialog.ab0cc42416e2");
     document.body.appendChild(overlay);
     requestAnimationFrame(() => { overlay.focus(); cancel.focus(); });
   });
@@ -2076,7 +2076,7 @@ async function broadcastFileDropChanges(paths) {
   });
 }
 
-async function performDroppedFileOperation(paths, destination, destinationEntries, operation) {
+async function performDroppedFileOperation(paths, destination, destinationEntries, operation, reportOutcome) {
   const existingNames = new Set((destinationEntries || []).map(entry => fileNameKey(entry.name)));
   const changedFolders = [destination];
   const conflictState = {action:null};
@@ -2189,6 +2189,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
       completeOperationTask(taskId);
     }
   }
+  if(typeof reportOutcome==='function')reportOutcome({changed,changedFolders:changed?changedFolders:[],errors,cancelled:userCancelled,taskId});
   return changed ? changedFolders : [];
 }
 
@@ -2278,20 +2279,20 @@ function highlightSidebarDropTarget(element, destination) {
   }, 700);
 }
 
-document.addEventListener('dragover', event => {
+RHFilesUI.listen(document,'dragover', event => {
   if (!isRhfilesFileDrag(event.dataTransfer)) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = event.ctrlKey ? 'copy' : 'move';
   const destination = sidebarDropDestination(event.target);
   if (destination) highlightSidebarDropTarget(sidebarDropElement(event.target), destination);
   else clearSidebarDropHover();
-});
+},undefined,"src.js.ops.top.bad28af00d29");
 
-document.addEventListener('dragend', clearSidebarDropHover);
-document.addEventListener('dragleave', event => { if (!event.relatedTarget) clearSidebarDropHover(); });
-window.addEventListener('blur', clearSidebarDropHover);
+RHFilesUI.listen(document,'dragend', clearSidebarDropHover,undefined,"src.js.ops.top.fb1153cf3078");
+RHFilesUI.listen(document,'dragleave', event => { if (!event.relatedTarget) clearSidebarDropHover(); },undefined,"src.js.ops.top.56cd542a1279");
+RHFilesUI.listen(window,'blur', clearSidebarDropHover,undefined,"src.js.ops.top.b2b0aa44134d");
 
-document.addEventListener('drop', async event => {
+RHFilesUI.listen(document,'drop', async event => {
   const payload = readRhfilesFileDragData(event.dataTransfer);
   if (!payload) return;
   event.preventDefault();
@@ -2318,7 +2319,7 @@ document.addEventListener('drop', async event => {
   const destination = folderRow?.dataset.path || destinationPane.path;
   const destinationEntries = folderRow ? [] : destinationPane.entries;
   await handleRhfilesFileDrop(payload, destination, destinationEntries, isRightDrop);
-});
+},undefined,"src.js.ops.top.e4bcd070fb82");
 
 // --- ADS streams dialog ---
 function showStreamsDialog(path, streams) {
@@ -2338,19 +2339,19 @@ function showStreamsDialog(path, streams) {
       <button class="dialog-btn" id="ads-close">${t('btn.close')}</button>
     </div>`;
   document.body.appendChild(dlg);
-  dlg.querySelector("#ads-close").onclick = () => { dlg.close(); dlg.remove(); };
+  RHFilesUI.assign(dlg.querySelector("#ads-close"),"click",() => { dlg.close(); dlg.remove(); },"src.js.ops.showStreamsDialog.4af16fe6a6d3");
   dlg.querySelectorAll("[data-del]").forEach(btn => {
-    btn.onclick = async () => {
+    RHFilesUI.assign(btn,"click",async () => {
       const stream = btn.dataset.del;
       try {
         await call("delete_ads", { path, stream });
         btn.closest("div[style]").remove();
         showNotice(t('notice.streamDeleted'));
       } catch(e) { alert(t('alert.streamDeleteFailed')); }
-    };
+    },"src.js.ops.showStreamsDialog.d5bf69b34ef9");
   });
   dlg.querySelectorAll("[data-stream]").forEach(el => {
-    el.onclick = async () => {
+    RHFilesUI.assign(el,"click",async () => {
       const stream = el.dataset.stream;
       try {
         const content = await call("read_ads", { path, stream });
@@ -2361,7 +2362,7 @@ function showStreamsDialog(path, streams) {
         if (existing) existing.remove();
         el.closest("div[style]").after(pre);
       } catch(e) { alert(t('alert.streamReadFailed')); }
-    };
+    },"src.js.ops.showStreamsDialog.f21e5781c28f");
   });
   dlg.showModal();
   dlg.onclose = () => dlg.remove();
@@ -2390,7 +2391,7 @@ function showNotice(msg) {
     close.textContent = '×';
     close.setAttribute('aria-label', t('btn.close'));
     close.style.cssText = 'border:0;background:transparent;color:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0 2px;opacity:.7';
-    close.addEventListener('click', () => { toast.style.opacity = '0'; });
+    RHFilesUI.listen(close,'click', () => { toast.style.opacity = '0'; },undefined,"src.js.ops.showNotice.34017e540014");
     toast.appendChild(close);
   }
 
@@ -2434,15 +2435,15 @@ function showCompatDialog(path) {
       <button class="dialog-btn primary" id="compat-ok">${t('btn.apply')}</button>
     </div>`;
   document.body.appendChild(dlg);
-  dlg.querySelector("#compat-cancel").onclick = () => { dlg.close(); dlg.remove(); };
-  dlg.querySelector("#compat-ok").onclick = async () => {
+  RHFilesUI.assign(dlg.querySelector("#compat-cancel"),"click",() => { dlg.close(); dlg.remove(); },"src.js.ops.showCompatDialog.ccb25e357317");
+  RHFilesUI.assign(dlg.querySelector("#compat-ok"),"click",async () => {
     const mode = dlg.querySelector("#compat-mode").value;
     try {
       await call("set_compat_mode", { path, mode });
       showNotice(mode ? t('notice.compatSet') : t('notice.compatCleared'));
     } catch (e) { alert(t('alert.compatFailed')); }
     dlg.close(); dlg.remove();
-  };
+  },"src.js.ops.showCompatDialog.c2d408e952c0");
   call("get_compat_mode", { path }).then(current => {
     const sel = dlg.querySelector("#compat-mode");
     if (sel && current) sel.value = current;
@@ -2464,7 +2465,7 @@ async function showPermissionsDialog(path) {
       <div style="text-align:right;"><button class="dialog-btn" id="perm-close">${t('btn.close')}</button></div>
     </div>`;
   document.body.appendChild(dlg);
-  dlg.querySelector("#perm-close").onclick = () => dlg.close();
+  RHFilesUI.assign(dlg.querySelector("#perm-close"),"click",() => dlg.close(),"src.js.ops.showPermissionsDialog.c770f2bf5f2f");
   dlg.showModal();
   dlg.onclose = () => dlg.remove();
 
@@ -2505,8 +2506,8 @@ async function showPermissionsDialog(path) {
         <button class="dialog-btn" id="perm-inherit-toggle">${t('dialog.permDisableInherit')}</button>
       </div>`;
 
-    dlg.querySelector("#perm-close").onclick = () => dlg.close();
-    dlg.querySelector("#perm-add").onclick = async () => {
+    RHFilesUI.assign(dlg.querySelector("#perm-close"),"click",() => dlg.close(),"src.js.ops.showPermissionsDialog.c770f2bf5f2f");
+    RHFilesUI.assign(dlg.querySelector("#perm-add"),"click",async () => {
       const account = dlg.querySelector("#perm-account").value.trim();
       const level = dlg.querySelector("#perm-level").value;
       if (!account) return;
@@ -2516,25 +2517,25 @@ async function showPermissionsDialog(path) {
         dlg.close(); dlg.remove();
         showPermissionsDialog(path);
       } catch (e) { alert(t('alert.permFailed')); }
-    };
+    },"src.js.ops.showPermissionsDialog.33a38b9a7652");
     dlg.querySelectorAll("[data-remove-account]").forEach(btn => {
-      btn.onclick = async () => {
+      RHFilesUI.assign(btn,"click",async () => {
         try {
           await call("remove_permission", { path, account: btn.dataset.removeAccount });
           showNotice(t('notice.permRemoved'));
           dlg.close(); dlg.remove();
           showPermissionsDialog(path);
         } catch (e) { alert(t('alert.permRemoveFailed')); }
-      };
+      },"src.js.ops.showPermissionsDialog.d5bf69b34ef9");
     });
-    dlg.querySelector("#perm-inherit-toggle").onclick = async () => {
+    RHFilesUI.assign(dlg.querySelector("#perm-inherit-toggle"),"click",async () => {
       try {
         await call("inherit_permissions", { path, enable: false });
         showNotice(t('notice.inheritDisabled'));
         dlg.close(); dlg.remove();
         showPermissionsDialog(path);
       } catch (e) { alert(t('alert.inheritFailed')); }
-    };
+    },"src.js.ops.showPermissionsDialog.c8ed0e2214d2");
 
   } catch (e) {
     if (!dlg.isConnected) return;
@@ -2549,10 +2550,10 @@ async function showPermissionsDialog(path) {
         <button class="dialog-btn" id="perm-close">${t('btn.close')}</button>
         <button class="dialog-btn primary" id="perm-retry">${t('btn.retry')}</button>
       </div>`;
-    content.querySelector("#perm-close").onclick = () => dlg.close();
-    content.querySelector("#perm-retry").onclick = () => {
+    RHFilesUI.assign(content.querySelector("#perm-close"),"click",() => dlg.close(),"src.js.ops.showPermissionsDialog.cf23e5c37aa0");
+    RHFilesUI.assign(content.querySelector("#perm-retry"),"click",() => {
       dlg.close();
       showPermissionsDialog(path);
-    };
+    },"src.js.ops.showPermissionsDialog.6d7d0a08fb88");
   }
 }

@@ -57,7 +57,7 @@ function initBoxSelection(listEl) {
 
   // Click on empty area: clear selection. Capture phase so the click that ends
   // a marquee drag can be stopped before it reaches the row handlers.
-  listEl.addEventListener('click', e => {
+  RHFilesUI.listen(listEl,'click', e => {
     if (suppressNextClick) {
       suppressNextClick = false;
       e.stopPropagation();
@@ -75,9 +75,9 @@ function initBoxSelection(listEl) {
     const selId = isRight ? null : "status-selection";
     renderFiles(tabOrPane, listId, countId, selId, isRight);
     updatePreviewForSelection();
-  }, true);
+  }, true,"src.js.selection.initBoxSelection.171b20ce488a");
 
-  listEl.addEventListener('mousedown', e => {
+  RHFilesUI.listen(listEl,'mousedown', e => {
     if (e.button === 0 || e.button === 2) {
       G.lastActivePane = listEl.id === 'right-file-list' ? 'right' : 'left';
       if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
@@ -90,30 +90,30 @@ function initBoxSelection(listEl) {
     const row = e.target.closest('.file-row, .column-item');
     if (row && !usesRubberBandTarget(e.target)) return;
     beginSelection(e);
-  });
+  },undefined,"src.js.selection.initBoxSelection.4c0cf9da0330");
 
   // The gutter is the always-available fallback for full grids and card
   // layouts where every row is packed with content.
   const gutter = document.querySelector(`.box-select-gutter[data-target="${listEl.id}"]`);
   if (gutter) {
-    gutter.addEventListener('mousedown', e => {
+    RHFilesUI.listen(gutter,'mousedown', e => {
       if (e.button !== 0) return;
       G.lastActivePane = listEl.id === 'right-file-list' ? 'right' : 'left';
       if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
       focusFilePane(listEl);
       beginSelection(e);
-    });
+    },undefined,"src.js.selection.initBoxSelection.e448d0abdbf6");
   }
 
   // A marquee drag must not be hijacked by the native file drag that the row's
   // draggable attribute would otherwise start.
-  listEl.addEventListener('dragstart', e => {
+  RHFilesUI.listen(listEl,'dragstart', e => {
     if (isSelecting) e.preventDefault();
-  }, true);
+  }, true,"src.js.selection.initBoxSelection.cdc44ac0af16");
 
   let _selRaf = 0;
   let _selE = null;
-  document.addEventListener('mousemove', e => {
+  RHFilesUI.listen(document,'mousemove', e => {
     if (!isSelecting) return;
     if (!dragActive) {
       const travelled = Math.hypot(e.clientX - pressX, e.clientY - pressY);
@@ -140,9 +140,9 @@ function initBoxSelection(listEl) {
         selectFilesInRect(list, x, y, w, h, ev.ctrlKey || (IS_MAC && ev.metaKey));
       });
     }
-  });
+  },undefined,"src.js.selection.initBoxSelection.304836c6cac7");
 
-  document.addEventListener('mouseup', () => {
+  RHFilesUI.listen(document,'mouseup', () => {
     const finishedMarquee = dragActive;
     if (selectionRect) {
       selectionRect.remove();
@@ -151,7 +151,7 @@ function initBoxSelection(listEl) {
     suppressNextClick = finishedMarquee;
     isSelecting = false;
     dragActive = false;
-  });
+  },undefined,"src.js.selection.initBoxSelection.32589474d3e3");
 }
 
 function selectFilesInRect(listEl, rx, ry, rw, rh, additive) {

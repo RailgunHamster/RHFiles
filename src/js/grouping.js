@@ -111,10 +111,10 @@ function toggleGroupingMenu() {
     const mi = document.createElement("div");
     mi.className = "ctx-item" + (G.groupBy === m.field ? " active" : "");
     mi.innerHTML = contextMenuLabelMarkup(m);
-    mi.addEventListener("click", () => {
+    RHFilesUI.listen(mi,"click", () => {
       removeContextMenu();
       toggleGrouping(m.field);
-    });
+    },undefined,"src.js.grouping.toggleGroupingMenu.53031fa66cf5");
     menu.appendChild(mi);
   });
   document.body.appendChild(menu);

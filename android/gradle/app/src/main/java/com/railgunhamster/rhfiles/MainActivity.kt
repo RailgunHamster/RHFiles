@@ -79,7 +79,7 @@ class MainActivity : TauriActivity() {
     onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){
       override fun handleOnBackPressed(){backNavigation.back()}
     })
-    if(BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
+    NativeAutomation.install(this);NativeAutomation.debugging(this)
     setSystemTheme(false);receive(intent)
     val filter=IntentFilter().apply{addAction(Intent.ACTION_MEDIA_MOUNTED);addAction(Intent.ACTION_MEDIA_UNMOUNTED);addAction(Intent.ACTION_MEDIA_REMOVED);addAction(Intent.ACTION_MEDIA_BAD_REMOVAL);addDataScheme("file")}
     if(Build.VERSION.SDK_INT>=33)registerReceiver(storageReceiver,filter,Context.RECEIVER_NOT_EXPORTED)else registerReceiver(storageReceiver,filter)
@@ -189,6 +189,9 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
+    "automation.status" -> onUi{NativeAutomation.status(this)}
+    "automation.enable" -> onUi{NativeAutomation.setEnabled(this,args.getBoolean("enabled"))}
+    "automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control" -> onUi{NativeAutomation.dispatch(this,command,args)}
     "nearby.keepAlive"->{onUi{
       val intent=Intent(this,NearbyService::class.java)
       if(args.optBoolean("enabled")){
@@ -197,7 +200,7 @@ class MainActivity : TauriActivity() {
       }else stopService(intent)
       true
     }}
-    "capabilities" -> JSONObject().put("version",3).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true).put("storageAnalysis",true)
+    "capabilities" -> JSONObject().put("version",3).put("automation",true).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true).put("storageAnalysis",true)
     "analysis.start" -> synchronized(settingsLock){require(!sharedConfig.isApplying()){"正在应用同步配置，请稍后再分析"};UsageAnalysis.get(this).start(args.getString("root"),args.optString("owner","first"))}
     "analysis.latest" -> UsageAnalysis.get(this).latest(args.optString("owner","first"),args.getString("root"))
     "analysis.status" -> UsageAnalysis.get(this).status(args.getString("id"))

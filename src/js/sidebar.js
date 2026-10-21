@@ -75,7 +75,7 @@ function renderTreeNode(container, children, parentPath, expand) {
     const childContainer = node.querySelector(".tree-children");
     children.forEach(c => renderTreeItem(childContainer, c, 1));
     const row = node.querySelector(".tree-row");
-    row.addEventListener("click", e => {
+    RHFilesUI.listen(row,"click", e => {
       e.stopPropagation();
       navigateTo(parentPath);
       const childrenDiv = node.querySelector(".tree-children");
@@ -88,7 +88,7 @@ function renderTreeNode(container, children, parentPath, expand) {
         arrow.classList.add("expanded");
         loadTree(parentPath, true);
       }
-    });
+    },undefined,"src.js.sidebar.renderTreeNode.c95e56ada845");
     container.appendChild(node);
   }
 }
@@ -112,7 +112,7 @@ function renderTreeItem(container, entry, depth) {
   childrenDiv.className = "tree-children";
   wrapper.appendChild(childrenDiv);
 
-  div.addEventListener("click", async e => {
+  RHFilesUI.listen(div,"click", async e => {
     e.stopPropagation();
     navigateTo(entry.path);
     const arrow = div.querySelector(".tree-arrow");
@@ -132,7 +132,7 @@ function renderTreeItem(container, entry, depth) {
       childrenDiv.classList.add("open");
       arrow.classList.add("expanded");
     }
-  });
+  },undefined,"src.js.sidebar.renderTreeItem.fada4b9e6db8");
   container.appendChild(wrapper);
 }
 
@@ -153,8 +153,8 @@ async function loadDrives() {
           ${esc(d.label)} (${esc(d.letter)})
         </div>
         <div class="drive-info">${esc(d.free)}</div>`;
-      div.addEventListener("click", () => navigateTo(d.path));
-      div.addEventListener("contextmenu", e => showDriveContextMenu(e, d.path, d.label, d.letter));
+      RHFilesUI.listen(div,"click", () => navigateTo(d.path),undefined,"src.js.sidebar.loadDrives.fada4b9e6db8");
+      RHFilesUI.listen(div,"contextmenu", e => showDriveContextMenu(e, d.path, d.label, d.letter),undefined,"src.js.sidebar.loadDrives.e7a07ecd2017");
       list.appendChild(div);
     }
   } catch (e) {}
@@ -204,8 +204,8 @@ function showFormatDialog(letter, label) {
       <button class="dialog-btn" style="background:var(--git-deleted);color:#fff;" id="fmt-ok">${t('btn.format')}</button>
     </div>`;
   document.body.appendChild(dlg);
-  dlg.querySelector("#fmt-cancel").onclick = () => { dlg.close(); dlg.remove(); };
-  dlg.querySelector("#fmt-ok").onclick = async () => {
+  RHFilesUI.assign(dlg.querySelector("#fmt-cancel"),"click",() => { dlg.close(); dlg.remove(); },"src.js.sidebar.showFormatDialog.b32b803d1d51");
+  RHFilesUI.assign(dlg.querySelector("#fmt-ok"),"click",async () => {
     const label = dlg.querySelector("#fmt-label").value;
     const fs = dlg.querySelector("#fmt-fs").value;
     const quick = dlg.querySelector("#fmt-quick").checked;
@@ -216,7 +216,7 @@ function showFormatDialog(letter, label) {
       await loadDrives();
     } catch (e) { alert(t('alert.formatFailed', {error: e})); }
     dlg.close(); dlg.remove();
-  };
+  },"src.js.sidebar.showFormatDialog.f7b3d6500a42");
   dlg.showModal();
   dlg.onclose = () => dlg.remove();
 }
@@ -242,7 +242,7 @@ async function loadTagList() {
       `<span class="tag-pill" data-tag="${esc(tag)}" style="background:${tagColor(idx)}22;color:${tagColor(idx)}" title="${tagMap[tag].length} files">${esc(tag)}</span>`
     ).join("");
     list.querySelectorAll(".tag-pill").forEach(el => {
-      el.addEventListener("click", () => navigateToTagFiles(el.dataset.tag));
+      RHFilesUI.listen(el,"click", () => navigateToTagFiles(el.dataset.tag),undefined,"src.js.sidebar.loadTagList.73d98c22b5d6");
     });
   } catch (e) {}
 }
@@ -292,7 +292,7 @@ async function loadRecentList() {
         : '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3" y="1" width="10" height="14" rx="1" stroke="currentColor" stroke-width=".8" fill="none"/><path d="M6 5h4M6 7h4M6 9h3" stroke="currentColor" stroke-width=".6"/></svg>';
       div.innerHTML = folderIcon + ' ' + esc(item.name);
       div.title = item.path + "\n" + formatTimeAgo(item.last_accessed) + (item.access_count > 1 ? " \u00b7 " + item.access_count + "x" : "");
-      div.addEventListener("click", () => {
+      RHFilesUI.listen(div,"click", () => {
         if (item.is_dir) {
           navigateTo(item.path);
         } else {
@@ -310,8 +310,8 @@ async function loadRecentList() {
             }
           });
         }
-      });
-      div.addEventListener("contextmenu", e => showRecentContextMenu(e, item));
+      },undefined,"src.js.sidebar.loadRecentList.fada4b9e6db8");
+      RHFilesUI.listen(div,"contextmenu", e => showRecentContextMenu(e, item),undefined,"src.js.sidebar.loadRecentList.e7a07ecd2017");
       list.appendChild(div);
     }
   } catch (e) {
@@ -497,9 +497,9 @@ function renderPinnedFolders() {
     div.dataset.path = p.path;
     div.title = p.path;
     div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1l2 4.5H15l-3.8 3 1.4 4.7L8 10.5 3.4 13.2l1.4-4.7L1 5.5h5z" fill="#e8b130" stroke="#c99820" stroke-width=".5"/></svg><span class="sidebar-item-label">' + esc(p.name) + '</span>';
-    div.addEventListener("click", () => navigateTo(p.path));
-    div.addEventListener("auxclick", e => { if (e.button === 1) { e.preventDefault(); addTab(p.path); } });
-    div.addEventListener("contextmenu", e => showSidebarContextMenu(e, p.path, p.name));
+    RHFilesUI.listen(div,"click", () => navigateTo(p.path),undefined,"src.js.sidebar.renderPinnedFolders.fada4b9e6db8");
+    RHFilesUI.listen(div,"auxclick", e => { if (e.button === 1) { e.preventDefault(); addTab(p.path); } },undefined,"src.js.sidebar.renderPinnedFolders.b8eb397530e3");
+    RHFilesUI.listen(div,"contextmenu", e => showSidebarContextMenu(e, p.path, p.name),undefined,"src.js.sidebar.renderPinnedFolders.e7a07ecd2017");
     container.appendChild(div);
   }
 }
@@ -567,8 +567,8 @@ async function loadCloudProviders() {
       div.dataset.id = p.id;
       const iconSvg = getCloudIcon(p.name);
       div.innerHTML = iconSvg + ' <span>' + esc(p.name) + '</span>';
-      div.addEventListener("click", () => navigateTo(p.path));
-      div.addEventListener("contextmenu", e => showCloudContextMenu(e, p));
+      RHFilesUI.listen(div,"click", () => navigateTo(p.path),undefined,"src.js.sidebar.loadCloudProviders.fada4b9e6db8");
+      RHFilesUI.listen(div,"contextmenu", e => showCloudContextMenu(e, p),undefined,"src.js.sidebar.loadCloudProviders.e7a07ecd2017");
       list.appendChild(div);
     }
   } catch (e) {
@@ -629,7 +629,7 @@ async function detectWSLDistros() {
           const div = document.createElement("div");
           div.className = "sidebar-item";
           div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width=".8"/><text x="8" y="11" text-anchor="middle" font-size="7" fill="currentColor">W</text></svg> ' + esc(d.name);
-          div.addEventListener("click", () => navigateTo(d.path));
+          RHFilesUI.listen(div,"click", () => navigateTo(d.path),undefined,"src.js.sidebar.detectWSLDistros.fada4b9e6db8");
           list.appendChild(div);
         }
       }
@@ -654,8 +654,8 @@ async function detectWindowsLibraries() {
       div.dataset.path = l.path;
       div.title = l.path;
       div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 5h5l2 2h5v6H2V5z" stroke="var(--accent)" stroke-width=".8"/></svg> ' + esc(l.name);
-      div.addEventListener("click", () => navigateTo(l.path));
-      div.addEventListener("contextmenu", e => showFolderShortcutContextMenu(e, l.path, l.name));
+      RHFilesUI.listen(div,"click", () => navigateTo(l.path),undefined,"src.js.sidebar.detectWindowsLibraries.fada4b9e6db8");
+      RHFilesUI.listen(div,"contextmenu", e => showFolderShortcutContextMenu(e, l.path, l.name),undefined,"src.js.sidebar.detectWindowsLibraries.e7a07ecd2017");
       container.appendChild(div);
     }
   } catch (e) {}
@@ -691,8 +691,8 @@ async function renderNetwork() {
       div.className = 'sidebar-item';
       div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="1" stroke="currentColor" stroke-width=".8"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width=".6"/></svg> ' + esc(s.name);
       div.dataset.path = s.path;
-      div.onclick = () => navigateTo(s.path);
-      div.oncontextmenu = (e) => {
+      RHFilesUI.assign(div,"click",() => navigateTo(s.path),"src.js.sidebar.renderNetwork.1afaf8209355");
+      RHFilesUI.assign(div,"contextmenu",(e) => {
         e.preventDefault();
         e.stopPropagation();
         const anchor = { clientX: e.clientX, clientY: e.clientY };
@@ -709,7 +709,7 @@ async function renderNetwork() {
               showNetworkMenu(anchor, s, [], { error: true, token });
             }
           });
-      };
+      },"src.js.sidebar.renderNetwork.dfeaef46cf03");
       section.appendChild(div);
     }
     if (servers.length === 0) {
@@ -768,8 +768,8 @@ function showFtpDialog() {
       <button class="dialog-btn primary" id="ftp-connect">${t('btn.connect')}</button>
     </div>`;
   document.body.appendChild(dlg);
-  dlg.querySelector('#ftp-cancel').onclick = () => { dlg.close(); dlg.remove(); };
-  dlg.querySelector('#ftp-connect').onclick = async () => {
+  RHFilesUI.assign(dlg.querySelector('#ftp-cancel'),"click",() => { dlg.close(); dlg.remove(); },"src.js.sidebar.showFtpDialog.e314288eb8e2");
+  RHFilesUI.assign(dlg.querySelector('#ftp-connect'),"click",async () => {
     const host = dlg.querySelector('#ftp-host').value.trim();
     const path = dlg.querySelector('#ftp-path').value || '/';
     const user = dlg.querySelector('#ftp-user').value || 'anonymous';
@@ -783,7 +783,7 @@ function showFtpDialog() {
     } catch (e) {
       alert(t('alert.ftpFailed', {error: e}));
     }
-  };
+  },"src.js.sidebar.showFtpDialog.0c490c0bb052");
   dlg.showModal();
   dlg.onclose = () => dlg.remove();
 }
@@ -812,7 +812,7 @@ async function renderMtpDevices() {
       div.className = 'sidebar-item';
       div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3" y="1" width="10" height="14" rx="1.5" stroke="currentColor" stroke-width=".8"/><circle cx="8" cy="12" r="1" fill="currentColor" opacity=".4"/></svg> ' + esc(d.name);
       div.dataset.path = d.path;
-      div.onclick = () => navigateTo(d.path);
+      RHFilesUI.assign(div,"click",() => navigateTo(d.path),"src.js.sidebar.renderMtpDevices.1afaf8209355");
       section.appendChild(div);
     }
     if (devices.length === 0) {

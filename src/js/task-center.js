@@ -91,7 +91,7 @@ function renderOperationCenter() {
       dismiss.title = t('tasks.dismiss');
       dismiss.setAttribute('aria-label', dismiss.title);
       dismiss.innerHTML = '<svg viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8m0-8-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-      dismiss.addEventListener('click', function() { dismissOperationTask(task.id); });
+      RHFilesUI.listen(dismiss,'click', function() { dismissOperationTask(task.id); },undefined,"src.js.task-center.renderOperationCenter.1d3a1c1ff565");
       heading.appendChild(dismiss);
     }
     card.appendChild(heading);
@@ -165,7 +165,7 @@ function renderOperationCenter() {
       cancelButton.type = 'button';
       cancelButton.textContent = task.cancelRequested ? t('tasks.cancelling') : t('btn.cancel');
       cancelButton.disabled = !!task.cancelRequested;
-      cancelButton.addEventListener('click', function() { cancelOperation(task.id); });
+      RHFilesUI.listen(cancelButton,'click', function() { cancelOperation(task.id); },undefined,"src.js.task-center.renderOperationCenter.1198d5138990");
       actions.appendChild(cancelButton);
       card.appendChild(actions);
     }

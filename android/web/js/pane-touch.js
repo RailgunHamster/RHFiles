@@ -59,7 +59,7 @@ const paneTouch=(()=>{
     }
     function attach(frame){
       const starts=new Map();
-      for(const [name,kind] of [['touchstart','start'],['touchmove','move'],['touchend','end'],['touchcancel','cancel']])frame.contentWindow.addEventListener(name,event=>{
+      for(const [name,kind] of [['touchstart','start'],['touchmove','move'],['touchend','end'],['touchcancel','cancel']])RHFilesUI.listen(frame.contentWindow,name,event=>{
         if(!native)return handle(frame,kind,event);
         if(!enabled()){starts.clear();return;}
         for(const t of event.changedTouches){
@@ -69,7 +69,7 @@ const paneTouch=(()=>{
           if(p.moved&&event.cancelable)event.preventDefault();
           if(kind==='end'||kind==='cancel')starts.delete(t.identifier);
         }
-      },{capture:true,passive:false});
+      },{capture:true,passive:false},"android.web.js.pane-touch.attach.177f38b5a817");
     }
     function relay(sample){handle(null,sample.phase,{changedTouches:sample.points.map(p=>({identifier:p.id,clientX:p.x*innerWidth,clientY:p.y*innerHeight,secondary:p.secondary})),cancelable:false});}
     function reset(){contacts.clear();flings.clear();if(animation)cancelAnimationFrame(animation);animation=0;}

@@ -86,6 +86,27 @@ class PlaybackActivity:AppCompatActivity() {
     playerView.hideController();header.visibility=View.GONE
   }
   private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
+  internal fun automationState():JSONObject {
+    val engine=player?:error("播放器尚未就绪")
+    return JSONObject().put("path",path).put("index",engine.currentMediaItemIndex).put("count",queue.size).put("playing",engine.isPlaying).put("positionMs",engine.currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
+  }
+  internal fun automationControl(args:JSONObject):JSONObject {
+    val engine=player?:error("播放器尚未就绪")
+    when(args.getString("command")){
+      "play"->engine.play();"pause"->engine.pause()
+      "next"->{check(engine.hasNextMediaItem()){"没有下一个文件"};engine.seekToNextMediaItem()}
+      "previous"->{check(engine.hasPreviousMediaItem()){"没有上一个文件"};engine.seekToPreviousMediaItem()}
+      "seek"->{val value=args.getDouble("value");require(value.isFinite()&&value>=0&&engine.duration!=C.TIME_UNSET&&value<=engine.duration){"跳转位置超出范围（毫秒）"};engine.seekTo(value.toLong())}
+      "rate"->{val value=args.getDouble("value");require(value.isFinite()&&value in .25..4.0){"播放速度应为 0.25–4"};engine.setPlaybackSpeed(value.toFloat())}
+      "repeat"->engine.repeatMode=if(args.getBoolean("enabled"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+      "fit"->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
+      "fill"->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
+      "controls.show"->playerView.showController();"controls.hide"->playerView.hideController()
+      "options"->options(playerView)
+      "fullscreen"->{landscape=args.getBoolean("enabled");requestedOrientation=if(landscape)ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
+      else->error("未知播放器操作")
+    };return automationState()
+  }
   // PlayerView otherwise consumes the first hardware Back to hide controls.
   // System edge Back and hardware Back must both return to the file list.
   override fun dispatchKeyEvent(event:KeyEvent):Boolean {

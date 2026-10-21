@@ -110,7 +110,7 @@ const androidUsage=(()=>{
       const percent=total?Math.min(100,entry.size/total*100):0;
       const detail=entry.issue||((entry.isDir?fmt.count(entry.files)+' 个文件 · '+fmt.count(entry.directories)+' 个文件夹':view==='types'?fmt.count(entry.files)+' 个文件':view==='largest'?decode(entry.path):types[entry.kind]||'文件')+' · '+(percent<.1&&percent>0?'<0.1':percent.toFixed(1))+'%');
       const track=ui.el('span','usage-size-track'),fill=ui.el('span','usage-color-'+(entry.isDir?'folder':entry.kind||'other'));fill.style.width=percent+'%';track.append(fill);copy.append(top,ui.el('small',entry.issue?'usage-warning':'muted',detail),track);open.append(symbol,copy);
-      if(view==='types')open.disabled=true;else open.onclick=()=>entry.isDir?drill(entry.id):rowActions(entry);row.append(open);
+      if(view==='types')open.disabled=true;else RHFilesUI.assign(open,"click",()=>entry.isDir?drill(entry.id):rowActions(entry),"android.web.js.usage.paintReport.e02cce55948e");row.append(open);
       if(view!=='types'){const more=button('更多操作','more',()=>rowActions(entry),'icon-btn usage-more');more.setAttribute('aria-label',entry.name+' 的更多操作');more.querySelector('span')?.remove();row.append(more);}list.append(row);
     }
     if(report.hasMore){const more=button('加载更多','download',async()=>{more.disabled=true;await load(true);if(more.isConnected)more.disabled=false;},'usage-load-more');node.append(more);}

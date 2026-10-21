@@ -22,7 +22,7 @@
     listing: null, selected: new Set(), clipboard: null, favorites, task: null,
     view: saved('rhfiles.view', 'list') === 'grid' ? 'grid' : 'list',
     sort: saved('rhfiles.sort', 'name'), hidden: saved('rhfiles.hidden', '0') === '1',
-    permissions: null, index: null, server: null, busy: false,
+    permissions: null, index: null, server: null, busy: false,navigationError:null,
   };
   let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0,bootReady=false;
   let refreshPromise = null, refreshAgain = false;
@@ -57,7 +57,7 @@
   async function categoryPage(route){if(!route.folder)return api.browseLibrary({category:route.category,root:state.root,showHidden:state.hidden,limit:2000,albums:route.category!=='recent'});try{const listing=await api.listDir({path:route.folder});return {...listing,entries:mobileList.categoryFiles(listing.entries||[],route.category)};}catch(err){if(!state.permissions?.manageExternalStorage&&api.featuresAvailable()&&['image','video','audio'].includes(route.category))return api.browseLibrary({category:route.category,root:state.root,folder:route.folder,showHidden:state.hidden,limit:2000});throw err;}}
   const action = (label, icon, onSelect, danger = false) => ({ label, icon, onSelect, danger });
   function on(id, handler) {
-    $(id).addEventListener('click', () => Promise.resolve().then(handler).catch(error));
+    RHFilesUI.listen($(id),'click', () => Promise.resolve().then(handler).catch(error),undefined,"android.web.js.app.on.34a6cc45ce94");
   }
   function error(value) { ui.toast('操作失败：' + (value?.message || String(value)), 4500); }
   function button(label, icon, handler, className = 'nav-item') {
@@ -65,7 +65,7 @@
     node.type = 'button';
     node.innerHTML = ui.icon(icon);
     node.append(ui.el('span', '', label));
-    node.addEventListener('click', () => Promise.resolve().then(handler).catch(error));
+    RHFilesUI.listen(node,'click', () => Promise.resolve().then(handler).catch(error),undefined,"android.web.js.app.button.0cdafb83897b");
     return node;
   }
 
@@ -157,7 +157,7 @@
     graphic.style.setProperty('--tile-color', color);
     graphic.innerHTML = ui.icon(icon);
     node.append(graphic, ui.el('strong', '', label), ui.el('small', '', note || ''));
-    node.addEventListener('click', () => Promise.resolve().then(handler).catch(error));
+    RHFilesUI.listen(node,'click', () => Promise.resolve().then(handler).catch(error),undefined,"android.web.js.app.tile.0cdafb83897b");
     grid.append(node);
   }
   function renderHome() {
@@ -224,7 +224,7 @@
     if (route.screen === 'folder' && route.parentPath && route.path !== route.parentPath) folderParents.set(route.path,route.parentPath);
     const id = ++navigationId;
     ++searchId; clearTimeout(searchTimer);
-    state.route = { ...route }; state.selected.clear(); state.entries = []; state.listing = null; state.busy = true;
+    state.route = { ...route }; state.selected.clear(); state.entries = []; state.listing = null; state.busy = true;state.navigationError=null;
     for (const name of ['home', 'filelist', 'tool-page', 'placeholder']) $(name).hidden = true;
     renderShell();
     try {
@@ -276,6 +276,7 @@
       }
     } catch (err) {
       if (id !== navigationId) return;
+      state.navigationError=String(err?.message||err);
       showPlaceholder('无法打开此位置\n' + (err?.message || err), () => go(route, { replace: true }));
     } finally {
       if (id === navigationId) { state.busy = false; renderShell(); }
@@ -385,14 +386,14 @@
     content.append(meta, ui.el('div', 'check'));
     const more = button('更多操作', 'more', () => entryMenu(entry), 'entry-more');
     more.setAttribute('aria-label', entry.name + ' 的更多操作'); more.querySelector('span').remove();
-    more.addEventListener('pointerdown', e => e.stopPropagation());
-    more.addEventListener('click', e => e.stopPropagation()); content.append(more);
+    RHFilesUI.listen(more,'pointerdown', e => e.stopPropagation(),undefined,"android.web.js.app.buildNode.4b1e4a2e52e4");
+    RHFilesUI.listen(more,'click', e => e.stopPropagation(),undefined,"android.web.js.app.buildNode.fe1bf1d4c651"); content.append(more);
     if(!entry.libraryAlbum){
       const del=button('删除','trash',()=>{node.dispatchEvent(new Event('rhfiles-close-swipe',{bubbles:true}));return remove([entry.path]);},'entry-delete');
       del.setAttribute('aria-label','删除 '+displayName);del.hidden=true;del.tabIndex=-1;
-      del.addEventListener('pointerdown',e=>e.stopPropagation());del.addEventListener('click',e=>e.stopPropagation());node.prepend(del);
+      RHFilesUI.listen(del,'pointerdown',e=>e.stopPropagation(),undefined,"android.web.js.app.buildNode.da22fc9e7096");RHFilesUI.listen(del,'click',e=>e.stopPropagation(),undefined,"android.web.js.app.buildNode.7b55ecb9b2da");node.prepend(del);
     }
-    node.addEventListener('keydown', e => { if(e.target!==node)return;if (e.key === 'Enter') { e.preventDefault(); activate(entry).catch(error); } else if (e.key === ' ') { e.preventDefault(); toggleSelection(entry.path); } });
+    RHFilesUI.listen(node,'keydown', e => { if(e.target!==node)return;if (e.key === 'Enter') { e.preventDefault(); activate(entry).catch(error); } else if (e.key === ' ') { e.preventDefault(); toggleSelection(entry.path); } },undefined,"android.web.js.app.buildNode.a4415e0f6a6c");
     return node;
   }
   const thumbnails=mobileList.thumbnailLoader(entry=>api.readThumbnail({path:entry.path,kind:entry.kind,maxEdge:160}));
@@ -654,9 +655,15 @@
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if(api.syncAvailable())configSync.refresh().catch(error);
+    await refreshAutomationSetting();
     if (status.indexing) pollIndex();
   }
   let settingsSection='display';
+  async function refreshAutomationSetting(){
+    const button=$('btn-automation'),help=$('automation-help');if(!button||!help)return;if(!api.automationAvailable()){button.hidden=help.hidden=true;return;}
+    try{const status=await api.native('automation.status');button.hidden=help.hidden=false;button.textContent='ADB 自动化：'+(status.enabled?'开':'关');button.dataset.enabled=String(status.enabled);}
+    catch{button.hidden=help.hidden=true;}
+  }
   function setSettingsSection(section){
     settingsSection=['display','index','storage','updates','sync','backup','about'].includes(section)?section:'display';
     if(state.route.tool==='settings')state.route.section=settingsSection;
@@ -748,6 +755,7 @@
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -765,20 +773,21 @@
       isOpen:()=>!$('drawer').hidden,prepare:renderDrawer});
     adaptive.init(renderDrawer);
     window.addEventListener('rhfiles-locations-changed',()=>refreshLocations().catch(error));
-    for(const tab of document.querySelectorAll('[data-settings-section]')){tab.onclick=()=>setSettingsSection(tab.dataset.settingsSection);tab.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();const tabs=[...tab.parentNode.children],delta=['ArrowLeft','ArrowUp'].includes(e.key)?-1:1,next=tabs[(tabs.indexOf(tab)+delta+tabs.length)%tabs.length];next.click();next.focus();};}
-    $('project-license').addEventListener('toggle',async()=>{
+    for(const tab of document.querySelectorAll('[data-settings-section]')){RHFilesUI.assign(tab,"click",()=>setSettingsSection(tab.dataset.settingsSection),"android.web.js.app.boot.e7446b62002b");RHFilesUI.assign(tab,"keydown",e=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();const tabs=[...tab.parentNode.children],delta=['ArrowLeft','ArrowUp'].includes(e.key)?-1:1,next=tabs[(tabs.indexOf(tab)+delta+tabs.length)%tabs.length];next.click();next.focus();},"android.web.js.app.boot.c084e956de4d");}
+    RHFilesUI.listen($('project-license'),'toggle',async()=>{
       const details=$('project-license');if(!details.open||details.dataset.loaded)return;
       try{const texts=await Promise.all(['NOTICE.txt','LICENSE.txt'].map(async name=>{const response=await fetch(name);if(!response.ok)throw Error('License unavailable');return response.text();}));$('project-notice-text').textContent=texts[0];$('project-license-text').textContent=texts[1];details.dataset.loaded='1';}
       catch{$('project-license-text').textContent='许可文件未能加载，请查看 RHFiles 源码仓库中的 LICENSE / NOTICE。';}
-    });
-    $('smb-rpc-license').addEventListener('toggle',async()=>{
+    },undefined,"android.web.js.app.boot.871ffa16f6c6");
+    RHFilesUI.listen($('smb-rpc-license'),'toggle',async()=>{
       const details=$('smb-rpc-license');if(!details.open||details.dataset.loaded)return;
       try{const response=await fetch('SMBJ-RPC-LICENSE.txt');if(!response.ok)throw Error('License unavailable');$('smb-rpc-license-text').textContent=await response.text();details.dataset.loaded='1';}
       catch{$('smb-rpc-license-text').textContent='请查看源码包内 SMBJ-RPC-LICENSE.txt。';}
-    });
+    },undefined,"android.web.js.app.boot.0ffd13d0e40c");
     ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path)||currentEntries().find(entry=>entry.path===path),select:startSelection,toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
-    $('scrim').addEventListener('click',closeDrawer);
+    RHFilesUI.listen($('scrim'),'click',closeDrawer,undefined,"android.web.js.app.boot.b5946fbd45ef");
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
+    on('btn-automation',async()=>{const enabled=$('btn-automation').dataset.enabled!=='true';if(enabled&&!await ui.confirm('开启 ADB 自动化？','已授权的电脑将能读取和操作 RHFiles 中的文件；仅在可信电脑上使用。','开启'))return;await api.native('automation.enable',{enabled});await refreshAutomationSetting();});
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
     on('nav-settings',()=>{closeDrawer();return go({screen:'tool',tool:'settings'});});
     on('btn-home',()=>go({screen:'home'}));
@@ -786,17 +795,17 @@
     on('btn-search',()=>go({screen:'search',path:currentDirectory()||state.root,global:!currentDirectory(),boundary:state.route.boundary,boundaryLabel:state.route.boundaryLabel}));
     on('btn-search-close',()=>back());
     on('search-scope',()=>{ state.route.global=!state.route.global; $('search-scope').textContent=state.route.global?'全部文件':'当前文件夹'; return runSearch($('search-input').value); });
-    $('search-input').addEventListener('input',()=>{clearTimeout(searchTimer);++searchId;searchTimer=setTimeout(()=>runSearch($('search-input').value),160);});
+    RHFilesUI.listen($('search-input'),'input',()=>{clearTimeout(searchTimer);++searchId;searchTimer=setTimeout(()=>runSearch($('search-input').value),160);},undefined,"android.web.js.app.boot.fab6fc9b1d2f");
     on('btn-overflow',moreMenu); on('btn-view',viewMenu); on('btn-sort',sortMenu); on('btn-new',newMenu);
     on('btn-refresh',refreshCurrent); on('sel-close',clearSelection);
     on('sel-all',()=>{ const entries=currentEntries(); state.selected=state.selected.size===entries.length?new Set():new Set(entries.map(e=>e.path)); paintSelection(); });
-    $('selection-bar').addEventListener('click',e=>{
+    RHFilesUI.listen($('selection-bar'),'click',e=>{
       const which=e.target.closest('[data-action]')?.dataset.action, paths=[...state.selected];
       if(which==='copy'||which==='cut') setClipboard(which,paths);
       if(which==='delete') remove(paths).catch(error);
       if(which==='rename'&&paths.length===1) rename(state.entries.find(item=>item.path===paths[0])).catch(error);
       if(which==='more') selectionMenu();
-    });
+    },undefined,"android.web.js.app.boot.1a78ad95bf9a");
     on('copy-to-pane',()=>transferToPane('copy',[...state.selected]));on('move-to-pane',()=>transferToPane('cut',[...state.selected]));
     on('btn-paste',paste); on('btn-cancel-paste',()=>{state.clipboard=null;paneHost()?.clipboard(window,null);renderList();renderShell();});
     on('btn-reindex',rebuildIndex); on('btn-clear-index',async()=>{await api.indexClear();await refreshSettings();});
@@ -815,7 +824,7 @@
         quitArmedAt=Date.now(); ui.toast('再按一次返回键退出');history.pushState({rhfiles:true},'',location.href);
       });
     }
-    document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();back();}});
+    RHFilesUI.listen(document,'keydown',e=>{if(e.key==='Escape'){e.preventDefault();back();}},undefined,"android.web.js.app.boot.ea5a60ea371d");
     let width=0;
     new ResizeObserver(entries=>{const w=entries[0].contentRect.width;if(w!==width){width=w;renderList();}}).observe($('filelist'));
     document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(api.featuresAvailable())androidFeatures.onResume().catch(error);else if(state.permissions && !state.permissions.manageExternalStorage)bootStorage().catch(error);}});

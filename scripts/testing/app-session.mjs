@@ -115,6 +115,6 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated'}={}
         await send('Input.setInterceptDrags',{enabled:false});
       }
     };
-    return {directory,artifactDir,profile,close,evaluate,send,events,screenshot,hover,click,drag};
+    return {directory,artifactDir,profile,port,close,evaluate,send,events,screenshot,hover,click,drag};
   } catch(e){close();throw e;}
 }

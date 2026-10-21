@@ -4,12 +4,12 @@ let _lastMouseX = 0;
 let _lastMouseY = 0;
 const RIGHT_CTRL_TAP_MAX_MS = 300;
 let _rightCtrlTap = null;
-document.addEventListener("mousemove", e => { _lastMouseX = e.clientX; _lastMouseY = e.clientY; });
-document.addEventListener('pointerdown', () => {
+RHFilesUI.listen(document,"mousemove", e => { _lastMouseX = e.clientX; _lastMouseY = e.clientY; },undefined,"src.js.keyboard.top.9f7eeb060c8c");
+RHFilesUI.listen(document,'pointerdown', () => {
   // A right-Ctrl used for Ctrl+click selection is a modifier, not a menu tap.
   if (_rightCtrlTap) _rightCtrlTap.eligible = false;
-}, true);
-window.addEventListener('blur', () => { _rightCtrlTap = null; });
+}, true,"src.js.keyboard.top.7fda541cbd6d");
+RHFilesUI.listen(window,'blur', () => { _rightCtrlTap = null; },undefined,"src.js.keyboard.top.b2b0aa44134d");
 
 const DEFAULT_SHORTCUTS = {
   "nav.up":              ["Backspace", "Alt+ArrowUp"],
@@ -450,7 +450,7 @@ function getShortcutBindings() {
   return _shortcutBindings;
 }
 
-document.addEventListener("keydown", async e => {
+RHFilesUI.listen(document,"keydown", async e => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") {
     if (e.key === "Escape") e.target.blur();
     if (e.target.id === "palette-input") return;
@@ -545,16 +545,16 @@ document.addEventListener("keydown", async e => {
     scheduleTypeSearchReset();
     await runTypeSearchSelection(G._typeSearch.str, repeatsSingleKey ? 1 : 0, isRight);
   }
-});
+},undefined,"src.js.keyboard.top.1ed4e9f445ad");
 
-document.addEventListener('keyup', e => {
+RHFilesUI.listen(document,'keyup', e => {
   if (e.key !== 'Control' || e.location !== 2) return;
   const tap = _rightCtrlTap;
   _rightCtrlTap = null;
   if (!tap || !tap.eligible || performance.now() - tap.downAt > RIGHT_CTRL_TAP_MAX_MS) return;
   e.preventDefault();
   showKeyboardContextMenu();
-});
+},undefined,"src.js.keyboard.top.aa664398606b");
 
 function visibleGridColumnCount(list) {
   const grid = list?.querySelector('.card-grid, .thumbnail-grid');
@@ -727,10 +727,10 @@ function filterPalette() {
     </div>`;
   }).join("");
   document.querySelectorAll(".palette-item").forEach(el => {
-    el.addEventListener("mouseenter", () => {
+    RHFilesUI.listen(el,"mouseenter", () => {
       document.querySelectorAll(".palette-item").forEach(e => e.classList.remove("active"));
       el.classList.add("active");
-    });
+    },undefined,"src.js.keyboard.filterPalette.03a4c0bcb50f");
   });
 }
 
@@ -742,7 +742,7 @@ function executePalette(idx) {
   }
 }
 
-document.getElementById("palette-input").addEventListener("keydown", e => {
+RHFilesUI.listen(document.getElementById("palette-input"),"keydown", e => {
   if (e.key === "Escape") { e.preventDefault(); closeCommandPalette(); }
   if (e.key === "ArrowDown") {
     e.preventDefault();
@@ -769,4 +769,4 @@ document.getElementById("palette-input").addEventListener("keydown", e => {
       if (cmdIdx >= 0) executePalette(cmdIdx);
     }
   }
-});
+},undefined,"src.js.keyboard.top.6d3c1cedcc29");

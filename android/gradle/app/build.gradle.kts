@@ -56,7 +56,7 @@ require(updateProbeCode == null || (providers.gradleProperty("rhfilesReleaseProb
 android {
     if (providers.gradleProperty("rhfilesReleaseProbe").isPresent) {
         testBuildType = "release"
-        defaultConfig { testInstrumentationRunner = "com.railgunhamster.rhfiles.SmbUpdateInstrumentation" }
+        defaultConfig { testInstrumentationRunner = if(providers.gradleProperty("rhfilesAutomationProbe").isPresent) "com.railgunhamster.rhfiles.AutomationInstrumentation" else "com.railgunhamster.rhfiles.SmbUpdateInstrumentation" }
     }
     compileSdk = 36
     namespace = "com.railgunhamster.rhfiles"

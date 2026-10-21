@@ -11,7 +11,8 @@ function section(file, start, end) {
   assert.ok(first >= 0 && last > first, 'test must use actual production function');
   return source.slice(first, last);
 }
-function context(extra = {}) { return vm.createContext({console, Set, Map, URL, ...extra}); }
+function context(extra = {}) { return vm.createContext({console, Set, Map, URL,
+  RHFilesUI:{listen:(node,type,handler,options)=>node?.addEventListener(type,handler,options),remove:(node,type,handler,options)=>node?.removeEventListener(type,handler,options),assign:(node,type,handler)=>node['on'+type]=handler},...extra}); }
 
 test('new-folder rename finds only the returned path and never installs a delete callback', () => {
   const calls = [];
