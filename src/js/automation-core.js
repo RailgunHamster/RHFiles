@@ -92,7 +92,7 @@
   function surface(document,registry){
     const records=new WeakMap(),controls=new WeakMap(),byId=new Map(),inlineMark=Symbol('rhfiles-inline');let next=0;
     const events=['click','dblclick','auxclick','contextmenu','input','beforeinput','change','submit','reset','focus','blur','focusin','focusout','select','keydown','keyup','pointerdown','pointermove','pointerup','pointercancel','pointerenter','pointerleave','pointerover','pointerout','mousedown','mousemove','mouseup','mouseenter','mouseleave','mouseover','mouseout','touchstart','touchmove','touchend','touchcancel','dragstart','dragover','dragenter','dragleave','drop','dragend','wheel','toggle'];
-    const idFor=node=>{let id=controls.get(node);if(!id){id='ui-'+(++next);controls.set(node,id);byId.set(id,new WeakRef(node));}return id;};
+    const idFor=node=>{const fingerprint=JSON.stringify(identity(node));let entry=controls.get(node);if(!entry||entry.fingerprint!==fingerprint){if(entry)byId.delete(entry.id);entry={id:'ui-'+(++next),fingerprint};controls.set(node,entry);}byId.set(entry.id,new WeakRef(node));return entry.id;};
     const isElement=node=>node?.nodeType===1;
     function bound(node){let map=records.get(node);if(!map){map=new Map();records.set(node,map);}return map;}
     function listen(node,type,listener,options,site){
@@ -111,7 +111,7 @@
       if(!document)return;
       for(const node of document.querySelectorAll(events.map(e=>'[on'+e+']').join(','))){for(const type of events){const callback=node['on'+type];if(typeof callback==='function'&&node.hasAttribute('on'+type)&&!callback[inlineMark])assign(node,type,callback,'inline:'+(node.id||node.getAttribute('data-command')||(node.getAttribute('on'+type).match(/[a-zA-Z_$][\w$]*\s*\(/)||['handler'])[0].replace(/\s*\($/,'')));}}
       for(const node of document.querySelectorAll('button,input,select,textarea,a[href],summary,[role=button],[draggable=true],canvas,video,audio,[id]'))if(node.id||node.scrollHeight>node.clientHeight||['BUTTON','INPUT','SELECT','TEXTAREA','A','SUMMARY','CANVAS','VIDEO','AUDIO'].includes(node.tagName)||node.hasAttribute('role')||node.draggable)idFor(node);
-      for(const [id,ref]of byId){const node=ref.deref();if(!node||(isElement(node)&&!node.isConnected))byId.delete(id);}
+      for(const [id,ref]of byId){const node=ref.deref();if(!node||(isElement(node)&&!node.isConnected))byId.delete(id);else idFor(node);}
     }
     function visible(node){if(!isElement(node))return true;return !node.closest('[hidden],[inert]')&&node.getClientRects().length>0;}
     function disabled(node){return !!(node?.disabled||node?.closest?.('fieldset[disabled],[aria-disabled=true],[inert]'));}

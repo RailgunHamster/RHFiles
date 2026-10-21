@@ -44,6 +44,7 @@ try{
     out.replay=await error(()=>call('ui.invoke',{controlId:danger.controlId,acknowledge:true,confirmationToken:danger.confirmationToken}));out.deletes=deletes;
     await call('ui.invoke',{controlId:id('summary')});out.expanded=$('details').open;
     const stale=id('inside');$('inside').remove();out.stale=await error(()=>call('ui.invoke',{controlId:stale}));
+    $('child').dataset.path='/old-file';const originalId=id('child');$('child').dataset.path='/different-file';out.recycled=await error(()=>call('ui.invoke',{controlId:originalId}));out.newIdentity=id('child')!==originalId;
     await call('ui.media',{controlId:id('video'),command:'rate',value:1.5});out.rate=$('video').playbackRate;out.invalidRate=await error(()=>call('ui.media',{controlId:id('video'),command:'rate',value:99}));
     return out;
   });
@@ -51,6 +52,6 @@ try{
   equal(data.order,['capture1','capture2','child','bubble']);equal(data.physical,data.order);equal(data.inline,1);equal(data.replaced,[1,1]);equal(data.once,1);equal(data.aborts,0);equal(data.removed,0);
   equal(data.edits,['input','change']);equal(data.value,'中文');equal(data.invalid,'INVALID_PARAMS');equal(data.rollback,'中文');equal(data.checkbox,[true,1]);equal(data.select,'INVALID_PARAMS');equal(data.selectValue,'a');
   equal(data.disabled,'CONTROL_DISABLED');equal(data.hidden,'CONTROL_HIDDEN');equal(data.password.sensitive,true);equal('value'in data.password,false);equal(data.file,'INTERACTION_REQUIRED');
-  equal(data.unconfirmed,'CONFIRMATION_REQUIRED');equal(data.replay,'CONFIRMATION_REQUIRED');equal(data.deletes,1);equal(data.expanded,true);equal(data.stale,'STALE_CONTROL');equal(data.rate,1.5);equal(data.invalidRate,'INVALID_PARAMS');equal(errors,[]);
+  equal(data.unconfirmed,'CONFIRMATION_REQUIRED');equal(data.replay,'CONFIRMATION_REQUIRED');equal(data.deletes,1);equal(data.expanded,true);equal(data.stale,'STALE_CONTROL');equal(data.recycled,'STALE_CONTROL');equal(data.newIdentity,true);equal(data.rate,1.5);equal(data.invalidRate,'INVALID_PARAMS');equal(errors,[]);
   console.log(JSON.stringify({pass:true,checks}));
 }finally{await fixture.close();}
