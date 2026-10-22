@@ -118,6 +118,7 @@ object FileTasks {
   fun status(context:Context,id:String):JSONObject { load(context);return jobs[id]?.json() ?: error("任务不存在") }
   fun hasActive()=jobs.values.any { it.state in listOf("queued","running","paused","scanning") }
   @Synchronized fun start(context:Context,op:String,args:JSONObject):String {
+    if(op in listOf("move","delete","trash","rename")){val sources=args.optJSONArray("sources");if(sources!=null){require(sources.length()<=1000){"每项任务最多 1000 个来源"};val remote=RemoteStorage(context);for(i in 0 until sources.length())require(!remote.isRhFilesRoot(sources.getString(i))){"不能移动、删除或重命名共享入口，请先打开共享目录再选择内容"}}}
     load(context);require(op in listOf("copy","move","delete","zip","extract","trash","restore","trash-delete","backup")) { "未知文件操作" }
     if(op in listOf("restore","trash-delete")){
       require(args.toString().toByteArray().size<=6*1024*1024){"回收站任务过大，请分批处理"}

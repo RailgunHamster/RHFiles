@@ -24,6 +24,7 @@ public class LanServiceInstrumentation extends Instrumentation {
             id=store.save(config);String root="remote://"+id+"/";
             List<NativeEntry> roots=store.list(root);require(roots.size()==1&&roots.get(0).getName().equals("Files"),"Shared root listing");
             String folder=roots.get(0).getPath();NativeEntry text=store.list(folder).stream().filter(e->e.getName().equals("中文.txt")).findFirst().orElseThrow();
+            for(String operation:Arrays.asList("move","delete")){boolean blocked=false;try{FileTasks.INSTANCE.start(getTargetContext(),operation,new JSONObject().put("sources",new JSONArray().put(folder)).put("destination",folder));}catch(IllegalArgumentException expected){blocked=expected.getMessage().contains("共享入口");}require(blocked,"Shared root destructive task preflight");}
             try(RemoteStorage.MediaInput media=store.mediaInput(text.getPath(),4)){require(media.getTotalLength()==10,"Range total");byte[] bytes=new byte[6];new DataInputStream(media.getStream()).readFully(bytes);require(new String(bytes,"UTF-8").equals("456789"),"Range content");}
             String dir=store.create(folder,"手机目录",true);String target=store.destination(dir,"手机.txt");
             store.uploadNew(target,new ByteArrayInputStream("hello".getBytes("UTF-8")),5,n->kotlin.Unit.INSTANCE);

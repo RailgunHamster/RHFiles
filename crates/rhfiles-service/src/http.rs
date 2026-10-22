@@ -306,8 +306,12 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         }
         if method == Method::DELETE {
             a.check(false, true)?;
+            s.storage.node(&decoded)?.require_child()?;
         } else if writing {
             a.check(true, false)?;
+        }
+        if method.as_str() == "MOVE" {
+            s.storage.node(&decoded)?.require_child()?;
         }
         // Infinity PROPFIND is unbounded; clients can enumerate one level at a
         // time. PUT is streamed by dav-server and staged atomically by DavFs.
@@ -334,6 +338,30 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
                 && destination.authority().map(|a| a.as_str()) != header(&r, "Host")
             {
                 return Err(Error::new("forbidden", "不允许跨服务器目标地址"));
+            }
+            let target = destination
+                .path()
+                .strip_prefix("/dav/")
+                .map(|v| format!("/{v}"))
+                .ok_or_else(|| Error::new("invalid_path", "目标必须位于 WebDAV 共享内"))?;
+            let target = percent_encoding::percent_decode_str(&target)
+                .decode_utf8()
+                .map_err(|_| Error::new("invalid_path", "目标路径不是 UTF-8"))?;
+            if destination.path().to_ascii_lowercase().contains("%2f")
+                || destination.path().to_ascii_lowercase().contains("%5c")
+            {
+                return Err(Error::new("invalid_path", "不接受目标路径分隔符别名"));
+            }
+            s.storage.node(&target)?.require_child()?;
+            let source_key = crate::locks::resource_key(&decoded);
+            let target_key = crate::locks::resource_key(&target);
+            if s.storage.stat(&decoded)?.is_dir
+                && (target_key == source_key || target_key.starts_with(&format!("{source_key}/")))
+            {
+                return Err(Error::new(
+                    "forbidden",
+                    "不能把文件夹复制或移动到自身或其子目录",
+                ));
             }
             // Overwrite:F is unconditional in v1, even if a third-party client
             // sends Overwrite:T. The filesystem additionally enforces it.

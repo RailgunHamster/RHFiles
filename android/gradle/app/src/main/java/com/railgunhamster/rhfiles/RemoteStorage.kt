@@ -204,6 +204,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   private fun child(path: String, name: String) = path.trimEnd('/') + "/" + Uri.encode(SafeFiles.name(name))
   fun isRhFiles(path:String)=path.startsWith("remote://")&&location(path).c.optString("type")=="rhfiles"
+  fun isRhFilesRoot(path:String):Boolean {if(!path.startsWith("remote://")||Uri.parse(path).pathSegments.size>1)return false;val l=location(path);return l.c.optString("type")=="rhfiles"}
   fun destination(parent:String,name:String)=child(parent,name)
   fun uploadNew(path:String,input:InputStream,length:Long,progress:(Int)->Unit){val l=location(path);require(l.c.optString("type")=="rhfiles");RhFilesConnection(l.c).upload(l.relative,input,length,progress)}
   fun rhFilesThumbnail(path:String):JSONObject {val l=location(path);require(l.c.optString("type")=="rhfiles");return RhFilesConnection(l.c).thumbnail(l.relative)}
@@ -435,6 +436,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     }
   }
   fun rename(path: String, name: String): String {
+    require(!isRhFilesRoot(path)){"不能重命名共享入口，请打开共享后选择其中的文件夹"}
     val l=location(path); require(l.relative.isNotEmpty()) { "不能重命名网络根目录" }
     require(list(parent(path)).none { it.name==name }) { "目标已存在，未覆盖" }
     val target=child(parent(path),name); val to=location(target)
@@ -446,6 +448,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     }; return target
   }
   fun delete(path: String) {
+    require(!isRhFilesRoot(path)){"不能删除共享入口，请打开共享后选择其中的文件"}
     val entry=stat(path); val l=location(path); require(l.relative.isNotEmpty()) { "不能删除网络根目录" }
     when(l.c.getString("type")) {
       "rhfiles" -> RhFilesConnection(l.c).mutate("delete",l.relative)

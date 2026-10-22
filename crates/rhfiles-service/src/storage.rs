@@ -37,7 +37,12 @@ pub fn valid_name(name: &str) -> Result<()> {
     Ok(())
 }
 pub fn components(path: &str) -> Result<Vec<&str>> {
-    if path.len() > 8192 || !path.starts_with('/') || path.contains('\\') || path.contains('\0') {
+    if path.len() > 8192
+        || !path.starts_with('/')
+        || path.contains("//")
+        || path.contains('\\')
+        || path.contains('\0')
+    {
         return Err(Error::new("invalid_path", "必须使用共享内的绝对虚拟路径"));
     }
     let mut parts = Vec::new();

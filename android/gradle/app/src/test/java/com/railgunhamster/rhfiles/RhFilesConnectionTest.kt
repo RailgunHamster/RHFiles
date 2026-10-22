@@ -52,4 +52,12 @@ class RhFilesConnectionTest {
       try{RhFilesConnection.valid(JSONObject().put("url",url).put("fingerprint","0".repeat(64)));fail(url)}catch(_:IllegalArgumentException){}
     }
   }
+  @Test fun sharedRootsRejectDestructiveOperationsWithoutNetworkAccess(){
+    val store=RemoteStorage(org.robolectric.RuntimeEnvironment.getApplication(),profileLookup={JSONObject().put("type","rhfiles").put("name","QA").put("url","https://127.0.0.1:1/").put("fingerprint","0".repeat(64)).put("username","qa").put("password","fixture")})
+    assertTrue(store.isRhFilesRoot("remote://qa/Files/"));assertFalse(store.isRhFilesRoot("remote://qa/Files/child"))
+    for(path in listOf("remote://qa/","remote://qa/Files")){
+      try{store.delete(path);fail("Shared root deleted")}catch(e:IllegalArgumentException){assertTrue(e.message!!.contains("共享入口"))}
+      try{store.rename(path,"new");fail("Shared root renamed")}catch(e:IllegalArgumentException){assertTrue(e.message!!.contains("共享入口"))}
+    }
+  }
 }

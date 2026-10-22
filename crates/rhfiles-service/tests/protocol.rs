@@ -637,6 +637,44 @@ async fn traversal_private_names_and_root_changes_are_denied() {
                 .status(),
             403
         );
+        let response = f
+            .request("DELETE", &format!("/dav{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403);
     }
     assert!(f.data.join("identity.json").exists());
+    assert!(f.share.join("中文 file.txt").exists());
+    assert!(f.share.join("folder").exists());
+}
+#[tokio::test]
+async fn webdav_copy_move_cannot_recurse_into_the_source_or_move_a_share_root() {
+    let f = Fixture::new(true, true);
+    std::fs::write(f.share.join("folder/keep"), "keep").unwrap();
+    for method in ["COPY", "MOVE"] {
+        for destination in ["FOLDER/child", "folder//child", "folder%2fchild"] {
+            let response = f
+                .request(method, "/dav/Files/folder")
+                .header("Destination", format!("{}/dav/Files/{destination}", f.base))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 403, "{}", response.text().await.unwrap());
+        }
+    }
+    assert_eq!(
+        f.request("MOVE", "/dav/Files/")
+            .header("Destination", format!("{}/dav/Files/moved", f.base))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.share.join("folder/keep")).unwrap(),
+        "keep"
+    );
+    assert!(!f.share.join("folder/child").exists());
 }

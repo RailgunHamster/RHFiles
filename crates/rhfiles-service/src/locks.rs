@@ -31,6 +31,13 @@ fn canonical(p: &DavPath) -> DavPath {
         .join("/");
     DavPath::new(&encoded).expect("valid normalized virtual URI")
 }
+pub(crate) fn resource_key(path: &str) -> String {
+    path.nfc()
+        .collect::<String>()
+        .to_uppercase()
+        .trim_end_matches('/')
+        .to_owned()
+}
 impl Locks {
     pub fn new() -> Box<Self> {
         Box::new(Self {
