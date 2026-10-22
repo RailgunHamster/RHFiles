@@ -4,7 +4,8 @@ param(
     [string]$Directory="$PSScriptRoot\..\dist\velopack-releases",
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repository='RailgunHamster/RHFiles',
     [string]$Commit,
-    [string]$Proxy
+    [string]$Proxy,
+    [ValidateRange(30,3600)][int]$UploadTimeoutSeconds=900
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'release-policy.ps1')
@@ -31,6 +32,7 @@ $headers=@{Authorization=('Bearer '+$passwordLine.Substring(9));Accept='applicat
 $options=@{Headers=$headers;TimeoutSec=240}
 $public=@{TimeoutSec=120}
 if($Proxy){$options.Proxy=$Proxy;$public.Proxy=$Proxy}
+$uploadOptions=$options.Clone();$uploadOptions.TimeoutSec=$UploadTimeoutSeconds
 $api="https://api.github.com/repos/$Repository"
 $tag="v$version"
 try{
@@ -53,7 +55,7 @@ try{
         $existing=@($remote.assets|Where-Object name -CEQ $file.Name)
         if($existing.Count -gt 1){throw 'Duplicate asset names'}
         if($existing.Count){if($existing[0].digest -cne "sha256:$hash"){throw "Draft asset differs: $($file.Name); refusing overwrite"};continue}
-        $uploaded=Invoke-RestMethod "https://uploads.github.com/repos/$Repository/releases/$($remote.id)/assets?name=$([uri]::EscapeDataString($file.Name))" -Method Post -InFile $file.FullName -ContentType 'application/octet-stream' @options
+        $uploaded=Invoke-RestMethod "https://uploads.github.com/repos/$Repository/releases/$($remote.id)/assets?name=$([uri]::EscapeDataString($file.Name))" -Method Post -InFile $file.FullName -ContentType 'application/octet-stream' @uploadOptions
         if($uploaded.digest -cne "sha256:$hash" -or [long]$uploaded.size -ne $file.Length){throw "Upload checksum/size mismatch: $($file.Name)"}
         Write-Host "Verified GitHub asset: $($file.Name)"
     }

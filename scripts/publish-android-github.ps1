@@ -5,7 +5,8 @@ param(
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
     [string]$Repository = 'RailgunHamster/RHFiles',
     [string]$Commit,
-    [string]$Proxy
+    [string]$Proxy,
+    [ValidateRange(30,3600)][int]$UploadTimeoutSeconds=900
 )
 $ErrorActionPreference = 'Stop'
 $manifest = Get-Content -LiteralPath (Join-Path $Directory 'releases.android.json') -Raw | ConvertFrom-Json
@@ -29,6 +30,7 @@ if (-not $passwordLine) { throw 'GitHub credentials unavailable' }
 $headers = @{Authorization=('Bearer '+$passwordLine.Substring(9)); Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28'}
 $requestOptions = @{Headers=$headers; TimeoutSec=120}
 if ($Proxy) { $requestOptions.Proxy=$Proxy }
+$uploadOptions=$requestOptions.Clone();$uploadOptions.TimeoutSec=$UploadTimeoutSeconds
 $api = "https://api.github.com/repos/$Repository"
 $latestBefore = Invoke-RestMethod "$api/releases/latest" @requestOptions
 $tag = "android-v$version"
@@ -60,7 +62,7 @@ foreach ($file in $files) {
     }
     try {
         $upload="https://uploads.github.com/repos/$Repository/releases/$($TargetRelease.id)/assets?name=$([uri]::EscapeDataString($name))"
-        $uploaded=Invoke-RestMethod $upload -Method Post -InFile $file -ContentType 'application/octet-stream' @requestOptions
+        $uploaded=Invoke-RestMethod $upload -Method Post -InFile $file -ContentType 'application/octet-stream' @uploadOptions
         if ($uploaded.digest -ne "sha256:$digest") { throw "GitHub upload checksum mismatch: $name" }
     } catch {
         $failure=$_
