@@ -1,5 +1,5 @@
-//! tus 1.0 creation / HEAD / PATCH / termination. Offsets come from the staged
-//! file, not a client counter. Files become visible only after no-replace commit.
+//! tus 1.0 creation / HEAD / PATCH / termination. Durable offsets advance only
+//! after the staged file is synced. Visibility requires a no-replace commit.
 use crate::{
     auth::Access,
     model::*,
@@ -23,6 +23,8 @@ pub struct Upload {
     pub path: String,
     pub staging: String,
     pub length: u64,
+    #[serde(default)]
+    pub offset: u64,
     pub expires_ms: u64,
     pub completed: bool,
     #[serde(default)]
@@ -127,6 +129,7 @@ impl Uploads {
             path,
             staging: staged.name.clone(),
             length,
+            offset: 0,
             expires_ms: now_ms() + 86400000,
             completed: false,
             digest: None,
@@ -170,13 +173,26 @@ impl Uploads {
         match Staged::reopen(storage.node(&u.path)?, u.staging.clone()) {
             Ok(staged) => {
                 let offset = staged.file.metadata()?.len();
-                if offset == u.length {
+                if offset < u.offset {
+                    return Err(Error::new(
+                        "interrupted",
+                        "临时上传数据不完整，请取消后重试",
+                    ));
+                }
+                // Discard only an unacknowledged tail of our private staging
+                // file after an interrupted request/process. The durable
+                // journal advances only after sync_all, never on allocation.
+                if offset > u.offset {
+                    staged.file.set_len(u.offset)?;
+                    staged.file.sync_all()?;
+                }
+                if u.offset == u.length {
                     return Err(Error::new(
                         "conflict",
                         "数据尚未发布，目标可能出现冲突，请取消任务后重新上传",
                     ));
                 }
-                Ok(offset)
+                Ok(u.offset)
             }
             Err(error) => {
                 // Commit and journal update cannot be one filesystem atomic
@@ -230,6 +246,8 @@ impl Uploads {
             written += chunk.len() as u64;
         }
         staged.file.sync_all()?;
+        u.offset = written;
+        self.save(u)?;
         if written == u.length {
             a.check(true, false)?;
             u.digest = Some(digest(&mut staged.file)?);

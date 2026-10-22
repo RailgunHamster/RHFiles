@@ -76,6 +76,24 @@ async fn tus_offsets_and_credentials_survive_server_restart() {
     );
     let old_fingerprint = f.service.status().fingerprint;
     f.service.stop();
+    // Model an unacknowledged tail written just before process death. A new
+    // server must resume the fsynced/journaled offset, not the allocated length.
+    let record = f
+        .data
+        .join("uploads")
+        .join(format!("{}.json", location.rsplit('/').next().unwrap()));
+    let record: Value = serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+    use std::io::Write;
+    let mut partial = std::fs::OpenOptions::new()
+        .append(true)
+        .open(
+            f.share
+                .join(".rhfiles-service-staging")
+                .join(record["staging"].as_str().unwrap()),
+        )
+        .unwrap();
+    partial.write_all(b"bad").unwrap();
+    drop(partial);
     let restarted = Service::start(
         &f.data,
         vec![ShareConfig {
