@@ -10,7 +10,9 @@ async fn session(c:&reqwest::Client,s:&Service,g:&Groups,id:&str)->reqwest::Resp
 #[tokio::test]
 async fn real_tls_sessions_offline_introductions_local_removal_restart_and_manual_restore(){
     let data=tempfile::tempdir().unwrap();let files=tempfile::tempdir().unwrap();std::fs::write(files.path().join("中文.txt"),b"group-transfer").unwrap();
-    let shares=vec![ShareConfig{name:"Files".into(),path:files.path().into()}];let server=Service::start(data.path(),shares.clone(),"127.0.0.1:0".parse().unwrap()).unwrap();
+    // macOS tempdir lives under /var -> /private/var. Resolve our fixture,
+    // rather than weakening production's symlink-free shared-root policy.
+    let shares=vec![ShareConfig{name:"Files".into(),path:files.path().canonicalize().unwrap()}];let server=Service::start(data.path(),shares.clone(),"127.0.0.1:0".parse().unwrap()).unwrap();
     let a=server.groups();let id=a.create("Home","A",Permissions{write:true,delete:true}).unwrap();server.advertise_group_host().unwrap();
     let bdata=tempfile::tempdir().unwrap();let b=Groups::open(bdata.path()).unwrap();let request=b.request("B").unwrap();b.join(a.approve(&id,&request,true).unwrap(),Permissions::default()).unwrap();
     let cdata=tempfile::tempdir().unwrap();let c=Groups::open(cdata.path()).unwrap();let request=c.request("C").unwrap();c.join(b.approve(&id,&request,false).unwrap(),Permissions::default()).unwrap();
