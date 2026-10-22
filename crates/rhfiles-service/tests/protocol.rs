@@ -270,6 +270,9 @@ impl Fixture {
         let data = temp.path().join("state");
         let share = temp.path().join("files");
         std::fs::create_dir(&share).unwrap();
+        // macOS TMPDIR commonly starts with the OS /var -> /private/var
+        // alias. Fixtures must pass real local roots to the strict service.
+        let share = share.canonicalize().unwrap();
         std::fs::write(share.join("中文 file.txt"), b"0123456789").unwrap();
         std::fs::create_dir(share.join("folder")).unwrap();
         let service = Service::start(
