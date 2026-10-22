@@ -51,7 +51,7 @@
   register('updates.check',object(),()=>checkForUpdates(true),'external');
   register('tasks.list',object(),()=>[..._operationTasks.values()].map(t=>({id:t.id,title:t.title??'',status:t.status,percentage:t.percentage??null,error:t.error??''})),'read');
   const recycleIds={type:'array',items:{type:'string',pattern:'^[0-9a-f]{16}$'},maxItems:50000};
-  register('recycle.open',object(),()=>openRecycleBin());
+  register('recycle.open',object({pane,newTab:boolean}),p=>{const t=focus(p.pane);return openRecycleBin(t.right,!!p.newTab);});
   register('recycle.close',object(),()=>closeRecycleBin());
   register('recycle.state',object(),()=>recycleViewState(),'read');
   register('recycle.refresh',object(),()=>recycleRefresh());

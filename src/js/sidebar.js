@@ -361,6 +361,7 @@ function showRecentContextMenu(e, item) {
 function updateSidebarSelection() {
   document.querySelectorAll(".sidebar-item,.tree-row").forEach(el => el.classList.remove("selected"));
   const currentPath = (G.lastActivePane === 'right' ? G.rp : getTab()).path;
+  if(typeof isRecyclePath==='function'&&isRecyclePath(currentPath))document.getElementById('sidebar-recycle')?.classList.add('selected');
   document.querySelectorAll(".pinned-item").forEach(el => {
     if (favoritePathKey(el.dataset.path) === favoritePathKey(currentPath)) el.classList.add("selected");
   });

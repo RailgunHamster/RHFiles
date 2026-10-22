@@ -355,6 +355,7 @@ async function updatePreviewForSelection() {
     return;
   }
   const file = sel[0];
+  if(file.recycle_id){_previewRequestToken++;setPreviewHeader(null);document.getElementById('preview-content').innerHTML='<div class="preview-empty">'+esc(recycleText('restoreFirst'))+'</div>';return;}
   const requestToken = ++_previewRequestToken;
   setPreviewHeader(file);
   document.getElementById("preview-content").innerHTML = `<div class="preview-empty preview-loading">${t('preview.loading')}</div>`;
@@ -667,6 +668,7 @@ async function rpNavigateTo(path, pushHistory) {
   const navigationToken = ++_rpNavigationToken;
   if (pushHistory === undefined) pushHistory = true;
   path = normalizeWindowsPathInput(path);
+  if(typeof isRecyclePath==='function'&&isRecyclePath(path))return navigateRecycleLocation(pane,pushHistory,true);
   if (!(pane.entries || []).length) renderNavigationLoading(path, true);
   try {
     let entries = await withTimeout(
@@ -713,12 +715,14 @@ function paneGoForward(pane) {
 }
 function paneGoUp(pane) {
   if (pane === "right") {
+    if(typeof isRecyclePath==='function'&&isRecyclePath(G.rp.path))return rpNavigateTo(FS_ROOT);
     if (G.rp.archivePath) return goUpArchive(true);
     try { call("parent_path", { path: G.rp.path }).then(parent => { if (parent) rpNavigateTo(parent); }); } catch (e) {}
   }
 }
 function paneSortBy(pane, field) {
   if (pane === "right") {
+    if(typeof isRecyclePath==='function'&&isRecyclePath(G.rp.path)){const state=recycleModel(G.rp),key=({modified:'deletedAt',created:'deletedAt',type:'itemType'})[field]||field;return recycleSetSort(key,state.sort===key?!state.descending:false,G.rp);}
     if (G.rp.sortF === field) G.rp.sortAsc = !G.rp.sortAsc;
     else { G.rp.sortF = field; G.rp.sortAsc = true; }
     sortStateEntries(G.rp, G.rp.sortF, G.rp.sortAsc);

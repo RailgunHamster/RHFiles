@@ -699,6 +699,8 @@ function normalizeWindowsPathInput(value) {
     path = path.slice(1, -1).trim();
   }
   if (path === 'home://') return path;
+  if (/^(?:recycle:\/*|shell:RecycleBinFolder)$/i.test(path)) return 'recycle://';
+  if (/^recycle:\/\//i.test(path)) return path;
   if (/^ftp:\/\//i.test(path)) return new URL(path).href;
   path = decodeFileUriPath(path);
   if (IS_MAC) {
@@ -809,6 +811,10 @@ function logInvokeFailure(command, error) {
 }
 
 async function call(cmd, args) {
+  // Virtual locations are not Windows paths. Never forward one to a file,
+  // terminal, preview, drop, or shell command (including automation callers).
+  const virtual=(value,key='')=>typeof value==='string'?/(?:paths?|director(?:y|ies)|folders?|destination|source|target|dest|parent|cwd|executable)$/i.test(key)&&/^recycle:\/\//i.test(value):Array.isArray(value)?value.some(item=>virtual(item,key)):value&&typeof value==='object'?Object.entries(value).some(([name,item])=>virtual(item,name)):false;
+  if(virtual(args)&&!cmd.startsWith('db_')&&!['open_new_window','save_window_state'].includes(cmd))throw Error(typeof recycleText==='function'?recycleText('restoreFirst'):'Restore the item before using filesystem operations');
   if (typeof routeFtpCommand === 'function') {
     const routed = await routeFtpCommand(cmd, args || {});
     if (routed) return routed.value;
@@ -1285,7 +1291,7 @@ function startFileWatch() {
     const pairs = [[getTab(), false], ...(G.dualOn ? [[G.rp, true]] : [])];
     try {
       await Promise.allSettled(pairs.map(async ([pane, isRight]) => {
-        if (!pane?.path || pane.path === 'home://' || pane.archivePath || pane._archiveOpening) return;
+        if (!pane?.path || pane.path === 'home://' || /^recycle:\/\//i.test(pane.path) || pane.archivePath || pane._archiveOpening) return;
         const path = pane.path;
         const archiveToken = pane._archiveToken || 0;
         const token = isRight ? _rpNavigationToken : _navigationToken;

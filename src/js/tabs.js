@@ -2,11 +2,13 @@
 
 function tabName(path) {
   if (path === "home://") return t('nav.home');
+  if (typeof isRecyclePath==='function'&&isRecyclePath(path)) return t('recycle.title');
   return displayPath(path);
 }
 
 function tabTooltip(path) {
   if (path === "home://") return t('nav.home');
+  if (typeof isRecyclePath==='function'&&isRecyclePath(path)) return t('recycle.title')+' · recycle://';
   return displayPath(path);
 }
 
@@ -216,6 +218,7 @@ async function duplicateTab(tabId, isRight) {
     duplicate._savedSelPaths = selectionPaths;
   }
   tabs.splice(sourceIndex + 1, 0, duplicate);
+  if(source._recycle)duplicate._recycle={...source._recycle,items:[...source._recycle.items],loading:false,loadToken:0,report:null};
 
   if (isRight) {
     G.activeRpTab = duplicate.id;
@@ -518,6 +521,7 @@ function _applySavedScroll(tab) {
 // --- background refresh (keeps cached entries fresh without blocking UI) ---
 async function _refreshTabInBackground(tab, isRight = false) {
   if (tab.path === "home://" || tab.archivePath || tab._archiveOpening) return;
+  if(typeof isRecyclePath==='function'&&isRecyclePath(tab.path))return recycleRefresh(tab);
   const isActive = () => isRight ? G.dualOn && G.rp === tab : tab.id === G.activeTab;
   const listId = isRight ? 'right-file-list' : 'file-list';
   const statusId = isRight ? 'right-status-count' : 'status-count';
@@ -575,6 +579,7 @@ async function _refreshTabInBackground(tab, isRight = false) {
 }
 
 function _refreshTabMeta(tab, force) {
+  if(typeof isRecyclePath==='function'&&isRecyclePath(tab.path))return;
   // A pending refresh may finish after the user switches tabs. Its entries can
   // be cached, but the tree/status belong to the currently displayed tab.
   if (tab.id !== G.activeTab) return;
@@ -830,7 +835,7 @@ async function showTabPreview(tabEl) {
   let entries = tab.entries || [];
   // Background tabs are loaded lazily, so an unvisited tab has no entries yet.
   // Fetch them for the preview instead of reporting an empty folder.
-  if (!entries.length && tab.path && tab.path !== 'home://') {
+  if (!entries.length && tab.path && tab.path !== 'home://' && !(typeof isRecyclePath==='function'&&isRecyclePath(tab.path))) {
     const token = ++_previewFetchToken;
     try {
       const listed = await listPathEntries(tab.path, '');
@@ -875,6 +880,10 @@ function revealBreadcrumbTail(bc) {
 
 function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   const bc = document.getElementById(bcId || "breadcrumb");
+  if(typeof isRecyclePath==='function'&&isRecyclePath(path)){
+    bc.innerHTML='<span class="bc-item" data-path="recycle://">'+esc(t('recycle.title'))+'</span><span class="breadcrumb-spacer"></span>';
+    RHFilesUI.listen(bc.querySelector('.breadcrumb-spacer'),'click',()=>enterEditMode(isRight),undefined,'src.js.tabs.recycle.address');return;
+  }
   if (typeof isFtpPath === 'function' && isFtpPath(path)) {
     const url = new URL(path);
     bc.replaceChildren();
@@ -1289,6 +1298,7 @@ async function navigateTo(path, pushHistory) {
   // navigating away from search results clears search state
   G.searchActive = false;
   G.searchQuery = "";
+  if(typeof isRecyclePath==='function'&&isRecyclePath(path))return navigateRecycleLocation(navigatingTab,pushHistory,false);
   if (path === "home://") {
     const tab = getTab();
     if (pushHistory && path !== tab.path) {
@@ -1418,6 +1428,7 @@ async function navigateAddressInput(value, isRight) {
   const path = normalizeWindowsPathInput(value);
   if (!path) return false;
   const navigate = isRight ? rpNavigateTo : navigateTo;
+  if(typeof isRecyclePath==='function'&&isRecyclePath(path))return navigate(path);
   if (IS_MAC && /^smb:\/\//i.test(path)) {
     try {
       await call('connect_macos_share', {url:path});
@@ -1468,6 +1479,10 @@ function updateSearchScopeUI() {
   const btn = document.getElementById('btn-search-scope');
   const input = document.getElementById('filter-input');
   const folderPath = getSearchFolderPath();
+  if(typeof isRecyclePath==='function'&&isRecyclePath(getActivePaneState()?.path)){
+    if(btn){btn.disabled=true;btn.classList.remove('active');btn.title=recycleText('search');}
+    if(input)input.placeholder=recycleText('search');return;
+  }
   const globalEnabled = G.settings.globalSearchEnabled !== false;
   if (!globalEnabled && _searchScope === 'global') _searchScope = 'folder';
   const folderScope = _searchScope === 'folder' && !!folderPath;
@@ -1526,6 +1541,7 @@ function applyFilter() {
   if (_searchTimer) clearTimeout(_searchTimer);
   _searchRequestToken++;
   const query = document.getElementById("filter-input").value.trim();
+  if(typeof isRecyclePath==='function'&&isRecyclePath(getActivePaneState()?.path)){recycleSetQuery(query);return;}
   if (query.length === 0) {
     _searchRequestToken++;
     _searchRunning = false;
@@ -1829,6 +1845,7 @@ async function goUp() {
     const isRight = G.lastActivePane === 'right' && G.dualOn;
     const pane = isRight ? G.rp : getTab();
     if (pane.archivePath) return goUpArchive(isRight);
+    if(typeof isRecyclePath==='function'&&isRecyclePath(pane.path))return isRight?rpNavigateTo(FS_ROOT):navigateTo('home://');
     if (pane.path === "home://") return;
     const prevDirName = pathLeaf(pane.path);
     // Drive root has no parent — go to home

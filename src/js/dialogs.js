@@ -789,6 +789,7 @@ const DISK_USAGE_NAV_REFRESH_DELAY = 180;
 function diskUsageTargetPath(path) {
   const requested = path || getActivePaneState()?.path;
   if (!requested) return '';
+  if(typeof isRecyclePath==='function'&&isRecyclePath(requested))return '';
   return requested === 'home://'
     ? (G.homeDirPath || FS_ROOT)
     : normalizeWindowsPathInput(requested);

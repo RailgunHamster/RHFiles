@@ -58,6 +58,7 @@ function initBoxSelection(listEl) {
   // Click on empty area: clear selection. Capture phase so the click that ends
   // a marquee drag can be stopped before it reaches the row handlers.
   RHFilesUI.listen(listEl,'click', e => {
+    if(e.target.closest('[data-recycle-controls],.recycle-columns,.recycle-more,.recycle-report'))return;
     if (suppressNextClick) {
       suppressNextClick = false;
       e.stopPropagation();
@@ -84,6 +85,7 @@ function initBoxSelection(listEl) {
       focusFilePane(listEl);
     }
     if (e.button !== 0) return;
+    if(e.target.closest('[data-recycle-controls],.recycle-columns,.recycle-more,.recycle-report'))return;
     // A new gesture always clears the stale swallow flag: the click it targets
     // belongs to the previous drag and never arrived.
     suppressNextClick = false;
@@ -151,6 +153,10 @@ function initBoxSelection(listEl) {
     suppressNextClick = finishedMarquee;
     isSelecting = false;
     dragActive = false;
+    if(finishedMarquee){
+      const pane=listEl.id==='right-file-list'?G.rp:getTab();
+      if(typeof isRecyclePath==='function'&&isRecyclePath(pane?.path))recyclePaint(pane);
+    }
   },undefined,"src.js.selection.initBoxSelection.32589474d3e3");
 }
 

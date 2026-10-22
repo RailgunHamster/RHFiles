@@ -90,6 +90,7 @@ function showConfirmDialog(options) {
 let _deleteRequestActive = false;
 
 function archiveSelectionIsReadOnly(selection) {
+  if(selection.some(file=>file.recycle_id)){showNotice(recycleText('restoreFirst'));return true;}
   if (!selection.some(file => file.archive_entry)) return false;
   showNotice(t('archive.readOnly'));
   return true;
@@ -97,6 +98,7 @@ function archiveSelectionIsReadOnly(selection) {
 
 async function deleteSelected(isRight) {
   isRight = resolveRightPane(isRight);
+  if(typeof isRecyclePath==='function'&&isRecyclePath((isRight?G.rp:getTab()).path))return recycleDelete(false,isRight?G.rp:getTab());
   const sel = getSelectedPaths(isRight);
   if (archiveSelectionIsReadOnly(sel)) return;
   if (!sel.length || _deleteRequestActive) return;
@@ -157,7 +159,8 @@ async function deleteSelected(isRight) {
 }
 
 async function deleteSelectedPermanently(isRight) {
-  isRight = resolveRightPane(isRight);
+  isRight=resolveRightPane(isRight);
+  if(typeof isRecyclePath==='function'&&isRecyclePath((isRight?G.rp:getTab()).path))return recycleDelete(false,isRight?G.rp:getTab());
   const sel = getSelectedPaths(isRight);
   if (archiveSelectionIsReadOnly(sel)) return;
   if (!sel.length || _deleteRequestActive) return;
@@ -339,6 +342,7 @@ async function renamePrompt(isRight) {
 async function newFolder(isRight) {
   isRight = resolveRightPane(isRight);
   const destPath = isRight ? G.rp.path : getTab().path;
+  if(typeof isRecyclePath==='function'&&isRecyclePath(destPath)){showNotice(recycleText('restoreFirst'));return;}
   try {
     const createdPath = await call("new_folder", { parent: destPath });
     await refresh();
@@ -524,6 +528,7 @@ async function paste(isRight) {
   isRight = resolveRightPane(isRight);
   const destTab = isRight ? G.rp : getTab();
   const destPath = destTab.path;
+  if(typeof isRecyclePath==='function'&&isRecyclePath(destPath)){showNotice(recycleText('restoreFirst'));return;}
   if (IS_MAC && window.__TAURI_INTERNALS__ && !window.__rhfilesSuppressNativeClipboard) {
     try {
       const info = await call('read_macos_file_clipboard', {});
@@ -682,6 +687,7 @@ async function paste(isRight) {
 }
 
 async function openFileHandler(path) {
+  if(typeof isRecyclePath==='function'&&isRecyclePath(path)){showNotice(recycleText('restoreFirst'));return;}
   try {
     await call("open_file", { path });
   } catch (e) {
@@ -694,6 +700,7 @@ async function openFileHandler(path) {
 // else is handed to the system shell.
 async function activateEntry(file, isRight, index) {
   if (!file) return;
+  if(file.recycle_id)return recycleInspect(file,isRight?G.rp:getTab());
   if (IS_MAC && file.is_dir && /\.app$/i.test(file.name) && !file.archive_entry) {
     await openFileHandler(file.path);
     return;
@@ -1180,6 +1187,7 @@ async function shareFiles(paths) {
 function copySelectedPaths(isRight) {
   isRight = resolveRightPane(isRight);
   const pane = isRight ? G.rp : getTab();
+  if(typeof isRecyclePath==='function'&&isRecyclePath(pane.path))return recycleCopyPaths(pane);
   const entries = pane?.entries || [];
   const paths = [...(pane?.sel || new Set())]
     .sort((left, right) => left - right)
@@ -1212,6 +1220,7 @@ function openTerminalFromMenu(path) {
 async function showPropertiesDialog(pathOrEntries) {
   const entries = (Array.isArray(pathOrEntries) ? pathOrEntries : [pathOrEntries]).filter(Boolean);
   if (!entries.length) return;
+  if(entries.length===1&&entries[0].recycle_id)return recycleInspect(entries[0]);
   if (entries.length > 1) {
     showSelectionProperties(entries);
     return;
@@ -1626,6 +1635,8 @@ function buildProgramOpenMenu(targetPath, options) {
 }
 
 function showContextMenu(x, y, isRight) {
+  isRight=resolveRightPane(isRight);
+  if(typeof isRecyclePath==='function'&&isRecyclePath((isRight?G.rp:getTab()).path))return recycleShowMenu(x,y,isRight?G.rp:getTab());
   removeContextMenu();
   const sel = getSelectedPaths(isRight);
   const hasSelection = sel.length > 0;
@@ -2079,6 +2090,7 @@ async function broadcastFileDropChanges(paths) {
 }
 
 async function performDroppedFileOperation(paths, destination, destinationEntries, operation, reportOutcome) {
+  if(typeof isRecyclePath==='function'&&[destination,...paths].some(isRecyclePath))throw Error(recycleText('restoreFirst'));
   const existingNames = new Set((destinationEntries || []).map(entry => fileNameKey(entry.name)));
   const changedFolders = [destination];
   const conflictState = {action:null};

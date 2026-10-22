@@ -506,6 +506,7 @@ RHFilesUI.listen(document,"keydown", async e => {
       const indices = [...sel];
       const focusedIndex = indices.length ? indices[indices.length - 1] : -1;
       if (indices.length === 1 && entries[focusedIndex]) {
+        if(entries[focusedIndex].recycle_id){await recycleInspect(entries[focusedIndex],pane);return;}
         if (IS_MAC) { await activateEntry(entries[focusedIndex], isRight, focusedIndex); return; }
         if (entries[focusedIndex].is_dir) {
           if (isRight) rpNavigateTo(entries[focusedIndex].path);
@@ -608,7 +609,7 @@ function moveFileSelectionByArrow(key, { extend = false, additive = false } = {}
   const list = document.getElementById(listId);
   const selected = [...(pane.sel || [])];
   const current = pane.lastIdx >= 0 ? pane.lastIdx : (selected.length ? selected[selected.length - 1] : -1);
-  const isGrid = G.layout === 'cards' || G.layout === 'thumbnails';
+  const isGrid = !(typeof isRecyclePath==='function'&&isRecyclePath(pane.path))&&(G.layout === 'cards' || G.layout === 'thumbnails');
   const columns = isGrid ? visibleGridColumnCount(list) : 1;
   const next = gridNavigationIndex(current, key, entries.length, columns);
   if (next < 0) return;
@@ -622,7 +623,7 @@ function scrollToVisible(index) {
   const listId = G.lastActivePane === 'right' ? "right-file-list" : "file-list";
   const list = document.getElementById(listId);
   if (!list) return;
-  if (G.layout !== 'details') {
+  if (G.layout !== 'details'||(typeof isRecyclePath==='function'&&isRecyclePath(getActivePaneState()?.path))) {
     const target = list.querySelector(`[data-index="${index}"]`);
     if (target) {
       const listRect = list.getBoundingClientRect();
@@ -649,7 +650,7 @@ function initCommands() {
   { id:"nav.back", label: t('cmd.goBack'), action: goBack, keys:() => getShortcutBindings()["nav.back"]?.[0] },
   { id:"nav.forward", label: t('cmd.goForward'), action: goForward, keys:() => getShortcutBindings()["nav.forward"]?.[0] },
   { id:"nav.up", label: t('cmd.goUp'), action: goUp, keys:() => getShortcutBindings()["nav.up"]?.[0] },
-  { id:"nav.down", label: t('cmd.openInto'), action: async () => { const tab = getTab(); const sel = tab.sel || new Set(); const indices = [...sel]; const fi = indices.length ? indices[indices.length-1] : -1; const entries = tab.entries || []; if (indices.length === 1 && entries[fi]) { if (entries[fi].is_dir) await navigateTo(entries[fi].path); else openFileHandler(entries[fi].path); } }, keys:() => getShortcutBindings()["nav.down"]?.[0] },
+  { id:"nav.down", label: t('cmd.openInto'), action: async () => await openActiveSelection(), keys:() => getShortcutBindings()["nav.down"]?.[0] },
   { id:"nav.refresh", label: t('cmd.refresh'), action: refresh, keys:"F5" },
   { id:"nav.address", label: t('cmd.focusAddress'), action: () => enterEditMode(G.dualOn && G.lastActivePane === 'right'), keys:"Ctrl+L" },
   { id:"file.newFolder", label: t('cmd.newFolder'), action: newFolder, keys:"F7" },

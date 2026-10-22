@@ -213,7 +213,7 @@
         <div id="tag-list" class="tag-list"></div>
       </div>
       <div class="sidebar-section" id="recycle-sidebar-section">
-        <button class="sidebar-item" id="sidebar-recycle" onclick="openRecycleBin()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg><span data-i18n="recycle.title">Recycle Bin</span></button>
+        <button class="sidebar-item" id="sidebar-recycle" onclick="openRecycleBin(undefined,event.ctrlKey||event.metaKey)" onauxclick="if(event.button===1){event.preventDefault();openRecycleBin(undefined,true)}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg><span data-i18n="recycle.title">Recycle Bin</span></button>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.recent">Recent</div>

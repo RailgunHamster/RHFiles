@@ -99,7 +99,7 @@ function fileChoiceSelectedFiles() {
   } catch (error) {
     return [];
   }
-  const files = entries.filter(entry => entry && !entry.is_dir).map(entry => entry.path).filter(Boolean);
+  const files = entries.filter(entry => entry && !entry.is_dir && !entry.recycle_id).map(entry => entry.path).filter(Boolean);
   return fileChoiceFilterPaths(files, fileChoiceAccepted());
 }
 

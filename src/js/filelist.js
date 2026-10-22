@@ -237,6 +237,7 @@ function updateSortArrows() {
 
 function sortBy(field) {
   const tab = getTab();
+  if(typeof isRecyclePath==='function'&&isRecyclePath(tab.path)){const state=recycleModel(tab),key=({modified:'deletedAt',created:'deletedAt',type:'itemType'})[field]||field;return recycleSetSort(key,state.sort===key?!state.descending:false,tab);}
   if (tab.sortF === field) tab.sortAsc = !tab.sortAsc;
   else { tab.sortF = field; tab.sortAsc = true; }
   G.sortField = tab.sortF;
@@ -249,6 +250,10 @@ function sortBy(field) {
 
 function toggleSort() {
   const tab = getTab();
+  if(typeof isRecyclePath==='function'&&isRecyclePath(tab.path)){
+    const fields=['name','deletedAt','itemType','size','originalFolder'],state=recycleModel(tab);
+    return recycleSetSort(fields[(fields.indexOf(state.sort)+1)%fields.length],false,tab);
+  }
   const fields = ["name", "modified", "created", "type", "size"];
   const idx = fields.indexOf(G.sortField);
   G.sortField = fields[(idx + 1) % fields.length];
@@ -389,6 +394,10 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   if (typeof renderArchiveHeader === 'function') renderArchiveHeader(tabOrPane, list, !!isRight);
   list.classList.toggle("search-results", !!G.searchActive && !isRight);
   const header = list.closest('.content')?.querySelector('.file-header');
+  const recycle=typeof isRecyclePath==='function'&&isRecyclePath(tabOrPane.path);
+  list.classList.toggle('recycle-location',recycle);
+  if(header)header.classList.toggle('recycle-location-header',recycle);
+  if(recycle){if(header)header.classList.remove('details-mode');recycleRender(tabOrPane,list,!!isRight);if(countId)updateStatus(tabOrPane,countId,selId);return;}
   if (header) header.classList.toggle('details-mode', G.layout === 'details');
   scheduleFileHeaderGeometry();
   if (!entries.length && tabOrPane._loaded === true && !(G.searchActive && !isRight)) {
