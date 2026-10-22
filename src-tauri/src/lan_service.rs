@@ -3,7 +3,7 @@ use rhfiles_service::{Permissions, Service, ShareConfig};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 static SERVICE: OnceLock<Mutex<Option<Service>>> = OnceLock::new();
@@ -13,6 +13,26 @@ fn slot() -> &'static Mutex<Option<Service>> {
 }
 fn directory() -> Result<std::path::PathBuf, String> {
     Ok(crate::profile::data_dir()?.join("lan-service-v1"))
+}
+static GROUPS: OnceLock<Mutex<Option<Arc<rhfiles_service::groups::Groups>>>> = OnceLock::new();
+pub(crate) fn groups() -> Result<Arc<rhfiles_service::groups::Groups>, String> {
+    let mut slot = GROUPS
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| "设备组状态不可用")?;
+    if let Some(groups) = &*slot {
+        return Ok(groups.clone());
+    }
+    let groups =
+        Arc::new(rhfiles_service::groups::Groups::open(&directory()?).map_err(|e| e.to_string())?);
+    *slot = Some(groups.clone());
+    Ok(groups)
+}
+pub(crate) fn advertise_groups() -> Result<(), String> {
+    if let Some(service) = slot().lock().map_err(|_| "服务状态不可用")?.as_ref() {
+        service.advertise_group_host().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -66,11 +86,12 @@ fn start(config: Config) -> Result<rhfiles_service::Status, String> {
     }
     service.take();
     let directory = directory()?;
-    let running = Service::start_protected(
+    let running = Service::start_grouped(
         &directory,
         config.shares.clone(),
         ([0, 0, 0, 0], config.port).into(),
         &[crate::profile::user_root()?],
+        groups()?,
     )
     .map_err(|e| e.to_string())?;
     save_config(&directory, &config)?;

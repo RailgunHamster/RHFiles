@@ -69,7 +69,7 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
   private val pending get()=context.getSharedPreferences("config-restore-v1",Context.MODE_PRIVATE)
   fun snapshot(web:JSONObject,updates:JSONObject):JSONObject {
     validateWeb(web)
-    return JSONObject().put("schemaVersion",1).put("platform","android").put("web",web).put("updates",updates).put("profiles",remotes.backupProfiles()).put("reader",ReaderSettings.state(context).getJSONObject("values")).put("sync",ConfigSync.rawConfig(context,remotes))
+    return JSONObject().put("schemaVersion",1).put("platform","android").put("web",remotes.portableWeb(web)).put("updates",updates).put("profiles",remotes.backupProfiles()).put("reader",ReaderSettings.state(context).getJSONObject("values")).put("sync",ConfigSync.rawConfig(context,remotes))
   }
   fun validate(payload:JSONObject) {
     require(payload.getInt("schemaVersion")==1&&payload.getString("platform")=="android"){"配置版本或平台不兼容"}

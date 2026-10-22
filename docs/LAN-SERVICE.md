@@ -1,5 +1,7 @@
 # RHFiles LAN file service / 局域网文件服务（首版）
 
+Windows 0.1.77 / Android 0.1.26 新增 [设备组](DEVICE-GROUPS.md)：签名介绍可以经成员离线转交，无需每对设备逐一配对。本机移除始终保留，恢复必须本机手动确认。下面的单设备配对和第三方 WebDAV 账号仍然可用。
+
 本功能使用直接 HTTPS 连接，不调用 Windows SMB、WebClient、盘符映射或 SMB 凭据。电脑只共享明确添加的本机目录；原有 SMB、附近互传和 WebDAV 配置同步是独立功能，不受影响。
 
 ## 使用

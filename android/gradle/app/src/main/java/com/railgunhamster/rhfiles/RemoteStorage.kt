@@ -37,6 +37,7 @@ import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 
 /** Credentials never enter URLs, logs, task journals, or localStorage. */
 class RemoteStorage(private val context: Context, private val credentialKey: (() -> SecretKey)? = null, private val profileLookup: ((String)->JSONObject)? = null) {
+  init { DeviceGroups.install(context) }
   data class SmbShare(val name:String,val type:Int)
   internal var shareReader:((JSONObject)->List<SmbShare>)?=null
   data class Unc(val host: String,val share: String,val parts: List<String>)
@@ -150,6 +151,10 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       require(UUID.fromString(requested).toString()==requested&&preferences.contains(requested)){"网络位置已删除，请重新添加"};requested
     }
     val old=if(requested.isNotBlank())this.config(id)else null
+    if(old?.optString("groupId")?.isNotEmpty()==true){
+      require(value.optString("type")=="rhfiles"){"设备组连接不能改为其他协议，请另建连接"}
+      value.put("groupId",old.getString("groupId")).put("groupPeerId",old.getString("groupPeerId"))
+    }
     if(old!=null&&!value.optBoolean("clearPassword")&&value.optString("password").isEmpty()){
       fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"),c.optString("fingerprint"))
       require(old.optString("password").isEmpty()||identity(old)==identity(value)){"更换服务器、协议或账号时请重新填写密码，或勾选清除密码"}
@@ -167,10 +172,14 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   fun editable(id:String):JSONObject {
     val c=config(id);val result=JSONObject().put("id",id).put("hasPassword",c.optString("password").isNotEmpty()).put("needsPassword",c.optBoolean("needsPassword"))
-    for(field in listOf("name","type","host","port","share","domain","url","username","insecure","fingerprint"))if(c.has(field))result.put(field,c.get(field))
+    for(field in listOf("name","type","host","port","share","domain","url","username","insecure","fingerprint","groupId","groupPeerId"))if(c.has(field))result.put(field,c.get(field))
     return result
   }
-  internal fun backupProfiles()=JSONArray().also{out->preferences.all.keys.sorted().forEach{id->out.put(JSONObject().put("id",id).put("config",config(id)))}}
+  internal fun backupProfiles(includeGroups:Boolean=false)=JSONArray().also{out->preferences.all.keys.sorted().forEach{id->val c=config(id);if(includeGroups||c.optString("groupId").isEmpty())out.put(JSONObject().put("id",id).put("config",c))}}
+  internal fun portableWeb(web:JSONObject):JSONObject {
+    val profiles=backupProfiles(true);val localIds=(0 until profiles.length()).map{profiles.getJSONObject(it)}.filter{it.getJSONObject("config").optString("groupId").isNotEmpty()}.map{it.getString("id")}.toSet()
+    val result=JSONObject(web.toString());if(result.has("rhfiles.favorites")){val favorites=JSONArray(result.getString("rhfiles.favorites"));result.put("rhfiles.favorites",JSONArray((0 until favorites.length()).map{favorites.getJSONObject(it)}.filter{Uri.parse(it.optString("path")).host !in localIds}).toString())};return result
+  }
   internal fun prepareProfiles(profiles:JSONArray):JSONObject=JSONObject().also{out->
     require(profiles.length()<=200){"网络位置过多"}
     for(i in 0 until profiles.length()){
@@ -178,7 +187,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       val value=item.getJSONObject("config");validate(value);out.put(id,encrypt(value))
     }
   }
-  fun remove(id: String) { require(preferences.edit().remove(id).commit()) { "删除连接失败" };readSessions.invalidate{it.id==id} }
+  fun remove(id: String,localRefusal:Boolean=true) { if(localRefusal)DeviceGroups.removingProfile(config(id));require(preferences.edit().remove(id).commit()) { "删除连接失败" };readSessions.invalidate{it.id==id} }
   private fun config(id: String): JSONObject {
     profileLookup?.let { return JSONObject(it(id).toString()) }
     val encrypted = Base64.decode(preferences.getString(id,null) ?: error("网络位置已删除"),Base64.NO_WRAP)

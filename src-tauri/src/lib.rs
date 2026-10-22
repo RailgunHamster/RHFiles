@@ -12,6 +12,7 @@ mod documents;
 mod network;
 mod nearby;
 mod lan_service;
+mod device_groups;
 mod lan_startup;
 #[cfg(windows)]
 pub mod network_io;
@@ -169,6 +170,7 @@ pub fn run() {
             lan_service::lan_service_permissions,
             lan_service::lan_service_startup,
             lan_service::lan_service_drives,
+            device_groups::device_groups,
             nearby::nearby_start,nearby::nearby_stop,nearby::nearby_status,nearby::nearby_probe,nearby::nearby_send,nearby::nearby_accept,nearby::nearby_cancel,
             #[cfg(target_os = "macos")]
             macos::connect_macos_share,

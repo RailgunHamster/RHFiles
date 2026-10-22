@@ -3,6 +3,7 @@
 mod auth;
 mod dav;
 mod discovery;
+pub mod groups;
 mod http;
 mod identity;
 mod locks;
@@ -54,6 +55,27 @@ impl Service {
             return Err(Error::new("invalid_bind", "不允许在公网地址启动文件服务"));
         }
         if bind.ip().is_unspecified() && bind.is_ipv6() {
+            return Err(Error::new("invalid_bind", "请使用明确的本机 IPv6 地址或 IPv4 自动选择"));
+        }
+        Self::start_grouped(
+            data,
+            shares,
+            bind,
+            protected,
+            Arc::new(groups::Groups::open(data)?),
+        )
+    }
+    pub fn start_grouped(
+        data: &Path,
+        shares: Vec<ShareConfig>,
+        bind: SocketAddr,
+        protected: &[std::path::PathBuf],
+        groups: Arc<groups::Groups>,
+    ) -> Result<Self> {
+        if !bind.ip().is_unspecified() && !network_scope::allowed(bind.ip()) {
+            return Err(Error::new("invalid_bind", "不允许在公网地址启动文件服务"));
+        }
+        if bind.ip().is_unspecified() && bind.is_ipv6() {
             return Err(Error::new(
                 "invalid_bind",
                 "请使用明确的本机 IPv6 地址或 IPv4 自动选择",
@@ -68,7 +90,7 @@ impl Service {
         let storage = Arc::new(storage::Storage::protected(&shares, data, protected)?);
         let (fingerprint, tls) = identity::load(data)?;
         let certificate = identity::certificate(data)?;
-        let state = Arc::new(http::State::new(data, storage)?);
+        let state = Arc::new(http::State::with_groups(data, storage, groups)?);
         let mut addresses = if bind.ip().is_unspecified() {
             if_addrs::get_if_addrs()?
                 .into_iter()
@@ -113,11 +135,21 @@ impl Service {
         } else {
             (None, None)
         };
-        let endpoints = addresses
+        let endpoints: Vec<String> = addresses
             .into_iter()
             .take(16)
             .map(|ip| format!("https://{}", SocketAddr::new(ip, port)))
             .collect();
+        let mut group_endpoints=endpoints.clone();
+        // A wildcard service also really listens on loopback. Keep it last for
+        // phones, but sign it too for local desktop instances / isolated AVD QA.
+        if bind.ip().is_unspecified() { group_endpoints.push(format!("https://127.0.0.1:{port}")); }
+        let host = groups::Server {
+            endpoints: group_endpoints,
+            fingerprint: fingerprint.clone(),
+        };
+        state.groups.advertise(host.clone())?;
+        *state.host.lock().unwrap() = Some(host);
         let handles = listeners
             .iter()
             .map(|_| axum_server::Handle::new())
@@ -197,6 +229,12 @@ impl Service {
             active_uploads: self.state.uploads.count(),
             discovery_error: self.discovery_error.clone(),
         }
+    }
+    pub fn groups(&self) -> Arc<groups::Groups> {
+        self.state.groups.clone()
+    }
+    pub fn advertise_group_host(&self) -> Result<()> {
+        self.state.groups.advertise(self.state.host.lock().unwrap().clone().ok_or_else(||Error::new("invalid_group","服务未启动"))?)
     }
     pub fn credential(&self, name: &str, permissions: Permissions) -> Result<Credential> {
         self.state.auth.issue(name, permissions)

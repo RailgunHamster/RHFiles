@@ -69,13 +69,17 @@ internal class RhFilesConnection(private val config:JSONObject) {
     }
   }
   internal class HttpFailure(val status:Int,message:String):IOException(message)
-  private fun request(method:String,endpoint:String,path:String?=null,body:RequestBody?=null,headers:Map<String,String> = emptyMap(),authenticate:Boolean=true,extra:Map<String,String> = emptyMap()):Response {
+  private fun request(method:String,endpoint:String,path:String?=null,body:RequestBody?=null,headers:Map<String,String> = emptyMap(),authenticate:Boolean=true,extra:Map<String,String> = emptyMap(),retryGroup:Boolean=true):Response {
     valid(config);require(endpoint.startsWith("/api/v1/")&&!endpoint.contains("?")&&!endpoint.contains("#")){"非法接口路径"}
     val url=config.getString("url").toHttpUrl().newBuilder().encodedPath(endpoint).apply{if(path!=null)addQueryParameter("path",path);extra.forEach{(k,v)->addQueryParameter(k,v)}}.build()
     val builder=Request.Builder().url(url).method(method,body)
-    if(authenticate){require(config.optString("username").isNotEmpty()&&config.optString("password").isNotEmpty()){"此设备需要重新配对"};builder.header("Authorization",Credentials.basic(config.getString("username"),config.getString("password"),Charsets.UTF_8))}
+    if(authenticate){if(config.optString("groupId").isNotEmpty())builder.header("Authorization",DeviceGroups.authorization(config))else{require(config.optString("username").isNotEmpty()&&config.optString("password").isNotEmpty()){"此设备需要重新配对"};builder.header("Authorization",Credentials.basic(config.getString("username"),config.getString("password"),Charsets.UTF_8))}}
     headers.forEach{(k,v)->builder.header(k,v)}
     val response=client(config).newCall(builder.build()).execute()
+    // A service restart discards RAM sessions, not group trust. HTTP 401 is an
+    // authentication rejection before file dispatch. Retry only replayable
+    // bodies once; tus offsets still guard any partially staged PATCH.
+    if(response.code==401&&authenticate&&retryGroup&&config.optString("groupId").isNotEmpty()&&body?.isOneShot()!=true&&body?.isDuplex()!=true){response.close();DeviceGroups.invalidate(config);return request(method,endpoint,path,body,headers,authenticate,extra,false)}
     if(!response.isSuccessful){val detail=try{JSONObject(String(response.body!!.byteStream().readBytesBounded(16384),Charsets.UTF_8)).optJSONObject("error")?.optString("message")}catch(_:Exception){null};response.close();throw HttpFailure(response.code,"RHFiles：HTTP ${response.code} · "+(detail?:when(response.code){401->"授权已失效，请重新配对";403->"电脑端未授予此权限";409,412->"目标已存在或目录已变化，未覆盖";423->"文件被其他客户端锁定";else->"请求失败"}))};return response
   }
   private fun objectReply(r:Response)=r.use{JSONObject(String(it.body!!.byteStream().readBytesBounded(8*1024*1024),Charsets.UTF_8))}

@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-tauri"
-version = "0.1.76"
+version = "0.1.77"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -31,6 +31,7 @@ rhfiles-core = { path = "../crates/rhfiles-core" }
 rhfiles-transfer = { path = "../crates/rhfiles-transfer" }
 rhfiles-service = { path = "../crates/rhfiles-service" }
 base64 = "0.22"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 zip = "2"
 ureq = "3.4"
 url = "2.5"

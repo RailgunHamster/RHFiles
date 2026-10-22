@@ -16,6 +16,12 @@ https://github.com/programatik29/axum-server
 dav-server — Apache-2.0 — https://github.com/messense/dav-server-rs
 mdns-sd — Apache-2.0 OR MIT — https://github.com/keepsimple1/mdns-sd
 
+Device groups and QR proofs:
+ring — ISC and bundled third-party licenses; see ring-LICENSE* and once_cell-LICENSE*.
+https://github.com/briansmith/ring
+qrcode — MIT OR Apache-2.0; see qrcode-LICENSE-MIT.txt.
+https://github.com/kennytm/qrcode-rust
+
 Android offline pairing scanner:
 AndroidX CameraX — Android Open Source Project — Apache-2.0
 https://developer.android.com/jetpack/androidx/releases/camera

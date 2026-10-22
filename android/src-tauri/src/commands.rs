@@ -2,6 +2,11 @@
 //! implementation remains directly testable, while the shipping handlers await
 //! Tauri's blocking pool. No task percentages are invented by the frontend.
 use crate::{device, fs_ops, thumbnail};
+#[tauri::command]
+pub fn device_group_qr(uri:String)->Result<Option<String>,String>{
+    if uri.len()>360000||!(uri.starts_with("rhfiles-group-request:v1:")||uri.starts_with("rhfiles-group-approval:v1:")){return Err("设备组信息无效".into());}
+    Ok(qrcode::QrCode::with_error_correction_level(uri.as_bytes(),qrcode::EcLevel::L).ok().map(|q|q.render::<qrcode::render::svg::Color>().min_dimensions(280,280).build()))
+}
 
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work).await.map_err(|error| error.to_string())?

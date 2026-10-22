@@ -17,11 +17,27 @@ pub struct Access {
     pub permissions: Permissions,
     pub live: Arc<AtomicBool>,
     pub method: String,
+    pub group: Option<(
+        Arc<crate::groups::Groups>,
+        String,
+        String,
+        std::time::Instant,
+    )>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rotating_group_sessions_keep_transfer_ownership_and_live_revocation(){
+        let data=tempfile::tempdir().unwrap();let groups=Arc::new(crate::groups::Groups::open(data.path()).unwrap());let id=groups.create("Home","A",Permissions::default()).unwrap();let auth=Auth::new(data.path()).unwrap();
+        let first=auth.group_session(groups.clone(),&id,&groups.device_id()).unwrap();let second=auth.group_session(groups.clone(),&id,&groups.device_id()).unwrap();
+        let header=|v:&serde_json::Value|format!("Bearer {}:{}",v["username"].as_str().unwrap(),v["password"].as_str().unwrap());
+        let old=auth.authenticate(Some(&header(&first)),"GET").unwrap();let fresh=auth.authenticate(Some(&header(&second)),"GET").unwrap();assert_eq!(old.id,fresh.id);assert_ne!(first["username"],second["username"]);
+        auth.sessions.lock().unwrap().get_mut(first["username"].as_str().unwrap()).unwrap().1.group.as_mut().unwrap().3=std::time::Instant::now()-std::time::Duration::from_secs(1);
+        assert!(auth.authenticate(Some(&header(&first)),"GET").is_err());assert!(old.check(false,false).is_ok());
+        auth.stop();assert!(old.check(false,false).is_err());assert!(fresh.check(false,false).is_err());
+    }
     #[test]
     fn permission_changes_invalidate_old_handles_but_keep_the_credential() {
         let data = tempfile::tempdir().unwrap();
@@ -98,6 +114,14 @@ impl Access {
         if !self.live.load(Ordering::Acquire) {
             return Err(Error::new("unauthorized", "设备授权已撤销"));
         }
+        if let Some((groups, group, peer, _expires)) = &self.group {
+            // Expiry gates NEW HTTP requests, not an already authorized large
+            // stream. Local removal/grant changes still apply on every chunk.
+            let current = groups.access(group, peer, true)?;
+            if write && !current.write || delete && !current.delete {
+                return Err(Error::new("forbidden", "本机未向设备组授予此权限"));
+            }
+        }
         if write && !self.permissions.write || delete && !self.permissions.delete {
             return Err(Error::new(
                 "forbidden",
@@ -121,6 +145,8 @@ struct Database {
 pub struct Auth {
     data: PathBuf,
     state: Mutex<Database>,
+    sessions: Mutex<HashMap<String, (String, Access)>>,
+    group_live: Arc<AtomicBool>,
 }
 fn hash(secret: &str) -> String {
     format!("{:x}", Sha256::digest(secret.as_bytes()))
@@ -147,6 +173,8 @@ impl Auth {
             .collect();
         Ok(Self {
             data: data.into(),
+            sessions: Mutex::new(HashMap::new()),
+            group_live: Arc::new(AtomicBool::new(true)),
             state: Mutex::new(Database {
                 devices,
                 live,
@@ -186,9 +214,47 @@ impl Auth {
             .collect()
     }
     pub fn stop(&self) {
+        self.group_live.store(false,Ordering::Release);
+        for (_, access) in self.sessions.lock().unwrap().values() {
+            access.live.store(false, Ordering::Release);
+        }
         for live in self.state.lock().unwrap().live.values() {
             live.store(false, Ordering::Release);
         }
+    }
+    pub fn group_session(
+        &self,
+        groups: Arc<crate::groups::Groups>,
+        group: &str,
+        peer: &str,
+    ) -> Result<serde_json::Value> {
+        let permissions = groups.access(group, peer, false)?;
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.retain(|_, (_, a)| {
+            a.group
+                .as_ref()
+                .is_some_and(|v| v.3 > std::time::Instant::now())
+        });
+        if sessions.len() >= 256 {
+            return Err(Error::new("busy", "设备组会话过多，请稍后重试"));
+        }
+        let id = random()?;
+        let password = random()?;
+        let access = Access {
+            // Session rotation must not change tus ownership / WebDAV locks.
+            id: format!("group-{}",hash(&format!("{group}:{peer}"))),
+            permissions,
+            live: self.group_live.clone(),
+            method: String::new(),
+            group: Some((
+                groups,
+                group.into(),
+                peer.into(),
+                std::time::Instant::now() + std::time::Duration::from_secs(1800),
+            )),
+        };
+        sessions.insert(id.clone(), (hash(&password), access));
+        Ok(serde_json::json!({"username":id,"password":password,"expiresIn":1800}))
     }
     pub fn issue(&self, name: &str, permissions: Permissions) -> Result<Credential> {
         if name.trim().is_empty() || name.len() > 120 || name.chars().any(char::is_control) {
@@ -317,6 +383,19 @@ impl Auth {
         } else {
             return Err(Error::new("unauthorized", "不支持的认证方式"));
         };
+        if let Some((expected, access)) = self.sessions.lock().unwrap().get(&id) {
+            if !bool::from(hash(&secret).as_bytes().ct_eq(expected.as_bytes())) {
+                return Err(Error::new("unauthorized", "凭据错误"));
+            }
+            let mut access = access.clone();
+            access.method = method.into();
+            let (groups, group, peer, expires) = access.group.as_ref().unwrap();
+            if *expires <= std::time::Instant::now() || !access.live.load(Ordering::Acquire) {
+                return Err(Error::new("unauthorized", "设备组会话已到期"));
+            }
+            access.permissions = groups.access(group, peer, false)?;
+            return Ok(access);
+        }
         let state = self.state.lock().unwrap();
         let device = state
             .devices
@@ -335,6 +414,7 @@ impl Auth {
             permissions: device.permissions.clone(),
             live: state.live[&id].clone(),
             method: method.into(),
+            group: None,
         })
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-android"
-version = "0.1.25"
+version = "0.1.26"
 edition = "2021"
 license = "Apache-2.0"
 description = "RHFiles for Android — an ad-free, telemetry-free file manager with full storage access"
@@ -43,6 +43,7 @@ image = { version = "0.25", default-features = false, features = [
 # Thumbnails cross the IPC bridge as `data:` URLs, which the WebView can use
 # directly as an `<img src>` without touching the filesystem protocol.
 base64 = "0.22"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 getrandom = "0.3"
 rhfiles-transfer = { path = "../../crates/rhfiles-transfer" }
 

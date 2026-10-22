@@ -144,6 +144,8 @@ foreach ($target in $targets) {
 
 Write-Host 'Android project sync complete.'
 Sync-File -Source (Join-Path $repoRoot 'src\js\nearby-ui.js') -Target (Join-Path $repoRoot 'android\web\js\nearby-ui.js')
+Sync-File -Source (Join-Path $repoRoot 'src\js\device-groups-ui.js') -Target (Join-Path $repoRoot 'android\web\js\device-groups-ui.js')
+Sync-File -Source (Join-Path $repoRoot 'src\css\device-groups.css') -Target (Join-Path $repoRoot 'android\web\css\device-groups.css')
 Sync-File -Source (Join-Path $repoRoot 'src\js\automation-core.js') -Target (Join-Path $repoRoot 'android\web\js\automation-core.js')
 # Include the unmodified project license and source attribution in every APK.
 Sync-File -Source (Join-Path $repoRoot 'LICENSE') -Target (Join-Path $repoRoot 'android\web\LICENSE.txt')

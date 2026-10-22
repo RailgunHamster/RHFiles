@@ -24,7 +24,8 @@ internal object SharedConfig {
   }
   fun snapshot(profiles:JSONArray,favorites:JSONArray):JSONObject {
     val out=empty();for(i in 0 until profiles.length()){val p=profiles.getJSONObject(i);out.getJSONArray("profiles").put(JSONObject().put("id",p.getString("id")).put("config",profile(p.getJSONObject("config"))))}
-    for(i in 0 until favorites.length()){val f=favorites.getJSONObject(i);if(f.optString("path").startsWith("remote://"))out.getJSONArray("favorites").put(favorite(f))}
+    val portableIds=(0 until profiles.length()).map{profiles.getJSONObject(it).getString("id")}.toSet()
+    for(i in 0 until favorites.length()){val f=favorites.getJSONObject(i);if(f.optString("path").startsWith("remote://")&&Uri.parse(f.optString("path")).host in portableIds)out.getJSONArray("favorites").put(favorite(f))}
     return out
   }
   fun favorite(f:JSONObject):JSONObject=JSONObject().also{out->for(key in listOf("name","path","isDir","label","parentPath"))if(f.has(key)&&!f.isNull(key))out.put(key,f.get(key))}

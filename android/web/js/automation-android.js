@@ -6,6 +6,7 @@ const androidAutomation=(()=>{
   function install(app){
     const actions=window.RHFilesAPI,state=app.state;
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
+    deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
     const reject=(code,message)=>{throw new ErrorType(code,message);};
     const entry=path=>{const value=state.entries.find(e=>e.path===path);if(!value)reject('ENTRY_NOT_FOUND','Path is outside the current listing');return value;};
     const snapshot=()=>({platform:'android',pane:workbench.id||'main',ready:app.ready(),route:{...state.route},busy:state.busy,root:state.root,selected:[...state.selected],entries:state.entries.length,error:state.navigationError??null});

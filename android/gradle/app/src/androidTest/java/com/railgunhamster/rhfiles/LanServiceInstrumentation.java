@@ -61,6 +61,35 @@ public class LanServiceInstrumentation extends Instrumentation {
         deadline=System.currentTimeMillis()+5000;while(!eval("window.__scanFinished===true").equals("true")){require(System.currentTimeMillis()<deadline,"Camera result returned to pairing bridge");Thread.sleep(80);}
         call("automation.enable",new JSONObject().put("enabled",false));
     }
+    private void groupPhase(Bundle result)throws Exception {
+        String phase=args.getString("groupPhase"),id=args.getString("groupId"),peer=args.getString("peer");
+        if(phase.equals("request")){JSONObject request=object("groups.request",new JSONObject().put("deviceName","Android group QA"));result.putString("groupData",android.util.Base64.encodeToString(request.getString("uri").getBytes("UTF-8"),android.util.Base64.NO_WRAP));return;}
+        if(phase.equals("join"))call("groups.join",new JSONObject().put("uri",new String(android.util.Base64.decode(args.getString("approval"),android.util.Base64.DEFAULT),"UTF-8")).put("confirmed",true));
+        if(phase.equals("remove")){call("groups.remove",new JSONObject().put("id",id).put("peer",peer));}
+        if(phase.equals("restore")){boolean rejected=false;try{call("groups.restore",new JSONObject().put("id",id).put("peer",peer).put("confirmed",false));}catch(Exception expected){rejected=true;}require(rejected,"No implicit local restore");call("groups.restore",new JSONObject().put("id",id).put("peer",peer).put("confirmed",true));}
+        JSONObject state=object("groups.state",new JSONObject());JSONArray groups=state.getJSONArray("groups");require(groups.length()==1,"Persisted group");JSONObject group=groups.getJSONObject(0);if(id==null&&phase.equals("ui"))id=group.getString("id");require(group.getString("id").equals(id),"Pinned group identity");
+        if(phase.equals("ui")){
+            long ready=System.currentTimeMillis()+15000;while(!eval("(()=>{try{return (RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).list().some(a=>a.id==='settings.open')}catch{return false}})()").equals("true")){require(System.currentTimeMillis()<ready,"File pane automation ready");Thread.sleep(100);}
+            eval("window.__groupUi=null;void (RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke('settings.open',{section:'storage'}).then(()=>window.__groupUi=true).catch(error=>window.__groupUi=String(error));");
+            long until=System.currentTimeMillis()+30000;while(!eval("window.__groupUi===true").equals("true")){require(System.currentTimeMillis()<until,"Group settings UI: "+eval("window.__groupUi"));Thread.sleep(100);}
+            while(!eval("[window,...Array.from(window.frames)].some(w=>w.document.getElementById('device-groups-settings')?.querySelector('.dg-member'))").equals("true")){require(System.currentTimeMillis()<until,"Group settings finished rendering");Thread.sleep(100);}
+            // AVD launcher ANRs from parallel build load are not application UI.
+            getUiAutomation().executeShellCommand("am force-stop com.google.android.apps.nexuslauncher").close();Thread.sleep(300);
+            Bitmap screenshot=getUiAutomation().takeScreenshot();require(screenshot!=null,"Group settings screenshot");try{ByteArrayOutputStream bytes=new ByteArrayOutputStream();screenshot.compress(Bitmap.CompressFormat.PNG,100,bytes);result.putString("screenshot",android.util.Base64.encodeToString(bytes.toByteArray(),android.util.Base64.NO_WRAP));}finally{screenshot.recycle();}return;
+        }
+        if(phase.equals("remove")||phase.equals("localBlocked")){
+            boolean blocked=false;JSONArray members=group.getJSONArray("members");for(int i=0;i<members.length();i++){JSONObject m=members.getJSONObject(i);if(m.getString("id").equals(peer))blocked=m.getBoolean("blocked");}require(blocked,"Local refusal survived activity/process restart");
+            JSONObject refresh=object("groups.refresh",new JSONObject());require(refresh.getInt("locations")==0,"Refresh did not add the removed server back");return;
+        }
+        JSONArray locations=(JSONArray)call("connections",new JSONObject());JSONObject location=null;for(int i=0;i<locations.length();i++){JSONObject l=locations.getJSONObject(i);if(l.optString("type").equals("rhfiles"))location=l;}
+        if(phase.equals("restore")){object("groups.refresh",new JSONObject());locations=(JSONArray)call("connections",new JSONObject());for(int i=0;i<locations.length();i++)if(locations.getJSONObject(i).optString("type").equals("rhfiles"))location=locations.getJSONObject(i);}
+        require(location!=null,"Generated group network location");
+        if(args.containsKey("loopback")){JSONObject c=object("connection.get",new JSONObject().put("id",location.getString("id")));c.put("url",args.getString("loopback"));call("connection.save",c);}
+        if(phase.equals("restart")){object("list",new JSONObject().put("path",location.getString("path")));Bundle ready=new Bundle();ready.putString("restartReady","true");sendStatus(1,ready);Thread.sleep(3000);}
+        boolean denied=false;try{JSONArray entries=object("list",new JSONObject().put("path",location.getString("path"))).getJSONArray("entries");require(entries.length()==1&&entries.getJSONObject(0).getString("name").equals("Files"),"Group file listing");}catch(Exception e){if(!phase.equals("serverBlocked"))throw e;denied=true;}
+        require(phase.equals("serverBlocked")==denied,"Server-local removal enforcement");
+        result.putString("deviceId",state.getString("deviceId"));
+    }
     @Override public void onStart(){Bundle result=new Bundle();File source=null,small=null;
         try{
             require(Build.FINGERPRINT.contains("generic")||Build.MODEL.contains("sdk"),"Owned emulator required");
@@ -69,6 +98,7 @@ public class LanServiceInstrumentation extends Instrumentation {
             if(Build.VERSION.SDK_INT>=33)getUiAutomation().grantRuntimePermission(getTargetContext().getPackageName(),android.Manifest.permission.POST_NOTIFICATIONS);
             Intent launch=getTargetContext().getPackageManager().getLaunchIntentForPackage(getTargetContext().getPackageName());launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);activity=startActivitySync(launch);
             long deadline=System.currentTimeMillis()+45000;while(!eval("typeof api!=='undefined'&&typeof api.native==='function'").equals("true")){require(System.currentTimeMillis()<deadline,"Main bridge startup");Thread.sleep(150);}
+            if(args.containsKey("groupPhase")){groupPhase(result);result.putString("pass","true");finish(Activity.RESULT_OK,result);return;}
             byte[] png=android.util.Base64.decode(args.getString("qrBase64"),android.util.Base64.DEFAULT);Bitmap bitmap=BitmapFactory.decodeByteArray(png,0,png.length);require(bitmap!=null,"QR fixture");
             try{List<zxingcpp.BarcodeReader.Result> symbols=new zxingcpp.BarcodeReader().read(bitmap,new Rect(),0);require(symbols.stream().anyMatch(v->args.getString("qrUri").equals(v.getText())),"Actual offline native QR decode");}finally{bitmap.recycle();}
             object("connection.describe",new JSONObject().put("uri",args.getString("qrUri")));scannerUi();

@@ -176,7 +176,7 @@ class MainActivity : TauriActivity() {
   }
   @Deprecated("Android result bridge") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
     super.onActivityResult(requestCode,resultCode,data)
-    if(requestCode==103){val callback=scanResult;scanResult=null;try{callback?.invoke(if(resultCode==RESULT_OK)PairingData.describe(data?.getStringExtra("uri")?:"")else JSONObject.NULL,null)}catch(e:Exception){callback?.invoke(null,e.message)};return}
+    if(requestCode==103){val callback=scanResult;scanResult=null;try{callback?.invoke(if(resultCode==RESULT_OK)DeviceGroups.describe(data?.getStringExtra("uri")?:"")else JSONObject.NULL,null)}catch(e:Exception){callback?.invoke(null,e.message)};return}
     if(backupUi.result(requestCode,resultCode,data))return
     if(requestCode !in listOf(101,102))return
     val callback=picker;picker=null
@@ -191,6 +191,7 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
+    "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.configure","groups.refresh" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{locationsChanged()}}
     "automation.status" -> onUi{NativeAutomation.status(this)}
     "automation.enable" -> onUi{NativeAutomation.setEnabled(this,args.getBoolean("enabled"))}
     "automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control" -> onUi{NativeAutomation.dispatch(this,command,args)}

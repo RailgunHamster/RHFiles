@@ -1,0 +1,195 @@
+use super::*;
+use std::sync::Arc;
+fn node() -> (tempfile::TempDir, Groups) {
+    let d = tempfile::tempdir().unwrap();
+    let g = Groups::open(d.path()).unwrap();
+    (d, g)
+}
+fn add(inviter: &Groups, guest: &Groups, id: &str, invite: bool) {
+    let r = guest.request("guest").unwrap();
+    let p = inviter.approve(id, &r, invite).unwrap();
+    guest.join(p, Permissions::default()).unwrap();
+}
+#[test]
+fn offline_introduction_does_not_require_inviter_online() {
+    let (_a, a) = node();
+    let (_b, b) = node();
+    let (_c, c) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    add(&a, &b, &id, true);
+    add(&b, &c, &id, false);
+    // A missed C's enrollment and B is not involved in this authentication.
+    let n = random().unwrap();
+    let proof = c.proof(&id, &n, &"a".repeat(64)).unwrap();
+    assert!(a.access(&id, &c.device_id(), true).is_err());
+    a.authenticate(&id, &c.packet(&id).unwrap(), &proof, &n, &"a".repeat(64))
+        .unwrap();
+    assert!(a.access(&id, &c.device_id(), true).is_ok());
+    assert!(c.approve(&id, &a.request("A").unwrap(), false).is_err());
+}
+#[test]
+fn refusal_applies_across_existing_and_future_local_groups() {
+    let (_a,a)=node();let (_b,b)=node();let first=a.create("First","A",Permissions::default()).unwrap();
+    let second=a.create("Second","A",Permissions::default()).unwrap();add(&a,&b,&first,false);add(&a,&b,&second,false);
+    a.remove(&first,&b.device_id()).unwrap();assert!(a.access(&second,&b.device_id(),true).is_err());
+    let third=a.create("Third","A",Permissions::default()).unwrap();assert!(a.approve(&third,&b.request("renamed B").unwrap(),false).is_err());
+    a.restore(&first,&b.device_id(),true).unwrap();assert!(a.access(&second,&b.device_id(),true).is_ok());
+}
+#[test]
+fn local_removal_survives_newer_advertisements_replays_restart_and_join() {
+    let (d, a) = node();
+    let (_b, b) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    add(&a, &b, &id, true);
+    a.remove(&id, &b.device_id()).unwrap();
+    for _ in 0..3 {
+        b.advertise(Server {
+            endpoints: vec!["https://192.168.1.55:39128".into()],
+            fingerprint: "ab".repeat(32),
+        })
+        .unwrap();
+        a.merge(&id, &b.packet(&id).unwrap()).unwrap();
+    }
+    a.join(
+        b.packet(&id).unwrap(),
+        Permissions {
+            write: true,
+            delete: true,
+        },
+    )
+    .unwrap();
+    drop(a);
+    let a = Groups::open(d.path()).unwrap();
+    assert!(a.access(&id, &b.device_id(), false).is_err());
+    let n = random().unwrap();
+    assert!(
+        a.authenticate(
+            &id,
+            &b.packet(&id).unwrap(),
+            &b.proof(&id, &n, &"a".repeat(64)).unwrap(),
+            &n,
+            &"a".repeat(64)
+        )
+        .is_err()
+    );
+    assert!(a.restore(&id, &b.device_id(), false).is_err());
+    assert!(a.access(&id, &b.device_id(), false).is_err());
+    a.restore(&id, &b.device_id(), true).unwrap();
+    assert!(a.access(&id, &b.device_id(), true).is_ok());
+    assert!(!a.access(&id, &b.device_id(), true).unwrap().write);
+}
+#[test]
+fn removed_inviter_cannot_introduce_new_members_but_old_peers_survive() {
+    let (_a, a) = node();
+    let (_b, b) = node();
+    let (_c, c) = node();
+    let (_d, d) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    add(&a, &b, &id, true);
+    add(&b, &c, &id, false);
+    a.merge(&id, &c.packet(&id).unwrap()).unwrap();
+    a.remove(&id, &b.device_id()).unwrap();
+    add(&b, &d, &id, false);
+    a.merge(&id, &d.packet(&id).unwrap()).unwrap();
+    assert!(a.access(&id, &c.device_id(), true).is_ok());
+    assert!(a.access(&id, &d.device_id(), true).is_err());
+    a.restore(&id, &b.device_id(), true).unwrap();
+    a.merge(&id, &d.packet(&id).unwrap()).unwrap();
+    assert!(a.access(&id, &d.device_id(), true).is_ok());
+}
+#[test]
+fn packet_tampering_cross_group_spoofing_and_unrequested_join_fail() {
+    let (_a, a) = node();
+    let (_b, b) = node();
+    let (_c, c) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    let request = b.request("B").unwrap();
+    let p = a.approve(&id, &request, false).unwrap();
+    assert!(c.join(p.clone(), Permissions::default()).is_err());
+    b.request("new request").unwrap();
+    assert!(b.join(p, Permissions::default()).is_err());
+    let mut request = b.request("B").unwrap();
+    request.payload.push('A');
+    assert!(a.approve(&id, &request, false).is_err());
+    add(&a, &b, &id, false); // Already accepted certificate has old nonce; see separate fresh request below.
+}
+#[test]
+fn removal_immediately_invalidates_existing_file_and_webdav_handles() {
+    let (d, a) = node();
+    let (_b, b) = node();
+    let id = a
+        .create(
+            "Home",
+            "A",
+            Permissions {
+                write: true,
+                delete: true,
+            },
+        )
+        .unwrap();
+    add(&a, &b, &id, false);
+    let groups = Arc::new(a);
+    let auth = crate::auth::Auth::new(d.path()).unwrap();
+    let credential = auth
+        .group_session(groups.clone(), &id, &b.device_id())
+        .unwrap();
+    let header = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!(
+            "{}:{}",
+            credential["username"].as_str().unwrap(),
+            credential["password"].as_str().unwrap()
+        ))
+    );
+    let old = auth.authenticate(Some(&header), "GET").unwrap();
+    assert!(old.check(true, true).is_ok());
+    groups.configure(&id, true, Permissions::default()).unwrap();
+    assert!(old.check(true, false).is_err());
+    groups.remove(&id, &b.device_id()).unwrap();
+    assert!(old.check(false, false).is_err());
+    assert!(auth.authenticate(Some(&header), "GET").is_err());
+    assert!(
+        !String::from_utf8(std::fs::read(d.path().join("devices.json")).unwrap_or_default())
+            .unwrap()
+            .contains(credential["password"].as_str().unwrap())
+    );
+}
+#[test]
+fn missing_key_or_corrupt_tombstone_file_fails_closed() {
+    let (d, a) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    a.remove(&id, &a.device_id()).unwrap();
+    drop(a);
+    std::fs::write(d.path().join("groups.json"), b"broken").unwrap();
+    assert!(Groups::open(d.path()).is_err());
+    std::fs::remove_file(d.path().join(".rhfiles-service-group-key.pkcs8")).unwrap();
+    assert!(Groups::open(d.path()).is_err());
+}
+#[test]
+fn network_packets_never_export_local_refusals_grants_or_private_keys() {
+    let (_d, a) = node();
+    let (_e, b) = node();
+    let id = a
+        .create(
+            "Home",
+            "A",
+            Permissions {
+                write: true,
+                delete: true,
+            },
+        )
+        .unwrap();
+    add(&a, &b, &id, false);
+    a.remove(&id, &b.device_id()).unwrap();
+    let wire = serde_json::to_string(&a.packet(&id).unwrap()).unwrap();
+    for secret in ["blocked", "removedAt", "permissions", "pkcs8", "password"] {
+        assert!(!wire.contains(secret));
+    }
+    assert!(
+        a.advertise(Server {
+            endpoints: vec!["https://8.8.8.8:39128".into()],
+            fingerprint: "a".repeat(64)
+        })
+        .is_err()
+    );
+}

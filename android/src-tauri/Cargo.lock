@@ -2775,11 +2775,12 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-android"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
  "image",
+ "qrcode",
  "rhfiles-transfer",
  "serde",
  "serde_json",
@@ -4977,3 +4978,9 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"

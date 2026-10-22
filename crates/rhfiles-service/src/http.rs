@@ -73,6 +73,9 @@ mod network_tests {
     }
 }
 pub struct State {
+    pub groups: Arc<crate::groups::Groups>,
+    pub host: Mutex<Option<crate::groups::Server>>,
+    challenges: Mutex<HashMap<String, (Instant, String, String)>>,
     pub auth: Auth,
     pub uploads: Uploads,
     pub storage: Arc<Storage>,
@@ -84,7 +87,15 @@ pub struct State {
     cache: Mutex<Cached>,
 }
 impl State {
+    #[cfg(test)]
     pub fn new(data: &Path, storage: Arc<Storage>) -> Result<Self> {
+        Self::with_groups(data, storage, Arc::new(crate::groups::Groups::open(data)?))
+    }
+    pub fn with_groups(
+        data: &Path,
+        storage: Arc<Storage>,
+        groups: Arc<crate::groups::Groups>,
+    ) -> Result<Self> {
         let uploads = Uploads::new(data)?;
         uploads.reap(&storage);
         let locks = Locks::new();
@@ -96,6 +107,9 @@ impl State {
             .locksystem(locks.clone())
             .build_handler();
         Ok(Self {
+            groups,
+            host: Mutex::new(None),
+            challenges: Mutex::new(HashMap::new()),
             auth: Auth::new(data)?,
             uploads,
             storage,
@@ -131,7 +145,7 @@ impl IntoResponse for Error {
             "expired" => 410,
             "busy" => 429,
             "timeout" => 408,
-            "invalid_request" => 400,
+            "invalid_request" | "invalid_group" | "confirmation_required" => 400,
             "unsupported" => 501,
             _ => 500,
         };
@@ -166,9 +180,12 @@ fn query<T: serde::de::DeserializeOwned>(request: &Request) -> Result<T> {
         .map_err(|_| bad("参数无效"))
 }
 async fn json<T: serde::de::DeserializeOwned>(request: Request) -> Result<T> {
+    json_limit(request, 16384).await
+}
+async fn json_limit<T: serde::de::DeserializeOwned>(request: Request, limit: usize) -> Result<T> {
     let bytes = tokio::time::timeout(
         Duration::from_secs(15),
-        to_bytes(request.into_body(), 16384),
+        to_bytes(request.into_body(), limit),
     )
     .await
     .map_err(|_| Error::new("timeout", "请求正文超时"))?
@@ -301,6 +318,20 @@ struct Mutation {
     path: String,
     destination: Option<String>,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GroupChallenge {
+    group_id: String,
+    device_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GroupSession {
+    group_id: String,
+    nonce: String,
+    packet: crate::groups::Packet,
+    proof: crate::groups::Signed,
+}
 
 async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
     let path = r.uri().path().to_owned();
@@ -314,9 +345,70 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         let p: PairRequest = json(r).await?;
         return Ok(Json(s.auth.pair(&p.code, &p.name)?).into_response());
     }
+    if path == "/api/v1/groups/challenge" && method == Method::POST {
+        let p: GroupChallenge = json(r).await?;
+        if p.device_id.len() != 64 || !p.device_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(bad("设备身份无效"));
+        }
+        s.groups.packet(&p.group_id)?;
+        let mut challenges = s.challenges.lock().unwrap();
+        challenges.retain(|_, v| v.0 > Instant::now());
+        if challenges.len() >= 256 {
+            return Err(Error::new("busy", "身份挑战过多，请稍后重试"));
+        }
+        let nonce = random()?;
+        challenges.insert(
+            nonce.clone(),
+            (
+                Instant::now() + Duration::from_secs(60),
+                p.group_id,
+                p.device_id,
+            ),
+        );
+        return Ok(Json(serde_json::json!({"nonce":nonce})).into_response());
+    }
+    if path == "/api/v1/groups/session" && method == Method::POST {
+        let p: GroupSession = json_limit(r, crate::groups::MAX_PACKET + 16384).await?;
+        let challenge = s
+            .challenges
+            .lock()
+            .unwrap()
+            .remove(&p.nonce)
+            .ok_or_else(|| Error::new("unauthorized", "身份挑战已失效，请重试"))?;
+        if challenge.0 <= Instant::now()
+            || challenge.1 != p.group_id
+            || crate::groups::key_id(&p.proof.read()?.key) != challenge.2
+        {
+            return Err(Error::new("unauthorized", "身份挑战不匹配"));
+        }
+        let fingerprint = s
+            .host
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| bad("电脑服务未启动"))?
+            .fingerprint
+            .clone();
+        let (peer, _) =
+            s.groups
+                .authenticate(&p.group_id, &p.packet, &p.proof, &p.nonce, &fingerprint)?;
+        let credential = s.auth.group_session(s.groups.clone(), &p.group_id, &peer)?;
+        return Ok(Json(
+            serde_json::json!({"credential":credential,"packet":s.groups.packet(&p.group_id)?,"serverProof":s.groups.server_proof(&p.group_id,&p.nonce,&fingerprint)?}),
+        )
+        .into_response());
+    }
     let a = s
         .auth
         .authenticate(header(&r, "Authorization"), method.as_str())?;
+    if path == "/api/v1/groups/state" && method == Method::GET {
+        let (_, group, _, _) = a
+            .group
+            .as_ref()
+            .ok_or_else(|| Error::new("forbidden", "需要设备组身份"))?;
+        return Ok(Json(s.groups.packet(group)?).into_response());
+    }
+    a.check(false, false)?;
     let writing = !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS)
         && method.as_str() != "PROPFIND";
     let locking = matches!(method.as_str(), "LOCK" | "UNLOCK");

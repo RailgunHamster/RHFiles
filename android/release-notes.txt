@@ -1,3 +1,16 @@
+RHFiles Android 0.1.26
+
+1. 新增无中心服务器的设备组；每台设备保留独立私钥，通过签名请求/批准二维码或文本加入。普通成员默认不可邀请。
+2. 本机移除留下持久拒绝记录；重启、更新、刷新和较新证明均不能自动加回，必须在本机手动确认恢复。
+3. 手机连接成员电脑时交换公开证明，“刷新组设备”可学习其他成员电脑地址；身份私钥留在 Android Keystore，会话仅存内存。
+4. 本机移除、身份与自动生成连接不参与配置备份或 WebDAV 同步；电脑端移除立即阻止旧会话访问。
+5. 设备组需要 Windows 0.1.77+；原有单设备配对、WebDAV 账号继续可用。
+
+1. Decentralized groups with independent device keys and signed QR/text request/approval.
+2. Persistent local removal; only explicit manual confirmation restores access.
+3. Signed introductions and computer addresses propagate through member connections; Android Keystore identities and memory-only sessions.
+4. Group identities/refusals/generated locations do not participate in backup or WebDAV sync. Servers check local removal on existing sessions too.
+
 RHFiles Android 0.1.25
 
 1. 新增不依赖 SMB 的电脑 HTTPS 文件服务连接：浏览、图片、视频分段读取和后台传输。需电脑端 0.1.76+。

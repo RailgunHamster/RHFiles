@@ -6,6 +6,7 @@
   const pane={type:'string',enum:['active','left','right']};
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const register=(name,params,handler,risk='ui',description=name)=>api.register(name,handler,{params,risk,description});
+  deviceGroupView.register(api,(command,args)=>call('device_groups',{command,args}));
   const reject=(code,message)=>{throw new ErrorType(code,message);};
   function target(which='active'){
     if(G.startupReady!==true)reject('NOT_READY','Application is still starting');

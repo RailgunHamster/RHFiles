@@ -101,6 +101,7 @@ pub fn build_app_generic<R: tauri::Runtime>() -> tauri::Builder<R> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::device_group_qr,
             nearby::nearby_start,nearby::nearby_stop,nearby::nearby_status,nearby::nearby_probe,nearby::nearby_send,nearby::nearby_accept,nearby::nearby_cancel,
             app::app_info,
             device::get_storage_roots,
