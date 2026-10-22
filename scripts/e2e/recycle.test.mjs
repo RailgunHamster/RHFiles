@@ -5,7 +5,7 @@ import path from 'node:path';
 import {launchApp,until} from '../testing/app-session.mjs';
 
 test('Windows Recycle Bin UI uses real owned IDs and preserves user data',{timeout:120000},async t=>{
-  const app=await launchApp({emulateFocus:true});await app.evaluate("setInspectorMode('closed',false);true");
+  const app=await launchApp({emulateFocus:true});await app.evaluate("setLang('zh');setInspectorMode('closed',false);true");
   const invoke=(name,args={})=>app.evaluate(`call(${JSON.stringify(name)},${JSON.stringify(args)})`);
   const directory=fs.realpathSync.native(app.directory),file=path.join(directory,'回收站 QA #.txt');
   fs.writeFileSync(file,'owned-recycle-ui-fixture');
@@ -49,7 +49,7 @@ test('Windows Recycle Bin UI uses real owned IDs and preserves user data',{timeo
   await app.click('[data-recycle-control=remove]');
   await until(()=>app.evaluate('!!document.querySelector(".app-confirm-overlay")'),'First permanent-delete confirmation');
   await app.click('.app-confirm-overlay .dialog-actions button:last-child');
-  await until(()=>app.evaluate('document.querySelector(".app-confirm-overlay .app-confirm-title")?.textContent.includes("再次")'),'Second permanent-delete confirmation');
+  await until(()=>app.evaluate('document.querySelector(".app-confirm-overlay .app-confirm-title")?.textContent===recycleText("finalTitle")'),'Second permanent-delete confirmation');
   await app.click('.app-confirm-overlay .dialog-actions button:first-child');
   await until(()=>app.evaluate('!recycleBusy'),'Delete cancelled');
   assert.ok((await invoke('recycle_bin_list')).items.some(e=>e.id===owned.id),'Cancel leaves recycled item intact');
@@ -69,7 +69,7 @@ test('Windows Recycle Bin UI uses real owned IDs and preserves user data',{timeo
   assert.equal(await app.evaluate('document.querySelectorAll(".recycle-row").length<=200'),true,'Large bins keep the DOM bounded');
   assert.equal(await app.evaluate(`(()=>{const list=document.getElementById('file-list'),row=list.querySelector('[data-index="49999"]'),a=list.getBoundingClientRect(),b=row.getBoundingClientRect();return b.top>=a.top&&b.bottom<=a.bottom})()`),true,'End scrolls to the actual visible recycled row');
   await app.evaluate("G.layout='details';true");
-  await app.evaluate("closeRecycleBin();_lang='en';openRecycleBin()");
+  await app.evaluate("closeRecycleBin();setLang('en');openRecycleBin()");
   assert.equal(await app.evaluate('tabName(getTab().path)'),'Recycle Bin');await app.screenshot('recycle-english');
   await app.evaluate('closeRecycleBin()');
   assert.equal(await app.evaluate('document.querySelectorAll("#recycle-dialog").length'),0);
