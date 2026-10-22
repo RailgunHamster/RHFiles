@@ -54,6 +54,8 @@ tus 请求携带 `Tus-Resumable: 1.0.0`；PATCH 为 `application/offset+octet-st
 
 电脑本机管理操作（选择共享、启动/停止、生成配对、创建账号、撤销授权）不暴露在网络上。对应命令行自动化操作：`server.state`、`server.start`、`server.stop`、`server.pair`、`server.credential`、`server.revoke`；通过现有 [CLI](AUTOMATION.md) 调用，参数可 `describe` 枚举。不要把含临时配对信息或密码的 CLI 输出提交到仓库。
 
+Android 对应 `connections.scan`（打开扫码页，确认后返回信息，不自动配对）、`connections.describe`（仅校验数据）、`connections.compose`（明确确认已核对身份后组装配对数据）、`connections.pair`，以及 `connections.discover.start/state/stop`。原生扫码页的按钮和滚动区域也可通过 `native.ui.*` 操作；系统相机权限仍由用户决定。正式压缩版的接受测试通过实际公开桥接接口操作，不依赖会被 R8 优化掉的私有构造函数。
+
 ## 安全边界与限制
 
 - 仅接受回环、私有或链路本地来源；不信任 `X-Forwarded-For`，不支持反向代理公网发布。独立 IPv4 监听；不会自行打洞或做公网映射。

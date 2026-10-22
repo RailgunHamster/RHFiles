@@ -29,5 +29,5 @@ try{
   assert.equal(fs.readFileSync(path.join(directory,'手机目录','重命名.txt'),'utf8'),'hello');
   const copied=fs.readdirSync(directory).find(n=>n.startsWith('rhfiles-lan-')&&n.endsWith('.bin'));assert.ok(copied);
   const bytes=fs.readFileSync(path.join(directory,copied));assert.equal(bytes.length,2500000);assert.ok(bytes.every((b,i)=>b===i%251));
-  console.log(JSON.stringify({pass:true,device,checks:'Android real HTTPS pairing, browse, Range, tus, background copy, byte-for-byte verification',artifacts:app.artifactDir}));
+  console.log(JSON.stringify({pass:true,device,checks:'Shipped bridge HTTPS pairing, native QR/camera, mDNS, permissions, tus, background copy, byte-for-byte verification',artifacts:app.artifactDir}));
 }finally{run('reverse','--remove','tcp:'+port);await app.evaluate("call('lan_service_stop',{})").catch(()=>{});app.close();}
