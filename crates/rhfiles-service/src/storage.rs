@@ -68,6 +68,17 @@ pub struct Node {
 }
 
 fn local_root(path: &Path) -> Result<PathBuf> {
+    // Rust canonicalize() returns the extended local-drive form on Windows.
+    // Accept only VerbatimDisk (\\?\C:\…), never VerbatimUNC, DeviceNS or
+    // arbitrary volume/device namespaces. Re-run all normal local-root checks.
+    #[cfg(windows)]
+    if matches!(path.components().next(),Some(std::path::Component::Prefix(prefix)) if matches!(prefix.kind(),std::path::Prefix::VerbatimDisk(_)))
+    {
+        let text = path
+            .to_str()
+            .ok_or_else(|| Error::new("invalid_root", "共享路径不是有效 Unicode"))?;
+        return local_root(Path::new(&text[4..]));
+    }
     let value = path.to_string_lossy();
     if !path.is_absolute() || value.starts_with("\\\\") || value.starts_with("//") {
         return Err(Error::new(
