@@ -14,6 +14,8 @@ const lanService=(()=>{
     card.append(el('h3','settings-card-title',text(running?'服务运行中':'服务已停止',running?'Service running':'Service stopped')),note);
     const failure=el('p','settings-update-failure');failure.setAttribute('role','alert');const actions=el('div','settings-inline-actions');
     const safe=fn=>async()=>{failure.textContent='';try{await fn();}catch(error){failure.textContent=String(error);}};
+    // Keep primary controls visible before a long list of drive/device cards.
+    card.append(actions,failure);
     if(!running){
       const rows=el('div'),shares=model.config.shares?.length?model.config.shares:[{name:text('文件','Files'),path:(getTab()?.path||'').includes('://')?'':getTab()?.path||''}];
       function add(share){const box=el('div','settings-card'),name=input(text('共享名称','Share name'),share.name),path=input(text('本机文件夹完整路径','Full local folder path'),share.path);box.append(name.row,path.row,button(text('移除此目录','Remove folder'),()=>box.remove(),'share.remove'));box.fields={name:name.field,path:path.field};rows.append(box);}
@@ -61,7 +63,7 @@ const lanService=(()=>{
       button(text('保存自动启动设置','Save startup settings'),safe(async()=>{await call('lan_service_startup',{autoStart:restore.field.checked,login:!!model.startup?.supported&&login.field.checked});await mount(host); }),'startup.save'));
     if(model.startupError)startup.append(el('p','settings-update-failure',text('上次自动启动失败：','Last automatic startup failed: ')+model.startupError));
     card.append(startup);
-    card.append(actions,failure);host.replaceChildren(card);
+    host.replaceChildren(card);
   }
   return {mount};
 })();
