@@ -994,5 +994,6 @@
   "archive.moreConflicts": "另有 {count} 项冲突",
   "archive.inputProtected": "同名目标包含正在读取的压缩包或分卷，不能替换；请选择跳过、保留两者或取消。",
   "archive.typeConflict": "解压路径与已有文件/文件夹类型冲突，或经过链接：{path}。请处理此路径后重试；不会替换或删除已有文件夹。",
-  "archive.sourceConflict": "不能覆盖正在读取的压缩包或分卷：{path}。请选择保留两者、跳过或换一个解压目录。"
+  "archive.sourceConflict": "不能覆盖正在读取的压缩包或分卷：{path}。请选择保留两者、跳过或换一个解压目录。",
+  "recycle.title": "回收站"
 }

@@ -14,6 +14,7 @@ mod nearby;
 #[cfg(windows)]
 pub mod network_io;
 mod profile;
+mod recycle;
 mod search;
 #[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]
 mod shell;
@@ -157,6 +158,7 @@ pub fn run() {
             profile::get_instance_profile,
             file_ops::list_dir, file_ops::get_drives, file_ops::parent_path,
             file_ops::delete_file, file_ops::delete_files, file_ops::delete_files_permanently, file_ops::restore_recycled_files,
+            recycle::recycle_bin_list, recycle::recycle_bin_prepare_delete, recycle::recycle_bin_discard_plan, recycle::recycle_bin_restore, recycle::recycle_bin_delete, recycle::recycle_bin_open_system,
             file_ops::rename_file, file_ops::inspect_rename_target, file_ops::new_folder,
             file_ops::copy_path, file_ops::move_path_cmd,
             file_ops::copy_path_exact, file_ops::move_path_exact, file_ops::move_paths_exact,

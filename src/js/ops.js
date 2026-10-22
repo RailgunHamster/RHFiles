@@ -32,6 +32,8 @@ function showConfirmDialog(options) {
     if (config.kind === 'update') {
       icon.classList.add('update');
       icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 4v11m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17v2h14v-2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+    } else if(config.kind === 'restore') {
+      icon.innerHTML='<svg viewBox="0 0 24 24" fill="none"><path d="M4 8h9a7 7 0 0 1 0 14M4 8l4-4M4 8l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     } else {
       icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M8 3h8l1 3h3v2H4V6h3l1-3zM6.5 9h11l-.7 11H7.2L6.5 9z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 12v5M14 12v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
     }
@@ -61,7 +63,7 @@ function showConfirmDialog(options) {
     cancel.className = 'dialog-btn';
     cancel.textContent = config.cancelLabel || t('btn.cancel');
     const confirm = document.createElement('button');
-    confirm.className = config.kind === 'update' ? 'dialog-btn primary' : 'dialog-btn danger';
+    confirm.className = config.kind === 'update' || config.kind === 'restore' ? 'dialog-btn primary' : 'dialog-btn danger';
     confirm.textContent = config.confirmLabel || t('btn.delete');
     actions.append(cancel, confirm);
     box.append(body, actions);

@@ -994,5 +994,6 @@
   "archive.moreConflicts": "{count} more conflicts",
   "archive.inputProtected": "A matching target is an input archive or volume. It cannot be replaced; choose Skip, Keep Both or Cancel.",
   "archive.typeConflict": "An extraction path has an incompatible file/folder type or passes through a link: {path}. Resolve this path before retrying; existing folders will not be replaced or deleted.",
-  "archive.sourceConflict": "Cannot overwrite an input archive or volume: {path}. Choose Keep Both, Skip or a different destination."
+  "archive.sourceConflict": "Cannot overwrite an input archive or volume: {path}. Choose Keep Both, Skip or a different destination.",
+  "recycle.title": "Recycle Bin"
 }

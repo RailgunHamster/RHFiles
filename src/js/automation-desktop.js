@@ -50,6 +50,20 @@
   register('settings.close',object(),()=>{closeSettings();return {closed:true};});
   register('updates.check',object(),()=>checkForUpdates(true),'external');
   register('tasks.list',object(),()=>[..._operationTasks.values()].map(t=>({id:t.id,title:t.title??'',status:t.status,percentage:t.percentage??null,error:t.error??''})),'read');
+  const recycleIds={type:'array',items:{type:'string',pattern:'^[0-9a-f]{16}$'},maxItems:50000};
+  register('recycle.open',object(),()=>openRecycleBin());
+  register('recycle.close',object(),()=>closeRecycleBin());
+  register('recycle.state',object(),()=>recycleViewState(),'read');
+  register('recycle.refresh',object(),()=>recycleRefresh());
+  register('recycle.list',object({offset:integer,limit:{type:'integer',minimum:1,maximum:2000}}),p=>{const items=recycleViewItems(),offset=p.offset??0;return {...recycleViewState(),matched:items.length,offset,items:items.slice(offset,offset+(p.limit??500))};},'read');
+  register('recycle.filter',object({query:{type:'string',maxLength:8192}},['query']),p=>recycleSetQuery(p.query));
+  register('recycle.sort',object({field:{type:'string',enum:['name','originalFolder','deletedAt','size','itemType']},descending:boolean},['field','descending']),p=>recycleSetSort(p.field,p.descending));
+  register('recycle.select',object({ids:recycleIds,mode:{type:'string',enum:['replace','add','remove']}},['ids']),p=>recycleSetSelection(p.ids,p.mode));
+  register('recycle.restore',object({keepBoth:boolean,all:boolean}),p=>recycleRestore(!!p.keepBoth,!!p.all),'write');
+  register('recycle.deleteSelected',object(),()=>recycleDelete(false),'destructive','Delete selected recycled items through both confirmations; never accepts arbitrary filesystem paths');
+  register('recycle.empty',object(),()=>recycleDelete(true),'destructive','Review and permanently delete the confirmed snapshot, never newly arriving items');
+  register('recycle.copyPaths',object(),()=>recycleCopyPaths(),'write');
+  register('recycle.openSystem',object(),()=>call('recycle_bin_open_system',{}),'external');
   register('tasks.cancel',object({taskId:string},['taskId']),async p=>{if(!_operationTasks.has(p.taskId))reject('TASK_NOT_FOUND','No such task');await cancelOperation(p.taskId);return {requested:true};});
   register('tasks.dismiss',object({taskId:string},['taskId']),p=>{if(!_operationTasks.has(p.taskId))reject('TASK_NOT_FOUND','No such task');dismissOperationTask(p.taskId);return {accepted:true};});
   for(const [id,handler]of Object.entries(ACTION_HANDLERS)){

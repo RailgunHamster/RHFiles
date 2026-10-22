@@ -1,5 +1,6 @@
 // macOS-only presentation and Finder drop integration. Windows paths remain untouched.
 function configureMacSettings() {
+  document.getElementById('recycle-sidebar-section')?.remove();
   const terminal = document.querySelector('#settings-page-general select[onchange*="settings.terminal"]');
   if (terminal) {
     terminal.innerHTML = '<option value="terminal">Terminal</option><option value="iterm">iTerm</option>';
