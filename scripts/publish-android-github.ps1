@@ -6,7 +6,10 @@ param(
     [string]$Repository = 'RailgunHamster/RHFiles',
     [string]$Commit,
     [string]$Proxy,
-    [ValidateRange(30,3600)][int]$UploadTimeoutSeconds=900
+    [ValidateRange(30,3600)][int]$UploadTimeoutSeconds=900,
+    # Prepare immutable draft assets while Windows is still uploading. Normal
+    # invocation later verifies them and publishes against the then-current Latest.
+    [switch]$StageOnly
 )
 $ErrorActionPreference = 'Stop'
 $manifest = Get-Content -LiteralPath (Join-Path $Directory 'releases.android.json') -Raw | ConvertFrom-Json
@@ -77,7 +80,13 @@ foreach ($file in $files) {
     Write-Host "Verified GitHub asset: $name"
 }
 }
+if($StageOnly -and -not $remoteRelease.draft){throw 'StageOnly requires an unpublished draft; refusing stable-release changes'}
 Publish-Assets $remoteRelease
+if($StageOnly){
+    Write-Host "Verified Android draft assets for $tag; no update channel or Latest marker changed."
+    $headers.Clear();$credentialLines=$null;$passwordLine=$null
+    return
+}
 if ($remoteRelease.draft) {
     $remoteRelease=Invoke-RestMethod "$api/releases/$($remoteRelease.id)" -Method Patch -Body (@{draft=$false;make_latest='false'} | ConvertTo-Json) -ContentType 'application/json; charset=utf-8' @requestOptions
 }

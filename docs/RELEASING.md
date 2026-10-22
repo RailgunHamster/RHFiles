@@ -173,3 +173,9 @@ choices are preserved. The three sources can be changed in Android Settings;
 none requires a publishing token on the phone. All released distributions must
 retain project LICENSE/NOTICE and the separate third-party notices.
 
+For slow simultaneous platform uploads, `publish-android-github.ps1 -StageOnly`
+may prepare verified Android draft assets without publishing or changing Latest.
+After Windows publishing completes, invoke it normally to verify/reuse those
+same bytes, publish Android, and update the compatibility sidecar on the current
+Windows Latest. Do not run the two final promotion steps concurrently.
+
