@@ -9,6 +9,7 @@ for(const file of [adb,apk,testApk])if(!fs.existsSync(file))throw Error('Missing
 const run=(...args)=>execFileSync(adb,['-s',device,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
 assert.match(run('shell','getprop','ro.kernel.qemu'),/1/);
 assert.match(run('emu','avd','name'),/^RHFiles[^\r\n]*[\r\n]/,'Only an RHFiles-owned test AVD may be modified');
+assert.match(run('shell','cmd','wifi','status'),/Wifi is connected/,'Connect the owned test AVD to its AndroidWifi virtual access point first; Android NSD does not advertise on cellular-only networks');
 run('install','-r','-t',apk);run('install','-r','-t',testApk);
 const app=await launchApp(),directory=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-lan-emulator-')),port=44128;
 try{

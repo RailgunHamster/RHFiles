@@ -71,7 +71,7 @@ internal object NativeAutomation {
   private fun all():List<View>{val out=mutableListOf<View>();fun visit(v:View){out.add(v);if(v is WebView)return;if(v is ViewGroup)for(i in 0 until v.childCount)visit(v.getChildAt(i))};roots().forEach(::visit);return out}
   fun list():JSONArray {
     val current=all();val alive=current.toSet();views.entries.removeAll{it.value.get() !in alive}
-    return JSONArray().also{out->current.filter{visible(it)&&(it.isClickable||it.isLongClickable||it is EditText||it is SeekBar||it is CompoundButton||it is Spinner||item(it)!=null)}.take(2000).forEach{v->
+    return JSONArray().also{out->current.filter{visible(it)&&(it.isClickable||it.isLongClickable||it is EditText||it is SeekBar||it is CompoundButton||it is Spinner||it is ScrollView||it is HorizontalScrollView||item(it)!=null)}.take(2000).forEach{v->
       val value=JSONObject().put("controlId",id(v)).put("kind",v.javaClass.simpleName).put("label",label(v)).put("enabled",v.isEnabled).put("resource",if(v.id==View.NO_ID)JSONObject.NULL else try{v.resources.getResourceName(v.id)}catch(_:Exception){JSONObject.NULL})
       if(secret(v))value.put("sensitive",true)else if(v is EditText)value.put("value",v.text.toString())
       if(v is CompoundButton)value.put("checked",v.isChecked)

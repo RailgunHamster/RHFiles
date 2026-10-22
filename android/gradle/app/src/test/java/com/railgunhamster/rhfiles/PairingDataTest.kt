@@ -38,6 +38,7 @@ class PairingDataTest {
   @Test fun mdnsMetadataRequiresSupportedProtocolLocalAddressAndFingerprint(){
     val info=NsdServiceInfo().apply{serviceType="_rhfiles._tcp.";serviceName="My PC";host=InetAddress.getByAddress(byteArrayOf(192.toByte(),168.toByte(),1,2));port=39128;setAttribute("v","1");setAttribute("fp",fp)}
     assertEquals("https://192.168.1.2:39128",LanDiscovery.rhFilesRecord(info)!!.getString("url"))
+    info.serviceType="._rhfiles._tcp.";assertNotNull(LanDiscovery.rhFilesRecord(info))
     info.setAttribute("v","2");assertNull(LanDiscovery.rhFilesRecord(info));info.setAttribute("v","1")
     info.setAttribute("fp","bad");assertNull(LanDiscovery.rhFilesRecord(info));info.setAttribute("fp",fp)
     info.port=0;assertNull(LanDiscovery.rhFilesRecord(info));info.port=39128

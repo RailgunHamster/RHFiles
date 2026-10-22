@@ -28,9 +28,9 @@ public class LanServiceInstrumentation extends Instrumentation {
         try {
             nsd.registerService(info,android.net.nsd.NsdManager.PROTOCOL_DNS_SD,listener);
             require(registered.await(8,java.util.concurrent.TimeUnit.SECONDS),"NSD fixture registration");
-            scan=discovery.start("rhfiles");long deadline=System.currentTimeMillis()+10000;boolean found=false;
-            do{JSONObject state=discovery.state(scan);JSONArray devices=state.getJSONArray("devices");for(int i=0;i<devices.length();i++){JSONObject d=devices.getJSONObject(i);if(d.optString("fingerprint").equals(fingerprint)&&d.getInt("port")==49128)found=true;}if(found||!state.getBoolean("running"))break;Thread.sleep(200);}while(System.currentTimeMillis()<deadline);
-            require(found,"Android NSD resolves RHFiles IPv4/TXT identity on a real emulator");
+            scan=discovery.start("rhfiles");long deadline=System.currentTimeMillis()+10000;boolean found=false;JSONObject state=null;
+            do{state=discovery.state(scan);JSONArray devices=state.getJSONArray("devices");for(int i=0;i<devices.length();i++){JSONObject d=devices.getJSONObject(i);if(d.optString("fingerprint").equals(fingerprint)&&d.getInt("port")==49128)found=true;}if(found||!state.getBoolean("running"))break;Thread.sleep(200);}while(System.currentTimeMillis()<deadline);
+            require(found,"Android NSD resolves RHFiles IPv4/TXT identity on a real emulator: "+state);
         }finally{if(scan!=null)discovery.stop(scan);discovery.close();try{nsd.unregisterService(listener);}catch(Exception ignored){}}
     }
     private void scannerUi()throws Exception {

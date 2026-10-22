@@ -51,7 +51,9 @@ class PairingScanActivity:AppCompatActivity() {
     torch=button(text("开关闪光灯","Toggle flashlight")){light=!light;camera?.cameraControl?.enableTorch(light)}.apply{isEnabled=false}
     button(text("重新扫描 / 允许相机","Rescan / allow camera")){found=null;accept.isEnabled=false;requestCamera()}
     button(text("取消，改用粘贴配对信息","Cancel — paste pairing data instead")){finish()}
-    root.addView(content,FrameLayout.LayoutParams(-1,-1,Gravity.FILL));setContentView(root)
+    // Short landscape/folded windows and large fonts must not hide Cancel.
+    val scroll=ScrollView(this).apply{isFillViewport=true;contentDescription=text("扫码操作区域","Scanner controls");addView(content,ViewGroup.LayoutParams(-1,-2))}
+    root.addView(scroll,FrameLayout.LayoutParams(-1,-1,Gravity.FILL));setContentView(root)
     WindowCompat.setDecorFitsSystemWindows(window,false)
     ViewCompat.setOnApplyWindowInsetsListener(content){v,insets->val i=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout());v.setPadding(i.left+dp(20),i.top+dp(16),i.right+dp(20),i.bottom+dp(20));insets}
     found=saved?.getString("uri")

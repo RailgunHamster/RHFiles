@@ -72,6 +72,22 @@ class LanDiscovery(private val context:Context):Closeable {
           nsd.discoverServices(if(scan.protocol=="rhfiles")"_rhfiles._tcp." else "_smb._tcp.",NsdManager.PROTOCOL_DNS_SD,listener);started=true
           while(alive()){
             val info=queue.poll(150,TimeUnit.MILLISECONDS)?:continue;val done=CountDownLatch(1)
+            if(scan.protocol=="rhfiles"&&android.os.Build.VERSION.SDK_INT>=34){
+              // Legacy resolveService may return only the first (IPv6) address.
+              // Keep the modern callback until a usable IPv4 update arrives.
+              val callback=object:NsdManager.ServiceInfoCallback {
+                override fun onServiceInfoCallbackRegistrationFailed(code:Int){scan.errors.addIfAbsent("mDNS 地址解析失败：$code");done.countDown()}
+                override fun onServiceInfoCallbackUnregistered(){}
+                override fun onServiceLost(){}
+                override fun onServiceUpdated(service:NsdServiceInfo){rhFilesRecord(service)?.let{value->rhFilesAddress(service)?.let{add(it,service.port,value.getString("name"),"mDNS",value.getString("fingerprint"));done.countDown()}}}
+              }
+              try {
+                nsd.registerServiceInfoCallback(info,java.util.concurrent.Executor{it.run()},callback)
+                val until=minOf(deadline,System.nanoTime()+TimeUnit.SECONDS.toNanos(3))
+                while(alive()&&System.nanoTime()<until&&!done.await(100,TimeUnit.MILLISECONDS)){}
+              }finally{try{nsd.unregisterServiceInfoCallback(callback)}catch(_:Exception){}}
+              continue
+            }
             @Suppress("DEPRECATION")
             nsd.resolveService(info,object:NsdManager.ResolveListener {
               override fun onResolveFailed(service:NsdServiceInfo,code:Int){done.countDown()}
@@ -109,7 +125,7 @@ class LanDiscovery(private val context:Context):Closeable {
     @Suppress("DEPRECATION") internal fun rhFilesAddress(info:NsdServiceInfo):InetAddress?=
       if(android.os.Build.VERSION.SDK_INT>=34)info.hostAddresses.firstOrNull{it is Inet4Address} else info.host?.takeIf{it is Inet4Address}
     internal fun rhFilesRecord(info:NsdServiceInfo):JSONObject?=try {
-      require(info.serviceType.trimEnd('.') in setOf("_rhfiles._tcp","_rhfiles._tcp.local"))
+      require(info.serviceType.trim('.') in setOf("_rhfiles._tcp","_rhfiles._tcp.local"))
       val address=rhFilesAddress(info)?.hostAddress?:return null
       require(PairingData.localAddress(address)&&info.port in 1..65535)
       require(info.attributes["v"]?.toString(Charsets.UTF_8)=="1")
