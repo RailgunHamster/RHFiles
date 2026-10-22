@@ -32,6 +32,9 @@
   register('server.pair',object({permissions:grants},['permissions']),p=>call('lan_service_pair',p),'external');
   register('server.credential',object({name:string,permissions:grants},['name','permissions']),p=>call('lan_service_credential',p),'external');
   register('server.revoke',object({id:string},['id']),p=>call('lan_service_revoke',p),'external');
+  register('server.permissions',object({id:string,permissions:grants},['id','permissions']),p=>call('lan_service_permissions',p),'external');
+  register('server.startup',object({autoStart:boolean,login:boolean},['autoStart','login']),p=>call('lan_service_startup',p),'external');
+  register('server.localDrives',object(),()=>call('lan_service_drives',{}),'read');
   api.provideState('application',()=>({platform:IS_MAC?'macos':'windows',ready:G.startupReady===true,window:G.windowLabel,dualPane:!!G.dualOn,activePane:G.lastActivePane,tabs:G.tabs.map(t=>({id:t.id,path:t.path,pinned:!!t.pinned,loaded:t._loaded===true})),rightTabs:(G.rpTabs||[]).map(t=>({id:t.id,path:t.path,pinned:!!t.pinned,loaded:t._loaded===true}))}));
   register('navigation.open',object({path:string,pane},['path']),async p=>{const t=focus(p.pane);const ok=await(t.right?rpNavigateTo(p.path):navigateTo(p.path));if(ok===false)reject('NAVIGATION_FAILED','The requested location could not be opened');return state(p.pane);});
   register('navigation.state',object({pane}),p=>state(p.pane),'read');

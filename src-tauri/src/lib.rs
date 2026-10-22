@@ -12,6 +12,7 @@ mod documents;
 mod network;
 mod nearby;
 mod lan_service;
+mod lan_startup;
 #[cfg(windows)]
 pub mod network_io;
 mod profile;
@@ -50,8 +51,10 @@ pub fn run() {
         }
     };
     context.config_mut().identifier = profile.instance_id.clone();
+    let background_start = lan_startup::requested_profile().is_some();
     for window in &mut context.config_mut().app.windows {
         window.data_directory = Some(profile.webview_directory.clone());
+        if background_start { window.visible = false; window.focus = false; }
     }
     if let Some(args) = window::requested_browser_args() {
         // WebView2 shares one user-data folder across the process and refuses
@@ -68,6 +71,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if lan_startup::parse_profile(&args).is_some() {
+                std::thread::spawn(lan_service::restore_if_enabled);
+                return;
+            }
             let _ = tray::show_main_window(app);
             if args.len() > 1 {
                 let mut path = args[1].clone();
@@ -78,6 +85,7 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            std::thread::spawn(lan_service::restore_if_enabled);
             std::thread::spawn(documents::cleanup_stale_workspaces);
             file_dialog_integration::initialize(app.handle().clone())?;
             tray::install(app)?;
@@ -107,6 +115,7 @@ pub fn run() {
                     Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
                 })();
                 if let Ok(rows) = restore_result {
+                    let rows = if lan_startup::requested_profile().is_some() { vec![] } else { rows };
                     if !rows.is_empty() {
                         std::thread::spawn(move || {
                             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -157,6 +166,9 @@ pub fn run() {
             lan_service::lan_service_pair,
             lan_service::lan_service_credential,
             lan_service::lan_service_revoke,
+            lan_service::lan_service_permissions,
+            lan_service::lan_service_startup,
+            lan_service::lan_service_drives,
             nearby::nearby_start,nearby::nearby_stop,nearby::nearby_status,nearby::nearby_probe,nearby::nearby_send,nearby::nearby_accept,nearby::nearby_cancel,
             #[cfg(target_os = "macos")]
             macos::connect_macos_share,

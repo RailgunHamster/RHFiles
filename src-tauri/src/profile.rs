@@ -223,6 +223,10 @@ pub fn initialize() -> Result<&'static Profile, String> {
         .map(PathBuf::from)
         .ok_or("LOCALAPPDATA is unavailable")?;
     let mut desktop = current_desktop_id();
+    // Restore the explicitly chosen profile even while Explorer is starting.
+    if let Some(startup_desktop) = crate::lan_startup::requested_profile() {
+        desktop = Some(startup_desktop);
+    }
     #[cfg(debug_assertions)]
     if std::env::var_os("RHFILES_TEST_PROFILE_ROOT").is_some() {
         local = root.join("test-webview");

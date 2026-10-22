@@ -21,6 +21,24 @@ class PairingDataTest {
     assertEquals(fp,PairingData.describe(uri).getString("fingerprint"))
     assertFalse(PairingData.describe(uri).has("password"))
   }
+  @Test fun tailnetAddressesAreSupportedButPublicAndAdjacentRangesAreRejected(){
+    for(host in listOf("127.0.0.1","192.168.0.1","100.64.0.0","100.127.255.255")) {
+      assertTrue(PairingData.localAddress(host))
+      assertEquals("https://$host:39128",PairingData.parse(PairingData.compose("https://$host:39128",fp,"0123456789",true)).getJSONArray("endpoints").getString(0))
+    }
+    for(host in listOf("100.63.255.255","100.128.0.0","8.8.8.8","172.32.0.1","0.0.0.0","255.255.255.255")) {
+      assertFalse(PairingData.localAddress(host))
+      rejected{PairingData.compose("https://$host:39128",fp,"0123456789",true)}
+    }
+  }
+  @Test fun directlyConnectedWifiWinsOverTailnetAndVirtualAdapters(){
+    val endpoints=listOf("https://100.122.230.22:39128","https://172.18.1.1:39128","https://192.168.0.110:39128")
+    assertEquals(endpoints[2],PairingData.preferredEndpoints(endpoints,listOf("192.168.0.101" to 24,"127.0.0.1" to 8)).first())
+    assertEquals(endpoints[0],PairingData.preferredEndpoints(endpoints,listOf("100.115.1.2" to 32,"192.168.2.2" to 24)).first())
+    assertEquals(endpoints[1],PairingData.preferredEndpoints(endpoints,listOf("172.18.1.2" to 24)).first())
+    assertEquals(listOf("https://localhost:39128"),PairingData.preferredEndpoints(listOf("https://localhost:39128"),emptyList()))
+    assertTrue(PairingData.localAddress("localhost"));assertTrue(PairingData.localAddress("::1"))
+  }
   @Test fun discoveryDoesNotSilentlyTrustAdvertisements(){
     rejected{PairingData.compose("https://192.168.1.2",fp,"0123456789",false)}
     rejected{PairingData.compose("https://192.168.1.2",fp,"123",true)}

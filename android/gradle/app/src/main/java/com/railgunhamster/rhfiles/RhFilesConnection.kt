@@ -25,6 +25,7 @@ internal class RhFilesConnection(private val config:JSONObject) {
     internal fun valid(c:JSONObject) {
       val u=c.getString("url").toHttpUrl()
       require(u.isHttps&&u.username.isEmpty()&&u.password.isEmpty()&&u.query==null&&u.fragment==null&&u.encodedPath=="/"){"RHFiles 地址必须是 HTTPS 主机和端口，不含路径或账号"}
+      require(PairingData.localAddress(u.host)){"仅允许本机、局域网或 Tailscale IPv4 地址 / Local, LAN or Tailscale IPv4 address required"}
       require(c.optString("fingerprint").matches(Regex("[0-9a-f]{64}"))){"需要电脑端证书 SHA-256 指纹"}
     }
     @Synchronized internal fun client(c:JSONObject):OkHttpClient {
@@ -52,11 +53,13 @@ internal class RhFilesConnection(private val config:JSONObject) {
     fun pair(uri:String,name:String):JSONObject {
       val data=PairingData.parse(uri)
       require(name.isNotBlank()&&name.length<=120){"请填写设备名称"}
-      val endpoints=data.getJSONArray("endpoints");require(endpoints.length() in 1..16){"电脑未提供可用地址"}
+      val addresses=data.getJSONArray("endpoints");require(addresses.length() in 1..16){"电脑未提供可用地址"}
+      val local=runCatching{java.net.NetworkInterface.getNetworkInterfaces().toList().flatMap{network->network.interfaceAddresses.mapNotNull{address->address.address.hostAddress?.let{it to address.networkPrefixLength.toInt()}}}}.getOrDefault(emptyList())
+      val endpoints=PairingData.preferredEndpoints((0 until addresses.length()).map{addresses.getString(it)},local)
       require(data.getString("code").matches(Regex("[0-9]{10}"))){"配对码无效"}
       var failure:IOException?=null
-      for(i in 0 until endpoints.length()) {
-        val c=JSONObject().put("type","rhfiles").put("name",name).put("url",endpoints.getString(i)).put("fingerprint",data.getString("fingerprint"));valid(c)
+      for(endpoint in endpoints) {
+        val c=JSONObject().put("type","rhfiles").put("name",name).put("url",endpoint).put("fingerprint",data.getString("fingerprint"));valid(c)
         try {
           val response=RhFilesConnection(c).request("POST","/api/v1/pair",body=JSONObject().put("code",data.getString("code")).put("name",name).toString().toRequestBody(JSON),authenticate=false)
           response.use{val credential=JSONObject(String(it.body!!.byteStream().readBytesBounded(16384),Charsets.UTF_8));return c.put("username",credential.getString("username")).put("password",credential.getString("password"))}

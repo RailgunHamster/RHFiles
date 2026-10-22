@@ -4,12 +4,15 @@
 
 ## 使用
 
-1. 电脑打开「设置 → 局域网文件服务」，填写共享名称与本机文件夹完整路径。默认端口 `39128`，`0` 表示自动分配。不自动启动、不修改防火墙。Windows 如提示联网权限，只在需要的专用网络上允许。
+1. 电脑打开「设置 → 局域网文件服务」，填写共享名称与本机文件夹完整路径；Windows 可点「改为全部本机磁盘」批量填入本机固定/可移动盘，仍需点启动才开放。不会加入网络映射盘。默认端口 `39128`，`0` 表示自动分配。自动启动默认关闭，不修改防火墙。
 2. 点击「启动文件服务」。同一 Wi-Fi 的手机打开「网络位置 → 添加网络位置」，协议选「RHFiles 电脑文件服务」。
 3. 电脑生成配对码，手机点「扫码连接电脑」扫描二维码并确认，最后点「保存连接」。也可点「发现局域网电脑」，核对电脑显示的 12 位身份标识后填写 10 位配对码；或复制完整 `rhfiles-connect:v1:…` 文本粘贴。配对码两分钟内有效、仅能成功使用一次，八次错误尝试后必须重新生成。
-4. 默认只读。需要复制到电脑时，**在生成配对信息之前**明确勾选写入权限；永久删除是独立权限。权限绑定设备，改变勾选不会追溯改变已配对设备；先撤销再重新配对。手机连接名称可以自定。
+4. 默认只读。生成配对信息时可勾选写入权限；永久删除是独立权限。已配对设备在电脑端各自的卡片中修改「允许写入、重命名」「允许永久删除」，点击「保存设备权限」，无需撤销或重新配对。旧请求授权失效，下一次请求使用新权限；手机连接名称可以自定。
 5. 配对后，连接出现在抽屉的存储位置和网络位置，可浏览、收藏子目录、直接看图片/播放视频，或通过现有后台文件任务复制、移动文件夹。移动来源删除仍需相应端的删除权限。
-6. 暂停共享点「停止共享」。隐藏电脑窗口不停止服务；退出 RHFiles 会关闭连接。当前不提供开机服务或无界面系统守护进程。
+6. 暂停共享点「停止共享」。隐藏电脑窗口不停止服务；退出 RHFiles 会关闭连接。
+7. 自动启动设置可分别选择「启动 RHFiles 时恢复文件服务」和「Windows 登录后在托盘自动启动」，点击保存。必须先成功启动一次以保存共享范围。两项默认关闭；后者必须同时启用前者。登录启动绑定当前账号和选定的虚拟桌面配置，升级时使用稳定的 `current` 程序路径；便携版移动后需要重新保存。停止共享只停止本次运行，不会关掉下次自动启动；禁用请取消开关并保存。启动失败原因会留在设置中，不阻塞文件管理界面。
+
+这是 Windows **用户登录启动**，不是无需用户登录也能运行的 Windows 系统服务。使用 [HKCU Run 登录项](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)，无需管理员权限。不同虚拟桌面的配置保持独立；若同时开启多个文件服务实例，应设置不同端口。不要在两台电脑之间复制服务私钥或设备授权文件，各自配对。
 
 首版手机配对信息可以通过你自己的可信渠道传递；不要公开二维码、短期配对码或 WebDAV 密码。手机将每台电脑的证书 SHA-256 指纹固定为设备身份，证书变化时拒绝连接，不会关闭 TLS 校验。连接密码沿用 Android Keystore 加密存储，不放进 URL、日志或网页存储。
 
@@ -52,17 +55,17 @@ tus 请求携带 `Tus-Resumable: 1.0.0`；PATCH 为 `application/offset+octet-st
 
 未完成上传保存在对应共享内的 `.rhfiles-service-staging`，不会被远程列出；完成后同步磁盘并以系统级 **no-replace** 操作发布。同名目标即使在最后一刻才出现也不会被覆盖。偏移与授权跨服务重启保留；上传任务保留 24 小时，启动服务或创建新上传时清理过期临时文件。单个声明上传上限 1TiB，最多 256 个保留任务。取消已完成 tus 任务只清理协议记录，不删除发布后的文件。手机后台任务的进程重启恢复仍遵循现有任务策略，不承诺所有任务跨崩溃自动续跑。
 
-电脑本机管理操作（选择共享、启动/停止、生成配对、创建账号、撤销授权）不暴露在网络上。对应命令行自动化操作：`server.state`、`server.start`、`server.stop`、`server.pair`、`server.credential`、`server.revoke`；通过现有 [CLI](AUTOMATION.md) 调用，参数可 `describe` 枚举。不要把含临时配对信息或密码的 CLI 输出提交到仓库。
+电脑本机管理操作（选择共享、启动/停止、生成配对、创建账号、修改权限、撤销授权、设置自动启动）不暴露在网络上。对应命令行自动化操作：`server.state`、`server.start`、`server.stop`、`server.pair`、`server.credential`、`server.permissions`、`server.revoke`、`server.startup`、`server.localDrives`；通过现有 [CLI](AUTOMATION.md) 调用，参数可 `describe` 枚举。不要把含临时配对信息或密码的 CLI 输出提交到仓库。
 
 Android 对应 `connections.scan`（打开扫码页，确认后返回信息，不自动配对）、`connections.describe`（仅校验数据）、`connections.compose`（明确确认已核对身份后组装配对数据）、`connections.pair`，以及 `connections.discover.start/state/stop`。原生扫码页的按钮和滚动区域也可通过 `native.ui.*` 操作；系统相机权限仍由用户决定。正式压缩版的接受测试通过实际公开桥接接口操作，不依赖会被 R8 优化掉的私有构造函数。
 
 ## 安全边界与限制
 
-- 仅接受回环、私有或链路本地来源；不信任 `X-Forwarded-For`，不支持反向代理公网发布。独立 IPv4 监听；不会自行打洞或做公网映射。
-- 共享不能包含服务配置/私钥目录。不接受 UNC、映射网络盘、符号链接、Windows junction/reparse point、路径穿越、设备名或 ADS；只共享真正的本机磁盘，因此不会间接重新引入 SMB 阻塞。
+- 仅接受 localhost、局域网或 Tailscale IPv4 (`100.64.0.0/10`) 来源；拒绝公网 IP 直接访问，不信任 `X-Forwarded-For`。自动选择时仅绑定这些本机接口及回环，不绑定 `0.0.0.0`/公网接口；不做端口映射或支持公网反向代理。没有实现公网例外授权模式。Tailscale 地址段不是设备身份；HTTPS、配对与设备认证仍必需。跨 Tailscale 通常不能 mDNS 发现，可粘贴含 Tailscale 地址的电脑配对信息。手机优先尝试自身直连子网中的端点，避免未启用 Tailscale 时先等待 VPN 或虚拟网卡地址超时。
+- 可以明确共享整盘，但服务配置目录、全部本账号 RHFiles 虚拟桌面配置及其私钥始终从列表、下载和所有写入接口排除，包含它们的祖先目录也禁止重命名/移动。系统权限不绕过，整盘会暴露当前账号有权读取的其他文件，请只向可信设备授权。不接受 UNC、映射网络盘、符号链接、Windows junction/reparse point、路径穿越、设备名或 ADS。
 - 请求、XML、图片解码与目录规模有限制；列表短暂缓存两秒。远程调用只获得共享内的虚拟路径，出错不返回主机绝对路径。
 - Windows、Linux 和 macOS 使用各自的无覆盖重命名；跨卷 MOVE 不是原子操作，失败会保留来源。目录合并由客户端逐项处理。
-- 当前视频可流式播放/拖动进度；**视频服务端缩略图、服务端索引搜索、跨设备回收站和静默自启动尚未实现**。图片 EXIF 方向处理尚需扩展服务端缩略图路径。
+- 当前视频可流式播放/拖动进度；**视频服务端缩略图、服务端索引搜索、跨设备回收站和无人登录的系统服务尚未实现**。图片 EXIF 方向处理尚需扩展服务端缩略图路径。
 - LAN/磁盘速度、Wi-Fi 隔离与防火墙仍会影响连接，专用协议不会消除断网或磁盘故障。
 
 ## 选型依据（2026-10-22 核实）
@@ -77,4 +80,4 @@ An opt-in desktop HTTPS service exposes the native JSON API at `/api/v1/` and a 
 
 Desktop: **Settings → LAN file service**. Add local folders, start the service, generate a short-lived pairing payload. Android: **Network locations → Add → RHFiles computer file service**, scan the QR offline, discover the computer and verify its identity before entering the code, or paste the payload. Confirm and save the connection; discovery/scanning never automatically grants trust. Read-only by default; write/rename and permanent deletion are separate grants. WebDAV clients use independently revocable app credentials and must trust the exported public HTTPS certificate. Private keys never leave the host.
 
-Version one includes paginated browsing, direct image/video reads, HTTP Range, bounded image thumbnails, basic WebDAV, tus chunked uploads, offline CameraX/ZXing-C++ QR pairing and bounded DNS-SD/mDNS discovery. Files publish using OS-level no-replace operations: **existing destinations are never overwritten**. Server upload state survives restart; incomplete uploads expire after 24 hours. Current limitations include no service-side video thumbnails/index search, no boot daemon, no network-backed share roots and no public reverse-proxy deployment. Windows E2E tests exercise the real settings UI and actual HTTPS/WebDAV requests; protocol and Android TLS/resume/native QR regressions live beside the implementation.
+Includes paginated browsing, direct image/video reads, HTTP Range, bounded image thumbnails, basic WebDAV, tus uploads, offline QR pairing and mDNS discovery. Existing device grants can be edited locally without re-pairing. Whole-drive sharing is explicit; RHFiles profiles/keys/staging remain excluded and their ancestors cannot be moved. Both application-start service restore and Windows login startup are opt-in; login launch stays in the tray, restores the selected profile and reports failures in settings. This is not a pre-login system daemon. Listeners and source validation allow only localhost, LAN and Tailscale addresses, not public-IP access; network scope never replaces authentication. Existing destinations are never overwritten. Incomplete uploads expire after 24 hours. Current limitations include no service-side video thumbnails/index search, network-backed share roots or public reverse-proxy deployment. E2E covers real settings, live grants, service restore, hidden login startup and disabling it; fixtures never register real login entries.

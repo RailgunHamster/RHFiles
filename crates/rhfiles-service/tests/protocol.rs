@@ -12,6 +12,258 @@ struct Fixture {
     user: String,
     password: String,
 }
+#[test]
+fn explicit_public_bind_is_rejected_before_creating_any_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().join("not-created");
+    let error = Service::start(&data, vec![], "8.8.8.8:39128".parse().unwrap())
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "invalid_bind");
+    assert!(!data.exists());
+}
+#[tokio::test]
+async fn live_permission_edits_apply_to_json_webdav_and_uploads_without_repairing() {
+    let f = Fixture::new(false, false);
+    assert_eq!(
+        f.request("PUT", "/dav/Files/new.txt")
+            .body("hello")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    f.service
+        .set_permissions(
+            &f.user,
+            Permissions {
+                write: true,
+                delete: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        f.request("PUT", "/dav/Files/new.txt")
+            .body("hello")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        201
+    );
+    assert_eq!(
+        f.request("POST", "/api/v1/mkdir")
+            .json(&json!({"path":"/Files/new-dir"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    assert_eq!(
+        f.request("DELETE", "/dav/Files/new.txt")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let location = f.upload("/Files/pending.bin", 3).await;
+    f.service
+        .set_permissions(&f.user, Permissions::default())
+        .unwrap();
+    assert_eq!(
+        f.request("PATCH", &location)
+            .header("Tus-Resumable", "1.0.0")
+            .header("Upload-Offset", 0)
+            .header("Content-Type", "application/offset+octet-stream")
+            .body("abc")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        f.request("POST", "/api/v1/mkdir")
+            .json(&json!({"path":"/Files/blocked"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert!(!f.share.join("blocked").exists());
+    assert!(!f.share.join("pending.bin").exists());
+    f.service
+        .set_permissions(
+            &f.user,
+            Permissions {
+                write: false,
+                delete: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        f.request("DELETE", "/dav/Files/new.txt")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    assert_eq!(
+        f.request("PUT", "/dav/Files/blocked.txt")
+            .body("bad")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        f.request("POST", "/api/v1/permissions")
+            .json(&json!({"write":true}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+}
+
+#[tokio::test]
+async fn broad_roots_exclude_private_profiles_and_protect_their_ancestors() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let profile = root.join("Users").join("RHFiles");
+    let data = profile.join("lan-service-v1");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(profile.join("secret.txt"), "must never leave host").unwrap();
+    std::fs::write(root.join("normal.txt"), "normal").unwrap();
+    let service = Service::start_protected(
+        &data,
+        vec![ShareConfig {
+            name: "Disk".into(),
+            path: root,
+        }],
+        "127.0.0.1:0".parse().unwrap(),
+        &[profile],
+    )
+    .unwrap();
+    let status = service.status();
+    let cert = reqwest::Certificate::from_pem(status.certificate_pem.as_bytes()).unwrap();
+    let client = Client::builder()
+        .add_root_certificate(cert)
+        .build()
+        .unwrap();
+    let cred = service
+        .credential(
+            "test",
+            Permissions {
+                write: true,
+                delete: true,
+            },
+        )
+        .unwrap();
+    let request = |method: &str, path: &str| {
+        client
+            .request(
+                Method::from_bytes(method.as_bytes()).unwrap(),
+                format!("{}{path}", status.endpoints[0]),
+            )
+            .basic_auth(&cred.username, Some(&cred.password))
+    };
+    let listing: Value = request("GET", "/api/v1/list?path=/Disk/Users")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listing["entries"].as_array().unwrap().len(), 0);
+    for path in [
+        "/Disk/Users/RHFiles/secret.txt",
+        "/Disk/Users/RHFiles/lan-service-v1/identity.json",
+    ] {
+        assert_eq!(
+            request("GET", "/api/v1/content")
+                .query(&[("path", path)])
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+    }
+    assert_eq!(
+        request("GET", "/dav/Disk/Users/RHFiles/secret.txt")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let dav = request("PROPFIND", "/dav/Disk/Users/")
+        .header("Depth", "1")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!dav.contains("RHFiles"));
+    assert_eq!(
+        request("POST", "/api/v1/rename")
+            .json(&json!({"path":"/Disk/Users","destination":"/Disk/escaped"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        request("MOVE", "/dav/Disk/Users/")
+            .header(
+                "Destination",
+                format!("{}/dav/Disk/escaped/", status.endpoints[0])
+            )
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        request("PUT", "/dav/Disk/writable.txt")
+            .body("allowed")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        201
+    );
+    assert_eq!(
+        request("GET", "/dav/Disk/normal.txt")
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "normal"
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        request("GET", "/dav/Disk/users/rhfiles/secret.txt")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+}
 #[tokio::test]
 async fn webdav_put_copy_and_conditional_download() {
     let f = Fixture::new(true, true);
@@ -257,7 +509,7 @@ async fn reject_unsafe_share_roots_and_preserve_corrupt_identity() {
             &f.data,
             vec![ShareConfig {
                 name: "Secrets".into(),
-                path: f.data.parent().unwrap().into()
+                path: f.data.clone()
             }],
             "127.0.0.1:0".parse().unwrap()
         )

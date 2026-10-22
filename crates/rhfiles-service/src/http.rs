@@ -26,6 +26,52 @@ use std::{
 };
 
 type Cached = HashMap<String, (Instant, String, Arc<Vec<Entry>>)>;
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+    #[tokio::test]
+    async fn peer_address_not_forwarded_headers_controls_network_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let data = root.join("state");
+        let share = root.join("files");
+        std::fs::create_dir(&data).unwrap();
+        std::fs::create_dir(&share).unwrap();
+        let storage = Arc::new(
+            Storage::protected(
+                &[ShareConfig {
+                    name: "Files".into(),
+                    path: share,
+                }],
+                &data,
+                &[],
+            )
+            .unwrap(),
+        );
+        let state = Arc::new(State::new(&data, storage).unwrap());
+        for (peer, expected) in [
+            ("127.0.0.1:1", 401),
+            ("192.168.1.2:1", 401),
+            ("100.64.1.2:1", 401),
+            ("8.8.8.8:1", 403),
+            ("100.128.0.1:1", 403),
+        ] {
+            let mut request = Request::builder()
+                .uri("/api/v1/capabilities")
+                .header("X-Forwarded-For", "127.0.0.1")
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                peer.parse::<std::net::SocketAddr>().unwrap(),
+            ));
+            assert_eq!(
+                dispatch(AxumState(state.clone()), request).await.status(),
+                expected,
+                "{peer}"
+            );
+        }
+    }
+}
 pub struct State {
     pub auth: Auth,
     pub uploads: Uploads,
@@ -173,14 +219,10 @@ pub async fn dispatch(AxumState(state): AxumState<Arc<State>>, request: Request)
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
     {
-        let local = match peer.0.ip() {
-            std::net::IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
-            std::net::IpAddr::V6(ip) => {
-                ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
-            }
-        };
+        let local = crate::network_scope::allowed(peer.0.ip());
         if !local {
-            return Error::new("forbidden", "仅接受本机或局域网连接").into_response();
+            return Error::new("forbidden", "仅接受本机、局域网或 Tailscale 地址连接")
+                .into_response();
         }
     } else {
         return Error::new("forbidden", "缺少连接来源").into_response();

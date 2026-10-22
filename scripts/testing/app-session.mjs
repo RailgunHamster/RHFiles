@@ -13,16 +13,16 @@ export async function until(check,label,timeout=15000) {
   while(Date.now()<end){try{const value=await check();if(value)return value;}catch(e){last=e;}await sleep(100);}
   throw Error(`Timed out: ${label}${last?' — '+last.message:''}`);
 }
-export async function launchApp({emulateFocus=false,desktopId='e2e-isolated'}={}) {
+export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',profileDirectory=null,args=[]}={}) {
   if(process.platform!=='win32')throw Error('Real RHFiles E2E requires Windows and WebView2');
   const executable=path.join(root,'target/debug/rhfiles.exe');
   if(!fs.existsSync(executable))throw Error('Build first: cargo build -p rhfiles-tauri --locked');
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-e2e-'));
-  const profileRoot=path.join(directory,'profile');
+  const profileRoot=profileDirectory||path.join(directory,'profile');
   const artifactDir=path.join(root,'test-artifacts',path.basename(directory));fs.mkdirSync(artifactDir,{recursive:true});
   const server=net.createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
   const port=server.address().port;await new Promise(resolve=>server.close(resolve));
-  const child=spawn(executable,[],{cwd:directory,windowsHide:true,env:{...process.env,
+  const child=spawn(executable,args,{cwd:directory,windowsHide:true,env:{...process.env,
     RHFILES_TEST_PROFILE_ROOT:profileRoot,RHFILES_TEST_DESKTOP_ID:desktopId,RHFILES_CDP_PORT:String(port),RHFILES_AUTORUN_TESTS:'0'}});
   let output='';child.stdout.on('data',x=>output+=x);child.stderr.on('data',x=>output+=x);
   let spawnError;child.on('error',e=>spawnError=e);
@@ -115,6 +115,6 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated'}={}
         await send('Input.setInterceptDrags',{enabled:false});
       }
     };
-    return {directory,artifactDir,profile,port,close,evaluate,send,events,screenshot,hover,click,drag};
+    return {directory,artifactDir,profile,profileRoot,port,close,evaluate,send,events,screenshot,hover,click,drag};
   } catch(e){close();throw e;}
 }

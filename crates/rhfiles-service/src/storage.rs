@@ -24,6 +24,7 @@ pub fn valid_name(name: &str) -> Result<()> {
             .chars()
             .any(|c| c.is_control() || "/\\:*?\"<>|".contains(c))
         || name.to_ascii_lowercase().starts_with(PRIVATE_PREFIX)
+        || name.eq_ignore_ascii_case("lan-service-v1")
         || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || ((stem.starts_with("COM") || stem.starts_with("LPT"))
             && stem.len() == 4
@@ -59,6 +60,7 @@ pub fn components(path: &str) -> Result<Vec<&str>> {
 #[derive(Debug)]
 pub struct Root {
     pub dir: Dir,
+    excluded: Vec<PathBuf>,
 }
 #[derive(Debug)]
 pub struct Storage {
@@ -111,6 +113,14 @@ fn local_root(path: &Path) -> Result<PathBuf> {
     // junction cannot hang the service while opening a root.
     let mut current = PathBuf::new();
     for part in path.components() {
+        if let std::path::Component::Normal(name) = part {
+            let name = name.to_string_lossy();
+            if name.eq_ignore_ascii_case("lan-service-v1")
+                || name.to_ascii_lowercase().starts_with(PRIVATE_PREFIX)
+            {
+                return Err(Error::new("invalid_root", "不能直接共享服务内部目录"));
+            }
+        }
         current.push(part);
         let metadata = std::fs::symlink_metadata(&current)?;
         #[cfg(windows)]
@@ -128,12 +138,16 @@ fn local_root(path: &Path) -> Result<PathBuf> {
 }
 
 impl Storage {
-    pub fn new(shares: &[ShareConfig], data: &Path) -> Result<Self> {
+    pub fn protected(shares: &[ShareConfig], data: &Path, protected: &[PathBuf]) -> Result<Self> {
         if shares.is_empty() || shares.len() > 32 {
             return Err(Error::new("invalid_config", "请选择 1–32 个本机共享文件夹"));
         }
         let mut roots = HashMap::new();
         let data = data.canonicalize()?;
+        let mut exclusions = vec![data];
+        for path in protected {
+            exclusions.push(path.canonicalize()?);
+        }
         let mut seen = std::collections::HashSet::new();
         let mut locations = Vec::<PathBuf>::new();
         for share in shares {
@@ -144,7 +158,7 @@ impl Storage {
             let path = local_root(&share.path)?;
             if locations
                 .iter()
-                .any(|other| path.starts_with(other) || other.starts_with(&path))
+                .any(|other| within(&path, other) || within(other, &path))
             {
                 return Err(Error::new(
                     "invalid_root",
@@ -152,14 +166,25 @@ impl Storage {
                 ));
             }
             locations.push(path.clone());
-            if path.starts_with(&data) || data.starts_with(&path) {
-                return Err(Error::new(
-                    "invalid_root",
-                    "共享不能包含文件服务的私钥、授权或配置目录，请选择更具体的文件夹",
-                ));
+            let mut excluded = Vec::new();
+            for private in &exclusions {
+                if within(&path, private) {
+                    return Err(Error::new(
+                        "invalid_root",
+                        "不能直接共享服务的私钥、授权或配置目录",
+                    ));
+                }
+                if within(private, &path) {
+                    excluded.push(
+                        private
+                            .components()
+                            .skip(path.components().count())
+                            .collect(),
+                    );
+                }
             }
             let dir = Dir::open_ambient_dir(path, cap_std::ambient_authority())?;
-            roots.insert(share.name.clone(), Arc::new(Root { dir }));
+            roots.insert(share.name.clone(), Arc::new(Root { dir, excluded }));
         }
         Ok(Self {
             roots,
@@ -177,6 +202,16 @@ impl Storage {
             .ok_or_else(|| Error::new("not_found", "共享不存在"))?
             .clone();
         let relative = parts.iter().skip(1).collect::<PathBuf>();
+        if root
+            .excluded
+            .iter()
+            .any(|private| within(&relative, private))
+        {
+            return Err(Error::new(
+                "forbidden",
+                "不允许访问服务的私钥、授权或配置目录",
+            ));
+        }
         let mut partial = PathBuf::new();
         for part in parts.iter().skip(1) {
             partial.push(part);
@@ -316,6 +351,15 @@ impl Node {
     pub fn require_child(&self) -> Result<()> {
         if self.relative.as_os_str().is_empty() {
             Err(Error::new("forbidden", "不能修改共享根目录"))
+        } else if self
+            .root
+            .excluded
+            .iter()
+            .any(|private| within(private, &self.relative))
+        {
+            // Renaming an ancestor would move keys outside the exclusion and
+            // make them reachable. The same guard covers all mutation protocols.
+            Err(Error::new("forbidden", "不能修改包含服务配置的目录"))
         } else {
             Ok(())
         }
@@ -370,6 +414,22 @@ impl Node {
             retain: false,
         })
     }
+}
+fn within(path: &Path, parent: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let path = path
+            .components()
+            .map(|p| p.as_os_str().to_string_lossy().to_lowercase())
+            .collect::<Vec<_>>();
+        let parent = parent
+            .components()
+            .map(|p| p.as_os_str().to_string_lossy().to_lowercase())
+            .collect::<Vec<_>>();
+        path.starts_with(&parent)
+    }
+    #[cfg(not(windows))]
+    path.starts_with(parent)
 }
 impl Root {
     pub fn staging(&self) -> Result<Dir> {

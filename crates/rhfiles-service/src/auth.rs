@@ -18,6 +18,81 @@ pub struct Access {
     pub live: Arc<AtomicBool>,
     pub method: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn permission_changes_invalidate_old_handles_but_keep_the_credential() {
+        let data = tempfile::tempdir().unwrap();
+        let auth = Auth::new(data.path()).unwrap();
+        let credential = auth.issue("phone", Permissions::default()).unwrap();
+        let header = format!("Bearer {}:{}", credential.username, credential.password);
+        let old = auth.authenticate(Some(&header), "PUT").unwrap();
+        assert!(old.check(true, false).is_err());
+        auth.set_permissions(
+            &credential.username,
+            Permissions {
+                write: true,
+                delete: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(old.check(false, false).unwrap_err().code, "unauthorized");
+        let current = auth.authenticate(Some(&header), "PUT").unwrap();
+        assert!(current.check(true, false).is_ok());
+        assert!(current.check(false, true).is_err());
+        let restored = Auth::new(data.path()).unwrap();
+        assert!(
+            restored
+                .authenticate(Some(&header), "PUT")
+                .unwrap()
+                .check(true, false)
+                .is_ok()
+        );
+        auth.set_permissions(&credential.username, Permissions::default())
+            .unwrap();
+        assert!(current.check(true, false).is_err());
+        assert!(
+            auth.authenticate(Some(&header), "PUT")
+                .unwrap()
+                .check(true, false)
+                .is_err()
+        );
+        assert!(
+            auth.set_permissions("missing", Permissions::default())
+                .is_err()
+        );
+    }
+    #[test]
+    fn failed_permission_save_does_not_revoke_or_change_access() {
+        let data = tempfile::tempdir().unwrap();
+        let auth = Auth::new(data.path()).unwrap();
+        let credential = auth.issue("phone", Permissions::default()).unwrap();
+        let header = format!("Bearer {}:{}", credential.username, credential.password);
+        let access = auth.authenticate(Some(&header), "PUT").unwrap();
+        // Make metadata publication fail in this private fixture only.
+        std::fs::remove_file(data.path().join("devices.json")).unwrap();
+        std::fs::create_dir(data.path().join("devices.json")).unwrap();
+        assert!(
+            auth.set_permissions(
+                &credential.username,
+                Permissions {
+                    write: true,
+                    delete: true
+                }
+            )
+            .is_err()
+        );
+        assert!(access.check(false, false).is_ok());
+        assert!(
+            auth.authenticate(Some(&header), "PUT")
+                .unwrap()
+                .check(true, false)
+                .is_err()
+        );
+    }
+}
 impl Access {
     pub fn check(&self, write: bool, delete: bool) -> Result<()> {
         if !self.live.load(Ordering::Acquire) {
@@ -163,6 +238,29 @@ impl Auth {
             live.store(false, Ordering::Release);
         }
         Ok(())
+    }
+    /// Local administration only. Keep the credential, invalidate in-flight
+    /// authorization snapshots, and apply the new grant on the next request.
+    pub fn set_permissions(&self, id: &str, permissions: Permissions) -> Result<Device> {
+        let mut state = self.state.lock().unwrap();
+        let index = state
+            .devices
+            .iter()
+            .position(|d| d.id == id)
+            .ok_or_else(|| Error::new("not_found", "设备不存在"))?;
+        let old = state.devices[index].permissions.clone();
+        state.devices[index].permissions = permissions;
+        if let Err(error) = self.persist(&state) {
+            state.devices[index].permissions = old;
+            return Err(error);
+        }
+        if let Some(live) = state
+            .live
+            .insert(id.into(), Arc::new(AtomicBool::new(true)))
+        {
+            live.store(false, Ordering::Release);
+        }
+        Ok(Device::from(&state.devices[index]))
     }
     pub fn pairing(&self, permissions: Permissions) -> Result<(String, u64)> {
         let mut bytes = [0u8; 8];

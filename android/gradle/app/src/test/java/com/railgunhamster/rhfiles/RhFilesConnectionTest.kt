@@ -18,9 +18,9 @@ class RhFilesConnectionTest {
   private fun https(block:(MockWebServer,JSONObject)->Unit){
     val cert=HeldCertificate.Builder().commonName("paired-pc").build()
     val tls=HandshakeCertificates.Builder().heldCertificate(cert).build()
-    MockWebServer().use{server->server.useHttps(tls.sslSocketFactory(),false);server.start();
+    MockWebServer().use{server->server.useHttps(tls.sslSocketFactory(),false);server.start(java.net.InetAddress.getByAddress(byteArrayOf(127,0,0,1)),0);
       val fingerprint=MessageDigest.getInstance("SHA-256").digest(cert.certificate.encoded).joinToString(""){"%02x".format(it)}
-      block(server,JSONObject().put("url",server.url("/").toString()).put("fingerprint",fingerprint).put("username","device").put("password","private-secret"))
+      block(server,JSONObject().put("url",server.url("/").newBuilder().host("127.0.0.1").build().toString()).put("fingerprint",fingerprint).put("username","device").put("password","private-secret"))
     }
   }
   @Test fun pairedSelfSignedCertificateAndUnicodeListingUseNativeApi(){https{server,c->
@@ -48,7 +48,7 @@ class RhFilesConnectionTest {
     try{RhFilesConnection(c).stat("Files","remote://test/Files");fail("Redirect followed")}catch(e:RhFilesConnection.HttpFailure){assertEquals(302,e.status);assertEquals(1,server.requestCount)}
   }}
   @Test fun invalidEndpointsAreRejected(){
-    for(url in listOf("http://localhost:39128/","https://user:pass@localhost/","https://localhost/dav/","https://localhost/?secret=1")){
+    for(url in listOf("http://localhost:39128/","https://user:pass@localhost/","https://localhost/dav/","https://localhost/?secret=1","https://8.8.8.8/","https://example.com/","https://100.128.0.1/")){
       try{RhFilesConnection.valid(JSONObject().put("url",url).put("fingerprint","0".repeat(64)));fail(url)}catch(_:IllegalArgumentException){}
     }
   }

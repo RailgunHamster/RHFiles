@@ -7,6 +7,7 @@ mod http;
 mod identity;
 mod locks;
 mod model;
+mod network_scope;
 mod storage;
 mod uploads;
 
@@ -23,7 +24,7 @@ use std::{
 
 pub struct Service {
     state: Arc<http::State>,
-    handle: axum_server::Handle<SocketAddr>,
+    handles: Vec<axum_server::Handle<SocketAddr>>,
     running: Arc<AtomicBool>,
     port: u16,
     fingerprint: String,
@@ -36,35 +37,74 @@ pub struct Service {
 
 impl Service {
     /// No auto-start, no firewall mutation. Callers explicitly select a local
-    /// listening address (0.0.0.0 enables LAN access) and explicit local roots.
+    /// listening address (0.0.0.0 selects local/LAN/Tailscale interfaces, never
+    /// public interfaces) and explicit local roots.
     pub fn start(data: &Path, shares: Vec<ShareConfig>, bind: SocketAddr) -> Result<Self> {
+        Self::start_protected(data, shares, bind, &[])
+    }
+    /// Allow an explicitly selected disk root, while excluding host-owned
+    /// configuration and credentials (also across virtual desktop profiles).
+    pub fn start_protected(
+        data: &Path,
+        shares: Vec<ShareConfig>,
+        bind: SocketAddr,
+        protected: &[std::path::PathBuf],
+    ) -> Result<Self> {
+        if !bind.ip().is_unspecified() && !network_scope::allowed(bind.ip()) {
+            return Err(Error::new("invalid_bind", "不允许在公网地址启动文件服务"));
+        }
+        if bind.ip().is_unspecified() && bind.is_ipv6() {
+            return Err(Error::new(
+                "invalid_bind",
+                "请使用明确的本机 IPv6 地址或 IPv4 自动选择",
+            ));
+        }
         std::fs::create_dir_all(data)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(data, std::fs::Permissions::from_mode(0o700))?;
         }
-        let storage = Arc::new(storage::Storage::new(&shares, data)?);
+        let storage = Arc::new(storage::Storage::protected(&shares, data, protected)?);
         let (fingerprint, tls) = identity::load(data)?;
         let certificate = identity::certificate(data)?;
         let state = Arc::new(http::State::new(data, storage)?);
-        let listener = TcpListener::bind(bind)?;
-        listener.set_nonblocking(true)?;
-        let port = listener.local_addr()?.port();
         let mut addresses = if bind.ip().is_unspecified() {
             if_addrs::get_if_addrs()?
                 .into_iter()
                 .map(|a| a.ip())
-                .filter(
-                    |ip| matches!(ip,std::net::IpAddr::V4(v) if v.is_private()||v.is_link_local()),
-                )
+                .filter(|ip| ip.is_ipv4() && !ip.is_loopback() && network_scope::allowed(*ip))
                 .collect::<Vec<_>>()
         } else {
             vec![bind.ip()]
         };
         addresses.sort();
         addresses.dedup();
-        addresses.truncate(16);
+        addresses.truncate(15);
+        // Never bind a wildcard/public interface. Even a LAN-origin connection
+        // addressed to the machine's public IP cannot reach this listener.
+        let mut listening = addresses.clone();
+        if bind.ip().is_unspecified() {
+            listening.insert(0, "127.0.0.1".parse().unwrap());
+        }
+        let mut port = bind.port();
+        let mut listeners = Vec::new();
+        for address in listening {
+            let listener = TcpListener::bind(SocketAddr::new(address, port)).map_err(|error| {
+                Error::new(
+                    "bind_failed",
+                    format!(
+                        "无法监听本机接口 {address}:{port} / Cannot bind local interface: {error}"
+                    ),
+                )
+            })?;
+            listener.set_nonblocking(true)?;
+            port = listener.local_addr()?.port();
+            listeners.push(listener);
+        }
+        if addresses.is_empty() {
+            addresses.push("127.0.0.1".parse().unwrap());
+        }
         let (advertisement, discovery_error) = if addresses.iter().any(|a| !a.is_loopback()) {
             match discovery::Advertisement::start(&addresses, port, &fingerprint) {
                 Ok(v) => (Some(Arc::new(v)), None),
@@ -78,8 +118,11 @@ impl Service {
             .take(16)
             .map(|ip| format!("https://{}", SocketAddr::new(ip, port)))
             .collect();
-        let handle = axum_server::Handle::new();
-        let thread_handle = handle.clone();
+        let handles = listeners
+            .iter()
+            .map(|_| axum_server::Handle::new())
+            .collect::<Vec<_>>();
+        let thread_handles = handles.clone();
         let server_state = state.clone();
         let running = Arc::new(AtomicBool::new(true));
         let flag = running.clone();
@@ -89,12 +132,17 @@ impl Service {
             .worker_threads(4)
             .enable_all()
             .build()?;
-        let server = {
+        let servers = {
             let _enter = runtime.enter();
-            axum_server::tls_rustls::from_tcp_rustls(
-                listener,
-                axum_server::tls_rustls::RustlsConfig::from_config(tls),
-            )?
+            listeners
+                .into_iter()
+                .map(|listener| {
+                    axum_server::tls_rustls::from_tcp_rustls(
+                        listener,
+                        axum_server::tls_rustls::RustlsConfig::from_config(tls.clone()),
+                    )
+                })
+                .collect::<std::io::Result<Vec<_>>>()?
         };
         std::thread::Builder::new()
             .name("rhfiles-https".into())
@@ -103,13 +151,21 @@ impl Service {
                     let app = axum::Router::new()
                         .fallback(http::dispatch)
                         .with_state(server_state);
-                    if let Err(error) = server
-                        .handle(thread_handle)
-                        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-                        .await
-                    {
-                        eprintln!("RHFiles HTTPS listener stopped: {error}");
-                    }
+                    futures_util::future::join_all(servers.into_iter().zip(thread_handles).map(
+                        |(server, handle)| {
+                            let app = app.clone();
+                            async move {
+                                if let Err(error) = server
+                                    .handle(handle)
+                                    .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                                    .await
+                                {
+                                    eprintln!("RHFiles HTTPS listener stopped: {error}");
+                                }
+                            }
+                        },
+                    ))
+                    .await;
                 });
                 flag.store(false, Ordering::Release);
                 if let Some(advertisement) = announcement {
@@ -118,7 +174,7 @@ impl Service {
             })?;
         Ok(Self {
             state,
-            handle,
+            handles,
             running,
             port,
             fingerprint,
@@ -148,6 +204,10 @@ impl Service {
     pub fn revoke(&self, id: &str) -> Result<()> {
         self.state.auth.revoke(id)
     }
+    /// Never exposed on either network API; only the local host may grant access.
+    pub fn set_permissions(&self, id: &str, permissions: Permissions) -> Result<Device> {
+        self.state.auth.set_permissions(id, permissions)
+    }
     pub fn pairing(&self, permissions: Permissions) -> Result<Pairing> {
         let (code, expires_ms) = self.state.auth.pairing(permissions)?;
         let payload = serde_json::json!({"version":1,"endpoints":self.endpoints,"fingerprint":self.fingerprint,"code":code});
@@ -175,7 +235,9 @@ impl Service {
             advertisement.stop();
         }
         self.state.auth.stop();
-        self.handle.shutdown();
+        for handle in &self.handles {
+            handle.shutdown();
+        }
     }
 }
 impl Drop for Service {
