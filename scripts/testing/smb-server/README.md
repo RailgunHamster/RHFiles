@@ -53,3 +53,30 @@ editing/password retention and native discovery cancellation. Neither proves
 that a real NAS advertises itself on the user's Wi-Fi; emulator NAT normally
 does not forward LAN discovery broadcasts. The probes delete their temporary
 profiles. Remove the reverse and stop only the fixture process afterward.
+
+## Android hostname and session reuse regressions
+
+Run `:app:testUniversalReleaseUnitTest --tests '*Smb*'` after syncing the
+canonical Gradle inputs. `SmbNameResolverTest` reproduces a blocked platform
+`.local` lookup while NBNS immediately succeeds, then checks the overall lookup
+deadline, concurrent-request coalescing, bounded worker/queue/cache sizes,
+positive-cache expiry, failed-address eviction and isolation between networks.
+`SmbNetworkScopeTest` checks Android link/DNS changes and disconnection before
+authentication. `SmbReadRecoveryTest` checks that server-root/share navigation
+shares an authentication fingerprint, whereas host, port or credentials changes
+do not; authentication denials are not classified as retryable read errors.
+
+The production resolver races network-scoped DNS, mDNS and same-subnet NBNS
+(only for short LAN names), with a 4-second overall name-query deadline and a
+5-minute, memory-only positive cache. DNS and SMB sockets are bound to the same
+Android Network; local NAS names/private addresses prefer connected Wi-Fi or
+Ethernet even when cellular is the default. An active VPN is never bypassed.
+Changing network identity or link properties invalidates the read-session key.
+Idle read-only sessions expire after 3 minutes. Write and
+media handles remain independently owned; write operations/authentication
+denials are never automatically replayed. Failed connection addresses are
+evicted so the next connection resolves again.
+
+The real SMB fixture above verifies the minified APK and protocol operations,
+but loopback cannot reproduce a physical Wi-Fi's mDNS/NBNS behavior. Keep both
+layers: deterministic stalled-resolver tests and the emulator SMB2/RPC probe.

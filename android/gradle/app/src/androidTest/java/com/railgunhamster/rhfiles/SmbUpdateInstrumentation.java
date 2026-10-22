@@ -55,6 +55,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
           "const qa=shares.find(e=>e.name==='QA');if(!qa?.isDir||shares.some(e=>e.name==='IPC$'))throw Error('Missing disk share or exposed IPC$: '+JSON.stringify(shares));"+
           "const files=(await list('share',qa.path)).entries;const folder=files.find(e=>e.name==='子目录');if(!folder?.isDir)throw Error('Unicode folder missing');"+
           "if(!(await list('nested',folder.path)).entries.some(e=>e.name==='测试.txt'&&!e.isDir))throw Error('Nested Unicode file missing');"+
+          "if(!(await list('root-again',root)).entries.some(e=>e.name==='QA'))throw Error('Reused RPC enumeration failed');"+
+          "for(let i=0;i<3;i++)if(!(await list('warm-'+i,folder.path)).entries.some(e=>e.name==='测试.txt'))throw Error('Warm session lost folder contents');"+
           "const pinned=await api.native('connection.save',{...profile,name:'QA pinned share',share:'QA'});ids.push(pinned);if(!(await list('pinned','remote://'+pinned+'/')).entries.some(e=>e.name==='子目录'))throw Error('Pinned-share compatibility failed');"+
           "const denied=await api.native('connection.save',{...profile,name:'QA wrong password',password:'wrong-fixture-password'});ids.push(denied);let rejected=false;try{await list('denied','remote://'+denied+'/');}catch(e){rejected=true;}if(!rejected)throw Error('Authentication failure returned an empty/successful listing');"+
           "if(times.some(t=>t.ms>=8000))throw Error('Loopback browse/logout latency regression');window.__networkSmbQa={pass:true,times};}catch(e){window.__networkSmbQa={error:String(e),times}}finally{for(const id of ids)await api.native('connection.delete',{id}).catch(()=>{});}})();");

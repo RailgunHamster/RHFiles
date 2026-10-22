@@ -41,7 +41,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   internal var shareReader:((JSONObject)->List<SmbShare>)?=null
   data class Unc(val host: String,val share: String,val parts: List<String>)
   companion object {
-    private data class ReadKey(val id:String,val fingerprint:String)
+    private data class ReadKey(val id:String,val fingerprint:String,val network:String)
     private class ReadSmb(val client:SMBClient,val session:Session):Closeable {
       private val shares=linkedMapOf<String,DiskShare>()
       val serverShares by lazy {SmbShares(SMBTransportFactories.SRVSVC.getTransport(session))}
@@ -53,9 +53,16 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       }
       override fun close(){closeReadSession(client,session);shares.clear()}
     }
-    private val readSessions=IdleReadPool<ReadKey,ReadSmb>(reusable={it.alive})
+    private val readSessions=IdleReadPool<ReadKey,ReadSmb>(idleMs=180000,reusable={it.alive})
     private val readReaper by lazy {java.util.concurrent.Executors.newSingleThreadScheduledExecutor{task->Thread(task,"RHFiles-SMB-idle").apply{isDaemon=true}}.apply{scheduleWithFixedDelay({readSessions.reap()},15,15,TimeUnit.SECONDS)}}
     internal fun discardReadSessions(){readSessions.invalidate{true}}
+    internal fun readFingerprint(c:JSONObject):String {
+      // A share is a tree on the same authenticated connection, not a new
+      // login. Canonical fields also avoid JSON key-order/label cache misses.
+      val (username,domain)=SmbHosts.credentials(c.optString("username"),c.optString("domain"))
+      val identity=JSONArray(listOf(c.getString("host").lowercase(java.util.Locale.ROOT),c.optInt("port",445),username,domain.lowercase(java.util.Locale.ROOT),c.optString("password")))
+      return java.security.MessageDigest.getInstance("SHA-256").digest(identity.toString().toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
+    }
     internal fun requireCredentials(c:JSONObject){require(!c.optBoolean("needsPassword")){"此网络位置的密码未同步，请先补填密码（网络位置 → 编辑连接）"}}
     // SMBJ wraps transport IOExceptions in SMBRuntimeException; a closed Share
     // may have no cause at all. Preserve permission/protocol errors on a live
@@ -211,24 +218,30 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   private class Smb(val client: SMBClient, val share: DiskShare,val session:Session): Closeable {
     override fun close() { try { share.close() } finally { client.close() } }
   }
-  private fun smbClient(timeout:Long=30)=SMBClient(SmbConfig.builder().withAuthenticators(listOf(com.hierynomus.smbj.auth.NtlmAuthenticator.Factory()))
+  private fun smbClient(network:SmbHosts.Scope,timeout:Long=30)=SMBClient(SmbConfig.builder().withSocketFactory(network.network.socketFactory).withAuthenticators(listOf(com.hierynomus.smbj.auth.NtlmAuthenticator.Factory()))
     .withTimeout(timeout,TimeUnit.SECONDS).withSoTimeout((timeout*1000).toInt()).build())
-  private fun authenticate(client:SMBClient,c:JSONObject):Session {
-    val connection=client.connect(SmbHosts.resolve(c.getString("host")),c.optInt("port",445))
+  private fun authenticate(client:SMBClient,c:JSONObject,network:SmbHosts.Scope):Session {
+    val host=c.getString("host");val answer=SmbHosts.resolve(network,host)
+    SmbHosts.requireCurrent(context,network)
+    val connection=try{client.connect(answer.address,c.optInt("port",445))}catch(error:Exception){
+      // No login or file operation has started. Evict a stale address, but do
+      // not blindly replay authentication/writes or conceal the original error.
+      SmbHosts.forget(network,host,answer.address);throw error
+    }
+    SmbHosts.requireCurrent(context,network)
     val (username,domain)=SmbHosts.credentials(c.optString("username"),c.optString("domain"))
     return connection.authenticate(if(username.isBlank()&&c.optString("password").isEmpty())AuthenticationContext.anonymous() else AuthenticationContext(username,c.optString("password").toCharArray(),domain))
   }
   private fun <T> readSmb(id:String,c:JSONObject,block:(ReadSmb)->T):T {
     readReaper
-    // Include the entire credential/config snapshot, but never retain/log a
-    // clear-text password in the pool key. A concurrent edit cannot reuse it.
-    val digest=java.security.MessageDigest.getInstance("SHA-256").digest(c.toString().toByteArray()).joinToString(""){"%02x".format(it)}
-    val key=ReadKey(id,digest)
+    val network=SmbHosts.network(context,c.getString("host"))
+    readSessions.invalidate{it.network!=network.key}
+    val key=ReadKey(id,readFingerprint(c),network.key)
     var created=false
     fun attempt()=readSessions.use(key,{
-      created=true;val client=smbClient(15)
-      try{ReadSmb(client,authenticate(client,c))}catch(error:Exception){client.close();throw error}
-    }){connection->try{block(connection)}catch(error:Exception){throw readFailure(error,connection.alive)}}
+      created=true;val client=smbClient(network,15)
+      try{ReadSmb(client,authenticate(client,c,network))}catch(error:Exception){client.close();throw error}
+    }){connection->SmbHosts.requireCurrent(context,network);try{block(connection)}catch(error:Exception){throw readFailure(error,connection.alive)}}
     return try{attempt()}catch(error:IOException){
       if(created)throw error
       // A server may silently expire an idle socket. Retry an idempotent read
@@ -240,9 +253,9 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     connection.serverShares.list()
   }
   private fun smb(c: JSONObject): Smb {
-    val client=smbClient()
+    val network=SmbHosts.network(context,c.getString("host"));val client=smbClient(network)
     try {
-      val session=authenticate(client,c)
+      val session=authenticate(client,c,network)
       val share=session.connectShare(c.getString("share")) as? DiskShare ?: error("不是文件共享")
       return Smb(client,share,session)
     } catch (e: Exception) { try{client.close()}catch(close:Exception){e.addSuppressed(close)}; throw e }

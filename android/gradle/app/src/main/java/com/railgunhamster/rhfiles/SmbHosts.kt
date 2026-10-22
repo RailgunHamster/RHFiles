@@ -1,23 +1,73 @@
 package com.railgunhamster.rhfiles
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
+import java.io.IOException
 import java.net.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.SecureRandom
 import java.util.Locale
 
-/** DNS first; Windows-style single-label LAN names may instead exist in NBNS.
+/** Windows-style single-label LAN names may exist in DNS, mDNS or NBNS.
  * No credentials are sent, no system DNS settings changed, no internet broadcast. */
 internal object SmbHosts {
-  fun resolve(host:String):String {
-    try{return InetAddress.getByName(host).hostAddress!!}catch(original:UnknownHostException){
-      if(!host.matches(Regex("[A-Za-z0-9_-]{1,15}")))throw original
-      // Modern Android also resolves .local through the platform mDNS resolver.
-      try{return InetAddress.getByName("$host.local").hostAddress!!}catch(_:UnknownHostException){}
-      val interfaces=NetworkInterface.getNetworkInterfaces().toList().filter{it.isUp&&!it.isLoopback}.flatMap{it.interfaceAddresses}.filter{it.address is Inet4Address && it.broadcast!=null}
-      if(interfaces.isEmpty())throw original
+  data class Scope(val network:Network,val key:String,val links:LinkProperties,val host:String)
+  private val resolver=SmbNameResolver()
+  internal fun scopeKey(handle:Long,links:String)="$handle:$links"
+  internal data class Route(val id:Int,val lan:Boolean=false,val vpn:Boolean=false)
+  internal fun selectRoute(active:Route?,routes:List<Route>,local:Boolean):Route? =
+    if(active?.vpn==true)active else if(local||active==null)routes.firstOrNull{it.lan&&!it.vpn&&it.id==active?.id}?:routes.firstOrNull{it.lan&&!it.vpn}?:active else active
+  internal fun localTarget(host:String):Boolean {
+    val target=host.removeSuffix(".").removeSurrounding("[","]")
+    if(target.equals("localhost",true)||target.startsWith("127.")||target=="::1")return false
+    if(target.isNotBlank()&&target.none{it=='.'||it==':'}&&target.any{!it.isDigit()})return true
+    if(listOf(".local",".lan",".home",".home.arpa").any{target.endsWith(it,true)})return true
+    val numeric=target.substringBefore('%')
+    if(!numeric.matches(Regex("[0-9.]+|[0-9a-fA-F:]+")))return false
+    return try{val address=InetAddress.getByName(numeric);address.isSiteLocalAddress||address.isLinkLocalAddress||
+      (address is Inet6Address&&(address.address[0].toInt() and 0xfe)==0xfc)}catch(_:UnknownHostException){false}
+  }
+  fun network(context:Context,host:String=""):Scope {
+    val manager=context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val active=manager.activeNetwork
+    val networks=(manager.allNetworks.toList()+listOfNotNull(active)).distinct()
+    val routes=networks.mapIndexed{index,value->
+      val caps=manager.getNetworkCapabilities(value)
+      Route(index,caps?.let{it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)||it.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)}==true,
+        caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)==true)
+    }
+    // A Wi-Fi without Internet is still a valid NAS network. Do not force its
+    // short names/private addresses over cellular, or bypass an active VPN.
+    val chosen=selectRoute(routes.getOrNull(networks.indexOf(active)),routes,localTarget(host))
+    val network=chosen?.let{networks[it.id]} ?: throw IOException("网络未连接，请连接服务器所在的 Wi-Fi")
+    val links=manager.getLinkProperties(network) ?: throw IOException("网络正在切换，请稍后重试")
+    return Scope(network,scopeKey(network.networkHandle,links.toString()),links,host)
+  }
+  fun requireCurrent(context:Context,scope:Scope){
+    if(network(context,scope.host).key!=scope.key)throw IOException("网络已切换，请重新打开网络位置")
+  }
+  internal fun isLanName(host:String)=host.matches(Regex("[A-Za-z0-9_-]{1,15}"))&&host.any{!it.isDigit()}
+  fun resolve(scope:Scope,host:String):SmbNameResolver.Answer {
+    val lookups=mutableListOf(SmbNameResolver.Lookup(SmbNameResolver.Lane.DNS){scope.network.getAllByName(host).firstOrNull()?.hostAddress})
+    if(isLanName(host)){
+      // Race the fallbacks. A failing platform .local lookup can take ~10s;
+      // it must not delay an NBNS answer that arrives immediately on the LAN.
+      lookups.add(SmbNameResolver.Lookup(SmbNameResolver.Lane.MDNS){scope.network.getAllByName("$host.local").firstOrNull()?.hostAddress})
+      lookups.add(SmbNameResolver.Lookup(SmbNameResolver.Lane.NBNS){nbns(scope,host)})
+    }
+    return resolver.resolve(scope.key,host,lookups)
+  }
+  fun forget(scope:Scope,host:String,address:String)=resolver.forget(scope.key,host,address)
+  private fun nbns(scope:Scope,host:String):String? {
+      val interfaces=scope.links.interfaceName?.let{NetworkInterface.getByName(it)}?.interfaceAddresses.orEmpty()
+        .filter{it.address is Inet4Address&&it.broadcast!=null&&scope.links.linkAddresses.any{link->link.address==it.address}}
+      if(interfaces.isEmpty())return null
       val id=SecureRandom().nextInt(65536);val query=query(host,id)
-      DatagramSocket().use{socket->socket.broadcast=true;socket.soTimeout=350
+      DatagramSocket().use{socket->scope.network.bindSocket(socket);socket.broadcast=true;socket.soTimeout=150
         for(address in interfaces)try{socket.send(DatagramPacket(query,query.size,address.broadcast,137))}catch(_:Exception){}
         val end=System.nanoTime()+TimeUnitNanos;val bytes=ByteArray(1500)
         while(System.nanoTime()<end)try{
@@ -28,8 +78,7 @@ internal object SmbHosts {
           }
         }catch(_:SocketTimeoutException){}
       }
-      throw UnknownHostException("无法解析服务器 $host（DNS 和局域网名称查询均未找到）。请确认同一 Wi-Fi，或把更新目录和 SMB 登录配置中的服务器名改为服务器的局域网 IP。").apply{initCause(original)}
-    }
+      return null
   }
   private const val TimeUnitNanos=1_400_000_000L
   private fun sameSubnet(a:ByteArray,b:ByteArray,prefix:Int):Boolean = a.size==4&&b.size==4&&prefix in 1..32&&(0 until prefix).all{bit->(a[bit/8].toInt() shr (7-bit%8) and 1)==(b[bit/8].toInt() shr (7-bit%8) and 1)}
