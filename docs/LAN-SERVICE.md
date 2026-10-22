@@ -1,0 +1,72 @@
+# RHFiles LAN file service / 局域网文件服务（首版）
+
+本功能使用直接 HTTPS 连接，不调用 Windows SMB、WebClient、盘符映射或 SMB 凭据。电脑只共享明确添加的本机目录；原有 SMB、附近互传和 WebDAV 配置同步是独立功能，不受影响。
+
+## 使用
+
+1. 电脑打开「设置 → 局域网文件服务」，填写共享名称与本机文件夹完整路径。默认端口 `39128`，`0` 表示自动分配。不自动启动、不修改防火墙。Windows 如提示联网权限，只在需要的专用网络上允许。
+2. 点击「启动文件服务」。同一 Wi-Fi 的手机打开「网络位置 → 添加网络位置」，协议选「RHFiles 电脑文件服务」。
+3. 电脑生成配对码并「复制配对信息」，将完整 `rhfiles-connect:v1:…` 文本填进手机。配对码两分钟内有效、仅能成功使用一次，八次错误尝试后必须重新生成。电脑可显示二维码；本版手机先提供粘贴入口，尚未加入内置扫码相机。
+4. 默认只读。需要复制到电脑时，**在生成配对信息之前**明确勾选写入权限；永久删除是独立权限。权限绑定设备，改变勾选不会追溯改变已配对设备；先撤销再重新配对。手机连接名称可以自定。
+5. 配对后，连接出现在抽屉的存储位置和网络位置，可浏览、收藏子目录、直接看图片/播放视频，或通过现有后台文件任务复制、移动文件夹。移动来源删除仍需相应端的删除权限。
+6. 暂停共享点「停止共享」。隐藏电脑窗口不停止服务；退出 RHFiles 会关闭连接。当前不提供开机服务或无界面系统守护进程。
+
+首版手机配对信息可以通过你自己的可信渠道传递；不要公开二维码、短期配对码或 WebDAV 密码。手机将每台电脑的证书 SHA-256 指纹固定为设备身份，证书变化时拒绝连接，不会关闭 TLS 校验。连接密码沿用 Android Keystore 加密存储，不放进 URL、日志或网页存储。
+
+## WebDAV 兼容入口
+
+- 相同 HTTPS 地址下的 `/dav/`，例如 `https://192.168.0.10:39128/dav/`。
+- 在电脑创建单独的「WebDAV 专用账号」，分别选择写入/删除权限。密码只显示一次，可单独撤销。**不要使用 Windows 登录密码。**
+- 第三方客户端需要信任电脑的自签名公共证书。电脑提供「复制 HTTPS 公共证书」，可保存为 `.pem` 后按客户端的信任证书流程导入。不要导出 `identity.json`，其中含私钥。
+- 创建证书时包含当时的本机 IP；电脑 IP 后续变化时，第三方客户端还需正确的证书主机名/证书配置。RHFiles 原生客户端按已配对指纹验证身份。
+- 支持基础 `PROPFIND`（Depth 0/1）、GET/HEAD、HTTP Range/ETag、PUT、MKCOL、COPY/MOVE、DELETE、LOCK/UNLOCK。JSON API 写入同样遵守 WebDAV 锁；锁是内存状态，服务重启后客户端需要重新获取。
+- **所有协议首版都不替换已有目标。** 即使客户端发送 `Overwrite: T` 也不覆盖。PUT 不支持覆盖/追加；重命名目标必须不存在。原生删除文件夹要求为空，手机文件任务会逐项处理，不将未知的新文件一并递归删除。
+
+这不是 Nextcloud、SFTPGo 或 Dufs 的完整功能集，也没有声称通过完整 WebDAV Litmus 兼容性认证。
+
+## 原生 JSON / 传输接口
+
+两种入口共用 capability-relative 文件核心、设备授权、锁和无覆盖发布逻辑，原生接口**不通过网络转发到 WebDAV**。文件下载复用经过测试的 Range/ETag 响应处理器。
+
+所有远端路径都是 `/共享名/相对路径`，永远不是 `C:\…`。除短期 `POST /api/v1/pair` 外都需要 HTTPS Basic 或 `Bearer <device-id>:<secret>`；不接受查询参数中的凭据，不跟随重定向，不提供 CORS。
+
+| 接口 | 行为 |
+| --- | --- |
+| `GET /api/v1/capabilities` | 协议版本、设备权限、功能和上限 |
+| `GET /api/v1/list?path=/Files&offset=0&limit=200` | 目录快照分页（最多 2000 项/页），返回 revision；后续页传入 revision，目录变化返回 409 |
+| `GET /api/v1/stat?path=…` | 文件元数据与修订标识 |
+| `GET/HEAD /api/v1/content?path=…` | 原始文件、分段视频、断点下载 |
+| `GET /api/v1/thumbnail?path=…` | JPEG/PNG/WebP/GIF/BMP 等图片的服务端缩略图；最多 320px，输入 32MiB、解码内存 64MiB，上限明确报错 |
+| `POST /api/v1/mkdir` | JSON `{ "path": "/Files/new" }` |
+| `POST /api/v1/rename` | JSON `{ "path": "/Files/old", "destination": "/Files/new" }` |
+| `POST /api/v1/copy` | 同上，服务端单文件复制；目录复制由手机后台任务递归处理 |
+| `POST /api/v1/delete` | JSON `{ "path": "/Files/name" }`；永久删除，文件夹必须为空 |
+| `POST/OPTIONS /api/v1/uploads` | tus 1.0 creation；`Upload-Length`、`Upload-Metadata: path <base64(UTF-8虚拟路径)>` |
+| `HEAD/PATCH/DELETE /api/v1/uploads/{id}` | tus 查询实际偏移、续传、取消；只有任务所属设备可访问 |
+
+tus 请求携带 `Tus-Resumable: 1.0.0`；PATCH 为 `application/offset+octet-stream`，携带 `Upload-Offset`。Android 每块最多 1MiB，遇到传输中断先 HEAD 确认偏移，再重传尚未确认的部分。后台任务仍由 Android 文件任务服务负责通知和进度，不占用页面执行循环。
+
+未完成上传保存在对应共享内的 `.rhfiles-service-staging`，不会被远程列出；完成后同步磁盘并以系统级 **no-replace** 操作发布。同名目标即使在最后一刻才出现也不会被覆盖。偏移与授权跨服务重启保留；上传任务保留 24 小时，启动服务或创建新上传时清理过期临时文件。单个声明上传上限 1TiB，最多 256 个保留任务。取消已完成 tus 任务只清理协议记录，不删除发布后的文件。手机后台任务的进程重启恢复仍遵循现有任务策略，不承诺所有任务跨崩溃自动续跑。
+
+电脑本机管理操作（选择共享、启动/停止、生成配对、创建账号、撤销授权）不暴露在网络上。对应命令行自动化操作：`server.state`、`server.start`、`server.stop`、`server.pair`、`server.credential`、`server.revoke`；通过现有 [CLI](AUTOMATION.md) 调用，参数可 `describe` 枚举。不要把含临时配对信息或密码的 CLI 输出提交到仓库。
+
+## 安全边界与限制
+
+- 仅接受回环、私有或链路本地来源；不信任 `X-Forwarded-For`，不支持反向代理公网发布。独立 IPv4 监听；不会自行打洞或做公网映射。
+- 共享不能包含服务配置/私钥目录。不接受 UNC、映射网络盘、符号链接、Windows junction/reparse point、路径穿越、设备名或 ADS；只共享真正的本机磁盘，因此不会间接重新引入 SMB 阻塞。
+- 请求、XML、图片解码与目录规模有限制；列表短暂缓存两秒。远程调用只获得共享内的虚拟路径，出错不返回主机绝对路径。
+- Windows、Linux 和 macOS 使用各自的无覆盖重命名；跨卷 MOVE 不是原子操作，失败会保留来源。目录合并由客户端逐项处理。
+- 当前视频可流式播放/拖动进度；**视频服务端缩略图、服务端索引搜索、自动发现、内置扫码、跨设备回收站和静默自启动尚未实现**。图片 EXIF 方向处理尚需扩展服务端缩略图路径。
+- LAN/磁盘速度、Wi-Fi 隔离与防火墙仍会影响连接，专用协议不会消除断网或磁盘故障。
+
+## 选型依据（2026-10-22 核实）
+
+实际嵌入 [Axum](https://github.com/tokio-rs/axum)（约 2.8 万星）与 [dav-server-rs](https://github.com/messense/dav-server-rs)，后者规模较小，但仍在维护、可嵌入 Rust 且采用 Apache-2.0。参考 [Dufs](https://github.com/sigoden/dufs)（约 1.1 万星）的共享/权限与流式传输实践，及 [tusd](https://github.com/tus/tusd) 的 [tus 1.0 协议](https://tus.io/protocols/resumable-upload)；没有直接捆绑 Go 服务。Nextcloud 的 [WebDAV](https://docs.nextcloud.com/server/stable/developer_manual/client_apis/WebDAV/basic.html) 与 [独立客户端授权](https://docs.nextcloud.com/server/stable/developer_manual/client_apis/LoginFlow/index.html) 是双接口与按设备撤销的产品参考。
+
+## English
+
+An opt-in desktop HTTPS service exposes the native JSON API at `/api/v1/` and a WebDAV compatibility endpoint at `/dav/`. Both use one confined local filesystem and authorization core; neither depends on SMB. Android stores per-device credentials using Android Keystore and verifies the explicitly paired SHA-256 certificate identity.
+
+Desktop: **Settings → LAN file service**. Add local folders, start the service, generate a short-lived pairing payload. Android: **Network locations → Add → RHFiles computer file service**, paste the payload. Read-only by default; write/rename and permanent deletion are separate grants. WebDAV clients use independently revocable app credentials and must trust the exported public HTTPS certificate. Private keys never leave the host.
+
+Version one includes paginated browsing, direct image/video reads, HTTP Range, bounded image thumbnails, basic WebDAV, and tus chunked uploads. Files publish using OS-level no-replace operations: **existing destinations are never overwritten**. Server upload state survives restart; incomplete uploads expire after 24 hours. Current limitations include no embedded phone QR scanner, no service-side video thumbnails/index search/discovery, no boot daemon, no network-backed share roots and no public reverse-proxy deployment. Windows E2E tests exercise the real settings UI and actual HTTPS/WebDAV requests; protocol and Android TLS/resume regressions live beside the implementation.

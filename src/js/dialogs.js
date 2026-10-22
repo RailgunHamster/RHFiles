@@ -143,6 +143,7 @@ const SETTINGS_SECTIONS = Object.freeze([
   ['search', 'settings.categorySearch'],
   ...(!IS_MAC ? [['integration', 'settings.categoryIntegration']] : []),
   ['updates', 'settings.categoryUpdates'],
+  ['lan', 'settings.categoryLan'],
   ['shortcuts', 'settings.categoryShortcuts'],
   ['data', 'settings.categoryData'],
 ]);
@@ -156,6 +157,7 @@ function settingsSectionIcon(id) {
     search: '<circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3.4 3.4"/>',
     integration: '<path d="M3 3.2h4.3v4.3H3zM8.7 8.5H13v4.3H8.7z"/><path d="M7.3 5.35h2.1a1.6 1.6 0 0 1 1.6 1.6V8.5M8.7 10.65H6.6A1.6 1.6 0 0 1 5 9.05V7.5"/>',
     updates: '<path d="M8 2.2v7.1M5.2 6.7 8 9.5l2.8-2.8"/><path d="M2.5 11.2v2h11v-2"/>',
+    lan: '<rect x="4" y="1.5" width="8" height="5" rx="1"/><path d="M8 6.5v3M2 9.5h12M2 9.5v2M8 9.5v2M14 9.5v2"/><circle cx="2" cy="13" r="1.2"/><circle cx="8" cy="13" r="1.2"/><circle cx="14" cy="13" r="1.2"/>',
     shortcuts: '<rect x="1.7" y="3.1" width="12.6" height="9.8" rx="1.5"/><path d="M4 6h1M7.5 6h1M11 6h1M4 9h1M7 9h5"/>',
     data: '<ellipse cx="8" cy="3.7" rx="5" ry="2"/><path d="M3 3.7v4.2c0 1.1 2.2 2 5 2s5-.9 5-2V3.7M3 7.8V12c0 1.1 2.2 2 5 2s5-.9 5-2V7.8"/>',
   };
@@ -462,9 +464,11 @@ function openSettings() {
     settingsPage('search', 'settings.categorySearch', 'settings.categorySearchDesc', search) +
     settingsPage('integration', 'settings.categoryIntegration', 'settings.categoryIntegrationDesc', integration) +
     settingsPage('updates', 'settings.categoryUpdates', 'settings.categoryUpdatesDesc', updates) +
+    settingsPage('lan', 'settings.categoryLan', 'settings.categoryLanDesc', '<div id="lan-service-settings"></div>') +
     settingsPage('shortcuts', 'settings.categoryShortcuts', 'settings.categoryShortcutsDesc', shortcuts) +
     settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data);
   dlg.style.display = "flex";
+  lanService.mount(document.getElementById('lan-service-settings'));
   if (IS_MAC && typeof configureMacSettings === 'function') configureMacSettings();
   call('get_instance_profile', {}).then(profile => {
     const element = document.getElementById('settings-instance-profile');

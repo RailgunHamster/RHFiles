@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream
 
 internal class RemoteImages(private val remote:RemoteStorage) {
   @Synchronized fun read(path:String,requestedEdge:Int):JSONObject {
+    if(requestedEdge<=320&&remote.isRhFiles(path))return remote.rhFilesThumbnail(path)
     val edge=requestedEdge.coerceIn(192,1920);val limit=24*1024*1024
     val bytes=remote.mediaInput(path).use{media->
       require(media.totalLength<=limit){"网络图片超过 24 MB，请下载后用外部查看器打开"}

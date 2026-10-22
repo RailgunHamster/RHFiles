@@ -11,6 +11,7 @@ mod media;
 mod documents;
 mod network;
 mod nearby;
+mod lan_service;
 #[cfg(windows)]
 pub mod network_io;
 mod profile;
@@ -150,6 +151,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            lan_service::lan_service_state,
+            lan_service::lan_service_start,
+            lan_service::lan_service_stop,
+            lan_service::lan_service_pair,
+            lan_service::lan_service_credential,
+            lan_service::lan_service_revoke,
             nearby::nearby_start,nearby::nearby_stop,nearby::nearby_status,nearby::nearby_probe,nearby::nearby_send,nearby::nearby_accept,nearby::nearby_cancel,
             #[cfg(target_os = "macos")]
             macos::connect_macos_share,

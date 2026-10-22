@@ -212,17 +212,18 @@ object FileTasks {
     val captured=mutableListOf<Captured>()
     fun copyTree(source:String,parent:String,name:String,depth:Int=0):String {
       checkpoint(j);require(depth<128);val entry=storage.stat(source)
-      val output=storage.create(parent,name,entry.isDir)
+      val direct=!entry.isDir&&storage.isRemote(parent)&&storage.remote.isRhFiles(parent)
+      val output=if(direct)storage.remote.destination(parent,name)else storage.create(parent,name,entry.isDir)
       try {
         if(entry.isDir) {captured.add(Captured(entry,null));val children=storage.list(source);require(children.size<50000){"单目录超过安全上限"};children.forEach {copyTree(it.path,output,it.name,depth+1)}}
         else {
           val digest=java.security.MessageDigest.getInstance("SHA-256")
-          storage.input(source).use {input->java.security.DigestInputStream(input,digest).use{storage.write(output,it){amount->checkpoint(j,amount)}}}
+          storage.input(source).use {input->java.security.DigestInputStream(input,digest).use{if(direct)storage.remote.uploadNew(output,it,entry.size){amount->checkpoint(j,amount)}else storage.write(output,it){amount->checkpoint(j,amount)}}}
           val after=storage.stat(source);require(after.size==entry.size && after.modified==entry.modified){"复制期间来源发生变化，保留来源并停止"}
           captured.add(Captured(entry,digest.digest().joinToString(""){"%02x".format(it)}))
         }
         j.done++;return output
-      } catch(e:Exception) {cleanup(output);throw e}
+      } catch(e:Exception) {if(!direct)cleanup(output);throw e}
     }
     val conflict=j.args.optString("conflict","merge")
     require(conflict in setOf("merge","rename","skip")){"未知冲突处理方式"}

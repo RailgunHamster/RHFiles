@@ -20,7 +20,8 @@ class MediaThumbnails(private val storage:NativeStorage){
   private val timers=Executors.newSingleThreadScheduledExecutor()
   fun close(){timers.shutdownNow();cache.evictAll()}
   fun read(path:String,requestedEdge:Int):JSONObject {
-    require(!storage.isRemote(path)){"网络媒体请下载后查看缩略图"}
+    if(storage.isRemote(path)&&storage.remote.isRhFiles(path))return storage.remote.rhFilesThumbnail(path)
+    require(!storage.isRemote(path)){"此网络协议暂不支持服务端缩略图"}
     val entry=storage.stat(path);require(!entry.isDir){"不是媒体文件"}
     val edge=requestedEdge.coerceIn(48,192);val kind=NativeEntry.kind(entry.name)
     require(kind in listOf("image","video")){"没有可用的媒体缩略图"}

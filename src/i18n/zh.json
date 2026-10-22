@@ -210,6 +210,8 @@
   "settings.categoryUpdatesDesc": "\u66f4\u65b0\u6e90\u3001\u4ee3\u7406\u4e0e\u5b8c\u6574\u7248\u672c\u8bb0\u5f55\u3002",
   "settings.categoryShortcuts": "\u5feb\u6377\u952e",
   "settings.categoryShortcutsDesc": "\u4e3a\u6bcf\u4e2a\u64cd\u4f5c\u5f55\u5236\u4e00\u4e2a\u6216\u591a\u4e2a\u6309\u952e\u7ec4\u5408\u3002",
+  "settings.categoryLan": "局域网文件服务",
+  "settings.categoryLanDesc": "通过 HTTPS、RHFiles 专用接口和 WebDAV 共享指定的本机文件夹，不依赖 SMB。",
   "settings.categoryData": "\u6570\u636e",
   "settings.categoryDataDesc": "\u5bfc\u51fa\u3001\u5bfc\u5165\u6216\u6e05\u9664 RHFiles \u7528\u6237\u6570\u636e\u3002",
   "settings.language": "\u8bed\u8a00",

@@ -26,7 +26,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
       require(u.isHttps||value.getBoolean("insecure")){"请使用 HTTPS，或明确允许可信局域网的明文 HTTP"}
     }
     internal fun restoredPrefs(context:Context,remotes:RemoteStorage,value:JSONObject):JSONObject {validateConfig(value,true);return JSONObject().put("config",remotes.sealLocal(JSONObject(value.toString()).put("enabled",false)))}
-    private fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"))
+    private fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"),c.optString("fingerprint"))
     internal fun credentials(config:JSONObject,prior:JSONObject?):JSONObject {
       val same=prior!=null&&identity(prior)==identity(config)
       val password=if(same)prior!!.optString("password")else ""

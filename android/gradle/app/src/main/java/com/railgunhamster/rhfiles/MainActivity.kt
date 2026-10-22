@@ -281,6 +281,7 @@ class MainActivity : TauriActivity() {
     }
     "ftp.stop" -> FtpAccess.stop()
     "connection.save" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};if(args.optString("id").isNotBlank()){UsageAnalysis.requireConnectionsIdle(args.getString("id"));RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"))};storage.remote.save(args).also{locationsChanged()}}
+    "connection.pair" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};storage.remote.save(RhFilesConnection.pair(args.getString("uri"),args.getString("name"))).also{locationsChanged()}}
     "connection.delete" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};UsageAnalysis.requireConnectionsIdle(args.getString("id"));RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));locationsChanged();true}
     "open","share" -> {
       val paths=args.optJSONArray("paths") ?: JSONArray().put(args.getString("path"))

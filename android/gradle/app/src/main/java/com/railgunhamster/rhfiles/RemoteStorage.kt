@@ -117,8 +117,9 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   internal fun validate(config:JSONObject) {
     require(config.toString().length<=65536){"网络配置过长"}
     val type = config.getString("type")
-    require(type in listOf("smb","ftp","ftps","webdav")) { "未知网络协议" }
+    require(type in listOf("smb","ftp","ftps","webdav","rhfiles")) { "未知网络协议" }
     SafeFiles.name(config.getString("name"))
+    if(type=="rhfiles"){RhFilesConnection.valid(config);return}
     if (type == "webdav") {
       val u = config.getString("url").toHttpUrl()
       require(u.username.isEmpty() && u.password.isEmpty() && u.query == null && u.fragment == null) { "请在用户名/密码框填写凭据，不要放进地址" }
@@ -150,7 +151,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     }
     val old=if(requested.isNotBlank())this.config(id)else null
     if(old!=null&&!value.optBoolean("clearPassword")&&value.optString("password").isEmpty()){
-      fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"))
+      fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"),c.optString("fingerprint"))
       require(old.optString("password").isEmpty()||identity(old)==identity(value)){"更换服务器、协议或账号时请重新填写密码，或勾选清除密码"}
       value.put("password",old.optString("password"))
     }
@@ -166,7 +167,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   fun editable(id:String):JSONObject {
     val c=config(id);val result=JSONObject().put("id",id).put("hasPassword",c.optString("password").isNotEmpty()).put("needsPassword",c.optBoolean("needsPassword"))
-    for(field in listOf("name","type","host","port","share","domain","url","username","insecure"))if(c.has(field))result.put(field,c.get(field))
+    for(field in listOf("name","type","host","port","share","domain","url","username","insecure","fingerprint"))if(c.has(field))result.put(field,c.get(field))
     return result
   }
   internal fun backupProfiles()=JSONArray().also{out->preferences.all.keys.sorted().forEach{id->out.put(JSONObject().put("id",id).put("config",config(id)))}}
@@ -202,6 +203,10 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     return Location(id,segments.joinToString("/"),c)
   }
   private fun child(path: String, name: String) = path.trimEnd('/') + "/" + Uri.encode(SafeFiles.name(name))
+  fun isRhFiles(path:String)=path.startsWith("remote://")&&location(path).c.optString("type")=="rhfiles"
+  fun destination(parent:String,name:String)=child(parent,name)
+  fun uploadNew(path:String,input:InputStream,length:Long,progress:(Int)->Unit){val l=location(path);require(l.c.optString("type")=="rhfiles");RhFilesConnection(l.c).upload(l.relative,input,length,progress)}
+  fun rhFilesThumbnail(path:String):JSONObject {val l=location(path);require(l.c.optString("type")=="rhfiles");return RhFilesConnection(l.c).thumbnail(l.relative)}
   private fun parent(path: String) = path.trimEnd('/').substringBeforeLast('/') + "/"
   private fun ftp(c: JSONObject): FTPClient {
     val f = if (c.getString("type") == "ftps") FTPSClient(false).apply { isEndpointCheckingEnabled = true } else FTPClient()
@@ -281,6 +286,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     }catch(e:LinkageError){throw IOException("共享枚举组件不兼容，请更新应用；仍可编辑网络位置直接填写共享名称。",e)}
     catch(e:Exception){throw IOException("无法列出服务器共享：${e.message?:e.javaClass.simpleName}。请编辑网络位置填写账号/密码；如果服务器禁止枚举，也可直接填写共享名称。",e)}
     return when(l.c.getString("type")) {
+      "rhfiles" -> RhFilesConnection(l.c).list(l.relative,path)
       "smb" -> readSmb(l.id,l.c) { connection -> connection.share(l.c.getString("share")).list(smbPath(l)).filter { it.fileName!="." && it.fileName!=".." }.take(50000).map {
         NativeEntry(child(path,it.fileName),it.fileName,it.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L,it.endOfFile,it.lastWriteTime.toEpochMillis())
       } }
@@ -315,6 +321,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   }
   fun stat(path: String): NativeEntry {
     val l=location(path)
+    if(l.c.optString("type")=="rhfiles")return RhFilesConnection(l.c).stat(l.relative,path)
     if(l.relative.isEmpty()) return NativeEntry(path,Uri.parse(path).pathSegments.lastOrNull()?:l.c.getString("name"),true)
     if(l.c.getString("type")=="smb")return readSmb(l.id,l.c){connection->
       val info=connection.share(l.c.getString("share")).getFileInformation(smbPath(l))
@@ -359,7 +366,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
         }catch(error:Exception){f.disconnect();throw error}
       }
       else->{
-        val response=request(l,"GET",headers=mapOf("Range" to "bytes=$position-","Accept-Encoding" to "identity"))
+        val response=if(l.c.optString("type")=="rhfiles")RhFilesConnection(l.c).content(l.relative,position)else request(l,"GET",headers=mapOf("Range" to "bytes=$position-","Accept-Encoding" to "identity"))
         try {
           val range=response.header("Content-Range")
           val total=if(response.code==206){
@@ -398,13 +405,14 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
           object: FilterInputStream(stream) { override fun close() { try { super.close(); require(f.completePendingCommand()) { "FTP 传输未完成" } } finally { f.disconnect() } } }
         } catch(e:Exception) { f.disconnect(); throw e }
       }
-      else -> { val r=request(l,"GET"); object: FilterInputStream(r.body!!.byteStream()) { override fun close() { try { super.close() } finally { r.close() } } } }
+      else -> { val r=if(l.c.optString("type")=="rhfiles")RhFilesConnection(l.c).content(l.relative)else request(l,"GET"); object: FilterInputStream(r.body!!.byteStream()) { override fun close() { try { super.close() } finally { r.close() } } } }
     }
   }
   fun create(parent: String, name: String, dir: Boolean): String {
     require(!location(parent).serverRoot){"服务器列表不是文件目录，请先打开一个共享文件夹"}
     val path=child(parent,name); val l=location(path)
     when(l.c.getString("type")) {
+      "rhfiles" -> if(dir)RhFilesConnection(l.c).mutate("mkdir",l.relative)else RhFilesConnection(l.c).upload(l.relative,ByteArrayInputStream(byteArrayOf()),0){}
       "smb" -> smb(l.c).use { s -> if(dir) s.share.mkdir(smbPath(l)) else s.share.openFile(smbPath(l),EnumSet.of(AccessMask.GENERIC_WRITE),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_CREATE,null).close() }
       "ftp", "ftps" -> withFtp(l.c) { f -> require(if(dir) f.makeDirectory(ftpPath(l)) else f.storeFile(ftpPath(l),ByteArrayInputStream(byteArrayOf()))) { "FTP 创建失败：${f.replyCode}" } }
       else -> request(l,if(dir) "MKCOL" else "PUT",if(dir) null else byteArrayOf().toRequestBody(),mapOf("If-None-Match" to "*")).close()
@@ -414,6 +422,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val l=location(path)
     require(!l.serverRoot&&l.relative.isNotEmpty()){ "不能写入服务器或共享根目录" }
     when(l.c.getString("type")) {
+      "rhfiles" -> error("首版 RHFiles 服务不覆盖已有文件，请复制为新文件或重命名后重试")
       "smb" -> smb(l.c).use { s -> s.share.openFile(smbPath(l),EnumSet.of(AccessMask.GENERIC_WRITE),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OVERWRITE,null).use { file -> file.outputStream.use { SafeFiles.pump(input,it,progress) } } }
       "ftp", "ftps" -> withFtp(l.c) { f ->
         (f.storeFileStream(ftpPath(l)) ?: error("FTP 写入被拒绝")).use { SafeFiles.pump(input,it,progress) }
@@ -430,6 +439,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     require(list(parent(path)).none { it.name==name }) { "目标已存在，未覆盖" }
     val target=child(parent(path),name); val to=location(target)
     when(l.c.getString("type")) {
+      "rhfiles" -> RhFilesConnection(l.c).mutate("rename",l.relative,to.relative)
       "smb" -> smb(l.c).use { s -> s.share.open(smbPath(l),EnumSet.of(AccessMask.DELETE,AccessMask.GENERIC_READ),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null).use { it.rename(smbPath(to),false) } }
       "ftp", "ftps" -> withFtp(l.c) { require(it.rename(ftpPath(l),ftpPath(to))) { "FTP 重命名失败：${it.replyCode}" } }
       else -> request(l,"MOVE",null,mapOf("Destination" to url(to).toString(),"Overwrite" to "F")).close()
@@ -438,6 +448,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   fun delete(path: String) {
     val entry=stat(path); val l=location(path); require(l.relative.isNotEmpty()) { "不能删除网络根目录" }
     when(l.c.getString("type")) {
+      "rhfiles" -> RhFilesConnection(l.c).mutate("delete",l.relative)
       "smb" -> smb(l.c).use { if(entry.isDir) it.share.rmdir(smbPath(l),false) else it.share.rm(smbPath(l)) }
       "ftp", "ftps" -> withFtp(l.c) { require(if(entry.isDir) it.removeDirectory(ftpPath(l)) else it.deleteFile(ftpPath(l))) { "FTP 删除失败：${it.replyCode}" } }
       else -> request(l,"DELETE").close()

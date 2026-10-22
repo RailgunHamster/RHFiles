@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rhfiles-core",
     "crates/rhfiles-transfer",
+    "crates/rhfiles-service",
     "src-tauri",
 ]
 # The Android app is built separately: it is cross-compiled against the NDK

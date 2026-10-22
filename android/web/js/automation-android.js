@@ -11,6 +11,7 @@ const androidAutomation=(()=>{
     const snapshot=()=>({platform:'android',pane:workbench.id||'main',ready:app.ready(),route:{...state.route},busy:state.busy,root:state.root,selected:[...state.selected],entries:state.entries.length,error:state.navigationError??null});
     const available=()=>{if(!app.ready())reject('NOT_READY','File pane is starting');if(state.busy)reject('BUSY','File pane is loading a location');};
     actions.provideState('application',snapshot);
+    register('connections.pair',apiSchema({uri:string,name:string},['uri','name']),async p=>{const id=await api.native('connection.pair',p);await app.refreshLocations();return {id};},'external','Pair with a desktop HTTPS service using its short-lived connection data; credentials stay in Android Keystore');
     register('navigation.state',apiSchema(),snapshot,'read');
     register('navigation.open',apiSchema({path:string,label:{type:'string'}},['path']),async p=>{available();await app.go({screen:'folder',path:p.path,...(p.label?{label:p.label}:{})});if(state.navigationError)reject('NAVIGATION_FAILED',state.navigationError);return snapshot();});
     register('navigation.home',apiSchema(),async()=>{await app.go({screen:'home'});return snapshot();});

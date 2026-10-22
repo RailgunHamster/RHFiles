@@ -25,6 +25,13 @@
     updatePreviewForSelection(value.right);if(typeof fileChoiceRefreshSelection==='function')fileChoiceRefreshSelection();return state(which);
   }
   const paths={type:'array',items:string,maxItems:10000};
+  const grants=object({write:boolean,delete:boolean});
+  register('server.state',object(),()=>call('lan_service_state',{}),'read');
+  register('server.start',object({config:object({port:{type:'integer',minimum:0,maximum:65535},shares:{type:'array',minItems:1,maxItems:32,items:object({name:string,path:string},['name','path'])}},['port','shares'])},['config']),p=>call('lan_service_start',p),'external');
+  register('server.stop',object(),()=>call('lan_service_stop',{}),'external');
+  register('server.pair',object({permissions:grants},['permissions']),p=>call('lan_service_pair',p),'external');
+  register('server.credential',object({name:string,permissions:grants},['name','permissions']),p=>call('lan_service_credential',p),'external');
+  register('server.revoke',object({id:string},['id']),p=>call('lan_service_revoke',p),'external');
   api.provideState('application',()=>({platform:IS_MAC?'macos':'windows',ready:G.startupReady===true,window:G.windowLabel,dualPane:!!G.dualOn,activePane:G.lastActivePane,tabs:G.tabs.map(t=>({id:t.id,path:t.path,pinned:!!t.pinned,loaded:t._loaded===true})),rightTabs:(G.rpTabs||[]).map(t=>({id:t.id,path:t.path,pinned:!!t.pinned,loaded:t._loaded===true}))}));
   register('navigation.open',object({path:string,pane},['path']),async p=>{const t=focus(p.pane);const ok=await(t.right?rpNavigateTo(p.path):navigateTo(p.path));if(ok===false)reject('NAVIGATION_FAILED','The requested location could not be opened');return state(p.pane);});
   register('navigation.state',object({pane}),p=>state(p.pane),'read');

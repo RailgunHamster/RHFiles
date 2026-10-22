@@ -96,6 +96,8 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 
 ### 开发与测试
 
+开发分支已加入不依赖 SMB 的[局域网 HTTPS 文件服务](docs/LAN-SERVICE.md)：专用 JSON API 与 WebDAV 共用文件/权限核心，Android 可配对访问。默认只读，首版不覆盖已有目标；尚未打入现有正式发布包。
+
 Windows 需要 `rust-toolchain.toml` 指定的 Rust、WebView2；发布打包还需要 .NET 8 与 Velopack CLI 1.2.0。
 
 ```powershell
@@ -187,6 +189,8 @@ The unified task center, external image opening, remembered per-type openers and
 Apple Silicon (M-series, arm64) builds share the desktop source version. They are ad-hoc-signed, **not Apple-notarized** previews, not a claim of Windows feature parity. GUI acceptance testing on a Mac is still needed. See [macOS setup, permissions and limits](docs/MACOS.md).
 
 ### Development and tests
+
+The development branch adds an opt-in [LAN HTTPS file service](docs/LAN-SERVICE.md): native JSON and WebDAV interfaces share one confined file/permission core, with a paired Android client. Read-only by default, no destination overwrites in v1. This is not yet included in existing published packages.
 
 Windows needs the Rust toolchain in `rust-toolchain.toml` and WebView2; packaging additionally requires .NET 8 and Velopack CLI 1.2.0.
 

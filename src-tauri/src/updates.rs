@@ -1015,6 +1015,10 @@ mod tests {
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
+                // Winsock may retain the listener's nonblocking mode on an
+                // accepted socket. The bounded accept loop must not turn the
+                // subsequent blocking HTTP header reader into a flaky poll.
+                stream.set_nonblocking(false).unwrap();
                 let mut request = Vec::new();
                 while !request.ends_with(b"\r\n\r\n") {
                     let mut byte = [0];

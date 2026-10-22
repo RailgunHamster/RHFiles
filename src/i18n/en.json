@@ -210,6 +210,8 @@
   "settings.categoryUpdatesDesc": "Update sources, proxy traffic, and complete release history.",
   "settings.categoryShortcuts": "Keyboard shortcuts",
   "settings.categoryShortcutsDesc": "Record one or more key bindings for each action.",
+  "settings.categoryLan": "LAN file service",
+  "settings.categoryLanDesc": "Share selected local folders using HTTPS, the RHFiles API and WebDAV. No SMB dependency.",
   "settings.categoryData": "Data",
   "settings.categoryDataDesc": "Export, import, or clear RHFiles user data.",
   "settings.language": "Language",

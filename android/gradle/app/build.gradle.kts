@@ -62,6 +62,7 @@ android {
     namespace = "com.railgunhamster.rhfiles"
     sourceSets.getByName("main").assets.srcDir(rootProject.file("../../../reader"))
     defaultConfig {
+        if(providers.gradleProperty("rhfilesLanServiceProbe").isPresent) testInstrumentationRunner="com.railgunhamster.rhfiles.LanServiceInstrumentation"
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.railgunhamster.rhfiles"
         minSdk = 24
@@ -156,6 +157,7 @@ dependencies {
     testImplementation("org.json:json:20250517")
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
 }
