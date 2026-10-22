@@ -7,3 +7,18 @@ Mirror: https://gitee.com/railgunhamster/RHFiles
 
 RHFiles original code is licensed under the Apache License, Version 2.0.
 Third-party components retain their own copyright and license notices.
+
+LAN file service components:
+axum — Copyright (c) 2019 axum Contributors — MIT
+https://github.com/tokio-rs/axum
+axum-server — Copyright 2021 Axum Server Contributors — MIT
+https://github.com/programatik29/axum-server
+dav-server — Apache-2.0 — https://github.com/messense/dav-server-rs
+mdns-sd — Apache-2.0 OR MIT — https://github.com/keepsimple1/mdns-sd
+
+Android offline pairing scanner:
+AndroidX CameraX — Android Open Source Project — Apache-2.0
+https://developer.android.com/jetpack/androidx/releases/camera
+ZXing-C++ — Copyright 2021 Axel Waggershauser and ZXing-C++ contributors — Apache-2.0
+https://github.com/zxing-cpp/zxing-cpp
+Additional license texts are bundled in LAN-Service-Licenses / lan-service-licenses.

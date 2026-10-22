@@ -16,14 +16,15 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 /** Short, opt-in discovery only. No login attempts, port sweep, or metadata fetch. */
 class LanDiscovery(private val context:Context):Closeable {
-  private class Scan {
+  private class Scan(val protocol:String) {
     val stopped=AtomicBoolean(false);val running=AtomicBoolean(true)
     val devices=ConcurrentHashMap<String,JSONObject>();val errors=CopyOnWriteArrayList<String>()
   }
   private val scans=linkedMapOf<String,Scan>()
-  @Synchronized fun start():String {
+  @Synchronized fun start(protocol:String="smb"):String {
+    require(protocol in listOf("smb","rhfiles")){"不支持的发现协议"}
     while(scans.size>=2){val key=scans.keys.first();scans.remove(key)?.stopped?.set(true)}
-    val id=UUID.randomUUID().toString();val scan=Scan();scans[id]=scan
+    val id=UUID.randomUUID().toString();val scan=Scan(protocol);scans[id]=scan
     Thread({run(scan)},"RHFiles-LAN").apply{isDaemon=true;start()};return id
   }
   @Synchronized fun state(id:String):JSONObject {
@@ -42,17 +43,17 @@ class LanDiscovery(private val context:Context):Closeable {
       multicast=(context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)?.createMulticastLock("RHFiles:discovery")?.apply{setReferenceCounted(false);acquire()}
       val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8)
       fun alive()=!scan.stopped.get()&&System.nanoTime()<deadline
-      fun add(host:InetAddress,port:Int,name:String,source:String){
+      fun add(host:InetAddress,port:Int,name:String,source:String,fingerprint:String?=null){
         if(!alive()||!addresses.any{sameSubnet(it.address.address,host.address,it.networkPrefixLength.toInt())}||port !in 1..65535)return
         val address=host.hostAddress?:return;val key="$address:$port"
         synchronized(scan){
           if(scan.devices.size>=256&&!scan.devices.containsKey(key)){scan.errors.addIfAbsent("发现结果达到 256 项上限，请缩小局域网范围或手动添加");return}
-          scan.devices.compute(key){_,previous->JSONObject().put("host",address).put("port",port)
+          scan.devices.compute(key){_,previous->JSONObject().put("host",address).put("port",port).put("type",scan.protocol).apply{if(fingerprint!=null)put("fingerprint",fingerprint)}
             .put("name",if(source=="mDNS"||previous==null)name.take(100) else previous.optString("name"))
             .put("source",if(previous==null)source else (previous.optString("source")+" / "+source).split(" / ").distinct().joinToString(" / "))}
         }
       }
-      val ipv4=interfaces.flatMap{iface->iface.interfaceAddresses.filter{it.address is Inet4Address}.map{iface to it}}.take(4)
+      val ipv4=if(scan.protocol=="smb")interfaces.flatMap{iface->iface.interfaceAddresses.filter{it.address is Inet4Address}.map{iface to it}}.take(4) else emptyList()
       workers=Executors.newFixedThreadPool(1+ipv4.size)
       val tasks=mutableListOf<Future<*>>()
       tasks+=workers.submit{
@@ -68,13 +69,17 @@ class LanDiscovery(private val context:Context):Closeable {
         }
         var started=false
         try {
-          nsd.discoverServices("_smb._tcp.",NsdManager.PROTOCOL_DNS_SD,listener);started=true
+          nsd.discoverServices(if(scan.protocol=="rhfiles")"_rhfiles._tcp." else "_smb._tcp.",NsdManager.PROTOCOL_DNS_SD,listener);started=true
           while(alive()){
             val info=queue.poll(150,TimeUnit.MILLISECONDS)?:continue;val done=CountDownLatch(1)
             @Suppress("DEPRECATION")
             nsd.resolveService(info,object:NsdManager.ResolveListener {
               override fun onResolveFailed(service:NsdServiceInfo,code:Int){done.countDown()}
-              override fun onServiceResolved(service:NsdServiceInfo){service.host?.let{add(it,service.port,service.serviceName,"mDNS")};done.countDown()}
+              override fun onServiceResolved(service:NsdServiceInfo){
+                if(scan.protocol=="rhfiles")rhFilesRecord(service)?.let{value->rhFilesAddress(service)?.let{add(it,service.port,value.getString("name"),"mDNS",value.getString("fingerprint"))}}
+                else service.host?.let{add(it,service.port,service.serviceName,"mDNS")}
+                done.countDown()
+              }
             })
             while(alive()&&!done.await(100,TimeUnit.MILLISECONDS)){}
           }
@@ -101,6 +106,17 @@ class LanDiscovery(private val context:Context):Closeable {
     finally{scan.stopped.set(true);workers?.shutdownNow();if(multicast?.isHeld==true)multicast.release();scan.running.set(false)}
   }
   companion object {
+    @Suppress("DEPRECATION") internal fun rhFilesAddress(info:NsdServiceInfo):InetAddress?=
+      if(android.os.Build.VERSION.SDK_INT>=34)info.hostAddresses.firstOrNull{it is Inet4Address} else info.host?.takeIf{it is Inet4Address}
+    internal fun rhFilesRecord(info:NsdServiceInfo):JSONObject?=try {
+      require(info.serviceType.trimEnd('.') in setOf("_rhfiles._tcp","_rhfiles._tcp.local"))
+      val address=rhFilesAddress(info)?.hostAddress?:return null
+      require(PairingData.localAddress(address)&&info.port in 1..65535)
+      require(info.attributes["v"]?.toString(Charsets.UTF_8)=="1")
+      val fp=info.attributes["fp"]?.toString(Charsets.UTF_8)?:return null
+      require(fp.matches(Regex("[0-9a-f]{64}")))
+      JSONObject().put("name",info.serviceName.filter{!it.isISOControl()}.take(100)).put("url","https://$address:${info.port}").put("fingerprint",fp)
+    }catch(_:Exception){null}
     internal fun sameSubnet(a:ByteArray,b:ByteArray,prefix:Int)=a.size==b.size&&prefix in 1..a.size*8&&(0 until prefix).all{bit->(a[bit/8].toInt() shr (7-bit%8) and 1)==(b[bit/8].toInt() shr (7-bit%8) and 1)}
     internal fun probe(id:String)="""<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:p="http://schemas.xmlsoap.org/ws/2006/02/devprof"><s:Header><a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</a:Action><a:MessageID>$id</a:MessageID><a:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To></s:Header><s:Body><d:Probe><d:Types>p:Device</d:Types></d:Probe></s:Body></s:Envelope>"""
     internal fun wsName(bytes:ByteArray,id:String):String?=try{

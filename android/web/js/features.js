@@ -184,6 +184,7 @@ const androidFeatures = (() => {
       onSaved?.();
     },'保存连接');
     pending.then(root=>{if(!root)return;const type=root.elements.type;
+      if(!existing.id)rhFilesConnect.mount(root);
       function update(){
         const rh=type.value==='rhfiles',pair=rh&&!existing.id,web=type.value==='webdav';
         for(const name of ['host','port','share','domain','url','insecure','pairing','fingerprint','username','password']){

@@ -96,7 +96,7 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 
 ### 开发与测试
 
-开发分支已加入不依赖 SMB 的[局域网 HTTPS 文件服务](docs/LAN-SERVICE.md)：专用 JSON API 与 WebDAV 共用文件/权限核心，Android 可配对访问。默认只读，首版不覆盖已有目标；尚未打入现有正式发布包。
+Windows 0.1.76 / Android 0.1.25 起提供不依赖 SMB 的[局域网 HTTPS 文件服务](docs/LAN-SERVICE.md)：专用 JSON API 与 WebDAV 共用文件/权限核心，手机支持离线扫码或局域网发现后核对身份配对。默认只读，首版不覆盖已有目标。
 
 Windows 需要 `rust-toolchain.toml` 指定的 Rust、WebView2；发布打包还需要 .NET 8 与 Velopack CLI 1.2.0。
 
@@ -190,7 +190,7 @@ Apple Silicon (M-series, arm64) builds share the desktop source version. They ar
 
 ### Development and tests
 
-The development branch adds an opt-in [LAN HTTPS file service](docs/LAN-SERVICE.md): native JSON and WebDAV interfaces share one confined file/permission core, with a paired Android client. Read-only by default, no destination overwrites in v1. This is not yet included in existing published packages.
+Windows 0.1.76 / Android 0.1.25 add an opt-in [LAN HTTPS file service](docs/LAN-SERVICE.md): native JSON and WebDAV interfaces share one confined file/permission core, with offline QR pairing or LAN discovery plus explicit identity verification. Read-only by default, no destination overwrites in v1.
 
 Windows needs the Rust toolchain in `rust-toolchain.toml` and WebView2; packaging additionally requires .NET 8 and Velopack CLI 1.2.0.
 

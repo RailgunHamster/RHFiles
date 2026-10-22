@@ -102,6 +102,7 @@ pub struct Status {
     pub shares: Vec<ShareConfig>,
     pub devices: Vec<Device>,
     pub active_uploads: usize,
+    pub discovery_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]

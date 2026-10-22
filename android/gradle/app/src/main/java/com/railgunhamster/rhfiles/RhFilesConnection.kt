@@ -50,9 +50,7 @@ internal class RhFilesConnection(private val config:JSONObject) {
       if(clients.size>=32){val first=clients.keys.first();clients.remove(first)?.connectionPool?.evictAll()};clients[key]=client;return client
     }
     fun pair(uri:String,name:String):JSONObject {
-      require(uri.length in 20..8192&&uri.startsWith("rhfiles-connect:v1:")){"请粘贴电脑端完整配对信息"}
-      val bytes=Base64.decode(uri.removePrefix("rhfiles-connect:v1:"),Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-      val data=JSONObject(String(bytes,Charsets.UTF_8));require(data.getInt("version")==1){"配对版本不兼容"}
+      val data=PairingData.parse(uri)
       require(name.isNotBlank()&&name.length<=120){"请填写设备名称"}
       val endpoints=data.getJSONArray("endpoints");require(endpoints.length() in 1..16){"电脑未提供可用地址"}
       require(data.getString("code").matches(Regex("[0-9]{10}"))){"配对码无效"}

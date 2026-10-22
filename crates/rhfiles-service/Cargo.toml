@@ -25,6 +25,7 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 bytes = "1"
 xmltree = "0.12"
 if-addrs = "0.15"
+mdns-sd = "0.21.6"
 percent-encoding = "2"
 unicode-normalization = "0.1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }

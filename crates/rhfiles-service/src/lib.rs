@@ -2,6 +2,7 @@
 //! Windows SMB/WebClient redirectors are never used for local shared roots.
 mod auth;
 mod dav;
+mod discovery;
 mod http;
 mod identity;
 mod locks;
@@ -29,6 +30,8 @@ pub struct Service {
     certificate: String,
     endpoints: Vec<String>,
     shares: Vec<ShareConfig>,
+    advertisement: Option<Arc<discovery::Advertisement>>,
+    discovery_error: Option<String>,
 }
 
 impl Service {
@@ -61,6 +64,15 @@ impl Service {
         };
         addresses.sort();
         addresses.dedup();
+        addresses.truncate(16);
+        let (advertisement, discovery_error) = if addresses.iter().any(|a| !a.is_loopback()) {
+            match discovery::Advertisement::start(&addresses, port, &fingerprint) {
+                Ok(v) => (Some(Arc::new(v)), None),
+                Err(_) => (None, Some("mDNS 自动发现未能启动，仍可扫码或粘贴配对信息 / Discovery unavailable; QR and manual pairing still work".into())),
+            }
+        } else {
+            (None, None)
+        };
         let endpoints = addresses
             .into_iter()
             .take(16)
@@ -71,6 +83,7 @@ impl Service {
         let server_state = state.clone();
         let running = Arc::new(AtomicBool::new(true));
         let flag = running.clone();
+        let announcement = advertisement.clone();
         // Separate runtime keeps slow local disk work out of the application UI.
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
@@ -99,6 +112,9 @@ impl Service {
                     }
                 });
                 flag.store(false, Ordering::Release);
+                if let Some(advertisement) = announcement {
+                    advertisement.stop();
+                }
             })?;
         Ok(Self {
             state,
@@ -109,6 +125,8 @@ impl Service {
             certificate,
             endpoints,
             shares,
+            advertisement,
+            discovery_error,
         })
     }
     pub fn status(&self) -> Status {
@@ -121,6 +139,7 @@ impl Service {
             shares: self.shares.clone(),
             devices: self.state.auth.devices(),
             active_uploads: self.state.uploads.count(),
+            discovery_error: self.discovery_error.clone(),
         }
     }
     pub fn credential(&self, name: &str, permissions: Permissions) -> Result<Credential> {
@@ -152,6 +171,9 @@ impl Service {
     }
     pub fn stop(&self) {
         self.running.store(false, Ordering::Release);
+        if let Some(advertisement) = &self.advertisement {
+            advertisement.stop();
+        }
         self.state.auth.stop();
         self.handle.shutdown();
     }

@@ -1,3 +1,17 @@
+RHFiles Android 0.1.25
+
+1. 新增不依赖 SMB 的电脑 HTTPS 文件服务连接：浏览、图片、视频分段读取和后台传输。需电脑端 0.1.76+。
+2. 支持本机离线扫码配对，不依赖 Google 服务、不上传相机画面；保留粘贴入口。
+3. 支持 mDNS 发现局域网电脑；核对电脑身份后输入短期配对码。不会自动信任、登录或保存发现的电脑。
+4. 默认只读，电脑分别授权写入/永久删除；tus 分块上传确认偏移，目标已存在时绝不覆盖。设备密码由 Android Keystore 加密存储。
+
+1. Native desktop HTTPS connections independent of SMB, with browsing, images, video ranges and background transfers. Requires desktop 0.1.76+.
+2. Offline QR pairing without Google services or camera uploads; manual paste remains available.
+3. Bounded mDNS discovery with explicit computer identity verification and a short-lived pairing code, never automatic trust/login.
+4. Read-only default, separate write/delete grants, acknowledged tus uploads, no destination overwrites and Android Keystore credentials.
+
+Previous releases / 历史版本
+
 RHFiles Android 0.1.23
 
 1. 回收站支持全选、多选恢复、批量永久删除和清空全部，统一文件列表、图标、按钮和空状态的视觉风格。

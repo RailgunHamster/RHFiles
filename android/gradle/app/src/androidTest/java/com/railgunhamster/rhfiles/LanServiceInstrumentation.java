@@ -13,12 +13,49 @@ public class LanServiceInstrumentation extends Instrumentation {
     private Bundle args;
     @Override public void onCreate(Bundle value){super.onCreate(value);args=value;start();}
     private void require(boolean value,String message)throws Exception{if(!value)throw new Exception(message);}
+    private void discoverSelf()throws Exception {
+        android.net.nsd.NsdManager nsd=(android.net.nsd.NsdManager)getTargetContext().getSystemService(Context.NSD_SERVICE);
+        java.util.concurrent.CountDownLatch registered=new java.util.concurrent.CountDownLatch(1);
+        String fingerprint=String.join("",Collections.nCopies(32,"cd"));
+        android.net.nsd.NsdServiceInfo info=new android.net.nsd.NsdServiceInfo();info.setServiceName("RHFiles emulator QA");info.setServiceType("_rhfiles._tcp.");info.setPort(49128);info.setAttribute("v","1");info.setAttribute("fp",fingerprint);
+        android.net.nsd.NsdManager.RegistrationListener listener=new android.net.nsd.NsdManager.RegistrationListener(){
+            public void onServiceRegistered(android.net.nsd.NsdServiceInfo i){registered.countDown();}
+            public void onRegistrationFailed(android.net.nsd.NsdServiceInfo i,int code){}
+            public void onServiceUnregistered(android.net.nsd.NsdServiceInfo i){}
+            public void onUnregistrationFailed(android.net.nsd.NsdServiceInfo i,int code){}
+        };
+        LanDiscovery discovery=new LanDiscovery(getTargetContext());String scan=null;
+        try {
+            nsd.registerService(info,android.net.nsd.NsdManager.PROTOCOL_DNS_SD,listener);
+            require(registered.await(8,java.util.concurrent.TimeUnit.SECONDS),"NSD fixture registration");
+            scan=discovery.start("rhfiles");long deadline=System.currentTimeMillis()+10000;boolean found=false;
+            do{JSONObject state=discovery.state(scan);JSONArray devices=state.getJSONArray("devices");for(int i=0;i<devices.length();i++){JSONObject d=devices.getJSONObject(i);if(d.optString("fingerprint").equals(fingerprint)&&d.getInt("port")==49128)found=true;}if(found||!state.getBoolean("running"))break;Thread.sleep(200);}while(System.currentTimeMillis()<deadline);
+            require(found,"Android NSD resolves RHFiles IPv4/TXT identity on a real emulator");
+        }finally{if(scan!=null)discovery.stop(scan);discovery.close();try{nsd.unregisterService(listener);}catch(Exception ignored){}}
+    }
+    private void scannerUi()throws Exception {
+        getUiAutomation().grantRuntimePermission(getTargetContext().getPackageName(),android.Manifest.permission.CAMERA);
+        Activity scanner=startActivitySync(new Intent(getTargetContext(),PairingScanActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        waitForIdleSync();Thread.sleep(1500);
+        File flag=new File(getTargetContext().getNoBackupFilesDir(),"automation-v1");byte[] previous=flag.exists()?java.nio.file.Files.readAllBytes(flag.toPath()):null;
+        try{
+            try(FileOutputStream out=new FileOutputStream(flag)){out.write(1);}
+            final Throwable[] failure=new Throwable[1];
+            runOnMainSync(()->{try{JSONArray controls=NativeAutomation.INSTANCE.list();require(controls.length()>=4,"Scanner native actions are enumerable");boolean canceled=false;for(int i=0;i<controls.length();i++){JSONObject c=controls.getJSONObject(i);String label=c.optString("label");if(label.startsWith("Cancel")||label.startsWith("取消")){NativeAutomation.INSTANCE.dispatch(getTargetContext(),"automation.ui.invoke",new JSONObject().put("controlId",c.getString("controlId")));canceled=true;break;}}require(canceled,"Scanner cancellation through native automation API");}catch(Throwable e){failure[0]=e;}});
+            if(failure[0]!=null)throw new Exception("Scanner UI",failure[0]);
+        }finally{runOnMainSync(scanner::finish);if(previous==null)flag.delete();else try(FileOutputStream out=new FileOutputStream(flag)){out.write(previous);}}
+    }
     @Override public void onStart(){
         Bundle result=new Bundle();String id=null;File source=null;
         RemoteStorage store=new RemoteStorage(getTargetContext(),null,null);
         try {
             require(android.os.Build.FINGERPRINT.contains("generic")||android.os.Build.MODEL.contains("sdk"),"Emulator required");
             getTargetContext().getSharedPreferences("updates-v1",0).edit().putBoolean("autoCheck",false).commit();
+            byte[] png=android.util.Base64.decode(args.getString("qrBase64"),android.util.Base64.DEFAULT);
+            android.graphics.Bitmap bitmap=android.graphics.BitmapFactory.decodeByteArray(png,0,png.length);
+            require(bitmap!=null,"QR bitmap fixture");
+            try{require(args.getString("qrUri").equals(new PairingQrReader().read(bitmap)),"Actual offline native QR decoder and payload validation");}finally{bitmap.recycle();}
+            discoverSelf();scannerUi();
             JSONObject config=RhFilesConnection.Companion.pair(args.getString("uri"),"Emulator LAN QA");
             require(config.getString("url").startsWith("https://127.0.0.1:"),"Loopback fixture required");
             id=store.save(config);String root="remote://"+id+"/";
@@ -39,7 +76,7 @@ public class LanServiceInstrumentation extends Instrumentation {
             // Output names are checked against the exact source below; do not
             // rely on job IDs being embedded in the user-visible final name.
             String expected=source.getName();require(store.list(folder).stream().anyMatch(e->e.getName().equals(expected)&&e.getSize()==data.length),"Background publish");
-            result.putString("pass","true");result.putString("checks","Android Keystore pairing; native shared root and Unicode listing; media Range; tus upload; rename; separate delete grant; real background 2.5MB copy and confirmed progress");
+            result.putString("pass","true");result.putString("checks","Offline native QR decode; scanner camera UI and native automation; Android NSD discovery; Keystore pairing; Unicode listing; media Range; tus upload; rename; separate delete grant; real background 2.5MB copy and confirmed progress");
             finish(Activity.RESULT_OK,result);
         }catch(Throwable error){result.putString("error",String.valueOf(error));finish(Activity.RESULT_CANCELED,result);}
         finally{if(id!=null)try{store.remove(id);}catch(Exception ignored){}if(source!=null)source.delete();}

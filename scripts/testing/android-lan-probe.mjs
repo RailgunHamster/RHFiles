@@ -18,7 +18,12 @@ try{
   const pair=await app.evaluate("call('lan_service_pair',{permissions:{write:true,delete:false}})");
   const payload=JSON.parse(Buffer.from(pair.connectionUri.split(':')[2],'base64url').toString());payload.endpoints=[`https://127.0.0.1:${port}`];
   const uri='rhfiles-connect:v1:'+Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const output=run('shell','am','instrument','-w','-r','-e','uri',uri,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.LanServiceInstrumentation');
+  // Render the actual service QR, not a second implementation of its encoder.
+  assert.ok(pair.qrSvg);
+  const qr=await app.evaluate(`(async()=>{const image=new Image();image.src='data:image/svg+xml;base64,'+btoa(${JSON.stringify(pair.qrSvg)});await image.decode();const canvas=document.createElement('canvas');canvas.width=640;canvas.height=640;canvas.getContext('2d').drawImage(image,0,0,640,640);return canvas.toDataURL('image/png').split(',')[1];})()`);
+  // The QR contains the real LAN endpoints. Decoder output is checked against
+  // that data, then transport uses adb's isolated loopback endpoint.
+  const output=run('shell','am','instrument','-w','-r','-e','uri',uri,'-e','qrUri',pair.connectionUri,'-e','qrBase64',qr,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.LanServiceInstrumentation');
   fs.writeFileSync(path.join(app.artifactDir,'android-lan-probe.txt'),output);assert.match(output,/pass=true/);assert.doesNotMatch(output,/error=/);
   assert.equal(fs.readFileSync(path.join(directory,'手机目录','重命名.txt'),'utf8'),'hello');
   const copied=fs.readdirSync(directory).find(n=>n.startsWith('rhfiles-lan-')&&n.endsWith('.bin'));assert.ok(copied);

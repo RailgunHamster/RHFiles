@@ -19,6 +19,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <!--
       All-files access. On Android 11+ this is the only way to enumerate and
@@ -79,6 +82,7 @@
         </activity>
 
         <!-- Books get a separate read-only origin/renderer, never Tauri file IPC. -->
+        <activity android:name=".PairingScanActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" />
         <activity android:name=".EbookActivity" android:exported="false" android:resizeableActivity="true" android:process=":ebook" />
         <service android:name=".NearbyService" android:exported="false" android:foregroundServiceType="dataSync" />
 

@@ -23,6 +23,7 @@ const lanService=(()=>{
         await call('lan_service_start',{config});await mount(host);
       }),'start'));card.append(rows,port.row);
     }else{
+      if(status.discoveryError)card.append(el('p','settings-update-failure',status.discoveryError));
       for(const endpoint of status.endpoints){const address=el('code','settings-card-description',endpoint);address.style.cssText='display:block;font-size:13px;line-height:1.8;overflow-wrap:anywhere';card.append(address);}
       card.append(el('p','settings-card-description',text('WebDAV 地址：','WebDAV URL: ')+status.endpoints.map(p=>p+'/dav/').join(' · ')));
       const grants=el('div'),write=input(text('允许新设备写入、重命名','Allow new devices to write / rename'),false,'checkbox'),remove=input(text('允许新设备永久删除文件','Allow new devices to permanently delete'),false,'checkbox');grants.append(write.row,remove.row);card.append(grants);
@@ -31,7 +32,7 @@ const lanService=(()=>{
       actions.append(button(text('生成手机配对码','Pair a phone'),safe(async()=>{
         const pair=await call('lan_service_pair',{permissions:permissions()});pairing.replaceChildren();pairing.hidden=false;
         const img=el('img');img.width=240;img.height=240;img.alt=text('RHFiles 配对二维码','RHFiles pairing QR code');img.src='data:image/svg+xml;base64,'+btoa(pair.qrSvg);
-        pairing.append(img,el('h3','',pair.code),el('p','settings-card-description',text('两分钟内有效，仅能使用一次。手机：网络位置 → 连接 RHFiles，粘贴配对信息。','Valid for two minutes, single use. Phone: Network locations → Connect RHFiles, paste pairing data.')),
+        pairing.append(img,el('h3','',pair.code),el('p','settings-card-description',text('身份核对：','Verify identity: ')+pair.fingerprint.slice(0,12).match(/.{4}/g).join(' ')),el('p','settings-card-description',text('两分钟内有效，仅能使用一次。手机：网络位置 → 添加 → 扫码，或发现电脑后核对身份并填写配对码。','Valid for two minutes, single use. Phone: Network locations → Add → Scan, or discover this computer, verify its identity and enter the code.')),
           button(text('复制配对信息','Copy pairing data'),safe(()=>copy(pair.connectionUri)),'pair.copy'));
       }),'pair'),button(text('创建 WebDAV 专用账号','Create WebDAV app credential'),safe(async()=>{
         const name=deviceName.field.value.trim();if(!name)throw Error(text('请填写账号备注','Enter a credential label'));

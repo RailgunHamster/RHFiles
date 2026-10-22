@@ -116,6 +116,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\7z.exe") -Dest
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\7z.dll") -Destination (Join-Path $stageDirectory "7z.dll")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\7zip-LICENSE.txt") -Destination (Join-Path $stageDirectory "7zip-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\LICENSE.txt") -Destination (Join-Path $stageDirectory "Three.js-LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\thirdparty\lan-service') -Destination (Join-Path $stageDirectory 'LAN-Service-Licenses') -Recurse
 Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\DRACO-LICENSE.txt") -Destination (Join-Path $stageDirectory "Draco-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\FFLATE-LICENSE.txt") -Destination (Join-Path $stageDirectory "fflate-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src\vendor\three\licenses\MESHOPTIMIZER-LICENSE.md") -Destination (Join-Path $stageDirectory "meshoptimizer-LICENSE.md")
