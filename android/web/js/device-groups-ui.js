@@ -26,15 +26,16 @@ const deviceGroupView=(()=>{
       const svg=value.qrSvg||await options.qr?.(value.uri);
       if(svg){const image=el('img','dg-qr');image.alt=text('设备组二维码','Device group QR');image.src='data:image/svg+xml;base64,'+btoa(svg);output.prepend(image);}else output.append(el('p','',text('信息较长，请复制完整文本传递，不要截断。','Too long for a QR: transfer the complete text without truncation.')));
     }
-    const name=input(text('设备名称','Device name'),options.deviceName),groupName=input(text('新设备组名称','New group name'),text('我的设备','My devices'));
+    const initialState=await call('state',{});if(!root.isConnected)return;
+    const name=input(text('设备名称','Device name'),initialState.defaultDeviceName||options.deviceName||''),groupName=input(text('新设备组名称','New group name'),text('我的设备','My devices'));
     controls.append(name.row,groupName.row,button(text('创建新设备组','Create group'),async()=>{await call('create',{name:groupName.field.value.trim(),deviceName:name.field.value.trim()});await paint();},'create'),button(text('生成本机入组请求','Request to join'),async()=>{await show(await call('request',{deviceName:name.field.value.trim()}));alert.textContent=text('把请求交给有邀请权限的成员。对方批准后，把批准信息贴回下方并加入。新的请求会使上次未使用的批准失效。','Send the request to a member with invitation rights. Paste their approval below. A new request invalidates an unused old approval.');},'request'));
     const incoming=input(text('粘贴入组请求或批准信息','Paste a request or approval'),'','textarea'),trust=input(text('已核对信息来自我信任的设备','I verified this data came from a trusted device'),false,'checkbox');controls.append(incoming.row,trust.row);
     if(options.scan)controls.append(button(text('扫码填写','Scan data'),async()=>{const result=await options.scan();if(result)incoming.field.value=result.uri;},'scan'));
     controls.append(button(text('使用批准信息加入','Join with approval'),async()=>{if(!trust.field.checked)throw Error(text('请先核对来源并勾选确认','Verify the source and check the confirmation first'));await call('join',{uri:incoming.field.value.trim(),confirmed:true});await paint();alert.textContent=text('已加入。电脑需在文件服务中设置共享目录并启动服务。手机点“刷新组设备”发现其他成员电脑。','Joined. Computers must configure roots and start file service. Refresh group devices on your phone to learn other member computers.');},'join'));
     if(options.mobile)controls.append(button(text('刷新组设备','Refresh group devices'),async()=>{alert.textContent=text('正在连接已知成员并交换公开证明…','Connecting to known members…');const r=await call('refresh',{});await paint();alert.textContent=text('已连接 ','Connected ')+r.connected+text(' 台；可用网络位置 ','; locations ')+r.locations+(r.errors?.length?'\n'+r.errors.map(v=>v.device+'：'+v.message).join('\n'):'');},'refresh'));
-    async function paint(){
+    async function paint(state){
       await settingsAutoSave.flush(root);
-      const state=await call('state',{});if(!root.isConnected)return;body.replaceChildren(el('p','dg-identity',text('本机身份：','Device identity: ')+state.deviceId));
+      state=state||await call('state',{});if(!root.isConnected)return;body.replaceChildren(el('p','dg-identity',text('本机身份：','Device identity: ')+state.deviceId));
       if(!state.groups.length)body.append(el('p','',text('尚未加入设备组。已有组请选择“生成本机入组请求”，不要另建同名组。','No groups yet. To join an existing group, request to join; creating a group with the same name makes a separate group.')));
       for(const group of state.groups){
         const card=el('section','dg-card'),head=el('h4','',group.name),summary=el('p','dg-identity',group.id);card.append(head,summary);
@@ -52,7 +53,7 @@ const deviceGroupView=(()=>{
         body.append(card);
       }
     }
-    await paint();
+    await paint(initialState);
   }
   return {mount,register};
 })();

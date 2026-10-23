@@ -14,6 +14,12 @@
 
 如果由手机先创建组，再批准电脑加入：电脑启动文件服务后「显示组公开信息」，在手机粘贴到入组区并确认，可更新该电脑签名的服务地址。不需要重新配对。地址全部变化时也可使用这一方式恢复连接。
 
+## 设备名称
+
+设备名称输入框默认读取本机名称：Windows 使用计算机名，其他桌面系统使用本机主机名；Android 优先读取系统设置中的设备名称，不可读取时使用厂商/型号。可在创建组或申请入组前手动修改。默认名称不会自动重命名已有成员，也不改变公钥身份或本机移除记录。
+
+脚本可从 `groups.state` 返回的 `defaultDeviceName` 读取同一默认值。
+
 ## 离线传播
 
 A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明、B 的授权和 B 签发的 C 成员证明；C 连接 A 时带上这些公开签名，A 可以直接核验，B 不必在线。电脑自身不能邀请则无法签发有效新成员介绍。已接受的权限不会被来自其他成员的同名记录悄悄提升。
@@ -48,6 +54,8 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 本机 JSON 命令：`groups.state/create/request/approve/join/export/remove/restore/configure`；手机还提供 `groups.refresh`。使用现有 `scripts/rhfiles-api.mjs` 命令行入口枚举动作及参数。`join`、`restore` 必须明确传 `confirmed: true`；没有网络端的恢复/权限管理 API。二维码渲染属于公开数据处理，手机 Rust 命令为 `device_group_qr`。
 
 ## English
+
+The device-name field defaults to the local computer/host name, or Android's configured device name with a manufacturer/model fallback. It remains editable before creating a group or requesting membership. Defaults never rename existing members or change cryptographic identities/local refusals.
 
 Create a group on one computer; on a new device generate a request, have an invite-capable member approve it, then explicitly accept the returned approval on the requesting device. Phone settings live under Storage & permissions; computer settings under LAN file service. Refresh group devices on the phone to exchange signed introductions and learn other member computers. Long public proofs use complete text instead of truncated QR codes.
 

@@ -5,6 +5,41 @@ use rhfiles_service::{
     groups::{Packet, Signed},
 };
 use serde_json::{Value, json};
+fn clean_device_name(value: &str) -> Option<String> {
+    let mut name = String::new();
+    for ch in value.trim().chars().filter(|ch| !ch.is_control()) {
+        if name.len() + ch.len_utf8() > 120 {
+            break;
+        }
+        name.push(ch);
+    }
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_owned())
+}
+fn default_device_name() -> String {
+    #[cfg(windows)]
+    if let Some(name) = std::env::var("COMPUTERNAME")
+        .ok()
+        .and_then(|v| clean_device_name(&v))
+    {
+        return name;
+    }
+    #[cfg(not(windows))]
+    {
+        // Local kernel hostname only: never resolve DNS or open a network path.
+        let mut bytes = [0u8; 256];
+        if unsafe { libc::gethostname(bytes.as_mut_ptr().cast(), bytes.len()) } == 0 {
+            let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+            if let Some(name) = clean_device_name(&String::from_utf8_lossy(&bytes[..end])) {
+                return name;
+            }
+        }
+    }
+    std::env::var("HOSTNAME")
+        .ok()
+        .and_then(|v| clean_device_name(&v))
+        .unwrap_or_else(|| "Computer".into())
+}
 fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
     v.get(key)
         .and_then(Value::as_str)
@@ -52,7 +87,11 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
     let groups = crate::lan_service::groups()?;
     let result = (|| -> rhfiles_service::Result<Value> {
         Ok(match command {
-            "state" => groups.state()?,
+            "state" => {
+                let mut state = groups.state()?;
+                state["defaultDeviceName"] = Value::String(default_device_name());
+                state
+            }
             "create" => json!(groups.create(
                 field(args, "name").map_err(err)?,
                 field(args, "deviceName").map_err(err)?,
@@ -135,4 +174,37 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
 }
 fn err(message: impl Into<String>) -> rhfiles_service::Error {
     rhfiles_service::Error::new("invalid_group", message)
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+    #[test]
+    fn system_names_are_safe_and_within_the_signed_name_limit() {
+        assert_eq!(
+            clean_device_name("  WINSERVER  ").as_deref(),
+            Some("WINSERVER")
+        );
+        assert_eq!(clean_device_name(" \r\n\0 "), None);
+        assert_eq!(clean_device_name("我的\n电脑").as_deref(), Some("我的电脑"));
+        for value in ["a".repeat(200), "中".repeat(100), "🖥️".repeat(100)] {
+            let name = clean_device_name(&value).unwrap();
+            assert!(name.len() <= 120);
+            assert!(!name.chars().any(char::is_control));
+            assert!(name.is_char_boundary(name.len()));
+        }
+    }
+    #[test]
+    fn local_machine_name_is_nonempty_without_network_access() {
+        let name = default_device_name();
+        assert!(!name.trim().is_empty());
+        assert!(name.len() <= 120);
+        #[cfg(windows)]
+        if let Some(expected) = std::env::var("COMPUTERNAME")
+            .ok()
+            .and_then(|v| clean_device_name(&v))
+        {
+            assert_eq!(name, expected);
+        }
+    }
 }

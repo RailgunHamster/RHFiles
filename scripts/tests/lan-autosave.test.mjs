@@ -117,6 +117,26 @@ test('device-group local grants autosave without a separate button or member-lis
   fail=true;await change(labeled(card,'允许永久删除'),true);assert.equal(labeled(card,'允许永久删除').checked,false);assert.match(host.textContent,/保存失败.*cannot save/);
   assert.ok(!all(host).some(n=>n.tagName==='button'&&n.textContent==='保存本机组权限'));
 });
+for(const [label,systemName,fallback]of [['computer','WINSERVER','我的电脑'],['phone','Moto 工作手机','我的手机'],['old backend',null,'Fixture']]){
+  test('device-group form uses the local '+label+' name without overwriting manual input',async()=>{
+    const {host,ctx}=sandbox(),calls=[],state={deviceId:'self',defaultDeviceName:systemName,groups:[]};
+    load(ctx,'device-groups-ui.js');const view=vm.runInContext('deviceGroupView',ctx);
+    await view.mount(host,{zh:true,deviceName:fallback,call:async(command,args)=>{
+      calls.push({command,args:plain(args)});
+      if(command==='state')return plain(state);
+      if(command==='request')return {uri:'test-public-request'};
+      if(command==='create')return 'group';
+      throw Error(command);
+    }});
+    const name=labeled(host,'设备名称');assert.equal(name.value,systemName||fallback);
+    await all(host).find(n=>n.tagName==='button'&&n.textContent==='创建新设备组').fire('click');
+    assert.equal(calls.find(c=>c.command==='create').args.deviceName,systemName||fallback);
+    name.value='用户自定义的名字';
+    await all(host).find(n=>n.tagName==='button'&&n.textContent==='生成本机入组请求').fire('click');
+    assert.equal(calls.find(c=>c.command==='request').args.deviceName,'用户自定义的名字');
+    assert.equal(name.value,'用户自定义的名字');
+  });
+}
 test('desktop and Android share identical autosave/group implementations loaded in dependency order',()=>{
   for(const name of ['settings-autosave.js','device-groups-ui.js'])assert.ok(fs.readFileSync(path.join(root,'src/js',name)).equals(fs.readFileSync(path.join(root,'android/web/js',name))),name);
   for(const page of ['src/index.html','android/web/index.html']){const source=fs.readFileSync(path.join(root,page),'utf8');assert.ok(source.indexOf('js/settings-autosave.js')<source.indexOf('js/device-groups-ui.js'));}

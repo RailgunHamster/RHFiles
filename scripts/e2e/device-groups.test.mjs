@@ -6,8 +6,12 @@ test('device-group UI and semantic APIs preserve local removal after relaunch',a
   try{
     await a.evaluate("setLang('zh');openSettings();switchSettingsSection('lan');true");
     await until(()=>a.evaluate("!!document.querySelector('.device-groups .dg-actions')"),'group controls');
+    const machineName=process.env.COMPUTERNAME;
+    assert.ok(machineName,'Windows computer name is available');
+    assert.equal(await a.evaluate("[...document.querySelectorAll('.device-groups label')].find(n=>n.textContent==='设备名称').querySelector('input').value"),machineName);
     await a.evaluate("[...document.querySelectorAll('.device-groups button')].find(b=>b.textContent==='创建新设备组').click()");
     const state=await until(async()=>{const s=await call(a,'state');return s.groups.length?s:null;},'created from actual UI');const id=state.groups[0].id;
+    assert.equal(state.defaultDeviceName,machineName);assert.equal(state.groups[0].members.find(m=>m.self).name,machineName);
     const request=await call(b,'request',{deviceName:'UI guest'});const approval=await call(a,'approve',{id,uri:request.uri,canInvite:false});await call(b,'join',{uri:approval.uri,confirmed:true});const peer=(await call(b,'state')).deviceId;
     await a.evaluate("lanService.mount(document.getElementById('lan-service-settings'))");
     await until(()=>a.evaluate("document.querySelector('.device-groups')?.textContent.includes('UI guest')"),'member displayed');

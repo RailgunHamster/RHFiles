@@ -45,6 +45,7 @@ internal object DeviceGroups {
     val g=groups()
     if(command=="refresh")return refresh(remote)
     val result=g.run(command,args)
+    if(command=="state")(result as JSONObject).put("defaultDeviceName",DeviceNames.current(owner?:error("设备组尚未初始化")))
     if(command in listOf("remove","restore","configure","join")){synchronized(this){sessions.clear()}}
     if(command=="join")importLocations(remote)
     if(command=="remove")removeLocation(remote,args.getString("id"),args.getString("peer"))
