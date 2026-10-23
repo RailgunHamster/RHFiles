@@ -64,6 +64,20 @@ public class LanServiceInstrumentation extends Instrumentation {
     private void groupPhase(Bundle result)throws Exception {
         String phase=args.getString("groupPhase"),id=args.getString("groupId"),peer=args.getString("peer");
         if(phase.equals("request")){JSONObject request=object("groups.request",new JSONObject().put("deviceName","Android group QA"));result.putString("groupData",android.util.Base64.encodeToString(request.getString("uri").getBytes("UTF-8"),android.util.Base64.NO_WRAP));return;}
+        if(phase.equals("forget")||phase.equals("forgotten")){
+            JSONObject before=object("groups.state",new JSONObject());require(!before.getString("defaultDeviceName").isEmpty(),"System device-name default in minified APK");
+            if(phase.equals("forget")){
+                boolean rejected=false;try{call("groups.forget",new JSONObject().put("id",id).put("confirmed",false));}catch(Exception expected){rejected=true;}require(rejected,"Forgetting requires local confirmation");
+                require(before.getJSONArray("groups").length()==object("groups.state",new JSONObject()).getJSONArray("groups").length(),"Rejected deletion preserves groups");
+                call("groups.create",new JSONObject().put("name","Keep other local group").put("deviceName",before.getString("defaultDeviceName")));
+                call("groups.forget",new JSONObject().put("id",id).put("confirmed",true));
+            }
+            JSONArray remaining=object("groups.state",new JSONObject()).getJSONArray("groups");require(remaining.length()==1,"Only the selected local group was forgotten");require(!remaining.getJSONObject(0).getString("id").equals(id),"No forgotten-group or restore stub");
+            require(remaining.getJSONObject(0).getString("name").equals("Keep other local group"),"Other local group remains");
+            require(object("groups.refresh",new JSONObject()).getInt("locations")==0,"Refresh cannot recreate forgotten-group locations");
+            JSONArray connections=(JSONArray)call("connections",new JSONObject());for(int i=0;i<connections.length();i++)require(!connections.getJSONObject(i).optString("type").equals("rhfiles"),"Generated group connection removed");
+            return;
+        }
         if(phase.equals("join"))call("groups.join",new JSONObject().put("uri",new String(android.util.Base64.decode(args.getString("approval"),android.util.Base64.DEFAULT),"UTF-8")).put("confirmed",true));
         if(phase.equals("remove")){call("groups.remove",new JSONObject().put("id",id).put("peer",peer));}
         if(phase.equals("restore")){boolean rejected=false;try{call("groups.restore",new JSONObject().put("id",id).put("peer",peer).put("confirmed",false));}catch(Exception expected){rejected=true;}require(rejected,"No implicit local restore");call("groups.restore",new JSONObject().put("id",id).put("peer",peer).put("confirmed",true));}

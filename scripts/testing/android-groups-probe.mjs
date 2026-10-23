@@ -32,6 +32,8 @@ try{
   await restartPhase(id);
   phase('remove',{groupId:id,peer:aId});phase('localBlocked',{groupId:id,peer:aId});phase('restore',{groupId:id,peer:aId});
   const ui=phase('ui',{groupId:id});fs.writeFileSync(path.join(app.artifactDir,'android-device-groups.png'),Buffer.from(ui.match(/screenshot=([^\r\n]+)/)[1].trim(),'base64'));
+  phase('forget',{groupId:id});phase('forgotten',{groupId:id});
+  assert.ok((await call(app,'state')).groups.some(g=>g.id===id),'Phone forgetting does not delete the Windows group');
   await app.evaluate("setLang('zh');openSettings();switchSettingsSection('lan');true");await new Promise(r=>setTimeout(r,600));await app.screenshot('device-groups-native-interop');
-  console.log(JSON.stringify({pass:true,device,checks:'Android Keystore P-256 ↔ Rust signatures; offline B introduction; native group browsing; server removal; client refusal after process restart; refresh cannot re-add; explicit manual restore',artifacts:app.artifactDir}));
+  console.log(JSON.stringify({pass:true,device,checks:'Android Keystore P-256 ↔ Rust signatures; offline B introduction; native group browsing; server removal; persistent client refusal; explicit manual restore; confirmed group deletion; fresh process cannot restore group; other groups/clients intact',artifacts:app.artifactDir}));
 }finally{if(port)run('reverse','--remove','tcp:'+port);await app.evaluate("call('lan_service_stop',{})").catch(()=>{});app.close();b.close();}
