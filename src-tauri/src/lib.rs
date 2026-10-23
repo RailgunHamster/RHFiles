@@ -168,6 +168,7 @@ pub fn run() {
             lan_service::lan_service_credential,
             lan_service::lan_service_revoke,
             lan_service::lan_service_permissions,
+            lan_service::lan_service_defaults,
             lan_service::lan_service_startup,
             lan_service::lan_service_drives,
             device_groups::device_groups,

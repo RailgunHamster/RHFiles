@@ -11,12 +11,13 @@ const deviceGroupView=(()=>{
     for(const [operation,params]of Object.entries(operations))api.register('groups.'+operation,p=>call(operation,p),{params,risk:operation==='state'?'read':'external',description:'Local device-group '+operation+'; local refusals are never cleared by incoming proofs'});
   }
   async function mount(root,options){
+    await settingsAutoSave.flush();
     const text=(a,b)=>options.zh===false?b:a,call=options.call;
     root.classList.add('device-groups');root.replaceChildren();
     const title=el('h3','',text('设备组','Device groups')),note=el('p','',text('无需中心服务器。每台设备保留自己的私钥；组成员可以携带签名证明互相认识。本机移除只影响本机，任何同步都不能自动加回。','No central server or shared private key. Members carry signed introductions. Removal affects only this device and cannot be undone by synchronization.'));
     const alert=el('p','dg-status');alert.setAttribute('role','status');const controls=el('div','dg-actions'),body=el('div'),output=el('div');
     root.append(title,note,controls,alert,output,body);
-    const safe=fn=>async e=>{const button=e?.currentTarget;if(button)button.disabled=true;alert.textContent='';try{await fn();}catch(error){alert.textContent=String(error.message||error);}finally{if(button)button.disabled=false;}};
+    const safe=fn=>async e=>{const button=e?.currentTarget;if(button)button.disabled=true;alert.textContent='';try{await settingsAutoSave.flush(root);await fn();}catch(error){alert.textContent=String(error.message||error);}finally{if(button)button.disabled=false;}};
     function button(label,fn,id){const b=el('button',options.mobile?'':'dialog-btn',label);b.type='button';RHFilesUI.listen(b,'click',safe(fn),undefined,'groups.'+id);return b;}
     function input(label,value='',type='text'){const row=el('label','dg-field'),field=el(type==='textarea'?'textarea':'input');if(type==='checkbox'){field.type=type;field.checked=!!value;}else{if(type!=='textarea')field.type=type;field.value=value;if(type==='textarea')field.rows=3;}row.append(el('span','',label),field);return {row,field};}
     async function show(value){
@@ -32,6 +33,7 @@ const deviceGroupView=(()=>{
     controls.append(button(text('使用批准信息加入','Join with approval'),async()=>{if(!trust.field.checked)throw Error(text('请先核对来源并勾选确认','Verify the source and check the confirmation first'));await call('join',{uri:incoming.field.value.trim(),confirmed:true});await paint();alert.textContent=text('已加入。电脑需在文件服务中设置共享目录并启动服务。手机点“刷新组设备”发现其他成员电脑。','Joined. Computers must configure roots and start file service. Refresh group devices on your phone to learn other member computers.');},'join'));
     if(options.mobile)controls.append(button(text('刷新组设备','Refresh group devices'),async()=>{alert.textContent=text('正在连接已知成员并交换公开证明…','Connecting to known members…');const r=await call('refresh',{});await paint();alert.textContent=text('已连接 ','Connected ')+r.connected+text(' 台；可用网络位置 ','; locations ')+r.locations+(r.errors?.length?'\n'+r.errors.map(v=>v.device+'：'+v.message).join('\n'):'');},'refresh'));
     async function paint(){
+      await settingsAutoSave.flush(root);
       const state=await call('state',{});if(!root.isConnected)return;body.replaceChildren(el('p','dg-identity',text('本机身份：','Device identity: ')+state.deviceId));
       if(!state.groups.length)body.append(el('p','',text('尚未加入设备组。已有组请选择“生成本机入组请求”，不要另建同名组。','No groups yet. To join an existing group, request to join; creating a group with the same name makes a separate group.')));
       for(const group of state.groups){
@@ -39,7 +41,13 @@ const deviceGroupView=(()=>{
         card.append(button(text('显示组公开信息','Show public group data'),async()=>{await show(await call('export',{id:group.id}));},'export.'+group.id));
         const invite=input(text('允许新成员继续邀请其他设备（默认关闭）','Allow the new member to invite others (off by default)'),false,'checkbox');
         if(group.members.some(m=>m.self&&m.canInvite&&!m.blocked))card.append(invite.row,button(text('批准上方入组请求','Approve pasted request'),async()=>{if(!trust.field.checked)throw Error(text('请先核对请求来源并勾选确认','Verify the source and check the confirmation first'));await show(await call('approve',{id:group.id,uri:incoming.field.value.trim(),canInvite:invite.field.checked}));await paint();alert.textContent=text('把批准信息交回请求设备，在其上确认加入。','Return this approval to the requesting device.');},'approve.'+group.id));
-        if(!options.mobile){const enabled=input(text('向此组开放本机文件服务','Share local file service with this group'),group.enabled,'checkbox'),write=input(text('允许写入、重命名','Allow write / rename'),group.permissions.write,'checkbox'),remove=input(text('允许永久删除','Allow permanent delete'),group.permissions.delete,'checkbox');card.append(enabled.row,write.row,remove.row,button(text('保存本机组权限','Save local grants'),async()=>{await call('configure',{id:group.id,enabled:enabled.field.checked,permissions:{write:write.field.checked,delete:remove.field.checked}});await paint();},'configure.'+group.id));}
+        if(!options.mobile){
+          const enabled=input(text('向此组开放本机文件服务','Share local file service with this group'),group.enabled,'checkbox'),write=input(text('允许写入、重命名','Allow write / rename'),group.permissions.write,'checkbox'),remove=input(text('允许永久删除','Allow permanent delete'),group.permissions.delete,'checkbox'),feedback=el('p','dg-status');feedback.setAttribute('role','status');feedback.setAttribute('aria-live','polite');
+          settingsAutoSave.bind({root,fields:{enabled:enabled.field,write:write.field,delete:remove.field},id:'groups.configure.'+group.id,
+            save:value=>call('configure',{id:group.id,enabled:value.enabled,permissions:{write:value.write,delete:value.delete}}),status:(state,error)=>{
+              feedback.setAttribute('aria-busy',String(state==='saving'));feedback.textContent=state==='saving'?text('正在保存…','Saving…'):state==='saved'?text('已自动保存','Saved automatically'):text('保存失败，已恢复上次保存的设置：','Could not save; previous settings restored: ')+error;
+            }});card.append(enabled.row,write.row,remove.row,feedback);
+        }
         for(const peer of group.members){const row=el('div','dg-member'),info=el('div');info.append(el('strong','',peer.name+(peer.self?text('（本机）',' (this device)'):'')),el('span','',peer.blocked?text('本机已移除 · 需手动恢复','Locally removed · manual restore required'):peer.canInvite?text('可邀请新成员','Can invite members'):text('普通成员','Member')),el('code','dg-identity',peer.id));row.append(info,button(peer.blocked?text('手动恢复','Restore locally'):text('本机移除','Remove locally'),async()=>{const restoring=peer.blocked;const message=(restoring?text('确认在本机恢复此设备的访问权限？','Restore this device’s access on this device?'):text('仅在本机移除此设备？不会自动加回，需手动确认才能恢复。','Remove locally? Synchronization cannot add it back.'))+'\n'+peer.name+'\n'+peer.id;const confirmed=options.confirm?await options.confirm(message):window.confirm(message);if(!confirmed)return;await call(restoring?'restore':'remove',{id:group.id,peer:peer.id,...(restoring?{confirmed:true}:{})});await paint();},(peer.blocked?'restore.':'remove.')+group.id+'.'+peer.id));card.append(row);}
         body.append(card);
       }

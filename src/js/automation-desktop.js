@@ -34,6 +34,7 @@
   register('server.credential',object({name:string,permissions:grants},['name','permissions']),p=>call('lan_service_credential',p),'external');
   register('server.revoke',object({id:string},['id']),p=>call('lan_service_revoke',p),'external');
   register('server.permissions',object({id:string,permissions:grants},['id','permissions']),p=>call('lan_service_permissions',p),'external');
+  register('server.defaults',object({permissions:grants},['permissions']),p=>call('lan_service_defaults',p),'external','Save default grants for newly paired devices; existing devices and device groups are unchanged');
   register('server.startup',object({autoStart:boolean,login:boolean},['autoStart','login']),p=>call('lan_service_startup',p),'external');
   register('server.localDrives',object(),()=>call('lan_service_drives',{}),'read');
   api.provideState('application',()=>({platform:IS_MAC?'macos':'windows',ready:G.startupReady===true,window:G.windowLabel,dualPane:!!G.dualOn,activePane:G.lastActivePane,tabs:G.tabs.map(t=>({id:t.id,path:t.path,pinned:!!t.pinned,loaded:t._loaded===true})),rightTabs:(G.rpTabs||[]).map(t=>({id:t.id,path:t.path,pinned:!!t.pinned,loaded:t._loaded===true}))}));

@@ -35,10 +35,10 @@ test('desktop shared-folder UI and real HTTPS native/WebDAV service',async()=>{
     const credential=await app.evaluate("call('lan_service_credential',{name:'E2E device',permissions:{write:true,delete:false}})");
     for(const endpoint of state.status.endpoints)assert.equal((await request(state.status,credential,'GET',endpoint+'/api/v1/capabilities')).status,200,endpoint);
     await app.evaluate("lanService.mount(document.getElementById('lan-service-settings'))");
-    await app.evaluate(`(()=>{const host=document.getElementById('lan-service-settings'),box=[...host.querySelectorAll('h3')].find(n=>n.textContent==='E2E device').parentElement;box.querySelector('input').checked=false;[...box.querySelectorAll('button')].find(n=>n.textContent==='保存设备权限').click();})()`);
+    await app.evaluate(`(()=>{const host=document.getElementById('lan-service-settings'),box=[...host.querySelectorAll('h3')].find(n=>n.textContent==='E2E device').parentElement;const field=box.querySelector('input');field.checked=false;field.dispatchEvent(new Event('change',{bubbles:true}));})()`);
     await until(async()=>!(await app.evaluate("call('lan_service_state',{})")).status.devices[0].permissions.write,'saved device is read-only');
     assert.equal((await request(state.status,credential,'PUT','/dav/Files/blocked.txt','bad')).status,403);
-    await app.evaluate(`(()=>{const box=[...document.querySelectorAll('#lan-service-settings h3')].find(n=>n.textContent==='E2E device').parentElement;box.querySelector('input').checked=true;[...box.querySelectorAll('button')].find(n=>n.textContent==='保存设备权限').click();})()`);
+    await app.evaluate(`(()=>{const box=[...document.querySelectorAll('#lan-service-settings h3')].find(n=>n.textContent==='E2E device').parentElement;const field=box.querySelector('input');field.checked=true;field.dispatchEvent(new Event('change',{bubbles:true}));})()`);
     await until(async()=>(await app.evaluate("call('lan_service_state',{})")).status.devices[0].permissions.write,'device write restored without pairing');
     const list=await request(state.status,credential,'GET','/api/v1/list?path=/Files');assert.equal(list.status,200);assert.equal(JSON.parse(list.body).entries[0].name,'中文.txt');
     const range=await request(state.status,credential,'GET','/api/v1/content?path='+encodeURIComponent('/Files/中文.txt'),'',{Range:'bytes=3-5'});assert.equal(range.status,206);assert.equal(range.body,'345');

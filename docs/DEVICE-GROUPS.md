@@ -35,6 +35,10 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 电脑每个组可独立开启/关闭文件服务访问、写入重命名、永久删除，默认只读；共享根目录由电脑单独设置。普通成员和可邀请成员的文件访问权限相同，邀请权不是管理员远程修改共享权限的能力。
 
+文件服务里的权限、设备组访问和自动启动开关点选后立即保存，不需要另点保存按钮。保存中/已保存/失败原因会显示在对应选项旁，失败会恢复最后一次成功保存的值，不刷新整页或清空其他输入。开启登录启动会同时开启服务恢复；关闭服务恢复会同时关闭登录启动。
+
+「新配对设备的默认权限」只用于之后生成的配对码和 WebDAV 专用账号；已有账号、已有配对码和设备组权限不会被批量修改。默认仍为只读；默认权限独立保存在本机服务配置中，刷新、重启和重新启动监听都保留。脚本可使用 `server.defaults` 修改，使用 `server.state` 读取 `config.newDevicePermissions`。
+
 设备组使用 P-256/SHA-256 签名、60 秒单次随机挑战、固定 HTTPS 证书和最多 30 分钟的内存会话。每个文件请求/流还会实时检查本机拒绝和权限，移除不会等到会话过期才生效。只有 localhost、局域网、Tailscale 私有地址；不接受公网地址、不信任转发来源头、不跟随重定向、不通过代理发送组认证。
 
 手机私钥留在 Android Keystore。桌面私钥放在当前用户/虚拟桌面的私密服务数据目录，受共享路径保护。设备组身份、拒绝记录、会话凭据和自动生成连接不参加手机配置备份或 WebDAV 同步；新设备必须自己加入，不能继承另一台的身份。
@@ -48,5 +52,7 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 Create a group on one computer; on a new device generate a request, have an invite-capable member approve it, then explicitly accept the returned approval on the requesting device. Phone settings live under Storage & permissions; computer settings under LAN file service. Refresh group devices on the phone to exchange signed introductions and learn other member computers. Long public proofs use complete text instead of truncated QR codes.
 
 Each device has its own P-256 private key. Signed introductions can be carried by a member while its introducer is offline. Local file roots and grants never travel in those proofs. Removing a device creates a persistent local public-key refusal across local groups; no incoming proof, timestamp, refresh or update can clear it. Only explicit local restoration can. Removing an introducer blocks new introductions, not previously accepted peers. Removal is local, not instantaneous global revocation: remove a lost device on each file server.
+
+Local permission and startup switches save immediately with inline progress/errors and rollback to the last saved state on failure, without rebuilding the form. New-device defaults persist independently and affect only future pairing codes and WebDAV credentials, never existing devices, codes or groups. Use `server.defaults` and `server.state` (`config.newDevicePermissions`) for scripting. Enabling login startup also enables service restore; disabling restore disables login startup.
 
 Android keys remain in Keystore; group sessions are short lived and memory-only. Identities/refusals/generated connections do not participate in backup or WebDAV configuration sync. Requests and streams check current local authorization. Local/LAN/Tailscale endpoints only; HTTPS certificate pinning, one-use challenges, no redirects/public endpoints/forwarded-IP trust. Existing individual pairing and third-party WebDAV credentials remain independent options.
