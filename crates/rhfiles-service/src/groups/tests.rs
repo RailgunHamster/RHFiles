@@ -193,3 +193,105 @@ fn network_packets_never_export_local_refusals_grants_or_private_keys() {
         .is_err()
     );
 }
+
+#[test]
+fn forgetting_is_confirmed_local_persistent_and_cannot_be_replayed() {
+    let (data, a) = node();
+    let (_b, b) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    let other = a.create("Other", "A", Permissions::default()).unwrap();
+    add(&a, &b, &id, true);
+    let packet = b.packet(&id).unwrap();
+    let identity = a.device_id();
+    let before = a.state().unwrap();
+    assert!(a.forget(&id, false).is_err());
+    assert_eq!(a.state().unwrap(), before);
+    a.forget(&id, true).unwrap();
+    assert_eq!(a.state().unwrap()["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(a.state().unwrap()["groups"][0]["id"], other);
+    assert!(a.packet(&id).is_err());
+    assert!(a.merge(&id, &packet).is_err());
+    assert!(a.join(packet, Permissions::default()).is_err());
+    assert!(b.packet(&id).is_ok()); // no global deletion
+    drop(a);
+    let a = Groups::open(data.path()).unwrap();
+    assert_eq!(a.device_id(), identity);
+    assert!(a.packet(&id).is_err());
+    assert!(a.packet(&other).is_ok());
+    // Even the original creator can rejoin through a fresh request to a
+    // remaining invite-capable member, without reconstructing a different group.
+    add(&b, &a, &id, true);
+    assert!(a.packet(&id).is_ok());
+}
+
+#[test]
+fn forgotten_group_credentials_and_handles_stay_invalid_after_manual_rejoin() {
+    let (data, a) = node();
+    let (_b, b) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    let other = a.create("Other", "A", Permissions::default()).unwrap();
+    add(&a, &b, &id, true);
+    let a = Arc::new(a);
+    let auth = crate::auth::Auth::new(data.path()).unwrap();
+    let header = |id: &str, peer: &str| {
+        let c = auth.group_session(a.clone(), id, peer).unwrap();
+        format!("Bearer {}:{}", c["username"].as_str().unwrap(), c["password"].as_str().unwrap())
+    };
+    let old_header = header(&id, &b.device_id());
+    let old = auth.authenticate(Some(&old_header), "GET").unwrap();
+    let other_header = header(&other, &a.device_id());
+    let other_access = auth.authenticate(Some(&other_header), "GET").unwrap();
+    a.forget(&id, true).unwrap();
+    assert!(old.check(false, false).is_err());
+    assert!(auth.authenticate(Some(&old_header), "GET").is_err());
+    assert!(other_access.check(false, false).is_ok());
+    add(&b, &a, &id, true);
+    assert!(old.check(false, false).is_err());
+    assert!(auth.authenticate(Some(&old_header), "GET").is_err());
+    assert!(other_access.check(false, false).is_ok());
+    let fresh = header(&id, &b.device_id());
+    assert!(auth.authenticate(Some(&fresh), "GET").unwrap().check(false, false).is_ok());
+}
+
+#[test]
+fn deleting_last_group_keeps_refusals_for_other_devices() {
+    let (data, a) = node();
+    let (_b, b) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    add(&a, &b, &id, false);
+    a.remove(&id, &b.device_id()).unwrap();
+    a.forget(&id, true).unwrap();
+    drop(a);
+    let a = Groups::open(data.path()).unwrap();
+    assert!(a.state().unwrap()["groups"].as_array().unwrap().is_empty());
+    let new = a.create("New", "A", Permissions::default()).unwrap();
+    assert!(a.approve(&new, &b.request("B").unwrap(), false).is_err());
+}
+
+#[test]
+fn self_removed_group_can_be_forgotten_and_explicitly_rejoined_without_restoring_other_groups() {
+    let (_data, a) = node();
+    let (_b, b) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    let other = a.create("Other", "A", Permissions::default()).unwrap();
+    add(&a, &b, &id, true);
+    a.remove(&id, &a.device_id()).unwrap();
+    a.forget(&id, true).unwrap();
+    assert!(a.join(b.packet(&id).unwrap(), Permissions::default()).is_err());
+    add(&b, &a, &id, true);
+    assert!(a.access(&id, &b.device_id(), true).is_ok());
+    assert!(a.access(&other, &a.device_id(), true).is_err());
+}
+
+#[test]
+fn failed_forget_persistence_does_not_remove_group_or_revoke_sessions() {
+    let (data, a) = node();
+    let id = a.create("Home", "A", Permissions::default()).unwrap();
+    let before = a.state().unwrap();
+    let (_, session) = a.session_access(&id, &a.device_id(), true, None).unwrap();
+    std::fs::remove_file(data.path().join("groups.json")).unwrap();
+    std::fs::create_dir(data.path().join("groups.json")).unwrap();
+    assert!(a.forget(&id, true).is_err());
+    assert_eq!(a.state().unwrap(), before);
+    assert!(a.session_access(&id, &a.device_id(), true, Some(&session)).is_ok());
+}

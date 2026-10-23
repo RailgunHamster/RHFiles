@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {launchApp,until} from '../testing/app-session.mjs';
-test('device-group UI and semantic APIs preserve local removal after relaunch',async()=>{
+test('device-group UI persists removals, confirms local group deletion, and supports fresh rejoin',async()=>{
   let a=await launchApp({emulateFocus:true,desktopId:'group-ui-a'});const b=await launchApp({desktopId:'group-ui-b'});
   const call=(app,command,args={})=>app.evaluate(`call('device_groups',{command:${JSON.stringify(command)},args:${JSON.stringify(args)}})`);
   try{
@@ -12,7 +12,7 @@ test('device-group UI and semantic APIs preserve local removal after relaunch',a
     await a.evaluate("[...document.querySelectorAll('.device-groups button')].find(b=>b.textContent==='创建新设备组').click()");
     const state=await until(async()=>{const s=await call(a,'state');return s.groups.length?s:null;},'created from actual UI');const id=state.groups[0].id;
     assert.equal(state.defaultDeviceName,machineName);assert.equal(state.groups[0].members.find(m=>m.self).name,machineName);
-    const request=await call(b,'request',{deviceName:'UI guest'});const approval=await call(a,'approve',{id,uri:request.uri,canInvite:false});await call(b,'join',{uri:approval.uri,confirmed:true});const peer=(await call(b,'state')).deviceId;
+    const request=await call(b,'request',{deviceName:'UI guest'});const approval=await call(a,'approve',{id,uri:request.uri,canInvite:true});await call(b,'join',{uri:approval.uri,confirmed:true});const peer=(await call(b,'state')).deviceId;
     await a.evaluate("lanService.mount(document.getElementById('lan-service-settings'))");
     await until(()=>a.evaluate("document.querySelector('.device-groups')?.textContent.includes('UI guest')"),'member displayed');
     await a.evaluate("[...document.querySelectorAll('.dg-member')].find(n=>n.textContent.includes('UI guest')).querySelector('button').click()");
@@ -30,5 +30,26 @@ test('device-group UI and semantic APIs preserve local removal after relaunch',a
     await a.evaluate("document.querySelector('.app-confirm-overlay button:last-of-type').click()");
     await until(async()=>!(await call(a,'state')).groups[0].members.find(m=>m.id===peer).blocked,'manual restore');
     await a.screenshot('device-groups-local-restore');
+    const other=await call(a,'create',{name:'Keep this group',deviceName:machineName});
+    await assert.rejects(call(a,'forget',{id,confirmed:false}));
+    await a.evaluate("lanService.mount(document.getElementById('lan-service-settings'))");
+    const forget=`[...document.querySelectorAll('.dg-card')].find(n=>n.querySelector('h4').textContent==='我的设备').querySelector('.dg-forget')`;
+    await a.evaluate(`${forget}.click()`);
+    await until(()=>a.evaluate("!!document.querySelector('.app-confirm-overlay')"),'forget confirmation');
+    await a.evaluate("document.querySelector('.app-confirm-overlay button:first-of-type').click()");
+    assert.ok((await call(a,'state')).groups.some(g=>g.id===id),'cancel keeps group');
+    await a.evaluate(`${forget}.click()`);
+    await until(()=>a.evaluate("!!document.querySelector('.app-confirm-overlay')"),'confirm actual local forget');
+    await a.evaluate("document.querySelector('.app-confirm-overlay button:last-of-type').click()");
+    await until(async()=>!(await call(a,'state')).groups.some(g=>g.id===id),'group actually forgotten');
+    await until(()=>a.evaluate("![...document.querySelectorAll('.dg-card h4')].some(n=>n.textContent==='我的设备')"),'no group or restore stub in UI');
+    assert.ok((await call(a,'state')).groups.some(g=>g.id===other));
+    await a.screenshot('device-groups-forgotten');
+    const retained=await call(b,'export',{id});assert.ok(retained.uri);
+    const forgottenProfile=a.profileRoot;a.close();a=await launchApp({emulateFocus:true,desktopId:'group-ui-a',profileDirectory:forgottenProfile});
+    assert.equal((await call(a,'state')).groups.length,1);
+    await assert.rejects(call(a,'join',{uri:retained.uri,confirmed:true}));
+    const freshRequest=await call(a,'request',{deviceName:machineName});const freshApproval=await call(b,'approve',{id,uri:freshRequest.uri,canInvite:true});
+    await call(a,'join',{uri:freshApproval.uri,confirmed:true});assert.ok((await call(a,'state')).groups.some(g=>g.id===id));
   }finally{a.close();b.close();}
 });

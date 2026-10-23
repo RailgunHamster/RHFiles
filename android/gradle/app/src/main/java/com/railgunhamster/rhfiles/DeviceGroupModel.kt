@@ -107,11 +107,15 @@ internal class DeviceGroupModel(private val identity:Identity, saved:String?, pr
           val own=each(p.getJSONArray("members")).map(::read).firstOrNull{it.getString("key")==identity.publicKey}?:error("证明中没有本机身份")
           require(it.optString("pending").isNotEmpty()&&own.getString("nonce")==it.optString("pending")){"不是本机当前入组请求的批准，请重新生成请求"}
           val g=JSONObject().put("packet",JSONObject().put("root",p.getJSONObject("root")).put("members",JSONArray()).put("servers",JSONArray())).put("blocked",JSONObject(refusals(it).toString())).put("permissions",grant(args)).put("enabled",true).put("left",false)
-          merge(g,p);member(g,deviceId);all.put(id,g);it.remove("pending")
+          // Only a fresh, explicitly confirmed join restores our membership
+          // here. Keep other groups' blocks and every other device's refusal.
+          g.getJSONObject("blocked").remove(deviceId)
+          merge(g,p);member(g,deviceId);all.put(id,g);refusals(it).remove(deviceId);it.remove("pending")
         };id
       }
     }
     "export"->JSONObject().put("uri",uri("rhfiles-group-approval:v1:",packet(args.getString("id"))))
+    "forget"->{require(args.opt("confirmed")==true){"删除本机设备组必须明确确认"};change{val id=args.getString("id");group(it,id);it.getJSONObject("groups").remove(id);true}}
     "remove"->change{val g=group(it,args.getString("id"));val peer=args.getString("peer");require(peers(g).containsKey(peer)){"成员不存在"};refusals(it).put(peer,JSONObject().put("removedAt",System.currentTimeMillis()).put("version",Math.addExact(it.getLong("version"),1)));true}
     "restore"->{require(args.optBoolean("confirmed")){"恢复访问必须在本机手动确认"};change{val peer=args.getString("peer");require(group(it,args.getString("id")).getJSONObject("blocked").has(peer)){"此设备不在本机移除列表中"};refusals(it).remove(peer);val all=it.getJSONObject("groups");all.keys().forEach{key->all.getJSONObject(key).getJSONObject("blocked").remove(peer)};true}}
     "configure"->change{val g=group(it,args.getString("id"));g.put("enabled",args.optBoolean("enabled")).put("permissions",grant(args));true}

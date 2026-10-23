@@ -191,7 +191,7 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.configure","groups.refresh" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{locationsChanged()}}
+    "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.forget","groups.configure","groups.refresh" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{locationsChanged()}}
     "automation.status" -> onUi{NativeAutomation.status(this)}
     "automation.enable" -> onUi{NativeAutomation.setEnabled(this,args.getBoolean("enabled"))}
     "automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control" -> onUi{NativeAutomation.dispatch(this,command,args)}

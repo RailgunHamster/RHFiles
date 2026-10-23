@@ -6,9 +6,9 @@ const deviceGroupView=(()=>{
     const string={type:'string',minLength:1,maxLength:360000},bool={type:'boolean'};
     const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
     const permissions=object({write:bool,delete:bool});
-    const operations={state:object(),create:object({name:string,deviceName:string,permissions},['name','deviceName']),request:object({deviceName:string},['deviceName']),approve:object({id:string,uri:string,canInvite:bool},['id','uri']),join:object({uri:string,confirmed:bool,permissions},['uri','confirmed']),export:object({id:string},['id']),remove:object({id:string,peer:string},['id','peer']),restore:object({id:string,peer:string,confirmed:bool},['id','peer','confirmed']),configure:object({id:string,enabled:bool,permissions},['id','enabled','permissions'])};
+    const operations={state:object(),create:object({name:string,deviceName:string,permissions},['name','deviceName']),request:object({deviceName:string},['deviceName']),approve:object({id:string,uri:string,canInvite:bool},['id','uri']),join:object({uri:string,confirmed:bool,permissions},['uri','confirmed']),export:object({id:string},['id']),remove:object({id:string,peer:string},['id','peer']),restore:object({id:string,peer:string,confirmed:bool},['id','peer','confirmed']),forget:object({id:string,confirmed:bool},['id','confirmed']),configure:object({id:string,enabled:bool,permissions},['id','enabled','permissions'])};
     if(mobile)operations.refresh=object();
-    for(const [operation,params]of Object.entries(operations))api.register('groups.'+operation,p=>call(operation,p),{params,risk:operation==='state'?'read':'external',description:'Local device-group '+operation+'; local refusals are never cleared by incoming proofs'});
+    for(const [operation,params]of Object.entries(operations))api.register('groups.'+operation,p=>call(operation,p),{params,risk:operation==='state'?'read':operation==='forget'?'destructive':'external',description:'Local device-group '+operation+'; local refusals are never cleared by incoming proofs'});
   }
   async function mount(root,options){
     await settingsAutoSave.flush();
@@ -32,7 +32,7 @@ const deviceGroupView=(()=>{
     const incoming=input(text('粘贴入组请求或批准信息','Paste a request or approval'),'','textarea'),trust=input(text('已核对信息来自我信任的设备','I verified this data came from a trusted device'),false,'checkbox');controls.append(incoming.row,trust.row);
     if(options.scan)controls.append(button(text('扫码填写','Scan data'),async()=>{const result=await options.scan();if(result)incoming.field.value=result.uri;},'scan'));
     controls.append(button(text('使用批准信息加入','Join with approval'),async()=>{if(!trust.field.checked)throw Error(text('请先核对来源并勾选确认','Verify the source and check the confirmation first'));await call('join',{uri:incoming.field.value.trim(),confirmed:true});await paint();alert.textContent=text('已加入。电脑需在文件服务中设置共享目录并启动服务。手机点“刷新组设备”发现其他成员电脑。','Joined. Computers must configure roots and start file service. Refresh group devices on your phone to learn other member computers.');},'join'));
-    if(options.mobile)controls.append(button(text('刷新组设备','Refresh group devices'),async()=>{alert.textContent=text('正在连接已知成员并交换公开证明…','Connecting to known members…');const r=await call('refresh',{});await paint();alert.textContent=text('已连接 ','Connected ')+r.connected+text(' 台；可用网络位置 ','; locations ')+r.locations+(r.errors?.length?'\n'+r.errors.map(v=>v.device+'：'+v.message).join('\n'):'');},'refresh'));
+    if(options.mobile)controls.append(button(text('刷新组设备','Refresh group devices'),async()=>{alert.textContent=text('正在连接已知成员并交换公开证明…','Connecting to known members…');const r=await call('refresh',{});await paint();await options.forgotten?.(r);alert.textContent=text('已连接 ','Connected ')+r.connected+text(' 台；可用网络位置 ','; locations ')+r.locations+(r.errors?.length?'\n'+r.errors.map(v=>v.device+'：'+v.message).join('\n'):'')+(r.cleanupErrors?.length?'\n'+r.cleanupErrors.join('\n'):'');},'refresh'));
     async function paint(state){
       await settingsAutoSave.flush(root);
       state=state||await call('state',{});if(!root.isConnected)return;body.replaceChildren(el('p','dg-identity',text('本机身份：','Device identity: ')+state.deviceId));
@@ -50,7 +50,12 @@ const deviceGroupView=(()=>{
             }});card.append(enabled.row,write.row,remove.row,feedback);
         }
         for(const peer of group.members){const row=el('div','dg-member'),info=el('div');info.append(el('strong','',peer.name+(peer.self?text('（本机）',' (this device)'):'')),el('span','',peer.blocked?text('本机已移除 · 需手动恢复','Locally removed · manual restore required'):peer.canInvite?text('可邀请新成员','Can invite members'):text('普通成员','Member')),el('code','dg-identity',peer.id));row.append(info,button(peer.blocked?text('手动恢复','Restore locally'):text('本机移除','Remove locally'),async()=>{const restoring=peer.blocked;const message=(restoring?text('确认在本机恢复此设备的访问权限？','Restore this device’s access on this device?'):text('仅在本机移除此设备？不会自动加回，需手动确认才能恢复。','Remove locally? Synchronization cannot add it back.'))+'\n'+peer.name+'\n'+peer.id;const confirmed=options.confirm?await options.confirm(message):window.confirm(message);if(!confirmed)return;await call(restoring?'restore':'remove',{id:group.id,peer:peer.id,...(restoring?{confirmed:true}:{})});await paint();},(peer.blocked?'restore.':'remove.')+group.id+'.'+peer.id));card.append(row);}
-        body.append(card);
+        const forget=button(text('删除本机设备组','Delete group from this device'),async()=>{
+          const message=text('删除本机保存的整个设备组？组将从界面移除，不保留恢复入口；手机上由此组生成的网络位置也会移除。不会删除实际文件，也不影响其他客户端或其他设备组。以后需要重新生成入组请求，由仍保留组信息且有邀请权限的客户端批准。','Delete this entire group from this device? It will disappear without a restore entry, along with its generated mobile network locations. Files, other clients and other groups are unaffected. To rejoin later, generate a new request and have a remaining invite-capable member approve it.')+'\n\n'+group.name+'\n'+group.id;
+          const confirmed=options.confirm?await options.confirm(message):window.confirm(message);if(!confirmed)return;
+          const result=await call('forget',{id:group.id,confirmed:true});output.replaceChildren();await paint();await options.forgotten?.(result);
+          alert.textContent=text('已删除本机设备组。其他客户端仍保留组信息。','Group deleted from this device. Other clients keep their copies.')+(result?.cleanupErrors?.length?'\n'+text('部分网络位置清理失败，点击“刷新组设备”重试：','Some locations could not be removed; refresh group devices to retry: ')+result.cleanupErrors.join('\n'):'');
+        },'forget.'+group.id);forget.classList.add('dg-forget');card.append(forget);body.append(card);
       }
     }
     await paint(initialState);

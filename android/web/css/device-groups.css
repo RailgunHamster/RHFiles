@@ -11,4 +11,5 @@
 .dg-identity { overflow-wrap:anywhere; font:11px/1.5 ui-monospace,monospace; opacity:.65; }
 .dg-qr { display:block; background:white; width:min(100%,320px); height:auto; padding:12px; margin:12px auto; }
 .dg-status { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--accent,#2875c5); }
+.dg-forget { margin-top:12px; color:var(--danger,#ba3030); }
 @media(max-width:500px) { .dg-field:not(:has([type=checkbox])) { align-items:stretch; flex-direction:column; gap:5px; }.dg-field input:not([type=checkbox]),.dg-field textarea { max-width:100%; }.dg-card { padding:12px; }.dg-member { align-items:flex-start; } }

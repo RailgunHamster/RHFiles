@@ -402,7 +402,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         .auth
         .authenticate(header(&r, "Authorization"), method.as_str())?;
     if path == "/api/v1/groups/state" && method == Method::GET {
-        let (_, group, _, _) = a
+        let (_, group, _, _, _) = a
             .group
             .as_ref()
             .ok_or_else(|| Error::new("forbidden", "需要设备组身份"))?;

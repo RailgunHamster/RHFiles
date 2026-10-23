@@ -155,6 +155,13 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
                 )?;
                 Value::Bool(true)
             }
+            "forget" => {
+                groups.forget(
+                    field(args, "id").map_err(err)?,
+                    args.get("confirmed") == Some(&Value::Bool(true)),
+                )?;
+                Value::Bool(true)
+            }
             "configure" => {
                 groups.configure(
                     field(args, "id").map_err(err)?,

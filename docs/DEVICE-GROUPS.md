@@ -37,6 +37,12 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 时间仅用于显示审计记录，不作为信任冲突的裁决。记录有单调增加的本机操作序号；磁盘保存失败则操作不生效，不会在内存中假装已保存。
 
+## 删除整个本机设备组
+
+在组卡片底部点「删除本机设备组」并确认：本机的该组成员证明、服务地址和组权限会删除，组从 UI 消失，不留下“恢复”条目。手机还会清理该组生成的网络位置及对应快捷访问。其他客户端、其他组、实际文件、独立配对/WebDAV 账号和本机私钥不受影响；对其他设备的本机拒绝记录仍保留。删除会立即使旧组会话失效，之后重新加入也不会复活这些旧会话。
+
+重启、刷新或旧证明不能自动加回。以后需要恢复时，在本机重新生成入组请求，交给仍保留此组且有邀请权限的客户端批准，然后在本机核对并确认加入；原创建者也能按此流程重新加入。若之前移除了本机身份，这次明确入组只恢复该组中的本机身份，不恢复其他已退出的组或已移除的其他设备。不要另建同名组代替原组。
+
 ## 权限与边界
 
 电脑每个组可独立开启/关闭文件服务访问、写入重命名、永久删除，默认只读；共享根目录由电脑单独设置。普通成员和可邀请成员的文件访问权限相同，邀请权不是管理员远程修改共享权限的能力。
@@ -51,7 +57,7 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 ## 自动化
 
-本机 JSON 命令：`groups.state/create/request/approve/join/export/remove/restore/configure`；手机还提供 `groups.refresh`。使用现有 `scripts/rhfiles-api.mjs` 命令行入口枚举动作及参数。`join`、`restore` 必须明确传 `confirmed: true`；没有网络端的恢复/权限管理 API。二维码渲染属于公开数据处理，手机 Rust 命令为 `device_group_qr`。
+本机 JSON 命令：`groups.state/create/request/approve/join/export/remove/restore/forget/configure`；手机还提供 `groups.refresh`。使用现有 `scripts/rhfiles-api.mjs` 命令行入口枚举动作及参数。`join`、`restore`、`forget` 必须明确传 `confirmed: true`；`forget` 参数为 `{ "id": "组 ID", "confirmed": true }`，属于破坏性的本机配置操作，不删除文件。没有网络端的删除组/恢复/权限管理 API。二维码渲染属于公开数据处理，手机 Rust 命令为 `device_group_qr`。
 
 ## English
 
@@ -60,6 +66,8 @@ The device-name field defaults to the local computer/host name, or Android's con
 Create a group on one computer; on a new device generate a request, have an invite-capable member approve it, then explicitly accept the returned approval on the requesting device. Phone settings live under Storage & permissions; computer settings under LAN file service. Refresh group devices on the phone to exchange signed introductions and learn other member computers. Long public proofs use complete text instead of truncated QR codes.
 
 Each device has its own P-256 private key. Signed introductions can be carried by a member while its introducer is offline. Local file roots and grants never travel in those proofs. Removing a device creates a persistent local public-key refusal across local groups; no incoming proof, timestamp, refresh or update can clear it. Only explicit local restoration can. Removing an introducer blocks new introductions, not previously accepted peers. Removal is local, not instantaneous global revocation: remove a lost device on each file server.
+
+“Delete group from this device” forgets the entire local group after confirmation, without a restore stub. Android also removes its generated connections and favorites. Files, other clients/groups, independent credentials, private identity and refusals for other devices remain intact. Old sessions stay invalid even after rejoining. Restart, refresh and old packets cannot bring a forgotten group back. Generate a fresh join request, have a remaining invite-capable member approve it, then explicitly accept it locally—even if you originally created the group. This restores only your membership in that group, not blocked peers or other self-removed groups. The local-only destructive automation action is `groups.forget` with `{ "id": "group ID", "confirmed": true }`.
 
 Local permission and startup switches save immediately with inline progress/errors and rollback to the last saved state on failure, without rebuilding the form. New-device defaults persist independently and affect only future pairing codes and WebDAV credentials, never existing devices, codes or groups. Use `server.defaults` and `server.state` (`config.newDevicePermissions`) for scripting. Enabling login startup also enables service restore; disabling restore disables login startup.
 

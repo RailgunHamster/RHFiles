@@ -141,3 +141,30 @@ test('desktop and Android share identical autosave/group implementations loaded 
   for(const name of ['settings-autosave.js','device-groups-ui.js'])assert.ok(fs.readFileSync(path.join(root,'src/js',name)).equals(fs.readFileSync(path.join(root,'android/web/js',name))),name);
   for(const page of ['src/index.html','android/web/index.html']){const source=fs.readFileSync(path.join(root,page),'utf8');assert.ok(source.indexOf('js/settings-autosave.js')<source.indexOf('js/device-groups-ui.js'));}
 });
+
+for(const outcome of ['confirmed','cancelled','failed']){
+  test('forget-group UI '+outcome+' only removes the selected local group after confirmation',async()=>{
+    const {host,ctx}=sandbox(),calls=[],other={id:'other',name:'Other group',enabled:true,permissions:{},members:[]};
+    let groups=[{id:'group',name:'Home group',enabled:true,permissions:{},members:[{id:'self',name:'Self',self:true,blocked:true}]},other],cleaned;
+    load(ctx,'device-groups-ui.js');const view=vm.runInContext('deviceGroupView',ctx);
+    await view.mount(host,{zh:true,confirm:async message=>{assert.match(message,/Home group/);assert.match(message,/不会删除实际文件/);return outcome!=='cancelled';},forgotten:result=>{cleaned=plain(result);},call:async(command,args)=>{
+      if(command==='state')return {deviceId:'self',groups:plain(groups)};
+      calls.push({command,args:plain(args)});
+      if(command==='forget'){if(outcome==='failed')throw Error('disk full');groups=groups.filter(g=>g.id!==args.id);return {removedLocations:['generated-location']};}
+      throw Error(command);
+    }});
+    const card=all(host).find(n=>n.tagName==='section'&&n.textContent.includes('Home group'));
+    await all(card).find(n=>n.tagName==='button'&&n.textContent==='删除本机设备组').fire('click');
+    if(outcome==='confirmed'){
+      assert.deepEqual(calls,[{command:'forget',args:{id:'group',confirmed:true}}]);assert.ok(!host.textContent.includes('Home group'));assert.ok(!all(host).some(n=>n.tagName==='button'&&n.textContent==='手动恢复'));assert.deepEqual(cleaned,{removedLocations:['generated-location']});
+    }else{assert.ok(host.textContent.includes('Home group'));assert.equal(cleaned,undefined);if(outcome==='failed')assert.match(host.textContent,/disk full/);else assert.deepEqual(calls,[]);}
+    assert.ok(host.textContent.includes('Other group'));
+  });
+}
+
+test('forget-group is a destructive semantic operation with explicit id and confirmation',async()=>{
+  const {ctx}=sandbox(),operations=new Map(),calls=[];load(ctx,'device-groups-ui.js');
+  vm.runInContext('deviceGroupView',ctx).register({register:(id,fn,schema)=>operations.set(id,{fn,schema})},(name,args)=>calls.push({name,args:plain(args)}),true);
+  const op=operations.get('groups.forget');assert.ok(op);assert.equal(op.schema.risk,'destructive');assert.deepEqual(plain(op.schema.params.required),['id','confirmed']);assert.equal(op.schema.params.additionalProperties,false);
+  await op.fn({id:'group',confirmed:true});assert.deepEqual(calls,[{name:'forget',args:{id:'group',confirmed:true}}]);
+});

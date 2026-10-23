@@ -22,6 +22,7 @@ pub struct Access {
         String,
         String,
         std::time::Instant,
+        Arc<()>,
     )>,
 }
 
@@ -114,10 +115,10 @@ impl Access {
         if !self.live.load(Ordering::Acquire) {
             return Err(Error::new("unauthorized", "设备授权已撤销"));
         }
-        if let Some((groups, group, peer, _expires)) = &self.group {
+        if let Some((groups, group, peer, _expires, session)) = &self.group {
             // Expiry gates NEW HTTP requests, not an already authorized large
             // stream. Local removal/grant changes still apply on every chunk.
-            let current = groups.access(group, peer, true)?;
+            let current = groups.session_access(group, peer, true, Some(session))?.0;
             if write && !current.write || delete && !current.delete {
                 return Err(Error::new("forbidden", "本机未向设备组授予此权限"));
             }
@@ -228,7 +229,7 @@ impl Auth {
         group: &str,
         peer: &str,
     ) -> Result<serde_json::Value> {
-        let permissions = groups.access(group, peer, false)?;
+        let (permissions, session) = groups.session_access(group, peer, false, None)?;
         let mut sessions = self.sessions.lock().unwrap();
         sessions.retain(|_, (_, a)| {
             a.group
@@ -251,6 +252,7 @@ impl Auth {
                 group.into(),
                 peer.into(),
                 std::time::Instant::now() + std::time::Duration::from_secs(1800),
+                session,
             )),
         };
         sessions.insert(id.clone(), (hash(&password), access));
@@ -389,11 +391,11 @@ impl Auth {
             }
             let mut access = access.clone();
             access.method = method.into();
-            let (groups, group, peer, expires) = access.group.as_ref().unwrap();
+            let (groups, group, peer, expires, session) = access.group.as_ref().unwrap();
             if *expires <= std::time::Instant::now() || !access.live.load(Ordering::Acquire) {
                 return Err(Error::new("unauthorized", "设备组会话已到期"));
             }
-            access.permissions = groups.access(group, peer, false)?;
+            access.permissions = groups.session_access(group, peer, false, Some(session))?.0;
             return Ok(access);
         }
         let state = self.state.lock().unwrap();

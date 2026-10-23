@@ -182,6 +182,10 @@ struct Group {
     permissions: Permissions,
     enabled: bool,
     left: bool,
+    // In-memory incarnation, not exported or persisted. Rejoining a forgotten
+    // group must never reactivate credentials/streams from its old incarnation.
+    #[serde(skip)]
+    session: std::sync::Arc<()>,
 }
 impl Group {
     fn members(&self) -> Result<BTreeMap<String, Claims>> {
@@ -464,6 +468,7 @@ impl Groups {
                     permissions,
                     enabled: true,
                     left: false,
+                    session: Default::default(),
                 },
             );
             Ok(id)
@@ -550,10 +555,16 @@ impl Groups {
                 permissions,
                 enabled: true,
                 left: false,
+                session: Default::default(),
             };
+            // A fresh, locally confirmed join restores only our membership in
+            // this absent group. Other devices' refusals and existing groups'
+            // blocked entries stay intact, including a previous self-removal.
+            group.blocked.remove(&self.device_id());
             group.merge(&packet)?;
             group.member(&self.device_id())?;
             doc.groups.insert(id.clone(), group);
+            doc.refusals.remove(&self.device_id());
             doc.pending = None;
             Ok(id)
         })
@@ -574,14 +585,37 @@ impl Groups {
         })
     }
     pub fn access(&self, id: &str, peer: &str, files: bool) -> Result<Permissions> {
+        self.session_access(id, peer, files, None).map(|v| v.0)
+    }
+    pub(crate) fn session_access(
+        &self,
+        id: &str,
+        peer: &str,
+        files: bool,
+        session: Option<&std::sync::Arc<()>>,
+    ) -> Result<(Permissions, std::sync::Arc<()>)> {
         let doc = self.doc.lock().unwrap();
         let g = doc.groups.get(id).ok_or_else(|| bad("设备组不存在"))?;
+        if session.is_some_and(|old| !std::sync::Arc::ptr_eq(old, &g.session)) {
+            return Err(Error::new("unauthorized", "设备组已删除并重新加入，请重新认证"));
+        }
         g.member(peer)?;
         g.member(&self.device_id())?;
         if files && !g.enabled {
             return Err(Error::new("forbidden", "本机未向此设备组开放文件服务"));
         }
-        Ok(g.permissions.clone())
+        Ok((g.permissions.clone(), g.session.clone()))
+    }
+    /// Forget membership on this device only. Never remove identity, other
+    /// groups, files or per-device refusals; network packets cannot call this.
+    pub fn forget(&self, id: &str, confirmed: bool) -> Result<()> {
+        if !confirmed {
+            return Err(Error::new("confirmation_required", "删除本机设备组必须明确确认"));
+        }
+        self.change(|doc| {
+            doc.groups.remove(id).ok_or_else(|| bad("设备组不存在"))?;
+            Ok(())
+        })
     }
     pub fn remove(&self, id: &str, peer: &str) -> Result<()> {
         self.change(|doc| {

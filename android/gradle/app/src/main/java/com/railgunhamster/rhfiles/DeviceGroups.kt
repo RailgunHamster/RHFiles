@@ -44,6 +44,11 @@ internal object DeviceGroups {
   fun run(command:String,args:JSONObject,remote:RemoteStorage):Any {
     val g=groups()
     if(command=="refresh")return refresh(remote)
+    if(command=="forget")return synchronized(this){
+      val id=args.getString("id");g.run(command,args)
+      sessions.keys.filter{it.startsWith("$id:")}.toList().forEach{sessions.remove(it)}
+      removeOrphanLocations(remote)
+    }
     val result=g.run(command,args)
     if(command=="state")(result as JSONObject).put("defaultDeviceName",DeviceNames.current(owner?:error("设备组尚未初始化")))
     if(command in listOf("remove","restore","configure","join")){synchronized(this){sessions.clear()}}
@@ -64,11 +69,18 @@ internal object DeviceGroups {
   }
   private fun profile(group:String,peer:String,member:JSONObject,url:String)=JSONObject().put("type","rhfiles").put("name",member.getString("name")).put("url",url).put("fingerprint",member.getJSONObject("server").getString("fingerprint")).put("groupId",group).put("groupPeerId",peer)
   private fun profiles(remote:RemoteStorage):List<JSONObject>{val a=remote.backupProfiles(true);return (0 until a.length()).map{val item=a.getJSONObject(it);JSONObject(item.getJSONObject("config").toString()).put("id",item.getString("id"))}}
-  private fun importLocations(remote:RemoteStorage):Int {
+  @Synchronized private fun importLocations(remote:RemoteStorage):Int {
     var count=0;for((group,peer,member) in servers()){
       groups().requirePeer(group,peer);val old=profiles(remote).firstOrNull{it.optString("groupId")==group&&it.optString("groupPeerId")==peer}
       val candidates=endpoints(member.getJSONObject("server"));val url=old?.optString("url")?.takeIf{it in candidates}?:candidates.first();val c=profile(group,peer,member,url);old?.let{c.put("id",it.getString("id"))};remote.save(c);count++
     };return count
+  }
+  /** Retry orphan cleanup after interruption; never create peer refusals in
+   * other groups. This lock also serializes refresh's final profile writes. */
+  @Synchronized private fun removeOrphanLocations(remote:RemoteStorage):JSONObject {
+    val all=groups().state().getJSONArray("groups");val ids=(0 until all.length()).map{all.getJSONObject(it).getString("id")}.toSet();val removed=JSONArray();val errors=JSONArray()
+    try{for(c in profiles(remote)){val id=c.optString("groupId");if(id.isNotEmpty()&&id !in ids){try{remote.remove(c.getString("id"),false);removed.put(c.getString("id"))}catch(e:Exception){errors.put(e.message?:"无法删除生成的网络位置")}}}}catch(e:Exception){errors.put(e.message?:"无法读取生成的网络位置")}
+    return JSONObject().put("removedLocations",removed).put("cleanupErrors",errors)
   }
   private fun removeLocation(remote:RemoteStorage,group:String,peer:String){for(c in profiles(remote)){if(c.optString("groupId")==group&&c.optString("groupPeerId")==peer)remote.remove(c.getString("id"),false)}}
   /** Removing the generated location is also a persistent local refusal. */
@@ -97,6 +109,7 @@ internal object DeviceGroups {
     if(sessions.size>=128)sessions.remove(sessions.keys.first());sessions[cache]=Session(auth,now+25*60*1000);return auth
   }
   private fun refresh(remote:RemoteStorage):JSONObject {
+    val cleanup=removeOrphanLocations(remote)
     val failures=JSONArray();var connected=0
     val deadline=android.os.SystemClock.elapsedRealtime()+30000;refreshDeadline.set(deadline)
     try {
@@ -105,10 +118,10 @@ internal object DeviceGroups {
       var failure:Exception?=null
       for(url in endpoints(member.getJSONObject("server")).take(4)){
         if(android.os.SystemClock.elapsedRealtime()>=deadline)break
-        try{val c=profile(group,peer,member,url);synchronized(this){sessions.keys.filter{it.startsWith("$group:$peer:")}.toList().forEach{sessions.remove(it)}};authorization(c);for(old in profiles(remote)){if(old.optString("groupId")==group&&old.optString("groupPeerId")==peer){old.put("url",url);remote.save(old)}};connected++;failure=null;break}catch(e:Exception){failure=e}
+        try{val c=profile(group,peer,member,url);synchronized(this){sessions.keys.filter{it.startsWith("$group:$peer:")}.toList().forEach{sessions.remove(it)}};authorization(c);synchronized(this){groups().requirePeer(group,peer);for(old in profiles(remote)){if(old.optString("groupId")==group&&old.optString("groupPeerId")==peer){old.put("url",url);remote.save(old)}}};connected++;failure=null;break}catch(e:Exception){failure=e}
       };failure?.let{failures.put(JSONObject().put("device",member.getString("name")).put("message",it.message))}
     }
     } finally {refreshDeadline.remove()}
-    return JSONObject().put("connected",connected).put("locations",importLocations(remote)).put("errors",failures)
+    return JSONObject().put("connected",connected).put("locations",importLocations(remote)).put("errors",failures).also{result->cleanup.keys().forEach{result.put(it,cleanup.get(it))}}
   }
 }
