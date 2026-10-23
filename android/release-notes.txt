@@ -1,3 +1,17 @@
+RHFiles Android 0.1.27
+
+1. 新增“删除本机设备组”：确认后删除本机组记录及其生成的网络位置/快捷访问，不保留恢复入口，不影响实际文件、其他客户端或独立连接。
+2. 重启、刷新和旧证明不能自动加回；需重新请求入组，由保留该组且有邀请权限的客户端批准，并在本机确认。原创建者也可重新加入，不恢复其他已移除设备。
+3. 防止刷新重新生成已删除组的连接；清理失败显示原因，可点“刷新组设备”重试。新增需明确确认的本机自动化操作 groups.forget。
+4. 设备名称默认采用 Android 系统设备名，无法读取时用厂商/型号；可手动修改，不重命名已有成员。
+5. 增加删除确认、重启持久化、保存失败和连接清理回归测试；安装包保留原签名，支持保留数据覆盖更新。配套 Windows 0.1.79，设备组协议兼容。
+
+1. Confirmed local group deletion removes the UI entry, generated locations and favorites, without changing actual files, other clients or independent connections.
+2. No automatic restoration by restart, refresh or old proofs. Rejoin through a fresh request and a remaining invite-capable member, with explicit local confirmation—even for the original creator. Other removed devices stay blocked.
+3. Prevent refresh from recreating deleted-group locations; report cleanup errors and retry through Refresh group devices. Add the confirmed local groups.forget automation action.
+4. Default names to the Android device name with manufacturer/model fallback, while preserving editable names and existing members.
+5. Add deletion/persistence/cleanup regressions and retain the original APK signing identity for in-place updates. Companion Windows 0.1.79; existing group protocol compatibility is preserved.
+
 RHFiles Android 0.1.26
 
 1. 新增无中心服务器的设备组；每台设备保留独立私钥，通过签名请求/批准二维码或文本加入。普通成员默认不可邀请。
