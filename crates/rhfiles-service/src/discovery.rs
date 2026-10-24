@@ -6,7 +6,62 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-pub(crate) const SERVICE_TYPE: &str = "_rhfiles._tcp.local.";
+pub const SERVICE_TYPE: &str = "_rhfiles._tcp.local.";
+
+/// One short browse, never a persistent scanner. Records are untrusted hints;
+/// the caller MUST pin TLS and verify the expected group's public key.
+pub fn find(
+    fingerprint: &str,
+    duration: std::time::Duration,
+) -> std::result::Result<Vec<String>, String> {
+    let daemon = ServiceDaemon::new().map_err(|_| "mDNS unavailable".to_string())?;
+    let result = (|| {
+        daemon
+            .disable_interface(IfKind::All)
+            .map_err(|_| "mDNS interface selection failed".to_string())?;
+        for ip in
+            crate::private_interfaces().map_err(|_| "Local interfaces unavailable".to_string())?
+        {
+            daemon
+                .enable_interface(IfKind::Addr(ip))
+                .map_err(|_| "mDNS private interface unavailable".to_string())?;
+        }
+        let events = daemon
+            .browse(SERVICE_TYPE)
+            .map_err(|_| "mDNS browse failed".to_string())?;
+        let end = std::time::Instant::now() + duration.min(std::time::Duration::from_secs(3));
+        let mut found = Vec::new();
+        while let Some(remaining) = end.checked_duration_since(std::time::Instant::now()) {
+            match events.recv_timeout(remaining.min(std::time::Duration::from_millis(100))) {
+                Ok(mdns_sd::ServiceEvent::ServiceResolved(info))
+                    if info.get_property_val_str("fp") == Some(fingerprint) =>
+                {
+                    for ip in info.get_addresses() {
+                        let ip = ip.to_ip_addr();
+                        if ip.is_ipv4() && crate::network_scope::allowed(ip) && info.get_port() > 0
+                        {
+                            let url = format!(
+                                "https://{}",
+                                std::net::SocketAddr::new(ip, info.get_port())
+                            );
+                            if !found.contains(&url) && found.len() < 16 {
+                                found.push(url);
+                            }
+                        }
+                    }
+                    if !found.is_empty() {
+                        break;
+                    }
+                }
+                _ => (),
+            }
+        }
+        let _ = daemon.stop_browse(SERVICE_TYPE);
+        Ok(found)
+    })();
+    let _ = daemon.shutdown();
+    result
+}
 
 pub(crate) struct Advertisement {
     daemon: ServiceDaemon,
@@ -82,7 +137,10 @@ mod tests {
         assert_eq!(value.get_port(), 39128);
         assert_eq!(value.get_property_val_str("v"), Some("1"));
         assert_eq!(value.get_property_val_str("fp"), Some(fp.as_str()));
-        assert_eq!(value.get_property_val_str("name"), Some(crate::device_name::default_device_name().as_str()));
+        assert_eq!(
+            value.get_property_val_str("name"),
+            Some(crate::device_name::default_device_name().as_str())
+        );
         assert_eq!(value.get_properties().len(), 3);
         assert!(value.get_hostname().ends_with(".local."));
     }

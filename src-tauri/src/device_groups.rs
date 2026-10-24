@@ -45,9 +45,42 @@ fn encoded(prefix: &str, value: impl serde::Serialize) -> Result<Value, String> 
 }
 #[tauri::command]
 pub async fn device_groups(command: String, args: Value) -> Result<Value, String> {
+    if command == "connect" {
+        let connector = connector()?;
+        let report = connector
+            .connect(
+                field(&args, "id")?,
+                field(&args, "peer")?,
+                args.get("endpoint")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                "manual",
+            )
+            .await;
+        return serde_json::to_value(report).map_err(|e| e.to_string());
+    }
+    if command == "diagnostics" {
+        return serde_json::to_value(connector()?.diagnostics()).map_err(|e| e.to_string());
+    }
+    if command == "cancel" {
+        return Ok(json!(
+            connector()?.cancel(field(&args, "id")?, field(&args, "peer")?)
+        ));
+    }
     tauri::async_runtime::spawn_blocking(move || run(&command, &args))
         .await
         .map_err(|e| e.to_string())?
+}
+fn connector() -> Result<std::sync::Arc<rhfiles_service::connection::Connector>, String> {
+    static INSTANCE: std::sync::OnceLock<std::sync::Arc<rhfiles_service::connection::Connector>> =
+        std::sync::OnceLock::new();
+    if let Some(v) = INSTANCE.get() {
+        return Ok(v.clone());
+    }
+    let v = std::sync::Arc::new(rhfiles_service::connection::Connector::new(
+        crate::lan_service::groups()?,
+    ));
+    Ok(INSTANCE.get_or_init(|| v).clone())
 }
 fn run(command: &str, args: &Value) -> Result<Value, String> {
     let groups = crate::lan_service::groups()?;
@@ -140,6 +173,12 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
         })
     })();
     let result = result.map_err(|e| e.to_string())?;
+    if matches!(
+        command,
+        "remove" | "restore" | "forget" | "configure" | "join"
+    ) {
+        connector()?.invalidate();
+    }
     if matches!(command, "create" | "join") {
         crate::lan_service::advertise_groups()?;
     }

@@ -18,7 +18,7 @@ import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 
 /** Native HTTPS API. The paired SHA-256 certificate is the device identity;
  * credentials stay in RemoteStorage's Android Keystore encrypted profiles. */
-internal class RhFilesConnection(private val config:JSONObject) {
+internal class RhFilesConnection(private var config:JSONObject) {
   companion object {
     private val clients=linkedMapOf<String,OkHttpClient>()
     private val JSON="application/json; charset=utf-8".toMediaType()
@@ -47,7 +47,7 @@ internal class RhFilesConnection(private val config:JSONObject) {
         // Explicit certificate pairing replaces CA/hostname identity, but this
         // verifier is never usable for a host other than this paired endpoint.
         .hostnameVerifier{hostname,_->hostname==host}.connectTimeout(8,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).writeTimeout(30,TimeUnit.SECONDS)
-        .followRedirects(false).followSslRedirects(false).proxy(java.net.Proxy.NO_PROXY).build()
+        .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).proxy(java.net.Proxy.NO_PROXY).build()
       if(clients.size>=32){val first=clients.keys.first();clients.remove(first)?.connectionPool?.evictAll()};clients[key]=client;return client
     }
     fun pair(uri:String,name:String,deviceName:String):JSONObject {
@@ -71,17 +71,28 @@ internal class RhFilesConnection(private val config:JSONObject) {
     }
   }
   internal class HttpFailure(val status:Int,message:String):IOException(message)
-  private fun request(method:String,endpoint:String,path:String?=null,body:RequestBody?=null,headers:Map<String,String> = emptyMap(),authenticate:Boolean=true,extra:Map<String,String> = emptyMap(),retryGroup:Boolean=true):Response {
+  private fun request(method:String,endpoint:String,path:String?=null,body:RequestBody?=null,headers:Map<String,String> = emptyMap(),authenticate:Boolean=true,extra:Map<String,String> = emptyMap(),retryGroup:Boolean=true,recoverRoute:Boolean=true):Response {
     valid(config);require(endpoint.startsWith("/api/v1/")&&!endpoint.contains("?")&&!endpoint.contains("#")){"非法接口路径"}
+    if(authenticate&&config.optString("groupId").isNotEmpty()&&recoverRoute)config=GroupConnections.resolve(config)
     val url=config.getString("url").toHttpUrl().newBuilder().encodedPath(endpoint).apply{if(path!=null)addQueryParameter("path",path);extra.forEach{(k,v)->addQueryParameter(k,v)}}.build()
     val builder=Request.Builder().url(url).method(method,body)
     if(authenticate){if(config.optString("groupId").isNotEmpty())builder.header("Authorization",DeviceGroups.authorization(config))else{require(config.optString("username").isNotEmpty()&&config.optString("password").isNotEmpty()){"此设备需要重新配对"};builder.header("Authorization",Credentials.basic(config.getString("username"),config.getString("password"),Charsets.UTF_8))}}
     headers.forEach{(k,v)->builder.header(k,v)}
-    val response=client(config).newCall(builder.build()).execute()
+    val requestStart=android.os.SystemClock.elapsedRealtime()
+    val response=try{client(config).newCall(builder.build()).execute()}catch(e:IOException){
+      GroupConnections.requestFailed(config,ConnectionBudget.classify(e),android.os.SystemClock.elapsedRealtime()-requestStart,method !in listOf("GET","HEAD"))
+      if(authenticate&&recoverRoute&&config.optString("groupId").isNotEmpty()){
+        GroupConnections.failed(config)
+        // An ambiguous write may already have committed: never replay it. tus
+        // recovery explicitly checks HEAD/offset before resending staged bytes.
+        if(method in listOf("GET","HEAD")){config=GroupConnections.resolve(config,"read_recovery",true);return request(method,endpoint,path,body,headers,authenticate,extra,retryGroup,false)}
+      };if(authenticate&&method !in listOf("GET","HEAD"))throw IOException("操作结果未确认，为避免重复执行未自动重试；请刷新目标核对并查看连接诊断",e);throw e
+    }
+    if(authenticate)GroupConnections.observed(config,if(response.isSuccessful)"response_received"else"http_${response.code}",android.os.SystemClock.elapsedRealtime()-requestStart)
     // A service restart discards RAM sessions, not group trust. HTTP 401 is an
     // authentication rejection before file dispatch. Retry only replayable
     // bodies once; tus offsets still guard any partially staged PATCH.
-    if(response.code==401&&authenticate&&retryGroup&&config.optString("groupId").isNotEmpty()&&body?.isOneShot()!=true&&body?.isDuplex()!=true){response.close();DeviceGroups.invalidate(config);return request(method,endpoint,path,body,headers,authenticate,extra,false)}
+    if(response.code==401&&authenticate&&retryGroup&&config.optString("groupId").isNotEmpty()&&body?.isOneShot()!=true&&body?.isDuplex()!=true){response.close();DeviceGroups.invalidate(config);return request(method,endpoint,path,body,headers,authenticate,extra,false,false)}
     if(!response.isSuccessful){val detail=try{JSONObject(String(response.body!!.byteStream().readBytesBounded(16384),Charsets.UTF_8)).optJSONObject("error")?.optString("message")}catch(_:Exception){null};response.close();throw HttpFailure(response.code,"RHFiles：HTTP ${response.code} · "+(detail?:when(response.code){401->"授权已失效，请重新配对";403->"电脑端未授予此权限";409,412->"目标已存在或目录已变化，未覆盖";423->"文件被其他客户端锁定";else->"请求失败"}))};return response
   }
   private fun objectReply(r:Response)=r.use{JSONObject(String(it.body!!.byteStream().readBytesBounded(8*1024*1024),Charsets.UTF_8))}

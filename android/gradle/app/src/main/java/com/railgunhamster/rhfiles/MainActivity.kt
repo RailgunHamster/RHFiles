@@ -32,6 +32,7 @@ import java.util.concurrent.Executors
 
 /** Only the trusted main frame gets this bridge. I/O never runs on Android's UI thread. */
 class MainActivity : TauriActivity() {
+  private val connectionControl=Executors.newSingleThreadExecutor()
   private val io=Executors.newFixedThreadPool(3)
   private val mediaIo=Executors.newFixedThreadPool(2)
   private val storage by lazy {NativeStorage(applicationContext)}
@@ -87,7 +88,7 @@ class MainActivity : TauriActivity() {
     watching=true
     try{contentResolver.registerContentObserver(MediaStore.Files.getContentUri("external"),true,mediaObserver)}catch(_:Exception){}
   }
-  override fun onDestroy(){if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();RemoteStorage.discardReadSessions();sharedConfig.close();lanDiscovery.close();io.shutdown();mediaIo.shutdown();appWebView=null;super.onDestroy()}
+  override fun onDestroy(){connectionControl.shutdown();if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();RemoteStorage.discardReadSessions();sharedConfig.close();lanDiscovery.close();io.shutdown();mediaIo.shutdown();appWebView=null;super.onDestroy()}
   override fun onSaveInstanceState(outState:Bundle){outState.putBoolean("rhfilesRestoreNavigation",true);super.onSaveInstanceState(outState)}
   override fun onStart(){super.onStart();adaptiveWindow.start()}
   override fun onStop(){adaptiveWindow.stop();super.onStop()}
@@ -161,7 +162,7 @@ class MainActivity : TauriActivity() {
           }}
           val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","connection.scan")
           val work={try{if(command=="connection.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,PairingScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
-          if(command in uiCommands) work() else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
+          if(command in uiCommands) work() else if(command in setOf("groups.cancel","groups.diagnostics"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
       }
     }
@@ -191,7 +192,8 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
-    "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.forget","groups.configure","groups.refresh" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{locationsChanged()}}
+    "groups.connect","groups.diagnostics","groups.cancel","groups.refresh" -> DeviceGroups.run(command.removePrefix("groups."),args,storage.remote)
+    "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.forget","groups.configure" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{locationsChanged()}}
     "automation.status" -> onUi{NativeAutomation.status(this)}
     "automation.enable" -> onUi{NativeAutomation.setEnabled(this,args.getBoolean("enabled"))}
     "automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control" -> onUi{NativeAutomation.dispatch(this,command,args)}

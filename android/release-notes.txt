@@ -1,3 +1,17 @@
+RHFiles Android 0.1.28
+
+1. 设备组文件访问接入按需发现、有限重试、地址恢复和连接诊断。新地址必须通过原证书及组公钥验证；不会把同名设备当成可信设备。
+2. 每轮最多 15 秒、6 次尝试，地址去重、失败冷却，可取消；只短时发现，不持续广播或扫描子网。网络变化最多短暂等待一次，不重置预算。
+3. 区分本机网络变化、慢响应、当前不可达和已验证的 IP 变化；无互联网仍可访问局域网。设置 → 存储与权限 → 设备组可查看/复制最近 20 轮的成功、失败和跳过原因。
+4. 文件读取可安全恢复一次；写入、移动、删除结果不明时不自动重放，提示核对目标。新增真实 TLS、换址、取消、慢响应、权限错误和不重复重命名测试。
+5. 修正扫码电脑名称建议和主页返回时的待粘贴/进行中任务取消流程。原签名保留数据覆盖更新；配套 Windows 0.1.80。
+
+1. Add on-demand group discovery, bounded route recovery and connection diagnostics, verifying pinned TLS and the expected group public key before accepting new addresses.
+2. Limit resolution to 15 seconds/six attempts, with deduplication, cooldown and cancellation. No continuous broadcasts/subnet sweeps; one link-stabilization wait never resets budgets.
+3. Distinguish local link changes, slow responses, unreachable devices and verified IP changes; Internet validation is not required for LAN access. Retain 20 diagnostic runs under group settings.
+4. Recover safe reads once, never replay ambiguous writes/moves/deletes. Add real TLS, address-change, cancellation, slow-response, authorization and non-replayed-rename tests.
+5. Correct scanned computer names and Home Back clipboard/task cancellation. Same signing key for in-place updates; companion Windows 0.1.80.
+
 RHFiles Android 0.1.27
 
 1. 新增“删除本机设备组”：确认后删除本机组记录及其生成的网络位置/快捷访问，不保留恢复入口，不影响实际文件、其他客户端或独立连接。

@@ -5,7 +5,9 @@ test('device-group UI persists removals, confirms local group deletion, and supp
   const call=(app,command,args={})=>app.evaluate(`call('device_groups',{command:${JSON.stringify(command)},args:${JSON.stringify(args)}})`);
   try{
     await a.evaluate("setLang('zh');openSettings();switchSettingsSection('lan');true");
-    await until(()=>a.evaluate("!!document.querySelector('.device-groups .dg-actions')"),'group controls');
+    // The shell exists before the async native identity read completes. Wait
+    // for the actual field, not an empty container (especially under CI load).
+    await until(()=>a.evaluate("[...document.querySelectorAll('.device-groups label')].some(n=>n.textContent==='设备名称'&&n.querySelector('input'))"),'group identity field');
     const machineName=process.env.COMPUTERNAME;
     assert.ok(machineName,'Windows computer name is available');
     assert.equal(await a.evaluate("[...document.querySelectorAll('.device-groups label')].find(n=>n.textContent==='设备名称').querySelector('input').value"),machineName);

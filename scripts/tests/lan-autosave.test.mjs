@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import {context,load,plain,deferred,root} from '../testing/source.mjs';
 
 class Element{
-  constructor(tag){this.tagName=tag;this.children=[];this.style={};this.attributes={};this.listeners={};this.checked=false;this.hidden=false;this.classList={add(){}};}
+  constructor(tag){this.tagName=tag;this.children=[];this.style={};this.dataset={};this.attributes={};this.listeners={};this.checked=false;this.hidden=false;this.classList={add(){}};}
   get isConnected(){return this.connected||!!this.parent?.isConnected;}
   get textContent(){return (this.text||'')+this.children.map(node=>node.textContent).join('');}
   set textContent(value){this.replaceChildren();this.text=String(value);}
@@ -184,4 +184,23 @@ test('forget-group is a destructive semantic operation with explicit id and conf
   vm.runInContext('deviceGroupView',ctx).register({register:(id,fn,schema)=>operations.set(id,{fn,schema})},(name,args)=>calls.push({name,args:plain(args)}),true);
   const op=operations.get('groups.forget');assert.ok(op);assert.equal(op.schema.risk,'destructive');assert.deepEqual(plain(op.schema.params.required),['id','confirmed']);assert.equal(op.schema.params.additionalProperties,false);
   await op.fn({id:'group',confirmed:true});assert.deepEqual(calls,[{name:'forget',args:{id:'group',confirmed:true}}]);
+});
+
+for(const mobile of [false,true])test((mobile?'Android':'Windows')+' diagnostics shows evidence without starting discovery and connects only on demand',async()=>{
+  const {host,ctx}=sandbox(),calls=[],state={deviceId:'self',defaultDeviceName:'Fixture',groups:[{id:'g',name:'Home',enabled:true,permissions:{},members:[{id:'peer',name:'PC',server:{endpoints:['https://192.168.1.2:39128']}}]}]};
+  const report={group:'g',peer:'peer',startedAt:1,durationMs:125,outcome:'connected',endpoint:'https://192.168.1.3:39128',steps:[{method:'last_success',code:'timeout',durationMs:100,outcome:'failed'},{method:'mdns',code:'address_changed_verified',durationMs:25,outcome:'succeeded'},{method:'udp',code:'already_connected',durationMs:0,outcome:'skipped'}]};
+  load(ctx,'device-groups-ui.js');const view=vm.runInContext('deviceGroupView',ctx);let copied;
+  await view.mount(host,{mobile,zh:true,copy:value=>{copied=value;},call:async(command,args)=>{calls.push({command,args:plain(args)});if(command==='state')return plain(state);if(command==='diagnostics')return [plain(report)];if(command==='connect')return plain(report);if(command==='cancel')return true;throw Error(command);}});
+  assert.deepEqual(calls.map(c=>c.command),['state']);
+  await all(host).find(n=>n.tagName==='button'&&n.textContent==='刷新记录（不重试）').fire('click');
+  assert.ok(!calls.some(c=>c.command==='connect'||c.command==='refresh'));assert.match(host.textContent,/不能证明设备离线/);assert.match(host.textContent,/新地址验证成功/);assert.match(host.textContent,/已连接，无需继续尝试/);
+  labeled(host,'恢复地址（选填，HTTPS 私网 IP:端口）').value='https://192.168.1.3:39128';
+  await all(host).find(n=>n.tagName==='button'&&n.textContent==='连接设备').fire('click');
+  assert.deepEqual(calls.find(c=>c.command==='connect').args,{id:'g',peer:'peer',endpoint:'https://192.168.1.3:39128'});
+  await all(host).find(n=>n.tagName==='button'&&n.textContent==='复制诊断').fire('click');assert.equal(JSON.parse(copied)[0].outcome,'connected');
+  await all(host).find(n=>n.tagName==='button'&&n.textContent==='取消连接').fire('click');assert.deepEqual(calls.find(c=>c.command==='cancel').args,{id:'g',peer:'peer'});
+});
+test('connection semantic APIs expose separate read-only diagnostics and bounded explicit connect/cancel',()=>{
+  const {ctx}=sandbox(),operations=new Map();load(ctx,'device-groups-ui.js');vm.runInContext('deviceGroupView',ctx).register({register:(id,fn,schema)=>operations.set(id,{fn,schema})},()=>{},false);
+  assert.equal(operations.get('groups.diagnostics').schema.risk,'read');assert.deepEqual(plain(operations.get('groups.connect').schema.params.required),['id','peer']);assert.ok(operations.has('groups.cancel'));assert.equal(operations.get('groups.connect').schema.params.properties.endpoint.maxLength,256);
 });
