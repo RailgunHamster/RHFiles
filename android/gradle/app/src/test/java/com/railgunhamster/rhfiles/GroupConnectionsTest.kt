@@ -122,4 +122,24 @@ class GroupConnectionsTest {
       assertTrue(cancelled);release.countDown();assertEquals(f.url,file.get(3,TimeUnit.SECONDS));assertTrue(manual.get(3,TimeUnit.SECONDS));assertEquals(3,f.server.requestCount)
     }finally{release.countDown();pool.shutdownNow()}
   }}
+  @Test fun exhaustedHandshakeAttemptIsATimeoutNotRevocationAndAnotherAddressCanSucceed(){fixture{f->
+    MockWebServer().use{alternate->
+      alternate.useHttps(HandshakeCertificates.Builder().heldCertificate(f.cert).build().sslSocketFactory(),false);alternate.start(java.net.InetAddress.getByAddress(byteArrayOf(127,0,0,1)),0)
+      val next="https://127.0.0.1:${alternate.port}"
+      val packet=f.host.packet(f.id);packet.getJSONArray("servers").put(0,sign(f.hostKey,claims(f.hostKey,"server",f.id,f.fp,server=obj("endpoints" to JSONArray(listOf(f.url,next)),"fingerprint" to f.fp)).put("seq",2)))
+      f.host.importPacket(f.id,packet);f.phone.importPacket(f.id,f.host.packet(f.id));alternate.dispatcher=f.server.dispatcher
+      val once=java.util.concurrent.atomic.AtomicBoolean(false)
+      // Simulate time spent in Keystore/CPU work after a challenge arrives.
+      f.onRequest={if(it.path=="/api/v1/groups/challenge"&&once.compareAndSet(false,true))org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(3100));null}
+      assertEquals(next,GroupConnections.resolve(f.config(),force=true).getString("url"))
+      val report=latest(f);assertEquals("connected",report.getString("outcome"));assertTrue(report.toString().contains("timeout"));assertFalse(report.toString().contains("authorization_revoked"))
+    }
+  }}
+  @Test fun aLongFailedRunDoesNotConsumeItsOwnCooldown(){fixture{f->
+    f.onRequest={if(it.path=="/api/v1/groups/challenge"){org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(16000));MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)}else null}
+    try{GroupConnections.resolve(f.config(),force=true);fail()}catch(_:java.io.IOException){}
+    val count=f.server.requestCount
+    try{GroupConnections.resolve(f.config(),force=true);fail()}catch(_:java.io.IOException){}
+    assertEquals(count,f.server.requestCount);assertEquals("cooldown",latest(f).getString("outcome"))
+  }}
 }

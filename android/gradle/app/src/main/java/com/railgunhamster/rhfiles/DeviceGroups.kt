@@ -99,7 +99,7 @@ internal object DeviceGroups {
   private fun exchange(c:JSONObject,path:String,body:JSONObject?):JSONObject {
     RhFilesConnection.valid(c)
     val remaining=minOf(GroupConnections.remaining(),refreshDeadline.get()?.let{it-android.os.SystemClock.elapsedRealtime()}?:12000L)
-    require(remaining>0){"本次刷新已到时间上限，请稍后再试离线设备"}
+    if(remaining<=0)throw java.net.SocketTimeoutException("本次连接阶段额度已耗尽")
     val client=RhFilesConnection.client(c).newBuilder().callTimeout(minOf(3000L,remaining),TimeUnit.MILLISECONDS).connectTimeout(minOf(1800L,remaining),TimeUnit.MILLISECONDS).build()
     val url=c.getString("url").trimEnd('/')+"/api/v1/groups/"+path
     val builder=Request.Builder().url(url)
@@ -107,30 +107,32 @@ internal object DeviceGroups {
     val call=client.newCall(builder.build());val start=android.os.SystemClock.elapsedRealtime();GroupConnections.track(call)
     try{return call.execute().use{r->if(!r.isSuccessful)throw RhFilesConnection.HttpFailure(r.code,"设备组连接失败 HTTP ${r.code}");JSONObject(String(r.body!!.byteStream().readBytesBounded(280000),Charsets.UTF_8))}.also{GroupConnections.phase(c,path,start)}}catch(e:Exception){GroupConnections.phase(c,path,start,ConnectionBudget.classify(e));throw e}finally{GroupConnections.release(call)}
   }
-  fun validatePeer(c:JSONObject){val s=knownServer(c);require(c.getString("fingerprint")==s.getString("fingerprint")){"电脑身份发生变化，已拒绝发送凭据"}}
-  private fun knownServer(c:JSONObject):JSONObject {val group=c.getString("groupId");val peer=c.getString("groupPeerId");groups().requirePeer(group,peer);return servers().firstOrNull{it.first==group&&it.second==peer}?.third?.getJSONObject("server")?:error("设备组没有此电脑的服务证明")}
+  private fun checkPeer(group:String,peer:String){try{groups().requirePeer(group,peer)}catch(e:Exception){throw SecurityException("本机设备组授权已失效",e)}}
+  fun validatePeer(c:JSONObject){val s=knownServer(c);if(c.getString("fingerprint")!=s.getString("fingerprint"))throw GroupIdentityFailure("电脑身份发生变化，已拒绝发送凭据")}
+  private fun knownServer(c:JSONObject):JSONObject {val group=c.getString("groupId");val peer=c.getString("groupPeerId");checkPeer(group,peer);return servers().firstOrNull{it.first==group&&it.second==peer}?.third?.getJSONObject("server")?:error("设备组没有此电脑的服务证明")}
   fun knownEndpoints(c:JSONObject)=endpoints(knownServer(c))
   fun checkFileAccess(c:JSONObject,auth:String){
     val start=android.os.SystemClock.elapsedRealtime()
-    val call=RhFilesConnection.client(c).newBuilder().callTimeout(GroupConnections.remaining().coerceIn(1,3000),TimeUnit.MILLISECONDS).build().newCall(Request.Builder().url(c.getString("url")+"/api/v1/capabilities").header("Authorization",auth).build());GroupConnections.track(call)
+    val remaining=GroupConnections.remaining();if(remaining<=0)throw java.net.SocketTimeoutException("本次连接阶段额度已耗尽")
+    val call=RhFilesConnection.client(c).newBuilder().callTimeout(remaining.coerceAtMost(3000),TimeUnit.MILLISECONDS).build().newCall(Request.Builder().url(c.getString("url")+"/api/v1/capabilities").header("Authorization",auth).build());GroupConnections.track(call)
     try{call.execute().use{r->if(!r.isSuccessful)throw RhFilesConnection.HttpFailure(r.code,"文件服务访问被拒绝 HTTP ${r.code}");r.body?.byteStream()?.readBytesBounded(16384)};GroupConnections.phase(c,"capabilities",start)}catch(e:Exception){GroupConnections.phase(c,"capabilities",start,ConnectionBudget.classify(e));throw e}finally{GroupConnections.release(call)}
   }
   fun exchangeKnownPeer(group:String,peer:String,url:String){
     val member=servers().firstOrNull{it.first==group&&it.second==peer}?.third?:error("没有此组设备")
     val c=profile(group,peer,member,url);val auth=synchronized(this){sessions["$group:$peer:$url:${c.getString("fingerprint")}"]?.takeIf{it.expires>android.os.SystemClock.elapsedRealtime()}?.authorization}?:error("没有现存在线会话")
     val call=RhFilesConnection.client(c).newBuilder().callTimeout(minOf(1000L,GroupConnections.remaining()).coerceAtLeast(1),TimeUnit.MILLISECONDS).build().newCall(Request.Builder().url(url+"/api/v1/groups/state").header("Authorization",auth).build());GroupConnections.track(call)
-    try{call.execute().use{r->require(r.isSuccessful){"组设备未响应"};val packet=JSONObject(String(r.body!!.byteStream().readBytesBounded(280000),Charsets.UTF_8));groups().requirePeer(group,peer);groups().importPacket(group,packet)}}finally{GroupConnections.release(call)}
+    try{call.execute().use{r->if(!r.isSuccessful)throw RhFilesConnection.HttpFailure(r.code,"组设备未响应 HTTP ${r.code}");val packet=JSONObject(String(r.body!!.byteStream().readBytesBounded(280000),Charsets.UTF_8));checkPeer(group,peer);groups().importPacket(group,packet)}}finally{GroupConnections.release(call)}
   }
   fun authorization(c:JSONObject,allowDiscovered:Boolean=false):String {
-    val g=groups();val group=c.getString("groupId");val peer=c.getString("groupPeerId");g.requirePeer(group,peer)
+    val g=groups();val group=c.getString("groupId");val peer=c.getString("groupPeerId");checkPeer(group,peer)
     val member=servers().firstOrNull{it.first==group&&it.second==peer}?.third?:error("设备组没有此电脑的服务证明")
     val server=member.getJSONObject("server");require(c.getString("fingerprint")==server.getString("fingerprint")&&(allowDiscovered||c.getString("url") in endpoints(server))){"电脑地址或身份已改变，请刷新组设备"}
     val cache="$group:$peer:${c.getString("url")}:${c.getString("fingerprint")}";val now=android.os.SystemClock.elapsedRealtime()
     synchronized(this){sessions[cache]?.takeIf{it.expires>now}?.let{return it.authorization}}
     val nonce=exchange(c,"challenge",JSONObject().put("groupId",group).put("deviceId",g.deviceId)).getString("nonce")
     val result=exchange(c,"session",JSONObject().put("groupId",group).put("nonce",nonce).put("packet",g.packet(group)).put("proof",g.proof(group,nonce,c.getString("fingerprint"))))
-    DeviceGroupModel.verifyServerProof(result.getJSONObject("serverProof"),group,nonce,c.getString("fingerprint"),peer)
-    g.importPacket(group,result.getJSONObject("packet"));g.requirePeer(group,peer)
+    try{DeviceGroupModel.verifyServerProof(result.getJSONObject("serverProof"),group,nonce,c.getString("fingerprint"),peer)}catch(e:Exception){throw GroupIdentityFailure("设备签名证明无效",e)}
+    try{g.importPacket(group,result.getJSONObject("packet"))}catch(e:Exception){checkPeer(group,peer);throw GroupIdentityFailure("设备组公开证明无效",e)};checkPeer(group,peer)
     require(c.getString("url") in knownEndpoints(c)){"实际服务没有签名确认此地址"}
     val credential=result.getJSONObject("credential");val auth=Credentials.basic(credential.getString("username"),credential.getString("password"),Charsets.UTF_8)
     synchronized(this){if(sessions.size>=128)sessions.remove(sessions.keys.first());sessions[cache]=Session(auth,now+25*60*1000)};return auth

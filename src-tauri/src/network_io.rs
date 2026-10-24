@@ -502,6 +502,13 @@ pub fn run_if_requested() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // These fixtures start the full Windows PowerShell/.NET interpreter,
+    // unlike production's lightweight worker entry point. Hosted CI can take
+    // over ten seconds to cold-start several interpreters concurrently. Keep
+    // fixture startup serialized/bounded; do not change the real 6 s timeout
+    // or the separate 150 ms kill/cleanup assertion below.
+    static SHELL_FIXTURE: Mutex<()> = Mutex::new(());
+    const SHELL_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
     #[test]
     fn unc_identity_is_normalized_without_resolving_or_changing_hosts() {
         for path in [
@@ -571,6 +578,7 @@ mod tests {
 
     #[test]
     fn silent_worker_is_actually_terminated_without_blocking_parent() {
+        let _fixture = SHELL_FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
         let child = test_child("Start-Sleep -Seconds 60");
         let pid = child.0.id();
         let start = Instant::now();
@@ -586,7 +594,8 @@ mod tests {
 
     #[test]
     fn worker_reply_preserves_false_and_original_errors() {
-        let timeout = Duration::from_secs(10);
+        let _fixture = SHELL_FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+        let timeout = SHELL_REPLY_TIMEOUT;
         assert!(
             !run_child::<bool>(
                 test_child("[Console]::WriteLine('{\"Done\":{\"Ok\":false}}')"),
@@ -608,20 +617,27 @@ mod tests {
 
     #[test]
     fn invalid_and_truncated_worker_replies_fail_safely() {
+        let _fixture = SHELL_FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
         for script in [
             "[Console]::WriteLine('broken-json')",
             "[Console]::Write('{\"Done\":')",
             "exit 3",
         ] {
-            assert!(run_child::<Value>(test_child(script), Duration::from_secs(10), None).is_err());
+            let error =
+                run_child::<Value>(test_child(script), SHELL_REPLY_TIMEOUT, None).unwrap_err();
+            assert!(
+                !error.contains("[timed_out]"),
+                "Malformed-output test did not reach its parser: {error}"
+            );
         }
     }
 
     #[test]
     fn a_reply_larger_than_a_pipe_buffer_is_drained_without_deadlock() {
+        let _fixture = SHELL_FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
         let result: String = run_child(
             test_child("[Console]::WriteLine('{\"Done\":{\"Ok\":\"' + ('x' * 200000) + '\"}}')"),
-            Duration::from_secs(10),
+            SHELL_REPLY_TIMEOUT,
             None,
         )
         .unwrap();

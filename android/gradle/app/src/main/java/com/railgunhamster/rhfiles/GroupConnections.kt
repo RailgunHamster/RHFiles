@@ -42,7 +42,7 @@ internal object GroupConnections {
     val a=r.report.getJSONArray("steps");if(a.length()<40)a.put(JSONObject().put("method",method).put("endpoint",url?:JSONObject.NULL).put("outcome",outcome).put("code",code).put("durationMs",android.os.SystemClock.elapsedRealtime()-start))
   }
   fun resolve(c:JSONObject,trigger:String="file_request",force:Boolean=false,manual:String?=null):JSONObject {
-    val key=key(c);val budget=ConnectionBudget(total=minOf(15_000L,DeviceGroups.refreshRemaining()))
+    val key=key(c);val budget=ConnectionBudget({android.os.SystemClock.elapsedRealtime()},total=minOf(15_000L,DeviceGroups.refreshRemaining()))
     val manualRequest=trigger=="manual"
     val(gate,cancellationVersion)=synchronized(locks){require(locks.size<128||locks.containsKey(key)){"并发连接数达到上限"};val value=locks.getOrPut(key){Gate()};val version=value.manualCancellation.get();value.users++;if(manualRequest)value.manualUsers++;value to version}
     val lock=gate.lock
@@ -55,7 +55,7 @@ internal object GroupConnections {
     val run=Run(budget,epoch,report);active[key]=run;current.set(run)
     try {
       if(manualRequest&&gate.manualCancellation.get()!=cancellationVersion){report.put("outcome","cancelled").put("certainty","confirmed");step(run,"coalesce",null,"cancelled","cancelled");throw java.io.InterruptedIOException("连接已取消")}
-      try{DeviceGroups.validatePeer(c)}catch(e:Exception){report.put("outcome","authorization_revoked").put("certainty","confirmed");step(run,"authorization",null,"failed","authorization_revoked");throw e}
+      try{DeviceGroups.validatePeer(c)}catch(e:Exception){val code=ConnectionBudget.classify(e);report.put("outcome",if(code=="authorization_revoked")code else "authorization_rejected").put("certainty","confirmed");step(run,"authorization",null,"failed",code);throw e}
       val cached=routes[key]
       if((!force||waited)&&cached!=null&&cached.epoch==epoch&&now-cached.at<60_000){
         val result=JSONObject(c.toString()).put("url",cached.url)
@@ -116,7 +116,9 @@ internal object GroupConnections {
         }catch(e:Exception){if(ConnectionNetwork.generation.get()!=epoch){step(run,method,url,"cancelled","local_network_changed",start);continue};val code=ConnectionBudget.classify(e);step(run,method,url,"failed",code,start);if(ConnectionBudget.terminal(code)){report.put("outcome","authorization_rejected").put("certainty","confirmed");throw e}}
       }
       step(run,"udp",null,"skipped","not_enabled");step(run,"manual_help",null,"available","enter_private_address_or_exchange_group_data")
-      if(failures.size>=128)failures.clear();failures[key]=Failure(epoch,now)
+      // Start cooldown when the run finishes, not when it began: a full
+      // 15-second failure must not consume its own entire cooldown allowance.
+      if(failures.size>=128)failures.clear();failures[key]=Failure(epoch,android.os.SystemClock.elapsedRealtime())
       throw java.io.IOException("设备当前不可达，不能确定是否离线；请打开设备组 → 连接诊断查看尝试过程")
     } finally {
       report.put("durationMs",budget.elapsed);if(report.optString("outcome")!="unreachable"||report.getJSONArray("steps").length()>0)record(report)

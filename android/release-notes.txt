@@ -1,3 +1,13 @@
+RHFiles Android 0.1.29
+
+1. 修正握手阶段额度耗尽被误报为“授权失效”的问题。正确记录超时，并在未耗尽的总预算内尝试其他地址，不增加总时限和次数。
+2. 区分无效响应、设备签名校验失败、本机撤权、HTTP 权限拒绝和网络超时；失败冷却从整轮结束时开始，防止长时间失败后立即重复扫描。
+3. 保留 0.1.28 的按需发现、连接恢复与诊断功能；原签名保留数据覆盖更新，配套 Windows 0.1.80。
+
+1. Fix handshake allowance exhaustion being mislabeled as revoked authorization. Continue with other endpoints only within the unchanged overall budget.
+2. Distinguish malformed responses, identity proof failures, local revocation, HTTP denial and timeouts. Start cooldown at failure completion, preventing repeat scans after long failures.
+3. Retain 0.1.28 discovery/recovery/diagnostics and the same signing key for in-place updates. Companion Windows 0.1.80.
+
 RHFiles Android 0.1.28
 
 1. 设备组文件访问接入按需发现、有限重试、地址恢复和连接诊断。新地址必须通过原证书及组公钥验证；不会把同名设备当成可信设备。
