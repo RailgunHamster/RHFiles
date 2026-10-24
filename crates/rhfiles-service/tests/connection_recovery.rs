@@ -14,14 +14,18 @@ struct Fixture {
 }
 fn setup() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
-    let data = dir.path().join("server");
-    let files = dir.path().join("files");
+    // macOS temporary roots commonly start with /var -> /private/var. The
+    // production share guard correctly refuses symlink ancestors; normalize
+    // the fixture rather than weakening that guard or skipping these tests.
+    let root = dir.path().canonicalize().unwrap();
+    let data = root.join("server");
+    let files = root.join("files");
     std::fs::create_dir_all(&files).unwrap();
     let host = Arc::new(Groups::open(&data).unwrap());
     let id = host
         .create("Recovery test", "Host", Permissions::default())
         .unwrap();
-    let client = Arc::new(Groups::open(&dir.path().join("client")).unwrap());
+    let client = Arc::new(Groups::open(&root.join("client")).unwrap());
     let request = client.request("Client").unwrap();
     let approval = host.approve(&id, &request, false).unwrap();
     client.join(approval, Permissions::default()).unwrap();
