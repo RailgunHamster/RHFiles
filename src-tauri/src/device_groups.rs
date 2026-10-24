@@ -2,44 +2,10 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use rhfiles_service::{
     Permissions,
+    device_name::default_device_name,
     groups::{Packet, Signed},
 };
 use serde_json::{Value, json};
-fn clean_device_name(value: &str) -> Option<String> {
-    let mut name = String::new();
-    for ch in value.trim().chars().filter(|ch| !ch.is_control()) {
-        if name.len() + ch.len_utf8() > 120 {
-            break;
-        }
-        name.push(ch);
-    }
-    let name = name.trim();
-    (!name.is_empty()).then(|| name.to_owned())
-}
-fn default_device_name() -> String {
-    #[cfg(windows)]
-    if let Some(name) = std::env::var("COMPUTERNAME")
-        .ok()
-        .and_then(|v| clean_device_name(&v))
-    {
-        return name;
-    }
-    #[cfg(not(windows))]
-    {
-        // Local kernel hostname only: never resolve DNS or open a network path.
-        let mut bytes = [0u8; 256];
-        if unsafe { libc::gethostname(bytes.as_mut_ptr().cast(), bytes.len()) } == 0 {
-            let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-            if let Some(name) = clean_device_name(&String::from_utf8_lossy(&bytes[..end])) {
-                return name;
-            }
-        }
-    }
-    std::env::var("HOSTNAME")
-        .ok()
-        .and_then(|v| clean_device_name(&v))
-        .unwrap_or_else(|| "Computer".into())
-}
 fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
     v.get(key)
         .and_then(Value::as_str)
@@ -186,6 +152,7 @@ fn err(message: impl Into<String>) -> rhfiles_service::Error {
 #[cfg(test)]
 mod name_tests {
     use super::*;
+    use rhfiles_service::device_name::clean_device_name;
     #[test]
     fn system_names_are_safe_and_within_the_signed_name_limit() {
         assert_eq!(

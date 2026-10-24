@@ -131,7 +131,8 @@ class LanDiscovery(private val context:Context):Closeable {
       require(info.attributes["v"]?.toString(Charsets.UTF_8)=="1")
       val fp=info.attributes["fp"]?.toString(Charsets.UTF_8)?:return null
       require(fp.matches(Regex("[0-9a-f]{64}")))
-      JSONObject().put("name",info.serviceName.filter{!it.isISOControl()}.take(100)).put("url","https://$address:${info.port}").put("fingerprint",fp)
+      val name=DeviceNames.normalize(info.attributes["name"]?.toString(Charsets.UTF_8))?:DeviceNames.normalize(info.serviceName)?:address
+      JSONObject().put("name",name).put("url","https://$address:${info.port}").put("fingerprint",fp)
     }catch(_:Exception){null}
     internal fun sameSubnet(a:ByteArray,b:ByteArray,prefix:Int)=a.size==b.size&&prefix in 1..a.size*8&&(0 until prefix).all{bit->(a[bit/8].toInt() shr (7-bit%8) and 1)==(b[bit/8].toInt() shr (7-bit%8) and 1)}
     internal fun probe(id:String)="""<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:p="http://schemas.xmlsoap.org/ws/2006/02/devprof"><s:Header><a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</a:Action><a:MessageID>$id</a:MessageID><a:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To></s:Header><s:Body><d:Probe><d:Types>p:Device</d:Types></d:Probe></s:Body></s:Envelope>"""

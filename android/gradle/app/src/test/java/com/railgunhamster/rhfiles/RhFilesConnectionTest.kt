@@ -33,6 +33,23 @@ class RhFilesConnectionTest {
     c.put("fingerprint","0".repeat(64));server.enqueue(MockResponse().setBody("should not read"))
     try{RhFilesConnection(c).stat("Files","remote://test/Files");fail("Wrong certificate accepted")}catch(e:javax.net.ssl.SSLException){assertEquals(0,server.requestCount)}
   }}
+  @Test fun pairingSendsThePhoneNameWithoutChangingTheSavedComputerLabel(){https{server,c->
+    val context=org.robolectric.RuntimeEnvironment.getApplication()
+    android.provider.Settings.Global.putString(context.contentResolver,"device_name","我的 OPPO")
+    val uri=PairingData.compose(c.getString("url"),c.getString("fingerprint"),"0123456789",true)
+    server.enqueue(MockResponse().setBody(JSONObject().put("username","paired-phone").put("password","fixture-secret").toString()))
+    val saved=RhFilesConnection.pair(uri,"CLAW（书房）",DeviceNames.current(context))
+    val request=server.takeRequest(5,TimeUnit.SECONDS)!!
+    assertEquals("/api/v1/pair",request.path);assertNull(request.getHeader("Authorization"))
+    val payload=JSONObject(request.body.readUtf8())
+    assertEquals("我的 OPPO",payload.getString("name"));assertEquals("0123456789",payload.getString("code"))
+    assertEquals("CLAW（书房）",saved.getString("name"));assertEquals("paired-phone",saved.getString("username"))
+  }}
+  @Test fun blankPhoneNamesAreRejectedBeforePairingNetworkAccess(){https{server,c->
+    val uri=PairingData.compose(c.getString("url"),c.getString("fingerprint"),"0123456789",true)
+    try{RhFilesConnection.pair(uri,"CLAW"," \n ");fail("Blank phone name accepted")}catch(_:IllegalArgumentException){}
+    assertEquals(0,server.requestCount)
+  }}
   @Test fun uploadUsesTusAndRecoversAnOffsetConflictWithoutWholeFilePut(){https{server,c->
     val target="/api/v1/uploads/"+"x".repeat(43)
     server.enqueue(MockResponse().setResponseCode(201).addHeader("Location",target))

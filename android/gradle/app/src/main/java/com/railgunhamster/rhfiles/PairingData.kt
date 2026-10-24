@@ -56,6 +56,8 @@ internal object PairingData {
   }
   fun describe(uri:String):JSONObject {
     val data=parse(uri)
+    // Optional display metadata for old QR compatibility; never used as trust.
     return JSONObject().put("uri",uri).put("endpoints",data.getJSONArray("endpoints")).put("fingerprint",data.getString("fingerprint"))
+      .put("deviceName",DeviceNames.normalize(data.opt("deviceName") as? String))
   }
 }

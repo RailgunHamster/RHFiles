@@ -38,3 +38,71 @@ async fn real_tls_sessions_offline_introductions_local_removal_restart_and_manua
     assert_eq!(http.post(format!("{url}/api/v1/groups/session")).json(&body).send().await.unwrap().status(),401);
     assert_eq!(http.post(format!("{url}/api/v1/groups/challenge")).header("Origin","https://evil.invalid").json(&json!({"groupId":id,"deviceId":c.device_id()})).send().await.unwrap().status(),403);
 }
+
+#[tokio::test]
+async fn forgetting_a_live_group_denies_fresh_file_reads_but_not_independent_credentials() {
+    let data = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    std::fs::write(files.path().join("not-cached.txt"), b"fresh file data").unwrap();
+    let shares = vec![ShareConfig {
+        name: "Files".into(),
+        path: files.path().canonicalize().unwrap(),
+    }];
+    let server = Service::start(data.path(), shares.clone(), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let groups = server.groups();
+    let id = groups.create("Delete this", "Server", Permissions { write: true, delete: true }).unwrap();
+    let other = groups.create("Keep this", "Server", Permissions::default()).unwrap();
+    server.advertise_group_host().unwrap();
+    let phone_data = tempfile::tempdir().unwrap();
+    let phone = Groups::open(phone_data.path()).unwrap();
+    for group in [&id, &other] {
+        let request = phone.request("Phone").unwrap();
+        phone.join(groups.approve(group, &request, true).unwrap(), Permissions::default()).unwrap();
+    }
+    let http = client(&server);
+    let header = |reply: &Value| {
+        use base64::Engine;
+        format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!(
+            "{}:{}", reply["credential"]["username"].as_str().unwrap(), reply["credential"]["password"].as_str().unwrap()
+        )))
+    };
+    let old = header(&session(&http, &server, &phone, &id).await.json::<Value>().await.unwrap());
+    let retained = header(&session(&http, &server, &phone, &other).await.json::<Value>().await.unwrap());
+    let independent = server.credential("Separate pairing", Permissions::default()).unwrap();
+    let url = format!("https://127.0.0.1:{}", server.status().port);
+    let routes = [
+        ("GET", "/api/v1/list?path=/Files"),
+        ("GET", "/api/v1/stat?path=/Files/not-cached.txt"),
+        ("GET", "/api/v1/content?path=/Files/not-cached.txt"),
+        ("HEAD", "/api/v1/content?path=/Files/not-cached.txt"),
+        ("GET", "/dav/Files/not-cached.txt"),
+        ("PROPFIND", "/dav/Files/"),
+    ];
+    for (method, path) in routes {
+        assert!(http.request(method.parse::<reqwest::Method>().unwrap(), format!("{url}{path}"))
+            .header("Authorization", &old).header("Depth", "1").send().await.unwrap().status().is_success());
+    }
+    groups.forget(&id, true).unwrap();
+    for (method, path) in routes {
+        assert!(!http.request(method.parse::<reqwest::Method>().unwrap(), format!("{url}{path}"))
+            .header("Authorization", &old).header("Depth", "1").send().await.unwrap().status().is_success(), "{method} {path}");
+    }
+    assert!(!http.post(format!("{url}/api/v1/mkdir")).header("Authorization", &old)
+        .json(&json!({"path":"/Files/forbidden"})).send().await.unwrap().status().is_success());
+    assert!(!files.path().join("forbidden").exists());
+    assert!(!http.post(format!("{url}/api/v1/groups/challenge"))
+        .json(&json!({"groupId":id,"deviceId":phone.device_id()})).send().await.unwrap().status().is_success());
+    // Separate grants are not silently revoked by deleting an unrelated group.
+    let content = format!("{url}/api/v1/content?path=/Files/not-cached.txt");
+    assert_eq!(http.get(&content).header("Authorization", &retained).send().await.unwrap().bytes().await.unwrap(), &b"fresh file data"[..]);
+    assert_eq!(http.get(&content).basic_auth(&independent.username, Some(&independent.password)).send().await.unwrap().bytes().await.unwrap(), &b"fresh file data"[..]);
+    let request = groups.request("Server").unwrap();
+    groups.join(phone.approve(&id, &request, true).unwrap(), Permissions::default()).unwrap();
+    assert!(!http.get(&content).header("Authorization", &old).send().await.unwrap().status().is_success());
+    assert_eq!(session(&http, &server, &phone, &id).await.status(), 200);
+    groups.forget(&id, true).unwrap();
+    server.stop(); drop(server); drop(groups);
+    let restarted = Service::start(data.path(), shares, "127.0.0.1:0".parse().unwrap()).unwrap();
+    assert!(restarted.groups().packet(&id).is_err());
+    assert!(restarted.groups().packet(&other).is_ok());
+}

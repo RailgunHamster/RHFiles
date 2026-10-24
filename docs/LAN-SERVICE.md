@@ -20,6 +20,16 @@ Windows 0.1.77 / Android 0.1.26 新增 [设备组](DEVICE-GROUPS.md)：签名介
 
 扫码使用 CameraX 与 ZXing-C++，只在本机解码，不上传画面、不需要 Google 服务。相机权限只在扫码时请求；拒绝或无相机的设备仍可粘贴配对。扫描普通网页二维码不会打开网页或发出网络请求。
 
+### 设备名称与地址
+
+新版电脑配对二维码可选携带 `deviceName`，手机扫码/粘贴后用电脑本机名称建议连接备注；旧二维码没有名称时显示其地址，不再填写“RHFiles 电脑”。局域网发现也提供完整电脑名称。重复扫描可更新自动建议，手动填写过的备注不会被覆盖。备注只用于显示，不作为可信身份。
+
+保存的电脑备注与手机自己的名称分开：`connections.pair` 的 `name` 是手机中显示的电脑备注，电脑收到的配对客户端名称由 Android 系统设备名称自动填写（不可读取时使用厂商/型号）。设备组的本机名称输入框同样读取本机系统名称，扫描对方的组证明不会把本机改成对方名称。已有账号/成员不会被自动改名。
+
+现有两种 RHFiles 授权不能混为一谈：文件服务配对码创建独立账号，设备组邀请创建签名成员证明。删除本机设备组会立即拒绝该组的旧会话及新读取，不会撤销独立配对、其他组或 WebDAV 专用账号。手机网络位置标注授权来源，独立配对扫码页也提示这一边界；第三方 SMB 连接更不受组删除影响。统一设备组入口及旧独立连接的明确迁移是后续改进，当前不能假定已经自动迁移。
+
+当前二维码和组证明可以携带多个私有 IPv4 地址，配对/刷新组设备时优先尝试直连子网地址；但普通文件请求仍使用连接中选定的单个地址。换网络后可能需要「刷新组设备」。不能将它理解为已实现一个永久地址、自动发现变化后的所有 IP 或传输中无缝切换；所有已知地址变化时仍需可信渠道传递新证明。当前原生连接只接受本机、局域网和 Tailscale IPv4，不接受 MagicDNS 主机名。
+
 发现采用标准 DNS-SD/mDNS `_rhfiles._tcp.local.`，电脑仅在主动启动服务时广播公开协议版本、HTTPS 端口和证书指纹，不广播配对码、账号、共享名称或本机路径；停止服务即撤销广播。手机只在用户点击后发现八秒，可中止，离开配对表单会停止。**发现的名称和指纹尚未可信，必须与电脑屏幕核对身份一致后才输入配对码**；不一致时取消并改用电脑屏幕上的二维码。网络隔离、防火墙或多播被禁用时可能发现不到，可扫码/粘贴直连。不会修改防火墙或发起公网扫描。
 
 ## WebDAV 兼容入口
@@ -81,5 +91,7 @@ Android 对应 `connections.scan`（打开扫码页，确认后返回信息，�
 An opt-in desktop HTTPS service exposes the native JSON API at `/api/v1/` and a WebDAV compatibility endpoint at `/dav/`. Both use one confined local filesystem and authorization core; neither depends on SMB. Android stores per-device credentials using Android Keystore and verifies the explicitly paired SHA-256 certificate identity.
 
 Desktop: **Settings → LAN file service**. Add local folders, start the service, generate a short-lived pairing payload. Android: **Network locations → Add → RHFiles computer file service**, scan the QR offline, discover the computer and verify its identity before entering the code, or paste the payload. Confirm and save the connection; discovery/scanning never automatically grants trust. Read-only by default; write/rename and permanent deletion are separate grants. WebDAV clients use independently revocable app credentials and must trust the exported public HTTPS certificate. Private keys never leave the host.
+
+New pairing payloads optionally include the computer's `deviceName`. Android suggests it as the saved connection label, preserves manual labels, and uses the endpoint address for legacy payloads without a name. Discovery also carries the full computer name. The phone's own system name—not the computer label—is sent as pairing-client display metadata. Names never establish trust or rename existing accounts/members. Groups already default to the local device name and scanning a peer's proof does not change it. Payloads may contain multiple private IPv4 endpoints, but ordinary file requests still use one selected address; group refresh may be needed after switching networks. Automatic per-request route failover, arbitrary address rediscovery and MagicDNS-hostname support are not implemented.
 
 Includes paginated browsing, direct image/video reads, HTTP Range, bounded image thumbnails, basic WebDAV, tus uploads, offline QR pairing and mDNS discovery. Existing device grants can be edited locally without re-pairing. Whole-drive sharing is explicit; RHFiles profiles/keys/staging remain excluded and their ancestors cannot be moved. Both application-start service restore and Windows login startup are opt-in; login launch stays in the tray, restores the selected profile and reports failures in settings. This is not a pre-login system daemon. Listeners and source validation allow only localhost, LAN and Tailscale addresses, not public-IP access; network scope never replaces authentication. Existing destinations are never overwritten. Incomplete uploads expire after 24 hours. Current limitations include no service-side video thumbnails/index search, network-backed share roots or public reverse-proxy deployment. E2E covers real settings, live grants, service restore, hidden login startup and disabling it; fixtures never register real login entries.

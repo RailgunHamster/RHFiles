@@ -21,6 +21,20 @@ class PairingDataTest {
     assertEquals(fp,PairingData.describe(uri).getString("fingerprint"))
     assertFalse(PairingData.describe(uri).has("password"))
   }
+  @Test fun qrComputerNameIsOptionalBoundedDisplayMetadata(){
+    val uri=PairingData.compose("https://192.168.1.2:39128",fp,"0123456789",true)
+    assertFalse(PairingData.describe(uri).has("deviceName")) // Old computers still work.
+    fun named(name:Any):JSONObject {
+      val payload=PairingData.parse(uri).put("deviceName",name)
+      val value="rhfiles-connect:v1:"+Base64.encodeToString(payload.toString().toByteArray(Charsets.UTF_8),Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+      return PairingData.describe(value)
+    }
+    assertEquals("CLAW",named("  C\nLAW  ").getString("deviceName"))
+    assertEquals(fp,named("Another PC").getString("fingerprint"))
+    assertFalse(named(" \n\u0000 ").has("deviceName"))
+    assertFalse(named(JSONObject().put("name","not a string")).has("deviceName"))
+    assertTrue(named("中".repeat(100)).getString("deviceName").toByteArray(Charsets.UTF_8).size<=120)
+  }
   @Test fun tailnetAddressesAreSupportedButPublicAndAdjacentRangesAreRejected(){
     for(host in listOf("127.0.0.1","192.168.0.1","100.64.0.0","100.127.255.255")) {
       assertTrue(PairingData.localAddress(host))
@@ -56,6 +70,9 @@ class PairingDataTest {
   @Test fun mdnsMetadataRequiresSupportedProtocolLocalAddressAndFingerprint(){
     val info=NsdServiceInfo().apply{serviceType="_rhfiles._tcp.";serviceName="My PC";host=InetAddress.getByAddress(byteArrayOf(192.toByte(),168.toByte(),1,2));port=39128;setAttribute("v","1");setAttribute("fp",fp)}
     assertEquals("https://192.168.1.2:39128",LanDiscovery.rhFilesRecord(info)!!.getString("url"))
+    assertEquals("My PC",LanDiscovery.rhFilesRecord(info)!!.getString("name"))
+    info.setAttribute("name","  RAILGUNHAMSTER\n ");assertEquals("RAILGUNHAMSTER",LanDiscovery.rhFilesRecord(info)!!.getString("name"))
+    info.setAttribute("name"," \n ");assertEquals("My PC",LanDiscovery.rhFilesRecord(info)!!.getString("name"))
     info.serviceType="._rhfiles._tcp.";assertNotNull(LanDiscovery.rhFilesRecord(info))
     info.setAttribute("v","2");assertNull(LanDiscovery.rhFilesRecord(info));info.setAttribute("v","1")
     info.setAttribute("fp","bad");assertNull(LanDiscovery.rhFilesRecord(info));info.setAttribute("fp",fp)

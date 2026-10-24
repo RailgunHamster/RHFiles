@@ -522,6 +522,14 @@
     paneHost()?.clipboard(window,state.clipboard);
     renderList(); renderShell();
   }
+  function cancelPaste() {
+    const pending=state.clipboard;if(!pending)return false;
+    const host=paneHost();
+    // Never clear a newer clipboard supplied by the other pane.
+    if(host&&host.clipboard(window,null,pending.revision)===false){state.clipboard=host.currentClipboard(window);renderList();renderShell();return true;}
+    state.clipboard=null;quitArmedAt=0;renderList();renderShell();
+    ui.toast(pending.mode==='cut'?'已取消待移动':'已取消待复制');return true;
+  }
   async function task(label, work) {
     if (blocked()||(paneHost()&&!paneHost().acquire(window,label))) { ui.toast('请等待当前文件任务完成'); return; }
     state.task = { label }; renderShell();
@@ -722,6 +730,11 @@
       }
       if(!api.isVirtual(path) || root?.path===path) {go({screen:'home'},{replace:true});return true;}
     }
+    if(state.route.screen==='home') {
+      if(androidFeatures.cancelTransfersOnBack(blocked()))return true;
+      if(cancelPaste())return true;
+      return false;
+    }
     if(state.stack.length) { go(state.stack.pop(),{replace:true}); return true; }
     if(state.route.screen!=='home') { go({screen:'home'},{replace:true}); return true; }
     return false;
@@ -808,7 +821,7 @@
       if(which==='more') selectionMenu();
     },undefined,"android.web.js.app.boot.1a78ad95bf9a");
     on('copy-to-pane',()=>transferToPane('copy',[...state.selected]));on('move-to-pane',()=>transferToPane('cut',[...state.selected]));
-    on('btn-paste',paste); on('btn-cancel-paste',()=>{state.clipboard=null;paneHost()?.clipboard(window,null);renderList();renderShell();});
+    on('btn-paste',paste); on('btn-cancel-paste',cancelPaste);
     on('btn-reindex',rebuildIndex); on('btn-clear-index',async()=>{await api.indexClear();await refreshSettings();});
     on('btn-permission',()=>api.openAppSettings());
     on('btn-theme',async()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';cache('rhfiles.theme',document.documentElement.dataset.theme);await api.systemTheme(document.documentElement.dataset.theme==='dark');return refreshSettings();});

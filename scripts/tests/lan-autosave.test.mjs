@@ -137,6 +137,23 @@ for(const [label,systemName,fallback]of [['computer','WINSERVER','我的电脑']
     assert.equal(name.value,'用户自定义的名字');
   });
 }
+
+test('scanning group approval preserves the local phone name, including an edited name',async()=>{
+  const {host,ctx}=sandbox(),calls=[];
+  load(ctx,'device-groups-ui.js');const view=vm.runInContext('deviceGroupView',ctx);
+  await view.mount(host,{mobile:true,deviceName:'我的手机',scan:async()=>({uri:'public-group-approval',deviceName:'CLAW'}),call:async(command,args)=>{
+    calls.push({command,args:plain(args)});
+    if(command==='state')return {deviceId:'self',defaultDeviceName:'Moto 工作手机',groups:[]};
+    if(command==='request')return {uri:'public-phone-request'};
+    throw Error(command);
+  }});
+  const scan=all(host).find(n=>n.tagName==='button'&&n.textContent==='扫码填写');
+  await scan.fire('click');assert.equal(labeled(host,'设备名称').value,'Moto 工作手机');
+  assert.equal(labeled(host,'粘贴入组请求或批准信息').value,'public-group-approval');
+  labeled(host,'设备名称').value='我的自定义手机';await scan.fire('click');
+  await all(host).find(n=>n.tagName==='button'&&n.textContent==='生成本机入组请求').fire('click');
+  assert.equal(calls.find(c=>c.command==='request').args.deviceName,'我的自定义手机');
+});
 test('desktop and Android share identical autosave/group implementations loaded in dependency order',()=>{
   for(const name of ['settings-autosave.js','device-groups-ui.js'])assert.ok(fs.readFileSync(path.join(root,'src/js',name)).equals(fs.readFileSync(path.join(root,'android/web/js',name))),name);
   for(const page of ['src/index.html','android/web/index.html']){const source=fs.readFileSync(path.join(root,page),'utf8');assert.ok(source.indexOf('js/settings-autosave.js')<source.indexOf('js/device-groups-ui.js'));}

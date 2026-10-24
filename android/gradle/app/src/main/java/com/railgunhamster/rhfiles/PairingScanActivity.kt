@@ -91,7 +91,7 @@ class PairingScanActivity:AppCompatActivity() {
     val data=DeviceGroups.describe(uri);found=uri;provider?.unbindAll();camera=null;torch.isEnabled=false;light=false
     if(data.has("kind")){note.text=text("已识别设备组信息：\n","Device group data:\n")+data.getString("name")+"\n"+text("返回后核对来源，再手动批准或加入。","Verify its source, then explicitly approve or join.");accept.isEnabled=true;return}
     val identity=data.getString("fingerprint").take(12).chunked(4).joinToString(" ")
-    note.text=text("已识别电脑：\n","Computer found:\n")+data.getJSONArray("endpoints").getString(0)+"\n"+text("身份：","Identity: ")+identity+"\n"+text("仅使用你自己电脑上显示的二维码。确认后仍需保存连接。","Only use a QR displayed on your own computer. Save the connection after confirming.")
+    note.text=text("已识别电脑独立配对码（不是设备组）：\n","Individual computer pairing (not a device group):\n")+data.optString("deviceName").let{if(it.isNotBlank())it+"\n"else""}+data.getJSONArray("endpoints").getString(0)+"\n"+text("身份：","Identity: ")+identity+"\n"+text("仅使用你自己电脑上显示的二维码。确认后仍需保存连接；删除设备组不会撤销此独立配对。","Only use a QR displayed on your own computer. Save after confirming; deleting a device group does not revoke this independent pairing.")
     accept.isEnabled=true
   }
   override fun onSaveInstanceState(out:Bundle){found?.let{out.putString("uri",it)};super.onSaveInstanceState(out)}

@@ -839,6 +839,15 @@ async fn pairing_single_use_and_no_cross_origin_requests() {
     let f = Fixture::new(false, false);
     let pair = f.service.pairing(Permissions::default()).unwrap();
     assert!(pair.connection_uri.starts_with("rhfiles-connect:v1:"));
+    let payload: Value = serde_json::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(pair.connection_uri.strip_prefix("rhfiles-connect:v1:").unwrap()).unwrap()
+    ).unwrap();
+    assert_eq!(payload["deviceName"], rhfiles_service::device_name::default_device_name());
+    assert_eq!(payload["endpoints"], json!(pair.endpoints));
+    assert_eq!(payload["fingerprint"], pair.fingerprint);
+    assert_eq!(payload["code"], pair.code);
+    assert_eq!(payload.as_object().unwrap().len(), 5, "QR contains no credentials or paths");
     assert!(pair.qr_svg.contains("<svg"));
     let url = format!("{}/api/v1/pair", f.base);
     let p = json!({"code":pair.code,"name":"phone"});

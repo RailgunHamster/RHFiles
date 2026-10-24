@@ -59,6 +59,16 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 本机 JSON 命令：`groups.state/create/request/approve/join/export/remove/restore/forget/configure`；手机还提供 `groups.refresh`。使用现有 `scripts/rhfiles-api.mjs` 命令行入口枚举动作及参数。`join`、`restore`、`forget` 必须明确传 `confirmed: true`；`forget` 参数为 `{ "id": "组 ID", "confirmed": true }`，属于破坏性的本机配置操作，不删除文件。没有网络端的删除组/恢复/权限管理 API。二维码渲染属于公开数据处理，手机 Rust 命令为 `device_group_qr`。
 
+## 已确定的后续改造（尚未实现 / Planned, not shipped）
+
+1. RHFiles 自家设备统一设备组入口，移除独立配对；清除旧 RHFiles 独立连接和未绑定组的服务端授权，不自动升级为组成员。不清除第三方 SMB/FTP/WebDAV 网络位置，也不删除实际文件。与旧连接关联的收藏/凭据和未完成任务要明确处理，不能悄悄重跑移动或删除。
+2. 电脑为选定组生成短期一次性邀请，手机扫码默认填本机系统名称，核对后加入；邀请只能赋予该组范围的成员资格，不能凭旧文件访问密码获取邀请权。新成员继续邀请的权限默认关闭。
+3. WebDAV 协议兼容保留，但普通客户端不实现 RHFiles 组签名。兼容凭据必须从组内创建并绑定该组，不能成为独立授权旁路；禁用/删除组立即使它失效，重启或重新加入同名/同 ID 组不能复活旧凭据。
+4. 保存设备公钥身份而不是把 IP 当身份。局域网用 mDNS/DNS-SD 发现当前地址，再验证已信任的设备身份；缓存 IP 只是快速尝试的线索。DHCP/网卡变化时，电脑要重新建立受限私网监听、更新广播与签名地址，手机使旧路由缓存失效。异步且有超时上限，不能把网络探测放进 UI 线程；局域网不可达可尝试 Tailscale 地址。名称或广播中写着某身份不代表已通过验证。
+5. 不要求中心管理服务器。多播被屏蔽且 Tailscale 不可用时不能保证自动找到设备，应明确报告不可达并提供重新扫码/手动地址入口，不冒充“永久地址”。传输换路也不等于可以盲目重放移动、删除或已提交的写入。
+
+设计依据：[Android NSD / DNS-SD](https://developer.android.com/develop/connectivity/wifi/use-nsd)、[Tailscale DNS](https://tailscale.com/docs/reference/dns-in-tailscale)。上面的自动换址、单次扫码邀请和组绑定 WebDAV 凭据均为后续工作，不是当前版本已具备的能力。
+
 ## English
 
 The device-name field defaults to the local computer/host name, or Android's configured device name with a manufacturer/model fallback. It remains editable before creating a group or requesting membership. Defaults never rename existing members or change cryptographic identities/local refusals.

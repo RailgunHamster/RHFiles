@@ -3,6 +3,7 @@ const androidFeatures = (() => {
   let app, jobTimer, toolGeneration = 0, mediaController, lastShare = '', lastJobs = [], resumePromise,appIconObserver;
   const appIconLoader=mobileList.thumbnailLoader(entry=>api.native('app.icon',{package:entry.path,maxEdge:64}));
   const refreshedJobs = new Set();
+  let backCancelPending=false;
   const $ = id => document.getElementById(id);
   const textFile = name => /\.(txt|md|csv|log|json|xml|ini|cfg|toml|ya?ml|js|ts|rs|py|java|kt|c|h|cpp|css|html|sh)$/i.test(name);
   const active = j => ['queued','scanning','running','paused'].includes(j.state);
@@ -58,6 +59,31 @@ const androidFeatures = (() => {
       if(!status.indexing && completed.some(j=>j.finished>(status.lastFinishedMs || 0))) await api.indexStart({roots:app.state.roots.filter(r=>!api.isVirtual(r.path)).map(r=>r.path)});
     }
   }
+  function trackTransfer(job){
+    if(!job||!['copy','move'].includes(job.op))return;
+    const index=lastJobs.findIndex(item=>item.id===job.id);
+    if(index<0)lastJobs.push(job);else lastJobs[index]=job;
+  }
+  function cancelTransfersOnBack(busy=false){
+    const transfers=lastJobs.filter(job=>active(job)&&['copy','move'].includes(job.op));
+    if(!busy&&!transfers.length&&!backCancelPending)return false;
+    if(backCancelPending)return true;
+    if(!api.featuresAvailable()){ui.toast('文件操作仍在处理中，请稍候');return true;}
+    backCancelPending=true;
+    (async()=>{
+      const jobs=await api.native('jobs'),selected=jobs.filter(job=>active(job)&&['copy','move'].includes(job.op));
+      lastJobs=jobs;
+      if(app.state.route.screen!=='home')return;
+      if(!selected.length){if(busy)ui.toast('文件操作仍在处理中，请在任务中心查看');return;}
+      if(!await ui.confirm('取消复制／移动任务？','正在进行 '+selected.length+' 个任务。已完成的文件会保留；未完成的移动来源不会主动删除。','取消任务'))return;
+      // A task can complete during confirmation. Never cancel a new task that
+      // was started later, or unrelated delete/extract/index operations.
+      const ids=new Set(selected.map(job=>job.id)),current=await api.native('jobs'),failures=[];
+      for(const job of current.filter(job=>ids.has(job.id)&&active(job))){try{await api.native('job.control',{id:job.id,action:'cancel'});}catch(e){failures.push(e.message||String(e));}}
+      lastJobs=await api.native('jobs');await pollJobs();if(failures.length)throw Error(failures.join('\n'));
+    })().catch(app.error).finally(()=>{backCancelPending=false;});
+    return true;
+  }
   function paintJobs(node) {
     const scroll=node.parentElement.scrollTop;node.replaceChildren(ui.el('h2','','文件任务'));
     notice(node,'关闭页面不会中断任务。暂停/取消在下一次读写检查时生效。系统强制停止或超时后会保留记录，不会擅自重做移动或删除。');
@@ -100,7 +126,8 @@ const androidFeatures = (() => {
       for(const c of connections) {
         const row=ui.el('article','network-location');
         const open=button(c.name,()=>c.path?app.go({screen:'folder',path:c.path,label:c.name}):undefined);open.className='network-open';open.setAttribute('aria-label',c.name);
-        const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small',c.needsPassword?'credential-badge':'',c.needsPassword?'待补填密码':c.type.toUpperCase());open.replaceChildren(symbol,name,type);row.append(open);
+        const connectionType=c.type==='rhfiles'?(c.authorization==='device-group'?'RHFiles · 设备组':'RHFiles · 独立配对'):c.type.toUpperCase();
+        const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small',c.needsPassword?'credential-badge':'',c.needsPassword?'待补填密码':connectionType);open.replaceChildren(symbol,name,type);row.append(open);
         const actions=[];
         if(c.path){
           actions.push(app.action('编辑连接','rename',async()=>{const value=await api.native('connection.get',{id:c.id});if(valid())addRemote(value);}));
@@ -378,11 +405,13 @@ const androidFeatures = (() => {
   }
   function init(context) {
     app=context;
+    window.addEventListener('rhfiles-task',event=>trackTransfer(event.detail));
+    window.addEventListener('rhfiles-task-started',event=>trackTransfer({...event.detail,state:'queued'}));
     androidNearby.init(context);
     const chip=ui.el('button','native-task-chip');chip.id='native-task-chip';chip.hidden=true;RHFilesUI.assign(chip,"click",()=>app.go({screen:'tool',tool:'tasks'}),"android.web.js.features.init.586523348202");$('app').append(chip);
     if(api.featuresAvailable()){pollJobs().catch(app.error);jobTimer=setInterval(()=>{if(!document.hidden)pollJobs().catch(()=>{});},1500);}
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
     RHFilesUI.listen($('btn-ftp-toggle'),'click',()=>toggleFtp().catch(app.error),undefined,"android.web.js.features.init.56ed6d2140c2");
   }
-  return {init,beforeRemoteNavigate,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
+  return {init,beforeRemoteNavigate,cancelTransfersOnBack,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
 })();

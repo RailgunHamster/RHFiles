@@ -188,6 +188,14 @@ try{
   await p.goBack();await p.waitForFunction(()=>document.getElementById('title').textContent==='内部存储');
   check(await p.locator('#paste-bar').isVisible(),'Back preserves pending operation');await p.click('#btn-cancel-paste');
   check(await p.locator('.pending-cut').count()===0,'Cancel restores cut visuals');
+  for(const operation of ['复制','移动']){
+    await more(p,'notes.txt');await choose(p,operation);await p.goBack();await tile(p,'storage-0').waitFor();
+    check(await p.locator('#paste-bar').isVisible(),operation+': returning Home preserves pending paste');
+    check(await p.evaluate(()=>rhfilesHandleBack())===true,operation+': Home Back consumes cancellation rather than exiting');
+    await p.waitForFunction(()=>document.getElementById('paste-bar').hidden);
+    check(await p.evaluate(()=>rhfilesHandleBack())===false,operation+': only a later Back can leave Home');
+    await storage(p);
+  }
   await press(p,'notes.txt');await row(p,'中文 文件.txt').click();await p.click('[data-action="cut"]');
   await p.evaluate(()=>window.__model.failPath='/storage/emulated/0/中文 文件.txt');await row(p,'备份').click();await p.click('#btn-paste');await p.waitForSelector('#sheet:not([hidden])');
   check((await p.locator('#paste-label').innerText()).includes('1 项'),'Partial move retains failed sources for retry');
@@ -295,7 +303,7 @@ try{
     check((await p.locator('#crumbs').innerText()).includes('授权文件夹') || (await p.locator('#crumbs').innerText()).includes('云端'),'Provider URI is not split into fake filesystem breadcrumbs');
     await row(p,'云端.txt').click();check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='open'&&c.args.path.startsWith('content:'))),'Content URI opens through Android without a guessed path');
     await home(p);await tile(p,'remote').click();await choose(p,'添加网络位置');
-    await p.locator('[name=name]').fill('家庭服务器');await p.locator('[name=host]').fill('server-home');await p.locator('[name=share]').fill('Public');await p.locator('[name=password]').fill('fixture-secret');await choose(p,'保存连接');
+    await p.locator('[name=type]').selectOption('smb');await p.locator('[name=name]').fill('家庭服务器');await p.locator('[name=host]').fill('server-home');await p.locator('[name=share]').fill('Public');await p.locator('[name=password]').fill('fixture-secret');await choose(p,'保存连接');
     await p.getByRole('button',{name:'家庭服务器',exact:true}).waitFor();
     check(!await p.evaluate(()=>JSON.stringify(localStorage).includes('fixture-secret')),'Network password never enters frontend persistence');await capture(p,'features-network');
     await home(p);await tile(p,'server').click();await choose(p,'启动 FTP 服务');

@@ -19,13 +19,8 @@ pub(crate) fn info(
     port: u16,
     fingerprint: &str,
 ) -> mdns_sd::Result<ServiceInfo> {
-    let label = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "Computer".into())
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(8)
-        .collect::<String>();
+    let name = crate::device_name::default_device_name();
+    let label = name.chars().take(8).collect::<String>();
     let suffix = &fingerprint[..12];
     ServiceInfo::new(
         SERVICE_TYPE,
@@ -33,7 +28,7 @@ pub(crate) fn info(
         &format!("rhfiles-{suffix}-{port}.local."),
         addresses,
         port,
-        &[("v", "1"), ("fp", fingerprint)][..],
+        &[("v", "1"), ("fp", fingerprint), ("name", name.as_str())][..],
     )
 }
 
@@ -87,7 +82,8 @@ mod tests {
         assert_eq!(value.get_port(), 39128);
         assert_eq!(value.get_property_val_str("v"), Some("1"));
         assert_eq!(value.get_property_val_str("fp"), Some(fp.as_str()));
-        assert_eq!(value.get_properties().len(), 2);
+        assert_eq!(value.get_property_val_str("name"), Some(crate::device_name::default_device_name().as_str()));
+        assert_eq!(value.get_properties().len(), 3);
         assert!(value.get_hostname().ends_with(".local."));
     }
     #[test]

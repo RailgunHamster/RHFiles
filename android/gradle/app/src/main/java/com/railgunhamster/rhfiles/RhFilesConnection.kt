@@ -50,9 +50,10 @@ internal class RhFilesConnection(private val config:JSONObject) {
         .followRedirects(false).followSslRedirects(false).proxy(java.net.Proxy.NO_PROXY).build()
       if(clients.size>=32){val first=clients.keys.first();clients.remove(first)?.connectionPool?.evictAll()};clients[key]=client;return client
     }
-    fun pair(uri:String,name:String):JSONObject {
+    fun pair(uri:String,name:String,deviceName:String):JSONObject {
       val data=PairingData.parse(uri)
       require(name.isNotBlank()&&name.length<=120){"请填写设备名称"}
+      val clientName=DeviceNames.normalize(deviceName)?:throw IllegalArgumentException("无法读取本机设备名称")
       val addresses=data.getJSONArray("endpoints");require(addresses.length() in 1..16){"电脑未提供可用地址"}
       val local=runCatching{java.net.NetworkInterface.getNetworkInterfaces().toList().flatMap{network->network.interfaceAddresses.mapNotNull{address->address.address.hostAddress?.let{it to address.networkPrefixLength.toInt()}}}}.getOrDefault(emptyList())
       val endpoints=PairingData.preferredEndpoints((0 until addresses.length()).map{addresses.getString(it)},local)
@@ -61,7 +62,8 @@ internal class RhFilesConnection(private val config:JSONObject) {
       for(endpoint in endpoints) {
         val c=JSONObject().put("type","rhfiles").put("name",name).put("url",endpoint).put("fingerprint",data.getString("fingerprint"));valid(c)
         try {
-          val response=RhFilesConnection(c).request("POST","/api/v1/pair",body=JSONObject().put("code",data.getString("code")).put("name",name).toString().toRequestBody(JSON),authenticate=false)
+          // The saved computer label and this phone's name are different data.
+          val response=RhFilesConnection(c).request("POST","/api/v1/pair",body=JSONObject().put("code",data.getString("code")).put("name",clientName).toString().toRequestBody(JSON),authenticate=false)
           response.use{val credential=JSONObject(String(it.body!!.byteStream().readBytesBounded(16384),Charsets.UTF_8));return c.put("username",credential.getString("username")).put("password",credential.getString("password"))}
         }catch(e:HttpFailure){throw e}catch(e:SSLException){throw e}catch(e:IOException){failure=e}
       }

@@ -2,6 +2,7 @@
 //! Windows SMB/WebClient redirectors are never used for local shared roots.
 mod auth;
 mod dav;
+pub mod device_name;
 mod discovery;
 pub mod groups;
 mod http;
@@ -248,7 +249,7 @@ impl Service {
     }
     pub fn pairing(&self, permissions: Permissions) -> Result<Pairing> {
         let (code, expires_ms) = self.state.auth.pairing(permissions)?;
-        let payload = serde_json::json!({"version":1,"endpoints":self.endpoints,"fingerprint":self.fingerprint,"code":code});
+        let payload = serde_json::json!({"version":1,"deviceName":device_name::default_device_name(),"endpoints":self.endpoints,"fingerprint":self.fingerprint,"code":code});
         let connection_uri = format!(
             "rhfiles-connect:v1:{}",
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string())
