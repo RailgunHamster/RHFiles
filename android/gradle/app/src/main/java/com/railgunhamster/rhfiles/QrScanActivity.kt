@@ -3,6 +3,7 @@ package com.railgunhamster.rhfiles
 import android.Manifest
 import android.content.*
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -43,16 +44,18 @@ class QrScanActivity:AppCompatActivity() {
     super.onCreate(saved);NativeAutomation.install(this);DeviceGroups.install(applicationContext)
     val dark=resources.configuration.uiMode and 48==32
     val bg=if(dark)0xff18201e.toInt()else 0xfff5f7f6.toInt();val ink=if(dark)Color.WHITE else 0xff1f2926.toInt()
+    val accent=0xff46705c.toInt();window.statusBarColor=bg;window.navigationBarColor=bg
+    WindowInsetsControllerCompat(window,window.decorView).isAppearanceLightStatusBars=!dark
     val body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(20),dp(16),dp(20),dp(20));setBackgroundColor(bg)}
     fun label(value:String,size:Float)=TextView(this).apply{setTextColor(ink);text=value;textSize=size;setPadding(0,dp(12),0,dp(12));body.addView(this)}
-    fun button(value:String,fn:()->Unit)=MaterialButton(this).apply{text=value;isAllCaps=false;cornerRadius=dp(18);setOnClickListener{fn()};body.addView(this,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(6)})}
+    fun button(value:String,fn:()->Unit)=MaterialButton(this).apply{text=value;isAllCaps=false;letterSpacing=0f;cornerRadius=dp(12);elevation=0f;setTextColor(ink);backgroundTintList=ColorStateList.valueOf(bg);strokeWidth=dp(1);strokeColor=ColorStateList.valueOf(if(dark)0xff46534d.toInt()else 0xffced8d2.toInt());setOnClickListener{fn()};body.addView(this,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(6)})}
     button(text("返回 RHFiles","Back to RHFiles")){if(callingActivity==null)startActivity(Intent(this,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));finish()}
     label(text("扫码","Scan QR"),26f)
     note=label(text("识别设备组或复制二维码内容。相机画面不上传。","Join a device group or copy QR contents. Camera frames stay on this device."),15f)
     preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE}
     body.addView(preview,LinearLayout.LayoutParams(-1,dp(280)))
     result=label("",15f).apply{setTextIsSelectable(true);visibility=View.GONE}
-    action=button(""){confirmGroup()}.apply{visibility=View.GONE}
+    action=button(""){confirmGroup()}.apply{visibility=View.GONE;backgroundTintList=ColorStateList.valueOf(accent);setTextColor(Color.WHITE);strokeWidth=0}
     copy=button(text("复制内容","Copy content")){found?.let{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("QR",it));Toast.makeText(this,text("已复制","Copied"),Toast.LENGTH_SHORT).show()}}.apply{visibility=View.GONE}
     torch=button(text("闪光灯","Flashlight")){light=!light;camera?.cameraControl?.enableTorch(light)}.apply{isEnabled=false}
     rescan=button(text("重新扫描","Scan again")){if(!busy){found=null;result.visibility=View.GONE;action.visibility=View.GONE;copy.visibility=View.GONE;preview.visibility=View.VISIBLE;requestCamera()}}
