@@ -8,7 +8,7 @@ async fn one_scan_invitation_introduces_group_member_only_and_is_single_use(){
     let id=server.groups().create("RH","Host",Permissions{write:true,delete:true}).unwrap();server.advertise_group_host().unwrap();
     let invite=server.group_invitation(&id,false).unwrap();assert!(invite["qrSvg"].as_str().unwrap().contains("<svg"));
     let uri=invite["uri"].as_str().unwrap();let payload:Value=serde_json::from_slice(&base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(uri.strip_prefix("rhfiles-group-invite:v1:").unwrap()).unwrap()).unwrap();
-    assert_eq!(payload["groupId"],id);assert!(uri.len()<2000);assert!(payload.get("password").is_none());
+    assert_eq!(payload["groupId"],id);assert_eq!(payload["groupName"],"RH");assert!(uri.len()<2000);assert!(payload.get("password").is_none());
     let phone_data=tempfile::tempdir().unwrap();let phone=Groups::open(phone_data.path()).unwrap();let request=phone.request("Moto").unwrap();let http=client(&server);let url=format!("https://127.0.0.1:{}",server.status().port);
     let body=json!({"token":payload["token"],"request":request});
     assert_eq!(http.post(format!("{url}/api/v1/groups/invitations/redeem")).header("Origin","https://evil.example").json(&body).send().await.unwrap().status(),403);

@@ -389,7 +389,8 @@ impl Service {
             .state
             .invitations
             .create(&self.state.groups, id, can_invite)?;
-        let data = serde_json::json!({"version":1,"groupId":id,"deviceId":self.state.groups.device_id(),"deviceName":device_name::default_device_name(),"endpoints":self.network.lock().unwrap().endpoints,"fingerprint":self.fingerprint,"token":token,"expiresMs":expires});
+        let group_name=self.state.groups.packet(id)?.root.read()?.label;
+        let data = serde_json::json!({"version":1,"groupId":id,"groupName":group_name,"deviceId":self.state.groups.device_id(),"deviceName":device_name::default_device_name(),"endpoints":self.network.lock().unwrap().endpoints,"fingerprint":self.fingerprint,"token":token,"expiresMs":expires});
         let uri = format!(
             "rhfiles-group-invite:v1:{}",
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.to_string())

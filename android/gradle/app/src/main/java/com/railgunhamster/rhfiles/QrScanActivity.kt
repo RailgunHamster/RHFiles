@@ -78,7 +78,7 @@ class QrScanActivity:AppCompatActivity() {
     result.text=value.take(8192);result.visibility=View.VISIBLE;copy.visibility=View.VISIBLE
     val meta=QrContents.describe(value)
     if(meta.getString("kind")=="content"){note.text=meta.optString("message").ifBlank{text("二维码内容","QR content")};action.visibility=View.GONE;return}
-    note.text=meta.optString("message").ifBlank{text("设备组：","Device group: ")+meta.optString("name")}
+    note.text=meta.optString("message").ifBlank{text("设备组：","Device group: ")+meta.optString("name")+meta.optString("deviceName").takeIf{it.isNotBlank()}?.let{"\n"+text("来自：","From: ")+it}.orEmpty()}
     action.text=when(meta.optString("kind")){"invitation","approval"->if(meta.optBoolean("joinable",true))text("确认并加入设备组","Confirm and join group")else text("生成本机入组请求","Create join request");else->text("选择设备组并批准请求","Select group and approve request")};action.visibility=View.VISIBLE
   }
   private fun confirmGroup(){

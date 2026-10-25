@@ -13,5 +13,5 @@ internal object GroupInvitation {
     for(i in 0 until addresses.length())RhFilesConnection.valid(JSONObject().put("url",addresses.getString(i)).put("fingerprint",data.getString("fingerprint")))
     return data
   }
-  fun describe(uri:String):JSONObject {val d=parse(uri);return JSONObject().put("uri",uri).put("kind","invitation").put("name",d.optString("deviceName","RHFiles")).put("groupId",d.getString("groupId")).put("expiresMs",d.getLong("expiresMs"))}
+  fun describe(uri:String):JSONObject {val d=parse(uri);return JSONObject().put("uri",uri).put("kind","invitation").put("name",d.optString("groupName",d.optString("deviceName","RHFiles"))).put("deviceName",d.optString("deviceName")).put("groupId",d.getString("groupId")).put("expiresMs",d.getLong("expiresMs"))}
 }
