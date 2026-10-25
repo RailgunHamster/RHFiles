@@ -64,6 +64,31 @@ class RhFilesConnectionTest {
     server.enqueue(MockResponse().setResponseCode(302).addHeader("Location","https://example.com/steal"))
     try{RhFilesConnection(c).stat("Files","remote://test/Files");fail("Redirect followed")}catch(e:RhFilesConnection.HttpFailure){assertEquals(302,e.status);assertEquals(1,server.requestCount)}
   }}
+  @Test fun emptyFilesAreReadWithoutAnUnsatisfiableRange(){https{server,c->
+    server.dispatcher=object:okhttp3.mockwebserver.Dispatcher(){
+      override fun dispatch(request:okhttp3.mockwebserver.RecordedRequest)=
+        if(request.getHeader("Range")!=null)MockResponse().setResponseCode(416)
+        else MockResponse().setBody("")
+    }
+    RhFilesConnection(c).content("Files/empty.txt").use{response->
+      assertEquals(200,response.code);assertEquals(0L,response.body!!.contentLength());assertEquals(-1,response.body!!.byteStream().read())
+    }
+    assertNull(server.takeRequest(5,TimeUnit.SECONDS)!!.getHeader("Range"))
+  }}
+  @Test fun wholeFileReadsDoNotRequireRangeSupport(){https{server,c->
+    server.enqueue(MockResponse().setBody("whole file"))
+    RhFilesConnection(c).content("Files/full.txt").use{assertEquals("whole file",it.body!!.string())}
+    val request=server.takeRequest(5,TimeUnit.SECONDS)!!
+    assertNull(request.getHeader("Range"));assertEquals("identity",request.getHeader("Accept-Encoding"))
+  }}
+  @Test fun positiveOffsetsStillRequestPartialContentAndNegativeOffsetsNeverReachTheNetwork(){https{server,c->
+    server.enqueue(MockResponse().setResponseCode(206).addHeader("Content-Range","bytes 2-4/5").setBody("llo"))
+    RhFilesConnection(c).content("Files/full.txt",2).use{assertEquals(206,it.code);assertEquals("llo",it.body!!.string())}
+    assertEquals("bytes=2-",server.takeRequest(5,TimeUnit.SECONDS)!!.getHeader("Range"))
+    server.enqueue(MockResponse().setBody("must not be requested"))
+    try{RhFilesConnection(c).content("Files/full.txt",-1);fail("Negative offset accepted")}catch(_:IllegalArgumentException){}
+    assertEquals(1,server.requestCount)
+  }}
   @Test fun invalidEndpointsAreRejected(){
     for(url in listOf("http://localhost:39128/","https://user:pass@localhost/","https://localhost/dav/","https://localhost/?secret=1","https://8.8.8.8/","https://example.com/","https://100.128.0.1/")){
       try{RhFilesConnection.valid(JSONObject().put("url",url).put("fingerprint","0".repeat(64)));fail(url)}catch(_:IllegalArgumentException){}

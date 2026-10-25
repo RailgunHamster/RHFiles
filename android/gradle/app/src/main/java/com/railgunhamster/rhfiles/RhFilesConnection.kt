@@ -107,7 +107,14 @@ internal class RhFilesConnection(private var config:JSONObject) {
     }while(result.size<page.getInt("total"));return result
   }
   fun stat(relative:String,path:String)=entry(objectReply(request("GET","/api/v1/stat","/$relative")),path)
-  fun content(relative:String,position:Long=0):Response=request("GET","/api/v1/content","/$relative",headers=mapOf("Range" to "bytes=$position-","Accept-Encoding" to "identity"))
+  fun content(relative:String,position:Long=0):Response {
+    require(position>=0){"文件偏移无效"}
+    // bytes=0- is unsatisfiable for an empty representation. Whole-file reads
+    // must work for zero-byte files too; reserve Range for actual seeks.
+    return request("GET","/api/v1/content","/$relative",headers=buildMap{
+      put("Accept-Encoding","identity");if(position>0)put("Range","bytes=$position-")
+    })
+  }
   fun thumbnail(relative:String):JSONObject=request("GET","/api/v1/thumbnail","/$relative").use{JSONObject().put("dataUrl","data:image/png;base64,"+Base64.encodeToString(it.body!!.byteStream().readBytesBounded(1024*1024),Base64.NO_WRAP))}
   fun mutate(action:String,relative:String,destination:String?=null){require(action in listOf("mkdir","rename","delete"));val v=JSONObject().put("path","/$relative");if(destination!=null)v.put("destination","/$destination");request("POST","/api/v1/$action",body=v.toString().toRequestBody(JSON)).close()}
   /** Retain one bounded chunk until HEAD confirms its offset. Never replay a
