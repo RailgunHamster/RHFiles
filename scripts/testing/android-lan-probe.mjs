@@ -6,7 +6,7 @@ const sdk=process.env.ANDROID_HOME||process.env.ANDROID_SDK_ROOT,adb=path.join(s
 const device=process.argv[2],apk=process.argv[3],testApk=process.argv[4];
 if(!/^emulator-\d+$/.test(device||'')||!apk||!testApk)throw Error('Usage: node scripts/testing/android-lan-probe.mjs emulator-N APP.apk TEST.apk');
 for(const file of [adb,apk,testApk])if(!fs.existsSync(file))throw Error('Missing: '+file);
-const run=(...args)=>execFileSync(adb,['-s',device,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
+const run=(...args)=>{try{return execFileSync(adb,['-s',device,...args],{encoding:'utf8',windowsHide:true,timeout:120000});}catch(error){throw Error('ADB fixture step failed: '+args.slice(0,2).join(' ')+' ('+error.code+'); invitation arguments withheld');}};
 assert.match(run('shell','getprop','ro.kernel.qemu'),/1/);
 assert.match(run('emu','avd','name'),/^RHFiles[^\r\n]*[\r\n]/,'Only an RHFiles-owned test AVD may be modified');
 assert.match(run('shell','cmd','wifi','status'),/Wifi is connected/,'Connect the owned test AVD to its AndroidWifi virtual access point first; Android NSD does not advertise on cellular-only networks');
@@ -25,7 +25,9 @@ try{
   const qr=await app.evaluate(`(async()=>{const image=new Image();image.src='data:image/svg+xml;base64,'+btoa(${JSON.stringify(pair.qrSvg)});await image.decode();const canvas=document.createElement('canvas');canvas.width=640;canvas.height=640;canvas.getContext('2d').drawImage(image,0,0,640,640);return canvas.toDataURL('image/png').split(',')[1];})()`);
   // The QR contains the real LAN endpoints. Decoder output is checked against
   // that data, then transport uses adb's isolated loopback endpoint.
-  const output=run('shell','am','instrument','-w','-r','-e','uri',uri,'-e','qrUri',pair.uri,'-e','qrBase64',qr,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.LanServiceInstrumentation');
+  const qrFile=path.join(app.artifactDir,'invitation.png'),qrPath='/sdcard/Android/data/com.railgunhamster.rhfiles/files/qa-invitation.png';fs.writeFileSync(qrFile,Buffer.from(qr,'base64'));
+  run('shell','mkdir','-p','/sdcard/Android/data/com.railgunhamster.rhfiles/files');run('push',qrFile,qrPath);
+  const output=run('shell','am','instrument','-w','-r','-e','uri',uri,'-e','qrUri',pair.uri,'-e','qrPath',qrPath,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.LanServiceInstrumentation');
   fs.writeFileSync(path.join(app.artifactDir,'android-lan-probe.txt'),output);assert.match(output,/pass=true/);assert.doesNotMatch(output,/error=/);
   assert.equal(fs.readFileSync(path.join(directory,'手机目录','重命名.txt'),'utf8'),'hello');
   const copied=fs.readdirSync(directory).find(n=>n.startsWith('rhfiles-lan-')&&n.endsWith('.bin'));assert.ok(copied);
