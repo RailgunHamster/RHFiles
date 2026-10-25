@@ -160,8 +160,8 @@ class MainActivity : TauriActivity() {
             if(error!=null) response.put("error",error) else response.put("result",value ?: JSONObject.NULL)
             try{reply.postMessage(response.toString())}catch(_:Exception){}
           }}
-          val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","connection.scan")
-          val work={try{if(command=="connection.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,PairingScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
+          val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan")
+          val work={try{if(command=="groups.scan"||command=="qr.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,QrScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
           if(command in uiCommands) work() else if(command in setOf("groups.cancel","groups.diagnostics"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
       }
@@ -177,7 +177,7 @@ class MainActivity : TauriActivity() {
   }
   @Deprecated("Android result bridge") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
     super.onActivityResult(requestCode,resultCode,data)
-    if(requestCode==103){val callback=scanResult;scanResult=null;try{callback?.invoke(if(resultCode==RESULT_OK)DeviceGroups.describe(data?.getStringExtra("uri")?:"")else JSONObject.NULL,null)}catch(e:Exception){callback?.invoke(null,e.message)};return}
+    if(requestCode==103){if(data?.getBooleanExtra("changed",false)==true)locationsChanged();val callback=scanResult;scanResult=null;try{callback?.invoke(if(resultCode==RESULT_OK)JSONObject().put("changed",data?.getBooleanExtra("changed",false)==true)else JSONObject.NULL,null)}catch(e:Exception){callback?.invoke(null,e.message)};return}
     if(backupUi.result(requestCode,resultCode,data))return
     if(requestCode !in listOf(101,102))return
     val callback=picker;picker=null
@@ -274,11 +274,11 @@ class MainActivity : TauriActivity() {
     "create" -> storage.create(args.getString("parent"),args.getString("name"),args.optBoolean("directory"))
     "rename" -> storage.rename(args.getString("path"),args.getString("name"))
     "connections" -> storage.remote.connections()
+    "connection.retired" -> storage.remote.retiredConnections()
+    "qr.inspect" -> QrContents.describe(args.getString("uri"))
     "app.icon" -> appIcons.read(args.getString("package"),args.optInt("maxEdge",64))
     "connection.get" -> storage.remote.editable(args.getString("id"))
     "lan.start" -> lanDiscovery.start(args.optString("protocol","smb"))
-    "connection.describe" -> PairingData.describe(args.getString("uri"))
-    "connection.compose" -> PairingData.compose(args.getString("url"),args.getString("fingerprint"),args.getString("code"),args.optBoolean("verified"))
     "lan.state" -> lanDiscovery.state(args.getString("id"))
     "lan.stop" -> {lanDiscovery.stop(args.getString("id"));true}
     "ftp.status" -> FtpAccess.status()
@@ -287,8 +287,7 @@ class MainActivity : TauriActivity() {
       FtpAccess.start(applicationContext,args)
     }
     "ftp.stop" -> FtpAccess.stop()
-    "connection.save" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};if(args.optString("id").isNotBlank()){UsageAnalysis.requireConnectionsIdle(args.getString("id"));RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"))};storage.remote.save(args).also{locationsChanged()}}
-    "connection.pair" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};storage.remote.save(RhFilesConnection.pair(args.getString("uri"),args.getString("name"),DeviceNames.current(this))).also{locationsChanged()}}
+    "connection.save" -> synchronized(settingsLock){require(args.optString("type")!="rhfiles"){"RHFiles 只支持设备组，请在设备组中添加"};require(!sharedConfig.busy){"请等待配置同步完成"};if(args.optString("id").isNotBlank()){UsageAnalysis.requireConnectionsIdle(args.getString("id"));RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"))};storage.remote.save(args).also{locationsChanged()}}
     "connection.delete" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};UsageAnalysis.requireConnectionsIdle(args.getString("id"));RemoteStorage.requireIdle(FileTasks.list(this),args.getString("id"));storage.remote.remove(args.getString("id"));locationsChanged();true}
     "open","share" -> {
       val paths=args.optJSONArray("paths") ?: JSONArray().put(args.getString("path"))

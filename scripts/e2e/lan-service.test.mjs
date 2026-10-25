@@ -31,23 +31,13 @@ test('desktop shared-folder UI and real HTTPS native/WebDAV service',async()=>{
     // Exercise the actual form, not an alternative test-only service launcher.
     await app.evaluate(`(()=>{const inputs=document.querySelectorAll('#lan-service-settings input');inputs[0].value='Files';inputs[1].value=${JSON.stringify(directory)};inputs[2].value='0';[...document.querySelectorAll('#lan-service-settings button')].find(b=>b.textContent==='启动文件服务').click();})()`);
     const state=await until(async()=>{const value=await app.evaluate("call('lan_service_state',{})");return value.status?.running?value:null;},'HTTPS listener started');
-    await until(()=>app.evaluate("document.getElementById('lan-service-settings')?.textContent.includes('生成手机配对码')"),'running settings loaded');
-    const credential=await app.evaluate("call('lan_service_credential',{name:'E2E device',permissions:{write:true,delete:false}})");
-    for(const endpoint of state.status.endpoints)assert.equal((await request(state.status,credential,'GET',endpoint+'/api/v1/capabilities')).status,200,endpoint);
-    await app.evaluate("lanService.mount(document.getElementById('lan-service-settings'))");
-    await app.evaluate(`(()=>{const host=document.getElementById('lan-service-settings'),box=[...host.querySelectorAll('h3')].find(n=>n.textContent==='E2E device').parentElement;const field=box.querySelector('input');field.checked=false;field.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-    await until(async()=>!(await app.evaluate("call('lan_service_state',{})")).status.devices[0].permissions.write,'saved device is read-only');
-    assert.equal((await request(state.status,credential,'PUT','/dav/Files/blocked.txt','bad')).status,403);
-    await app.evaluate(`(()=>{const box=[...document.querySelectorAll('#lan-service-settings h3')].find(n=>n.textContent==='E2E device').parentElement;const field=box.querySelector('input');field.checked=true;field.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-    await until(async()=>(await app.evaluate("call('lan_service_state',{})")).status.devices[0].permissions.write,'device write restored without pairing');
-    const list=await request(state.status,credential,'GET','/api/v1/list?path=/Files');assert.equal(list.status,200);assert.equal(JSON.parse(list.body).entries[0].name,'中文.txt');
-    const range=await request(state.status,credential,'GET','/api/v1/content?path='+encodeURIComponent('/Files/中文.txt'),'',{Range:'bytes=3-5'});assert.equal(range.status,206);assert.equal(range.body,'345');
-    const dav=await request(state.status,credential,'PROPFIND','/dav/Files/','',{Depth:'1'});assert.equal(dav.status,207);
-    const upload=await request(state.status,credential,'POST','/api/v1/uploads','',{'Tus-Resumable':'1.0.0','Upload-Length':'5','Upload-Metadata':'path '+Buffer.from('/Files/upload.txt').toString('base64')});assert.equal(upload.status,201);
-    const patch=await request(state.status,credential,'PATCH',upload.headers.location,'hello',{'Tus-Resumable':'1.0.0','Upload-Offset':'0','Content-Type':'application/offset+octet-stream'});assert.equal(patch.status,204);assert.equal(fs.readFileSync(path.join(directory,'upload.txt'),'utf8'),'hello');
-    await app.screenshot('lan-settings');
-    await app.evaluate(`call('lan_service_revoke',{id:${JSON.stringify(credential.username)}})`);
-    assert.equal((await request(state.status,credential,'GET','/api/v1/list')).status,401);
+    await until(()=>app.evaluate("document.getElementById('lan-service-settings')?.textContent.includes('仅设备组')"),'group-only service UI');
+    await assert.rejects(app.evaluate("call('lan_service_pair',{permissions:{write:true,delete:true}})"));
+    await assert.rejects(app.evaluate("call('lan_service_credential',{name:'Old device',permissions:{write:true,delete:true}})"));
+    const group=await app.evaluate("call('device_groups',{command:'create',args:{name:'Invite QA',deviceName:'Host'}})");
+    const invite=await app.evaluate("call('device_groups',{command:'invite',args:{id:"+JSON.stringify(group)+"}})");
+    assert.match(invite.uri,/^rhfiles-group-invite:v1:/);assert.match(invite.qrSvg,/<svg/);
+    const denied=await request(state.status,{username:'old-user',password:'old-secret'},'GET','/dav/Files/');assert.equal(denied.status,401);
     await app.evaluate("call('lan_service_stop',{})");assert.equal((await app.evaluate("call('lan_service_state',{})")).status,null);
   }finally{await app.evaluate("call('lan_service_stop',{})").catch(()=>{});app.close();}
 });

@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 
-/** Native HTTPS API. The paired SHA-256 certificate is the device identity;
+/** Native HTTPS API. The pinned SHA-256 certificate is the device identity;
  * credentials stay in RemoteStorage's Android Keystore encrypted profiles. */
 internal class RhFilesConnection(private var config:JSONObject) {
   companion object {
@@ -25,7 +25,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
     internal fun valid(c:JSONObject) {
       val u=c.getString("url").toHttpUrl()
       require(u.isHttps&&u.username.isEmpty()&&u.password.isEmpty()&&u.query==null&&u.fragment==null&&u.encodedPath=="/"){"RHFiles 地址必须是 HTTPS 主机和端口，不含路径或账号"}
-      require(PairingData.localAddress(u.host)){"仅允许本机、局域网或 Tailscale IPv4 地址 / Local, LAN or Tailscale IPv4 address required"}
+      require(GroupAddresses.localAddress(u.host)){"仅允许本机、局域网或 Tailscale IPv4 地址 / Local, LAN or Tailscale IPv4 address required"}
       require(c.optString("fingerprint").matches(Regex("[0-9a-f]{64}"))){"需要电脑端证书 SHA-256 指纹"}
     }
     @Synchronized internal fun client(c:JSONObject):OkHttpClient {
@@ -39,7 +39,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
           chain[0].checkValidity()
           val actual=MessageDigest.getInstance("SHA-256").digest(chain[0].encoded)
           val expected=pin.chunked(2).map{it.toInt(16).toByte()}.toByteArray()
-          if(!MessageDigest.isEqual(actual,expected))throw CertificateException("电脑证书已改变，请重新配对；已阻止发送登录凭据")
+          if(!MessageDigest.isEqual(actual,expected))throw CertificateException("电脑证书已改变，请核对设备组身份；已阻止发送登录凭据")
         }
       }
       val tls=SSLContext.getInstance("TLS").apply{init(null,arrayOf<TrustManager>(trust),SecureRandom())}
@@ -50,33 +50,14 @@ internal class RhFilesConnection(private var config:JSONObject) {
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).proxy(java.net.Proxy.NO_PROXY).build()
       if(clients.size>=32){val first=clients.keys.first();clients.remove(first)?.connectionPool?.evictAll()};clients[key]=client;return client
     }
-    fun pair(uri:String,name:String,deviceName:String):JSONObject {
-      val data=PairingData.parse(uri)
-      require(name.isNotBlank()&&name.length<=120){"请填写设备名称"}
-      val clientName=DeviceNames.normalize(deviceName)?:throw IllegalArgumentException("无法读取本机设备名称")
-      val addresses=data.getJSONArray("endpoints");require(addresses.length() in 1..16){"电脑未提供可用地址"}
-      val local=runCatching{java.net.NetworkInterface.getNetworkInterfaces().toList().flatMap{network->network.interfaceAddresses.mapNotNull{address->address.address.hostAddress?.let{it to address.networkPrefixLength.toInt()}}}}.getOrDefault(emptyList())
-      val endpoints=PairingData.preferredEndpoints((0 until addresses.length()).map{addresses.getString(it)},local)
-      require(data.getString("code").matches(Regex("[0-9]{10}"))){"配对码无效"}
-      var failure:IOException?=null
-      for(endpoint in endpoints) {
-        val c=JSONObject().put("type","rhfiles").put("name",name).put("url",endpoint).put("fingerprint",data.getString("fingerprint"));valid(c)
-        try {
-          // The saved computer label and this phone's name are different data.
-          val response=RhFilesConnection(c).request("POST","/api/v1/pair",body=JSONObject().put("code",data.getString("code")).put("name",clientName).toString().toRequestBody(JSON),authenticate=false)
-          response.use{val credential=JSONObject(String(it.body!!.byteStream().readBytesBounded(16384),Charsets.UTF_8));return c.put("username",credential.getString("username")).put("password",credential.getString("password"))}
-        }catch(e:HttpFailure){throw e}catch(e:SSLException){throw e}catch(e:IOException){failure=e}
-      }
-      throw IOException("无法连接电脑，请确认同一局域网、服务已启动，并检查防火墙。${failure?.message}",failure)
-    }
   }
   internal class HttpFailure(val status:Int,message:String):IOException(message)
   private fun request(method:String,endpoint:String,path:String?=null,body:RequestBody?=null,headers:Map<String,String> = emptyMap(),authenticate:Boolean=true,extra:Map<String,String> = emptyMap(),retryGroup:Boolean=true,recoverRoute:Boolean=true):Response {
-    valid(config);require(endpoint.startsWith("/api/v1/")&&!endpoint.contains("?")&&!endpoint.contains("#")){"非法接口路径"}
+    valid(config);require(config.optString("groupId").matches(Regex("[0-9a-f]{64}"))&&config.optString("groupPeerId").matches(Regex("[0-9a-f]{64}"))){"独立连接已移除，请通过设备组连接"};require(endpoint.startsWith("/api/v1/")&&!endpoint.contains("?")&&!endpoint.contains("#")){"非法接口路径"}
     if(authenticate&&config.optString("groupId").isNotEmpty()&&recoverRoute)config=GroupConnections.resolve(config)
     val url=config.getString("url").toHttpUrl().newBuilder().encodedPath(endpoint).apply{if(path!=null)addQueryParameter("path",path);extra.forEach{(k,v)->addQueryParameter(k,v)}}.build()
     val builder=Request.Builder().url(url).method(method,body)
-    if(authenticate){if(config.optString("groupId").isNotEmpty())builder.header("Authorization",DeviceGroups.authorization(config))else{require(config.optString("username").isNotEmpty()&&config.optString("password").isNotEmpty()){"此设备需要重新配对"};builder.header("Authorization",Credentials.basic(config.getString("username"),config.getString("password"),Charsets.UTF_8))}}
+    if(authenticate)builder.header("Authorization",DeviceGroups.authorization(config))
     headers.forEach{(k,v)->builder.header(k,v)}
     val requestStart=android.os.SystemClock.elapsedRealtime()
     val response=try{client(config).newCall(builder.build()).execute()}catch(e:IOException){

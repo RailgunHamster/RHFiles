@@ -73,6 +73,7 @@ mod network_tests {
     }
 }
 pub struct State {
+    pub invitations: crate::invitations::Invitations,
     pub groups: Arc<crate::groups::Groups>,
     pub host: Mutex<Option<crate::groups::Server>>,
     challenges: Mutex<HashMap<String, (Instant, String, String)>>,
@@ -107,6 +108,7 @@ impl State {
             .locksystem(locks.clone())
             .build_handler();
         Ok(Self {
+            invitations: Default::default(),
             groups,
             host: Mutex::new(None),
             challenges: Mutex::new(HashMap::new()),
@@ -286,12 +288,6 @@ fn async_stream_body(
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PairRequest {
-    code: String,
-    name: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PathQuery {
     path: String,
 }
@@ -341,9 +337,18 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
     if r.headers().contains_key("Origin") {
         return Err(Error::new("forbidden", "不接受跨站请求"));
     }
-    if path == "/api/v1/pair" && method == Method::POST {
-        let p: PairRequest = json(r).await?;
-        return Ok(Json(s.auth.pair(&p.code, &p.name)?).into_response());
+    if path == "/api/v1/pair" {
+        return Err(Error::new("not_found", "独立配对已移除，请使用设备组"));
+    }
+    if path == "/api/v1/groups/invitations/redeem" && method == Method::POST {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Redeem {
+            token: String,
+            request: crate::groups::Signed,
+        }
+        let p: Redeem = json(r).await?;
+        return Ok(Json(s.invitations.redeem(&s.groups, &p.token, &p.request)?).into_response());
     }
     if path == "/api/v1/groups/challenge" && method == Method::POST {
         let p: GroupChallenge = json(r).await?;

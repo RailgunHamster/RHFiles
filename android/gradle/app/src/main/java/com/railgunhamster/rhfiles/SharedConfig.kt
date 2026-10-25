@@ -13,6 +13,13 @@ internal object SharedConfig {
   // Group membership/session credentials deliberately remain device-local.
   val fields=setOf("name","type","host","port","share","domain","url","username","insecure","fingerprint")
   fun empty()=JSONObject().put("schemaVersion",1).put("profiles",JSONArray()).put("favorites",JSONArray())
+  /** Remove retired connections before merging a cloud document or old base. */
+  fun withoutRhFiles(doc:JSONObject):JSONObject {
+    val out=JSONObject(doc.toString());val profiles=out.getJSONArray("profiles")
+    val retired=(0 until profiles.length()).map{profiles.getJSONObject(it)}.filter{it.getJSONObject("config").optString("type")=="rhfiles"}.map{it.getString("id")}.toSet()
+    out.put("profiles",JSONArray((0 until profiles.length()).map{profiles.getJSONObject(it)}.filter{it.getString("id") !in retired}))
+    val favorites=out.getJSONArray("favorites");out.put("favorites",JSONArray((0 until favorites.length()).map{favorites.getJSONObject(it)}.filter{Uri.parse(it.optString("path")).host !in retired}));return out
+  }
   fun canonical(value:Any?):String=when(value){
     null,JSONObject.NULL->"null"
     is JSONObject->value.keys().asSequence().sorted().joinToString(",","{","}"){JSONObject.quote(it)+":"+canonical(value.get(it))}
@@ -41,7 +48,7 @@ internal object SharedConfig {
       val c=p.getJSONObject("config");require(c.keys().asSequence().all{it in fields}){"同步文件不能包含密码或未知配置"}
       for(key in c.keys())require(if(key=="port")c.get(key).let{it is Int||it is Long} else if(key=="insecure")c.get(key) is Boolean else c.get(key) is String){"网络位置字段类型无效"}
       if(c.has("port"))require(c.getLong("port") in 1L..65535L){"网络位置端口无效"}
-      if(c.optString("type")=="rhfiles")require(c.optString("fingerprint").matches(Regex("[0-9a-f]{64}"))){"同步网络位置："+c.optString("name")+"，缺少有效的电脑证书指纹；请重新配对该连接后同步，无需在 WebDAV 同步设置中填写指纹"}
+      if(c.optString("type")=="rhfiles")error("RHFiles 仅支持本机设备组，不能通过配置同步创建独立连接")
       else require(!c.has("fingerprint")){"非 RHFiles 网络位置不能包含电脑证书指纹"}
       validateProfile(c)
     }

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)@Config(manifest=Config.NONE,sdk=[28])
 class GroupConnectionsTest {
-  private class Key:DeviceGroupModel.Identity {
+  internal class Key:DeviceGroupModel.Identity {
     private val pair=KeyPairGenerator.getInstance("EC").apply{initialize(ECGenParameterSpec("secp256r1"))}.generateKeyPair()
     override val publicKey=DeviceGroupModel.publicKey(pair.public)
     override fun sign(bytes:ByteArray)=Signature.getInstance("SHA256withECDSA").run{initSign(pair.private);update(bytes);sign()}
@@ -23,7 +23,7 @@ class GroupConnectionsTest {
   private fun obj(vararg pairs:Pair<String,Any>)=JSONObject().also{v->pairs.forEach{v.put(it.first,it.second)}}
   private fun claims(key:Key,kind:String,id:String,fp:String,nonce:String="",server:JSONObject?=null)=obj("v" to 1,"kind" to kind,"group" to id,"key" to key.publicKey,"issuer" to key.publicKey,"name" to "","label" to if(kind=="server-auth")fp else "","invite" to false,"nonce" to nonce,"seq" to if(kind=="server")1 else 0,"server" to (server?:JSONObject.NULL))
   private fun sign(key:Key,value:JSONObject):JSONObject {val bytes=value.toString().toByteArray();return obj("payload" to DeviceGroupModel.encode(bytes),"signature" to DeviceGroupModel.encode(key.sign("RHFiles-Group-v1\u0000".toByteArray()+bytes)))}
-  private class Fixture:java.io.Closeable {
+  internal class Fixture:java.io.Closeable {
     val cert=HeldCertificate.Builder().commonName("group-host").build()
     val server=MockWebServer()
     val hostKey=Key();val phoneKey=Key()
@@ -45,7 +45,7 @@ class GroupConnectionsTest {
     fun config(saved:String=url)=JSONObject().put("type","rhfiles").put("url",saved).put("fingerprint",fp).put("groupId",id).put("groupPeerId",peer)
     override fun close(){server.close();GroupConnections.invalidate()}
   }
-  private fun fixture(block:(Fixture)->Unit){Fixture().use{f->
+  internal fun fixture(block:(Fixture)->Unit){Fixture().use{f->
     fun advertise(addresses:List<String>){val packet=f.host.packet(f.id);packet.getJSONArray("servers").put(sign(f.hostKey,claims(f.hostKey,"server",f.id,f.fp,server=obj("endpoints" to JSONArray(addresses),"fingerprint" to f.fp))));f.host.importPacket(f.id,packet);f.phone.importPacket(f.id,f.host.packet(f.id))}
     advertise(listOf(f.url,"https://127.0.0.1:1"))
     val context=org.robolectric.RuntimeEnvironment.getApplication()

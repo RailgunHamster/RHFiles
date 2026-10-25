@@ -9,6 +9,7 @@ struct Fixture {
     service: Service,
     client: Client,
     base: String,
+    group: String,
     user: String,
     password: String,
 }
@@ -24,7 +25,7 @@ fn explicit_public_bind_is_rejected_before_creating_any_state() {
 }
 #[tokio::test]
 async fn live_permission_edits_apply_to_json_webdav_and_uploads_without_repairing() {
-    let f = Fixture::new(false, false);
+    let f = Fixture::new(false, false).await;
     assert_eq!(
         f.request("PUT", "/dav/Files/new.txt")
             .body("hello")
@@ -35,8 +36,8 @@ async fn live_permission_edits_apply_to_json_webdav_and_uploads_without_repairin
         403
     );
     f.service
-        .set_permissions(
-            &f.user,
+        .groups().configure(
+            &f.group, true,
             Permissions {
                 write: true,
                 delete: false,
@@ -71,7 +72,7 @@ async fn live_permission_edits_apply_to_json_webdav_and_uploads_without_repairin
     );
     let location = f.upload("/Files/pending.bin", 3).await;
     f.service
-        .set_permissions(&f.user, Permissions::default())
+        .groups().configure(&f.group, true, Permissions::default())
         .unwrap();
     assert_eq!(
         f.request("PATCH", &location)
@@ -97,8 +98,8 @@ async fn live_permission_edits_apply_to_json_webdav_and_uploads_without_repairin
     assert!(!f.share.join("blocked").exists());
     assert!(!f.share.join("pending.bin").exists());
     f.service
-        .set_permissions(
-            &f.user,
+        .groups().configure(
+            &f.group, true,
             Permissions {
                 write: false,
                 delete: true,
@@ -158,22 +159,15 @@ async fn broad_roots_exclude_private_profiles_and_protect_their_ancestors() {
         .add_root_certificate(cert)
         .build()
         .unwrap();
-    let cred = service
-        .credential(
-            "test",
-            Permissions {
-                write: true,
-                delete: true,
-            },
-        )
-        .unwrap();
+    let group=service.groups().create("Protected roots", "Host", Permissions {write:true,delete:true}).unwrap();
+    let cred=group_session(&service,&group).await;
     let request = |method: &str, path: &str| {
         client
             .request(
                 Method::from_bytes(method.as_bytes()).unwrap(),
                 format!("{}{path}", status.endpoints[0]),
             )
-            .basic_auth(&cred.username, Some(&cred.password))
+            .basic_auth(cred["username"].as_str().unwrap(), cred["password"].as_str())
     };
     let listing: Value = request("GET", "/api/v1/list?path=/Disk/Users")
         .send()
@@ -266,7 +260,7 @@ async fn broad_roots_exclude_private_profiles_and_protect_their_ancestors() {
 }
 #[tokio::test]
 async fn webdav_put_copy_and_conditional_download() {
-    let f = Fixture::new(true, true);
+    let f = Fixture::new(true, true).await;
     assert_eq!(
         f.request("PUT", "/dav/Files/new.txt")
             .body("new data")
@@ -312,7 +306,7 @@ async fn webdav_put_copy_and_conditional_download() {
 }
 #[tokio::test]
 async fn tus_offsets_and_credentials_survive_server_restart() {
-    let f = Fixture::new(true, false);
+    let f = Fixture::new(true, false).await;
     let location = f.upload("/Files/restart.bin", 6).await;
     assert_eq!(
         f.request("PATCH", &location)
@@ -356,11 +350,12 @@ async fn tus_offsets_and_credentials_survive_server_restart() {
     )
     .unwrap();
     assert_eq!(restarted.status().fingerprint, old_fingerprint);
+    let renewed=group_session(&restarted,&f.group).await;
     let url = format!("{}{}", restarted.status().endpoints[0], location);
     let response = f
         .client
         .head(&url)
-        .basic_auth(&f.user, Some(&f.password))
+        .basic_auth(renewed["username"].as_str().unwrap(), renewed["password"].as_str())
         .header("Tus-Resumable", "1.0.0")
         .send()
         .await
@@ -370,7 +365,7 @@ async fn tus_offsets_and_credentials_survive_server_restart() {
     assert_eq!(
         f.client
             .patch(&url)
-            .basic_auth(&f.user, Some(&f.password))
+            .basic_auth(renewed["username"].as_str().unwrap(), renewed["password"].as_str())
             .header("Tus-Resumable", "1.0.0")
             .header("Upload-Offset", 3)
             .header("Content-Type", "application/offset+octet-stream")
@@ -385,27 +380,19 @@ async fn tus_offsets_and_credentials_survive_server_restart() {
         std::fs::read(f.share.join("restart.bin")).unwrap(),
         b"abcdef"
     );
-    let database = std::fs::read_to_string(f.data.join("devices.json")).unwrap();
+    let database = std::fs::read_to_string(f.data.join("devices.json")).unwrap_or_default();
     assert!(!database.contains(&f.password));
 }
 #[tokio::test]
 async fn upload_owner_isolation_cancellation_and_no_implicit_delete_grant() {
-    let f = Fixture::new(true, false);
+    let f = Fixture::new(true, false).await;
     let path = f.upload("/Files/cancel.bin", 5).await;
-    let other = f
-        .service
-        .credential(
-            "other",
-            Permissions {
-                write: true,
-                delete: false,
-            },
-        )
-        .unwrap();
+    let other_group=f.service.groups().create("Other", "Host", Permissions {write:true,delete:false}).unwrap();
+    let other=group_session(&f.service,&other_group).await;
     assert_eq!(
         f.client
             .head(format!("{}{path}", f.base))
-            .basic_auth(other.username, Some(other.password))
+            .basic_auth(other["username"].as_str().unwrap(), other["password"].as_str())
             .header("Tus-Resumable", "1.0.0")
             .send()
             .await
@@ -434,47 +421,14 @@ async fn upload_owner_isolation_cancellation_and_no_implicit_delete_grant() {
     );
 }
 #[tokio::test]
-async fn pairing_guess_limit_and_request_body_limits() {
-    let f = Fixture::new(false, false);
-    let pair = f.service.pairing(Permissions::default()).unwrap();
-    let url = format!("{}/api/v1/pair", f.base);
-    let wrong = if pair.code == "0000000000" {
-        "1111111111"
-    } else {
-        "0000000000"
-    };
-    for _ in 0..8 {
-        assert_eq!(
-            f.client
-                .post(&url)
-                .json(&json!({"code":wrong,"name":"guess"}))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            401
-        );
+async fn retired_pairing_endpoint_is_unavailable_and_request_limits_still_apply() {
+    let f=Fixture::new(false,false).await;
+    for auth in [false,true] {
+        let mut request=f.client.post(format!("{}/api/v1/pair",f.base));
+        if auth { request=request.basic_auth(&f.user,Some(&f.password)); }
+        assert_eq!(request.json(&json!({"code":"0123456789","name":"phone"})).send().await.unwrap().status(),404);
     }
-    assert_eq!(
-        f.client
-            .post(&url)
-            .json(&json!({"code":pair.code,"name":"phone"}))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        401
-    );
-    assert_eq!(
-        f.client
-            .post(&url)
-            .body("a".repeat(17000))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        400
-    );
+    assert_eq!(f.request("POST","/api/v1/mkdir").body("a".repeat(17000)).send().await.unwrap().status(),400);
     assert_eq!(
         f.request("PROPFIND", "/dav/Files")
             .header("Depth", "infinity")
@@ -487,7 +441,7 @@ async fn pairing_guess_limit_and_request_body_limits() {
 }
 #[tokio::test]
 async fn image_thumbnail_has_bounds_and_is_not_an_original_file_download() {
-    let f = Fixture::new(false, false);
+    let f = Fixture::new(false, false).await;
     image::RgbImage::new(2000, 1000)
         .save(f.share.join("picture.png"))
         .unwrap();
@@ -503,7 +457,7 @@ async fn image_thumbnail_has_bounds_and_is_not_an_original_file_download() {
 }
 #[tokio::test]
 async fn reject_unsafe_share_roots_and_preserve_corrupt_identity() {
-    let f = Fixture::new(false, false);
+    let f = Fixture::new(false, false).await;
     assert!(
         Service::start(
             &f.data,
@@ -535,7 +489,7 @@ async fn reject_unsafe_share_roots_and_preserve_corrupt_identity() {
     );
 }
 impl Fixture {
-    fn new(write: bool, delete: bool) -> Self {
+    async fn new(write: bool, delete: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let data = temp.path().join("state");
         let share = temp.path().join("files");
@@ -554,9 +508,8 @@ impl Fixture {
             "127.0.0.1:0".parse().unwrap(),
         )
         .unwrap();
-        let credential = service
-            .credential("test", Permissions { write, delete })
-            .unwrap();
+        let group=service.groups().create("Protocol fixture","Host",Permissions {write,delete}).unwrap();
+        let credential=group_session(&service,&group).await;
         let identity: Value =
             serde_json::from_slice(&std::fs::read(data.join("identity.json")).unwrap()).unwrap();
         let der: Vec<u8> = serde_json::from_value(identity["certificate"].clone()).unwrap();
@@ -574,8 +527,9 @@ impl Fixture {
             service,
             client,
             base,
-            user: credential.username,
-            password: credential.password,
+            group,
+            user: credential["username"].as_str().unwrap().into(),
+            password: credential["password"].as_str().unwrap().into(),
         }
     }
     fn request(&self, method: &str, path: &str) -> reqwest::RequestBuilder {
@@ -607,7 +561,7 @@ impl Fixture {
 }
 #[tokio::test]
 async fn api_webdav_unicode_and_range_share_the_same_content() {
-    let f = Fixture::new(false, false);
+    let f = Fixture::new(false, false).await;
     assert_eq!(
         f.client
             .get(format!("{}/api/v1/list", f.base))
@@ -662,7 +616,7 @@ async fn api_webdav_unicode_and_range_share_the_same_content() {
 }
 #[tokio::test]
 async fn readonly_and_revocation_are_enforced_in_both_protocols() {
-    let f = Fixture::new(false, false);
+    let f = Fixture::new(false, false).await;
     for (method, path) in [
         ("PUT", "/dav/Files/new"),
         ("DELETE", "/dav/Files/folder"),
@@ -684,20 +638,20 @@ async fn readonly_and_revocation_are_enforced_in_both_protocols() {
             .status(),
         403
     );
-    f.service.revoke(&f.user).unwrap();
+    f.service.groups().remove(&f.group,&f.service.groups().device_id()).unwrap();
     assert_eq!(
         f.request("GET", "/api/v1/list")
             .send()
             .await
             .unwrap()
             .status(),
-        401
+        403
     );
     assert!(!f.share.join("new").exists());
 }
 #[tokio::test]
 async fn tus_partial_resume_and_publish_without_overwrite() {
-    let f = Fixture::new(true, false);
+    let f = Fixture::new(true, false).await;
     let path = f.upload("/Files/resume.bin", 6).await;
     for (offset, body) in [(0, "abc"), (3, "def")] {
         let response = f
@@ -753,7 +707,7 @@ async fn tus_partial_resume_and_publish_without_overwrite() {
 }
 #[tokio::test]
 async fn concurrent_destination_creation_is_not_overwritten() {
-    let f = Fixture::new(true, true);
+    let f = Fixture::new(true, true).await;
     let path = f.upload("/Files/racing", 3).await;
     std::fs::write(f.share.join("racing"), "original").unwrap();
     assert_eq!(
@@ -786,7 +740,7 @@ async fn concurrent_destination_creation_is_not_overwritten() {
 }
 #[tokio::test]
 async fn rename_directory_and_dav_move_never_replace_target() {
-    let f = Fixture::new(true, true);
+    let f = Fixture::new(true, true).await;
     std::fs::write(f.share.join("folder/a"), "a").unwrap();
     let response = f
         .request("POST", "/api/v1/rename")
@@ -811,7 +765,7 @@ async fn rename_directory_and_dav_move_never_replace_target() {
 }
 #[tokio::test]
 async fn native_mutations_respect_webdav_locks() {
-    let f = Fixture::new(true, true);
+    let f = Fixture::new(true, true).await;
     let response=f.request("LOCK","/dav/Files/folder/").header("Content-Type","application/xml").body("<D:lockinfo xmlns:D=\"DAV:\"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>").send().await.unwrap();
     assert!(
         response.status().is_success(),
@@ -835,45 +789,13 @@ async fn native_mutations_respect_webdav_locks() {
     assert_eq!(response.status(), 423, "{}", response.text().await.unwrap());
 }
 #[tokio::test]
-async fn pairing_single_use_and_no_cross_origin_requests() {
-    let f = Fixture::new(false, false);
-    let pair = f.service.pairing(Permissions::default()).unwrap();
-    assert!(pair.connection_uri.starts_with("rhfiles-connect:v1:"));
-    let payload: Value = serde_json::from_slice(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(pair.connection_uri.strip_prefix("rhfiles-connect:v1:").unwrap()).unwrap()
-    ).unwrap();
-    assert_eq!(payload["deviceName"], rhfiles_service::device_name::default_device_name());
-    assert_eq!(payload["endpoints"], json!(pair.endpoints));
-    assert_eq!(payload["fingerprint"], pair.fingerprint);
-    assert_eq!(payload["code"], pair.code);
-    assert_eq!(payload.as_object().unwrap().len(), 5, "QR contains no credentials or paths");
-    assert!(pair.qr_svg.contains("<svg"));
-    let url = format!("{}/api/v1/pair", f.base);
-    let p = json!({"code":pair.code,"name":"phone"});
-    assert_eq!(
-        f.client
-            .post(&url)
-            .header("Origin", "https://evil.example")
-            .json(&p)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        403
-    );
-    let response = f.client.post(&url).json(&p).send().await.unwrap();
-    assert_eq!(response.status(), 200);
-    let credential: Value = response.json().await.unwrap();
-    assert!(!credential["password"].as_str().unwrap().is_empty());
-    assert_eq!(
-        f.client.post(&url).json(&p).send().await.unwrap().status(),
-        401
-    );
+async fn device_group_requests_reject_cross_origin_access() {
+    let f=Fixture::new(false,false).await;
+    assert_eq!(f.request("POST","/api/v1/groups/challenge").header("Origin","https://evil.example").json(&json!({"groupId":f.group,"deviceId":f.service.groups().device_id()})).send().await.unwrap().status(),403);
 }
 #[tokio::test]
 async fn traversal_private_names_and_root_changes_are_denied() {
-    let f = Fixture::new(true, true);
+    let f = Fixture::new(true, true).await;
     for path in [
         "/Files/../state/identity.json",
         "/Files/.rhfiles-service-staging/x",
@@ -911,7 +833,7 @@ async fn traversal_private_names_and_root_changes_are_denied() {
 }
 #[tokio::test]
 async fn webdav_copy_move_cannot_recurse_into_the_source_or_move_a_share_root() {
-    let f = Fixture::new(true, true);
+    let f = Fixture::new(true, true).await;
     std::fs::write(f.share.join("folder/keep"), "keep").unwrap();
     for method in ["COPY", "MOVE"] {
         for destination in ["FOLDER/child", "folder//child", "folder%2fchild"] {
@@ -938,4 +860,14 @@ async fn webdav_copy_move_cannot_recurse_into_the_source_or_move_a_share_root() 
         "keep"
     );
     assert!(!f.share.join("folder/child").exists());
+}
+
+async fn group_session(service:&Service,id:&str)->Value {
+    let groups=service.groups();
+    let client=Client::builder().no_proxy().add_root_certificate(reqwest::Certificate::from_pem(service.status().certificate_pem.as_bytes()).unwrap()).timeout(std::time::Duration::from_secs(10)).build().unwrap();
+    let url=format!("https://127.0.0.1:{}",service.status().port);
+    let challenge:Value=client.post(format!("{url}/api/v1/groups/challenge")).json(&json!({"groupId":id,"deviceId":groups.device_id()})).send().await.unwrap().json().await.unwrap();
+    let nonce=challenge["nonce"].as_str().unwrap();
+    let response=client.post(format!("{url}/api/v1/groups/session")).json(&json!({"groupId":id,"nonce":nonce,"packet":groups.packet(id).unwrap(),"proof":groups.proof(id,nonce,&service.status().fingerprint).unwrap()})).send().await.unwrap();
+    assert_eq!(response.status(),200);response.json::<Value>().await.unwrap()["credential"].clone()
 }

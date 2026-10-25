@@ -107,7 +107,7 @@ async fn reused_ip_with_another_certificate_never_receives_group_credentials() {
     assert_eq!(r.outcome, "authorization_rejected", "{r:?}");
     assert_eq!(r.endpoint, None);
     assert!(r.steps.iter().any(|s| s.code == "identity_mismatch"));
-    assert!(rogue.server.status().devices.is_empty());
+    assert_eq!(rogue.server.groups().state().unwrap()["groups"].as_array().unwrap().len(),1);
 }
 #[tokio::test]
 async fn group_deletion_and_remote_denial_do_not_trigger_discovery() {

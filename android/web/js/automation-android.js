@@ -13,10 +13,9 @@ const androidAutomation=(()=>{
     const available=()=>{if(!app.ready())reject('NOT_READY','File pane is starting');if(state.busy)reject('BUSY','File pane is loading a location');};
     const fresh=()=>{available();if(state.staleError)reject('STALE_LISTING','Refresh the listing successfully before modifying files');};
     actions.provideState('application',snapshot);
-    register('connections.pair',apiSchema({uri:string,name:string},['uri','name']),async p=>{const id=await api.native('connection.pair',p);await app.refreshLocations();return {id};},'external','Pair with a desktop HTTPS service; name is the saved computer label, while the phone system name is sent as client identity metadata; credentials stay in Android Keystore');
-    register('connections.scan',apiSchema(),()=>api.native('connection.scan'),'external','Open the private offline camera scanner; returns pairing data only after user confirmation, without pairing');
-    register('connections.describe',apiSchema({uri:string},['uri']),p=>api.native('connection.describe',p),'read','Validate and inspect pairing data without network I/O');
-    register('connections.compose',apiSchema({url:string,fingerprint:string,code:string,verified:bool},['url','fingerprint','code','verified']),p=>api.native('connection.compose',p),'read','Build pairing data only after the desktop certificate identity has been verified');
+    register('qr.inspect',apiSchema({uri:string},['uri']),p=>api.native('qr.inspect',p),'read','Decode QR content metadata without opening URLs or joining a group');
+    register('qr.scan',apiSchema(),async()=>{await api.native('qr.scan');await app.refreshLocations();return {closed:true};},'external','Open the standalone offline QR reader; group actions require local confirmation, other QR contents are copy-only');
+    register('groups.scan',apiSchema(),()=>api.native('groups.scan'),'external','Scan a device-group invitation or join request; old independent pairing codes are rejected');
     register('connections.discover.start',apiSchema(),()=>api.native('lan.start',{protocol:'rhfiles'}),'external','Discover RHFiles computers using mDNS for eight seconds; results do not establish trust');
     register('connections.discover.state',apiSchema({id:string},['id']),p=>api.native('lan.state',p),'read');
     register('connections.discover.stop',apiSchema({id:string},['id']),p=>api.native('lan.stop',p));

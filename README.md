@@ -96,7 +96,7 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 
 ### 开发与测试
 
-Windows 0.1.76 / Android 0.1.25 起提供不依赖 SMB 的[局域网 HTTPS 文件服务](docs/LAN-SERVICE.md)：专用 JSON API 与 WebDAV 共用文件/权限核心，手机支持离线扫码或局域网发现后核对身份配对。默认只读，首版不覆盖已有目标。
+提供不依赖 SMB 的[局域网 HTTPS 文件服务](docs/LAN-SERVICE.md)：专用 JSON API 与 WebDAV 共用文件/权限核心，RHFiles 设备之间只使用设备组授权，不再支持独立配对或专用密码账号。电脑启动文件服务后，在设备组里生成“邀请新设备”二维码，手机打开独立“扫码”页面，核对并确认后加入。也支持离线入组请求/批准交换。默认只读，不覆盖已有目标。
 
 Windows 需要 `rust-toolchain.toml` 指定的 Rust、WebView2；发布打包还需要 .NET 8 与 Velopack CLI 1.2.0。
 
@@ -190,7 +190,7 @@ Apple Silicon (M-series, arm64) builds share the desktop source version. They ar
 
 ### Development and tests
 
-Windows 0.1.76 / Android 0.1.25 add an opt-in [LAN HTTPS file service](docs/LAN-SERVICE.md): native JSON and WebDAV interfaces share one confined file/permission core, with offline QR pairing or LAN discovery plus explicit identity verification. Read-only by default, no destination overwrites in v1.
+The opt-in [LAN HTTPS file service](docs/LAN-SERVICE.md) shares one confined file/permission core between JSON and WebDAV. RHFiles devices use device groups exclusively; independent pairing and app passwords are no longer supported. Start the computer's service, generate an “Invite device” QR in its group, then scan and explicitly confirm on the phone. Offline request/approval exchange remains available. Read-only by default, without destination overwrites.
 
 Windows needs the Rust toolchain in `rust-toolchain.toml` and WebView2; packaging additionally requires .NET 8 and Velopack CLI 1.2.0.
 

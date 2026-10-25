@@ -211,7 +211,8 @@
   }
   function openDrawer() { renderDrawer(); ui.setDrawerOpen(true); }
   function closeDrawer() { ui.setDrawerOpen(false); }
-  async function refreshLocations(){state.roots=await api.storageRoots();thumbnails.clear();renderDrawer();if(state.route.screen==='home')renderHome();}
+  async function refreshLocations(){state.roots=await api.storageRoots();await clearRetiredFavorites();thumbnails.clear();renderDrawer();if(state.route.screen==='home')renderHome();}
+  async function clearRetiredFavorites(){if(!api.featuresAvailable())return;const ids=new Set(await api.native('connection.retired')),next=state.favorites.filter(e=>!ids.has(mobileList.remoteId(e.path)));if(next.length!==state.favorites.length){state.favorites=next;cache('rhfiles.favorites',JSON.stringify(next));}}
   function removeFavoritePrefix(prefix){state.favorites=state.favorites.filter(e=>!e.path.startsWith(prefix));cache('rhfiles.favorites',JSON.stringify(state.favorites));renderDrawer();}
 
   // Request IDs make old directory/search/preview responses unable to replace a
@@ -628,7 +629,7 @@
     ui.openSheet('显示方式', [['list','列表'],['grid','网格']].map(([key,label])=> action((state.view===key?'✓ ':'')+label,'grid',()=>{ state.view=key; cache('rhfiles.view',key); renderList(); })));
   }
   function moreMenu() {
-    const options = [action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
+    const options = [action('扫码','scan',()=>api.native('qr.scan')),action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
     if (currentDirectory()) {const path=currentDirectory();options.unshift(action('分析当前文件夹','chart',()=>go({screen:'tool',tool:'usage',path})),action(state.favorites.some(e=>e.path===path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path,name:state.route.label||fmt.baseName(path),isDir:true})));if(state.route.screen==='library')options.unshift(action('打开实际文件夹','folder',()=>go(folderRoute(path))));}
@@ -666,7 +667,7 @@
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if(api.syncAvailable())configSync.refresh().catch(error);
-    deviceGroupView.mount($('device-groups-settings'),{mobile:true,deviceName:localStorage.getItem('rhfiles.nearby.alias')||'我的手机',call:(command,args)=>api.native('groups.'+command,args),scan:()=>api.native('connection.scan'),qr:uri=>api.raw('device_group_qr',{uri}),confirm:message=>ui.confirm('设备组',message,'确认'),forgotten:async result=>{for(const id of result?.removedLocations||[])removeFavoritePrefix('remote://'+id+'/');await refreshLocations();}}).catch(error);
+    deviceGroupView.mount($('device-groups-settings'),{mobile:true,deviceName:localStorage.getItem('rhfiles.nearby.alias')||'我的手机',call:(command,args)=>api.native('groups.'+command,args),scan:()=>api.native('groups.scan'),qr:uri=>api.raw('device_group_qr',{uri}),confirm:message=>ui.confirm('设备组',message,'确认'),forgotten:async result=>{for(const id of result?.removedLocations||[])removeFavoritePrefix('remote://'+id+'/');await refreshLocations();}}).catch(error);
     await refreshAutomationSetting();
     if (status.indexing) pollIndex();
   }
@@ -752,6 +753,7 @@
       $('placeholder').replaceChildren(box); renderShell(); return;
     }
     state.roots=await api.storageRoots();
+    await clearRetiredFavorites();
     if(state.roots.length) state.root=state.roots.find(r=>!r.removable)?.path || state.roots[0].path;
     try { state.index=await api.indexStatus(); } catch {}
     await go({screen:'home'},{replace:true});
@@ -807,6 +809,8 @@
     on('btn-automation',async()=>{const enabled=$('btn-automation').dataset.enabled!=='true';if(enabled&&!await ui.confirm('开启 ADB 自动化？','已授权的电脑将能读取和操作 RHFiles 中的文件；仅在可信电脑上使用。','开启'))return;await api.native('automation.enable',{enabled});await refreshAutomationSetting();});
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
     on('nav-settings',()=>{closeDrawer();return go({screen:'tool',tool:'settings'});});
+    on('nav-scan',async()=>{closeDrawer();await api.native('qr.scan');await refreshLocations();});
+    on('drawer-more',()=>ui.openSheet('更多选项',[action('扫码','scan',async()=>{closeDrawer();await api.native('qr.scan');await refreshLocations();})]));
     on('btn-home',()=>go({screen:'home'}));
     on('btn-up',()=>state.route.screen==='library'?libraryUp():back());
     on('btn-search',()=>go({screen:'search',path:currentDirectory()||state.root,global:!currentDirectory(),boundary:state.route.boundary,boundaryLabel:state.route.boundaryLabel}));

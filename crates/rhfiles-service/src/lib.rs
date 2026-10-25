@@ -8,14 +8,14 @@ pub mod discovery;
 pub mod groups;
 mod http;
 mod identity;
+mod invitations;
 mod locks;
 mod model;
 mod network_scope;
 mod storage;
 mod uploads;
 
-use base64::Engine;
-pub use model::{Credential, Device, Error, Pairing, Permissions, Result, ShareConfig, Status};
+pub use model::{Error, Permissions, Result, ShareConfig, Status};
 use std::{
     net::{SocketAddr, TcpListener},
     path::Path,
@@ -247,7 +247,7 @@ impl Service {
         let (advertisement, discovery_error) = if addresses.iter().any(|a| !a.is_loopback()) {
             match discovery::Advertisement::start(&addresses, port, &fingerprint) {
                 Ok(v) => (Some(Arc::new(v)), None),
-                Err(_) => (None, Some("mDNS 自动发现未能启动，仍可扫码或粘贴配对信息 / Discovery unavailable; QR and manual pairing still work".into())),
+                Err(_) => (None, Some("mDNS 自动发现未能启动，仍可使用设备组邀请 / Discovery unavailable; device-group invitations still work".into())),
             }
         } else {
             (None, None)
@@ -361,7 +361,7 @@ impl Service {
             certificate_pem: self.certificate.clone(),
             endpoints: network.endpoints.clone(),
             shares: self.shares.clone(),
-            devices: self.state.auth.devices(),
+
             active_uploads: self.state.uploads.count(),
             discovery_error: network.error.clone(),
         }
@@ -379,39 +379,30 @@ impl Service {
                 .ok_or_else(|| Error::new("invalid_group", "服务未启动"))?,
         )
     }
-    pub fn credential(&self, name: &str, permissions: Permissions) -> Result<Credential> {
-        self.state.auth.issue(name, permissions)
-    }
-    pub fn revoke(&self, id: &str) -> Result<()> {
-        self.state.auth.revoke(id)
-    }
-    /// Never exposed on either network API; only the local host may grant access.
-    pub fn set_permissions(&self, id: &str, permissions: Permissions) -> Result<Device> {
-        self.state.auth.set_permissions(id, permissions)
-    }
-    pub fn pairing(&self, permissions: Permissions) -> Result<Pairing> {
-        let (code, expires_ms) = self.state.auth.pairing(permissions)?;
-        let endpoints = self.network.lock().unwrap().endpoints.clone();
-        let payload = serde_json::json!({"version":1,"deviceName":device_name::default_device_name(),"endpoints":endpoints,"fingerprint":self.fingerprint,"code":code});
-        let connection_uri = format!(
-            "rhfiles-connect:v1:{}",
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string())
+    /// Local-only administration. Never log or synchronize invitation tokens.
+    pub fn group_invitation(&self, id: &str, can_invite: bool) -> Result<serde_json::Value> {
+        use base64::Engine;
+        if !self.running.load(Ordering::Acquire) {
+            return Err(Error::new("invalid_group", "请先启动文件服务"));
+        }
+        let (token, expires) = self
+            .state
+            .invitations
+            .create(&self.state.groups, id, can_invite)?;
+        let data = serde_json::json!({"version":1,"groupId":id,"deviceId":self.state.groups.device_id(),"deviceName":device_name::default_device_name(),"endpoints":self.network.lock().unwrap().endpoints,"fingerprint":self.fingerprint,"token":token,"expiresMs":expires});
+        let uri = format!(
+            "rhfiles-group-invite:v1:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.to_string())
         );
-        let qr_svg = qrcode::QrCode::new(connection_uri.as_bytes())
-            .map_err(|_| Error::new("qr", "无法生成配对二维码"))?
+        let qr = qrcode::QrCode::with_error_correction_level(uri.as_bytes(), qrcode::EcLevel::L)
+            .map_err(|_| Error::new("qr", "无法生成设备组邀请二维码"))?
             .render::<qrcode::render::svg::Color>()
-            .min_dimensions(240, 240)
+            .min_dimensions(320, 320)
             .build();
-        Ok(Pairing {
-            code,
-            expires_ms,
-            fingerprint: self.fingerprint.clone(),
-            endpoints,
-            connection_uri,
-            qr_svg,
-        })
+        Ok(serde_json::json!({"uri":uri,"qrSvg":qr,"expiresMs":expires}))
     }
     pub fn stop(&self) {
+        self.state.invitations.clear();
         self.running.store(false, Ordering::Release);
         let network = self.network.lock().unwrap();
         if let Some(advertisement) = &network.advertisement {
@@ -447,14 +438,21 @@ mod interface_tests {
             "127.0.0.1:0".parse().unwrap(),
         )
         .unwrap();
-        let credential = service
-            .credential(
+        let groups = service.groups();
+        let id = groups
+            .create(
                 "QA",
+                "Host",
                 Permissions {
                     write: true,
                     delete: true,
                 },
             )
+            .unwrap();
+        let credential = service
+            .state
+            .auth
+            .group_session(groups.clone(), &id, &groups.device_id())
             .unwrap();
         let (_, tls) = identity::load(&data).unwrap();
         let status = service.status();
@@ -465,7 +463,10 @@ mod interface_tests {
             .unwrap();
         let upload = client
             .post(format!("https://127.0.0.1:{}/api/v1/uploads", status.port))
-            .basic_auth(&credential.username, Some(&credential.password))
+            .basic_auth(
+                credential["username"].as_str().unwrap(),
+                credential["password"].as_str(),
+            )
             .header("Tus-Resumable", "1.0.0")
             .header("Upload-Length", "1")
             .header("Upload-Metadata", "path L0ZpbGVzL25ldy50eHQ=")
@@ -493,7 +494,10 @@ mod interface_tests {
         .unwrap();
         let response = client
             .head(format!("https://127.0.0.2:{}{location}", status.port))
-            .basic_auth(&credential.username, Some(&credential.password))
+            .basic_auth(
+                credential["username"].as_str().unwrap(),
+                credential["password"].as_str(),
+            )
             .header("Tus-Resumable", "1.0.0")
             .send()
             .await
@@ -532,7 +536,10 @@ mod interface_tests {
                     "https://127.0.0.1:{}/api/v1/capabilities",
                     status.port
                 ))
-                .basic_auth(&credential.username, Some(&credential.password))
+                .basic_auth(
+                    credential["username"].as_str().unwrap(),
+                    credential["password"].as_str()
+                )
                 .send()
                 .await
                 .unwrap()

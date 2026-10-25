@@ -17,47 +17,6 @@ pub struct Permissions {
     pub delete: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Device {
-    pub id: String,
-    pub name: String,
-    pub permissions: Permissions,
-    pub created_ms: u64,
-    #[serde(skip_serializing)]
-    pub secret_hash: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct StoredDevice {
-    pub id: String,
-    pub name: String,
-    pub permissions: Permissions,
-    pub created_ms: u64,
-    pub secret_hash: String,
-}
-
-impl From<&StoredDevice> for Device {
-    fn from(v: &StoredDevice) -> Self {
-        Self {
-            id: v.id.clone(),
-            name: v.name.clone(),
-            permissions: v.permissions.clone(),
-            created_ms: v.created_ms,
-            secret_hash: String::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Credential {
-    pub username: String,
-    pub password: String,
-    pub device: Device,
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
@@ -82,17 +41,6 @@ pub struct Listing {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Pairing {
-    pub code: String,
-    pub expires_ms: u64,
-    pub fingerprint: String,
-    pub endpoints: Vec<String>,
-    pub connection_uri: String,
-    pub qr_svg: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Status {
     pub running: bool,
     pub port: u16,
@@ -100,7 +48,6 @@ pub struct Status {
     pub certificate_pem: String,
     pub endpoints: Vec<String>,
     pub shares: Vec<ShareConfig>,
-    pub devices: Vec<Device>,
     pub active_uploads: usize,
     pub discovery_error: Option<String>,
 }

@@ -103,6 +103,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
         case 'list':return {path:a.path,entries:m.fs[a.path]||[]};
         case 'media.library':return {entries:Object.values(m.fs).flat().filter(e=>e.kind===a.category),total:1,truncated:false};
         case 'connections':return m.connections;
+        case 'connection.retired':return [];
         case 'lan.start':return 'scan-1';
         case 'lan.state':return {running:false,devices:[],warnings:[]};
         case 'lan.stop':return true;

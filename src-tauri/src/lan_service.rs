@@ -1,5 +1,5 @@
 //! Local-only administration. Network clients cannot change roots or grants.
-use rhfiles_service::{Permissions, Service, ShareConfig};
+use rhfiles_service::{Service, ShareConfig};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -34,6 +34,15 @@ pub(crate) fn advertise_groups() -> Result<(), String> {
     }
     Ok(())
 }
+pub(crate) fn group_invitation(id: &str, can_invite: bool) -> Result<serde_json::Value, String> {
+    slot()
+        .lock()
+        .map_err(|_| "服务状态不可用")?
+        .as_ref()
+        .ok_or("请先启动文件服务，再生成设备组邀请")?
+        .group_invitation(id, can_invite)
+        .map_err(|e| e.to_string())
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -44,8 +53,8 @@ pub struct Config {
     port: u16,
     #[serde(default)]
     auto_start: bool,
-    #[serde(default)]
-    new_device_permissions: Permissions,
+    #[serde(default, rename="newDevicePermissions", skip_serializing)]
+    _retired_device_permissions: Option<serde_json::Value>,
 }
 fn port() -> u16 {
     39128
@@ -56,7 +65,7 @@ impl Default for Config {
             shares: vec![],
             port: port(),
             auto_start: false,
-            new_device_permissions: Permissions::default(),
+            _retired_device_permissions: None,
         }
     }
 }
@@ -82,11 +91,6 @@ fn save_config(path: &Path, config: &Config) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     Ok(())
 }
-fn save_defaults(path: &Path, permissions: Permissions) -> Result<(), String> {
-    let mut config = read_config(path)?;
-    config.new_device_permissions = permissions;
-    save_config(path, &config)
-}
 fn start(mut config: Config) -> Result<rhfiles_service::Status, String> {
     let mut service = slot().lock().map_err(|_| "服务状态不可用")?;
     if service.as_ref().is_some_and(|s| s.status().running) {
@@ -98,7 +102,6 @@ fn start(mut config: Config) -> Result<rhfiles_service::Status, String> {
     // a listener must not overwrite a concurrent autosave or old clients' defaults.
     let saved = read_config(&directory)?;
     config.auto_start = saved.auto_start;
-    config.new_device_permissions = saved.new_device_permissions;
     let running = Service::start_grouped(
         &directory,
         config.shares.clone(),
@@ -153,15 +156,6 @@ pub async fn lan_service_start(config: Config) -> Result<rhfiles_service::Status
     tauri::async_runtime::spawn_blocking(move || start(config))
         .await
         .map_err(|e| e.to_string())?
-}
-#[tauri::command]
-pub async fn lan_service_defaults(permissions: Permissions) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let _guard = slot().lock().map_err(|_| "服务状态不可用")?;
-        save_defaults(&directory()?, permissions)
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub async fn lan_service_startup(auto_start: bool, login: bool) -> Result<(), String> {
@@ -238,59 +232,6 @@ pub async fn lan_service_drives() -> Result<Vec<ShareConfig>, String> {
     .await
     .map_err(|e| e.to_string())?
 }
-#[tauri::command]
-pub async fn lan_service_pair(
-    permissions: Permissions,
-) -> Result<rhfiles_service::Pairing, String> {
-    slot()
-        .lock()
-        .map_err(|_| "服务状态不可用")?
-        .as_ref()
-        .ok_or("文件服务尚未启动")?
-        .pairing(permissions)
-        .map_err(|e| e.to_string())
-}
-#[tauri::command]
-pub async fn lan_service_credential(
-    name: String,
-    permissions: Permissions,
-) -> Result<rhfiles_service::Credential, String> {
-    slot()
-        .lock()
-        .map_err(|_| "服务状态不可用")?
-        .as_ref()
-        .ok_or("文件服务尚未启动")?
-        .credential(&name, permissions)
-        .map_err(|e| e.to_string())
-}
-#[tauri::command]
-pub async fn lan_service_revoke(id: String) -> Result<(), String> {
-    slot()
-        .lock()
-        .map_err(|_| "服务状态不可用")?
-        .as_ref()
-        .ok_or("文件服务尚未启动")?
-        .revoke(&id)
-        .map_err(|e| e.to_string())
-}
-#[tauri::command]
-pub async fn lan_service_permissions(
-    id: String,
-    permissions: Permissions,
-) -> Result<rhfiles_service::Device, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        slot()
-            .lock()
-            .map_err(|_| "服务状态不可用")?
-            .as_ref()
-            .ok_or("文件服务尚未启动")?
-            .set_permissions(&id, permissions)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,59 +240,9 @@ mod tests {
         let config: Config = serde_json::from_str(r#"{"shares":[]}"#).unwrap();
         assert_eq!(config.port, 39128);
         assert!(!config.auto_start);
-        assert!(!config.new_device_permissions.write);
-        assert!(!config.new_device_permissions.delete);
+        assert!(!serde_json::to_value(&config).unwrap().as_object().unwrap().contains_key("newDevicePermissions"));
         assert_eq!(Config::default().port, 39128);
         assert!(serde_json::from_str::<Config>(r#"{"autoStart":true,"oops":1}"#).is_err());
-    }
-    #[test]
-    fn new_device_grants_are_persistent_independent_and_preserve_other_settings() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut config = read_config(directory.path()).unwrap();
-        config.port = 12345;
-        config.auto_start = true;
-        config.shares.push(ShareConfig {
-            name: "Files".into(),
-            path: directory.path().into(),
-        });
-        save_config(directory.path(), &config).unwrap();
-        for (write, delete) in [(true, false), (false, true), (true, true), (false, false)] {
-            save_defaults(directory.path(), Permissions { write, delete }).unwrap();
-            let saved = read_config(directory.path()).unwrap();
-            assert_eq!(saved.new_device_permissions.write, write);
-            assert_eq!(saved.new_device_permissions.delete, delete);
-            assert_eq!(saved.port, 12345);
-            assert!(saved.auto_start);
-            assert_eq!(saved.shares[0].name, "Files");
-            assert_eq!(saved.shares[0].path, directory.path());
-            save_config(directory.path(), &saved).unwrap();
-            assert_eq!(
-                read_config(directory.path())
-                    .unwrap()
-                    .new_device_permissions
-                    .write,
-                write
-            );
-        }
-    }
-    #[test]
-    fn default_grant_save_does_not_replace_corrupt_configuration() {
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::write(directory.path().join("config.json"), b"broken").unwrap();
-        assert!(
-            save_defaults(
-                directory.path(),
-                Permissions {
-                    write: true,
-                    delete: true
-                }
-            )
-            .is_err()
-        );
-        assert_eq!(
-            std::fs::read(directory.path().join("config.json")).unwrap(),
-            b"broken"
-        );
     }
     #[test]
     fn atomic_config_roundtrip_and_corruption_is_not_silently_ignored() {

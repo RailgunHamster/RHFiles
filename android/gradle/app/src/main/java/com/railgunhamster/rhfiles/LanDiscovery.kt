@@ -127,7 +127,7 @@ class LanDiscovery(private val context:Context):Closeable {
     internal fun rhFilesRecord(info:NsdServiceInfo):JSONObject?=try {
       require(info.serviceType.trim('.') in setOf("_rhfiles._tcp","_rhfiles._tcp.local"))
       val address=rhFilesAddress(info)?.hostAddress?:return null
-      require(PairingData.localAddress(address)&&info.port in 1..65535)
+      require(GroupAddresses.localAddress(address)&&info.port in 1..65535)
       require(info.attributes["v"]?.toString(Charsets.UTF_8)=="1")
       val fp=info.attributes["fp"]?.toString(Charsets.UTF_8)?:return null
       require(fp.matches(Regex("[0-9a-f]{64}")))

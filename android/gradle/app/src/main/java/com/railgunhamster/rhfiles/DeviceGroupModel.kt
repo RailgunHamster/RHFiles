@@ -11,6 +11,18 @@ import java.security.spec.*
  * incoming payload can clear blocked entries or change local file grants. */
 internal class DeviceGroupModel(private val identity:Identity, saved:String?, private val persist:(String)->Unit) {
   interface Identity { val publicKey:String; fun sign(bytes:ByteArray):ByteArray }
+  fun publicIdentity()=identity.publicKey
+  fun inspectIncoming(uri:String):JSONObject {
+    val result=inspect(uri);if(result.getString("kind")!="approval")return result
+    val packet=parse(uri,"rhfiles-group-approval:v1:");val group=packetId(packet)
+    val known=doc.getJSONObject("groups").has(group)
+    val own=(0 until packet.getJSONArray("members").length()).map{read(packet.getJSONArray("members").getJSONObject(it))}.firstOrNull{it.getString("key")==identity.publicKey}
+    val pending=doc.optString("pending")
+    val joinable=known||(own!=null&&pending.isNotEmpty()&&own.optString("nonce")==pending)
+    result.put("joinable",joinable)
+    if(!joinable)result.put("message",if(own==null)"这是组公开信息，不是对本机的入组批准。请先生成本机入组请求，交给电脑批准，再扫描电脑返回的批准二维码。"else"批准不对应本机当前请求。请让电脑批准本机最新的入组请求，再扫描新的批准二维码。")
+    return result
+  }
   companion object {
     private val domain="RHFiles-Group-v1\u0000".toByteArray(Charsets.UTF_8)
     private val fields=setOf("v","kind","group","key","issuer","name","label","invite","nonce","seq","server")
@@ -87,7 +99,8 @@ internal class DeviceGroupModel(private val identity:Identity, saved:String?, pr
   }
   @Synchronized fun run(command:String,args:JSONObject):Any = when(command) {
     "state"->state()
-    "request"->{val n=args.getString("deviceName");name(n);val c=claims("request",n).put("nonce",nonce());val signed=sign(c);change{it.put("pending",c.getString("nonce"));JSONObject().put("uri",uri("rhfiles-group-request:v1:",signed))}}
+    "invitationRequest"->if(doc.has("pendingRequest"))JSONObject().put("uri",uri("rhfiles-group-request:v1:",doc.getJSONObject("pendingRequest")))else run("request",args)
+    "request"->{val n=args.getString("deviceName");name(n);val c=claims("request",n).put("nonce",nonce());val signed=sign(c);change{it.put("pending",c.getString("nonce")).put("pendingRequest",signed);JSONObject().put("uri",uri("rhfiles-group-request:v1:",signed))}}
     "create"->{
       val n=args.getString("deviceName");val label=args.getString("name");name(n);name(label)
       val p=JSONObject().put("root",sign(claims("root",n).put("label",label).put("invite",true).put("nonce",nonce()))).put("members",JSONArray()).put("servers",JSONArray());val id=packetId(p)
@@ -104,13 +117,13 @@ internal class DeviceGroupModel(private val identity:Identity, saved:String?, pr
       change{val all=it.getJSONObject("groups");val old=all.optJSONObject(id)
         if(old!=null){member(old,deviceId);merge(old,p)}else{
           require(all.length()<16){"最多加入 16 个设备组"}
-          val own=each(p.getJSONArray("members")).map(::read).firstOrNull{it.getString("key")==identity.publicKey}?:error("证明中没有本机身份")
+          val own=each(p.getJSONArray("members")).map(::read).firstOrNull{it.getString("key")==identity.publicKey}?:error("这是组公开信息，不是对本机的入组批准。请生成本机入组请求，让电脑批准后再扫码加入。")
           require(it.optString("pending").isNotEmpty()&&own.getString("nonce")==it.optString("pending")){"不是本机当前入组请求的批准，请重新生成请求"}
           val g=JSONObject().put("packet",JSONObject().put("root",p.getJSONObject("root")).put("members",JSONArray()).put("servers",JSONArray())).put("blocked",JSONObject(refusals(it).toString())).put("permissions",grant(args)).put("enabled",true).put("left",false)
           // Only a fresh, explicitly confirmed join restores our membership
           // here. Keep other groups' blocks and every other device's refusal.
           g.getJSONObject("blocked").remove(deviceId)
-          merge(g,p);member(g,deviceId);all.put(id,g);refusals(it).remove(deviceId);it.remove("pending")
+          merge(g,p);member(g,deviceId);all.put(id,g);refusals(it).remove(deviceId);it.remove("pending");it.remove("pendingRequest")
         };id
       }
     }

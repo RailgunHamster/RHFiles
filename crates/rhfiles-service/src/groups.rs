@@ -674,6 +674,11 @@ impl Groups {
             Ok(())
         })
     }
+    pub(crate) fn require_inviter(&self,id:&str)->Result<()> {
+        let doc=self.doc.lock().unwrap();let group=doc.groups.get(id).ok_or_else(||bad("设备组不存在"))?;
+        if !group.member(&self.device_id())?.invite { return Err(Error::new("forbidden","本机没有邀请权限")); }
+        Ok(())
+    }
     pub fn advertise(&self, server: Server) -> Result<()> {
         server.validate()?;
         self.change(|doc| {

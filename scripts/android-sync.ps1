@@ -120,6 +120,10 @@ Sync-File `
     -Target (Join-Path $appDir 'src\main\java\com\railgunhamster\rhfiles\MainActivity.kt')
 
 # New native modules and JVM business tests are canonical inputs too.
+# Remove only this retired generated source; copying new inputs alone would
+# silently retain the obsolete independent-pairing Activity in existing builds.
+$retiredScanner = Join-Path $appDir 'src\main\java\com\railgunhamster\rhfiles\PairingScanActivity.kt'
+if (Test-Path -LiteralPath $retiredScanner) { Remove-Item -LiteralPath $retiredScanner -Force }
 foreach ($sourceSet in @('main', 'test', 'androidTest')) {
     $canonical = Join-Path $repoRoot "android\gradle\app\src\$sourceSet\java\com\railgunhamster\rhfiles"
     $destination = Join-Path $appDir "src\$sourceSet\java\com\railgunhamster\rhfiles"

@@ -58,49 +58,27 @@ class ConfigSyncIdentityTest {
     web.put("rhfiles.favorites",applied.getJSONArray("favorites").toString())
     assertEquals("success",sync.acknowledge(applied.getString("id")).getString("state"))
   }
-  @Test fun pairedComputerFingerprintSurvivesTwoWaySyncWithoutPasswords(){
-    MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start()
-      val a=device();val b=device();val ra=remotes(a);val rb=remotes(b)
-      val sa=ConfigSync(a,ra);val sb=ConfigSync(b,rb);configure(sa,server);configure(sb,server)
-      val id=ra.save(computer());val wa=web(favorite(id));val wb=web()
-      finish(sa,wa)
-      val exported=cloud.doc!!.getJSONArray("profiles").getJSONObject(0).getJSONObject("config")
-      assertEquals(pin,exported.getString("fingerprint"))
-      for(secret in listOf("computer-secret","sync-secret","password","groupId","privateKey"))assertFalse(cloud.doc.toString().contains(secret))
-      finish(sb,wb);assertEquals(pin,rb.editable(id).getString("fingerprint"))
-      assertTrue(rb.editable(id).getBoolean("needsPassword"));assertFalse(rb.editable(id).getBoolean("hasPassword"))
-      rb.save(rb.editable(id).put("password","phone-b-secret"))
-      val renamed=JSONArray(wb.getString("rhfiles.favorites")).getJSONObject(0).put("label","B 的图片")
-      wb.put("rhfiles.favorites",JSONArray().put(renamed).toString());finish(sb,wb);finish(sa,wa)
-      assertEquals("computer-secret",ra.backupProfiles().getJSONObject(0).getJSONObject("config").getString("password"))
-      assertEquals("phone-b-secret",rb.backupProfiles().getJSONObject(0).getJSONObject("config").getString("password"))
-      assertEquals("B 的图片",JSONArray(wa.getString("rhfiles.favorites")).getJSONObject(0).getString("label"))
-      assertFalse(cloud.doc.toString().contains("phone-b-secret"))
-      // Changing the public identity must never carry the old local credential.
-      cloud.doc!!.getJSONArray("profiles").getJSONObject(0).getJSONObject("config").put("fingerprint","cd".repeat(32));cloud.revision++
-      finish(sa,wa);assertEquals("cd".repeat(32),ra.editable(id).getString("fingerprint"))
-      assertFalse(ra.editable(id).getBoolean("hasPassword"));assertTrue(ra.editable(id).getBoolean("needsPassword"))
-    }
-  }
-  @Test fun malformedOrMissingCloudPinsAreRejectedWithoutLearningAnIdentityOrMutatingLocalData(){
+  @Test fun oldCloudPairingsAreRemovedConditionallyWithoutRestoringTheirPasswords(){
     MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start()
       val c=device();val r=remotes(c);val sync=ConfigSync(c,r);configure(sync,server)
-      val id=r.save(computer());val w=web(favorite(id));finish(sync,w)
-      val valid=cloud.doc!!.toString();val before=c.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).all.toMap();val writes=cloud.writes
-      for(badPin in listOf("","abc","gg".repeat(32),"ab".repeat(31))){
-        cloud.doc=JSONObject(valid);cloud.doc!!.getJSONArray("profiles").getJSONObject(0).getJSONObject("config").put("fingerprint",badPin)
-        try{sync.run(w,true);fail("Invalid fingerprint accepted")}catch(e:IllegalArgumentException){assertTrue(e.message!!.contains("指纹"))}
-        assertEquals(before,c.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).all);assertEquals(writes,cloud.writes)
+      val retired=UUID.randomUUID().toString();val kept=r.save(smb());val w=web(favorite(kept))
+      cloud.doc=SharedConfig.empty().put("profiles",JSONArray().put(JSONObject().put("id",retired).put("config",SharedConfig.profile(computer())))).put("favorites",JSONArray().put(favorite(retired)))
+      finish(sync,w);assertEquals(1,r.connections().length());assertEquals(kept,r.connections().getJSONObject(0).getString("id"));assertFalse(cloud.doc.toString().contains(retired));assertFalse(cloud.doc.toString().contains("rhfiles"));assertEquals(1,cloud.writes)
+    }
+  }
+  @Test fun malformedOldPinsCannotRestoreAnyIndependentConnection(){
+    MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start()
+      val c=device();val r=remotes(c);val sync=ConfigSync(c,r);configure(sync,server)
+      for(pin in listOf("","abc","gg".repeat(32))){
+        val retired=UUID.randomUUID().toString();cloud.doc=SharedConfig.empty().put("profiles",JSONArray().put(JSONObject().put("id",retired).put("config",SharedConfig.profile(computer().put("fingerprint",pin)))))
+        cloud.revision++;finish(sync,web());assertEquals(0,r.connections().length());assertEquals(0,cloud.doc!!.getJSONArray("profiles").length())
       }
-      cloud.doc=JSONObject(valid);cloud.doc!!.getJSONArray("profiles").getJSONObject(0).getJSONObject("config").remove("fingerprint")
-      try{sync.run(w,true);fail("Missing fingerprint accepted")}catch(e:IllegalArgumentException){assertTrue(e.message!!.contains("指纹"))}
-      assertEquals(before,c.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).all);assertEquals(writes,cloud.writes)
     }
   }
   @Test fun syncingPortableProfilesNeverDeletesOrExportsLocalDeviceGroupsOrTheirBookmarks(){
     MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start()
       val a=device();val b=device();val ra=remotes(a);val rb=remotes(b)
-      val groupId=ra.save(computer().put("groupId","local-group").put("groupPeerId","local-peer"))
+      val groupId=ra.save(computer().put("groupId","a".repeat(64)).put("groupPeerId","b".repeat(64)))
       val groupBefore=a.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).getString(groupId,null)
       val portableId=ra.save(smb());val groupFavorite=favorite(groupId).put("label","仅本机设备组收藏")
       val wa=web(groupFavorite,favorite(portableId));val wb=web()
@@ -108,7 +86,7 @@ class ConfigSyncIdentityTest {
       finish(sa,wa);finish(sb,wb)
       assertEquals(groupBefore,a.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).getString(groupId,null))
       assertEquals(2,ra.connections().length());assertEquals(1,rb.connections().length())
-      assertEquals("local-group",ra.editable(groupId).getString("groupId"))
+      assertEquals("a".repeat(64),ra.editable(groupId).getString("groupId"))
       assertEquals(groupFavorite.toString(),JSONArray(wa.getString("rhfiles.favorites")).getJSONObject(0).toString())
       assertEquals(2,JSONArray(wa.getString("rhfiles.favorites")).length())
       for(localOnly in listOf(groupId,"local-group","local-peer","仅本机设备组收藏","computer-secret"))assertFalse(cloud.doc.toString().contains(localOnly))
@@ -118,7 +96,7 @@ class ConfigSyncIdentityTest {
   @Test fun aCloudProfileCannotReplaceALocalGroupUsingTheSameProfileId(){
     MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start()
       val c=device();val r=remotes(c);val sync=ConfigSync(c,r);configure(sync,server)
-      val id=r.save(computer().put("groupId","local-group").put("groupPeerId","local-peer"))
+      val id=r.save(computer().put("groupId","a".repeat(64)).put("groupPeerId","b".repeat(64)))
       val before=c.getSharedPreferences("remote-v1",Context.MODE_PRIVATE).all.toMap()
       cloud.doc=SharedConfig.empty().put("profiles",JSONArray().put(JSONObject().put("id",id).put("config",SharedConfig.profile(smb()))))
       val w=web(favorite(id))

@@ -87,7 +87,7 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
   private fun rawPrefs(name:String)=JSONObject(context.getSharedPreferences(name,Context.MODE_PRIVATE).all)
   private fun prefs(name:String,value:JSONObject){val editor=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear();value.keys().forEach{key->when(val v=value.get(key)){is String->editor.putString(key,v);is Boolean->editor.putBoolean(key,v);is Number->editor.putLong(key,v.toLong());else->error("内部配置类型无效")}};require(editor.commit()){"配置写入失败"}}
   private fun current()=JSONObject().put("remote",rawPrefs("remote-v1")).put("updates",rawPrefs("updates-v1")).put("pending",rawPrefs("config-restore-v1")).put("reader",ReaderSettings.state(context).getJSONObject("values")).put("sync",rawPrefs(ConfigSync.PREFS))
-  private fun restore(snapshot:JSONObject){prefs("remote-v1",snapshot.getJSONObject("remote"));prefs("updates-v1",snapshot.getJSONObject("updates"));ReaderSettings.replace(context,snapshot.getJSONObject("reader"));prefs("config-restore-v1",snapshot.getJSONObject("pending"));if(snapshot.has("sync"))prefs(ConfigSync.PREFS,snapshot.getJSONObject("sync"))}
+  private fun restore(snapshot:JSONObject){prefs("remote-v1",snapshot.getJSONObject("remote"));remotes.purgeIndependentConnections();prefs("updates-v1",snapshot.getJSONObject("updates"));ReaderSettings.replace(context,snapshot.getJSONObject("reader"));prefs("config-restore-v1",snapshot.getJSONObject("pending"));if(snapshot.has("sync"))prefs(ConfigSync.PREFS,snapshot.getJSONObject("sync"))}
   private fun hasJournal()=journal.baseFile.exists()||File(journal.baseFile.path+".bak").exists()
   @Synchronized fun recover(){if(hasJournal()){
     val before=JSONObject(journal.openRead().bufferedReader().use{it.readText()});restore(before)
@@ -96,7 +96,11 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
   }}
   @Synchronized fun apply(payload:JSONObject,currentWeb:JSONObject=JSONObject()){
     require(!hasJournal()){"上一次配置导入尚未确认，请重新打开应用"}
-    validate(payload);validateWeb(currentWeb);val prepared=remotes.prepareProfiles(payload.getJSONArray("profiles"));val before=current().put("web",currentWeb)
+    validate(payload);validateWeb(currentWeb)
+    require((0 until payload.getJSONArray("profiles").length()).none{payload.getJSONArray("profiles").getJSONObject(it).getJSONObject("config").optString("type")=="rhfiles"}){"旧备份包含已移除的 RHFiles 独立连接，请移除这些连接后导入；设备组只能在本机确认加入"}
+    val prepared=remotes.prepareProfiles(payload.getJSONArray("profiles"));val local=remotes.localGroupProfiles()
+    for(i in 0 until local.length()){val item=local.getJSONObject(i);if(item.getJSONObject("config").optString("type")=="rhfiles"){val id=item.getString("id");require(!prepared.has(id)){"备份网络位置与本机设备组冲突"};prepared.put(id,remotes.sealLocal(item.getJSONObject("config")))}}
+    require(prepared.length()<=200){"网络位置过多"};val before=current().put("web",currentWeb)
     val stream=journal.startWrite();try{stream.write(before.toString().toByteArray());journal.finishWrite(stream)}catch(e:Exception){journal.failWrite(stream);throw e}
     try{
       prefs("remote-v1",prepared);prefs("updates-v1",JSONObject(payload.getJSONObject("updates").toString()).put("pendingInstall",false));ReaderSettings.replace(context,payload.getJSONObject("reader"))

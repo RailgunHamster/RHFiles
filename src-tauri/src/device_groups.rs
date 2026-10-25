@@ -86,6 +86,15 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
     let groups = crate::lan_service::groups()?;
     let result = (|| -> rhfiles_service::Result<Value> {
         Ok(match command {
+            "invite" => {
+                return crate::lan_service::group_invitation(
+                    field(args, "id").map_err(err)?,
+                    args.get("canInvite")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                )
+                .map_err(err);
+            }
             "state" => {
                 let mut state = groups.state()?;
                 state["defaultDeviceName"] = Value::String(default_device_name());

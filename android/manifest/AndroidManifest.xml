@@ -67,6 +67,7 @@
             android:name=".MainActivity"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -82,7 +83,7 @@
         </activity>
 
         <!-- Books get a separate read-only origin/renderer, never Tauri file IPC. -->
-        <activity android:name=".PairingScanActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" />
+        <activity android:name=".QrScanActivity" android:exported="true" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" />
         <activity android:name=".EbookActivity" android:exported="false" android:resizeableActivity="true" android:process=":ebook" />
         <service android:name=".NearbyService" android:exported="false" android:foregroundServiceType="dataSync" />
 

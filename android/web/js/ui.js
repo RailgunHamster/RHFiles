@@ -11,6 +11,7 @@ const ui = (() => {
     more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
     layoutColumns:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
     layoutRows:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>',
+    scan:'<path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4"/><path d="M7 7h3v3H7zm7 0h3v3h-3zM7 14h3v3H7zm7 0h3v3h-3z"/>',
     layoutSingle:'<rect x="3" y="4" width="18" height="16" rx="2"/>',
     layoutAuto:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16M12 12h9"/>',
     check:'<path d="m5 12 4 4L19 6"/>',

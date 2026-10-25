@@ -4,6 +4,10 @@
 
 ## 第一次加入
 
+Windows 0.1.82 / Android 0.1.33 起推荐直接扫码：电脑启动文件服务，在设备组中点「邀请新设备（扫码加入）」。手机从侧栏三点菜单、设置下方“扫码”或桌面长按图标打开扫码页，核对来源并确认加入。邀请两分钟有效、仅能使用一次；加入后只有设备组授权，没有独立配对账号。
+
+“显示组公开信息”用于已有成员交换证明，**不是**新设备的一次性邀请。需要不联网交换时仍可按以下方式操作：
+
 1. 建议先在一台电脑「设置 → 局域网文件服务 → 设备组」填写设备/组名称，创建一个组；选择共享目录并启动文件服务。组名称相同不代表同一个组，请不要在每台设备各建一个同名组。
 2. 新设备打开设备组（手机在「设置 → 存储与权限」），填写自己的名称，点「生成本机入组请求」。
 3. 已有邀请权限的成员扫描或粘贴请求，核对来源后批准。默认不授予新成员邀请权；如需让它继续接纳成员，明确勾选允许邀请。
@@ -39,7 +43,7 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 ## 删除整个本机设备组
 
-在组卡片底部点「删除本机设备组」并确认：本机的该组成员证明、服务地址和组权限会删除，组从 UI 消失，不留下“恢复”条目。手机还会清理该组生成的网络位置及对应快捷访问。其他客户端、其他组、实际文件、独立配对/WebDAV 账号和本机私钥不受影响；对其他设备的本机拒绝记录仍保留。删除会立即使旧组会话失效，之后重新加入也不会复活这些旧会话。
+在组卡片底部点「删除本机设备组」并确认：本机的该组成员证明、服务地址和组权限会删除，组从 UI 消失，不留下“恢复”条目。手机还会清理该组生成的网络位置及对应快捷访问。其他客户端、其他组、实际文件和本机私钥不受影响；对其他设备的本机拒绝记录仍保留。删除会立即使旧组会话失效，之后重新加入也不会复活这些旧会话。
 
 重启、刷新或旧证明不能自动加回。以后需要恢复时，在本机重新生成入组请求，交给仍保留此组且有邀请权限的客户端批准，然后在本机核对并确认加入；原创建者也能按此流程重新加入。若之前移除了本机身份，这次明确入组只恢复该组中的本机身份，不恢复其他已退出的组或已移除的其他设备。不要另建同名组代替原组。
 
@@ -49,7 +53,7 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 文件服务里的权限、设备组访问和自动启动开关点选后立即保存，不需要另点保存按钮。保存中/已保存/失败原因会显示在对应选项旁，失败会恢复最后一次成功保存的值，不刷新整页或清空其他输入。开启登录启动会同时开启服务恢复；关闭服务恢复会同时关闭登录启动。
 
-「新配对设备的默认权限」只用于之后生成的配对码和 WebDAV 专用账号；已有账号、已有配对码和设备组权限不会被批量修改。默认仍为只读；默认权限独立保存在本机服务配置中，刷新、重启和重新启动监听都保留。脚本可使用 `server.defaults` 修改，使用 `server.state` 读取 `config.newDevicePermissions`。
+独立配对、WebDAV 专用密码账号及 server.defaults 已移除。权限只在各设备组卡片设置，脚本使用 groups.configure。
 
 设备组使用 P-256/SHA-256 签名、60 秒单次随机挑战、固定 HTTPS 证书和最多 30 分钟的内存会话。每个文件请求/流还会实时检查本机拒绝和权限，移除不会等到会话过期才生效。只有 localhost、局域网、Tailscale 私有地址；不接受公网地址、不信任转发来源头、不跟随重定向、不通过代理发送组认证。
 
@@ -61,7 +65,7 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 ## 按需恢复与诊断（Windows 0.1.80 / Android 0.1.28）
 
-手机打开 RHFiles 组位置时按需恢复地址；电脑服务在接口变化后热更新私网监听和签名地址，保留会话/上传所有权。电脑设备组也提供显式连接及相同诊断。独立配对、SMB、FTP、第三方 WebDAV 不借此升级或重建授权。
+手机打开 RHFiles 组位置时按需恢复地址；电脑服务在接口变化后热更新私网监听和签名地址，保留会话/上传所有权。电脑设备组也提供显式连接及相同诊断。普通 SMB、FTP、第三方 WebDAV 不借此升级或重建授权。
 
 一轮连接总预算 15 秒、最多 6 次连接尝试，去重、失败冷却、支持取消；尝试最近成功/保存/其他已知地址（按本机网段及 Tailscale 排序）、至多两个现存在线组会话交换、一次短时 mDNS。成功立即停止。没有子网扫描、递归寻找成员、持续 ping 或自定义周期 UDP 广播。Windows 每两秒枚举本机接口仅是本地状态检查，不会发送网络探测。
 
@@ -87,8 +91,8 @@ Create a group on one computer; on a new device generate a request, have an invi
 
 Each device has its own P-256 private key. Signed introductions can be carried by a member while its introducer is offline. Local file roots and grants never travel in those proofs. Removing a device creates a persistent local public-key refusal across local groups; no incoming proof, timestamp, refresh or update can clear it. Only explicit local restoration can. Removing an introducer blocks new introductions, not previously accepted peers. Removal is local, not instantaneous global revocation: remove a lost device on each file server.
 
-“Delete group from this device” forgets the entire local group after confirmation, without a restore stub. Android also removes its generated connections and favorites. Files, other clients/groups, independent credentials, private identity and refusals for other devices remain intact. Old sessions stay invalid even after rejoining. Restart, refresh and old packets cannot bring a forgotten group back. Generate a fresh join request, have a remaining invite-capable member approve it, then explicitly accept it locally—even if you originally created the group. This restores only your membership in that group, not blocked peers or other self-removed groups. The local-only destructive automation action is `groups.forget` with `{ "id": "group ID", "confirmed": true }`.
+“Delete group from this device” forgets the entire local group after confirmation, without a restore stub. Android also removes its generated connections and favorites. Files, other clients/groups, private identity and refusals for other devices remain intact. Old sessions stay invalid even after rejoining. Restart, refresh and old packets cannot bring a forgotten group back. Generate a fresh join request, have a remaining invite-capable member approve it, then explicitly accept it locally—even if you originally created the group. This restores only your membership in that group, not blocked peers or other self-removed groups. The local-only destructive automation action is `groups.forget` with `{ "id": "group ID", "confirmed": true }`.
 
-Local permission and startup switches save immediately with inline progress/errors and rollback to the last saved state on failure, without rebuilding the form. New-device defaults persist independently and affect only future pairing codes and WebDAV credentials, never existing devices, codes or groups. Use `server.defaults` and `server.state` (`config.newDevicePermissions`) for scripting. Enabling login startup also enables service restore; disabling restore disables login startup.
+Local group permission and startup switches save immediately with inline errors and rollback. Independent pairings, app passwords and server.defaults have been removed; configure group grants with groups.configure.
 
-Android keys remain in Keystore; group sessions are short lived and memory-only. Identities/refusals/generated connections do not participate in backup or WebDAV configuration sync. Requests and streams check current local authorization. Local/LAN/Tailscale endpoints only; HTTPS certificate pinning, one-use challenges, no redirects/public endpoints/forwarded-IP trust. Existing individual pairing and third-party WebDAV credentials remain independent options.
+Android keys remain in Keystore; group sessions are short lived and memory-only. Identities/refusals/generated connections do not participate in backup or WebDAV configuration sync. Requests and streams check current local authorization. Local/LAN/Tailscale endpoints only; HTTPS certificate pinning, one-use challenges, no redirects/public endpoints/forwarded-IP trust. Independent RHFiles pairings and app passwords are removed. Ordinary connections to third-party WebDAV services remain available.

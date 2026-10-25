@@ -42,8 +42,38 @@ internal object DeviceGroups {
     }
     return DeviceGroupModel(signer,preferences.getString("document",null)){require(preferences.edit().putString("document",it).commit()){"无法保存设备组，本次更改未生效"}}.also{model=it}
   }
-  fun describe(uri:String)=if(uri.startsWith("rhfiles-group-"))DeviceGroupModel.inspect(uri)else PairingData.describe(uri)
+  fun describe(uri:String):JSONObject {
+    if(uri.startsWith(GroupInvitation.PREFIX))return GroupInvitation.describe(uri)
+    val meta=DeviceGroupModel.inspect(uri);return if(meta.getString("kind")=="request")meta else groups().inspectIncoming(uri)
+  }
+  @Synchronized fun joinInvitation(uri:String,confirmed:Boolean,remote:RemoteStorage):Any {
+    require(confirmed){"请确认信任邀请来自你的电脑"};val invite=GroupInvitation.parse(uri);val g=groups()
+    val request=g.run("invitationRequest",JSONObject().put("deviceName",DeviceNames.current(owner?:error("设备组未初始化")))) as JSONObject
+    val signed=DeviceGroupModel.parse(request.getString("uri"),"rhfiles-group-request:v1:")
+    val addresses=invite.getJSONArray("endpoints");val ordered=preferredEndpoints((0 until addresses.length()).map{addresses.getString(it)}).distinct().take(6)
+    val deadline=android.os.SystemClock.elapsedRealtime()+15000;var last:Exception?=null
+    for(address in ordered){
+      val remaining=deadline-android.os.SystemClock.elapsedRealtime();if(remaining<=0)break
+      val c=JSONObject().put("url",address).put("fingerprint",invite.getString("fingerprint"))
+      val body=JSONObject().put("token",invite.getString("token")).put("request",signed).toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+      try {
+        val call=RhFilesConnection.client(c).newBuilder().connectTimeout(minOf(4500,remaining),TimeUnit.MILLISECONDS).callTimeout(minOf(6000,remaining),TimeUnit.MILLISECONDS).build().newCall(Request.Builder().url(address.trimEnd('/')+"/api/v1/groups/invitations/redeem").post(body).build())
+        val packet=call.execute().use{response->
+          val reply=JSONObject(String(response.body!!.byteStream().readBytesBounded(180000),Charsets.UTF_8))
+          require(response.isSuccessful){reply.optJSONObject("error")?.optString("message")?:"入组失败：HTTP ${response.code}"};reply
+        }
+        require(DeviceGroupModel.packetId(packet)==invite.getString("groupId")){"返回的设备组与邀请不一致"}
+        val members=packet.getJSONArray("members");val approval=(0 until members.length()).map{DeviceGroupModel.read(members.getJSONObject(it))}.firstOrNull{it.getString("key")==g.publicIdentity()}
+        val known=g.state().getJSONArray("groups").let{all->(0 until all.length()).any{all.getJSONObject(it).getString("id")==invite.getString("groupId")}}
+        require(known||approval!=null&&DeviceGroupModel.id(approval.getString("issuer"))==invite.getString("deviceId")){"批准设备身份与邀请不一致"}
+        val result=g.run("join",JSONObject().put("uri",DeviceGroupModel.uri("rhfiles-group-approval:v1:",packet)).put("confirmed",true));g.requirePeer(invite.getString("groupId"),invite.getString("deviceId"));sessions.clear();GroupConnections.invalidate();importLocations(remote);return result
+      }catch(e:java.net.ConnectException){last=e}catch(e:java.net.NoRouteToHostException){last=e}
+      catch(e:java.net.SocketTimeoutException){throw java.io.IOException("邀请请求超时，可能已由电脑批准。未重复发送；请重试或生成新邀请。",e)}
+    }
+    throw java.io.IOException("无法连接邀请中的电脑地址，请确认局域网或 Tailscale 已连通。${last?.javaClass?.simpleName?:("已达到尝试上限")}")
+  }
   fun run(command:String,args:JSONObject,remote:RemoteStorage):Any {
+    if(command=="join"&&args.optString("uri").startsWith(GroupInvitation.PREFIX))return joinInvitation(args.getString("uri"),args.optBoolean("confirmed"),remote)
     val g=groups()
     if(command=="diagnostics")return GroupConnections.diagnostics()
     if(command=="cancel")return GroupConnections.cancel(args.getString("id"),args.getString("peer"))
@@ -74,7 +104,7 @@ internal object DeviceGroups {
   }
   fun preferredEndpoints(values:List<String>):List<String> {
     val local=runCatching{java.net.NetworkInterface.getNetworkInterfaces().toList().flatMap{n->n.interfaceAddresses.mapNotNull{a->a.address.hostAddress?.let{it to a.networkPrefixLength.toInt()}}}}.getOrDefault(emptyList())
-    return PairingData.preferredEndpoints(values,local)
+    return GroupAddresses.preferredEndpoints(values,local)
   }
   fun ownAddress(url:String)=runCatching{val host=java.net.URI(url).host;!ConnectionPolicy.loopback(url)&&java.net.NetworkInterface.getNetworkInterfaces().toList().any{n->n.inetAddresses.toList().any{it.hostAddress==host}}}.getOrDefault(false)
   private fun servers():List<Triple<String,String,JSONObject>> {

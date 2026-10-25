@@ -104,6 +104,23 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     return c.optString("share").isBlank()
   }
   private val preferences = context.getSharedPreferences("remote-v1", Context.MODE_PRIVATE)
+  private var retiredSnapshot:Map<String,*>?=null
+  init { purgeIndependentConnections() }
+  /** Upgrade and rollback safety: old app-password profiles never become trust. */
+  @Synchronized internal fun purgeIndependentConnections() {
+    val snapshot=preferences.all;if(snapshot==retiredSnapshot)return
+    val retired=preferences.all.keys.filter { id -> runCatching { independent(readConfig(id)) }.getOrDefault(false) }
+    if(retired.isNotEmpty()) {
+      val history=context.getSharedPreferences("retired-rhfiles-connections-v1",Context.MODE_PRIVATE)
+      require(history.edit().putStringSet("ids",(history.getStringSet("ids",emptySet())!!.toSet()+retired).toList().takeLast(1000).toSet()).commit()){"无法记录旧连接清理"}
+      val edit=preferences.edit();retired.forEach(edit::remove)
+      require(edit.commit()) { "无法清除旧独立连接，请重试" }
+      readSessions.invalidate{it.id in retired}
+    }
+    retiredSnapshot=preferences.all
+  }
+  fun retiredConnections()=JSONArray(context.getSharedPreferences("retired-rhfiles-connections-v1",Context.MODE_PRIVATE).getStringSet("ids",emptySet())!!.toList())
+  private fun independent(c:JSONObject)=c.optString("type")=="rhfiles"&&(!c.optString("groupId").matches(Regex("[0-9a-f]{64}"))||!c.optString("groupPeerId").matches(Regex("[0-9a-f]{64}")))
   private val http = OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS)
     .writeTimeout(30,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
   private fun key(): SecretKey {
@@ -120,7 +137,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val type = config.getString("type")
     require(type in listOf("smb","ftp","ftps","webdav","rhfiles")) { "未知网络协议" }
     SafeFiles.name(config.getString("name"))
-    if(type=="rhfiles"){RhFilesConnection.valid(config);return}
+    if(type=="rhfiles"){require(!independent(config)){"独立连接已移除，请通过设备组连接"};RhFilesConnection.valid(config);return}
     if (type == "webdav") {
       val u = config.getString("url").toHttpUrl()
       require(u.username.isEmpty() && u.password.isEmpty() && u.query == null && u.fragment == null) { "请在用户名/密码框填写凭据，不要放进地址" }
@@ -176,9 +193,10 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     return result
   }
   internal fun backupProfiles(includeGroups:Boolean=false)=JSONArray().also{out->preferences.all.keys.sorted().forEach{id->val c=config(id);if(includeGroups||c.optString("groupId").isEmpty())out.put(JSONObject().put("id",id).put("config",c))}}
+  internal fun localGroupProfiles()=JSONArray().also{out->preferences.all.keys.sorted().forEach{id->val c=runCatching{config(id)}.getOrNull();if(c?.optString("type")=="rhfiles")out.put(JSONObject().put("id",id).put("config",c))}}
   internal fun portableWeb(web:JSONObject):JSONObject {
-    val profiles=backupProfiles(true);val localIds=(0 until profiles.length()).map{profiles.getJSONObject(it)}.filter{it.getJSONObject("config").optString("groupId").isNotEmpty()}.map{it.getString("id")}.toSet()
-    val result=JSONObject(web.toString());if(result.has("rhfiles.favorites")){val favorites=JSONArray(result.getString("rhfiles.favorites"));result.put("rhfiles.favorites",JSONArray((0 until favorites.length()).map{favorites.getJSONObject(it)}.filter{Uri.parse(it.optString("path")).host !in localIds}).toString())};return result
+    val profiles=backupProfiles();val portableIds=(0 until profiles.length()).map{profiles.getJSONObject(it).getString("id")}.toSet()
+    val result=JSONObject(web.toString());if(result.has("rhfiles.favorites")){val favorites=JSONArray(result.getString("rhfiles.favorites"));result.put("rhfiles.favorites",JSONArray((0 until favorites.length()).map{favorites.getJSONObject(it)}.filter{!it.optString("path").startsWith("remote://")||Uri.parse(it.optString("path")).host in portableIds}).toString())};return result
   }
   internal fun prepareProfiles(profiles:JSONArray):JSONObject=JSONObject().also{out->
     require(profiles.length()<=200){"网络位置过多"}
@@ -188,13 +206,14 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     }
   }
   fun remove(id: String,localRefusal:Boolean=true) { if(localRefusal)DeviceGroups.removingProfile(config(id));require(preferences.edit().remove(id).commit()) { "删除连接失败" };readSessions.invalidate{it.id==id} }
-  private fun config(id: String): JSONObject {
+  private fun config(id:String)=readConfig(id).also{require(!independent(it)){"独立连接已移除，请通过设备组连接"}}
+  private fun readConfig(id: String): JSONObject {
     profileLookup?.let { return JSONObject(it(id).toString()) }
     val encrypted = Base64.decode(preferences.getString(id,null) ?: error("网络位置已删除"),Base64.NO_WRAP)
     val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,encrypted.copyOfRange(0,12)))
     return JSONObject(String(cipher.doFinal(encrypted.copyOfRange(12,encrypted.size)),Charsets.UTF_8))
   }
-  fun connections(): JSONArray = JSONArray().also { result -> preferences.all.keys.sorted().forEach { id ->
+  fun connections(): JSONArray = JSONArray().also { result -> purgeIndependentConnections();preferences.all.keys.sorted().forEach { id ->
     try { val c = config(id); result.put(JSONObject().put("id",id).put("name",c.getString("name")).put("type",c.getString("type")).put("host",c.optString("host")).put("port",c.optInt("port",445)).put("share",c.optString("share")).put("needsPassword",c.optBoolean("needsPassword")).put("authorization",if(c.optString("groupId").isNotEmpty())"device-group"else"independent").put("path","remote://$id/")) }
     catch (_: Exception) { result.put(JSONObject().put("id",id).put("name","密钥失效，请删除并重新添加").put("type","unavailable")) }
   } }

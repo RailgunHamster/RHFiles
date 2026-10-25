@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="scan_qr" android:enabled="true" android:icon="@drawable/ic_shortcut_scan" android:shortcutShortLabel="@string/shortcut_scan" android:shortcutLongLabel="@string/shortcut_scan">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="com.railgunhamster.rhfiles" android:targetClass="com.railgunhamster.rhfiles.QrScanActivity" />
+    </shortcut>
+</shortcuts>

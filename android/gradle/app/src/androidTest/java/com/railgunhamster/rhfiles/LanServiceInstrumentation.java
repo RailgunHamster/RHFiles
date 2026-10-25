@@ -54,9 +54,9 @@ public class LanServiceInstrumentation extends Instrumentation {
     }
     private void scannerUi()throws Exception{
         call("automation.enable",new JSONObject().put("enabled",true));
-        eval("window.__scanFinished=false;void api.native('connection.scan').then(()=>window.__scanFinished=true).catch(error=>window.__scanError=String(error));");
+        eval("window.__scanFinished=false;void api.native('qr.scan').then(()=>window.__scanFinished=true).catch(error=>window.__scanError=String(error));");
         long deadline=System.currentTimeMillis()+10000;boolean canceled=false;
-        do{JSONArray controls=(JSONArray)call("automation.ui.list",new JSONObject());for(int i=0;i<controls.length();i++){JSONObject c=controls.getJSONObject(i);String label=c.optString("label");if(label.startsWith("Cancel")||label.startsWith("取消")){call("automation.ui.invoke",new JSONObject().put("controlId",c.getString("controlId")));canceled=true;break;}}if(canceled)break;Thread.sleep(150);}while(System.currentTimeMillis()<deadline);
+        do{JSONArray controls=(JSONArray)call("automation.ui.list",new JSONObject());for(int i=0;i<controls.length();i++){JSONObject c=controls.getJSONObject(i);String label=c.optString("label");if(label.startsWith("Back to RHFiles")||label.startsWith("返回 RHFiles")){call("automation.ui.invoke",new JSONObject().put("controlId",c.getString("controlId")));canceled=true;break;}}if(canceled)break;Thread.sleep(150);}while(System.currentTimeMillis()<deadline);
         require(canceled,"Camera scanner cancellation through public native automation");
         deadline=System.currentTimeMillis()+5000;while(!eval("window.__scanFinished===true").equals("true")){require(System.currentTimeMillis()<deadline,"Camera result returned to pairing bridge");Thread.sleep(80);}
         call("automation.enable",new JSONObject().put("enabled",false));
@@ -115,8 +115,8 @@ public class LanServiceInstrumentation extends Instrumentation {
             if(args.containsKey("groupPhase")){groupPhase(result);result.putString("pass","true");finish(Activity.RESULT_OK,result);return;}
             byte[] png=android.util.Base64.decode(args.getString("qrBase64"),android.util.Base64.DEFAULT);Bitmap bitmap=BitmapFactory.decodeByteArray(png,0,png.length);require(bitmap!=null,"QR fixture");
             try{List<zxingcpp.BarcodeReader.Result> symbols=new zxingcpp.BarcodeReader().read(bitmap,new Rect(),0);require(symbols.stream().anyMatch(v->args.getString("qrUri").equals(v.getText())),"Actual offline native QR decode");}finally{bitmap.recycle();}
-            object("connection.describe",new JSONObject().put("uri",args.getString("qrUri")));scannerUi();
-            connection=(String)call("connection.pair",new JSONObject().put("uri",args.getString("uri")).put("name","Emulator LAN QA"));String root="remote://"+connection+"/";
+            object("qr.inspect",new JSONObject().put("uri",args.getString("qrUri")));scannerUi();
+            String joined=(String)call("groups.join",new JSONObject().put("uri",args.getString("uri")).put("confirmed",true));JSONArray saved=(JSONArray)call("connections",new JSONObject());for(int i=0;i<saved.length();i++){String id=saved.getJSONObject(i).getString("id");if(object("connection.get",new JSONObject().put("id",id)).optString("groupId").equals(joined)){connection=id;break;}}require(connection!=null,"Group server location imported");String root="remote://"+connection+"/";
             JSONArray roots=object("list",new JSONObject().put("path",root)).getJSONArray("entries");require(roots.length()==1&&roots.getJSONObject(0).getString("name").equals("Files"),"Shared root listing");String folder=roots.getJSONObject(0).getString("path");
             boolean blocked=false;try{job("delete",new JSONObject().put("sources",new JSONArray().put(folder)));}catch(Exception expected){blocked=expected.getMessage().contains("共享入口");}require(blocked,"Shared root destructive task preflight");
             String dir=(String)call("create",new JSONObject().put("parent",folder).put("name","手机目录").put("directory",true));
@@ -128,7 +128,7 @@ public class LanServiceInstrumentation extends Instrumentation {
             source=new File(getTargetContext().getExternalFilesDir(null),"rhfiles-lan-"+UUID.randomUUID()+".bin");byte[] data=new byte[2500000];for(int i=0;i<data.length;i++)data[i]=(byte)(i%251);try(FileOutputStream out=new FileOutputStream(source)){out.write(data);}
             JSONObject task=waitJob(job("copy",new JSONObject().put("sources",new JSONArray().put(source.getAbsolutePath())).put("destination",folder)),true);require(task.getLong("bytes")==data.length,"Confirmed transfer progress");
             discoverSelf();
-            result.putString("pass","true");result.putString("checks","Minified public bridge; offline QR; camera/result API; shared-root guard; pairing/Keystore; Unicode browse; tus background upload; rename; separate deletion grant; measured 2.5MB copy; Android NSD discovery");finish(Activity.RESULT_OK,result);
+            result.putString("pass","true");result.putString("checks","Minified public bridge; offline QR; camera/result API; shared-root guard; device groups/Keystore; Unicode browse; tus background upload; rename; separate deletion grant; measured 2.5MB copy; Android NSD discovery");finish(Activity.RESULT_OK,result);
         }catch(Throwable error){result.putString("error",android.util.Log.getStackTraceString(error));finish(Activity.RESULT_CANCELED,result);}
         finally{try{if(connection!=null)call("connection.delete",new JSONObject().put("id",connection));}catch(Exception ignored){}if(source!=null)source.delete();if(small!=null)small.delete();}
     }

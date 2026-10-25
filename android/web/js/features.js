@@ -126,7 +126,7 @@ const androidFeatures = (() => {
       for(const c of connections) {
         const row=ui.el('article','network-location');
         const open=button(c.name,()=>c.path?app.go({screen:'folder',path:c.path,label:c.name}):undefined);open.className='network-open';open.setAttribute('aria-label',c.name);
-        const connectionType=c.type==='rhfiles'?(c.authorization==='device-group'?'RHFiles · 设备组':'RHFiles · 独立配对'):c.type.toUpperCase();
+        const connectionType=c.type==='rhfiles'?'RHFiles · 设备组':c.type.toUpperCase();
         const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small',c.needsPassword?'credential-badge':'',c.needsPassword?'待补填密码':connectionType);open.replaceChildren(symbol,name,type);row.append(open);
         const actions=[];
         if(c.path){
@@ -186,14 +186,13 @@ const androidFeatures = (() => {
     }
   }
   function addRemote(existing={},common=false,onSaved=null) {
+    if(existing.type==='rhfiles')return app.go({screen:'tool',tool:'settings',section:'storage'});
     const fields=[
       {name:'name',label:'名称',required:true},
-      {name:'type',label:'协议',options:[['rhfiles','RHFiles 电脑文件服务（推荐）'],['smb','SMB2 / SMB3'],['ftps','FTPS（显式 TLS）'],['ftp','FTP（明文）'],['webdav','WebDAV / HTTPS']]},
-      {name:'pairing',label:'电脑端配对信息（设置 → 局域网文件服务 → 复制配对信息）',type:'password'},
+      {name:'type',label:'协议',options:[['smb','SMB2 / SMB3'],['ftps','FTPS（显式 TLS）'],['ftp','FTP（明文）'],['webdav','WebDAV / HTTPS']]},
       {name:'host',label:'主机名 / IP（SMB、FTP）'}, {name:'port',label:'端口（留空使用协议默认值）',type:'number'},
       {name:'share',label:'SMB 共享名称（可选；留空列出全部共享）'}, {name:'domain',label:'SMB 域（可选）'},
       {name:'url',label:'WebDAV 地址（完整 HTTPS URL）'}, {name:'username',label:'用户名'}, {name:'password',label:'密码',type:'password'},
-      {name:'fingerprint',label:'RHFiles 证书 SHA-256 指纹'},
       {name:'insecure',label:'我允许此连接使用明文 FTP / HTTP，仅在可信网络使用',type:'checkbox'},
     ];
     if(existing.hasPassword){fields.find(f=>f.name==='password').label='密码（留空保留；更换服务器或账号需重填）';fields.push({name:'clearPassword',label:'清除已保存的密码（匿名访问还需清空用户名）',type:'checkbox'});}
@@ -201,9 +200,7 @@ const androidFeatures = (() => {
     const pending=form(existing.needsPassword?'补填网络位置密码':existing.id?'编辑网络位置':'添加网络位置',fields.map(f=>({...f,...(existing[f.name]!==undefined?{value:existing[f.name]}:{})})),async values=>{
       if(existing.needsPassword&&!values.password&&values.username.trim()&&!values.allowEmptyPassword)throw Error('密码不会随配置同步。请补填密码，或确认此账号使用空密码。');
       if(!values.port)delete values.port;else values.port=Number(values.port);if(existing.id)values.id=existing.id;
-      const pairing=values.type==='rhfiles'&&!existing.id;
-      const clean={...values};delete clean.pairing;if(clean.type!=='rhfiles')delete clean.fingerprint;
-      const id=await api.native(pairing?'connection.pair':'connection.save',pairing?{uri:values.pairing.trim(),name:values.name}:clean),path='remote://'+id+'/';
+      const id=await api.native('connection.save',values),path='remote://'+id+'/';
       if(common&&!app.state.favorites.some(entry=>entry.path===path))app.favorite({name:values.name,path,isDir:true});
       if(existing.id&&existing.name!==values.name){const saved=app.state.favorites.find(entry=>entry.path===path);if(saved){saved.name=values.name;localStorage.setItem('rhfiles.favorites',JSON.stringify(app.state.favorites));}}
       await app.refreshLocations();
@@ -211,14 +208,13 @@ const androidFeatures = (() => {
       onSaved?.();
     },'保存连接');
     pending.then(root=>{if(!root)return;const type=root.elements.type;
-      if(!existing.id)rhFilesConnect.mount(root);
       function update(){
-        const rh=type.value==='rhfiles',pair=rh&&!existing.id,web=type.value==='webdav';
-        for(const name of ['host','port','share','domain','url','insecure','pairing','fingerprint','username','password']){
-          const shown=name==='pairing'?pair:name==='fingerprint'?rh&&!pair:name==='url'?web||rh&&!pair:name==='host'||name==='port'?!web&&!rh:name==='insecure'?['ftp','webdav'].includes(type.value):name==='share'||name==='domain'?type.value==='smb':!pair;
+        const web=type.value==='webdav';
+        for(const name of ['host','port','share','domain','url','insecure','username','password']){
+          const shown=name==='url'?web:name==='host'||name==='port'?!web:name==='insecure'?['ftp','webdav'].includes(type.value):name==='share'||name==='domain'?type.value==='smb':true;
           root.elements[name].closest('label').hidden=!shown;
         }
-        root.elements.host.required=!web&&!rh;root.elements.url.required=web||rh&&!pair;root.elements.pairing.required=pair;
+        root.elements.host.required=!web;root.elements.url.required=web;
       }
       RHFilesUI.assign(type,'change',update,'android.web.js.features.addRemote.fc87159338e5');update();
       if(existing.needsPassword){root.prepend(ui.el('p','credential-notice','此连接来自配置同步，密码未同步。请在本机补填一次，密码只加密保存在本机。'));root.elements.password.focus();}

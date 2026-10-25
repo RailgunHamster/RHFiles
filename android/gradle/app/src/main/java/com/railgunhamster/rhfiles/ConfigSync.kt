@@ -87,7 +87,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
   private fun readBody(response:Response):JSONObject {
     val body=response.body?:error("WebDAV 未返回配置内容");require(body.contentLength()<=SharedConfig.LIMIT){"同步配置超过 1 MB 上限"}
     val bytes=body.byteStream().use{it.readBytesBounded(SharedConfig.LIMIT)}
-    return try{SharedConfig.parse(String(bytes,Charsets.UTF_8)).also{SharedConfig.validate(it,remotes::validate)}}catch(e:Exception){throw IllegalArgumentException("WebDAV 同步文件无效，未更改本机配置：${e.message}")}
+    return try{SharedConfig.parse(String(bytes,Charsets.UTF_8)).also{SharedConfig.validate(SharedConfig.withoutRhFiles(it),remotes::validate)}}catch(e:Exception){throw IllegalArgumentException("WebDAV 同步文件无效，未更改本机配置：${e.message}")}
   }
   private fun local(web:JSONObject):JSONObject {SettingsBackup.validateWeb(web);val f=JSONArray(web.optString("rhfiles.favorites","[]"));return SharedConfig.snapshot(remotes.backupProfiles(),f).also{SharedConfig.validate(it,remotes::validate)}}
   fun run(web:JSONObject,manual:Boolean,token:String="",choice:String=""):JSONObject {
@@ -95,19 +95,20 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
     synchronized(settingsLock){
       require(!busy&&!journal.baseFile.exists()&&!prefs.contains("rollback")){"上一次配置同步尚未完成，请重新打开应用"}
       c=rawConfig(context,remotes);if(!manual&&!c.getBoolean("enabled"))return status();validateConfig(c)
-      local=local(web);base=JSONObject(prefs.getString("base",null)?:SharedConfig.empty().toString());resolution=conflict
+      local=local(web);base=SharedConfig.withoutRhFiles(JSONObject(prefs.getString("base",null)?:SharedConfig.empty().toString()));resolution=conflict
       if(choice.isNotEmpty())require(choice in listOf("local","remote")&&resolution?.optString("token")==token&&SharedConfig.same(local,resolution.getJSONObject("local"))){"配置已经变化，请重新同步并确认冲突"}
       busy=true;phase="syncing";message="正在同步配置…";proposal=null
     }
     try{
       repeat(3){
         var etag:String?=null;var missing=false
-        val remote=request(c).use{r->if(r.code==404){missing=true;SharedConfig.empty()}else{if(!r.isSuccessful)fail(r.code);etag=r.header("ETag");readBody(r)}}
+        val remoteRaw=request(c).use{r->if(r.code==404){missing=true;SharedConfig.empty()}else{if(!r.isSuccessful)fail(r.code);etag=r.header("ETag");readBody(r)}}
+        val remote=SharedConfig.withoutRhFiles(remoteRaw)
         if(choice.isNotEmpty())require(etag==resolution?.optString("etag")&&missing==resolution?.optBoolean("missing")){"云端配置已变化，请重新同步并确认冲突"}
         val merged=SharedConfig.merge(if(missing)SharedConfig.empty()else base,local,remote,choice.takeIf{it.isNotEmpty()})
         if(merged.conflicts.length()>0&&choice.isEmpty())return synchronized(settingsLock){conflict=JSONObject().put("token",UUID.randomUUID().toString()).put("etag",etag?:"").put("missing",missing).put("local",local).put("items",merged.conflicts);phase="conflict";message="两端修改了相同项目，请选择冲突处理方式";status()}
         SharedConfig.validate(merged.document,remotes::validate)
-        if(!SharedConfig.same(remote,merged.document)||missing){
+        if(!SharedConfig.same(remoteRaw,merged.document)||missing){
           require(missing||(!etag.isNullOrBlank()&&!etag!!.startsWith("W/"))){"服务器没有提供强 ETag，已停止上传以防覆盖其他设备的更改"}
           val result=request(c,etag,SharedConfig.canonical(merged.document).toByteArray()).use{r->if(r.code==412)false else {if(!r.isSuccessful)fail(r.code);true}}
           if(!result){if(choice.isNotEmpty())error("云端配置已变化，请重新确认冲突");return@repeat}
@@ -153,7 +154,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
   fun recover():JSONObject?=synchronized(settingsLock){
     if(journal.baseFile.exists()||File(journal.baseFile.path+".bak").exists()){
       val before=JSONObject(journal.openRead().use{String(it.readBytesBounded(8*1024*1024),Charsets.UTF_8)})
-      replace("remote-v1",before.getJSONObject("remote"));replace(PREFS,before.getJSONObject("sync"));check(prefs.edit().putString("rollback",JSONObject().put("favorites",before.getString("favorites")).put("after",before.getString("after")).toString()).commit());journal.delete();RemoteStorage.discardReadSessions();phase="failed";message="上次配置同步未确认，已恢复原配置"
+      replace("remote-v1",before.getJSONObject("remote"));remotes.purgeIndependentConnections();replace(PREFS,before.getJSONObject("sync"));check(prefs.edit().putString("rollback",JSONObject().put("favorites",before.getString("favorites")).put("after",before.getString("after")).toString()).commit());journal.delete();RemoteStorage.discardReadSessions();phase="failed";message="上次配置同步未确认，已恢复原配置"
     }
     busy=false;proposal=null;prefs.getString("rollback",null)?.let(::JSONObject)
   }

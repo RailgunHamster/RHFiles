@@ -64,29 +64,11 @@ function lanFixture({intercept=()=>{},shares=true}={}){
   load(fixture.ctx,'lan-service.js');return {...fixture,model,calls,service:vm.runInContext('lanService',fixture.ctx)};
 }
 const defaultsWrite='允许新设备写入、重命名',defaultsDelete='允许新设备永久删除文件',restore='启动 RHFiles 时恢复文件服务',login='Windows 登录后在托盘自动启动';
-test('new-device defaults survive refresh without modifying existing-device grants',async()=>{
-  const {host,service,model,calls}=lanFixture();await service.mount(host);
-  await change(labeled(host,defaultsWrite),true);await change(labeled(host,defaultsDelete),true);await service.mount(host);
-  assert.equal(labeled(host,defaultsWrite).checked,true);assert.equal(labeled(host,defaultsDelete).checked,true);
-  assert.deepEqual(model.status.devices[0].permissions,{write:false,delete:false});assert.equal(calls.filter(c=>c.command==='lan_service_permissions').length,0);
-  assert.ok(!all(host).some(n=>n.tagName==='button'&&n.textContent.startsWith('保存')));
-});
-test('refresh during an in-flight autosave reads the saved value, not a stale snapshot',async()=>{
-  const pending=deferred();const {host,service}=lanFixture({intercept:command=>command==='lan_service_defaults'?pending.promise:undefined});await service.mount(host);
-  const save=change(labeled(host,defaultsWrite),true),refresh=service.mount(host);pending.resolve();await save;await refresh;
-  assert.equal(labeled(host,defaultsWrite).checked,true);
-});
-test('reopening settings with a replacement host waits for detached-form saves too',async()=>{
-  const pending=deferred(),{host,service,calls}=lanFixture({intercept:command=>command==='lan_service_defaults'?pending.promise:undefined});await service.mount(host);
-  const save=change(labeled(host,defaultsWrite),true);host.connected=false;const replacement=new Element('div');replacement.connected=true;
-  const reopen=service.mount(replacement);await Promise.resolve();assert.equal(calls.filter(c=>c.command==='lan_service_state').length,1);
-  pending.resolve();await save;await reopen;assert.equal(labeled(replacement,defaultsWrite).checked,true);
-});
-test('saving existing-device grants does not recreate the form or clear other drafts',async()=>{
-  const {host,service,model}=lanFixture();await service.mount(host);const card=host.children[0],draft=labeled(host,'WebDAV 账号备注');draft.value='Unfinished label';
-  const device=all(host).find(n=>n.tagName==='h3'&&n.textContent==='Existing phone').parent;
-  await change(labeled(device,'允许写入、重命名'),true);await change(labeled(device,'允许永久删除'),true);
-  assert.equal(host.children[0],card);assert.equal(draft.value,'Unfinished label');assert.deepEqual(model.status.devices[0].permissions,{write:true,delete:true});
+test('file service UI exposes device groups only, with no pair or credential controls',async()=>{
+  const {host,service,calls}=lanFixture();await service.mount(host);
+  assert.doesNotMatch(host.textContent,/生成手机配对码|创建 WebDAV 专用账号|新配对设备的默认权限/);
+  assert.match(host.textContent,/仅设备组内已授权的设备可以访问/);
+  assert.ok(!calls.some(c=>/pair|credential|permissions/.test(c.command)));
 });
 test('startup toggles autosave their linked state and persist after refresh',async()=>{
   const {host,service,model}=lanFixture();await service.mount(host);
@@ -97,12 +79,6 @@ test('startup toggles autosave their linked state and persist after refresh',asy
 test('startup save failure restores both linked checkboxes with a visible error',async()=>{
   const {host,service,model}=lanFixture({shares:false});await service.mount(host);await change(labeled(host,login),true);
   assert.equal(labeled(host,login).checked,false);assert.equal(labeled(host,restore).checked,false);assert.equal(model.config.autoStart,false);assert.match(host.textContent,/保存失败.*Configure and start/);
-});
-test('pairing waits for defaults autosave and receives the committed grants',async()=>{
-  const pending=deferred(),{host,service,calls}=lanFixture({intercept:command=>command==='lan_service_defaults'?pending.promise:undefined});await service.mount(host);
-  const save=change(labeled(host,defaultsWrite),true),pair=all(host).find(n=>n.tagName==='button'&&n.textContent==='生成手机配对码').fire('click');
-  assert.ok(!calls.some(c=>c.command==='lan_service_pair'));pending.resolve();await save;await pair;
-  assert.deepEqual(calls.find(c=>c.command==='lan_service_pair').args.permissions,{write:true,delete:false});
 });
 test('device-group local grants autosave without a separate button or member-list repaint',async()=>{
   const {host,ctx}=sandbox(),group={id:'group',name:'Home',enabled:false,permissions:{write:false,delete:false},members:[]},calls=[];let fail=false;
@@ -147,9 +123,9 @@ test('scanning group approval preserves the local phone name, including an edite
     if(command==='request')return {uri:'public-phone-request'};
     throw Error(command);
   }});
-  const scan=all(host).find(n=>n.tagName==='button'&&n.textContent==='扫码填写');
+  const scan=all(host).find(n=>n.tagName==='button'&&n.textContent==='扫码');
   await scan.fire('click');assert.equal(labeled(host,'设备名称').value,'Moto 工作手机');
-  assert.equal(labeled(host,'粘贴入组请求或批准信息').value,'public-group-approval');
+  assert.equal(labeled(host,'粘贴入组请求或批准信息').value,'');
   labeled(host,'设备名称').value='我的自定义手机';await scan.fire('click');
   await all(host).find(n=>n.tagName==='button'&&n.textContent==='生成本机入组请求').fire('click');
   assert.equal(calls.find(c=>c.command==='request').args.deviceName,'我的自定义手机');

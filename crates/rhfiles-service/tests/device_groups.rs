@@ -1,5 +1,24 @@
 use rhfiles_service::{Service,ShareConfig,Permissions,groups::{Groups,Packet}};
 use serde_json::{Value,json};
+#[tokio::test]
+async fn one_scan_invitation_introduces_group_member_only_and_is_single_use(){
+    use base64::Engine;
+    let data=tempfile::tempdir().unwrap();let files=tempfile::tempdir().unwrap();
+    let server=Service::start(data.path(),vec![ShareConfig{name:"Files".into(),path:files.path().canonicalize().unwrap()}],"127.0.0.1:0".parse().unwrap()).unwrap();
+    let id=server.groups().create("RH","Host",Permissions{write:true,delete:true}).unwrap();server.advertise_group_host().unwrap();
+    let invite=server.group_invitation(&id,false).unwrap();assert!(invite["qrSvg"].as_str().unwrap().contains("<svg"));
+    let uri=invite["uri"].as_str().unwrap();let payload:Value=serde_json::from_slice(&base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(uri.strip_prefix("rhfiles-group-invite:v1:").unwrap()).unwrap()).unwrap();
+    assert_eq!(payload["groupId"],id);assert!(uri.len()<2000);assert!(payload.get("password").is_none());
+    let phone_data=tempfile::tempdir().unwrap();let phone=Groups::open(phone_data.path()).unwrap();let request=phone.request("Moto").unwrap();let http=client(&server);let url=format!("https://127.0.0.1:{}",server.status().port);
+    let body=json!({"token":payload["token"],"request":request});
+    assert_eq!(http.post(format!("{url}/api/v1/groups/invitations/redeem")).header("Origin","https://evil.example").json(&body).send().await.unwrap().status(),403);
+    let response=http.post(format!("{url}/api/v1/groups/invitations/redeem")).json(&body).send().await.unwrap();assert_eq!(response.status(),200);
+    let packet:Packet=response.json().await.unwrap();phone.join(packet,Permissions::default()).unwrap();
+    assert_eq!(http.post(format!("{url}/api/v1/groups/invitations/redeem")).json(&body).send().await.unwrap().status(),401);
+    let reply:Value=session(&http,&server,&phone,&id).await.json().await.unwrap();
+    let list=||http.get(format!("{url}/api/v1/list")).basic_auth(reply["credential"]["username"].as_str().unwrap(),reply["credential"]["password"].as_str());
+    assert_eq!(list().send().await.unwrap().status(),200);server.groups().forget(&id,true).unwrap();assert!(!list().send().await.unwrap().status().is_success());
+}
 fn client(service:&Service)->reqwest::Client{reqwest::Client::builder().no_proxy().https_only(true).add_root_certificate(reqwest::Certificate::from_pem(service.status().certificate_pem.as_bytes()).unwrap()).timeout(std::time::Duration::from_secs(10)).build().unwrap()}
 async fn session(c:&reqwest::Client,s:&Service,g:&Groups,id:&str)->reqwest::Response{
     let url=format!("https://127.0.0.1:{}",s.status().port);
@@ -40,7 +59,7 @@ async fn real_tls_sessions_offline_introductions_local_removal_restart_and_manua
 }
 
 #[tokio::test]
-async fn forgetting_a_live_group_denies_fresh_file_reads_but_not_independent_credentials() {
+async fn forgetting_a_live_group_denies_fresh_file_reads_and_has_no_independent_credential_fallback() {
     let data = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     std::fs::write(files.path().join("not-cached.txt"), b"fresh file data").unwrap();
@@ -68,7 +87,6 @@ async fn forgetting_a_live_group_denies_fresh_file_reads_but_not_independent_cre
     };
     let old = header(&session(&http, &server, &phone, &id).await.json::<Value>().await.unwrap());
     let retained = header(&session(&http, &server, &phone, &other).await.json::<Value>().await.unwrap());
-    let independent = server.credential("Separate pairing", Permissions::default()).unwrap();
     let url = format!("https://127.0.0.1:{}", server.status().port);
     let routes = [
         ("GET", "/api/v1/list?path=/Files"),
@@ -92,10 +110,10 @@ async fn forgetting_a_live_group_denies_fresh_file_reads_but_not_independent_cre
     assert!(!files.path().join("forbidden").exists());
     assert!(!http.post(format!("{url}/api/v1/groups/challenge"))
         .json(&json!({"groupId":id,"deviceId":phone.device_id()})).send().await.unwrap().status().is_success());
-    // Separate grants are not silently revoked by deleting an unrelated group.
+    // An unrelated surviving group remains valid; no independent grant exists.
     let content = format!("{url}/api/v1/content?path=/Files/not-cached.txt");
     assert_eq!(http.get(&content).header("Authorization", &retained).send().await.unwrap().bytes().await.unwrap(), &b"fresh file data"[..]);
-    assert_eq!(http.get(&content).basic_auth(&independent.username, Some(&independent.password)).send().await.unwrap().bytes().await.unwrap(), &b"fresh file data"[..]);
+    assert_eq!(http.get(&content).basic_auth("old-device", Some("retired-password")).send().await.unwrap().status(),401);
     let request = groups.request("Server").unwrap();
     groups.join(phone.approve(&id, &request, true).unwrap(), Permissions::default()).unwrap();
     assert!(!http.get(&content).header("Authorization", &old).send().await.unwrap().status().is_success());
