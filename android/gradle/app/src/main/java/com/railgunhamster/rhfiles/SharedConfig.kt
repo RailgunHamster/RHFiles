@@ -8,7 +8,10 @@ import java.util.UUID
 /** A portable, password-free schema and three-way merge; never whole-device settings. */
 internal object SharedConfig {
   const val LIMIT=1024*1024
-  val fields=setOf("name","type","host","port","share","domain","url","username","insecure")
+  // A certificate digest is public identity metadata, not a login secret.
+  // Dropping it makes an otherwise valid RHFiles profile fail validation.
+  // Group membership/session credentials deliberately remain device-local.
+  val fields=setOf("name","type","host","port","share","domain","url","username","insecure","fingerprint")
   fun empty()=JSONObject().put("schemaVersion",1).put("profiles",JSONArray()).put("favorites",JSONArray())
   fun canonical(value:Any?):String=when(value){
     null,JSONObject.NULL->"null"
@@ -38,6 +41,8 @@ internal object SharedConfig {
       val c=p.getJSONObject("config");require(c.keys().asSequence().all{it in fields}){"同步文件不能包含密码或未知配置"}
       for(key in c.keys())require(if(key=="port")c.get(key).let{it is Int||it is Long} else if(key=="insecure")c.get(key) is Boolean else c.get(key) is String){"网络位置字段类型无效"}
       if(c.has("port"))require(c.getLong("port") in 1L..65535L){"网络位置端口无效"}
+      if(c.optString("type")=="rhfiles")require(c.optString("fingerprint").matches(Regex("[0-9a-f]{64}"))){"同步网络位置："+c.optString("name")+"，缺少有效的电脑证书指纹；请重新配对该连接后同步，无需在 WebDAV 同步设置中填写指纹"}
+      else require(!c.has("fingerprint")){"非 RHFiles 网络位置不能包含电脑证书指纹"}
       validateProfile(c)
     }
     val favorites=doc.getJSONArray("favorites");require(favorites.length()<=100){"同步收藏超过上限"};val paths=mutableSetOf<String>()
@@ -100,9 +105,9 @@ internal object SharedConfig {
     out.put("favorites",kept);val byPath=records(out,"favorites","path")
     out.put("favorites",JSONArray(favoriteOrder(byPath.keys,base,local,remote,choice,conflicts).map{byPath.getValue(it)}));return Merged(out,conflicts)
   }
-  fun localFavorites(current:JSONArray,shared:JSONArray):JSONArray {
+  fun localFavorites(current:JSONArray,shared:JSONArray,localProfileIds:Set<String> = emptySet()):JSONArray {
     val out=JSONArray();var next=0
-    for(i in 0 until current.length()){val f=current.getJSONObject(i);if(!f.getString("path").startsWith("remote://"))out.put(f)else if(next<shared.length())out.put(shared.getJSONObject(next++))}
+    for(i in 0 until current.length()){val f=current.getJSONObject(i);val path=f.getString("path");if(!path.startsWith("remote://")||Uri.parse(path).host in localProfileIds)out.put(f)else if(next<shared.length())out.put(shared.getJSONObject(next++))}
     while(next<shared.length())out.put(shared.getJSONObject(next++));require(out.length()<=100){"合并后收藏超过 100 项，请先整理收藏"};return out
   }
   // Remember only successfully uploaded LOCAL deltas before UI acknowledgement.

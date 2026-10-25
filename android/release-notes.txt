@@ -1,3 +1,13 @@
+RHFiles Android 0.1.30
+
+1. 修复配置同步漏掉电脑连接的公开 SHA-256 证书指纹，不再错误要求在同步设置里填写指纹；密码和私钥仍不上传。
+2. 同步时保留本机设备组连接、授权及收藏，拒绝云端连接覆盖本机设备组；身份变化不复用旧密码。
+3. 原签名保留数据覆盖更新，Windows 继续使用 0.1.80。
+
+1. Preserve public certificate fingerprints during configuration sync without exporting passwords or private keys.
+2. Retain local device-group connections, trust and bookmarks; reject cloud ID collisions and never reuse credentials after identity changes.
+3. Same signing key for in-place updates. Windows remains 0.1.80.
+
 RHFiles Android 0.1.29
 
 1. 修正握手阶段额度耗尽被误报为“授权失效”的问题。正确记录超时，并在未耗尽的总预算内尝试其他地址，不增加总时限和次数。

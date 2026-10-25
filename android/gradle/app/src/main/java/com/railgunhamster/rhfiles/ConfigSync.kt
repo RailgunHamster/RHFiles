@@ -127,13 +127,21 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
     try{
     val p=proposal?:error("同步结果已过期，请重新同步");require(p.getString("id")==id&&!busy&&!journal.baseFile.exists()){"配置同步尚未完成"}
     require(SharedConfig.same(local(web),p.getJSONObject("local"))&&SharedConfig.same(JSONArray(web.optString("rhfiles.favorites","[]")),JSONArray(p.getJSONObject("web").optString("rhfiles.favorites","[]")))){"同步期间收藏或网络位置已改变，已保留更改，请重新同步"}
-    val doc=p.getJSONObject("document");val incoming=doc.getJSONArray("profiles");val old=remotes.backupProfiles();val secrets=(0 until old.length()).associate{old.getJSONObject(it).getString("id") to old.getJSONObject(it).getJSONObject("config")}
+    val doc=p.getJSONObject("document");val incoming=doc.getJSONArray("profiles");val old=remotes.backupProfiles(true)
+    val localGroups=(0 until old.length()).map{old.getJSONObject(it)}.filter{it.getJSONObject("config").optString("groupId").isNotEmpty()}.map{it.getString("id")}.toSet()
+    require((0 until incoming.length()).none{incoming.getJSONObject(it).getString("id") in localGroups}){"同步网络位置 ID 与本机设备组连接冲突，未替换本机设备组"}
+    val secrets=(0 until old.length()).map{old.getJSONObject(it)}.filter{it.getString("id") !in localGroups}.associate{it.getString("id") to it.getJSONObject("config")}
     val prepared=JSONArray();for(i in 0 until incoming.length()){
       val item=incoming.getJSONObject(i);val config=JSONObject(item.getJSONObject("config").toString());val prior=secrets[item.getString("id")]
       credentials(config,prior);prepared.put(JSONObject().put("id",item.getString("id")).put("config",config))
     }
-    val favorites=SharedConfig.localFavorites(JSONArray(web.optString("rhfiles.favorites","[]")),doc.getJSONArray("favorites"));val encrypted=remotes.prepareProfiles(prepared)
-    val before=JSONObject().put("remote",raw("remote-v1")).put("sync",raw(PREFS)).put("favorites",web.optString("rhfiles.favorites","[]")).put("after",favorites.toString())
+    val favorites=SharedConfig.localFavorites(JSONArray(web.optString("rhfiles.favorites","[]")),doc.getJSONArray("favorites"),localGroups);val encrypted=remotes.prepareProfiles(prepared)
+    require(encrypted.length()+localGroups.size<=200){"合并后网络位置超过 200 项，未更改本机配置"}
+    // Replacing only the portable subset must not erase local device-group
+    // connections. Retain their exact encrypted records and bookmark slots;
+    // neither group trust nor credentials are exported or learned from WebDAV.
+    val beforeRemote=raw("remote-v1");for(groupId in localGroups)encrypted.put(groupId,beforeRemote.getString(groupId))
+    val before=JSONObject().put("remote",beforeRemote).put("sync",raw(PREFS)).put("favorites",web.optString("rhfiles.favorites","[]")).put("after",favorites.toString())
     val output=journal.startWrite();try{output.write(before.toString().toByteArray());journal.finishWrite(output)}catch(e:Exception){journal.failWrite(output);throw e}
     try{replace("remote-v1",encrypted);RemoteStorage.discardReadSessions();busy=true;phase="applying";JSONObject().put("id",id).put("favorites",favorites)}catch(e:Exception){recover();throw e}
     }catch(e:Exception){phase="failed";message=e.message?:"同步配置未应用";throw e}
