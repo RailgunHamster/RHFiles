@@ -35,6 +35,7 @@ test('LAN switches save with real clicks and survive refresh, listener restart a
     const profile=app.profileRoot;app.close();app=await launchApp({emulateFocus:true,desktopId,profileDirectory:profile});
     model=await until(async()=>{const value=await state();return value.status?.running?value:null;},'auto-restored listener');
     assert.equal((await app.evaluate("call('device_groups',{command:'state',args:{}})")).groups[0].permissions.delete,true);
+    await open();
     await toggle('lan.startup.autoStart');model=await state();assert.equal(model.config.autoStart,false);assert.equal(model.startup.loginEnabled,false);
   }finally{await app.evaluate("(async()=>{await call('lan_service_startup',{autoStart:false,login:false});await call('lan_service_stop',{});})()").catch(()=>{});app.close();}
 });
