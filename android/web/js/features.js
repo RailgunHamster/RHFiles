@@ -226,7 +226,8 @@ const androidFeatures = (() => {
   }
   async function beforeRemoteNavigate(path,valid=()=>true){
     if(!path?.startsWith('remote://'))return true;
-    const id=new URL(path).hostname,value=await api.native('connection.get',{id});
+    const id=mobileList.remoteId(path);if(!id)throw Error('网络路径无效');
+    const value=await api.native('connection.get',{id});
     if(!valid())return false;
     if(!value.needsPassword)return true;
     return new Promise((resolve,reject)=>{

@@ -50,5 +50,11 @@
     }
     return {left:Math.max(left,rail),top,width:Math.max(1,right-Math.max(left,rail)),height:Math.max(1,bottom-top),rail,railWidth:rail?Math.min(280,rail):0};
   }
-  return {range,directoryFor,categoryFiles,capturePosition,restorePosition,albums,reconcile,thumbnailLoader,layout};
+  // Android WebView may treat custom schemes as opaque and expose an empty
+  // URL.hostname. This is our private UUID namespace, not a general web URL.
+  function remoteId(path){
+    if(typeof path!=='string'||/[?#]/.test(path))return null;
+    return /^remote:\/\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(?:\/|$)/i.exec(path)?.[1].toLowerCase()||null;
+  }
+  return {range,directoryFor,categoryFiles,capturePosition,restorePosition,albums,reconcile,thumbnailLoader,layout,remoteId};
 });

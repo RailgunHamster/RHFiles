@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import vm from 'node:vm';import {parse} from 'acorn';
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import vm from 'node:vm';import {parse} from 'acorn';import {createRequire} from 'node:module';
 import {sourceRoot} from '../testing/source.mjs';
 const source=fs.readFileSync(path.join(sourceRoot,'android/web/js/app.js'),'utf8');
 const body=parse(source,{ecmaVersion:'latest'}).body[0].expression.callee.body.body;
@@ -20,4 +20,16 @@ test('automation exposes stale state and rejects file changes with a structured 
   vm.runInContext(fs.readFileSync(path.join(sourceRoot,'android/web/js/automation-android.js'),'utf8')+'\nandroidAutomation.install(app);',ctx);
   assert.equal(handlers['navigation.state']().stale,true);
   for(const name of ['files.paste','files.delete','files.rename'])assert.throws(()=>handlers[name]({path:'/a'}),error=>error.code==='STALE_LISTING');
+});
+test('Android opaque custom URLs still resolve real network profile IDs',async()=>{
+  const require=createRequire(import.meta.url),mobileList=require(path.join(sourceRoot,'android/web/js/list-model.js'));
+  const text=fs.readFileSync(path.join(sourceRoot,'android/web/js/features.js'),'utf8');
+  const fn=parse(text,{ecmaVersion:'latest'}).body[0].declarations[0].init.callee.body.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='beforeRemoteNavigate');assert.ok(fn);
+  const calls=[],id='a41e0350-6644-48d2-87a5-409aa184502f';
+  const ctx=vm.createContext({mobileList,URL:class{constructor(){this.hostname='';}},api:{native:async(command,args)=>{calls.push({command,args});assert.equal(args.id,id);return {needsPassword:false};}}});
+  vm.runInContext(text.slice(fn.start,fn.end),ctx);
+  for(const p of [`remote://${id}/`,`remote://${id}/Files/${encodeURIComponent('中文')}`,`remote://${id.toUpperCase()}/`]){ctx.path=p;assert.equal(await vm.runInContext('beforeRemoteNavigate(path)',ctx),true);}
+  assert.equal(calls.length,3);
+  for(const p of [`remote://${id}@evil/`,`remote://${id}:445/`,`remote://${id}/?token=x`]){ctx.path=p;await assert.rejects(vm.runInContext('beforeRemoteNavigate(path)',ctx));}
+  assert.equal(calls.length,3);
 });

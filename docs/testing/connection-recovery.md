@@ -42,5 +42,6 @@ Android preserves a failed-refresh directory without resetting scroll and labels
 | Unknown outcome of writes | Android rename and delete disconnect-after-request, exactly one mutation; existing TUS offset reconciliation and server move/overwrite protections |
 | Stale listing and script behavior | Execute actual shipped refresh/task/automation handlers, preserve list, reject mutation, recover on successful refresh |
 | Diagnostic UI and translations | Execute shared UI in Chinese/English; viewing reports cannot probe |
+| Android WebView opaque internal URLs | Execute the actual navigation preflight with an empty URL.hostname; validate UUID roots/children and reject credentials, ports and queries |
 
 Radio handovers, actual screen-off behavior and cellular/Tailscale performance are device/environment checks, not proven by socket/fake-clock fixtures. Record those separately from these deterministic regressions; a successful individual connection is not proof that every carrier or relay issue has been eliminated.

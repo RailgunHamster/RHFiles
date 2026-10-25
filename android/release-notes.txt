@@ -5,12 +5,14 @@ RHFiles Android 0.1.32
 3. 独立记住成功地址，忽略无关网络变化，服务重启后重新验证会话，不需要重新入组。
 4. 连接诊断展示次数、预算、冷却与成功路线；刷新失败保留并标明旧列表，刷新成功后才继续修改文件。
 5. 身份不符、权限拒绝停止尝试，结果不明的写入不自动重放。
+6. 修复部分 WebView 对内部 remote 路径的兼容性问题，不再错误提示“网络位置已删除”。
 
 1. Improve cold/idle and cellular/Tailscale group connections with network-aware address ordering.
 2. Retry a transport failure once and allow rate-limited manual retries during automatic cooldown; retain the original 15-second/six-attempt budget without background scans.
 3. Remember successful addresses separately, ignore unrelated network changes, and renew sessions after server restarts without rejoining.
 4. Expand diagnostics with budgets, cooldowns and successful routes; preserve stale listings and require a successful refresh before mutations.
 5. Stop on identity/permission failures and never replay ambiguous writes.
+6. Fix false “network location deleted” errors on WebViews with opaque custom-scheme URLs.
 
 RHFiles Android 0.1.31
 
