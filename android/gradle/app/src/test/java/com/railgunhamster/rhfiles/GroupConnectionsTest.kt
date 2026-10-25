@@ -59,7 +59,7 @@ class GroupConnectionsTest {
         "/api/v1/groups/session"->{val body=JSONObject(request.body.readUtf8());assertEquals("auth",DeviceGroupModel.read(body.getJSONObject("proof")).getString("kind"));MockResponse().setBody(obj("credential" to obj("username" to "test-user","password" to "fixture-private-secret"),"packet" to f.host.packet(f.id),"serverProof" to sign(f.hostKey,claims(f.hostKey,"server-auth",f.id,f.fp,body.getString("nonce")))).toString())}
         "/api/v1/capabilities"->MockResponse().setBody("{}")
         "/api/v1/stat"->MockResponse().setBody(obj("name" to "file.txt","isDir" to false,"size" to 3,"modifiedMs" to 1).toString())
-        "/api/v1/rename"->{f.mutations.incrementAndGet();MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)}
+        "/api/v1/rename","/api/v1/delete","/api/v1/mkdir"->{f.mutations.incrementAndGet();MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)}
         else->MockResponse().setResponseCode(404)
       }
     }}
@@ -70,7 +70,7 @@ class GroupConnectionsTest {
     val c=f.config("https://127.0.0.1:1")
     assertEquals("file.txt",RhFilesConnection(c).stat("Files/file.txt","remote://qa/Files/file.txt").name)
     val report=latest(f);assertEquals("connected",report.getString("outcome"));assertEquals(f.url,report.getString("endpoint"));assertTrue(report.toString().contains("address_changed_verified"))
-    val count=f.server.requestCount;RhFilesConnection(c).stat("Files/file.txt","remote://qa/Files/file.txt");assertEquals(count+1,f.server.requestCount)
+    val count=f.server.requestCount;repeat(5){RhFilesConnection(c).stat("Files/file.txt","remote://qa/Files/file.txt")};assertEquals(count+5,f.server.requestCount)
     assertFalse(GroupConnections.diagnostics().toString().contains("fixture-private-secret"))
   }}
   @Test fun remotePermissionDenialIsNotTreatedAsOfflineOrRetried(){fixture{f->
@@ -84,6 +84,10 @@ class GroupConnectionsTest {
   }}
   @Test fun uncertainRenameIsNeverReplayed(){fixture{f->
     try{RhFilesConnection(f.config()).mutate("rename","Files/old","Files/new");fail()}catch(e:java.io.IOException){assertTrue(e.message!!.contains("操作结果未确认"))}
+    assertEquals(1,f.mutations.get());assertEquals("operation_unconfirmed",latest(f).getString("outcome"))
+  }}
+  @Test fun uncertainDeleteIsNeverReplayed(){fixture{f->
+    try{RhFilesConnection(f.config()).mutate("delete","Files/file");fail()}catch(e:java.io.IOException){assertTrue(e.message!!.contains("操作结果未确认"))}
     assertEquals(1,f.mutations.get());assertEquals("operation_unconfirmed",latest(f).getString("outcome"))
   }}
   @Test fun aLocalNetworkChangeGetsOneBoundedContinuation(){fixture{f->
@@ -130,8 +134,8 @@ class GroupConnectionsTest {
       f.host.importPacket(f.id,packet);f.phone.importPacket(f.id,f.host.packet(f.id));alternate.dispatcher=f.server.dispatcher
       val once=java.util.concurrent.atomic.AtomicBoolean(false)
       // Simulate time spent in Keystore/CPU work after a challenge arrives.
-      f.onRequest={if(it.path=="/api/v1/groups/challenge"&&once.compareAndSet(false,true))org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(3100));null}
-      assertEquals(next,GroupConnections.resolve(f.config(),force=true).getString("url"))
+      f.onRequest={if(it.path=="/api/v1/groups/challenge"&&once.compareAndSet(false,true))org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(6100));null}
+      assertEquals(f.url,GroupConnections.resolve(f.config(),force=true).getString("url"))
       val report=latest(f);assertEquals("connected",report.getString("outcome"));assertTrue(report.toString().contains("timeout"));assertFalse(report.toString().contains("authorization_revoked"))
     }
   }}
@@ -141,5 +145,49 @@ class GroupConnectionsTest {
     val count=f.server.requestCount
     try{GroupConnections.resolve(f.config(),force=true);fail()}catch(_:java.io.IOException){}
     assertEquals(count,f.server.requestCount);assertEquals("cooldown",latest(f).getString("outcome"))
+  }}
+  @Test fun manualRetryCanRecoverImmediatelyAfterAnAutomaticFailure(){fixture{f->
+    f.onRequest={if(it.path=="/api/v1/groups/challenge"){org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(16000));MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)}else null}
+    try{GroupConnections.resolve(f.config(),force=true);fail()}catch(_:java.io.IOException){}
+    f.onRequest=null
+    assertEquals(f.url,GroupConnections.resolve(f.config(),trigger="manual",force=true).getString("url"))
+    assertTrue(latest(f).toString().contains("manual_retry_allowed"))
+  }}
+  @Test fun repeatedFailedManualClicksAreRateLimited(){fixture{f->
+    f.onRequest={if(it.path=="/api/v1/groups/challenge"){org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(16000));MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)}else null}
+    try{GroupConnections.resolve(f.config(),trigger="manual",force=true);fail()}catch(_:java.io.IOException){}
+    val count=f.server.requestCount
+    // The first automatic cooldown (2s) has expired; the independent manual
+    // limit (3s) must still prevent another click from opening sockets.
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(2500))
+    try{GroupConnections.resolve(f.config(),trigger="manual",force=true);fail()}catch(_:java.io.IOException){}
+    assertEquals(count,f.server.requestCount);assertTrue(latest(f).toString().contains("manual_rate_limited"))
+  }}
+  @Test fun aColdExpiredSessionCanTakeLongerThanThreeSeconds(){fixture{f->
+    GroupConnections.resolve(f.config(),force=true)
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMinutes(26))
+    f.onRequest={if(it.path=="/api/v1/groups/challenge")MockResponse().setHeadersDelay(3400,TimeUnit.MILLISECONDS).setBody(obj("nonce" to "A".repeat(43)).toString())else null}
+    assertEquals(f.url,GroupConnections.resolve(f.config()).getString("url"));assertTrue(latest(f).getInt("attempts")<=6)
+  }}
+  @Test fun oneTransportFailureRetriesTheSameAddressButDoesNotLoop(){fixture{f->
+    val once=java.util.concurrent.atomic.AtomicBoolean(false)
+    f.onRequest={if(it.path=="/api/v1/groups/challenge"&&once.compareAndSet(false,true))MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)else null}
+    assertEquals(f.url,GroupConnections.resolve(f.config(),force=true).getString("url"))
+    val report=latest(f);assertEquals(2,report.getInt("attempts"));assertTrue(report.toString().contains("bounded_transport_retry"))
+  }}
+  @Test fun successfulAddressSurvivesRuntimeInvalidationWithoutPersistingCredentials(){fixture{f->
+    GroupConnections.resolve(f.config(),force=true);GroupConnections.invalidate()
+    assertEquals(f.url,GroupConnections.resolve(f.config("https://127.0.0.1:1"),force=true).getString("url"))
+    val report=latest(f)
+    val steps=report.getJSONArray("steps")
+    val success=(0 until steps.length()).map{steps.getJSONObject(it)}.first{it.optString("code")=="identity_verified"||it.optString("code")=="address_changed_verified"}
+    assertEquals("last_success",success.getString("method"))
+    val prefs=org.robolectric.RuntimeEnvironment.getApplication().getSharedPreferences("rhfiles-connection-history",android.content.Context.MODE_PRIVATE).all.toString();assertFalse(prefs.contains("fixture-private-secret"));assertFalse(prefs.contains("Authorization"))
+  }}
+  @Test fun aServerRestartRenewsAnOldSessionOnlyOnce(){fixture{f->
+    GroupConnections.resolve(f.config(),force=true)
+    val once=java.util.concurrent.atomic.AtomicBoolean(false)
+    f.onRequest={if(it.path=="/api/v1/capabilities"&&once.compareAndSet(false,true))MockResponse().setResponseCode(401)else null}
+    assertEquals(f.url,GroupConnections.resolve(f.config(),force=true).getString("url"));assertTrue(latest(f).toString().contains("session_expired"))
   }}
 }

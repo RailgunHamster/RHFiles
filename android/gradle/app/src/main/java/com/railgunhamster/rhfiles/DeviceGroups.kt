@@ -26,6 +26,7 @@ internal object DeviceGroups {
   fun refreshRemaining()=refreshDeadline.get()?.let{(it-android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0)}?:15000L
   @Synchronized fun install(context:Context){if(owner==null){owner=context.applicationContext;GroupConnections.install(context)}}
   @Synchronized fun invalidate(c:JSONObject){val prefix="${c.getString("groupId")}:${c.getString("groupPeerId")}:";sessions.keys.filter{it.startsWith(prefix)}.toList().forEach{sessions.remove(it)}}
+  @Synchronized fun hasSession(c:JSONObject)=sessions["${c.getString("groupId")}:${c.getString("groupPeerId")}:${c.getString("url")}:${c.getString("fingerprint")}"]?.let{it.expires>android.os.SystemClock.elapsedRealtime()}==true
   @Synchronized private fun groups():DeviceGroupModel {
     model?.let{return it};val context=owner?:error("设备组尚未初始化")
     val preferences=context.getSharedPreferences("rhfiles-device-groups-v1",Context.MODE_PRIVATE)
@@ -69,9 +70,13 @@ internal object DeviceGroups {
   }
   private fun endpoints(server:JSONObject):List<String> {
     val a=server.getJSONArray("endpoints");val values=(0 until a.length()).map{a.getString(it)}
+    return preferredEndpoints(values)
+  }
+  fun preferredEndpoints(values:List<String>):List<String> {
     val local=runCatching{java.net.NetworkInterface.getNetworkInterfaces().toList().flatMap{n->n.interfaceAddresses.mapNotNull{a->a.address.hostAddress?.let{it to a.networkPrefixLength.toInt()}}}}.getOrDefault(emptyList())
     return PairingData.preferredEndpoints(values,local)
   }
+  fun ownAddress(url:String)=runCatching{val host=java.net.URI(url).host;!ConnectionPolicy.loopback(url)&&java.net.NetworkInterface.getNetworkInterfaces().toList().any{n->n.inetAddresses.toList().any{it.hostAddress==host}}}.getOrDefault(false)
   private fun servers():List<Triple<String,String,JSONObject>> {
     val result=mutableListOf<Triple<String,String,JSONObject>>();val state=groups().state();val all=state.getJSONArray("groups")
     for(i in 0 until all.length()){val g=all.getJSONObject(i);val members=g.getJSONArray("members");if((0 until members.length()).any{members.getJSONObject(it).optBoolean("self")&&members.getJSONObject(it).optBoolean("blocked")})continue
@@ -100,7 +105,7 @@ internal object DeviceGroups {
     RhFilesConnection.valid(c)
     val remaining=minOf(GroupConnections.remaining(),refreshDeadline.get()?.let{it-android.os.SystemClock.elapsedRealtime()}?:12000L)
     if(remaining<=0)throw java.net.SocketTimeoutException("本次连接阶段额度已耗尽")
-    val client=RhFilesConnection.client(c).newBuilder().callTimeout(minOf(3000L,remaining),TimeUnit.MILLISECONDS).connectTimeout(minOf(1800L,remaining),TimeUnit.MILLISECONDS).build()
+    val client=RhFilesConnection.client(c).newBuilder().callTimeout(remaining,TimeUnit.MILLISECONDS).connectTimeout(minOf(4500L,remaining),TimeUnit.MILLISECONDS).build()
     val url=c.getString("url").trimEnd('/')+"/api/v1/groups/"+path
     val builder=Request.Builder().url(url)
     if(body!=null)builder.post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))

@@ -28,6 +28,10 @@ const deviceGroupView=(()=>{
     methods.challenge=['TLS 连接与身份挑战','TLS connection and challenge'];methods.session=['签名认证与公开证明交换','Signed authentication and proof exchange'];methods.capabilities=['文件访问权限检查','File access permission check'];
     methods.coalesce=['合并同一设备的连接请求','Coalesced device connection'];methods.authorization=['本机组授权检查','Local group authorization'];
     Object.assign(codes,{busy:['已有连接任务等待超时','Timed out waiting for an existing connection'],reused_verified_route:['复用刚完成验证的连接','Reused the just-verified connection'],invalid_identity_proof:['设备签名证明无效，已停止','Invalid identity proof; stopped'],endpoint_not_signed:['设备未签名确认该地址','Endpoint not confirmed by device signature'],invalid_response:['服务器响应格式无效','Invalid server response'],invalid_challenge:['身份挑战格式无效','Invalid authentication challenge'],response_too_large:['服务器响应超过安全上限','Server response exceeds safety limit'],response_interrupted:['服务器响应中断','Server response interrupted'],tls_unavailable:['TLS 组件不可用','TLS unavailable']});
+    Object.assign(codes,{manual_retry_allowed:['手动重试获准，不受自动冷却阻挡','Manual retry admitted during automatic cooldown'],manual_rate_limited:['刚刚已手动尝试，请稍候再试','Manual retry was just attempted; please wait'],bounded_transport_retry:['短暂退避后重试一次，仍使用原预算','Retrying transport once after a short backoff; same budget'],remote_loopback_ignored:['对方的回环地址不能用于远程访问，已跳过','Remote loopback address skipped'],history_not_saved:['连接成功，但地址历史未能保存','Connected, but address history could not be saved'],tailscale_address:['Tailscale 地址（不代表已确认直连或中继）','Tailscale address (direct/relay path not determined)'],lan_address:['局域网地址','LAN address'],loopback:['本机或显式转发地址','Local or explicitly forwarded address']});
+    methods.warm_retry=['原地址受限重试','Bounded retry of the same address'];methods.history=['本机地址记忆','Local address history'];
+    codes.session_expired=['会话失效，重新验证一次，不重放文件操作','Session expired; authenticate once without replaying file operations'];
+    codes.remote_self_address_ignored=['对方地址与本机网卡地址相同，已跳过；显式转发请填写手动地址','Peer hint points to this device; skipped. Use a manual address for an intentional tunnel.'];
     const label=(map,key)=>map[key]?text(...map[key]):String(key||'').startsWith('http_')?text('服务器已响应：HTTP ','Server responded: HTTP ')+String(key).slice(5):({operation_unconfirmed:text('操作结果未确认，未自动重放，请核对目标','Operation outcome unknown; not replayed; check destination'),server_response_error:text('服务器返回错误，不是设备离线','Server returned an error, not offline'),invalid_endpoint:text('地址无效，仅允许不含凭据的 HTTPS 私网地址','Invalid endpoint; HTTPS private address without credentials required')}[key]||String(key||''));
     async function showDiagnostics(){
       // Reading diagnostics never starts a scan or connection.
@@ -36,6 +40,9 @@ const deviceGroupView=(()=>{
       for(const report of reports){const card=el('section','dg-report');
         card.append(el('strong','',label(codes,report.outcome)),el('p','dg-identity',new Date(report.startedAt).toLocaleString(options.zh===false?'en':'zh-CN')+' · '+report.durationMs+' ms · '+report.peer));
         if(report.endpoint)card.append(el('code','dg-endpoint',report.endpoint));
+        if(report.routeType)card.append(el('p','',label(codes,report.routeType)));
+        if(Number.isInteger(report.attempts))card.append(el('p','',text('尝试 ','Attempts ')+report.attempts+'/6 · '+text('剩余预算 ','Remaining budget ')+Math.max(0,report.remainingMs||0)+' ms'));
+        if(report.retryAfterMs>0)card.append(el('p','',text('自动请求冷却剩余（记录时）：','Automatic-request cooldown remaining at time of report: ')+Math.ceil(report.retryAfterMs/1000)+text(' 秒；可主动点击“连接设备”受限重试。',' seconds; Connect device allows a rate-limited manual retry.')));
         const list=el('ol','dg-steps');for(const step of report.steps||[]){const row=el('li','dg-step');row.dataset.outcome=step.outcome;row.append(el('strong','',label(methods,step.method)),el('span','',label(codes,step.code)+' · '+step.durationMs+' ms'));if(step.endpoint)row.append(el('code','dg-endpoint',step.endpoint));list.append(row);}card.append(list);diagnosticBody.append(card);
       }
     }
@@ -46,9 +53,10 @@ const deviceGroupView=(()=>{
         observer=new MutationObserver(()=>{if(!root.isConnected||root.getClientRects().length===0){observer.disconnect();call('cancel',{id:group,peer}).catch(()=>{});}});
         observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true});
       }
-      try{await call('connect',{id:group,peer,...(address.trim()?{endpoint:address.trim()}:{})});}
+      let result;
+      try{result=await call('connect',{id:group,peer,...(address.trim()?{endpoint:address.trim()}:{})});}
       finally{observer?.disconnect();}
-      if(!root.isConnected)return;diagnostics.open=true;await showDiagnostics();alert.textContent=text('已完成，请查看连接诊断','Finished; see connection diagnostics');
+      if(!root.isConnected)return;diagnostics.open=true;await showDiagnostics();alert.textContent=label(codes,result?.outcome||'unreachable');
     }
     diagnostics.append(button(text('刷新记录（不重试）','Refresh records (no retry)'),showDiagnostics,'diagnostics.refresh'),button(text('复制诊断','Copy diagnostics'),async()=>{const report=JSON.stringify(await call('diagnostics',{}),null,2);if(options.copy)await options.copy(report);else await navigator.clipboard.writeText(report);alert.textContent=text('已复制不含凭据的诊断记录','Copied diagnostics without credentials');},'diagnostics.copy'));
     RHFilesUI.listen(diagnostics,'toggle',()=>{if(diagnostics.open)showDiagnostics().catch(e=>{alert.textContent=String(e);});},undefined,'groups.diagnostics.open');

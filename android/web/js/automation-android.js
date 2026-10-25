@@ -9,8 +9,9 @@ const androidAutomation=(()=>{
     deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
     const reject=(code,message)=>{throw new ErrorType(code,message);};
     const entry=path=>{const value=state.entries.find(e=>e.path===path);if(!value)reject('ENTRY_NOT_FOUND','Path is outside the current listing');return value;};
-    const snapshot=()=>({platform:'android',pane:workbench.id||'main',ready:app.ready(),route:{...state.route},busy:state.busy,root:state.root,selected:[...state.selected],entries:state.entries.length,error:state.navigationError??null});
+    const snapshot=()=>({platform:'android',pane:workbench.id||'main',ready:app.ready(),route:{...state.route},busy:state.busy,root:state.root,selected:[...state.selected],entries:state.entries.length,error:state.navigationError??null,stale:!!state.staleError,refreshError:state.staleError??null});
     const available=()=>{if(!app.ready())reject('NOT_READY','File pane is starting');if(state.busy)reject('BUSY','File pane is loading a location');};
+    const fresh=()=>{available();if(state.staleError)reject('STALE_LISTING','Refresh the listing successfully before modifying files');};
     actions.provideState('application',snapshot);
     register('connections.pair',apiSchema({uri:string,name:string},['uri','name']),async p=>{const id=await api.native('connection.pair',p);await app.refreshLocations();return {id};},'external','Pair with a desktop HTTPS service; name is the saved computer label, while the phone system name is sent as client identity metadata; credentials stay in Android Keystore');
     register('connections.scan',apiSchema(),()=>api.native('connection.scan'),'external','Open the private offline camera scanner; returns pairing data only after user confirmation, without pairing');
@@ -33,9 +34,9 @@ const androidAutomation=(()=>{
     register('files.open',apiSchema({path:string},['path']),async p=>{available();await app.activate(entry(p.path));return {accepted:true};},'external');
     register('files.copy',apiSchema({paths},[]),p=>{const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');app.setClipboard('copy',chosen);return {count:chosen.length};});
     register('files.cut',apiSchema({paths},[]),p=>{const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');app.setClipboard('cut',chosen);return {count:chosen.length};});
-    register('files.paste',apiSchema(),()=>app.paste(),'write');
-    register('files.delete',apiSchema({paths}),p=>{const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');return app.remove(chosen);},'destructive','Open the normal deletion confirmation. No confirmation bypass.');
-    register('files.rename',apiSchema({path:string},['path']),p=>app.rename(entry(p.path)),'write','Open the existing rename form; fill it through ui.set');
+    register('files.paste',apiSchema(),()=>{fresh();return app.paste();},'write');
+    register('files.delete',apiSchema({paths}),p=>{fresh();const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');return app.remove(chosen);},'destructive','Open the normal deletion confirmation. No confirmation bypass.');
+    register('files.rename',apiSchema({path:string},['path']),p=>{fresh();return app.rename(entry(p.path));},'write','Open the existing rename form; fill it through ui.set');
     register('search.run',apiSchema({query:string,global:bool},['query']),async p=>{const path=app.currentDirectory()||state.root;await app.go({screen:'search',path,global:!!p.global});document.getElementById('search-input').value=p.query;await app.search(p.query);return snapshot();});
     register('settings.open',apiSchema({section:{type:'string'}}),async p=>{await app.go({screen:'tool',tool:'settings',...(p.section?{section:p.section}:{})});return snapshot();});
     if(!api.automationAvailable())return;

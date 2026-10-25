@@ -6,17 +6,19 @@ internal class GroupIdentityFailure(message:String,cause:Throwable?=null):java.i
 internal class ConnectionBudget(private val clock:()->Long= {System.nanoTime()/1_000_000},val total:Long=15_000,val maxAttempts:Int=6) {
   private val start=clock()
   private val seen=hashSetOf<String>()
+  private val retried=hashSetOf<String>()
   var attempts=0;private set
   val remaining get()=(total-(clock()-start)).coerceAtLeast(0)
   val elapsed get()=(clock()-start).coerceAtLeast(0)
-  fun admit(url:String,generation:Long=0):String? {
+  fun admit(url:String,generation:Long=0,retry:Boolean=false):String? {
     val key=url.trimEnd('/')+"@$generation"
-    if(key in seen)return "duplicate"
+    if(key in seen&&(!retry||key in retried))return "duplicate"
     if(remaining<=0||attempts>=maxAttempts)return "budget_exhausted"
+    if(key in seen)retried.add(key)
     seen.add(key);attempts++;return null
   }
   companion object {
-    fun terminal(code:String)=code in setOf("http_401","http_403","authorization_revoked","invalid_identity_proof")
+    fun terminal(code:String)=code in setOf("http_401","http_403","authorization_revoked","invalid_identity_proof","identity_or_tls_failure")
     fun classify(error:Exception):String=when(error){
       is RhFilesConnection.HttpFailure->"http_${error.status}"
       is GroupIdentityFailure->"invalid_identity_proof"

@@ -15,7 +15,41 @@ use std::{
 
 pub const TOTAL: Duration = Duration::from_secs(15);
 pub const MAX_ATTEMPTS: usize = 6;
-const COOLDOWN: Duration = Duration::from_secs(15);
+fn cooldown(count: u32) -> Duration {
+    Duration::from_secs(match count {
+        0 => 0,
+        1 => 2,
+        2 => 5,
+        3 => 15,
+        _ => 30,
+    })
+}
+fn retryable(code: &str) -> bool {
+    matches!(
+        code,
+        "timeout"
+            | "transport_error"
+            | "response_interrupted"
+            | "connection_rejected_or_unreachable"
+    )
+}
+fn address(url: &str) -> Option<std::net::SocketAddr> {
+    url.strip_prefix("https://")?.parse().ok()
+}
+fn loopback(url: &str) -> bool {
+    address(url).is_some_and(|a| a.ip().is_loopback())
+}
+fn route_type(url: &str) -> &'static str {
+    match address(url).map(|a| a.ip()) {
+        Some(ip) if ip.is_loopback() => "loopback",
+        Some(std::net::IpAddr::V4(ip))
+            if ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]) =>
+        {
+            "tailscale_address"
+        }
+        _ => "lan_address",
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +72,14 @@ pub struct Report {
     pub certainty: String,
     pub endpoint: Option<String>,
     pub steps: Vec<Step>,
+    #[serde(default)]
+    pub attempts: usize,
+    #[serde(default)]
+    pub remaining_ms: u64,
+    #[serde(default)]
+    pub retry_after_ms: u64,
+    #[serde(default)]
+    pub route_type: Option<String>,
 }
 impl Report {
     fn step(
@@ -64,6 +106,7 @@ pub struct Budget {
     start: Instant,
     seen: HashSet<String>,
     attempts: usize,
+    retried: HashSet<String>,
 }
 impl Default for Budget {
     fn default() -> Self {
@@ -71,6 +114,7 @@ impl Default for Budget {
             start: Instant::now(),
             seen: HashSet::new(),
             attempts: 0,
+            retried: HashSet::new(),
         }
     }
 }
@@ -88,6 +132,35 @@ impl Budget {
         self.attempts += 1;
         true
     }
+    pub fn retry(&mut self, endpoint: &str) -> bool {
+        let key = endpoint.trim_end_matches('/');
+        if !self.seen.contains(key)
+            || self.remaining().is_zero()
+            || self.attempts >= MAX_ATTEMPTS
+            || !self.retried.insert(key.into())
+        {
+            return false;
+        }
+        self.attempts += 1;
+        true
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct Remembered {
+    endpoint: String,
+    at: u64,
+}
+#[derive(Clone)]
+struct Failure {
+    at: Instant,
+    network: Vec<String>,
+    count: u32,
+    manual_at: Option<Instant>,
+}
+fn manual_wait(f: &Failure) -> Duration {
+    f.manual_at
+        .map(|t| Duration::from_secs(3).saturating_sub(t.elapsed()))
+        .unwrap_or_default()
 }
 #[derive(Clone)]
 struct Route {
@@ -98,20 +171,34 @@ struct Route {
     password: String,
     network: Vec<String>,
     verified: Instant,
+    usable: bool,
 }
 pub struct Connector {
     groups: Arc<Groups>,
     routes: Mutex<HashMap<String, Route>>,
     reports: Mutex<VecDeque<Report>>,
-    failures: Mutex<HashMap<String, (Instant, Vec<String>)>>,
+    failures: Mutex<HashMap<String, Failure>>,
+    remembered: Mutex<HashMap<String, Remembered>>,
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     active: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
 }
-fn network() -> Vec<String> {
+fn network(endpoint: &str) -> Vec<String> {
+    // UDP connect only asks the OS to select a route: no datagram is sent.
+    // Unrelated Hyper-V/IMS/virtual adapters must not invalidate this route.
+    let selected = address(endpoint).and_then(|target| {
+        let socket = std::net::UdpSocket::bind(if target.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        })
+        .ok()?;
+        socket.connect(target).ok()?;
+        Some(socket.local_addr().ok()?.ip())
+    });
     let mut values = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
-        .filter(|a| a.ip().is_ipv4() && !a.ip().is_loopback())
+        .filter(|a| Some(a.ip()) == selected)
         .map(|a| format!("{}:{:?}", a.name, a.addr))
         .collect::<Vec<_>>();
     values.sort();
@@ -197,8 +284,8 @@ fn client(pin: &str) -> Result<reqwest::Client, String> {
         .use_preconfigured_tls(tls)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_millis(1800))
-        .timeout(Duration::from_secs(4))
+        .connect_timeout(Duration::from_millis(4500))
+        .timeout(Duration::from_secs(6))
         .build()
         .map_err(|_| "tls_unavailable".into())
 }
@@ -270,16 +357,33 @@ fn verify(proof: Signed, group: &str, nonce: &str, fp: &str, peer: &str) -> Resu
 pub fn terminal(code: &str) -> bool {
     matches!(
         code,
-        "http_401" | "http_403" | "invalid_identity_proof" | "authorization_revoked"
+        "http_401"
+            | "http_403"
+            | "invalid_identity_proof"
+            | "authorization_revoked"
+            | "identity_mismatch"
     )
 }
 impl Connector {
     pub fn new(groups: Arc<Groups>) -> Self {
+        let remembered =
+            serde_json::from_value::<HashMap<String, Remembered>>(groups.connection_history())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(_, v)| {
+                    now_ms().saturating_sub(v.at) < 604800000
+                        && now_ms() >= v.at
+                        && address(&v.endpoint)
+                            .is_some_and(|a| a.port() > 0 && crate::network_scope::allowed(a.ip()))
+                })
+                .take(128)
+                .collect();
         Self {
             groups,
             routes: Mutex::new(HashMap::new()),
             reports: Mutex::new(VecDeque::new()),
             failures: Mutex::new(HashMap::new()),
+            remembered: Mutex::new(remembered),
             locks: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
         }
@@ -380,8 +484,9 @@ impl Connector {
             client,
             username,
             password,
-            network: network(),
+            network: network(endpoint),
             verified: Instant::now(),
+            usable: true,
         })
     }
     /// Manual connect and file-read callers use the same bounded resolver. An
@@ -415,6 +520,10 @@ impl Connector {
             certainty: "unknown".into(),
             endpoint: None,
             steps: vec![],
+            attempts: 0,
+            remaining_ms: 15000,
+            retry_after_ms: 0,
+            route_type: None,
         };
         let (guard, waited) = match lock.try_lock() {
             Ok(v) => (v, false),
@@ -430,11 +539,28 @@ impl Connector {
         let mut budget = Budget::default();
         // Waiting for a coalesced request counts against the same whole run.
         budget.start = started;
-        let initial_network = network();
+        let initial_endpoint = manual
+            .clone()
+            .or_else(|| {
+                self.routes
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .map(|r| r.endpoint.clone())
+            })
+            .or_else(|| {
+                member(&self.groups, group, peer)
+                    .ok()
+                    .and_then(|s| s.endpoints.first().cloned())
+            })
+            .unwrap_or_default();
+        let initial_network = network(&initial_endpoint);
         if waited && manual.is_none() {
             let cached = self.routes.lock().unwrap().get(&key).cloned();
             if let Some(route) = cached.filter(|v| {
-                v.network == initial_network && v.verified.elapsed() < Duration::from_secs(5)
+                v.usable
+                    && v.network == network(&v.endpoint)
+                    && v.verified.elapsed() < Duration::from_secs(5)
             }) {
                 if member(&self.groups, group, peer).is_ok_and(|s| {
                     s.fingerprint == route.fingerprint && s.endpoints.contains(&route.endpoint)
@@ -468,10 +594,50 @@ impl Connector {
             _=tokio::time::sleep(remaining)=>{report.step("budget",None,"failed","budget_exhausted",Instant::now());None},
         };
         self.active.lock().unwrap().remove(&key);
+        if result.is_none() {
+            if let Some(route) = self.routes.lock().unwrap().get_mut(&key) {
+                route.usable = false;
+            }
+        }
         if let Some(route) = result {
             report.outcome = "connected".into();
             report.certainty = "confirmed".into();
             report.endpoint = Some(route.endpoint.clone());
+            report.route_type = Some(route_type(&route.endpoint).into());
+            let mut remembered = self.remembered.lock().unwrap();
+            if remembered.len() >= 128 {
+                let oldest = remembered
+                    .iter()
+                    .min_by_key(|(_, v)| v.at)
+                    .map(|(k, _)| k.clone());
+                if let Some(oldest) = oldest {
+                    remembered.remove(&oldest);
+                }
+            }
+            remembered.insert(
+                format!(
+                    "{key}:{}:{}",
+                    route.fingerprint,
+                    route_type(&route.endpoint)
+                ),
+                Remembered {
+                    endpoint: route.endpoint.clone(),
+                    at: now_ms(),
+                },
+            );
+            if self
+                .groups
+                .save_connection_history(&serde_json::to_value(&*remembered).unwrap_or_default())
+                .is_err()
+            {
+                report.step(
+                    "history",
+                    None,
+                    "failed",
+                    "history_not_saved",
+                    Instant::now(),
+                );
+            }
             let mut routes = self.routes.lock().unwrap();
             if routes.len() >= 128 {
                 routes.clear();
@@ -483,9 +649,27 @@ impl Connector {
             if failures.len() >= 128 {
                 failures.clear();
             }
-            failures.insert(key, (Instant::now(), initial_network));
+            let previous = failures.get(&key).filter(|f| f.network == initial_network);
+            let count = previous.map_or(1, |f| f.count.saturating_add(1));
+            let manual_at = if trigger == "manual" {
+                Some(Instant::now())
+            } else {
+                previous.and_then(|f| f.manual_at)
+            };
+            report.retry_after_ms = cooldown(count).as_millis() as u64;
+            failures.insert(
+                key,
+                Failure {
+                    at: Instant::now(),
+                    network: initial_network,
+                    count,
+                    manual_at,
+                },
+            );
         }
         report.duration_ms = started.elapsed().as_millis() as u64;
+        report.attempts = budget.attempts;
+        report.remaining_ms = budget.remaining().as_millis() as u64;
         drop(guard);
         self.record(report.clone());
         report
@@ -515,16 +699,45 @@ impl Connector {
                 return None;
             }
         };
-        if self
+        let failure = self
             .failures
             .lock()
             .unwrap()
             .get(key)
-            .is_some_and(|(time, n)| time.elapsed() < COOLDOWN && n == initial)
-        {
-            r.outcome = "cooldown".into();
-            r.step("budget", None, "skipped", "cooldown", Instant::now());
-            return None;
+            .filter(|f| f.network == initial)
+            .cloned();
+        if let Some(f) = failure.filter(|f| {
+            f.at.elapsed() < cooldown(f.count) || r.trigger == "manual" && !manual_wait(f).is_zero()
+        }) {
+            let manual_wait = manual_wait(&f);
+            if r.trigger != "manual" || !manual_wait.is_zero() {
+                r.outcome = "cooldown".into();
+                r.retry_after_ms = if r.trigger == "manual" {
+                    manual_wait
+                } else {
+                    cooldown(f.count).saturating_sub(f.at.elapsed())
+                }
+                .as_millis() as u64;
+                r.step(
+                    "budget",
+                    None,
+                    "skipped",
+                    if r.trigger == "manual" {
+                        "manual_rate_limited"
+                    } else {
+                        "cooldown"
+                    },
+                    Instant::now(),
+                );
+                return None;
+            }
+            r.step(
+                "budget",
+                None,
+                "allowed",
+                "manual_retry_allowed",
+                Instant::now(),
+            );
         }
         let cached = self.routes.lock().unwrap().get(key).cloned();
         let mut candidates = VecDeque::new();
@@ -546,13 +759,32 @@ impl Connector {
         if let Some(route) = &cached {
             candidates.push_back(("last_success", route.endpoint.clone()));
         }
+        let prefix = format!("{key}:{}:", server.fingerprint);
+        let mut remembered = self
+            .remembered
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .map(|(_, v)| v.clone())
+            .collect::<Vec<_>>();
+        remembered.sort_by_key(|v| std::cmp::Reverse(v.at));
+        candidates.extend(remembered.into_iter().map(|v| ("last_success", v.endpoint)));
         let mut signed = server.endpoints.clone();
         signed.sort_by_key(|url| endpoint_rank(url, initial));
         candidates.extend(signed.into_iter().map(|v| ("known_address", v)));
+        candidates.make_contiguous().sort_by_key(|(method, url)| {
+            if *method == "manual" {
+                0
+            } else {
+                1 + endpoint_rank(url, initial)
+            }
+        });
         let mut discovered = false;
         let mut peers_queried = false;
-        let mut current_network = initial.to_vec();
         let mut network_waited = false;
+        let mut warm_retried = false;
+        let remote_addresses = server.endpoints.iter().any(|s| !loopback(s));
         loop {
             // Reserve space/time for discovery instead of spending the entire
             // budget knocking on up to sixteen obsolete addresses.
@@ -566,8 +798,9 @@ impl Connector {
                     .filter(|(k, v)| {
                         k.starts_with(&format!("{group}:"))
                             && k.as_str() != key
+                            && v.usable
                             && v.verified.elapsed() < Duration::from_secs(300)
-                            && v.network == initial
+                            && v.network == network(&v.endpoint)
                     })
                     .take(2)
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -674,7 +907,42 @@ impl Connector {
             let Some((method, url)) = candidates.pop_front() else {
                 break;
             };
-            if !budget.admit(&url) {
+            if remote_addresses
+                && loopback(&url)
+                && !matches!(method, "manual" | "last_success" | "warm_retry")
+            {
+                r.step(
+                    method,
+                    Some(&url),
+                    "skipped",
+                    "remote_loopback_ignored",
+                    Instant::now(),
+                );
+                continue;
+            }
+            if !matches!(method, "manual" | "last_success" | "warm_retry")
+                && address(&url).is_some_and(|target| {
+                    !target.ip().is_loopback()
+                        && if_addrs::get_if_addrs()
+                            .unwrap_or_default()
+                            .iter()
+                            .any(|a| a.ip() == target.ip())
+                })
+            {
+                r.step(
+                    method,
+                    Some(&url),
+                    "skipped",
+                    "remote_self_address_ignored",
+                    Instant::now(),
+                );
+                continue;
+            }
+            if !(if method == "warm_retry" {
+                budget.retry(&url)
+            } else {
+                budget.admit(&url)
+            }) {
                 r.step(
                     method,
                     Some(&url),
@@ -692,13 +960,20 @@ impl Connector {
                 continue;
             }
             let start = Instant::now();
+            let attempt_network = network(&url);
             let outcome = tokio::time::timeout(
-                budget.remaining().min(Duration::from_secs(3)),
+                budget.remaining().min(Duration::from_secs(
+                    if budget.attempts == 1 || method == "last_success" {
+                        6
+                    } else {
+                        3
+                    },
+                )),
                 self.handshake(group, peer, &server, &url, r),
             )
             .await
             .unwrap_or_else(|_| Err("timeout".into()));
-            if network() != current_network {
+            if network(&url) != attempt_network {
                 r.step(
                     method,
                     Some(&url),
@@ -716,7 +991,6 @@ impl Connector {
                         Instant::now(),
                     );
                     tokio::time::sleep(Duration::from_millis(250)).await;
-                    current_network = network();
                     // Same URL on a new link is a different route attempt; the
                     // attempt counter and total deadline are NOT reset.
                     budget.seen.clear();
@@ -762,6 +1036,23 @@ impl Connector {
                         r.certainty = "confirmed".into();
                         return None;
                     }
+                    if !warm_retried
+                        && retryable(&code)
+                        && (budget.attempts == 1 || method == "last_success")
+                        && budget.remaining() > Duration::from_millis(500)
+                        && budget.attempts < MAX_ATTEMPTS
+                    {
+                        warm_retried = true;
+                        r.step(
+                            "warm_retry",
+                            Some(&url),
+                            "waiting",
+                            "bounded_transport_retry",
+                            Instant::now(),
+                        );
+                        tokio::time::sleep(Duration::from_millis(200 + now_ms() % 151)).await;
+                        candidates.push_front(("warm_retry", url));
+                    }
                 }
             }
         }
@@ -776,7 +1067,7 @@ impl Connector {
         None
     }
 }
-fn endpoint_rank(url: &str, local: &[String]) -> u8 {
+fn endpoint_rank(url: &str, _local: &[String]) -> u8 {
     let address = url
         .strip_prefix("https://")
         .and_then(|s| s.parse::<std::net::SocketAddr>().ok())
@@ -800,7 +1091,7 @@ fn endpoint_rank(url: &str, local: &[String]) -> u8 {
         Some(std::net::IpAddr::V4(ip))
             if ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]) =>
         {
-            if local.iter().any(|s| s.contains("ip: 100.")) {
+            if if_addrs::get_if_addrs().unwrap_or_default().iter().any(|a|matches!(a.ip(),std::net::IpAddr::V4(v) if v.octets()[0]==100&&(64..=127).contains(&v.octets()[1]))) {
                 1
             } else {
                 3
@@ -834,7 +1125,45 @@ mod tests {
         assert!(terminal("http_403"));
         assert!(terminal("http_401"));
         assert!(!terminal("timeout"));
-        assert!(!terminal("identity_mismatch"));
+        assert!(terminal("identity_mismatch"));
+    }
+    #[test]
+    fn retries_count_and_never_extend_the_round() {
+        let mut b = Budget::default();
+        assert!(b.admit("a"));
+        assert!(b.retry("a"));
+        assert!(!b.retry("a"));
+        assert_eq!(b.attempts, 2);
+        b.start = Instant::now() - TOTAL;
+        assert!(!b.admit("b"));
+        assert!(!b.retry("b"));
+    }
+    #[test]
+    fn backoff_and_failure_classification_are_bounded() {
+        assert_eq!(
+            (0..=5).map(|n| cooldown(n).as_secs()).collect::<Vec<_>>(),
+            vec![0, 2, 5, 15, 30, 30]
+        );
+        for code in [
+            "http_403",
+            "identity_mismatch",
+            "invalid_identity_proof",
+            "authorization_revoked",
+        ] {
+            assert!(!retryable(code));
+        }
+        assert!(retryable("timeout"));
+    }
+    #[test]
+    fn manual_interval_is_independent_of_the_short_automatic_cooldown() {
+        let f = Failure {
+            at: Instant::now() - Duration::from_millis(2500),
+            network: vec![],
+            count: 1,
+            manual_at: Some(Instant::now() - Duration::from_millis(2500)),
+        };
+        assert!(f.at.elapsed() > cooldown(f.count));
+        assert!(!manual_wait(&f).is_zero());
     }
     #[test]
     fn diagnostics_are_bounded_and_do_not_serialize_credentials() {
@@ -848,6 +1177,10 @@ mod tests {
             certainty: "unknown".into(),
             endpoint: None,
             steps: vec![],
+            attempts: 0,
+            remaining_ms: 0,
+            retry_after_ms: 0,
+            route_type: None,
         };
         for _ in 0..100 {
             r.step(

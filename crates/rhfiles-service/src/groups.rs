@@ -340,6 +340,17 @@ fn save(path: &Path, bytes: &[u8]) -> Result<()> {
     result
 }
 impl Groups {
+    // Local address hints only. They never enter signed packets, configuration
+    // synchronization or exported membership. No session credentials stored.
+    pub(crate) fn connection_history(&self) -> serde_json::Value {
+        let path = self.data.join("connection-history.json");
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() <= 65536) {
+            std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        } else { serde_json::Value::Null }
+    }
+    pub(crate) fn save_connection_history(&self, value: &serde_json::Value) -> Result<()> {
+        save(&self.data.join("connection-history.json"), &serde_json::to_vec(value).map_err(|_| bad("无法保存连接地址历史"))?)
+    }
     pub fn open(data: &Path) -> Result<Self> {
         std::fs::create_dir_all(data)?;
         let key_path = data.join(".rhfiles-service-group-key.pkcs8");

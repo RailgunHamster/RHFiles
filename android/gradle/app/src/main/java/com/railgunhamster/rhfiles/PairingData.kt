@@ -40,9 +40,10 @@ internal object PairingData {
       return value
     }
     fun tailnet(value:Long)=value ushr 22==0x191L
-    val networks=local.mapNotNull{(host,prefix)->ipv4(host)?.takeIf{prefix in 1..32}?.let{Triple(it,prefix,(0xffffffffL shl (32-prefix)) and 0xffffffffL)}}
+    val networks=local.mapNotNull{(host,prefix)->ipv4(host)?.takeIf{prefix in 1..32&&it ushr 24!=127L}?.let{Triple(it,prefix,(0xffffffffL shl (32-prefix)) and 0xffffffffL)}}
     fun score(endpoint:String):Int {
       val ip=ipv4(endpoint.toHttpUrl().host)?:return -1
+      if(ip ushr 24==127L)return -200
       val direct=networks.filter{(address,_,mask)->(address and mask)==(ip and mask)}.maxOfOrNull{1000+it.second}
       return direct?:if(tailnet(ip)){if(networks.any{tailnet(it.first)})100 else -100}else 0
     }

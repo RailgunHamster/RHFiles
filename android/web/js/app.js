@@ -98,6 +98,7 @@
     $('browse-actions').hidden = !isList() || count > 0 || !!pending;
     $('btn-new').disabled = route.screen !== 'folder' || blocked() || state.busy;
     $('list-status').hidden = !isList() || state.busy;
+    if(state.staleError&&isList())$('list-status').textContent='未刷新 · 显示上次列表，请刷新后再修改文件';
     $('btn-search').hidden = route.screen === 'tool';
     $('pathbar').hidden = route.screen !== 'folder'&&route.screen!=='library';
     $('btn-up').setAttribute('aria-label',route.screen==='library'?(route.folder?'返回'+labels[route.category]+'分类':'返回首页'):'上一级');
@@ -224,7 +225,7 @@
     if (route.screen === 'folder' && route.parentPath && route.path !== route.parentPath) folderParents.set(route.path,route.parentPath);
     const id = ++navigationId;
     ++searchId; clearTimeout(searchTimer);
-    state.route = { ...route }; state.selected.clear(); state.entries = []; state.listing = null; state.busy = true;state.navigationError=null;
+    state.route = { ...route }; state.selected.clear(); state.entries = []; state.listing = null; state.busy = true;state.navigationError=null;state.staleError=null;
     for (const name of ['home', 'filelist', 'tool-page', 'placeholder']) $(name).hidden = true;
     renderShell();
     try {
@@ -305,6 +306,7 @@
           if (token !== navigationId || state.route !== route) continue;
           const entries = route.screen==='library'?libraryEntries(listing.entries||[],route):listing.entries||[], changed = !fmt.sameEntries(state.entries,entries) || entries.some((e,i)=>e.count!==state.entries[i]?.count||e.cover?.path!==state.entries[i]?.cover?.path);
           state.listing = listing;
+          if(state.staleError){state.staleError=null;$('list-status').textContent=currentEntries().length+' 项';}
           if (changed) {
             const position=captureListPosition(), paths = new Set(entries.map(entry=>entry.path));
             state.entries = entries;
@@ -312,7 +314,7 @@
             renderList(undefined,position);
           }
         } catch (err) {
-          if (token === navigationId && state.route === route) error('刷新失败，已保留当前列表：'+(err?.message || err));
+          if (token === navigationId && state.route === route) {state.staleError=String(err?.message||err);error('刷新失败，已保留当前列表：'+state.staleError);}
         }
       } while (refreshAgain);
     })();
@@ -531,6 +533,7 @@
     ui.toast(pending.mode==='cut'?'已取消待移动':'已取消待复制');return true;
   }
   async function task(label, work) {
+    if(state.staleError){ui.toast('当前列表未刷新，请先刷新成功后再修改文件');return;}
     if (blocked()||(paneHost()&&!paneHost().acquire(window,label))) { ui.toast('请等待当前文件任务完成'); return; }
     state.task = { label }; renderShell();
     try { await work(); } catch (err) { error(err); }
