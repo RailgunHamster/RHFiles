@@ -98,6 +98,8 @@ internal object NativeAutomation {
       "automation.back"->{val activity=current.get() as? ComponentActivity?:error("当前界面不支持返回");activity.onBackPressedDispatcher.onBackPressed();true}
       "automation.media.state"->(current.get() as? PlaybackActivity)?.automationState()?:error("原生播放器没有打开")
       "automation.media.control"->(current.get() as? PlaybackActivity)?.automationControl(args)?:error("原生播放器没有打开")
+      "automation.grid.state"->RhVideoGridActivity.state()
+      "automation.grid.control"->RhVideoGridActivity.control(args)
       else->error("未知原生自动化操作")
     }
   }

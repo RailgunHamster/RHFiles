@@ -28,3 +28,14 @@ https://developer.android.com/jetpack/androidx/releases/camera
 ZXing-C++ — Copyright 2021 Axel Waggershauser and ZXing-C++ contributors — Apache-2.0
 https://github.com/zxing-cpp/zxing-cpp
 Additional license texts are bundled in LAN-Service-Licenses / lan-service-licenses.
+
+RHVideo shared phonetic search and nested tag filters:
+Copyright (c) 2025 RHVideo Team — MIT
+https://github.com/RailgunHamster/RHVideo
+License text: src/vendor/rhvideo/LICENSE (also bundled with the Android media UI).
+pinyin-pro 3.29.5 — MIT; see src/vendor/pinyin-pro/LICENSE.
+
+Android WebView lifecycle compatibility patch:
+wry 0.55.1 — Copyright 2020-2023 Tauri Programme within The Commons Conservancy
+MIT OR Apache-2.0; see vendor/wry-0.55.1/LICENSE-* and RHFILES-PATCH.md.
+https://github.com/tauri-apps/wry

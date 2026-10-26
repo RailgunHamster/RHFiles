@@ -23,6 +23,37 @@ class RhVideoClientTest {
   @After fun cleanup(){client.logout();server.shutdown()}
   private fun json(value:String)=server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(value))
   private fun login(){json("""{"access_token":"test-native-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));assertEquals("/api/v1/auth/login",server.takeRequest().path)}
+  @Test fun fullLibraryPlaylistOnlyCreatesABoundedNativePlaybackWindow(){
+    login();val rows=JSONArray();for(i in 0 until 200)rows.put(JSONObject().put("id","video-$i").put("title","测试 $i").put("duration",200))
+    client.request("playlist.prepare",JSONObject().put("ticket","queue-test").put("reset",true).put("items",rows).put("options",JSONObject().put("fullLength",false).put("segment",15).put("super",true)))
+    val selected=client.playback(JSONObject().put("playlist","queue-test").put("id","video-100").put("title","测试 100"));assertEquals(100,selected.globalIndex);assertEquals(21,selected.items.size)
+    val w=client.playbackWindow("queue-test",100);assertEquals(90,w.offset);assertEquals(10,w.index);assertEquals(200,w.total);assertTrue(w.items.all{it.path.startsWith("rhvideo://")});assertTrue(w.ends.zip(w.starts).all{it.first-it.second==15000L})
+    client.logout();try{client.playbackWindow("queue-test",100);fail()}catch(_:Exception){}
+  }
+  @Test fun accountPreferencesAreNativeAndPartitionedWithoutTokens(){
+    login();client.request("preferences",JSONObject().put("value",JSONObject().put("sort","nameDesc")))
+    assertEquals("nameDesc",(client.request("preferences",JSONObject()) as JSONObject).getString("sort"));client.logout()
+    json("""{"access_token":"different-account-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","other-password"));server.takeRequest()
+    assertEquals(0,(client.request("preferences",JSONObject()) as JSONObject).length())
+    val stored=RuntimeEnvironment.getApplication().getSharedPreferences("rhvideo-client-v1",0).all.toString();assertFalse(stored.contains("test-native-token"));assertFalse(stored.contains("different-account-token"));assertFalse(stored.contains("other-password"))
+  }
+  @Test fun gridResolvesOnlyOneBoundedGroupAndRevokesItsCapabilitiesOnLogout(){
+    login();val rows=JSONArray();for(i in 0 until 10)rows.put(JSONObject().put("id","video-$i").put("title","视频 $i"))
+    client.request("playlist.prepare",JSONObject().put("ticket","grid-qa").put("reset",true).put("items",rows).put("options",JSONObject()))
+    val page=client.gridWindow("grid-qa",8,4,true);assertEquals(2,page.getJSONArray("items").length());assertEquals(10,page.getInt("total"));assertEquals(8,page.getInt("offset"))
+    try{client.gridWindow("grid-qa",9,4,false);fail("Misaligned grid page accepted")}catch(_:IllegalArgumentException){}
+    client.logout();try{client.gridWindow("grid-qa",0,4,false);fail("Old grid accepted")}catch(_:Exception){}
+  }
+  @Test fun nativePlaybackHistoryIsAccountScopedAndNearEndDoesNotResumeAtEnd(){
+    login();val rows=JSONArray().put(JSONObject().put("id","video-0").put("title","播放记录"))
+    client.request("playlist.prepare",JSONObject().put("ticket","history-qa").put("reset",true).put("items",rows).put("options",JSONObject().put("fullLength",true)))
+    client.rememberPlayback("history-qa",0,5000,20000)
+    assertEquals(5000L,client.playback(JSONObject().put("playlist","history-qa").put("id","video-0").put("resume",true)).position)
+    client.rememberPlayback("history-qa",0,19500,20000)
+    assertEquals(0L,client.playback(JSONObject().put("playlist","history-qa").put("id","video-0").put("resume",true)).position)
+    client.logout();json("""{"access_token":"other-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","other-password"));server.takeRequest()
+    assertEquals(0,(client.request("playback.history",JSONObject()) as JSONObject).length())
+  }
   @Test fun loginIsNativeAndOnlyServerAndUserPersist(){
     login();assertTrue(client.state().getBoolean("connected"))
     val prefs=RuntimeEnvironment.getApplication().getSharedPreferences("rhvideo-client-v1",0)

@@ -1,0 +1,7 @@
+Pinned dependency: pinyin-pro 3.29.5 (MIT), copied from the sibling RHVideo
+static/vendor/pinyin-pro/pinyin-pro-3.29.5.js. See LICENSE in this directory.
+
+rhvideo-search.js and rhvideo-tags.js adapt RHVideo a8caab2's search-core.js
+and tag-filter.js without changing matching semantics. RHVideo is MIT licensed.
+They run inside RHFiles' packaged worker, not on a remote webpage. No password
+or access token is passed to the worker or any browser persistence API.

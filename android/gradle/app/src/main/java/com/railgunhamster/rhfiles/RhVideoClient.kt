@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 
 /** RHFiles client of RHVideo's API. No database access, persisted password or
  * bearer in the WebView/Intent. Only registered opaque media IDs can be read. */
-internal class RhVideoClient(context:Context) {
+internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null) {
   companion object {
     @Volatile private var instance:RhVideoClient?=null
     fun get(context:Context):RhVideoClient=instance?:synchronized(this){instance?:RhVideoClient(context.applicationContext).also{instance=it}}
@@ -41,10 +41,12 @@ internal class RhVideoClient(context:Context) {
       return path
     }
   }
-  private data class Session(val base:HttpUrl,val username:String,val token:String,val generation:Long)
+  private data class Session(val base:HttpUrl,val username:String,@Volatile var token:String,val generation:Long,@Volatile var refreshAt:Long)
   private data class Asset(val session:Session,val path:String,val image:Boolean)
   private val lock=Any()
   private val prefs=context.getSharedPreferences("rhvideo-client-v1",Context.MODE_PRIVATE)
+  private val contract by lazy{RhVideoContract(operationManifest?:JSONObject(context.assets.open("rhvideo/rhvideo-operations.json").bufferedReader().use{it.readText()}))}
+  private val refreshLock=Any()
   private val http=OkHttpClient.Builder().proxy(Proxy.NO_PROXY).followRedirects(false).followSslRedirects(false)
     .connectTimeout(8,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
   private val mediaHttp=http.newBuilder().callTimeout(0,TimeUnit.SECONDS).build()
@@ -54,15 +56,56 @@ internal class RhVideoClient(context:Context) {
   private data class VideoCatalog(val checked:Long,val etag:String?,val rows:JSONArray)
   private val catalogLock=Any()
   private var videoCache:VideoCatalog?=null
+  private data class Prepared(val ticket:String,val generation:Long,val entries:MutableList<JSONObject>,val options:JSONObject)
+  private var prepared:Prepared?=null
+  data class Window(val items:List<PlaybackQueue.Item>,val offset:Int,val index:Int,val total:Int,val options:JSONObject,val starts:List<Long>,val ends:List<Long>)
+  fun gridWindow(ticket:String,offset:Int,count:Int,lowBandwidth:Boolean):JSONObject {
+    val s=current();require(count in 1..9)
+    return synchronized(lock){
+      val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation&&it.entries.isNotEmpty()}?:error("网格队列已失效")
+      require(offset>=0&&offset<q.entries.size&&offset%count==0){"网格位置无效"}
+      val items=(offset until (offset+count).coerceAtMost(q.entries.size)).map{n->val entry=q.entries[n];PlaybackQueue.Item(asset(s,"api/v1/videos/${id(entry)}/play"+(if(lowBandwidth)"?super=true"else""),false),entry.optString("title","视频"))}
+      JSONObject().put("items",JSONArray(PlaybackQueue.json(items))).put("offset",offset).put("total",q.entries.size).put("count",count)
+    }
+  }
+  fun playbackWindow(ticket:String,index:Int):Window {
+    val s=current();return synchronized(lock){
+      val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("播放列表已结束")
+      require(index in q.entries.indices);val offset=(index-10).coerceAtLeast(0);val last=(offset+21).coerceAtMost(q.entries.size);val options=q.options
+      val starts=mutableListOf<Long>();val ends=mutableListOf<Long>()
+      val items=(offset until last).map{n->val entry=q.entries[n];val duration=entry.optDouble("duration",0.0);val full=options.optBoolean("fullLength",true);val segment=options.optDouble("segment",15.0).coerceIn(.1,3600.0)
+        val start=if(full||duration<=segment+1)0L else (1000*(1+java.util.Random(RhVideoClient::class.java.name.hashCode().toLong()+n).nextDouble()*(duration-segment-1))).toLong();starts.add(start);ends.add(if(full)-1 else start+(segment*1000).toLong())
+        PlaybackQueue.Item(asset(s,"api/v1/videos/${id(entry)}/play"+(if(options.optBoolean("super"))"?super=true"else""),false),entry.optString("title","视频"))}
+      Window(items,offset,index-offset,q.entries.size,JSONObject(options.toString()),starts,ends)
+    }
+  }
   private fun current()=synchronized(lock){session?:error("请先连接并登录 RHVideo")}
+  fun sessionGeneration():Long=current().generation
+  private fun accountKey(s:Session)="account-"+java.security.MessageDigest.getInstance("SHA-256").digest("${s.base}\n${s.username}".toByteArray()).joinToString(""){"%02x".format(it)}
+  fun rememberPlayback(ticket:String,index:Int,position:Long,duration:Long){
+    try{val s=current();synchronized(lock){val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:return;val entry=q.entries.getOrNull(index)?:return;val key=accountKey(s)+"-playback";val data=JSONObject(prefs.getString(key,"{}")?:"{}");data.put(id(entry),JSONObject().put("title",entry.optString("title")).put("seconds",if(duration>0&&position>=duration-1000)0 else position.coerceAtLeast(0)/1000.0).put("savedAt",System.currentTimeMillis()));while(data.length()>1000){val oldest=data.keys().asSequence().minByOrNull{data.optJSONObject(it)?.optLong("savedAt")?:0}?:break;data.remove(oldest)};prefs.edit().putString(key,data.toString()).apply()}}
+    catch(_:Exception){}
+  }
+  private fun resume(s:Session,id:String)=JSONObject(prefs.getString(accountKey(s)+"-playback","{}")?:"{}").optJSONObject(id)?.optDouble("seconds",0.0)?.takeIf{it.isFinite()&&it in 0.0..604800.0}?:0.0
   private fun live(value:Session)=synchronized(lock){session?.generation==value.generation}
+  private fun token(s:Session):String=synchronized(refreshLock){
+    check(live(s)){"登录已结束"}
+    if(System.currentTimeMillis()<s.refreshAt)return@synchronized s.token
+    val request=Request.Builder().url(s.base.resolve("api/v1/auth/refresh")!!).header("Authorization","Bearer ${s.token}").post("{}".toRequestBody("application/json".toMediaType())).build()
+    http.newCall(request).execute().use{r->
+      expire(s,r.code);check(r.isSuccessful){"刷新登录失败（HTTP ${r.code}）"}
+      val value=readJson(r) as JSONObject;val next=value.getString("access_token")
+      require(next.isNotEmpty()&&next.length<=32768&&!next.any{it.code<32}){"登录令牌无效"}
+      check(live(s)){"登录已结束"};s.token=next;s.refreshAt=System.currentTimeMillis()+(value.optLong("expires_in",1800)-60).coerceAtLeast(1)*1000;next
+    }
+  }
   private fun expire(s:Session,code:Int){
     if(code==401)synchronized(lock){if(session?.generation==s.generation){++generation;session=null;assets.clear();videoCache=null}}
   }
   fun state():JSONObject=synchronized(lock){JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:prefs.getString("server","")).put("username",session?.username?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",false)}
   private fun json(s:Session,path:String,method:String="GET",body:JSONObject?=null):Any {
     val url=s.base.resolve(path)?:error("无效的 API 路径")
-    val builder=Request.Builder().url(url).header("Authorization","Bearer ${s.token}").header("Accept","application/json")
+    val builder=Request.Builder().url(url).header("Authorization","Bearer ${token(s)}").header("Accept","application/json")
     if(method!="GET")builder.method(method,if(method=="DELETE")null else (body?:JSONObject()).toString().toRequestBody("application/json".toMediaType()))
     http.newCall(builder.build()).execute().use{response->
       expire(s,response.code)
@@ -80,7 +123,7 @@ internal class RhVideoClient(context:Context) {
       val cached=synchronized(lock){videoCache}
       if(cached!=null&&(!refresh&&now-cached.checked<30000||cached.checked>started))return@synchronized cached.rows
       val url=s.base.resolve("api/v1/videos")!!.newBuilder().addQueryParameter("summary","true").build()
-      val request=Request.Builder().url(url).header("Authorization","Bearer ${s.token}").header("Accept","application/json")
+      val request=Request.Builder().url(url).header("Authorization","Bearer ${token(s)}").header("Accept","application/json")
       cached?.etag?.let{request.header("If-None-Match",it)}
       http.newCall(request.build()).execute().use{response->
         expire(s,response.code)
@@ -103,17 +146,22 @@ internal class RhVideoClient(context:Context) {
     val out=java.io.ByteArrayOutputStream();val buf=ByteArray(16384)
     while(true){val size=read(buf);if(size<0)break;require(out.size()+size<=limit){"服务器响应过大"};out.write(buf,0,size)};return out.toByteArray()
   }
-  fun connect(args:JSONObject):JSONObject {
+  fun connect(args:JSONObject,register:Boolean=false):JSONObject {
     val base=base(args.getString("server"));val user=args.getString("username").trim();val password=args.getString("password")
     require(user.isNotEmpty()&&user.length<=256&&password.isNotEmpty()&&password.length<=4096){"请填写有效的用户名和密码"}
     val ticket=synchronized(lock){++generation;session=null;assets.clear();videoCache=null;generation}
+    if(register){
+      val body=JSONObject().put("username",user).put("password",password).put("email",args.getString("email"))
+      http.newCall(Request.Builder().url(base.resolve("api/v1/auth/register")!!).post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use{r->check(r.isSuccessful){"注册失败（HTTP ${r.code}）"}}
+    }
     val request=Request.Builder().url(base.resolve("api/v1/auth/login")!!).post(JSONObject().put("username",user).put("password",password).toString().toRequestBody("application/json".toMediaType())).build()
-    val token=http.newCall(request).execute().use{r->check(r.isSuccessful){if(r.code==401)"用户名或密码不正确"else "登录失败（HTTP ${r.code}）"};(readJson(r) as JSONObject).getString("access_token")}
+    var expires=1800L
+    val token=http.newCall(request).execute().use{r->check(r.isSuccessful){if(r.code==401)"用户名或密码不正确"else "登录失败（HTTP ${r.code}）"};val value=readJson(r) as JSONObject;expires=value.optLong("expires_in",1800);value.getString("access_token")}
     require(token.isNotBlank()&&token.length<=32768&&!token.any{it.code<32}){"服务器返回了无效的登录令牌"}
-    synchronized(lock){check(ticket==generation){"登录已取消"};session=Session(base,user,token,ticket);prefs.edit().putString("server",base.toString()).putString("username",user).apply()}
+    synchronized(lock){check(ticket==generation){"登录已取消"};session=Session(base,user,token,ticket,System.currentTimeMillis()+(expires-60).coerceAtLeast(1)*1000);prefs.edit().putString("server",base.toString()).putString("username",user).apply()}
     return state()
   }
-  fun logout():JSONObject {synchronized(lock){++generation;session=null;assets.clear();videoCache=null};return state()}
+  fun logout():JSONObject {synchronized(lock){++generation;session=null;assets.clear();videoCache=null;prepared=null};return state()}
   private fun asset(s:Session,path:String,image:Boolean):String=synchronized(lock){
     check(live(s)){"连接已结束"}
     val key=assets.entries.firstOrNull{it.value.session.generation==s.generation&&it.value.path==path&&it.value.image==image}?.key?:UUID.randomUUID().toString().also{key->
@@ -132,9 +180,38 @@ internal class RhVideoClient(context:Context) {
       .put("progress",v.optJSONObject("progress")?:JSONObject.NULL).put("wordCount",v.optInt("word_count")).put("chapters",v.optInt("chapter_count"))
   }
   fun request(action:String,args:JSONObject):Any {
-    when(action){"state"->return state();"connect"->return connect(args);"logout"->return logout()}
+    when(action){"state"->return state();"connect"->return connect(args);"register"->return connect(args,true);"logout"->return logout()}
     val s=current()
     return when(action){
+      "playlist.prepare"->{
+        val ticket=id(JSONObject().put("id",args.getString("ticket")));val values=args.getJSONArray("items");require(values.length() in 1..200)
+        synchronized(lock){
+          if(args.optBoolean("reset"))prepared=Prepared(ticket,s.generation,mutableListOf(),args.getJSONObject("options"))
+          val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("播放列表准备已失效")
+          require(q.entries.size+values.length()<=100000)
+          for(i in 0 until values.length()){val v=values.getJSONObject(i);id(v);require(v.optString("title").length<=1024);q.entries.add(JSONObject(v.toString()))}
+          JSONObject().put("count",q.entries.size)
+        }
+      }
+      "operation"->{
+        val call=contract.request(args)
+        if(args.getString("name")=="index.video")videoCatalog(s,args.optJSONObject("query")?.optBoolean("refresh")?:false) else {
+          val url=s.base.resolve(call.path)!!.newBuilder();call.query.forEach{(key,value)->url.addQueryParameter(key,value)}
+          json(s,url.build().toString(),call.method,call.body)
+        }
+      }
+      "resolve"->{
+        val rows=args.getJSONArray("items");require(rows.length()<=100){"每次最多解析 100 个媒体"};val items=JSONArray()
+        for(i in 0 until rows.length()){val v=rows.getJSONObject(i);items.put(normalized(s,v,v.optString("kind","video")))}
+        JSONObject().put("items",items).put("generation",s.generation)
+      }
+      "images"->{val paths=args.getJSONArray("paths");require(paths.length()<=100);JSONArray().also{out->for(i in 0 until paths.length())out.put(asset(s,storagePath(paths.getString(i)),true))}}
+      "preferences"->{
+        val key=accountKey(s)
+        if(args.has("value")){val value=args.getJSONObject("value");require(value.toString().length<=256*1024);check(prefs.edit().putString(key,value.toString()).commit()){"无法保存偏好"};JSONObject().put("saved",true)}else JSONObject(prefs.getString(key,"{}")?:"{}")
+      }
+      "playback.history"->JSONObject(prefs.getString(accountKey(s)+"-playback","{}")?:"{}")
+      "playback.clear"->{prefs.edit().remove(accountKey(s)+"-playback").apply();JSONObject()}
       "catalog"->{
         val type=kind(args);val offset=args.optInt("offset",0).coerceIn(0,10000000);val limit=args.optInt("limit",36).coerceIn(1,72)
         val search=args.optString("search","").take(256);val folder=args.optString("folder","").take(1024)
@@ -172,15 +249,20 @@ internal class RhVideoClient(context:Context) {
       else->error("未知的 RHVideo 操作")
     }
   }
-  data class Playlist(val items:List<PlaybackQueue.Item>,val path:String,val position:Long)
+  data class Playlist(val items:List<PlaybackQueue.Item>,val path:String,val position:Long,val ticket:String?=null,val globalIndex:Int=0)
   fun playback(args:JSONObject):Playlist {
     val s=current();val selected=id(args);val queue=args.optJSONArray("queue")?:JSONArray();require(queue.length()<=500){"播放列表过大"}
+    if(args.has("playlist")){
+      val ticket=args.getString("playlist");val index=synchronized(lock){val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("播放列表准备已失效");q.entries.indexOfFirst{it.optString("id")==selected}}
+      require(index>=0);val window=playbackWindow(ticket,index);return Playlist(window.items,window.items[window.index].path,if(args.optBoolean("resume")&&window.options.optBoolean("fullLength",true))(resume(s,selected)*1000).toLong()else 0,ticket,index)
+    }
     val entries=linkedMapOf<String,String>()
     for(i in 0 until queue.length()){val item=queue.getJSONObject(i);entries[id(item)]=item.optString("title","视频").take(512)}
     if(!entries.containsKey(selected))entries[selected]=args.optString("title","视频").take(512)
-    val selectedPath=asset(s,"api/v1/videos/$selected/play",false)
-    val ordered=entries.map{(id,title)->PlaybackQueue.Item(asset(s,"api/v1/videos/$id/play",false),title)}
-    val seconds=args.optDouble("seconds",0.0);require(seconds.isFinite()&&seconds in 0.0..604800.0)
+    val suffix=if(args.optBoolean("super"))"?super=true"else""
+    val selectedPath=asset(s,"api/v1/videos/$selected/play$suffix",false)
+    val ordered=entries.map{(id,title)->PlaybackQueue.Item(asset(s,"api/v1/videos/$id/play$suffix",false),title)}
+    val seconds=if(!args.has("seconds")&&args.optBoolean("resume"))resume(s,selected)else args.optDouble("seconds",0.0);require(seconds.isFinite()&&seconds in 0.0..604800.0)
     return Playlist(ordered,selectedPath,(seconds*1000).toLong())
   }
   class Media(val stream:InputStream,val length:Long,val type:String,private val response:Response):java.io.Closeable {override fun close(){response.close()}}
@@ -188,10 +270,11 @@ internal class RhVideoClient(context:Context) {
     require(position>=0)
     val value=synchronized(lock){assets[key]}?:error("媒体连接已失效，请重新打开")
     require(value.image==image&&live(value.session)){"媒体连接已失效"}
-    val request=Request.Builder().url(value.session.base.resolve(value.path)!!).header("Authorization","Bearer ${value.session.token}")
+    val request=Request.Builder().url(value.session.base.resolve(value.path)!!).header("Authorization","Bearer ${token(value.session)}")
     if(position>0)request.header("Range","bytes=$position-")
     val response=mediaHttp.newCall(request.build()).execute()
     try{
+      expire(value.session,response.code)
       check(response.isSuccessful&&live(value.session)){"媒体读取失败（HTTP ${response.code}）"}
       if(position>0)require(response.code==206&&response.header("Content-Range")?.startsWith("bytes $position-")==true){"服务器未正确支持视频跳转"}
       val body=response.body?:error("媒体为空");val type=body.contentType()?.toString()?:"application/octet-stream"

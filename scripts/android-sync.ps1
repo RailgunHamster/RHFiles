@@ -58,7 +58,7 @@ $properties = @(
     'keyAlias=rhfiles',
     'keyPassword=android'
 ) -join "`n"
-if ((Test-Path $propertiesPath) -and ((Get-Content $propertiesPath -Raw).Trim() -eq $properties.Trim())) {
+if ((Test-Path $propertiesPath) -and ((Get-Content $propertiesPath -Raw).Trim() -ceq $properties.Trim())) {
     Write-Host "already in sync: $propertiesPath"
 } else {
     Set-Content -Path $propertiesPath -Value $properties -NoNewline
@@ -76,7 +76,7 @@ function Sync-File {
     }
 
     $desired = (Get-Content $Source -Raw)
-    if ((Test-Path $Target) -and ((Get-Content $Target -Raw) -eq $desired)) {
+    if ((Test-Path $Target) -and ((Get-Content $Target -Raw) -ceq $desired)) {
         Write-Host "already in sync: $Target"
         return
     }
@@ -150,7 +150,7 @@ Write-Host 'Android project sync complete.'
 # RHVideo uses the same packaged library UI, with a phone-specific bridge and
 # layout. Copy only these allowlisted assets, never the desktop file browser.
 $rhvideoAssets=Join-Path $appDir 'src/main/assets/rhvideo'
-foreach($relative in @('rhvideo.html','css/rhvideo.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-client.js')){
+foreach($relative in @('rhvideo.html','rhvideo-operations.json','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-client.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-search.js','js/rhvideo-tags.js','vendor/pinyin-pro/pinyin-pro.js','vendor/pinyin-pro/LICENSE','vendor/pinyin-pro/PROVENANCE.txt','vendor/rhvideo/LICENSE')){
     $destination=Join-Path $rhvideoAssets $relative
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Sync-File -Source (Join-Path $repoRoot ('src/'+$relative)) -Target $destination

@@ -34,6 +34,13 @@ pub struct Frame {
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 impl Frame {
+    pub fn observe_native(&self, count: u64) {
+        let previous = self.count.swap(count, Ordering::Relaxed);
+        if count > previous {
+            self.last_display
+                .store(self.epoch.elapsed().as_millis() as u64, Ordering::Relaxed);
+        }
+    }
     pub fn new(hwnd: usize) -> Self {
         Self {
             hwnd,

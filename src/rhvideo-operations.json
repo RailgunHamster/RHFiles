@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "operations": {
+    "account.me": { "method": "GET", "path": "auth/me" },
+    "account.refresh": {
+      "method": "POST",
+      "path": "auth/refresh",
+      "internal": true
+    },
+    "index.video": {
+      "method": "GET",
+      "path": "videos",
+      "query": { "summary": "bool", "refresh": "bool" }
+    },
+    "index.picture": { "method": "GET", "path": "pictures/catalog" },
+    "index.novel": {
+      "method": "GET",
+      "path": "novels",
+      "query": { "summary": "bool" }
+    },
+    "index.favorite": {
+      "method": "GET",
+      "path": "favorites",
+      "query": {
+        "media_type": "all|video|picture|novel",
+        "skip": "int:0:1000000",
+        "limit": "int:1:500",
+        "search": "text:256"
+      }
+    },
+    "video.info": { "method": "GET", "path": "videos/{id}" },
+    "video.reprocess": {
+      "method": "POST",
+      "path": "videos/{id}/reprocess",
+      "risk": "write"
+    },
+    "video.open": {
+      "method": "POST",
+      "path": "videos/{id}/open",
+      "risk": "external"
+    },
+    "video.folder": {
+      "method": "POST",
+      "path": "videos/{id}/open-folder",
+      "risk": "external"
+    },
+    "video.estimate": {
+      "method": "POST",
+      "path": "videos/{id}/replace-source/estimate",
+      "body": { "max_resolution": "resolution", "crf": "int:18:38" }
+    },
+    "video.replace": {
+      "method": "POST",
+      "path": "videos/{id}/replace-source",
+      "risk": "destructive",
+      "body": {
+        "max_resolution": "resolution",
+        "crf": "int:18:38",
+        "request_id": "id"
+      }
+    },
+    "video.replacement": {
+      "method": "GET",
+      "path": "videos/{id}/replace-source/status"
+    },
+    "novel.previews": {
+      "method": "GET",
+      "path": "novels/{id}/previews",
+      "query": {
+        "skip": "int:0:100000",
+        "limit": "int:1:500",
+        "preview_chars": "int:40:2000"
+      }
+    },
+    "frames.grid": {
+      "method": "GET",
+      "path": "screenshots/grid",
+      "query": {
+        "per_video": "int:1:100",
+        "compact": "bool",
+        "rules": "text:32768"
+      }
+    },
+    "frames.cleanup": {
+      "method": "POST",
+      "path": "screenshots/cleanup",
+      "risk": "destructive"
+    },
+    "watch.list": { "method": "GET", "path": "watch-folders" },
+    "watch.add": {
+      "method": "POST",
+      "path": "watch-folders",
+      "risk": "write",
+      "body": { "path": "text:8192" }
+    },
+    "watch.update": {
+      "method": "PATCH",
+      "path": "watch-folders/{id}",
+      "risk": "write",
+      "body": { "enabled": "bool" }
+    },
+    "watch.remove": {
+      "method": "DELETE",
+      "path": "watch-folders/{id}",
+      "risk": "destructive"
+    },
+    "watch.scan": {
+      "method": "POST",
+      "path": "watch-folders/{id}/scan",
+      "risk": "write"
+    },
+    "tasks.list": {
+      "method": "GET",
+      "path": "processing-tasks",
+      "query": {
+        "kind": "default|replacement",
+        "view": "running|queued|failed|history",
+        "page": "int:1:100000",
+        "limit": "int:1:50",
+        "days": "0|7|30|90",
+        "status": "all|succeeded|issues|skipped|cancelled",
+        "q": "text:200"
+      }
+    },
+    "tasks.detail": {
+      "method": "GET",
+      "path": "processing-tasks/{queue}/{entry}",
+      "params": { "queue": "default|replacement", "entry": "task" }
+    },
+    "tasks.progress": { "method": "GET", "path": "processing-progress" },
+    "batches.list": {
+      "method": "GET",
+      "path": "replace-batches",
+      "query": { "limit": "int:1:50" }
+    },
+    "batches.create": {
+      "method": "POST",
+      "path": "replace-batches",
+      "risk": "destructive",
+      "body": {
+        "video_ids": "ids:1000",
+        "max_resolution": "resolution",
+        "crf": "int:18:38",
+        "request_id": "id"
+      }
+    },
+    "batches.detail": { "method": "GET", "path": "replace-batches/{id}" },
+    "batches.stop": {
+      "method": "POST",
+      "path": "replace-batches/{id}/cancel",
+      "risk": "write"
+    },
+    "trash.list": { "method": "GET", "path": "trash" },
+    "trash.stage": {
+      "method": "POST",
+      "path": "trash/{kind}/{id}",
+      "params": { "kind": "video|picture|novel" },
+      "risk": "destructive"
+    },
+    "trash.restore": {
+      "method": "POST",
+      "path": "trash/{kind}/{id}/restore",
+      "params": { "kind": "video|picture|novel" },
+      "risk": "write"
+    },
+    "trash.expired": {
+      "method": "POST",
+      "path": "trash/purge-expired",
+      "risk": "destructive"
+    },
+    "storage.usage": {
+      "method": "GET",
+      "path": "system/storage-usage",
+      "query": { "force": "bool" }
+    },
+    "storage.folders": {
+      "method": "GET",
+      "path": "system/watch-folder-usage",
+      "query": { "force": "bool" }
+    },
+    "storage.savings": {
+      "method": "GET",
+      "path": "system/replacement-savings"
+    },
+    "system.health": { "method": "GET", "path": "system/health" },
+    "system.config": { "method": "GET", "path": "system/config" },
+    "system.restartState": { "method": "GET", "path": "system/restart" },
+    "system.restart": {
+      "method": "POST",
+      "path": "system/restart",
+      "risk": "destructive",
+      "body": { "mode": "immediate|all", "request_id": "id" }
+    },
+    "system.cancelRestart": {
+      "method": "DELETE",
+      "path": "system/restart/{id}",
+      "risk": "write"
+    },
+    "cleanup.preview": {
+      "method": "GET",
+      "path": "system/cleanup-missing/preview"
+    },
+    "cleanup.execute": {
+      "method": "POST",
+      "path": "system/cleanup-missing",
+      "risk": "destructive"
+    }
+  }
+}

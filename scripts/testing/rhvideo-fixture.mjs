@@ -2,12 +2,13 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import {once} from 'node:events';
-export async function rhvideoFixture({videoFile=null}={}){
+export async function rhvideoFixture({videoFile=null,failTrashIds=[],pictureCount=8}={}){
   const favorites=new Set(),progress=[],requests=[];
+  const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
   const folders=['山野与旅途','日常片段','城市观察','慢生活'];
   const names=['沿着山脊，看见清晨','海边的蓝色时刻','森林里的一场小雨','城市醒来之前','周末，留一点空白','穿过落日的列车','湖面与风的形状','路过人间烟火','一个很慢的下午','远山，云与自由','星空下的营地','把日子过成风景'];
   const videos=Array.from({length:52},(_,i)=>({id:'video-'+i,original_filename:names[i%names.length]+(i>11?' · '+(i+1):'')+'.mp4',duration_seconds:126+i*31,original_resolution:i%3?'1920×1080':'3840×2160',folder_label:folders[i%folders.length],status:'completed'}));
-  const pictures=Array.from({length:8},(_,i)=>({id:'picture-'+i,original_filename:['山间留白','远行手记','夏日的海','微光森林'][i%4]+'.webp',webp_path:'pictures/'+i+'.svg',folder_label:folders[i%4],original_resolution:'2560×1600',status:'active'}));
+  const pictures=Array.from({length:pictureCount},(_,i)=>({id:'picture-'+i,original_filename:['山间留白','远行手记','夏日的海','微光森林'][i%4]+'.webp',webp_path:'pictures/'+i+'.svg',folder_label:folders[i%4],original_resolution:'2560×1600',status:'active'}));
   const novels=[{id:'novel-0',title:'沿途的风景',folder_label:'旅行与散文',word_count:216000,chapter_count:3,status:'active',progress:null},{id:'novel-1',title:'城市以外',folder_label:'小说书架',word_count:128000,chapter_count:3,status:'active',progress:{chapter_index:1,scroll_ratio:.2,percent:40}}];
   const svg=(index)=>{
     const palettes=[['#94b6bf','#e9d8c3','#477881'],['#bbc3dc','#f2d8d4','#606e99'],['#9dbbb2','#e3e8d0','#538478'],['#b6c8dd','#f0e1ce','#718fa5']];
@@ -23,6 +24,32 @@ export async function rhvideoFixture({videoFile=null}={}){
     }
     if(req.headers.authorization!=='Bearer fixture-bearer-do-not-persist')return send(401,{detail:'Unauthorized'});
     if(path==='/api/v1/auth/me')return send(200,{username:'preview',user_id:'fixture-user'});
+    if(path==='/api/v1/watch-folders'){
+      if(req.method==='POST'){const v=await body();const folder={id:'watch-'+watch.length,path:v.path,enabled:true};watch.push(folder);return send(200,{folder,scan_started:true});}return send(200,{folders:watch,queue_size:0});
+    }
+    const watcher=path.match(/^\/api\/v1\/watch-folders\/([^/]+)(\/scan)?$/);
+    if(watcher){const w=watch.find(v=>v.id===watcher[1]);if(!w)return send(404,{detail:'Missing watch folder'});if(watcher[2])return send(200,{scanned:5,added:0});if(req.method==='PATCH')Object.assign(w,await body());if(req.method==='DELETE')watch.splice(watch.indexOf(w),1);return send(200,w);}
+    if(path==='/api/v1/processing-tasks')return send(200,{items:[{id:'video:video-0',filename:'处理样本.mp4',status:'failed',message:'源文件离线'}],counts:{running:0,queued:0,failed:1,history:1},total:1,page:1,pages:1,limit:25});
+    if(path.startsWith('/api/v1/processing-tasks/'))return send(200,{id:'video:video-0',filename:'处理样本.mp4',status:'failed',message:'源文件离线',steps:[{key:'compress',label:'压缩',status:'failed',metrics:[]}],progress:null});
+    if(path==='/api/v1/replace-batches'){if(req.method==='POST'){const v=await body(),batch={id:'batch-'+batches.length,status:'pending',...v};batches.push(batch);return send(202,batch);}return send(200,batches);}
+    if(path.startsWith('/api/v1/replace-batches/')){const b=batches.find(v=>v.id===path.split('/')[4]);return send(200,b||{id:'batch-0',status:'cancelled',items:[]});}
+    if(path==='/api/v1/trash')return send(200,{items:trash,retention_days:30});
+    const staged=path.match(/^\/api\/v1\/trash\/(video|picture|novel)\/([^/]+)(\/restore)?$/);
+    if(staged){if(failTrashIds.includes(staged[1]+':'+staged[2]))return send(403,{detail:'Fixture source is read-only'});if(staged[3]){const index=trash.findIndex(v=>v.id===staged[2]&&v.media_type===staged[1]);if(index>=0)trash.splice(index,1);}else trash.push({id:staged[2],media_type:staged[1],filename:'测试暂存',expires_at:'2026-12-31T00:00:00Z'});return send(200,{ok:true});}
+    if(path==='/api/v1/trash/purge-expired')return send(200,{purged:0});
+    if(path==='/api/v1/system/cleanup-missing/preview')return send(200,{pictures:{count:0,items:[]},videos:{count:0,items:[]},novels:{count:0,items:[]},skipped_processing:0});
+    if(path==='/api/v1/system/cleanup-missing')return send(200,{deleted_pictures:0,deleted_videos:0,deleted_novels:0});
+    if(path==='/api/v1/system/restart')return send(200,{can_manage:false,status:'idle'});
+    if(path==='/api/v1/system/storage-usage')return send(200,{status:'ready',scanning:false,total_bytes:123456,total_files:52,categories:[]});
+    if(path==='/api/v1/system/watch-folder-usage')return send(200,{items:watch.map(w=>({...w,status:'ready',total_bytes:1000})),total_bytes:1000});
+    if(path==='/api/v1/system/replacement-savings')return send(200,{saved_bytes:500});
+    if(path==='/api/v1/system/health')return send(200,{status:'healthy'});
+    if(path==='/api/v1/system/config')return send(200,{app_name:'RHVideo fixture'});
+    if(path==='/api/v1/screenshots/grid')return send(200,videos.slice(0,4).map(v=>({video_id:v.id,filename:v.original_filename,folder:v.folder_label,resolution:'640x360',duration:20,screenshots:Array.from({length:8},(_,i)=>({url:'/storage/pictures/'+i+'.svg',time_seconds:i*2}))})));
+    const preview=path.match(/^\/api\/v1\/novels\/(novel-\d+)\/previews$/);
+    if(preview)return send(200,{title:'章节速览',total:3,items:Array.from({length:3},(_,i)=>({index:i,title:'第'+(i+1)+'章 速览',preview:'真实 API 形状的章节摘录',word_count:1000}))});
+    if(path.match(/^\/api\/v1\/videos\/[^/]+\/replace-source\/estimate$/))return send(200,{before_size:10000,estimated_size:5000,saved_bytes:5000});
+    if(path.match(/^\/api\/v1\/videos\/[^/]+$/)&&path!=='/api/v1/videos/folders')return send(200,{...videos.find(v=>v.id===path.split('/')[4]),source_path:'D:\\FixtureMedia\\sample.mp4'});
     if(path==='/api/v1/videos')return send(200,videos);
     if(/^\/api\/v1\/(videos|pictures|novels)\/folders$/.test(path))return send(200,folders);
     const paginate=items=>{
@@ -30,8 +57,9 @@ export async function rhvideoFixture({videoFile=null}={}){
       const all=items.filter(item=>(!search||(item.title||item.original_filename).toLowerCase().includes(search))&&(!folder||item.folder_label.includes(folder)));
       return {items:all.slice(Number(url.searchParams.get('skip')||0),Number(url.searchParams.get('skip')||0)+Number(url.searchParams.get('limit')||36)),total:all.length};
     };
+    if(path==='/api/v1/pictures/catalog')return send(200,{items:pictures,total:pictures.length});
     if(path==='/api/v1/pictures')return send(200,paginate(pictures));
-    if(path==='/api/v1/novels')return send(200,paginate(novels));
+    if(path==='/api/v1/novels')return send(200,url.searchParams.get('summary')==='true'?{items:novels,total:novels.length}:paginate(novels));
     if(path==='/api/v1/favorites/ids')return send(200,{video_ids:[...favorites].filter(k=>k.startsWith('video:')).map(k=>k.slice(6)),picture_ids:[...favorites].filter(k=>k.startsWith('picture:')).map(k=>k.slice(8)),novel_ids:[]});
     if(path==='/api/v1/favorites'){
       const all=[...videos.map(v=>({...v,type:'video'})),...pictures.map(p=>({...p,type:'picture'})),...novels.map(n=>({...n,type:'novel'}))].filter(v=>favorites.has(v.type+':'+v.id));return send(200,paginate(all));
@@ -55,5 +83,5 @@ export async function rhvideoFixture({videoFile=null}={}){
     send(404,{detail:'Fixture route not found'});
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');
-  return {server,url:'http://127.0.0.1:'+server.address().port,favorites,progress,requests,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
+  return {server,url:'http://127.0.0.1:'+server.address().port,favorites,progress,requests,watch,trash,batches,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
 }

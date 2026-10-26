@@ -6,25 +6,24 @@
 
 1. 在 RHFiles 左侧点击 RHVideo，打开应用自己的媒体库窗口。
 2. 点击“连接 RHVideo”，填写已有服务器地址、用户名和密码。
-3. 浏览视频、图片、小说、收藏；搜索和文件夹筛选在当前分类中进行。
-4. 视频可以直接播放，或在关键帧时间轴中从指定位置播放。播放队列沿用当前页的视频。
-5. 图片可前后切换和缩放；小说支持目录、字号、继续阅读和向服务器保存进度。
+3. 浏览视频、图片、小说、收藏；支持中文/拼音/首字母混合搜索、八种双向排序及嵌套标签规则。
+4. 视频直接播放，或从关键帧时间轴定位。连播使用完整筛选队列，不限当前页；可以选择分段、全长、竖屏、低带宽版本、循环和断点记忆。多视频可同屏播放并切换上一组/下一组。
+5. 图片支持全列表前后切换、随机、缩放、横/竖向虚拟条带和自动放映；小说支持目录搜索、章节/滚动进度、主题/字号/行距及分章速览。
+6. “服务器”内管理监控目录、处理队列、原片替换、30 天暂存、存储统计及服务状态。删除和替换先预览、再确认，不在本机直接操作服务器文件。
 
 当前 Windows 原生播放使用 64 位 VLC 3.x 的 libVLC。自动检测系统安装目录或程序旁的 vlc/ 目录。不启动 vlc.exe，没有 HTML video 或网页播放器兜底。未安装内核时，浏览、图片和阅读仍可使用，播放会明确提示缺失。
 
-体验版采用兼容性优先的软件解码与原生 GDI 画布，帧缓冲上限为 1920×1080，适用于先验证操作和接入方式；并不代表已经完成 4K/HDR、硬件加速和最终播放性能优化。原生输入时间戳较粗时，仅在确实收到显示帧之间插值进度；无帧、暂停或缓冲时不凭墙钟伪造进度。
+普通 Windows 桌面采用原生硬件自动解码/输出，不经过网页像素传输或 1080p 帧缓冲限制。RDP 或显式兼容模式保留有界 GDI 画布。仅在确实收到显示帧之间插值进度；无帧、暂停或缓冲时不凭墙钟伪造进度。4K/HDR、设备间性能比较仍需独立实测，不能仅因启用原生模式就认定性能达标。
 
-Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套分类、图片、小说和收藏操作。视频复用 Media3 原生播放器，无需安装 VLC；支持当前页播放队列、时间轴定位、暂停、跳转和速度。系统返回先关闭当前图片、阅读器或对话框，然后回到文件管理器。
+Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套媒体库与服务器管理。视频使用 Media3，无需安装 VLC；完整大队列只向原生播放器交付附近最多 21 项，避免过大的 Binder 参数。系统返回先关闭当前图片、阅读器或对话框，然后回到文件管理器。
 
-这是第一版，不代表已经迁移全部功能：尚未包含连续图片条带、自动放映、多视频同屏、复杂标签规则、转码任务和服务器管理。
-
-完整迁移目标、逐项缺口和性能验收条件见 [RHVideo 功能对齐清单](RHVIDEO-PARITY.md)。目前不能将这个客户端视作 RHVideo 的全功能替代品。
+实现和验收状态逐项记录在 [RHVideo 功能对齐清单](RHVIDEO-PARITY.md)。没有完成的性能比较、真实手机或服务重启验收不会用模拟结果冒充。
 
 ## 数据与边界
 
 - 登录、媒体清单、收藏、章节、阅读进度、关键帧使用 RHVideo 现有 HTTP API。
 - 增加收藏使用 PUT /api/v1/favorites/{type}/{id}，取消使用 DELETE。
-- 不修改源文件，不提供服务器媒体删除、数据库修改或任意 URL 代理。
+- 服务器写入只通过固定业务接口。源文件暂存、原片替换、清理和重启会明确显示影响；不提供任意 URL/SQL/服务器路径执行代理。
 - 本地只保存服务器地址和用户名；密码不保存，令牌仅存在原生内存。重启后需要重新登录。
 - HTTP 登录没有传输加密，跨公网请使用 HTTPS 或可信 VPN。
 - Windows 媒体通过仅绑定 127.0.0.1 的临时通道；Android 图片使用原生拦截的应用内资源路径，视频通过原生 Media3 DataSource 读取。两端都只允许登记的随机媒体标识；令牌不进入网页、播放器参数或磁盘。
@@ -34,12 +33,20 @@ Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套分类
 
 ## 自动化
 
-所有界面操作使用 RHFilesAPI 注册动作。现有本机 CLI 可选择窗口调用：
+所有界面操作使用 RHFilesAPI 注册动作。不是另写一套“测试专用操作”：UI 与脚本调用相同处理函数。`list` 返回参数 schema、风险级别，`rhvideo.ui.contract` 逐个枚举真实控件并报告没有接口的控件（包括尚未标注的新按钮，不会只检查已标注按钮）。输入框也可通过通用 `ui.set` 填写，再调用对应提交操作。
+
+固定远程操作清单在 `src/rhvideo-operations.json`，两端原生层校验方法、路径、参数、上限和危险确认。网页拿不到登录令牌，也不能自行指定任意远程接口。
+
+现有本机 CLI 可选择窗口调用：
 
     node scripts/rhfiles-api.mjs --port 9222 --window main run rhvideo.open --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo list
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.category '{"kind":"picture"}' --wait
+    node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.sort '{"value":"dateAsc"}' --wait
+    node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.ui.contract --wait
+    node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.server.open '{"page":"tasks"}' --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo-player run rhvideo.player.next --wait
+    node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo-grid run rhvideo.grid.page '{"direction":1}' --wait
 
 Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连接调用同一组界面动作，例如：
 
@@ -48,14 +55,18 @@ Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连
 
 接口仅在用户显式启用本机自动化后可调用。不要把真实密码写进命令行历史，可使用 CLI 的 JSON 行输入。UI 与脚本走同一原生接口。
 
+批量暂存使用 `selection.toggle` → `selection.snapshot` → `selection.stage`，最后返回一次性 ticket，须显式调用两次 `confirm.advance`。ticket 与账户、当前会话、选中快照绑定并在提交前消费，2 分钟后失效；失败只返回逐项结果，不自动重试。`selection.result` 可查询本次结果。正常复制/移动等文件任务的终态规则不受媒体库功能影响。
+
 ## 验证
 
     node --test scripts/tests/rhvideo.test.mjs
-    cargo test -p rhfiles-tauri --locked rhvideo::tests
+    node --test scripts/tests/rhvideo-workbench.test.mjs
+    cargo test -p rhfiles-tauri --locked rhvideo::
+    cargo test --manifest-path android/src-tauri/Cargo.toml --locked --test webview_startup
     node --test --test-concurrency=1 scripts/e2e/rhvideo.test.mjs
 
 Windows E2E 使用隔离配置，不操作已安装的 RHFiles。设置 RHFILES_NATIVE_PLAYER_QA=1 可启用真实 libVLC 播放验收，需要已安装 64 位 VLC 和 FFmpeg。测试生成专用 MP4，检查真实进度、暂停、跳转、前后切换，不以模拟播放代替。
 
 同级有 RHVideo 源码时，还会通过它的 uv 环境启动真实 FastAPI，使用独立临时 SQLite、生成的媒体及测试账号核对 API 契约。测试工作目录不含生产 .env，不连接或写入正式媒体库。
 
-Android 的 RhVideoClientTest 覆盖账号保存边界、API 契约、缓存、UUID、路径安全、原生 Range 跳转与退出撤销。scripts/testing/rhvideo-android.mjs 仅接受模拟器，安装正式压缩的 APK 和测试 APK，使用临时服务器与生成的视频验收手机布局、图片、收藏、章节进度、原生播放/跳转/播放队列和返回行为，并保存截图；不会连接真机或正式媒体库。
+Android 的 RhVideoClientTest/RhVideoContractTest 覆盖账户偏好/断点隔离、固定 API 契约、缓存、路径安全、原生 Range 跳转、21 项播放窗口、9 项同屏分组和退出撤销。scripts/testing/rhvideo-android.mjs 仅接受模拟器，核对已安装 APK 字节哈希，使用临时服务器与生成的视频验收；开机尚未完成、系统/应用错误弹窗、解码失败都不能算通过。它不会连接真机或正式媒体库。

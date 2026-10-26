@@ -1,0 +1,3569 @@
+/* RHFiles media workbench. Packaged UI, native HTTP/media, semantic public API. */
+(() => {
+  "use strict";
+  window.RHVideoWorkbench = {
+    install(ctx) {
+      const {
+        api,
+        native,
+        action,
+        invoke,
+        object,
+        string,
+        state,
+        reader,
+        $,
+        notice,
+        load,
+        showImage,
+        openMedia,
+        icon,
+      } = ctx;
+      const I = RHVideoIndex,
+        listen = (node, type, fn, site) =>
+          RHFilesUI.listen(
+            node,
+            type,
+            fn,
+            undefined,
+            "rhvideo.workbench." + site,
+          );
+      let worker,
+        sequence = 0,
+        epoch = 0,
+        account = "",
+        prefs = {},
+        saveTimer = 0,
+        saveChain = Promise.resolve(),
+        selected = new Set(),
+        raw = new Map(),
+        queries = new Map(),
+        imageSession = null,
+        imageToken = 0,
+        dialogStack = [];
+      const requests = new Map(),
+        manifest = fetch("rhvideo-operations.json").then((r) => {
+          if (!r.ok) throw Error("无法读取媒体操作契约");
+          return r.json();
+        });
+      const defaults = {
+        sort: "dateDesc",
+        rule: { mode: "and", include: [], exclude: [] },
+        mediaType: "",
+        seed: 0,
+        stay: 5,
+        videoStay: 15,
+        overlap: true,
+        ratio: 0.3,
+        min: 1,
+        max: 2.5,
+        kenBurns: true,
+        lanes: 1,
+        vertical: false,
+        scrollSpeed: 60,
+        perVideo: 8,
+        mixPictures: false,
+        readerTheme: "day",
+        readerLine: 2.05,
+        readerFont: 20,
+        segment: 15,
+        fullLength: true,
+        portraitOnly: false,
+        loop: false,
+        super: false,
+        rotation: 0,
+        gridCount: 4,
+        resume: true,
+      };
+      const config = () => ({ ...defaults, ...prefs });
+      function el(tag, text, cls) {
+        const node = document.createElement(tag);
+        if (text !== undefined) node.textContent = text;
+        if (cls) node.className = cls;
+        return node;
+      }
+      function button(text, name, args = {}, cls = "button secondary") {
+        const b = el("button", text, cls);
+        b.type = "button";
+        b.dataset.apiAction = "rhvideo." + name;
+        listen(
+          b,
+          "click",
+          () =>
+            invoke(name, typeof args === "function" ? args() : args).catch(
+              notice,
+            ),
+          name,
+        );
+        return b;
+      }
+      function select(options, name, args, value) {
+        const node = el("select");
+        node.dataset.apiAction = "rhvideo." + name;
+        for (const [key, label] of options) node.append(new Option(label, key));
+        node.value = String(value ?? "");
+        listen(
+          node,
+          "change",
+          () => invoke(name, args(node.value)).catch(notice),
+          name,
+        );
+        return node;
+      }
+      function field(label, input) {
+        const root = el("label", undefined, "wb-field");
+        root.append(el("span", label), input);
+        return root;
+      }
+      function input(type, value, id) {
+        const node = el("input");
+        node.dataset.apiAction = "ui.set";
+        node.type = type;
+        node.value = String(value ?? "");
+        if (id) node.id = id;
+        return node;
+      }
+      function dialog(id, title) {
+        if (id !== "wb-viewer" && viewer?.videoActive) {
+          void native("presentation.control", { command: "pause" }).catch(
+            notice,
+          );
+          void syncPresentation(0, false).catch(notice);
+        }
+        let node = $(id);
+        if (!node) {
+          node = el("dialog", undefined, "wb-dialog");
+          node.id = id;
+          const header = el("header", undefined, "wb-dialog-head");
+          header.append(el("h2", title), button("关闭", "panel.close", { id }));
+          node.append(header, el("section", undefined, "wb-content"));
+          document.body.append(node);
+          listen(
+            node,
+            "cancel",
+            (event) => {
+              event.preventDefault();
+              invoke("panel.close", { id }).catch(notice);
+            },
+            id + ".cancel",
+          );
+        }
+        if (!node.open) {
+          node.showModal();
+          dialogStack = dialogStack.filter((v) => v !== id);
+          dialogStack.push(id);
+        }
+        node.querySelector(".wb-dialog-head h2").textContent = title;
+        return node.querySelector(".wb-content");
+      }
+      function startWorker() {
+        worker?.terminate();
+        for (const p of requests.values()) {
+          clearTimeout(p.timer);
+          p.reject(Error("媒体账户或清单已更改"));
+        }
+        requests.clear();
+        worker = new Worker("js/rhvideo-worker.js");
+        worker.onmessage = (e) => {
+          const p = requests.get(e.data.id);
+          if (!p) return;
+          requests.delete(e.data.id);
+          clearTimeout(p.timer);
+          e.data.error
+            ? p.reject(Error(e.data.error))
+            : p.resolve(e.data.result);
+        };
+        worker.onerror = () => {
+          for (const p of requests.values()) {
+            clearTimeout(p.timer);
+            p.reject(Error("媒体搜索索引失败，请刷新媒体库"));
+          }
+          requests.clear();
+        };
+      }
+      function send(action, args = {}) {
+        if (!worker) startWorker();
+        return new Promise((resolve, reject) => {
+          const id = ++sequence,
+            timer = setTimeout(() => {
+              requests.delete(id);
+              reject(Error("媒体索引处理超时"));
+            }, 120000);
+          requests.set(id, { resolve, reject, timer });
+          worker.postMessage({ id, action, args });
+        });
+      }
+      async function reset(authenticated) {
+        ctx.invalidateReads();
+        epoch++;
+        account = "";
+        raw.clear();
+        queries.clear();
+        selected.clear();
+        lastBatch = null;
+        imageSession = null;
+        imageToken++;
+        stopViewer();
+        pendingConfirmation = null;
+        server.load++;
+        Object.assign(server, {
+          page: "watch",
+          queue: "default",
+          view: "running",
+          pageNumber: 1,
+          q: "",
+          days: 7,
+          status: "all",
+        });
+        preview.load++;
+        preview.items = [];
+        gallery.load++;
+        gallery.loaded = false;
+        gallery.items = [];
+        gallery.offset = 0;
+        gallery.total = 0;
+        gallery.seed = 0;
+        state.search = "";
+        state.folder = "";
+        state.offset = 0;
+        $("search").value = "";
+        $("folder").replaceChildren(new Option("所有文件夹", ""));
+        for (const node of document.querySelectorAll(".wb-dialog")) {
+          node.close();
+          node.querySelector(".wb-content")?.replaceChildren();
+        }
+        dialogStack = [];
+        startWorker();
+        prefs = {};
+        clearTimeout(saveTimer);
+        if (authenticated) {
+          const s = await native("state");
+          account = s.server + "\n" + s.username;
+          prefs = await native("preferences");
+          applyPreferences();
+        }
+        return { reset: true };
+      }
+      async function ensure() {
+        const s = await native("state");
+        if (!s.connected) throw Error("请先连接并登录 RHVideo");
+        const key = s.server + "\n" + s.username;
+        if (account !== key) {
+          await reset(true);
+        }
+        await ready;
+        return epoch;
+      }
+      function applyPreferences() {
+        const c = config();
+        $("wb-sort").value = c.sort;
+        document.documentElement.style.setProperty(
+          "--reader-size",
+          c.readerFont + "px",
+        );
+        document.documentElement.style.setProperty(
+          "--reader-line",
+          c.readerLine,
+        );
+        $("reader-dialog").dataset.theme = c.readerTheme;
+        if (
+          ![...$("reader-font").options].some(
+            (option) => option.value === String(c.readerFont),
+          )
+        )
+          $("reader-font").append(
+            new Option(String(c.readerFont), String(c.readerFont)),
+          );
+        $("reader-font").value = String(c.readerFont);
+      }
+      function save() {
+        clearTimeout(saveTimer);
+        const session = epoch;
+        saveTimer = setTimeout(() => {
+          const value = structuredClone(prefs);
+          saveChain = saveChain
+            .catch(() => {})
+            .then(() => {
+              if (session === epoch && state.connected)
+                return native("preferences", { value });
+            })
+            .catch(notice);
+        }, 150);
+      }
+      async function rawCatalog(kind, refresh = false) {
+        const version = epoch;
+        if (refresh) {
+          raw.delete(kind);
+          queries.clear();
+        }
+        if (!raw.has(kind))
+          raw.set(
+            kind,
+            (async () => {
+              let rows;
+              if (kind === "favorite") {
+                rows = [];
+                const seen = new Set();
+                for (let skip = 0; skip < 100000; skip += 200) {
+                  const data = await remote("index.favorite", {
+                    query: { skip, limit: 200, media_type: "all" },
+                  });
+                  if (version !== epoch) throw Error("账户已更改");
+                  if (!Array.isArray(data.items))
+                    throw Error("收藏清单格式无效");
+                  if (
+                    data.items.some((v) =>
+                      seen.has((v.type || v.kind) + ":" + v.id),
+                    )
+                  )
+                    throw Error("服务器重复返回同一页收藏，已停止继续请求");
+                  data.items.forEach((v) =>
+                    seen.add((v.type || v.kind) + ":" + v.id),
+                  );
+                  rows.push(...data.items);
+                  if (!data.items.length || rows.length >= data.total) break;
+                  if (skip >= 99800)
+                    throw Error("收藏清单超过 10 万项，请先在服务器缩小范围");
+                }
+              } else {
+                const data = await remote("index." + kind, {
+                  ...(["video", "novel"].includes(kind)
+                    ? {
+                        query: {
+                          summary: true,
+                          ...(kind === "video" ? { refresh } : {}),
+                        },
+                      }
+                    : {}),
+                });
+                rows = Array.isArray(data) ? data : data.items;
+              }
+              if (version !== epoch) throw Error("账户已更改");
+              await send("set", { kind, items: rows });
+              return true;
+            })().catch((error) => {
+              raw.delete(kind);
+              throw error;
+            }),
+          );
+        return raw.get(kind);
+      }
+      function criteria(extra = {}) {
+        const c = config();
+        return {
+          kind: state.kind,
+          search: state.search,
+          folder: state.folder,
+          rule: c.rule,
+          sort: c.sort,
+          seed: c.seed,
+          mediaType: state.kind === "favorite" ? c.mediaType : "",
+          offset: state.offset,
+          limit: state.limit,
+          ...extra,
+        };
+      }
+      async function query(extra = {}) {
+        const token = await ensure(),
+          args = criteria(extra);
+        await rawCatalog(args.kind);
+        const result = await send("query", args);
+        if (token !== epoch) throw Error("媒体账户已更改");
+        return result;
+      }
+      async function catalog(refresh) {
+        await ensure();
+        await rawCatalog(state.kind, refresh);
+        const result = await query();
+        const resolved = await native("resolve", { items: result.items });
+        return { ...resolved, total: result.total };
+      }
+      async function remote(name, args = {}) {
+        await ready;
+        return api.invoke("rhvideo.remote." + name, args);
+      }
+      const simpleSchema = (rule) =>
+        rule === "bool"
+          ? { type: "boolean" }
+          : rule.startsWith("int:")
+            ? {
+                type: "integer",
+                minimum: Number(rule.split(":")[1]),
+                maximum: Number(rule.split(":")[2]),
+              }
+            : rule.startsWith("ids:")
+              ? {
+                  type: "array",
+                  items: { type: "string", minLength: 1, maxLength: 128 },
+                  minItems: 1,
+                  maxItems: Number(rule.split(":")[1]),
+                }
+              : rule.startsWith("text:")
+                ? { type: "string", maxLength: Number(rule.split(":")[1]) }
+                : rule === "resolution"
+                  ? {}
+                  : rule.includes("|")
+                    ? {
+                        enum: rule
+                          .split("|")
+                          .flatMap((v) =>
+                            /^\d+$/.test(v) ? [v, Number(v)] : [v],
+                          ),
+                      }
+                    : { type: "string", maxLength: 160 };
+      const ready = manifest.then((spec) => {
+        for (const [name, s] of Object.entries(spec.operations)) {
+          if (s.internal) continue;
+          const pathKeys = [...s.path.matchAll(/\{([^}]+)\}/g)].map(
+              (m) => m[1],
+            ),
+            props = {};
+          if (pathKeys.length)
+            props.params = object(
+              Object.fromEntries(
+                pathKeys.map((k) => [k, simpleSchema(s.params?.[k] || "id")]),
+              ),
+              pathKeys,
+            );
+          for (const section of ["query", "body"])
+            if (s[section])
+              props[section] = object(
+                Object.fromEntries(
+                  Object.entries(s[section]).map(([k, v]) => [
+                    k,
+                    simpleSchema(v),
+                  ]),
+                ),
+              );
+          if (s.risk === "destructive")
+            props.confirmation = { type: "string", enum: ["RHVIDEO:" + name] };
+          action(
+            "remote." + name,
+            object(props, [
+              ...(pathKeys.length ? ["params"] : []),
+              ...(s.risk === "destructive" ? ["confirmation"] : []),
+            ]),
+            async (args) => {
+              const version = epoch;
+              const result = await native("operation", { name, ...args });
+              if (version !== epoch)
+                throw Error(
+                  "媒体账户已更改，已丢弃旧响应；写操作可能已完成，请在原服务器核对，不会自动重试",
+                );
+              if (s.risk === "write" || s.risk === "destructive") {
+                raw.clear();
+                gallery.loaded = false;
+                if ($("wb-server")?.open) await renderServer();
+              }
+              return result;
+            },
+            s.risk || "read",
+          );
+        }
+        return spec;
+      });
+      action(
+        "capabilities",
+        object(),
+        async () => ({
+          contractVersion: (await manifest).version,
+          operations: Object.keys((await manifest).operations).filter(
+            (n) => !awaitSpec(n)?.internal,
+          ),
+          nativeVideo: true,
+        }),
+        "read",
+      );
+      let cachedSpec;
+      manifest.then((v) => (cachedSpec = v));
+      function awaitSpec(name) {
+        return cachedSpec?.operations[name];
+      }
+      action(
+        "panel.close",
+        object(
+          {
+            id: {
+              type: "string",
+              enum: [
+                "wb-settings",
+                "wb-server",
+                "wb-info",
+                "wb-preview",
+                "wb-confirm",
+                "wb-gallery",
+                "wb-viewer",
+              ],
+            },
+          },
+          ["id"],
+        ),
+        async ({ id }) => {
+          if (id === "wb-viewer") stopViewer();
+          if (id === "wb-confirm") pendingConfirmation = null;
+          $(id)?.close();
+          if (viewer?.videoActive && viewerIsTop()) {
+            await syncPresentation();
+            if (viewer.running)
+              await native("presentation.control", { command: "resume" });
+          }
+          return { closed: true };
+        },
+      );
+      action(
+        "sort",
+        object({ value: { type: "string", enum: I.sorts } }, ["value"]),
+        async ({ value }) => {
+          prefs.sort = value;
+          prefs.seed = 0;
+          state.offset = 0;
+          save();
+          applyPreferences();
+          return load();
+        },
+      );
+      action(
+        "selection.toggle",
+        object(
+          {
+            id: string,
+            kind: { type: "string", enum: ["video", "picture", "novel"] },
+            enabled: { type: "boolean" },
+          },
+          ["id", "kind", "enabled"],
+        ),
+        ({ id, kind, enabled }) => {
+          const key = kind + ":" + id;
+          enabled ? selected.add(key) : selected.delete(key);
+          paintCards();
+          return { count: selected.size };
+        },
+      );
+      action("order.shuffle", object(), async () => {
+        prefs.seed = crypto.getRandomValues(new Uint32Array(1))[0] || 1;
+        state.offset = 0;
+        save();
+        return load();
+      });
+      action("order.restore", object(), async () => {
+        prefs.seed = 0;
+        state.offset = 0;
+        save();
+        return load();
+      });
+      action(
+        "order.save",
+        object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
+          "name",
+        ]),
+        ({ name }) => {
+          const orders = prefs.orders || {};
+          if (!Object.hasOwn(orders, name) && Object.keys(orders).length >= 32)
+            throw Error("最多保存 32 个浏览顺序");
+          prefs.orders = {
+            ...orders,
+            [name]: {
+              ...criteria(),
+              seed: config().seed,
+              offset: state.offset,
+            },
+          };
+          save();
+          return { saved: name };
+        },
+      );
+      action(
+        "order.restoreNamed",
+        object({ name: { type: "string", maxLength: 100 } }, ["name"]),
+        async ({ name }) => {
+          const saved = prefs.orders?.[name];
+          if (!saved) throw Error("没有这个浏览顺序");
+          await invoke("category", { kind: saved.kind });
+          state.search = saved.search || "";
+          state.folder = saved.folder || "";
+          state.offset = saved.offset || 0;
+          $("search").value = state.search;
+          $("folder").value = state.folder;
+          prefs.seed = saved.seed;
+          prefs.sort = saved.sort;
+          prefs.rule = saved.rule;
+          save();
+          return load();
+        },
+      );
+      action("order.open", object(), () => {
+        const root = dialog("wb-settings", "浏览顺序");
+        root.replaceChildren(
+          button("随机排列", "order.shuffle"),
+          button("还原默认顺序", "order.restore"),
+        );
+        const name = input("text", "", "wb-order-name");
+        root.append(
+          field("保存名称", name),
+          button("保存当前顺序", "order.save", () => ({ name: name.value })),
+        );
+        for (const name of Object.keys(prefs.orders || {})) {
+          const row = serverRow(name, "浏览顺序");
+          row.append(
+            button("恢复", "order.restoreNamed", { name }),
+            button("移除", "order.delete", { name }),
+          );
+          root.append(row);
+        }
+        return { opened: true };
+      });
+      action(
+        "order.delete",
+        object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
+          "name",
+        ]),
+        ({ name }) => {
+          delete prefs.orders?.[name];
+          save();
+          return { removed: name };
+        },
+      );
+      action("selection.clear", object(), () => {
+        selected.clear();
+        paintCards();
+        return { count: 0 };
+      });
+      action("selection.page", object(), () => {
+        for (const row of state.items) selected.add(I.key(row));
+        paintCards();
+        return { count: selected.size };
+      });
+      async function selectedItems() {
+        const version = await ensure(),
+          keys = [...selected],
+          items = [];
+        if (!keys.length) throw Error("请先选择媒体");
+        for (const kind of ["video", "picture", "novel"]) {
+          if (!keys.some((key) => key.startsWith(kind + ":"))) continue;
+          await rawCatalog(kind);
+          const result = await send("query", {
+            kind,
+            selected: keys,
+            search: "",
+            folder: "",
+            rule: {},
+            sort: "nameAsc",
+            seed: 0,
+            allKeys: true,
+            offset: 0,
+            limit: 1,
+          });
+          if (version !== epoch) throw Error("媒体账户已更改");
+          items.push(...result.queue);
+        }
+        if (items.length !== keys.length)
+          throw Error("部分所选媒体已不存在，请刷新并重新选择");
+        return items;
+      }
+      action(
+        "selection.snapshot",
+        object(),
+        async () => ({ items: await selectedItems() }),
+        "read",
+      );
+      action(
+        "selection.stage",
+        object(),
+        async () => {
+          const items = await selectedItems();
+          return beginConfirmation({ name: "trash.stage", batch: items });
+        },
+        "destructive",
+      );
+      action("selection.result", object(), () => lastBatch, "read");
+      action("selection.markCurrent", object(), async () => {
+        const item = $("wb-viewer")?.open
+          ? viewer?.current
+          : imageSession?.current;
+        if (!item) throw Error("当前没有可标记的预览项目");
+        const kind = item.kind === "frame" ? "video" : item.kind,
+          id = item.kind === "frame" ? item.videoId : item.id;
+        if (!["video", "picture", "novel"].includes(kind) || !id)
+          throw Error("此预览没有源文件标识");
+        const enabled = !selected.has(kind + ":" + id);
+        await invoke("selection.toggle", { kind, id, enabled });
+        notice(enabled ? "已标记，可在多选栏核对并暂存" : "已取消标记", true);
+        return { kind, id, enabled };
+      });
+      function paintCards() {
+        for (const card of $("media-grid").querySelectorAll(".media-card")) {
+          const key = card.dataset.kind + ":" + card.dataset.id;
+          let checkbox = card.querySelector(".wb-select");
+          if (!checkbox) {
+            checkbox = input("checkbox", "");
+            checkbox.className = "wb-select";
+            checkbox.setAttribute(
+              "aria-label",
+              "选择 " + card.querySelector(".card-title").textContent,
+            );
+            listen(
+              checkbox,
+              "change",
+              () =>
+                invoke("selection.toggle", {
+                  id: card.dataset.id,
+                  kind: card.dataset.kind,
+                  enabled: checkbox.checked,
+                }).catch(notice),
+              "selection",
+            );
+            card.prepend(checkbox);
+            card
+              .querySelector(".card-actions")
+              .prepend(
+                button(
+                  "更多",
+                  "media.actions",
+                  { id: card.dataset.id, kind: card.dataset.kind },
+                  "text-button",
+                ),
+              );
+          }
+          checkbox.checked = selected.has(key);
+          card.classList.toggle("selected", checkbox.checked);
+        }
+        $("wb-selection-count").textContent = selected.size
+          ? "已选 " + selected.size + " 项"
+          : "";
+        if ($("wb-selection")) $("wb-selection").hidden = selected.size === 0;
+      }
+      action(
+        "media.actions",
+        object(
+          {
+            id: string,
+            kind: { type: "string", enum: ["video", "picture", "novel"] },
+          },
+          ["id", "kind"],
+        ),
+        async (args) => {
+          const content = dialog("wb-info", "媒体操作");
+          content.replaceChildren();
+          const media = state.items.find(
+            (v) => v.id === args.id && v.kind === args.kind,
+          );
+          if (!media) throw Error("请刷新后重新选择");
+          content.append(el("h3", media.title));
+          if (media.kind === "video")
+            content.append(
+              button("媒体信息", "media.info", { id: media.id }),
+              button("原片替换预估", "replacement.estimate", { id: media.id }),
+              button("重新处理", "remote.video.reprocess", {
+                params: { id: media.id },
+              }),
+              button("在服务器打开文件", "remote.video.open", {
+                params: { id: media.id },
+              }),
+              button("在服务器打开所在文件夹", "remote.video.folder", {
+                params: { id: media.id },
+              }),
+            );
+          if (media.kind === "novel")
+            content.append(
+              button("章节速览", "novel.preview", { id: media.id, offset: 0 }),
+            );
+          content.append(
+            button(
+              "删除源文件并暂存 30 天",
+              "confirm.begin",
+              { name: "trash.stage", params: args },
+              "button destructive",
+            ),
+          );
+          return { opened: true };
+        },
+      );
+      action(
+        "media.info",
+        object({ id: string }, ["id"]),
+        async ({ id }) => {
+          const data = await remote("video.info", { params: { id } });
+          const root = dialog("wb-info", "视频信息");
+          root.replaceChildren(detail(data));
+          return { info: data };
+        },
+        "read",
+      );
+      function detail(value) {
+        const root = el("div", undefined, "wb-details");
+        for (const [key, v] of Object.entries(value || {})) {
+          const row = el("div", undefined, "wb-detail");
+          row.append(
+            el("span", key),
+            typeof v === "object"
+              ? el("pre", JSON.stringify(v, null, 2))
+              : el("strong", String(v ?? "—")),
+          );
+          root.append(row);
+        }
+        return root;
+      }
+      action(
+        "preferences.set",
+        object(
+          { key: { type: "string", enum: Object.keys(defaults) }, value: {} },
+          ["key", "value"],
+        ),
+        async ({ key, value }) => {
+          if (
+            (typeof defaults[key] === "boolean" &&
+              typeof value !== "boolean") ||
+            (typeof defaults[key] === "number" &&
+              (!Number.isFinite(value) || Math.abs(value) > 4294967295)) ||
+            (typeof defaults[key] === "string" && typeof value !== "string")
+          )
+            throw Error("偏好参数无效");
+          if (
+            (key === "sort" && !I.sorts.includes(value)) ||
+            (key === "lanes" && ![1, 2].includes(value)) ||
+            (key === "readerTheme" &&
+              !["day", "sepia", "night"].includes(value))
+          )
+            throw Error("设置选项无效");
+          const bounds = {
+            readerFont: [13, 40],
+            readerLine: [1.2, 3],
+            perVideo: [1, 100],
+            gridCount: [1, 9],
+            stay: [0.1, 30],
+            videoStay: [1, 300],
+            min: [0, 30],
+            max: [0, 30],
+            ratio: [0, 1],
+            segment: [0.1, 3600],
+            scrollSpeed: [0, 1000],
+            seed: [0, 4294967295],
+          };
+          if (bounds[key] && (value < bounds[key][0] || value > bounds[key][1]))
+            throw Error("设置数值超出范围");
+          if (
+            (["perVideo", "gridCount", "readerFont"].includes(key) &&
+              !Number.isSafeInteger(value)) ||
+            (key === "rotation" && ![0, 90, 180, 270].includes(value))
+          )
+            throw Error("设置数值无效");
+          if (key === "rule")
+            await send("query", { ...criteria(), rule: value, limit: 1 });
+          prefs[key] = value;
+          save();
+          applyPreferences();
+          if (["perVideo", "mixPictures"].includes(key)) {
+            gallery.loaded = false;
+            if ($("wb-gallery")?.open) await loadGallery(true);
+          }
+          if (["rule", "sort", "mediaType", "seed"].includes(key)) {
+            state.offset = 0;
+            await load();
+          }
+          return { key, value };
+        },
+      );
+      action(
+        "preferences.state",
+        object(),
+        () => structuredClone(config()),
+        "read",
+      );
+      action(
+        "preferences.flush",
+        object(),
+        async () => {
+          const version = await ensure(),
+            value = structuredClone(prefs);
+          clearTimeout(saveTimer);
+          const pending = saveChain
+            .catch(() => {})
+            .then(() => {
+              if (version !== epoch) throw Error("媒体账户已更改");
+              return native("preferences", { value });
+            });
+          saveChain = pending.catch(notice);
+          return pending;
+        },
+        "write",
+      );
+      action("preferences.reset", object(), async () => {
+        prefs = {};
+        save();
+        applyPreferences();
+        return load();
+      });
+      action("settings.open", object(), () => {
+        const root = dialog("wb-settings", "媒体库偏好");
+        root.replaceChildren();
+        const c = config();
+        const groups = [
+          [
+            "浏览",
+            [
+              ["mediaType", "收藏类型", "all"],
+              ["perVideo", "每个视频截图数", "number"],
+              ["mixPictures", "截图库混入图片", "bool"],
+              ["gridCount", "同屏视频数（1–9）", "number"],
+            ],
+          ],
+          [
+            "连播",
+            [
+              ["fullLength", "播放全长", "bool"],
+              ["segment", "分段秒数", "number"],
+              ["portraitOnly", "仅竖屏视频", "bool"],
+              ["loop", "循环队列", "bool"],
+              ["super", "超压低带宽版本", "bool"],
+              ["rotation", "旋转角度", "number"],
+              ["resume", "记住播放断点", "bool"],
+            ],
+          ],
+          [
+            "连续浏览与放映",
+            [
+              ["vertical", "竖向长卷", "bool"],
+              ["lanes", "列数", "number"],
+              ["scrollSpeed", "每秒滚动像素", "number"],
+              ["stay", "每张停留秒数", "number"],
+              ["videoStay", "混合放映每段视频秒数", "number"],
+              ["kenBurns", "缓慢缩放平移", "bool"],
+              ["overlap", "重叠过渡", "bool"],
+              ["ratio", "过渡时长比例", "number"],
+              ["min", "过渡下限秒数", "number"],
+              ["max", "过渡上限秒数", "number"],
+            ],
+          ],
+          [
+            "阅读",
+            [
+              ["readerFont", "字号", "number"],
+              ["readerLine", "行距", "number"],
+            ],
+          ],
+        ];
+        for (const [title, fields] of groups) {
+          root.append(el("h3", title));
+          const grid = el("div", undefined, "wb-settings-grid");
+          for (const [key, label, type] of fields) {
+            let control;
+            if (type === "all")
+              control = select(
+                [
+                  ["", "全部"],
+                  ["video", "视频"],
+                  ["picture", "图片"],
+                  ["novel", "小说"],
+                ],
+                "preferences.set",
+                (value) => ({ key, value }),
+                c[key],
+              );
+            else {
+              control = input(type === "bool" ? "checkbox" : "number", c[key]);
+              if (type === "bool") control.checked = c[key];
+              if (type === "number") control.step = "any";
+              listen(
+                control,
+                "change",
+                () =>
+                  invoke("preferences.set", {
+                    key,
+                    value:
+                      type === "bool" ? control.checked : Number(control.value),
+                  }).catch(notice),
+                "settings." + key,
+              );
+            }
+            grid.append(field(label, control));
+          }
+          root.append(grid);
+        }
+        root.append(
+          button("快捷键", "shortcuts.open"),
+          field(
+            "阅读主题",
+            select(
+              [
+                ["day", "日间"],
+                ["sepia", "护眼"],
+                ["night", "夜间"],
+              ],
+              "preferences.set",
+              (value) => ({ key: "readerTheme", value }),
+              c.readerTheme,
+            ),
+          ),
+          button("重置当前账户偏好", "preferences.reset"),
+        );
+        return { opened: true };
+      });
+      const shortcutDefaults = {
+        viewer: { next: "ArrowRight", previous: "ArrowLeft", toggle: "Space" },
+        reader: { next: "Alt+ArrowRight", previous: "Alt+ArrowLeft" },
+        image: { next: "ArrowRight", previous: "ArrowLeft" },
+      };
+      const shortcutSchema = {
+        scope: { type: "string", enum: ["viewer", "reader", "image"] },
+        command: { type: "string", enum: ["next", "previous", "toggle"] },
+        combo: { type: "string", maxLength: 80 },
+      };
+      action(
+        "shortcuts.set",
+        object(shortcutSchema, ["scope", "command", "combo"]),
+        ({ scope, command, combo }) => {
+          if (!Object.hasOwn(shortcutDefaults[scope], command))
+            throw Error("此界面不支持该快捷操作");
+          if (
+            !/^(?:Ctrl\+)?(?:Alt\+)?(?:Shift\+)?(?:Meta\+)?(?:ArrowLeft|ArrowRight|Space|PageUp|PageDown|Key[A-Z]|Digit[0-9]|F(?:[1-9]|1[0-2]))$/.test(
+              combo,
+            )
+          )
+            throw Error("快捷键格式无效，例如 Alt+ArrowRight");
+          const map = {
+            ...shortcutDefaults[scope],
+            ...prefs.shortcuts?.[scope],
+          };
+          if (
+            Object.entries(map).some(
+              ([key, value]) => key !== command && value === combo,
+            )
+          )
+            throw Error("同一界面内已有这个快捷键");
+          prefs.shortcuts = {
+            ...(prefs.shortcuts || {}),
+            [scope]: { ...map, [command]: combo },
+          };
+          save();
+          return { scope, command, combo };
+        },
+      );
+      action("shortcuts.reset", object(), () => {
+        delete prefs.shortcuts;
+        save();
+        return { reset: true };
+      });
+      action("shortcuts.open", object(), () => {
+        const root = dialog("wb-settings", "媒体快捷键");
+        root.replaceChildren();
+        for (const [scope, commands] of Object.entries(shortcutDefaults)) {
+          root.append(
+            el(
+              "h3",
+              {
+                viewer: "连续浏览/放映",
+                reader: "小说阅读",
+                image: "图片查看",
+              }[scope],
+            ),
+          );
+          for (const [command, defaultCombo] of Object.entries(commands)) {
+            const value = input(
+              "text",
+              prefs.shortcuts?.[scope]?.[command] || defaultCombo,
+            );
+            listen(
+              value,
+              "change",
+              () =>
+                invoke("shortcuts.set", {
+                  scope,
+                  command,
+                  combo: value.value,
+                }).catch(notice),
+              "shortcut." + scope + "." + command,
+            );
+            root.append(
+              field(
+                { next: "下一项", previous: "上一项", toggle: "暂停/继续" }[
+                  command
+                ],
+                value,
+              ),
+            );
+          }
+        }
+        root.append(button("恢复媒体快捷键", "shortcuts.reset"));
+        return { opened: true };
+      });
+      listen(
+        document,
+        "keydown",
+        (event) => {
+          if (
+            event.defaultPrevented ||
+            event.target.closest?.(
+              "input,textarea,select,[contenteditable=true]",
+            ) ||
+            $("wb-settings")?.open ||
+            $("wb-confirm")?.open
+          )
+            return;
+          const scope = $("wb-viewer")?.open
+            ? "viewer"
+            : $("reader-dialog").open
+              ? "reader"
+              : $("image-dialog").open
+                ? "image"
+                : null;
+          if (!scope) return;
+          const combo =
+            (event.ctrlKey ? "Ctrl+" : "") +
+            (event.altKey ? "Alt+" : "") +
+            (event.shiftKey ? "Shift+" : "") +
+            (event.metaKey ? "Meta+" : "") +
+            event.code;
+          const bindings = {
+            ...shortcutDefaults[scope],
+            ...prefs.shortcuts?.[scope],
+          };
+          const command = Object.keys(bindings).find(
+            (k) => bindings[k] === combo,
+          );
+          if (!command) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const name =
+            scope === "viewer"
+              ? command === "toggle"
+                ? "viewer.toggle"
+                : "viewer.step"
+              : scope === "reader"
+                ? "reader.step"
+                : "image.step";
+          void invoke(
+            name,
+            command === "toggle"
+              ? {}
+              : { direction: command === "previous" ? -1 : 1 },
+          ).catch(notice);
+        },
+        "keyboard",
+      );
+      action(
+        "rules.apply",
+        object({ rule: { type: "object" } }, ["rule"]),
+        async ({ rule }) => {
+          const result = await send("query", { ...criteria(), rule, limit: 1 });
+          prefs.rule = rule;
+          state.offset = 0;
+          save();
+          await load();
+          return { total: result.total };
+        },
+      );
+      action(
+        "rules.save",
+        object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
+          "name",
+        ]),
+        ({ name }) => {
+          prefs.savedRules = {
+            ...(prefs.savedRules || {}),
+            [name]: structuredClone(config().rule),
+          };
+          save();
+          return { saved: true };
+        },
+      );
+      action(
+        "rules.restore",
+        object({ name: { type: "string", maxLength: 100 } }, ["name"]),
+        ({ name }) => {
+          const rule = prefs.savedRules?.[name];
+          if (!rule) throw Error("没有这个筛选规则");
+          return invoke("rules.apply", { rule });
+        },
+      );
+      action("rules.open", object(), () => {
+        ruleMode = config().rule.mode || "and";
+        const root = dialog("wb-settings", "标签规则");
+        root.replaceChildren();
+        const include = input(
+            "text",
+            config().rule.include?.join(",") || "",
+            "wb-rule-include",
+          ),
+          exclude = input(
+            "text",
+            config().rule.exclude?.join(",") || "",
+            "wb-rule-exclude",
+          ),
+          mode = select(
+            [
+              ["and", "同时满足 AND"],
+              ["or", "任意满足 OR"],
+            ],
+            "rules.mode",
+            (value) => ({ value }),
+            config().rule.mode || "and",
+          );
+        const nested = el("textarea");
+        nested.id = "wb-rule-json";
+        nested.rows = 7;
+        nested.value = JSON.stringify(config().rule, null, 2);
+        root.append(
+          field("组合方式", mode),
+          field("包含标签（逗号分隔）", include),
+          field("排除标签（逗号分隔）", exclude),
+          button("应用标签", "rules.form"),
+          field("嵌套分组（JSON）", nested),
+          button("应用嵌套分组", "rules.json"),
+        );
+        const name = input("text", "", "wb-rule-name");
+        root.append(
+          field("规则名称", name),
+          button("保存规则", "rules.save", () => ({ name: name.value })),
+        );
+        for (const name of Object.keys(prefs.savedRules || {})) {
+          const row = serverRow(name, "标签规则");
+          row.append(
+            button("应用", "rules.restore", { name }),
+            button("移除", "rules.delete", { name }),
+          );
+          root.append(row);
+        }
+        return { opened: true };
+      });
+      action(
+        "rules.delete",
+        object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
+          "name",
+        ]),
+        ({ name }) => {
+          delete prefs.savedRules?.[name];
+          save();
+          return { removed: name };
+        },
+      );
+      let ruleMode = "and";
+      action(
+        "rules.mode",
+        object({ value: { type: "string", enum: ["and", "or"] } }, ["value"]),
+        ({ value }) => {
+          ruleMode = value;
+          return { mode: value };
+        },
+      );
+      action("rules.form", object(), () =>
+        invoke("rules.apply", {
+          rule: {
+            mode: $("wb-rule-json") ? ruleMode : config().rule.mode,
+            include: $("wb-rule-include")
+              .value.split(",")
+              .map((v) => v.trim())
+              .filter(Boolean),
+            exclude: $("wb-rule-exclude")
+              .value.split(",")
+              .map((v) => v.trim())
+              .filter(Boolean),
+          },
+        }),
+      );
+      action("rules.json", object(), () =>
+        invoke("rules.apply", { rule: JSON.parse($("wb-rule-json").value) }),
+      );
+      let pendingConfirmation = null,
+        lastBatch = null;
+      function beginConfirmation(args) {
+        const ticket = crypto.randomUUID();
+        pendingConfirmation = {
+          ...args,
+          ticket,
+          account,
+          epoch,
+          step: 0,
+          created: Date.now(),
+        };
+        const root = dialog("wb-confirm", "确认服务器操作");
+        root.replaceChildren(
+          el(
+            "p",
+            "此操作在 RHVideo 服务器执行，不是本机文件操作。请核对目标。",
+          ),
+          args.batch
+            ? el(
+                "p",
+                "将删除源文件并暂存 30 天，共 " + args.batch.length + " 项。",
+              )
+            : detail(args),
+        );
+        if (args.batch)
+          for (const item of args.batch.slice(0, 200))
+            root.append(
+              serverRow(item.title || item.id, item.kind + " · " + item.id),
+            );
+        if (args.batch?.length > 200)
+          root.append(el("p", "完整名单可通过 selection.snapshot 接口导出。"));
+        root.append(button("核对无误，继续", "confirm.advance", { ticket }));
+        return {
+          ticket,
+          step: 0,
+          ...(args.batch ? { count: args.batch.length } : {}),
+        };
+      }
+      action(
+        "confirm.begin",
+        object(
+          {
+            name: string,
+            params: { type: "object" },
+            body: { type: "object" },
+          },
+          ["name"],
+        ),
+        async (args) => {
+          const spec = (await manifest).operations[args.name];
+          if (!spec || spec.risk !== "destructive")
+            throw Error("不支持的确认操作");
+          return beginConfirmation(args);
+        },
+      );
+      action(
+        "confirm.advance",
+        object({ ticket: string }, ["ticket"]),
+        async ({ ticket }) => {
+          const p = pendingConfirmation;
+          if (
+            !p ||
+            p.ticket !== ticket ||
+            p.account !== account ||
+            p.epoch !== epoch ||
+            Date.now() - p.created > 120000
+          )
+            throw Error("确认已失效，请重新发起");
+          if (p.step === 0) {
+            p.step = 1;
+            const root = dialog("wb-confirm", "最后确认");
+            root.append(
+              el("p", "确认后立即提交。失败只显示结果，不会自动重试。"),
+              button(
+                "确认执行",
+                "confirm.advance",
+                { ticket },
+                "button destructive",
+              ),
+            );
+            return { step: 1 };
+          }
+          pendingConfirmation = null;
+          $("wb-confirm").close();
+          if (p.batch) {
+            const results = [],
+              root = dialog("wb-info", "批量暂存结果");
+            root.replaceChildren(el("p", "正在提交 0 / " + p.batch.length));
+            for (const item of p.batch) {
+              if (p.epoch !== epoch || p.account !== account) break;
+              try {
+                await remote("trash.stage", {
+                  params: { kind: item.kind, id: item.id },
+                  confirmation: "RHVIDEO:trash.stage",
+                });
+                selected.delete(item.key || I.key(item));
+                results.push({
+                  id: item.id,
+                  kind: item.kind,
+                  title: item.title,
+                  state: "succeeded",
+                });
+              } catch (error) {
+                results.push({
+                  id: item.id,
+                  kind: item.kind,
+                  title: item.title,
+                  state: "failed",
+                  error: String(error.message || error),
+                });
+              }
+              if (p.epoch !== epoch) break;
+              root.replaceChildren(
+                el("p", "已提交 " + results.length + " / " + p.batch.length),
+              );
+            }
+            if (p.epoch !== epoch)
+              throw Error("账户已更改，未提交的项目不会继续执行");
+            lastBatch = {
+              total: p.batch.length,
+              results,
+              succeeded: results.filter((v) => v.state === "succeeded").length,
+              failed: results.filter((v) => v.state === "failed").length,
+              notAttempted: p.batch.length - results.length,
+            };
+            raw.clear();
+            queries.clear();
+            root.replaceChildren(
+              el(
+                "p",
+                "成功 " +
+                  lastBatch.succeeded +
+                  " 项，失败 " +
+                  lastBatch.failed +
+                  " 项。不会自动重试。",
+              ),
+            );
+            for (const result of results)
+              root.append(
+                serverRow(
+                  result.title || result.id,
+                  result.state === "succeeded" ? "已暂存" : result.error,
+                ),
+              );
+            await load();
+            return lastBatch;
+          }
+          const result = await remote(p.name, {
+            ...(p.params ? { params: p.params } : {}),
+            ...(p.body ? { body: p.body } : {}),
+            confirmation: "RHVIDEO:" + p.name,
+          });
+          raw.clear();
+          notice("服务器操作已完成", true);
+          if ($("wb-server")?.open) await renderServer();
+          return result;
+        },
+        "destructive",
+      );
+      // Server tools share the same registered operation handlers as CLI callers.
+      const server = {
+        page: "watch",
+        queue: "default",
+        view: "running",
+        pageNumber: 1,
+        q: "",
+        days: 7,
+        status: "all",
+        load: 0,
+      };
+      action(
+        "server.open",
+        object(
+          {
+            page: {
+              type: "string",
+              enum: [
+                "watch",
+                "tasks",
+                "replacement",
+                "trash",
+                "storage",
+                "system",
+              ],
+            },
+          },
+          ["page"],
+        ),
+        async ({ page }) => {
+          server.page = page;
+          server.pageNumber = 1;
+          await renderServer();
+          return { page };
+        },
+      );
+      action(
+        "server.filter",
+        object(
+          {
+            key: {
+              type: "string",
+              enum: ["queue", "view", "q", "days", "status", "pageNumber"],
+            },
+            value: {},
+          },
+          ["key", "value"],
+        ),
+        async ({ key, value }) => {
+          server[key] = value;
+          if (key !== "pageNumber") server.pageNumber = 1;
+          await renderServer();
+          return { ...server };
+        },
+      );
+      action(
+        "server.refresh",
+        object(),
+        async () => {
+          await renderServer();
+          return { refreshed: true };
+        },
+        "read",
+      );
+      action(
+        "watch.add",
+        object({ path: { type: "string", maxLength: 8192 } }, ["path"]),
+        async ({ path }) => {
+          const result = await remote("watch.add", { body: { path } });
+          await renderServer();
+          return result;
+        },
+        "write",
+      );
+      async function renderServer() {
+        await ensure();
+        const token = ++server.load,
+          root = dialog("wb-server", "服务器管理");
+        root.replaceChildren();
+        const nav = el("nav", undefined, "wb-tabs");
+        for (const [page, title] of [
+          ["watch", "监控目录"],
+          ["tasks", "处理队列"],
+          ["replacement", "原片替换"],
+          ["trash", "暂存区"],
+          ["storage", "存储"],
+          ["system", "服务"],
+        ])
+          nav.append(
+            button(
+              title,
+              "server.open",
+              { page },
+              "button " + (page === server.page ? "primary" : "secondary"),
+            ),
+          );
+        root.append(nav, button("刷新", "server.refresh"));
+        const body = el("div", undefined, "wb-server-body");
+        root.append(body);
+        body.textContent = "正在读取…";
+        try {
+          const page = server.page;
+          if (page === "watch") {
+            const data = await remote("watch.list");
+            if (token !== server.load) return;
+            body.replaceChildren();
+            const path = input("text", "", "wb-watch-path");
+            path.placeholder = "服务器上的目录路径";
+            body.append(
+              field("添加监控目录", path),
+              button("添加", "watch.add", () => ({ path: path.value })),
+            );
+            for (const w of data.folders || []) {
+              const row = serverRow(w.path, w.enabled ? "监控中" : "已暂停");
+              row.append(
+                button(w.enabled ? "暂停" : "启用", "remote.watch.update", {
+                  params: { id: w.id },
+                  body: { enabled: !w.enabled },
+                }),
+                button("立即扫描", "remote.watch.scan", {
+                  params: { id: w.id },
+                }),
+                button("移除监控", "confirm.begin", {
+                  name: "watch.remove",
+                  params: { id: w.id },
+                }),
+              );
+              row.append(
+                detail({ last_scan_at: w.last_scan_at, ...w.last_scan_result }),
+              );
+              body.append(row);
+            }
+            body.append(
+              detail(
+                Object.fromEntries(
+                  Object.entries(data).filter(([k]) => k !== "folders"),
+                ),
+              ),
+            );
+          } else if (page === "tasks" || page === "replacement") {
+            const kind = page === "replacement" ? "replacement" : server.queue,
+              view =
+                kind === "replacement" && server.view === "failed"
+                  ? "history"
+                  : server.view;
+            const filters = el("div", undefined, "wb-filters");
+            filters.append(
+              select(
+                [
+                  ["default", "默认处理"],
+                  ["replacement", "原片替换"],
+                ],
+                "server.filter",
+                (value) => ({ key: "queue", value }),
+                kind,
+              ),
+              select(
+                [
+                  ["running", "运行中"],
+                  ["queued", "排队中"],
+                  ...(kind === "default" ? [["failed", "失败"]] : []),
+                  ["history", "历史"],
+                ],
+                "server.filter",
+                (value) => ({ key: "view", value }),
+                view,
+              ),
+            );
+            const q = input("search", server.q);
+            q.placeholder = "搜索文件名";
+            listen(
+              q,
+              "change",
+              () =>
+                invoke("server.filter", { key: "q", value: q.value }).catch(
+                  notice,
+                ),
+              "tasks.search",
+            );
+            filters.append(
+              q,
+              select(
+                [
+                  ["7", "7 天"],
+                  ["30", "30 天"],
+                  ["90", "90 天"],
+                  ["0", "全部时间"],
+                ],
+                "server.filter",
+                (value) => ({ key: "days", value: Number(value) }),
+                server.days,
+              ),
+              select(
+                [
+                  ["all", "所有结果"],
+                  ["succeeded", "成功"],
+                  ["issues", "失败/中断"],
+                  ["skipped", "跳过"],
+                  ["cancelled", "已停止"],
+                ],
+                "server.filter",
+                (value) => ({ key: "status", value }),
+                server.status,
+              ),
+            );
+            const data = await remote("tasks.list", {
+              query: {
+                kind,
+                view,
+                page: server.pageNumber,
+                limit: 25,
+                days: server.days,
+                status: server.status,
+                q: server.q,
+              },
+            });
+            if (token !== server.load) return;
+            body.replaceChildren(filters, detail(data.counts || {}));
+            for (const t of data.items || []) {
+              const row = serverRow(t.filename, t.status);
+              row.append(
+                el("p", t.message || ""),
+                button("处理步骤与进度", "task.detail", { kind, id: t.id }),
+              );
+              body.append(row);
+            }
+            body.append(
+              button("上一页", "server.filter", {
+                key: "pageNumber",
+                value: Math.max(1, data.page - 1),
+              }),
+              el("span", data.page + " / " + data.pages),
+              button("下一页", "server.filter", {
+                key: "pageNumber",
+                value: Math.min(data.pages, data.page + 1),
+              }),
+            );
+            if (page === "replacement") {
+              const batches = await remote("batches.list", {
+                query: { limit: 20 },
+              });
+              for (const batch of Array.isArray(batches)
+                ? batches
+                : batches.items || []) {
+                const row = serverRow(batch.id, batch.status);
+                row.append(
+                  button("批次详情", "batch.detail", { id: batch.id }),
+                  button("停止剩余项目", "remote.batches.stop", {
+                    params: { id: batch.id },
+                  }),
+                );
+                body.append(row);
+              }
+            }
+          } else if (page === "trash") {
+            const data = await remote("trash.list");
+            if (token !== server.load) return;
+            body.replaceChildren(
+              el(
+                "p",
+                "源文件暂存 " + data.retention_days + " 天，到期后才能清理。",
+              ),
+            );
+            for (const t of data.items || []) {
+              const row = serverRow(t.filename, t.media_type);
+              row.append(
+                el("p", "到期：" + new Date(t.expires_at).toLocaleString()),
+                button("恢复", "remote.trash.restore", {
+                  params: { kind: t.media_type, id: t.id },
+                }),
+              );
+              if (t.preview_url)
+                row.append(
+                  button("预览", "trash.preview", {
+                    path: t.preview_url,
+                    title: t.filename,
+                  }),
+                );
+              body.append(row);
+            }
+            body.append(
+              button("清理已过期项目", "confirm.begin", {
+                name: "trash.expired",
+              }),
+            );
+          } else if (page === "storage") {
+            const values = await Promise.allSettled([
+              remote("storage.usage"),
+              remote("storage.folders"),
+              remote("storage.savings"),
+            ]);
+            if (token !== server.load) return;
+            body.replaceChildren();
+            for (let i = 0; i < values.length; i++) {
+              body.append(
+                el("h3", ["全库占用", "监控目录占用", "原片替换节省"][i]),
+              );
+              if (values[i].status === "rejected")
+                body.append(el("p", String(values[i].reason)));
+              else body.append(detail(values[i].value));
+            }
+            body.append(
+              button("重新统计全库", "remote.storage.usage", {
+                query: { force: true },
+              }),
+              button("重新统计监控目录", "remote.storage.folders", {
+                query: { force: true },
+              }),
+            );
+          } else {
+            const values = await Promise.allSettled([
+              remote("system.health"),
+              remote("system.config"),
+              remote("system.restartState"),
+            ]);
+            if (token !== server.load) return;
+            body.replaceChildren();
+            for (const v of values)
+              body.append(
+                v.status === "fulfilled"
+                  ? detail(v.value)
+                  : el("p", String(v.reason)),
+              );
+            const status =
+              values[2].status === "fulfilled" ? values[2].value : {};
+            if (status.can_manage && status.supported) {
+              body.append(
+                button("立即重启服务器", "confirm.begin", {
+                  name: "system.restart",
+                  body: { mode: "immediate", request_id: crypto.randomUUID() },
+                }),
+                button("处理完队列后重启", "confirm.begin", {
+                  name: "system.restart",
+                  body: { mode: "all", request_id: crypto.randomUUID() },
+                }),
+              );
+              if (status.restart?.id && status.restart.can_cancel)
+                body.append(
+                  button("取消重启计划", "remote.system.cancelRestart", {
+                    params: { id: status.restart.id },
+                  }),
+                );
+            }
+            body.append(
+              button("预览缺失源文件", "cleanup.preview"),
+              button("清理多余关键帧", "confirm.begin", {
+                name: "frames.cleanup",
+              }),
+            );
+          }
+        } catch (error) {
+          if (token === server.load)
+            body.replaceChildren(
+              el("p", String(error.message || error), "wb-error"),
+            );
+          throw error;
+        }
+      }
+      function serverRow(title, badge) {
+        const row = el("section", undefined, "wb-row");
+        const header = el("header");
+        header.append(el("strong", title), el("span", badge || "", "wb-badge"));
+        row.append(header);
+        return row;
+      }
+      action(
+        "task.detail",
+        object(
+          {
+            kind: { type: "string", enum: ["default", "replacement"] },
+            id: string,
+          },
+          ["kind", "id"],
+        ),
+        async ({ kind, id }) => {
+          const t = await remote("tasks.detail", {
+            params: { queue: kind, entry: id },
+          });
+          const root = dialog("wb-info", t.filename || "任务详情");
+          root.replaceChildren();
+          if (t.progress) {
+            const p = el("progress");
+            p.max = 100;
+            p.value = Number(t.progress.percent || 0);
+            root.append(p, detail(t.progress));
+          }
+          for (const step of t.steps || [])
+            root.append(
+              serverRow(step.label || step.title || step.key, step.status),
+              detail(step),
+            );
+          root.append(
+            detail(
+              Object.fromEntries(
+                Object.entries(t).filter(
+                  ([k]) => !["steps", "progress"].includes(k),
+                ),
+              ),
+            ),
+          );
+          return t;
+        },
+        "read",
+      );
+      action(
+        "batch.detail",
+        object({ id: string }, ["id"]),
+        async ({ id }) => {
+          const data = await remote("batches.detail", { params: { id } });
+          dialog("wb-info", "替换批次").replaceChildren(detail(data));
+          return data;
+        },
+        "read",
+      );
+      action(
+        "cleanup.preview",
+        object(),
+        async () => {
+          const data = await remote("cleanup.preview");
+          const root = dialog("wb-info", "清理缺失源预览");
+          root.replaceChildren(
+            el("p", "仅清理服务器确认源文件已不存在的媒体记录和生成产物。"),
+            detail(data),
+            button("核对并进入清理确认", "confirm.begin", {
+              name: "cleanup.execute",
+            }),
+          );
+          return data;
+        },
+        "read",
+      );
+      action(
+        "replacement.estimate",
+        object({ id: string }, ["id"]),
+        async ({ id }) => {
+          const root = dialog("wb-info", "原片替换");
+          root.replaceChildren();
+          const resolution = input("text", "1280x720", "wb-replace-resolution"),
+            crf = input("number", 30, "wb-replace-crf");
+          root.append(
+            field("最大分辨率（留空保持原分辨率）", resolution),
+            field("CRF（18–38）", crf),
+            button("采样预估，不写入源文件", "replacement.sample", () => ({
+              id,
+              resolution: resolution.value,
+              crf: Number(crf.value),
+            })),
+            button("提交这个视频", "replacement.submit", () => ({
+              ids: [id],
+              resolution: resolution.value,
+              crf: Number(crf.value),
+            })),
+            button("提交已选视频", "replacement.selected", () => ({
+              resolution: resolution.value,
+              crf: Number(crf.value),
+            })),
+            el("div", undefined, "wb-estimate"),
+          );
+          return { opened: true };
+        },
+      );
+      const replacementParams = {
+        resolution: { type: "string", maxLength: 20 },
+        crf: { type: "integer", minimum: 18, maximum: 38 },
+      };
+      action(
+        "replacement.sample",
+        object({ id: string, ...replacementParams }, [
+          "id",
+          "resolution",
+          "crf",
+        ]),
+        async ({ id, resolution, crf }) => {
+          const result = await remote("video.estimate", {
+            params: { id },
+            body: { max_resolution: resolution, crf },
+          });
+          $("wb-info")
+            .querySelector(".wb-estimate")
+            .replaceChildren(detail(result));
+          return result;
+        },
+        "read",
+      );
+      action(
+        "replacement.submit",
+        object(
+          {
+            ids: { type: "array", minItems: 1, maxItems: 1000, items: string },
+            ...replacementParams,
+          },
+          ["ids", "resolution", "crf"],
+        ),
+        ({ ids, resolution, crf }) =>
+          invoke("confirm.begin", {
+            name: "batches.create",
+            body: {
+              video_ids: ids,
+              max_resolution: resolution,
+              crf,
+              request_id: crypto.randomUUID(),
+            },
+          }),
+      );
+      action(
+        "replacement.selected",
+        object(replacementParams, ["resolution", "crf"]),
+        (args) =>
+          invoke("replacement.submit", {
+            ...args,
+            ids: [...selected]
+              .filter((k) => k.startsWith("video:"))
+              .map((k) => k.slice(6)),
+          }),
+      );
+      action(
+        "selection.export",
+        object(),
+        async () => {
+          const items = await selectedItems();
+          const text = JSON.stringify(items, null, 2);
+          if (ctx.mobile && text.length > 64000) {
+            const ticket = crypto.randomUUID(),
+              version = epoch;
+            for (
+              let offset = 0, index = 0;
+              offset < text.length;
+              offset += 64000, index++
+            ) {
+              if (version !== epoch) throw Error("媒体账户已更改");
+              await native("export.chunk", {
+                ticket,
+                index,
+                reset: index === 0,
+                text: text.slice(offset, offset + 64000),
+              });
+            }
+            return native("export.finish", { ticket });
+          }
+          return native("export", {
+            name: "RHVideo-selection.json",
+            text,
+          });
+        },
+        "write",
+      );
+      // Full-library queues and images retain the active filtering/order snapshot.
+      async function play(media) {
+        const c = config(),
+          result = await query({
+            kind: state.kind,
+            mediaType: "video",
+            allKeys: true,
+            portraitOnly: c.portraitOnly,
+            selected: selected.size ? [...selected] : [],
+            offset: 0,
+            limit: 1,
+          });
+        if (!result.queue.length) throw Error("没有符合条件的视频");
+        const current = result.queue.some((v) => v.id === media.id)
+          ? media.id
+          : result.queue[0].id;
+        const ticket = await prepareQueue(result.queue, {
+          super: c.super,
+          loop: c.loop,
+          fullLength: c.fullLength,
+          segment: c.segment,
+          rotation: c.rotation,
+        });
+        return native("play", {
+          id: current,
+          title: media.title,
+          playlist: ticket,
+          super: c.super,
+          resume: c.resume,
+        });
+      }
+      async function prepareQueue(queue, options = {}) {
+        const ticket = crypto.randomUUID(),
+          version = epoch;
+        for (let offset = 0; offset < queue.length; offset += 200) {
+          if (version !== epoch) throw Error("媒体账户已更改");
+          await native("playlist.prepare", {
+            ticket,
+            reset: offset === 0,
+            items: queue.slice(offset, offset + 200),
+            options,
+          });
+        }
+        return ticket;
+      }
+      action(
+        "playback.history",
+        object(),
+        async () => {
+          const data = await native("playback.history"),
+            root = dialog("wb-info", "播放记录");
+          root.replaceChildren();
+          for (const [id, item] of Object.entries(data).sort(
+            (a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0),
+          )) {
+            const row = serverRow(
+              item.title || id,
+              Math.floor(item.seconds || 0) + " 秒",
+            );
+            row.append(button("继续播放", "playback.resume", { id }));
+            root.append(row);
+          }
+          root.append(button("清除当前账户播放记录", "playback.clear"));
+          return { items: data };
+        },
+        "read",
+      );
+      action(
+        "playback.resume",
+        object({ id: string }, ["id"]),
+        async ({ id }) => {
+          const data = await native("playback.history"),
+            item = data[id];
+          if (!item) throw Error("播放记录不存在");
+          return native("play", { id, title: item.title || id, resume: true });
+        },
+        "external",
+      );
+      action(
+        "playback.clear",
+        object(),
+        () => native("playback.clear"),
+        "write",
+      );
+      action(
+        "playlist.start",
+        object(),
+        async () => {
+          const result = await query({ mediaType: "video", limit: 1 });
+          if (!result.items.length) throw Error("没有符合条件的视频");
+          return play(result.items[0]);
+        },
+        "external",
+      );
+      action(
+        "grid.open",
+        object(),
+        async () => {
+          const result = await query({
+            mediaType: "video",
+            allKeys: true,
+            selected: [...selected],
+            offset: 0,
+            limit: 1,
+          });
+          if (!result.queue.length) throw Error("没有可同屏播放的视频");
+          const ticket = await prepareQueue(result.queue);
+          return native("grid.open", {
+            playlist: ticket,
+            count: Math.max(1, Math.min(9, config().gridCount)),
+            super: config().super,
+          });
+        },
+        "external",
+      );
+      action(
+        "grid.page",
+        object({ direction: { type: "integer", enum: [-1, 1] } }, [
+          "direction",
+        ]),
+        (args) => native("grid.page", args),
+        "external",
+      );
+      action("grid.state", object(), () => native("grid.state"), "read");
+      action("grid.close", object(), () => native("grid.close"));
+      action(
+        "grid.control",
+        object(
+          {
+            target: { type: "integer", minimum: -1, maximum: 8 },
+            command: {
+              type: "string",
+              enum: ["pause", "resume", "seek", "volume", "rate", "rotate"],
+            },
+            value: { type: "number" },
+          },
+          ["target", "command"],
+        ),
+        (args) => native("grid.control", args),
+      );
+      action(
+        "grid.expand",
+        object({ target: { type: "integer", minimum: -1, maximum: 8 } }, [
+          "target",
+        ]),
+        (args) => native("grid.expand", args),
+      );
+      if (ctx.mobile) {
+        action(
+          "grid.target",
+          object({ index: { type: "integer", minimum: -1, maximum: 8 } }, [
+            "index",
+          ]),
+          ({ index }) =>
+            native("grid.control", { target: index, command: "target" }),
+        );
+        action("player.state", object(), () => native("player.state"), "read");
+        action(
+          "player.control",
+          object(
+            {
+              command: {
+                type: "string",
+                enum: [
+                  "pause",
+                  "resume",
+                  "next",
+                  "previous",
+                  "seek",
+                  "volume",
+                  "rate",
+                  "rotate",
+                  "repeat",
+                  "fullscreen",
+                  "fit",
+                  "fill",
+                  "controls.show",
+                  "controls.hide",
+                ],
+              },
+              value: { type: "number" },
+              enabled: { type: "boolean" },
+            },
+            ["command"],
+          ),
+          (args) => native("player.control", args),
+        );
+        for (const name of ["next", "previous"])
+          action("player." + name, object(), () =>
+            native("player.control", { command: name }),
+          );
+      }
+      async function image(media) {
+        const args = criteria({
+            kind: state.kind === "favorite" ? "favorite" : "picture",
+            mediaType: "picture",
+            allKeys: true,
+            offset: 0,
+            limit: 1,
+          }),
+          result = await query(args);
+        imageSession = {
+          args,
+          index: Math.max(
+            0,
+            result.queue.findIndex((v) => v.id === media.id),
+          ),
+          total: result.total,
+          current: null,
+        };
+        await stepImage(0);
+        if (!$("image-dialog").open) $("image-dialog").showModal();
+        return { opened: true, total: result.total };
+      }
+      async function stepImage(direction) {
+        if (!imageSession) throw Error("没有图片浏览队列");
+        const ticket = ++imageToken,
+          session = imageSession,
+          index = Math.max(
+            0,
+            Math.min(session.total - 1, session.index + direction),
+          );
+        session.index = index;
+        const value = await send("query", {
+          ...session.args,
+          allKeys: false,
+          offset: index,
+          limit: 1,
+        });
+        if (value.stale || ticket !== imageToken) return { stale: true };
+        if (!value.items.length)
+          throw Error("当前筛选结果中没有这张图片，请刷新清单");
+        const result = await native("resolve", { items: value.items });
+        if (ticket !== imageToken || session !== imageSession)
+          return { stale: true };
+        session.index = index;
+        session.current = result.items[0];
+        ctx.resetImageZoom();
+        refreshImage();
+        return { index, total: session.total };
+      }
+      function refreshImage() {
+        if (imageSession?.current)
+          showImage(
+            imageSession.current,
+            imageSession.index,
+            imageSession.total,
+          );
+      }
+      action(
+        "image.order",
+        object({ random: { type: "boolean" } }, ["random"]),
+        async ({ random }) => {
+          if (!imageSession?.args) throw Error("当前图片没有可排序的浏览队列");
+          imageSession.args.seed = random
+            ? crypto.getRandomValues(new Uint32Array(1))[0] || 1
+            : 0;
+          imageSession.index = 0;
+          return stepImage(0);
+        },
+      );
+      $("image-dialog")
+        .querySelector(".viewer-bar>div")
+        .prepend(
+          button("随机", "image.order", { random: true }, "text-button"),
+          button("还原顺序", "image.order", { random: false }, "text-button"),
+          button("标记/取消待删除", "selection.markCurrent", {}, "text-button"),
+        );
+      action(
+        "trash.preview",
+        object({ path: string, title: string }, ["path", "title"]),
+        async ({ path, title }) => {
+          const [url] = await native("images", { paths: [path] });
+          imageSession = { current: { title, cover: url }, index: 0, total: 1 };
+          refreshImage();
+          $("image-dialog").showModal();
+          return { opened: true };
+        },
+      );
+      // Paged novel previews never read every chapter's text into browser memory.
+      let preview = {
+        id: "",
+        offset: 0,
+        total: 0,
+        items: [],
+        flow: false,
+        current: 0,
+        load: 0,
+      };
+      action(
+        "novel.preview",
+        object(
+          {
+            id: string,
+            offset: { type: "integer", minimum: 0, maximum: 100000 },
+          },
+          ["id", "offset"],
+        ),
+        async ({ id, offset }) => {
+          const ticket = ++preview.load;
+          const value = await remote("novel.previews", {
+            params: { id },
+            query: { skip: offset, limit: 40, preview_chars: 260 },
+          });
+          if (ticket !== preview.load) return { stale: true };
+          preview = {
+            ...preview,
+            id,
+            offset,
+            total: value.total,
+            items: value.items,
+            current: 0,
+          };
+          const root = dialog("wb-preview", value.title);
+          root.replaceChildren();
+          root.append(
+            button("上一本", "novel.book", { direction: -1 }),
+            button("下一本", "novel.book", { direction: 1 }),
+            button(
+              preview.flow ? "章节列表" : "连续试读",
+              "novel.previewMode",
+              { flow: !preview.flow },
+            ),
+          );
+          const list = el("div", undefined, "wb-excerpts");
+          root.append(list);
+          renderPreview();
+          root.append(
+            button("上一页", "novel.preview", {
+              id,
+              offset: Math.max(0, offset - 40),
+            }),
+            el(
+              "span",
+              offset +
+                1 +
+                "–" +
+                Math.min(offset + 40, value.total) +
+                " / " +
+                value.total,
+            ),
+            button("下一页", "novel.preview", {
+              id,
+              offset: Math.min(Math.max(0, value.total - 1), offset + 40),
+            }),
+          );
+          return { id, offset, total: value.total };
+        },
+        "read",
+      );
+      function renderPreview() {
+        const root = $("wb-preview").querySelector(".wb-excerpts");
+        root.replaceChildren();
+        const rows = preview.flow
+          ? preview.items.slice(preview.current, preview.current + 1)
+          : preview.items;
+        for (const chapter of rows) {
+          const row = serverRow(chapter.title, chapter.word_count + " 字");
+          row.append(
+            el("p", chapter.preview),
+            button("进入这一章", "novel.readPreview", { index: chapter.index }),
+          );
+          root.append(row);
+        }
+        if (preview.flow)
+          root.append(
+            button("上一章", "novel.previewStep", { direction: -1 }),
+            button("下一章", "novel.previewStep", { direction: 1 }),
+          );
+      }
+      action(
+        "novel.previewMode",
+        object({ flow: { type: "boolean" } }, ["flow"]),
+        ({ flow }) => {
+          preview.flow = flow;
+          renderPreview();
+          return { flow };
+        },
+      );
+      action(
+        "novel.previewStep",
+        object({ direction: { type: "integer", enum: [-1, 1] } }, [
+          "direction",
+        ]),
+        ({ direction }) => {
+          const next = preview.current + direction;
+          if (next < 0 && preview.offset > 0)
+            return invoke("novel.preview", {
+              id: preview.id,
+              offset: Math.max(0, preview.offset - 40),
+            }).then((result) => {
+              if (!result.stale) {
+                preview.current = Math.max(0, preview.items.length - 1);
+                renderPreview();
+              }
+              return result;
+            });
+          if (
+            next >= preview.items.length &&
+            preview.offset + preview.items.length < preview.total
+          )
+            return invoke("novel.preview", {
+              id: preview.id,
+              offset: preview.offset + 40,
+            });
+          preview.current = Math.max(
+            0,
+            Math.min(preview.items.length - 1, next),
+          );
+          renderPreview();
+          return { index: preview.current };
+        },
+      );
+      action(
+        "novel.readPreview",
+        object({ index: { type: "integer", minimum: 0, maximum: 100000 } }, [
+          "index",
+        ]),
+        async ({ index }) => {
+          await openMedia({ id: preview.id, kind: "novel", title: "小说" });
+          await ctx.chapter(index);
+          return { opened: true, chapter: index };
+        },
+        "external",
+      );
+      action(
+        "novel.book",
+        object({ direction: { type: "integer", enum: [-1, 1] } }, [
+          "direction",
+        ]),
+        async ({ direction }) => {
+          const result = await query({
+              kind: "novel",
+              mediaType: "novel",
+              allKeys: true,
+              offset: 0,
+              limit: 1,
+            }),
+            index = result.queue.findIndex((v) => v.id === preview.id),
+            next = result.queue[index + direction];
+          if (!next) throw Error("已经到达书架边界");
+          return invoke("novel.preview", { id: next.id, offset: 0 });
+        },
+      );
+      let tocBook = "";
+      action(
+        "reader.search",
+        object({ query: { type: "string", maxLength: 256 } }, ["query"]),
+        async ({ query }) => {
+          if (!reader.book) throw Error("请先打开小说");
+          const select = $("chapter-select");
+          if (tocBook !== reader.book.id) {
+            await send("set", {
+              kind: "toc",
+              items: reader.book.chapters.map((c) => ({
+                id: String(c.index),
+                title: c.title,
+                kind: "novel",
+              })),
+            });
+            tocBook = reader.book.id;
+          }
+          const result = await send("query", {
+            kind: "toc",
+            search: query,
+            allKeys: true,
+            limit: 1,
+          });
+          const ids = new Set(result.queue.map((v) => v.id));
+          for (const option of select.options)
+            option.hidden = !ids.has(option.value);
+          return { matches: result.total };
+        },
+        "read",
+      );
+      const chapterSearch = input("search", "", "wb-chapter-search");
+      chapterSearch.placeholder = "搜索章节";
+      $("reader-dialog")
+        .querySelector(".reader-body>aside")
+        .prepend(chapterSearch);
+      listen(
+        chapterSearch,
+        "input",
+        () =>
+          invoke("reader.search", { query: chapterSearch.value }).catch(notice),
+        "reader.search",
+      );
+      $("reader-dialog")
+        .querySelector(".reader-toolbar")
+        .append(button("阅读设置", "settings.open"));
+      // Screenshot catalog is a separate collection; all image URLs stay opaque.
+      const gallery = {
+        offset: 0,
+        limit: 36,
+        seed: 0,
+        total: 0,
+        items: [],
+        loaded: false,
+        load: 0,
+      };
+      async function loadGallery(refresh = false) {
+        await ensure();
+        const ticket = ++gallery.load,
+          c = config();
+        if (!gallery.loaded || refresh) {
+          const values = await remote("frames.grid", {
+            query: {
+              per_video: Math.max(1, Math.min(100, c.perVideo)),
+              compact: true,
+              rules: JSON.stringify(c.rule),
+            },
+          });
+          const frames = [];
+          for (const video of values) {
+            const screenshots =
+              video.screenshots ||
+              video.frames?.map(([name, time]) => ({
+                url: video.base_url + name,
+                time_seconds: time,
+              })) ||
+              [];
+            for (let i = 0; i < screenshots.length; i++) {
+              const f = screenshots[i];
+              frames.push({
+                id: video.video_id + "-frame" + i,
+                kind: "frame",
+                videoId: video.video_id,
+                title: video.filename,
+                folder_label: video.folder,
+                resolution: video.resolution,
+                duration: video.duration,
+                seconds: f.time_seconds,
+                path: f.url,
+              });
+            }
+          }
+          if (c.mixPictures) {
+            const p = await remote("index.picture");
+            frames.push(
+              ...p.items.map((v) => ({
+                ...v,
+                kind: "picture",
+                path: "/storage/" + v.webp_path,
+              })),
+            );
+          }
+          await send("set", { kind: "gallery", items: frames });
+          gallery.loaded = true;
+        }
+        const value = await send("query", {
+          kind: "gallery",
+          search: state.search,
+          rule: c.rule,
+          sort: c.sort,
+          seed: gallery.seed,
+          offset: gallery.offset,
+          limit: gallery.limit,
+        });
+        if (ticket !== gallery.load) return { stale: true };
+        gallery.total = value.total;
+        gallery.items = value.items;
+        const urls = await native("images", {
+          paths: value.items.map((v) => v.path),
+        });
+        const root = dialog("wb-gallery", "截图库");
+        root.replaceChildren(
+          button("重新读取", "gallery.refresh"),
+          button("随机排列", "gallery.shuffle"),
+          button("还原顺序", "gallery.restore"),
+          button("浏览顺序", "gallery.orders"),
+          button("恢复上次浏览", "gallery.resume"),
+          button("自动放映", "viewer.open", {
+            mode: "slideshow",
+            source: "gallery",
+          }),
+          button("显示设置", "settings.open"),
+        );
+        const grid = el("div", undefined, "wb-gallery-grid");
+        for (let i = 0; i < value.items.length; i++) {
+          const f = value.items[i],
+            card = button(
+              f.title,
+              "gallery.openItem",
+              { index: i },
+              "wb-frame",
+            );
+          const image = el("img");
+          image.src = urls[i];
+          image.loading = "lazy";
+          image.alt = f.title;
+          card.prepend(image);
+          grid.append(card);
+        }
+        root.append(
+          grid,
+          button("上一页", "gallery.page", { direction: -1 }),
+          el("span", gallery.offset + 1 + " / " + gallery.total),
+          button("下一页", "gallery.page", { direction: 1 }),
+        );
+        prefs.galleryResume = { offset: gallery.offset, seed: gallery.seed };
+        save();
+        return { total: gallery.total, offset: gallery.offset };
+      }
+      action("gallery.open", object(), () => loadGallery());
+      action("gallery.orders", object(), () => {
+        const root = dialog("wb-settings", "截图浏览顺序"),
+          name = input("text", "", "wb-gallery-order-name");
+        root.replaceChildren(
+          field("名称", name),
+          button("保存当前顺序", "gallery.save", () => ({ name: name.value })),
+        );
+        for (const name of Object.keys(prefs.galleryOrders || {})) {
+          const row = serverRow(name, "截图顺序与浏览位置");
+          row.append(
+            button("恢复", "gallery.resume", { name }),
+            button("移除", "gallery.deleteOrder", { name }),
+          );
+          root.append(row);
+        }
+        return { names: Object.keys(prefs.galleryOrders || {}) };
+      });
+      action(
+        "gallery.deleteOrder",
+        object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
+          "name",
+        ]),
+        ({ name }) => {
+          delete prefs.galleryOrders?.[name];
+          save();
+          return { removed: name };
+        },
+      );
+      action("gallery.refresh", object(), () => loadGallery(true), "read");
+      action(
+        "gallery.page",
+        object({ direction: { type: "integer", enum: [-1, 1] } }, [
+          "direction",
+        ]),
+        ({ direction }) => {
+          gallery.offset = Math.max(
+            0,
+            Math.min(
+              Math.max(
+                0,
+                Math.floor((gallery.total - 1) / gallery.limit) * gallery.limit,
+              ),
+              gallery.offset + direction * gallery.limit,
+            ),
+          );
+          return loadGallery();
+        },
+      );
+      action("gallery.shuffle", object(), () => {
+        gallery.seed = crypto.getRandomValues(new Uint32Array(1))[0] || 1;
+        gallery.offset = 0;
+        return loadGallery();
+      });
+      action("gallery.restore", object(), () => {
+        gallery.seed = 0;
+        gallery.offset = 0;
+        return loadGallery();
+      });
+      action(
+        "gallery.save",
+        object({ name: { type: "string", maxLength: 100 } }),
+        ({ name = "默认顺序" }) => {
+          prefs.galleryOrders = {
+            ...(prefs.galleryOrders || {}),
+            [name]: { seed: gallery.seed, offset: gallery.offset },
+          };
+          save();
+          return { saved: name };
+        },
+      );
+      action(
+        "gallery.resume",
+        object({ name: { type: "string", maxLength: 100 } }),
+        ({ name }) => {
+          const saved = name
+            ? prefs.galleryOrders?.[name]
+            : prefs.galleryResume;
+          if (!saved) throw Error("没有保存的浏览进度");
+          Object.assign(gallery, saved);
+          return loadGallery();
+        },
+      );
+      action(
+        "gallery.openItem",
+        object({ index: { type: "integer", minimum: 0, maximum: 99 } }, [
+          "index",
+        ]),
+        async ({ index }) => {
+          const f = gallery.items[index];
+          if (!f) throw Error("截图不在当前页");
+          if (f.kind === "frame")
+            return native("play", {
+              id: f.videoId,
+              title: f.title,
+              seconds: f.seconds,
+              super: config().super,
+            });
+          return image(f);
+        },
+        "external",
+      );
+      // The strip is virtualized: at most 80 nearby tiles + two slideshow layers.
+      let viewer = null,
+        animation = 0,
+        viewerToken = 0;
+      function stopViewer() {
+        viewerToken++;
+        cancelAnimationFrame(animation);
+        animation = 0;
+        if (viewer) {
+          if (state.connected && account && viewer.signature) {
+            const v = viewer,
+              extent = v.vertical
+                ? v.surface.clientHeight
+                : v.surface.clientWidth;
+            prefs.viewerResume = {
+              ...(prefs.viewerResume || {}),
+              [v.mode + ":" + v.source]: {
+                signature: v.signature,
+                index: v.index,
+                key: v.queue[v.index]?.key,
+                ratio: v.layout
+                  ? (v.vertical ? v.surface.scrollTop : v.surface.scrollLeft) /
+                    Math.max(1, v.physicalMax)
+                  : 0,
+              },
+            };
+            save();
+          }
+          viewer.running = false;
+          viewer.tiles.clear();
+          viewer.observer?.disconnect();
+          clearTimeout(viewer.resizeTimer);
+          if (viewer.videoActive)
+            void native("presentation.close").catch(notice);
+        }
+        viewer = null;
+      }
+      action(
+        "viewer.open",
+        object(
+          {
+            mode: { type: "string", enum: ["strip", "slideshow"] },
+            source: {
+              type: "string",
+              enum: ["picture", "favorite", "gallery"],
+            },
+          },
+          ["mode", "source"],
+        ),
+        async ({ mode, source }) => {
+          await ensure();
+          stopViewer();
+          const token = ++viewerToken,
+            c = config(),
+            kind = source === "gallery" ? "gallery" : source;
+          if (kind === "gallery" && !gallery.loaded) await loadGallery();
+          if (kind !== "gallery") await rawCatalog(kind);
+          const args = {
+            ...criteria(),
+            kind,
+            mediaType:
+              mode === "strip" && kind !== "gallery"
+                ? "picture"
+                : kind === "favorite"
+                  ? ""
+                  : kind === "gallery"
+                    ? ""
+                    : "picture",
+            allKeys: true,
+            offset: 0,
+            limit: 1,
+          };
+          let result = await send("query", args);
+          if (token !== viewerToken) return { stale: true };
+          const signature = I.canonical({
+              ...args,
+              offset: 0,
+              limit: 1,
+              allKeys: true,
+            }),
+            resume = prefs.viewerResume?.[mode + ":" + source];
+          const root = dialog(
+            "wb-viewer",
+            mode === "strip" ? "连续浏览" : "自动放映",
+          );
+          root.replaceChildren();
+          const controls = el("div", undefined, "wb-viewer-controls");
+          controls.append(
+            button("暂停/继续", "viewer.toggle"),
+            button("上一个", "viewer.step", { direction: -1 }),
+            button("下一个", "viewer.step", { direction: 1 }),
+            button("切换方向", "viewer.direction"),
+            button("单列/双列", "viewer.lanes"),
+            button("标记/取消待删除", "selection.markCurrent"),
+            button("从头浏览", "viewer.restart"),
+            button("设置", "settings.open"),
+          );
+          const surface = el("div", undefined, "wb-viewer-surface");
+          root.append(controls, surface);
+          viewer = {
+            token,
+            signature,
+            mode,
+            source,
+            vertical: c.vertical,
+            kind,
+            args,
+            queue: result.queue.filter((v) => v.kind !== "novel"),
+            index: 0,
+            running: true,
+            clock: performance.now(),
+            surface,
+            tiles: new Map(),
+            loading: new Set(),
+            length: result.queue.filter((v) => v.kind !== "novel").length,
+            at: 0,
+            elapsed: 0,
+            last: performance.now(),
+          };
+          viewer.observer = new ResizeObserver(() => {
+            if (viewer?.token === token && viewer.videoActive)
+              void syncPresentation().catch(notice);
+          });
+          viewer.observer.observe(surface);
+          if (!viewer.length) {
+            surface.textContent = "没有符合筛选条件的图片或视频";
+            return { total: 0 };
+          }
+          if (mode === "strip") {
+            const raws = viewer.queue;
+            viewer.layoutItems = raws;
+            viewer.lanes = c.lanes;
+            viewer.layout = I.stripLayout(raws, {
+              vertical: c.vertical,
+              lanes: c.lanes,
+              extent: c.vertical ? surface.clientWidth : surface.clientHeight,
+            });
+            const spacer = el("div", undefined, "wb-strip-spacer");
+            surface.append(spacer);
+            viewer.spacer = spacer;
+            layoutStrip();
+            listen(
+              surface,
+              "scroll",
+              () => {
+                if (viewer?.token === token) void renderStrip().catch(notice);
+              },
+              "viewer.scroll",
+            );
+            const map = el("input");
+            map.type = "range";
+            map.min = 0;
+            map.max = 1000;
+            map.value = 0;
+            map.setAttribute("aria-label", "连续浏览位置");
+            listen(
+              map,
+              "input",
+              () =>
+                invoke("viewer.seek", {
+                  ratio: Number(map.value) / 1000,
+                }).catch(notice),
+              "viewer.minimap",
+            );
+            controls.append(map);
+            viewer.map = map;
+            const minimap = el("canvas", undefined, "wb-strip-minimap");
+            minimap.setAttribute("aria-hidden", "true");
+            minimap.dataset.apiAction = "rhvideo.viewer.seek";
+            listen(
+              minimap,
+              "pointerdown",
+              (event) => {
+                const bounds = minimap.getBoundingClientRect();
+                void invoke("viewer.seek", {
+                  ratio: Math.min(
+                    1,
+                    Math.max(0, (event.clientX - bounds.left) / bounds.width),
+                  ),
+                }).catch(notice);
+              },
+              "viewer.visualMap",
+            );
+            root.append(minimap);
+            viewer.minimap = minimap;
+            await renderStrip();
+            if (resume?.signature === signature)
+              await invoke("viewer.seek", {
+                ratio: Math.max(0, Math.min(1, resume.ratio || 0)),
+              });
+          } else {
+            const remembered =
+              resume?.signature === signature
+                ? viewer.queue.findIndex((v) => v.key === resume.key)
+                : -1;
+            await slide(remembered >= 0 ? remembered : 0);
+          }
+          animation = requestAnimationFrame(tick);
+          return { total: result.total, mode };
+        },
+      );
+      function layoutStrip() {
+        const v = viewer,
+          c = config();
+        if (!v?.layout) return;
+        const metrics = I.scrollMetrics(
+          v.layout.length,
+          c.vertical ? v.surface.clientHeight : v.surface.clientWidth,
+        );
+        v.scrollScale = metrics.scale;
+        v.physicalMax = metrics.physicalMax;
+        v.surface.classList.toggle("vertical", c.vertical);
+        v.spacer.style.width = c.vertical ? "100%" : metrics.spacer + "px";
+        v.spacer.style.height = c.vertical ? metrics.spacer + "px" : "100%";
+      }
+      async function renderStrip() {
+        const v = viewer;
+        if (!v?.layout) return;
+        if (v.renderBusy) {
+          v.renderAgain = true;
+          return;
+        }
+        v.renderBusy = true;
+        try {
+          do {
+            v.renderAgain = false;
+            await renderStripFrame(v);
+          } while (viewer === v && v.renderAgain);
+        } finally {
+          v.renderBusy = false;
+        }
+      }
+      async function renderStripFrame(v) {
+        if (!v?.layout) return;
+        const c = config(),
+          position = c.vertical ? v.surface.scrollTop : v.surface.scrollLeft,
+          start = position * v.scrollScale,
+          length = c.vertical ? v.surface.clientHeight : v.surface.clientWidth,
+          visible = I.visible(v.layout, start, length).slice(0, 80),
+          keys = new Set(visible.map((t) => t.key));
+        for (const [key, node] of v.tiles)
+          if (!keys.has(key)) {
+            node.remove();
+            v.tiles.delete(key);
+          }
+        const missing = visible.filter(
+          (t) => !v.tiles.has(t.key) && !v.loading.has(t.key),
+        );
+        missing.forEach((t) => v.loading.add(t.key));
+        try {
+          const paths = missing.map(
+            (t) => t.item.path || "/storage/" + t.item.webp_path,
+          );
+          const urls = paths.length ? await native("images", { paths }) : [];
+          if (viewer !== v) return;
+          const currentPosition = c.vertical
+            ? v.surface.scrollTop
+            : v.surface.scrollLeft;
+          if (
+            Math.abs(currentPosition - position) * v.scrollScale >
+            length / 2
+          ) {
+            v.renderAgain = true;
+            return;
+          }
+          for (let i = 0; i < missing.length; i++) {
+            const tile = missing[i],
+              node = el("div", undefined, "wb-strip-tile"),
+              img = el("img");
+            node.dataset.key = tile.key;
+            node.dataset.logicalStart = String(tile.start);
+            img.src = urls[i];
+            img.alt = tile.item.title;
+            img.decoding = "async";
+            node.style.cssText = c.vertical
+              ? `top:${tile.start - start + position}px;left:${tile.lane * (tile.cross + 8)}px;width:${tile.cross}px;height:${tile.length}px`
+              : `left:${tile.start - start + position}px;top:${tile.lane * (tile.cross + 8)}px;height:${tile.cross}px;width:${tile.length}px`;
+            if (tile.cuts > 1) {
+              img.style.height = 100 * tile.cuts + "%";
+              img.style.width = "100%";
+              img.style.transform = `translateY(-${(tile.part * 100) / tile.cuts}%)`;
+            }
+            node.append(img);
+            v.spacer.append(node);
+            v.tiles.set(tile.key, node);
+          }
+          for (const tile of visible) {
+            const node = v.tiles.get(tile.key);
+            if (node)
+              node.style[c.vertical ? "top" : "left"] =
+                tile.start - start + position + "px";
+          }
+          if (v.map)
+            v.map.value = String(
+              Math.round(
+                (start / Math.max(1, v.layout.length - length)) * 1000,
+              ),
+            );
+          drawMinimap(v, start, length, visible);
+        } finally {
+          missing.forEach((t) => v.loading.delete(t.key));
+        }
+      }
+      function drawMinimap(v, start, length, visible) {
+        const canvas = v.minimap;
+        if (!canvas) return;
+        const width = Math.min(
+            2048,
+            Math.max(1, Math.round(canvas.clientWidth)),
+          ),
+          scale = width / Math.max(1, v.layout.length),
+          lanes = config().lanes;
+        if (!v.minimapBase || v.minimapBase.width !== width) {
+          const base = document.createElement("canvas");
+          base.width = width;
+          base.height = 40;
+          const paint = base.getContext("2d"),
+            used = new Set();
+          paint.fillStyle = "#182332";
+          paint.fillRect(0, 0, width, 40);
+          // One sample per pixel/lane. This is drawn only once, never per frame.
+          for (const tile of v.layout.items) {
+            const x = Math.floor(tile.start * scale),
+              key = tile.lane + ":" + x;
+            if (used.has(key)) continue;
+            used.add(key);
+            paint.fillStyle = tile.lane % 2 ? "#789fae" : "#8e9ab9";
+            paint.fillRect(
+              x,
+              (tile.lane * 40) / lanes,
+              Math.max(1, tile.length * scale),
+              40 / lanes - 2,
+            );
+          }
+          v.minimapBase = base;
+        }
+        canvas.width = width;
+        canvas.height = 40;
+        const paint = canvas.getContext("2d");
+        paint.drawImage(v.minimapBase, 0, 0);
+        // Reuse only already-decoded visible thumbnails; no extra media requests.
+        for (const tile of visible) {
+          const image = v.tiles.get(tile.key)?.querySelector("img");
+          if (image?.complete && image.naturalWidth)
+            paint.drawImage(
+              image,
+              tile.start * scale,
+              (tile.lane * 40) / lanes,
+              Math.max(1, tile.length * scale),
+              40 / lanes - 2,
+            );
+        }
+        paint.strokeStyle = "#ffffff";
+        paint.lineWidth = 2;
+        paint.strokeRect(start * scale, 1, Math.max(3, length * scale), 38);
+      }
+      async function slide(index) {
+        const v = viewer;
+        if (!v) return;
+        const c = config();
+        const transitionTicket = (v.transitionTicket || 0) + 1;
+        v.transitionTicket = transitionTicket;
+        v.index = (index + v.length) % v.length;
+        v.elapsed = 0;
+        v.loadingMedia = true;
+        const result = await send("query", {
+            ...v.args,
+            allKeys: false,
+            selected: [v.queue[v.index].key],
+            offset: 0,
+            limit: 1,
+          }),
+          media = result.items[0];
+        if (viewer !== v) return;
+        v.current = media;
+        const layer = el("div", undefined, "wb-slide");
+        layer.style.setProperty("--stay", c.stay + "s");
+        layer.style.setProperty("--fade", I.transition(c).fade + "s");
+        layer.classList.toggle("ken-burns", c.kenBurns);
+        if (media.kind === "video") {
+          await invoke("viewer.video", { id: media.id, title: media.title });
+          const deadline = performance.now() + 15000;
+          while (viewer === v && transitionTicket === v.transitionTicket) {
+            const status = await native("presentation.state");
+            if (status.error) throw Error(status.error);
+            if (status.renderedFrames > 0) break;
+            if (performance.now() >= deadline) {
+              v.running = false;
+              throw Error("视频首帧等待超时，放映已暂停");
+            }
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+          v.videoFadeStart = performance.now();
+          v.videoFadeSeconds = I.transition(c).fade;
+          await syncPresentation(c.overlap ? 0 : 1);
+          if (!v.running)
+            await native("presentation.control", { command: "pause" });
+        } else {
+          const [url] = await native("images", {
+            paths: [media.path || "/storage/" + media.webp_path],
+          });
+          if (viewer !== v || transitionTicket !== v.transitionTicket) return;
+          const image = el("img");
+          image.src = url;
+          image.alt = media.title;
+          await image.decode();
+          if (viewer !== v || transitionTicket !== v.transitionTicket) return;
+          layer.append(image);
+          if (v.videoActive) {
+            await native("presentation.close");
+            v.videoActive = false;
+          }
+        }
+        if (viewer !== v || transitionTicket !== v.transitionTicket) return;
+        // Keep the old image opaque until the next frame is actually decoded.
+        // Slow networks and rapid manual navigation must not fade to black.
+        const old = v.surface.querySelector(".wb-slide:not(.outgoing)");
+        v.surface.append(layer);
+        v.elapsed = 0;
+        v.loadingMedia = false;
+        if (old) {
+          old.classList.add("outgoing");
+          if (c.overlap) old.classList.add("holding");
+          setTimeout(() => old.remove(), I.transition(c).fade * 1000 + 50);
+        }
+        while (v.surface.children.length > 3) v.surface.firstChild.remove();
+        v.surface.style.setProperty(
+          "--slide-progress",
+          (v.index + 1) / v.length,
+        );
+        return { index: v.index, total: v.length };
+      }
+      function tick(now) {
+        const v = viewer;
+        if (!v) return;
+        const dt = Math.min(0.1, (now - v.last) / 1000);
+        v.last = now;
+        if (v.running && !document.hidden && !v.loadingMedia && viewerIsTop()) {
+          const c = config();
+          if (v.mode === "strip") {
+            const prop = c.vertical ? "scrollTop" : "scrollLeft",
+              extent = c.vertical
+                ? v.surface.clientHeight
+                : v.surface.clientWidth;
+            v.surface[prop] += (dt * c.scrollSpeed) / v.scrollScale;
+            if (v.surface[prop] >= v.physicalMax) v.surface[prop] = 0;
+          } else {
+            v.elapsed += dt;
+            if (
+              v.videoActive &&
+              !v.boundsBusy &&
+              now - (v.boundsAt || 0) > 100
+            ) {
+              const alpha =
+                v.videoFadeSeconds > 0
+                  ? Math.min(
+                      1,
+                      (now - v.videoFadeStart) / 1000 / v.videoFadeSeconds,
+                    )
+                  : 1;
+              if (alpha < 1 || !v.faded) {
+                v.boundsAt = now;
+                v.boundsBusy = true;
+                v.faded = alpha >= 1;
+                syncPresentation(alpha)
+                  .catch(notice)
+                  .finally(() => (v.boundsBusy = false));
+              }
+            }
+            if (
+              v.elapsed >=
+                (v.current?.kind === "video"
+                  ? c.videoStay
+                  : I.transition(c).stay) &&
+              !v.busy
+            ) {
+              v.busy = true;
+              slide(v.index + 1)
+                .catch((error) => {
+                  v.running = false;
+                  v.loadingMedia = false;
+                  notice(error);
+                })
+                .finally(() => {
+                  v.busy = false;
+                });
+            }
+          }
+        }
+        animation = requestAnimationFrame(tick);
+      }
+      action("viewer.toggle", object(), () => {
+        if (!viewer) throw Error("浏览器未打开");
+        viewer.running = !viewer.running;
+        viewer.surface.classList.toggle("paused", !viewer.running);
+        if (viewer.videoActive)
+          void native("presentation.control", {
+            command: viewer.running ? "resume" : "pause",
+          }).catch(notice);
+        return { running: viewer.running };
+      });
+      function viewerSnapshot() {
+        const v = viewer;
+        if (!v) return { opened: false };
+        const extent = config().vertical
+          ? v.surface.clientHeight
+          : v.surface.clientWidth;
+        return {
+          opened: true,
+          mode: v.mode,
+          source: v.source,
+          index: v.index,
+          total: v.length,
+          running: v.running,
+          loading: !!v.loadingMedia,
+          nativeVideo: !!v.videoActive,
+          tiles: v.tiles.size,
+          ratio: v.layout
+            ? (v.vertical ? v.surface.scrollTop : v.surface.scrollLeft) /
+              Math.max(1, v.physicalMax)
+            : (v.index + 1) / Math.max(1, v.length),
+        };
+      }
+      action("viewer.state", object(), viewerSnapshot, "read");
+      action("viewer.restart", object(), () => {
+        if (!viewer) throw Error("浏览器未打开");
+        delete prefs.viewerResume?.[viewer.mode + ":" + viewer.source];
+        save();
+        return viewer.mode === "strip"
+          ? invoke("viewer.seek", { ratio: 0 })
+          : slide(0);
+      });
+      action(
+        "viewer.step",
+        object({ direction: { type: "integer", enum: [-1, 1] } }, [
+          "direction",
+        ]),
+        ({ direction }) => {
+          if (!viewer) throw Error("浏览器未打开");
+          return viewer.mode === "slideshow"
+            ? slide(viewer.index + direction)
+            : invoke("viewer.seek", {
+                ratio: Math.max(
+                  0,
+                  Math.min(
+                    1,
+                    viewerSnapshot().ratio +
+                      (direction * 500) /
+                        Math.max(
+                          1,
+                          viewer.layout.length -
+                            (viewer.vertical
+                              ? viewer.surface.clientHeight
+                              : viewer.surface.clientWidth),
+                        ),
+                  ),
+                ),
+              });
+        },
+      );
+      action(
+        "viewer.seek",
+        object({ ratio: { type: "number", minimum: 0, maximum: 1 } }, [
+          "ratio",
+        ]),
+        ({ ratio }) => {
+          if (!viewer) throw Error("浏览器未打开");
+          const c = config(),
+            v = viewer;
+          if (v.mode === "slideshow")
+            return slide(Math.min(v.length - 1, Math.floor(ratio * v.length)));
+          v.surface[c.vertical ? "scrollTop" : "scrollLeft"] =
+            ratio * v.physicalMax;
+          return { ratio };
+        },
+      );
+      action("viewer.direction", object(), () => {
+        prefs.vertical = !config().vertical;
+        save();
+        if (viewer)
+          return invoke("viewer.open", {
+            mode: viewer.mode,
+            source: viewer.source,
+          });
+        return { vertical: prefs.vertical };
+      });
+      action("viewer.lanes", object(), () => {
+        prefs.lanes = config().lanes === 1 ? 2 : 1;
+        save();
+        if (viewer)
+          return invoke("viewer.open", {
+            mode: viewer.mode,
+            source: viewer.source,
+          });
+        return { lanes: prefs.lanes };
+      });
+      action(
+        "viewer.video",
+        object({ id: string, title: string }, ["id", "title"]),
+        async (args) => {
+          if (!viewer) throw Error("放映没有打开");
+          const v = viewer;
+          await native("presentation.open", { ...args, super: config().super });
+          if (viewer !== v) {
+            await native("presentation.close");
+            return { stale: true };
+          }
+          v.videoActive = true;
+          v.faded = false;
+          return syncPresentation(0);
+        },
+        "external",
+      );
+      function syncPresentation(opacity = 1, visible = true) {
+        const v = viewer;
+        if (!v?.videoActive) return Promise.resolve({ opened: false });
+        const rect = v.surface.getBoundingClientRect();
+        return native("presentation.bounds", {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          viewportWidth: innerWidth,
+          opacity,
+          visible,
+        });
+      }
+      function viewerIsTop() {
+        return dialogStack.filter((id) => $(id)?.open).at(-1) === "wb-viewer";
+      }
+      action(
+        "viewer.mediaState",
+        object(),
+        () => native("presentation.state"),
+        "read",
+      );
+      action(
+        "viewer.mediaControl",
+        object(
+          {
+            command: {
+              type: "string",
+              enum: ["pause", "resume", "seek", "volume", "rate"],
+            },
+            value: { type: "number" },
+          },
+          ["command"],
+        ),
+        (args) => native("presentation.control", args),
+      );
+      listen(
+        document,
+        "visibilitychange",
+        () => {
+          if (viewer?.videoActive)
+            void native("presentation.control", {
+              command: document.hidden || !viewer.running ? "pause" : "resume",
+            }).catch(notice);
+        },
+        "viewer.visibility",
+      );
+      api.provideState("rhvideoWorkbench", () => ({
+        selected: [...selected],
+        sort: config().sort,
+        rule: config().rule,
+        gallery: { offset: gallery.offset, total: gallery.total },
+        viewer: viewer
+          ? {
+              mode: viewer.mode,
+              index: viewer.index,
+              total: viewer.length,
+              running: viewer.running,
+              tiles: viewer.tiles.size,
+            }
+          : null,
+      }));
+      const toolbar = el("div", undefined, "wb-toolbar");
+      action(
+        "browse.mode",
+        object(
+          {
+            mode: {
+              type: "string",
+              enum: ["cards", "screenshots", "strip", "slideshow"],
+            },
+          },
+          ["mode"],
+        ),
+        ({ mode }) =>
+          mode === "cards"
+            ? { mode }
+            : mode === "screenshots"
+              ? invoke("gallery.open")
+              : invoke("viewer.open", {
+                  mode: mode === "strip" ? "strip" : "slideshow",
+                  source: state.kind === "favorite" ? "favorite" : "picture",
+                }),
+      );
+      action(
+        "play.mode",
+        object(
+          { mode: { type: "string", enum: ["choose", "playlist", "grid"] } },
+          ["mode"],
+        ),
+        ({ mode }) =>
+          mode === "choose"
+            ? { mode }
+            : invoke(mode === "grid" ? "grid.open" : "playlist.start"),
+      );
+      action("selection.mode", object(), () => {
+        const bar = $("wb-selection");
+        bar.hidden = !bar.hidden;
+        return { visible: !bar.hidden };
+      });
+      const sortLabels = [
+        "名称 A→Z",
+        "名称 Z→A",
+        "最新在前",
+        "最早在前",
+        "最大在前",
+        "最小在前",
+        "时长从长到短",
+        "时长从短到长",
+      ];
+      const sort = select(
+        I.sorts.map((key, i) => [key, sortLabels[i]]),
+        "sort",
+        (value) => ({ value }),
+        defaults.sort,
+      );
+      sort.id = "wb-sort";
+      toolbar.append(
+        sort,
+        button("标签筛选", "rules.open"),
+        button("顺序", "order.open"),
+        button("播放记录", "playback.history"),
+        select(
+          [
+            ["cards", "卡片浏览"],
+            ["screenshots", "截图库"],
+            ["strip", "连续浏览"],
+            ["slideshow", "自动放映"],
+          ],
+          "browse.mode",
+          (mode) => ({ mode }),
+          "cards",
+        ),
+        select(
+          [
+            ["choose", "播放方式"],
+            ["playlist", "连播"],
+            ["grid", "多视频同屏"],
+          ],
+          "play.mode",
+          (mode) => ({ mode }),
+          "choose",
+        ),
+        button("多选", "selection.mode"),
+      );
+      $("library-controls")?.after(toolbar);
+      if (!toolbar.isConnected)
+        document.querySelector(".library-controls").after(toolbar);
+      const selectionCount = el("span");
+      selectionCount.id = "wb-selection-count";
+      const selectionBar = el("div", undefined, "wb-toolbar wb-selection");
+      selectionBar.id = "wb-selection";
+      selectionBar.hidden = true;
+      toolbar.after(selectionBar);
+      selectionBar.append(
+        selectionCount,
+        button("选择本页", "selection.page"),
+        button("清除选择", "selection.clear"),
+        button("导出所选", "selection.export"),
+        button("删除源文件并暂存", "selection.stage", {}, "button destructive"),
+      );
+      document
+        .querySelector(".header-actions")
+        .prepend(
+          button("媒体设置", "settings.open"),
+          button("服务器", "server.open", { page: "watch" }),
+        );
+      const register = button("注册并连接", "account.register", () => ({
+        server: $("server").value,
+        username: $("username").value,
+        password: $("password").value,
+        email: $("wb-register-email").value,
+      }));
+      const email = input("email", "", "wb-register-email");
+      email.placeholder = "注册邮箱（仅注册时填写）";
+      $("connection-form").append(field("注册新账户", email), register);
+      action(
+        "account.register",
+        object(
+          {
+            server: string,
+            username: string,
+            password: { type: "string", maxLength: 4096 },
+            email: { type: "string", maxLength: 320 },
+          },
+          ["server", "username", "password", "email"],
+        ),
+        async (args) => {
+          try {
+            const result = await native("register", args);
+            ctx.updateConnection(result);
+            $("connection-dialog").close();
+            await reset(true);
+            await load(true, true);
+            return result;
+          } finally {
+            $("password").value = "";
+          }
+        },
+        "external",
+      );
+      action(
+        "workbench.diagnostics",
+        object(),
+        async () => ({
+          index: await send("info"),
+          requests: requests.size,
+          selected: selected.size,
+          contractVersion: (await manifest).version,
+        }),
+        "read",
+      );
+      action(
+        "ui.contract",
+        object(),
+        async () => {
+          await ready;
+          const controls = [
+            ...document.querySelectorAll(
+              "button,input:not([type=hidden]),select,textarea,summary,a[href],[role=button],[data-api-action]",
+            ),
+          ].map((node) => ({
+            label:
+              node.getAttribute("aria-label") ||
+              node.textContent?.trim().slice(0, 100) ||
+              node.tagName,
+            action:
+              node.dataset.apiAction ||
+              (["INPUT", "TEXTAREA"].includes(node.tagName)
+                ? "ui.set"
+                : node.closest("form")?.dataset.apiAction || ""),
+          }));
+          const ids = new Set(api.list().map((v) => v.id));
+          return {
+            controls: controls.length,
+            missing: controls.filter((v) => !ids.has(v.action)),
+            operations: api
+              .list()
+              .filter((v) => v.id.startsWith("rhvideo."))
+              .map(({ id, params, risk }) => ({ id, params, risk })),
+          };
+        },
+        "read",
+      );
+      window.addEventListener("pagehide", () => {
+        stopViewer();
+        worker?.terminate();
+        clearTimeout(saveTimer);
+      });
+      return {
+        catalog,
+        reset,
+        paintCards,
+        play,
+        image,
+        stepImage,
+        refreshImage,
+        invalidate(kind) {
+          raw.delete(kind);
+        },
+        back() {
+          for (const id of [
+            "wb-confirm",
+            "wb-settings",
+            "wb-info",
+            "wb-preview",
+            "wb-gallery",
+            "wb-viewer",
+          ])
+            if ($(id)?.open) {
+              void invoke("panel.close", { id }).catch(notice);
+              return true;
+            }
+          return false;
+        },
+      };
+    },
+  };
+})();

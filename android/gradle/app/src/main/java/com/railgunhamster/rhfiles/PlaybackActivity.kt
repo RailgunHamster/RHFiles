@@ -33,6 +33,12 @@ import androidx.media3.ui.PlayerView
 /** Native local/content/remote playback with a real Media3 queue and range reads. */
 @UnstableApi
 class PlaybackActivity:AppCompatActivity() {
+  companion object {
+    private var active=java.lang.ref.WeakReference<PlaybackActivity>(null)
+    fun rhState()=active.get()?.automationState()?:error("原生播放器没有打开")
+    fun rhControl(args:JSONObject)=active.get()?.automationControl(args)?:error("原生播放器没有打开")
+    fun closeRhVideo(){active.get()?.let{if(it.intent.getStringExtra("path")?.startsWith("rhvideo://")==true)it.finish()}}
+  }
   private lateinit var playerView:PlayerView
   private lateinit var header:LinearLayout
   private lateinit var failure:LinearLayout
@@ -48,8 +54,12 @@ class PlaybackActivity:AppCompatActivity() {
   private var play=true
   private var landscape=false
   private var resize=AspectRatioFrameLayout.RESIZE_MODE_FIT
+  private var rhWindow:RhVideoClient.Window?=null
+  private var rhTicket:String?=null
+  private var rebuildingWindow=false
   override fun onCreate(savedInstanceState:Bundle?) {
     super.onCreate(savedInstanceState)
+    NativeAutomation.install(this);active=java.lang.ref.WeakReference(this)
     onBackPressedDispatcher.addCallback(this){finish()}
     path=intent.getStringExtra("path") ?: run{finish();return}
     storage=NativeStorage(applicationContext)
@@ -58,8 +68,14 @@ class PlaybackActivity:AppCompatActivity() {
         val file=storage.local(path);require(file.isFile && file.canRead()) {"文件不存在或没有读取权限"};Uri.fromFile(file)
       }
       queue=PlaybackQueue.parse(JSONObject().put("path",path).put("name",intent.getStringExtra("name")).put("queue",JSONArray(intent.getStringExtra("queue")?:"[]")))
+      rhTicket=intent.getStringExtra("rhvideoPlaylist")
+      rhTicket?.let{ticket->
+        val first=RhVideoClient.get(this).playbackWindow(ticket,0)
+        rhWindow=RhVideoClient.get(this).playbackWindow(ticket,(savedInstanceState?.getInt("rhGlobalIndex")?:intent.getIntExtra("rhvideoIndex",0)).coerceAtLeast(first.offset))
+        queue=rhWindow!!.items
+      }
       sources=queue.map{item->if(storage.isRemote(item.path)||item.path.startsWith("rhvideo://"))Uri.parse(item.path)else if(storage.isDocument(item.path))storage.docUri(item.path)else Uri.fromFile(storage.local(item.path))}
-      index=(savedInstanceState?.getInt("index")?:queue.indexOfFirst{it.path==path}).coerceIn(0,queue.lastIndex)
+      index=(rhWindow?.index?:savedInstanceState?.getInt("index")?:queue.indexOfFirst{it.path==path}).coerceIn(0,queue.lastIndex)
       path=queue[index].path;source=sources[index];title=queue[index].name
     }catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish();return}
     position=savedInstanceState?.getLong("position") ?: intent.getLongExtra("positionMs",0).coerceAtLeast(0);play=savedInstanceState?.getBoolean("play",true) ?: true
@@ -88,16 +104,18 @@ class PlaybackActivity:AppCompatActivity() {
   private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
   internal fun automationState():JSONObject {
     val engine=player?:error("播放器尚未就绪")
-    return JSONObject().put("path",path).put("index",engine.currentMediaItemIndex).put("count",queue.size).put("playing",engine.isPlaying).put("positionMs",engine.currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
+    return JSONObject().put("path",path).put("index",engine.currentMediaItemIndex+(rhWindow?.offset?:0)).put("count",rhWindow?.total?:queue.size).put("playing",engine.isPlaying).put("playWhenReady",engine.playWhenReady).put("playbackState",engine.playbackState).put("suppressionReason",engine.playbackSuppressionReason).put("error",engine.playerError?.let{JSONObject().put("code",it.errorCodeName).put("message",it.cause?.message?:it.message?:"") }?:JSONObject.NULL).put("positionMs",engine.currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
   }
   internal fun automationControl(args:JSONObject):JSONObject {
     val engine=player?:error("播放器尚未就绪")
     when(args.getString("command")){
       "play"->engine.play();"pause"->engine.pause()
-      "next"->{check(engine.hasNextMediaItem()){"没有下一个文件"};engine.seekToNextMediaItem()}
-      "previous"->{check(engine.hasPreviousMediaItem()){"没有上一个文件"};engine.seekToPreviousMediaItem()}
+      "next"->{check(engine.hasNextMediaItem()){"没有下一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToNextMediaItem();if(failed){engine.prepare();engine.play()}}
+      "previous"->{check(engine.hasPreviousMediaItem()){"没有上一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToPreviousMediaItem();if(failed){engine.prepare();engine.play()}}
       "seek"->{val value=args.getDouble("value");require(value.isFinite()&&value>=0&&engine.duration!=C.TIME_UNSET&&value<=engine.duration){"跳转位置超出范围（毫秒）"};engine.seekTo(value.toLong())}
       "rate"->{val value=args.getDouble("value");require(value.isFinite()&&value in .25..4.0){"播放速度应为 0.25–4"};engine.setPlaybackSpeed(value.toFloat())}
+      "volume"->{val value=args.getDouble("value");require(value.isFinite()&&value in 0.0..100.0);engine.volume=(value/100).toFloat()}
+      "rotate"->{val value=args.getInt("value");require(value in listOf(0,90,180,270));playerView.videoSurfaceView?.rotation=value.toFloat()}
       "repeat"->engine.repeatMode=if(args.getBoolean("enabled"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
       "fit"->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
       "fill"->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
@@ -122,16 +140,32 @@ class PlaybackActivity:AppCompatActivity() {
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
     engine.setHandleAudioBecomingNoisy(true)
     engine.addListener(object:Player.Listener {
+      override fun onPositionDiscontinuity(old:Player.PositionInfo,next:Player.PositionInfo,reason:Int){val ticket=rhTicket;val w=rhWindow;if(!rebuildingWindow&&ticket!=null&&w!=null)RhVideoClient.get(this@PlaybackActivity).rememberPlayback(ticket,w.offset+old.mediaItemIndex,old.positionMs,0)}
       override fun onMediaItemTransition(item:MediaItem?,reason:Int){
         index=engine.currentMediaItemIndex.coerceIn(0,queue.lastIndex);path=queue[index].path;source=sources[index];titleView.text=queue[index].name;title=queue[index].name
         failure.visibility=View.GONE
+        val w=rhWindow
+        if(!rebuildingWindow&&w!=null&&((index<=1&&w.offset>0)||(index>=queue.lastIndex-1&&w.offset+queue.size<w.total))){
+          rebuildRhWindow(w.offset+index)
+        }
       }
-      override fun onRenderedFirstFrame(){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","First video frame rendered")}
-      override fun onPlaybackStateChanged(state:Int){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","Playback state=$state")}
+      override fun onRenderedFirstFrame(){playerView.videoSurfaceView?.rotation=(rhWindow?.options?.optInt("rotation",0)?:0).toFloat();if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","First video frame rendered")}
+      override fun onPlaybackStateChanged(state:Int){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","Playback state=$state");if(state==Player.STATE_ENDED&&rhWindow?.options?.optBoolean("loop")==true)rebuildRhWindow(0)}
       override fun onIsPlayingChanged(isPlaying:Boolean){if(isPlaying)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
       override fun onPlayerError(error:PlaybackException){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback",error.errorCodeName);showError(error)}
     })
-    engine.setMediaItems(sources.mapIndexed{i,uri->MediaItem.Builder().setUri(uri).setMediaId(queue[i].path).build()},index,position);engine.prepare();engine.playWhenReady=play;playerView.hideController()
+    engine.setMediaItems(sources.mapIndexed{i,uri->rhItem(i,uri)},index,position);engine.prepare();engine.playWhenReady=play;playerView.hideController()
+  }
+  private fun rhItem(i:Int,uri:Uri):MediaItem {
+    val builder=MediaItem.Builder().setUri(uri).setMediaId(queue[i].path)
+    rhWindow?.let{w->val clipping=MediaItem.ClippingConfiguration.Builder().setStartPositionMs(w.starts[i]);if(w.ends[i]>=0)clipping.setEndPositionMs(w.ends[i]);builder.setClippingConfiguration(clipping.build())}
+    return builder.build()
+  }
+  private fun rebuildRhWindow(globalIndex:Int){
+    val ticket=rhTicket?:return;val engine=player?:return
+    try{rebuildingWindow=true;val w=RhVideoClient.get(this).playbackWindow(ticket,globalIndex);rhWindow=w;queue=w.items;sources=queue.map{Uri.parse(it.path)};index=w.index
+      engine.setMediaItems(sources.mapIndexed{i,uri->rhItem(i,uri)},index,0);engine.prepare();engine.play()
+    }catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();engine.pause()}finally{rebuildingWindow=false}
   }
   private fun showError(error:PlaybackException){
     failure.removeAllViews();failure.visibility=View.VISIBLE;header.visibility=View.VISIBLE
@@ -140,8 +174,7 @@ class PlaybackActivity:AppCompatActivity() {
     val detail=TextView(this).apply{text="MP4 等后缀表示容器，不代表内部编码一定受设备支持。\n"+codecs+"\n"+error.errorCodeName+"\n"+(error.cause?.message ?: error.message ?: "读取失败");setTextColor(0xFFB9BEC8.toInt());textSize=13f;setPadding(0,dp(16),0,dp(16));setTextIsSelectable(true)}
     failure.addView(title);failure.addView(detail)
     if(source.scheme !in listOf("remote","rhvideo"))failure.addView(Button(this).apply{text="用其他播放器打开";setOnClickListener{external()}})
-    if(player?.hasNextMediaItem()==true)failure.addView(Button(this).apply{text="下一个";setOnClickListener{failure.visibility=View.GONE;player?.seekToNextMediaItem();player?.play()}})
-    failure.addView(Button(this).apply{text="重试";setOnClickListener{failure.visibility=View.GONE;player?.prepare();player?.play()}})
+    if(player?.hasNextMediaItem()==true)failure.addView(Button(this).apply{text="下一个";setOnClickListener{automationControl(JSONObject().put("command","next"))}})
     failure.addView(Button(this).apply{text="返回文件列表";setOnClickListener{finish()}})
   }
   private fun external(){try{
@@ -155,13 +188,14 @@ class PlaybackActivity:AppCompatActivity() {
     listOf("适应画面","填满画面（可能裁切）","播放速度","循环播放","用其他播放器打开").forEachIndexed{i,label->menu.menu.add(0,i,i,label)}
     menu.menu.findItem(4).isVisible=source.scheme !in listOf("remote","rhvideo")
     menu.setOnMenuItemClickListener{item->when(item.itemId){
-      0->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
-      1->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
-      2->{val rates=arrayOf("0.5×","1×","1.25×","1.5×","2×");androidx.appcompat.app.AlertDialog.Builder(this).setTitle("播放速度").setItems(rates){_,index->player?.setPlaybackSpeed(floatArrayOf(.5f,1f,1.25f,1.5f,2f)[index])}.show()}
-      3->{player?.repeatMode=if(player?.repeatMode==Player.REPEAT_MODE_ONE)Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ONE;Toast.makeText(this,if(player?.repeatMode==Player.REPEAT_MODE_ONE)"已开启循环" else "已关闭循环",Toast.LENGTH_SHORT).show()}
+      0->automationControl(JSONObject().put("command","fit"))
+      1->automationControl(JSONObject().put("command","fill"))
+      2->{val rates=arrayOf("0.5×","1×","1.25×","1.5×","2×");androidx.appcompat.app.AlertDialog.Builder(this).setTitle("播放速度").setItems(rates){_,index->automationControl(JSONObject().put("command","rate").put("value",floatArrayOf(.5f,1f,1.25f,1.5f,2f)[index]))}.show()}
+      3->{automationControl(JSONObject().put("command","repeat").put("enabled",player?.repeatMode!=Player.REPEAT_MODE_ONE));Toast.makeText(this,if(player?.repeatMode==Player.REPEAT_MODE_ONE)"已开启循环" else "已关闭循环",Toast.LENGTH_SHORT).show()}
       4->external()
     };true};menu.show()
   }
-  override fun onSaveInstanceState(outState:Bundle){outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
-  override fun onStop(){player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;play=it.playWhenReady;it.release()};if(::playerView.isInitialized)playerView.player=null;player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
+  override fun onSaveInstanceState(outState:Bundle){outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
+  override fun onStop(){player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;it.release()};if(::playerView.isInitialized)playerView.player=null;player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
+  override fun onDestroy(){if(active.get()===this)active.clear();super.onDestroy()}
 }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:*; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>RHFiles · RHVideo</title><link rel="stylesheet" href="css/rhvideo.css">
+  <title>RHFiles · RHVideo</title><link rel="stylesheet" href="css/rhvideo.css"><link rel="stylesheet" href="css/rhvideo-workbench.css">
 </head>
 <body>
   <aside class="library-sidebar">
@@ -18,7 +18,7 @@
     <button class="server-card" id="connection-open"><span class="connection-dot"></span><span><strong id="connection-label">尚未连接</strong><small id="connection-host">连接你的 RHVideo</small></span><span data-icon="settings"></span></button>
   </aside>
   <main class="library-main">
-    <header class="library-header"><div><h1 id="page-title">视频</h1></div><div class="header-actions"><button class="icon-button" id="library-back" aria-label="返回 RHFiles" title="返回" hidden><span data-icon="left"></span></button><button class="icon-button" id="refresh" aria-label="刷新媒体库" title="刷新"><span data-icon="refresh"></span></button></div></header>
+    <header class="library-header"><div><h1 id="page-title">视频</h1></div><div class="header-actions"><button class="icon-button" id="library-back" data-api-action="rhvideo.back" aria-label="返回 RHFiles" title="返回" hidden><span data-icon="left"></span></button><button class="icon-button" id="refresh" aria-label="刷新媒体库" title="刷新"><span data-icon="refresh"></span></button></div></header>
     <section class="library-controls"><label class="search"><span data-icon="search"></span><input type="search" id="search" placeholder="搜索名称或文件夹…" autocomplete="off" aria-label="搜索媒体"></label><label class="folder-filter"><span data-icon="folder"></span><select id="folder" aria-label="按文件夹筛选"><option value="">所有文件夹</option></select></label><span class="result-count" id="result-count"></span></section>
     <div id="notice" class="notice" role="status" hidden></div>
     <div id="library-status" class="library-status" role="status"></div>
@@ -43,6 +43,6 @@
     <div class="reader-body"><aside><p class="nav-label">章节目录</p><select id="chapter-select" size="18" aria-label="章节目录"></select></aside><article id="chapter-scroll"><div class="chapter-content"><h2 id="chapter-title"></h2><div id="chapter-text"></div><footer class="chapter-actions"><button class="button secondary" id="chapter-previous">上一章</button><button class="button secondary" id="chapter-next">下一章</button></footer></div></article></div>
   </dialog>
   <dialog id="timeline-dialog" class="timeline-dialog"><header class="dialog-heading"><div><p class="eyebrow">VIDEO TIMELINE</p><h2 id="timeline-title">关键帧时间轴</h2></div><button class="icon-button" id="timeline-close" aria-label="关闭时间轴"><span data-icon="close"></span></button></header><p class="dialog-subtitle">点击画面，在原生播放器中跳转到这一刻。</p><div id="timeline-frames"></div></dialog>
-  <script src="js/automation-core.js"></script><script src="js/rhvideo-model.js"></script><script src="js/rhvideo-client.js"></script>
+  <script src="js/automation-core.js"></script><script src="js/rhvideo-model.js"></script><script src="js/rhvideo-index.js"></script><script src="js/rhvideo-workbench.js"></script><script src="js/rhvideo-client.js"></script>
 </body>
 </html>

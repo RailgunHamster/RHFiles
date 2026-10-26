@@ -36,6 +36,7 @@ async def lifespan(application):
     async with original_lifespan(application):
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH1cAAAAASUVORK5CYII=")
         (root / "storage" / "covers" / "preview.png").write_bytes(png)
+        (root / "original.png").write_bytes(png)
         chapter_data = [("第%d章 真实接口测试" % (i+1), ("这是 RHVideo 真实后端提供的章节正文。\n\n" * 100).encode("utf-8")) for i in range(3)]
         novel_path = root / "book.txt"
         novel_path.write_bytes(b"".join(body for _, body in chapter_data))
@@ -49,7 +50,7 @@ async def lifespan(application):
                          variants=[], keyframes=["covers/preview.png"], thumbnail_path="covers/preview.png"))
             db.add(Picture(id="real-picture", user_id="fixture-user", original_filename="真实接口图片.png",
                            original_filesize=len(png), original_resolution="1x1", original_format="png",
-                           md5_hash="0"*32, webp_path="covers/preview.png", folder_label="真实测试", status="active"))
+                           md5_hash="0"*32, webp_path="covers/preview.png", original_path=str(root / "original.png"), folder_label="真实测试", status="active"))
             db.add(Novel(id="real-novel", user_id="fixture-user", title="真实接口小说",
                          source_path=str(novel_path), encoding="utf-8", folder_label="真实测试",
                          word_count=12000, chapter_count=3, status="active"))

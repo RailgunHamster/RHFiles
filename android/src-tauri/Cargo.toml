@@ -48,6 +48,7 @@ getrandom = "0.3"
 rhfiles-transfer = { path = "../../crates/rhfiles-transfer" }
 
 [dev-dependencies]
+crossbeam-channel = "0.5"
 # `test` provides the MockRuntime used by tests/ipc.rs to drive the real command
 # layer over the IPC bridge — no device or emulator required.
 tauri = { version = "2", features = ["protocol-asset", "test"] }
@@ -58,3 +59,6 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[patch.crates-io]
+wry = { path = "../../vendor/wry-0.55.1" }
