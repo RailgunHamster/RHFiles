@@ -45,7 +45,7 @@ internal class RhVideoPresentation(private val activity:AppCompatActivity,privat
       override fun onVideoSizeChanged(size:VideoSize){videoWidth=(size.width*size.pixelWidthHeightRatio).coerceAtLeast(1f);videoHeight=size.height.coerceAtLeast(1).toFloat();resize()}
       override fun onPlayerError(error:PlaybackException){failure=error.errorCodeName+": "+(error.cause?.message?:error.message?:"")}
     })
-    player.volume=0f;player.setMediaItem(MediaItem.fromUri(playback.path),playback.position);player.prepare();player.play()
+    RhVideoVolume.track(player,0f);player.setMediaItem(MediaItem.fromUri(playback.path),playback.position);player.prepare();player.play()
     return state()
   }
   private fun resize(){val t=texture?:return;if(t.width<1||t.height<1)return;val scale=minOf(t.width/videoWidth,t.height/videoHeight);t.setTransform(android.graphics.Matrix().apply{setScale(scale*videoWidth/t.width,scale*videoHeight/t.height,t.width/2f,t.height/2f)})}
@@ -65,17 +65,18 @@ internal class RhVideoPresentation(private val activity:AppCompatActivity,privat
       .put("positionMs",player.currentPosition).put("durationMs",if(player.duration==C.TIME_UNSET)0 else player.duration)
       .put("playing",player.isPlaying).put("state",if(failure!=null)"error" else if(player.playbackState==Player.STATE_ENDED)"ended" else if(player.isPlaying)"playing"else"paused")
       .put("error",failure?:JSONObject.NULL)
+      .put("volume",RhVideoVolume.local(player)*100).put("decoderVolume",player.volume*100)
   }
   fun control(args:JSONObject):JSONObject{
     val p=engine?:return state();val value=args.optDouble("value",0.0);require(value.isFinite())
     when(args.getString("command")){
       "pause"->p.pause();"resume"->p.play()
       "seek"->{require(value>=0&&p.duration!=C.TIME_UNSET&&value<=p.duration);p.seekTo(value.toLong())}
-      "volume"->{require(value in 0.0..100.0);p.volume=(value/100).toFloat()}
+      "volume"->{require(value in 0.0..100.0);RhVideoVolume.setLocal(p,(value/100).toFloat())}
       "rate"->{require(value in .25..4.0);p.setPlaybackSpeed(value.toFloat())}
       else->error("未知放映操作")
     };return state()
   }
   fun pause(){engine?.pause()}
-  fun close():JSONObject{view?.let{root.removeView(it)};engine?.clearVideoTextureView(texture);engine?.release();view=null;texture=null;engine=null;rendered=false;failure=null;return JSONObject().put("closed",true)}
+  fun close():JSONObject{view?.let{root.removeView(it)};engine?.clearVideoTextureView(texture);engine?.let{RhVideoVolume.untrack(it);it.release()};view=null;texture=null;engine=null;rendered=false;failure=null;return JSONObject().put("closed",true)}
 }

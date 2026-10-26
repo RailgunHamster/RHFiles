@@ -56,6 +56,7 @@ class PlaybackActivity:AppCompatActivity() {
   private var resize=AspectRatioFrameLayout.RESIZE_MODE_FIT
   private var rhWindow:RhVideoClient.Window?=null
   private var rhTicket:String?=null
+  private var rhLocalGain=1f
   private var rebuildingWindow=false
   override fun onCreate(savedInstanceState:Bundle?) {
     super.onCreate(savedInstanceState)
@@ -79,6 +80,7 @@ class PlaybackActivity:AppCompatActivity() {
       path=queue[index].path;source=sources[index];title=queue[index].name
     }catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish();return}
     position=savedInstanceState?.getLong("position") ?: intent.getLongExtra("positionMs",0).coerceAtLeast(0);play=savedInstanceState?.getBoolean("play",true) ?: true
+    rhLocalGain=savedInstanceState?.getFloat("rhLocalGain",1f)?:1f
     WindowCompat.setDecorFitsSystemWindows(window,false)
     WindowInsetsControllerCompat(window,window.decorView).apply{hide(WindowInsetsCompat.Type.systemBars());systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE}
     val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK)}
@@ -105,7 +107,7 @@ class PlaybackActivity:AppCompatActivity() {
   internal fun automationState():JSONObject {
     val engine=player?:error("播放器尚未就绪")
     return JSONObject().put("path",path).put("index",engine.currentMediaItemIndex+(rhWindow?.offset?:0)).put("count",rhWindow?.total?:queue.size).put("playing",engine.isPlaying).put("playWhenReady",engine.playWhenReady).put("playbackState",engine.playbackState).put("suppressionReason",engine.playbackSuppressionReason).put("error",engine.playerError?.let{JSONObject().put("code",it.errorCodeName).put("message",it.cause?.message?:it.message?:"") }?:JSONObject.NULL).put("positionMs",engine.currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
-      .put("volume",engine.volume*100).put("tracks",PlayerTracks.state(engine.currentTracks,engine.trackSelectionParameters))
+      .put("volume",RhVideoVolume.local(engine)*100).put("decoderVolume",engine.volume*100).put("tracks",PlayerTracks.state(engine.currentTracks,engine.trackSelectionParameters))
   }
   internal fun automationControl(args:JSONObject):JSONObject {
     val engine=player?:error("播放器尚未就绪")
@@ -120,7 +122,7 @@ class PlaybackActivity:AppCompatActivity() {
       "previous"->{check(engine.hasPreviousMediaItem()){"没有上一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToPreviousMediaItem();if(failed){engine.prepare();engine.play()}}
       "seek"->{val value=args.getDouble("value");require(value.isFinite()&&value>=0&&engine.duration!=C.TIME_UNSET&&value<=engine.duration){"跳转位置超出范围（毫秒）"};engine.seekTo(value.toLong())}
       "rate"->{val value=args.getDouble("value");require(value.isFinite()&&value in .25..4.0){"播放速度应为 0.25–4"};engine.setPlaybackSpeed(value.toFloat())}
-      "volume"->{val value=args.getDouble("value");require(value.isFinite()&&value in 0.0..100.0);engine.volume=(value/100).toFloat()}
+      "volume"->{val value=args.getDouble("value");require(value.isFinite()&&value in 0.0..100.0);RhVideoVolume.setLocal(engine,(value/100).toFloat())}
       "rotate"->{val value=args.getInt("value");require(value in listOf(0,90,180,270));playerView.videoSurfaceView?.rotation=value.toFloat()}
       "repeat"->engine.repeatMode=if(args.getBoolean("enabled"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
       "fit"->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
@@ -144,6 +146,7 @@ class PlaybackActivity:AppCompatActivity() {
       .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})))
       .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000).build()
     player=engine;playerView.player=engine
+    if(path.startsWith("rhvideo://"))RhVideoVolume.track(engine,rhLocalGain)
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
     engine.setHandleAudioBecomingNoisy(true)
     engine.addListener(object:Player.Listener {
@@ -202,7 +205,7 @@ class PlaybackActivity:AppCompatActivity() {
       4->external()
     };true};menu.show()
   }
-  override fun onSaveInstanceState(outState:Bundle){outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
-  override fun onStop(){player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;it.release()};if(::playerView.isInitialized)playerView.player=null;player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
+  override fun onSaveInstanceState(outState:Bundle){outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
+  override fun onStop(){player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);it.release()};if(::playerView.isInitialized)playerView.player=null;player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
   override fun onDestroy(){if(active.get()===this)active.clear();super.onDestroy()}
 }

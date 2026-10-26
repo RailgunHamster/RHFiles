@@ -29,6 +29,7 @@
   for(const direction of ['next','previous'])register(direction,object({expectedId:{type:'string',maxLength:128},expectedRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}}),async args=>{const result=await native('player.'+direction,args);paint(result);return result;});
   register('preloadState',object(),()=>native('player.preloadState'));
   register('preload',object(),()=>native('player.preload'));
+  register('close',object(),()=>native('player.close'));
   for(const [id,name]of Object.entries({toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen'}))$(id).dataset.apiAction='rhvideo.player.'+name;
   api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...document.querySelectorAll('button,input,select')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native player UI/public API coverage'});
   const control=args=>api.invoke('rhvideo.player.control',args).catch(error);

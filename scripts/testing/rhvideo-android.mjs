@@ -11,6 +11,11 @@ assert.match(serial,/^emulator-\d+$/);assert(apk&&probe,'Provide release APK and
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME||path.join(process.env.LOCALAPPDATA,'Android/Sdk');
 const adb=path.join(sdk,'platform-tools/adb.exe');
 const sevenZip=path.resolve('src-tauri/thirdparty/7z.exe');
+const aapt=fs.readdirSync(path.join(sdk,'build-tools')).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})).map(v=>path.join(sdk,'build-tools',v,'aapt.exe')).find(v=>fs.existsSync(v));
+assert(aapt,'Android aapt is required to validate the native runtime');
+const apkEntries=execFileSync(aapt,['list',path.resolve(apk)],{encoding:'utf8',windowsHide:true}).split(/\r?\n/),abis=new Set(apkEntries.filter(v=>v.startsWith('lib/')).map(v=>v.split('/')[1]));
+assert(abis.size>0,'Release APK has no native libraries');
+for(const abi of abis)assert(apkEntries.includes('lib/'+abi+'/librhfiles_android_lib.so'),'Missing RHFiles runtime for '+abi+'; use the same ABI filters as the completed Rust build');
 for(const relative of ['rhvideo.html','js/rhvideo-client.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(apk),'assets/rhvideo/'+relative],{windowsHide:true,maxBuffer:8*1024*1024});
   const expected=fs.readFileSync(path.resolve('src',relative));
@@ -29,7 +34,7 @@ assert.doesNotMatch(run(['shell','dumpsys','window','windows']),/Application Not
 const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-rhvideo-android-'));
 const video=path.join(temporary,'sample.mp4');
 execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-t','20','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart',video],{windowsHide:true,timeout:30000});
-const fixture=await rhvideoFixture({videoFile:video}),port=new URL(fixture.url).port;
+const fixture=await rhvideoFixture({videoFile:video,chapterCount:83}),port=new URL(fixture.url).port;
 const artifact=path.resolve('test-artifacts/rhvideo-android-release');fs.mkdirSync(artifact,{recursive:true});
 function installExact(packageId,file){
   let matches=false;

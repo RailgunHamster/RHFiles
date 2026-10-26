@@ -119,6 +119,14 @@ foreach ($candidate in $candidates) {
         $failures += "$($candidate.Kind): APK package, version or ABI does not match this build ($expectedVersion / $abi)"
         continue
     }
+    # Third-party JNI libraries alone can make an APK advertise an ABI even
+    # when the RHFiles runtime was not built for it. Refuse such startup-crash
+    # packages before copying anything into the release output directory.
+    $apkEntries = & $aapt list $candidate.Path
+    if ($LASTEXITCODE -ne 0 -or $apkEntries -cnotcontains "lib/$abi/librhfiles_android_lib.so") {
+        $failures += "$($candidate.Kind): missing RHFiles native runtime for $abi"
+        continue
+    }
     $certs = (& $apksigner.FullName verify --print-certs $candidate.Path 2>&1) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $certs -notmatch 'SHA-256 digest: ([0-9a-fA-F]+)') {
         $failures += "$($candidate.Kind): APK is not correctly signed"

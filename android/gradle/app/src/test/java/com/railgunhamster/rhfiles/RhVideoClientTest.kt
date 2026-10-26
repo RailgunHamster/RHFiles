@@ -17,6 +17,10 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[28])
 class RhVideoClientTest {
+  @Test fun taskImagePathsDoNotExposeArbitraryAuthenticatedApis(){
+    assertEquals("api/v1/videos/video_123/thumbnail",RhVideoClient.imagePath("/api/v1/videos/video_123/thumbnail"))
+    for(value in listOf("/api/v1/auth/login","/api/v1/videos/../thumbnail","/api/v1/videos/a/thumbnail?x=1","/api/v1/videos/a%2fb/thumbnail","https://evil.invalid/a","/storage/../secret"))try{RhVideoClient.imagePath(value);fail(value)}catch(_:IllegalArgumentException){}
+  }
   private lateinit var server:MockWebServer
   private lateinit var client:RhVideoClient
   @Before fun setup(){server=MockWebServer();server.start();val context=RuntimeEnvironment.getApplication();context.getSharedPreferences("rhvideo-client-v1",0).edit().clear().commit();client=RhVideoClient(context)}

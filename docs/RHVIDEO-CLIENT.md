@@ -33,6 +33,12 @@ Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套媒体
 
 ## 自动化
 
+新增的页码跳转、摘录搜索、截图逐张浏览/原清单定位、任务图片放大、阅读器目录/收藏及统一音量，同样是公开动作，不是只能点 UI 的特殊逻辑：`rhvideo.page.jump`、`rhvideo.gallery.jump`、`rhvideo.novel.previewSearch`、`rhvideo.gallery.inspect`、`rhvideo.image.reveal`、`rhvideo.image.preview`、`rhvideo.reader.toc`、`rhvideo.reader.favorite`、`rhvideo.volume.set`。统一音量默认 20%，与单个视频的音量相乘，静音后恢复不会丢失各格音量；不修改 Windows/Android 系统音量或普通本地播放器。
+
+章节速览每页 40 章、每章最多 720 字，搜索标题和摘录，支持拼音；界面明确显示“本页”范围，可以继续翻页查找，不无限拉取整本正文。截图浏览支持完整筛选队列的前后切换、“播放此刻”以及定位到源视频所在的清单页。
+
+批量暂存执行中可用 `rhvideo.selection.progress` 查看进度，或带本次 `ticket` 调用 `rhvideo.selection.stop`，只停止尚未发送的项目；不撤销已经提交的请求，旧 ticket 不控制后来的任务。完成/失败后停止按钮移除，失败项不自动重试。
+
 所有界面操作使用 RHFilesAPI 注册动作。不是另写一套“测试专用操作”：UI 与脚本调用相同处理函数。`list` 返回参数 schema、风险级别，`rhvideo.ui.contract` 逐个枚举真实控件并报告没有接口的控件（包括尚未标注的新按钮，不会只检查已标注按钮）。输入框也可通过通用 `ui.set` 填写，再调用对应提交操作。
 
 固定远程操作清单在 `src/rhvideo-operations.json`，两端原生层校验方法、路径、参数、上限和危险确认。网页拿不到登录令牌，也不能自行指定任意远程接口。

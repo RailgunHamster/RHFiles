@@ -17,11 +17,64 @@ async function target(app,file){
   },file+' packaged app window');
   const session=await cdpSession(found,30000);
   await until(()=>session.evaluate("!!globalThis.RHFilesAPI?.list().some(a=>['rhvideo.state','rhvideo.player.state','rhvideo.grid.state'].includes(a.id))"),'view actions registered');
-  const code={'rhvideo.html':'rhvideo-workbench.js','rhvideo-player.html':'rhvideo-player.js','rhvideo-grid.html':'rhvideo-grid.js'}[file];
-  if(code){const served=await session.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=text=>createHash('sha256').update(text).digest('hex');assert.equal(hash(served),hash(source),'The tested executable must embed the current '+code);}
+  const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
+  for(const code of codes){const served=await session.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=text=>createHash('sha256').update(text).digest('hex');assert.equal(hash(served),hash(source),'The tested executable must embed the current '+code);}
   return session;
 }
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
+
+test('stopping a live batch never replays a submitted write, clobbers another panel or controls a later batch',async()=>{
+  let release,entered=false;const fixture=await rhvideoFixture({beforeTrash:async()=>{if(!entered){entered=true;await new Promise(r=>release=r);}}}),app=await launchApp({emulateFocus:true});let view;
+  try{
+    await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+    await invoke(view,'category',{kind:'picture'});for(let i=0;i<3;i++)await invoke(view,'selection.toggle',{kind:'picture',id:'picture-'+i,enabled:true});
+    const confirmation=await invoke(view,'selection.stage');await invoke(view,'confirm.advance',{ticket:confirmation.ticket});
+    await view.evaluate('window.__pendingStage=RHFilesAPI.invoke("rhvideo.confirm.advance",'+JSON.stringify({ticket:confirmation.ticket})+');true');await until(()=>entered,'one stage request sent');
+    assert.equal((await invoke(view,'selection.progress')).running,true);await assert.rejects(invoke(view,'selection.stop',{ticket:'other-old-batch'}),/已结束|目标已改变/);
+    await invoke(view,'selection.stop',{ticket:confirmation.ticket});await invoke(view,'task.detail',{kind:'default',id:'video:video-0'});release();
+    const result=await view.evaluate('window.__pendingStage');assert.equal(result.succeeded,1);assert.equal(result.notAttempted,2);assert.equal(result.stopped,true);assert.equal(fixture.trash.length,1);
+    assert.equal((await invoke(view,'selection.progress')).running,false);await assert.rejects(invoke(view,'selection.stop',{ticket:confirmation.ticket}),/已结束|目标已改变/);
+    assert.equal(await view.evaluate("document.querySelector('#wb-info .wb-dialog-head h2').textContent"),'任务详情');assert.equal(await view.evaluate("document.querySelector('#wb-info .wb-content').textContent.includes('成功 1 项')"),false);
+    assert.equal(await view.evaluate("document.querySelectorAll('#wb-info [data-api-action=\"rhvideo.selection.stop\"]').length"),0);
+    assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);
+  }finally{release?.();view?.close();app.close();await fixture.close();}
+});
+
+test('reference control audit: arbitrary paging, excerpt search, task image enlargement and master volume have real public APIs',async()=>{
+  const app=await launchApp({emulateFocus:true}),fixture=await rhvideoFixture({chapterCount:83,taskState:{detail:{id:'video:video-0',video_id:'video-0',filename:'真实缩略图',status:'failed',steps:[]}}});let view;
+  try{
+    await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
+    await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+    assert.equal((await invoke(view,'page.jump',{page:2})).offset,36);
+    await assert.rejects(invoke(view,'page.jump',{page:3}),/页码/);
+    await view.evaluate("document.getElementById('page-number').value='1';document.getElementById('page-jump-form').requestSubmit();true");
+    await until(async()=>(await invoke(view,'state')).offset===0&&!(await invoke(view,'state')).loading,'page form uses the same API');
+    await invoke(view,'volume.set',{value:37});assert.equal((await invoke(view,'volume.state')).volume,37);assert.equal(await view.evaluate("document.getElementById('wb-page-volume').value"),'37');
+    await invoke(view,'volume.set',{value:0});await invoke(view,'volume.set',{value:52});assert.equal((await invoke(view,'preferences.state')).volume,52);
+    await assert.rejects(invoke(view,'volume.set',{value:101}),/allowed range/);
+    await invoke(view,'task.detail',{kind:'default',id:'video:video-0'});
+    await until(()=>view.evaluate("document.querySelector('#wb-info .wb-thumbnail-preview img')?.naturalWidth===800"),'task thumbnail decoded');
+    await invoke(view,'image.preview',{path:'/api/v1/videos/video-0/thumbnail',title:'真实缩略图'});
+    await until(()=>view.evaluate("document.querySelector('#wb-image-preview img')?.naturalWidth===800"),'enlarged task image decoded');
+    assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);await invoke(view,'panel.close',{id:'wb-image-preview'});await invoke(view,'panel.close',{id:'wb-info'});
+    await invoke(view,'category',{kind:'novel'});await invoke(view,'novel.preview',{id:'novel-0',offset:0});
+    assert.equal((await invoke(view,'novel.previewState')).chapters.length,40);
+    assert.equal((await invoke(view,'novel.previewSearch',{query:'zhang jie zhai lu'})).matches,40);
+    assert.equal((await invoke(view,'novel.previewSearch',{query:'duanluo41'})).matches,0);
+    await invoke(view,'novel.preview',{id:'novel-0',offset:40});assert.deepEqual((await invoke(view,'novel.previewState')).chapters,[41]);
+    await invoke(view,'novel.previewMode',{flow:true});await invoke(view,'novel.previewMode',{flow:false});
+    assert.equal(await view.evaluate("document.querySelector('[data-api-action=\"rhvideo.novel.previewMode\"]').textContent"),'连续试读');
+    assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);await invoke(view,'panel.close',{id:'wb-preview'});
+    await invoke(view,'media.open',{kind:'novel',id:'novel-0'});assert.equal((await invoke(view,'reader.toc',{visible:false})).visible,false);assert.equal((await invoke(view,'reader.toc')).visible,true);
+    assert.equal((await invoke(view,'reader.favorite')).favorite,true);assert.equal((await invoke(view,'reader.favorite')).favorite,false);await invoke(view,'reader.close');
+    await invoke(view,'gallery.open');await assert.rejects(invoke(view,'gallery.jump',{page:2}),/页码/);await invoke(view,'gallery.jump',{page:1});
+    await invoke(view,'gallery.inspect',{index:0});await until(()=>view.evaluate("document.getElementById('full-image').naturalWidth===800"),'full gallery screenshot decoded');
+    const before=(await invoke(view,'image.state')).index;await invoke(view,'image.step',{direction:1});assert.equal((await invoke(view,'image.state')).index,before+1);
+    const revealed=await invoke(view,'image.reveal');assert.equal(revealed.kind,'video');assert.equal((await invoke(view,'state')).kind,'video');assert.equal(await view.evaluate("document.querySelectorAll('.media-card.wb-revealed').length"),1);
+    assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);await invoke(view,'panel.close',{id:'wb-gallery'});
+    await view.send('Page.captureScreenshot',{format:'png'}).then(shot=>fs.writeFileSync(path.join(app.artifactDir,'rhvideo-control-audit.png'),Buffer.from(shot.data,'base64')));
+  }finally{view?.close();await fixture.close();app.close();}
+});
 
 test('late login and stale generations cannot erase or mutate a newer account',async()=>{
   const app=await launchApp({emulateFocus:true});let view,release,entered=false;
@@ -171,7 +224,7 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
     const file=path.join(app.directory,'sample.mp4');
-    execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-t','14','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
+    execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-t','14','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
     fixture=await rhvideoFixture({videoFile:file});
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
     const connected=await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
@@ -193,6 +246,8 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
     await until(async()=>{preload=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.preloadState')");return preload.state==='ready'&&preload.decodedFrames>0;},'bounded native next-video preload',15000).catch(error=>{console.log(JSON.stringify({preload}));throw error;});
     await invoke(player,'player.control',{command:'volume',value:37});await invoke(player,'player.control',{command:'rate',value:1.25});
     const preloaded=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.next')");assert.equal(preloaded.preloaded,true,'next must consume a real decoded native preload');assert.equal(preloaded.volume,37);assert.equal(preloaded.rate,1.25);assert.deepEqual((await invoke(player,'ui.contract')).missing,[]);
+    await invoke(view,'volume.set',{value:0});assert.equal((await invoke(player,'player.state')).decoderVolume,0);assert.equal((await invoke(player,'player.state')).volume,37);
+    await invoke(view,'volume.set',{value:60});assert.equal((await invoke(player,'player.state')).decoderVolume,22,'master gain multiplies rather than replaces local gain');
     const late=await invoke(player,'player.next',{expectedId:beforeNext.queue.id,expectedRevision:beforeNext.queue.revision});assert.equal(late.stale,true);assert.equal(late.queue.index,1,'a delayed auto-next must not skip a second item');
     let afterNext;
     await until(async()=>{afterNext=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.state')");return afterNext.queue?.index===1&&afterNext.title.includes('海边');},'next video in native queue').catch(error=>{console.log(JSON.stringify({preloaded,afterNext}));throw error;});

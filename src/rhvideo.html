@@ -23,7 +23,7 @@
     <div id="notice" class="notice" role="status" hidden></div>
     <div id="library-status" class="library-status" role="status"></div>
     <section id="media-grid" class="media-grid" aria-label="媒体内容" aria-busy="false"></section>
-    <footer class="pagination"><span id="page-count"></span><div><button class="button secondary" id="previous-page">上一页</button><button class="button secondary" id="next-page">下一页</button></div></footer>
+    <footer class="pagination"><span id="page-count"></span><form id="page-jump-form" class="page-jump"><label>跳到 <input id="page-number" type="number" min="1" value="1" aria-label="页码" required></label><button class="button secondary" type="submit">跳转</button></form><div><button class="button secondary" id="previous-page">上一页</button><button class="button secondary" id="next-page">下一页</button></div></footer>
   </main>
   <dialog id="connection-dialog" class="connection-dialog">
     <form id="connection-form"><div class="dialog-heading"><div><h2>连接 RHVideo</h2></div><button type="button" class="icon-button" id="connection-close" aria-label="关闭"><span data-icon="close"></span></button></div>

@@ -262,6 +262,14 @@ fn kind(args: &Value) -> Result<&str, String> {
     }
     Ok(value)
 }
+fn safe_image_path(path: &str) -> Result<String, String> {
+    let api=path.trim_start_matches('/');
+    if api.starts_with("api/") {
+        let id=api.strip_prefix("api/v1/videos/").and_then(|p|p.strip_suffix("/thumbnail")).ok_or("不支持的缩略图接口")?;
+        return Ok(format!("api/v1/videos/{}/thumbnail",identifier(id)?));
+    }
+    safe_storage_path(path)
+}
 fn safe_storage_path(path: &str) -> Result<String, String> {
     let decoded = percent_encoding::percent_decode_str(path)
         .decode_utf8()
@@ -965,6 +973,19 @@ pub async fn rhvideo_request(
         return Err("参数必须是 JSON 对象".into());
     }
     match action.as_str() {
+        "page.volume" => {
+            current()?;
+            let value=args["value"].as_u64().filter(|v|*v<=100).ok_or("页面音量范围是 0–100")? as u32;
+            #[cfg(windows)] { return crate::rhvideo_player::page_volume(value); }
+            #[cfg(not(windows))] { let _=value;return Err("此平台尚未接入原生音量".into()); }
+        }
+        "player.close" => {
+            flush_playback();
+            *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
+            #[cfg(windows)] { crate::rhvideo_player::stop(); }
+            if let Some(window)=app.get_webview_window("window-rhvideo-player") { let _=window.close(); }
+            return Ok(json!({"closed":true}));
+        }
         "player.preloadState" => {
             current()?;
             #[cfg(windows)]
@@ -1369,7 +1390,7 @@ pub async fn rhvideo_request(
                 .ok_or("每次最多解析 100 张图片")?;
             let urls = paths
                 .iter()
-                .map(|p| session.asset(safe_storage_path(p.as_str().ok_or("图片路径无效")?)?, true))
+                .map(|p| session.asset(safe_image_path(p.as_str().ok_or("图片路径无效")?)?, true))
                 .collect::<Result<Vec<_>, String>>()?;
             Ok(json!(urls))
         }
@@ -1873,6 +1894,13 @@ pub async fn rhvideo_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn task_image_paths_whitelist_only_native_thumbnail_gets_and_storage() {
+        assert_eq!(safe_image_path("/api/v1/videos/video_123/thumbnail").unwrap(),"api/v1/videos/video_123/thumbnail");
+        for bad in ["/api/v1/auth/login","/api/v1/videos/../thumbnail","/api/v1/videos/a/thumbnail?x=1","/api/v1/videos/a%2fb/thumbnail","https://evil.invalid/a","/storage/../secret"] {
+            assert!(safe_image_path(bad).is_err(),"{bad}");
+        }
+    }
     #[tokio::test]
     async fn unchanged_video_catalog_reuses_the_same_allocation_and_conditional_request() {
         let seen = Arc::new(Mutex::new(Vec::<HeaderMap>::new()));

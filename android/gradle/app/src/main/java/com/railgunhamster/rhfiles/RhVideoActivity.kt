@@ -91,6 +91,8 @@ class RhVideoActivity:AppCompatActivity() {
             val contextArgs=JSONObject(args.toString())
             if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}}}
             val value=when(action){
+              "player.close"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{PlaybackActivity.closeRhVideo();result.complete(JSONObject().put("closed",true))};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
+              "page.volume"->{val value=args.getInt("value");require(value in 0..100);val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(RhVideoVolume.set(value))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "export.chunk"->{
                 val ticket=args.getString("ticket");require(ticket.matches(Regex("[A-Za-z0-9_-]{1,128}")))
                 val index=args.getInt("index");val text=args.getString("text");require(text.length<=64000)

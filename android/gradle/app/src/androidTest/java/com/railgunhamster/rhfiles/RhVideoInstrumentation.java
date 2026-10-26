@@ -77,6 +77,21 @@ public class RhVideoInstrumentation extends Instrumentation {
   }
   private void ready(WebView web,String name)throws Exception{long end=System.currentTimeMillis()+15000;do{if(eval(web,"typeof "+name+" !== 'undefined'").equals("true"))return;Thread.sleep(150);}while(System.currentTimeMillis()<end);throw new Exception("Bridge not ready: "+name);}
   private void readerReady()throws Exception{long end=System.currentTimeMillis()+10000;do{JSONObject state=(JSONObject)action("state",new JSONObject());if(state.optJSONObject("reader")!=null&&state.getJSONObject("reader").optBoolean("loaded"))return;Thread.sleep(100);}while(System.currentTimeMillis()<end);throw new Exception("Reader not ready");}
+  private void checkReferenceControls()throws Exception{
+    require(((JSONObject)action("page.jump",new JSONObject().put("page",2))).getInt("offset")==36,"Direct page jump");action("page.jump",new JSONObject().put("page",1));
+    action("volume.set",new JSONObject().put("value",60));require(((JSONObject)action("volume.state",new JSONObject())).getInt("volume")==60,"Master gain preference/API");
+    action("task.detail",new JSONObject().put("kind","default").put("id","video:video-0"));
+    action("image.preview",new JSONObject().put("path","/api/v1/videos/video-0/thumbnail").put("title","任务预览"));
+    long end=System.currentTimeMillis()+10000;while(!eval(library,"document.querySelector('#wb-image-preview img')?.naturalWidth===800").equals("true")&&System.currentTimeMillis()<end)Thread.sleep(100);
+    require(eval(library,"document.querySelector('#wb-image-preview img')?.naturalWidth===800").equals("true"),"Actual enlarged task image");action("panel.close",new JSONObject().put("id","wb-image-preview"));action("panel.close",new JSONObject().put("id","wb-info"));
+    action("category",new JSONObject().put("kind","novel"));action("novel.preview",new JSONObject().put("id","novel-0").put("offset",0));
+    require(((JSONObject)action("novel.previewSearch",new JSONObject().put("query","zhangjiezhailu"))).getInt("matches")==40,"Excerpt pinyin search");
+    action("novel.previewSearch",new JSONObject().put("query","duanluo41"));action("novel.preview",new JSONObject().put("id","novel-0").put("offset",40));
+    JSONArray chapters=((JSONObject)action("novel.previewState",new JSONObject())).getJSONArray("chapters");require(chapters.length()==1&&chapters.getInt(0)==41,"Paged excerpt search");action("panel.close",new JSONObject().put("id","wb-preview"));
+    action("media.open",new JSONObject().put("kind","novel").put("id","novel-0"));readerReady();action("reader.toc",new JSONObject().put("visible",false));require(((JSONObject)action("reader.toc",new JSONObject())).getBoolean("visible"),"Reader TOC toggle");action("reader.favorite",new JSONObject());action("reader.favorite",new JSONObject());action("reader.close",new JSONObject());
+    action("gallery.open",new JSONObject());action("gallery.inspect",new JSONObject().put("index",0));action("image.step",new JSONObject().put("direction",1));require(((JSONObject)action("image.state",new JSONObject())).getInt("index")==1,"Screenshot browsing queue");action("image.reveal",new JSONObject());
+    require(((JSONObject)action("state",new JSONObject())).getString("kind").equals("video"),"Reveal original video in list");require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"New controls need public APIs");
+  }
   private void screenshot(String name)throws Exception{
     File file=new File(getTargetContext().getExternalFilesDir(null),name);android.graphics.Bitmap bitmap=getUiAutomation().takeScreenshot();
     if(bitmap!=null){try(FileOutputStream out=new FileOutputStream(file)){bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}bitmap.recycle();}
@@ -109,6 +124,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       action("page",new JSONObject().put("direction",1));require(((JSONObject)action("state",new JSONObject())).getInt("offset")==36,"Paging");
       action("search",new JSONObject().put("query","shanye"));require(((JSONObject)action("state",new JSONObject())).getInt("total")>0,"Pinyin folder search");action("search",new JSONObject().put("query",""));
       action("sort",new JSONObject().put("value","nameDesc"));action("sort",new JSONObject().put("value","dateDesc"));
+      checkReferenceControls();
       require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"Every media UI action has a public interface");
       checkRotationState(catalog.getJSONArray("items").getJSONObject(0).getString("id"));
       for(String section:new String[]{"watch","tasks","replacement","trash","storage","system"}){
@@ -136,6 +152,9 @@ public class RhVideoInstrumentation extends Instrumentation {
       long end=System.currentTimeMillis()+20000;JSONObject state=null;
       do{try{state=(JSONObject)nativeCall("automation.media.state",new JSONObject());if(state.optBoolean("playing")&&state.optLong("positionMs")>700)break;}catch(Exception ignored){}Thread.sleep(200);}while(System.currentTimeMillis()<end);
       require(state!=null&&state.optBoolean("playing")&&state.optLong("positionMs")>700,"Native Media3 stream did not advance: "+state);
+      action("player.control",new JSONObject().put("command","volume").put("value",37));action("volume.set",new JSONObject().put("value",0));
+      JSONObject muted=(JSONObject)nativeCall("automation.media.state",new JSONObject());require(Math.abs(muted.getDouble("volume")-37)<.1&&muted.getDouble("decoderVolume")==0,"Master mute preserves player gain");
+      action("volume.set",new JSONObject().put("value",60));require(Math.abs(((JSONObject)nativeCall("automation.media.state",new JSONObject())).getDouble("decoderVolume")-22.2)<.1,"Master gain multiplies native Media3 volume");
       nativeCall("automation.media.control",new JSONObject().put("command","pause"));nativeCall("automation.media.control",new JSONObject().put("command","seek").put("value",4000));
       checkNativeTrackControls((JSONObject)mainAction("native.media.state",new JSONObject()));
       Thread.sleep(250);require(((JSONObject)nativeCall("automation.media.state",new JSONObject())).getLong("positionMs")>=3900,"Native seek");screenshot("rhvideo-player-qa.png");

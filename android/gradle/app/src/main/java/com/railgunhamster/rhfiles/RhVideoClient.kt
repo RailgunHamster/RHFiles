@@ -40,6 +40,14 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       require(path.length<=8192&&!path.contains(Regex("[%\\\\?#\\x00-\\x1f]"))&&path.split('/').none{it=="."||it==".."||it.isEmpty()}){"服务器返回了无效的媒体地址"}
       return path
     }
+    internal fun imagePath(value:String):String {
+      val path=value.trimStart('/')
+      if(path.startsWith("api/")){
+        require(path.matches(Regex("api/v1/videos/[A-Za-z0-9_-]{1,128}/thumbnail"))){"不支持的缩略图接口"}
+        return path
+      }
+      return storagePath(value)
+    }
   }
   private data class Session(val base:HttpUrl,val username:String,@Volatile var token:String,val generation:Long,@Volatile var refreshAt:Long)
   private data class Asset(val session:Session,val path:String,val image:Boolean)
@@ -222,7 +230,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
         for(i in 0 until rows.length()){val v=rows.getJSONObject(i);items.put(normalized(s,v,v.optString("kind","video")))}
         JSONObject().put("items",items).put("generation",s.generation)
       }
-      "images"->{val paths=args.getJSONArray("paths");require(paths.length()<=100);JSONArray().also{out->for(i in 0 until paths.length())out.put(asset(s,storagePath(paths.getString(i)),true))}}
+      "images"->{val paths=args.getJSONArray("paths");require(paths.length()<=100);JSONArray().also{out->for(i in 0 until paths.length())out.put(asset(s,imagePath(paths.getString(i)),true))}}
       "preferences"->{
         val key=accountKey(s)
         if(args.has("value")){val value=args.getJSONObject("value");require(value.toString().length<=256*1024);check(prefs.edit().putString(key,value.toString()).commit()){"无法保存偏好"};JSONObject().put("saved",true)}else JSONObject(prefs.getString(key,"{}")?:"{}")

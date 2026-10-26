@@ -46,6 +46,7 @@
         raw = new Map(),
         imageSession = null,
         imageToken = 0,
+        thumbnailTicket = 0,
         detailJob = null,
         liveRefresh = null;
       let mutations = {
@@ -86,6 +87,7 @@
         super: false,
         rotation: 0,
         gridCount: 4,
+        volume: 20,
         resume: true,
       };
       const config = () => ({ ...defaults, ...prefs });
@@ -167,6 +169,7 @@
         }
         liveRefresh?.configure(liveRefresh.enabled);
         node.querySelector(".wb-dialog-head h2").textContent = title;
+        if(id==="wb-info")delete node.querySelector(".wb-content").dataset.batchTicket;
         return node.querySelector(".wb-content");
       }
       function startWorker() {
@@ -249,6 +252,7 @@
           status: "all",
         });
         preview.load++;
+        thumbnailTicket++;
         preview.items = [];
         gallery.load++;
         gallery.loaded = false;
@@ -326,6 +330,16 @@
         await ready;
         return epoch;
       }
+      let volumeChain=Promise.resolve(),volumeKey="";
+      function syncVolume(){
+        const value=config().volume,key=state.generation+":"+value;
+        if($("wb-page-volume"))$("wb-page-volume").value=String(value);
+        if(!state.connected)return Promise.resolve({volume:value});
+        if(volumeKey===key)return volumeChain;
+        volumeKey=key;const generation=state.generation;
+        volumeChain=volumeChain.catch(()=>{}).then(()=>{if(!state.connected||generation!==state.generation)return {stale:true};return native("page.volume",{value});});
+        return volumeChain;
+      }
       function applyPreferences() {
         const c = config();
         $("wb-sort").value = c.sort;
@@ -347,6 +361,7 @@
             new Option(String(c.readerFont), String(c.readerFont)),
           );
         $("reader-font").value = String(c.readerFont);
+        void syncVolume().catch(error=>{volumeKey="";notice(error);});
       }
       function save() {
         clearTimeout(saveTimer);
@@ -677,6 +692,7 @@
                 "wb-confirm",
                 "wb-gallery",
                 "wb-viewer",
+                "wb-image-preview",
               ],
             },
           },
@@ -686,6 +702,8 @@
           if (id === "wb-viewer") stopViewer();
           if (id === "wb-confirm") pendingConfirmation = null;
           if (id === "wb-info") detailJob = null;
+          if (id === "wb-preview") { preview.load++; preview.searchTicket++; }
+          if (id === "wb-image-preview") { thumbnailTicket++; $(id)?.querySelector('img')?.removeAttribute('src'); }
           $(id)?.close();
           liveRefresh.configure(liveRefresh.enabled);
           if (viewer?.videoActive && viewerIsTop()) {
@@ -967,6 +985,23 @@
         },
       );
       action(
+        "media.reveal",
+        object({id:string,kind:{type:"string",enum:["video","picture","novel"]}},["id","kind"]),
+        async ({id,kind})=>{
+          const version=await ensure();
+          await invoke("category",{kind});
+          let result=await query({allKeys:true,offset:0,limit:1}),index=result.queue.findIndex(v=>v.id===id);
+          if(index<0){prefs.rule={};save();result=await query({allKeys:true,offset:0,limit:1});index=result.queue.findIndex(v=>v.id===id);}
+          if(version!==epoch)throw Error("媒体账户已改变");if(index<0)throw Error("源媒体已不在服务器清单中");
+          state.offset=Math.floor(index/state.limit)*state.limit;await load();
+          if(version!==epoch)return {stale:true};
+          if($("image-dialog").open)await invoke("image.close");if($("wb-gallery")?.open)await invoke("panel.close",{id:"wb-gallery"});
+          const card=[...$("media-grid").querySelectorAll('.media-card')].find(n=>n.dataset.id===id&&n.dataset.kind===kind);
+          if(card){card.scrollIntoView({behavior:"smooth",block:"center"});card.classList.add("wb-revealed");setTimeout(()=>card.classList.remove("wb-revealed"),3000);}
+          return {id,kind,offset:state.offset};
+        },
+      );
+      action(
         "media.info",
         object({ id: string }, ["id"]),
         async ({ id }) => {
@@ -1020,6 +1055,7 @@
             readerLine: [1.2, 3],
             perVideo: [1, 100],
             gridCount: [1, 9],
+            volume: [0, 100],
             stay: [0.1, 30],
             videoStay: [1, 300],
             min: [0, 30],
@@ -1032,7 +1068,7 @@
           if (bounds[key] && (value < bounds[key][0] || value > bounds[key][1]))
             throw Error("设置数值超出范围");
           if (
-            (["perVideo", "gridCount", "readerFont"].includes(key) &&
+            (["perVideo", "gridCount", "readerFont", "volume"].includes(key) &&
               !Number.isSafeInteger(value)) ||
             (key === "rotation" && ![0, 90, 180, 270].includes(value))
           )
@@ -1042,6 +1078,7 @@
           prefs[key] = value;
           save();
           applyPreferences();
+          if(key==="volume")await syncVolume();
           if (["perVideo", "mixPictures"].includes(key)) {
             gallery.loaded = false;
             if ($("wb-gallery")?.open) await loadGallery(true);
@@ -1059,6 +1096,8 @@
         () => structuredClone(config()),
         "read",
       );
+      action("volume.set",object({value:{type:"integer",minimum:0,maximum:100}},["value"]),({value})=>invoke("preferences.set",{key:"volume",value}));
+      action("volume.state",object(),()=>({volume:config().volume}),"read");
       action(
         "preferences.flush",
         object(),
@@ -1454,8 +1493,12 @@
         invoke("rules.apply", { rule: JSON.parse($("wb-rule-json").value) }),
       );
       let pendingConfirmation = null,
-        lastBatch = null;
+        lastBatch = null,
+        activeBatch = null;
+      action("selection.progress",object(),()=>activeBatch?{...activeBatch}: {running:false},"read");
+      action("selection.stop",object({ticket:string},["ticket"]),({ticket})=>{if(!activeBatch?.running||activeBatch.ticket!==ticket)throw Error("批量提交已结束或目标已改变");activeBatch.stopping=true;return {...activeBatch};});
       function beginConfirmation(args) {
+        if(args.batch&&activeBatch?.running)throw Error("已有批量提交正在执行");
         const ticket = crypto.randomUUID();
         pendingConfirmation = {
           ...args,
@@ -1545,12 +1588,16 @@
           pendingConfirmation = null;
           $("wb-confirm").close();
           if (p.batch) {
+            if(activeBatch?.running)throw Error("已有批量提交正在执行");
+            const batch=activeBatch={ticket:p.ticket,running:true,stopping:false,total:p.batch.length,attempted:0};
             const results = [],
               root = dialog("wb-info", "批量暂存结果");
-            root.replaceChildren(el("p", "正在提交 0 / " + p.batch.length));
-            await batchWrites(async () => {
+            root.dataset.batchTicket=p.ticket;
+            const progress=()=>{if(root.dataset.batchTicket!==p.ticket||!$("wb-info").open)return;root.replaceChildren(el("p",(batch.stopping?"正在停止后续提交 · ":"正在提交 ")+results.length+" / "+p.batch.length),button("停止后续提交","selection.stop",{ticket:p.ticket}));};
+            progress();
+            try { await batchWrites(async () => {
               for (const item of p.batch) {
-                if (p.epoch !== epoch || p.account !== account) break;
+                if (batch.stopping || p.epoch !== epoch || p.account !== account) break;
                 try {
                   await remote("trash.stage", {
                     params: { kind: item.kind, id: item.id },
@@ -1574,11 +1621,9 @@
                   });
                 }
                 if (p.epoch !== epoch) break;
-                root.replaceChildren(
-                  el("p", "已提交 " + results.length + " / " + p.batch.length),
-                );
+                batch.attempted=results.length;progress();
               }
-            });
+            }); } catch(error) {if(root.dataset.batchTicket===p.ticket)root.replaceChildren(el("p","批量提交失败："+String(error.message||error),"wb-error"));throw error;} finally { batch.running=false;root.querySelector('[data-api-action="rhvideo.selection.stop"]')?.remove();if(activeBatch===batch)activeBatch=null; }
             if (p.epoch !== epoch)
               throw Error("账户已更改，未提交的项目不会继续执行");
             lastBatch = {
@@ -1587,11 +1632,12 @@
               succeeded: results.filter((v) => v.state === "succeeded").length,
               failed: results.filter((v) => v.state === "failed").length,
               notAttempted: p.batch.length - results.length,
+              stopped: batch.stopping,
               ...(mutations.refreshError
                 ? { clientWarning: mutations.refreshError }
                 : {}),
             };
-            root.replaceChildren(
+            if(root.dataset.batchTicket===p.ticket)root.replaceChildren(
               el(
                 "p",
                 "成功 " +
@@ -1600,15 +1646,16 @@
                   lastBatch.failed +
                   " 项。不会自动重试。",
               ),
+              el("p","未提交 "+lastBatch.notAttempted+" 项"+(batch.stopping?"；已停止后续提交，当前已发送的请求未撤销。":"")),
             );
-            for (const result of results)
+            for (const result of results)if(root.dataset.batchTicket===p.ticket)
               root.append(
                 serverRow(
                   result.title || result.id,
                   result.state === "succeeded" ? "已暂存" : result.error,
                 ),
               );
-            if (lastBatch.clientWarning)
+            if (lastBatch.clientWarning&&root.dataset.batchTicket===p.ticket)
               root.append(
                 el(
                   "p",
@@ -2134,6 +2181,13 @@
       );
       function paintTaskDetail(root, t) {
         root.replaceChildren();
+        if (typeof t.video_id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(t.video_id)) {
+          const path="/api/v1/videos/"+t.video_id+"/thumbnail", title=t.filename||"任务缩略图";
+          const previewButton=button("放大缩略图", "image.preview", {path,title}, "wb-thumbnail-preview");
+          const image=el("img");image.alt=title;previewButton.prepend(image);root.append(previewButton);
+          const version=epoch;
+          void native("images",{paths:[path]}).then(([url])=>{if(version===epoch&&image.isConnected)image.src=url;}).catch(notice);
+        }
         if (t.progress) {
           const p = el("progress");
           p.max = 100;
@@ -2467,6 +2521,7 @@
       );
       action("grid.state", object(), () => native("grid.state"), "read");
       action("grid.close", object(), () => native("grid.close"));
+      action("player.close", object(), () => native("player.close"));
       action(
         "grid.control",
         object(
@@ -2574,7 +2629,9 @@
         if (value.stale || ticket !== imageToken) return { stale: true };
         if (!value.items.length)
           throw Error("当前筛选结果中没有这张图片，请刷新清单");
-        const result = await native("resolve", { items: value.items });
+        const result = session.args.kind==="gallery"
+          ? {items:[{...value.items[0],cover:(await native("images",{paths:[value.items[0].path||"/storage/"+value.items[0].webp_path]}))[0]}]}
+          : await native("resolve", { items: value.items });
         if (ticket !== imageToken || session !== imageSession)
           return { stale: true };
         session.index = index;
@@ -2584,6 +2641,7 @@
         return { index, total: session.total };
       }
       function refreshImage() {
+        const frame=imageSession?.current?.kind==="frame";if($("wb-frame-play"))$("wb-frame-play").hidden=!frame;
         if (imageSession?.current)
           showImage(
             imageSession.current,
@@ -2610,6 +2668,25 @@
           button("还原顺序", "image.order", { random: false }, "text-button"),
           button("标记/取消待删除", "selection.markCurrent", {}, "text-button"),
         );
+      const framePlay=button("播放此刻","image.playFrame",{},"text-button");framePlay.id="wb-frame-play";framePlay.hidden=true;
+      $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,button("在清单中定位","image.reveal",{},"text-button"));
+      action("image.state",object(),()=>({opened:$("image-dialog").open,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id,kind:imageSession.current.kind,videoId:imageSession.current.videoId,seconds:imageSession.current.seconds}:null}),"read");
+      action("image.playFrame",object(),()=>{const item=imageSession?.current;if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");return native("play",{id:item.videoId,title:item.title,seconds:item.seconds,super:config().super});},"external");
+      action("image.reveal",object(),()=>{const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有源媒体");return invoke("media.reveal",{id:item.kind==="frame"?item.videoId:item.id,kind:item.kind==="frame"?"video":item.kind});});
+      action(
+        "image.preview",
+        object({ path: string, title: string }, ["path", "title"]),
+        async ({ path, title }) => {
+          const version=epoch,ticket=++thumbnailTicket,root=dialog("wb-image-preview",title);
+          root.classList.add("wb-image-preview");root.textContent="正在读取预览…";
+          const [url]=await native("images",{paths:[path]});
+          if(version!==epoch||ticket!==thumbnailTicket||!$("wb-image-preview").open)return {stale:true};
+          const image=el("img");image.alt=title;image.src=url;
+          listen(image,"error",()=>{if(image.isConnected)root.textContent="预览加载失败";},"image.preview.error");
+          root.replaceChildren(image);return {opened:true};
+        },
+        "read",
+      );
       action(
         "trash.preview",
         object({ path: string, title: string }, ["path", "title"]),
@@ -2630,6 +2707,9 @@
         flow: false,
         current: 0,
         load: 0,
+        query: "",
+        searchTicket: 0,
+        matched: [],
       };
       action(
         "novel.preview",
@@ -2642,9 +2722,10 @@
         ),
         async ({ id, offset }) => {
           const ticket = ++preview.load;
+          if(preview.id!==id)preview.query="";
           const value = await remote("novel.previews", {
             params: { id },
-            query: { skip: offset, limit: 40, preview_chars: 260 },
+            query: { skip: offset, limit: 40, preview_chars: 720 },
           });
           if (ticket !== preview.load) return { stale: true };
           preview = {
@@ -2655,6 +2736,8 @@
             items: value.items,
             current: 0,
           };
+          await send("set",{kind:"excerpts",items:value.items.map(chapter=>({id:String(chapter.index),kind:"novel",title:chapter.title,folder:chapter.preview}))});
+          if(ticket!==preview.load)return {stale:true};
           const root = dialog("wb-preview", value.title);
           root.replaceChildren();
           root.append(
@@ -2663,12 +2746,16 @@
             button(
               preview.flow ? "章节列表" : "连续试读",
               "novel.previewMode",
-              { flow: !preview.flow },
+              () => ({ flow: !preview.flow }),
             ),
           );
+          const search=input("search",preview.query,"wb-excerpt-search");search.className="wb-preview-search";search.placeholder="搜索本页章节标题和摘录（支持拼音）";search.dataset.apiAction="rhvideo.novel.previewSearch";
+          listen(search,"input",()=>invoke("novel.previewSearch",{query:search.value}).catch(notice),"novel.previewSearch");
+          root.append(search,el("p","","wb-preview-status"));
           const list = el("div", undefined, "wb-excerpts");
           root.append(list);
-          renderPreview();
+          await renderPreview();
+          if(ticket!==preview.load)return {stale:true};
           root.append(
             button("上一页", "novel.preview", {
               id,
@@ -2692,12 +2779,20 @@
         },
         "read",
       );
-      function renderPreview() {
+      async function renderPreview() {
+        const ticket=++preview.searchTicket,load=preview.load;
+        const result=await send("query",{kind:"excerpts",search:preview.query,sort:"nameAsc",allKeys:true,limit:40});
+        if(ticket!==preview.searchTicket||load!==preview.load||result.stale||!$("wb-preview")?.open)return {stale:true};
+        const matches=new Set(result.queue.map(v=>Number(v.id)));
+        const all=preview.items.filter(v=>matches.has(v.index));preview.matched=all;
+        preview.current=Math.min(preview.current,Math.max(0,all.length-1));
         const root = $("wb-preview").querySelector(".wb-excerpts");
         root.replaceChildren();
         const rows = preview.flow
-          ? preview.items.slice(preview.current, preview.current + 1)
-          : preview.items;
+          ? all.slice(preview.current, preview.current + 1)
+          : all;
+        $("wb-preview").querySelector(".wb-preview-status").textContent="本页 "+preview.items.length+" 章，匹配 "+all.length+" 章 · 共 "+preview.total+" 章";
+        if(!rows.length)root.append(el("p","本页没有匹配的章节；可翻页继续查找。"));
         for (const chapter of rows) {
           const row = serverRow(chapter.title, chapter.word_count + " 字");
           row.append(
@@ -2711,13 +2806,17 @@
             button("上一章", "novel.previewStep", { direction: -1 }),
             button("下一章", "novel.previewStep", { direction: 1 }),
           );
+        return {matches:all.length};
       }
+      action("novel.previewSearch",object({query:{type:"string",maxLength:256}},["query"]),({query})=>{if(!$("wb-preview")?.open)throw Error("请先打开章节速览");preview.query=query;preview.current=0;$("wb-excerpt-search").value=query;return renderPreview();},"read");
+      action("novel.previewState",object(),()=>({id:preview.id,offset:preview.offset,total:preview.total,query:preview.query,flow:preview.flow,current:preview.current,matches:preview.matched.length,chapters:preview.matched.map(v=>v.index)}),"read");
       action(
         "novel.previewMode",
         object({ flow: { type: "boolean" } }, ["flow"]),
-        ({ flow }) => {
+        async ({ flow }) => {
           preview.flow = flow;
-          renderPreview();
+          await renderPreview();
+          const toggle=$("wb-preview")?.querySelector('[data-api-action="rhvideo.novel.previewMode"]');if(toggle)toggle.textContent=flow?"章节列表":"连续试读";
           return { flow };
         },
       );
@@ -2726,7 +2825,7 @@
         object({ direction: { type: "integer", enum: [-1, 1] } }, [
           "direction",
         ]),
-        ({ direction }) => {
+        async ({ direction }) => {
           const next = preview.current + direction;
           if (next < 0 && preview.offset > 0)
             return invoke("novel.preview", {
@@ -2734,13 +2833,13 @@
               offset: Math.max(0, preview.offset - 40),
             }).then((result) => {
               if (!result.stale) {
-                preview.current = Math.max(0, preview.items.length - 1);
-                renderPreview();
+                preview.current = Math.max(0, preview.matched.length - 1);
+                return renderPreview().then(()=>result);
               }
               return result;
             });
           if (
-            next >= preview.items.length &&
+            next >= preview.matched.length &&
             preview.offset + preview.items.length < preview.total
           )
             return invoke("novel.preview", {
@@ -2749,9 +2848,9 @@
             });
           preview.current = Math.max(
             0,
-            Math.min(preview.items.length - 1, next),
+            Math.min(preview.matched.length - 1, next),
           );
-          renderPreview();
+          await renderPreview();
           return { index: preview.current };
         },
       );
@@ -2941,11 +3040,21 @@
           el("span", gallery.offset + 1 + " / " + gallery.total),
           button("下一页", "gallery.page", { direction: 1 }),
         );
+        const jump=el("form",undefined,"page-jump"),page=input("number",Math.floor(gallery.offset/gallery.limit)+1,"wb-gallery-page"),last=Math.max(1,Math.ceil(gallery.total/gallery.limit));
+        page.min="1";page.max=String(last);page.required=true;page.setAttribute("aria-label","截图页码");page.dataset.apiAction="rhvideo.gallery.jump";
+        const submit=el("button","跳转","button secondary");submit.type="submit";submit.dataset.apiAction="rhvideo.gallery.jump";
+        jump.append(field("跳到页",page),submit);listen(jump,"submit",event=>{event.preventDefault();invoke("gallery.jump",{page:Number(page.value)}).catch(notice);},"gallery.jump");root.append(jump);
         prefs.galleryResume = { offset: gallery.offset, seed: gallery.seed };
         save();
         return { total: gallery.total, offset: gallery.offset };
       }
       action("gallery.open", object(), () => loadGallery());
+      action("gallery.inspect",object({index:{type:"integer",minimum:0,maximum:99}},["index"]),async({index})=>{
+        const media=gallery.items[index];if(!media)throw Error("截图不在当前页");
+        const args={kind:"gallery",search:state.search,rule:config().rule,sort:config().sort,seed:gallery.seed,offset:0,limit:1,allKeys:true};
+        const result=await send("query",args),at=result.queue.findIndex(v=>v.id===media.id&&v.kind===media.kind);
+        if(at<0)throw Error("截图筛选结果已改变，请刷新");imageSession={args,index:at,total:result.total,current:null};await stepImage(0);ctx.openDialog("image-dialog");return {opened:true,total:result.total,index:at};
+      });
       action("gallery.orders", object(), () => {
         const root = dialog("wb-settings", "截图浏览顺序"),
           name = input("text", "", "wb-gallery-order-name");
@@ -2975,6 +3084,7 @@
         },
       );
       action("gallery.refresh", object(), () => loadGallery(true), "read");
+      action("gallery.jump",object({page:{type:"integer",minimum:1,maximum:1000000}},["page"]),({page})=>{if(page>Math.ceil(gallery.total/gallery.limit))throw Error("页码超出截图范围");gallery.offset=(page-1)*gallery.limit;return loadGallery();});
       action(
         "gallery.page",
         object({ direction: { type: "integer", enum: [-1, 1] } }, [
@@ -3034,16 +3144,7 @@
           "index",
         ]),
         async ({ index }) => {
-          const f = gallery.items[index];
-          if (!f) throw Error("截图不在当前页");
-          if (f.kind === "frame")
-            return native("play", {
-              id: f.videoId,
-              title: f.title,
-              seconds: f.seconds,
-              super: config().super,
-            });
-          return image(f);
+          return invoke("gallery.inspect",{index});
         },
         "external",
       );
@@ -3836,6 +3937,9 @@
           button("媒体设置", "settings.open"),
           button("服务器", "server.open", { page: "watch" }),
         );
+      const master=input("range",config().volume,"wb-page-volume");master.min="0";master.max="100";master.step="1";master.setAttribute("aria-label","统一音量");master.dataset.apiAction="rhvideo.volume.set";
+      const masterField=field("音量",master);masterField.classList.add("rhvideo-master-volume");document.querySelector(".header-actions").prepend(masterField);
+      listen(master,"input",()=>invoke("volume.set",{value:Number(master.value)}).catch(notice),"page.volume");
       const register = button("注册并连接", "account.register", () => ({
         server: $("server").value,
         username: $("username").value,

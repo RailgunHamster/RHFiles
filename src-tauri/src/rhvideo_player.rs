@@ -21,6 +21,23 @@ use windows::{
 
 const LABEL: &str = "window-rhvideo-player";
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
+static PAGE_VOLUME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
+fn effective_volume(local: i32) -> i32 {
+    (local.clamp(0,100) as u32 * PAGE_VOLUME.load(std::sync::atomic::Ordering::Acquire) / 100) as i32
+}
+pub fn page_volume(value: u32) -> Result<Value, String> {
+    if value > 100 { return Err("页面音量范围是 0–100".into()); }
+    PAGE_VOLUME.store(value,std::sync::atomic::Ordering::Release);
+    for slot in [&PLAYER,&WARM,&PRESENTATION] {
+        if let Some(player)=slot.lock().map_err(|_|"播放器状态不可用")?.as_ref() {
+            unsafe { (player.api.set_volume)(player.player as Ptr,effective_volume(player.requested_volume)); }
+        }
+    }
+    for player in &GRID.lock().map_err(|_|"网格状态不可用")?.players {
+        unsafe { (player.api.set_volume)(player.player as Ptr,effective_volume(player.requested_volume)); }
+    }
+    Ok(json!({"volume":value}))
+}
 static WARM: Mutex<Option<Engine>> = Mutex::new(None);
 static WARM_STATUS: Mutex<Option<Value>> = Mutex::new(None);
 static WARM_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -392,6 +409,7 @@ impl Engine {
                 (self.api.media_release)(self.media as Ptr);
             }
             self.media = media as usize;
+            (self.api.set_volume)(self.player as Ptr,effective_volume(self.requested_volume));
             if (self.api.play)(self.player as Ptr) != 0 {
                 return Err("原生播放器无法开始播放".into());
             }
@@ -1257,8 +1275,8 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                     .and_then(Value::as_i64)
                     .filter(|v| (0..=100).contains(v))
                     .ok_or("音量范围是 0–100")?;
-                (player.api.set_volume)(p, value as i32);
                 player.requested_volume = value as i32;
+                (player.api.set_volume)(p, effective_volume(player.requested_volume));
             }
             "rate" => {
                 let value = args
