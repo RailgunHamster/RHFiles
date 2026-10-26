@@ -30,8 +30,11 @@ class RhVideoActivity:AppCompatActivity() {
     window.statusBarColor=Color.rgb(247,249,253);window.navigationBarColor=Color.rgb(247,249,253)
     WindowCompat.getInsetsController(window,window.decorView).apply{isAppearanceLightStatusBars=true;isAppearanceLightNavigationBars=true}
     NativeAutomation.install(this);NativeAutomation.debugging(this)
-    web=WebView(this);setContentView(web)
-    ViewCompat.setOnApplyWindowInsetsListener(web){v,insets->val bars=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime() or WindowInsetsCompat.Type.displayCutout());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);insets}
+    val root=android.widget.FrameLayout(this)
+    web=WebView(this);root.addView(web,android.widget.FrameLayout.LayoutParams(-1,-1));setContentView(root)
+    // WebView padding does not reliably inset its HTML viewport. Pad its native
+    // container so status/navigation bars, cutouts and IME cannot cover content.
+    ViewCompat.setOnApplyWindowInsetsListener(root){v,insets->val bars=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime() or WindowInsetsCompat.Type.displayCutout());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);insets}
     web.settings.apply{javaScriptEnabled=true;allowFileAccess=false;allowContentAccess=false;domStorageEnabled=false;useWideViewPort=true;setSupportMultipleWindows(false);mediaPlaybackRequiresUserGesture=true;mixedContentMode=android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW}
     web.webViewClient=object:WebViewClient(){
       override fun shouldOverrideUrlLoading(view:WebView,request:WebResourceRequest)=true
