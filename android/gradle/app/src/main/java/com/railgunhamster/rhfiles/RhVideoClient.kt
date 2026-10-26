@@ -51,19 +51,46 @@ internal class RhVideoClient(context:Context) {
   private var session:Session?=null
   private var generation=0L
   private val assets=linkedMapOf<String,Asset>()
-  private var videoCache:Pair<Long,JSONArray>?=null
+  private data class VideoCatalog(val checked:Long,val etag:String?,val rows:JSONArray)
+  private val catalogLock=Any()
+  private var videoCache:VideoCatalog?=null
   private fun current()=synchronized(lock){session?:error("请先连接并登录 RHVideo")}
   private fun live(value:Session)=synchronized(lock){session?.generation==value.generation}
+  private fun expire(s:Session,code:Int){
+    if(code==401)synchronized(lock){if(session?.generation==s.generation){++generation;session=null;assets.clear();videoCache=null}}
+  }
   fun state():JSONObject=synchronized(lock){JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:prefs.getString("server","")).put("username",session?.username?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",false)}
   private fun json(s:Session,path:String,method:String="GET",body:JSONObject?=null):Any {
     val url=s.base.resolve(path)?:error("无效的 API 路径")
     val builder=Request.Builder().url(url).header("Authorization","Bearer ${s.token}").header("Accept","application/json")
     if(method!="GET")builder.method(method,if(method=="DELETE")null else (body?:JSONObject()).toString().toRequestBody("application/json".toMediaType()))
     http.newCall(builder.build()).execute().use{response->
+      expire(s,response.code)
       check(response.isSuccessful){if(response.code==401)"登录已过期，请重新登录"else "RHVideo 请求失败（HTTP ${response.code}）"}
       val result=readJson(response)
       check(live(s)){"连接已经更改，请重试"}
       return result
+    }
+  }
+  private fun videoCatalog(s:Session,refresh:Boolean):JSONArray {
+    val started=android.os.SystemClock.elapsedRealtime()
+    return synchronized(catalogLock){
+      check(live(s)){"媒体库连接已失效"}
+      val now=android.os.SystemClock.elapsedRealtime()
+      val cached=synchronized(lock){videoCache}
+      if(cached!=null&&(!refresh&&now-cached.checked<30000||cached.checked>started))return@synchronized cached.rows
+      val url=s.base.resolve("api/v1/videos")!!.newBuilder().addQueryParameter("summary","true").build()
+      val request=Request.Builder().url(url).header("Authorization","Bearer ${s.token}").header("Accept","application/json")
+      cached?.etag?.let{request.header("If-None-Match",it)}
+      http.newCall(request.build()).execute().use{response->
+        expire(s,response.code)
+        val unchanged=response.code==304
+        check(response.isSuccessful||unchanged) {if(response.code==401)"登录已过期，请重新登录"else "RHVideo 请求失败（HTTP ${response.code}）"}
+        val rows=if(unchanged)cached?.rows?:error("服务器返回 304，但本机没有可用清单") else readJson(response) as? JSONArray?:error("视频清单格式不兼容")
+        val etag=response.header("ETag")?.takeIf{it.length<=1024}?:if(unchanged)cached?.etag else null
+        synchronized(lock){check(live(s)){"连接已经更改，请重试"};videoCache=VideoCatalog(android.os.SystemClock.elapsedRealtime(),etag,rows)}
+        rows
+      }
     }
   }
   private fun readJson(response:Response):Any {
@@ -113,10 +140,14 @@ internal class RhVideoClient(context:Context) {
         val search=args.optString("search","").take(256);val folder=args.optString("folder","").take(1024)
         val items=JSONArray();val total:Int
         if(type=="video"){
-          val now=android.os.SystemClock.elapsedRealtime();val cached=synchronized(lock){videoCache?.takeIf{!args.optBoolean("refresh")&&now-it.first<30000}?.second}
-          val rows=cached?:((json(s,"api/v1/videos?summary=true") as? JSONArray)?:error("视频清单格式不兼容")).also{synchronized(lock){if(live(s))videoCache=now to it}}
-          val matches=(0 until rows.length()).map{rows.getJSONObject(it)}.filter{v->(search.isBlank()||v.optString("original_filename").contains(search,true)||v.optString("folder_label").contains(search,true))&&(folder.isEmpty()||v.optString("folder_label")==folder)}
-          total=matches.size;matches.drop(offset).take(limit).forEach{items.put(normalized(s,it,"video"))}
+          val rows=videoCatalog(s,args.optBoolean("refresh"));var matches=0
+          for(i in 0 until rows.length()){
+            val v=rows.getJSONObject(i);val labels=v.optString("folder_label")
+            if((search.isBlank()||v.optString("original_filename").contains(search,true)||labels.contains(search,true))&&(folder.isEmpty()||labels.split(',').any{it.trim()==folder})){
+              if(matches>=offset&&items.length()<limit)items.put(normalized(s,v,"video"));matches++
+            }
+          }
+          total=matches
         }else{
           val path=if(type=="favorite")"api/v1/favorites"else "api/v1/${type}s"
           val url=s.base.resolve(path)!!.newBuilder().addQueryParameter("skip",offset.toString()).addQueryParameter("limit",limit.toString()).addQueryParameter("search",search)

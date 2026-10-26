@@ -117,10 +117,20 @@
       const extra=document.createElement('button');extra.className='text-button';extra.innerHTML=icon(media.kind==='video'?'timeline':media.kind==='picture'?'picture':'book');
       const caption=document.createElement('span');caption.textContent=media.kind==='video'?'时间轴':media.kind==='picture'?'查看图片':media.progress?.percent?'继续阅读 · '+media.progress.percent+'%':'开始阅读';extra.append(caption);
       RHFilesUI.listen(extra,'click',()=>invoke(media.kind==='video'?'timeline.open':'media.open',{id:media.id,kind:media.kind}).catch(notice),undefined,'rhvideo.card.secondary');
-      const heart=document.createElement('button');const key=model.itemKey(media);heart.className='favorite-button'+(state.favorites.has(key)?' active':'');heart.innerHTML=icon('heart');
+      const heart=document.createElement('button');const key=model.itemKey(media);heart.dataset.key=key;heart.className='favorite-button'+(state.favorites.has(key)?' active':'');heart.innerHTML=icon('heart');
       heart.setAttribute('aria-label',state.favorites.has(key)?'取消收藏 '+media.title:'收藏 '+media.title);heart.setAttribute('aria-pressed',String(state.favorites.has(key)));heart.disabled=state.favoriteBusy.has(key);
       RHFilesUI.listen(heart,'click',()=>invoke('favorite.toggle',{id:media.id,kind:media.kind}).catch(notice),undefined,'rhvideo.card.favorite');
       actions.append(extra,heart);info.append(actions);card.append(info);grid.append(card);
+    }
+  }
+  function paintFavorite(key){
+    // Updating one heart must not discard decoded images or scroll/card state.
+    for(const heart of $('media-grid').querySelectorAll('.favorite-button')){
+      if(heart.dataset.key!==key)continue;
+      const card=heart.closest('.media-card'),media=state.items.find(m=>m.id===card.dataset.id&&m.kind===card.dataset.kind);
+      heart.classList.toggle('active',state.favorites.has(key));heart.disabled=state.favoriteBusy.has(key);
+      heart.setAttribute('aria-pressed',String(state.favorites.has(key)));
+      heart.setAttribute('aria-label',(state.favorites.has(key)?'取消收藏 ':'收藏 ')+(media?.title||''));
     }
   }
   function snapshot(){return {kind:state.kind,connected:state.connected,nativePlayback:state.nativePlayback,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
@@ -152,9 +162,9 @@
   action('page',object({direction:{type:'integer',enum:[-1,1]}},['direction']),({direction})=>{const p=model.page(state.total,state.offset,state.limit);if(state.loading||direction<0&&!p.previous||direction>0&&!p.next)return snapshot();state.offset+=direction*state.limit;window.scrollTo(0,0);return load();});
   action('favorite.toggle',object({id:string,kind:{type:'string',enum:['video','picture','novel']}},['id','kind']),async args=>{
     const media=item(args.id,args.kind),key=model.itemKey(media);if(state.favoriteBusy.has(key))throw Error('收藏操作正在处理');
-    const generation=state.generation;state.favoriteBusy.add(key);paint();
+    const generation=state.generation;state.favoriteBusy.add(key);paintFavorite(key);
     try{await native('favorite',{id:media.id,kind:media.kind,enabled:!state.favorites.has(key)});if(generation!==state.generation)return {changed:false};if(state.favorites.has(key))state.favorites.delete(key);else state.favorites.add(key);if(state.kind==='favorite')await load();return {favorite:state.favorites.has(key)};}
-    finally{state.favoriteBusy.delete(key);if(state.connected&&!state.loading)paint();}
+    finally{state.favoriteBusy.delete(key);if(state.connected&&!state.loading)paintFavorite(key);}
   },'write');
   action('media.open',object({id:string,kind:{type:'string',enum:['video','picture','novel']}},['id','kind']),async args=>{
     const media=item(args.id,args.kind);

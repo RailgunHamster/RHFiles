@@ -54,7 +54,12 @@ struct Session {
     client: reqwest::Client,
     assets: Mutex<HashMap<String, Asset>>,
     next_asset: AtomicU64,
-    videos: Mutex<Option<(Instant, Value)>>,
+    videos: tokio::sync::Mutex<Option<VideoCatalog>>,
+}
+struct VideoCatalog {
+    checked: Instant,
+    etag: Option<String>,
+    rows: Arc<Value>,
 }
 fn current() -> Result<Arc<Session>, String> {
     SESSION
@@ -214,6 +219,73 @@ async fn json_response(mut response: reqwest::Response) -> Result<Value, String>
         .map_err(|_| "RHVideo 没有返回有效 JSON；请检查地址是否指向 RHVideo 服务".into())
 }
 impl Session {
+    async fn video_catalog(&self, refresh: bool) -> Result<Arc<Value>, String> {
+        // Coalesce concurrent paging/search requests. Only the returned page is
+        // copied, never a whole library for each keystroke.
+        let started = Instant::now();
+        let mut cache = self.videos.lock().await;
+        if GENERATION.load(Ordering::SeqCst) != self.generation {
+            return Err("媒体库连接已失效".into());
+        }
+        if let Some(value) = cache.as_ref().filter(|c| {
+            c.checked >= started || !refresh && c.checked.elapsed() < Duration::from_secs(30)
+        }) {
+            return Ok(value.rows.clone());
+        }
+        let mut request = self
+            .client
+            .get(self.endpoint("api/v1/videos")?)
+            .bearer_auth(&self.token)
+            .query(&[("summary", "true")])
+            .timeout(Duration::from_secs(25));
+        if let Some(etag) = cache.as_ref().and_then(|c| c.etag.as_deref()) {
+            request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+        }
+        let response = request.send().await.map_err(network_error)?;
+        let etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| v.len() <= 1024)
+            .map(str::to_owned);
+        let unchanged = response.status() == reqwest::StatusCode::NOT_MODIFIED;
+        let rows = if unchanged {
+            cache
+                .as_ref()
+                .ok_or("服务器返回 304，但本机没有可用清单")?
+                .rows
+                .clone()
+        } else {
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                let mut active = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
+                if active
+                    .as_ref()
+                    .is_some_and(|s| s.generation == self.generation)
+                {
+                    active.take();
+                }
+            }
+            let value = json_response(response).await?;
+            if !value.is_array() {
+                return Err("RHVideo 视频列表格式不兼容".into());
+            }
+            Arc::new(value)
+        };
+        if GENERATION.load(Ordering::SeqCst) != self.generation {
+            return Err("连接已更改，已丢弃旧媒体清单".into());
+        }
+        let etag = if unchanged {
+            etag.or_else(|| cache.as_ref().and_then(|c| c.etag.clone()))
+        } else {
+            etag
+        };
+        *cache = Some(VideoCatalog {
+            checked: Instant::now(),
+            etag,
+            rows: rows.clone(),
+        });
+        Ok(rows)
+    }
     fn endpoint(&self, path: &str) -> Result<Url, String> {
         self.base
             .join(path.trim_start_matches('/'))
@@ -603,7 +675,7 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
                 client,
                 assets: Mutex::new(HashMap::new()),
                 next_asset: AtomicU64::new(1),
-                videos: Mutex::new(None),
+                videos: tokio::sync::Mutex::new(None),
             });
             session
                 .request(reqwest::Method::GET, "api/v1/auth/me", &[], None)
@@ -646,32 +718,9 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
                 .transpose()?
                 .unwrap_or("");
             let (rows, total) = if kind == "video" {
-                let cached = if args.get("refresh").and_then(Value::as_bool) == Some(true) {
-                    None
-                } else {
-                    session
-                        .videos
-                        .lock()
-                        .map_err(|_| "媒体列表状态不可用")?
-                        .as_ref()
-                        .filter(|(at, _)| at.elapsed() < Duration::from_secs(30))
-                        .map(|(_, v)| v.clone())
-                };
-                let value = if let Some(value) = cached {
-                    value
-                } else {
-                    let value = session
-                        .request(
-                            reqwest::Method::GET,
-                            "api/v1/videos",
-                            &[("summary", "true".into())],
-                            None,
-                        )
-                        .await?;
-                    *session.videos.lock().map_err(|_| "媒体列表状态不可用")? =
-                        Some((Instant::now(), value.clone()));
-                    value
-                };
+                let value = session
+                    .video_catalog(args.get("refresh").and_then(Value::as_bool) == Some(true))
+                    .await?;
                 let rows = value.as_array().ok_or("RHVideo 视频列表格式不兼容")?;
                 let search = search.to_lowercase();
                 let rows: Vec<_> = rows
@@ -927,6 +976,68 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn unchanged_video_catalog_reuses_the_same_allocation_and_conditional_request() {
+        let seen = Arc::new(Mutex::new(Vec::<HeaderMap>::new()));
+        let inspect = seen.clone();
+        let router = Router::new().route(
+            "/api/v1/videos",
+            get(move |headers: HeaderMap| {
+                let inspect = inspect.clone();
+                async move {
+                    let unchanged = headers
+                        .get(reqwest::header::IF_NONE_MATCH)
+                        .is_some_and(|v| v == "\"catalog-v1\"");
+                    inspect.lock().unwrap().push(headers);
+                    Response::builder()
+                        .status(if unchanged {
+                            StatusCode::NOT_MODIFIED
+                        } else {
+                            StatusCode::OK
+                        })
+                        .header(reqwest::header::ETAG, "\"catalog-v1\"")
+                        .body(if unchanged {
+                            Body::empty()
+                        } else {
+                            Body::from(r#"[{"id":"one","original_filename":"movie.mp4"}]"#)
+                        })
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let session = Session {
+            base: Url::parse(&format!("http://{address}/")).unwrap(),
+            username: "test".into(),
+            token: "test-only".into(),
+            capability: "unused".into(),
+            port: 0,
+            generation: GENERATION.load(Ordering::SeqCst),
+            client: client().unwrap(),
+            assets: Mutex::new(HashMap::new()),
+            next_asset: AtomicU64::new(1),
+            videos: tokio::sync::Mutex::new(None),
+        };
+        let first = session.video_catalog(false).await.unwrap();
+        let warm = session.video_catalog(false).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &warm));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        let checked = session.video_catalog(true).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &checked));
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1].get(reqwest::header::IF_NONE_MATCH).unwrap(),
+            "\"catalog-v1\""
+        );
+        assert_eq!(
+            requests[1].get(reqwest::header::AUTHORIZATION).unwrap(),
+            "Bearer test-only"
+        );
+        worker.abort();
+    }
     #[test]
     fn base_address_is_not_a_credential_or_arbitrary_protocol() {
         for bad in [

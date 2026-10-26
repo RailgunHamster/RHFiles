@@ -72,4 +72,26 @@ class RhVideoClientTest {
     val request=server.takeRequest();assertEquals("PUT",request.method);val body=JSONObject(request.body.readUtf8());assertEquals(2,body.getInt("chapter_index"));assertEquals(.5,body.getDouble("scroll_ratio"),0.0)
     try{client.request("progress",JSONObject().put("id","3").put("chapter",0).put("ratio",2));fail()}catch(_:IllegalArgumentException){}
   }
+  @Test fun catalogRevalidationUsesEtagsAndNeverTransfersOrParsesAnUnchangedLibrary(){
+    login()
+    server.enqueue(MockResponse().setHeader("ETag","\"v1\"").setBody("""[{"id":"1","original_filename":"旧片.mp4","folder_label":"电影, 剧集"}]"""))
+    val first=client.request("catalog",JSONObject().put("folder","剧集")) as JSONObject
+    assertEquals(1,first.getInt("total"));assertNull(server.takeRequest().getHeader("If-None-Match"))
+    server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag","\"v1\""))
+    val unchanged=client.request("catalog",JSONObject().put("refresh",true)) as JSONObject
+    assertEquals(1,unchanged.getInt("total"));assertEquals("\"v1\"",server.takeRequest().getHeader("If-None-Match"))
+    server.enqueue(MockResponse().setBody("""[{"id":"2","original_filename":"新片.mp4"}]"""))
+    val changed=client.request("catalog",JSONObject().put("refresh",true)) as JSONObject
+    assertEquals("新片.mp4",changed.getJSONArray("items").getJSONObject(0).getString("title"));server.takeRequest()
+    server.enqueue(MockResponse().setBody("[]"))
+    client.request("catalog",JSONObject().put("refresh",true))
+    assertNull(server.takeRequest().getHeader("If-None-Match"))
+  }
+  @Test fun expiredCatalogLoginRevokesNativeMediaAndDoesNotKeepPretendingToBeConnected(){
+    login();val key=client.playback(JSONObject().put("id","1")).path.removePrefix("rhvideo://")
+    server.enqueue(MockResponse().setResponseCode(401))
+    try{client.request("catalog",JSONObject());fail("Expired session accepted")}catch(_:IllegalStateException){}
+    assertFalse(client.state().getBoolean("connected"))
+    try{client.media(key,0,false);fail("Old media still available")}catch(_:Exception){}
+  }
 }

@@ -39,7 +39,9 @@ test('RHVideo packaged UI, real native HTTP bridge, reader, favorites, paging an
     const page=await invoke(view,'page',{direction:1});assert.equal(page.offset,36);assert.equal(page.items.length,16);
     const search=await invoke(view,'search',{query:'清晨'});assert(search.items.length>0&&search.items.every(v=>v.title.includes('清晨')));
     const all=await invoke(view,'search',{query:''}),media=all.items[0];
+    await view.evaluate("window.__favoriteCover=document.querySelector('.cover-button img')");
     await invoke(view,'favorite.toggle',{id:media.id,kind:media.kind});assert(fixture.favorites.has('video:'+media.id));
+    assert.equal(await view.evaluate("document.querySelector('.cover-button img')===window.__favoriteCover"),true,'favorite toggle must retain decoded cover DOM');
     const favorite=await invoke(view,'category',{kind:'favorite'});assert.equal(favorite.total,1);
     await invoke(view,'favorite.toggle',{id:media.id,kind:'video'});assert.equal((await invoke(view,'state')).total,0);
     const pictures=await invoke(view,'category',{kind:'picture'});assert.equal(pictures.items.length,8);
