@@ -56,10 +56,17 @@ export async function cdpSession(target,timeout){
   const send=(method,params)=>new Promise((resolve,reject)=>{if(closed)return reject(new ClientError('CONNECTION_LOST','Session is closed'));const id=++next,timer=setTimeout(()=>{pending.delete(id);reject(new ClientError('REQUEST_TIMEOUT','Request timed out; the action may still be running. Do not automatically repeat it.'));},timeout);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
   return {send,async evaluate(expression){const value=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(value.exceptionDetails)throw new ClientError('API_NOT_READY',value.exceptionDetails.exception?.description||value.exceptionDetails.exception?.value||value.exceptionDetails.text);return value.result?.value;},close(){socket.close();rejectAll();}};
 }
+export function isAppTargetURL(value,options={}){
+  try{
+    const u=new URL(value),scope=options.scope||'main';
+    if(scope==='reader')return u.hostname==='ebook.rhfiles.local';
+    if(['tauri.localhost','localhost'].includes(u.hostname))return true;
+    return scope==='main'&&!!options.android&&u.origin==='https://appassets.androidplatform.net'&&u.pathname==='/rhvideo/rhvideo.html'&&!u.username&&!u.password&&!u.search&&!u.hash;
+  }catch{return false;}
+}
 async function selectSession(endpoint,options){
   let targets;try{const response=await fetch(endpoint+'/json/list',{signal:AbortSignal.timeout(options.timeout)});if(!response.ok)throw Error('HTTP '+response.status);targets=await response.json();}catch{throw new ClientError('AUTOMATION_NOT_ENABLED','No local RHFiles automation target. Desktop: start RHFiles with RHFILES_CDP_PORT set. Android: enable ADB automation in Settings.');}
-  const scope=options.scope||'main';
-  targets=targets.filter(t=>{try{const u=new URL(t.url);return t.type==='page'&&(scope==='reader'?u.hostname==='ebook.rhfiles.local':['tauri.localhost','localhost'].includes(u.hostname))&&(!options.target||t.id===options.target);}catch{return false;}});
+  targets=targets.filter(t=>t.type==='page'&&isAppTargetURL(t.url,options)&&(!options.target||t.id===options.target));
   if(options.window){const found=[];for(const target of targets){const session=await cdpSession(target,options.timeout);try{const snapshot=await session.evaluate('globalThis.RHFilesAPI?.snapshot()');if(snapshot?.state?.application?.window===options.window)found.push(target);}finally{session.close();}}targets=found;}
   if(targets.length!==1)throw new ClientError('TARGET_REQUIRED',targets.length?'Multiple RHFiles windows: select --target or --window':'No matching RHFiles window is ready',targets.map(t=>({target:t.id,title:t.title,url:t.url})));
   return cdpSession(targets[0],options.timeout);
