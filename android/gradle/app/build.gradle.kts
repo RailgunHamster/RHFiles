@@ -58,6 +58,10 @@ android {
         testBuildType = "release"
         defaultConfig { testInstrumentationRunner = if(providers.gradleProperty("rhfilesAutomationProbe").isPresent) "com.railgunhamster.rhfiles.AutomationInstrumentation" else "com.railgunhamster.rhfiles.SmbUpdateInstrumentation" }
     }
+    if (providers.gradleProperty("rhfilesRhVideoProbe").isPresent) {
+        testBuildType = "release"
+        defaultConfig { testInstrumentationRunner = "com.railgunhamster.rhfiles.RhVideoInstrumentation" }
+    }
     compileSdk = 36
     namespace = "com.railgunhamster.rhfiles"
     sourceSets.getByName("main").assets.srcDir(rootProject.file("../../../reader"))

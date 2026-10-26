@@ -64,7 +64,7 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
     const file=path.join(app.directory,'sample.mp4');
-    execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-t','14','-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
+    execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-t','14','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
     fixture=await rhvideoFixture({videoFile:file});
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
     const connected=await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});

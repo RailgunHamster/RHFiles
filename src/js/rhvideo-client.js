@@ -2,8 +2,9 @@
 (() => {
   'use strict';
   const api=window.RHFilesAPI,model=RHVideoModel,$=id=>document.getElementById(id);
-  const native=(action,args={})=>window.__TAURI__.core.invoke('rhvideo_request',{action,args});
-  api.provideState('application',()=>({platform:'windows',window:'window-rhvideo',ready:true}));
+  const mobile=!!window.RHVideoNative;
+  const native=(action,args={})=>mobile?window.RHVideoNative.request(action,args):window.__TAURI__.core.invoke('rhvideo_request',{action,args});
+  api.provideState('application',()=>({platform:mobile?'android':'windows',window:'window-rhvideo',ready:true}));
   const icons={
     library:'<rect x="3" y="4" width="18" height="16" rx="4"/><path d="m10 8 6 4-6 4z"/>',
     video:'<rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-3v10l-4-3"/>',
@@ -25,7 +26,7 @@
   };
   const icon=name=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+(icons[name]||icons.library)+'</svg>';
   document.querySelectorAll('[data-icon]').forEach(node=>node.innerHTML=icon(node.dataset.icon));
-  const titles={video:['视频','让每一段内容，都有舒服的打开方式。'],picture:['图片','慢慢浏览，留住值得多看一眼的画面。'],novel:['小说','书架、章节和阅读进度，沿用你的 RHVideo。'],favorite:['我的收藏','你喜欢的内容，都放在一起。']};
+  const titles={video:'视频',picture:'图片',novel:'小说',favorite:'我的收藏'};
   const state={kind:'video',offset:0,limit:36,total:0,items:[],favorites:new Set(),favoriteBusy:new Set(),loading:false,error:'',connected:false,nativePlayback:false,loadId:0,search:'',folder:'',generation:0};
   const reader={book:null,chapter:0,loaded:false,token:0,saveTimer:0,ratio:0};
   let searchTimer=0,folderLoadId=0,timelineLoadId=0,images=[],imageIndex=0,imageZoom=1;
@@ -52,7 +53,7 @@
     $('connection-host').textContent=host||'连接你的 RHVideo';
     $('server').value=value.server||'';$('username').value=value.username||'';
     $('disconnect').hidden=!value.connected;
-    $('engine-status').textContent=value.nativePlayback?'原生视频内核：已检测到 VLC。播放时直接嵌入 RHFiles 窗口，不启动 VLC 程序。':'原生视频内核：未检测到。本 Windows 体验版需要 64 位 VLC 3.x；图片、小说和媒体浏览不受影响。';
+    $('engine-status').textContent=mobile?'视频使用 Android 原生播放器。':value.nativePlayback?'原生视频内核：VLC。':'视频播放需要安装 64 位 VLC 3.x。';
   }
   async function loadFolders(){
     const kind=state.kind,token=++folderLoadId;
@@ -143,7 +144,7 @@
   },'external');
   action('category',object({kind:{type:'string',enum:model.kinds}},['kind']),async({kind})=>{
     clearTimeout(searchTimer);state.kind=kind;state.offset=0;state.search='';state.folder='';$('search').value='';$('folder').value='';
-    $('page-title').textContent=titles[kind][0];$('page-description').textContent=titles[kind][1];document.querySelectorAll('[data-kind].nav-item').forEach(n=>n.classList.toggle('active',n.dataset.kind===kind));return load(false,true);
+    $('page-title').textContent=titles[kind];document.querySelectorAll('[data-kind].nav-item').forEach(n=>n.classList.toggle('active',n.dataset.kind===kind));return load(false,true);
   });
   action('refresh',object(),async()=>{if(state.connected)try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){notice(error);}return load(true);},'read');
   action('search',object({query:{type:'string',maxLength:256}},['query']),({query})=>{state.search=query;state.offset=0;$('search').value=query;return load();});
@@ -214,6 +215,11 @@
     await save;return {closed:true};
   });
   action('reader.font',object({size:{type:'integer',enum:[18,20,22,24]}},['size']),({size})=>{document.documentElement.style.setProperty('--reader-size',size+'px');$('reader-font').value=String(size);return {size};});
+  action('back',object(),async()=>{
+    for(const [id,name] of [['connection-dialog','connection.close'],['image-dialog','image.close'],['reader-dialog','reader.close'],['timeline-dialog','timeline.close']])if($(id).open)return invoke(name);
+    if(mobile)return native('close');return {closed:false};
+  });
+  if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
   bind('connection-open','click','connection.open');bind('connection-close','click','connection.close');
   bind('connection-form','submit','connection.connect',()=>({server:$('server').value,username:$('username').value,password:$('password').value}));
   bind('disconnect','click','connection.logout');bind('refresh','click','refresh');

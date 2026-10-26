@@ -34,3 +34,13 @@ test('packaged client has no iframe, HTML video, remote page or browser credenti
   assert.match(js,/rhvideo_request/);assert.match(html,/form-action 'none'/);
   assert.match(player,/media-src 'none'/);
 });
+test('library omits promotional copy and mobile playback stays native',()=>{
+  const html=fs.readFileSync(new URL('../../src/rhvideo.html',import.meta.url),'utf8');
+  const js=fs.readFileSync(new URL('../../src/js/rhvideo-client.js',import.meta.url),'utf8');
+  assert.doesNotMatch(html+js,/内容在服务器|体验在这里|让每一段内容|慢慢浏览，留住/);
+  assert.match(js,/platform:mobile\?'android'/);
+  assert.match(js,/action\('back'/);
+  const activity=fs.readFileSync(new URL('../../android/gradle/app/src/main/java/com/railgunhamster/rhfiles/RhVideoActivity.kt',import.meta.url),'utf8');
+  assert.match(activity,/PlaybackActivity::class/);assert.match(activity,/main&&source===web/);
+  assert.doesNotMatch(activity,/addJavascriptInterface|loadUrl\(.*server|allowFileAccess=true/);
+});

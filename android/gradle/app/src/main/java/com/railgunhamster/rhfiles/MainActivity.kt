@@ -192,6 +192,7 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
+    "rhvideo.open" -> onUi{startActivity(Intent(this,RhVideoActivity::class.java));JSONObject().put("opened",true)}
     "groups.connect","groups.diagnostics","groups.cancel","groups.refresh" -> DeviceGroups.run(command.removePrefix("groups."),args,storage.remote)
     "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.forget","groups.configure" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{locationsChanged()}}
     "automation.status" -> onUi{NativeAutomation.status(this)}

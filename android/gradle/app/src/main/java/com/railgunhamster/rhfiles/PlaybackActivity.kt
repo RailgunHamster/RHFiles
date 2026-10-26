@@ -54,15 +54,15 @@ class PlaybackActivity:AppCompatActivity() {
     path=intent.getStringExtra("path") ?: run{finish();return}
     storage=NativeStorage(applicationContext)
     try {
-      source=if(storage.isRemote(path))Uri.parse(path) else if(storage.isDocument(path))storage.docUri(path) else {
+      source=if(storage.isRemote(path)||path.startsWith("rhvideo://"))Uri.parse(path) else if(storage.isDocument(path))storage.docUri(path) else {
         val file=storage.local(path);require(file.isFile && file.canRead()) {"文件不存在或没有读取权限"};Uri.fromFile(file)
       }
       queue=PlaybackQueue.parse(JSONObject().put("path",path).put("name",intent.getStringExtra("name")).put("queue",JSONArray(intent.getStringExtra("queue")?:"[]")))
-      sources=queue.map{item->if(storage.isRemote(item.path))Uri.parse(item.path)else if(storage.isDocument(item.path))storage.docUri(item.path)else Uri.fromFile(storage.local(item.path))}
+      sources=queue.map{item->if(storage.isRemote(item.path)||item.path.startsWith("rhvideo://"))Uri.parse(item.path)else if(storage.isDocument(item.path))storage.docUri(item.path)else Uri.fromFile(storage.local(item.path))}
       index=(savedInstanceState?.getInt("index")?:queue.indexOfFirst{it.path==path}).coerceIn(0,queue.lastIndex)
       path=queue[index].path;source=sources[index];title=queue[index].name
     }catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish();return}
-    position=savedInstanceState?.getLong("position") ?: 0;play=savedInstanceState?.getBoolean("play",true) ?: true
+    position=savedInstanceState?.getLong("position") ?: intent.getLongExtra("positionMs",0).coerceAtLeast(0);play=savedInstanceState?.getBoolean("play",true) ?: true
     WindowCompat.setDecorFitsSystemWindows(window,false)
     WindowInsetsControllerCompat(window,window.decorView).apply{hide(WindowInsetsCompat.Type.systemBars());systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE}
     val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK)}
@@ -116,7 +116,7 @@ class PlaybackActivity:AppCompatActivity() {
   override fun onStart(){super.onStart();if(::source.isInitialized)startPlayer()}
   private fun startPlayer(){
     val engine=ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-      .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{RemoteMediaDataSource(storage.remote)})))
+      .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})))
       .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000).build()
     player=engine;playerView.player=engine
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
@@ -139,7 +139,7 @@ class PlaybackActivity:AppCompatActivity() {
     val title=TextView(this).apply{text="暂时无法播放";textSize=21f;setTextColor(Color.WHITE);gravity=Gravity.CENTER}
     val detail=TextView(this).apply{text="MP4 等后缀表示容器，不代表内部编码一定受设备支持。\n"+codecs+"\n"+error.errorCodeName+"\n"+(error.cause?.message ?: error.message ?: "读取失败");setTextColor(0xFFB9BEC8.toInt());textSize=13f;setPadding(0,dp(16),0,dp(16));setTextIsSelectable(true)}
     failure.addView(title);failure.addView(detail)
-    if(source.scheme!="remote")failure.addView(Button(this).apply{text="用其他播放器打开";setOnClickListener{external()}})
+    if(source.scheme !in listOf("remote","rhvideo"))failure.addView(Button(this).apply{text="用其他播放器打开";setOnClickListener{external()}})
     if(player?.hasNextMediaItem()==true)failure.addView(Button(this).apply{text="下一个";setOnClickListener{failure.visibility=View.GONE;player?.seekToNextMediaItem();player?.play()}})
     failure.addView(Button(this).apply{text="重试";setOnClickListener{failure.visibility=View.GONE;player?.prepare();player?.play()}})
     failure.addView(Button(this).apply{text="返回文件列表";setOnClickListener{finish()}})
@@ -153,7 +153,7 @@ class PlaybackActivity:AppCompatActivity() {
   private fun options(anchor:View){
     val menu=PopupMenu(this,anchor)
     listOf("适应画面","填满画面（可能裁切）","播放速度","循环播放","用其他播放器打开").forEachIndexed{i,label->menu.menu.add(0,i,i,label)}
-    menu.menu.findItem(4).isVisible=source.scheme!="remote"
+    menu.menu.findItem(4).isVisible=source.scheme !in listOf("remote","rhvideo")
     menu.setOnMenuItemClickListener{item->when(item.itemId){
       0->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
       1->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}

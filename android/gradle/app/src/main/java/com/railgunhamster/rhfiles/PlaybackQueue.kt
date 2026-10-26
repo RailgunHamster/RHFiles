@@ -9,7 +9,7 @@ internal object PlaybackQueue {
   fun parse(args:JSONObject):List<Item> {
     val selected=args.getString("path");val input=args.optJSONArray("queue")?:JSONArray()
     require(input.length()<=1000&&input.toString().toByteArray(Charsets.UTF_8).size<=256*1024){"播放列表过大"}
-    fun valid(path:String)=path.length<=8192&&(path.startsWith("/")||path.startsWith("content://")||path.startsWith("remote://"))&&!path.contains('\u0000')
+    fun valid(path:String)=path.length<=8192&&(path.startsWith("/")||path.startsWith("content://")||path.startsWith("remote://")||path.matches(Regex("rhvideo://[a-f0-9-]{36}")))&&!path.contains('\u0000')
     require(valid(selected)){"媒体路径无效"}
     val items=linkedMapOf<String,Item>()
     for(i in 0 until input.length()){

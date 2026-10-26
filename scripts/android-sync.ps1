@@ -147,6 +147,17 @@ foreach ($target in $targets) {
 }
 
 Write-Host 'Android project sync complete.'
+# RHVideo uses the same packaged library UI, with a phone-specific bridge and
+# layout. Copy only these allowlisted assets, never the desktop file browser.
+$rhvideoAssets=Join-Path $appDir 'src/main/assets/rhvideo'
+foreach($relative in @('rhvideo.html','css/rhvideo.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-client.js')){
+    $destination=Join-Path $rhvideoAssets $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+    Sync-File -Source (Join-Path $repoRoot ('src/'+$relative)) -Target $destination
+}
+foreach($relative in @('css/rhvideo-mobile.css','js/rhvideo-mobile.js')){
+    Sync-File -Source (Join-Path $repoRoot ('android/web/'+$relative)) -Target (Join-Path $rhvideoAssets $relative)
+}
 Sync-File -Source (Join-Path $repoRoot 'src\js\nearby-ui.js') -Target (Join-Path $repoRoot 'android\web\js\nearby-ui.js')
 Sync-File -Source (Join-Path $repoRoot 'src\js\device-groups-ui.js') -Target (Join-Path $repoRoot 'android\web\js\device-groups-ui.js')
 Sync-File -Source (Join-Path $repoRoot 'src\css\device-groups.css') -Target (Join-Path $repoRoot 'android\web\css\device-groups.css')
