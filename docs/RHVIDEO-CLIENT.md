@@ -39,6 +39,11 @@ Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套分类
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.category '{"kind":"picture"}' --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo-player run rhvideo.player.next --wait
 
+Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连接调用同一组界面动作，例如：
+
+    node scripts/rhfiles-api.mjs --android SERIAL run rhvideo.open --wait
+    node scripts/rhfiles-api.mjs --android SERIAL --window window-rhvideo list
+
 接口仅在用户显式启用本机自动化后可调用。不要把真实密码写进命令行历史，可使用 CLI 的 JSON 行输入。UI 与脚本走同一原生接口。
 
 ## 验证
@@ -50,3 +55,5 @@ Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套分类
 Windows E2E 使用隔离配置，不操作已安装的 RHFiles。设置 RHFILES_NATIVE_PLAYER_QA=1 可启用真实 libVLC 播放验收，需要已安装 64 位 VLC 和 FFmpeg。测试生成专用 MP4，检查真实进度、暂停、跳转、前后切换，不以模拟播放代替。
 
 同级有 RHVideo 源码时，还会通过它的 uv 环境启动真实 FastAPI，使用独立临时 SQLite、生成的媒体及测试账号核对 API 契约。测试工作目录不含生产 .env，不连接或写入正式媒体库。
+
+Android 的 RhVideoClientTest 覆盖账号保存边界、API 契约、缓存、UUID、路径安全、原生 Range 跳转与退出撤销。scripts/testing/rhvideo-android.mjs 仅接受模拟器，安装正式压缩的 APK 和测试 APK，使用临时服务器与生成的视频验收手机布局、图片、收藏、章节进度、原生播放/跳转/播放队列和返回行为，并保存截图；不会连接真机或正式媒体库。
