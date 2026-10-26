@@ -536,7 +536,7 @@ async function _refreshTabInBackground(tab, isRight = false) {
   try {
     let entries = await withTimeout(
       listPathEntries(tab.path, ""),
-      10000,
+      typeof isDevicePath==='function'&&isDevicePath(tab.path)?50000:10000,
       t('nav.folderLoadTimedOut'),
     );
     if (token !== tab._refreshToken || tab.path !== requestedPath) return;
@@ -880,6 +880,14 @@ function revealBreadcrumbTail(bc) {
 
 function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   const bc = document.getElementById(bcId || "breadcrumb");
+  if(typeof isDevicePath==='function'&&isDevicePath(path)){
+    const location=RHFilesDevicePaths.parse(path);bc.replaceChildren();
+    const parts=[deviceBrowser.name(location.group,location.peer),...location.parts];
+    parts.forEach((label,index)=>{const item=document.createElement('span');item.className='bc-item';item.textContent=label;item.dataset.apiAction='devices.open';
+      const destination='/'+location.parts.slice(0,index).join('/');
+      RHFilesUI.listen(item,'click',()=>RHFilesAPI.invoke('devices.open',{group:location.group,peer:location.peer,path:destination,pane:isRight?'right':'left'}).catch(error=>showNotice(String(error))),undefined,'devices.breadcrumb.'+index);bc.append(item);});
+    const spacer=document.createElement('span');spacer.className='breadcrumb-spacer';RHFilesUI.listen(spacer,'click',()=>enterEditMode(isRight),undefined,'devices.breadcrumb.edit');bc.append(spacer);revealBreadcrumbTail(bc);return;
+  }
   if(typeof isRecyclePath==='function'&&isRecyclePath(path)){
     bc.innerHTML='<span class="bc-item" data-path="recycle://">'+esc(t('recycle.title'))+'</span><span class="breadcrumb-spacer"></span>';
     RHFilesUI.listen(bc.querySelector('.breadcrumb-spacer'),'click',()=>enterEditMode(isRight),undefined,'src.js.tabs.recycle.address');return;
@@ -1223,11 +1231,11 @@ function describeNavigationError(error) {
     raw = tagged[2];
   } else if (/^\[(timed_out|network_cooldown|network_busy)\]/.test(raw)) {
     code = 'timed_out';
-  } else if (/access is denied|permission denied|拒绝访问|无权访问|os error 5/i.test(raw)) {
+  } else if (/^\[(forbidden|unauthorized|authorization_revoked)\]|access is denied|permission denied|拒绝访问|无权访问|os error 5/i.test(raw)) {
     code = 'permission_denied';
-  } else if (/not found|cannot find|找不到|不存在|os error (2|3)\b/i.test(raw)) {
+  } else if (/^\[not_found\]|not found|cannot find|找不到|不存在|os error (2|3)\b/i.test(raw)) {
     code = 'not_found';
-  } else if (/network.*(unreachable|not found)|找不到网络路径|网络.*不可用|os error (53|67)\b/i.test(raw)) {
+  } else if (/^\[(unreachable|transport_error|network_changed|cooldown)\]|network.*(unreachable|not found)|找不到网络路径|网络.*不可用|os error (53|67)\b/i.test(raw)) {
     code = 'network_unreachable';
   } else if (/timed? out|超时/i.test(raw)) {
     code = 'timed_out';
@@ -1333,7 +1341,7 @@ async function navigateTo(path, pushHistory) {
   try {
     let entries = await withTimeout(
       listPathEntries(path, ""),
-      10000,
+      typeof isDevicePath==='function'&&isDevicePath(path)?50000:10000,
       t('nav.folderLoadTimedOut'),
     );
     if (navigationToken !== _navigationToken) return false;
@@ -1400,9 +1408,9 @@ async function navigateTo(path, pushHistory) {
 
 function selectNavigatedPath(path, isRight) {
   const pane = isRight ? G.rp : getTab();
-  const target = normalizeWindowsPathInput(path).toLocaleLowerCase();
+  const target = windowsPathKey(normalizeWindowsPathInput(path));
   const index = (pane.entries || []).findIndex(entry =>
-    normalizeWindowsPathInput(entry.path).toLocaleLowerCase() === target
+    windowsPathKey(normalizeWindowsPathInput(entry.path)) === target
   );
   if (index < 0) return false;
 
@@ -1471,6 +1479,7 @@ let _searchRequestToken = 0;
 
 function getSearchFolderPath() {
   const path = getActivePaneState()?.path || '';
+  if(typeof isDevicePath==='function'&&isDevicePath(path))return path;
   if (IS_MAC) return path.startsWith('/') ? path : null;
   return /^[A-Za-z]:\\/.test(path) || path.startsWith('\\\\') ? path : null;
 }
@@ -1500,7 +1509,7 @@ function updateSearchScopeUI() {
   }
   if (input && !input.value) {
     input.placeholder = folderScope
-      ? t('search.inFolderPlaceholder', {folder: folderPath.split('\\').filter(Boolean).pop() || folderPath})
+      ? t('search.inFolderPlaceholder', {folder: typeof isDevicePath==='function'&&isDevicePath(folderPath)?pathLeaf(folderPath):(folderPath.split('\\').filter(Boolean).pop() || folderPath)})
       : t('search.globalPlaceholder');
   }
 }
@@ -1681,7 +1690,8 @@ async function runSearch(query) {
     const tab = isRight ? G.rp : getTab();
     const statusId = isRight ? 'right-status-count' : 'status-count';
     const requestToken = ++_searchRequestToken;
-    const scopePath = _searchScope === 'folder' ? getSearchFolderPath() : null;
+    const device=typeof isDevicePath==='function'&&isDevicePath(tab.path)?RHFilesDevicePaths.parse(tab.path):null;
+    const scopePath = device ? (_searchScope==='folder'?device.uri:RHFilesDevicePaths.make(device.group,device.peer)) : _searchScope === 'folder' ? getSearchFolderPath() : null;
     const modePrefix = _searchMode === 'regex' ? 'regex:' : _searchMode === 'wildcard' ? 'wildcards:' : '';
     const fullQuery = modePrefix + query;
     _searchRunning = true;
@@ -1692,7 +1702,7 @@ async function runSearch(query) {
           : scopePath
           ? call("search_recursive", { path: scopePath, query: fullQuery, maxResults: 500 })
           : call("quick_search", { query: fullQuery, maxResults: 500 });
-        const results = await withTimeout(request, 12000, 'SEARCH_TIMEOUT|The search did not finish within 12 seconds');
+        const results = await withTimeout(request, device?18000:12000, 'SEARCH_TIMEOUT|The search did not finish within its bounded time limit');
         if (requestToken !== _searchRequestToken || document.getElementById("filter-input").value.trim() !== query) return;
         G.searchActive = true;
         G.searchQuery = query;

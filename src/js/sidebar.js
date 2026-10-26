@@ -69,7 +69,7 @@ function renderTreeNode(container, children, parentPath, expand) {
     node.innerHTML = `<div class="tree-row" style="padding-left:0px">
       <span class="tree-arrow ${expand?'expanded':''}">\u25b6</span>
       ${treeFolderIcon(parentPath, parentPath.split('\\').filter(Boolean).pop() || parentPath)}
-      <span class="tree-name">${esc(parentPath.split('\\').filter(Boolean).pop() || parentPath)}</span>
+      <span class="tree-name">${esc(typeof isDevicePath==='function'&&isDevicePath(parentPath)?pathLeaf(parentPath):(parentPath.split('\\').filter(Boolean).pop() || parentPath))}</span>
     </div>
     <div class="tree-children ${expand?'open':''}"></div>`;
     const childContainer = node.querySelector(".tree-children");

@@ -95,6 +95,7 @@ const deviceGroupView=(()=>{
         for(const peer of group.members.filter(p=>!p.self&&!p.blocked&&p.server)){
           const row=el('div','dg-connect'),address=input(text('恢复地址（选填，HTTPS 私网 IP:端口）','Recovery address (optional, HTTPS private IP:port)'));
           row.append(el('strong','',peer.name),button(text('连接设备','Connect device'),()=>connectPeer(group.id,peer.id,address.field.value),'connect.'+group.id+'.'+peer.id),address.row);
+          if(options.browse)row.append(button(text('浏览文件','Browse files'),()=>options.browse(group.id,peer.id),'browse.'+group.id+'.'+peer.id));
           row.append(button(text('取消连接','Cancel connection'),()=>call('cancel',{id:group.id,peer:peer.id}),'cancel.'+group.id+'.'+peer.id));card.append(row);
         }
         const forget=button(text('删除本机设备组','Delete group from this device'),async()=>{

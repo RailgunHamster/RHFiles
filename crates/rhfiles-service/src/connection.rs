@@ -12,6 +12,8 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+mod file_client;
+pub use file_client::{DevicePath, FileLease, FileRequest, FileResponse};
 
 pub const TOTAL: Duration = Duration::from_secs(15);
 pub const MAX_ATTEMPTS: usize = 6;
@@ -181,6 +183,25 @@ pub struct Connector {
     remembered: Mutex<HashMap<String, Remembered>>,
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     active: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    file_epoch: Arc<std::sync::atomic::AtomicU64>,
+}
+// Dropping a timed-out/cancelled read must not leave a live-looking connection
+// entry behind. A later request must never be cancelled through an old handle.
+struct ActiveConnection<'a> {
+    owner: &'a Connector,
+    key: String,
+    signal: Arc<tokio::sync::Notify>,
+}
+impl Drop for ActiveConnection<'_> {
+    fn drop(&mut self) {
+        let mut active = self.owner.active.lock().unwrap();
+        if active
+            .get(&self.key)
+            .is_some_and(|v| Arc::ptr_eq(v, &self.signal))
+        {
+            active.remove(&self.key);
+        }
+    }
 }
 fn network(endpoint: &str) -> Vec<String> {
     // UDP connect only asks the OS to select a route: no datagram is sent.
@@ -285,6 +306,7 @@ fn client(pin: &str) -> Result<reqwest::Client, String> {
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_millis(4500))
+        .read_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(6))
         .build()
         .map_err(|_| "tls_unavailable".into())
@@ -386,12 +408,15 @@ impl Connector {
             remembered: Mutex::new(remembered),
             locks: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
+            file_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
     pub fn diagnostics(&self) -> Vec<Report> {
         self.reports.lock().unwrap().iter().rev().cloned().collect()
     }
     pub fn invalidate(&self) {
+        self.file_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.routes.lock().unwrap().clear();
         self.failures.lock().unwrap().clear();
         for n in self.active.lock().unwrap().values() {
@@ -587,6 +612,11 @@ impl Connector {
             .lock()
             .unwrap()
             .insert(key.clone(), cancel.clone());
+        let _active_connection = ActiveConnection {
+            owner: self,
+            key: key.clone(),
+            signal: cancel.clone(),
+        };
         let remaining = budget.remaining();
         let result = tokio::select! {
             result=self.resolve(group,peer,&key,manual,&initial_network,&mut budget,&mut report)=>result,

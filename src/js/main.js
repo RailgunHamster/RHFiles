@@ -196,6 +196,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     withTimeout(loadDrives(), 3000, "Drive discovery timed out"),
     withTimeout(loadTagList(), 3000, "Tag loading timed out"),
     withTimeout(loadPinnedFolders(), 3000, "Pinned folder loading timed out"),
+    deviceBrowser.refresh().catch(error=>showNotice(String(error))),
   ]);
   document.querySelectorAll(".sidebar-item[data-nav]").forEach(el => {
     const navPath = homeDir(el.dataset.nav);
@@ -229,6 +230,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // single instance: listen for navigate-to-path from second instance
   const listen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
   if (listen) {
+    listen('device-groups-changed',()=>deviceBrowser.refresh().catch(error=>showNotice(String(error)))).catch(()=>{});
     listen("navigate-to-path", (event) => {
       if (event.payload) navigateAddressInput(event.payload, false);
     }).catch(() => {});

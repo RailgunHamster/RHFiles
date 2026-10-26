@@ -1,6 +1,7 @@
 // pane.js — preview pane + dual pane
 
 function convertFileSrc(filePath) {
+  if(typeof isDevicePath==='function'&&isDevicePath(filePath))return deviceBrowser.cachedSource(filePath);
   const converter = window.__TAURI_INTERNALS__?.convertFileSrc || window.__TAURI__?.core?.convertFileSrc;
   if (converter) {
     try { return converter(filePath); } catch (e) {}
@@ -384,6 +385,10 @@ async function updatePreviewForSelection() {
     }
     return;
   }
+  if (typeof isDevicePath==='function'&&isDevicePath(file.path)) {
+    try{await deviceBrowser.source(file.path);}catch(error){if(previewRequestIsCurrent(requestToken,file.path,isRight))document.getElementById('preview-content').innerHTML='<div class="preview-empty">'+esc(String(error))+'</div>';return;}
+    if(!previewRequestIsCurrent(requestToken,file.path,isRight))return;
+  }
   if (ext === "lnk") {
     try {
       const scData = await call("read_shortcut", { path: file.path });
@@ -673,7 +678,7 @@ async function rpNavigateTo(path, pushHistory) {
   try {
     let entries = await withTimeout(
       listPathEntries(path, ""),
-      10000,
+      typeof isDevicePath==='function'&&isDevicePath(path)?50000:10000,
       t('nav.folderLoadTimedOut'),
     );
     if (navigationToken !== _rpNavigationToken || pane !== G.rp) return false;

@@ -133,7 +133,7 @@ fn has_known_binary_signature(bytes: &[u8]) -> bool {
         .any(|signature| bytes.starts_with(signature))
 }
 
-fn is_probably_text_content(bytes: &[u8]) -> bool {
+pub(crate) fn is_probably_text_content(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
     }

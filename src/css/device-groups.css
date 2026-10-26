@@ -20,3 +20,7 @@
 .dg-endpoint { display:block; font:12px/1.6 ui-monospace,monospace; overflow-wrap:anywhere; user-select:text; }
 .dg-connect { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:12px; padding-top:12px; border-top:1px solid color-mix(in srgb,currentColor 12%,transparent); }
 @media(max-width:500px) { .dg-field:not(:has([type=checkbox])) { align-items:stretch; flex-direction:column; gap:5px; }.dg-field input:not([type=checkbox]),.dg-field textarea { max-width:100%; }.dg-card { padding:12px; }.dg-member { align-items:flex-start; } }
+#device-group-section .sidebar-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}
+#device-group-refresh{border:0;background:transparent;color:var(--text-3);padding:3px;display:inline-flex;align-items:center;border-radius:5px;cursor:pointer}
+#device-group-refresh:hover{background:var(--bg-3);color:var(--text-1)}
+#device-group-settings{width:100%;background:transparent;color:var(--text-3);border:0;font:inherit;text-align:left;cursor:pointer}

@@ -55,7 +55,7 @@ const lanService=(()=>{
     if(model.startupError)startup.append(el('p','settings-update-failure',text('上次自动启动失败：','Last automatic startup failed: ')+model.startupError));
     card.append(startup);
     host.replaceChildren(card);
-    const groups=el('div');card.append(groups);await deviceGroupView.mount(groups,{zh:zh(),deviceName:text('我的电脑','My computer'),call:(command,args)=>call('device_groups',{command,args}),copy,confirm:message=>showConfirmDialog({kind:'restore',title:text('设备组','Device group'),message,confirmLabel:text('确认','Confirm')})});
+    const groups=el('div');card.append(groups);await deviceGroupView.mount(groups,{zh:zh(),deviceName:text('我的电脑','My computer'),call:(command,args)=>call('device_groups',{command,args}),copy,browse:(group,peer)=>RHFilesAPI.invoke('devices.open',{group,peer}),confirm:message=>showConfirmDialog({kind:'restore',title:text('设备组','Device group'),message,confirmLabel:text('确认','Confirm')})});
   }
   return {mount};
 })();

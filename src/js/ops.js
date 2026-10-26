@@ -825,12 +825,14 @@ function summarizeSelection(entries) {
 }
 
 function joinFolderPath(parent, child) {
+  if(typeof isDevicePath==='function'&&isDevicePath(parent))return RHFilesDevicePaths.join(parent,child);
   if (isFtpPath(parent)) return String(parent).replace(/\/+$/, '') + '/' + encodeURIComponent(child);
   if (IS_MAC) return String(parent || '').replace(/\/+$/, '') + '/' + child;
   return String(parent || '').replace(/[\\/]+$/, '') + '\\' + child;
 }
 
 function windowsPathKey(path) {
+  if(typeof isDevicePath==='function'&&isDevicePath(path))return RHFilesDevicePaths.parse(path).uri;
   if (IS_MAC && !isFtpPath(path)) return String(path || '').replace(/\/+$/, '') || '/';
   if (isFtpPath(path)) return new URL(path).href.replace(/\/+$/, '').normalize('NFC');
   return String(path || '')

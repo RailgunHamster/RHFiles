@@ -6,6 +6,7 @@ use rhfiles_service::{
     groups::{Packet, Signed},
 };
 use serde_json::{Value, json};
+use tauri::Emitter;
 fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
     v.get(key)
         .and_then(Value::as_str)
@@ -44,7 +45,11 @@ fn encoded(prefix: &str, value: impl serde::Serialize) -> Result<Value, String> 
     Ok(json!({"uri":uri,"qrSvg":qr}))
 }
 #[tauri::command]
-pub async fn device_groups(command: String, args: Value) -> Result<Value, String> {
+pub async fn device_groups(
+    command: String,
+    args: Value,
+    app: tauri::AppHandle,
+) -> Result<Value, String> {
     if command == "connect" {
         let connector = connector()?;
         let report = connector
@@ -67,11 +72,20 @@ pub async fn device_groups(command: String, args: Value) -> Result<Value, String
             connector()?.cancel(field(&args, "id")?, field(&args, "peer")?)
         ));
     }
-    tauri::async_runtime::spawn_blocking(move || run(&command, &args))
+    let changed = matches!(
+        command.as_str(),
+        "create" | "join" | "remove" | "restore" | "forget" | "configure"
+    );
+    let result = tauri::async_runtime::spawn_blocking(move || run(&command, &args))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    if changed {
+        let _ = app.emit("device-groups-changed", ());
+    }
+    Ok(result)
 }
-fn connector() -> Result<std::sync::Arc<rhfiles_service::connection::Connector>, String> {
+pub(crate) fn connector() -> Result<std::sync::Arc<rhfiles_service::connection::Connector>, String>
+{
     static INSTANCE: std::sync::OnceLock<std::sync::Arc<rhfiles_service::connection::Connector>> =
         std::sync::OnceLock::new();
     if let Some(v) = INSTANCE.get() {
