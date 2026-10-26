@@ -51,25 +51,46 @@ try {
             ),
           "RHFiles API ready",
         );
-        const actual = await page.evaluate(
-            "fetch('js/rhvideo-workbench.js').then(r=>r.text())",
-          ),
-          expected = fs.readFileSync("src/js/rhvideo-workbench.js", "utf8");
-        assert.equal(
-          createHash("sha256").update(actual).digest("hex"),
-          createHash("sha256").update(expected).digest("hex"),
-          "benchmark must use the current executable",
-        );
+        for (const file of [
+          "rhvideo-workbench.js",
+          "rhvideo-client.js",
+          "rhvideo-worker.js",
+        ]) {
+          const actual = await page.evaluate(
+              "fetch(" + JSON.stringify("js/" + file) + ").then(r=>r.text())",
+            ),
+            expected = fs.readFileSync("src/js/" + file, "utf8");
+          assert.equal(
+            createHash("sha256").update(actual).digest("hex"),
+            createHash("sha256").update(expected).digest("hex"),
+            "benchmark must use the current " + file,
+          );
+        }
       }
+      await page.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+      await page.send("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 800,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await page.send("Page.bringToFront");
       await page.evaluate(
         "window.__bench={maxGap:0,last:0,frames:0};window.__benchFrame=t=>{const b=window.__bench;if(b.last)b.maxGap=Math.max(b.maxGap,t-b.last);b.last=t;b.frames++;window.__benchRAF=requestAnimationFrame(window.__benchFrame)};requestAnimationFrame(window.__benchFrame);true",
       );
       const before = Date.now();
       if (client === "RHVideo") {
         await page.evaluate(
-          "(async()=>{const v=await(await fetch('/api/v1/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'preview',password:'fixture-only'})})).json();token=v.access_token;document.getElementById('app').classList.remove('hidden');document.getElementById('login-section').classList.add('hidden');pageSize=36;await loadVideos();await filterVideos()})()",
+          "(async()=>{const v=await(await fetch('/api/v1/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'preview',password:'fixture-only'})})).json();token=v.access_token;document.getElementById('app').classList.remove('hidden');document.getElementById('login-section').classList.add('hidden');pageSize=36;switchTab('list');await loadVideos();await filterVideos();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))})()",
         );
         assert.equal(await page.evaluate("filteredVideos.length"), 50000);
+        assert.equal(
+          await page.evaluate(
+            "document.getElementById('videos-grid').getBoundingClientRect().height>0",
+          ),
+          true,
+          "reference list must be visible, not a hidden background tab",
+        );
       } else {
         const result = await page.evaluate(
           'RHFilesAPI.invoke("rhvideo.connection.connect",' +
@@ -84,22 +105,28 @@ try {
       }
       const coldMs = Date.now() - before,
         samples = [],
+        apiSamples = [],
         counts = [];
       for (const query of [
         "shan ye",
         ...Array.from({ length: 20 }, (_, i) => (i % 2 ? "海边" : "qing chen")),
       ]) {
+        await page.send("Page.bringToFront");
         const result =
           await page.evaluate(`(async()=>{const start=performance.now();${
             client === "RHVideo"
               ? `document.getElementById('search-input').value=${JSON.stringify(query)};await filterVideos();const total=filteredVideos.length;`
               : `const value=await RHFilesAPI.invoke('rhvideo.search',{query:${JSON.stringify(query)}});const total=value.total;`
           }
-        await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ms:performance.now()-start,total};})()`);
+        const apiMs=performance.now()-start;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ms:performance.now()-start,apiMs,total};})()`);
         samples.push(result.ms);
+        apiSamples.push(result.apiMs);
         counts.push(result.total);
       }
       const frame = await page.evaluate("({...window.__bench})");
+      const rendered = await page.evaluate(
+        "({width:innerWidth,height:innerHeight,visible:document.visibilityState,decodedImages:[...document.images].filter(n=>n.naturalWidth>0).length})",
+      );
       reports.push({
         client,
         count: 50000,
@@ -107,7 +134,10 @@ try {
         coldPinyinMs: samples[0],
         hotSearchP50: percentile(samples.slice(1), 0.5),
         hotSearchP95: percentile(samples.slice(1), 0.95),
+        hotApiP50: percentile(apiSamples.slice(1), 0.5),
+        hotApiP95: percentile(apiSamples.slice(1), 0.95),
         maxFrameGapMs: frame.maxGap,
+        rendered,
         counts,
       });
     } finally {
@@ -125,7 +155,9 @@ assert.deepEqual(
 );
 const output = {
   at: new Date().toISOString(),
-  executable: process.env.RHFILES_TEST_EXECUTABLE || "target/debug/rhfiles.exe (unoptimized development build)",
+  executable:
+    process.env.RHFILES_TEST_EXECUTABLE ||
+    "target/debug/rhfiles.exe (unoptimized development build)",
   referenceSource: reference,
   referenceSHA256: createHash("sha256")
     .update(fs.readFileSync(path.join(reference, "static/index.html")))

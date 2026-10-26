@@ -23,6 +23,35 @@ async function target(app,file){
 }
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
 
+test('late login and stale generations cannot erase or mutate a newer account',async()=>{
+  const app=await launchApp({emulateFocus:true});let view,release,entered=false;
+  const old=await rhvideoFixture({beforeLogin:async()=>{entered=true;await new Promise(r=>release=r);}}),active=await rhvideoFixture();
+  try{
+    await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
+    await view.evaluate('window.__oldLogin=RHFilesAPI.invoke("rhvideo.connection.connect",'+JSON.stringify({server:old.url,username:'preview',password:'fixture-only'})+').catch(e=>String(e));true');
+    await until(()=>entered,'old login held');
+    await invoke(view,'connection.connect',{server:active.url,username:'preview',password:'fixture-only'});
+    const generation=(await invoke(view,'state')).generation;release();await view.evaluate('window.__oldLogin');
+    assert.equal((await invoke(view,'state')).generation,generation);assert.equal(new URL((await invoke(view,'state')).server).href,new URL(active.url).href);
+    await assert.rejects(invoke(view,'remote.watch.add',{body:{path:'D:\\MustNotWrite'},expectedGeneration:generation-1}),/账户已改变|会话已改变/);
+    assert.equal(active.watch.length,1);assert.equal(old.watch.length,1);
+    assert.equal((await invoke(view,'search',{query:'shanye'})).total,13);
+  }finally{release?.();view?.close();await old.close();await active.close();app.close();}
+});
+
+test('expired native authorization clears the connected UI and both memory caches',async()=>{
+  const app=await launchApp({emulateFocus:true}),authState={active:true},fixture=await rhvideoFixture({authState});let view;
+  try{
+    await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+    for(let cycle=0;cycle<5;cycle++){
+    assert((await invoke(view,'capabilities')).resolutions.items>0);authState.active=false;await invoke(view,'refresh');
+    const state=await invoke(view,'state');assert.equal(state.connected,false);assert.equal(state.total,0);assert.match(state.error,/登录已失效/);
+    assert.equal(await view.evaluate("document.querySelectorAll('.media-card').length"),0);assert.equal((await invoke(view,'render.state')).cachedCards,0);assert.equal((await invoke(view,'capabilities')).resolutions.items,0);
+    authState.active=true;await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});const reconnected=await invoke(view,'state');assert.equal(reconnected.total,52,JSON.stringify(reconnected));
+    }
+  }finally{view?.close();await fixture.close();app.close();}
+});
+
 test('catalog writes invalidate immediately; delayed pre-write reads never resurrect sources',async()=>{
   const app=await launchApp({emulateFocus:true});let view,release,delayed=false,holdNext=false,fail=false;
   const fixture=await rhvideoFixture({beforeCatalog:async kind=>{
@@ -100,6 +129,9 @@ test('RHVideo packaged UI, real native HTTP bridge, reader, favorites, paging an
     const search=await invoke(view,'search',{query:'清晨'});assert(search.items.length>0&&search.items.every(v=>v.title.includes('清晨')));
     const all=await invoke(view,'search',{query:''}),media=all.items[0];
     await view.evaluate("window.__favoriteCover=document.querySelector('.cover-button img')");
+    await invoke(view,'search',{query:media.title.slice(0,6)});await invoke(view,'search',{query:''});
+    assert.equal(await view.evaluate("document.querySelector('.cover-button img')===window.__favoriteCover"),true,'searching and returning must not discard a decoded matching thumbnail');
+    const renderCache=await invoke(view,'render.state');assert(renderCache.cachedCards<=72);assert(renderCache.detachedBytes<=16*1024*1024);
     await invoke(view,'favorite.toggle',{id:media.id,kind:media.kind});assert(fixture.favorites.has('video:'+media.id));
     assert.equal(await view.evaluate("document.querySelector('.cover-button img')===window.__favoriteCover"),true,'favorite toggle must retain decoded cover DOM');
     const favorite=await invoke(view,'category',{kind:'favorite'});assert.equal(favorite.total,1);
@@ -123,10 +155,13 @@ test('RHVideo packaged UI, real native HTTP bridge, reader, favorites, paging an
     const batchResult=await invoke(view,'confirm.advance',{ticket:batch.ticket});assert.equal(batchResult.succeeded,2);assert.equal(batchResult.failed,1);assert.equal(batchResult.notAttempted,0);assert.equal(fixture.trash.length,2);
     await assert.rejects(invoke(view,'confirm.advance',{ticket:batch.ticket}),/失效/);assert.equal(fixture.requests.filter(r=>r.path==='/api/v1/trash/picture/picture-1').length,1,'failed write is never replayed');
     assert.deepEqual((await invoke(view,'selection.result')).results,batchResult.results);await invoke(view,'panel.close',{id:'wb-info'});await invoke(view,'selection.clear');await invoke(view,'search',{query:''});
+    const catalogCapability=(await invoke(view,'catalog.resource',{kind:'video'})).url;
+    const catalogResponse=await fetch(catalogCapability);assert.equal(catalogResponse.status,200);assert.equal(catalogResponse.headers.get('access-control-allow-origin'),'*');assert(Array.isArray(await catalogResponse.json()));
     const capabilities=await view.evaluate("[...document.querySelectorAll('.cover-button img')].map(n=>n.src)");
     assert.equal((await fetch(capabilities[0])).status,200);
     const forged=new URL(capabilities[0]);forged.pathname='/wrong-cap/1';assert.equal((await fetch(forged)).status,401);
     await invoke(view,'connection.logout');assert.equal((await fetch(capabilities[0])).status,401);
+    assert.equal((await fetch(catalogCapability)).status,401,'catalog capabilities must be revoked with the native session');
     await assert.rejects(app.evaluate("call('rhvideo_request',{action:'catalog',args:{kind:'video'}})"),/请先/);
     assert(fixture.requests.some(r=>r.authorization==='Bearer fixture-bearer-do-not-persist'&&r.path.endsWith('/thumbnail')));
     console.log(JSON.stringify({pass:true,artifacts:app.artifactDir,checks:'packaged UI, native bearer broker, favorite writes, pagination, image viewer, chapter/progress, timeline, logout capability revocation, no credential persistence'}));

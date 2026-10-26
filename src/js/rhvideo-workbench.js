@@ -28,6 +28,12 @@
             undefined,
             "rhvideo.workbench." + site,
           );
+      const resolutions = new I.ResolveCache();
+      let resolutionRevision = "",
+        accountGeneration = null,
+        resolutionGeneration = 0;
+      let sessionSnapshot = null,
+        sessionCheckedAt = 0;
       let worker,
         sequence = 0,
         epoch = 0,
@@ -164,14 +170,20 @@
         return node.querySelector(".wb-content");
       }
       function startWorker() {
-        worker?.terminate();
+        if (worker) {
+          worker.onmessage = null;
+          worker.onerror = null;
+          worker.terminate();
+        }
         for (const p of requests.values()) {
           clearTimeout(p.timer);
           p.reject(Error("媒体账户或清单已更改"));
         }
         requests.clear();
-        worker = new Worker("js/rhvideo-worker.js");
-        worker.onmessage = (e) => {
+        const activeWorker = new Worker("js/rhvideo-worker.js");
+        worker = activeWorker;
+        activeWorker.onmessage = (e) => {
+          if (worker !== activeWorker) return;
           const p = requests.get(e.data.id);
           if (!p) return;
           requests.delete(e.data.id);
@@ -180,10 +192,12 @@
             ? p.reject(Error(e.data.error))
             : p.resolve(e.data.result);
         };
-        worker.onerror = () => {
+        activeWorker.onerror = (event) => {
+          if (worker !== activeWorker) return;
           for (const p of requests.values()) {
             clearTimeout(p.timer);
-            p.reject(Error("媒体搜索索引失败，请刷新媒体库"));
+            const reason = typeof event?.message === "string" ? event.message.slice(0, 300) : "";
+            p.reject(Error("媒体搜索索引失败，请刷新媒体库" + (reason ? "：" + reason : "")));
           }
           requests.clear();
         };
@@ -203,6 +217,11 @@
       async function reset(authenticated) {
         ctx.invalidateReads();
         epoch++;
+        resolutions.clear();
+        sessionSnapshot = null;
+        sessionCheckedAt = 0;
+        resolutionRevision = "";
+        accountGeneration = null;
         liveRefresh?.stop();
         detailJob = null;
         mutations = {
@@ -251,19 +270,59 @@
         clearTimeout(saveTimer);
         if (authenticated) {
           const s = await native("state");
+          ctx.updateConnection(s);
+          sessionSnapshot = s;
+          sessionCheckedAt = performance.now();
           account = s.server + "\n" + s.username;
+          accountGeneration = s.generation ?? null;
+          resolutionRevision =
+            String(s.generation) + ":" + String(s.assetRevision);
           prefs = await native("preferences");
           applyPreferences();
         }
         return { reset: true };
       }
-      async function ensure() {
-        const s = await native("state");
-        if (!s.connected) throw Error("请先连接并登录 RHVideo");
+      async function ensure(force = false) {
+        if (!state.connected) throw Error("请先连接并登录 RHVideo");
+        const readEpoch = epoch;
+        const cached =
+          !force &&
+          sessionSnapshot &&
+          performance.now() - sessionCheckedAt < 5000;
+        const s = cached ? sessionSnapshot : await native("state");
+        if (readEpoch !== epoch) throw Error("媒体账户已更改，已丢弃旧读取");
+        if (!cached) {
+          sessionSnapshot = s;
+          sessionCheckedAt = performance.now();
+        }
+        if (!s.connected) {
+          if (state.connected) {
+            ctx.updateConnection(s);
+            await reset(false);
+            state.total = 0;
+            state.error = "RHVideo 登录已失效，请重新连接";
+            await load();
+            notice(state.error);
+            throw Error(state.error);
+          }
+          throw Error("请先连接并登录 RHVideo");
+        }
         const key = s.server + "\n" + s.username;
-        if (account !== key) {
+        if (
+          account !== key ||
+          (accountGeneration !== null && s.generation !== accountGeneration)
+        ) {
+          ctx.updateConnection(s);
           await reset(true);
         }
+        const active = sessionSnapshot || s;
+        const revision =
+          String(active.generation) + ":" + String(active.assetRevision);
+        if (resolutionRevision !== revision) {
+          resolutions.clear();
+          resolutionRevision = revision;
+        }
+        resolutionGeneration = active.generation ?? state.generation;
         await ready;
         return epoch;
       }
@@ -305,6 +364,11 @@
       }
       function invalidateCatalog(kind) {
         catalogRevision++;
+        if (kind !== "favorite") resolutions.clear();
+        if (worker)
+          void send("invalidate", { revision: catalogRevision }).catch(
+            () => {},
+          );
         if (kind) raw.delete(kind);
         else raw.clear();
       }
@@ -340,17 +404,16 @@
                   throw Error("收藏清单超过 10 万项，请先在服务器缩小范围");
               }
             } else {
-              const data = await remote("index." + kind, {
-                ...(["video", "novel"].includes(kind)
-                  ? {
-                      query: {
-                        summary: true,
-                        ...(kind === "video" ? { refresh } : {}),
-                      },
-                    }
-                  : {}),
+              const resource = await invoke("catalog.resource", {
+                kind,
+                refresh,
               });
-              rows = Array.isArray(data) ? data : data.items;
+              if (version !== epoch || revision !== catalogRevision)
+                throw Error("媒体账户或清单已更改，已丢弃旧读取");
+              await send("resource", { kind, url: resource.url, revision });
+              if (version !== epoch || revision !== catalogRevision)
+                throw Error("媒体账户或清单已更改，已丢弃旧读取");
+              return true;
             }
             if (version !== epoch || revision !== catalogRevision)
               throw Error("媒体账户或清单已更改，已丢弃旧读取");
@@ -379,8 +442,8 @@
           ...extra,
         };
       }
-      async function query(extra = {}) {
-        const token = await ensure(),
+      async function query(extra = {}, verifiedToken) {
+        const token = verifiedToken ?? (await ensure()),
           args = criteria(extra),
           revision = catalogRevision;
         await rawCatalog(args.kind);
@@ -390,17 +453,40 @@
         return result;
       }
       async function catalog(refresh) {
-        await ensure();
+        const token = await ensure(refresh);
         await rawCatalog(state.kind, refresh);
         const version = epoch,
           revision = catalogRevision;
-        const result = await query();
-        const resolved = await native("resolve", { items: result.items });
+        const result = await query({}, token);
+        const cached = result.items.map((item) =>
+          resolutions.get(I.key(item), JSON.stringify(item)),
+        );
+        const missing = result.items.filter((_, index) => !cached[index]);
+        let resolved = { items: [], generation: resolutionGeneration };
+        if (missing.length) {
+          resolved = await native("resolve", { items: missing });
+          if (version !== epoch || revision !== catalogRevision)
+            throw Error("媒体账户或清单已更改，已丢弃旧读取");
+          if (
+            !Array.isArray(resolved.items) ||
+            resolved.items.length !== missing.length
+          )
+            throw Error("媒体解析结果无效");
+          for (let i = 0; i < missing.length; i++)
+            resolutions.put(
+              I.key(missing[i]),
+              JSON.stringify(missing[i]),
+              resolved.items[i],
+            );
+        }
+        let index = 0;
+        resolved.items = cached.map((item) => item || resolved.items[index++]);
         if (version !== epoch || revision !== catalogRevision)
           throw Error("媒体账户或清单已更改，已丢弃旧读取");
         return { ...resolved, total: result.total };
       }
       async function remote(name, args = {}) {
+        args = { expectedGeneration: state.generation, ...args };
         await ready;
         return api.invoke("rhvideo.remote." + name, args);
       }
@@ -475,7 +561,14 @@
           const pathKeys = [...s.path.matchAll(/\{([^}]+)\}/g)].map(
               (m) => m[1],
             ),
-            props = {};
+            props = {
+              expectedGeneration: {
+                type: "integer",
+                minimum: 0,
+                description:
+                  "Optional session generation from rhvideo.state; rejects stale targets before execution",
+              },
+            };
           if (pathKeys.length)
             props.params = object(
               Object.fromEntries(
@@ -502,8 +595,15 @@
               ...(s.risk === "destructive" ? ["confirmation"] : []),
             ]),
             async (args) => {
-              const version = epoch;
-              const result = await native("operation", { name, ...args });
+              const wanted = args.expectedGeneration ?? state.generation;
+              const version = await ensure();
+              if (version !== epoch || wanted !== state.generation)
+                throw Error("媒体账户已改变，操作未执行，请核对当前账户");
+              const { expectedGeneration, ...operationArgs } = args;
+              const result = await native("operation", {
+                name,
+                ...operationArgs,
+              });
               if (version !== epoch)
                 throw Error(
                   "媒体账户已更改，已丢弃旧响应；写操作可能已完成，请在原服务器核对，不会自动重试",
@@ -531,10 +631,26 @@
         return spec;
       });
       action(
+        "catalog.resource",
+        object(
+          {
+            kind: { type: "string", enum: ["video", "picture", "novel"] },
+            refresh: { type: "boolean" },
+          },
+          ["kind"],
+        ),
+        async (args) => {
+          await ensure();
+          return native("catalog.resource", args);
+        },
+        "read",
+      );
+      action(
         "capabilities",
         object(),
         async () => ({
           contractVersion: (await manifest).version,
+          resolutions: resolutions.info(),
           operations: Object.keys((await manifest).operations).filter(
             (n) => !awaitSpec(n)?.internal,
           ),
@@ -740,7 +856,9 @@
         "selection.stage",
         object(),
         async () => {
+          const version = epoch;
           const items = await selectedItems();
+          if (version !== epoch) throw Error("媒体账户已改变，确认未创建");
           return beginConfirmation({ name: "trash.stage", batch: items });
         },
         "destructive",
@@ -852,7 +970,9 @@
         "media.info",
         object({ id: string }, ["id"]),
         async ({ id }) => {
+          const version = epoch;
           const data = await remote("video.info", { params: { id } });
+          if (version !== epoch) throw Error("媒体账户已改变，已丢弃旧信息");
           const root = dialog("wb-info", "视频信息");
           root.replaceChildren(detail(data));
           return { info: data };
@@ -1342,6 +1462,7 @@
           ticket,
           account,
           epoch,
+          generation: state.generation,
           step: 0,
           created: Date.now(),
         };
@@ -1379,11 +1500,16 @@
             name: string,
             params: { type: "object" },
             body: { type: "object" },
+            expectedGeneration: { type: "integer", minimum: 0 },
           },
           ["name"],
         ),
         async (args) => {
+          const wanted = args.expectedGeneration ?? state.generation,
+            version = await ensure();
           const spec = (await manifest).operations[args.name];
+          if (version !== epoch || wanted !== state.generation)
+            throw Error("媒体账户已改变，确认未创建");
           if (!spec || spec.risk !== "destructive")
             throw Error("不支持的确认操作");
           return beginConfirmation(args);
@@ -1429,6 +1555,7 @@
                   await remote("trash.stage", {
                     params: { kind: item.kind, id: item.id },
                     confirmation: "RHVIDEO:trash.stage",
+                    expectedGeneration: p.generation,
                   });
                   selected.delete(item.key || I.key(item));
                   results.push({
@@ -1495,6 +1622,7 @@
             ...(p.params ? { params: p.params } : {}),
             ...(p.body ? { body: p.body } : {}),
             confirmation: "RHVIDEO:" + p.name,
+            expectedGeneration: p.generation,
           });
           notice(
             result?.clientWarning
@@ -2079,7 +2207,9 @@
         "cleanup.preview",
         object(),
         async () => {
+          const version = epoch;
           const data = await remote("cleanup.preview");
+          if (version !== epoch) throw Error("媒体账户已改变，已丢弃旧预览");
           const root = dialog("wb-info", "清理缺失源预览");
           root.replaceChildren(
             el("p", "仅清理服务器确认源文件已不存在的媒体记录和生成产物。"),
@@ -2180,11 +2310,12 @@
         "selection.export",
         object(),
         async () => {
+          const version = epoch;
           const items = await selectedItems();
+          if (version !== epoch) throw Error("媒体账户已改变，导出未开始");
           const text = I.exportText(items);
           if (ctx.mobile && text.length > 64000) {
-            const ticket = crypto.randomUUID(),
-              version = epoch;
+            const ticket = crypto.randomUUID();
             for (
               let offset = 0, index = 0;
               offset < text.length;
@@ -2256,8 +2387,10 @@
         "playback.history",
         object(),
         async () => {
-          const data = await native("playback.history"),
-            root = dialog("wb-info", "播放记录");
+          const version = epoch;
+          const data = await native("playback.history");
+          if (version !== epoch) throw Error("媒体账户已改变，已丢弃旧记录");
+          const root = dialog("wb-info", "播放记录");
           root.replaceChildren();
           for (const [id, item] of Object.entries(data).sort(
             (a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0),
@@ -2278,8 +2411,10 @@
         "playback.resume",
         object({ id: string }, ["id"]),
         async ({ id }) => {
+          const version = epoch;
           const data = await native("playback.history"),
             item = data[id];
+          if (version !== epoch) throw Error("媒体账户已改变，播放未开始");
           if (!item) throw Error("播放记录不存在");
           return native("play", { id, title: item.title || id, resume: true });
         },
@@ -3722,15 +3857,32 @@
           ["server", "username", "password", "email"],
         ),
         async (args) => {
+          const connection = ctx.beginConnection();
           try {
             const result = await native("register", args);
+            if (!ctx.connectionCurrent(connection)) return { stale: true };
             ctx.updateConnection(result);
             $("connection-dialog").close();
             await reset(true);
             await load(true, true);
             return result;
+          } catch (error) {
+            if (ctx.connectionCurrent(connection)) {
+              ctx.updateConnection({
+                connected: false,
+                nativePlayback: state.nativePlayback,
+                server: args.server,
+                username: args.username,
+                generation: 0,
+              });
+              await reset(false);
+              state.total = 0;
+              state.items = [];
+              await load();
+            }
+            throw error;
           } finally {
-            $("password").value = "";
+            if (ctx.connectionCurrent(connection)) $("password").value = "";
           }
         },
         "external",
@@ -3785,6 +3937,15 @@
         clearTimeout(saveTimer);
       });
       return {
+        invalidateSession() {
+          sessionSnapshot = null;
+          sessionCheckedAt = 0;
+          resolutions.clear();
+        },
+        acceptSession(value) {
+          sessionSnapshot = value;
+          sessionCheckedAt = performance.now();
+        },
         catalog,
         reset,
         paintCards,

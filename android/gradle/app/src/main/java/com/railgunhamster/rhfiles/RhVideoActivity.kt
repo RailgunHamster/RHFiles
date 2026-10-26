@@ -54,7 +54,9 @@ class RhVideoActivity:AppCompatActivity() {
         if(request.method!="GET"||uri.scheme!="https"||uri.host!="appassets.androidplatform.net"||uri.port!=-1||uri.query!=null)return denied()
         val path=uri.path?:return denied()
         return try{
-          if(path.startsWith("/rhvideo-media/")&&!request.isForMainFrame){
+          if(path.startsWith("/rhvideo-catalog/")&&!request.isForMainFrame){
+            WebResourceResponse("application/json","UTF-8",200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff"),client.catalogResource(path.removePrefix("/rhvideo-catalog/")))
+          }else if(path.startsWith("/rhvideo-media/")&&!request.isForMainFrame){
             val key=path.removePrefix("/rhvideo-media/");require(key.matches(Regex("[a-f0-9-]{36}")))
             val media=client.media(key,image=true)
             WebResourceResponse(media.type.substringBefore(';'),null,200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff"),media.stream)
@@ -70,7 +72,9 @@ class RhVideoActivity:AppCompatActivity() {
             }else assets.open(path.removePrefix("/"))
             WebResourceResponse(mime,"UTF-8",200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff"),input)
           }
-        }catch(_:Exception){denied()}
+        }catch(error:Exception){
+          if(path.startsWith("/rhvideo-catalog/"))WebResourceResponse("application/json","UTF-8",502,"Bad Gateway",mapOf("Cache-Control" to "no-store"),ByteArrayInputStream(JSONObject().put("error",error.message?:"清单读取失败").toString().toByteArray(Charsets.UTF_8))) else denied()
+        }
       }
     }
     if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
@@ -83,7 +87,9 @@ class RhVideoActivity:AppCompatActivity() {
           val response=JSONObject().put("id",request.optInt("id"))
           try{
             val action=request.getString("action");val args=request.optJSONObject("args")?:JSONObject()
-            if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}}
+            client.validateContext(args,action=="logout")
+            val contextArgs=JSONObject(args.toString())
+            if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}}}
             val value=when(action){
               "export.chunk"->{
                 val ticket=args.getString("ticket");require(ticket.matches(Regex("[A-Za-z0-9_-]{1,128}")))
@@ -118,7 +124,7 @@ class RhVideoActivity:AppCompatActivity() {
               else->client.request(action,args)
             }
             response.put("result",value)
-            if(action=="logout")runOnUiThread{presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}
+            if(action=="logout")runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}}
           }catch(e:Exception){response.put("error",e.message?:"RHVideo 操作失败")}
           runOnUiThread{if(!isDestroyed)try{reply.postMessage(response.toString())}catch(_:Exception){}}
         }

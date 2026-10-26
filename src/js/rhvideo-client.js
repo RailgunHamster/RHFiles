@@ -3,10 +3,16 @@
   'use strict';
   const api=window.RHFilesAPI,model=RHVideoModel,$=id=>document.getElementById(id);
   const mobile=!!window.RHVideoNative;
+  const cardCache=new Map();
+  function clearCards(){for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();}
+  function trimCards(){let detached=0;for(const {node} of cardCache.values())if(!node.isConnected){const image=node.querySelector('img');detached+=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;}for(const [key,entry] of cardCache){if(cardCache.size<=72&&detached<=16*1024*1024)break;if(!entry.node.isConnected){const image=entry.node.querySelector('img');detached-=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;image?.removeAttribute('src');cardCache.delete(key);}}}
   let modalOrder=[];
   const modalTop=()=>modalOrder.filter(id=>$(id)?.open).at(-1);
   function openDialog(id){const node=$(id);if(!node.open){node.showModal();modalOrder=modalOrder.filter(v=>$(v)?.open&&v!==id);modalOrder.push(id);}return node;}
-  const native=(action,args={})=>mobile?window.RHVideoNative.request(action,args):window.__TAURI__.core.invoke('rhvideo_request',{action,args});
+  const native=(action,args={})=>{
+    if(state.generation>0&&!['state','connect','register','close','presentation.close','grid.close'].includes(action))args={...args,_sessionGeneration:state.generation};
+    return (mobile?window.RHVideoNative.request(action,args):window.__TAURI__.core.invoke('rhvideo_request',{action,args})).catch(error=>{workbench?.invalidateSession();throw error;});
+  };
   api.provideState('application',()=>({platform:mobile?'android':'windows',window:'window-rhvideo',ready:true}));
   const icons={
     library:'<rect x="3" y="4" width="18" height="16" rx="4"/><path d="m10 8 6 4-6 4z"/>',
@@ -30,11 +36,13 @@
   const icon=name=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+(icons[name]||icons.library)+'</svg>';
   document.querySelectorAll('[data-icon]').forEach(node=>node.innerHTML=icon(node.dataset.icon));
   const titles={video:'视频',picture:'图片',novel:'小说',favorite:'我的收藏'};
-  const state={kind:'video',offset:0,limit:36,total:0,items:[],favorites:new Set(),favoriteBusy:new Set(),loading:false,error:'',connected:false,nativePlayback:false,loadId:0,search:'',folder:'',generation:0};
+  const state={kind:'video',offset:0,limit:36,total:0,items:[],favorites:new Set(),favoriteBusy:new Set(),loading:false,error:'',connected:false,nativePlayback:false,loadId:0,search:'',folder:'',generation:0,server:'',username:''};
   const reader={book:null,chapter:0,loaded:false,token:0,saveTimer:0,ratio:0};
   let workbench=null;
   let readSaveChain=Promise.resolve();
   let readEpoch=0;
+  let connectionEpoch=0;
+  function beginConnection(){readEpoch++;clearMediaViews();return ++connectionEpoch;}
   let searchTimer=0,folderLoadId=0,timelineLoadId=0,images=[],imageIndex=0,imageZoom=1;
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const string={type:'string',maxLength:4096},integer={type:'integer',minimum:0,maximum:100000};
@@ -55,6 +63,9 @@
   }
   function updateConnection(value){
     state.connected=value.connected;state.nativePlayback=value.nativePlayback;
+    state.generation=value.generation??0;
+    state.server=value.server||'';state.username=value.username||'';
+    workbench?.acceptSession(value);
     $('connection-open').classList.toggle('connected',value.connected);
     $('connection-label').textContent=value.connected?(value.username||'已连接'):'尚未连接';
     let host=value.server;try{host=new URL(host).host;}catch{}
@@ -79,16 +90,17 @@
   async function load(refresh=false,folders=false){
     if(!state.connected){state.items=[];$('media-grid').replaceChildren();status('把你的媒体库带进来','连接已经运行的 RHVideo，浏览视频、图片、小说和收藏。','library',true);pagination();return;}
     const token=++state.loadId;state.loading=true;state.error='';state.items=[];$('notice').hidden=true;$('media-grid').setAttribute('aria-busy','true');
+    if(refresh)clearCards();
     if(folders)void loadFolders();
-    status('正在读取媒体库…','只读取当前分类的清单，图片按需加载。','refresh');$('media-grid').replaceChildren();
+    if($('media-grid').dataset.kind!==state.kind){$('media-grid').replaceChildren();trimCards();}$('media-grid').inert=true;if(!$('media-grid').children.length)status('正在读取媒体库…','只读取当前分类的清单，图片按需加载。','refresh');else $('result-count').textContent='正在更新…';
     try{
       const value=model.validateCatalog(await (workbench?workbench.catalog(refresh):native('catalog',{kind:state.kind,offset:state.offset,limit:state.limit,search:state.search,folder:state.folder,refresh})));
       if(token!==state.loadId)return;
       if(value.total>0&&state.offset>=value.total){state.offset=Math.floor((value.total-1)/state.limit)*state.limit;return load(false,false);}
       state.total=value.total;state.items=value.items;state.generation=value.generation;paint();workbench?.paintCards();
     }catch(error){
-      if(token!==state.loadId)return;state.items=[];state.error=String(error);status('暂时无法读取媒体库',state.error,'library');notice(state.error);
-    }finally{if(token===state.loadId){state.loading=false;$('media-grid').setAttribute('aria-busy','false');pagination();}}
+      if(token!==state.loadId)return;state.items=[];state.error=String(error);$('media-grid').replaceChildren();trimCards();status('暂时无法读取媒体库',state.error,'library');notice(state.error);
+    }finally{if(token===state.loadId){state.loading=false;$('media-grid').inert=false;$('media-grid').setAttribute('aria-busy','false');pagination();}}
     return snapshot();
   }
   function pagination(){
@@ -98,16 +110,19 @@
     $('previous-page').disabled=!state.connected||state.loading||!page.previous;$('next-page').disabled=!state.connected||state.loading||!page.next;
   }
   function paint(){
-    $('library-status').replaceChildren();const grid=$('media-grid');grid.replaceChildren();grid.className='media-grid '+({picture:'pictures',novel:'novels'}[state.kind]||'');
-    if(!state.items.length){status('这里暂时没有内容',state.search||state.folder?'换个关键词或文件夹试试。':'内容会沿用服务器的媒体库；可以在 RHVideo 中添加监控目录。',state.kind==='favorite'?'heart':state.kind);return;}
+    $('library-status').replaceChildren();const grid=$('media-grid');grid.replaceChildren();grid.dataset.kind=state.kind;grid.className='media-grid '+({picture:'pictures',novel:'novels'}[state.kind]||'');
+    if(!state.items.length){trimCards();status('这里暂时没有内容',state.search||state.folder?'换个关键词或文件夹试试。':'内容会沿用服务器的媒体库；可以在 RHVideo 中添加监控目录。',state.kind==='favorite'?'heart':state.kind);return;}
     for(const media of state.items){
+      const cacheKey=model.itemKey(media),signature=JSON.stringify(media),cached=cardCache.get(cacheKey);
+      if(cached?.signature===signature){cardCache.delete(cacheKey);cardCache.set(cacheKey,cached);grid.append(cached.node);paintFavorite(cacheKey);continue;}
+      cached?.node.querySelector('img')?.removeAttribute('src');
       const card=document.createElement('article');card.className='media-card';card.dataset.id=media.id;card.dataset.kind=media.kind;
       const cover=document.createElement('button');cover.className='cover-button';cover.setAttribute('aria-label',(media.kind==='novel'?'阅读 ':media.kind==='picture'?'查看 ':'播放 ')+media.title);
       cover.innerHTML='<span class="cover-empty">'+icon(media.kind==='novel'?'book':media.kind)+'</span>';
       if(media.cover){
         const image=document.createElement('img');image.loading='lazy';image.decoding='async';image.alt='';image.src=media.cover;
-        RHFilesUI.listen(image,'load',()=>{image.classList.add('loaded');cover.querySelector('.cover-empty')?.remove();},undefined,'rhvideo.cover.loaded');
-        RHFilesUI.listen(image,'error',()=>{image.hidden=true;cover.title='缩略图暂时不可用；仍可点击打开内容';},undefined,'rhvideo.cover.error');cover.append(image);
+        RHFilesUI.listen(image,'load',()=>{image.classList.add('loaded');cover.querySelector('.cover-empty')?.remove();trimCards();},undefined,'rhvideo.cover.loaded');
+        RHFilesUI.listen(image,'error',()=>{workbench?.invalidateSession();image.hidden=true;cover.title='缩略图暂时不可用，可刷新；仍可点击打开内容';},undefined,'rhvideo.cover.error');cover.append(image);
       }else if(media.kind==='novel'){
         cover.replaceChildren();cover.classList.add('book-cover');cover.innerHTML=icon('book');const name=document.createElement('span');name.textContent=media.title.slice(0,22);cover.append(name);
       }
@@ -128,8 +143,9 @@
       const heart=document.createElement('button');const key=model.itemKey(media);heart.dataset.key=key;heart.className='favorite-button'+(state.favorites.has(key)?' active':'');heart.innerHTML=icon('heart');
       heart.setAttribute('aria-label',state.favorites.has(key)?'取消收藏 '+media.title:'收藏 '+media.title);heart.setAttribute('aria-pressed',String(state.favorites.has(key)));heart.disabled=state.favoriteBusy.has(key);
       heart.dataset.apiAction='rhvideo.favorite.toggle';RHFilesUI.listen(heart,'click',()=>invoke('favorite.toggle',{id:media.id,kind:media.kind}).catch(notice),undefined,'rhvideo.card.favorite');
-      actions.append(extra,heart);info.append(actions);card.append(info);grid.append(card);
+      actions.append(extra,heart);info.append(actions);card.append(info);grid.append(card);cardCache.delete(cacheKey);cardCache.set(cacheKey,{node:card,signature});
     }
+    trimCards();
   }
   function paintFavorite(key){
     // Updating one heart must not discard decoded images or scroll/card state.
@@ -141,29 +157,30 @@
       heart.setAttribute('aria-label',(state.favorites.has(key)?'取消收藏 ':'收藏 ')+(media?.title||''));
     }
   }
-  function snapshot(){return {kind:state.kind,connected:state.connected,nativePlayback:state.nativePlayback,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
+  function snapshot(){return {kind:state.kind,connected:state.connected,server:state.server,username:state.username,generation:state.generation,nativePlayback:state.nativePlayback,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
   action('state',object(),snapshot,'read');api.provideState('rhvideo',snapshot);
+  action('render.state',object(),()=>{let detachedBytes=0,detachedCards=0;for(const {node} of cardCache.values())if(!node.isConnected){detachedCards++;const image=node.querySelector('img');detachedBytes+=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;}return {cachedCards:cardCache.size,detachedCards,detachedBytes,currentCards:$('media-grid').children.length,loading:state.loading};},'read');
   action('connection.open',object(),async()=>{updateConnection(await native('state'));$('connection-error').textContent='';openDialog('connection-dialog');return {opened:true};});
   action('connection.close',object(),()=>{$('connection-dialog').close();$('password').value='';return {closed:true};});
   action('connection.connect',object({server:string,username:string,password:{type:'string',maxLength:4096}},['server','username','password']),async args=>{
-    readEpoch++;
-    clearMediaViews();
+    const connection=beginConnection();
     $('connect').disabled=true;$('disconnect').disabled=true;$('connection-error').textContent='';
     try{
-      updateConnection(await native('connect',args));$('connection-dialog').close();state.offset=0;state.search='';state.folder='';$('search').value='';
+      const value=await native('connect',args);if(connection!==connectionEpoch)return {stale:true};updateConnection(value);$('connection-dialog').close();state.offset=0;state.search='';state.folder='';$('search').value='';
       await workbench?.reset(true);
       let favoriteError;try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){state.favorites.clear();favoriteError=error;}
       await load(true,true);if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));return snapshot();
-    }catch(error){state.connected=false;state.items=[];state.total=0;state.favorites.clear();$('connection-open').classList.remove('connected');$('connection-label').textContent='尚未连接';await load();$('connection-error').textContent=String(error);throw error;}
-    finally{$('connect').disabled=false;$('disconnect').disabled=false;$('password').value='';}
+    }catch(error){if(connection!==connectionEpoch)throw error;state.connected=false;state.generation=0;state.items=[];state.total=0;state.favorites.clear();await workbench?.reset(false);$('connection-open').classList.remove('connected');$('connection-label').textContent='尚未连接';await load();$('connection-error').textContent=String(error);throw error;}
+    finally{if(connection===connectionEpoch){$('connect').disabled=false;$('disconnect').disabled=false;$('password').value='';}}
   },'external');
   action('connection.logout',object(),async()=>{
+    const connection=++connectionEpoch;
     readEpoch++;
     await workbench?.reset(false);
-    ++state.loadId;++reader.token;++folderLoadId;++timelineLoadId;state.loading=false;state.search='';state.folder='';state.generation=0;$('search').value='';$('folder').replaceChildren(new Option('所有文件夹',''));
+    ++state.loadId;++reader.token;++folderLoadId;++timelineLoadId;state.loading=false;state.search='';state.folder='';$('search').value='';$('folder').replaceChildren(new Option('所有文件夹',''));
     clearTimeout(searchTimer);clearTimeout(reader.saveTimer);for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();reader.book=null;
     $('full-image').removeAttribute('src');$('chapter-text').replaceChildren();images=[];
-    updateConnection(await native('logout'));state.items=[];state.total=0;state.favorites.clear();$('connection-dialog').close();await load();return snapshot();
+    const value=await native('logout');if(connection!==connectionEpoch)return {stale:true};updateConnection(value);state.items=[];state.total=0;state.favorites.clear();$('connection-dialog').close();await load();return snapshot();
   },'external');
   action('category',object({kind:{type:'string',enum:model.kinds}},['kind']),async({kind})=>{
     clearTimeout(searchTimer);state.kind=kind;state.offset=0;state.search='';state.folder='';$('search').value='';$('folder').value='';
@@ -222,7 +239,7 @@
     try{const pending=readSaveChain.catch(()=>{}).then(()=>epoch===readEpoch&&state.connected?native('progress',{id,chapter:index,ratio:Math.min(1,Math.max(0,ratio))}):null);readSaveChain=pending;const value=await pending;if(epoch!==readEpoch)return {saved:false,stale:true};if(token===reader.token)$('reader-save').textContent='进度已同步到 RHVideo';return {saved:value!==null};}
     catch(error){if(token===reader.token)$('reader-save').textContent='进度保存失败';notice('阅读进度未保存：'+String(error));throw error;}
   }
-  function clearMediaViews(){++reader.token;++timelineLoadId;++folderLoadId;++state.loadId;state.loading=false;$('media-grid').setAttribute('aria-busy','false');clearTimeout(reader.saveTimer);reader.book=null;reader.loaded=false;for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();$('full-image').removeAttribute('src');$('chapter-text').textContent='';$('timeline-frames').replaceChildren();images=[];}
+  function clearMediaViews(){++reader.token;++timelineLoadId;++folderLoadId;++state.loadId;state.loading=false;for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();$('media-grid').inert=false;$('media-grid').setAttribute('aria-busy','false');clearTimeout(reader.saveTimer);reader.book=null;reader.loaded=false;for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();$('full-image').removeAttribute('src');$('chapter-text').textContent='';$('timeline-frames').replaceChildren();images=[];}
   async function chapter(index,ratio=0){
     if(!reader.book)throw Error('请先打开一本书');
     if(!reader.book.chapters.some(c=>c.index===index))throw Error('没有这个章节');
@@ -249,7 +266,7 @@
     if(mobile)return native('close');return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
-  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,saveRead,chapter,icon,bind});
+  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,saveRead,chapter,icon,bind});
   bind('connection-open','click','connection.open');bind('connection-close','click','connection.close');
   bind('connection-form','submit','connection.connect',()=>({server:$('server').value,username:$('username').value,password:$('password').value}));
   bind('disconnect','click','connection.logout');bind('refresh','click','refresh');

@@ -61,6 +61,12 @@ Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连
 
 成功写入会立即失效相关清单缓存；比写入更早发出的旧清单不能覆盖新索引。若写入成功但刷新失败，接口仍返回成功结果，并附 `clientWarning`；请核对或手动刷新，不要据此重复写入。导出在提交系统保存窗口前按 UTF-8 检查 32 MiB 上限。
 
+`rhvideo.state` 返回当前 `generation`。面向具体媒体 ID 的自动化可将它作为远程操作的 `expectedGeneration`；切换服务器、重新登录后旧版本请求会在执行前被拒绝。确认票据与批量操作也固定到发起时的会话，不把未完成项目自动迁移到新账号。连接状态最多复用 5 秒，显式刷新立即复核；后端每次操作仍核对会话版本。
+
+Android 原生播放界面的控件通过 `native.media.state/control`、网格通过 `native.grid.state/control` 调用。`track.select`、`track.auto`、`subtitles` 分别选择实际轨道、恢复自动选择和控制字幕；状态返回实际格式、语言、支持及选中信息。单视频可传 `expectedPath`、网格可传 `expectedOffset`，拒绝迟到的旧目标控制。系统返回、旋转属于生命周期行为，不伪装成重复的远程写操作。
+
+清单由可撤销的只读临时资源直接交给 Worker，避免全量 JSON 在界面桥接中来回复制；缩略图卡片与已解析媒体都有容量/字节上限。显式刷新、失效授权和账号切换会清空相关缓存。
+
 ## 验证
 
     node --test scripts/tests/rhvideo.test.mjs

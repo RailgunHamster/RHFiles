@@ -166,7 +166,10 @@ mod tests {
     }
     #[test]
     fn bounds_and_task_identifiers_match_both_clients() {
-        assert!(request(&json!({"name":"tasks.detail","params":{"queue":"replacement","entry":"replace:42"}})).is_ok());
+        assert!(request(
+            &json!({"name":"tasks.detail","params":{"queue":"replacement","entry":"replace:42"}})
+        )
+        .is_ok());
         assert!(request(&json!({"name":"tasks.list","query":{"limit":51}})).is_err());
         assert!(request(&json!({"name":"batches.create","body":{"video_ids":[],"crf":39},"confirmation":"RHVIDEO:batches.create"})).is_err());
     }

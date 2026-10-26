@@ -4,12 +4,41 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import vm from "node:vm";
 const require = createRequire(import.meta.url),
   I = require("../../src/js/rhvideo-index.js"),
   tags = require("../../src/js/rhvideo-tags.js"),
   search = require("../../src/js/rhvideo-search.js"),
   dictionary = require("../../src/vendor/pinyin-pro/pinyin-pro.js");
 const create = () => new I.Catalog({ tags, search, dictionary });
+
+test("queued events from a terminated account worker cannot reject or resolve the replacement worker", () => {
+  const source = fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js", import.meta.url), "utf8");
+  const start = source.slice(source.indexOf("function startWorker()"), source.indexOf("function send(action"));
+  const context = vm.createContext({ Worker: class { terminate() {} }, clearTimeout, Error });
+  vm.runInContext(`let worker; const requests=new Map(); ${start}
+    startWorker(); const oldError=worker.onerror, oldMessage=worker.onmessage; startWorker();
+    let resolved=0,rejected=0; requests.set(7,{timer:0,resolve:()=>resolved++,reject:()=>rejected++});
+    oldError();oldMessage({data:{id:7,result:'stale'}});
+    if(rejected||resolved||requests.size!==1)throw Error('Old worker touched new requests');
+    worker.onmessage({data:{id:7,result:'current'}});
+    if(resolved!==1||rejected||requests.size)throw Error('Current worker failed');`, context);
+});
+test("resolved metadata memo is signature-checked, byte/entry bounded and clearable", () => {
+  const cache = new I.ResolveCache(2, 1024);
+  cache.put("a", "one", { id: "a" });
+  cache.put("b", "two", { id: "b" });
+  assert.equal(cache.get("a", "outdated"), undefined);
+  assert.equal(cache.get("a", "one").id, "a");
+  cache.put("c", "three", { id: "c" });
+  assert.equal(cache.get("b", "two"), undefined);
+  cache.put("huge", "x".repeat(2000), { id: "large" });
+  assert(cache.info().estimatedBytes <= 1024);
+  assert(cache.info().items <= 2);
+  cache.clear();
+  assert.equal(cache.info().items, 0);
+  assert.equal(cache.info().estimatedBytes, 0);
+});
 test("export limit counts UTF-8 bytes, rejects before native dialogs, and preserves JSON", () => {
   const rows = [{ title: "中文😀", id: "a" }],
     text = I.exportText(rows);

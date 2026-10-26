@@ -50,10 +50,10 @@ const androidAutomation=(()=>{
     register('native.ui.set',apiSchema({controlId:string,value:{type:'string'},checked:bool,number:{type:'number'}},['controlId']),p=>api.native('automation.ui.set',p));
     register('native.ui.scroll',apiSchema({controlId:string,top:integer,left:integer},['controlId']),p=>api.native('automation.ui.scroll',p));
     register('native.back',apiSchema(),()=>api.native('automation.back'));
-    register('native.media.control',apiSchema({command:{type:'string'},value:{type:'number'},enabled:bool},['command']),p=>api.native('automation.media.control',p));
+    register('native.media.control',apiSchema({command:{type:'string',enum:['play','pause','toggle','next','previous','rewind','forward','seek','rate','volume','rotate','repeat','fit','fill','controls.show','controls.hide','options','external','fullscreen','track.select','track.auto','subtitles']},value:{type:'number'},enabled:bool,trackGroup:integer,trackIndex:integer,trackType:{type:'string',enum:['video','audio','text']},expectedPath:string},['command']),p=>api.native('automation.media.control',p));
     register('native.media.state',apiSchema(),()=>api.native('automation.media.state'),'read');
     register('native.grid.state',apiSchema(),()=>api.native('automation.grid.state'),'read');
-    register('native.grid.control',apiSchema({target:{type:'integer',minimum:-1,maximum:8},command:{type:'string',enum:['target','pause','resume','play','seek','seekRatio','volume','rate','rotate','expand','page']},value:{type:'number'}},['command']),p=>api.native('automation.grid.control',p));
+    register('native.grid.control',apiSchema({target:{type:'integer',minimum:-1,maximum:8},command:{type:'string',enum:['target','pause','resume','play','seek','seekRatio','volume','rate','rotate','expand','page','track.select','track.auto','subtitles']},value:{type:'number'},enabled:bool,trackGroup:integer,trackIndex:integer,trackType:{type:'string',enum:['video','audio','text']},expectedOffset:integer},['command']),p=>api.native('automation.grid.control',p));
   }
   function host({frames,active,layout,setLayout}){
     const actions=window.RHFilesAPI;

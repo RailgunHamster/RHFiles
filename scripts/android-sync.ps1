@@ -169,4 +169,14 @@ New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot 'android\web\lan-
 Get-ChildItem -LiteralPath (Join-Path $repoRoot 'docs\thirdparty\lan-service') -File | ForEach-Object {
     Sync-File -Source $_.FullName -Target (Join-Path $repoRoot ('android\web\lan-service-licenses\'+$_.Name))
 }
-Sync-File -Source (Join-Path $repoRoot 'android\release-notes.txt') -Target (Join-Path $repoRoot 'android\web\CHANGELOG.txt')
+$rhAndroidVersion=(Get-Content -LiteralPath (Join-Path $repoRoot 'android\src-tauri\tauri.conf.json') -Raw|ConvertFrom-Json).version
+$rhAndroidNotes=Join-Path $repoRoot ('docs\release-notes\android\'+$rhAndroidVersion+'.md')
+if(Test-Path -LiteralPath $rhAndroidNotes){
+    # Versioned notes are reproducible without overwriting local draft notes.
+    $rhHistory=Get-ChildItem -LiteralPath (Split-Path $rhAndroidNotes) -Filter '*.md' -File |
+        Where-Object {$_.BaseName -match '^\d+\.\d+\.\d+$'} | Sort-Object {[version]$_.BaseName} -Descending |
+        ForEach-Object {Get-Content -LiteralPath $_.FullName -Raw}
+    [IO.File]::WriteAllText((Join-Path $repoRoot 'android\web\CHANGELOG.txt'),($rhHistory -join "`n`n"),[Text.UTF8Encoding]::new($false))
+}else{
+    Sync-File -Source (Join-Path $repoRoot 'android\release-notes.txt') -Target (Join-Path $repoRoot 'android\web\CHANGELOG.txt')
+}

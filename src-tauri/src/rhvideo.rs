@@ -1,20 +1,20 @@
 //! RHVideo client, not a bundled server or a direct database connection.
 //! Passwords are used once; bearer tokens stay in native process memory.
 use axum::{
-    Router,
     body::Body,
     extract::Path,
     http::{HeaderMap, StatusCode},
     response::Response,
     routing::get,
+    Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -28,6 +28,7 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 static SESSION: Mutex<Option<Arc<Session>>> = Mutex::new(None);
 static BROKER: tokio::sync::OnceCell<u16> = tokio::sync::OnceCell::const_new();
 static CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+static CATALOG_CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 static PLAYBACK: Mutex<Option<Playback>> = Mutex::new(None);
 static PLAY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static PREPARED: Mutex<Option<PreparedPlaylist>> = Mutex::new(None);
@@ -109,6 +110,7 @@ struct Session {
     client: reqwest::Client,
     assets: Mutex<HashMap<String, Asset>>,
     next_asset: AtomicU64,
+    asset_revision: AtomicU64,
     videos: tokio::sync::Mutex<Option<VideoCatalog>>,
 }
 struct VideoCatalog {
@@ -121,6 +123,7 @@ fn current() -> Result<Arc<Session>, String> {
         .lock()
         .map_err(|_| "媒体库状态不可用")?
         .clone()
+        .filter(|s| s.generation == GENERATION.load(Ordering::SeqCst))
         .ok_or_else(|| "请先连接并登录 RHVideo".into())
 }
 fn config_path() -> Result<std::path::PathBuf, String> {
@@ -333,6 +336,9 @@ async fn json_response(mut response: reqwest::Response) -> Result<Value, String>
 }
 impl Session {
     async fn access_token(&self) -> Result<String, String> {
+        if self.generation != GENERATION.load(Ordering::SeqCst) {
+            return Err("媒体账户已改变，操作未执行".into());
+        }
         let _refresh = self.refresh_lock.lock().await;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -498,6 +504,7 @@ impl Session {
                 });
             if let Some(id) = oldest {
                 assets.remove(&id);
+                self.asset_revision.fetch_add(1, Ordering::Relaxed);
             } else {
                 return Err("本机媒体通道繁忙，请稍后重试".into());
             }
@@ -598,10 +605,62 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
     else {
         return failure(StatusCode::NOT_FOUND);
     };
-    let semaphore = CAPACITY.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(12)));
+    // Slow image/video streams must not starve navigation/search metadata.
+    let semaphore = if path.starts_with("@catalog:") {
+        CATALOG_CAPACITY.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(3)))
+    } else {
+        CAPACITY.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(12)))
+    };
     let Ok(permit) = semaphore.clone().try_acquire_owned() else {
         return failure(StatusCode::SERVICE_UNAVAILABLE);
     };
+    // Catalogs go straight to the worker over an opaque, session-revoked
+    // capability. Do not serialize 50k rows through the UI's IPC/DOM thread.
+    if let Some(spec) = path.strip_prefix("@catalog:") {
+        let result = match spec {
+            "video" | "video:refresh" => session
+                .video_catalog(spec.ends_with(":refresh"))
+                .await
+                .map(|rows| rows),
+            "picture" => session
+                .request(reqwest::Method::GET, "api/v1/pictures/catalog", &[], None)
+                .await
+                .map(Arc::new),
+            "novel" => session
+                .request(
+                    reqwest::Method::GET,
+                    "api/v1/novels",
+                    &[("summary", "true".into())],
+                    None,
+                )
+                .await
+                .map(Arc::new),
+            _ => return failure(StatusCode::BAD_REQUEST),
+        };
+        let (status, bytes) = match result {
+            Ok(value) if GENERATION.load(Ordering::SeqCst) == session.generation => (
+                StatusCode::OK,
+                serde_json::to_vec(value.as_ref()).unwrap_or_default(),
+            ),
+            Ok(_) => (
+                StatusCode::UNAUTHORIZED,
+                r#"{"error":"媒体账户已更改"}"#.as_bytes().to_vec(),
+            ),
+            Err(error) => (
+                StatusCode::BAD_GATEWAY,
+                serde_json::to_vec(&json!({"error":error})).unwrap_or_default(),
+            ),
+        };
+        drop(permit);
+        return Response::builder()
+            .status(status)
+            .header("content-type", "application/json; charset=utf-8")
+            .header("cache-control", "no-store")
+            .header("access-control-allow-origin", "*")
+            .header("x-content-type-options", "nosniff")
+            .body(Body::from(bytes))
+            .unwrap();
+    }
     let Ok(url) = session.endpoint(&path) else {
         return failure(StatusCode::BAD_REQUEST);
     };
@@ -678,11 +737,16 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
     output.body(Body::from_stream(stream)).unwrap()
 }
 fn state() -> Value {
-    let config = read_config();
-    let session = SESSION.lock().ok().and_then(|s| s.clone());
+    let session = current().ok();
+    let config = if session.is_some() {
+        Config::default()
+    } else {
+        read_config()
+    };
     json!({"server":session.as_ref().map(|s|s.base.as_str()).unwrap_or(&config.server),
         "username":session.as_ref().map(|s|s.username.as_str()).unwrap_or(&config.username),
-        "connected":session.is_some(),"nativePlayback":native_available(),"credentialsPersisted":false})
+        "connected":session.is_some(),"nativePlayback":native_available(),"credentialsPersisted":false,
+        "generation":session.as_ref().map(|s|s.generation),"assetRevision":session.as_ref().map(|s|s.asset_revision.load(Ordering::Relaxed))})
 }
 fn native_available() -> bool {
     #[cfg(windows)]
@@ -697,8 +761,8 @@ fn native_available() -> bool {
 #[cfg(windows)]
 fn export_dialog(text: &str) -> Result<Value, String> {
     use windows::{
-        Win32::{System::Com::*, UI::Shell::*},
         core::PCWSTR,
+        Win32::{System::Com::*, UI::Shell::*},
     };
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED)
@@ -882,7 +946,21 @@ pub async fn rhvideo_open(app: AppHandle) -> Result<Value, String> {
     Ok(json!({"opened":true}))
 }
 #[tauri::command]
-pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Result<Value, String> {
+pub async fn rhvideo_request(
+    app: AppHandle,
+    action: String,
+    mut args: Value,
+) -> Result<Value, String> {
+    let expected = args
+        .as_object_mut()
+        .and_then(|a| a.remove("_sessionGeneration"))
+        .map(|v| v.as_u64().ok_or("媒体会话参数无效"))
+        .transpose()?;
+    if let Some(generation) = expected {
+        if action != "logout" && current()?.generation != generation {
+            return Err("媒体账户已改变，操作未执行，请刷新后重新操作".into());
+        }
+    }
     if !args.is_object() {
         return Err("参数必须是 JSON 对象".into());
     }
@@ -1101,8 +1179,21 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
         }
         "logout" => {
             flush_playback();
+            let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
+            if expected.is_some_and(|g| g != GENERATION.load(Ordering::SeqCst)) {
+                let active = slot
+                    .as_ref()
+                    .is_some_and(|s| s.generation == GENERATION.load(Ordering::SeqCst));
+                drop(slot);
+                return if active {
+                    Err("媒体账户已改变，退出操作未执行".into())
+                } else {
+                    Ok(state())
+                };
+            }
             GENERATION.fetch_add(1, Ordering::SeqCst);
-            SESSION.lock().map_err(|_| "媒体库状态不可用")?.take();
+            slot.take();
+            drop(slot);
             PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
             PREPARED.lock().map_err(|_| "播放队列状态不可用")?.take();
             #[cfg(windows)]
@@ -1111,8 +1202,12 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
         }
         "connect" | "register" => {
             flush_playback();
-            let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-            SESSION.lock().map_err(|_| "媒体库状态不可用")?.take();
+            let generation = {
+                let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
+                let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+                slot.take();
+                generation
+            };
             PREPARED.lock().map_err(|_| "播放队列状态不可用")?.take();
             PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
             #[cfg(windows)]
@@ -1184,6 +1279,7 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
                 client,
                 assets: Mutex::new(HashMap::new()),
                 next_asset: AtomicU64::new(1),
+                asset_revision: AtomicU64::new(0),
                 videos: tokio::sync::Mutex::new(None),
             });
             session
@@ -1205,13 +1301,37 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
             #[cfg(windows)]
             crate::rhvideo_player::stop();
             PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
-            *SESSION.lock().map_err(|_| "媒体库状态不可用")? = Some(session);
+            {
+                let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
+                if generation != GENERATION.load(Ordering::SeqCst) {
+                    return Err("连接已取消，未切换媒体账户".into());
+                }
+                *slot = Some(session);
+            }
             return Ok(state());
         }
         _ => {}
     }
     let session = current()?;
+    if expected.is_some_and(|g| g != session.generation) {
+        return Err("媒体账户已改变，操作未执行，请刷新后重新操作".into());
+    }
     match action.as_str() {
+        "catalog.resource" => {
+            let kind = kind(&args)?;
+            if kind == "favorite" {
+                return Err("收藏需要分页读取".into());
+            }
+            let path = format!(
+                "@catalog:{kind}{}",
+                if kind == "video" && args["refresh"] == true {
+                    ":refresh"
+                } else {
+                    ""
+                }
+            );
+            Ok(json!({"url":session.asset(path, false)?, "generation":session.generation}))
+        }
         "operation" => {
             let r = contract::request(&args)?;
             if args["name"] == "index.video" {
@@ -1797,6 +1917,7 @@ mod tests {
             client: client().unwrap(),
             assets: Mutex::new(HashMap::new()),
             next_asset: AtomicU64::new(1),
+            asset_revision: AtomicU64::new(0),
             videos: tokio::sync::Mutex::new(None),
         };
         let first = session.video_catalog(false).await.unwrap();
@@ -1919,13 +2040,11 @@ mod tests {
         let body = br#"{"detail":"token=private"}"#;
         assert!(!upstream_error(reqwest::StatusCode::UNAUTHORIZED, body).contains("private"));
         assert!(!upstream_error(reqwest::StatusCode::FOUND, body).contains("private"));
-        assert!(
-            !upstream_error(
-                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-                b"<html>secret</html>"
-            )
-            .contains("secret")
-        );
+        assert!(!upstream_error(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            b"<html>secret</html>"
+        )
+        .contains("secret"));
         let config = serde_json::to_string(&Config {
             server: "http://local/".into(),
             username: "name".into(),

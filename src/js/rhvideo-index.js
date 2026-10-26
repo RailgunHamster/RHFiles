@@ -331,6 +331,45 @@
       throw Error("导出超过 32 MiB，请减少所选项目后再导出");
     return text;
   }
+  class ResolveCache {
+    constructor(maximum = 512, budget = 2 * 1024 * 1024) {
+      this.maximum = maximum;
+      this.budget = budget;
+      this.entries = new Map();
+      this.bytes = 0;
+    }
+    clear() {
+      this.entries.clear();
+      this.bytes = 0;
+    }
+    get(key, signature) {
+      const e = this.entries.get(key);
+      if (!e || e.signature !== signature) return;
+      this.entries.delete(key);
+      this.entries.set(key, e);
+      return e.value;
+    }
+    put(key, signature, value) {
+      const old = this.entries.get(key);
+      if (old) {
+        this.bytes -= old.bytes;
+        this.entries.delete(key);
+      }
+      const bytes = 256 + 2 * (signature.length + JSON.stringify(value).length);
+      if (bytes > this.budget) return;
+      this.entries.set(key, { signature, value, bytes });
+      this.bytes += bytes;
+      for (const [id, e] of this.entries) {
+        if (this.entries.size <= this.maximum && this.bytes <= this.budget)
+          break;
+        this.entries.delete(id);
+        this.bytes -= e.bytes;
+      }
+    }
+    info() {
+      return { items: this.entries.size, estimatedBytes: this.bytes };
+    }
+  }
   return {
     Catalog,
     sorts,
@@ -344,5 +383,6 @@
     transition,
     scrollMetrics,
     exportText,
+    ResolveCache,
   };
 });

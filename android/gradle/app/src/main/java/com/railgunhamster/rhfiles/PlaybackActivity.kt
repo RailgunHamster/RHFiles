@@ -105,10 +105,16 @@ class PlaybackActivity:AppCompatActivity() {
   internal fun automationState():JSONObject {
     val engine=player?:error("播放器尚未就绪")
     return JSONObject().put("path",path).put("index",engine.currentMediaItemIndex+(rhWindow?.offset?:0)).put("count",rhWindow?.total?:queue.size).put("playing",engine.isPlaying).put("playWhenReady",engine.playWhenReady).put("playbackState",engine.playbackState).put("suppressionReason",engine.playbackSuppressionReason).put("error",engine.playerError?.let{JSONObject().put("code",it.errorCodeName).put("message",it.cause?.message?:it.message?:"") }?:JSONObject.NULL).put("positionMs",engine.currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
+      .put("volume",engine.volume*100).put("tracks",PlayerTracks.state(engine.currentTracks,engine.trackSelectionParameters))
   }
   internal fun automationControl(args:JSONObject):JSONObject {
     val engine=player?:error("播放器尚未就绪")
-    when(args.getString("command")){
+    if(args.has("expectedPath"))require(args.getString("expectedPath")==path){"播放文件已改变，请重新读取状态"}
+    val command=args.getString("command")
+    if(command in PlayerTracks.commands)engine.trackSelectionParameters=PlayerTracks.change(engine.currentTracks,engine.trackSelectionParameters,args)
+    else when(command){
+      "rewind"->engine.seekBack();"forward"->engine.seekForward()
+      "toggle"->if(engine.playWhenReady)engine.pause()else engine.play()
       "play"->engine.play();"pause"->engine.pause()
       "next"->{check(engine.hasNextMediaItem()){"没有下一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToNextMediaItem();if(failed){engine.prepare();engine.play()}}
       "previous"->{check(engine.hasPreviousMediaItem()){"没有上一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToPreviousMediaItem();if(failed){engine.prepare();engine.play()}}
@@ -121,6 +127,7 @@ class PlaybackActivity:AppCompatActivity() {
       "fill"->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
       "controls.show"->playerView.showController();"controls.hide"->playerView.hideController()
       "options"->options(playerView)
+      "external"->{require(source.scheme !in listOf("remote","rhvideo")){"受保护的远程媒体不能转交外部应用"};external()}
       "fullscreen"->{landscape=args.getBoolean("enabled");requestedOrientation=if(landscape)ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
       else->error("未知播放器操作")
     };return automationState()

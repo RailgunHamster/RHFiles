@@ -23,6 +23,25 @@ class RhVideoClientTest {
   @After fun cleanup(){client.logout();server.shutdown()}
   private fun json(value:String)=server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(value))
   private fun login(){json("""{"access_token":"test-native-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));assertEquals("/api/v1/auth/login",server.takeRequest().path)}
+  @Test fun staleSessionCannotWriteOrRevokeANewerLogin(){
+    login();val old=client.state().getLong("generation");login();val active=client.state().getLong("generation");assertNotEquals(old,active)
+    for(action in listOf("preferences","operation"))try{
+      client.request(action,JSONObject().put("_sessionGeneration",old).put("value",JSONObject().put("sort","nameAsc")).put("name","watch.add").put("body",JSONObject().put("path","D:\\OldAccount")))
+      fail("Old account operation accepted")
+    }catch(_:IllegalStateException){}
+    try{client.logout(old);fail("Old logout accepted")}catch(_:IllegalStateException){}
+    assertEquals(active,client.state().getLong("generation"));assertTrue(client.state().getBoolean("connected"));assertEquals(2,server.requestCount)
+  }
+  @Test fun catalogCapabilitiesStreamJsonWithoutBridgeTokensAndRevokeOnLogout(){
+    login();val resource=client.request("catalog.resource",JSONObject().put("kind","video")) as JSONObject
+    val url=resource.getString("url");assertTrue(url.startsWith("https://appassets.androidplatform.net/rhvideo-catalog/"));assertFalse(resource.toString().contains("test-native-token"))
+    json("""[{"id":"one","original_filename":"中文视频.mp4"}]""")
+    val key=url.substringAfterLast('/');val stream=client.catalogResource(key)
+    assertEquals("/api/v1/videos?summary=true",server.takeRequest().path)
+    assertEquals(1,JSONArray(stream.readBytes().toString(Charsets.UTF_8)).length())
+    client.logout();try{stream.read();fail("Existing streams must reject the revoked session")}catch(_:java.io.IOException){}
+    stream.close();try{client.catalogResource(key);fail("Old capabilities cannot be reopened")}catch(_:Exception){}
+  }
   @Test fun fullLibraryPlaylistOnlyCreatesABoundedNativePlaybackWindow(){
     login();val rows=JSONArray();for(i in 0 until 200)rows.put(JSONObject().put("id","video-$i").put("title","测试 $i").put("duration",200))
     client.request("playlist.prepare",JSONObject().put("ticket","queue-test").put("reset",true).put("items",rows).put("options",JSONObject().put("fullLength",false).put("segment",15).put("super",true)))
