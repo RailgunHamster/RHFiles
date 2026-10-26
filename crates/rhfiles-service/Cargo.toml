@@ -35,7 +35,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Wdk_Storage_FileSystem", "Win32_System_IO"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 rustix = { version = "1", features = ["fs"] }
 
 [target.'cfg(unix)'.dependencies]

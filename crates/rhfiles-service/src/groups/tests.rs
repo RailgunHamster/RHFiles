@@ -1,5 +1,49 @@
 use super::*;
 use std::sync::Arc;
+struct ExternalStore {
+    groups: Arc<Groups>,
+    // Retain the old OS-store incarnation while allocating its replacement,
+    // so even allocator reuse cannot simulate an unchanged epoch in this test.
+    epochs: Mutex<BTreeMap<String,Arc<()>>>,
+}
+impl ServerGroupBackend for ExternalStore {
+    fn public_key(&self)->String {self.groups.public_key()}
+    fn packet(&self,id:&str)->Result<Packet>{self.groups.packet(id)}
+    fn advertise(&self,server:Server)->Result<()>{self.groups.advertise(server)}
+    fn accept(&self,id:&str,p:&Packet,peer:&str)->Result<String>{self.groups.merge(id,p)?;self.groups.access(id,peer,false)?;Ok(self.groups.doc.lock().unwrap().groups[id].member(peer)?.name)}
+    fn access(&self,id:&str,peer:&str,files:bool)->Result<(Permissions,String)>{let (permissions,epoch)=self.groups.session_access(id,peer,files,None)?;let token=format!("{:p}",Arc::as_ptr(&epoch));self.epochs.lock().unwrap().insert(id.into(),epoch);Ok((permissions,token))}
+    fn sign(&self,message:&[u8])->Result<Vec<u8>>{Ok(self.groups.key.as_ref().unwrap().sign(&SystemRandom::new(),message).map_err(|_|bad("test signer"))?.as_ref().to_vec())}
+    fn approve(&self,id:&str,r:&Signed,invite:bool)->Result<Packet>{self.groups.approve(id,r,invite)}
+    fn require_inviter(&self,id:&str)->Result<()>{self.groups.require_inviter(id)}
+    fn state(&self)->Result<serde_json::Value>{self.groups.state()}
+}
+#[tokio::test]
+async fn externally_owned_group_identity_serves_real_tls_without_a_second_key_or_database_and_revokes_aba_handles(){
+    use crate::connection::{Connector,FileRequest};
+    let root=tempfile::tempdir().unwrap();let root_path=root.path().canonicalize().unwrap();
+    let desktop=Arc::new(Groups::open(&root_path.join("desktop")).unwrap());
+    let phone=Arc::new(Groups::open(&root_path.join("os-owned-store")).unwrap());
+    let id=desktop.create("RH","Desktop",Permissions{write:true,delete:true}).unwrap();
+    let join=desktop.approve(&id,&phone.request("Phone").unwrap(),true).unwrap();phone.join(join,Permissions{write:true,delete:true}).unwrap();
+    let data=root_path.join("service-only-tls-data");let backend=Arc::new(ExternalStore{groups:phone.clone(),epochs:Default::default()});
+    let external=Arc::new(Groups::with_server_backend(&data,backend).unwrap());assert_eq!(external.device_id(),phone.device_id());
+    assert!(external.create("Must not fork the OS store","Other identity",Permissions::default()).is_err());
+    let files=root_path.join("shared");std::fs::create_dir(&files).unwrap();std::fs::write(files.join("read.txt"),b"fixture").unwrap();
+    let service=crate::Service::start_grouped(&data,vec![crate::ShareConfig{name:"Files".into(),path:files.clone()}],"127.0.0.1:0".parse().unwrap(),&[],external.clone()).unwrap();
+    assert!(!data.join(".rhfiles-service-group-key.pkcs8").exists());assert!(!data.join("groups.json").exists());
+    desktop.merge(&id,&phone.packet(&id).unwrap()).unwrap();let client=Connector::new(desktop.clone());
+    let mut stream=client.file_request(&id,&phone.device_id(),FileRequest::Content{path:"/Files/read.txt".into(),range:None}).await.unwrap();
+    assert_eq!(stream.chunk().await.unwrap().unwrap(),&b"fixture"[..]);
+    let old=stream.lease.clone();let prior=external.session_access(&id,&desktop.device_id(),true,None).unwrap().1;
+    phone.forget(&id,true).unwrap();assert!(external.session_access(&id,&desktop.device_id(),true,Some(&prior)).is_err());
+    let join=desktop.approve(&id,&phone.request("Phone again").unwrap(),true).unwrap();phone.join(join,Permissions::default()).unwrap();
+    assert!(old.check().is_ok(),"Client membership was not removed; server revocation is checked server-side");
+    // The server's old Access must fail on the changed external-store incarnation.
+    assert!(external.session_access(&id,&desktop.device_id(),true,Some(&prior)).is_err());
+    let result=client.file_request(&id,&phone.device_id(),FileRequest::Stat{path:"/Files/read.txt".into()}).await.unwrap().json(65536).await.unwrap();assert_eq!(result["size"],7);
+    assert!(client.file_request(&id,&phone.device_id(),FileRequest::Mkdir{path:"/Files/denied".into()}).await.err().unwrap().contains("forbidden"));
+    assert!(!files.join("denied").exists());drop(service);
+}
 fn node() -> (tempfile::TempDir, Groups) {
     let d = tempfile::tempdir().unwrap();
     let g = Groups::open(d.path()).unwrap();

@@ -565,7 +565,7 @@ fn rename_noreplace(
     to: &Dir,
     destination: &Path,
 ) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         return rustix::fs::renameat_with(
             from,
@@ -595,7 +595,7 @@ fn rename_noreplace(
         }
         Ok(())
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
     {
         // macOS support is deliberately no-overwrite: files can be published
         // with an atomic hard-link; directory moves require platform support.

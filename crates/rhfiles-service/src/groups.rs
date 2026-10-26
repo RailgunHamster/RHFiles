@@ -306,9 +306,28 @@ struct Document {
     #[serde(default)]
     refusals: BTreeMap<String, Refusal>,
 }
+/// Server-only adapter for an OS-owned identity/membership store (Android
+/// Keystore, for example). It never exports a private key or creates another
+/// membership database. Local admin stays with the owning application's UI.
+pub trait ServerGroupBackend: Send + Sync {
+    fn public_key(&self) -> String;
+    fn packet(&self, group: &str) -> Result<Packet>;
+    fn advertise(&self, server: Server) -> Result<()>;
+    fn accept(&self, group: &str, packet: &Packet, peer: &str) -> Result<String>;
+    /// Opaque process-local incarnation. Forget/rejoin must return a NEW value.
+    /// Check current membership, local refusals and the enabled flag every call.
+    fn access(&self, group: &str, peer: &str, files: bool) -> Result<(Permissions, String)>;
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>>;
+    fn approve(&self, group: &str, request: &Signed, invite: bool) -> Result<Packet>;
+    fn require_inviter(&self, group: &str) -> Result<()>;
+    fn state(&self) -> Result<serde_json::Value>;
+}
 pub struct Groups {
     data: PathBuf,
-    key: signature::EcdsaKeyPair,
+    key: Option<signature::EcdsaKeyPair>,
+    backend: Option<std::sync::Arc<dyn ServerGroupBackend>>,
+    backend_public: String,
+    backend_sessions: Mutex<BTreeMap<String,(String,std::sync::Arc<()>)>>,
     doc: Mutex<Document>,
 }
 impl std::fmt::Debug for Groups {
@@ -340,6 +359,12 @@ fn save(path: &Path, bytes: &[u8]) -> Result<()> {
     result
 }
 impl Groups {
+    pub fn with_server_backend(data: &Path, backend: std::sync::Arc<dyn ServerGroupBackend>) -> Result<Self> {
+        let backend_public=backend.public_key();let public=decode(&backend_public)?;
+        if public.len()!=65 || public.first()!=Some(&4) { return Err(bad("外部设备身份无效")); }
+        std::fs::create_dir_all(data)?;
+        Ok(Self {data:data.into(),key:None,backend:Some(backend),backend_public,backend_sessions:Mutex::new(BTreeMap::new()),doc:Mutex::new(Document::default())})
+    }
     // Local address hints only. They never enter signed packets, configuration
     // synchronization or exported membership. No session credentials stored.
     pub(crate) fn connection_history(&self) -> serde_json::Value {
@@ -404,12 +429,15 @@ impl Groups {
         }
         Ok(Self {
             data: data.into(),
-            key,
+            key:Some(key),
+            backend:None,
+            backend_public:String::new(),
+            backend_sessions:Mutex::new(BTreeMap::new()),
             doc: Mutex::new(doc),
         })
     }
     pub fn public_key(&self) -> String {
-        B64.encode(self.key.public_key().as_ref())
+        if self.backend.is_some(){self.backend_public.clone()}else{B64.encode(self.key.as_ref().expect("local identity").public_key().as_ref())}
     }
     pub fn device_id(&self) -> String {
         key_id(&self.public_key())
@@ -418,16 +446,17 @@ impl Groups {
         let bytes = serde_json::to_vec(claims).map_err(|_| bad("无法创建设备组证明"))?;
         let mut message = DOMAIN.to_vec();
         message.extend_from_slice(&bytes);
-        let signature = self
-            .key
+        let signature = if let Some(backend)=&self.backend { backend.sign(&message)? } else { self
+            .key.as_ref().ok_or_else(||bad("设备身份不可用"))?
             .sign(&SystemRandom::new(), &message)
-            .map_err(|_| bad("设备组签名失败"))?;
+            .map_err(|_| bad("设备组签名失败"))?.as_ref().to_vec() };
         Ok(Signed {
             payload: B64.encode(bytes),
-            signature: B64.encode(signature.as_ref()),
+            signature: B64.encode(&signature),
         })
     }
     fn change<T>(&self, mutate: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
+        if self.backend.is_some() { return Err(bad("外部设备组必须由本机设备组管理界面修改")); }
         let mut doc = self.doc.lock().map_err(|_| bad("设备组状态不可用"))?;
         let mut next = doc.clone();
         let result = mutate(&mut next)?;
@@ -486,6 +515,7 @@ impl Groups {
         })
     }
     pub fn approve(&self, id: &str, request: &Signed, invite: bool) -> Result<Packet> {
+        if let Some(backend)=&self.backend { return backend.approve(id,request,invite); }
         let request = request.read()?;
         if request.kind != "request"
             || request.key != request.issuer
@@ -581,6 +611,7 @@ impl Groups {
         })
     }
     pub fn packet(&self, id: &str) -> Result<Packet> {
+        if let Some(backend)=&self.backend { let packet=backend.packet(id)?;if packet.group_id()?!=id{return Err(bad("外部设备组记录不匹配"));}return Ok(packet); }
         let doc = self.doc.lock().unwrap();
         let g = doc.groups.get(id).ok_or_else(|| bad("设备组不存在"))?;
         g.member(&self.device_id())?;
@@ -605,6 +636,20 @@ impl Groups {
         files: bool,
         session: Option<&std::sync::Arc<()>>,
     ) -> Result<(Permissions, std::sync::Arc<()>)> {
+        if let Some(backend)=&self.backend {
+            let (permissions,epoch)=backend.access(id,peer,files)?;
+            if epoch.is_empty()||epoch.len()>256{return Err(bad("外部设备组会话标识无效"));}
+            let mut sessions=self.backend_sessions.lock().map_err(|_|bad("设备组会话不可用"))?;
+            if !sessions.contains_key(id)&&sessions.len()>=16{
+                let state=backend.state()?;let groups=state["groups"].as_array().ok_or_else(||bad("外部设备组清单无效"))?;
+                sessions.retain(|key,_|groups.iter().any(|g|g["id"].as_str()==Some(key)));
+                if sessions.len()>=16{return Err(bad("设备组会话超过上限"));}
+            }
+            let entry=sessions.entry(id.into()).or_insert_with(||(epoch.clone(),std::sync::Arc::new(())));
+            if entry.0!=epoch{*entry=(epoch,std::sync::Arc::new(()));}
+            if session.is_some_and(|old|!std::sync::Arc::ptr_eq(old,&entry.1)){return Err(Error::new("unauthorized","设备组已删除并重新加入，请重新认证"));}
+            return Ok((permissions,entry.1.clone()));
+        }
         let doc = self.doc.lock().unwrap();
         let g = doc.groups.get(id).ok_or_else(|| bad("设备组不存在"))?;
         if session.is_some_and(|old| !std::sync::Arc::ptr_eq(old, &g.session)) {
@@ -675,12 +720,14 @@ impl Groups {
         })
     }
     pub(crate) fn require_inviter(&self,id:&str)->Result<()> {
+        if let Some(backend)=&self.backend { return backend.require_inviter(id); }
         let doc=self.doc.lock().unwrap();let group=doc.groups.get(id).ok_or_else(||bad("设备组不存在"))?;
         if !group.member(&self.device_id())?.invite { return Err(Error::new("forbidden","本机没有邀请权限")); }
         Ok(())
     }
     pub fn advertise(&self, server: Server) -> Result<()> {
         server.validate()?;
+        if let Some(backend)=&self.backend { return backend.advertise(server); }
         self.change(|doc| {
             for (id, g) in &mut doc.groups {
                 if g.member(&self.device_id()).is_err() {
@@ -748,6 +795,7 @@ impl Groups {
             return Err(bad("设备组身份挑战校验失败"));
         }
         let key = key_id(&c.key);
+        if let Some(backend)=&self.backend { return Ok((key.clone(),backend.accept(id,packet,&key)?)); }
         self.change(|doc| {
             let g = doc
                 .groups
@@ -767,6 +815,7 @@ impl Groups {
         c.group=id.into();c.nonce=nonce.into();c.label=fingerprint.into();self.sign(&c)
     }
     pub fn state(&self) -> Result<serde_json::Value> {
+        if let Some(backend)=&self.backend { return backend.state(); }
         let doc = self.doc.lock().unwrap();
         let mut out = Vec::new();
         for (id, g) in &doc.groups {
