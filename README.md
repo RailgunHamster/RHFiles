@@ -90,6 +90,10 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 
 **虚拟桌面识别失败：** 不再阻止启动，而使用当前账号、登录会话的独立备用配置；原有各桌面数据不会被覆盖或混用。备用配置在设置中明确标识，并暂停 Explorer / 原生选文件窗口联动。系统恢复识别后重新启动会使用正常桌面配置，不自动合并备用数据。
 
+### RHVideo 媒体库（Windows / Android）
+
+侧栏内连接已有 RHVideo 服务，浏览视频、图片、小说和收藏；支持拼音搜索、组合标签、截图、跨页连播、原生多视频、图片条带/混合放映及服务器管理。界面操作都有可枚举的脚本接口和参数定义，不加载远程网站。Windows 的此媒体库原生播放需要 64 位 VLC 3.x；Android 使用内置 Media3。使用方法、接口与测试边界见 [RHVideo 说明](docs/RHVIDEO-CLIENT.md)及[功能对齐清单](docs/RHVIDEO-PARITY.md)。
+
 ### macOS 预览版
 
 支持 Apple Silicon（M 系列、arm64），与桌面源码共用版本。当前为 ad-hoc 签名、**未经 Apple 公证**的预览构建，不宣称与 Windows 功能完全一致，仍需 Mac 实机界面验收。安装、权限和平台差异见 [macOS 说明](docs/MACOS.md)。
@@ -157,6 +161,10 @@ GitHub **Latest** is reserved for Windows; it does not indicate whether Android 
 - APK updates from Gitee, GitHub or a home server. Gitee is the default for new installations; saved choices remain unchanged. Package identity, version, signing certificate and checksum are verified before Android requests installation confirmation.
 
 The unified task center, external image opening, remembered per-type openers and sidebar visit history are in development, not features already shipped by the interface proposal. See [Android features, permissions and limits](docs/ANDROID.md).
+
+### RHVideo library (Windows / Android)
+
+Connect to an existing RHVideo server from the sidebar. Browse videos, pictures, novels and favorites, with pinyin search, nested tag rules, screenshots, full-list queues, native multi-video playback, image strips/mixed slideshows and server tools. UI operations have enumerable script APIs and parameter schemas; the client does not load the remote website. Native playback in this library requires 64-bit VLC 3.x on Windows; Android includes Media3. See the [client guide](docs/RHVIDEO-CLIENT.md) and [parity/validation checklist](docs/RHVIDEO-PARITY.md).
 
 ### Windows
 
