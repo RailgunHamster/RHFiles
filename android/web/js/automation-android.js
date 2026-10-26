@@ -30,6 +30,9 @@ const androidAutomation=(()=>{
     register('selection.set',apiSchema({paths,mode:{type:'string',enum:['replace','add','remove']}},['paths']),p=>{available();p.paths.forEach(entry);const next=p.mode==='replace'||!p.mode?new Set():new Set(state.selected);for(const path of p.paths){if(entry(path).libraryAlbum)reject('INVALID_SELECTION','Category group headers are not file selections');p.mode==='remove'?next.delete(path):next.add(path);}state.selected=next;app.paintSelection();return snapshot();});
     register('selection.clear',apiSchema(),()=>{state.selected.clear();app.paintSelection();return snapshot();});
     register('selection.get',apiSchema(),()=>[...state.selected],'read');
+    register('view.sort',apiSchema({sort:{type:'string',enum:fmt.sortChoices.map(([key])=>key)}},['sort']),p=>app.setSort(p.sort));
+    register('tasks.list',apiSchema(),()=>api.native('jobs'),'read','Read file task results without retrying or dismissing old operations');
+    register('tasks.advice',apiSchema({id:string},['id']),async p=>fileTaskGuidance.forTask(await api.native('job.status',p)),'read','Explain a failed task without retrying it or changing permissions');
     register('files.open',apiSchema({path:string},['path']),async p=>{available();await app.activate(entry(p.path));return {accepted:true};},'external');
     register('files.copy',apiSchema({paths},[]),p=>{const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');app.setClipboard('copy',chosen);return {count:chosen.length};});
     register('files.cut',apiSchema({paths},[]),p=>{const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');app.setClipboard('cut',chosen);return {count:chosen.length};});

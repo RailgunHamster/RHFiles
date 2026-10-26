@@ -98,6 +98,14 @@
     date: (a, b) => (b.modifiedMs || 0) - (a.modifiedMs || 0) || collator.compare(a.name, b.name),
     kind: (a, b) => collator.compare(a.kind || '', b.kind || '') || collator.compare(a.name, b.name),
   };
+  // Keep existing keys/defaults compatible with older configurations.
+  const sortChoices = [
+    ['name', '名称（A → Z）'], ['name-desc', '名称（Z → A）'],
+    ['date', '修改时间（新到旧）'], ['date-asc', '修改时间（旧到新）'],
+    ['size', '大小（大到小）'], ['size-asc', '大小（小到大）'],
+    ['kind', '类型（A → Z）'], ['kind-desc', '类型（Z → A）'],
+  ];
+  const reverseSorts = { 'name-desc': 'name', 'date-asc': 'date', 'size-asc': 'size', 'kind-desc': 'kind' };
 
   /**
    * Filters hidden entries and sorts folders first, then by the chosen key.
@@ -106,13 +114,15 @@
   function shapeEntries(entries, options) {
     const settings = options || {};
     const keepHidden = settings.showHidden === true;
-    const comparator = COMPARATORS[settings.sort] || COMPARATORS.name;
+    const reversed = Object.prototype.hasOwnProperty.call(reverseSorts, settings.sort);
+    const key = reversed ? reverseSorts[settings.sort] : settings.sort;
+    const comparator = Object.prototype.hasOwnProperty.call(COMPARATORS, key) ? COMPARATORS[key] : COMPARATORS.name;
     return entries
       .filter((entry) => keepHidden || !String(entry.name).startsWith('.'))
       .slice()
       .sort((a, b) => {
         if (Boolean(a.isDir) !== Boolean(b.isDir)) return a.isDir ? -1 : 1;
-        return comparator(a, b);
+        return (reversed ? -1 : 1) * comparator(a, b);
       });
   }
 
@@ -122,5 +132,5 @@
     return a.every((entry, index) => keys.every(key => entry[key] === b[index][key]));
   }
 
-  return { size, date, relative, count, path2parts, parentOf, baseName, displayPath, displayPathText, shapeEntries, sameEntries };
+  return { size, date, relative, count, path2parts, parentOf, baseName, displayPath, displayPathText, shapeEntries, sameEntries, sortChoices };
 });

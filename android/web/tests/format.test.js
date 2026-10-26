@@ -132,6 +132,28 @@ test('an unknown sort key falls back to name order', () => {
   );
 });
 
+test('every sort direction reverses within groups, never moving folders below files', () => {
+  const entries = [
+    entry('f2', true, {size:2, modifiedMs:20}), entry('f1', true, {size:1, modifiedMs:10}),
+    entry('b.jpg', false, {size:3, modifiedMs:30, kind:'image'}),
+    entry('a.txt', false, {size:2, modifiedMs:20, kind:'document'}),
+    entry('c.jpg', false, {size:4, modifiedMs:40, kind:'image'}),
+  ];
+  for (const [normal, reverse] of [['name','name-desc'],['date','date-asc'],['size','size-asc'],['kind','kind-desc']]) {
+    const a=fmt.shapeEntries(entries,{sort:normal}), b=fmt.shapeEntries(entries,{sort:reverse});
+    assert.deepEqual(b.filter(e=>e.isDir), a.filter(e=>e.isDir).reverse());
+    assert.deepEqual(b.filter(e=>!e.isDir), a.filter(e=>!e.isDir).reverse());
+    assert.equal(b[0].isDir,true);assert.equal(b[1].isDir,true);
+  }
+  for (const [key] of fmt.sortChoices) {
+    assert.equal(fmt.shapeEntries([], {sort:key}).length,0);
+    assert.deepEqual(fmt.shapeEntries([entry('.hidden',false)],{sort:key}),[]);
+  }
+  assert.deepEqual(fmt.shapeEntries(entries,{sort:'size-asc'}).filter(e=>!e.isDir).map(e=>e.size),[2,3,4]);
+  assert.deepEqual(fmt.shapeEntries(entries,{sort:'date-asc'}).filter(e=>!e.isDir).map(e=>e.modifiedMs),[20,30,40]);
+  for(const key of ['__proto__','constructor','toString']) assert.doesNotThrow(()=>fmt.shapeEntries(entries,{sort:key}));
+});
+
 test('count uses locale grouping', () => {
   assert.equal(fmt.count(0), '0');
   assert.equal(fmt.count(1234567), (1234567).toLocaleString());

@@ -21,7 +21,7 @@
     route: { screen: 'home' }, stack: [], roots: [], root: '/storage/emulated/0', entries: [],
     listing: null, selected: new Set(), clipboard: null, favorites, task: null,
     view: saved('rhfiles.view', 'list') === 'grid' ? 'grid' : 'list',
-    sort: saved('rhfiles.sort', 'name'), hidden: saved('rhfiles.hidden', '0') === '1',
+    sort: saved('rhfiles.sort', 'name'), sortExplicit: !!saved('rhfiles.sort', ''), hidden: saved('rhfiles.hidden', '0') === '1',
     permissions: null, index: null, server: null, busy: false,navigationError:null,
   };
   let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0,bootReady=false;
@@ -322,7 +322,7 @@
     try { await refreshPromise; } finally { refreshPromise = null; renderShell(); }
   }
   function currentEntries() {
-    const list = fmt.shapeEntries(state.entries, { sort: state.route.screen === 'library' && state.route.category === 'recent' ? 'date' : state.sort, showHidden: state.hidden });
+    const list = fmt.shapeEntries(state.entries, { sort: currentSort(), showHidden: state.hidden });
     return list;
   }
   function libraryEntries(entries,route){
@@ -623,7 +623,15 @@
     ui.openSheet('新建', [action('文件夹','folder',()=>create(true)), action('文件','document',()=>create(false))]);
   }
   function sortMenu() {
-    ui.openSheet('排序方式', [['name','名称'],['date','修改时间（新到旧）'],['size','大小（大到小）'],['kind','类型']].map(([key,label]) => action((state.sort === key ? '✓ ' : '') + label, 'sort', () => { state.sort = key; cache('rhfiles.sort',key); renderList(); })));
+    ui.openSheet('排序方式', fmt.sortChoices.map(([key,label]) => action((currentSort() === key ? '✓ ' : '') + label, 'sort', () => setSort(key))));
+  }
+  function currentSort() {
+    return !state.sortExplicit && state.route.screen === 'library' && state.route.category === 'recent' ? 'date' : state.sort;
+  }
+  function setSort(key) {
+    if (!fmt.sortChoices.some(([value]) => value === key)) throw Error('排序方式无效');
+    state.sort = key; state.sortExplicit = true; cache('rhfiles.sort', key); renderList();
+    return {sort: state.sort};
   }
   function viewMenu() {
     ui.openSheet('显示方式', [['list','列表'],['grid','网格']].map(([key,label])=> action((state.view===key?'✓ ':'')+label,'grid',()=>{ state.view=key; cache('rhfiles.view',key); renderList(); })));
@@ -774,7 +782,7 @@
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch,setSort});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});

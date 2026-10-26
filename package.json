@@ -6,6 +6,7 @@
     "test": "node scripts/automation-bindings.mjs && node --test scripts/tests/*.test.mjs",
     "api": "node scripts/rhfiles-api.mjs",
     "test:automation-ui": "node scripts/testing/automation-ui-check.mjs",
+    "test:android-sort-tasks": "node android/web/tests/sort-task-check.mjs",
     "test:mutations": "node scripts/testing/mutation-check.mjs",
     "test:gui": "node scripts/testing/gui-check.mjs",
     "test:pdf": "node scripts/markdown-pdf-regression.mjs",

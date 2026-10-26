@@ -46,10 +46,10 @@ const androidFeatures = (() => {
   async function pollJobs() {
     if(!api.featuresAvailable())return;
     lastJobs=await api.native('jobs');
-    const running=lastJobs.filter(active), incomplete=lastJobs.filter(j=>['failed','interrupted'].includes(j.state));
+    const running=lastJobs.filter(active);
     const chip=$('native-task-chip');
-    chip.hidden=!running.length&&!incomplete.length;
-    chip.textContent=running.length?'文件任务 '+running.length+' · '+states[running[0].state]+' · '+fmt.size(running[0].bytes):incomplete.length+' 个任务需要处理';
+    chip.hidden=!running.length;
+    chip.textContent=running.length?'文件任务 '+running.length+' · '+states[running[0].state]+' · '+fmt.size(running[0].bytes):'';
     if(app.state.route.tool==='tasks') paintJobs($('tool-extra'));
     const completed=lastJobs.filter(j=>j.state==='completed' && !refreshedJobs.has(j.id));
     completed.forEach(j=>refreshedJobs.add(j.id));
@@ -86,7 +86,7 @@ const androidFeatures = (() => {
   }
   function paintJobs(node) {
     const scroll=node.parentElement.scrollTop;node.replaceChildren(ui.el('h2','','文件任务'));
-    notice(node,'关闭页面不会中断任务。暂停/取消在下一次读写检查时生效。系统强制停止或超时后会保留记录，不会擅自重做移动或删除。');
+    notice(node,'关闭页面不会中断正在运行的任务。失败和中断只保留结果与原因，不重试旧请求；再次操作请重新选择当前文件。');
     if(!lastJobs.length)notice(node,'暂无任务');
     for(const j of lastJobs.slice(0,100)) {
       const card=ui.el('article','task-card');card.append(ui.el('strong','',(names[j.op]||j.op)+' · '+states[j.state]));
@@ -97,16 +97,13 @@ const androidFeatures = (() => {
       card.append(progress);
       if(j.message)notice(card,fmt.displayPathText(j.message));
       for(const failure of j.failures || [])notice(card,fmt.displayPath(failure.path)+'\n'+fmt.displayPathText(failure.message));
+      const guidance=fileTaskGuidance.forTask(j);
+      if(guidance){const help=ui.el('details');help.append(ui.el('summary','',guidance.title+' · 怎么处理'));const steps=ui.el('ol');for(const text of guidance.steps)steps.append(ui.el('li','',text));help.append(steps);card.append(help);}
       const actions=ui.el('div','button-row');
       if(active(j)) {
         actions.append(button(j.state==='paused'?'继续':'暂停',async()=>{await api.native('job.control',{id:j.id,action:j.state==='paused'?'resume':'pause'});await pollJobs();}),
           button('取消',async()=>{if(await ui.confirm('取消任务？','已完成的文件会保留；未完成的移动来源不会主动删除。','取消任务')){await api.native('job.control',{id:j.id,action:'cancel'});await pollJobs();}}));
-      } else if(['failed','canceled','interrupted'].includes(j.state)) actions.append(button('重试未完成项',async()=>{
-        if(!await ui.confirm('重试未完成项？','已完成的项目不会重复执行。中断时已经发布的副本会保留；同名文件将另存，不会覆盖。请先检查下方输出位置。','重试'))return;
-        const args={...j.args};if(args.sources)args.sources=args.sources.filter(p=>!j.completed.includes(p));
-        if(args.ids){args.ids=args.ids.filter(id=>!j.completed.includes(id));if(!args.ids.length)return ui.toast('没有剩余回收站项目');}
-        if(args.sources && !args.sources.length)return ui.toast('没有剩余来源');await enqueue(j.op,args);
-      }));
+      }
       if(j.outputs?.length) {
         const details=ui.el('details');details.append(ui.el('summary','','输出位置'),ui.el('pre','',j.outputs.map(fmt.displayPath).join('\n')));card.append(details);
       }

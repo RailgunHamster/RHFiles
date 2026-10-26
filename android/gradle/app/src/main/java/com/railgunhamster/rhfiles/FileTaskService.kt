@@ -51,7 +51,7 @@ class FileTaskService : Service() {
     else if(!FileTasks.hasActive())update("FTP 文件服务运行中；点击打开 RHFiles 管理")
   }
   override fun onTimeout(startId: Int, fgsType: Int) {
-    FileTasks.cancelAll("系统限制后台任务运行时间，请回到应用重试未完成项")
+    FileTasks.cancelAll("系统限制后台任务运行时间，请在任务中心核对结果；需要继续时重新选择当前文件")
     stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
     FtpAccess.stopAsync(ownedFtp)
   }

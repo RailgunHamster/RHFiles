@@ -33,3 +33,12 @@ test('storage failure restores the previous preferences',()=>{
  const store=memory({'rhfiles.theme':'light','rhfiles.view':'list'}),set=store.setItem;let once=true;store.setItem=(key,value)=>{if(key==='rhfiles.view'&&once){once=false;throw Error('quota')}set(key,value)};
  assert.throws(()=>data.apply(store,{'rhfiles.theme':'dark','rhfiles.view':'grid'}));assert.deepEqual(data.snapshot(store),{'rhfiles.theme':'light','rhfiles.view':'list'});
 });
+
+test('all eight sort choices round-trip through backup and invalid choices are rejected',()=>{
+ const choices=require('../js/format.js').sortChoices;
+ for(const [sort] of choices){
+  const source=memory({'rhfiles.sort':sort}),target=memory();
+  data.apply(target,data.snapshot(source));assert.equal(target.getItem('rhfiles.sort'),sort);
+ }
+ assert.throws(()=>data.validate({'rhfiles.sort':'size-unknown'}));
+});

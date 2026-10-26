@@ -1,6 +1,6 @@
 (function(root,factory){const common=typeof module==='object'&&module.exports;const value=factory(common?require('./pane-model.js'):root.paneLayout);if(common)module.exports=value;else root.settingsData=value;})(globalThis,paneLayout=>{
   const keys=['rhfiles.theme','rhfiles.view','rhfiles.sort','rhfiles.hidden','rhfiles.favorites','rhfiles.panes','rhfiles.panes.screens','rhfiles.nearby.alias'];
-  const enums={'rhfiles.theme':['light','dark'],'rhfiles.view':['list','grid'],'rhfiles.sort':['name','date','size','kind'],'rhfiles.hidden':['0','1'],'rhfiles.panes':['auto','single','columns','rows']};
+  const enums={'rhfiles.theme':['light','dark'],'rhfiles.view':['list','grid'],'rhfiles.sort':['name','name-desc','date','date-asc','size','size-asc','kind','kind-desc'],'rhfiles.hidden':['0','1'],'rhfiles.panes':['auto','single','columns','rows']};
   function validate(value){
     if(!value||typeof value!=='object'||Array.isArray(value))throw Error('配置内容无效');
     const result={};
