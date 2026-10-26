@@ -201,9 +201,9 @@ const api = (() => {
     },
 
     // Reverse server (phone as a file source for a PC)
-    serverStatus: wrap('get_reverse_server_status'),
-    serverStart: wrap('start_reverse_server'),
-    serverStop: wrap('stop_reverse_server'),
+    serverStatus: () => nativeCall('fileServer.state'),
+    serverStart: args => nativeCall('fileServer.start',args),
+    serverStop: () => nativeCall('fileServer.stop'),
 
     // Diagnostics
     logs: wrap('get_logs'),

@@ -7,6 +7,8 @@ pub mod index;
 pub mod log;
 pub mod server;
 pub mod thumbnail;
+#[cfg(target_os = "android")]
+mod group_service;
 #[path="../../../src-tauri/src/nearby.rs"]
 pub mod nearby;
 
@@ -107,9 +109,6 @@ pub fn build_app_generic<R: tauri::Runtime>() -> tauri::Builder<R> {
             device::get_storage_roots,
             device::get_permission_status,
             commands::scan_storage_sizes,
-            server::get_reverse_server_status,
-            server::start_reverse_server,
-            server::stop_reverse_server,
             commands::list_dir,
             fs_ops::create_directory,
             fs_ops::create_file,

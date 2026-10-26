@@ -14,6 +14,7 @@ mod nearby;
 mod lan_service;
 mod device_groups;
 mod device_fs;
+mod browser_loopback;
 mod lan_startup;
 #[cfg(windows)]
 pub mod network_io;

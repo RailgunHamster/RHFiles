@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-android"
-version = "0.1.36"
+version = "0.1.37"
 edition = "2021"
 license = "Apache-2.0"
 description = "RHFiles for Android — an ad-free, telemetry-free file manager with full storage access"
@@ -46,6 +46,10 @@ base64 = "0.22"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 getrandom = "0.3"
 rhfiles-transfer = { path = "../../crates/rhfiles-transfer" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+rhfiles-service = { path = "../../crates/rhfiles-service" }
 
 [dev-dependencies]
 crossbeam-channel = "0.5"

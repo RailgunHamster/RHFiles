@@ -562,7 +562,7 @@ impl Session {
 async fn broker() -> Result<u16, String> {
     BROKER
         .get_or_try_init(|| async {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            let listener = crate::browser_loopback::bind()
                 .await
                 .map_err(|_| "无法启动本机媒体通道")?;
             let port = listener

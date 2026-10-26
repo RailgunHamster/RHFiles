@@ -62,6 +62,10 @@ android {
         testBuildType = "release"
         defaultConfig { testInstrumentationRunner = "com.railgunhamster.rhfiles.RhVideoInstrumentation" }
     }
+    if (providers.gradleProperty("rhfilesPhoneServerProbe").isPresent) {
+        testBuildType = "release"
+        defaultConfig { testInstrumentationRunner = "com.railgunhamster.rhfiles.PhoneServerInstrumentation" }
+    }
     compileSdk = 36
     namespace = "com.railgunhamster.rhfiles"
     sourceSets.getByName("main").assets.srcDir(rootProject.file("../../../reader"))

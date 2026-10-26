@@ -247,11 +247,8 @@ fn device_commands_answer_without_a_device() {
     assert!(permissions["notes"].is_array());
     assert!(permissions["appDataDir"].is_string());
 
-    let server = invoke("get_reverse_server_status", serde_json::json!({}))
-        .expect("get_reverse_server_status");
-    assert_eq!(server["running"], serde_json::json!(false));
-    assert_eq!(server["enabled"], serde_json::json!(false));
-    assert_eq!(server["port"], serde_json::json!(0));
+    assert!(invoke("get_reverse_server_status", serde_json::json!({})).is_err(),
+        "The retired independent password server must not remain an IPC entry point");
 
     // Storage discovery is filesystem-based; off-device it may legitimately find
     // nothing, but it must return a list rather than an error.

@@ -294,7 +294,7 @@ async fn resource(path: DevicePath) -> Result<String, String> {
     let lease = connector()?.file_lease(&path.group, &path.peer)?;
     let port = *BROKER
         .get_or_try_init(|| async {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            let listener = crate::browser_loopback::bind()
                 .await
                 .map_err(|_| "无法创建本机媒体通道")?;
             let port = listener

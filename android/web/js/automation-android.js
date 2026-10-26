@@ -7,6 +7,10 @@ const androidAutomation=(()=>{
     const actions=window.RHFilesAPI,state=app.state;
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
     deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
+    register('fileServer.state',apiSchema(),()=>api.serverStatus(),'read','Read the explicitly started phone group HTTPS/WebDAV service');
+    register('fileServer.start',apiSchema({roots:{type:'array',minItems:1,maxItems:8,items:apiSchema({name:{type:'string',minLength:1,maxLength:64},path:string},['name','path'])},port:{type:'integer',minimum:1024,maximum:65535}}),p=>app.startServer(p),'external','Confirm selected local roots and start the device-group file service');
+    register('fileServer.stop',apiSchema(),()=>app.stopServer(),'external','Stop phone sharing and invalidate all active service sessions');
+    register('fileServer.roots',apiSchema(),()=>app.chooseServerRoots(),'ui','Open the same local share-directory form as the service page');
     const reject=(code,message)=>{throw new ErrorType(code,message);};
     const entry=path=>{const value=state.entries.find(e=>e.path===path);if(!value)reject('ENTRY_NOT_FOUND','Path is outside the current listing');return value;};
     const snapshot=()=>({platform:'android',pane:workbench.id||'main',ready:app.ready(),route:{...state.route},busy:state.busy,root:state.root,selected:[...state.selected],entries:state.entries.length,error:state.navigationError??null,stale:!!state.staleError,refreshError:state.staleError??null});

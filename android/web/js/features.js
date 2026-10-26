@@ -407,5 +407,5 @@ const androidFeatures = (() => {
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
     RHFilesUI.listen($('btn-ftp-toggle'),'click',()=>toggleFtp().catch(app.error),undefined,"android.web.js.features.init.56ed6d2140c2");
   }
-  return {init,beforeRemoteNavigate,cancelTransfersOnBack,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
+  return {init,form,beforeRemoteNavigate,cancelTransfersOnBack,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
 })();

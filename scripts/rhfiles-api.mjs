@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Local command-line JSON-RPC client. Requires Node 22+, no npm packages.
 // CDP/ADB debugging is an explicit, powerful local opt-in, never a LAN service.
-import {randomUUID} from 'node:crypto';
+import {randomUUID,randomInt} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
@@ -71,6 +71,15 @@ async function selectSession(endpoint,options){
   if(targets.length!==1)throw new ClientError('TARGET_REQUIRED',targets.length?'Multiple RHFiles windows: select --target or --window':'No matching RHFiles window is ready',targets.map(t=>({target:t.id,title:t.title,url:t.url})));
   return cdpSession(targets[0],options.timeout);
 }
+export function allocateAdbForward(run,remote,{randomPort=()=>20000+randomInt(30000)}={}){
+  if(!/^(localabstract:webview_devtools_remote_\d+|tcp:[1-9]\d{0,4})$/.test(remote))throw new ClientError('ADB_FORWARD_FAILED','Invalid local debugging/fixture endpoint');
+  for(let attempt=0;attempt<16;attempt++){
+    const port=randomPort();if(!Number.isInteger(port)||port<20000||port>=50000)throw new ClientError('ADB_FORWARD_FAILED','Invalid local debugging port');
+    try{run(['forward','--no-rebind','tcp:'+port,remote]);return String(port);}
+    catch(error){if(!/cannot bind listener|address.*in use|already.*listener|10048/i.test(String(error)))throw error;}
+  }
+  throw new ClientError('ADB_FORWARD_FAILED','No free local debugging port in the bounded allocation budget');
+}
 async function connection(options){
   let endpoint=endpointUrl(options.endpoint||'http://127.0.0.1:'+options.port),cleanup=()=>{};
   if(options.android){
@@ -78,7 +87,7 @@ async function connection(options){
     const processName='com.railgunhamster.rhfiles'+(options.scope==='reader'?':ebook':options.scope==='image'?':image':'');
     let pid;try{pid=run(['shell','pidof',processName]).split(/\s+/)[0];}catch{throw new ClientError('APP_NOT_RUNNING','The selected RHFiles process is not running; open it on the device first');}
     if(!/^\d+$/.test(pid))throw new ClientError('APP_NOT_RUNNING','No valid app process');
-    const port=run(['forward','tcp:0','localabstract:webview_devtools_remote_'+pid]);
+    const port=allocateAdbForward(run,'localabstract:webview_devtools_remote_'+pid);
     if(!/^\d+$/.test(port))throw new ClientError('ADB_FORWARD_FAILED','ADB did not allocate a port');
     endpoint='http://127.0.0.1:'+port;cleanup=()=>{try{run(['forward','--remove','tcp:'+port]);}catch{}};
   }

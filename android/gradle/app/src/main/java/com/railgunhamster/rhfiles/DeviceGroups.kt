@@ -17,6 +17,21 @@ import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 /** Key never leaves Android Keystore. Neither membership, local refusals nor
  * session passwords participate in configuration/WebDAV backup or sync. */
 internal object DeviceGroups {
+  internal fun serverOperation(operation:String,args:JSONObject):Any {
+    val g=groups()
+    return when(operation){
+      "publicKey"->g.publicIdentity()
+      "state"->g.state()
+      "packet"->g.packet(args.getString("id"))
+      "advertise"->{g.serviceAdvertise(args.getJSONObject("server"));true}
+      "accept"->g.serviceAccept(args.getString("id"),args.getJSONObject("packet"),args.getString("peer"))
+      "access"->g.serviceAccess(args.getString("id"),args.getString("peer"),args.getBoolean("files"))
+      "sign"->DeviceGroupModel.encode(g.serviceSign(DeviceGroupModel.decode(args.getString("message"))))
+      "approve"->{val result=g.run("approve",JSONObject().put("id",args.getString("id")).put("uri",DeviceGroupModel.uri("rhfiles-group-request:v1:",args.getJSONObject("request"))).put("canInvite",args.getBoolean("invite"))) as JSONObject;DeviceGroupModel.parse(result.getString("uri"),"rhfiles-group-approval:v1:")}
+      "requireInviter"->{g.serviceRequireInviter(args.getString("id"));true}
+      else->error("未知本机组服务回调")
+    }
+  }
   private const val ALIAS="rhfiles-device-group-p256-v1"
   private var owner:Context?=null
   private var model:DeviceGroupModel?=null

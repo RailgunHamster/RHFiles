@@ -16,14 +16,24 @@ const output=path.join(web,'tests','__screenshots__');fs.mkdirSync(output,{recur
 let executablePath=process.env.CHROMIUM_PATH;
 const cache=path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
 if(!executablePath&&fs.existsSync(cache))executablePath=fs.readdirSync(cache).filter(n=>n.startsWith('chromium-')).sort().reverse().map(n=>path.join(cache,n,'chrome-win64','chrome.exe')).find(p=>fs.existsSync(p));
+const bundledHistory=['0.1.3','0.1.2','0.1.1'].map(v=>'# RHFiles Android '+v+'\n\n1. 中文更新记录 '+v+'\n2. Offline history\n').join('\n');
 const server=http.createServer((req,res)=>{
   const target=path.resolve(web,'.'+decodeURIComponent(new URL(req.url,'http://localhost').pathname));
   if(target!==web&&!target.startsWith(web+path.sep))return res.writeHead(403).end();
   if(req.url==='/favicon.ico')return res.writeHead(204).end();
+  // Stable installed-version history, independent of a concurrent APK build
+  // regenerating ignored CHANGELOG.txt or the number of published releases.
+  if(req.url==='/CHANGELOG.txt')return res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8'}).end(bundledHistory);
   const file=target===web?path.join(web,'index.html'):target;
   fs.readFile(file,(err,data)=>err?res.writeHead(404).end():res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css'})[path.extname(file)]+'; charset=utf-8'}).end(data));
 });
-await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+// Some Windows hosts allocate low dynamic ports that Chromium intentionally
+// refuses (e.g. PPTP 1723). Choose a high, bounded fixture port, not a browser
+// security override or a change to the host's networking configuration.
+for(let attempt=0;;attempt++){
+  try{await new Promise((resolve,reject)=>{const error=e=>{server.off('listening',ready);reject(e);};const ready=()=>{server.off('error',error);resolve();};server.once('error',error);server.once('listening',ready);server.listen(20000+Math.floor(Math.random()*30000),'127.0.0.1');});break;}
+  catch(error){if(error.code!=='EADDRINUSE'||attempt>=15)throw error;}
+}
 const browser=await pw.chromium.launch({headless:true,executablePath});
 let checks=0;
 function check(value,label){assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);}
@@ -53,9 +63,6 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
       case 'browse_library':case 'browse_library_folders':{const entries=Object.values(m.fs).flat().filter(e=>!e.isDir&&(args.category==='recent'||e.kind===args.category)).slice(0,args.limit);return {entries,total:entries.length,totalBytes:1234,truncated:false};}
       case 'search_files':return Object.values(m.fs).flat().filter(e=>e.name.toLowerCase().includes(args.query.toLowerCase()));
       case 'app_info':return {version:'0.1.0-test',platform:'android'};
-      case 'get_reverse_server_status':return {running:!!m.server,root,urls:m.server?['http://192.0.2.1:8765/']:[]};
-      case 'start_reverse_server':m.server=true;return {};
-      case 'stop_reverse_server':m.server=false;return {};
       case 'get_logs':return {entries:[{atMs:1712345678000,level:'info',scope:'test',message:'fixture ready'}]};
       case 'clear_logs':return;
       case 'scan_storage_sizes':return {totalBytes:1024,files:2,categories:[{name:'Images',bytes:1024,files:2}]};
@@ -83,6 +90,8 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
       default:throw 'Unstubbed command '+cmd;
     }
   }};
+  const fileServer=command=>{if(command==='fileServer.start')m.server=true;if(command==='fileServer.stop')m.server=false;return {running:!!m.server,shares:[{name:'Phone',path:root}],endpoints:m.server?['https://192.0.2.1:39128']:[]};};
+  if(!nativeV2&&!nativeV3)window.RHFilesNative={postMessage(message){const r=JSON.parse(message);Promise.resolve().then(()=>r.command.startsWith('fileServer.')?r.command==='fileServer.requested'?false:fileServer(r.command):r.command==='capabilities'?{version:1}:r.command==='permission'?!m.denied&&!m.partial:r.command==='theme'?true:Promise.reject(Error('Unstubbed native command '+r.command))).then(result=>this.onmessage({data:JSON.stringify({id:r.id,result})}),error=>this.onmessage({data:JSON.stringify({id:r.id,error:error.message})}));}};
   if(nativeV2 || nativeV3){
     m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
     m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'gitee',gitee:'https://gitee.com/railgunhamster/RHFiles',github:'https://github.com/RailgunHamster/RHFiles',family:'\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
@@ -90,6 +99,8 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
+        case 'fileServer.state':case 'fileServer.start':case 'fileServer.stop':return fileServer(r.command);
+        case 'fileServer.requested':return false;
         case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates,nativePlayback,restoreNavigation,nearby};case 'theme':return true;case 'permission':return !m.denied;
         case 'media.play':return true;
         case 'image.wallpaper':if(m.wallpaperFail)throw Error('当前系统没有可用的壁纸设置界面');return true;
@@ -327,7 +338,7 @@ try{
     check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='job.start'&&c.args.op==='zip'&&c.args.args.level===6)),'ZIP form starts real background job with configured level');
     await home(p);await tile(p,'tasks').click();await choose(p,'暂停');await p.getByRole('button',{name:'继续',exact:true}).waitFor();check(true,'Task pause updates native task state');await choose(p,'继续');await p.getByRole('button',{name:'暂停',exact:true}).waitFor();
     check((await p.locator('#tool-extra').innerText()).includes('/s（平均）'),'Task details expose bytes and clearly labelled average speed');await capture(p,'features-tasks');
-    await choose(p,'取消');await choose(p,'取消任务');await p.getByRole('button',{name:'重试未完成项',exact:true}).waitFor();check(true,'Task cancellation is explicit and retryable');
+    await choose(p,'取消');await choose(p,'取消任务');await p.waitForFunction(()=>document.getElementById('tool-extra').textContent.includes('已取消'));check(await p.getByRole('button',{name:/重试未完成项|重新提交/}).count()===0,'Terminal tasks are shown without replay controls');
     await home(p);await tile(p,'trash').click();await p.getByRole('button',{name:'已删除.txt 的更多操作',exact:true}).click();await choose(p,'恢复原位置');
     check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='job.start'&&c.args.op==='restore'&&c.args.args.ids[0]==='trash-1')),'Trash restore uses stored identity, not an arbitrary target path');
     await home(p);await tile(p,'providers').click();await choose(p,'从系统网盘导入文件');await p.waitForSelector('#paste-bar:not([hidden])');
@@ -397,7 +408,8 @@ try{
     check((await p.locator('#update-notes').innerText()).includes('\n2. 第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes number entries, preserve line breaks and never inject HTML');
     check(!(await p.locator('#update-notes').innerText()).includes('旧版不应'),'Pending update notes do not expand accumulated historical releases');
     check(await p.locator('#app-changelog details').count()===1,'Only the installed latest version appears in the outer release log');
-    await p.click('#update-history');check(await p.locator('.release-history details').count()>10,'Older release notes are available from the separate History menu');await p.evaluate(()=>rhfilesHandleBack());
+    const historyCount=await p.evaluate(async()=>releaseNotes.sections(await(await fetch('CHANGELOG.txt')).text()).length-1);
+    await p.click('#update-history');check(historyCount>0&&await p.locator('.release-history details').count()===historyCount,'History menu contains every installed older release without duplicating the latest');await p.evaluate(()=>rhfilesHandleBack());
     await p.click('#update-download');check(await p.locator('#update-progress').isVisible(),'Downloading exposes byte progress');
     check(await p.evaluate(()=>!!(document.getElementById('update-actions').compareDocumentPosition(document.getElementById('update-pending-notes'))&Node.DOCUMENT_POSITION_FOLLOWING)),'Downloading never moves actions below release notes');
     check(await p.locator('#update-state').innerText().then(t=>t.includes('/s')),'APK download shows speed');
@@ -509,7 +521,7 @@ try{
     await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:b.x+40,y:b.y+20}]});for(let i=1;i<=10;i++)await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:b.x+40+i*20,y:b.y+20}]});await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await p.waitForTimeout(260);
     check(before>0&&await tabs.evaluate(e=>e.scrollLeft)<before&&await p.locator('#drawer').isHidden(),'Real rightward settings-tab pan scrolls tabs and never opens the drawer');
     await p.click('[data-settings-section=updates]');await p.locator('#app-changelog details').first().waitFor();
-    const bundled=fs.readFileSync(path.join(web,'CHANGELOG.txt'),'utf8'),latest=require('../js/changelog.js').sections(bundled)[0];
+    const latest=require('../js/changelog.js').sections(bundledHistory)[0];
     const history=await p.locator('#app-changelog').innerText();check(history.includes(latest.title)&&history.includes(latest.text.split('\n').find(line=>/^1\./.test(line)))&&await p.locator('#update-history').count()===1&&await p.evaluate(()=>__model.updateRequests===0),'Installed numbered latest log works offline; older versions stay inside History');
     await p.evaluate(()=>{__model.updates.state='latest';__model.updates.release=null;return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Latest/installed state never erases release history');
     await p.evaluate(()=>{__model.updates.state='failed';__model.updates.message='offline';return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Failed update checks never erase release history');

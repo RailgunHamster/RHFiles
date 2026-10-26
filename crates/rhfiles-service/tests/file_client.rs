@@ -56,6 +56,18 @@ async fn dropping_a_connection_deadline_does_not_leave_a_live_cancel_handle() {
         "A dropped request cannot remain live or cancel a later operation"
     );
 }
+#[tokio::test]
+async fn server_local_removal_remains_an_authorization_error_with_or_without_session_recovery(){
+    let f=fixture();std::fs::write(f.files.join("revoked.txt"),b"fixture").unwrap();
+    let stat=||FileRequest::Stat{path:"/Files/revoked.txt".into()};
+    f.connector.file_request(&f.group,&f.peer,stat()).await.unwrap();
+    f.service.groups().remove(&f.group,&f.client.device_id()).unwrap();
+    let error=f.connector.file_request(&f.group,&f.peer,stat()).await.err().unwrap();
+    assert!(error.starts_with("[forbidden]")||error.starts_with("[unauthorized]"),"{error}");
+    f.connector.invalidate();
+    let recovered=f.connector.file_request(&f.group,&f.peer,stat()).await.err().unwrap();
+    assert!(recovered.starts_with("[unauthorized]"),"{recovered}");
+}
 use serde_json::Value;
 use std::{path::PathBuf, sync::Arc};
 

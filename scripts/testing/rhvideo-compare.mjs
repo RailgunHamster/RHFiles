@@ -74,6 +74,10 @@ try {
         deviceScaleFactor: 1,
         mobile: false,
       });
+      // The reference runs in the already focus-emulated main WebView; RHFiles
+      // runs in its own library window. Apply the SAME focus condition to both,
+      // otherwise secondary-window timer throttling skews only RHFiles samples.
+      await page.send("Emulation.setFocusEmulationEnabled", { enabled: true });
       await page.send("Page.bringToFront");
       await page.evaluate(
         "window.__bench={maxGap:0,last:0,frames:0};window.__benchFrame=t=>{const b=window.__bench;if(b.last)b.maxGap=Math.max(b.maxGap,t-b.last);b.last=t;b.frames++;window.__benchRAF=requestAnimationFrame(window.__benchFrame)};requestAnimationFrame(window.__benchFrame);true",

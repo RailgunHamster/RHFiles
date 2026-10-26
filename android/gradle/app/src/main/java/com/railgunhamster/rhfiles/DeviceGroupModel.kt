@@ -80,18 +80,56 @@ internal class DeviceGroupModel(private val identity:Identity, saved:String?, pr
     }
   }
   private var doc=if(saved==null)JSONObject().put("version",0).put("groups",JSONObject())else JSONObject(saved)
+  private val serviceEpochs=mutableMapOf<String,String>()
+  private var serviceCacheVersion=-1L
+  private val serviceMembers=mutableMapOf<String,Map<String,JSONObject>>()
   val deviceId get()=id(identity.publicKey)
   init {require((saved?.toByteArray()?.size?:0)<=4*1024*1024&&doc.getJSONObject("groups").length()<=16){"设备组记录过大"};doc.getJSONObject("groups").keys().forEach{require(packetId(doc.getJSONObject("groups").getJSONObject(it).getJSONObject("packet"))==it){"设备组记录损坏，不会忽略本机移除记录"}}}
   private fun group(d:JSONObject,id:String)=d.getJSONObject("groups").optJSONObject(id)?:error("本机没有加入此设备组")
   private fun refusals(d:JSONObject)=d.optJSONObject("refusals")?:JSONObject().also{d.put("refusals",it)}
   private fun inheritRefusals(d:JSONObject){val all=d.getJSONObject("groups");all.keys().forEach{key->val blocked=all.getJSONObject(key).getJSONObject("blocked");refusals(d).keys().forEach{blocked.put(it,refusals(d).get(it))}}}
-  private fun change(run:(JSONObject)->Any):Any {val next=JSONObject(doc.toString());inheritRefusals(next);val result=run(next);inheritRefusals(next);next.put("version",Math.addExact(next.getLong("version"),1));val text=next.toString();require(text.toByteArray().size<=4*1024*1024){"设备组记录过大"};persist(text);doc=next;return result}
+  private fun change(run:(JSONObject)->Any):Any {val next=JSONObject(doc.toString());inheritRefusals(next);val result=run(next);inheritRefusals(next);next.put("version",Math.addExact(next.getLong("version"),1));val text=next.toString();require(text.toByteArray().size<=4*1024*1024){"设备组记录过大"};persist(text);val previous=doc.getJSONObject("groups");val updated=next.getJSONObject("groups");serviceEpochs.keys.toList().forEach{id->val before=previous.optJSONObject(id);val after=updated.optJSONObject(id);if(before==null||after==null||serviceAccessReduced(before,after))serviceEpochs.remove(id)};doc=next;serviceEpochs.keys.retainAll(doc.getJSONObject("groups").keys().asSequence().toSet());return result}
   private fun claims(kind:String,name:String="")=JSONObject().put("v",1).put("kind",kind).put("group","").put("key",identity.publicKey).put("issuer",identity.publicKey).put("name",name).put("label","").put("invite",false).put("nonce","").put("seq",0).put("server",JSONObject.NULL)
   private fun sign(c:JSONObject):JSONObject {val bytes=c.toString().toByteArray(Charsets.UTF_8);return JSONObject().put("payload",encode(bytes)).put("signature",encode(identity.sign(domain+bytes)))}
   private fun nonce()=encode(ByteArray(32).also{SecureRandom().nextBytes(it)})
+  private fun serviceAccessReduced(before:JSONObject,after:JSONObject):Boolean {
+    if(before.optBoolean("enabled")&&!after.optBoolean("enabled")||!before.optBoolean("left")&&after.optBoolean("left"))return true
+    val old=before.getJSONObject("permissions");val next=after.getJSONObject("permissions")
+    if(listOf("write","delete").any{old.optBoolean(it)&&!next.optBoolean(it)})return true
+    val blocked=before.getJSONObject("blocked");return after.getJSONObject("blocked").keys().asSequence().any{!blocked.has(it)}
+  }
   private fun grant(args:JSONObject)=JSONObject().put("write",args.optJSONObject("permissions")?.optBoolean("write")==true).put("delete",args.optJSONObject("permissions")?.optBoolean("delete")==true)
   @Synchronized fun packet(id:String):JSONObject {val g=group(doc,id);member(g,deviceId);return JSONObject(g.getJSONObject("packet").toString())}
   @Synchronized fun requirePeer(id:String,peer:String):JSONObject {val g=group(doc,id);member(g,deviceId);member(g,peer);return JSONObject(g.getJSONObject("permissions").toString())}
+  /** Used only by the native HTTPS/WebDAV server, never exposed as a UI action. */
+  @Synchronized fun serviceAccess(id:String,peer:String,files:Boolean):JSONObject {
+    val g=group(doc,id);require(!g.optBoolean("left")&&!g.getJSONObject("blocked").has(deviceId)&&!g.getJSONObject("blocked").has(peer)){"本机已移除此设备，必须手动确认恢复"}
+    if(serviceCacheVersion!=doc.getLong("version")){serviceMembers.clear();serviceCacheVersion=doc.getLong("version")}
+    val accepted=serviceMembers.getOrPut(id){peers(g)}
+    require(accepted.containsKey(deviceId)&&accepted.containsKey(peer)){"没有有效的组成员证明"}
+    require(!files||g.getBoolean("enabled")){"本机未向此设备组开放文件服务"}
+    return JSONObject().put("permissions",JSONObject(g.getJSONObject("permissions").toString())).put("epoch",serviceEpochs.getOrPut(id){nonce()})
+  }
+  @Synchronized fun serviceAccept(id:String,packet:JSONObject,peer:String):String = change{next->
+    val g=group(next,id);member(g,deviceId);merge(g,packet);member(g,deviceId);member(g,peer).getString("name")
+  } as String
+  @Synchronized fun serviceAdvertise(server:JSONObject) {
+    validateServer(server)
+    change{next->val all=next.getJSONObject("groups");all.keys().forEach{id->val g=all.getJSONObject(id)
+      if(!g.optBoolean("left")&&!g.getJSONObject("blocked").has(deviceId)){
+        val own=member(g,deviceId);val packet=JSONObject(g.getJSONObject("packet").toString());val ads=each(packet.getJSONArray("servers"));val seq=Math.addExact(ads.map(::read).filter{it.getString("key")==identity.publicKey}.maxOfOrNull{it.getLong("seq")}?:0,1)
+        packet.put("servers",JSONArray(ads.filter{read(it).getString("key")!=identity.publicKey})).getJSONArray("servers").put(sign(claims("server",own.getString("name")).put("group",id).put("seq",seq).put("server",JSONObject(server.toString()))));merge(g,packet)
+      }
+    };true}
+  }
+  @Synchronized fun serviceSign(message:ByteArray):ByteArray {
+    require(message.size in domain.size+1..16384&&message.copyOfRange(0,domain.size).contentEquals(domain)){"服务签名域无效"}
+    val c=JSONObject(String(message,domain.size,message.size-domain.size,Charsets.UTF_8));exact(c,fields)
+    require(c.getInt("v")==1&&c.getString("kind")=="server-auth"&&c.getString("key")==identity.publicKey&&c.getString("issuer")==identity.publicKey&&c.getString("name").isEmpty()&&!c.getBoolean("invite")&&c.isNull("server")&&c.getLong("seq")==0L){"服务身份签名类型无效"}
+    require(decode(c.getString("nonce")).size==32&&c.getString("label").matches(Regex("[0-9a-f]{64}"))){"服务身份挑战无效"}
+    requirePeer(c.getString("group"),deviceId);return identity.sign(message)
+  }
+  @Synchronized fun serviceRequireInviter(id:String){val g=group(doc,id);require(member(g,deviceId).getBoolean("invite")){"本机没有邀请权限"}}
   @Synchronized fun importPacket(id:String,p:JSONObject){change{val g=group(it,id);member(g,deviceId);merge(g,p);true}}
   @Synchronized fun proof(id:String,nonce:String,fp:String):JSONObject {requirePeer(id,deviceId);require(decode(nonce).size==32&&fp.matches(Regex("[0-9a-f]{64}"))){"身份挑战无效"};return sign(claims("auth").put("group",id).put("nonce",nonce).put("label",fp))}
   @Synchronized fun state():JSONObject {

@@ -567,6 +567,9 @@ impl Connector {
             } else {
                 let report = self.connect(group, peer, None, "file_read").await;
                 if report.outcome != "connected" {
+                    if report.outcome == "authorization_rejected" {
+                        return Err("[unauthorized] 远端拒绝设备组授权，请查看连接诊断；不会继续尝试其他地址".into());
+                    }
                     return Err(format!("[{}] 无法连接设备，请查看连接诊断", report.outcome));
                 }
                 self.usable_file_route(group, peer)
