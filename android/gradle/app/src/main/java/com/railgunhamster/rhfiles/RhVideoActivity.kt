@@ -27,7 +27,7 @@ class RhVideoActivity:AppCompatActivity() {
   private val io=Executors.newFixedThreadPool(4)
   private val client by lazy{RhVideoClient.get(this)}
   private var exportText:String?=null
-  private data class ExportBuffer(val ticket:String,val generation:Long,val text:StringBuilder=StringBuilder(),var index:Int=0,var touched:Long=android.os.SystemClock.elapsedRealtime())
+  private data class ExportBuffer(val ticket:String,val generation:Long,val text:StringBuilder=StringBuilder(),var index:Int=0,var bytes:Int=0,var touched:Long=android.os.SystemClock.elapsedRealtime())
   private var exportBuffer:ExportBuffer?=null
   private var presentation:RhVideoPresentation?=null
   private val exportDocument=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->
@@ -59,7 +59,7 @@ class RhVideoActivity:AppCompatActivity() {
             val media=client.media(key,image=true)
             WebResourceResponse(media.type.substringBefore(';'),null,200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff"),media.stream)
           }else{
-            require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json","/rhvideo/css/rhvideo.css","/rhvideo/css/rhvideo-mobile.css","/rhvideo/css/rhvideo-workbench.css","/rhvideo/js/automation-core.js","/rhvideo/js/rhvideo-model.js","/rhvideo/js/rhvideo-client.js","/rhvideo/js/rhvideo-mobile.js","/rhvideo/js/rhvideo-workbench.js","/rhvideo/js/rhvideo-index.js","/rhvideo/js/rhvideo-worker.js","/rhvideo/js/rhvideo-search.js","/rhvideo/js/rhvideo-tags.js","/rhvideo/vendor/pinyin-pro/pinyin-pro.js"))
+            require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json","/rhvideo/css/rhvideo.css","/rhvideo/css/rhvideo-mobile.css","/rhvideo/css/rhvideo-workbench.css","/rhvideo/js/automation-core.js","/rhvideo/js/rhvideo-model.js","/rhvideo/js/rhvideo-client.js","/rhvideo/js/rhvideo-mobile.js","/rhvideo/js/rhvideo-workbench.js","/rhvideo/js/rhvideo-index.js","/rhvideo/js/rhvideo-refresh.js","/rhvideo/js/rhvideo-worker.js","/rhvideo/js/rhvideo-search.js","/rhvideo/js/rhvideo-tags.js","/rhvideo/vendor/pinyin-pro/pinyin-pro.js"))
             val mime=when{path.endsWith(".html")->"text/html";path.endsWith(".css")->"text/css";path.endsWith(".json")->"application/json";else->"application/javascript"}
             val input=if(path.endsWith(".html")){
               val html=assets.open(path.removePrefix("/")).bufferedReader().use{it.readText()}
@@ -91,8 +91,14 @@ class RhVideoActivity:AppCompatActivity() {
                 synchronized(this){
                   if(args.optBoolean("reset")){require(index==0);exportBuffer=ExportBuffer(ticket,client.sessionGeneration())}
                   val buffer=exportBuffer?.takeIf{it.ticket==ticket&&it.generation==client.sessionGeneration()&&android.os.SystemClock.elapsedRealtime()-it.touched<120000}?:error("导出准备已失效")
-                  require(buffer.index==index){"导出分片顺序无效，不会重复追加"};require(buffer.text.length+text.length<=32*1024*1024){"导出超过 32 Mi 字符"}
-                  buffer.text.append(text);buffer.index++;buffer.touched=android.os.SystemClock.elapsedRealtime();JSONObject().put("characters",buffer.text.length)
+                  require(buffer.index==index){"导出分片顺序无效，不会重复追加"}
+                  // Conservative at a split surrogate pair: never undercount
+                  // UTF-8 bytes or let multibyte names bypass the desktop limit.
+                  val bytes=text.toByteArray(Charsets.UTF_8).size+
+                    (if(text.isNotEmpty()&&Character.isHighSurrogate(text.last()))2 else 0)+
+                    (if(text.isNotEmpty()&&Character.isLowSurrogate(text.first()))2 else 0)
+                  require(buffer.bytes+bytes<=32*1024*1024){"导出超过 32 MiB"}
+                  buffer.text.append(text);buffer.bytes+=bytes;buffer.index++;buffer.touched=android.os.SystemClock.elapsedRealtime();JSONObject().put("characters",buffer.text.length)
                 }
               }
               "export.finish"->{

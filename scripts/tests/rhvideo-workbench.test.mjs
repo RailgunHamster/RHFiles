@@ -10,6 +10,19 @@ const require = createRequire(import.meta.url),
   search = require("../../src/js/rhvideo-search.js"),
   dictionary = require("../../src/vendor/pinyin-pro/pinyin-pro.js");
 const create = () => new I.Catalog({ tags, search, dictionary });
+test("export limit counts UTF-8 bytes, rejects before native dialogs, and preserves JSON", () => {
+  const rows = [{ title: "中文😀", id: "a" }],
+    text = I.exportText(rows);
+  assert.deepEqual(JSON.parse(text), rows);
+  const bytes = new TextEncoder().encode(text).byteLength;
+  assert(bytes > text.length);
+  assert.equal(I.exportText(rows, bytes), text);
+  assert.throws(() => I.exportText(rows, bytes - 1), /32 MiB/);
+  assert.throws(
+    () => I.exportText([{ title: "中".repeat(12 * 1024 * 1024) }]),
+    /32 MiB/,
+  );
+});
 const videos = [
   {
     id: "a",

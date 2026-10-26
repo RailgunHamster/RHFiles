@@ -3,6 +3,9 @@
   'use strict';
   const api=window.RHFilesAPI,model=RHVideoModel,$=id=>document.getElementById(id);
   const mobile=!!window.RHVideoNative;
+  let modalOrder=[];
+  const modalTop=()=>modalOrder.filter(id=>$(id)?.open).at(-1);
+  function openDialog(id){const node=$(id);if(!node.open){node.showModal();modalOrder=modalOrder.filter(v=>$(v)?.open&&v!==id);modalOrder.push(id);}return node;}
   const native=(action,args={})=>mobile?window.RHVideoNative.request(action,args):window.__TAURI__.core.invoke('rhvideo_request',{action,args});
   api.provideState('application',()=>({platform:mobile?'android':'windows',window:'window-rhvideo',ready:true}));
   const icons={
@@ -140,7 +143,7 @@
   }
   function snapshot(){return {kind:state.kind,connected:state.connected,nativePlayback:state.nativePlayback,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
   action('state',object(),snapshot,'read');api.provideState('rhvideo',snapshot);
-  action('connection.open',object(),async()=>{updateConnection(await native('state'));$('connection-error').textContent='';if(!$('connection-dialog').open)$('connection-dialog').showModal();return {opened:true};});
+  action('connection.open',object(),async()=>{updateConnection(await native('state'));$('connection-error').textContent='';openDialog('connection-dialog');return {opened:true};});
   action('connection.close',object(),()=>{$('connection-dialog').close();$('password').value='';return {closed:true};});
   action('connection.connect',object({server:string,username:string,password:{type:'string',maxLength:4096}},['server','username','password']),async args=>{
     readEpoch++;
@@ -183,13 +186,13 @@
   async function openMedia(media){
     if(media.kind==='video')return workbench?workbench.play(media):native('play',{id:media.id,title:media.title,queue:state.items.filter(v=>v.kind==='video').map(({id,title})=>({id,title}))});
     if(media.kind==='picture'&&workbench)return workbench.image(media);
-    if(media.kind==='picture'){const result=model.imageIndex(state.items,media.id);images=result.images;imageIndex=result.index;imageZoom=1;showImage();if(!$('image-dialog').open)$('image-dialog').showModal();return {opened:true};}
+    if(media.kind==='picture'){const result=model.imageIndex(state.items,media.id);images=result.images;imageIndex=result.index;imageZoom=1;showImage();openDialog('image-dialog');return {opened:true};}
     const token=++reader.token;const book=await native('novel',{id:media.id});if(token!==reader.token)return {cancelled:true};
     reader.book=book;reader.loaded=false;reader.chapter=book.progress?.chapter_index||0;$('book-title').textContent=book.title||media.title;
     const select=$('chapter-select');select.replaceChildren();
     if(!Array.isArray(book.chapters)||!book.chapters.length)throw Error('这本书还没有可读取的章节');
     for(const chapter of book.chapters)select.append(new Option(chapter.title,String(chapter.index)));
-    if(!$('reader-dialog').open)$('reader-dialog').showModal();await chapter(reader.chapter,book.progress?.scroll_ratio||0);return {opened:true};
+    openDialog('reader-dialog');await chapter(reader.chapter,book.progress?.scroll_ratio||0);return {opened:true};
   }
   function showImage(media=images[imageIndex],index=imageIndex,total=images.length){
     $('image-title').textContent=media.title;if($('full-image').src!==media.cover)$('full-image').src=media.cover;$('full-image').alt=media.title;
@@ -200,7 +203,7 @@
   action('image.zoom',object({delta:{type:'number',minimum:-1,maximum:1}},['delta']),({delta})=>{if(!$('image-dialog').open)throw Error('图片查看器未打开');imageZoom=delta===0?1:Math.max(.5,Math.min(4,imageZoom+delta));if(workbench)workbench.refreshImage();else showImage();return {zoom:imageZoom};});
   action('image.close',object(),()=>{$('image-dialog').close();$('full-image').removeAttribute('src');images=[];return {closed:true};});
   action('timeline.open',object({id:string,kind:{type:'string'}},['id']),async({id})=>{
-    const media=item(id,'video'),token=++timelineLoadId;$('timeline-title').textContent=media.title;$('timeline-frames').textContent='正在读取时间轴…';if(!$('timeline-dialog').open)$('timeline-dialog').showModal();
+    const media=item(id,'video'),token=++timelineLoadId;$('timeline-title').textContent=media.title;$('timeline-frames').textContent='正在读取时间轴…';openDialog('timeline-dialog');
     const value=await native('frames',{id});if(!$('timeline-dialog').open||token!==timelineLoadId)return {cancelled:true};
     const root=$('timeline-frames');root.replaceChildren();
     if(!value.frames?.length){root.textContent='服务器还没有为这个视频生成关键帧。';return {count:0};}
@@ -242,11 +245,11 @@
   action('reader.font',object({size:{type:'integer',minimum:13,maximum:40}},['size']),async({size})=>{if(workbench)await invoke('preferences.set',{key:'readerFont',value:size});else document.documentElement.style.setProperty('--reader-size',size+'px');$('reader-font').value=String(size);return {size};});
   action('back',object(),async()=>{
     if(workbench?.back())return {closed:true};
-    for(const [id,name] of [['connection-dialog','connection.close'],['image-dialog','image.close'],['reader-dialog','reader.close'],['timeline-dialog','timeline.close']])if($(id).open)return invoke(name);
+    for(const [id,name] of [['connection-dialog','connection.close'],['image-dialog','image.close'],['reader-dialog','reader.close'],['timeline-dialog','timeline.close']])if(modalTop()===id)return invoke(name);
     if(mobile)return native('close');return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
-  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,saveRead,chapter,icon,bind});
+  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,saveRead,chapter,icon,bind});
   bind('connection-open','click','connection.open');bind('connection-close','click','connection.close');
   bind('connection-form','submit','connection.connect',()=>({server:$('server').value,username:$('username').value,password:$('password').value}));
   bind('disconnect','click','connection.logout');bind('refresh','click','refresh');

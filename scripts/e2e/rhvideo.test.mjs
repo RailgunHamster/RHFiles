@@ -22,6 +22,51 @@ async function target(app,file){
   return session;
 }
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
+
+test('catalog writes invalidate immediately; delayed pre-write reads never resurrect sources',async()=>{
+  const app=await launchApp({emulateFocus:true});let view,release,delayed=false,holdNext=false,fail=false;
+  const fixture=await rhvideoFixture({beforeCatalog:async kind=>{
+    if(kind!=='picture')return;
+    if(holdNext){holdNext=false;delayed=true;await new Promise(r=>release=r);}
+    if(fail)return {status:503,detail:'Read refresh is offline, write already succeeded'};
+  }});
+  try{
+    await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
+    await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+    assert.equal((await invoke(view,'category',{kind:'picture'})).total,8);
+    holdNext=true;await view.evaluate("window.__staleRead=RHFilesAPI.invoke('rhvideo.refresh').catch(e=>String(e));true");
+    await until(()=>delayed,'pre-write catalog captured');
+    const result=await invoke(view,'remote.trash.stage',{params:{kind:'picture',id:'picture-0'},confirmation:'RHVIDEO:trash.stage'});
+    assert.equal(result.ok,true);assert.equal((await invoke(view,'state')).total,7);
+    release();await view.evaluate('window.__staleRead');
+    await invoke(view,'sort',{value:'nameAsc'});assert.equal((await invoke(view,'state')).total,7,'late raw response must not repopulate worker with deleted rows');
+    fail=true;
+    const committed=await invoke(view,'remote.trash.stage',{params:{kind:'picture',id:'picture-1'},confirmation:'RHVIDEO:trash.stage'});
+    assert.equal(committed.ok,true,'read refresh failure cannot turn a committed write into a failed request');
+    assert.match(committed.clientWarning,/offline|503/);assert.equal(fixture.requests.filter(r=>r.path==='/api/v1/trash/picture/picture-1').length,1);
+    fail=false;await invoke(view,'refresh');assert.equal((await invoke(view,'state')).total,6);
+  }finally{release?.();view?.close();await fixture.close();app.close();}
+});
+
+test('running tasks refresh through the public API, stop when terminal, and never refresh closed panels',async()=>{
+  const app=await launchApp({emulateFocus:true}),taskState={
+    list:{items:[{id:'video:video-0',filename:'test.mp4',status:'processing'}],counts:{running:1,queued:0},page:1,pages:1,total:1},
+    detail:{id:'video:video-0',filename:'test.mp4',status:'processing',live:true,steps:[],progress:{percent:20}},
+  },fixture=await rhvideoFixture({taskState});let view;
+  try{
+    await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
+    await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+    await invoke(view,'server.open',{page:'tasks'});assert.equal((await invoke(view,'server.refreshState')).enabled,true);
+    await invoke(view,'task.detail',{kind:'default',id:'video:video-0'});
+    taskState.detail={...taskState.detail,status:'succeeded',live:false,progress:{percent:100}};
+    await until(()=>view.evaluate("document.querySelector('#wb-info progress')?.value===100"),'task progress updated without manual refresh',10000);
+    assert.equal((await invoke(view,'server.refreshState')).enabled,false);
+    await invoke(view,'panel.close',{id:'wb-info'});await invoke(view,'server.refresh');
+    await invoke(view,'back');assert.equal(await view.evaluate("document.getElementById('wb-server').open"),false,'Back closes server tools rather than leaving the library');const count=fixture.requests.filter(r=>r.path==='/api/v1/processing-tasks').length;
+    await new Promise(r=>setTimeout(r,3500));assert.equal(fixture.requests.filter(r=>r.path==='/api/v1/processing-tasks').length,count);
+    assert.equal((await invoke(view,'server.refreshState')).scheduled,false);assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);
+  }finally{view?.close();await fixture.close();app.close();}
+});
 test('RHVideo packaged UI, real native HTTP bridge, reader, favorites, paging and credential boundary',async()=>{
   const app=await launchApp({emulateFocus:true}),fixture=await rhvideoFixture({failTrashIds:['picture:picture-1']});let view;
   try{
@@ -64,6 +109,7 @@ test('RHVideo packaged UI, real native HTTP bridge, reader, favorites, paging an
     await invoke(view,'viewer.open',{mode:'strip',source:'picture'});assert(Math.abs((await invoke(view,'viewer.state')).ratio-.5)<.05,'strip restores its filter/layout-scoped location');await invoke(view,'viewer.restart');assert((await invoke(view,'viewer.state')).ratio<.05);await invoke(view,'panel.close',{id:'wb-viewer'});
     await invoke(view,'viewer.open',{mode:'slideshow',source:'picture'});await until(()=>view.evaluate("document.querySelector('#wb-viewer .wb-slide img')?.naturalWidth>0"),'slideshow image decoded');await invoke(view,'viewer.toggle');await invoke(view,'viewer.step',{direction:1});await invoke(view,'panel.close',{id:'wb-viewer'});
     await invoke(view,'media.open',{id:pictures.items[0].id,kind:'picture'});await until(()=>view.evaluate("document.getElementById('full-image').naturalWidth>0"),'full image');
+    await invoke(view,'settings.open');await invoke(view,'back');assert.equal(await view.evaluate("document.getElementById('wb-settings').open"),false);assert.equal(await view.evaluate("document.getElementById('image-dialog').open"),true,'Back closes the actual top dialog, preserving the image underneath');
     assert.equal((await invoke(view,'image.step',{direction:1})).index,1);await invoke(view,'image.zoom',{delta:.25});assert.equal((await invoke(view,'selection.markCurrent')).enabled,true);assert.equal((await invoke(view,'selection.markCurrent')).enabled,false);await invoke(view,'image.close');
     await invoke(view,'category',{kind:'novel'});await invoke(view,'novel.preview',{id:'novel-0',offset:0});await invoke(view,'novel.previewMode',{flow:true});await invoke(view,'novel.previewStep',{direction:1});assert.equal(await view.evaluate("document.querySelectorAll('.wb-excerpts .wb-row').length"),1);await invoke(view,'panel.close',{id:'wb-preview'});await invoke(view,'media.open',{id:'novel-1',kind:'novel'});
     await until(async()=>{const s=await invoke(view,'state');return s.reader?.loaded&&s.reader.chapter===1;},'saved chapter resumed');
@@ -108,7 +154,8 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
     await player.evaluate("RHFilesAPI.invoke('rhvideo.player.control',{command:'resume'})");
     await until(async()=>{const v=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.state')");return v.positionMs>=5000;},'native seek resumed');
     const beforeNext=await invoke(player,'player.control',{command:'pause'});
-    await until(async()=>{const s=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.preloadState')");return s.state==='ready';},'bounded native next-video preload',15000);
+    let preload;
+    await until(async()=>{preload=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.preloadState')");return preload.state==='ready'&&preload.decodedFrames>0;},'bounded native next-video preload',15000).catch(error=>{console.log(JSON.stringify({preload}));throw error;});
     await invoke(player,'player.control',{command:'volume',value:37});await invoke(player,'player.control',{command:'rate',value:1.25});
     const preloaded=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.next')");assert.equal(preloaded.preloaded,true,'next must consume a real decoded native preload');assert.equal(preloaded.volume,37);assert.equal(preloaded.rate,1.25);assert.deepEqual((await invoke(player,'ui.contract')).missing,[]);
     const late=await invoke(player,'player.next',{expectedId:beforeNext.queue.id,expectedRevision:beforeNext.queue.revision});assert.equal(late.stale,true);assert.equal(late.queue.index,1,'a delayed auto-next must not skip a second item');
@@ -199,10 +246,15 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
     const previews=await invoke(view,'novel.preview',{id:'real-novel',offset:0});assert.equal(previews.total,3);await invoke(view,'panel.close',{id:'wb-preview'});
     const staged=await invoke(view,'confirm.begin',{name:'trash.stage',params:{kind:'picture',id:'real-picture'}});await invoke(view,'confirm.advance',{ticket:staged.ticket});await invoke(view,'confirm.advance',{ticket:staged.ticket});assert.equal(fs.existsSync(path.join(directory,'original.png')),false,'only the isolated fixture source was staged');
     await invoke(view,'remote.trash.restore',{params:{kind:'picture',id:'real-picture'}});assert.equal(fs.existsSync(path.join(directory,'original.png')),true,'real server restores the exact source path');
+    await invoke(view,'category',{kind:'video'});const videoStage=await invoke(view,'confirm.begin',{name:'trash.stage',params:{kind:'video',id:'real-video'}});await invoke(view,'confirm.advance',{ticket:videoStage.ticket});await invoke(view,'confirm.advance',{ticket:videoStage.ticket});assert.equal((await invoke(view,'state')).total,0,'a successful source write must invalidate the native catalog and refresh the UI immediately');assert.equal(fs.existsSync(path.join(directory,'sample.mp4')),false);
+    await invoke(view,'remote.trash.restore',{params:{kind:'video',id:'real-video'}});assert.equal((await invoke(view,'state')).total,1,'restoring must immediately return the item without a manual refresh');
     assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);
     console.log(JSON.stringify({pass:true,checks:'actual sibling RHVideo service, isolated SQLite, login, media lists, favorites write, actual chapter reads/progress, frames'}));
   }finally{
-    view?.close();if(child?.pid&&child.exitCode===null)execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
-    fs.writeFileSync(path.join(app.artifactDir,'actual-rhvideo.log'),output);app.close();
+    view?.close();
+    // uv may exit between exitCode inspection and taskkill. Cleanup failures
+    // must never skip closing the isolated app/CDP session or hide assertions.
+    try{if(child?.pid&&child.exitCode===null)execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});}catch{}
+    finally{fs.writeFileSync(path.join(app.artifactDir,'actual-rhvideo.log'),output);app.close();}
   }
 });

@@ -325,6 +325,12 @@
       spacer: physicalMax + extent,
     };
   }
+  function exportText(items, maximumBytes = 32 * 1024 * 1024) {
+    const text = JSON.stringify(items, null, 2);
+    if (new TextEncoder().encode(text).byteLength > maximumBytes)
+      throw Error("导出超过 32 MiB，请减少所选项目后再导出");
+    return text;
+  }
   return {
     Catalog,
     sorts,
@@ -337,5 +343,6 @@
     visible,
     transition,
     scrollMetrics,
+    exportText,
   };
 });

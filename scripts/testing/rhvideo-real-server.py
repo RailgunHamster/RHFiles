@@ -37,6 +37,7 @@ async def lifespan(application):
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH1cAAAAASUVORK5CYII=")
         (root / "storage" / "covers" / "preview.png").write_bytes(png)
         (root / "original.png").write_bytes(png)
+        (root / "sample.mp4").write_bytes(b"isolated-source-for-trash-contract-only")
         chapter_data = [("第%d章 真实接口测试" % (i+1), ("这是 RHVideo 真实后端提供的章节正文。\n\n" * 100).encode("utf-8")) for i in range(3)]
         novel_path = root / "book.txt"
         novel_path.write_bytes(b"".join(body for _, body in chapter_data))

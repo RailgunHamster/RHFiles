@@ -1225,7 +1225,11 @@ pub async fn rhvideo_request(app: AppHandle, action: String, args: Value) -> Res
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.clone()))
                 .collect();
-            session.request(r.method, &r.path, &query, r.body).await
+            let value = session.request(r.method, &r.path, &query, r.body).await?;
+            if r.invalidates_catalog {
+                *session.videos.lock().await = None;
+            }
+            Ok(value)
         }
         "resolve" => {
             let rows = args["items"]

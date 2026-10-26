@@ -31,16 +31,23 @@
       let worker,
         sequence = 0,
         epoch = 0,
+        catalogRevision = 0,
         account = "",
         prefs = {},
         saveTimer = 0,
         saveChain = Promise.resolve(),
         selected = new Set(),
         raw = new Map(),
-        queries = new Map(),
         imageSession = null,
         imageToken = 0,
-        dialogStack = [];
+        detailJob = null,
+        liveRefresh = null;
+      let mutations = {
+        depth: 0,
+        catalog: false,
+        server: false,
+        refreshError: "",
+      };
       const requests = new Map(),
         manifest = fetch("rhvideo-operations.json").then((r) => {
           if (!r.ok) throw Error("无法读取媒体操作契约");
@@ -124,6 +131,7 @@
         return node;
       }
       function dialog(id, title) {
+        if (id === "wb-info") detailJob = null;
         if (id !== "wb-viewer" && viewer?.videoActive) {
           void native("presentation.control", { command: "pause" }).catch(
             notice,
@@ -149,10 +157,9 @@
           );
         }
         if (!node.open) {
-          node.showModal();
-          dialogStack = dialogStack.filter((v) => v !== id);
-          dialogStack.push(id);
+          ctx.openDialog(id);
         }
+        liveRefresh?.configure(liveRefresh.enabled);
         node.querySelector(".wb-dialog-head h2").textContent = title;
         return node.querySelector(".wb-content");
       }
@@ -196,9 +203,16 @@
       async function reset(authenticated) {
         ctx.invalidateReads();
         epoch++;
+        liveRefresh?.stop();
+        detailJob = null;
+        mutations = {
+          depth: 0,
+          catalog: false,
+          server: false,
+          refreshError: "",
+        };
         account = "";
-        raw.clear();
-        queries.clear();
+        invalidateCatalog();
         selected.clear();
         lastBatch = null;
         imageSession = null;
@@ -232,7 +246,6 @@
           node.close();
           node.querySelector(".wb-content")?.replaceChildren();
         }
-        dialogStack = [];
         startWorker();
         prefs = {};
         clearTimeout(saveTimer);
@@ -290,62 +303,65 @@
             .catch(notice);
         }, 150);
       }
+      function invalidateCatalog(kind) {
+        catalogRevision++;
+        if (kind) raw.delete(kind);
+        else raw.clear();
+      }
       async function rawCatalog(kind, refresh = false) {
-        const version = epoch;
-        if (refresh) {
-          raw.delete(kind);
-          queries.clear();
-        }
-        if (!raw.has(kind))
-          raw.set(
-            kind,
-            (async () => {
-              let rows;
-              if (kind === "favorite") {
-                rows = [];
-                const seen = new Set();
-                for (let skip = 0; skip < 100000; skip += 200) {
-                  const data = await remote("index.favorite", {
-                    query: { skip, limit: 200, media_type: "all" },
-                  });
-                  if (version !== epoch) throw Error("账户已更改");
-                  if (!Array.isArray(data.items))
-                    throw Error("收藏清单格式无效");
-                  if (
-                    data.items.some((v) =>
-                      seen.has((v.type || v.kind) + ":" + v.id),
-                    )
-                  )
-                    throw Error("服务器重复返回同一页收藏，已停止继续请求");
-                  data.items.forEach((v) =>
-                    seen.add((v.type || v.kind) + ":" + v.id),
-                  );
-                  rows.push(...data.items);
-                  if (!data.items.length || rows.length >= data.total) break;
-                  if (skip >= 99800)
-                    throw Error("收藏清单超过 10 万项，请先在服务器缩小范围");
-                }
-              } else {
-                const data = await remote("index." + kind, {
-                  ...(["video", "novel"].includes(kind)
-                    ? {
-                        query: {
-                          summary: true,
-                          ...(kind === "video" ? { refresh } : {}),
-                        },
-                      }
-                    : {}),
+        if (refresh) invalidateCatalog(kind);
+        const version = epoch,
+          revision = catalogRevision;
+        if (!raw.has(kind)) {
+          const pending = (async () => {
+            let rows;
+            if (kind === "favorite") {
+              rows = [];
+              const seen = new Set();
+              for (let skip = 0; skip < 100000; skip += 200) {
+                const data = await remote("index.favorite", {
+                  query: { skip, limit: 200, media_type: "all" },
                 });
-                rows = Array.isArray(data) ? data : data.items;
+                if (version !== epoch || revision !== catalogRevision)
+                  throw Error("媒体账户或清单已更改，已丢弃旧读取");
+                if (!Array.isArray(data.items)) throw Error("收藏清单格式无效");
+                if (
+                  data.items.some((v) =>
+                    seen.has((v.type || v.kind) + ":" + v.id),
+                  )
+                )
+                  throw Error("服务器重复返回同一页收藏，已停止继续请求");
+                data.items.forEach((v) =>
+                  seen.add((v.type || v.kind) + ":" + v.id),
+                );
+                rows.push(...data.items);
+                if (!data.items.length || rows.length >= data.total) break;
+                if (skip >= 99800)
+                  throw Error("收藏清单超过 10 万项，请先在服务器缩小范围");
               }
-              if (version !== epoch) throw Error("账户已更改");
-              await send("set", { kind, items: rows });
-              return true;
-            })().catch((error) => {
-              raw.delete(kind);
-              throw error;
-            }),
-          );
+            } else {
+              const data = await remote("index." + kind, {
+                ...(["video", "novel"].includes(kind)
+                  ? {
+                      query: {
+                        summary: true,
+                        ...(kind === "video" ? { refresh } : {}),
+                      },
+                    }
+                  : {}),
+              });
+              rows = Array.isArray(data) ? data : data.items;
+            }
+            if (version !== epoch || revision !== catalogRevision)
+              throw Error("媒体账户或清单已更改，已丢弃旧读取");
+            await send("set", { kind, items: rows });
+            return true;
+          })().catch((error) => {
+            if (raw.get(kind) === pending) raw.delete(kind);
+            throw error;
+          });
+          raw.set(kind, pending);
+        }
         return raw.get(kind);
       }
       function criteria(extra = {}) {
@@ -365,22 +381,64 @@
       }
       async function query(extra = {}) {
         const token = await ensure(),
-          args = criteria(extra);
+          args = criteria(extra),
+          revision = catalogRevision;
         await rawCatalog(args.kind);
         const result = await send("query", args);
-        if (token !== epoch) throw Error("媒体账户已更改");
+        if (token !== epoch || revision !== catalogRevision)
+          throw Error("媒体账户或清单已更改，已丢弃旧读取");
         return result;
       }
       async function catalog(refresh) {
         await ensure();
         await rawCatalog(state.kind, refresh);
+        const version = epoch,
+          revision = catalogRevision;
         const result = await query();
         const resolved = await native("resolve", { items: result.items });
+        if (version !== epoch || revision !== catalogRevision)
+          throw Error("媒体账户或清单已更改，已丢弃旧读取");
         return { ...resolved, total: result.total };
       }
       async function remote(name, args = {}) {
         await ready;
         return api.invoke("rhvideo.remote." + name, args);
+      }
+      async function flushWrites(scope) {
+        if (scope !== mutations || scope.depth) return;
+        const catalog = scope.catalog,
+          serverDirty = scope.server;
+        scope.catalog = false;
+        scope.server = false;
+        scope.refreshError = "";
+        if (catalog) {
+          try {
+            await load();
+            if (scope === mutations && state.error)
+              scope.refreshError = state.error;
+          } catch (error) {
+            scope.refreshError = String(error.message || error);
+          }
+        }
+        if (serverDirty && scope === mutations && $("wb-server")?.open)
+          try {
+            await renderServer();
+            if (scope === mutations) liveRefresh.configure(server.live, true);
+          } catch (error) {
+            scope.refreshError = String(error.message || error);
+          }
+        if (scope === mutations && scope.refreshError)
+          notice("服务器操作已完成，但刷新失败：" + scope.refreshError);
+      }
+      async function batchWrites(run) {
+        const scope = mutations;
+        scope.depth++;
+        try {
+          return await run();
+        } finally {
+          scope.depth--;
+          if (scope === mutations) await flushWrites(scope);
+        }
       }
       const simpleSchema = (rule) =>
         rule === "bool"
@@ -451,9 +509,19 @@
                   "媒体账户已更改，已丢弃旧响应；写操作可能已完成，请在原服务器核对，不会自动重试",
                 );
               if (s.risk === "write" || s.risk === "destructive") {
-                raw.clear();
+                invalidateCatalog();
                 gallery.loaded = false;
-                if ($("wb-server")?.open) await renderServer();
+                const scope = mutations;
+                scope.catalog ||= !!s.invalidatesCatalog;
+                scope.server ||= !!$("wb-server")?.open;
+                await flushWrites(scope);
+                if (
+                  scope.refreshError &&
+                  result &&
+                  typeof result === "object" &&
+                  !Array.isArray(result)
+                )
+                  return { ...result, clientWarning: scope.refreshError };
               }
               return result;
             },
@@ -501,7 +569,9 @@
         async ({ id }) => {
           if (id === "wb-viewer") stopViewer();
           if (id === "wb-confirm") pendingConfirmation = null;
+          if (id === "wb-info") detailJob = null;
           $(id)?.close();
+          liveRefresh.configure(liveRefresh.enabled);
           if (viewer?.videoActive && viewerIsTop()) {
             await syncPresentation();
             if (viewer.running)
@@ -1352,34 +1422,36 @@
             const results = [],
               root = dialog("wb-info", "批量暂存结果");
             root.replaceChildren(el("p", "正在提交 0 / " + p.batch.length));
-            for (const item of p.batch) {
-              if (p.epoch !== epoch || p.account !== account) break;
-              try {
-                await remote("trash.stage", {
-                  params: { kind: item.kind, id: item.id },
-                  confirmation: "RHVIDEO:trash.stage",
-                });
-                selected.delete(item.key || I.key(item));
-                results.push({
-                  id: item.id,
-                  kind: item.kind,
-                  title: item.title,
-                  state: "succeeded",
-                });
-              } catch (error) {
-                results.push({
-                  id: item.id,
-                  kind: item.kind,
-                  title: item.title,
-                  state: "failed",
-                  error: String(error.message || error),
-                });
+            await batchWrites(async () => {
+              for (const item of p.batch) {
+                if (p.epoch !== epoch || p.account !== account) break;
+                try {
+                  await remote("trash.stage", {
+                    params: { kind: item.kind, id: item.id },
+                    confirmation: "RHVIDEO:trash.stage",
+                  });
+                  selected.delete(item.key || I.key(item));
+                  results.push({
+                    id: item.id,
+                    kind: item.kind,
+                    title: item.title,
+                    state: "succeeded",
+                  });
+                } catch (error) {
+                  results.push({
+                    id: item.id,
+                    kind: item.kind,
+                    title: item.title,
+                    state: "failed",
+                    error: String(error.message || error),
+                  });
+                }
+                if (p.epoch !== epoch) break;
+                root.replaceChildren(
+                  el("p", "已提交 " + results.length + " / " + p.batch.length),
+                );
               }
-              if (p.epoch !== epoch) break;
-              root.replaceChildren(
-                el("p", "已提交 " + results.length + " / " + p.batch.length),
-              );
-            }
+            });
             if (p.epoch !== epoch)
               throw Error("账户已更改，未提交的项目不会继续执行");
             lastBatch = {
@@ -1388,9 +1460,10 @@
               succeeded: results.filter((v) => v.state === "succeeded").length,
               failed: results.filter((v) => v.state === "failed").length,
               notAttempted: p.batch.length - results.length,
+              ...(mutations.refreshError
+                ? { clientWarning: mutations.refreshError }
+                : {}),
             };
-            raw.clear();
-            queries.clear();
             root.replaceChildren(
               el(
                 "p",
@@ -1408,7 +1481,14 @@
                   result.state === "succeeded" ? "已暂存" : result.error,
                 ),
               );
-            await load();
+            if (lastBatch.clientWarning)
+              root.append(
+                el(
+                  "p",
+                  "写入已完成，但刷新失败：" + lastBatch.clientWarning,
+                  "wb-error",
+                ),
+              );
             return lastBatch;
           }
           const result = await remote(p.name, {
@@ -1416,9 +1496,12 @@
             ...(p.body ? { body: p.body } : {}),
             confirmation: "RHVIDEO:" + p.name,
           });
-          raw.clear();
-          notice("服务器操作已完成", true);
-          if ($("wb-server")?.open) await renderServer();
+          notice(
+            result?.clientWarning
+              ? "服务器操作已完成，但刷新失败：" + result.clientWarning
+              : "服务器操作已完成",
+            !result?.clientWarning,
+          );
           return result;
         },
         "destructive",
@@ -1434,6 +1517,97 @@
         status: "all",
         load: 0,
       };
+      function liveTarget() {
+        if (
+          document.hidden ||
+          !state.connected ||
+          document.activeElement?.matches("input,select,textarea") ||
+          ["reader-dialog", "image-dialog", "timeline-dialog"].some(
+            (id) => $(id)?.open,
+          )
+        )
+          return null;
+        const top = ctx.modalTop();
+        if (top === "wb-info" && detailJob) return detailJob;
+        return top === "wb-server" ? { type: "server" } : null;
+      }
+      function hasLiveWork(value) {
+        if (!value || typeof value !== "object") return false;
+        if (Array.isArray(value)) return value.some(hasLiveWork);
+        return (
+          value.scanning === true ||
+          value.live === true ||
+          ["running", "processing", "pending", "queued", "scanning"].includes(
+            value.status,
+          ) ||
+          Number(value.counts?.running || 0) +
+            Number(value.counts?.queued || 0) >
+            0 ||
+          ["items", "folders", "restart"].some((key) => hasLiveWork(value[key]))
+        );
+      }
+      liveRefresh = new RHVideoRefresh.Loop({
+        visible: () => !!liveTarget(),
+        run: () => invoke("server.liveRefresh"),
+        changed: (value) => {
+          for (const node of document.querySelectorAll(".wb-live-status"))
+            node.textContent = value.error
+              ? "自动刷新失败（" +
+                value.failures +
+                "/3）：" +
+                value.error +
+                (value.failures >= 3
+                  ? "。已停止，请手动刷新。"
+                  : "。稍后仅重读状态。")
+              : value.enabled
+                ? value.paused
+                  ? "自动刷新已暂停"
+                  : "进度自动更新中"
+                : "状态已更新";
+        },
+      });
+      action(
+        "server.refreshState",
+        object(),
+        () => liveRefresh.state(),
+        "read",
+      );
+      action(
+        "server.liveRefresh",
+        object(),
+        async () => {
+          const target = liveTarget(),
+            version = epoch;
+          if (!target) return liveRefresh.enabled;
+          if (target.type === "server") return renderServer(true);
+          const value = await remote(
+            target.type === "task" ? "tasks.detail" : "batches.detail",
+            {
+              params:
+                target.type === "task"
+                  ? { queue: target.kind, entry: target.id }
+                  : { id: target.id },
+            },
+          );
+          if (version !== epoch || detailJob !== target || !$("wb-info")?.open)
+            return false;
+          const root = $("wb-info").querySelector(".wb-content");
+          if (target.type === "task") paintTaskDetail(root, value);
+          else root.replaceChildren(detail(value));
+          root.append(
+            el("p", "", "wb-live-status"),
+            button(
+              "刷新",
+              target.type === "task" ? "task.detail" : "batch.detail",
+              target.type === "task"
+                ? { kind: target.kind, id: target.id }
+                : { id: target.id },
+            ),
+          );
+          return hasLiveWork(value);
+        },
+        "read",
+      );
       action(
         "server.open",
         object(
@@ -1456,6 +1630,7 @@
           server.page = page;
           server.pageNumber = 1;
           await renderServer();
+          liveRefresh.configure(server.live, true);
           return { page };
         },
       );
@@ -1475,6 +1650,7 @@
           server[key] = value;
           if (key !== "pageNumber") server.pageNumber = 1;
           await renderServer();
+          liveRefresh.configure(server.live, true);
           return { ...server };
         },
       );
@@ -1483,6 +1659,7 @@
         object(),
         async () => {
           await renderServer();
+          liveRefresh.configure(server.live, true);
           return { refreshed: true };
         },
         "read",
@@ -1492,16 +1669,21 @@
         object({ path: { type: "string", maxLength: 8192 } }, ["path"]),
         async ({ path }) => {
           const result = await remote("watch.add", { body: { path } });
-          await renderServer();
           return result;
         },
         "write",
       );
-      async function renderServer() {
+      async function renderServer(background = false) {
         await ensure();
+        if (background && liveTarget()?.type !== "server")
+          return liveRefresh.enabled;
         const token = ++server.load,
-          root = dialog("wb-server", "服务器管理");
-        root.replaceChildren();
+          target = background
+            ? $("wb-server").querySelector(".wb-content")
+            : dialog("wb-server", "服务器管理"),
+          root = background ? el("section") : target;
+        if (!background) root.replaceChildren();
+        let active = false;
         const nav = el("nav", undefined, "wb-tabs");
         for (const [page, title] of [
           ["watch", "监控目录"],
@@ -1527,6 +1709,7 @@
           const page = server.page;
           if (page === "watch") {
             const data = await remote("watch.list");
+            active = hasLiveWork(data);
             if (token !== server.load) return;
             body.replaceChildren();
             const path = input("text", "", "wb-watch-path");
@@ -1639,6 +1822,7 @@
                 q: server.q,
               },
             });
+            active = hasLiveWork(data);
             if (token !== server.load) return;
             body.replaceChildren(filters, detail(data.counts || {}));
             for (const t of data.items || []) {
@@ -1664,6 +1848,8 @@
               const batches = await remote("batches.list", {
                 query: { limit: 20 },
               });
+              if (token !== server.load) return;
+              active ||= hasLiveWork(batches);
               for (const batch of Array.isArray(batches)
                 ? batches
                 : batches.items || []) {
@@ -1714,6 +1900,9 @@
               remote("storage.folders"),
               remote("storage.savings"),
             ]);
+            active = values.some(
+              (v) => v.status === "fulfilled" && hasLiveWork(v.value),
+            );
             if (token !== server.load) return;
             body.replaceChildren();
             for (let i = 0; i < values.length; i++) {
@@ -1725,12 +1914,8 @@
               else body.append(detail(values[i].value));
             }
             body.append(
-              button("重新统计全库", "remote.storage.usage", {
-                query: { force: true },
-              }),
-              button("重新统计监控目录", "remote.storage.folders", {
-                query: { force: true },
-              }),
+              button("重新统计全库", "storage.rescan", { scope: "library" }),
+              button("重新统计监控目录", "storage.rescan", { scope: "watch" }),
             );
           } else {
             const values = await Promise.allSettled([
@@ -1738,6 +1923,9 @@
               remote("system.config"),
               remote("system.restartState"),
             ]);
+            active = values.some(
+              (v) => v.status === "fulfilled" && hasLiveWork(v.value),
+            );
             if (token !== server.load) return;
             body.replaceChildren();
             for (const v of values)
@@ -1773,8 +1961,18 @@
               }),
             );
           }
+          if (token !== server.load) return false;
+          server.live = active;
+          root.append(el("p", "", "wb-live-status"));
+          if (background) {
+            if (liveTarget()?.type !== "server") return active;
+            const scroll = target.scrollTop;
+            target.replaceChildren(...root.childNodes);
+            target.scrollTop = scroll;
+          }
+          return active;
         } catch (error) {
-          if (token === server.load)
+          if (token === server.load && !background)
             body.replaceChildren(
               el("p", String(error.message || error), "wb-error"),
             );
@@ -1789,6 +1987,47 @@
         return row;
       }
       action(
+        "storage.rescan",
+        object({ scope: { type: "string", enum: ["library", "watch"] } }, [
+          "scope",
+        ]),
+        async ({ scope }) => {
+          const result = await remote(
+            scope === "library" ? "storage.usage" : "storage.folders",
+            { query: { force: true } },
+          );
+          if ($("wb-server")?.open && server.page === "storage") {
+            await renderServer();
+            liveRefresh.configure(server.live, true);
+          }
+          return result;
+        },
+        "read",
+      );
+      function paintTaskDetail(root, t) {
+        root.replaceChildren();
+        if (t.progress) {
+          const p = el("progress");
+          p.max = 100;
+          p.value = Number(t.progress.percent || 0);
+          root.append(p, detail(t.progress));
+        }
+        for (const step of t.steps || [])
+          root.append(
+            serverRow(step.label || step.title || step.key, step.status),
+            detail(step),
+          );
+        root.append(
+          detail(
+            Object.fromEntries(
+              Object.entries(t).filter(
+                ([key]) => !["steps", "progress"].includes(key),
+              ),
+            ),
+          ),
+        );
+      }
+      action(
         "task.detail",
         object(
           {
@@ -1798,31 +2037,20 @@
           ["kind", "id"],
         ),
         async ({ kind, id }) => {
+          const root = dialog("wb-info", "任务详情"),
+            job = { type: "task", kind, id };
+          detailJob = job;
+          root.textContent = "正在读取…";
           const t = await remote("tasks.detail", {
             params: { queue: kind, entry: id },
           });
-          const root = dialog("wb-info", t.filename || "任务详情");
-          root.replaceChildren();
-          if (t.progress) {
-            const p = el("progress");
-            p.max = 100;
-            p.value = Number(t.progress.percent || 0);
-            root.append(p, detail(t.progress));
-          }
-          for (const step of t.steps || [])
-            root.append(
-              serverRow(step.label || step.title || step.key, step.status),
-              detail(step),
-            );
+          if (detailJob !== job || !$("wb-info").open) return { stale: true };
+          paintTaskDetail(root, t);
           root.append(
-            detail(
-              Object.fromEntries(
-                Object.entries(t).filter(
-                  ([k]) => !["steps", "progress"].includes(k),
-                ),
-              ),
-            ),
+            el("p", "", "wb-live-status"),
+            button("刷新", "task.detail", { kind, id }),
           );
+          liveRefresh.configure(hasLiveWork(t), true);
           return t;
         },
         "read",
@@ -1831,8 +2059,18 @@
         "batch.detail",
         object({ id: string }, ["id"]),
         async ({ id }) => {
+          const root = dialog("wb-info", "替换批次"),
+            job = { type: "batch", id };
+          detailJob = job;
+          root.textContent = "正在读取…";
           const data = await remote("batches.detail", { params: { id } });
-          dialog("wb-info", "替换批次").replaceChildren(detail(data));
+          if (detailJob !== job || !$("wb-info").open) return { stale: true };
+          root.replaceChildren(
+            detail(data),
+            el("p", "", "wb-live-status"),
+            button("刷新", "batch.detail", { id }),
+          );
+          liveRefresh.configure(hasLiveWork(data), true);
           return data;
         },
         "read",
@@ -1943,7 +2181,7 @@
         object(),
         async () => {
           const items = await selectedItems();
-          const text = JSON.stringify(items, null, 2);
+          const text = I.exportText(items);
           if (ctx.mobile && text.length > 64000) {
             const ticket = crypto.randomUUID(),
               version = epoch;
@@ -2180,7 +2418,7 @@
           current: null,
         };
         await stepImage(0);
-        if (!$("image-dialog").open) $("image-dialog").showModal();
+        ctx.openDialog("image-dialog");
         return { opened: true, total: result.total };
       }
       async function stepImage(direction) {
@@ -2244,7 +2482,7 @@
           const [url] = await native("images", { paths: [path] });
           imageSession = { current: { title, cover: url }, index: 0, total: 1 };
           refreshImage();
-          $("image-dialog").showModal();
+          ctx.openDialog("image-dialog");
           return { opened: true };
         },
       );
@@ -3302,7 +3540,7 @@
         });
       }
       function viewerIsTop() {
-        return dialogStack.filter((id) => $(id)?.open).at(-1) === "wb-viewer";
+        return ctx.modalTop() === "wb-viewer";
       }
       action(
         "viewer.mediaState",
@@ -3328,6 +3566,7 @@
         document,
         "visibilitychange",
         () => {
+          liveRefresh.configure(liveRefresh.enabled);
           if (viewer?.videoActive)
             void native("presentation.control", {
               command: document.hidden || !viewer.running ? "pause" : "resume",
@@ -3335,6 +3574,13 @@
         },
         "viewer.visibility",
       );
+      for (const event of ["focusin", "focusout"])
+        listen(
+          document,
+          event,
+          () => liveRefresh.configure(liveRefresh.enabled),
+          "server." + event,
+        );
       api.provideState("rhvideoWorkbench", () => ({
         selected: [...selected],
         sort: config().sort,
@@ -3533,6 +3779,7 @@
         "read",
       );
       window.addEventListener("pagehide", () => {
+        liveRefresh.stop();
         stopViewer();
         worker?.terminate();
         clearTimeout(saveTimer);
@@ -3546,21 +3793,14 @@
         stepImage,
         refreshImage,
         invalidate(kind) {
-          raw.delete(kind);
+          invalidateCatalog(kind);
         },
         back() {
-          for (const id of [
-            "wb-confirm",
-            "wb-settings",
-            "wb-info",
-            "wb-preview",
-            "wb-gallery",
-            "wb-viewer",
-          ])
-            if ($(id)?.open) {
-              void invoke("panel.close", { id }).catch(notice);
-              return true;
-            }
+          const id = ctx.modalTop();
+          if (id?.startsWith("wb-") && $(id)?.open) {
+            void invoke("panel.close", { id }).catch(notice);
+            return true;
+          }
           return false;
         },
       };

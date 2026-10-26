@@ -57,6 +57,10 @@ Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连
 
 批量暂存使用 `selection.toggle` → `selection.snapshot` → `selection.stage`，最后返回一次性 ticket，须显式调用两次 `confirm.advance`。ticket 与账户、当前会话、选中快照绑定并在提交前消费，2 分钟后失效；失败只返回逐项结果，不自动重试。`selection.result` 可查询本次结果。正常复制/移动等文件任务的终态规则不受媒体库功能影响。
 
+处理队列、任务/批次详情及存储扫描通过 `rhvideo.server.liveRefresh` 只读更新，`rhvideo.server.refreshState` 返回刷新是否启用、暂停、进行中及失败原因。仅可见且仍运行的任务定期读取；后台、关闭、被其他弹窗覆盖或编辑输入时暂停。连续三次读取失败后停止，手动刷新才重置失败预算，不会重放服务器写操作。
+
+成功写入会立即失效相关清单缓存；比写入更早发出的旧清单不能覆盖新索引。若写入成功但刷新失败，接口仍返回成功结果，并附 `clientWarning`；请核对或手动刷新，不要据此重复写入。导出在提交系统保存窗口前按 UTF-8 检查 32 MiB 上限。
+
 ## 验证
 
     node --test scripts/tests/rhvideo.test.mjs

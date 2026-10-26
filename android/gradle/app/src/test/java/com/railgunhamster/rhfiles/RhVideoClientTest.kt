@@ -54,6 +54,12 @@ class RhVideoClientTest {
     client.logout();json("""{"access_token":"other-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","other-password"));server.takeRequest()
     assertEquals(0,(client.request("playback.history",JSONObject()) as JSONObject).length())
   }
+  @Test fun successfulSourceWritesInvalidateTheNativeVideoCatalogImmediately(){
+    client=RhVideoClient(RuntimeEnvironment.getApplication(),JSONObject(java.io.File("src/main/assets/rhvideo/rhvideo-operations.json").readText()))
+    login();json("""[{"id":"1","original_filename":"需要暂存.mp4"}]""");assertEquals(1,(client.request("catalog",JSONObject()) as JSONObject).getInt("total"));server.takeRequest()
+    json("{}");client.request("operation",JSONObject().put("name","trash.stage").put("params",JSONObject().put("kind","video").put("id","1")).put("confirmation","RHVIDEO:trash.stage"));assertEquals("/api/v1/trash/video/1",server.takeRequest().path)
+    json("[]");assertEquals(0,(client.request("catalog",JSONObject()) as JSONObject).getInt("total"));assertEquals("/api/v1/videos?summary=true",server.takeRequest().path)
+  }
   @Test fun loginIsNativeAndOnlyServerAndUserPersist(){
     login();assertTrue(client.state().getBoolean("connected"))
     val prefs=RuntimeEnvironment.getApplication().getSharedPreferences("rhvideo-client-v1",0)

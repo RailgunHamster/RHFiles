@@ -32,7 +32,8 @@
     "video.reprocess": {
       "method": "POST",
       "path": "videos/{id}/reprocess",
-      "risk": "write"
+      "risk": "write",
+      "invalidatesCatalog": true
     },
     "video.open": {
       "method": "POST",
@@ -53,6 +54,7 @@
       "method": "POST",
       "path": "videos/{id}/replace-source",
       "risk": "destructive",
+      "invalidatesCatalog": true,
       "body": {
         "max_resolution": "resolution",
         "crf": "int:18:38",
@@ -137,6 +139,7 @@
       "method": "POST",
       "path": "replace-batches",
       "risk": "destructive",
+      "invalidatesCatalog": true,
       "body": {
         "video_ids": "ids:1000",
         "max_resolution": "resolution",
@@ -148,25 +151,29 @@
     "batches.stop": {
       "method": "POST",
       "path": "replace-batches/{id}/cancel",
-      "risk": "write"
+      "risk": "write",
+      "invalidatesCatalog": true
     },
     "trash.list": { "method": "GET", "path": "trash" },
     "trash.stage": {
       "method": "POST",
       "path": "trash/{kind}/{id}",
       "params": { "kind": "video|picture|novel" },
-      "risk": "destructive"
+      "risk": "destructive",
+      "invalidatesCatalog": true
     },
     "trash.restore": {
       "method": "POST",
       "path": "trash/{kind}/{id}/restore",
       "params": { "kind": "video|picture|novel" },
-      "risk": "write"
+      "risk": "write",
+      "invalidatesCatalog": true
     },
     "trash.expired": {
       "method": "POST",
       "path": "trash/purge-expired",
-      "risk": "destructive"
+      "risk": "destructive",
+      "invalidatesCatalog": true
     },
     "storage.usage": {
       "method": "GET",
@@ -203,7 +210,8 @@
     "cleanup.execute": {
       "method": "POST",
       "path": "system/cleanup-missing",
-      "risk": "destructive"
+      "risk": "destructive",
+      "invalidatesCatalog": true
     }
   }
 }

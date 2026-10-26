@@ -197,7 +197,9 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
         val call=contract.request(args)
         if(args.getString("name")=="index.video")videoCatalog(s,args.optJSONObject("query")?.optBoolean("refresh")?:false) else {
           val url=s.base.resolve(call.path)!!.newBuilder();call.query.forEach{(key,value)->url.addQueryParameter(key,value)}
-          json(s,url.build().toString(),call.method,call.body)
+          val value=json(s,url.build().toString(),call.method,call.body)
+          if(call.invalidatesCatalog)synchronized(catalogLock){synchronized(lock){if(live(s))videoCache=null}}
+          value
         }
       }
       "resolve"->{

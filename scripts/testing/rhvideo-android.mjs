@@ -11,7 +11,7 @@ assert.match(serial,/^emulator-\d+$/);assert(apk&&probe,'Provide release APK and
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME||path.join(process.env.LOCALAPPDATA,'Android/Sdk');
 const adb=path.join(sdk,'platform-tools/adb.exe');
 const sevenZip=path.resolve('src-tauri/thirdparty/7z.exe');
-for(const relative of ['rhvideo.html','js/rhvideo-workbench.js','js/rhvideo-index.js','rhvideo-operations.json']){
+for(const relative of ['rhvideo.html','js/rhvideo-client.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(apk),'assets/rhvideo/'+relative],{windowsHide:true,maxBuffer:8*1024*1024});
   const expected=fs.readFileSync(path.resolve('src',relative));
   assert.equal(createHash('sha256').update(packaged).digest('hex'),createHash('sha256').update(expected).digest('hex'),'APK must include the current '+relative);

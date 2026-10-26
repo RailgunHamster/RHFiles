@@ -2,21 +2,21 @@
 //! DLLs are loaded only from the installed/bundled VLC directory with a safe
 //! dependency search path; never from a media folder or the working directory.
 use libloading::Library;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
-    ffi::{CStr, CString, c_char, c_void},
+    ffi::{c_char, c_void, CStr, CString},
     path::PathBuf,
     sync::Mutex,
 };
 use tauri::{AppHandle, Manager, WindowEvent};
 use windows::{
+    core::w,
     Win32::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
-        Graphics::Gdi::{BLACKNESS, BeginPaint, EndPaint, PAINTSTRUCT, PatBlt},
+        Graphics::Gdi::{BeginPaint, EndPaint, PatBlt, BLACKNESS, PAINTSTRUCT},
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::*,
     },
-    core::w,
 };
 
 const LABEL: &str = "window-rhvideo-player";
@@ -591,7 +591,9 @@ pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value
             return Ok(json!({"state":"cancelled"}));
         }
         let status = engine.state();
-        if status["renderedFrames"].as_u64().unwrap_or(0) > 0 {
+        // Transparent native windows can be GPU-occluded. Readiness is actual
+        // decoder output; ordinary playback still requires displayed frames.
+        if status["decodedFrames"].as_u64().unwrap_or(0) > 0 {
             if let Err(error) = control_engine(&mut engine, &json!({"command":"pause"})) {
                 release_surface(engine);
                 return Err(error);
@@ -603,14 +605,13 @@ pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value
                 return Ok(json!({"state":"cancelled"}));
             }
             *slot = Some(engine);
-            let value = json!({"state":"ready","renderedFrames":status["renderedFrames"]});
+            let value = json!({"state":"ready","decodedFrames":status["decodedFrames"],"renderedFrames":status["renderedFrames"]});
             *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? = Some(value.clone());
             return Ok(value);
         }
         if std::time::Instant::now() >= deadline || status["state"] == 7 {
             tauri::async_runtime::spawn_blocking(move || release_surface(engine));
-            let value =
-                json!({"state":"failed","reason":"原生下一项首帧预加载失败或超时；不会自动重试"});
+            let value = json!({"state":"failed","reason":"原生下一项首帧预加载失败或超时；不会自动重试","decoderState":status["state"],"decodedFrames":status["decodedFrames"],"renderedFrames":status["renderedFrames"]});
             *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? = Some(value.clone());
             return Ok(value);
         }

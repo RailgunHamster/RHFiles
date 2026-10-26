@@ -75,6 +75,7 @@ pub struct Request {
     pub path: String,
     pub query: Vec<(String, String)>,
     pub body: Option<Value>,
+    pub invalidates_catalog: bool,
 }
 pub fn request(args: &Value) -> Result<Request, String> {
     let name = args
@@ -141,6 +142,7 @@ pub fn request(args: &Value) -> Result<Request, String> {
         path: format!("api/v1/{path}"),
         query,
         body: args.get("body").cloned(),
+        invalidates_catalog: spec["invalidatesCatalog"] == true,
     })
 }
 #[cfg(test)]

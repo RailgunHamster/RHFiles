@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 /** Same packaged operation contract as Windows; never accepts an arbitrary URL. */
 internal class RhVideoContract(private val manifest:JSONObject) {
-  data class Call(val method:String,val path:String,val query:Map<String,String>,val body:JSONObject?)
+  data class Call(val method:String,val path:String,val query:Map<String,String>,val body:JSONObject?,val invalidatesCatalog:Boolean=false)
   private fun valid(v:Any?,rule:String):Boolean = when {
     rule=="bool" -> v is Boolean
     rule=="id" -> v is String && v.matches(Regex("[A-Za-z0-9_-]{1,128}"))
@@ -37,6 +37,6 @@ internal class RhVideoContract(private val manifest:JSONObject) {
         if(section=="query")query[key]=values.get(key).toString()
       }
     }
-    return Call(spec.getString("method"),"api/v1/$path",query,args.optJSONObject("body"))
+    return Call(spec.getString("method"),"api/v1/$path",query,args.optJSONObject("body"),spec.optBoolean("invalidatesCatalog"))
   }
 }
