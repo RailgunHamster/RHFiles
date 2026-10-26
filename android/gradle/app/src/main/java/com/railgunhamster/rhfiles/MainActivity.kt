@@ -75,6 +75,10 @@ class MainActivity : TauriActivity() {
   }
   override fun onCreate(savedInstanceState:Bundle?) {
     restoreNavigation=savedInstanceState?.getBoolean("rhfilesRestoreNavigation",false)==true
+    // Wry's startup version RPC times out after 10 seconds. A cold Chromium
+    // provider can block the UI thread longer; its late reply then panics in
+    // Wry. Initialize the provider before super starts that native runtime.
+    WebView(applicationContext).destroy()
     super.onCreate(savedInstanceState)
     backup.recover()
     sharedConfig.recover()
