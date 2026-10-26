@@ -18,6 +18,13 @@ mod lan_startup;
 pub mod network_io;
 mod profile;
 mod recycle;
+mod rhvideo;
+#[cfg(windows)]
+mod rhvideo_clock;
+#[cfg(windows)]
+mod rhvideo_player;
+#[cfg(windows)]
+mod rhvideo_frame;
 mod search;
 #[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]
 mod shell;
@@ -161,6 +168,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            rhvideo::rhvideo_open,
+            rhvideo::rhvideo_request,
             lan_service::lan_service_state,
             lan_service::lan_service_start,
             lan_service::lan_service_stop,

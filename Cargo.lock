@@ -4890,15 +4890,20 @@ dependencies = [
 name = "rhfiles-tauri"
 version = "0.1.82"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "chrono",
+ "futures-util",
+ "getrandom 0.3.4",
  "libc",
  "libloading 0.8.9",
  "native-tls",
+ "percent-encoding",
  "pinyin",
  "pulldown-cmark",
  "qrcode",
  "regex",
+ "reqwest 0.12.28",
  "rhfiles-core",
  "rhfiles-service",
  "rhfiles-transfer",
@@ -4914,6 +4919,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tempfile",
+ "tokio",
  "ureq",
  "url",
  "velopack",

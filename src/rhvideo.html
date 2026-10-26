@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:*; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>RHFiles · RHVideo</title><link rel="stylesheet" href="css/rhvideo.css">
+</head>
+<body>
+  <aside class="library-sidebar">
+    <div class="library-brand"><span class="brand-mark" data-icon="library"></span><div><strong>RHFiles</strong><small>RHVideo 媒体库</small></div></div>
+    <div class="nav-label">我的媒体</div>
+    <nav id="library-nav" aria-label="媒体分类">
+      <button data-kind="video" class="nav-item active"><span data-icon="video"></span>视频<span class="nav-count" id="video-count"></span></button>
+      <button data-kind="picture" class="nav-item"><span data-icon="picture"></span>图片</button>
+      <button data-kind="novel" class="nav-item"><span data-icon="book"></span>小说</button>
+      <button data-kind="favorite" class="nav-item"><span data-icon="heart"></span>我的收藏</button>
+    </nav>
+    <div class="sidebar-note"><span data-icon="layers"></span><strong>内容在服务器，体验在这里</strong><p>沿用 RHVideo 媒体库，不导入、不复制你的原始文件。</p></div>
+    <button class="server-card" id="connection-open"><span class="connection-dot"></span><span><strong id="connection-label">尚未连接</strong><small id="connection-host">连接你的 RHVideo</small></span><span data-icon="settings"></span></button>
+  </aside>
+  <main class="library-main">
+    <header class="library-header"><div><p class="eyebrow">RHVIDEO LIBRARY</p><h1 id="page-title">视频</h1><p id="page-description">让每一段内容，都有舒服的打开方式。</p></div><div class="header-actions"><span class="native-badge"><span data-icon="desktop"></span>应用内媒体库</span><button class="icon-button" id="refresh" aria-label="刷新媒体库" title="刷新"><span data-icon="refresh"></span></button></div></header>
+    <section class="library-controls"><label class="search"><span data-icon="search"></span><input type="search" id="search" placeholder="搜索名称或文件夹…" autocomplete="off" aria-label="搜索媒体"></label><label class="folder-filter"><span data-icon="folder"></span><select id="folder" aria-label="按文件夹筛选"><option value="">所有文件夹</option></select></label><span class="result-count" id="result-count"></span></section>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="library-status" class="library-status" role="status"></div>
+    <section id="media-grid" class="media-grid" aria-label="媒体内容" aria-busy="false"></section>
+    <footer class="pagination"><span id="page-count"></span><div><button class="button secondary" id="previous-page">上一页</button><button class="button secondary" id="next-page">下一页</button></div></footer>
+  </main>
+  <dialog id="connection-dialog" class="connection-dialog">
+    <form id="connection-form"><div class="dialog-heading"><div><p class="eyebrow">YOUR MEDIA, CONNECTED</p><h2>连接 RHVideo</h2></div><button type="button" class="icon-button" id="connection-close" aria-label="关闭"><span data-icon="close"></span></button></div>
+      <p class="dialog-subtitle">使用现有 RHVideo 账号，访问同一份媒体库。</p>
+      <label class="field">服务器地址<input id="server" type="url" placeholder="http://server-home:8000" required spellcheck="false" autocomplete="url"></label>
+      <div class="fields-row"><label class="field">用户名<input id="username" required maxlength="256" autocomplete="username"></label><label class="field">密码<input id="password" type="password" required maxlength="4096" autocomplete="off"></label></div>
+      <div class="privacy-note"><span data-icon="shield"></span><p>只记住服务器地址和用户名。密码不保存，登录令牌仅保存在本次应用运行的原生内存中。HTTP 登录为明文传输，外网请使用 HTTPS 或可信 VPN。</p></div>
+      <div class="engine-status" id="engine-status"></div><p class="form-error" id="connection-error" role="alert"></p>
+      <footer class="dialog-actions"><button class="button secondary" id="disconnect" type="button" hidden>退出登录</button><span></span><button class="button primary" id="connect" type="submit">连接并登录<span data-icon="arrow"></span></button></footer>
+    </form>
+  </dialog>
+  <dialog id="image-dialog" class="image-dialog">
+    <header class="viewer-bar"><span id="image-title"></span><div><button class="icon-button" id="image-zoom-out" aria-label="缩小"><span data-icon="minus"></span></button><button class="text-button" id="image-fit">适应画面</button><button class="icon-button" id="image-zoom-in" aria-label="放大"><span data-icon="plus"></span></button><button class="icon-button" id="image-close" aria-label="关闭图片"><span data-icon="close"></span></button></div></header>
+    <div class="image-stage"><button class="image-arrow" id="image-previous" aria-label="上一张"><span data-icon="left"></span></button><div id="image-surface"><img id="full-image" alt="" draggable="false"></div><button class="image-arrow" id="image-next" aria-label="下一张"><span data-icon="right"></span></button></div><footer id="image-position"></footer>
+  </dialog>
+  <dialog id="reader-dialog" class="reader-dialog">
+    <header class="reader-toolbar"><button class="icon-button" id="reader-close" aria-label="关闭阅读器"><span data-icon="left"></span></button><strong id="book-title"></strong><span class="reader-save" id="reader-save"></span><label>字号<select id="reader-font" aria-label="阅读字号"><option value="18">18</option><option value="20" selected>20</option><option value="22">22</option><option value="24">24</option></select></label></header>
+    <div class="reader-body"><aside><p class="nav-label">章节目录</p><select id="chapter-select" size="18" aria-label="章节目录"></select></aside><article id="chapter-scroll"><div class="chapter-content"><h2 id="chapter-title"></h2><div id="chapter-text"></div><footer class="chapter-actions"><button class="button secondary" id="chapter-previous">上一章</button><button class="button secondary" id="chapter-next">下一章</button></footer></div></article></div>
+  </dialog>
+  <dialog id="timeline-dialog" class="timeline-dialog"><header class="dialog-heading"><div><p class="eyebrow">VIDEO TIMELINE</p><h2 id="timeline-title">关键帧时间轴</h2></div><button class="icon-button" id="timeline-close" aria-label="关闭时间轴"><span data-icon="close"></span></button></header><p class="dialog-subtitle">点击画面，在原生播放器中跳转到这一刻。</p><div id="timeline-frames"></div></dialog>
+  <script src="js/automation-core.js"></script><script src="js/rhvideo-model.js"></script><script src="js/rhvideo-client.js"></script>
+</body>
+</html>
