@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
@@ -16,8 +17,19 @@ const video=path.join(temporary,'sample.mp4');
 execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-t','20','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart',video],{windowsHide:true,timeout:30000});
 const fixture=await rhvideoFixture({videoFile:video}),port=new URL(fixture.url).port;
 const artifact=path.resolve('test-artifacts/rhvideo-android-release');fs.mkdirSync(artifact,{recursive:true});
+function installExact(packageId,file){
+  let matches=false;
+  try{
+    const installed=run(['shell','pm','path',packageId]).trim().split(/\r?\n/);
+    if(installed.length===1&&/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(installed[0])){
+      const remote=run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64);
+      matches=remote===createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    }
+  }catch{}
+  console.log(matches?'Installed APK byte-for-byte verified: '+packageId:run(['install','-r',file]).trim());
+}
 try{
-  console.log(run(['install','-r',apk]).trim());console.log(run(['install','-r',probe]).trim());
+  installExact('com.railgunhamster.rhfiles',apk);installExact('com.railgunhamster.rhfiles.test',probe);
   run(['reverse','tcp:'+port,'tcp:'+port]);run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
   const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='';child.stdout.on('data',data=>{output+=data;process.stdout.write(data);});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});

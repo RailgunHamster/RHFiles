@@ -43,4 +43,6 @@ test('library omits promotional copy and mobile playback stays native',()=>{
   const activity=fs.readFileSync(new URL('../../android/gradle/app/src/main/java/com/railgunhamster/rhfiles/RhVideoActivity.kt',import.meta.url),'utf8');
   assert.match(activity,/PlaybackActivity::class/);assert.match(activity,/main&&source===web/);
   assert.doesNotMatch(activity,/addJavascriptInterface|loadUrl\(.*server|allowFileAccess=true/);
+  const main=fs.readFileSync(new URL('../../android/gradle/app/src/main/java/com/railgunhamster/rhfiles/MainActivity.kt',import.meta.url),'utf8');
+  assert.match(main,/val uiCommands=setOf\([^\n]+"rhvideo.open"/);
 });

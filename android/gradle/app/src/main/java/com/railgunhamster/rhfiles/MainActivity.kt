@@ -160,7 +160,7 @@ class MainActivity : TauriActivity() {
             if(error!=null) response.put("error",error) else response.put("result",value ?: JSONObject.NULL)
             try{reply.postMessage(response.toString())}catch(_:Exception){}
           }}
-          val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan")
+          val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan","rhvideo.open","automation.status","automation.enable","automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control")
           val work={try{if(command=="groups.scan"||command=="qr.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,QrScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
           if(command in uiCommands) work() else if(command in setOf("groups.cancel","groups.diagnostics"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
