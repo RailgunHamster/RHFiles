@@ -130,10 +130,7 @@
         limit > 100
       )
         throw Error("分页或排序参数无效");
-      const rows = this.collections.get(kind) || [],
-        matches = await this.search(kind, search),
-        tags = this.tags?.compile(rule) || (() => true),
-        selectedSet = new Set(selected);
+      const rows = this.collections.get(kind) || [];
       const cacheKey = JSON.stringify([
         kind,
         search,
@@ -147,6 +144,9 @@
       ]);
       let order = this.orderCache.get(cacheKey);
       if (!order) {
+        const matches = await this.search(kind, search),
+          tags = this.tags?.compile(rule) || (() => true),
+          selectedSet = new Set(selected);
         order = [];
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];

@@ -12,6 +12,21 @@ const require = createRequire(import.meta.url),
   dictionary = require("../../src/vendor/pinyin-pro/pinyin-pro.js");
 const create = () => new I.Catalog({ tags, search, dictionary });
 
+test("cached filtered ordering skips repeated full-index searches and invalidates on catalog writes", async () => {
+  const catalog = create();
+  catalog.set("video", [{ id: "one", original_filename: "山野.mp4" }]);
+  let reads = 0;
+  const original = catalog.search.bind(catalog);
+  catalog.search = (...args) => { reads++; return original(...args); };
+  const criteria = { kind: "video", search: "shanye" };
+  assert.equal((await catalog.query(criteria)).total, 1);
+  await catalog.query({ ...criteria, offset: 1 });
+  assert.equal(reads, 1, "Paging/revisiting a cached filter must not scan the whole search index again");
+  catalog.set("video", []);
+  assert.equal((await catalog.query(criteria)).total, 0);
+  assert.equal(reads, 2, "A changed catalog cannot reuse old matches");
+});
+
 test("queued events from a terminated account worker cannot reject or resolve the replacement worker", () => {
   const source = fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js", import.meta.url), "utf8");
   const start = source.slice(source.indexOf("function startWorker()"), source.indexOf("function send(action"));
