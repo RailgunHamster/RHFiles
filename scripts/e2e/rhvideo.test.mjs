@@ -225,11 +225,11 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
   try{
     const file=path.join(app.directory,'sample.mp4');
     execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-t','14','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
-    fixture=await rhvideoFixture({videoFile:file});
+    fixture=await rhvideoFixture({videoFile:file,videoDuration:14});
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
     const connected=await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
     assert.equal(connected.nativePlayback,true,'VLC 3.x must be installed for native acceptance');
-    await invoke(view,'playlist.start');player=await target(app,'rhvideo-player.html');
+    await invoke(view,'playlist.sequential');player=await target(app,'rhvideo-player.html');
     let lastState,samples=[];
     const playing=await until(async()=>{
       lastState=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.state')");if(samples.length<10)samples.push(lastState);return lastState.nativeSurface&&lastState.durationMs>0&&lastState.positionMs>500?lastState:null;
@@ -272,7 +272,7 @@ test('native 1080p H.264 and 4K HEVC streams decode actual input frames',{skip:p
     try{
       const sample=path.join(app.directory,entry.name+'.mp4');
       execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i',`testsrc2=size=${entry.width}x${entry.height}:rate=12`,'-t','4','-c:v',entry.codec,'-threads','2','-preset','ultrafast',...(entry.codec==='libx265'?['-x265-params','pools=2:frame-threads=2:log-level=error']:[]),'-pix_fmt','yuv420p','-movflags','+faststart',sample],{windowsHide:true,timeout:120000,stdio:'pipe'});
-      fixture=await rhvideoFixture({videoFile:sample});await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
+      fixture=await rhvideoFixture({videoFile:sample,videoDuration:4});await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
       await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});const start=performance.now();await invoke(view,'timeline.play',{id:'video-0',seconds:0});player=await target(app,'rhvideo-player.html');
       const decoded=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.videoWidth===entry.width&&s.videoHeight===entry.height?s:null;},entry.name+' real native decoded frames',20000);
       records.push({codec:entry.name,firstFrameMs:performance.now()-start,nativeOpenToFrameMs:decoded.firstFrameMs,renderer:decoded.renderer,width:decoded.videoWidth,height:decoded.videoHeight,displayed:decoded.renderedFrames,decoded:decoded.decodedFrames,lost:decoded.lostFrames});

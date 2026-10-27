@@ -65,6 +65,10 @@ Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连
 
 批量暂存使用 `selection.toggle` → `selection.snapshot` → `selection.stage`，最后返回一次性 ticket，须显式调用两次 `confirm.advance`。ticket 与账户、当前会话、选中快照绑定并在提交前消费，2 分钟后失效；失败只返回逐项结果，不自动重试。`selection.result` 可查询本次结果。正常复制/移动等文件任务的终态规则不受媒体库功能影响。
 
+Windows 0.1.88 的播放行为单独对齐参考源码：`playlist.start` 是截图浏览位置开始的去重分段队列，`playlist.sequential` 是当前过滤后完整视频列表的顺序队列，传 `{ "super": true }` 使用独立的超压顺序队列；不再把它们合并到一个模式下拉中。三者分别保存位置和设置，只有 ID 与顺序完全一致才恢复游标。`player.seekQueue` 以 `ratio: 0..1` 定位整个队列，普通 `player.control` 的 seek 仍按当前视频的毫秒数定位。
+
+`player.back` 返回父截图，`player.next/previous` 在截图打开的单视频中返回父队列并移动一张；`player.close`／Esc 才关闭整层预览。连播的手动前后切换回绕，自动结束不回绕。`player.favorite`、`player.mark` 分别收藏和标记暂存当前视频。预览标记与列表多选不同，`preview.pending` 查看标记，关闭预览后仅提交一次；`preview.state` 只读查询结果，`preview.result` 打开逐项结果 UI。失败不重新放回标记池，后续关闭不会重放旧写入。
+
 处理队列、任务/批次详情及存储扫描通过 `rhvideo.server.liveRefresh` 只读更新，`rhvideo.server.refreshState` 返回刷新是否启用、暂停、进行中及失败原因。仅可见且仍运行的任务定期读取；后台、关闭、被其他弹窗覆盖或编辑输入时暂停。连续三次读取失败后停止，手动刷新才重置失败预算，不会重放服务器写操作。
 
 成功写入会立即失效相关清单缓存；比写入更早发出的旧清单不能覆盖新索引。若写入成功但刷新失败，接口仍返回成功结果，并附 `clientWarning`；请核对或手动刷新，不要据此重复写入。导出在提交系统保存窗口前按 UTF-8 检查 32 MiB 上限。
@@ -83,6 +87,8 @@ Android 原生播放界面的控件通过 `native.media.state/control`、网格�
     cargo test --manifest-path android/src-tauri/Cargo.toml --locked --test webview_startup
     node --test --test-concurrency=1 scripts/e2e/rhvideo.test.mjs
     node --test --test-concurrency=1 scripts/e2e/rhvideo-media-pressure.test.mjs
+    node --test scripts/tests/rhvideo-playback-reference.test.mjs
+    node --test --test-concurrency=1 scripts/e2e/rhvideo-playback-behavior.test.mjs
 
 Windows E2E 使用隔离配置，不操作已安装的 RHFiles。设置 RHFILES_NATIVE_PLAYER_QA=1 可启用真实 libVLC 播放验收，需要已安装 64 位 VLC 和 FFmpeg。测试生成专用 MP4，检查真实进度、暂停、跳转、前后切换，不以模拟播放代替。
 

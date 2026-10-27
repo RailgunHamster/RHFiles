@@ -1,7 +1,7 @@
 :root{font-family:"Segoe UI","Microsoft YaHei",sans-serif;color:#c7d0e3;background:#070b11;color-scheme:dark;font-size:12px}
 *{box-sizing:border-box}
 body{margin:0;overflow:hidden}
-#controls{height:132px;position:absolute;bottom:0;left:0;right:0;background:#121a29;padding:10px 14px;border-top:1px solid #263248}
+#controls{height:196px;position:absolute;bottom:0;left:0;right:0;background:#121a29;padding:10px 14px;border-top:1px solid #263248}
 .player-title{display:flex;gap:10px;align-items:center;margin-bottom:6px;height:30px;overflow:hidden}
 .player-title strong{flex:1;min-width:0;font-size:12px;font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .player-title>span{font-size:11px;color:#8b9db7;white-space:nowrap}
@@ -16,3 +16,9 @@ input[type=range]{accent-color:#8099f3;height:4px;cursor:pointer;min-width:25px}
 .control-row>span{font-size:10px;font-variant-numeric:tabular-nums;min-width:32px}
 .control-row label{display:flex;align-items:center;gap:7px;color:#8b9db7;font-size:10px}
 .control-row label input{width:65px}
+[hidden]{display:none!important}
+#queue-seek{flex:1;min-width:120px}
+#queue-counter{min-width:140px;text-align:right}
+#segment-row{margin-top:6px}
+#segment-row input[type=checkbox]{width:auto}
+#segment-length{background:#1d2940;color:inherit;border:1px solid #2c3b58;border-radius:5px;padding:4px;width:64px}

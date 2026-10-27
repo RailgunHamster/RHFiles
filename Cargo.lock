@@ -4888,7 +4888,7 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-tauri"
-version = "0.1.87"
+version = "0.1.88"
 dependencies = [
  "axum",
  "base64 0.22.1",

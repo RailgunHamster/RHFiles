@@ -8,7 +8,7 @@ export async function rhvideoFixture({videoFile=null,videoDuration=null,failTras
   const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
   const folders=['山野与旅途','日常片段','城市观察','慢生活'];
   const names=['沿着山脊，看见清晨','海边的蓝色时刻','森林里的一场小雨','城市醒来之前','周末，留一点空白','穿过落日的列车','湖面与风的形状','路过人间烟火','一个很慢的下午','远山，云与自由','星空下的营地','把日子过成风景'];
-  const videos=Array.from({length:videoCount},(_,i)=>({id:'video-'+i,original_filename:names[i%names.length]+(i>11?' · '+(i+1):'')+'.mp4',duration_seconds:videoDuration??126+i*31,original_resolution:i%3?'1920×1080':'3840×2160',folder_label:folders[i%folders.length],status:'completed'}));
+  const videos=Array.from({length:videoCount},(_,i)=>({id:'video-'+i,original_filename:names[i%names.length]+(i>11?' · '+(i+1):'')+'.mp4',duration_seconds:videoDuration??126+i*31,original_resolution:i%3?'1920×1080':'3840×2160',folder_label:folders[i%folders.length],status:'ready'}));
   const pictures=Array.from({length:pictureCount},(_,i)=>({id:'picture-'+i,original_filename:['山间留白','远行手记','夏日的海','微光森林'][i%4]+'.webp',webp_path:'pictures/'+i+'.svg',folder_label:folders[i%4],original_resolution:'2560×1600',status:'active'}));
   const novels=[{id:'novel-0',title:'沿途的风景',folder_label:'旅行与散文',word_count:216000,chapter_count:chapterCount,status:'active',progress:null},{id:'novel-1',title:'城市以外',folder_label:'小说书架',word_count:128000,chapter_count:chapterCount,status:'active',progress:{chapter_index:1,scroll_ratio:.2,percent:40}}];
   const svg=(index)=>{
@@ -17,7 +17,7 @@ export async function rhvideoFixture({videoFile=null,videoDuration=null,failTras
     return '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><defs><linearGradient id="s" x2="0" y2="1"><stop stop-color="'+sky+'"/><stop offset="1" stop-color="'+light+'"/></linearGradient><linearGradient id="m" x2="0" y2="1"><stop stop-color="'+dark+'"/><stop offset="1" stop-color="'+sky+'"/></linearGradient></defs><rect width="800" height="500" fill="url(#s)"/><circle cx="'+(570-index%3*90)+'" cy="130" r="43" fill="#fff4df" opacity=".8"/><path d="M0 330 145 190 280 300 440 145 650 310 800 215v285H0z" fill="'+dark+'" opacity=".35"/><path d="M0 370 185 280 330 390 520 260 800 380v120H0z" fill="url(#m)" opacity=".75"/><path d="M0 435q220-100 450-25t350-30v120H0z" fill="'+dark+'" opacity=".55"/></svg>';
   };
   const server=http.createServer(async(req,res)=>{
-    const url=new URL(req.url,'http://fixture'),path=url.pathname;requests.push({path,authorization:req.headers.authorization,range:req.headers.range,method:req.method});
+    const url=new URL(req.url,'http://fixture'),path=url.pathname;requests.push({path,query:url.search,authorization:req.headers.authorization,range:req.headers.range,method:req.method});
     const send=(status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value));};
     if(referenceStatic&&(path==='/'||path.startsWith('/static/'))){
       const relative=path==='/'?'index.html':decodeURIComponent(path.slice(8)),file=pathModule.resolve(referenceStatic,relative);
@@ -94,7 +94,8 @@ export async function rhvideoFixture({videoFile=null,videoDuration=null,failTras
       res.writeHead(200,{'content-type':'image/svg+xml'});return res.end(svg(Number(path.match(/\d+/g)?.at(-1))||0));
     }
     if(path.endsWith('/play')&&videoFile){
-      await beforeMedia?.({path,range:req.headers.range,image:false});
+      const override=await beforeMedia?.({path,range:req.headers.range,image:false});
+      if(override?.status)return send(override.status,{detail:override.detail||'Fixture video failure'});
       const size=fs.statSync(videoFile).size,range=req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
       const start=range?Number(range[1]):0,end=range&&range[2]?Math.min(Number(range[2]),size-1):size-1;
       if(start>=size){res.writeHead(416,{'content-range':'bytes */'+size});return res.end();}

@@ -85,7 +85,7 @@ test('valid streamed WebP is content-detected without byte loss, while HTML misl
 test('clicking one video opens that exact file, not the selected/portrait-filtered playlist',native,async()=>{
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
-    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory)});view=await library(app,fixture);
+    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoDuration:12});view=await library(app,fixture);
     await invoke(view,'selection.toggle',{kind:'video',id:'video-0',enabled:true});
     await invoke(view,'media.open',{kind:'video',id:'video-1'});player=await viewFor(app,'rhvideo-player.html');
     const state=await invoke(player,'player.state');
@@ -102,8 +102,8 @@ test('playlist preloading starts only after the current native video has display
   const app=await launchApp({emulateFocus:true});let release,fixture,view,player;
   const gate=new Promise(resolve=>release=resolve);
   try{
-    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),beforeMedia:async({path})=>{if(path==='/api/v1/videos/video-0/play')await gate;}});
-    view=await library(app,fixture);await invoke(view,'playlist.start');player=await viewFor(app,'rhvideo-player.html');
+    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoDuration:12,beforeMedia:async({path})=>{if(path==='/api/v1/videos/video-0/play')await gate;}});
+    view=await library(app,fixture);await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
     await until(()=>fixture.requests.some(r=>r.path==='/api/v1/videos/video-0/play'),'current video requested');
     await sleep(800);
     assert.equal(fixture.requests.some(r=>r.path==='/api/v1/videos/video-1/play'),false,'prefetch must not compete with a current video still waiting for its first byte');
@@ -118,7 +118,7 @@ test('repeat loops the current video instead of silently advancing through the q
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory,6),videoDuration:6,videoCount:3});view=await library(app,fixture);
     await invoke(view,'volume.set',{value:50});
-    await invoke(view,'playlist.start');player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
     const playing=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs>5000?s:null;},'real playback before repeat',25000);
     await invoke(player,'player.loop');
     await player.send('Emulation.setVirtualTimePolicy',{policy:'pause'});
@@ -134,29 +134,26 @@ test('repeat loops the current video instead of silently advancing through the q
   }finally{player?.close();view?.close();app.close();await fixture?.close();}
 });
 
-test('the last segment pauses at its boundary, and repeating it returns to its own random segment start',native,async()=>{
+test('repeating a gallery segment keeps its planned start instead of drawing a new random segment on each repeat',native,async()=>{
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory,12),videoDuration:12,videoCount:2});view=await library(app,fixture);
-    await invoke(view,'selection.toggle',{kind:'video',id:'video-0',enabled:true});
     await invoke(view,'preferences.set',{key:'fullLength',value:false});await invoke(view,'preferences.set',{key:'segment',value:3});
     await invoke(view,'playlist.start');player=await viewFor(app,'rhvideo-player.html');
     const current=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs===12000?s:null;},'real random segment frames',25000);
-    assert.equal(current.queue.total,1);assert.equal(current.queue.hasNext,false);
+    assert.equal(current.queue.total,2);assert.equal(current.queue.hasNext,true);
     const start=current.queue.segmentStartMs,end=start+3000;assert(start>0&&end<=12000);
+    await invoke(player,'player.loop');
     await invoke(player,'player.control',{command:'seek',value:end-100});
-    const stopped=await until(async()=>{const s=await invoke(player,'player.state');return s.state===4?s:null;},'last segment pauses instead of playing the entire file',5000);
-    assert.equal(stopped.queue.id,'video-0');assert(stopped.decoderPositionMs>=end-300&&stopped.decoderPositionMs<end+900);
-    await invoke(player,'player.loop');await invoke(player,'player.control',{command:'resume'});
     const repeated=await until(async()=>{const s=await invoke(player,'player.state');return s.state===3&&s.decoderPositionMs>=start-200&&s.decoderPositionMs<end-900?s:null;},'repeat returns to the same segment start',6000);
-    assert.equal(repeated.queue.id,'video-0');assert.equal(repeated.queue.segmentStartMs,start);
+    assert.equal(repeated.queue.id,current.queue.id);assert.equal(repeated.queue.segmentStartMs,start);
   }finally{player?.close();view?.close();app.close();await fixture?.close();}
 });
 
 test('closing the single-video player leaves independent multi-video playback running',native,async()=>{
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
-    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoCount:4});view=await library(app,fixture);
+    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoDuration:12,videoCount:4});view=await library(app,fixture);
     await invoke(view,'grid.open');
     await until(async()=>{const s=await invoke(view,'grid.state');return s.cells?.length===4&&s.cells.every(c=>c.renderedFrames>0);},'four actual independent video surfaces',25000);
     await invoke(view,'media.open',{kind:'video',id:'video-0'});player=await viewFor(app,'rhvideo-player.html');
@@ -169,7 +166,7 @@ test('closing the single-video player leaves independent multi-video playback ru
 test('native grid gain is independent for each real audio output, not only the UI slider',native,async t=>{
   const app=await launchApp({emulateFocus:true});let fixture,view;
   try{
-    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoCount:2});view=await library(app,fixture);
+    fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoDuration:12,videoCount:2});view=await library(app,fixture);
     await invoke(view,'volume.set',{value:50});await invoke(view,'grid.open');
     await until(async()=>{const s=await invoke(view,'grid.state');return s.cells?.length===2&&s.cells.every(c=>c.renderedFrames>0);},'actual grid streams',25000);
     const initial=await invoke(view,'grid.state');
@@ -191,7 +188,7 @@ test('native playlist advances even while the controls WebView virtual clock is 
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory,6),videoDuration:6,videoCount:3});view=await library(app,fixture);
-    await invoke(view,'playlist.start');player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
     const playing=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs>5000?s:null;},'native current frames',25000);
     await player.send('Emulation.setVirtualTimePolicy',{policy:'pause'});
     await app.evaluate("call('rhvideo_request',{action:'player.control',args:{command:'seek',value:"+(playing.durationMs-150)+"}})");

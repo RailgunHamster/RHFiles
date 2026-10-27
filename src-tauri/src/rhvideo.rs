@@ -11,14 +11,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap,HashSet},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Emitter};
 use url::Url;
 #[path = "rhvideo_contract.rs"]
 mod contract;
@@ -41,6 +41,14 @@ static RESUME: Mutex<Option<(Value, Instant)>> = Mutex::new(None);
 static PLAYBACK_REVISION: AtomicU64 = AtomicU64::new(1);
 static PLAY_MONITOR: OnceLock<Result<std::thread::Thread,String>> = OnceLock::new();
 static PLAY_MONITOR_ERROR: Mutex<Option<Value>> = Mutex::new(None);
+static QUEUE_STATE_LOCK: Mutex<()> = Mutex::new(());
+static PREVIEW_RUN: AtomicU64 = AtomicU64::new(1);
+
+fn failed_media(state:&Value)->bool{
+    // libVLC can report HTTP 404 as Ended, not Error. An input that ends
+    // without any duration or displayed frame is not a successful segment.
+    state["state"]==7||(state["state"]==6&&state["durationMs"].as_i64().unwrap_or(0)<=0&&state["renderedFrames"].as_u64().unwrap_or(0)==0)
+}
 
 // Native playback progression cannot depend on a WebView timer: Chromium may
 // throttle an occluded/unfocused controls window. One worker sleeps while idle
@@ -55,28 +63,31 @@ fn wake_playback_monitor(app:&AppHandle){
                 let independent_active=crate::rhvideo_player::maintain_independent_outputs();
                 let wait_for_activity=||if independent_active {std::thread::park_timeout(Duration::from_millis(100));}else{std::thread::park();};
                 let snapshot=PLAYBACK.lock().ok().and_then(|slot|slot.as_ref().map(|q|(
-                    q.generation,q.revision,q.items[q.index].0.clone(),(q.start_seconds*1000.) as i64,
-                    if q.options["fullLength"]==false{Some((q.options["segment"].as_f64().unwrap_or(15.)*1000.) as i64)}else{None},
-                    q.options["loop"]==true,q.index+1<q.items.len()
+                    q.generation,q.revision,q.items[q.index].0.clone(),(q.bounds().0*1000.) as i64,
+                    q.bounds().1.map(|seconds|(seconds*1000.) as i64),
+                    q.options["loop"]==true,q.index+1<q.items.len(),q.options["closeAtEnd"]==true
                 )));
-                let Some((generation,revision,id,start,segment,repeating,has_next))=snapshot else {wait_for_activity();continue};
+                let Some((generation,revision,id,start,segment,repeating,has_next,close_at_end))=snapshot else {wait_for_activity();continue};
                 if !current().is_ok_and(|s|s.generation==generation){wait_for_activity();continue;}
                 let Ok(state)=crate::rhvideo_player::command("player.state",&json!({})) else {wait_for_activity();continue};
-                if state["opened"]!=true || state["state"]==7 {wait_for_activity();continue;}
+                if state["opened"]!=true {wait_for_activity();continue;}
+                let failed=failed_media(&state);
+                if failed&&!close_at_end {wait_for_activity();continue;}
                 if state["state"]==4 {std::thread::park_timeout(if independent_active{Duration::from_millis(100)}else{Duration::from_secs(1)});continue;}
                 let duration=state["durationMs"].as_i64().unwrap_or(0);
                 let end=segment.map(|length|(start+length).min(duration)).unwrap_or(duration);
                 let lead=((end-start)/4).clamp(1,200);
                 let position=state["decoderPositionMs"].as_i64().unwrap_or(0);
-                let ending=state["state"]==6 || (end>0&&state["renderedFrames"].as_u64().unwrap_or(0)>0&&position>=end-lead&&(repeating||segment.is_some()));
+                let ending=failed||state["state"]==6 || (end>0&&state["renderedFrames"].as_u64().unwrap_or(0)>0&&position>=end-lead&&(repeating||segment.is_some()));
                 if !ending {
                     if end>0&&position<end-lead {handled=None;}
                     std::thread::park_timeout(Duration::from_millis(100));continue;
                 }
-                if handled==Some(revision){if state["state"]==6 {wait_for_activity();}else{std::thread::park_timeout(Duration::from_millis(100));}continue;}
-                let action=if repeating {"player.repeatCurrent"}else if has_next {"player.next"}else if segment.is_some(){"player.finishSegment"}else{wait_for_activity();continue};
+                if handled==Some(revision){if failed||state["state"]==6 {wait_for_activity();}else{std::thread::park_timeout(Duration::from_millis(100));}continue;}
+                let action=if failed {if has_next{"player.next"}else{"player.finishQueue"}}else if repeating {"player.repeatCurrent"}else if has_next {"player.next"}else if close_at_end {"player.finishQueue"}else if segment.is_some(){"player.finishSegment"}else{wait_for_activity();continue};
                 handled=Some(revision);
-                let result=tauri::async_runtime::block_on(rhvideo_request(app.clone(),action.into(),json!({"expectedId":id,"expectedRevision":revision})));
+                if failed{let _=app.emit_to("window-rhvideo","rhvideo-playback-error",json!({"generation":generation,"id":id,"message":format!("视频加载失败，{}：{}",if has_next{"已跳过"}else{"连播已结束"},state["title"].as_str().unwrap_or(&id))}));}
+                let result=tauri::async_runtime::block_on(rhvideo_request(app.clone(),action.into(),json!({"expectedId":id,"expectedRevision":revision,"automatic":true,"failed":failed})));
                 if PLAYBACK.lock().ok().is_some_and(|q|q.as_ref().is_some_and(|q|q.generation==generation&&q.revision==revision)) {
                     if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=result.err().map(|message|json!({"revision":revision,"message":message}));}
                 }
@@ -91,11 +102,16 @@ fn wake_playback_monitor(app:&AppHandle){
 #[cfg(not(windows))]
 fn wake_playback_monitor(_app:&AppHandle){}
 #[cfg(windows)]
-pub(crate) async fn player_window_destroyed(lease:u64){
+pub(crate) async fn player_window_destroyed(app:AppHandle,lease:u64){
     let _play=PLAY_LOCK.lock().await;
+    let context=PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|(q.generation,q.options.clone())));
     if crate::rhvideo_player::retire_window(lease){
         flush_playback();
         if let Ok(mut queue)=PLAYBACK.lock(){*queue=None;}
+        if let Some((generation,options))=context {
+            emit_parent_preview(&app,generation,&options,0,true);
+            if let Ok(session)=current(){let _=start_preview_commit(app,session);}
+        }
     }
 }
 struct PreparedPlaylist {
@@ -103,6 +119,8 @@ struct PreparedPlaylist {
     generation: u64,
     items: Vec<(String, String)>,
     durations: Vec<f64>,
+    segments: Vec<Option<(f64,f64)>>,
+    prefix: Vec<f64>,
     options: Value,
 }
 struct Playback {
@@ -111,8 +129,18 @@ struct Playback {
     items: Vec<(String, String)>,
     index: usize,
     durations: Vec<f64>,
+    segments: Vec<Option<(f64,f64)>>,
+    prefix: Vec<f64>,
     options: Value,
     start_seconds: f64,
+}
+impl Playback {
+    fn bounds(&self)->(f64,Option<f64>){
+        self.segments.get(self.index).copied().flatten().map(|(start,length)|(start,Some(length))).unwrap_or_else(||if self.options["fullLength"]==false{(self.start_seconds,Some(self.options["segment"].as_f64().unwrap_or(15.)))}else{(0.,None)})
+    }
+    fn start(&self,index:usize)->f64{
+        self.segments.get(index).copied().flatten().map(|s|s.0).unwrap_or_else(||segment_start(self.durations.get(index).copied().unwrap_or(0.),&self.options))
+    }
 }
 fn expected_playback(
     q: &Playback,
@@ -123,6 +151,15 @@ fn expected_playback(
     q.generation == generation
         && id.is_none_or(|id| q.items[q.index].0 == id)
         && revision.is_none_or(|revision| q.revision == revision)
+}
+fn queue_seek(prefix:&[f64],ratio:f64)->Result<(usize,f64),String>{
+    if prefix.len()<2||!ratio.is_finite()||!(0.0..=1.).contains(&ratio){return Err("队列位置无效".into());}
+    let count=prefix.len()-1;let total=*prefix.last().unwrap();
+    if total<=0.{return Err("队列缺少时长，无法定位".into());}
+    if ratio==1.{return Ok((count-1,0.));}
+    let target=ratio*total;
+    let index=prefix.partition_point(|value|*value<=target).saturating_sub(1).min(count-1);
+    Ok((index,(target-prefix[index]).max(0.)))
 }
 #[derive(Clone)]
 struct GridQueue {
@@ -173,6 +210,48 @@ struct Session {
     next_asset: AtomicU64,
     asset_revision: AtomicU64,
     videos: tokio::sync::Mutex<Option<VideoCatalog>>,
+    favorites: Mutex<HashSet<String>>,
+    preview: Mutex<PreviewState>,
+}
+#[derive(Default)]
+struct PreviewState{pending:HashMap<String,Value>,next:u64,running:bool,result:Value}
+fn emit_parent_preview(app:&AppHandle,generation:u64,options:&Value,direction:i64,close:bool){
+    if options["origin"]=="frame" {let _=app.emit_to("window-rhvideo","rhvideo-parent-preview",json!({"generation":generation,"parentKey":options["parentKey"],"direction":direction,"close":close}));}
+}
+async fn update_favorite(app:&AppHandle,session:&Session,kind:&str,id:&str,enabled:bool)->Result<Value,String>{
+    let result=session.request(if enabled{reqwest::Method::PUT}else{reqwest::Method::DELETE},&format!("api/v1/favorites/{kind}/{id}"),&[],None).await?;
+    if let Ok(mut cache)=session.favorites.lock(){if enabled{cache.insert(format!("{kind}:{id}"));}else{cache.remove(&format!("{kind}:{id}"));}}
+    let _=app.emit_to("window-rhvideo","rhvideo-favorite",json!({"generation":session.generation,"kind":kind,"id":id,"enabled":enabled}));
+    Ok(result)
+}
+fn start_preview_commit(app:AppHandle,session:Arc<Session>)->Result<Value,String>{
+    let run=PREVIEW_RUN.fetch_add(1,Ordering::SeqCst);
+    let targets={
+        let mut state=session.preview.lock().map_err(|_|"暂存标记不可用")?;
+        if state.running||state.pending.is_empty(){return Ok(state.result.clone());}
+        // Consume the explicit marks once, BEFORE any network write. Failed or
+        // late requests never re-enter this map when another preview closes.
+        let mut targets=std::mem::take(&mut state.pending).into_values().collect::<Vec<_>>();
+        targets.sort_by_key(|item|item["order"].as_u64().unwrap_or(0));
+        state.running=true;state.result=json!({"run":run,"running":true,"total":targets.len(),"completed":0,"items":[]});targets
+    };
+    let initial=json!({"run":run,"running":true,"total":targets.len(),"completed":0,"items":[]});
+    let _=app.emit_to("window-rhvideo","rhvideo-preview-result",json!({"generation":session.generation,"result":initial}));
+    tauri::async_runtime::spawn(async move{
+        let mut items=Vec::new();let total=targets.len();let mut published=Instant::now();
+        for target in targets {
+            let result=if !current().is_ok_and(|s|s.generation==session.generation){Err("媒体账户已更改；此项未提交，不会自动恢复".to_string())}
+            else{session.request(reqwest::Method::POST,&format!("api/v1/trash/{}/{}",target["kind"].as_str().unwrap_or(""),target["id"].as_str().unwrap_or("")),&[],None).await};
+            let mut item=target;item["success"]=json!(result.is_ok());if let Err(error)=result{item["error"]=json!(error);}items.push(item);
+            if items.len()==total||published.elapsed()>=Duration::from_millis(250){
+                let value=json!({"run":run,"running":items.len()<total,"total":total,"completed":items.len(),"items":items});
+                if let Ok(mut state)=session.preview.lock(){state.result=value.clone();if items.len()==total{state.running=false;}}
+                let _=app.emit_to("window-rhvideo","rhvideo-preview-result",json!({"generation":session.generation,"result":value}));
+                published=Instant::now();
+            }
+        }
+    });
+    Ok(initial)
 }
 struct VideoCatalog {
     checked: Instant,
@@ -252,8 +331,31 @@ fn playback_history(
 }
 pub(crate) fn flush_playback() {
     if let Ok(session) = current() {
+        let _ = save_queue_state(&session);
         let _ = playback_history(&session, None, None, true);
     }
+}
+fn queue_state(session:&Session,mode:&str,update:Option<Value>)->Result<Value,String>{
+    if !["segments","sequential","sequential-super"].contains(&mode){return Err("连播模式无效".into());}
+    let _lock=QUEUE_STATE_LOCK.lock().map_err(|_|"连播记录不可用")?;
+    let path=config_path()?.with_file_name("rhvideo-queues.json");
+    let mut data=std::fs::metadata(&path).ok().filter(|m|m.len()<=1024*1024).and_then(|_|std::fs::read(&path).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object).unwrap_or(json!({}));
+    let account=format!("{}\n{}",session.base,session.username);
+    if !data[&account].is_object(){data[&account]=json!({});}
+    if let Some(update)=update {
+        if !data[&account][mode].is_object(){data[&account][mode]=json!({});}
+        for(key,value)in update.as_object().ok_or("连播设置无效")?{data[&account][mode][key]=value.clone();}
+        if data.as_object().is_some_and(|o|o.len()>128){return Err("连播账户记录超出上限".into());}
+        let temp=path.with_extension("tmp");
+        std::fs::write(&temp,serde_json::to_vec(&data).map_err(|_|"连播记录无效")?).map_err(|_|"无法保存连播记录")?;
+        std::fs::rename(&temp,&path).map_err(|_|"无法提交连播记录")?;
+    }
+    Ok(data[&account][mode].clone())
+}
+fn save_queue_state(session:&Session)->Result<(),String>{
+    let snapshot=PLAYBACK.lock().map_err(|_|"播放队列不可用")?.as_ref().filter(|q|q.generation==session.generation&&q.options["reference"]==true).map(|q|(q.options["mode"].as_str().unwrap_or("").to_owned(),json!({"signature":q.options["signature"],"index":q.index,"id":q.items[q.index].0,"loop":q.options["loop"],"fullLength":q.options["fullLength"],"segment":q.options["segment"],"rate":q.options["rate"].as_f64().unwrap_or(1.)})));
+    if let Some((mode,value))=snapshot {queue_state(session,&mode,Some(value))?;}
+    Ok(())
 }
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
@@ -973,20 +1075,32 @@ pub(crate) async fn client_window(
     }
 }
 fn queue_info() -> Value {
-    PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),"hasPrevious":q.index>0,"hasNext":q.index+1<q.items.len(),"options":q.options,"segmentDuration":q.durations.get(q.index),"segmentStartMs":(q.start_seconds*1000.) as i64}))).unwrap_or(Value::Null)
+    PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|{let parent=q.options["origin"]=="frame"&&q.options["parentTotal"].as_u64().unwrap_or(0)>1;json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),"hasPrevious":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index>0},"hasNext":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index+1<q.items.len()},"options":q.options,"segmentDuration":q.durations.get(q.index),"segmentStartMs":(q.bounds().0*1000.) as i64,"segmentLengthMs":q.bounds().1.map(|s|(s*1000.) as i64),"elapsedBeforeMs":(q.prefix.get(q.index).copied().unwrap_or(0.)*1000.) as i64,"totalMs":(q.prefix.last().copied().unwrap_or(0.)*1000.) as i64})})).unwrap_or(Value::Null)
 }
 fn segment_start(duration: f64, options: &Value) -> f64 {
     if options["fullLength"] != false {
         return 0.;
     }
-    let segment = options["segment"].as_f64().unwrap_or(15.).clamp(0.1, 3600.);
-    if duration <= segment + 1. {
-        0.
-    } else {
-        let mut random = [0u8; 4];
-        let _ = getrandom::fill(&mut random);
-        1. + u32::from_le_bytes(random) as f64 / u32::MAX as f64 * (duration - segment - 1.)
+    let segment = options["segment"].as_f64().unwrap_or(3.).clamp(0.1, 3600.);
+    let mut random = [0u8; 4];
+    let _ = getrandom::fill(&mut random);
+    reference_segment_start(duration, segment, u32::from_le_bytes(random) as f64 / (u32::MAX as f64 + 1.))
+}
+fn reference_segment_start(duration:f64,segment:f64,random:f64)->f64{
+    let maximum=duration-segment-1.;
+    if maximum>1.{((1.+random.clamp(0.,1.)*(maximum-1.))*10.).round()/10.}else{0.}
+}
+fn validate_reference_options(options:&Value)->Result<(),String>{
+    if options["reference"]!=true{return Ok(());}
+    if !options["mode"].as_str().is_some_and(|s|["segments","sequential","sequential-super"].contains(&s))
+        || !options["signature"].as_str().is_some_and(|s|s.len()==64&&s.bytes().all(|b|b.is_ascii_hexdigit()))
+        || !options["fullLength"].is_boolean()
+        || !options["loop"].is_boolean()
+        || !options["segment"].as_f64().is_some_and(|n|n.is_finite()&&(1.0..=300.).contains(&n))
+        || !options["rate"].as_f64().is_some_and(|n|n.is_finite()&&(0.25..=4.).contains(&n)){
+        return Err("连播配置无效；尚未更改播放队列".into());
     }
+    Ok(())
 }
 fn schedule_preload(app: AppHandle, session: Arc<Session>) -> Result<Value, String> {
     #[cfg(windows)]
@@ -1091,13 +1205,18 @@ pub async fn rhvideo_request(
             #[cfg(windows)] { return crate::rhvideo_player::page_volume(value); }
             #[cfg(not(windows))] { let _=value;return Err("此平台尚未接入原生音量".into()); }
         }
-        "player.close" => {
+        "player.close" | "player.back" => {
             let _play=PLAY_LOCK.lock().await;
+            let context=PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|(q.generation,q.options.clone())));
             flush_playback();
             *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
             #[cfg(windows)] { crate::rhvideo_player::stop_single(); }
             if let Some(window)=app.get_webview_window("window-rhvideo-player") { let _=window.close(); }
             if let Some(window)=app.get_webview_window("window-rhvideo") {let _=window.show();let _=window.set_focus();}
+            if let Some((generation,options))=context {
+                emit_parent_preview(&app,generation,&options,0,action=="player.close");
+                if action=="player.close"||options["deferPreviewCommit"]!=true {if let Ok(session)=current(){let _=start_preview_commit(app,session);}}
+            }
             return Ok(json!({"closed":true}));
         }
         "player.preloadState" => {
@@ -1421,6 +1540,8 @@ pub async fn rhvideo_request(
                 next_asset: AtomicU64::new(1),
                 asset_revision: AtomicU64::new(0),
                 videos: tokio::sync::Mutex::new(None),
+                favorites: Mutex::new(HashSet::new()),
+                preview: Mutex::new(PreviewState::default()),
             });
             session
                 .request(reqwest::Method::GET, "api/v1/auth/me", &[], None)
@@ -1541,6 +1662,12 @@ pub async fn rhvideo_request(
             }
         }
         "playback.history" => playback_history(&session, None, None, false),
+        "playlist.state"=>queue_state(&session,text(&args,"mode",32)?,None),
+        "playlist.settings"=>{
+            let options=args["options"].as_object().ok_or("连播设置无效")?;
+            for(key,value)in options{if key=="segment"{if !value.as_f64().is_some_and(|n|n.is_finite()&&(1.0..=300.).contains(&n)){return Err("分段长度无效".into());}}else if !["loop","fullLength"].contains(&key.as_str())||!value.is_boolean(){return Err("连播设置无效".into());}}
+            queue_state(&session,text(&args,"mode",32)?,Some(args["options"].clone()))
+        }
         "playback.clear" => playback_history(&session, None, Some(json!({})), true),
         "playlist.prepare" => {
             let ticket = identifier(text(&args, "ticket", 128)?)?.to_owned();
@@ -1548,6 +1675,7 @@ pub async fn rhvideo_request(
                 .as_array()
                 .filter(|a| !a.is_empty() && a.len() <= 200)
                 .ok_or("播放列表分片无效")?;
+            if args["reset"]==true{validate_reference_options(&args["options"])?;}
             let mut slot = PREPARED.lock().map_err(|_| "队列不可用")?;
             if args["reset"] == true {
                 *slot = Some(PreparedPlaylist {
@@ -1555,6 +1683,8 @@ pub async fn rhvideo_request(
                     generation: session.generation,
                     items: Vec::new(),
                     durations: Vec::new(),
+                    segments: Vec::new(),
+                    prefix: vec![0.],
                     options: args["options"].clone(),
                 });
             }
@@ -1565,17 +1695,24 @@ pub async fn rhvideo_request(
             if q.items.len() + items.len() > 100000 {
                 return Err("播放列表超出 10 万项".into());
             }
+            let mut validated=Vec::with_capacity(items.len());
             for item in items {
-                q.items.push((
+                let identity=(
                     identifier(text(item, "id", 128)?)?.to_owned(),
                     text(item, "title", 1024)?.to_owned(),
-                ));
-                q.durations.push(
-                    item["duration"]
-                        .as_f64()
-                        .unwrap_or(0.0)
-                        .clamp(0.0, 604800.0),
                 );
+                let duration=item["duration"].as_f64().unwrap_or(0.).clamp(0.,604800.);
+                let segment=if q.options["reference"]==true {
+                    let start=item["segmentStart"].as_f64().filter(|n|n.is_finite()&&(0.0..=604800.).contains(n)).ok_or("分段起点无效")?;
+                    let length=item["segmentLength"].as_f64().filter(|n|n.is_finite()&&(0.1..=604800.).contains(n)).ok_or("分段长度无效")?;
+                    if duration>0.&&start+length>duration+0.2{return Err("分段超出视频时长".into());}
+                    Some((start,length))
+                }else{None};
+                validated.push((identity,duration,segment));
+            }
+            for(identity,duration,segment)in validated{
+                q.items.push(identity);q.durations.push(duration);q.segments.push(segment);
+                q.prefix.push(q.prefix.last().copied().unwrap_or(0.)+segment.map(|s|s.1).unwrap_or(duration));
             }
             Ok(json!({"count":q.items.len()}))
         }
@@ -1680,9 +1817,12 @@ pub async fn rhvideo_request(
             session.request(reqwest::Method::GET, path, &[], None).await
         }
         "favorites" => {
-            session
+            let value=session
                 .request(reqwest::Method::GET, "api/v1/favorites/ids", &[], None)
-                .await
+                .await?;
+            let mut cache=HashSet::new();for kind in ["video","picture","novel"]{if let Some(ids)=value[format!("{kind}_ids")].as_array(){for id in ids.iter().filter_map(Value::as_str){if identifier(id).is_ok(){cache.insert(format!("{kind}:{id}"));}}}}
+            *session.favorites.lock().map_err(|_|"收藏状态不可用")?=cache;
+            Ok(value)
         }
         "favorite" => {
             let kind = kind(&args)?;
@@ -1694,19 +1834,27 @@ pub async fn rhvideo_request(
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .ok_or("缺少收藏状态")?;
-            session
-                .request(
-                    if enabled {
-                        reqwest::Method::PUT
-                    } else {
-                        reqwest::Method::DELETE
-                    },
-                    &format!("api/v1/favorites/{kind}/{id}"),
-                    &[],
-                    None,
-                )
-                .await
+            update_favorite(&app,&session,kind,id,enabled).await
         }
+        "player.favorite"=>{
+            let id=identifier(text(&args,"id",128)?)?;
+            let revision=number(&args,"revision",0,u64::MAX)?;
+            if !PLAYBACK.lock().ok().is_some_and(|q|q.as_ref().is_some_and(|q|expected_playback(q,session.generation,Some(id),Some(revision)))){return Err("播放目标已更改，收藏操作未执行".into());}
+            let enabled=!session.favorites.lock().map_err(|_|"收藏不可用")?.contains(&format!("video:{id}"));
+            update_favorite(&app,&session,"video",id,enabled).await?;
+            Ok(json!({"id":id,"favorite":enabled}))
+        }
+        "preview.mark"=>{
+            let media_kind=kind(&args)?;if media_kind=="favorite"{return Err("标记类型无效".into());}
+            let id=identifier(text(&args,"id",128)?)?;let title=text(&args,"title",1024)?;
+            let key=format!("{media_kind}:{id}");let mut marks=session.preview.lock().map_err(|_|"标记不可用")?;
+            let enabled=args["enabled"].as_bool().unwrap_or(!marks.pending.contains_key(&key));
+            if enabled {if marks.pending.len()>=1000&&!marks.pending.contains_key(&key){return Err("本次预览暂存标记最多 1000 项".into());}let order=marks.pending.get(&key).and_then(|v|v["order"].as_u64()).unwrap_or_else(||{let order=marks.next;marks.next=marks.next.saturating_add(1);order});marks.pending.insert(key,json!({"kind":media_kind,"id":id,"title":title,"order":order}));}else{marks.pending.remove(&key);}
+            Ok(json!({"kind":media_kind,"id":id,"enabled":enabled,"pending":marks.pending.len()}))
+        }
+        "preview.pending"=>{let marks=session.preview.lock().map_err(|_|"标记不可用")?;let mut items=marks.pending.values().collect::<Vec<_>>();items.sort_by_key(|item|item["order"].as_u64().unwrap_or(0));Ok(json!({"items":items,"running":marks.running}))}
+        "preview.result"=>Ok(session.preview.lock().map_err(|_|"暂存结果不可用")?.result.clone()),
+        "preview.commit"=>start_preview_commit(app,session),
         "novel" | "chapter" | "progress" => {
             let id = identifier(text(&args, "id", 128)?)?;
             let path = format!("api/v1/novels/{id}");
@@ -1794,6 +1942,8 @@ pub async fn rhvideo_request(
                 .as_ref()
                 .map(|q| q.durations.clone())
                 .unwrap_or_default();
+            let segments=prepared.as_ref().map(|q|q.segments.clone()).unwrap_or_default();
+            let prefix=prepared.as_ref().map(|q|q.prefix.clone()).unwrap_or_default();
             let options = prepared
                 .as_ref()
                 .map(|q| q.options.clone())
@@ -1822,7 +1972,7 @@ pub async fn rhvideo_request(
                 .position(|(item, _)| item == id)
                 .ok_or("当前视频不在播放队列中")?;
             if args.get("seconds").is_none() {
-                seconds = segment_start(durations.get(index).copied().unwrap_or(0.), &options);
+                seconds = segments.get(index).copied().flatten().map(|s|s.0).unwrap_or_else(||segment_start(durations.get(index).copied().unwrap_or(0.), &options));
                 if args["resume"] == true && options["fullLength"] != false {
                     seconds = playback_history(&session, Some(id), None, false)?["seconds"]
                         .as_f64()
@@ -1841,6 +1991,7 @@ pub async fn rhvideo_request(
             .await?;
             #[cfg(windows)]
             {
+                if let Some(rate)=options["rate"].as_f64().filter(|r|(0.25..=4.).contains(r)){crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
                 let rotation = options["rotation"].as_i64().unwrap_or(0);
                 let actual = crate::rhvideo_player::command("player.state", &json!({}))?;
                 if actual["rotation"].as_i64() != Some(rotation) {
@@ -1856,31 +2007,43 @@ pub async fn rhvideo_request(
                 items,
                 index,
                 durations,
+                segments,
+                prefix,
                 options,
                 start_seconds: seconds,
             });
             if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
+            save_queue_state(&session)?;
             schedule_preload(app.clone(), session.clone())?;
             wake_playback_monitor(&app);
             Ok(result)
         }
-        "player.repeatCurrent" | "player.finishSegment" => {
+        "player.repeatCurrent" | "player.finishSegment" | "player.finishQueue" => {
             let _play=PLAY_LOCK.lock().await;
             let expected_id=identifier(text(&args,"expectedId",128)?)?;
             let expected_revision=number(&args,"expectedRevision",0,u64::MAX)?;
-            let (start,segment,enabled)={
+            let (start,segment,enabled,close_at_end)={
                 let queue=PLAYBACK.lock().map_err(|_|"播放队列不可用")?;
                 let queue=queue.as_ref().filter(|q|expected_playback(q,session.generation,Some(expected_id),Some(expected_revision)));
-                queue.map(|q|((q.start_seconds*1000.) as i64,if q.options["fullLength"]==false{q.options["segment"].as_f64().map(|s|(s*1000.) as i64)}else{None},q.options["loop"]==true)).unwrap_or((0,None,false))
+                queue.map(|q|((q.bounds().0*1000.) as i64,q.bounds().1.map(|s|(s*1000.) as i64),q.options["loop"]==true,q.options["closeAtEnd"]==true&&q.index+1==q.items.len())).unwrap_or((0,None,false,false))
             };
             #[cfg(windows)] {
                 let mut value=crate::rhvideo_player::command("player.state",&json!({}))?;
                 let duration=value["durationMs"].as_i64().unwrap_or(0);
                 let end=segment.map(|length|(start+length).min(duration)).unwrap_or(duration);
                 let lead=((end-start)/4).clamp(1,200);
-                let valid=if action=="player.repeatCurrent" {enabled}else{!enabled&&segment.is_some()};
-                if !valid || (value["state"]!=6&&(end<=0||value["decoderPositionMs"].as_i64().unwrap_or(0)<end-lead)) {
+                let failed=args["failed"]==true&&failed_media(&value)&&action=="player.finishQueue"&&close_at_end;
+                let valid=if action=="player.repeatCurrent" {enabled}else if action=="player.finishQueue"{(!enabled||failed)&&close_at_end}else{!enabled&&segment.is_some()};
+                if !valid || (!failed&&value["state"]!=6&&(end<=0||value["decoderPositionMs"].as_i64().unwrap_or(0)<end-lead)) {
                     value["stale"]=json!(true);
+                } else if action=="player.finishQueue" {
+                    flush_playback();
+                    *PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
+                    crate::rhvideo_player::stop_single();
+                    if let Some(w)=app.get_webview_window("window-rhvideo-player"){let _=w.close();}
+                    if let Some(w)=app.get_webview_window("window-rhvideo"){let _=w.show();let _=w.set_focus();}
+                    let _=start_preview_commit(app,session.clone());
+                    return Ok(json!({"closed":true,"finished":true}));
                 } else if action=="player.finishSegment" {
                     value=crate::rhvideo_player::command("player.control",&json!({"command":"pause"}))?;
                 } else {
@@ -1888,9 +2051,9 @@ pub async fn rhvideo_request(
                 }
                 value["queue"]=queue_info();return Ok(value);
             }
-            #[cfg(not(windows))] {let _=(start,segment,enabled);return Err("此平台暂未接入原生播放器".into());}
+            #[cfg(not(windows))] {let _=(start,segment,enabled,close_at_end);return Err("此平台暂未接入原生播放器".into());}
         }
-        "player.next" | "player.previous" => {
+        "player.next" | "player.previous" | "player.seekQueue" => {
             let _play = PLAY_LOCK.lock().await;
             if args.get("expectedId").is_some() || args.get("expectedRevision").is_some() {
                 let expected_id = args
@@ -1926,57 +2089,77 @@ pub async fn rhvideo_request(
                     }
                 }
             }
+            if args["failed"]==true{
+                #[cfg(windows)]{
+                    let value=crate::rhvideo_player::command("player.state",&json!({}))?;
+                    if !failed_media(&value)||args.get("expectedId").is_none()||args.get("expectedRevision").is_none()||action!="player.next"{return Err("失败视频的队列位置已更改".into());}
+                }
+            }
+            let parent=PLAYBACK.lock().ok().and_then(|q|q.as_ref().filter(|q|q.options["origin"]=="frame"&&action!="player.seekQueue").map(|q|q.options.clone()));
+            if let Some(options)=parent{
+                flush_playback();*PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
+                #[cfg(windows)]crate::rhvideo_player::stop_single();
+                if let Some(w)=app.get_webview_window("window-rhvideo-player"){let _=w.close();}
+                emit_parent_preview(&app,session.generation,&options,if action=="player.next"{1}else{-1},false);
+                if let Some(w)=app.get_webview_window("window-rhvideo"){let _=w.show();let _=w.set_focus();}
+                return Ok(json!({"closed":true,"returned":true}));
+            }
             let (id, title, index) = {
                 let queue = PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?;
                 let queue = queue
                     .as_ref()
                     .filter(|q| q.generation == session.generation)
                     .ok_or("播放队列已失效")?;
-                let index = if action == "player.next" {
+                let index = if action=="player.seekQueue" {
+                    queue_seek(&queue.prefix,args["ratio"].as_f64().ok_or("缺少队列位置")?)?.0
+                }else if queue.options["reference"]==true && args["automatic"]!=true {
+                    if action=="player.next"{(queue.index+1)%queue.items.len()}else{(queue.index+queue.items.len()-1)%queue.items.len()}
+                }else if action == "player.next" {
                     queue
                         .index
                         .checked_add(1)
-                        .filter(|v| *v < queue.items.len())
+                        .filter(|v| *v < queue.items.len()).ok_or("已经到达播放队列边界")?
                 } else {
-                    queue.index.checked_sub(1)
-                }
-                .ok_or("已经到达播放队列边界")?;
+                    queue.index.checked_sub(1).ok_or("已经到达播放队列边界")?
+                };
                 (
                     queue.items[index].0.clone(),
                     queue.items[index].1.clone(),
                     index,
                 )
             };
-            let (low, start) = PLAYBACK
+            let (low, start,rate) = PLAYBACK
                 .lock()
                 .ok()
                 .and_then(|q| {
                     q.as_ref().map(|q| {
                         (
                             q.options["super"] == true,
-                            segment_start(
-                                q.durations.get(index).copied().unwrap_or(0.),
-                                &q.options,
-                            ),
+                            q.start(index)+if action=="player.seekQueue"{queue_seek(&q.prefix,args["ratio"].as_f64().unwrap_or(0.)).map(|s|s.1).unwrap_or(0.)}else{0.},
+                            q.options["rate"].as_f64().unwrap_or(1.),
                         )
                     })
                 })
-                .unwrap_or((false, 0.));
+                .unwrap_or((false, 0.,1.));
             let mut result = native_play(app.clone(), &session, &id, title, start, low).await?;
+            #[cfg(windows)]{crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
+            #[cfg(not(windows))]let _=rate;
             if let Some(queue) = PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.as_mut()
             {
                 if queue.generation == session.generation {
                     queue.index = index;
-                    queue.start_seconds = start;
+                    queue.start_seconds = queue.segments.get(index).copied().flatten().map(|s|s.0).unwrap_or(start);
                     queue.revision = PLAYBACK_REVISION.fetch_add(1, Ordering::SeqCst);
                 }
             }
             if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
+            save_queue_state(&session)?;
             schedule_preload(app, session.clone())?;
             result["queue"] = queue_info();
             Ok(result)
         }
         "player.options" => {
+            let _play=PLAY_LOCK.lock().await;
             let mut slot = PLAYBACK.lock().map_err(|_| "播放队列不可用")?;
             let q = slot
                 .as_mut()
@@ -1990,18 +2173,38 @@ pub async fn rhvideo_request(
                 if k == "segment" {
                     if !v
                         .as_f64()
-                        .is_some_and(|n| n.is_finite() && (0.1..=3600.).contains(&n))
+                        .is_some_and(|n| n.is_finite() && if q.options["reference"]==true{(1.0..=300.).contains(&n)}else{(0.1..=3600.).contains(&n)})
                     {
                         return Err("分段时长无效".into());
                     }
                 } else if !v.is_boolean() {
                     return Err("选项无效".into());
                 }
-                q.options[k] = v.clone();
+            }
+            for(k,v)in options{q.options[k]=v.clone();}
+            let mut reposition=None;
+            if q.options["reference"]==true&&(options.contains_key("fullLength")||options.contains_key("segment")) {
+                q.prefix=vec![0.];
+                let full=q.options["fullLength"]!=false;let length=q.options["segment"].as_f64().unwrap_or(3.).clamp(1.,300.);
+                for(index,duration)in q.durations.iter().enumerate(){
+                    let current=q.segments.get(index).copied().flatten();
+                    let start=if full{0.}else{current.filter(|s|s.0>0.&&s.0+length<=*duration).map(|s|s.0).unwrap_or_else(||segment_start(*duration,&q.options))};
+                    let actual=if *duration>0.{if full{*duration}else{length.min(*duration)}}else{length};
+                    q.segments[index]=Some((start,actual));
+                    q.prefix.push(q.prefix.last().copied().unwrap_or(0.)+actual);
+                }
+                q.start_seconds=q.bounds().0;reposition=q.segments[q.index];
             }
             q.revision = PLAYBACK_REVISION.fetch_add(1, Ordering::SeqCst);
             let repeating=q.options["loop"]==true;
             drop(slot);
+            #[cfg(windows)] if let Some((start,length))=reposition{
+                let state=crate::rhvideo_player::command("player.state",&json!({}))?;
+                let position=state["decoderPositionMs"].as_f64().unwrap_or(0.)/1000.;
+                if position<start-0.5||position>start+length {crate::rhvideo_player::command("player.control",&json!({"command":"seek","value":(start*1000.) as i64}))?;}
+            }
+            #[cfg(not(windows))]let _=reposition;
+            save_queue_state(&session)?;
             #[cfg(windows)] if repeating {crate::rhvideo_player::clear_preload();}
             wake_playback_monitor(&app);
             Ok(queue_info())
@@ -2012,7 +2215,25 @@ pub async fn rhvideo_request(
                 let mut value = crate::rhvideo_player::command(&action, &args)?;
                 value["queue"] = queue_info();
                 value["automationError"]=PLAY_MONITOR_ERROR.lock().ok().and_then(|e|e.clone()).unwrap_or(Value::Null);
+                value["generation"]=json!(session.generation);
+                if let Some(id)=value["queue"]["id"].as_str().map(str::to_owned){
+                    value["favorite"]=json!(session.favorites.lock().ok().is_some_and(|s|s.contains(&format!("video:{id}"))));
+                    value["marked"]=json!(session.preview.lock().ok().is_some_and(|s|s.pending.contains_key(&format!("video:{id}"))));
+                }
                 if action=="player.control" {wake_playback_monitor(&app);}
+                if action=="player.control"&&args["command"]=="rate" {
+                    if let Ok(mut slot)=PLAYBACK.lock(){if let Some(q)=slot.as_mut(){q.options["rate"]=value["rate"].clone();}}
+                    save_queue_state(&session)?;
+                }
+                if action=="player.control"&&args["command"]=="seek" {
+                    if let Ok(mut slot)=PLAYBACK.lock(){if let Some(q)=slot.as_mut(){
+                        if q.options["reference"]==true&&q.options["loop"]==true {
+                            let (start,length)=q.bounds();let position=args["value"].as_f64().unwrap_or(0.)/1000.;
+                            if position<start-0.5||length.is_some_and(|length|position>start+length+1.){q.options["loop"]=json!(false);q.revision=PLAYBACK_REVISION.fetch_add(1,Ordering::SeqCst);}
+                        }
+                    }}
+                    value["queue"]=queue_info();
+                }
                 if let Some(id) = value["queue"]["id"].as_str() {
                     let pos = value["positionMs"].as_f64().unwrap_or(0.) / 1000.;
                     let duration = value["durationMs"].as_f64().unwrap_or(0.) / 1000.;
@@ -2107,6 +2328,8 @@ mod tests {
             next_asset: AtomicU64::new(1),
             asset_revision: AtomicU64::new(0),
             videos: tokio::sync::Mutex::new(None),
+            favorites: Mutex::new(HashSet::new()),
+            preview: Mutex::new(PreviewState::default()),
         };
         let first = session.video_catalog(false).await.unwrap();
         let warm = session.video_catalog(false).await.unwrap();
@@ -2189,6 +2412,8 @@ mod tests {
             items: vec![("A".into(), "A".into()), ("B".into(), "B".into())],
             index: 0,
             durations: vec![20.0, 20.0],
+            segments: vec![None,None],
+            prefix: vec![0.,20.,40.],
             options: json!({}),
             start_seconds: 0.0,
         };
@@ -2222,6 +2447,33 @@ mod tests {
         assert_eq!(q.annotate(json!({}))["hasNext"], false);
         q.page(-1);
         assert_eq!(q.offset, 4);
+    }
+    #[test]
+    fn reference_queue_scrubber_uses_segment_lengths_and_end_selects_last_entry_start(){
+        let prefix=[0.,3.,6.];
+        assert_eq!(queue_seek(&prefix,0.).unwrap(),(0,0.));
+        assert_eq!(queue_seek(&prefix,0.5).unwrap(),(1,0.));
+        assert_eq!(queue_seek(&prefix,0.75).unwrap(),(1,1.5));
+        assert_eq!(queue_seek(&prefix,1.).unwrap(),(1,0.));
+        assert!(queue_seek(&prefix,f64::NAN).is_err());
+        assert!(queue_seek(&[0.],0.5).is_err());
+    }
+    #[test]
+    fn native_segment_replanning_matches_reference_rounding_and_short_video_bounds(){
+        assert_eq!(reference_segment_start(40.,3.,0.5),18.5);
+        assert_eq!(reference_segment_start(7.,3.,0.5),2.);
+        assert_eq!(reference_segment_start(5.,3.,0.5),0.);
+        assert_eq!(reference_segment_start(2.,3.,0.5),0.);
+        let valid=json!({"reference":true,"mode":"segments","signature":"a".repeat(64),"fullLength":false,"loop":false,"segment":3,"rate":1});
+        assert!(validate_reference_options(&valid).is_ok());
+        for(key,value)in [("mode",json!("unknown")),("signature",json!("short")),("rate",json!(0)),("segment",json!(301)),("loop",json!("false"))]{let mut bad=valid.clone();bad[key]=value;assert!(validate_reference_options(&bad).is_err());}
+    }
+    #[test]
+    fn empty_ended_http_input_is_a_failure_not_a_repeatable_finished_segment(){
+        assert!(failed_media(&json!({"state":7})));
+        assert!(failed_media(&json!({"state":6,"durationMs":0,"renderedFrames":0})));
+        assert!(!failed_media(&json!({"state":6,"durationMs":6000,"renderedFrames":144})));
+        assert!(!failed_media(&json!({"state":1,"durationMs":0,"renderedFrames":0})));
     }
     #[test]
     fn network_errors_do_not_disclose_tokens_or_html() {

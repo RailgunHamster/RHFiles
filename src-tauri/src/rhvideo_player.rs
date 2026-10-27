@@ -20,6 +20,7 @@ use windows::{
 };
 
 const LABEL: &str = "window-rhvideo-player";
+const CONTROLS_HEIGHT:f64=196.;
 static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
 static PAGE_VOLUME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
@@ -889,7 +890,7 @@ fn layout_grid(window: &tauri::WebviewWindow) {
         return;
     }
     if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
-        let controls = (132. * scale) as u32;
+        let controls = (CONTROLS_HEIGHT * scale) as u32;
         let height = size.height.saturating_sub(controls).max(1);
         let cols = (grid.players.len() as f64).sqrt().ceil() as i32;
         let rows = (grid.players.len() as i32 + cols - 1) / cols;
@@ -1067,7 +1068,7 @@ fn resize(window: &tauri::WebviewWindow) {
 }
 fn layout(window: &tauri::WebviewWindow, child: usize) {
     if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
-        let controls = (132.0 * scale).round() as u32;
+        let controls = (CONTROLS_HEIGHT * scale).round() as u32;
         let video_height = size.height.saturating_sub(controls).max(1);
         // WebView2 is a native compositor surface: a full-window webview can
         // cover the HWND even when its HTML "video area" is empty. Give the
@@ -1123,11 +1124,12 @@ pub async fn play(
         )
         .await?;
         let view = window.clone();
+        let owner=app.clone();
         let lease=WINDOW_EPOCH.fetch_add(1,std::sync::atomic::Ordering::SeqCst)+1;
         window.on_window_event(move |event| match event {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => resize(&view),
             WindowEvent::Destroyed => {
-                tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(lease));
+                tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(owner.clone(),lease));
             }
             _ => {}
         });
@@ -1223,7 +1225,7 @@ pub async fn play(
                         0,
                         0,
                         size.width as i32,
-                        (size.height as i32 - (132.0 * scale).round() as i32).max(1),
+                        (size.height as i32 - (CONTROLS_HEIGHT * scale).round() as i32).max(1),
                         Some(HWND(parent.0)),
                         None,
                         None,

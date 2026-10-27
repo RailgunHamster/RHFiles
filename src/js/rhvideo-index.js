@@ -200,6 +200,8 @@
                   id: v.id,
                   kind: v.kind,
                   title: v.title,
+                  status: v.status,
+                  folder_label: v.folder,
                   duration: v.duration,
                   resolution: v.resolution,
                   ...(v.kind === "picture" || v.kind === "frame"

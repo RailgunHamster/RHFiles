@@ -1,12 +1,13 @@
 (() => {
   'use strict';
   const api=window.RHFilesAPI,$=id=>document.getElementById(id),object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
-  const native=(action,args={})=>window.__TAURI__.core.invoke('rhvideo_request',{action,args});
+  const native=(action,args={})=>window.__TAURI__.core.invoke('rhvideo_request',{action,args:state.generation?{...args,_sessionGeneration:state.generation}:args});
   api.provideState('application',()=>({platform:'windows',window:'window-rhvideo-player',ready:true}));
-  let state={opened:false},busy=false,dragging=false,closed=false;
+  let state={opened:false},busy=false,dragging=false,queueDragging=false,closed=false;
   function error(value){delete $('error').dataset.automation;$('error').textContent=String(value?.message||value);}
   let audibleVolume=100;
   function paint(value){
+    for(const node of document.querySelectorAll('#controls button,#controls input,#controls select'))if(node.id!=='back')node.disabled=!value.opened||!value.queue?.id;
     state=value;if(!state.opened){$('status').textContent='播放已停止';return;}
     $('title').textContent=state.title;$('position').textContent=RHVideoModel.clock(state.positionMs/1000);$('duration').textContent=RHVideoModel.clock(state.durationMs/1000);
     if(!dragging)$('seek').value=state.durationMs>0?Math.round(state.positionMs/state.durationMs*1000):0;
@@ -16,17 +17,34 @@
     $('volume').value=String(state.volume);$('rate').value=String(state.rate);
     $('previous').disabled=!state.queue?.hasPrevious;$('next').disabled=!state.queue?.hasNext;
     const repeat=$('player-loop');if(repeat){repeat.textContent=state.queue?.options?.fullLength===false?'循环当前片段':'循环当前视频';repeat.setAttribute('aria-pressed',String(state.queue?.options?.loop===true));}
+    const q=state.queue,reference=q?.options?.reference===true;
+    $('back').textContent=q?.options?.origin==='frame'?'返回截图':'返回媒体库';
+    if($('player-favorite')){$('player-favorite').textContent=state.favorite?'取消收藏':'收藏';$('player-favorite').setAttribute('aria-pressed',String(!!state.favorite));}
+    if($('player-mark')){$('player-mark').textContent=state.marked?'取消暂存标记':'标记暂存';$('player-mark').setAttribute('aria-pressed',String(!!state.marked));}
+    $('queue-row').hidden=!reference;$('segment-row').hidden=!reference;
+    if(reference){
+      const elapsed=Math.max(0,Math.min(q.segmentLengthMs||0,state.positionMs-(q.segmentStartMs||0)))+(q.elapsedBeforeMs||0);
+      if(!queueDragging)$('queue-seek').value=String(Math.round(elapsed/Math.max(1,q.totalMs)*1000));
+      $('queue-counter').textContent=`${q.index+1}/${q.total} · ${RHVideoModel.clock(elapsed/1000)} / ${RHVideoModel.clock(q.totalMs/1000)}`;
+      $('full-length').checked=q.options.fullLength!==false;
+      if(document.activeElement!==$('segment-length'))$('segment-length').value=String(q.options.segment||3);
+      $('segment-length').disabled=q.options.fullLength!==false;
+    }
     if(state.automationError){$('error').dataset.automation='true';$('error').textContent='自动播放失败：'+state.automationError.message;}else if($('error').dataset.automation){delete $('error').dataset.automation;$('error').textContent='';}
   }
   api.provideState('player',()=>state);
+  async function currentTarget(){if(state.opened&&state.queue?.id)return state;const value=await native('player.state');paint(value);if(!value.opened||!value.queue?.id)throw Error('视频正在准备，请稍候');return value;}
   const register=(name,params,handler)=>api.register('rhvideo.player.'+name,handler,{params,risk:['state','preloadState'].includes(name)?'read':'ui',description:'Native RHVideo player '+name});
   register('state',object(),async()=>{const value=await native('player.state');paint(value);return value;});
   register('control',object({command:{type:'string',enum:['pause','resume','seek','rate','volume','rotate']},value:{type:'number'}},['command']),async args=>{const value=await native('player.control',args);paint(value);return value;});
-  register('options',object({loop:{type:'boolean'},fullLength:{type:'boolean'},segment:{type:'number',minimum:.1,maximum:3600},super:{type:'boolean'}}),args=>native('player.options',{options:args}));
-  register('mute',object(),()=>control({command:'volume',value:state.volume?0:audibleVolume}));
-  register('rotate',object(),()=>control({command:'rotate',value:((state.rotation||0)+90)%360}));
-  register('loop',object(),()=>api.invoke('rhvideo.player.options',{loop:!state.queue?.options?.loop}));
-  for(const [name,title]of [['mute','静音'],['rotate','旋转'],['loop','循环当前视频']]){const b=document.createElement('button');b.id='player-'+name;b.dataset.apiAction='rhvideo.player.'+name;b.textContent=title;RHFilesUI.listen(b,'click',()=>api.invoke('rhvideo.player.'+name).catch(error),undefined,'rhvideo.player.'+name);document.querySelector('.control-row').append(b);}
+  register('options',object({loop:{type:'boolean'},fullLength:{type:'boolean'},segment:{type:'number',minimum:1,maximum:300},super:{type:'boolean'}}),async args=>{const queue=await native('player.options',{options:args});state.queue=queue;paint(state);return queue;});
+  register('mute',object(),async()=>{const current=await currentTarget();return control({command:'volume',value:current.volume?0:audibleVolume});});
+  register('rotate',object(),async()=>{const current=await currentTarget();return control({command:'rotate',value:((current.rotation||0)+90)%360});});
+  register('loop',object(),async()=>{const current=await currentTarget();return api.invoke('rhvideo.player.options',{loop:!current.queue.options?.loop});});
+  let favoriteBusy=false;
+  register('favorite',object(),async()=>{if(favoriteBusy)throw Error('收藏请求正在处理');favoriteBusy=true;try{const current=await currentTarget();await native('player.favorite',{id:current.queue.id,revision:current.queue.revision});return api.invoke('rhvideo.player.state');}finally{favoriteBusy=false;}});
+  register('mark',object(),async()=>{const current=await currentTarget();await native('preview.mark',{id:current.queue.id,kind:'video',title:current.title});return api.invoke('rhvideo.player.state');});
+  for(const [name,title]of [['mute','静音'],['rotate','旋转'],['loop','循环当前视频'],['favorite','收藏'],['mark','标记暂存']]){const b=document.createElement('button');b.id='player-'+name;b.dataset.apiAction='rhvideo.player.'+name;b.textContent=title;if(name==='mark')b.title='关闭预览时将已标记源文件移入 RHVideo 的暂存区（不是永久删除）';RHFilesUI.listen(b,'click',()=>api.invoke('rhvideo.player.'+name).catch(error),undefined,'rhvideo.player.'+name);$('playback-actions').append(b);}
   register('fullscreen',object(),()=>native('player.fullscreen'));
   for(const direction of ['next','previous'])register(direction,object({expectedId:{type:'string',maxLength:128},expectedRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}}),async args=>{const result=await native('player.'+direction,args);paint(result);return result;});
   register('preloadState',object(),()=>native('player.preloadState'));
@@ -34,7 +52,9 @@
   register('finishSegment',object({expectedId:{type:'string',maxLength:128},expectedRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['expectedId','expectedRevision']),async args=>{const value=await native('player.finishSegment',args);paint(value);return value;});
   register('preload',object(),()=>native('player.preload'));
   register('close',object(),()=>native('player.close'));
-  for(const [id,name]of Object.entries({back:'close',toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen'}))$(id).dataset.apiAction='rhvideo.player.'+name;
+  register('back',object(),()=>native('player.back'));
+  register('seekQueue',object({ratio:{type:'number',minimum:0,maximum:1}},['ratio']),async args=>{const value=await native('player.seekQueue',args);paint(value);return value;});
+  for(const [id,name]of Object.entries({back:'back',toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen','queue-seek':'seekQueue','full-length':'options','segment-length':'options'}))$(id).dataset.apiAction='rhvideo.player.'+name;
   api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...document.querySelectorAll('button,input,select')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native player UI/public API coverage'});
   const control=args=>api.invoke('rhvideo.player.control',args).catch(error);
   RHFilesUI.listen($('toggle'),'click',()=>control({command:state.state===4||state.state===6?'resume':'pause'}),undefined,'rhvideo.player.toggle');
@@ -44,8 +64,13 @@
   RHFilesUI.listen($('rate'),'change',()=>control({command:'rate',value:Number($('rate').value)}),undefined,'rhvideo.player.rate');
   RHFilesUI.listen($('volume'),'change',()=>control({command:'volume',value:Number($('volume').value)}),undefined,'rhvideo.player.volume');
   RHFilesUI.listen($('fullscreen'),'click',()=>api.invoke('rhvideo.player.fullscreen').catch(error),undefined,'rhvideo.player.fullscreen');
-  RHFilesUI.listen($('back'),'click',()=>api.invoke('rhvideo.player.close').catch(error),undefined,'rhvideo.player.close');
-  RHFilesUI.listen(document,'keydown',event=>{if(event.code==='Escape'){event.preventDefault();void api.invoke('rhvideo.player.close').catch(error);return;}if(event.code!=='Space'||event.target.matches('input,select'))return;event.preventDefault();control({command:state.state===4||state.state===6?'resume':'pause'});},undefined,'rhvideo.player.keyboard');
+  RHFilesUI.listen($('queue-seek'),'input',()=>{queueDragging=true;},undefined,'rhvideo.player.queue.preview');
+  RHFilesUI.listen($('queue-seek'),'change',()=>{queueDragging=false;void api.invoke('rhvideo.player.seekQueue',{ratio:Number($('queue-seek').value)/1000}).catch(error);},undefined,'rhvideo.player.seekQueue');
+  RHFilesUI.listen($('full-length'),'change',()=>api.invoke('rhvideo.player.options',{fullLength:$('full-length').checked}).catch(error),undefined,'rhvideo.player.options.fullLength');
+  RHFilesUI.listen($('segment-length'),'change',()=>api.invoke('rhvideo.player.options',{segment:Number($('segment-length').value),fullLength:false}).catch(error),undefined,'rhvideo.player.options.segment');
+  RHFilesUI.listen($('back'),'click',()=>api.invoke('rhvideo.player.back').catch(error),undefined,'rhvideo.player.back');
+  RHFilesUI.listen(document,'keydown',event=>{if(event.code==='Escape'){event.preventDefault();void api.invoke('rhvideo.player.close').catch(error);return;}if(event.target.matches('input,select,textarea')||event.target.isContentEditable)return;let name,args={};if(event.code==='Space'){name='control';args={command:state.state===4||state.state===6?'resume':'pause'};}else if(event.code==='Delete'&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey)name='mark';else if(event.code==='ArrowLeft')name='previous';else if(event.code==='ArrowRight')name='next';else if(state.queue?.options?.reference&&['Home','End'].includes(event.code)){name='seekQueue';args={ratio:event.code==='Home'?0:1};}if(!name)return;event.preventDefault();void api.invoke('rhvideo.player.'+name,args).catch(error);},undefined,'rhvideo.player.keyboard');
+  let wheelAt=0;RHFilesUI.listen(document,'wheel',event=>{if((!state.queue?.options?.reference&&state.queue?.options?.origin!=='frame')||event.target.closest('input,select,textarea'))return;event.preventDefault();if(performance.now()-wheelAt<180)return;wheelAt=performance.now();void api.invoke('rhvideo.player.'+(event.deltaY>0?'next':'previous')).catch(error);},{passive:false},'rhvideo.player.wheel');
   RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.player.contextmenu');
   async function poll(){
     if(busy||closed)return;busy=true;

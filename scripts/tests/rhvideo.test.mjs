@@ -16,9 +16,9 @@ test('favorites retain media type even when two types share an ID',()=>{
   const set=model.favoriteSet({video_ids:['same'],picture_ids:['same'],novel_ids:['book']});
   assert.deepEqual([...set],['video:same','picture:same','novel:book']);assert.equal(model.itemKey({kind:'picture',id:'same'}),'picture:same');
 });
-test('image queue is isolated from videos and bounded at either end',()=>{
+test('image queue is isolated from videos and wraps like RHVideo navMedia',()=>{
   const items=[{id:'v',kind:'video',cover:'v'},{id:'a',kind:'picture',cover:'a'},{id:'b',kind:'picture',cover:'b'},{id:'c',kind:'picture',cover:null}];
-  assert.equal(model.imageIndex(items,'a',-1).index,0);assert.equal(model.imageIndex(items,'b',1).index,1);
+  assert.equal(model.imageIndex(items,'a',-1).index,1);assert.equal(model.imageIndex(items,'b',1).index,0);
   assert.equal(model.imageIndex(items,'a',1).images.length,2);assert.throws(()=>model.imageIndex(items,'v'));assert.throws(()=>model.imageIndex(items,'c'));
 });
 test('unexpected catalog formats are not rendered as successful empty folders',()=>{
