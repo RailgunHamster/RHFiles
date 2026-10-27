@@ -69,6 +69,12 @@ Windows 0.1.88 的播放行为单独对齐参考源码：`playlist.start` 是截
 
 `player.back` 返回父截图，`player.next/previous` 在截图打开的单视频中返回父队列并移动一张；`player.close`／Esc 才关闭整层预览。连播的手动前后切换回绕，自动结束不回绕。`player.favorite`、`player.mark` 分别收藏和标记暂存当前视频。预览标记与列表多选不同，`preview.pending` 查看标记，关闭预览后仅提交一次；`preview.state` 只读查询结果，`preview.result` 打开逐项结果 UI。失败不重新放回标记池，后续关闭不会重放旧写入。
 
+Windows 0.1.89 开发分支增加 `player.options {"portraitOnly":true}`，在不可变的完整原队列上投影竖屏项；取消后恢复顺序，少于两项时拒绝操作、保留当前播放。各模式分别保存筛选、速度、位置和全长选择。播放器窗口的该动作以读取到的 ID／队列版本发起原生请求，拒绝迟到的旧目标设置。切换服务器后窗口同步新的 `generation`。
+
+`image.seek {"ratio":0.5}` 定位完整图片／截图集合，使用 `round(ratio * (count - 1))`，不是视频时间轴。`image.favorite` 收藏当前预览（截图收藏源视频），不受当前卡片页限制。`image.playVideo` 从头播放截图源视频，`image.playFrame` 跳到截图时间点；返回事件必须同时匹配 `generation`、`parentKey` 和独立的 `parentPreview`。`image.state` 的缺失字段用 `null` 返回，关闭状态及非媒体库任务图片也保持有效 JSON。自定义图片快捷键取代旧键，不叠加隐藏的默认绑定。
+
+全长播放缺少时长元数据时，沿用参考客户端的 86400 秒保护长度，而非三秒片段；原生解码器正常的结束事件仍会前进或关闭。上述开发改动尚未发布为 0.1.89 完整安装包，也不代表 Android 原生控制已同步。
+
 处理队列、任务/批次详情及存储扫描通过 `rhvideo.server.liveRefresh` 只读更新，`rhvideo.server.refreshState` 返回刷新是否启用、暂停、进行中及失败原因。仅可见且仍运行的任务定期读取；后台、关闭、被其他弹窗覆盖或编辑输入时暂停。连续三次读取失败后停止，手动刷新才重置失败预算，不会重放服务器写操作。
 
 成功写入会立即失效相关清单缓存；比写入更早发出的旧清单不能覆盖新索引。若写入成功但刷新失败，接口仍返回成功结果，并附 `clientWarning`；请核对或手动刷新，不要据此重复写入。导出在提交系统保存窗口前按 UTF-8 检查 32 MiB 上限。

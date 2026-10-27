@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest,Sha256};
 use std::{
     collections::{HashMap,HashSet},
     sync::{
@@ -119,10 +120,19 @@ struct PreparedPlaylist {
     generation: u64,
     items: Vec<(String, String)>,
     durations: Vec<f64>,
+    portraits: Vec<bool>,
     segments: Vec<Option<(f64,f64)>>,
     prefix: Vec<f64>,
     options: Value,
 }
+#[derive(Clone)]
+struct PlaylistPool {
+    items: Vec<(String,String)>,
+    durations: Vec<f64>,
+    portraits: Vec<bool>,
+    segments: Vec<Option<(f64,f64)>>,
+}
+#[derive(Clone)]
 struct Playback {
     generation: u64,
     revision: u64,
@@ -133,6 +143,9 @@ struct Playback {
     prefix: Vec<f64>,
     options: Value,
     start_seconds: f64,
+    // The immutable source order survives live filtering. Never reconstruct
+    // it from the already-filtered queue or a later, changed library page.
+    pool: Option<Arc<PlaylistPool>>,
 }
 impl Playback {
     fn bounds(&self)->(f64,Option<f64>){
@@ -140,6 +153,28 @@ impl Playback {
     }
     fn start(&self,index:usize)->f64{
         self.segments.get(index).copied().flatten().map(|s|s.0).unwrap_or_else(||segment_start(self.durations.get(index).copied().unwrap_or(0.),&self.options))
+    }
+    fn project_portrait(&mut self,enabled:bool,reset_full_length:bool)->Result<(),String>{
+        let pool=self.pool.as_ref().ok_or("当前不是可筛选的连播队列")?;
+        let indices=(0..pool.items.len()).filter(|i|!enabled||pool.portraits.get(*i)==Some(&true)).collect::<Vec<_>>();
+        if indices.len()<if enabled{2}else{1}{return Err("竖屏视频不足 2 个，当前播放保持不变".into());}
+        let same=indices.len()==self.items.len()&&indices.iter().zip(&self.items).all(|(i,item)|pool.items[*i].0==item.0);
+        let items=indices.iter().map(|i|pool.items[*i].clone()).collect::<Vec<_>>();
+        let durations=indices.iter().map(|i|pool.durations.get(*i).copied().unwrap_or(0.)).collect::<Vec<_>>();
+        let signature=format!("{:x}",Sha256::digest(serde_json::to_vec(&items.iter().map(|item|&item.0).collect::<Vec<_>>()).map_err(|_|"播放顺序无效")?));
+        let mut options=self.options.clone();options["portraitOnly"]=json!(enabled);if reset_full_length{options["fullLength"]=json!(enabled);}options["signature"]=json!(signature);
+        let mut prefix=vec![0.];
+        let segments=durations.iter().enumerate().map(|(index,duration)|{
+            let original=if reset_full_length{None}else{pool.segments.get(indices[index]).copied().flatten()};
+            let (start,length)=original.unwrap_or_else(||(segment_start(*duration,&options),reference_segment_length(*duration,&options)));
+            prefix.push(prefix.last().copied().unwrap_or(0.)+length);Some((start,length))
+        }).collect();
+        // All validation/calculation above precedes mutation. A rejected toggle
+        // cannot discard the old pool, cursor, segment plan or decoder input.
+        self.items=items;self.durations=durations;self.segments=segments;self.prefix=prefix;self.options=options;
+        if !same{self.index=0;}
+        self.start_seconds=self.bounds().0;
+        Ok(())
     }
 }
 fn expected_playback(
@@ -216,7 +251,7 @@ struct Session {
 #[derive(Default)]
 struct PreviewState{pending:HashMap<String,Value>,next:u64,running:bool,result:Value}
 fn emit_parent_preview(app:&AppHandle,generation:u64,options:&Value,direction:i64,close:bool){
-    if options["origin"]=="frame" {let _=app.emit_to("window-rhvideo","rhvideo-parent-preview",json!({"generation":generation,"parentKey":options["parentKey"],"direction":direction,"close":close}));}
+    if options["origin"]=="frame" {let _=app.emit_to("window-rhvideo","rhvideo-parent-preview",json!({"generation":generation,"parentKey":options["parentKey"],"parentPreview":options["parentPreview"],"direction":direction,"close":close}));}
 }
 async fn update_favorite(app:&AppHandle,session:&Session,kind:&str,id:&str,enabled:bool)->Result<Value,String>{
     let result=session.request(if enabled{reqwest::Method::PUT}else{reqwest::Method::DELETE},&format!("api/v1/favorites/{kind}/{id}"),&[],None).await?;
@@ -353,7 +388,7 @@ fn queue_state(session:&Session,mode:&str,update:Option<Value>)->Result<Value,St
     Ok(data[&account][mode].clone())
 }
 fn save_queue_state(session:&Session)->Result<(),String>{
-    let snapshot=PLAYBACK.lock().map_err(|_|"播放队列不可用")?.as_ref().filter(|q|q.generation==session.generation&&q.options["reference"]==true).map(|q|(q.options["mode"].as_str().unwrap_or("").to_owned(),json!({"signature":q.options["signature"],"index":q.index,"id":q.items[q.index].0,"loop":q.options["loop"],"fullLength":q.options["fullLength"],"segment":q.options["segment"],"rate":q.options["rate"].as_f64().unwrap_or(1.)})));
+    let snapshot=PLAYBACK.lock().map_err(|_|"播放队列不可用")?.as_ref().filter(|q|q.generation==session.generation&&q.options["reference"]==true).map(|q|(q.options["mode"].as_str().unwrap_or("").to_owned(),json!({"signature":q.options["signature"],"index":q.index,"id":q.items[q.index].0,"loop":q.options["loop"],"fullLength":q.options["fullLength"],"portraitOnly":q.options["portraitOnly"]==true,"segment":q.options["segment"],"rate":q.options["rate"].as_f64().unwrap_or(1.)})));
     if let Some((mode,value))=snapshot {queue_state(session,&mode,Some(value))?;}
     Ok(())
 }
@@ -1075,7 +1110,16 @@ pub(crate) async fn client_window(
     }
 }
 fn queue_info() -> Value {
-    PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|{let parent=q.options["origin"]=="frame"&&q.options["parentTotal"].as_u64().unwrap_or(0)>1;json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),"hasPrevious":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index>0},"hasNext":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index+1<q.items.len()},"options":q.options,"segmentDuration":q.durations.get(q.index),"segmentStartMs":(q.bounds().0*1000.) as i64,"segmentLengthMs":q.bounds().1.map(|s|(s*1000.) as i64),"elapsedBeforeMs":(q.prefix.get(q.index).copied().unwrap_or(0.)*1000.) as i64,"totalMs":(q.prefix.last().copied().unwrap_or(0.)*1000.) as i64})})).unwrap_or(Value::Null)
+    PLAYBACK.lock().ok().and_then(|slot|slot.as_ref().map(|q|{
+        let parent=q.options["origin"]=="frame"&&q.options["parentTotal"].as_u64().unwrap_or(0)>1;
+        json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),
+            "sourceTotal":q.pool.as_ref().map(|p|p.items.len()),"portraitTotal":q.pool.as_ref().map(|p|p.portraits.iter().filter(|v|**v).count()),
+            "hasPrevious":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index>0},
+            "hasNext":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index+1<q.items.len()},
+            "options":q.options,"segmentDuration":q.durations.get(q.index),"segmentStartMs":(q.bounds().0*1000.) as i64,
+            "segmentLengthMs":q.bounds().1.map(|s|(s*1000.) as i64),"elapsedBeforeMs":(q.prefix.get(q.index).copied().unwrap_or(0.)*1000.) as i64,
+            "totalMs":(q.prefix.last().copied().unwrap_or(0.)*1000.) as i64})
+    })).unwrap_or(Value::Null)
 }
 fn segment_start(duration: f64, options: &Value) -> f64 {
     if options["fullLength"] != false {
@@ -1090,8 +1134,13 @@ fn reference_segment_start(duration:f64,segment:f64,random:f64)->f64{
     let maximum=duration-segment-1.;
     if maximum>1.{((1.+random.clamp(0.,1.)*(maximum-1.))*10.).round()/10.}else{0.}
 }
+fn reference_segment_length(duration:f64,options:&Value)->f64{
+    let segment=options["segment"].as_f64().unwrap_or(3.).clamp(1.,300.);
+    if duration>0.{((if options["fullLength"]!=false{duration}else{segment.min(duration)})*10.).round().max(1.)/10.}else if options["fullLength"]!=false{86400.}else{segment}
+}
 fn validate_reference_options(options:&Value)->Result<(),String>{
     if options["reference"]!=true{return Ok(());}
+    if options.get("portraitOnly").is_some_and(|value|!value.is_boolean()){return Err("竖屏选项必须是布尔值".into());}
     if !options["mode"].as_str().is_some_and(|s|["segments","sequential","sequential-super"].contains(&s))
         || !options["signature"].as_str().is_some_and(|s|s.len()==64&&s.bytes().all(|b|b.is_ascii_hexdigit()))
         || !options["fullLength"].is_boolean()
@@ -1153,7 +1202,9 @@ async fn native_play(
     let url = session.asset(path, false)?;
     #[cfg(windows)]
     {
-        crate::rhvideo_player::play(app, url, title, seconds).await
+        let result=crate::rhvideo_player::play(app, url, title, seconds).await?;
+        if !current().is_ok_and(|s|s.generation==session.generation){crate::rhvideo_player::stop_single();return Err("播放期间媒体账户已更改；旧播放已停止".into());}
+        Ok(result)
     }
     #[cfg(not(windows))]
     {
@@ -1168,7 +1219,7 @@ pub async fn rhvideo_open(app: AppHandle) -> Result<Value, String> {
         window.set_focus().map_err(|e| e.to_string())?;
     } else {
         client_window(
-            app,
+            app.clone(),
             "window-rhvideo",
             "rhvideo.html",
             "RHFiles · RHVideo",
@@ -1177,7 +1228,14 @@ pub async fn rhvideo_open(app: AppHandle) -> Result<Value, String> {
         )
         .await?;
     }
+    // Focusing the Tauri Window does not focus its WebView2 controller. Without
+    // both, the preview can visibly own the active window while keyboard input
+    // is still routed to the former native video surface/main WebView.
+    focus_library(&app);
     Ok(json!({"opened":true}))
+}
+fn focus_library(app:&AppHandle){
+    if let Some(window)=app.get_webview_window("window-rhvideo"){let _=window.unminimize();let _=window.show();let _=window.set_focus();let webview:&tauri::Webview=window.as_ref();let _=webview.set_focus();}
 }
 #[tauri::command]
 pub async fn rhvideo_request(
@@ -1212,7 +1270,7 @@ pub async fn rhvideo_request(
             *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
             #[cfg(windows)] { crate::rhvideo_player::stop_single(); }
             if let Some(window)=app.get_webview_window("window-rhvideo-player") { let _=window.close(); }
-            if let Some(window)=app.get_webview_window("window-rhvideo") {let _=window.show();let _=window.set_focus();}
+            focus_library(&app);
             if let Some((generation,options))=context {
                 emit_parent_preview(&app,generation,&options,0,action=="player.close");
                 if action=="player.close"||options["deferPreviewCommit"]!=true {if let Ok(session)=current(){let _=start_preview_commit(app,session);}}
@@ -1665,7 +1723,7 @@ pub async fn rhvideo_request(
         "playlist.state"=>queue_state(&session,text(&args,"mode",32)?,None),
         "playlist.settings"=>{
             let options=args["options"].as_object().ok_or("连播设置无效")?;
-            for(key,value)in options{if key=="segment"{if !value.as_f64().is_some_and(|n|n.is_finite()&&(1.0..=300.).contains(&n)){return Err("分段长度无效".into());}}else if !["loop","fullLength"].contains(&key.as_str())||!value.is_boolean(){return Err("连播设置无效".into());}}
+            for(key,value)in options{if key=="segment"{if !value.as_f64().is_some_and(|n|n.is_finite()&&(1.0..=300.).contains(&n)){return Err("分段长度无效".into());}}else if !["loop","fullLength","portraitOnly"].contains(&key.as_str())||!value.is_boolean(){return Err("连播设置无效".into());}}
             queue_state(&session,text(&args,"mode",32)?,Some(args["options"].clone()))
         }
         "playback.clear" => playback_history(&session, None, Some(json!({})), true),
@@ -1683,6 +1741,7 @@ pub async fn rhvideo_request(
                     generation: session.generation,
                     items: Vec::new(),
                     durations: Vec::new(),
+                    portraits: Vec::new(),
                     segments: Vec::new(),
                     prefix: vec![0.],
                     options: args["options"].clone(),
@@ -1708,10 +1767,11 @@ pub async fn rhvideo_request(
                     if duration>0.&&start+length>duration+0.2{return Err("分段超出视频时长".into());}
                     Some((start,length))
                 }else{None};
-                validated.push((identity,duration,segment));
+                if item.get("portrait").is_some_and(|value|!value.is_boolean()){return Err("竖屏元数据无效".into());}
+                validated.push((identity,duration,segment,item["portrait"]==true));
             }
-            for(identity,duration,segment)in validated{
-                q.items.push(identity);q.durations.push(duration);q.segments.push(segment);
+            for(identity,duration,segment,portrait)in validated{
+                q.items.push(identity);q.durations.push(duration);q.segments.push(segment);q.portraits.push(portrait);
                 q.prefix.push(q.prefix.last().copied().unwrap_or(0.)+segment.map(|s|s.1).unwrap_or(duration));
             }
             Ok(json!({"count":q.items.len()}))
@@ -1944,6 +2004,7 @@ pub async fn rhvideo_request(
                 .unwrap_or_default();
             let segments=prepared.as_ref().map(|q|q.segments.clone()).unwrap_or_default();
             let prefix=prepared.as_ref().map(|q|q.prefix.clone()).unwrap_or_default();
+            let pool=prepared.as_ref().filter(|q|q.options["reference"]==true).map(|q|Arc::new(PlaylistPool{items:q.items.clone(),durations:q.durations.clone(),portraits:q.portraits.clone(),segments:q.segments.clone()}));
             let options = prepared
                 .as_ref()
                 .map(|q| q.options.clone())
@@ -1971,9 +2032,14 @@ pub async fn rhvideo_request(
                 .iter()
                 .position(|(item, _)| item == id)
                 .ok_or("当前视频不在播放队列中")?;
+            let mut playback=Playback{generation:session.generation,revision:PLAYBACK_REVISION.fetch_add(1,Ordering::SeqCst),items,index,durations,segments,prefix,options,start_seconds:seconds,pool};
+            if playback.options["portraitOnly"]==true{
+                playback.project_portrait(true,false)?;
+                playback.index=playback.items.iter().position(|item|item.0==id).ok_or("当前视频不在竖屏队列中")?;
+            }
             if args.get("seconds").is_none() {
-                seconds = segments.get(index).copied().flatten().map(|s|s.0).unwrap_or_else(||segment_start(durations.get(index).copied().unwrap_or(0.), &options));
-                if args["resume"] == true && options["fullLength"] != false {
+                seconds = playback.start(playback.index);
+                if args["resume"] == true && playback.options["fullLength"] != false {
                     seconds = playback_history(&session, Some(id), None, false)?["seconds"]
                         .as_f64()
                         .filter(|n| n.is_finite() && (0.0..=604800.).contains(n))
@@ -1991,8 +2057,8 @@ pub async fn rhvideo_request(
             .await?;
             #[cfg(windows)]
             {
-                if let Some(rate)=options["rate"].as_f64().filter(|r|(0.25..=4.).contains(r)){crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
-                let rotation = options["rotation"].as_i64().unwrap_or(0);
+                if let Some(rate)=playback.options["rate"].as_f64().filter(|r|(0.25..=4.).contains(r)){crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
+                let rotation = playback.options["rotation"].as_i64().unwrap_or(0);
                 let actual = crate::rhvideo_player::command("player.state", &json!({}))?;
                 if actual["rotation"].as_i64() != Some(rotation) {
                     crate::rhvideo_player::command(
@@ -2001,17 +2067,9 @@ pub async fn rhvideo_request(
                     )?;
                 }
             }
-            *PLAYBACK.lock().map_err(|_| "播放队列状态不可用")? = Some(Playback {
-                generation: session.generation,
-                revision: PLAYBACK_REVISION.fetch_add(1, Ordering::SeqCst),
-                items,
-                index,
-                durations,
-                segments,
-                prefix,
-                options,
-                start_seconds: seconds,
-            });
+            playback.start_seconds=seconds;
+            *PLAYBACK.lock().map_err(|_| "播放队列状态不可用")? = Some(playback);
+            let _=app.emit_to("window-rhvideo-player","rhvideo-player-session",json!({"generation":session.generation}));
             if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
             save_queue_state(&session)?;
             schedule_preload(app.clone(), session.clone())?;
@@ -2041,7 +2099,7 @@ pub async fn rhvideo_request(
                     *PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
                     crate::rhvideo_player::stop_single();
                     if let Some(w)=app.get_webview_window("window-rhvideo-player"){let _=w.close();}
-                    if let Some(w)=app.get_webview_window("window-rhvideo"){let _=w.show();let _=w.set_focus();}
+                    focus_library(&app);
                     let _=start_preview_commit(app,session.clone());
                     return Ok(json!({"closed":true,"finished":true}));
                 } else if action=="player.finishSegment" {
@@ -2101,7 +2159,7 @@ pub async fn rhvideo_request(
                 #[cfg(windows)]crate::rhvideo_player::stop_single();
                 if let Some(w)=app.get_webview_window("window-rhvideo-player"){let _=w.close();}
                 emit_parent_preview(&app,session.generation,&options,if action=="player.next"{1}else{-1},false);
-                if let Some(w)=app.get_webview_window("window-rhvideo"){let _=w.show();let _=w.set_focus();}
+                focus_library(&app);
                 return Ok(json!({"closed":true,"returned":true}));
             }
             let (id, title, index) = {
@@ -2156,18 +2214,24 @@ pub async fn rhvideo_request(
             save_queue_state(&session)?;
             schedule_preload(app, session.clone())?;
             result["queue"] = queue_info();
+            result["generation"]=json!(session.generation);
             Ok(result)
         }
         "player.options" => {
             let _play=PLAY_LOCK.lock().await;
+            let (replacement,reposition,repeating)={
             let mut slot = PLAYBACK.lock().map_err(|_| "播放队列不可用")?;
             let q = slot
                 .as_mut()
                 .filter(|q| q.generation == session.generation)
                 .ok_or("播放队列已失效")?;
             let options = args["options"].as_object().ok_or("选项无效")?;
+            if args.get("expectedId").is_some()||args.get("expectedRevision").is_some(){
+                let id=text(&args,"expectedId",128)?;let revision=number(&args,"expectedRevision",0,u64::MAX)?;
+                if !expected_playback(q,session.generation,Some(id),Some(revision)){return Err("播放目标已改变，设置未应用".into());}
+            }
             for (k, v) in options {
-                if !["loop", "fullLength", "super", "segment"].contains(&k.as_str()) {
+                if !["loop", "fullLength", "super", "segment","portraitOnly"].contains(&k.as_str()) {
                     return Err("选项无效".into());
                 }
                 if k == "segment" {
@@ -2181,6 +2245,16 @@ pub async fn rhvideo_request(
                     return Err("选项无效".into());
                 }
             }
+            if options.contains_key("portraitOnly")&&q.options["reference"]!=true{return Err("仅竖屏只适用于连播队列".into());}
+            if let Some(enabled)=options.get("portraitOnly").and_then(Value::as_bool).filter(|enabled|*enabled!=(q.options["portraitOnly"]==true)){
+                if options.get("fullLength").and_then(Value::as_bool).is_some_and(|full|full!=enabled){return Err("切换仅竖屏时会同时切换完整播放，请分别调整".into());}
+                let mut replacement=q.clone();
+                for(key,value)in options{replacement.options[key]=value.clone();}
+                replacement.project_portrait(enabled,true)?;
+                replacement.revision=PLAYBACK_REVISION.fetch_add(1,Ordering::SeqCst);
+                let repeating=replacement.options["loop"]==true;
+                (Some(replacement),None,repeating)
+            }else{
             for(k,v)in options{q.options[k]=v.clone();}
             let mut reposition=None;
             if q.options["reference"]==true&&(options.contains_key("fullLength")||options.contains_key("segment")) {
@@ -2189,15 +2263,25 @@ pub async fn rhvideo_request(
                 for(index,duration)in q.durations.iter().enumerate(){
                     let current=q.segments.get(index).copied().flatten();
                     let start=if full{0.}else{current.filter(|s|s.0>0.&&s.0+length<=*duration).map(|s|s.0).unwrap_or_else(||segment_start(*duration,&q.options))};
-                    let actual=if *duration>0.{if full{*duration}else{length.min(*duration)}}else{length};
+                    let actual=reference_segment_length(*duration,&q.options);
                     q.segments[index]=Some((start,actual));
                     q.prefix.push(q.prefix.last().copied().unwrap_or(0.)+actual);
                 }
                 q.start_seconds=q.bounds().0;reposition=q.segments[q.index];
             }
             q.revision = PLAYBACK_REVISION.fetch_add(1, Ordering::SeqCst);
-            let repeating=q.options["loop"]==true;
-            drop(slot);
+            (None,reposition,q.options["loop"]==true)
+            }
+            };
+            if let Some(replacement)=replacement{
+                let (id,title)=replacement.items[replacement.index].clone();let start=replacement.bounds().0;
+                flush_playback();
+                native_play(app.clone(),&session,&id,title,start,replacement.options["super"]==true).await?;
+                #[cfg(windows)]{crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":replacement.options["rate"].as_f64().unwrap_or(1.)}))?;}
+                *PLAYBACK.lock().map_err(|_|"播放队列不可用")?=Some(replacement);
+                save_queue_state(&session)?;schedule_preload(app.clone(),session.clone())?;wake_playback_monitor(&app);
+                return Ok(queue_info());
+            }
             #[cfg(windows)] if let Some((start,length))=reposition{
                 let state=crate::rhvideo_player::command("player.state",&json!({}))?;
                 let position=state["decoderPositionMs"].as_f64().unwrap_or(0.)/1000.;
@@ -2416,6 +2500,7 @@ mod tests {
             prefix: vec![0.,20.,40.],
             options: json!({}),
             start_seconds: 0.0,
+            pool: None,
         };
         assert!(expected_playback(&q, 4, Some("A"), Some(10)));
         q.index = 1;
@@ -2464,6 +2549,9 @@ mod tests {
         assert_eq!(reference_segment_start(7.,3.,0.5),2.);
         assert_eq!(reference_segment_start(5.,3.,0.5),0.);
         assert_eq!(reference_segment_start(2.,3.,0.5),0.);
+        assert_eq!(reference_segment_length(0.,&json!({"fullLength":true,"segment":3})),86400.);
+        assert_eq!(reference_segment_length(0.,&json!({"fullLength":false,"segment":3})),3.);
+        assert_eq!(reference_segment_length(14.,&json!({"fullLength":true,"segment":3})),14.);
         let valid=json!({"reference":true,"mode":"segments","signature":"a".repeat(64),"fullLength":false,"loop":false,"segment":3,"rate":1});
         assert!(validate_reference_options(&valid).is_ok());
         for(key,value)in [("mode",json!("unknown")),("signature",json!("short")),("rate",json!(0)),("segment",json!(301)),("loop",json!("false"))]{let mut bad=valid.clone();bad[key]=value;assert!(validate_reference_options(&bad).is_err());}
@@ -2474,6 +2562,34 @@ mod tests {
         assert!(failed_media(&json!({"state":6,"durationMs":0,"renderedFrames":0})));
         assert!(!failed_media(&json!({"state":6,"durationMs":6000,"renderedFrames":144})));
         assert!(!failed_media(&json!({"state":1,"durationMs":0,"renderedFrames":0})));
+    }
+    fn portrait_queue(flags:Vec<bool>)->Playback{
+        let items=vec![("a".into(),"A".into()),("b".into(),"B".into()),("c".into(),"C".into())];
+        let durations=vec![40.,7.,2.];
+        let segments=vec![Some((3.,3.)),Some((1.,3.)),Some((0.,2.))];
+        Playback{generation:1,revision:1,items:items.clone(),index:2,durations:durations.clone(),segments:segments.clone(),prefix:vec![0.,3.,6.,8.],options:json!({"reference":true,"mode":"segments","segment":3,"fullLength":false,"loop":true,"rate":1.5}),start_seconds:0.,pool:Some(Arc::new(PlaylistPool{items,durations,portraits:flags,segments}))}
+    }
+    #[test]
+    fn live_portrait_filter_keeps_the_full_source_pool_and_rebuilds_bounded_segment_progress(){
+        let mut q=portrait_queue(vec![true,false,true]);
+        q.project_portrait(true,true).unwrap();
+        assert_eq!(q.items.iter().map(|i|i.0.as_str()).collect::<Vec<_>>(),["a","c"]);
+        assert_eq!(q.index,0);assert_eq!(q.prefix,[0.,40.,42.]);assert_eq!(q.options["fullLength"],true);assert_eq!(q.options["loop"],true);assert_eq!(q.options["rate"],1.5);
+        assert_eq!(q.pool.as_ref().unwrap().items.len(),3);
+        let expected=format!("{:x}",Sha256::digest(br#"["a","c"]"#));assert_eq!(q.options["signature"],expected);
+        q.project_portrait(false,true).unwrap();
+        assert_eq!(q.items.iter().map(|i|i.0.as_str()).collect::<Vec<_>>(),["a","b","c"]);
+        assert_eq!(q.prefix,[0.,3.,6.,8.]);assert_eq!(q.options["fullLength"],false);assert_eq!(q.options["portraitOnly"],false);
+        for(i,segment)in q.segments.iter().enumerate(){let(start,length)=segment.unwrap();assert!(start>=0.&&start+length<=q.durations[i]);}
+        let mut initial=portrait_queue(vec![true,false,true]);initial.project_portrait(true,false).unwrap();assert_eq!(initial.segments,[Some((3.,3.)),Some((0.,2.))],"initial projection must preserve the frontend's explicit segment plan, not randomize it again");
+    }
+    #[test]
+    fn rejected_portrait_filter_preserves_every_visible_playback_field(){
+        let mut q=portrait_queue(vec![true,false,false]);let before=q.clone();
+        assert!(q.project_portrait(true,true).is_err());
+        assert_eq!(q.items,before.items);assert_eq!(q.index,before.index);assert_eq!(q.options,before.options);assert_eq!(q.segments,before.segments);assert_eq!(q.prefix,before.prefix);assert_eq!(q.revision,before.revision);
+        let mut all=portrait_queue(vec![true,true,true]);all.project_portrait(true,true).unwrap();assert_eq!(all.index,2,"unchanged ordered IDs retain the cursor, as in the reference resume rule");
+        all.options["fullLength"]=json!(false);all.project_portrait(true,false).unwrap();assert_eq!(all.options["fullLength"],false,"restoring the portrait pool must retain a separately saved segment choice");assert_eq!(all.prefix,[0.,3.,6.,8.]);
     }
     #[test]
     fn network_errors_do_not_disclose_tokens_or_html() {

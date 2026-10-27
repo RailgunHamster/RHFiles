@@ -7,8 +7,9 @@
   function error(value){delete $('error').dataset.automation;$('error').textContent=String(value?.message||value);}
   let audibleVolume=100;
   function paint(value){
+    const generation=value.generation??state.generation;if(generation&&state.generation&&generation<state.generation)return;
     for(const node of document.querySelectorAll('#controls button,#controls input,#controls select'))if(node.id!=='back')node.disabled=!value.opened||!value.queue?.id;
-    state=value;if(!state.opened){$('status').textContent='播放已停止';return;}
+    state={...value,generation};if(!state.opened){$('status').textContent='播放已停止';return;}
     $('title').textContent=state.title;$('position').textContent=RHVideoModel.clock(state.positionMs/1000);$('duration').textContent=RHVideoModel.clock(state.durationMs/1000);
     if(!dragging)$('seek').value=state.durationMs>0?Math.round(state.positionMs/state.durationMs*1000):0;
     $('toggle').textContent=state.state===6?'重新播放':state.state===4?'继续':'暂停';
@@ -27,6 +28,8 @@
       if(!queueDragging)$('queue-seek').value=String(Math.round(elapsed/Math.max(1,q.totalMs)*1000));
       $('queue-counter').textContent=`${q.index+1}/${q.total} · ${RHVideoModel.clock(elapsed/1000)} / ${RHVideoModel.clock(q.totalMs/1000)}`;
       $('full-length').checked=q.options.fullLength!==false;
+      $('portrait-only').checked=q.options.portraitOnly===true;
+      $('portrait-count').textContent=`${q.portraitTotal??0}/${q.sourceTotal??q.total}`;
       if(document.activeElement!==$('segment-length'))$('segment-length').value=String(q.options.segment||3);
       $('segment-length').disabled=q.options.fullLength!==false;
     }
@@ -37,7 +40,7 @@
   const register=(name,params,handler)=>api.register('rhvideo.player.'+name,handler,{params,risk:['state','preloadState'].includes(name)?'read':'ui',description:'Native RHVideo player '+name});
   register('state',object(),async()=>{const value=await native('player.state');paint(value);return value;});
   register('control',object({command:{type:'string',enum:['pause','resume','seek','rate','volume','rotate']},value:{type:'number'}},['command']),async args=>{const value=await native('player.control',args);paint(value);return value;});
-  register('options',object({loop:{type:'boolean'},fullLength:{type:'boolean'},segment:{type:'number',minimum:1,maximum:300},super:{type:'boolean'}}),async args=>{const queue=await native('player.options',{options:args});state.queue=queue;paint(state);return queue;});
+  register('options',object({loop:{type:'boolean'},fullLength:{type:'boolean'},segment:{type:'number',minimum:1,maximum:300},super:{type:'boolean'},portraitOnly:{type:'boolean'}}),async args=>{const current=await currentTarget();await native('player.options',{options:args,expectedId:current.queue.id,expectedRevision:current.queue.revision});const value=await native('player.state');paint(value);return value.queue;});
   register('mute',object(),async()=>{const current=await currentTarget();return control({command:'volume',value:current.volume?0:audibleVolume});});
   register('rotate',object(),async()=>{const current=await currentTarget();return control({command:'rotate',value:((current.rotation||0)+90)%360});});
   register('loop',object(),async()=>{const current=await currentTarget();return api.invoke('rhvideo.player.options',{loop:!current.queue.options?.loop});});
@@ -54,7 +57,7 @@
   register('close',object(),()=>native('player.close'));
   register('back',object(),()=>native('player.back'));
   register('seekQueue',object({ratio:{type:'number',minimum:0,maximum:1}},['ratio']),async args=>{const value=await native('player.seekQueue',args);paint(value);return value;});
-  for(const [id,name]of Object.entries({back:'back',toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen','queue-seek':'seekQueue','full-length':'options','segment-length':'options'}))$(id).dataset.apiAction='rhvideo.player.'+name;
+  for(const [id,name]of Object.entries({back:'back',toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen','queue-seek':'seekQueue','full-length':'options','segment-length':'options','portrait-only':'options'}))$(id).dataset.apiAction='rhvideo.player.'+name;
   api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...document.querySelectorAll('button,input,select')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native player UI/public API coverage'});
   const control=args=>api.invoke('rhvideo.player.control',args).catch(error);
   RHFilesUI.listen($('toggle'),'click',()=>control({command:state.state===4||state.state===6?'resume':'pause'}),undefined,'rhvideo.player.toggle');
@@ -68,6 +71,7 @@
   RHFilesUI.listen($('queue-seek'),'change',()=>{queueDragging=false;void api.invoke('rhvideo.player.seekQueue',{ratio:Number($('queue-seek').value)/1000}).catch(error);},undefined,'rhvideo.player.seekQueue');
   RHFilesUI.listen($('full-length'),'change',()=>api.invoke('rhvideo.player.options',{fullLength:$('full-length').checked}).catch(error),undefined,'rhvideo.player.options.fullLength');
   RHFilesUI.listen($('segment-length'),'change',()=>api.invoke('rhvideo.player.options',{segment:Number($('segment-length').value),fullLength:false}).catch(error),undefined,'rhvideo.player.options.segment');
+  RHFilesUI.listen($('portrait-only'),'change',()=>api.invoke('rhvideo.player.options',{portraitOnly:$('portrait-only').checked}).catch(value=>{paint(state);error(value);}),undefined,'rhvideo.player.options.portrait');
   RHFilesUI.listen($('back'),'click',()=>api.invoke('rhvideo.player.back').catch(error),undefined,'rhvideo.player.back');
   RHFilesUI.listen(document,'keydown',event=>{if(event.code==='Escape'){event.preventDefault();void api.invoke('rhvideo.player.close').catch(error);return;}if(event.target.matches('input,select,textarea')||event.target.isContentEditable)return;let name,args={};if(event.code==='Space'){name='control';args={command:state.state===4||state.state===6?'resume':'pause'};}else if(event.code==='Delete'&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey)name='mark';else if(event.code==='ArrowLeft')name='previous';else if(event.code==='ArrowRight')name='next';else if(state.queue?.options?.reference&&['Home','End'].includes(event.code)){name='seekQueue';args={ratio:event.code==='Home'?0:1};}if(!name)return;event.preventDefault();void api.invoke('rhvideo.player.'+name,args).catch(error);},undefined,'rhvideo.player.keyboard');
   let wheelAt=0;RHFilesUI.listen(document,'wheel',event=>{if((!state.queue?.options?.reference&&state.queue?.options?.origin!=='frame')||event.target.closest('input,select,textarea'))return;event.preventDefault();if(performance.now()-wheelAt<180)return;wheelAt=performance.now();void api.invoke('rhvideo.player.'+(event.deltaY>0?'next':'previous')).catch(error);},{passive:false},'rhvideo.player.wheel');
@@ -80,5 +84,8 @@
       // are throttled, hidden, suspended, or not yet initialized.
     }catch(e){error(e);}finally{busy=false;if(!closed)setTimeout(poll,500);}
   }
+  // The existing poll owns the sole timer chain. A session event invalidates
+  // cached identity, but must not start another recurring loop on every switch.
+  window.__TAURI__.event.listen('rhvideo-player-session',({payload})=>{if(Number.isSafeInteger(payload.generation)&&payload.generation>(state.generation||0)){state={opened:false,generation:payload.generation};$('error').textContent='';}}).catch(error);
   window.addEventListener('pagehide',()=>{closed=true;});void poll();
 })();

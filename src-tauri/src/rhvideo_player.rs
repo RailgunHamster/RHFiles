@@ -1019,6 +1019,7 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String, String)>) -> Result
         .map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
+    let webview:&tauri::Webview=window.as_ref();webview.set_focus().map_err(|e|e.to_string())?;
     grid_command("grid.state", &json!({}))
 }
 pub fn grid_command(action: &str, args: &Value) -> Result<Value, String> {
@@ -1140,6 +1141,7 @@ pub async fn play(
         .map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
+    let webview:&tauri::Webview=window.as_ref();webview.set_focus().map_err(|e|e.to_string())?;
     let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
     let mut guard = SurfaceGuard(vec![]);
     WARM_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);

@@ -22,9 +22,10 @@
       const byId=new Map(videos.map(v=>[String(v.id),v]));
       return ids.map(id=>{const v=byId.get(String(id))||{},duration=Number(v.duration_seconds||v.original_duration||v.duration||0),maxStart=duration-segment-1;
         const start=fullLength?0:maxStart>1?1+random()*(maxStart-1):0;
-        return {id:String(id),title:(v.folder_label?'['+v.folder_label+'] ':'')+(v.original_filename||v.title||String(id))+(low?' (超压)':''),duration,segmentStart:Math.round(start*10)/10,segmentLength:fullLength&&duration>0?Math.round(duration*10)/10:duration>0?Math.round(Math.min(segment,duration)*10)/10:segment};});
+        return {id:String(id),title:(v.folder_label?'['+v.folder_label+'] ':'')+(v.original_filename||v.title||String(id))+(low?' (超压)':''),duration,portrait:['ready','processing'].includes(v.status)&&playback.portrait(v.original_resolution||v.resolution),segmentStart:Math.round(start*10)/10,segmentLength:fullLength?(duration>0?Math.round(duration*10)/10:86400):duration>0?Math.round(Math.min(segment,duration)*10)/10:segment};});
     },
     step(index,direction,count){if(!Number.isSafeInteger(count)||count<1)throw Error('播放队列为空');return ((index+direction)%count+count)%count;},
+    imageSeek(count,ratio){if(!Number.isSafeInteger(count)||count<1||!Number.isFinite(ratio)||ratio<0||ratio>1)throw Error('图片集合位置无效');return Math.round(ratio*(count-1));},
     seek(entries,ratio){
       const total=entries.reduce((sum,e)=>sum+e.segmentLength,0),target=Math.max(0,Math.min(1,ratio))*total;
       let index=entries.length-1,before=0;for(let i=0;i<entries.length;i++){if(target<before+entries[i].segmentLength){index=i;break;}before+=entries[i].segmentLength;}

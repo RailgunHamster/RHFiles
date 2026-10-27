@@ -1094,11 +1094,11 @@
             throw Error("设置数值无效");
           if (key === "rule")
             await send("query", { ...criteria(), rule: value, limit: 1 });
-          prefs[key] = value;
-          if(!ctx.mobile&&["segment","fullLength","loop"].includes(key)){
+          if(!ctx.mobile&&["segment","fullLength","loop","portraitOnly"].includes(key)){
+            const current=await native("player.state");if(current.queue?.options?.mode==="segments")await native("player.options",{options:{[key]:value},expectedId:current.queue.id,expectedRevision:current.queue.revision});
             await native("playlist.settings",{mode:"segments",options:{[key]:value}});
-            const current=await native("player.state");if(current.queue?.options?.mode==="segments")await native("player.options",{options:{[key]:value}});
           }
+          prefs[key] = value;
           save();
           applyPreferences();
           if(key==="volume")await syncVolume();
@@ -2429,7 +2429,7 @@
             if(!gallery.loaded)await loadGallery(false,false);
             const args={kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1};
             const result=await send("query",args),index=result.queue.findIndex(f=>f.videoId===media.id);
-            if(index>=0){imageSession={args,index,total:result.total,current:result.queue[index]};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(imageSession.current),parentTotal:result.total};}
+            if(index>=0){imageSession={args,index,total:result.total,current:result.queue[index],previewId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(imageSession.current),parentPreview:imageSession.previewId,parentTotal:result.total};}
           }catch(error){if(version===epoch)notice("截图队列不可用，视频仍可单独播放："+String(error));}
         }
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
@@ -2442,6 +2442,8 @@
       async function startPlaylist(mode="segments") {
         const version=epoch,c=config(),sequential=mode!=="segments",low=mode==="sequential-super",P=RHVideoModel.playback;
         if(sequential&&selected.size)throw Error("请先退出多选，再按当前列表顺序连播");
+        const saved=ctx.mobile?null:await native("playlist.state",{mode});
+        const portraitOnly=saved?.portraitOnly??(!sequential&&c.portraitOnly);
         const result=await query({kind:"video",mediaType:"video",allKeys:true,portraitOnly:false,selected:[],offset:0,limit:1});
         let ids;
         if(sequential)ids=P.listIds(result.queue);
@@ -2450,21 +2452,21 @@
           const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,offset:0,limit:1,allKeys:true});
           const anchor=prefs.galleryResume?.mediaKey,at=anchor?frames.queue.findIndex(f=>f.key===anchor):-1;
           ids=P.galleryIds(frames.queue,at>=0?at:gallery.offset);
-          if(c.portraitOnly){const allowed=new Set(result.queue.filter(v=>P.portrait(v.resolution)).map(v=>v.id));ids=ids.filter(id=>allowed.has(id));}
         }
-        if(ids.length<(sequential?1:2))throw Error(sequential?"当前列表没有可播放的视频":c.portraitOnly?"竖屏视频不足 2 个，无法连播":"需要至少 2 个视频才能分段连播");
         // Metadata is resolved in the worker once, not by fetching each video.
         const all=await send("query",{kind:"video",sort:"nameAsc",allKeys:true,offset:0,limit:1});
-        const signature=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(ids))))).map(b=>b.toString(16).padStart(2,"0")).join("");
-        const saved=ctx.mobile?null:await native("playlist.state",{mode});
+        const portraitIds=new Set(all.queue.filter(v=>['ready','processing'].includes(v.status)&&P.portrait(v.resolution)).map(v=>v.id));
+        const visibleIds=portraitOnly?ids.filter(id=>portraitIds.has(id)):ids;
+        if(visibleIds.length<(portraitOnly?2:sequential?1:2))throw Error(portraitOnly?"竖屏视频不足 2 个，无法连播":sequential?"当前列表没有可播放的视频":"需要至少 2 个视频才能分段连播");
+        const signature=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(visibleIds))))).map(b=>b.toString(16).padStart(2,"0")).join("");
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
-        const fullLength=sequential||c.portraitOnly||(saved?.fullLength??c.fullLength),segment=Math.max(1,Math.min(300,saved?.segment??c.segment));
-        const entries=P.entries(ids,all.queue,{segment,fullLength,super:low});
-        const index=saved?.signature===signature?Math.max(0,Math.min(entries.length-1,saved.index||0)):0,current=entries[index];
+        const fullLength=sequential||(saved?.fullLength??(portraitOnly?true:c.fullLength)),segment=sequential?300:Math.max(1,Math.min(300,saved?.segment??c.segment));
+        const entries=P.entries(ctx.mobile?visibleIds:ids,all.queue,{segment,fullLength,super:low});
+        const index=saved?.signature===signature?Math.max(0,Math.min(visibleIds.length-1,saved.index||0)):0,current=entries.find(e=>e.id===visibleIds[index]);
         const ticket = await prepareQueue(entries, {
           reference:true,mode,signature,closeAtEnd:true,
           super:low,loop:saved?.loop??(sequential?false:c.loop),rate:saved?.rate??1,
-          fullLength,segment,rotation:c.rotation,
+          fullLength,segment,portraitOnly,rotation:c.rotation,
         });
         return native("play", {
           id: current.id,
@@ -2647,6 +2649,7 @@
           }),
           result = await query(args);
         imageSession = {
+          previewId:crypto.randomUUID(),
           args,
           index: Math.max(
             0,
@@ -2659,11 +2662,12 @@
         ctx.openDialog("image-dialog");
         return { opened: true, total: result.total };
       }
-      async function stepImage(direction) {
+      async function stepImage(direction,targetIndex=null) {
         if (!imageSession) throw Error("没有图片浏览队列");
+        if(!imageSession.args&&imageSession.total===1)return {index:0,total:1};
         const ticket = ++imageToken,
           session = imageSession,
-          index = RHVideoModel.playback.step(session.index,direction,session.total);
+          index = targetIndex??RHVideoModel.playback.step(session.index,direction,session.total);
         session.index = index;
         const value = await send("query", {
           ...session.args,
@@ -2688,6 +2692,8 @@
       }
       function refreshImage() {
         const frame=imageSession?.current?.kind==="frame";for(const id of ["wb-frame-play","wb-frame-play-low"])if($(id))$(id).hidden=!frame;
+        const item=imageSession?.current,kind=frame?"video":item?.kind,id=frame?item?.videoId:item?.id,key=kind+":"+id,favorite=$("wb-image-favorite");
+        if(favorite){favorite.hidden=!["video","picture","novel"].includes(kind)||!id;favorite.textContent=state.favorites.has(key)?"取消收藏":"收藏";favorite.setAttribute("aria-pressed",String(state.favorites.has(key)));favorite.disabled=state.favoriteBusy.has(key);}
         if (imageSession?.current)
           showImage(
             imageSession.current,
@@ -2716,11 +2722,16 @@
         );
       const framePlay=button("播放此刻","image.playFrame",{},"text-button");framePlay.id="wb-frame-play";framePlay.hidden=true;
       const frameLow=button("超压播放此刻","image.playFrame",{super:true},"text-button");frameLow.id="wb-frame-play-low";frameLow.hidden=true;
-      $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,frameLow,button("在清单中定位","image.reveal",{},"text-button"));
-      action("image.state",object(),()=>({opened:$("image-dialog").open,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id,kind:imageSession.current.kind,videoId:imageSession.current.videoId,seconds:imageSession.current.seconds}:null}),"read");
-      action("image.playFrame",object({super:{type:"boolean"}}),async({super:low=false})=>{const item=imageSession?.current;if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");const ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentTotal:imageSession.total});return native("play",{id:item.videoId,title:item.title,seconds:item.seconds,super:low,playlist:ticket});},"external");
-      action("image.returnFromVideo",object({generation:{type:"integer",minimum:0},parentKey:string,direction:{type:"integer",enum:[-1,0,1]},close:{type:"boolean"}},["generation","parentKey"]),async({generation,parentKey,direction=0,close=false})=>{
-        if(generation!==state.generation||!imageSession?.current||I.key(imageSession.current)!==parentKey)return {stale:true};
+      const imageFavorite=button("收藏","image.favorite",{},"text-button");imageFavorite.id="wb-image-favorite";imageFavorite.hidden=true;
+      $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,frameLow,imageFavorite,button("在清单中定位","image.reveal",{},"text-button"));
+      action("image.favorite",object(),async()=>{const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有可收藏的媒体");return invoke("favorite.toggle",{kind:item.kind==="frame"?"video":item.kind,id:item.kind==="frame"?item.videoId:item.id});},"write");
+      action("image.state",object(),()=>({opened:$("image-dialog").open,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null}),"read");
+      action("image.seek",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),async({ratio})=>{if(!$("image-dialog").open||!imageSession)throw Error("图片查看器未打开");return stepImage(0,RHVideoModel.playback.imageSeek(imageSession.total,ratio));});
+      async function playImageVideo(low,atFrame){const item=imageSession?.current;if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");const ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentPreview:imageSession.previewId,parentTotal:imageSession.total});return native("play",{id:item.videoId,title:item.title,seconds:atFrame?item.seconds:0,super:low,playlist:ticket});}
+      action("image.playFrame",object({super:{type:"boolean"}}),({super:low=false})=>playImageVideo(low,true),"external");
+      action("image.playVideo",object({super:{type:"boolean"}}),({super:low=false})=>playImageVideo(low,false),"external");
+      action("image.returnFromVideo",object({generation:{type:"integer",minimum:0},parentKey:string,parentPreview:string,direction:{type:"integer",enum:[-1,0,1]},close:{type:"boolean"}},["generation","parentKey","parentPreview"]),async({generation,parentKey,parentPreview,direction=0,close=false})=>{
+        if(generation!==state.generation||!imageSession?.current||imageSession.previewId!==parentPreview||I.key(imageSession.current)!==parentKey)return {stale:true};
         if(close)return $("image-dialog").open?invoke("image.close"):{closed:true};
         const result=await stepImage(direction);if(!result.stale)ctx.openDialog("image-dialog");return result;
       });
@@ -2744,7 +2755,7 @@
         object({ path: string, title: string }, ["path", "title"]),
         async ({ path, title }) => {
           const [url] = await native("images", { paths: [path] });
-          imageSession = { current: { title, cover: url }, index: 0, total: 1 };
+          imageSession = { current: { title, cover: url }, index: 0, total: 1,previewId:crypto.randomUUID() };
           refreshImage();
           ctx.openDialog("image-dialog");
           return { opened: true };
@@ -3106,7 +3117,7 @@
         const media=gallery.items[index];if(!media)throw Error("截图不在当前页");
         const args={kind:"gallery",search:state.search,rule:config().rule,sort:config().sort,seed:gallery.seed,offset:0,limit:1,allKeys:true};
         const result=await send("query",args),at=result.queue.findIndex(v=>v.id===media.id&&v.kind===media.kind);
-        if(at<0)throw Error("截图筛选结果已改变，请刷新");imageSession={args,index:at,total:result.total,current:null};await stepImage(0);ctx.openDialog("image-dialog");return {opened:true,total:result.total,index:at};
+        if(at<0)throw Error("截图筛选结果已改变，请刷新");imageSession={args,index:at,total:result.total,current:null,previewId:crypto.randomUUID()};await stepImage(0);ctx.openDialog("image-dialog");return {opened:true,total:result.total,index:at};
       });
       action("gallery.orders", object(), () => {
         const root = dialog("wb-settings", "截图浏览顺序"),
@@ -4104,6 +4115,9 @@
         image,
         stepImage,
         refreshImage,
+        closeImage(){const id=imageSession?.previewId;imageSession=null;imageToken++;return id;},
+        canPlayImage(){return imageSession?.current?.kind==="frame";},
+        previewTarget(kind,id){const item=$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},
         async receivePreviewResult(result){showPreviewResult(result);if(!result.running&&result.items.some(i=>i.success)){invalidateCatalog();await load();}},
         invalidate(kind) {
           invalidateCatalog(kind);
