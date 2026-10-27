@@ -28,6 +28,37 @@ class RhVideoClientTest {
   private fun json(value:String)=server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(value))
   private fun awaitState(check:()->Boolean){val end=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);while(!check()){assertTrue("Native operation did not finish",System.nanoTime()<end);Thread.sleep(10)}}
   private fun login(){json("""{"access_token":"test-native-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));assertEquals("/api/v1/auth/login",server.takeRequest().path)}
+  private fun draft(ticket:String,reset:Boolean,vararg ids:String)=client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",reset).put("items",JSONArray(ids.map{id->JSONObject().put("id",id).put("title",id).put("duration",20)})).put("options",JSONObject().put("fullLength",true))) as JSONObject
+  @Test fun preparedTicketsCanInterleaveAndDiscardDoesNotCloseAnActiveInput(){
+    login();draft("a",true,"one");draft("b",true,"two");assertEquals(2,draft("a",false,"three").getInt("count"))
+    client.playback(JSONObject().put("playlist","b").put("id","two"));val b=client.playbackWindow("b",0);assertEquals(listOf("two"),b.ids)
+    draft("c",true,"four");assertTrue((client.request("playlist.discard",JSONObject().put("ticket","c")) as JSONObject).getBoolean("removed"));assertFalse((client.request("playlist.discard",JSONObject().put("ticket","c")) as JSONObject).getBoolean("removed"));client.checkPlayback("b",b.lease)
+    client.playback(JSONObject().put("playlist","a").put("id","three"));val a=client.playbackWindow("a",1);assertEquals(listOf("one","three"),a.ids)
+    try{client.playback(JSONObject().put("playlist","c").put("id","four"));fail("Discarded draft played")}catch(_:IllegalStateException){};client.checkPlayback("a",a.lease)
+  }
+  @Test fun preparedTicketQuotaAndInvalidResetPreserveOtherDrafts(){
+    login();for(n in 0..7)draft("draft-$n",true,"one")
+    try{draft("overflow",true,"two");fail("Unbounded drafts")}catch(_:IllegalArgumentException){}
+    try{draft("draft-0",true,"bad/id");fail("Invalid reset accepted")}catch(_:IllegalArgumentException){}
+    client.playback(JSONObject().put("playlist","draft-0").put("id","one"));assertEquals(listOf("one"),client.playbackWindow("draft-0",0).ids)
+    draft("now-has-room",true,"two")
+  }
+  @Test fun preparedItemsHaveAnAggregateBudgetAndDiscardReleasesIt(){
+    login();val block=Array(200){"item-$it"};for(n in 0 until 499)draft("large",n==0,*block);draft("other",true,*block)
+    try{draft("other",false,"overflow");fail("Aggregate item budget exceeded")}catch(_:IllegalArgumentException){}
+    assertTrue((client.request("playlist.discard",JSONObject().put("ticket","large")) as JSONObject).getBoolean("removed"));assertEquals(201,draft("other",false,"last").getInt("count"))
+  }
+  @Test fun aPreviousGenerationCannotDiscardANewAccountsTicket(){
+    login();val generation=client.sessionGeneration();draft("reused",true,"old");client.logout();login();draft("reused",true,"new")
+    try{client.request("playlist.discard",JSONObject().put("ticket","reused").put("_sessionGeneration",generation));fail("Old account discarded new draft")}catch(_:IllegalStateException){}
+    client.playback(JSONObject().put("playlist","reused").put("id","new"));assertEquals(listOf("new"),client.playbackWindow("reused",0).ids)
+  }
+  @Test fun orphanDraftsExpireLazilyWithoutExpiringAnActivePlayback(){
+    login();draft("orphan",true,"old");draft("live",true,"current");client.playback(JSONObject().put("playlist","live").put("id","current"));val live=client.playbackWindow("live",0)
+    org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMinutes(6))
+    try{client.playback(JSONObject().put("playlist","orphan").put("id","old"));fail("Expired draft played")}catch(_:IllegalStateException){};client.checkPlayback("live",live.lease)
+    draft("new",true,"fresh");client.playback(JSONObject().put("playlist","new").put("id","fresh"));assertEquals(listOf("fresh"),client.playbackWindow("new",0).ids)
+  }
   @Test fun singleControlsAreTransientAndIndependentOfReferenceQueueMemories(){
     login()
     fun open(ticket:String,reference:Boolean=false):RhVideoClient.Window {

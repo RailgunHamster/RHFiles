@@ -46,6 +46,7 @@
         raw = new Map(),
         imageSession = null,
         imageToken = 0,
+        singlePlayIntent = 0,
         thumbnailTicket = 0,
         detailJob = null,
         liveRefresh = null;
@@ -2418,9 +2419,9 @@
       // Direct playback means the clicked video, exactly as playVideoLocal in
       // RHVideo. Selection/portrait/segment rules only belong to explicit queues.
       async function play(media,low=false) {
-        const c=config(),version=epoch;
+        const c=config(),version=epoch,intent=++singlePlayIntent;
         const title=media.title+(low?" (超压)":"");
-        let parent={};
+        let parent={},parentSession=null;
         {
           // playVideoLocal also pushes the first matching gallery screenshot.
           // Load metadata only: do not flash a gallery or decode its thumbnails
@@ -2429,18 +2430,24 @@
             if(!gallery.loaded)await loadGallery(false,false);
             const args={kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1};
             const result=await send("query",args),index=result.queue.findIndex(f=>f.videoId===media.id);
-            if(index>=0){imageSession={args,index,total:result.total,current:result.queue[index],previewId:crypto.randomUUID(),playbackId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(imageSession.current),parentPreview:imageSession.previewId,parentPlayback:imageSession.playbackId,parentTotal:result.total};}
-          }catch(error){if(version===epoch)notice("截图队列不可用，视频仍可单独播放："+String(error));}
+            if(intent!==singlePlayIntent)return {stale:true};
+            if(index>=0){parentSession={args,index,total:result.total,current:result.queue[index],previewId:crypto.randomUUID(),playbackId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(parentSession.current),parentPreview:parentSession.previewId,parentPlayback:parentSession.playbackId,parentTotal:result.total};}
+          }catch(error){if(version===epoch&&intent===singlePlayIntent)notice("截图队列不可用，视频仍可单独播放："+String(error));}
         }
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
+        if(intent!==singlePlayIntent)return {stale:true};
         const ticket=await prepareQueue([{...media,title}],{fullLength:true,super:low,rotation:c.rotation,...parent});
-        return native("play",{id:media.id,title,playlist:ticket,super:low,resume:c.resume});
+        if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
+        if(intent!==singlePlayIntent){await discardPrepared(ticket,version);return {stale:true};}
+        const previous=imageSession;imageSession=parentSession;
+        try{return await native("play",{id:media.id,title,playlist:ticket,super:low,resume:c.resume});}
+        catch(error){if(version===epoch&&intent===singlePlayIntent&&imageSession===parentSession)imageSession=previous;await discardPrepared(ticket,version);throw error;}
       }
       action("media.playLow",object({id:string},["id"]),({id})=>{const item=state.items.find(v=>v.id===id&&v.kind==="video");if(!item)throw Error("视频已不在当前清单，请刷新");return play(item,true);},"external");
       // Explicit playlists retain the full filtering/order snapshot, not just
       // the current card page. Never silently substitute a clicked item's ID.
       async function startPlaylist(mode="segments") {
-        const version=epoch,c=config(),sequential=mode!=="segments",low=mode==="sequential-super",P=RHVideoModel.playback;
+        const version=epoch,intent=++singlePlayIntent,c=config(),sequential=mode!=="segments",low=mode==="sequential-super",P=RHVideoModel.playback;
         if(sequential&&selected.size)throw Error("请先退出多选，再按当前列表顺序连播");
         const saved=await native("playlist.state",{mode});
         const initial=P.initial(mode,saved,c),{portraitOnly,fullLength,segment}=initial;
@@ -2460,6 +2467,7 @@
         if(visibleIds.length<(portraitOnly?2:sequential?1:2))throw Error(portraitOnly?"竖屏视频不足 2 个，无法连播":sequential?"当前列表没有可播放的视频":"需要至少 2 个视频才能分段连播");
         const signature=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(visibleIds))))).map(b=>b.toString(16).padStart(2,"0")).join("");
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
+        if(intent!==singlePlayIntent)return {stale:true};
         const entries=P.entries(ids,all.queue,{segment,fullLength,super:low});
         const index=saved?.signature===signature?Math.max(0,Math.min(visibleIds.length-1,saved.index||0)):0,current=entries.find(e=>e.id===visibleIds[index]);
         const ticket = await prepareQueue(entries, {
@@ -2467,18 +2475,20 @@
           super:low,loop:initial.loop,rate:initial.rate,
           fullLength,segment,portraitOnly,rotation:c.rotation,
         });
-        return native("play", {
+        if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
+        if(intent!==singlePlayIntent){await discardPrepared(ticket,version);return {stale:true};}
+        try{return await native("play", {
           id: current.id,
           title: current.title,
           playlist: ticket,
           super:low,
           resume:false,
-        });
+        });}catch(error){await discardPrepared(ticket,version);throw error;}
       }
       async function prepareQueue(queue, options = {}) {
         const ticket = crypto.randomUUID(),
           version = epoch;
-        for (let offset = 0; offset < queue.length; offset += 200) {
+        try{for (let offset = 0; offset < queue.length; offset += 200) {
           if (version !== epoch) throw Error("媒体账户已更改");
           await native("playlist.prepare", {
             ticket,
@@ -2486,8 +2496,12 @@
             items: queue.slice(offset, offset + 200),
             options,
           });
-        }
-        return ticket;
+        }return ticket;}catch(error){await discardPrepared(ticket,version);throw error;}
+      }
+      async function discardPrepared(ticket,version){
+        if(!ticket||version!==epoch)return;
+        try{await native("playlist.discard",{ticket});}
+        catch(error){if(version===epoch)notice("释放旧播放准备失败："+String(error));}
       }
       action(
         "playback.history",
@@ -2517,10 +2531,11 @@
         "playback.resume",
         object({ id: string }, ["id"]),
         async ({ id }) => {
-          const version = epoch;
+          const version = epoch,intent=++singlePlayIntent;
           const data = await native("playback.history"),
             item = data[id];
           if (version !== epoch) throw Error("媒体账户已改变，播放未开始");
+          if(intent!==singlePlayIntent)return {stale:true};
           if (!item) throw Error("播放记录不存在");
           return native("play", { id, title: item.title || id, resume: true });
         },
@@ -2571,7 +2586,7 @@
       action("grid.seekGroup",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),args=>native("grid.seekGroup",args));
       action("grid.close", object(), () => native("grid.close"));
       if(!ctx.mobile)for(const name of ['favorite','mark'])action('grid.'+name,object({target:{type:'integer',minimum:0,maximum:8}},['target']),args=>native('grid.'+name,args),'write');
-      action("player.close", object(), () => native("player.close"));
+      action("player.close", object(), () => {singlePlayIntent++;return native("player.close");});
       action(
         "grid.control",
         object(
@@ -2648,6 +2663,7 @@
           );
       }
       async function image(media) {
+        const version=epoch,intent=++singlePlayIntent;
         const args = criteria({
             kind: state.kind === "favorite" ? "favorite" : "picture",
             mediaType: "picture",
@@ -2656,7 +2672,8 @@
             limit: 1,
           }),
           result = await query(args);
-        imageSession = {
+        if(version!==epoch||intent!==singlePlayIntent)return {stale:true};
+        const session=imageSession = {
           previewId:crypto.randomUUID(),
           args,
           index: Math.max(
@@ -2666,7 +2683,8 @@
           total: result.total,
           current: null,
         };
-        await stepImage(0);
+        const displayed=await stepImage(0);
+        if(displayed.stale||version!==epoch||intent!==singlePlayIntent||imageSession!==session)return {stale:true};
         ctx.openDialog("image-dialog");
         return { opened: true, total: result.total };
       }
@@ -2749,15 +2767,15 @@
       async function playImageVideo(low,atFrame){
         const session=imageSession,item=session?.current,version=epoch;
         if(session?.loading)throw Error("图片正在切换，请稍候再播放");if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");
-        const playbackId=crypto.randomUUID();session.playAttempt=playbackId;let previous,installed=false;
+        const intent=++singlePlayIntent,playbackId=crypto.randomUUID();session.playAttempt=playbackId;let ticket,previous,installed=false;
         try{
-          const ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentPreview:session.previewId,parentPlayback:playbackId,parentTotal:session.total});
-          if(version!==epoch||imageSession!==session||session.current!==item||session.loading||session.playAttempt!==playbackId||!$("image-dialog").open)throw Error("预览目标已改变，旧播放未执行");
+          ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentPreview:session.previewId,parentPlayback:playbackId,parentTotal:session.total});
+          if(version!==epoch||intent!==singlePlayIntent||imageSession!==session||session.current!==item||session.loading||session.playAttempt!==playbackId||!$("image-dialog").open)throw Error("预览目标已改变，旧播放未执行");
           // Preparing a replacement must not retire the still-playing child's
           // return. Only install its capability once the new source is ready.
           previous=session.playbackId;session.playbackId=playbackId;installed=true;
           return await native("play",{id:item.videoId,title:item.title,seconds:atFrame?item.seconds:0,super:low,playlist:ticket});
-        }catch(error){if(installed&&imageSession===session&&session.playbackId===playbackId)session.playbackId=previous;throw error;}
+        }catch(error){if(installed&&imageSession===session&&session.playbackId===playbackId)session.playbackId=previous;await discardPrepared(ticket,version);throw error;}
         finally{if(session.playAttempt===playbackId)delete session.playAttempt;}
       }
       action("image.playFrame",object({super:{type:"boolean"}}),({super:low=false})=>playImageVideo(low,true),"external");
@@ -4148,7 +4166,8 @@
         image,
         stepImage,
         refreshImage,
-        closeImage(){const id=imageSession?.previewId;imageSession=null;imageToken++;return id;},
+        cancelPendingPlayback(){singlePlayIntent++;},
+        closeImage(){const id=imageSession?.previewId;singlePlayIntent++;imageSession=null;imageToken++;return id;},
         canPlayImage(){return !imageSession?.loading&&imageSession?.current?.kind==="frame";},
         previewTarget(kind,id){const item=$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},
         async receivePreviewResult(result){showPreviewResult(result);if(!result.running&&result.items.some(i=>i.success)){invalidateCatalog();await load();}},

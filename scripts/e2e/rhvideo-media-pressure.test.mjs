@@ -121,7 +121,7 @@ test('repeat loops the current video instead of silently advancing through the q
     await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
     const playing=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs>5000?s:null;},'real playback before repeat',25000);
     await invoke(player,'player.loop');
-    await player.send('Emulation.setVirtualTimePolicy',{policy:'pause'});
+    await player.send('Page.setWebLifecycleState',{state:'frozen'});
     await app.evaluate("call('rhvideo_request',{action:'player.control',args:{command:'seek',value:"+(playing.durationMs-150)+"}})");
     await sleep(1800);
     const repeated=await app.evaluate("call('rhvideo_request',{action:'player.state',args:{}})");
@@ -189,13 +189,13 @@ test('native grid gain is independent for each real audio output, not only the U
   }finally{view?.close();app.close();await fixture?.close();}
 });
 
-test('native playlist advances even while the controls WebView virtual clock is paused',native,async()=>{
+test('native playlist advances even while the controls WebView is frozen',native,async()=>{
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory,6),videoDuration:6,videoCount:3});view=await library(app,fixture);
     await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
     const playing=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs>5000?s:null;},'native current frames',25000);
-    await player.send('Emulation.setVirtualTimePolicy',{policy:'pause'});
+    await player.send('Page.setWebLifecycleState',{state:'frozen'});
     await app.evaluate("call('rhvideo_request',{action:'player.control',args:{command:'seek',value:"+(playing.durationMs-150)+"}})");
     await until(async()=>{const s=await app.evaluate("call('rhvideo_request',{action:'player.state',args:{}})");return s.queue?.id==='video-1'&&s.renderedFrames>0;},'next native video without UI timers',15000);
   }finally{player?.close();view?.close();app.close();await fixture?.close();}

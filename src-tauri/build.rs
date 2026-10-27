@@ -102,6 +102,9 @@ fn enable_common_controls_for_all_windows_targets() {
 }
 
 fn main() {
+    // The packaged interface is frontendDist=../src. Track it explicitly so
+    // changing only JS/CSS/HTML cannot leave an old interface in a new binary.
+    println!("cargo:rerun-if-changed=../src");
     enable_common_controls_for_all_windows_targets();
     generate_release_history();
     let attributes = tauri_build::Attributes::new()

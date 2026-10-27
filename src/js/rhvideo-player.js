@@ -3,7 +3,7 @@
   const api=window.RHFilesAPI,$=id=>document.getElementById(id),object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const native=(action,args={})=>window.__TAURI__.core.invoke('rhvideo_request',{action,args:state.generation?{...args,_sessionGeneration:state.generation}:args});
   api.provideState('application',()=>({platform:'windows',window:'window-rhvideo-player',ready:true}));
-  let state={opened:false},busy=false,dragging=false,queueDragging=false,closed=false;
+  let state={opened:false},busy=false,dragging=false,volumeDragging=false,queueDragging=false,closed=false;
   function error(value){delete $('error').dataset.automation;$('error').textContent=String(value?.message||value);}
   let audibleVolume=100;
   function paint(value){
@@ -18,7 +18,7 @@
     if(state.state===5)$('status').textContent='播放已停止';
     if(state.restoringPausedFrame)$('status').textContent='正在恢复暂停画面…';
     if(state.volume>0)audibleVolume=state.volume;
-    $('volume').value=String(state.volume);$('rate').value=String(state.rate);
+    if(!volumeDragging)$('volume').value=String(state.volume);$('rate').value=String(state.rate);
     $('previous').disabled=!state.queue?.hasPrevious;$('next').disabled=!state.queue?.hasNext;
     const repeat=$('player-loop');if(repeat){repeat.textContent=state.queue?.options?.fullLength===false?'循环当前片段':'循环当前视频';repeat.setAttribute('aria-pressed',String(state.queue?.options?.loop===true));}
     const q=state.queue,reference=q?.options?.reference===true;
@@ -59,7 +59,7 @@
   register('preload',object(),()=>native('player.preload'));
   register('close',object(),()=>native('player.close'));
   register('back',object(),()=>native('player.back'));
-  register('seekQueue',object({ratio:{type:'number',minimum:0,maximum:1}},['ratio']),async args=>{const value=await native('player.seekQueue',args);paint(value);return value;});
+  register('seekQueue',object({ratio:{type:'number',minimum:0,maximum:1},expectedPlanRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['ratio']),async args=>{const value=await native('player.seekQueue',args);paint(value);return value;});
   let inputBusy=false;
   register('input',object({inputId:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER},intent:{type:'string',enum:['next','previous','first','last','toggle','close','expand','mark']}},['inputId','intent']),async({inputId,intent})=>{
     if(inputBusy)return {ignored:true};inputBusy=true;
@@ -81,15 +81,34 @@
   for(const [id,name]of Object.entries({back:'back',toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen','queue-seek':'seekQueue','full-length':'options','segment-length':'options','portrait-only':'options'}))$(id).dataset.apiAction='rhvideo.player.'+name;
   api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...document.querySelectorAll('button,input,select')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native player UI/public API coverage'});
   const control=args=>api.invoke('rhvideo.player.control',{...(Number.isSafeInteger(state.inputId)?{expectedInput:state.inputId}:{}),...args}).catch(error);
+  function bindSourceRange(id,command,setLocked,preview,scope='input'){
+    const node=$(id);let target=null,active=false,keyHeld=false;
+    // Source controls belong to one decoder input. Whole-queue progress instead
+    // belongs to one immutable time/ordering plan, even across automatic Next.
+    const snapshot=()=>scope==='queue'?{planRevision:state.queue?.planRevision}:{inputId:state.inputId,durationMs:state.durationMs};
+    const begin=()=>{target=snapshot();active=true;setLocked(true);};
+    RHFilesUI.listen(node,'pointerdown',event=>{if(event.button===0)begin();},undefined,'rhvideo.player.'+id+'.begin');
+    RHFilesUI.listen(node,'keydown',event=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.code)){if(!event.repeat)begin();keyHeld=true;}},undefined,'rhvideo.player.'+id+'.keyboard.begin');
+    RHFilesUI.listen(node,'keyup',()=>{keyHeld=false;},undefined,'rhvideo.player.'+id+'.keyboard.end');
+    RHFilesUI.listen(node,'input',()=>{if(!active&&!keyHeld)begin();preview?.(target);},undefined,'rhvideo.player.'+id+'.preview');
+    RHFilesUI.listen(node,'change',event=>{
+      // A standalone public ui.fire(change) is a new automation action. A
+      // trusted pointer/key commit retains its original source, including ABA.
+      const started=(!active&&!keyHeld&&event?.isTrusted===false?snapshot():target)||snapshot();active=false;setLocked(false);
+      if(!started||!Number.isSafeInteger(scope==='queue'?started.planRevision:started.inputId))return error('播放器尚未就绪，拖动未执行');
+      if(started.cancelled)return error('拖动已取消，未更改播放');
+      if(scope==='queue')void api.invoke('rhvideo.player.seekQueue',{...command(Number(node.value),started),expectedPlanRevision:started.planRevision}).catch(error);
+      else void control({...command(Number(node.value),started),expectedInput:started.inputId});
+    },undefined,'rhvideo.player.'+id+'.commit');
+    RHFilesUI.listen(node,'pointercancel',()=>{if(target)target.cancelled=true;active=false;setLocked(false);},undefined,'rhvideo.player.'+id+'.cancel');
+  }
   RHFilesUI.listen($('toggle'),'click',()=>control({command:state.state===4||state.state===6?'resume':'pause'}),undefined,'rhvideo.player.toggle');
   for(const name of ['next','previous'])RHFilesUI.listen($(name),'click',()=>api.invoke('rhvideo.player.'+name).catch(error),undefined,'rhvideo.player.'+name);
-  RHFilesUI.listen($('seek'),'input',()=>{dragging=true;$('position').textContent=RHVideoModel.clock(Number($('seek').value)/1000*state.durationMs/1000);},undefined,'rhvideo.player.seek.preview');
-  RHFilesUI.listen($('seek'),'change',()=>{dragging=false;control({command:'seek',value:Math.round(Number($('seek').value)/1000*state.durationMs)});},undefined,'rhvideo.player.seek.commit');
+  bindSourceRange('seek',(value,started)=>({command:'seek',value:Math.round(value/1000*started.durationMs)}),locked=>{dragging=locked;},started=>{$('position').textContent=RHVideoModel.clock(Number($('seek').value)/1000*started.durationMs/1000);});
   RHFilesUI.listen($('rate'),'change',()=>control({command:'rate',value:Number($('rate').value)}),undefined,'rhvideo.player.rate');
-  RHFilesUI.listen($('volume'),'change',()=>control({command:'volume',value:Number($('volume').value)}),undefined,'rhvideo.player.volume');
+  bindSourceRange('volume',value=>({command:'volume',value}),locked=>{volumeDragging=locked;});
   RHFilesUI.listen($('fullscreen'),'click',()=>api.invoke('rhvideo.player.fullscreen').catch(error),undefined,'rhvideo.player.fullscreen');
-  RHFilesUI.listen($('queue-seek'),'input',()=>{queueDragging=true;},undefined,'rhvideo.player.queue.preview');
-  RHFilesUI.listen($('queue-seek'),'change',()=>{queueDragging=false;void api.invoke('rhvideo.player.seekQueue',{ratio:Number($('queue-seek').value)/1000}).catch(error);},undefined,'rhvideo.player.seekQueue');
+  bindSourceRange('queue-seek',value=>({ratio:value/1000}),locked=>{queueDragging=locked;},undefined,'queue');
   RHFilesUI.listen($('full-length'),'change',()=>api.invoke('rhvideo.player.options',{fullLength:$('full-length').checked}).catch(error),undefined,'rhvideo.player.options.fullLength');
   RHFilesUI.listen($('segment-length'),'change',()=>api.invoke('rhvideo.player.options',{segment:Number($('segment-length').value),fullLength:false}).catch(error),undefined,'rhvideo.player.options.segment');
   RHFilesUI.listen($('portrait-only'),'change',()=>api.invoke('rhvideo.player.options',{portraitOnly:$('portrait-only').checked}).catch(value=>{paint(state);error(value);}),undefined,'rhvideo.player.options.portrait');

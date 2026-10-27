@@ -65,6 +65,31 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{try{state=(JSONObject)action("player.state",new JSONObject());if((id==null||id.equals(state.optString("id")))&&state.optBoolean("rendered")&&state.optInt("playbackState")==3&&state.optLong("renderedFrames")>0&&state.optBoolean("playing")==playing)return state;}catch(Exception ignored){}Thread.sleep(150);}while(System.currentTimeMillis()<end);
     throw new Exception("Native reference player did not settle: "+state);
   }
+  private void checkLatestPlayIntent()throws Exception{
+    action("category",new JSONObject().put("kind","video"));action("sort",new JSONObject().put("value","dateDesc"));
+    action("gallery.open",new JSONObject());action("panel.close",new JSONObject().put("id","wb-gallery"));
+    expression(library,"(()=>{window.__intentPost=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...rest){if(!window.__heldIntent&&message.action==='query'&&message.args.kind==='gallery'&&message.args.allKeys){window.__heldIntent={worker:this,message,rest};return;}return window.__intentPost.call(this,message,...rest);};window.__oldIntent=RHFilesAPI.invoke('rhvideo.media.open',{kind:'video',id:'video-0'});return true;})()");
+    long end=System.currentTimeMillis()+10000;while(!"true".equals(eval(library,"!!window.__heldIntent"))&&System.currentTimeMillis()<end)Thread.sleep(100);if(!"true".equals(eval(library,"!!window.__heldIntent")))throw new Exception("Older library request did not reach metadata: "+expression(library,"Promise.race([window.__oldIntent.then(value=>({value}),error=>({error:String(error)})),new Promise(resolve=>setTimeout(()=>resolve({pending:true}),300))])")+"; "+action("state",new JSONObject()));
+    action("media.open",new JSONObject().put("kind","video").put("id","video-1"));long input=waitPlayer("video-1",true).getLong("inputId");
+    expression(library,"(()=>{Worker.prototype.postMessage=window.__intentPost;window.__intentPost.call(window.__heldIntent.worker,window.__heldIntent.message,...window.__heldIntent.rest);return true;})()");
+    require(((JSONObject)expression(library,"window.__oldIntent")).optBoolean("stale"),"Old preparation must report stale without launching its source");
+    require(((JSONObject)action("player.state",new JSONObject())).getLong("inputId")==input&&((JSONObject)action("image.state",new JSONObject())).getJSONObject("current").getString("videoId").equals("video-1"),"Neither native playback nor its parent may be taken over by an old request");
+    action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+  }
+  private Object mediaNative(String name,JSONObject params)throws Exception{step("prepared-ticket "+name);return expression(library,"RHVideoNative.request("+JSONObject.quote(name)+","+params+")");}
+  private JSONObject prepareTicket(String ticket,boolean reset,int... ids)throws Exception{
+    JSONArray rows=new JSONArray();for(int id:ids)rows.put(new JSONObject().put("id","video-"+id).put("title","video-"+id).put("duration",20));
+    return (JSONObject)mediaNative("playlist.prepare",new JSONObject().put("ticket",ticket).put("reset",reset).put("items",rows).put("options",new JSONObject().put("fullLength",true)));
+  }
+  private void checkPreparedTickets()throws Exception{
+    prepareTicket("draft-a",true,0);prepareTicket("draft-b",true,2);require(prepareTicket("draft-a",false,1).getInt("count")==2,"A second preparation cannot invalidate earlier chunks");
+    mediaNative("play",new JSONObject().put("playlist","draft-b").put("id","video-2").put("title","B"));long input=waitPlayer("video-2",true).getLong("inputId");Activity superseded=current;require(superseded!=null&&superseded.getClass().getSimpleName().equals("PlaybackActivity"),"Actual first native Activity is resumed");
+    prepareTicket("discarded",true,0);require(((JSONObject)mediaNative("playlist.discard",new JSONObject().put("ticket","discarded"))).getBoolean("removed"),"Explicit draft cleanup must release its own ticket");require(((JSONObject)action("player.state",new JSONObject())).getLong("inputId")==input,"Discarding a draft cannot close active Media3");
+    mediaNative("play",new JSONObject().put("playlist","draft-a").put("id","video-1").put("title","A"));JSONObject active=waitPlayer("video-1",true);require(active.getInt("count")==2,"Interleaved draft retains its exact own entries");
+    require(superseded.isFinishing()||superseded.isDestroyed(),"Replacing a native single player must retire the old Activity, not stack stopped decoders");
+    require(!((JSONObject)mediaNative("playlist.discard",new JSONObject().put("ticket","draft-a"))).getBoolean("removed"),"Activated tickets are consumed, not leaked");
+    action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+  }
   private JSONObject waitPausedPlayerFrame(String id,long target,long previousFrames)throws Exception{
     long end=System.currentTimeMillis()+30000;JSONObject state=null;
     do{state=(JSONObject)action("player.state",new JSONObject());if(id.equals(state.optString("id"))&&!state.optBoolean("playWhenReady")&&state.optInt("playbackState")==3&&state.optLong("renderedFrames")>previousFrames&&Math.abs(state.optLong("positionMs")-target)<250)return state;Thread.sleep(150);}while(System.currentTimeMillis()<end);
@@ -216,10 +241,14 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(latch.await(15,TimeUnit.SECONDS),"JavaScript evaluation timed out");return result[0];
   }
   private Object expression(WebView web,String expression)throws Exception{
-    eval(web,"window.__rhQa=null;void(async()=>{try{const value=await ("+expression+");window.__rhQa={value:value===undefined?null:value}}catch(e){window.__rhQa={error:String(e)}}})();");
+    String request=java.util.UUID.randomUUID().toString(),nonce=JSONObject.quote(request);
+    // Reset separately: a syntax error in the next script must never leave a
+    // previous successful result looking like this call's acknowledgement.
+    eval(web,"window.__rhQa={request:"+nonce+"};true");
+    eval(web,"void(async()=>{const publish=result=>{if(window.__rhQa?.request==="+nonce+")window.__rhQa={request:"+nonce+",...result};};try{const value=await ("+expression+");publish({value:value===undefined?null:value});}catch(e){publish({error:String(e)});}})();");
     long end=System.currentTimeMillis()+45000;
     do{Object text=new JSONTokener(eval(web,"JSON.stringify(window.__rhQa||{})")).nextValue();JSONObject result=new JSONObject(String.valueOf(text));
-      if(result.has("error"))throw new Exception(result.getString("error"));if(result.has("value"))return result.get("value");Thread.sleep(100);
+      if(request.equals(result.optString("request"))){if(result.has("error"))throw new Exception(result.getString("error"));if(result.has("value"))return result.get("value");}Thread.sleep(100);
     }while(System.currentTimeMillis()<end);throw new Exception("Action timed out");
   }
   private Object action(String name,JSONObject p)throws Exception{Bundle step=new Bundle();step.putString("stream","STEP: rhvideo."+name+"\n");sendStatus(0,step);return expression(library,"RHFilesAPI.invoke("+JSONObject.quote("rhvideo."+name)+","+p+")");}
@@ -307,13 +336,14 @@ public class RhVideoInstrumentation extends Instrumentation {
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
-      if(!"grid".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode")))checkFileTaskAndSort();
+      if(!"grid".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
       JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==("single".equals(args.getString("mode"))?3:52),"Video catalog count");
+      if("tickets".equals(args.getString("mode"))){checkPreparedTickets();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: prepared ticket lifetime and native player replacement");finish(Activity.RESULT_OK,result);return;}
       if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, audible cells, native frames, pause/seek/mute/rate restoration, independent queue, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}
       if("playlist".equals(args.getString("mode"))){checkReferencePlaylist();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference playlist segments, whole-file seek, native segment loop, global navigation, immutable pool, portrait projection, mode memory and native EOF close");finish(Activity.RESULT_OK,result);return;}
-      if("preview".equals(args.getString("mode"))){checkReferencePreview();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference preview parent stack, native favorite and mark controls, one-shot stage results, stale-event isolation and account boundaries");finish(Activity.RESULT_OK,result);return;}
+      if("preview".equals(args.getString("mode"))){checkPreparedTickets();checkLatestPlayIntent();checkReferencePreview();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference preview parent stack, native favorite and mark controls, one-shot stage results, independent prepared tickets, late preparation isolation and account boundaries");finish(Activity.RESULT_OK,result);return;}
       if("single".equals(args.getString("mode"))){checkReferenceSingle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference single controls, native menus, one-item parents, per-child return identity and independent mode/account state");finish(Activity.RESULT_OK,result);return;}
       require(Boolean.TRUE.equals(expression(library,"RHVideoNative.request('folders',{kind:'video'}).then(Array.isArray)")),"Folder API must return a real array");
       if(Build.VERSION.SDK_INT>=30){int[] location={0,0},top={0};runOnMainSync(()->{library.getLocationOnScreen(location);top[0]=library.getRootWindowInsets().getInsets(WindowInsets.Type.statusBars()|WindowInsets.Type.displayCutout()).top;});require(location[1]>=top[0],"Status bar must not cover the library header");}

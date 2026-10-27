@@ -207,7 +207,9 @@
     return openMedia(media);
   },'external');
   async function openMedia(media){
-    if(media.kind==='video')return workbench?workbench.play(media):native('play',{id:media.id,title:media.title,queue:state.items.filter(v=>v.kind==='video').map(({id,title})=>({id,title}))});
+    if(media.kind!=='novel')reader.token++;
+    if(media.kind==='novel')workbench?.cancelPendingPlayback();
+    if(media.kind==='video'){if(!workbench)throw Error('媒体工作台尚未就绪，播放未开始');return workbench.play(media);}
     if(media.kind==='picture'&&workbench)return workbench.image(media);
     if(media.kind==='picture'){const result=model.imageIndex(state.items,media.id);images=result.images;imageIndex=result.index;imageZoom=1;showImage();openDialog('image-dialog');return {opened:true};}
     const token=++reader.token;const book=await native('novel',{id:media.id});if(token!==reader.token)return {cancelled:true};
@@ -238,7 +240,7 @@
     }
     return {count:value.frames.length};
   },'read');
-  action('timeline.play',object({id:string,seconds:{type:'number',minimum:0,maximum:604800}},['id','seconds']),({id,seconds})=>{const media=item(id,'video');return native('play',{id,title:media.title,seconds});},'external');
+  action('timeline.play',object({id:string,seconds:{type:'number',minimum:0,maximum:604800}},['id','seconds']),({id,seconds})=>{const media=item(id,'video');workbench?.cancelPendingPlayback();return native('play',{id,title:media.title,seconds});},'external');
   action('timeline.close',object(),()=>{timelineLoadId++;$('timeline-dialog').close();$('timeline-frames').replaceChildren();return {closed:true};});
   async function saveRead(){
     if(!reader.book||!reader.loaded)return {saved:false};

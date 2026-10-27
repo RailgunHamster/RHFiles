@@ -15,6 +15,24 @@ const native={skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'};
 const {grid:Grid}=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
 const command=(app,action,args={})=>app.evaluate('call("rhvideo_request",'+JSON.stringify({action,args})+')');
+async function withSuspendedControls(view,work){
+  // VirtualTimePolicy.advance fast-forwards delayed work; it does not restore
+  // the real clock. Use reversible page suspension for native-background tests.
+  await view.evaluate('window.__rhFreezeProbe={ticks:0};window.__rhFreezeProbe.timer=setInterval(()=>window.__rhFreezeProbe.ticks++,50);true');
+  await until(()=>view.evaluate('window.__rhFreezeProbe.ticks>0'),'controls probe is actually ticking');
+  const before=await view.evaluate('window.__rhFreezeProbe.ticks');
+  await view.send('Page.setWebLifecycleState',{state:'frozen'});
+  let result;
+  try{result=await work();}finally{await view.send('Page.setWebLifecycleState',{state:'active'});}
+  const after=await view.evaluate('window.__rhFreezeProbe.ticks');
+  assert(after-before<=2,'controls timers must remain suspended during native-only work');
+  const started=performance.now(),resumed=await until(async()=>{const ticks=await view.evaluate('window.__rhFreezeProbe.ticks');return ticks>after?ticks:null;},'controls timers resume after activation',5000);
+  const wallMs=performance.now()-started;
+  assert(resumed-after<=wallMs/50+6,'resume must not put controls into an accelerated synthetic clock');
+  console.log(JSON.stringify({controlsClock:{before,after,resumed,wallMs}}));
+  await view.evaluate('clearInterval(window.__rhFreezeProbe.timer);delete window.__rhFreezeProbe;true');
+  return result;
+}
 async function target(app,file){
   const found=await until(async()=>{const all=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return all.find(t=>new URL(t.url).pathname.endsWith('/'+file));},file+' window');
   const view=await cdpSession(found,30000);
@@ -266,6 +284,85 @@ test('replaying the same screenshot uses a new child identity and consumes each 
   }finally{player?.close();await s.close();}
 });
 
+test('a delayed real video-card click cannot take over a newer clicked video or its parent',native,async()=>{
+  const s=await setup();let player;
+  try{
+    await s.view.send('Emulation.setFocusEmulationEnabled',{enabled:true});
+    await invoke(s.view,'gallery.open');await invoke(s.view,'panel.close',{id:'wb-gallery'});
+    await s.view.evaluate("window.__playPost=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...rest){if(!window.__heldPlay&&message.action==='query'&&message.args.kind==='gallery'&&message.args.allKeys){window.__heldPlay={worker:this,message,rest};return;}return window.__playPost.call(this,message,...rest);};true");
+    const click=async id=>{await s.view.evaluate("document.querySelector('.media-card[data-id="+JSON.stringify(id)+"] .cover-button').scrollIntoView({block:'center'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");const point=await s.view.evaluate("(()=>{const n=document.querySelector('.media-card[data-id="+JSON.stringify(id)+"] .cover-button'),r=n.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return {x,y,hit:document.elementFromPoint(x,y)?.closest('.media-card')?.dataset.id};})()");assert.equal(point.hit,id,'the real pointer must hit the requested visible card');const {x,y}=point;await s.view.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x,y});await s.view.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x,y});};
+    await click('video-0');await until(()=>s.view.evaluate('!!window.__heldPlay'),'first real card is awaiting gallery metadata');
+    await click('video-1');player=await target(s.app,'rhvideo-player.html');
+    const shown=await until(async()=>{const v=await invoke(player,'player.state');return v.queue?.id==='video-1'&&v.renderedFrames>0?v:null;},'newer clicked video displays actual native frames',25000);
+    await s.view.evaluate("Worker.prototype.postMessage=window.__playPost;const held=window.__heldPlay,receive=held.worker.onmessage;held.worker.onmessage=function(event){receive.call(this,event);if(event.data.id===held.message.id)window.__oldPlayDelivered=true;};window.__playPost.call(held.worker,held.message,...held.rest);true");
+    await until(()=>s.view.evaluate('window.__oldPlayDelivered===true'),'old gallery response delivered');
+    const current=await invoke(player,'player.state');assert.equal(current.inputId,shown.inputId);assert.equal(current.queue.id,'video-1');assert.equal((await invoke(s.view,'image.state')).current.videoId,'video-1');
+    assert.equal(s.fixture.requests.filter(r=>r.path==='/api/v1/videos/video-0/play').length,0,'an obsolete click must never start an old stream after the new one');
+  }finally{player?.close();await s.close();}
+});
+
+test('a real seek drag stays bound to the input where it started when the queue advances',native,async()=>{
+  const s=await setup({videoDuration:20});let player;
+  try{
+    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    const first=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0&&v.durationMs>0?v:null;},'first native seek target',25000);
+    await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await player.evaluate("window.__seekEvents=[];for(const name of ['pointerdown','input','change','pointerup'])document.getElementById('seek').addEventListener(name,event=>window.__seekEvents.push({name,value:event.target.value,trusted:event.isTrusted}),true);true");
+    const point=await player.evaluate("(()=>{const r=document.getElementById('seek').getBoundingClientRect();return {x:r.x+r.width*.75,y:r.y+r.height/2};})()");
+    await player.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...point});
+    await invoke(player,'player.next');
+    const next=await until(async()=>{const v=await invoke(player,'player.state');return v.inputId!==first.inputId&&v.renderedFrames>0?v:null;},'queue advanced during the held drag',25000);
+    await invoke(player,'player.control',{command:'pause'});
+    await player.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...point});
+    console.log(JSON.stringify({seekDrag:await player.evaluate("({events:window.__seekEvents,error:document.getElementById('error').textContent})"),released:await invoke(player,'player.state')}));
+    await until(()=>player.evaluate("document.getElementById('error').textContent.includes('旧操作未执行')"),'old drag is rejected visibly rather than seeking the new video');
+    const current=await invoke(player,'player.state');assert.equal(current.inputId,next.inputId);assert(current.positionMs<8000,'releasing an old 75% drag must not seek the new input');
+  }finally{player?.close();await s.close();}
+});
+
+test('a real total-progress drag survives Next but cannot seek a replacement time plan',native,async()=>{
+  const s=await setup({videoDuration:20});let player;
+  try{
+    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    const first=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0&&v.durationMs>0?v:null;},'initial total-progress target',25000);
+    await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});
+    await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const point=await player.evaluate("(()=>{const r=document.getElementById('queue-seek').getBoundingClientRect();return {x:r.x+r.width*.75,y:r.y+r.height/2};})()");
+    const down=(at=point)=>player.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...at});
+    const up=(at=point)=>player.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...at});
+    await down();await invoke(player,'player.next');
+    assert.equal((await invoke(player,'player.state')).queue.planRevision,first.queue.planRevision);
+    await up();
+    const seeked=await until(async()=>{const v=await invoke(player,'player.state');return v.queue.index===4&&v.renderedFrames>0&&v.positionMs>8000?v:null;},'queue gesture uses its full original timeline after Next',25000);
+    await invoke(player,'player.control',{command:'pause'});
+    // Make a genuinely different value, otherwise a second click at the same
+    // position produces no native HTML range change/commit at all.
+    const secondPoint=await player.evaluate("(()=>{const r=document.getElementById('queue-seek').getBoundingClientRect();return {x:r.x+r.width*.25,y:r.y+r.height/2};})()");
+    await player.evaluate("window.__queueDragEvents=[];for(const name of ['pointerdown','input','change','pointerup'])document.getElementById('queue-seek').addEventListener(name,event=>window.__queueDragEvents.push({name,value:event.target.value,trusted:event.isTrusted}),true);true");
+    await down(secondPoint);await invoke(player,'player.options',{fullLength:false,segment:2});
+    const changed=await invoke(player,'player.state');assert.notEqual(changed.queue.planRevision,seeked.queue.planRevision);
+    await up(secondPoint);await until(()=>player.evaluate("document.getElementById('error').textContent.includes('播放队列已改变')"),'replaced plan is rejected visibly');
+    console.log(JSON.stringify({queueDrag:await player.evaluate('window.__queueDragEvents'),beforePlan:seeked.queue.planRevision,afterPlan:changed.queue.planRevision,inputBeforeRejection:changed.inputId}));
+    assert.equal((await invoke(player,'player.state')).inputId,changed.inputId,'old drag does not replace the current native source');
+    await assert.rejects(invoke(player,'player.seekQueue',{ratio:.5,expectedPlanRevision:seeked.queue.planRevision}),/播放队列已改变/);
+  }finally{player?.close();await s.close();}
+});
+
+test('independent prepared tickets survive interleaved chunks and discarding one never stops active playback',native,async()=>{
+  const s=await setup({videoCount:3,videoDuration:20});let player;
+  const prepare=(ticket,reset,ids)=>command(s.app,'playlist.prepare',{ticket,reset,items:ids.map(id=>({id,title:id,duration:20})),options:{fullLength:true}});
+  try{
+    await prepare('draft-a',true,['video-0']);await prepare('draft-b',true,['video-2']);
+    assert.equal((await prepare('draft-a',false,['video-1'])).count,2,'another ticket cannot invalidate an earlier draft or its later chunks');
+    await command(s.app,'play',{playlist:'draft-b',id:'video-2',title:'B'});player=await target(s.app,'rhvideo-player.html');
+    const first=await invoke(player,'player.state');assert.equal(first.queue.id,'video-2');assert.equal(first.queue.total,1);
+    await prepare('discarded-draft',true,['video-0']);assert.equal((await command(s.app,'playlist.discard',{ticket:'discarded-draft'})).removed,true);assert.equal((await command(s.app,'playlist.discard',{ticket:'discarded-draft'})).removed,false);
+    assert.equal((await invoke(player,'player.state')).inputId,first.inputId,'draft cleanup is not a player-close action');
+    await command(s.app,'play',{playlist:'draft-a',id:'video-1',title:'A'});const current=await invoke(player,'player.state');assert.equal(current.queue.total,2);assert.equal(current.queue.id,'video-1');
+    await assert.rejects(command(s.app,'play',{playlist:'discarded-draft',id:'video-0',title:'Discarded'}),/准备已失效/);assert.equal((await invoke(player,'player.state')).inputId,current.inputId);
+  }finally{player?.close();await s.close();}
+});
+
 test('a delayed screenshot switch cannot play, favorite or mark the old target; fast arrows retain their intended order',native,async()=>{
   const s=await setup();let player;
   try{
@@ -439,14 +536,13 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
     const saved=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&v.decoderPositionMs>=4800?v:null;},'actual paused cell position');
     await invoke(grid,'grid.control',{target:-1,command:'pause'});
     const next=await invoke(grid,'grid.page',{direction:1});assert.deepEqual(next.cells.map(c=>c.id),groups[1].map(v=>v.id));
-    await grid.send('Emulation.setVirtualTimePolicy',{policy:'pause'});
-    await invoke(grid,'grid.page',{direction:-1});
-    // The expected-renderer environment variable is an optional assertion, not
-    // the renderer selection. Default native runs also need their real cold
-    // decoder budget before the one-shot background observation.
-    await sleep(first.cells.some(c=>c.renderer==='native-hardware-auto')?12000:2500);
-    const backgroundState=await command(s.app,'grid.state'),background=backgroundState.cells;console.log(JSON.stringify({backgroundMonitorTicks:backgroundState.monitorTicks,cells:background.map(v=>({phase:v.restorePhase,frames:v.renderedFrames,state:v.state,position:v.positionMs}))}));assert(background.every(v=>!v.restoringPausedFrame&&v.renderedFrames>0&&v.state===4),'every paused cell must restore without any controls WebView timers or state polling');
-    phase='resume controls WebView clock';await grid.send('Emulation.setVirtualTimePolicy',{policy:'advance'});
+    phase='restore paused group while controls are frozen';await withSuspendedControls(grid,async()=>{
+      // A frozen page cannot answer its own JS bridge. Invoke the same native
+      // action from its owner, without waking or reading the controls page.
+      await command(s.app,'grid.page',{direction:-1});
+      await sleep(first.cells.some(c=>c.renderer==='native-hardware-auto')?12000:2500);
+      const backgroundState=await command(s.app,'grid.state'),background=backgroundState.cells;console.log(JSON.stringify({backgroundMonitorTicks:backgroundState.monitorTicks,cells:background.map(v=>({phase:v.restorePhase,frames:v.renderedFrames,state:v.state,position:v.positionMs}))}));assert(background.every(v=>!v.restoringPausedFrame&&v.renderedFrames>0&&v.state===4),'every paused cell must restore without any controls WebView timers or state polling');
+    });
     phase='read restored paused cell';const restored=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&Math.abs(v.positionMs-saved.positionMs)<500?v:null;},'paused cell displays an actual restored frame after paging',25000);
     assert.equal(restored.volume,37);assert.equal(restored.muted,true);assert.equal(restored.rate,1.5);assert.equal(restored.seekError,null);assert.notEqual(restored.inputId,saved.inputId);
     phase='page after paused restore';const boundary=await invoke(grid,'grid.page',{direction:-1});assert.equal(boundary.cells[0].inputId,restored.inputId,'clamped navigation cannot restart the current group');

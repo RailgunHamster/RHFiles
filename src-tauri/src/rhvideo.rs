@@ -34,7 +34,7 @@ static MEDIA_WAITERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 static CATALOG_CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 static PLAYBACK: Mutex<Option<Playback>> = Mutex::new(None);
 static PLAY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-static PREPARED: Mutex<Option<PreparedPlaylist>> = Mutex::new(None);
+static PREPARED: Mutex<Vec<PreparedPlaylist>> = Mutex::new(Vec::new());
 static GRID_QUEUE: Mutex<Option<GridQueue>> = Mutex::new(None);
 static GRID_LOAD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static PREFERENCES_LOCK: Mutex<()> = Mutex::new(());
@@ -137,6 +137,52 @@ struct PreparedPlaylist {
     segments: Vec<Option<(f64,f64)>>,
     prefix: Vec<f64>,
     options: Value,
+    touched: std::time::Instant,
+}
+fn prepare_playlist(drafts:&mut Vec<PreparedPlaylist>,generation:u64,args:&Value)->Result<Value,String>{
+    drafts.retain(|q|q.touched.elapsed()<Duration::from_secs(300));
+    let ticket=identifier(text(args,"ticket",128)?)?.to_owned();
+    let items=args["items"].as_array().filter(|a|!a.is_empty()&&a.len()<=200).ok_or("播放列表分片无效")?;
+    let index=drafts.iter().position(|q|q.ticket==ticket&&q.generation==generation);
+    let reset=args["reset"]==true;
+    let options=if reset{
+        validate_reference_options(&args["options"])?;
+        if serde_json::to_vec(&args["options"]).map_err(|_|"播放设置无效")?.len()>256*1024{return Err("播放设置过大".into());}
+        if index.is_none()&&drafts.len()>=8{return Err("准备中的播放队列过多，请先释放不用的票据".into());}
+        &args["options"]
+    }else{&drafts.get(index.ok_or("播放列表准备已失效")?).ok_or("播放列表准备已失效")?.options};
+    let existing:usize=drafts.iter().enumerate().filter(|(at,_)|!reset||Some(*at)!=index).map(|(_,q)|q.items.len()).sum();
+    if existing+items.len()>100000{return Err("准备中的播放列表合计超出 10 万项".into());}
+    let mut validated=Vec::with_capacity(items.len());
+    for item in items{
+        let identity=(identifier(text(item,"id",128)?)?.to_owned(),text(item,"title",1024)?.to_owned());
+        let duration=item["duration"].as_f64().unwrap_or(0.).clamp(0.,604800.);
+        let segment=if options["reference"]==true{
+            let start=item["segmentStart"].as_f64().filter(|n|n.is_finite()&&(0.0..=604800.).contains(n)).ok_or("分段起点无效")?;
+            let length=item["segmentLength"].as_f64().filter(|n|n.is_finite()&&(0.1..=604800.).contains(n)).ok_or("分段长度无效")?;
+            if duration>0.&&start+length>duration+0.2{return Err("分段超出视频时长".into());}Some((start,length))
+        }else{None};
+        if item.get("portrait").is_some_and(|value|!value.is_boolean()){return Err("竖屏元数据无效".into());}
+        let rect=if options["grid"]==true{
+            let parts=item["gridRect"].as_array().filter(|r|r.len()==4).ok_or("同屏布局无效")?;
+            let values=parts.iter().map(|v|v.as_f64().filter(|n|n.is_finite()&&*n>=0.)).collect::<Option<Vec<_>>>().ok_or("同屏布局无效")?;
+            if values[2]<=0.||values[3]<=0.||values[0]+values[2]>1.002||values[1]+values[3]>1.002||!item["gridEnd"].is_boolean(){return Err("同屏布局超出范围".into());}Some([values[0],values[1],values[2],values[3]])
+        }else{None};
+        validated.push((identity,duration,segment,item["portrait"]==true,rect,item["gridEnd"]==true));
+    }
+    // Validate the entire chunk before replacing a valid draft or appending.
+    // Different tickets coexist; their aggregate memory remains bounded.
+    let index=if reset{
+        let q=PreparedPlaylist{ticket,generation,items:Vec::new(),durations:Vec::new(),portraits:Vec::new(),grid_cells:Vec::new(),grid_ends:Vec::new(),segments:Vec::new(),prefix:vec![0.],options:options.clone(),touched:std::time::Instant::now()};
+        if let Some(index)=index{drafts[index]=q;index}else{drafts.push(q);drafts.len()-1}
+    }else{index.ok_or("播放列表准备已失效")?};
+    let q=&mut drafts[index];
+    q.touched=std::time::Instant::now();
+    for(identity,duration,segment,portrait,rect,end)in validated{
+        q.items.push(identity);q.durations.push(duration);q.segments.push(segment);q.portraits.push(portrait);q.grid_cells.push(rect);q.grid_ends.push(end);
+        q.prefix.push(q.prefix.last().copied().unwrap_or(0.)+segment.map(|s|s.1).unwrap_or(duration));
+    }
+    Ok(json!({"count":q.items.len()}))
 }
 #[derive(Clone)]
 struct PlaylistPool {
@@ -149,6 +195,9 @@ struct PlaylistPool {
 struct Playback {
     generation: u64,
     revision: u64,
+    // Stable across Next/Previous; changes when the ordered/time-weighted plan
+    // changes or a viewer is reopened, so an old total-progress drag is safe.
+    plan_revision: u64,
     items: Vec<(String, String)>,
     index: usize,
     durations: Vec<f64>,
@@ -199,6 +248,9 @@ fn expected_playback(
     q.generation == generation
         && id.is_none_or(|id| q.items[q.index].0 == id)
         && revision.is_none_or(|revision| q.revision == revision)
+}
+fn expected_plan(q:&Playback,generation:u64,revision:u64)->bool{
+    q.generation==generation&&q.plan_revision==revision
 }
 fn queue_seek(prefix:&[f64],ratio:f64)->Result<(usize,f64),String>{
     if prefix.len()<2||!ratio.is_finite()||!(0.0..=1.).contains(&ratio){return Err("队列位置无效".into());}
@@ -1166,7 +1218,7 @@ pub(crate) async fn client_window(
 fn queue_info() -> Value {
     PLAYBACK.lock().ok().and_then(|slot|slot.as_ref().map(|q|{
         let parent=q.options["origin"]=="frame"&&q.options["parentTotal"].as_u64().unwrap_or(0)>0;
-        json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),
+        json!({"id":q.items[q.index].0,"revision":q.revision,"planRevision":q.plan_revision,"index":q.index,"total":q.items.len(),
             "sourceTotal":q.pool.as_ref().map(|p|p.items.len()),"portraitTotal":q.pool.as_ref().map(|p|p.portraits.iter().filter(|v|**v).count()),
             "hasPrevious":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index>0},
             "hasNext":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index+1<q.items.len()},
@@ -1436,16 +1488,18 @@ pub async fn rhvideo_request(
                     .as_u64()
                     .filter(|n| (1..=9).contains(n))
                     .ok_or("同屏数量无效")? as usize;
-                let prepared = PREPARED.lock().map_err(|_| "队列不可用")?;
-                let q = prepared
-                    .as_ref()
-                    .filter(|q| {
+                let mut prepared = PREPARED.lock().map_err(|_| "队列不可用")?;
+                let at = prepared
+                    .iter().position(|q| {
                         q.ticket == ticket
                             && q.generation == session.generation
+                            && q.touched.elapsed()<Duration::from_secs(300)
                             && !q.items.is_empty()
                     })
                     .ok_or("播放列表已失效")?;
-                GridQueue::new(session.generation,q.items.clone(),count,if q.options["grid"]==true{q.grid_cells.clone()}else{Vec::new()},if q.options["grid"]==true{q.grid_ends.clone()}else{Vec::new()},args["super"]==true)?
+                let q=&prepared[at];
+                let queue=GridQueue::new(session.generation,q.items.clone(),count,if q.options["grid"]==true{q.grid_cells.clone()}else{Vec::new()},if q.options["grid"]==true{q.grid_ends.clone()}else{Vec::new()},args["super"]==true)?;
+                prepared.remove(at);queue
             } else {
                 let items = args["items"]
                     .as_array()
@@ -1589,7 +1643,7 @@ pub async fn rhvideo_request(
             slot.take();
             drop(slot);
             PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
-            PREPARED.lock().map_err(|_| "播放队列状态不可用")?.take();
+            PREPARED.lock().map_err(|_| "播放队列状态不可用")?.clear();
             #[cfg(windows)]
             crate::rhvideo_player::stop();
             return Ok(state());
@@ -1602,7 +1656,7 @@ pub async fn rhvideo_request(
                 slot.take();
                 generation
             };
-            PREPARED.lock().map_err(|_| "播放队列状态不可用")?.take();
+            PREPARED.lock().map_err(|_| "播放队列状态不可用")?.clear();
             PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
             #[cfg(windows)]
             crate::rhvideo_player::stop();
@@ -1806,60 +1860,14 @@ pub async fn rhvideo_request(
         }
         "playback.clear" => playback_history(&session, None, Some(json!({})), true),
         "playlist.prepare" => {
-            let ticket = identifier(text(&args, "ticket", 128)?)?.to_owned();
-            let items = args["items"]
-                .as_array()
-                .filter(|a| !a.is_empty() && a.len() <= 200)
-                .ok_or("播放列表分片无效")?;
-            if args["reset"]==true{validate_reference_options(&args["options"])?;}
-            let mut slot = PREPARED.lock().map_err(|_| "队列不可用")?;
-            if args["reset"] == true {
-                *slot = Some(PreparedPlaylist {
-                    ticket: ticket.clone(),
-                    generation: session.generation,
-                    items: Vec::new(),
-                    durations: Vec::new(),
-                    portraits: Vec::new(),
-                    grid_cells:Vec::new(),grid_ends:Vec::new(),
-                    segments: Vec::new(),
-                    prefix: vec![0.],
-                    options: args["options"].clone(),
-                });
-            }
-            let q = slot
-                .as_mut()
-                .filter(|q| q.ticket == ticket && q.generation == session.generation)
-                .ok_or("播放列表准备已失效")?;
-            if q.items.len() + items.len() > 100000 {
-                return Err("播放列表超出 10 万项".into());
-            }
-            let mut validated=Vec::with_capacity(items.len());
-            for item in items {
-                let identity=(
-                    identifier(text(item, "id", 128)?)?.to_owned(),
-                    text(item, "title", 1024)?.to_owned(),
-                );
-                let duration=item["duration"].as_f64().unwrap_or(0.).clamp(0.,604800.);
-                let segment=if q.options["reference"]==true {
-                    let start=item["segmentStart"].as_f64().filter(|n|n.is_finite()&&(0.0..=604800.).contains(n)).ok_or("分段起点无效")?;
-                    let length=item["segmentLength"].as_f64().filter(|n|n.is_finite()&&(0.1..=604800.).contains(n)).ok_or("分段长度无效")?;
-                    if duration>0.&&start+length>duration+0.2{return Err("分段超出视频时长".into());}
-                    Some((start,length))
-                }else{None};
-                if item.get("portrait").is_some_and(|value|!value.is_boolean()){return Err("竖屏元数据无效".into());}
-                let rect=if q.options["grid"]==true{
-                    let parts=item["gridRect"].as_array().filter(|r|r.len()==4).ok_or("同屏布局无效")?;
-                    let values=parts.iter().map(|v|v.as_f64().filter(|n|n.is_finite()&&*n>=0.)).collect::<Option<Vec<_>>>().ok_or("同屏布局无效")?;
-                    if values[2]<=0.||values[3]<=0.||values[0]+values[2]>1.002||values[1]+values[3]>1.002||!item["gridEnd"].is_boolean(){return Err("同屏布局超出范围".into());}Some([values[0],values[1],values[2],values[3]])
-                }else{None};
-                validated.push((identity,duration,segment,item["portrait"]==true,rect,item["gridEnd"]==true));
-            }
-            for(identity,duration,segment,portrait,rect,end)in validated{
-                q.items.push(identity);q.durations.push(duration);q.segments.push(segment);q.portraits.push(portrait);
-                q.grid_cells.push(rect);q.grid_ends.push(end);
-                q.prefix.push(q.prefix.last().copied().unwrap_or(0.)+segment.map(|s|s.1).unwrap_or(duration));
-            }
-            Ok(json!({"count":q.items.len()}))
+            let mut drafts=PREPARED.lock().map_err(|_| "队列不可用")?;
+            prepare_playlist(&mut drafts,session.generation,&args)
+        }
+        "playlist.discard" => {
+            let ticket=identifier(text(&args,"ticket",128)?)?;
+            let mut drafts=PREPARED.lock().map_err(|_|"队列不可用")?;let before=drafts.len();
+            drafts.retain(|q|q.ticket!=ticket||q.generation!=session.generation);
+            Ok(json!({"removed":before!=drafts.len()}))
         }
         "export" => {
             let text = text(&args, "text", 32 * 1024 * 1024)?.to_owned();
@@ -2071,13 +2079,8 @@ pub async fn rhvideo_request(
             }
             let prepared = if let Some(ticket) = args.get("playlist").and_then(Value::as_str) {
                 let mut slot = PREPARED.lock().map_err(|_| "播放队列不可用")?;
-                if !slot
-                    .as_ref()
-                    .is_some_and(|q| q.ticket == ticket && q.generation == session.generation)
-                {
-                    return Err("播放列表准备已失效".into());
-                }
-                slot.take()
+                let at=slot.iter().position(|q|q.ticket==ticket&&q.generation==session.generation&&q.touched.elapsed()<Duration::from_secs(300)).ok_or("播放列表准备已失效")?;
+                Some(slot.remove(at))
             } else {
                 None
             };
@@ -2116,7 +2119,8 @@ pub async fn rhvideo_request(
                 .position(|(item, _)| item == id)
                 .ok_or("当前视频不在播放队列中")?;
             if options["reference"]!=true{session.single_controls.lock().map_err(|_|"单视频设置不可用")?.apply(&mut options);}
-            let mut playback=Playback{generation:session.generation,revision:PLAYBACK_REVISION.fetch_add(1,Ordering::SeqCst),items,index,durations,segments,prefix,options,start_seconds:seconds,pool};
+            let revision=PLAYBACK_REVISION.fetch_add(1,Ordering::SeqCst);
+            let mut playback=Playback{generation:session.generation,revision,plan_revision:revision,items,index,durations,segments,prefix,options,start_seconds:seconds,pool};
             if playback.options["portraitOnly"]==true{
                 playback.project_portrait(true,false)?;
                 playback.index=playback.items.iter().position(|item|item.0==id).ok_or("当前视频不在竖屏队列中")?;
@@ -2199,6 +2203,11 @@ pub async fn rhvideo_request(
         "player.next" | "player.previous" | "player.seekQueue" => {
             let _play = PLAY_LOCK.lock().await;
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
+            if let Some(value)=args.get("expectedPlanRevision"){
+                let revision=value.as_u64().filter(|n|*n>0).ok_or("播放队列版本无效")?;
+                let matches=PLAYBACK.lock().map_err(|_|"播放队列不可用")?.as_ref().is_some_and(|q|expected_plan(q,session.generation,revision));
+                if !matches{return Err("播放队列已改变，拖动未执行".into());}
+            }
             if args.get("expectedId").is_some() || args.get("expectedRevision").is_some() {
                 let expected_id = args
                     .get("expectedId")
@@ -2338,6 +2347,7 @@ pub async fn rhvideo_request(
                 for(key,value)in options{replacement.options[key]=value.clone();}
                 replacement.project_portrait(enabled,true)?;
                 replacement.revision=PLAYBACK_REVISION.fetch_add(1,Ordering::SeqCst);
+                replacement.plan_revision=replacement.revision;
                 let repeating=replacement.options["loop"]==true;
                 (Some(replacement),None,repeating)
             }else{
@@ -2356,6 +2366,9 @@ pub async fn rhvideo_request(
                 q.start_seconds=q.bounds().0;reposition=q.segments[q.index];
             }
             q.revision = PLAYBACK_REVISION.fetch_add(1, Ordering::SeqCst);
+            if options.contains_key("fullLength")||options.contains_key("segment"){
+                q.plan_revision=q.revision;
+            }
             (None,reposition,q.options["loop"]==true)
             }
             };
@@ -2585,6 +2598,7 @@ mod tests {
         let mut q = Playback {
             generation: 4,
             revision: 10,
+            plan_revision: 10,
             items: vec![("A".into(), "A".into()), ("B".into(), "B".into())],
             index: 0,
             durations: vec![20.0, 20.0],
@@ -2669,6 +2683,29 @@ mod tests {
         for(key,value)in [("mode",json!("unknown")),("signature",json!("short")),("rate",json!(0)),("segment",json!(301)),("loop",json!("false"))]{let mut bad=valid.clone();bad[key]=value;assert!(validate_reference_options(&bad).is_err());}
     }
     #[test]
+    fn prepared_tickets_are_independent_and_invalid_resets_are_atomic(){
+        let mut drafts=Vec::new();
+        let chunk=|ticket:&str,reset:bool,id:&str|json!({"ticket":ticket,"reset":reset,"items":[{"id":id,"title":id,"duration":20}],"options":{"fullLength":true}});
+        prepare_playlist(&mut drafts,1,&chunk("a",true,"one")).unwrap();prepare_playlist(&mut drafts,1,&chunk("b",true,"two")).unwrap();
+        assert_eq!(prepare_playlist(&mut drafts,1,&chunk("a",false,"three")).unwrap()["count"],2);
+        assert_eq!(drafts[1].items[0].0,"two");
+        assert!(prepare_playlist(&mut drafts,1,&chunk("a",true,"bad/id")).is_err());assert_eq!(drafts[0].items.len(),2);
+        assert!(prepare_playlist(&mut drafts,2,&chunk("a",false,"four")).is_err());assert_eq!(drafts[0].items.len(),2);
+    }
+    #[test]
+    fn prepared_ticket_and_aggregate_budgets_do_not_discard_other_valid_drafts(){
+        let mut drafts=Vec::new();
+        let chunk=|ticket:String|json!({"ticket":ticket,"reset":true,"items":[{"id":"one","title":"one"}],"options":{}});
+        for n in 0..8{prepare_playlist(&mut drafts,1,&chunk(format!("draft-{n}"))).unwrap();}
+        assert!(prepare_playlist(&mut drafts,1,&chunk("overflow".into())).is_err());assert_eq!(drafts.len(),8);
+        prepare_playlist(&mut drafts,1,&chunk("draft-0".into())).unwrap();assert_eq!(drafts.len(),8);
+        drafts.truncate(1);drafts[0].items.resize(100000,("one".into(),"one".into()));
+        assert!(prepare_playlist(&mut drafts,1,&chunk("another".into())).is_err());assert_eq!(drafts.len(),1);
+        prepare_playlist(&mut drafts,1,&chunk("draft-0".into())).unwrap();assert_eq!(drafts[0].items.len(),1);
+        drafts[0].touched=std::time::Instant::now()-Duration::from_secs(301);
+        prepare_playlist(&mut drafts,1,&chunk("fresh".into())).unwrap();assert_eq!(drafts.len(),1);assert_eq!(drafts[0].ticket,"fresh");
+    }
+    #[test]
     fn ordinary_media_control_defaults_do_not_overwrite_explicit_options(){
         let controls=SingleControls{looping:true,rate:1.5};let mut empty=json!({});controls.apply(&mut empty);assert_eq!(empty,json!({"loop":true,"rate":1.5}));
         let mut explicit=json!({"loop":false,"rate":2});controls.apply(&mut explicit);assert_eq!(explicit,json!({"loop":false,"rate":2}));
@@ -2685,7 +2722,18 @@ mod tests {
         let items=vec![("a".into(),"A".into()),("b".into(),"B".into()),("c".into(),"C".into())];
         let durations=vec![40.,7.,2.];
         let segments=vec![Some((3.,3.)),Some((1.,3.)),Some((0.,2.))];
-        Playback{generation:1,revision:1,items:items.clone(),index:2,durations:durations.clone(),segments:segments.clone(),prefix:vec![0.,3.,6.,8.],options:json!({"reference":true,"mode":"segments","segment":3,"fullLength":false,"loop":true,"rate":1.5}),start_seconds:0.,pool:Some(Arc::new(PlaylistPool{items,durations,portraits:flags,segments}))}
+        Playback{generation:1,revision:1,plan_revision:1,items:items.clone(),index:2,durations:durations.clone(),segments:segments.clone(),prefix:vec![0.,3.,6.,8.],options:json!({"reference":true,"mode":"segments","segment":3,"fullLength":false,"loop":true,"rate":1.5}),start_seconds:0.,pool:Some(Arc::new(PlaylistPool{items,durations,portraits:flags,segments}))}
+    }
+    #[test]
+    fn total_progress_gesture_accepts_navigation_but_not_a_replaced_time_plan(){
+        let mut q=portrait_queue(vec![true,false,true]);
+        assert!(expected_plan(&q,1,1));
+        q.index=0;q.revision=2;
+        assert!(expected_plan(&q,1,1),"Next/Previous must not invalidate a whole-queue gesture");
+        q.plan_revision=3;
+        assert!(!expected_plan(&q,1,1),"new timing/order, even with the same IDs, is a different target");
+        assert!(!expected_plan(&q,2,3));
+        assert!(expected_plan(&q,1,3));
     }
     #[test]
     fn live_portrait_filter_keeps_the_full_source_pool_and_rebuilds_bounded_segment_progress(){

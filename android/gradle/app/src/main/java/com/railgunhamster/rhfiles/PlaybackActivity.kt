@@ -42,6 +42,18 @@ class PlaybackActivity:AppCompatActivity() {
     fun rhState()=active.get()?.takeIf{it.isRhVideo()&&!it.rhClosing}?.automationState()?:JSONObject().put("opened",false)
     fun rhControl(args:JSONObject):JSONObject {val target=active.get()?.takeIf{it.isRhVideo()&&!it.rhClosing};if(target==null){if(args.optString("command") in listOf("back","close"))return JSONObject().put("closed",true);error("原生播放器没有打开")};return target.automationControl(args)}
     fun closeRhVideo(){active.get()?.let{if(it.isRhVideo()){it.rhClosing=true;it.finish()}}}
+    fun launchRhVideo(owner:android.app.Activity,intent:Intent){
+      check(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
+      // The client has already atomically selected the new queue. Retire the
+      // old surface/decoder before allocating another, without closing the new
+      // queue or treating replacement as a user-requested staging commit.
+      active.get()?.takeIf{it.isRhVideo()}?.let{old->
+        old.rhClosing=true;old.rhUi.removeCallbacks(old.rhTick);old.rhEndMessage?.cancel();old.rhEndMessage=null
+        old.player?.let{engine->RhVideoVolume.untrack(engine);old.playerView.player=null;old.player=null;engine.release()}
+        old.finish()
+      }
+      owner.startActivity(intent)
+    }
   }
   private lateinit var playerView:PlayerView
   private lateinit var header:LinearLayout
