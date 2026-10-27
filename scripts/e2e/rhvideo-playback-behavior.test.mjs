@@ -354,9 +354,14 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
     await invoke(grid,'grid.control',{target:0,command:'volume',value:37});
     await invoke(grid,'grid.control',{target:0,command:'mute'});
     const saved=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&v.decoderPositionMs>=4800?v:null;},'actual paused cell position');
+    await invoke(grid,'grid.control',{target:-1,command:'pause'});
     const next=await invoke(grid,'grid.page',{direction:1});assert.deepEqual(next.cells.map(c=>c.id),groups[1].map(v=>v.id));
+    await grid.send('Emulation.setVirtualTimePolicy',{policy:'pause'});
     await invoke(grid,'grid.page',{direction:-1});
-    const restored=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&v.pendingSeekMs===null&&Math.abs(v.decoderPositionMs-saved.decoderPositionMs)<500?v:null;},'native cell position and pause restored after paging',25000);
+    await sleep(process.env.RHFILES_EXPECT_RENDERER==='native-hardware-auto'?12000:2500);
+    const backgroundState=await command(s.app,'grid.state'),background=backgroundState.cells;console.log(JSON.stringify({backgroundMonitorTicks:backgroundState.monitorTicks,cells:background.map(v=>({phase:v.restorePhase,frames:v.renderedFrames,state:v.state,position:v.positionMs}))}));assert(background.every(v=>!v.restoringPausedFrame&&v.renderedFrames>0&&v.state===4),'every paused cell must restore without any controls WebView timers or state polling');
+    await grid.send('Emulation.setVirtualTimePolicy',{policy:'advance'});
+    const restored=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&Math.abs(v.positionMs-saved.positionMs)<500?v:null;},'paused cell displays an actual restored frame after paging',25000);
     assert.equal(restored.volume,37);assert.equal(restored.muted,true);assert.equal(restored.rate,1.5);assert.equal(restored.seekError,null);assert.notEqual(restored.inputId,saved.inputId);
     const boundary=await invoke(grid,'grid.page',{direction:-1});assert.equal(boundary.cells[0].inputId,restored.inputId,'clamped navigation cannot restart the current group');
     await invoke(grid,'grid.page',{direction:1});
@@ -374,6 +379,11 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
     await invoke(grid,'grid.input',{target:0,inputId:fresh.inputId,intent:'mark'});assert.equal((await invoke(grid,'grid.state')).cells[0].marked,true);assert.equal(s.fixture.trash.length,0,'marking does not delete a source immediately');
     await invoke(grid,'grid.mark',{target:0});assert.equal((await invoke(grid,'grid.state')).cells[0].marked,false);
     assert.deepEqual((await invoke(grid,'ui.contract')).missing,[]);
+    await invoke(grid,'grid.control',{target:0,command:'pause'});await invoke(grid,'grid.control',{target:0,command:'seek',value:8000});
+    await invoke(grid,'grid.page',{direction:1});const priming=await invoke(grid,'grid.page',{direction:-1});
+    assert.equal(priming.cells[0].restoringPausedFrame,true);assert.equal(priming.cells[0].decoderVolume,0,'priming a paused frame must never emit audio');
+    await invoke(grid,'grid.control',{target:0,command:'seek',value:9000});await invoke(grid,'grid.control',{target:0,command:'resume'});
+    await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===3&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&v.decoderPositionMs>=8800;},'explicit resume supersedes pending pause restoration but retains the latest seek target',25000);
     const oldSession=await invoke(grid,'grid.state');
     other=await rhvideoFixture({videoFile:path.join(s.app.directory,'behavior.mp4'),videoDuration:18,videoCount:6,galleryVideoCount:6});
     await invoke(s.view,'connection.connect',{server:other.url,username:'preview',password:'fixture-only'});await invoke(s.view,'grid.open');
@@ -397,6 +407,7 @@ test('grid repeats normal EOF within the same native input but never retries a f
     await until(async()=>(await invoke(grid,'grid.state')).cells[0].decoderPositionMs>=before.cells[0].durationMs-1000,'actual near-EOF decoder position');
     const looped=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];assert.equal(v.inputId,before.cells[0].inputId,'normal EOF must not tear down and recreate the input');return v.decoderPositionMs<2000&&v.state===3?v:null;},'native EOF loop without decoder replacement',12000);
     assert.equal(looped.volume,23);assert.equal(looped.rate,1.5);assert(looped.renderedFrames>=before.cells[0].renderedFrames);
+    assert(looped.positionMs<2500,'the visible progress must wrap too, not remain stuck at the previous EOF');
   }finally{grid?.close();await s.close();}
   const failed=await setup({videoCount:2,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Offline test source'}});let failedGrid;
   try{

@@ -21,6 +21,9 @@ use windows::{
 
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
+// 0.25x stretches the 1 s network delay beyond VLC 3's 3 s audio clock bound.
+// Hidden/silent restoration must prepare at a normal, supported clock rate.
+const PAUSE_PREPARE_RATE:f32=1.;
 static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static GRID_WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
@@ -201,6 +204,9 @@ struct MediaStats {
     send_bitrate: f32,
 }
 struct PendingSeek{input:u64,ms:i64,deadline:std::time::Instant,clamp:bool}
+#[derive(Clone,Copy)]
+enum PauseFramePhase{Priming,Seeking{not_before:std::time::Instant},Presenting{frames:u64},Pausing}
+struct PauseFrame{target:i64,rate:f32,deadline:std::time::Instant,phase:PauseFramePhase}
 #[derive(Default)]
 struct SeekState{pending:Option<PendingSeek>,error:Option<String>}
 impl SeekState{
@@ -360,7 +366,9 @@ struct Engine {
     seek:Mutex<SeekState>,
     requested_volume: i32,
     muted:bool,last_volume:i32,
-    repeat_input:bool,start_paused:bool,
+    repeat_input:bool,
+    paused_preview:Mutex<Option<PauseFrame>>,
+    hold_audio:std::sync::atomic::AtomicBool,
     title: String,
     frame: Box<crate::rhvideo_frame::Frame>,
     clock: Mutex<crate::rhvideo_clock::Clock>,
@@ -372,7 +380,17 @@ struct Engine {
     first_frame_ms: std::sync::atomic::AtomicU64,
 }
 impl Engine {
-    fn output_gain(&self)->i32{effective_volume(if self.muted{0}else{self.requested_volume})}
+    fn output_gain(&self)->i32{effective_volume(if self.muted||self.hold_audio.load(std::sync::atomic::Ordering::Relaxed){0}else{self.requested_volume})}
+    fn begin_pause_restore(&self,target:i64)->Result<(),String>{
+        self.hold_audio.store(true,std::sync::atomic::Ordering::Relaxed);
+        *self.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?=Some(PauseFrame{target,rate:unsafe{(self.api.rate)(self.player as Ptr)},deadline:std::time::Instant::now()+std::time::Duration::from_secs(15),phase:PauseFramePhase::Priming});
+        unsafe{let h=HWND(self.child as Ptr);let style=GetWindowLongPtrW(h,GWL_EXSTYLE);SetWindowLongPtrW(h,GWL_EXSTYLE,style|WS_EX_LAYERED.0 as isize);let _=SetLayeredWindowAttributes(h,windows::Win32::Foundation::COLORREF(0),0,LWA_ALPHA);}
+        Ok(())
+    }
+    fn cancel_pause_restore(&self)->Result<(),String>{
+        if let Some(plan)=self.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.take(){unsafe{(self.api.set_rate)(self.player as Ptr,plan.rate);let _=SetLayeredWindowAttributes(HWND(self.child as Ptr),windows::Win32::Foundation::COLORREF(0),255,LWA_ALPHA);}}
+        self.hold_audio.store(false,std::sync::atomic::Ordering::Relaxed);Ok(())
+    }
     fn new(child: usize) -> Result<Self, String> {
         let api = unsafe { Api::load()? };
         let options = [
@@ -434,7 +452,8 @@ impl Engine {
             input_id:0,
             seek:Mutex::new(SeekState::default()),
             requested_volume: 100,
-            muted:false,last_volume:100,repeat_input:false,start_paused:false,
+            muted:false,last_volume:100,repeat_input:false,
+            paused_preview:Mutex::new(None),hold_audio:std::sync::atomic::AtomicBool::new(false),
             title: String::new(),
             frame,
             clock: Mutex::new(crate::rhvideo_clock::Clock::new()),
@@ -451,6 +470,8 @@ impl Engine {
         *self.seek.lock().map_err(|_|"跳转状态不可用")?=SeekState::default();
         self.open_started=std::time::Instant::now();
         self.first_frame_ms.store(0,std::sync::atomic::Ordering::Relaxed);
+        let had_paused_restore=self.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.is_some();
+        if had_paused_restore{self.cancel_pause_restore()?;}
         self.url = url.to_owned();
         self.clock.lock().map_err(|_| "播放时钟不可用")?.reset(
             (seconds * 1000.) as i64,
@@ -475,7 +496,6 @@ impl Engine {
             // VLC 3 repeats only positive counts, and only at EOF (not errors).
             // Keep the input/decoder alive rather than reopening it each loop.
             if self.repeat_input{let option=CString::new(":input-repeat=2147483647").unwrap();(self.api.media_option_flag)(media,option.as_ptr(),0x2);}
-            if self.start_paused{let option=CString::new(":start-paused=1").unwrap();(self.api.media_option_flag)(media,option.as_ptr(),0x2);}
             // These are fixed application options, never server-controlled.
             // libVLC resets vout defaults when creating a player, so setting
             // only --vout on the instance is insufficient. A native GDI output
@@ -552,35 +572,79 @@ impl Engine {
                 self.frame.observe_native(stats.displayed.max(0) as u64);
             }
             let rendered=if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64};
+            let mut restoring=false;let mut restore_target=None;let mut restore_rate=None;let mut restore_phase=None;
+            if let Ok(mut slot)=self.paused_preview.lock(){if let Some(plan)=slot.as_mut(){
+                let now=std::time::Instant::now();let mut complete=false;
+                if now>=plan.deadline||matches!(state,5..=7){
+                    (self.api.set_rate)(p,plan.rate);
+                    (self.api.stop)(p);
+                    if let Ok(mut seek)=self.seek.lock(){seek.error=Some("恢复暂停画面失败，未自动重试".into());}
+                    complete=true;
+                }else{match plan.phase{
+                    PauseFramePhase::Priming if rendered>0&&duration>0=>{
+                        plan.target=plan.target.min((duration-50).max(0));
+                        // Seek with a running, silent decoder. Seeking while
+                        // paused can strand the hardware decoder's first frame.
+                        (self.api.set_pause)(p,0);(self.api.set_rate)(p,PAUSE_PREPARE_RATE);(self.api.set_time)(p,plan.target);
+                        if let Ok(mut clock)=self.clock.lock(){clock.reset(plan.target,self.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));}
+                        // libVLC can postpone seeks while flushing ES buffers.
+                        plan.phase=PauseFramePhase::Seeking{not_before:now+std::time::Duration::from_millis(250)};
+                    }
+                    PauseFramePhase::Seeking{not_before} if state==3&&now>=not_before=>{
+                        // VLC 3 freezes its published display statistics while
+                        // paused. Briefly render silently at normal speed to get
+                        // a real fresh frame, then acknowledge the pause.
+                        plan.phase=PauseFramePhase::Presenting{frames:rendered};
+                    }
+                    PauseFramePhase::Presenting{frames} if state==3&&rendered>frames=>{(self.api.set_pause)(p,1);plan.phase=PauseFramePhase::Pausing;}
+                    PauseFramePhase::Pausing if state==4=>{
+                        (self.api.set_rate)(p,plan.rate);
+                        if let Ok(mut clock)=self.clock.lock(){clock.reset(plan.target,self.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));}
+                        complete=true;
+                    }
+                    _=>{}
+                }}
+                if complete{*slot=None;self.hold_audio.store(false,std::sync::atomic::Ordering::Relaxed);let _=SetLayeredWindowAttributes(HWND(self.child as Ptr),windows::Win32::Foundation::COLORREF(0),255,LWA_ALPHA);}else{restoring=true;restore_target=Some(plan.target);restore_rate=Some(plan.rate);restore_phase=Some(match plan.phase{PauseFramePhase::Priming=>"priming",PauseFramePhase::Seeking{..}=>"seeking",PauseFramePhase::Presenting{..}=>"presenting",PauseFramePhase::Pausing=>"pausing"});}
+            }}
             if rendered>0 {let _=self.first_frame_ms.compare_exchange(0,self.open_started.elapsed().as_millis().max(1) as u64,std::sync::atomic::Ordering::Relaxed,std::sync::atomic::Ordering::Relaxed);}
-            let position = {
+            let position = if restoring {restore_target.unwrap_or(0)}else{
                 self.clock
                     .lock()
                     .map(|mut c| {
-                        c.observe(
+                        if self.repeat_input{c.observe_wrapping(
+                            raw,duration,state,self.frame.last_display.load(std::sync::atomic::Ordering::Relaxed),
+                        )}else{c.observe(
                             raw,
                             duration,
                             state,
                             self.frame
                                 .last_display
                                 .load(std::sync::atomic::Ordering::Relaxed),
-                        )
+                        )}
                     })
                     .unwrap_or(raw)
             };
             json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
-            "state":state,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
-            "rate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
+            "state":(self.api.state)(p),"restoringPausedFrame":restoring,"restorePhase":restore_phase,"restoreTargetMs":restore_target,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
+            "rate":restore_rate.unwrap_or_else(||(self.api.rate)(p)),"decoderRate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
         }
     }
 }
+fn independent_active(state:&Value)->bool{
+    state["restoringPausedFrame"]==true||state["pendingSeekMs"].is_i64()||
+        (!matches!(state["state"].as_i64(),Some(4|6|7))&&!(state["state"]==5&&state["seekError"].is_string()))
+}
 pub fn maintain_independent_outputs()->bool{
     let mut active=false;
-    if let Ok(grid)=GRID.try_lock(){
-        for player in &grid.players {let state=player.state();active|=!matches!(state["state"].as_i64(),Some(4|6|7));}
+    let grid=GRID.try_lock();
+    if matches!(&grid,Err(std::sync::TryLockError::WouldBlock)){active=true;}
+    if let Ok(grid)=grid{
+        for player in &grid.players {active|=independent_active(&player.state());}
     }
-    if let Ok(slot)=PRESENTATION.try_lock(){
-        if let Some(player)=slot.as_ref(){let state=player.state();active|=!matches!(state["state"].as_i64(),Some(4|6|7));}
+    let presentation=PRESENTATION.try_lock();
+    if matches!(&presentation,Err(std::sync::TryLockError::WouldBlock)){active=true;}
+    if let Ok(slot)=presentation{
+        if let Some(player)=slot.as_ref(){active|=independent_active(&player.state());}
     }
     active
 }
@@ -978,7 +1042,7 @@ pub fn retire_grid_window(lease:u64)->bool{
     for engine in players{release_surface(engine);}true
 }
 pub fn grid_snapshot()->std::collections::HashMap<String,Value>{
-    let Ok(grid)=GRID.lock() else{return Default::default();};grid.ids.iter().zip(&grid.players).map(|(id,p)|{let s=p.state();(id.clone(),json!({"positionMs":s["decoderPositionMs"],"volume":s["volume"],"muted":s["muted"],"lastVolume":s["lastVolume"],"rate":s["rate"],"paused":s["state"]==4}))}).collect()
+    let Ok(grid)=GRID.lock() else{return Default::default();};grid.ids.iter().zip(&grid.players).map(|(id,p)|{let s=p.state();(id.clone(),json!({"positionMs":if s["restoringPausedFrame"]==true{s["restoreTargetMs"].clone()}else{s["positionMs"].clone()},"volume":s["volume"],"muted":s["muted"],"lastVolume":s["lastVolume"],"rate":s["rate"],"paused":s["state"]==4||s["restoringPausedFrame"]==true}))}).collect()
 }
 fn layout_grid(window: &tauri::WebviewWindow) {
     let Ok(grid) = GRID.try_lock() else { return };
@@ -1102,11 +1166,14 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option
             let mut engine = Engine::new(child)?;
             engine.requested_volume=restore["volume"].as_i64().unwrap_or(100).clamp(0,100) as i32;
             engine.muted=restore["muted"]==true;engine.last_volume=restore["lastVolume"].as_i64().unwrap_or(100).clamp(0,100) as i32;
-            engine.repeat_input=true;engine.start_paused=restore["paused"]==true;
+            engine.repeat_input=true;
+            engine.hold_audio.store(restore["paused"]==true,std::sync::atomic::Ordering::Relaxed);
             engine.open(&url, title, 0.)?;
-            if let Some(ms)=restore["positionMs"].as_i64().filter(|ms|*ms>0){engine.seek.lock().map_err(|_|"同屏跳转不可用")?.prepare_clamped(engine.input_id,ms,std::time::Instant::now());}
+            let position=restore["positionMs"].as_i64().unwrap_or(0).max(0);
+            if restore["paused"]==true{
+                engine.begin_pause_restore(position)?;
+            }else if position>0{engine.seek.lock().map_err(|_|"同屏跳转不可用")?.prepare_clamped(engine.input_id,position,std::time::Instant::now());}
             control_engine(&mut engine,&json!({"command":"rate","value":restore["rate"].as_f64().filter(|r|r.is_finite()&&(0.25..=4.).contains(r)).unwrap_or(1.)}))?;
-            if restore["paused"]==true{control_engine(&mut engine,&json!({"command":"pause"}))?;}
             ids.push(id);rects.push(rect);
             players.push(engine);
         }
@@ -1428,14 +1495,19 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                     .as_i64()
                     .filter(|v| [0, 90, 180, 270].contains(v))
                     .ok_or("旋转角度无效")?;
+                let paused=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.is_some()||(player.api.state)(p)==4;
+                let target=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.as_ref().map(|plan|plan.target).unwrap_or_else(||(player.api.time)(p).max(0));
+                player.cancel_pause_restore()?;
+                player.hold_audio.store(paused,std::sync::atomic::Ordering::Relaxed);
                 player.rotation = value as i32;
                 let url = player.url.clone();
                 let title = player.title.clone();
                 let seconds = (player.api.time)(p).max(0) as f64 / 1000.;
-                player.open(&url, title, seconds)?;
+                player.open(&url, title, if paused{0.}else{seconds})?;
+                if paused{player.begin_pause_restore(target)?;}
             }
             "pause" => {
-                player.start_paused=true;
+                if player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.is_some(){return Ok(());}
                 player
                     .clock
                     .lock()
@@ -1444,13 +1516,15 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                 (player.api.set_pause)(p, 1);
             }
             "resume" => {
-                player.start_paused=false;
+                let restore_target=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.as_ref().map(|plan|plan.target);
+                player.cancel_pause_restore()?;
+                if let Some(target)=restore_target{player.seek.lock().map_err(|_|"跳转状态不可用")?.prepare_clamped(player.input_id,target,std::time::Instant::now());}
                 player
                     .clock
                     .lock()
                     .map_err(|_| "播放时钟不可用")?
                     .discontinuity();
-                if (player.api.state)(p)==6 {
+                if matches!((player.api.state)(p),5|6) {
                     let url=player.url.clone();let title=player.title.clone();let rate=(player.api.rate)(p);
                     player.open(&url,title,0.)?;
                     if rate>0. {(player.api.set_rate)(p,rate);}
@@ -1464,6 +1538,14 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                     .and_then(Value::as_i64)
                     .filter(|v| *v >= 0 && *v <= 604800000 && ((player.api.length)(p)<=0||*v<=(player.api.length)(p)))
                     .ok_or("跳转位置超出范围")?;
+                if let Some(plan)=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.as_mut(){
+                    plan.target=ms;plan.deadline=std::time::Instant::now()+std::time::Duration::from_secs(15);
+                    if !matches!(plan.phase,PauseFramePhase::Priming){
+                        (player.api.set_pause)(p,0);(player.api.set_rate)(p,PAUSE_PREPARE_RATE);(player.api.set_time)(p,ms);player.clock.lock().map_err(|_|"播放时钟不可用")?.reset(ms,player.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));
+                        plan.phase=PauseFramePhase::Seeking{not_before:std::time::Instant::now()+std::time::Duration::from_millis(250)};
+                    }return Ok(());
+                }
+                if (player.api.state)(p)==4{player.begin_pause_restore(ms)?;let _=player.state();return Ok(());}
                 player.seek.lock().map_err(|_|"跳转状态不可用")?.prepare(player.input_id,ms,std::time::Instant::now());
                 let _=player.state();
             }
@@ -1487,7 +1569,8 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                     .and_then(Value::as_f64)
                     .filter(|v| v.is_finite() && (0.25..=4.0).contains(v))
                     .ok_or("速度范围是 0.25–4")?;
-                if (player.api.set_rate)(p, value as f32) != 0 {
+                let decoder_rate={let mut plan=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?;if let Some(plan)=plan.as_mut(){plan.rate=value as f32;PAUSE_PREPARE_RATE}else{value as f32}};
+                if (player.api.set_rate)(p, decoder_rate) != 0 {
                     return Err("当前媒体不支持此播放速度".into());
                 }
                 let mut clock = player.clock.lock().map_err(|_| "播放时钟不可用")?;
@@ -1550,3 +1633,11 @@ mod input_tests{
         seek.prepare_clamped(7,15000,now);assert_eq!(seek.ready(8,10000,4,true,now),None);assert!(seek.pending.is_none());
     }
 }
+    #[test]
+    fn pending_paused_work_keeps_the_worker_awake_but_terminal_failure_does_not(){
+        assert!(independent_active(&json!({"state":4,"restoringPausedFrame":true})));
+        assert!(independent_active(&json!({"state":4,"pendingSeekMs":5000})));
+        assert!(!independent_active(&json!({"state":4})));
+        assert!(!independent_active(&json!({"state":5,"seekError":"恢复失败"})));
+        assert!(independent_active(&json!({"state":5})),"a transient decoder startup state is not proof of idle");
+    }

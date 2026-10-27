@@ -63,7 +63,7 @@
             Math.floor(v.positionMs / 1000) +
             "s · " +
             v.renderedFrames +
-            " 帧 · " + (v.state===7||(v.state===6&&!v.durationMs&&!v.renderedFrames)?"加载失败":v.seekError?"定位失败："+v.seekError:v.state===4?"已暂停":v.state===1||v.state===2?"缓冲中":"播放中"),
+            " 帧 · " + (v.state===7||(v.state===6&&!v.durationMs&&!v.renderedFrames)?"加载失败":v.seekError?"定位失败："+v.seekError:v.restoringPausedFrame?"正在恢复暂停画面":v.state===4?"已暂停":v.state===1||v.state===2?"缓冲中":"播放中"),
         )
         .join("　");
     return value;

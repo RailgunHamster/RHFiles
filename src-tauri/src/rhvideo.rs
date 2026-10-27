@@ -42,6 +42,7 @@ static RESUME: Mutex<Option<(Value, Instant)>> = Mutex::new(None);
 static PLAYBACK_REVISION: AtomicU64 = AtomicU64::new(1);
 static PLAY_MONITOR: OnceLock<Result<std::thread::Thread,String>> = OnceLock::new();
 static PLAY_MONITOR_ERROR: Mutex<Option<Value>> = Mutex::new(None);
+static PLAY_MONITOR_TICKS:AtomicU64=AtomicU64::new(0);
 static QUEUE_STATE_LOCK: Mutex<()> = Mutex::new(());
 static PREVIEW_RUN: AtomicU64 = AtomicU64::new(1);
 
@@ -61,6 +62,7 @@ fn wake_playback_monitor(app:&AppHandle){
         std::thread::Builder::new().name("rhvideo-playback".into()).spawn(move||{
             let mut handled=None;
             loop {
+                PLAY_MONITOR_TICKS.fetch_add(1,Ordering::Relaxed);
                 let independent_active=crate::rhvideo_player::maintain_independent_outputs();
                 let wait_for_activity=||if independent_active {std::thread::park_timeout(Duration::from_millis(100));}else{std::thread::park();};
                 let snapshot=PLAYBACK.lock().ok().and_then(|slot|slot.as_ref().map(|q|(
@@ -72,6 +74,7 @@ fn wake_playback_monitor(app:&AppHandle){
                 if !current().is_ok_and(|s|s.generation==generation){wait_for_activity();continue;}
                 let Ok(state)=crate::rhvideo_player::command("player.state",&json!({})) else {wait_for_activity();continue};
                 if state["opened"]!=true {wait_for_activity();continue;}
+                if state["state"]==5&&state["seekError"].is_string(){wait_for_activity();continue;}
                 let failed=failed_media(&state);
                 if failed&&!close_at_end {wait_for_activity();continue;}
                 if state["state"]==4 {std::thread::park_timeout(if independent_active{Duration::from_millis(100)}else{Duration::from_secs(1)});continue;}
@@ -245,6 +248,7 @@ impl GridQueue {
         value["count"] = json!(self.count());
         value["groupIndex"]=json!(self.group_index());value["groupTotal"]=json!(self.ends.len());
         value["generation"]=json!(self.generation);value["windowLease"]=json!(self.window_lease);
+        value["monitorTicks"]=json!(PLAY_MONITOR_TICKS.load(Ordering::Relaxed));
         value["hasPrevious"] = json!(self.offset > 0);
         value["hasNext"] = json!(self.group_index()+1<self.ends.len());
         value

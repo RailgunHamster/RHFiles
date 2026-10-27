@@ -15,6 +15,8 @@
     $('toggle').textContent=state.state===6?'重新播放':state.state===4?'继续':'暂停';
     $('status').textContent=state.state===7?'播放失败，请检查服务器或媒体编码':state.state===6?'播放结束':state.state===4?'已暂停':state.state===1||state.state===2?'正在缓冲…':'播放中';
     if(state.pendingSeekMs!=null)$('status').textContent='正在定位…';
+    if(state.state===5)$('status').textContent='播放已停止';
+    if(state.restoringPausedFrame)$('status').textContent='正在恢复暂停画面…';
     if(state.volume>0)audibleVolume=state.volume;
     $('volume').value=String(state.volume);$('rate').value=String(state.rate);
     $('previous').disabled=!state.queue?.hasPrevious;$('next').disabled=!state.queue?.hasNext;
