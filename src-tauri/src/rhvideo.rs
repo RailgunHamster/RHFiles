@@ -211,6 +211,11 @@ impl GridQueue {
             ((self.items.len().saturating_sub(1) / self.count) * self.count) as i64,
         ) as usize;
     }
+    fn seek_group(&mut self,ratio:f64)->Result<(),String>{
+        if !ratio.is_finite()||!(0.0..=1.).contains(&ratio){return Err("同屏分组位置无效".into());}
+        let last=self.items.len().saturating_sub(1)/self.count;
+        self.offset=(ratio*last as f64).round() as usize*self.count;Ok(())
+    }
     fn annotate(&self, mut value: Value) -> Value {
         value["offset"] = json!(self.offset);
         value["total"] = json!(self.items.len());
@@ -1265,6 +1270,7 @@ pub async fn rhvideo_request(
         }
         "player.close" | "player.back" => {
             let _play=PLAY_LOCK.lock().await;
+            #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             let context=PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|(q.generation,q.options.clone())));
             flush_playback();
             *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
@@ -1352,21 +1358,25 @@ pub async fn rhvideo_request(
                 return Err("此平台尚未接入原生放映".into());
             }
         }
-        "grid.open" | "grid.page" => {
+        "grid.open" | "grid.page" | "grid.seekGroup" => {
             let _loading = GRID_LOAD.lock().await;
+            #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
             let session = current()?;
-            let queue = if action == "grid.page" {
-                let direction = args["direction"]
-                    .as_i64()
-                    .filter(|d| [-1, 1].contains(d))
-                    .ok_or("翻页方向无效")?;
+            let queue = if action != "grid.open" {
                 let mut queue = GRID_QUEUE
                     .lock()
                     .map_err(|_| "网格队列不可用")?
                     .clone()
                     .filter(|q| q.generation == session.generation)
                     .ok_or("网格队列已失效")?;
-                queue.page(direction);
+                if action=="grid.seekGroup"{
+                    let previous=queue.offset;queue.seek_group(args["ratio"].as_f64().ok_or("同屏分组位置无效")?)?;
+                    if queue.offset==previous{
+                        #[cfg(windows)]return Ok(queue.annotate(crate::rhvideo_player::grid_command("grid.state",&json!({}))?));
+                    }
+                }else{
+                    let direction=args["direction"].as_i64().filter(|d|[-1,1].contains(d)).ok_or("翻页方向无效")?;queue.page(direction);
+                }
                 queue
             } else if let Some(ticket) = args["playlist"].as_str() {
                 let count = args["count"]
@@ -1451,6 +1461,8 @@ pub async fn rhvideo_request(
             }
         }
         "grid.state" | "grid.control" | "grid.expand" => {
+            let _loading=GRID_LOAD.lock().await;
+            #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
             let _session = current()?;
             #[cfg(windows)]
             {
@@ -1474,6 +1486,8 @@ pub async fn rhvideo_request(
         }
         "state" => return Ok(state()),
         "grid.close" => {
+            let _loading=GRID_LOAD.lock().await;
+            #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
             *GRID_QUEUE.lock().map_err(|_| "网格队列不可用")? = None;
             #[cfg(windows)]
             {
@@ -1485,6 +1499,8 @@ pub async fn rhvideo_request(
             return Ok(json!({"closed":true}));
         }
         "player.fullscreen" => {
+            let _play=PLAY_LOCK.lock().await;
+            #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             let window = app
                 .get_webview_window("window-rhvideo-player")
                 .ok_or("播放器尚未打开")?;
@@ -1905,6 +1921,7 @@ pub async fn rhvideo_request(
             Ok(json!({"id":id,"favorite":enabled}))
         }
         "preview.mark"=>{
+            #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             let media_kind=kind(&args)?;if media_kind=="favorite"{return Err("标记类型无效".into());}
             let id=identifier(text(&args,"id",128)?)?;let title=text(&args,"title",1024)?;
             let key=format!("{media_kind}:{id}");let mut marks=session.preview.lock().map_err(|_|"标记不可用")?;
@@ -2113,6 +2130,7 @@ pub async fn rhvideo_request(
         }
         "player.next" | "player.previous" | "player.seekQueue" => {
             let _play = PLAY_LOCK.lock().await;
+            #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             if args.get("expectedId").is_some() || args.get("expectedRevision").is_some() {
                 let expected_id = args
                     .get("expectedId")
@@ -2532,6 +2550,10 @@ mod tests {
         assert_eq!(q.annotate(json!({}))["hasNext"], false);
         q.page(-1);
         assert_eq!(q.offset, 4);
+        q.seek_group(1.).unwrap();assert_eq!(q.offset,8);
+        q.seek_group(0.25).unwrap();assert_eq!(q.offset,4);
+        q.seek_group(0.).unwrap();assert_eq!(q.offset,0);
+        assert!(q.seek_group(f64::NAN).is_err());assert!(q.seek_group(1.1).is_err());
     }
     #[test]
     fn reference_queue_scrubber_uses_segment_lengths_and_end_selects_last_entry_start(){

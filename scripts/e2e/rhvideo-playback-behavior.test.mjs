@@ -15,7 +15,7 @@ const command=(app,action,args={})=>app.evaluate('call("rhvideo_request",'+JSON.
 async function target(app,file){
   const found=await until(async()=>{const all=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return all.find(t=>new URL(t.url).pathname.endsWith('/'+file));},file+' window');
   const view=await cdpSession(found,30000);
-  const action=file==='rhvideo-player.html'?'rhvideo.player.state':'rhvideo.playlist.sequential';
+  const action=file==='rhvideo-player.html'?'rhvideo.player.state':file==='rhvideo-grid.html'?'rhvideo.grid.state':'rhvideo.playlist.sequential';
   await until(()=>view.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==='+JSON.stringify(action)+')'),'behavior APIs ready');return view;
 }
 async function setup(options={}){
@@ -64,7 +64,7 @@ test('sequential playback keeps the visible full-list order, wraps manually, see
   }finally{player?.close();await s.close();}
 });
 
-test('live portrait playback filters the original pool, preserves speed, restores all items, and remembers modes independently',native,async()=>{
+test('live portrait playback filters its original pool; restarting sequential mode resets portrait/full length exactly as the reference',native,async()=>{
   const s=await setup({portraitIndices:[0,2,3],videoDuration:20});let player;
   try{
     const original=(await invoke(s.view,'state')).items.map(i=>i.id);
@@ -79,7 +79,7 @@ test('live portrait playback filters the original pool, preserves speed, restore
     await invoke(player,'player.options',{portraitOnly:true});
     await invoke(s.view,'player.close');player.close();player=null;
     await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
-    const resumed=(await invoke(player,'player.state')).queue;assert.equal(resumed.total,3);assert.equal(resumed.sourceTotal,6);assert.equal(resumed.options.portraitOnly,true);
+    const resumed=(await invoke(player,'player.state')).queue;assert.equal(resumed.total,6);assert.equal(resumed.sourceTotal,6);assert.equal(resumed.options.portraitOnly,false);assert.equal(resumed.options.fullLength,true,'a fresh sequential start always restores full-length playback');
     await invoke(s.view,'player.close');player.close();player=null;
     await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
     const segments=(await invoke(player,'player.state')).queue;assert.equal(segments.options.portraitOnly,false);assert.equal(segments.total,4,'a sequential setting cannot filter the independent gallery mode');
@@ -275,6 +275,59 @@ test('full-length playback with missing catalog duration is not cut off at the s
     await invoke(player,'player.control',{command:'seek',value:6000});await invoke(player,'player.control',{command:'resume'});
     await until(async()=>{const v=await invoke(player,'player.state');assert.equal(v.queue?.id,initial.queue.id,'the original source must remain active beyond three seconds');return v.renderedFrames>0&&v.decoderPositionMs>=7000;},'full-length source continues past short-segment cutoff',20000);
   }finally{player?.close();await s.close();}
+});
+
+test('native-input public APIs bind single and grid intents to exact decoder instances and expose group seeking',native,async()=>{
+  const s=await setup();let player,grid;
+  try{
+    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    const first=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'single native frame before input',25000);assert(Number.isSafeInteger(first.inputId));
+    const input=async(intent,inputId)=>(invoke(player,'player.input',{inputId:inputId??(await invoke(player,'player.state')).inputId,intent}));
+    await input('toggle');await until(async()=>(await invoke(player,'player.state')).state===4,'native pause intent');
+    await input('toggle');await until(async()=>(await invoke(player,'player.state')).state===3,'native resume intent');
+    const second=await input('next');assert.equal(second.queue.index,1);assert.notEqual(second.inputId,first.inputId);
+    assert.equal((await input('toggle',first.inputId)).stale,true,'late input from a retired decoder never toggles its replacement');
+    await assert.rejects(command(s.app,'player.control',{command:'pause',expectedInput:first.inputId}),/旧操作未执行/);
+    const again=await input('previous');assert.equal(again.queue.id,first.queue.id);assert.notEqual(again.inputId,first.inputId,'same-video ABA still creates a new decoder-input lease');
+    assert.equal((await input('next',first.inputId)).stale,true);
+    await assert.rejects(command(s.app,'player.close',{expectedInput:first.inputId}),/旧操作未执行/);
+    assert.equal((await input('last')).queue.index,5);assert.equal((await input('first')).queue.index,0);
+    await command(s.app,'player.close');player.close();player=null;
+    await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    const state=await invoke(grid,'grid.state'),old=state.cells[1].inputId;
+    assert.deepEqual((await invoke(grid,'grid.seekGroup',{ratio:0})).cells.map(v=>v.inputId),state.cells.map(v=>v.inputId),'seeking to the current group must not restart its decoders');
+    assert.equal((await invoke(grid,'grid.input',{target:1,inputId:old,intent:'expand'})).expanded,1);
+    assert.equal((await invoke(grid,'grid.input',{target:1,inputId:old,intent:'close'})).expanded,null,'Escape restores an expanded cell before closing the entire grid');
+    const next=await invoke(grid,'grid.input',{target:1,inputId:old,intent:'next'});assert.equal(next.offset,4);
+    assert.equal((await invoke(grid,'grid.input',{target:1,inputId:old,intent:'expand'})).stale,true);
+    await assert.rejects(command(s.app,'grid.expand',{target:1,inputTarget:1,expectedInput:old}),/旧操作未执行/);
+    assert.equal((await invoke(grid,'grid.seekGroup',{ratio:0})).offset,0);
+    assert.equal((await invoke(grid,'grid.seekGroup',{ratio:.5})).offset,4,'the group scrubber rounds collection positions, not video seconds');
+    const current=await invoke(grid,'grid.state');assert.equal((await invoke(grid,'grid.input',{target:0,inputId:current.cells[0].inputId,intent:'first'})).offset,0);
+    assert.deepEqual((await invoke(grid,'ui.contract')).missing,[]);
+    await grid.send('Emulation.setFocusEmulationEnabled',{enabled:true});await grid.send('Emulation.setDeviceMetricsOverride',{width:700,height:196,deviceScaleFactor:1,mobile:false});
+    await grid.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    assert.deepEqual(await grid.evaluate("[...document.querySelectorAll('#controls button,#controls input,#controls select')].filter(n=>n.getClientRects().length).filter(n=>{const r=n.getBoundingClientRect();return r.left<0||r.right>innerWidth+1||r.top<0||r.bottom>innerHeight+1}).map(n=>n.id)"),[],'group-position controls fit inside the native control strip');
+    const point=await grid.evaluate("(()=>{const r=document.getElementById('group-seek').getBoundingClientRect();return {x:r.x+r.width*.8,y:r.y+r.height/2}})()");
+    await grid.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await grid.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
+    await until(async()=>(await invoke(grid,'grid.state')).offset===4,'actual group scrubber UI invokes collection seek');
+  }finally{player?.close();grid?.close();await s.close();}
+});
+
+test('changing a segment while the new stream has no metadata defers one bounded seek instead of failing CI or seeking an old input',native,async()=>{
+  let blocked=false,release;const gate=new Promise(resolve=>release=resolve);
+  const s=await setup({portraitIndices:[0,2,3],videoDuration:20,beforeMedia:async({image})=>{if(!image&&blocked)await gate;return null;}});let player;
+  try{
+    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    const first=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'initial metadata/frame',25000);
+    blocked=true;await invoke(player,'player.options',{portraitOnly:true});
+    await until(async()=>{const value=await invoke(player,'player.state');return value.inputId!==first.inputId&&value.durationMs===0;},'new decoder awaiting the gated stream');
+    await invoke(player,'player.options',{fullLength:false,segment:2});
+    const pending=await invoke(player,'player.state');assert(pending.pendingSeekMs>=1000);assert.equal(pending.pendingSeekMs,pending.queue.segmentStartMs);assert.equal(pending.seekError,null);
+    release();blocked=false;
+    await until(async()=>{const value=await invoke(player,'player.state');assert.equal(value.inputId,pending.inputId);return value.pendingSeekMs===null&&value.decoderPositionMs>=pending.pendingSeekMs-200&&value.renderedFrames>0;},'single deferred seek applied to the actual new native stream',25000);
+    assert.equal((await invoke(player,'player.state')).seekError,null);
+  }finally{release();player?.close();await s.close();}
 });
 
 test('closing a parent preview stops its video; an old return cannot navigate a later preview of the same screenshot',native,async()=>{

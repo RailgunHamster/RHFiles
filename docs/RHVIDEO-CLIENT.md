@@ -69,7 +69,11 @@ Windows 0.1.88 的播放行为单独对齐参考源码：`playlist.start` 是截
 
 `player.back` 返回父截图，`player.next/previous` 在截图打开的单视频中返回父队列并移动一张；`player.close`／Esc 才关闭整层预览。连播的手动前后切换回绕，自动结束不回绕。`player.favorite`、`player.mark` 分别收藏和标记暂存当前视频。预览标记与列表多选不同，`preview.pending` 查看标记，关闭预览后仅提交一次；`preview.state` 只读查询结果，`preview.result` 打开逐项结果 UI。失败不重新放回标记池，后续关闭不会重放旧写入。
 
-Windows 0.1.89 开发分支增加 `player.options {"portraitOnly":true}`，在不可变的完整原队列上投影竖屏项；取消后恢复顺序，少于两项时拒绝操作、保留当前播放。各模式分别保存筛选、速度、位置和全长选择。播放器窗口的该动作以读取到的 ID／队列版本发起原生请求，拒绝迟到的旧目标设置。切换服务器后窗口同步新的 `generation`。
+Windows 0.1.89 开发分支增加 `player.options {"portraitOnly":true}`，在不可变的完整原队列上投影竖屏项；取消后恢复顺序，少于两项时拒绝操作、保留当前播放。图库连播保存筛选、片段选择和位置；重新启动顺序／超压顺序模式按原版取消竖屏筛选、恢复全长，速度和循环仍分别记忆。播放器窗口的该动作以读取到的 ID／队列版本发起原生请求，拒绝迟到的旧目标设置。切换服务器后窗口同步新的 `generation`。
+
+原生画布使用同一组 `player.input {"inputId":...,"intent":"next"}`／`grid.input {"inputId":...,"target":0,"intent":"expand"}` 结构化动作；`inputId` 来自最新的播放器／格子状态，每次重开解码输入都更换，不能仅凭相同视频 ID 重放。支持媒体导航、暂停、返回、组首尾定位；双击格子切换展开，展开时 Esc 先恢复网格。`grid.seekGroup {"ratio":0.5}` 对完整分组集合取整定位，不是单格的视频秒数；定位当前组不重启解码器。原生画布不安装全局键鼠钩子。
+
+视频尚未报告实际时长时，显式 seek 最多等待当前解码输入就绪 15 秒，消费一次。新输入会丢弃旧计划；`pendingSeekMs`、`seekError` 可分别查询等待位置和终态原因，失败不会重新排队。该行为修复了 CI 兼容渲染下切换后立即改片段造成的“跳转越界”。接口／原生解码测试与真实窗口物理鼠标验收分开记录。
 
 `image.seek {"ratio":0.5}` 定位完整图片／截图集合，使用 `round(ratio * (count - 1))`，不是视频时间轴。`image.favorite` 收藏当前预览（截图收藏源视频），不受当前卡片页限制。`image.playVideo` 从头播放截图源视频，`image.playFrame` 跳到截图时间点；返回事件必须同时匹配 `generation`、`parentKey` 和独立的 `parentPreview`。`image.state` 的缺失字段用 `null` 返回，关闭状态及非媒体库任务图片也保持有效 JSON。自定义图片快捷键取代旧键，不叠加隐藏的默认绑定。
 

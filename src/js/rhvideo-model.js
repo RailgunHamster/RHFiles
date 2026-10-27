@@ -11,6 +11,7 @@
   // come from collectListOrderVideoIds / collectPlaylistVideoIds /
   // buildPlaylistEntries, not from the shape of the RHFiles toolbar.
   const playback={
+    initial(mode,saved={},defaults={}){saved=saved||{};const sequential=mode!=='segments';return {portraitOnly:!sequential&&!!(saved.portraitOnly??defaults.portraitOnly),fullLength:sequential||!!(saved.fullLength??defaults.fullLength),segment:sequential?300:Math.max(1,Math.min(300,saved.segment??defaults.segment??3)),loop:!!(saved.loop??(sequential?false:defaults.loop)),rate:saved.rate??1};},
     portrait(resolution){const [w,h]=String(resolution||'').split(/[x×X]/).map(Number);return w>0&&h>w*1.1;},
     listIds(videos){return videos.filter(v=>v&&['ready','processing'].includes(v.status)&&v.id!=null).map(v=>String(v.id));},
     galleryIds(frames,start=0){

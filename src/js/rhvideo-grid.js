@@ -25,6 +25,9 @@
     });
   function paint(value) {
     state = value;
+    const count=Math.max(1,value.count||1),groups=Math.max(1,Math.ceil((value.total||0)/count)),group=Math.floor((value.offset||0)/count);
+    if(document.activeElement!==$('group-seek'))$('group-seek').value=String(groups>1?Math.round(group/(groups-1)*1000):0);
+    $('group-seek').disabled=groups<=1;$('group-position').textContent=`第 ${group+1}/${groups} 组`;
     const selected = $("target").value;
     if ($("target").options.length !== value.cells.length + 1) {
       $("target").replaceChildren(new Option("全部视频", "-1"));
@@ -92,6 +95,24 @@
     async (args) => paint(await native("grid.expand", args)),
   );
   register("close", object(), () => native("grid.close"));
+  register('seekGroup',object({ratio:{type:'number',minimum:0,maximum:1}},['ratio']),async args=>paint(await native('grid.seekGroup',args)));
+  let inputBusy=false;
+  register('input',object({inputId:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER},target:{type:'integer',minimum:0,maximum:8},intent:{type:'string',enum:['next','previous','first','last','toggle','close','expand','mark']}},['inputId','target','intent']),async({inputId,target,intent})=>{
+    if(inputBusy)return {ignored:true};inputBusy=true;
+    try{
+      const current=await native('grid.state');paint(current);
+      if(current.cells[target]?.inputId!==inputId)return {stale:true};
+      const guard={expectedInput:inputId,inputTarget:target};let value;
+      if(intent==='expand')value=await native('grid.expand',{...guard,target,toggle:true});
+      else if(intent==='close'){if(current.expanded!=null)value=await native('grid.expand',{...guard,target:-1});else return await native('grid.close',guard);}
+      else if(intent==='next'||intent==='previous')value=await native('grid.page',{...guard,direction:intent==='next'?1:-1});
+      else if(intent==='first'||intent==='last')value=await native('grid.seekGroup',{...guard,ratio:intent==='first'?0:1});
+      else if(intent==='toggle')value=await native('grid.control',{...guard,target:-1,command:current.cells.every(v=>[1,2,3].includes(v.state))?'pause':'resume'});
+      else return {ignored:true};
+      return paint(value);
+    }finally{inputBusy=false;}
+  });
+  window.__TAURI__.event.listen('rhvideo-native-input',({payload})=>{void api.invoke('rhvideo.grid.input',payload).catch(e=>{$('error').textContent=String(e.message||e);});}).catch(e=>{$('error').textContent=String(e.message||e);});
   for (const [id, name] of Object.entries({
     previous: "page",
     next: "page",
@@ -103,6 +124,7 @@
     seek: "seekRatio",
     volume: "control",
     rate: "control",
+    'group-seek':'seekGroup',
   }))
     $(id).dataset.apiAction = "rhvideo.grid." + name;
   api.register(
@@ -206,6 +228,13 @@
     undefined,
     "rhvideo.grid.seek",
   );
+  RHFilesUI.listen($('group-seek'),'change',()=>call('seekGroup',{ratio:Number($('group-seek').value)/1000}),undefined,'rhvideo.grid.seekGroup');
+  RHFilesUI.listen(document,'keydown',event=>{
+    if(event.target.closest('input,select,textarea')||event.ctrlKey||event.altKey||event.metaKey)return;
+    const intent={Escape:'close',Space:'toggle',ArrowLeft:'previous',ArrowRight:'next',Home:'first',End:'last'}[event.code];
+    if(!intent||event.repeat||!state.cells.length)return;event.preventDefault();void call('input',{inputId:state.cells[0].inputId,target:0,intent});
+  },undefined,'rhvideo.grid.keyboard');
+  RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.grid.contextmenu');
   for (const [id, target] of [
     ["expand", () => Math.max(0, Number($("target").value))],
     ["restore", () => -1],

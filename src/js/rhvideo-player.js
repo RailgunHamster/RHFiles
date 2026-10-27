@@ -14,6 +14,7 @@
     if(!dragging)$('seek').value=state.durationMs>0?Math.round(state.positionMs/state.durationMs*1000):0;
     $('toggle').textContent=state.state===6?'重新播放':state.state===4?'继续':'暂停';
     $('status').textContent=state.state===7?'播放失败，请检查服务器或媒体编码':state.state===6?'播放结束':state.state===4?'已暂停':state.state===1||state.state===2?'正在缓冲…':'播放中';
+    if(state.pendingSeekMs!=null)$('status').textContent='正在定位…';
     if(state.volume>0)audibleVolume=state.volume;
     $('volume').value=String(state.volume);$('rate').value=String(state.rate);
     $('previous').disabled=!state.queue?.hasPrevious;$('next').disabled=!state.queue?.hasNext;
@@ -33,7 +34,7 @@
       if(document.activeElement!==$('segment-length'))$('segment-length').value=String(q.options.segment||3);
       $('segment-length').disabled=q.options.fullLength!==false;
     }
-    if(state.automationError){$('error').dataset.automation='true';$('error').textContent='自动播放失败：'+state.automationError.message;}else if($('error').dataset.automation){delete $('error').dataset.automation;$('error').textContent='';}
+    if(state.seekError){$('error').dataset.automation='true';$('error').textContent='跳转失败：'+state.seekError;}else if(state.automationError){$('error').dataset.automation='true';$('error').textContent='自动播放失败：'+state.automationError.message;}else if($('error').dataset.automation){delete $('error').dataset.automation;$('error').textContent='';}
   }
   api.provideState('player',()=>state);
   async function currentTarget(){if(state.opened&&state.queue?.id)return state;const value=await native('player.state');paint(value);if(!value.opened||!value.queue?.id)throw Error('视频正在准备，请稍候');return value;}
@@ -57,6 +58,24 @@
   register('close',object(),()=>native('player.close'));
   register('back',object(),()=>native('player.back'));
   register('seekQueue',object({ratio:{type:'number',minimum:0,maximum:1}},['ratio']),async args=>{const value=await native('player.seekQueue',args);paint(value);return value;});
+  let inputBusy=false;
+  register('input',object({inputId:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER},intent:{type:'string',enum:['next','previous','first','last','toggle','close','expand','mark']}},['inputId','intent']),async({inputId,intent})=>{
+    if(inputBusy)return {ignored:true};inputBusy=true;
+    try{
+      const current=await native('player.state');paint(current);
+      if(!current.opened||!current.queue?.id||current.inputId!==inputId)return {stale:true};
+      const guard={expectedInput:inputId,expectedId:current.queue?.id,expectedRevision:current.queue?.revision};
+      let result;
+      if(['next','previous'].includes(intent))result=await native('player.'+intent,guard);
+      else if(intent==='first'||intent==='last'){if(!current.queue?.options?.reference)return {ignored:true};result=await native('player.seekQueue',{...guard,ratio:intent==='first'?0:1});}
+      else if(intent==='toggle')result=await native('player.control',{expectedInput:inputId,command:current.state===4||current.state===6?'resume':'pause'});
+      else if(intent==='close')return await native('player.close',{expectedInput:inputId});
+      else if(intent==='expand')return await native('player.fullscreen',{expectedInput:inputId});
+      else if(intent==='mark')return await native('preview.mark',{expectedInput:inputId,id:current.queue.id,kind:'video',title:current.title});
+      if(result?.opened)paint(result);return result;
+    }finally{inputBusy=false;}
+  });
+  window.__TAURI__.event.listen('rhvideo-native-input',({payload})=>{void api.invoke('rhvideo.player.input',{inputId:payload.inputId,intent:payload.intent}).catch(error);}).catch(error);
   for(const [id,name]of Object.entries({back:'back',toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen','queue-seek':'seekQueue','full-length':'options','segment-length':'options','portrait-only':'options'}))$(id).dataset.apiAction='rhvideo.player.'+name;
   api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...document.querySelectorAll('button,input,select')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native player UI/public API coverage'});
   const control=args=>api.invoke('rhvideo.player.control',args).catch(error);
@@ -78,11 +97,12 @@
   RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.player.contextmenu');
   async function poll(){
     if(busy||closed)return;busy=true;
+    const generation=state.generation;
     try{
       paint(await native('player.state'));
       // Display only. Native progression continues when this WebView's timers
       // are throttled, hidden, suspended, or not yet initialized.
-    }catch(e){error(e);}finally{busy=false;if(!closed)setTimeout(poll,500);}
+    }catch(e){if(generation===state.generation)error(e);}finally{busy=false;if(!closed)setTimeout(poll,500);}
   }
   // The existing poll owns the sole timer chain. A session event invalidates
   // cached identity, but must not start another recurring loop on every switch.

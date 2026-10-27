@@ -8,14 +8,14 @@ use std::{
     path::PathBuf,
     sync::Mutex,
 };
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Manager, WindowEvent, Emitter};
 use windows::{
     core::w,
     Win32::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::{BeginPaint, EndPaint, PatBlt, BLACKNESS, PAINTSTRUCT},
         System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::*,
+        UI::{WindowsAndMessaging::*, Input::KeyboardAndMouse::{SetFocus,GetKeyState,VK_CONTROL,VK_SHIFT,VK_MENU}},
     },
 };
 
@@ -23,6 +23,45 @@ const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
 static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
+static INPUT_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+static INPUT_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static INPUT_AT: std::sync::LazyLock<Mutex<std::collections::HashMap<usize,std::time::Instant>>> = std::sync::LazyLock::new(||Mutex::new(std::collections::HashMap::new()));
+// Only recognized media intents leave the native canvas. Never forward raw
+// keystrokes, install global hooks, or read input from another application.
+fn surface_intent(message:u32,wparam:usize,lparam:isize,modified:bool)->Option<&'static str>{
+    if modified{return None;}
+    if message==WM_MOUSEWHEEL{return match ((wparam>>16) as u16) as i16{0=>None,n if n>0=>Some("previous"),_=>Some("next")};}
+    if message==WM_MOUSEHWHEEL{return match ((wparam>>16) as u16) as i16{0=>None,n if n>0=>Some("next"),_=>Some("previous")};}
+    if message==WM_LBUTTONDBLCLK{return Some("expand");}
+    if message!=WM_KEYDOWN{return None;}
+    if lparam&(1<<30)!=0{return None;} // one intent per physical key press
+    match wparam{0x1b=>Some("close"),0x20=>Some("toggle"),0x25=>Some("previous"),0x27=>Some("next"),0x24=>Some("first"),0x23=>Some("last"),0x2e=>Some("mark"),_=>None}
+}
+fn surface_binding(child:usize)->Option<(&'static str,u64,Option<usize>)>{
+    let single=PLAYER.try_lock().ok().and_then(|p|p.as_ref().filter(|p|p.child==child).map(|p|p.input_id));
+    single.map(|input|("window-rhvideo-player",input,None)).or_else(||GRID.try_lock().ok().and_then(|g|g.players.iter().enumerate().find(|(_,p)|p.child==child).map(|(index,p)|("window-rhvideo-grid",p.input_id,Some(index)))))
+}
+fn emit_surface_input(child:usize,intent:&str)->bool{
+    let Some(app)=INPUT_APP.get() else{return false;};
+    let Some((label,input,target))=surface_binding(child) else{return false;};
+    if matches!(intent,"next"|"previous"){
+        let Ok(mut at)=INPUT_AT.try_lock() else{return true;};
+        let now=std::time::Instant::now();if at.get(&child).is_some_and(|last|now.duration_since(*last)<std::time::Duration::from_millis(180)){return true;}
+        at.insert(child,now);
+    }
+    let _=app.emit_to(label,"rhvideo-native-input",json!({"inputId":input,"intent":intent,"target":target}));true
+}
+pub fn check_input(args:&Value)->Result<(),String>{
+    let Some(expected)=args.get("expectedInput") else{return Ok(());};
+    let expected=expected.as_u64().ok_or("播放输入标识无效")?;
+    if !PLAYER.lock().map_err(|_|"播放器不可用")?.as_ref().is_some_and(|p|p.input_id==expected){return Err("播放输入已改变，旧操作未执行".into());}Ok(())
+}
+pub fn check_grid_input(args:&Value)->Result<(),String>{
+    let Some(expected)=args.get("expectedInput") else{return Ok(());};
+    let expected=expected.as_u64().ok_or("同屏输入标识无效")?;
+    let target=args["inputTarget"].as_u64().ok_or("同屏输入目标无效")? as usize;
+    if GRID.lock().map_err(|_|"网格不可用")?.players.get(target).map(|p|p.input_id)!=Some(expected){return Err("同屏输入已改变，旧操作未执行".into());}Ok(())
+}
 static PAGE_VOLUME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
 fn effective_volume(local: i32) -> i32 {
     (local.clamp(0,100) as u32 * PAGE_VOLUME.load(std::sync::atomic::Ordering::Acquire) / 100) as i32
@@ -77,6 +116,11 @@ unsafe extern "system" fn surface_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     unsafe {
+        if message==WM_NCDESTROY{if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
+        if message==WM_LBUTTONDOWN&&surface_binding(hwnd.0 as usize).is_some(){let _=SetFocus(Some(hwnd));}
+        let modified=matches!(message,WM_KEYDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL)&&[VK_CONTROL,VK_SHIFT,VK_MENU].iter().any(|key|GetKeyState(key.0 as i32)<0);
+        if let Some(intent)=surface_intent(message,wparam.0,lparam.0,modified){if emit_surface_input(hwnd.0 as usize,intent){return LRESULT(0);}}
+        if message==WM_CONTEXTMENU{return LRESULT(0);}
         if message == WM_ERASEBKGND {
             return LRESULT(1);
         }
@@ -116,6 +160,8 @@ fn surface_class() -> Result<(), String> {
         .get_or_init(|| unsafe {
             let module = GetModuleHandleW(None).map_err(|e| e.to_string())?;
             let class = WNDCLASSW {
+                style: CS_DBLCLKS,
+                hCursor:LoadCursorW(None,IDC_ARROW).unwrap_or_default(),
                 lpfnWndProc: Some(surface_proc),
                 hInstance: HINSTANCE(module.0),
                 lpszClassName: w!("RHFilesNativeVideoSurface"),
@@ -151,6 +197,19 @@ struct MediaStats {
     sent_bytes: i32,
     send_bitrate: f32,
 }
+struct PendingSeek{input:u64,ms:i64,deadline:std::time::Instant}
+#[derive(Default)]
+struct SeekState{pending:Option<PendingSeek>,error:Option<String>}
+impl SeekState{
+    fn prepare(&mut self,input:u64,ms:i64,now:std::time::Instant){self.error=None;self.pending=Some(PendingSeek{input,ms,deadline:now+std::time::Duration::from_secs(15)});}
+    fn ready(&mut self,input:u64,duration:i64,state:i32,seekable:bool,now:std::time::Instant)->Option<i64>{
+        let pending=self.pending.as_ref()?;
+        if pending.input!=input{self.pending=None;return None;}
+        let error=if now>=pending.deadline{Some("等待媒体就绪超时，跳转未执行")}else if matches!(state,5..=7){Some("媒体已经停止，跳转未执行")}else if duration>0&&pending.ms>duration{Some("跳转位置超出实际媒体时长")}else{None};
+        if let Some(error)=error{self.error=Some(error.into());self.pending=None;return None;}
+        if duration>0&&seekable&&matches!(state,3|4){return self.pending.take().map(|p|p.ms);}None
+    }
+}
 struct Api {
     new: unsafe extern "C" fn(i32, *const *const c_char) -> Ptr,
     release: unsafe extern "C" fn(Ptr),
@@ -173,6 +232,7 @@ struct Api {
     length: unsafe extern "C" fn(Ptr) -> i64,
     set_time: unsafe extern "C" fn(Ptr, i64),
     state: unsafe extern "C" fn(Ptr) -> i32,
+    seekable: unsafe extern "C" fn(Ptr) -> i32,
     rate: unsafe extern "C" fn(Ptr) -> f32,
     set_rate: unsafe extern "C" fn(Ptr, f32) -> i32,
     volume: unsafe extern "C" fn(Ptr) -> i32,
@@ -279,6 +339,7 @@ impl Api {
                 set_volume: function!("libvlc_audio_set_volume"),
                 key_input: function!("libvlc_video_set_key_input"),
                 mouse_input: function!("libvlc_video_set_mouse_input"),
+                seekable: function!("libvlc_media_player_is_seekable"),
                 video_callbacks: function!("libvlc_video_set_callbacks"),
                 video_formats: function!("libvlc_video_set_format_callbacks"),
                 _library: lib,
@@ -291,6 +352,8 @@ struct Engine {
     instance: usize,
     player: usize,
     child: usize,
+    input_id:u64,
+    seek:Mutex<SeekState>,
     requested_volume: i32,
     title: String,
     frame: Box<crate::rhvideo_frame::Frame>,
@@ -361,6 +424,8 @@ impl Engine {
             instance: instance as usize,
             player: player as usize,
             child,
+            input_id:0,
+            seek:Mutex::new(SeekState::default()),
             requested_volume: 100,
             title: String::new(),
             frame,
@@ -374,6 +439,8 @@ impl Engine {
         })
     }
     fn open(&mut self, url: &str, title: String, seconds: f64) -> Result<(), String> {
+        self.input_id=INPUT_SEQUENCE.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        *self.seek.lock().map_err(|_|"跳转状态不可用")?=SeekState::default();
         self.open_started=std::time::Instant::now();
         self.first_frame_ms.store(0,std::sync::atomic::Ordering::Relaxed);
         self.url = url.to_owned();
@@ -448,6 +515,15 @@ impl Engine {
             let raw = (self.api.time)(p).max(0);
             let duration = (self.api.length)(p).max(0);
             let state = (self.api.state)(p);
+            // A bounded readiness transition, not a network retry: consume the
+            // latest explicit seek exactly once, only on its decoder lease.
+            let (pending_seek,seek_error)=if let Ok(mut seek)=self.seek.lock(){
+                if let Some(ms)=seek.ready(self.input_id,duration,state,(self.api.seekable)(p)!=0,std::time::Instant::now()){
+                    (self.api.set_time)(p,ms);
+                    if let Ok(mut clock)=self.clock.lock(){clock.reset(ms,self.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));}
+                }
+                (seek.pending.as_ref().map(|s|s.ms),seek.error.clone())
+            }else{(None,Some("跳转状态不可用".into()))};
             // Audio modules may initialize asynchronously after play(). Start
             // silent and reconcile the existing desired gain once they report
             // a usable output; never write the OS session/master volume.
@@ -481,7 +557,7 @@ impl Engine {
                     .unwrap_or(raw)
             };
             json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
-            "state":state,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
+            "state":state,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
             "rate":(self.api.rate)(p),"volume":self.requested_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
         }
     }
@@ -595,7 +671,7 @@ pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value
                     WS_EX_LAYERED,
                     w!("RHFilesNativeVideoSurface"),
                     w!(""),
-                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                     0,
                     0,
                     320,
@@ -735,7 +811,7 @@ pub async fn presentation_open(
                     WS_EX_LAYERED,
                     w!("RHFilesNativeVideoSurface"),
                     w!(""),
-                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                     0,
                     0,
                     16,
@@ -930,6 +1006,7 @@ fn layout_grid(window: &tauri::WebviewWindow) {
     }
 }
 pub async fn grid_open(app: AppHandle, sources: Vec<(String, String)>) -> Result<Value, String> {
+    let _=INPUT_APP.set(app.clone());
     if sources.is_empty() || sources.len() > 9 {
         return Err("同屏播放需要 1–9 个视频".into());
     }
@@ -974,7 +1051,7 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String, String)>) -> Result
                         WINDOW_EX_STYLE::default(),
                         w!("RHFilesNativeVideoSurface"),
                         w!(""),
-                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                         0,
                         0,
                         10,
@@ -1040,7 +1117,7 @@ pub fn grid_command(action: &str, args: &Value) -> Result<Value, String> {
             .as_i64()
             .filter(|n| *n >= -1 && *n < grid.players.len() as i64)
             .ok_or("目标视频无效")?;
-        grid.expanded = if target < 0 {
+        grid.expanded = if target < 0 || (args["toggle"]==true&&grid.expanded==Some(target as usize)) {
             None
         } else {
             Some(target as usize)
@@ -1107,6 +1184,7 @@ pub async fn play(
     title: String,
     seconds: f64,
 ) -> Result<Value, String> {
+    let _=INPUT_APP.set(app.clone());
     if !available() {
         return Err(
             "未检测到原生播放内核。此体验版请先安装 64 位 VLC 3.x；不会打开网页播放。".into(),
@@ -1223,7 +1301,7 @@ pub async fn play(
                         WINDOW_EX_STYLE::default(),
                         w!("RHFilesNativeVideoSurface"),
                         w!(""),
-                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                         0,
                         0,
                         size.width as i32,
@@ -1301,6 +1379,7 @@ pub fn command(action: &str, args: &Value) -> Result<Value, String> {
         };
     };
     if action == "player.control" {
+        if args.get("expectedInput").is_some_and(|expected|expected.as_u64()!=Some(player.input_id)){return Err("播放输入已改变，旧操作未执行".into());}
         control_engine(player, args)?;
     }
     Ok(player.state())
@@ -1351,16 +1430,10 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                 let ms = args
                     .get("value")
                     .and_then(Value::as_i64)
-                    .filter(|v| *v >= 0 && *v <= (player.api.length)(p))
+                    .filter(|v| *v >= 0 && *v <= 604800000 && ((player.api.length)(p)<=0||*v<=(player.api.length)(p)))
                     .ok_or("跳转位置超出范围")?;
-                (player.api.set_time)(p, ms);
-                player.clock.lock().map_err(|_| "播放时钟不可用")?.reset(
-                    ms,
-                    player
-                        .frame
-                        .last_display
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                );
+                player.seek.lock().map_err(|_|"跳转状态不可用")?.prepare(player.input_id,ms,std::time::Instant::now());
+                let _=player.state();
             }
             "volume" => {
                 let value = args
@@ -1388,4 +1461,47 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod input_tests{
+    use super::*;
+    #[test]
+    fn native_canvas_decodes_only_media_keys_and_never_replays_key_repeat(){
+        for(key,intent)in [(0x1b,"close"),(0x20,"toggle"),(0x25,"previous"),(0x27,"next"),(0x24,"first"),(0x23,"last"),(0x2e,"mark")]{
+            assert_eq!(surface_intent(WM_KEYDOWN,key,0,false),Some(intent));
+            assert_eq!(surface_intent(WM_KEYDOWN,key,1<<30,false),None);
+            assert_eq!(surface_intent(WM_KEYDOWN,key,0,true),None);
+        }
+        assert_eq!(surface_intent(WM_KEYDOWN,0x41,0,false),None);
+        assert_eq!(surface_intent(WM_CHAR,0x20,0,false),None);
+        assert_eq!(surface_intent(WM_LBUTTONDBLCLK,0,0,false),Some("expand"));
+    }
+    #[test]
+    fn native_wheel_signs_match_browser_vertical_and_horizontal_navigation(){
+        let positive=120usize<<16;let negative=(((-120i16) as u16) as usize)<<16;
+        assert_eq!(surface_intent(WM_MOUSEWHEEL,positive,0,false),Some("previous"));
+        assert_eq!(surface_intent(WM_MOUSEWHEEL,negative,0,false),Some("next"));
+        assert_eq!(surface_intent(WM_MOUSEHWHEEL,positive,0,false),Some("next"));
+        assert_eq!(surface_intent(WM_MOUSEHWHEEL,negative,0,false),Some("previous"));
+        assert_eq!(surface_intent(WM_MOUSEWHEEL,0,0,false),None);
+    }
+    #[test]
+    fn delayed_seek_is_bounded_consumed_once_and_bound_to_its_decoder(){
+        let now=std::time::Instant::now();let mut seek=SeekState::default();seek.prepare(1,7000,now);
+        assert_eq!(seek.ready(1,0,1,false,now),None);assert!(seek.pending.is_some());
+        assert_eq!(seek.ready(1,20000,2,false,now),None);assert!(seek.pending.is_some());
+        assert_eq!(seek.ready(1,20000,3,true,now),Some(7000));
+        assert_eq!(seek.ready(1,20000,3,true,now),None);assert!(seek.error.is_none());
+        seek.prepare(1,8000,now);assert_eq!(seek.ready(2,20000,3,true,now),None);assert!(seek.pending.is_none());
+        assert_eq!(seek.ready(1,20000,3,true,now),None,"returning to the old ID cannot revive a consumed/stale seek");
+    }
+    #[test]
+    fn delayed_seek_reports_terminal_failure_without_rearming_itself(){
+        let now=std::time::Instant::now();let mut seek=SeekState::default();seek.prepare(1,30000,now);
+        assert_eq!(seek.ready(1,14000,3,true,now),None);assert!(seek.error.as_ref().unwrap().contains("实际媒体时长"));
+        assert!(seek.pending.is_none());assert_eq!(seek.ready(1,60000,3,true,now),None);
+        seek.prepare(2,3000,now);assert!(seek.error.is_none());
+        assert_eq!(seek.ready(2,0,1,false,now+std::time::Duration::from_secs(15)),None);assert!(seek.error.as_ref().unwrap().contains("超时"));assert!(seek.pending.is_none());
+    }
 }
