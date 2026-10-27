@@ -73,6 +73,10 @@ Windows 0.1.89 开发分支增加 `player.options {"portraitOnly":true}`，在�
 
 原生画布使用同一组 `player.input {"inputId":...,"intent":"next"}`／`grid.input {"inputId":...,"target":0,"intent":"expand"}` 结构化动作；`inputId` 来自最新的播放器／格子状态，每次重开解码输入都更换，不能仅凭相同视频 ID 重放。支持媒体导航、暂停、返回、组首尾定位；双击格子切换展开，展开时 Esc 先恢复网格。`grid.seekGroup {"ratio":0.5}` 对完整分组集合取整定位，不是单格的视频秒数；定位当前组不重启解码器。原生画布不安装全局键鼠钩子。
 
+Windows 多视频默认 `gridCount:0`，按参考客户端的画面比例评分自动分成每组 2–4 项；1–9 为可选的手动数量。队列从完整图库顺序去重取视频，不取当前清单多选，也不从当前截图旋转起点。`grid.state` 返回 `groupIndex`／`groupTotal`、每格 `id`／`rect`／`inputId`、独立音量／静音／倍速及收藏／暂存标记。`grid.control` 的 `mute` 与 `volume` 独立；默认每格均有声音，再乘页面总音量。
+
+同一次打开中翻组保留逐项位置、暂停、音量、静音和速度；关闭重开只恢复完全匹配的有序组 ID，逐项控制重置。恢复位置按实际媒体时长限制，不把过期位置无限排队。正常结束循环使用同一个 VLC 输入，失败不循环重试。`grid.favorite {"target":0}` 和 `grid.mark {"target":0}` 操作单格，原生画布 Delete 使用相同标记动作，关闭时只提交一次暂存；不是永久删除。复用窗口时更新会话，旧解码输入和旧窗口销毁事件不能控制替代项。这部分为 Windows 开发实现，不能当作 Android 已同步或发行包已发布。
+
 视频尚未报告实际时长时，显式 seek 最多等待当前解码输入就绪 15 秒，消费一次。新输入会丢弃旧计划；`pendingSeekMs`、`seekError` 可分别查询等待位置和终态原因，失败不会重新排队。该行为修复了 CI 兼容渲染下切换后立即改片段造成的“跳转越界”。接口／原生解码测试与真实窗口物理鼠标验收分开记录。
 
 `image.seek {"ratio":0.5}` 定位完整图片／截图集合，使用 `round(ratio * (count - 1))`，不是视频时间轴。`image.favorite` 收藏当前预览（截图收藏源视频），不受当前卡片页限制。`image.playVideo` 从头播放截图源视频，`image.playFrame` 跳到截图时间点；返回事件必须同时匹配 `generation`、`parentKey` 和独立的 `parentPreview`。`image.state` 的缺失字段用 `null` 返回，关闭状态及非媒体库任务图片也保持有效 JSON。自定义图片快捷键取代旧键，不叠加隐藏的默认绑定。
@@ -98,6 +102,7 @@ Android 原生播放界面的控件通过 `native.media.state/control`、网格�
     node --test --test-concurrency=1 scripts/e2e/rhvideo.test.mjs
     node --test --test-concurrency=1 scripts/e2e/rhvideo-media-pressure.test.mjs
     node --test scripts/tests/rhvideo-playback-reference.test.mjs
+    node --test scripts/tests/rhvideo-grid-reference.test.mjs
     node --test --test-concurrency=1 scripts/e2e/rhvideo-playback-behavior.test.mjs
 
 Windows E2E 使用隔离配置，不操作已安装的 RHFiles。设置 RHFILES_NATIVE_PLAYER_QA=1 可启用真实 libVLC 播放验收，需要已安装 64 位 VLC 和 FFmpeg。测试生成专用 MP4，检查真实进度、暂停、跳转、前后切换，不以模拟播放代替。

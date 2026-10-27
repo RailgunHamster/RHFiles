@@ -115,12 +115,22 @@ pub(crate) async fn player_window_destroyed(app:AppHandle,lease:u64){
         }
     }
 }
+#[cfg(windows)]
+pub(crate) async fn grid_window_destroyed(app:AppHandle,lease:u64){
+    let _loading=GRID_LOAD.lock().await;
+    let matches=GRID_QUEUE.lock().ok().is_some_and(|q|q.as_ref().is_some_and(|q|q.window_lease==lease));
+    if !matches||!crate::rhvideo_player::retire_grid_window(lease){return;}
+    let generation=GRID_QUEUE.lock().ok().and_then(|mut q|q.take().map(|q|q.generation));
+    if let Ok(session)=current(){if Some(session.generation)==generation{let _=start_preview_commit(app,session);}}
+}
 struct PreparedPlaylist {
     ticket: String,
     generation: u64,
     items: Vec<(String, String)>,
     durations: Vec<f64>,
     portraits: Vec<bool>,
+    grid_cells:Vec<Option<[f64;4]>>,
+    grid_ends:Vec<bool>,
     segments: Vec<Option<(f64,f64)>>,
     prefix: Vec<f64>,
     options: Value,
@@ -199,30 +209,52 @@ fn queue_seek(prefix:&[f64],ratio:f64)->Result<(usize,f64),String>{
 #[derive(Clone)]
 struct GridQueue {
     generation: u64,
-    items: Vec<(String, String)>,
+    items: Arc<Vec<(String, String)>>,
+    ends:Arc<Vec<usize>>,
+    rects:Arc<Vec<Option<[f64;4]>>>,
+    states:Arc<std::sync::Mutex<HashMap<String,Value>>>,
     offset: usize,
-    count: usize,
     low_bandwidth: bool,
+    window_lease:u64,
 }
 impl GridQueue {
+    fn new(generation:u64,items:Vec<(String,String)>,count:usize,rects:Vec<Option<[f64;4]>>,flags:Vec<bool>,low_bandwidth:bool)->Result<Self,String>{
+        if items.is_empty()||!(1..=9).contains(&count)||(!rects.is_empty()&&rects.len()!=items.len()){return Err("同屏队列无效".into());}
+        let ends=if flags.is_empty(){(count..items.len()).step_by(count).chain(std::iter::once(items.len())).collect::<Vec<_>>()}else{
+            if flags.len()!=items.len()||rects.len()!=items.len()||!flags.last().copied().unwrap_or(false)||rects.iter().any(Option::is_none){return Err("同屏分组计划不完整".into());}
+            let mut previous=0;let mut ends=Vec::new();for(i,end)in flags.iter().enumerate(){if *end{if i+1-previous>9{return Err("单组视频不能超过 9 项".into());}ends.push(i+1);previous=i+1;}}ends
+        };
+        let rects=if rects.is_empty(){vec![None;items.len()]}else{rects};
+        Ok(Self{generation,items:Arc::new(items),ends:Arc::new(ends),rects:Arc::new(rects),states:Arc::new(std::sync::Mutex::new(HashMap::new())),offset:0,low_bandwidth,window_lease:0})
+    }
+    fn group_index(&self)->usize{self.ends.partition_point(|end|*end<=self.offset)}
+    fn count(&self)->usize{self.ends[self.group_index()]-self.offset}
+    fn select(&mut self,index:usize){let index=index.min(self.ends.len()-1);self.offset=if index==0{0}else{self.ends[index-1]};}
+    fn ids(&self)->Vec<String>{self.items.iter().skip(self.offset).take(self.count()).map(|item|item.0.clone()).collect()}
+    fn restore_group(&mut self,ids:&Value){if let Some(ids)=ids.as_array(){for i in 0..self.ends.len(){let start=if i==0{0}else{self.ends[i-1]};let items=&self.items[start..self.ends[i]];if items.len()==ids.len()&&items.iter().zip(ids).all(|(item,id)|id.as_str()==Some(item.0.as_str())){self.select(i);return;}}}}
     fn page(&mut self, direction: i64) {
-        self.offset = (self.offset as i64 + direction * self.count as i64).clamp(
-            0,
-            ((self.items.len().saturating_sub(1) / self.count) * self.count) as i64,
-        ) as usize;
+        self.select((self.group_index() as i64+direction).clamp(0,self.ends.len() as i64-1) as usize);
     }
     fn seek_group(&mut self,ratio:f64)->Result<(),String>{
         if !ratio.is_finite()||!(0.0..=1.).contains(&ratio){return Err("同屏分组位置无效".into());}
-        let last=self.items.len().saturating_sub(1)/self.count;
-        self.offset=(ratio*last as f64).round() as usize*self.count;Ok(())
+        self.select((ratio*(self.ends.len()-1) as f64).round() as usize);Ok(())
     }
     fn annotate(&self, mut value: Value) -> Value {
         value["offset"] = json!(self.offset);
         value["total"] = json!(self.items.len());
-        value["count"] = json!(self.count);
+        value["count"] = json!(self.count());
+        value["groupIndex"]=json!(self.group_index());value["groupTotal"]=json!(self.ends.len());
+        value["generation"]=json!(self.generation);value["windowLease"]=json!(self.window_lease);
         value["hasPrevious"] = json!(self.offset > 0);
-        value["hasNext"] = json!(self.offset + self.count < self.items.len());
+        value["hasNext"] = json!(self.group_index()+1<self.ends.len());
         value
+    }
+    fn view(&self,session:&Session,value:Value)->Result<Value,String>{
+        let mut value=self.annotate(value);
+        let favorites=session.favorites.lock().map_err(|_|"收藏状态不可用")?;
+        let preview=session.preview.lock().map_err(|_|"暂存标记不可用")?;
+        if let Some(cells)=value["cells"].as_array_mut(){for cell in cells{if let Some(id)=cell["id"].as_str(){let key=format!("video:{id}");let favorite=favorites.contains(&key);let marked=preview.pending.contains_key(&key);cell["favorite"]=json!(favorite);cell["marked"]=json!(marked);}}}
+        Ok(value)
     }
 }
 
@@ -263,6 +295,12 @@ async fn update_favorite(app:&AppHandle,session:&Session,kind:&str,id:&str,enabl
     if let Ok(mut cache)=session.favorites.lock(){if enabled{cache.insert(format!("{kind}:{id}"));}else{cache.remove(&format!("{kind}:{id}"));}}
     let _=app.emit_to("window-rhvideo","rhvideo-favorite",json!({"generation":session.generation,"kind":kind,"id":id,"enabled":enabled}));
     Ok(result)
+}
+fn preview_mark(session:&Session,media_kind:&str,id:&str,title:&str,enabled:Option<bool>)->Result<Value,String>{
+    let key=format!("{media_kind}:{id}");let mut marks=session.preview.lock().map_err(|_|"标记不可用")?;
+    let enabled=enabled.unwrap_or(!marks.pending.contains_key(&key));
+    if enabled {if marks.pending.len()>=1000&&!marks.pending.contains_key(&key){return Err("本次预览暂存标记最多 1000 项".into());}let order=marks.pending.get(&key).and_then(|v|v["order"].as_u64()).unwrap_or_else(||{let order=marks.next;marks.next=marks.next.saturating_add(1);order});marks.pending.insert(key,json!({"kind":media_kind,"id":id,"title":title,"order":order}));}else{marks.pending.remove(&key);}
+    Ok(json!({"kind":media_kind,"id":id,"enabled":enabled,"pending":marks.pending.len()}))
 }
 fn start_preview_commit(app:AppHandle,session:Arc<Session>)->Result<Value,String>{
     let run=PREVIEW_RUN.fetch_add(1,Ordering::SeqCst);
@@ -376,7 +414,7 @@ pub(crate) fn flush_playback() {
     }
 }
 fn queue_state(session:&Session,mode:&str,update:Option<Value>)->Result<Value,String>{
-    if !["segments","sequential","sequential-super"].contains(&mode){return Err("连播模式无效".into());}
+    if !["segments","sequential","sequential-super","grid"].contains(&mode){return Err("连播模式无效".into());}
     let _lock=QUEUE_STATE_LOCK.lock().map_err(|_|"连播记录不可用")?;
     let path=config_path()?.with_file_name("rhvideo-queues.json");
     let mut data=std::fs::metadata(&path).ok().filter(|m|m.len()<=1024*1024).and_then(|_|std::fs::read(&path).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object).unwrap_or(json!({}));
@@ -1362,20 +1400,22 @@ pub async fn rhvideo_request(
             let _loading = GRID_LOAD.lock().await;
             #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
             let session = current()?;
-            let queue = if action != "grid.open" {
+            if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变，同屏操作未执行".into());}
+            let mut queue = if action != "grid.open" {
                 let mut queue = GRID_QUEUE
                     .lock()
                     .map_err(|_| "网格队列不可用")?
                     .clone()
                     .filter(|q| q.generation == session.generation)
                     .ok_or("网格队列已失效")?;
+                let previous=queue.offset;
                 if action=="grid.seekGroup"{
-                    let previous=queue.offset;queue.seek_group(args["ratio"].as_f64().ok_or("同屏分组位置无效")?)?;
-                    if queue.offset==previous{
-                        #[cfg(windows)]return Ok(queue.annotate(crate::rhvideo_player::grid_command("grid.state",&json!({}))?));
-                    }
+                    queue.seek_group(args["ratio"].as_f64().ok_or("同屏分组位置无效")?)?;
                 }else{
                     let direction=args["direction"].as_i64().filter(|d|[-1,1].contains(d)).ok_or("翻页方向无效")?;queue.page(direction);
+                }
+                if queue.offset==previous{
+                    #[cfg(windows)]return queue.view(&session,crate::rhvideo_player::grid_command("grid.state",&json!({}))?);
                 }
                 queue
             } else if let Some(ticket) = args["playlist"].as_str() {
@@ -1392,13 +1432,7 @@ pub async fn rhvideo_request(
                             && !q.items.is_empty()
                     })
                     .ok_or("播放列表已失效")?;
-                GridQueue {
-                    generation: session.generation,
-                    items: q.items.clone(),
-                    offset: 0,
-                    count,
-                    low_bandwidth: args["super"] == true,
-                }
+                GridQueue::new(session.generation,q.items.clone(),count,if q.options["grid"]==true{q.grid_cells.clone()}else{Vec::new()},if q.options["grid"]==true{q.grid_ends.clone()}else{Vec::new()},args["super"]==true)?
             } else {
                 let items = args["items"]
                     .as_array()
@@ -1413,21 +1447,18 @@ pub async fn rhvideo_request(
                         ))
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-                GridQueue {
-                    generation: session.generation,
-                    count: items.len(),
-                    items,
-                    offset: 0,
-                    low_bandwidth: args["super"] == true,
-                }
+                GridQueue::new(session.generation,items.clone(),items.len(),Vec::new(),Vec::new(),args["super"]==true)?
             };
-            let sources = queue
+            if action=="grid.open"{queue.restore_group(&queue_state(&session,"grid",None)?["groupIds"]);}
+            #[cfg(windows)]if action!="grid.open"{queue.states.lock().map_err(|_|"同屏状态不可用")?.extend(crate::rhvideo_player::grid_snapshot());}
+            let sources = {let snapshots=queue.states.lock().map_err(|_|"同屏状态不可用")?;queue
                 .items
                 .iter()
                 .skip(queue.offset)
-                .take(queue.count)
-                .map(|(id, title)| {
+                .take(queue.count()).enumerate()
+                .map(|(i,(id, title))| {
                     Ok((
+                        id.clone(),
                         session.asset(
                             format!(
                                 "api/v1/videos/{id}/play{}",
@@ -1440,18 +1471,23 @@ pub async fn rhvideo_request(
                             false,
                         )?,
                         title.clone(),
+                        queue.rects.get(queue.offset+i).copied().flatten(),snapshots.get(id).cloned().unwrap_or(Value::Null),
                     ))
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, String>>()?};
             #[cfg(windows)]
             {
-                let result = crate::rhvideo_player::grid_open(app.clone(), sources).await?;
+                let mut result = crate::rhvideo_player::grid_open(app.clone(), sources).await?;
                 wake_playback_monitor(&app);
                 if current()?.generation != session.generation {
+                    crate::rhvideo_player::stop_grid();
                     return Err("媒体账户已更改".into());
                 }
-                let result = queue.annotate(result);
+                queue.window_lease=result["windowLease"].as_u64().unwrap_or(0);
+                if let Err(error)=queue_state(&session,"grid",Some(json!({"groupIds":queue.ids()}))){result["clientWarning"]=json!(format!("同屏已打开，但无法保存分组位置：{error}"));}
+                let result = queue.view(&session,result)?;
                 *GRID_QUEUE.lock().map_err(|_| "网格队列不可用")? = Some(queue);
+                let _=app.emit_to("window-rhvideo-grid","rhvideo-grid-session",json!({"generation":session.generation}));
                 return Ok(result);
             }
             #[cfg(not(windows))]
@@ -1464,6 +1500,7 @@ pub async fn rhvideo_request(
             let _loading=GRID_LOAD.lock().await;
             #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
             let _session = current()?;
+            if expected.is_some_and(|g|g!=_session.generation){return Err("媒体账户已改变，同屏操作未执行".into());}
             #[cfg(windows)]
             {
                 let value = crate::rhvideo_player::grid_command(&action, &args)?;
@@ -1471,23 +1508,33 @@ pub async fn rhvideo_request(
                 if action == "grid.expand" {
                     crate::rhvideo_player::grid_relayout(&app)?;
                 }
-                return Ok(GRID_QUEUE
+                return GRID_QUEUE
                     .lock()
                     .map_err(|_| "网格队列不可用")?
                     .as_ref()
                     .filter(|q| q.generation == _session.generation)
-                    .map(|q| q.annotate(value.clone()))
-                    .unwrap_or(value));
+                    .map(|q| q.view(&_session,value.clone()))
+                    .unwrap_or(Ok(value));
             }
             #[cfg(not(windows))]
             {
                 return Err("此平台尚未接入原生多视频".into());
             }
         }
+        "grid.favorite"|"grid.mark"=>{
+            let _loading=GRID_LOAD.lock().await;
+            #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
+            let session=current()?;if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变，同屏操作未执行".into());}
+            let(id,title)={let slot=GRID_QUEUE.lock().map_err(|_|"网格队列不可用")?;let q=slot.as_ref().filter(|q|q.generation==session.generation).ok_or("网格队列已失效")?;let index=args["target"].as_u64().filter(|i|*i<(q.count() as u64)).ok_or("请选择单个视频")? as usize;q.items[q.offset+index].clone()};
+            if action=="grid.mark"{return preview_mark(&session,"video",&id,&title,args["enabled"].as_bool());}
+            let enabled=!session.favorites.lock().map_err(|_|"收藏不可用")?.contains(&format!("video:{id}"));
+            update_favorite(&app,&session,"video",&id,enabled).await?;return Ok(json!({"id":id,"favorite":enabled}));
+        }
         "state" => return Ok(state()),
         "grid.close" => {
             let _loading=GRID_LOAD.lock().await;
             #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
+            let session=current()?;if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变，同屏操作未执行".into());}
             *GRID_QUEUE.lock().map_err(|_| "网格队列不可用")? = None;
             #[cfg(windows)]
             {
@@ -1496,6 +1543,7 @@ pub async fn rhvideo_request(
                     let _ = w.close();
                 }
             }
+            start_preview_commit(app,session)?;
             return Ok(json!({"closed":true}));
         }
         "player.fullscreen" => {
@@ -1758,6 +1806,7 @@ pub async fn rhvideo_request(
                     items: Vec::new(),
                     durations: Vec::new(),
                     portraits: Vec::new(),
+                    grid_cells:Vec::new(),grid_ends:Vec::new(),
                     segments: Vec::new(),
                     prefix: vec![0.],
                     options: args["options"].clone(),
@@ -1784,10 +1833,16 @@ pub async fn rhvideo_request(
                     Some((start,length))
                 }else{None};
                 if item.get("portrait").is_some_and(|value|!value.is_boolean()){return Err("竖屏元数据无效".into());}
-                validated.push((identity,duration,segment,item["portrait"]==true));
+                let rect=if q.options["grid"]==true{
+                    let parts=item["gridRect"].as_array().filter(|r|r.len()==4).ok_or("同屏布局无效")?;
+                    let values=parts.iter().map(|v|v.as_f64().filter(|n|n.is_finite()&&*n>=0.)).collect::<Option<Vec<_>>>().ok_or("同屏布局无效")?;
+                    if values[2]<=0.||values[3]<=0.||values[0]+values[2]>1.002||values[1]+values[3]>1.002||!item["gridEnd"].is_boolean(){return Err("同屏布局超出范围".into());}Some([values[0],values[1],values[2],values[3]])
+                }else{None};
+                validated.push((identity,duration,segment,item["portrait"]==true,rect,item["gridEnd"]==true));
             }
-            for(identity,duration,segment,portrait)in validated{
+            for(identity,duration,segment,portrait,rect,end)in validated{
                 q.items.push(identity);q.durations.push(duration);q.segments.push(segment);q.portraits.push(portrait);
+                q.grid_cells.push(rect);q.grid_ends.push(end);
                 q.prefix.push(q.prefix.last().copied().unwrap_or(0.)+segment.map(|s|s.1).unwrap_or(duration));
             }
             Ok(json!({"count":q.items.len()}))
@@ -1924,10 +1979,7 @@ pub async fn rhvideo_request(
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             let media_kind=kind(&args)?;if media_kind=="favorite"{return Err("标记类型无效".into());}
             let id=identifier(text(&args,"id",128)?)?;let title=text(&args,"title",1024)?;
-            let key=format!("{media_kind}:{id}");let mut marks=session.preview.lock().map_err(|_|"标记不可用")?;
-            let enabled=args["enabled"].as_bool().unwrap_or(!marks.pending.contains_key(&key));
-            if enabled {if marks.pending.len()>=1000&&!marks.pending.contains_key(&key){return Err("本次预览暂存标记最多 1000 项".into());}let order=marks.pending.get(&key).and_then(|v|v["order"].as_u64()).unwrap_or_else(||{let order=marks.next;marks.next=marks.next.saturating_add(1);order});marks.pending.insert(key,json!({"kind":media_kind,"id":id,"title":title,"order":order}));}else{marks.pending.remove(&key);}
-            Ok(json!({"kind":media_kind,"id":id,"enabled":enabled,"pending":marks.pending.len()}))
+            preview_mark(&session,media_kind,id,title,args["enabled"].as_bool())
         }
         "preview.pending"=>{let marks=session.preview.lock().map_err(|_|"标记不可用")?;let mut items=marks.pending.values().collect::<Vec<_>>();items.sort_by_key(|item|item["order"].as_u64().unwrap_or(0));Ok(json!({"items":items,"running":marks.running}))}
         "preview.result"=>Ok(session.preview.lock().map_err(|_|"暂存结果不可用")?.result.clone()),
@@ -2532,13 +2584,7 @@ mod tests {
     }
     #[test]
     fn grid_group_navigation_never_duplicates_or_exceeds_the_last_partial_group() {
-        let mut q = GridQueue {
-            generation: 1,
-            items: (0..10).map(|i| (i.to_string(), i.to_string())).collect(),
-            offset: 0,
-            count: 4,
-            low_bandwidth: false,
-        };
+        let mut q=GridQueue::new(1,(0..10).map(|i|(i.to_string(),i.to_string())).collect(),4,Vec::new(),Vec::new(),false).unwrap();
         q.page(-1);
         assert_eq!(q.offset, 0);
         q.page(1);
@@ -2554,6 +2600,28 @@ mod tests {
         q.seek_group(0.25).unwrap();assert_eq!(q.offset,4);
         q.seek_group(0.).unwrap();assert_eq!(q.offset,0);
         assert!(q.seek_group(f64::NAN).is_err());assert!(q.seek_group(1.1).is_err());
+    }
+    #[test]
+    fn aspect_grid_groups_seek_by_group_and_restore_exact_ids_not_offsets(){
+        let items=(0..7).map(|i|(i.to_string(),i.to_string())).collect::<Vec<_>>();
+        let mut q=GridQueue::new(9,items.clone(),4,vec![Some([0.,0.,0.5,1.]);7],vec![false,true,false,false,true,false,true],false).unwrap();
+        assert_eq!(q.count(),2);assert_eq!(q.ends.as_ref(),&[2,5,7]);
+        q.page(1);assert_eq!(q.ids(),vec!["2","3","4"]);assert_eq!(q.count(),3);assert_eq!(q.group_index(),1);
+        q.seek_group(1.).unwrap();assert_eq!(q.offset,5);assert_eq!(q.count(),2);
+        q.restore_group(&json!(["2","3","4"]));assert_eq!(q.offset,2);
+        let mut fresh=GridQueue::new(9,items,4,Vec::new(),Vec::new(),false).unwrap();
+        fresh.restore_group(&json!(["2","3","4"]));assert_eq!(fresh.offset,0,"changed group boundaries must not accidentally restore an old offset");
+        fresh.restore_group(&json!(["6","5","4"]));assert_eq!(fresh.offset,0,"matching membership is not matching order");
+        q.states.lock().unwrap().insert("2".into(),json!({"volume":20}));
+        assert!(fresh.states.lock().unwrap().is_empty(),"cell playback state belongs only to one open grid session");
+    }
+    #[test]
+    fn incomplete_grid_plans_are_rejected_before_opening_any_decoder(){
+        let items=vec![("a".into(),"A".into()),("b".into(),"B".into())];
+        for(rects,flags)in [(vec![Some([0.,0.,1.,1.])],vec![]),(vec![None,None],vec![false,true]),(vec![Some([0.,0.,1.,1.]);2],vec![true,false])]{
+            assert!(GridQueue::new(1,items.clone(),2,rects,flags,false).is_err());
+        }
+        assert!(GridQueue::new(1,items,0,Vec::new(),Vec::new(),false).is_err());
     }
     #[test]
     fn reference_queue_scrubber_uses_segment_lengths_and_end_selects_last_entry_start(){

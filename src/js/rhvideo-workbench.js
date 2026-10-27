@@ -86,7 +86,7 @@
         loop: false,
         super: false,
         rotation: 0,
-        gridCount: 4,
+        gridCount: ctx.mobile?4:0,
         volume: 20,
         resume: true,
       };
@@ -1073,7 +1073,7 @@
             readerFont: [13, 40],
             readerLine: [1.2, 3],
             perVideo: [1, 100],
-            gridCount: [1, 9],
+            gridCount: [ctx.mobile?1:0, 9],
             volume: [0, 100],
             stay: [0.1, 30],
             videoStay: [1, 300],
@@ -1156,7 +1156,7 @@
               ["mediaType", "收藏类型", "all"],
               ["perVideo", "每个视频截图数", "number"],
               ["mixPictures", "截图库混入图片", "bool"],
-              ["gridCount", "同屏视频数（1–9）", "number"],
+              ["gridCount", ctx.mobile?"同屏视频数（1–9）":"同屏视频数（0：按比例自动分组，1–9：手动）", "number"],
             ],
           ],
           [
@@ -2543,20 +2543,19 @@
         "grid.open",
         object(),
         async () => {
-          const result = await query({
-            mediaType: "video",
-            allKeys: true,
-            selected: [...selected],
-            offset: 0,
-            limit: 1,
-          });
-          if (!result.queue.length) throw Error("没有可同屏播放的视频");
-          const ticket = await prepareQueue(result.queue);
-          return native("grid.open", {
+          const version=epoch,c=config();if(!gallery.loaded)await loadGallery(false,false);
+          const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1});
+          const videos=await send("query",{kind:"video",sort:"nameAsc",allKeys:true,offset:0,limit:1});
+          const entries=RHVideoModel.grid.entries(frames.queue,videos.queue);if(entries.length<2)throw Error("需要至少 2 个图库视频才能同屏播放");
+          if(version!==epoch)throw Error("媒体账户已改变，未开始同屏播放");
+          const count=Math.max(ctx.mobile?1:0,Math.min(9,c.gridCount)),ticket=await prepareQueue(RHVideoModel.grid.plan(entries,count),{grid:true});
+          const result=await native("grid.open", {
             playlist: ticket,
-            count: Math.max(1, Math.min(9, config().gridCount)),
-            super: config().super,
+            count:count||4,
+            super:c.super,
           });
+          if(result.clientWarning)notice(result.clientWarning);
+          return result;
         },
         "external",
       );
@@ -2570,6 +2569,7 @@
       );
       action("grid.state", object(), () => native("grid.state"), "read");
       action("grid.close", object(), () => native("grid.close"));
+      if(!ctx.mobile)for(const name of ['favorite','mark'])action('grid.'+name,object({target:{type:'integer',minimum:0,maximum:8}},['target']),args=>native('grid.'+name,args),'write');
       action("player.close", object(), () => native("player.close"));
       action(
         "grid.control",
@@ -2578,7 +2578,7 @@
             target: { type: "integer", minimum: -1, maximum: 8 },
             command: {
               type: "string",
-              enum: ["pause", "resume", "seek", "volume", "rate", "rotate"],
+              enum: ctx.mobile?["pause", "resume", "seek", "volume", "rate", "rotate"]:["pause", "resume", "seek", "volume", "mute", "rate", "rotate"],
             },
             value: { type: "number" },
           },

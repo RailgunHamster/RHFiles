@@ -22,6 +22,7 @@ use windows::{
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
 static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static GRID_WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
 static INPUT_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 static INPUT_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -71,11 +72,11 @@ pub fn page_volume(value: u32) -> Result<Value, String> {
     PAGE_VOLUME.store(value,std::sync::atomic::Ordering::Release);
     for slot in [&PLAYER,&WARM,&PRESENTATION] {
         if let Some(player)=slot.lock().map_err(|_|"播放器状态不可用")?.as_ref() {
-            unsafe { (player.api.set_volume)(player.player as Ptr,effective_volume(player.requested_volume)); }
+            unsafe { (player.api.set_volume)(player.player as Ptr,player.output_gain()); }
         }
     }
     for player in &GRID.lock().map_err(|_|"网格状态不可用")?.players {
-        unsafe { (player.api.set_volume)(player.player as Ptr,effective_volume(player.requested_volume)); }
+        unsafe { (player.api.set_volume)(player.player as Ptr,player.output_gain()); }
     }
     Ok(json!({"volume":value}))
 }
@@ -88,10 +89,12 @@ static PRESENTATION_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 static GRID: Mutex<Grid> = Mutex::new(Grid {
     players: Vec::new(),
     expanded: None,
+    ids:Vec::new(),rects:Vec::new(),lease:0,
 });
 struct Grid {
     players: Vec<Engine>,
     expanded: Option<usize>,
+    ids:Vec<String>,rects:Vec<Option<[f64;4]>>,lease:u64,
 }
 struct SurfaceGuard(Vec<usize>);
 impl Drop for SurfaceGuard {
@@ -197,17 +200,18 @@ struct MediaStats {
     sent_bytes: i32,
     send_bitrate: f32,
 }
-struct PendingSeek{input:u64,ms:i64,deadline:std::time::Instant}
+struct PendingSeek{input:u64,ms:i64,deadline:std::time::Instant,clamp:bool}
 #[derive(Default)]
 struct SeekState{pending:Option<PendingSeek>,error:Option<String>}
 impl SeekState{
-    fn prepare(&mut self,input:u64,ms:i64,now:std::time::Instant){self.error=None;self.pending=Some(PendingSeek{input,ms,deadline:now+std::time::Duration::from_secs(15)});}
+    fn prepare(&mut self,input:u64,ms:i64,now:std::time::Instant){self.error=None;self.pending=Some(PendingSeek{input,ms,deadline:now+std::time::Duration::from_secs(15),clamp:false});}
+    fn prepare_clamped(&mut self,input:u64,ms:i64,now:std::time::Instant){self.prepare(input,ms,now);if let Some(p)=self.pending.as_mut(){p.clamp=true;}}
     fn ready(&mut self,input:u64,duration:i64,state:i32,seekable:bool,now:std::time::Instant)->Option<i64>{
         let pending=self.pending.as_ref()?;
         if pending.input!=input{self.pending=None;return None;}
-        let error=if now>=pending.deadline{Some("等待媒体就绪超时，跳转未执行")}else if matches!(state,5..=7){Some("媒体已经停止，跳转未执行")}else if duration>0&&pending.ms>duration{Some("跳转位置超出实际媒体时长")}else{None};
+        let error=if now>=pending.deadline{Some("等待媒体就绪超时，跳转未执行")}else if matches!(state,5..=7){Some("媒体已经停止，跳转未执行")}else if duration>0&&pending.ms>duration&&!pending.clamp{Some("跳转位置超出实际媒体时长")}else{None};
         if let Some(error)=error{self.error=Some(error.into());self.pending=None;return None;}
-        if duration>0&&seekable&&matches!(state,3|4){return self.pending.take().map(|p|p.ms);}None
+        if duration>0&&seekable&&matches!(state,3|4){return self.pending.take().map(|p|if p.clamp{p.ms.min((duration-50).max(0))}else{p.ms});}None
     }
 }
 struct Api {
@@ -355,6 +359,8 @@ struct Engine {
     input_id:u64,
     seek:Mutex<SeekState>,
     requested_volume: i32,
+    muted:bool,last_volume:i32,
+    repeat_input:bool,start_paused:bool,
     title: String,
     frame: Box<crate::rhvideo_frame::Frame>,
     clock: Mutex<crate::rhvideo_clock::Clock>,
@@ -366,6 +372,7 @@ struct Engine {
     first_frame_ms: std::sync::atomic::AtomicU64,
 }
 impl Engine {
+    fn output_gain(&self)->i32{effective_volume(if self.muted{0}else{self.requested_volume})}
     fn new(child: usize) -> Result<Self, String> {
         let api = unsafe { Api::load()? };
         let options = [
@@ -427,6 +434,7 @@ impl Engine {
             input_id:0,
             seek:Mutex::new(SeekState::default()),
             requested_volume: 100,
+            muted:false,last_volume:100,repeat_input:false,start_paused:false,
             title: String::new(),
             frame,
             clock: Mutex::new(crate::rhvideo_clock::Clock::new()),
@@ -464,6 +472,10 @@ impl Engine {
                 let option = CString::new(option).unwrap();
                 (self.api.media_option)(media, option.as_ptr());
             }
+            // VLC 3 repeats only positive counts, and only at EOF (not errors).
+            // Keep the input/decoder alive rather than reopening it each loop.
+            if self.repeat_input{let option=CString::new(":input-repeat=2147483647").unwrap();(self.api.media_option_flag)(media,option.as_ptr(),0x2);}
+            if self.start_paused{let option=CString::new(":start-paused=1").unwrap();(self.api.media_option_flag)(media,option.as_ptr(),0x2);}
             // These are fixed application options, never server-controlled.
             // libVLC resets vout defaults when creating a player, so setting
             // only --vout on the instance is insufficient. A native GDI output
@@ -499,7 +511,7 @@ impl Engine {
             if (self.api.set_audio_output)(self.player as Ptr,output.as_ptr())!=0 {
                 return Err("无法初始化独立的音频输出".into());
             }
-            (self.api.set_volume)(self.player as Ptr,effective_volume(self.requested_volume));
+            (self.api.set_volume)(self.player as Ptr,self.output_gain());
             if (self.api.play)(self.player as Ptr) != 0 {
                 return Err("原生播放器无法开始播放".into());
             }
@@ -524,10 +536,10 @@ impl Engine {
                 }
                 (seek.pending.as_ref().map(|s|s.ms),seek.error.clone())
             }else{(None,Some("跳转状态不可用".into()))};
-            // Audio modules may initialize asynchronously after play(). Start
-            // silent and reconcile the existing desired gain once they report
+            // Audio modules may initialize asynchronously after play().
+            // Reconcile the existing desired gain once they report
             // a usable output; never write the OS session/master volume.
-            let desired=effective_volume(self.requested_volume);
+            let desired=self.output_gain();
             let actual=(self.api.volume)(p);
             if matches!(state,3|4)&&actual>=0&&actual!=desired {
                 (self.api.set_volume)(p,desired);
@@ -558,7 +570,7 @@ impl Engine {
             };
             json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
             "state":state,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
-            "rate":(self.api.rate)(p),"volume":self.requested_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
+            "rate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
         }
     }
 }
@@ -944,6 +956,7 @@ pub fn stop_grid() {
         .lock()
         .map(|mut g| {
             g.expanded = None;
+            g.ids.clear();g.rects.clear();g.lease=0;
             std::mem::take(&mut g.players)
         })
         .unwrap_or_default();
@@ -959,6 +972,13 @@ pub fn stop_grid() {
             );
         }
     }
+}
+pub fn retire_grid_window(lease:u64)->bool{
+    let players={let Ok(mut grid)=GRID.lock() else{return false;};if grid.lease!=lease{return false;}grid.lease=0;grid.expanded=None;grid.ids.clear();grid.rects.clear();std::mem::take(&mut grid.players)};
+    for engine in players{release_surface(engine);}true
+}
+pub fn grid_snapshot()->std::collections::HashMap<String,Value>{
+    let Ok(grid)=GRID.lock() else{return Default::default();};grid.ids.iter().zip(&grid.players).map(|(id,p)|{let s=p.state();(id.clone(),json!({"positionMs":s["decoderPositionMs"],"volume":s["volume"],"muted":s["muted"],"lastVolume":s["lastVolume"],"rate":s["rate"],"paused":s["state"]==4}))}).collect()
 }
 fn layout_grid(window: &tauri::WebviewWindow) {
     let Ok(grid) = GRID.try_lock() else { return };
@@ -981,6 +1001,8 @@ fn layout_grid(window: &tauri::WebviewWindow) {
             let visible = grid.expanded.is_none() || expanded;
             let (x, y, w, h) = if expanded {
                 (0, 0, size.width as i32, height as i32)
+            } else if let Some(rect)=grid.rects.get(i).copied().flatten(){
+                ((rect[0]*size.width as f64).round() as i32,(rect[1]*height as f64).round() as i32,(rect[2]*size.width as f64).round() as i32,(rect[3]*height as f64).round() as i32)
             } else {
                 let w = size.width as i32 / cols;
                 let h = height as i32 / rows;
@@ -1005,15 +1027,14 @@ fn layout_grid(window: &tauri::WebviewWindow) {
         }
     }
 }
-pub async fn grid_open(app: AppHandle, sources: Vec<(String, String)>) -> Result<Value, String> {
+pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option<[f64;4]>,Value)>) -> Result<Value, String> {
     let _=INPUT_APP.set(app.clone());
     if sources.is_empty() || sources.len() > 9 {
         return Err("同屏播放需要 1–9 个视频".into());
     }
-    stop();
     let label = "window-rhvideo-grid";
-    let window = if let Some(w) = app.get_webview_window(label) {
-        w
+    let (window,lease) = if let Some(w) = app.get_webview_window(label) {
+        (w,GRID_WINDOW_EPOCH.load(std::sync::atomic::Ordering::SeqCst))
     } else {
         let w = crate::rhvideo::client_window(
             app.clone(),
@@ -1024,15 +1045,17 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String, String)>) -> Result
             (700., 500.),
         )
         .await?;
+        let lease=GRID_WINDOW_EPOCH.fetch_add(1,std::sync::atomic::Ordering::SeqCst)+1;
         let view = w.clone();
+        let owner=app.clone();
         w.on_window_event(move |e| match e {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => layout_grid(&view),
             WindowEvent::Destroyed => {
-                tauri::async_runtime::spawn_blocking(stop_grid);
+                tauri::async_runtime::spawn(crate::rhvideo::grid_window_destroyed(owner.clone(),lease));
             }
             _ => {}
         });
-        w
+        (w,lease)
     };
     tauri::async_runtime::spawn_blocking(stop_grid)
         .await
@@ -1074,17 +1097,23 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String, String)>) -> Result
     tauri::async_runtime::spawn_blocking(move || {
         let mut guard = SurfaceGuard(children.clone());
         let mut players = Vec::new();
-        for (i, ((url, title), child)) in sources.into_iter().zip(children).enumerate() {
+        let mut ids=Vec::new();let mut rects=Vec::new();
+        for ((id,url,title,rect,restore),child) in sources.into_iter().zip(children) {
             let mut engine = Engine::new(child)?;
+            engine.requested_volume=restore["volume"].as_i64().unwrap_or(100).clamp(0,100) as i32;
+            engine.muted=restore["muted"]==true;engine.last_volume=restore["lastVolume"].as_i64().unwrap_or(100).clamp(0,100) as i32;
+            engine.repeat_input=true;engine.start_paused=restore["paused"]==true;
             engine.open(&url, title, 0.)?;
-            if i != 0 {
-                control_engine(&mut engine, &json!({"command":"volume","value":0}))?;
-            }
+            if let Some(ms)=restore["positionMs"].as_i64().filter(|ms|*ms>0){engine.seek.lock().map_err(|_|"同屏跳转不可用")?.prepare_clamped(engine.input_id,ms,std::time::Instant::now());}
+            control_engine(&mut engine,&json!({"command":"rate","value":restore["rate"].as_f64().filter(|r|r.is_finite()&&(0.25..=4.).contains(r)).unwrap_or(1.)}))?;
+            if restore["paused"]==true{control_engine(&mut engine,&json!({"command":"pause"}))?;}
+            ids.push(id);rects.push(rect);
             players.push(engine);
         }
         *GRID.lock().map_err(|_| "网格状态不可用")? = Grid {
             players,
             expanded: None,
+            ids,rects,lease,
         };
         guard.0.clear();
         Ok::<_, String>(())
@@ -1122,9 +1151,10 @@ pub fn grid_command(action: &str, args: &Value) -> Result<Value, String> {
         } else {
             Some(target as usize)
         };
+        if let Some(index)=grid.expanded{if grid.players[index].state()["state"]==4{control_engine(&mut grid.players[index],&json!({"command":"resume"}))?;}}
     }
     Ok(
-        json!({"cells":grid.players.iter().map(Engine::state).collect::<Vec<_>>(),"expanded":grid.expanded}),
+        json!({"cells":grid.players.iter().enumerate().map(|(i,p)|{let mut s=p.state();s["id"]=json!(grid.ids.get(i));s["rect"]=json!(grid.rects.get(i));s}).collect::<Vec<_>>(),"expanded":grid.expanded,"windowLease":grid.lease}),
     )
 }
 pub fn grid_relayout(app: &AppHandle) -> Result<(), String> {
@@ -1405,6 +1435,7 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                 player.open(&url, title, seconds)?;
             }
             "pause" => {
+                player.start_paused=true;
                 player
                     .clock
                     .lock()
@@ -1413,6 +1444,7 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                 (player.api.set_pause)(p, 1);
             }
             "resume" => {
+                player.start_paused=false;
                 player
                     .clock
                     .lock()
@@ -1442,7 +1474,12 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                     .filter(|v| (0..=100).contains(v))
                     .ok_or("音量范围是 0–100")?;
                 player.requested_volume = value as i32;
-                (player.api.set_volume)(p, effective_volume(player.requested_volume));
+                if value>0{player.muted=false;player.last_volume=value as i32;}
+                (player.api.set_volume)(p,player.output_gain());
+            }
+            "mute"=>{
+                if player.muted||player.requested_volume<=0{player.requested_volume=if player.last_volume>0{player.last_volume}else{50};player.muted=false;}else{player.last_volume=player.requested_volume;player.muted=true;}
+                (player.api.set_volume)(p,player.output_gain());
             }
             "rate" => {
                 let value = args
@@ -1503,5 +1540,13 @@ mod input_tests{
         assert!(seek.pending.is_none());assert_eq!(seek.ready(1,60000,3,true,now),None);
         seek.prepare(2,3000,now);assert!(seek.error.is_none());
         assert_eq!(seek.ready(2,0,1,false,now+std::time::Duration::from_secs(15)),None);assert!(seek.error.as_ref().unwrap().contains("超时"));assert!(seek.pending.is_none());
+    }
+    #[test]
+    fn restored_grid_position_clamps_to_new_duration_but_explicit_seek_does_not(){
+        let now=std::time::Instant::now();let mut seek=SeekState::default();
+        seek.prepare_clamped(7,15000,now);assert_eq!(seek.ready(7,0,1,false,now),None);
+        assert_eq!(seek.ready(7,10000,4,true,now),Some(9950));assert!(seek.error.is_none());
+        seek.prepare(7,15000,now);assert_eq!(seek.ready(7,10000,4,true,now),None);assert!(seek.error.is_some());
+        seek.prepare_clamped(7,15000,now);assert_eq!(seek.ready(8,10000,4,true,now),None);assert!(seek.pending.is_none());
     }
 }

@@ -9,7 +9,7 @@
       additionalProperties: false,
     }),
     native = (action, args = {}) =>
-      window.__TAURI__.core.invoke("rhvideo_request", { action, args });
+      window.__TAURI__.core.invoke("rhvideo_request", { action, args:state.generation?{...args,_sessionGeneration:state.generation}:args });
   let state = { cells: [] },
     closed = false;
   api.provideState("application", () => ({
@@ -24,18 +24,24 @@
       description: "RHVideo native multi-video " + name,
     });
   function paint(value) {
+    if(value.generation&&state.generation&&value.generation<state.generation)return state;
     state = value;
-    const count=Math.max(1,value.count||1),groups=Math.max(1,Math.ceil((value.total||0)/count)),group=Math.floor((value.offset||0)/count);
+    const count=Math.max(1,value.count||1),groups=value.groupTotal??Math.max(1,Math.ceil((value.total||0)/count)),group=value.groupIndex??Math.floor((value.offset||0)/count);
     if(document.activeElement!==$('group-seek'))$('group-seek').value=String(groups>1?Math.round(group/(groups-1)*1000):0);
     $('group-seek').disabled=groups<=1;$('group-position').textContent=`第 ${group+1}/${groups} 组`;
     const selected = $("target").value;
-    if ($("target").options.length !== value.cells.length + 1) {
+    if ($("target").dataset.ids !== JSON.stringify(value.cells.map(v=>[v.id,v.title]))) {
       $("target").replaceChildren(new Option("全部视频", "-1"));
       value.cells.forEach((v, i) =>
         $("target").append(new Option(i + 1 + " · " + v.title, String(i))),
       );
-      $("target").value = selected;
+      $("target").value = Number(selected)<value.cells.length?selected:'-1';
+      $("target").dataset.ids=JSON.stringify(value.cells.map(v=>[v.id,v.title]));
     }
+    const target=Number($('target').value),cells=target<0?value.cells:value.cells.slice(target,target+1);
+    $('mute').setAttribute('aria-pressed',String(cells.length>0&&cells.every(v=>v.muted||v.volume===0)));
+    for(const [name,field,yes,no]of [['favorite','favorite','取消收藏','收藏'],['mark','marked','取消暂存标记','标记暂存']]){const button=$(name);button.disabled=target<0||cells.length!==1;button.setAttribute('aria-pressed',String(cells.length===1&&!!cells[0][field]));button.textContent=cells.length===1&&cells[0][field]?yes:no;}
+    if(cells.length===1){if(document.activeElement!==$('volume'))$('volume').value=String(cells[0].volume);if(document.activeElement!==$('rate'))$('rate').value=String(cells[0].rate);if(document.activeElement!==$('seek'))$('seek').value=String(Math.round(cells[0].positionMs/Math.max(1,cells[0].durationMs)*1000));}
     $("previous").disabled = !value.hasPrevious;
     $("next").disabled = !value.hasNext;
     $("summary").textContent =
@@ -57,7 +63,7 @@
             Math.floor(v.positionMs / 1000) +
             "s · " +
             v.renderedFrames +
-            " 帧",
+            " 帧 · " + (v.state===7||(v.state===6&&!v.durationMs&&!v.renderedFrames)?"加载失败":v.seekError?"定位失败："+v.seekError:v.state===4?"已暂停":v.state===1||v.state===2?"缓冲中":"播放中"),
         )
         .join("　");
     return value;
@@ -69,6 +75,7 @@
     ({ index }) => {
       if (index >= state.cells.length) throw Error("目标视频不存在");
       $("target").value = String(index);
+      paint(state);
       return { index };
     },
   );
@@ -79,7 +86,7 @@
         target: { type: "integer", minimum: -1, maximum: 8 },
         command: {
           type: "string",
-          enum: ["pause", "resume", "seek", "volume", "rate", "rotate"],
+          enum: ["pause", "resume", "seek", "volume", "mute", "rate", "rotate"],
         },
         value: { type: "number" },
       },
@@ -95,6 +102,13 @@
     async (args) => paint(await native("grid.expand", args)),
   );
   register("close", object(), () => native("grid.close"));
+  let mutationBusy=false;
+  for(const name of ['favorite','mark'])register(name,object({target:{type:'integer',minimum:0,maximum:8}},['target']),async({target})=>{
+    if(mutationBusy)throw Error('视频标记正在处理');mutationBusy=true;
+    // Bind to the cell the user actually saw, not whichever cell occupies the
+    // same index after an already-running group transition finishes.
+    try{const cell=state.cells[target];if(!cell)throw Error('目标视频不存在');await native('grid.'+name,{target,inputTarget:target,expectedInput:cell.inputId});return paint(await native('grid.state'));}finally{mutationBusy=false;}
+  });
   register('seekGroup',object({ratio:{type:'number',minimum:0,maximum:1}},['ratio']),async args=>paint(await native('grid.seekGroup',args)));
   let inputBusy=false;
   register('input',object({inputId:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER},target:{type:'integer',minimum:0,maximum:8},intent:{type:'string',enum:['next','previous','first','last','toggle','close','expand','mark']}},['inputId','target','intent']),async({inputId,target,intent})=>{
@@ -108,17 +122,25 @@
       else if(intent==='next'||intent==='previous')value=await native('grid.page',{...guard,direction:intent==='next'?1:-1});
       else if(intent==='first'||intent==='last')value=await native('grid.seekGroup',{...guard,ratio:intent==='first'?0:1});
       else if(intent==='toggle')value=await native('grid.control',{...guard,target:-1,command:current.cells.every(v=>[1,2,3].includes(v.state))?'pause':'resume'});
+      else if(intent==='mark'){await native('grid.mark',{...guard,target});value=await native('grid.state');}
       else return {ignored:true};
       return paint(value);
     }finally{inputBusy=false;}
   });
   window.__TAURI__.event.listen('rhvideo-native-input',({payload})=>{void api.invoke('rhvideo.grid.input',payload).catch(e=>{$('error').textContent=String(e.message||e);});}).catch(e=>{$('error').textContent=String(e.message||e);});
+  window.__TAURI__.event.listen('rhvideo-grid-session',({payload})=>{
+    if(!Number.isSafeInteger(payload?.generation)||payload.generation<(state.generation||0))return;
+    state={...state,generation:payload.generation};void api.invoke('rhvideo.grid.state').catch(e=>{$('error').textContent=String(e.message||e);});
+  }).catch(e=>{$('error').textContent=String(e.message||e);});
   for (const [id, name] of Object.entries({
     previous: "page",
     next: "page",
     target: "target",
     pause: "control",
     resume: "control",
+    mute: "control",
+    favorite: "favorite",
+    mark: "mark",
     expand: "expand",
     restore: "expand",
     seek: "seekRatio",
@@ -178,7 +200,8 @@
     api.invoke("rhvideo.grid." + name, args).catch((e) => {
       $("error").textContent = String(e.message || e);
     });
-  for (const command of ["pause", "resume"])
+  for(const name of ['favorite','mark'])RHFilesUI.listen($(name),'click',()=>call(name,{target:Number($('target').value)}),undefined,'rhvideo.grid.'+name);
+  for (const command of ["pause", "resume", "mute"])
     RHFilesUI.listen(
       $(command),
       "click",

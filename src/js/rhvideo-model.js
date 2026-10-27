@@ -33,5 +33,12 @@
       return {index,offset:Math.max(0,target-before),total};
     },
   };
-  return {kinds,clock,page,itemKey,favoriteSet,validateCatalog,imageIndex,playback};
+  const grid={
+    entries(frames,videos){const byId=new Map(videos.map(v=>[String(v.id),v]));return playback.galleryIds(frames).filter(id=>byId.has(id)).map(id=>{const v=byId.get(id),[w,h]=String(v.original_resolution||v.resolution||'').split(/[x×X]/).map(Number);return {id,title:(v.folder_label?'['+v.folder_label+'] ':'')+(v.original_filename||v.title||id),duration:Number(v.duration_seconds||v.original_duration||v.duration||0),aspectRatio:w>0&&h>0?w/h:16/9};});},
+    score(ars){const screen=16/9,n=ars.length,fit=a=>a>screen?screen/a:a/screen,sum=ars.reduce((a,b)=>a+b,0);if(n===2)return fit(sum);if(n===3){if(Math.min(...ars)/sum<.30){const pairs=[[0,1,2],[0,2,1],[1,2,0]].sort((a,b)=>Math.abs(ars[a[0]]-ars[a[1]])-Math.abs(ars[b[0]]-ars[b[1]]));const a=pairs[0];return(fit(ars[a[0]]+ars[a[1]])+.6*fit(ars[a[2]]))/1.6;}return fit(sum);}if(n===4){const cell=screen/2;return ars.reduce((s,a)=>s+(a>cell?cell/a:a/cell),0)/4*.95;}return 0;},
+    groups(entries,count=0){const groups=[];for(let i=0;i<entries.length;){let size=count;if(!size){const remaining=entries.length-i;if(remaining===1){if(groups.length)groups.at(-1).push(entries[i]);else groups.push([entries[i]]);break;}const sizes=[2,3,4].filter(n=>i+n<=entries.length&&i+n!==entries.length-1);size=sizes[0]||remaining;for(const n of sizes)if(grid.score(entries.slice(i,i+n).map(v=>v.aspectRatio))>grid.score(entries.slice(i,i+size).map(v=>v.aspectRatio)))size=n;}groups.push(entries.slice(i,i+size));i+=size;}return groups;},
+    rects(ars){const n=ars.length,total=ars.reduce((a,b)=>a+b,0),pct=v=>Math.round(v*1000)/1000;if(n===1)return [[0,0,1,1]];if(n===2||n===3){if(n===3&&Math.min(...ars)/total<.30){const pair=[[0,1,2],[0,2,1],[1,2,0]].sort((a,b)=>Math.abs(ars[a[0]]-ars[a[1]])-Math.abs(ars[b[0]]-ars[b[1]]))[0],w=pct(ars[pair[0]]/(ars[pair[0]]+ars[pair[1]])),r=[];r[pair[0]]=[0,0,w,.5];r[pair[1]]=[w,0,1-w,.5];r[pair[2]]=[0,.5,1,.5];return r;}let x=0;return ars.map(a=>{const width=pct(a/total),r=[x,0,width,1];x+=width;return r;});}const cols=Math.ceil(Math.sqrt(n)),rows=Math.ceil(n/cols);return ars.map((_,i)=>[(i%cols)/cols,Math.floor(i/cols)/rows,1/cols,1/rows]);},
+    plan(entries,count=0){return grid.groups(entries,count).flatMap(group=>{const rects=grid.rects(group.map(v=>v.aspectRatio));return group.map((v,i)=>({...v,gridRect:rects[i],gridEnd:i===group.length-1}));});},
+  };
+  return {kinds,clock,page,itemKey,favoriteSet,validateCatalog,imageIndex,playback,grid};
 });

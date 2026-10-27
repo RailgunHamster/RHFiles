@@ -154,9 +154,13 @@ test('closing the single-video player leaves independent multi-video playback ru
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoDuration:12,videoCount:4});view=await library(app,fixture);
+    await invoke(view,'preferences.set',{key:'gridCount',value:4});
     await invoke(view,'grid.open');
     await until(async()=>{const s=await invoke(view,'grid.state');return s.cells?.length===4&&s.cells.every(c=>c.renderedFrames>0);},'four actual independent video surfaces',25000);
     await invoke(view,'media.open',{kind:'video',id:'video-0'});player=await viewFor(app,'rhvideo-player.html');
+    const single=await invoke(player,'player.state');
+    await invoke(view,'grid.open');
+    const afterOpen=await invoke(player,'player.state');assert.equal(afterOpen.opened,true);assert.equal(afterOpen.inputId,single.inputId,'opening an independent grid cannot stop or replace the single-video decoder');
     await invoke(view,'player.close');player.close();player=null;
     const grid=await invoke(view,'grid.state');assert.equal(grid.cells.length,4,'closing one player must not execute stop-all');
     assert(grid.cells.every(c=>c.opened),'independent native engines remain available');
@@ -170,6 +174,7 @@ test('native grid gain is independent for each real audio output, not only the U
     await invoke(view,'volume.set',{value:50});await invoke(view,'grid.open');
     await until(async()=>{const s=await invoke(view,'grid.state');return s.cells?.length===2&&s.cells.every(c=>c.renderedFrames>0);},'actual grid streams',25000);
     const initial=await invoke(view,'grid.state');
+    assert(initial.cells.every(c=>c.volume===100&&!c.muted),'reference defaults all cells to audible; it does not silently mute every cell except the first');
     console.log(JSON.stringify({initialAudio:initial.cells.map(c=>({requested:c.volume,master:c.masterVolume,actual:c.decoderVolume,state:c.state}))}));
     if(initial.cells.every(c=>c.decoderVolume<0)){t.skip('This runner has no available audio output endpoint; no audible-output claim');return;}
     assert(initial.cells.every(c=>Math.abs(c.decoderVolume-Math.floor(c.volume*(c.masterVolume??50)/100))<=3),'each initial decoder gain must honor its own mute/volume and the page gain');

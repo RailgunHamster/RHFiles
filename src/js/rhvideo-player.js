@@ -47,7 +47,7 @@
   register('loop',object(),async()=>{const current=await currentTarget();return api.invoke('rhvideo.player.options',{loop:!current.queue.options?.loop});});
   let favoriteBusy=false;
   register('favorite',object(),async()=>{if(favoriteBusy)throw Error('收藏请求正在处理');favoriteBusy=true;try{const current=await currentTarget();await native('player.favorite',{id:current.queue.id,revision:current.queue.revision});return api.invoke('rhvideo.player.state');}finally{favoriteBusy=false;}});
-  register('mark',object(),async()=>{const current=await currentTarget();await native('preview.mark',{id:current.queue.id,kind:'video',title:current.title});return api.invoke('rhvideo.player.state');});
+  register('mark',object(),async()=>{const current=await currentTarget();await native('preview.mark',{id:current.queue.id,kind:'video',title:current.title,expectedInput:current.inputId});return api.invoke('rhvideo.player.state');});
   for(const [name,title]of [['mute','静音'],['rotate','旋转'],['loop','循环当前视频'],['favorite','收藏'],['mark','标记暂存']]){const b=document.createElement('button');b.id='player-'+name;b.dataset.apiAction='rhvideo.player.'+name;b.textContent=title;if(name==='mark')b.title='关闭预览时将已标记源文件移入 RHVideo 的暂存区（不是永久删除）';RHFilesUI.listen(b,'click',()=>api.invoke('rhvideo.player.'+name).catch(error),undefined,'rhvideo.player.'+name);$('playback-actions').append(b);}
   register('fullscreen',object(),()=>native('player.fullscreen'));
   for(const direction of ['next','previous'])register(direction,object({expectedId:{type:'string',maxLength:128},expectedRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}}),async args=>{const result=await native('player.'+direction,args);paint(result);return result;});

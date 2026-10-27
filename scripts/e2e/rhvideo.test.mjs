@@ -225,7 +225,7 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
   try{
     const file=path.join(app.directory,'sample.mp4');
     execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-t','14','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
-    fixture=await rhvideoFixture({videoFile:file,videoDuration:14});
+    fixture=await rhvideoFixture({videoFile:file,videoDuration:14,galleryVideoCount:52});
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
     const connected=await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
     assert.equal(connected.nativePlayback,true,'VLC 3.x must be installed for native acceptance');
@@ -256,6 +256,7 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
     await invoke(view,'viewer.open',{mode:'slideshow',source:'favorite'});await invoke(view,'viewer.toggle');await invoke(view,'viewer.step',{direction:1});
     await until(async()=>{const s=await invoke(view,'viewer.mediaState');return s.nativeSurface&&s.renderedFrames>0;},'native video inside the mixed slideshow',20000);
     assert.equal(await view.evaluate("document.querySelectorAll('#wb-viewer video,iframe').length"),0);await invoke(view,'viewer.mediaControl',{command:'pause'});await invoke(view,'viewer.step',{direction:1});assert.equal((await invoke(view,'viewer.mediaState')).opened,false);await invoke(view,'panel.close',{id:'wb-viewer'});await invoke(view,'category',{kind:'video'});
+    await invoke(view,'preferences.set',{key:'gridCount',value:4});
     await invoke(view,'grid.open');const grid=await target(app,'rhvideo-grid.html');
     assert.deepEqual((await invoke(grid,'ui.contract')).missing,[]);
     try{await until(async()=>{const s=await invoke(grid,'grid.state');return s.cells.length===4&&s.cells.every(c=>c.renderedFrames>0);},'four native video surfaces decode',25000);await invoke(grid,'grid.control',{target:-1,command:'pause'});await invoke(grid,'grid.control',{target:0,command:'seek',value:3000});await invoke(grid,'grid.expand',{target:1});assert.equal((await invoke(grid,'grid.state')).expanded,1);await invoke(grid,'grid.expand',{target:-1});const nextGroup=await invoke(grid,'grid.page',{direction:1});assert.equal(nextGroup.offset,4);assert.equal(nextGroup.total,52);await until(async()=>{const s=await invoke(grid,'grid.state');return s.cells.every(c=>c.renderedFrames>0);},'next native group frames',25000);assert.equal((await invoke(grid,'grid.page',{direction:-1})).offset,0);console.log('PASS: four native libVLC cells, independent seek, all-player pause, expand/restore and full-library group navigation');await invoke(view,'grid.close');}finally{grid.close();}
