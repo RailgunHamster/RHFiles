@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {once} from 'node:events';
 import pathModule from 'node:path';
-export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,failTrashIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null}={}){
+export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null}={}){
   const favorites=new Set(),progress=[],requests=[];
   const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
   const folders=['山野与旅途','日常片段','城市观察','慢生活'];
@@ -75,7 +75,7 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
       const all=[...videos.map(v=>({...v,type:'video'})),...pictures.map(p=>({...p,type:'picture'})),...novels.map(n=>({...n,type:'novel'}))].filter(v=>favorites.has(v.type+':'+v.id));return send(200,paginate(all));
     }
     const favorite=path.match(/^\/api\/v1\/favorites\/(video|picture|novel)\/([^/]+)$/);
-    if(favorite){const key=favorite[1]+':'+favorite[2];if(req.method==='PUT')favorites.add(key);else if(req.method==='DELETE')favorites.delete(key);else return send(405,{detail:'Use PUT or DELETE'});return send(200,{ok:true});}
+    if(favorite){const key=favorite[1]+':'+favorite[2];if(failFavoriteIds.includes(key))return send(503,{detail:'Owned favorite failure'});if(req.method==='PUT')favorites.add(key);else if(req.method==='DELETE')favorites.delete(key);else return send(405,{detail:'Use PUT or DELETE'});return send(200,{ok:true});}
     const novel=path.match(/^\/api\/v1\/novels\/(novel-\d+)$/);
     if(novel)return send(200,{...novels.find(n=>n.id===novel[1]),chapters:Array.from({length:chapterCount},(_,i)=>({index:i,title:'第'+(i+1)+'章 '+['清晨出发','山间来信','回到日常'][i%3],word_count:1500}))});
     if(path.endsWith('/progress')){progress.push({path,...await body()});return send(200,{saved:true});}

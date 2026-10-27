@@ -31,7 +31,7 @@ internal class RhVideoPresentation(private val activity:AppCompatActivity,privat
   private var title=""
   fun open(args:JSONObject):JSONObject{
     close()
-    val playback=RhVideoClient.get(activity).playback(args)
+    val playback=RhVideoClient.get(activity).playback(args,track=false)
     title=args.optString("title","视频")
     val storage=NativeStorage(activity.applicationContext)
     val player=ExoPlayer.Builder(activity,DefaultRenderersFactory(activity).setEnableDecoderFallback(true))

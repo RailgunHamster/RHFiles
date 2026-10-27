@@ -30,6 +30,7 @@ class RhVideoActivity:AppCompatActivity() {
   private data class ExportBuffer(val ticket:String,val generation:Long,val text:StringBuilder=StringBuilder(),var index:Int=0,var bytes:Int=0,var touched:Long=android.os.SystemClock.elapsedRealtime())
   private var exportBuffer:ExportBuffer?=null
   private var presentation:RhVideoPresentation?=null
+  private var mediaEvents:java.io.Closeable?=null
   private val exportDocument=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->
     val text=exportText;exportText=null
     if(uri!=null&&text!=null)io.execute{try{contentResolver.openOutputStream(uri,"wt")?.use{it.write(text.toByteArray(Charsets.UTF_8))}?:error("无法写入文件");runOnUiThread{android.widget.Toast.makeText(this,"已导出",android.widget.Toast.LENGTH_SHORT).show()}}catch(e:Exception){runOnUiThread{android.widget.Toast.makeText(this,"导出失败：${e.message}",android.widget.Toast.LENGTH_LONG).show()}}}
@@ -42,6 +43,7 @@ class RhVideoActivity:AppCompatActivity() {
     NativeAutomation.install(this);NativeAutomation.debugging(this)
     val root=android.widget.FrameLayout(this)
     web=WebView(this);root.addView(web,android.widget.FrameLayout.LayoutParams(-1,-1));setContentView(root)
+    mediaEvents=client.listen{name,payload->runOnUiThread{if(!isDestroyed)web.evaluateJavascript("window.RHVideoNative?.dispatch(${JSONObject.quote(name)},$payload)",null)}}
     presentation=RhVideoPresentation(this,root,web)
     // WebView padding does not reliably inset its HTML viewport. Pad its native
     // container so status/navigation bars, cutouts and IME cannot cover content.
@@ -91,7 +93,7 @@ class RhVideoActivity:AppCompatActivity() {
             val contextArgs=JSONObject(args.toString())
             if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}}}
             val value=when(action){
-              "player.close"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{PlaybackActivity.closeRhVideo();result.complete(JSONObject().put("closed",true))};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
+              "player.close","player.back"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(PlaybackActivity.rhControl(JSONObject().put("command",if(action=="player.back")"back"else"close")))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "page.volume"->{val value=args.getInt("value");require(value in 0..100);val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(RhVideoVolume.set(value))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "export.chunk"->{
                 val ticket=args.getString("ticket");require(ticket.matches(Regex("[A-Za-z0-9_-]{1,128}")))
@@ -124,7 +126,7 @@ class RhVideoActivity:AppCompatActivity() {
               }
               "grid.state","grid.control","grid.expand","grid.page","grid.seekGroup"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{result.complete(if(action=="grid.state")RhVideoGridActivity.state()else RhVideoGridActivity.control(JSONObject(args.toString()).also{if(action=="grid.expand")it.put("command","expand");if(action=="grid.page")it.put("command","page").put("value",args.getInt("direction"));if(action=="grid.seekGroup")it.put("command","seekGroup").put("value",args.getDouble("ratio"))}))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "grid.close"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{result.complete(RhVideoGridActivity.close())};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
-              "player.state","player.control"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{result.complete(if(action=="player.state")PlaybackActivity.rhState()else PlaybackActivity.rhControl(JSONObject(args.toString()).also{if(it.optString("command")=="resume")it.put("command","play")}))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
+              "player.state","player.control"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(if(action=="player.state")PlaybackActivity.rhState()else PlaybackActivity.rhControl(JSONObject(args.toString()).also{if(it.optString("command")=="resume")it.put("command","play")}))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "close"->{runOnUiThread{finish()};true}
               "play"->{val playback=client.playback(args);runOnUiThread{if(!isFinishing)startActivity(Intent(this,PlaybackActivity::class.java).putExtra("path",playback.path).putExtra("name",args.optString("title","视频")).putExtra("kind","video").putExtra("positionMs",playback.position).putExtra("queue",PlaybackQueue.json(playback.items)).putExtra("rhvideoPlaylist",playback.ticket).putExtra("rhvideoIndex",playback.globalIndex))};JSONObject().put("opened",true)}
               "export"->{val text=args.getString("text");require(text.length<=256*1024){"请分批导出所选媒体"};check(exportText==null){"已有导出操作"};exportText=text;runOnUiThread{exportDocument.launch("RHVideo-selection.json")};JSONObject().put("requested",true)}
@@ -142,5 +144,5 @@ class RhVideoActivity:AppCompatActivity() {
   }
   private fun denied()=WebResourceResponse("text/plain","UTF-8",403,"Forbidden",mapOf("Cache-Control" to "no-store"),ByteArrayInputStream(ByteArray(0)))
   override fun onStop(){presentation?.pause();super.onStop()}
-  override fun onDestroy(){presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();web.destroy()};super.onDestroy()}
+  override fun onDestroy(){mediaEvents?.close();mediaEvents=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();web.destroy()};super.onDestroy()}
 }

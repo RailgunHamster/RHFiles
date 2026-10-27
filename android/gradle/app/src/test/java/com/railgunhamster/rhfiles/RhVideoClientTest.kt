@@ -26,6 +26,7 @@ class RhVideoClientTest {
   @Before fun setup(){server=MockWebServer();server.start();val context=RuntimeEnvironment.getApplication();context.getSharedPreferences("rhvideo-client-v1",0).edit().clear().commit();client=RhVideoClient(context)}
   @After fun cleanup(){client.logout();server.shutdown()}
   private fun json(value:String)=server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(value))
+  private fun awaitState(check:()->Boolean){val end=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);while(!check()){assertTrue("Native operation did not finish",System.nanoTime()<end);Thread.sleep(10)}}
   private fun login(){json("""{"access_token":"test-native-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));assertEquals("/api/v1/auth/login",server.takeRequest().path)}
   @Test fun staleSessionCannotWriteOrRevokeANewerLogin(){
     login();val old=client.state().getLong("generation");login();val active=client.state().getLong("generation");assertNotEquals(old,active)
@@ -80,6 +81,74 @@ class RhVideoClientTest {
     assertEquals(1,client.playbackWindow("playing",0).total)
     assertEquals(7500L,client.playback(JSONObject().put("playlist","playing").put("id","one").put("seconds",7.5)).position)
     assertEquals(0L,client.playback(JSONObject().put("playlist","playing").put("id","one").put("seconds",0).put("resume",true)).position)
+  }
+  @Test fun invalidNewPlaybackDoesNotReplaceTheActiveLease(){
+    login()
+    fun prepare(ticket:String,id:String){client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",JSONArray().put(JSONObject().put("id",id))).put("options",JSONObject().put("fullLength",true)))}
+    prepare("active","one");client.playback(JSONObject().put("playlist","active").put("id","one"));val lease=client.playbackWindow("active",0).lease
+    prepare("invalid","two")
+    try{client.playback(JSONObject().put("playlist","invalid").put("id","absent"));fail("Unknown item accepted")}catch(_:IllegalArgumentException){}
+    client.checkPlayback("active",lease)
+    try{client.playback(JSONObject().put("playlist","invalid").put("id","two").put("seconds",-1));fail("Invalid seek accepted")}catch(_:IllegalArgumentException){}
+    client.checkPlayback("active",lease)
+    client.playback(JSONObject().put("id","presentation-video"),track=false);client.checkPlayback("active",lease)
+  }
+  @Test fun parentReturnsAreBoundToTheOriginalPreviewAndBackDefersTheCommit(){
+    login();val returns=java.util.concurrent.CopyOnWriteArrayList<JSONObject>();client.listen{name,value->if(name=="rhvideo-parent-preview")returns.add(value)}
+    fun open(ticket:String){client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",JSONArray().put(JSONObject().put("id","one"))).put("options",JSONObject().put("fullLength",true).put("origin","frame").put("parentKey","frame:one:2").put("parentPreview","preview-snapshot").put("parentTotal",8).put("deferPreviewCommit",true)));client.playback(JSONObject().put("playlist",ticket).put("id","one"))}
+    open("parent");val w=client.playbackWindow("parent",0);client.request("preview.mark",JSONObject().put("kind","video").put("id","one").put("title","一"))
+    client.closePlayback("parent",w.lease,-1,false)
+    assertEquals(1,returns.size);assertEquals(-1,returns.single().getInt("direction"));assertFalse(returns.single().getBoolean("close"));assertEquals("preview-snapshot",returns.single().getString("parentPreview"));assertEquals(1,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length());assertEquals(1,server.requestCount)
+    try{client.closePlayback("parent",w.lease,0,true);fail("Old closure accepted")}catch(_:IllegalStateException){}
+    open("reopened");json("{}");client.closePlayback("reopened",client.playbackWindow("reopened",0).lease,0,true)
+    awaitState{(client.request("preview.result",JSONObject()) as JSONObject).optInt("completed")==1};assertTrue(returns.last().getBoolean("close"));assertEquals(2,server.requestCount)
+  }
+  @Test fun previewMarksConsumeOnceAndFailuresRemainTerminalWithVisibleResults(){
+    login();val events=java.util.concurrent.CopyOnWriteArrayList<JSONObject>();client.listen{name,value->if(name=="rhvideo-preview-result")events.add(value)}
+    for(id in listOf("one","two"))client.request("preview.mark",JSONObject().put("kind","video").put("id",id).put("title",id))
+    json("{}");server.enqueue(MockResponse().setResponseCode(500).setBody("failed"))
+    val first=client.request("preview.commit",JSONObject()) as JSONObject;client.request("preview.commit",JSONObject())
+    awaitState{(client.request("preview.result",JSONObject()) as JSONObject).optInt("completed")==2}
+    val result=client.request("preview.result",JSONObject()) as JSONObject;assertEquals(first.getLong("run"),result.getLong("run"));assertFalse(result.getBoolean("running"));assertTrue(result.getJSONArray("items").getJSONObject(0).getBoolean("success"));assertFalse(result.getJSONArray("items").getJSONObject(1).getBoolean("success"))
+    assertEquals("/api/v1/trash/video/one",server.takeRequest().path);assertEquals("/api/v1/trash/video/two",server.takeRequest().path)
+    assertEquals(0,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length());client.request("preview.commit",JSONObject());assertEquals(3,server.requestCount)
+    assertTrue(events.any{it.getJSONObject("result").optInt("completed")==2})
+  }
+  @Test fun switchingAccountsDuringPreviewCommitDoesNotPublishIntoOrWriteAsTheNewAccount(){
+    login();val generation=client.sessionGeneration();val finished=java.util.concurrent.CountDownLatch(1)
+    client.listen{name,value->if(name=="rhvideo-preview-result"&&value.getLong("generation")==generation&&value.getJSONObject("result").optInt("completed")==2)finished.countDown()}
+    for(id in listOf("one","two"))client.request("preview.mark",JSONObject().put("kind","video").put("id",id).put("title",id))
+    server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody("{}").setBodyDelay(500,java.util.concurrent.TimeUnit.MILLISECONDS));client.request("preview.commit",JSONObject());assertEquals("/api/v1/trash/video/one",server.takeRequest(3,java.util.concurrent.TimeUnit.SECONDS)?.path)
+    client.logout();json("""{"access_token":"new-account"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","test"));server.takeRequest()
+    client.request("preview.mark",JSONObject().put("kind","picture").put("id","new").put("title","新账户"))
+    assertTrue(finished.await(5,java.util.concurrent.TimeUnit.SECONDS));assertEquals(3,server.requestCount)
+    assertEquals(0,(client.request("preview.result",JSONObject()) as JSONObject).length());assertEquals("new",(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").getJSONObject(0).getString("id"))
+  }
+  @Test fun nativeFavoritesShareTheCacheAndReportFailureWithoutReplayingAWrite(){
+    login();json("""{"video_ids":[],"picture_ids":[],"novel_ids":[]}""");client.request("favorites",JSONObject());server.takeRequest()
+    json("{}");val generation=client.sessionGeneration();client.toggleFavorite("video","one",generation){true};awaitState{!client.favoriteState("video","one",generation).getBoolean("favoriteBusy")}
+    assertTrue(client.favoriteState("video","one",generation).getBoolean("favorite"));assertEquals("PUT",server.takeRequest().method)
+    server.enqueue(MockResponse().setResponseCode(500).setBody("failed"));client.toggleFavorite("video","one",generation){true};awaitState{!client.favoriteState("video","one",generation).getBoolean("favoriteBusy")}
+    val failed=client.favoriteState("video","one",generation);assertTrue(failed.getBoolean("favorite"));assertFalse(failed.isNull("favoriteError"));assertEquals("DELETE",server.takeRequest().method);assertEquals(4,server.requestCount)
+  }
+  @Test fun writesDoNotReuseIdleReadConnectionsOrReplayAnAmbiguousResponse(){
+    login();json("""{"video_ids":[],"picture_ids":[],"novel_ids":[]}""");client.request("favorites",JSONObject());assertEquals(0,server.takeRequest().sequenceNumber)
+    json("{}");client.request("favorite",JSONObject().put("kind","video").put("id","one").put("enabled",true));val first=server.takeRequest();assertEquals("PUT",first.method);assertEquals(0,first.sequenceNumber)
+    json("{}");client.request("favorite",JSONObject().put("kind","video").put("id","one").put("enabled",false));val second=server.takeRequest();assertEquals("DELETE",second.method);assertEquals(0,second.sequenceNumber)
+    server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST))
+    try{client.request("favorite",JSONObject().put("kind","video").put("id","one").put("enabled",true));fail("A lost response cannot be treated as success")}catch(_:java.io.IOException){}
+    assertEquals("PUT",server.takeRequest().method);assertEquals(5,server.requestCount);assertNull(server.takeRequest(200,java.util.concurrent.TimeUnit.MILLISECONDS))
+  }
+  @Test fun safeReadsCanReconnectWithoutGivingWritesTheSameReplayPolicy(){
+    login();json("""{"video_ids":[],"picture_ids":[],"novel_ids":[]}""");client.request("favorites",JSONObject());server.takeRequest()
+    server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST));json("""{"video_ids":["one"],"picture_ids":[],"novel_ids":[]}""")
+    assertEquals("one",(client.request("favorites",JSONObject()) as JSONObject).getJSONArray("video_ids").getString(0));assertEquals("GET",server.takeRequest().method);assertEquals("GET",server.takeRequest().method);assertEquals(4,server.requestCount)
+  }
+  @Test fun aQueuedNativeFavoriteCannotWriteAfterItsInputChanges(){
+    login();val current=java.util.concurrent.atomic.AtomicBoolean(true);val generation=client.sessionGeneration()
+    server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody("""{"video_ids":[],"picture_ids":[],"novel_ids":[]}""").setBodyDelay(500,java.util.concurrent.TimeUnit.MILLISECONDS))
+    client.toggleFavorite("video","one",generation){current.get()};assertEquals("/api/v1/favorites/ids",server.takeRequest(3,java.util.concurrent.TimeUnit.SECONDS)?.path);current.set(false)
+    awaitState{!client.favoriteState("video","one",generation).getBoolean("favoriteBusy")};assertFalse(client.favoriteState("video","one",generation).isNull("favoriteError"));assertEquals(2,server.requestCount)
   }
   @Test fun playlistModesHaveIndependentAccountScopedMemoriesAndLeases(){
     login()

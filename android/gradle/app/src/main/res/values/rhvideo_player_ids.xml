@@ -1,0 +1,5 @@
+<resources>
+    <item type="id" name="rhvideo_player_favorite"/>
+    <item type="id" name="rhvideo_player_mark"/>
+    <item type="id" name="rhvideo_player_close"/>
+</resources>

@@ -226,7 +226,7 @@
   }
   action('image.step',object({direction:{type:'integer',enum:[-1,1]}},['direction']),({direction})=>{if(!$('image-dialog').open)throw Error('图片查看器未打开');if(workbench)return workbench.stepImage(direction);imageIndex=Math.max(0,Math.min(images.length-1,imageIndex+direction));imageZoom=1;showImage();return {index:imageIndex,total:images.length};});
   action('image.zoom',object({delta:{type:'number',minimum:-1,maximum:1}},['delta']),({delta})=>{if(!$('image-dialog').open)throw Error('图片查看器未打开');imageZoom=delta===0?1:Math.max(.5,Math.min(4,imageZoom+delta));if(workbench)workbench.refreshImage();else showImage();return {zoom:imageZoom};});
-  action('image.close',object(),async()=>{const previewId=workbench?.closeImage();$('image-dialog').close();$('full-image').removeAttribute('src');images=[];if(!mobile){const player=await native('player.state');if(previewId&&player.queue?.options?.parentPreview===previewId)await native('player.close');await invoke('preview.commit');}return {closed:true};});
+  action('image.close',object(),async()=>{const previewId=workbench?.closeImage();$('image-dialog').close();$('full-image').removeAttribute('src');images=[];const player=await native('player.state');if(previewId&&player.queue?.options?.parentPreview===previewId)await native('player.close');await invoke('preview.commit');return {closed:true};});
   action('timeline.open',object({id:string,kind:{type:'string'}},['id']),async({id})=>{
     const media=item(id,'video'),token=++timelineLoadId;$('timeline-title').textContent=media.title;$('timeline-frames').textContent='正在读取时间轴…';openDialog('timeline-dialog');
     const value=await native('frames',{id});if(!$('timeline-dialog').open||token!==timelineLoadId)return {cancelled:true};
@@ -277,12 +277,12 @@
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
   workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,saveRead,chapter,icon,bind});
-  if(!mobile){
-    window.__TAURI__.event.listen('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
-    window.__TAURI__.event.listen('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);
-    window.__TAURI__.event.listen('rhvideo-parent-preview',({payload})=>{if(payload.generation===state.generation)void invoke('image.returnFromVideo',payload).catch(notice);}).catch(notice);
-    window.__TAURI__.event.listen('rhvideo-playback-error',({payload})=>{if(payload.generation===state.generation)notice(payload.message);}).catch(notice);
-  }
+  const listenNative=mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen;
+  listenNative('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
+  listenNative('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);
+  listenNative('rhvideo-parent-preview',({payload})=>{if(payload.generation===state.generation)void invoke('image.returnFromVideo',payload).catch(notice);}).catch(notice);
+  listenNative('rhvideo-playback-error',({payload})=>{if(payload.generation===state.generation)notice(payload.message);}).catch(notice);
+  if(mobile)listenNative('rhvideo-media-action',({payload})=>{if(payload.generation===state.generation&&payload.error)notice(payload.error);}).catch(notice);
   bind('connection-open','click','connection.open');bind('connection-close','click','connection.close');
   bind('connection-form','submit','connection.connect',()=>({server:$('server').value,username:$('username').value,password:$('password').value}));
   bind('disconnect','click','connection.logout');bind('refresh','click','refresh');

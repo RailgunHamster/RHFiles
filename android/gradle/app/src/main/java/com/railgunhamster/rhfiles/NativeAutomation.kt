@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inspector.WindowInspector
@@ -95,7 +96,16 @@ internal object NativeAutomation {
         is Spinner->{val index=args.getInt("number");require(index in 0 until v.count){"选项不存在"};v.setSelection(index)}
         else->error("此控件不支持输入")};JSONObject().put("updated",true)}
       "automation.ui.scroll"->{val view=resolve(args);val x=args.optInt("left",view.scrollX);val y=args.optInt("top",view.scrollY);require(x>=0&&y>=0);view.scrollTo(x,y);JSONObject().put("left",view.scrollX).put("top",view.scrollY)}
-      "automation.back"->{val activity=current.get() as? ComponentActivity?:error("当前界面不支持返回");activity.onBackPressedDispatcher.onBackPressed();true}
+      "automation.back"->{
+        val activity=current.get() as? ComponentActivity?:error("当前界面不支持返回")
+        // A focused popup/dialog owns Back before the Activity. Calling only
+        // the dispatcher would close the video underneath its open menu.
+        val focused=roots().lastOrNull{it!==activity.window.decorView&&it.hasWindowFocus()}
+        val down=focused?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BACK))?:false
+        val up=focused?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BACK))?:false
+        if(!down&&!up)activity.onBackPressedDispatcher.onBackPressed()
+        true
+      }
       "automation.media.state"->(current.get() as? PlaybackActivity)?.automationState()?:error("原生播放器没有打开")
       "automation.media.control"->(current.get() as? PlaybackActivity)?.automationControl(args)?:error("原生播放器没有打开")
       "automation.grid.state"->RhVideoGridActivity.state()

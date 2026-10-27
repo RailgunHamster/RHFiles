@@ -18,6 +18,10 @@ internal class RhVideoPlaybackPlan(rows:List<JSONObject>,settings:JSONObject) {
   init {
     require(source.isNotEmpty()&&source.size<=100000){"播放队列为空或过大"}
     require(options.optDouble("rate",1.0).let{it.isFinite()&&it in .25..4.0}){"播放速度无效"}
+    for(key in listOf("reference","fullLength","portraitOnly","loop","closeAtEnd","super","deferPreviewCommit"))if(options.has(key))require(options.get(key) is Boolean){"播放开关无效"}
+    if(options.optString("origin")=="frame"){
+      require(options.optString("parentKey").let{it.isNotEmpty()&&it.length<=1024}&&options.optString("parentPreview").matches(Regex("[A-Za-z0-9_-]{1,128}"))&&options.optInt("parentTotal") in 1..10000000){"父截图上下文无效"}
+    }
     val seen=HashSet<String>()
     val all=source.mapIndexed{index,row->
       val id=row.getString("id");require(id.matches(Regex("[A-Za-z0-9_-]{1,128}"))&&seen.add(id)){"播放队列编号无效或重复"}

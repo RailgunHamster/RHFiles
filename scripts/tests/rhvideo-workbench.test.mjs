@@ -376,3 +376,55 @@ test("large image strips do not exceed browser scroll geometry limits", () => {
   assert.equal(I.scrollMetrics(800, 1200).physicalMax, 0);
   assert.equal(I.scrollMetrics(800, 1200).scale, 1);
 });
+
+test("Android native events are allowlisted, unsubscribable, and cannot complete a request",async()=>{
+  const source=fs.readFileSync(new URL("../../android/web/js/rhvideo-mobile.js",import.meta.url),"utf8"),sent=[];
+  const context=vm.createContext({window:{RHVideoBridge:{postMessage:value=>sent.push(JSON.parse(value))}},Map,Set,Promise,Error,JSON,setTimeout,clearTimeout});
+  vm.runInContext(source,context);const native=context.window.RHVideoNative,received=[];
+  const unlisten=await native.listen("rhvideo-parent-preview",event=>received.push(event.payload));
+  native.dispatch("arbitrary-event",{generation:1});assert.equal(received.length,0);
+  native.dispatch("rhvideo-parent-preview",{generation:2,parentPreview:"new"});assert.equal(received.length,1);unlisten();native.dispatch("rhvideo-parent-preview",{generation:3});assert.equal(received.length,1);
+  const request=native.request("state",{});native.dispatch("rhvideo-parent-preview",{id:sent[0].id,result:"not a response"});context.window.RHVideoBridge.onmessage({data:JSON.stringify({id:sent[0].id,result:{connected:true}})});assert.equal((await request).connected,true);
+  await assert.rejects(native.listen("arbitrary-event",()=>{}),/未知/);
+});
+
+test("parent-video returns require the exact account, source and preview nonce, including unopened parents",async()=>{
+  const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf('action("image.returnFromVideo"'),end=source.indexOf('action("image.reveal"',start),calls=[];
+  let handler;const context=vm.createContext({action:(name,schema,callback)=>{handler=callback;},object:v=>v,string:{type:"string"},state:{generation:7},imageSession:{previewId:"new",current:{key:"frame:one:2"}},I:{key:item=>item.key},invoke:async name=>{calls.push(name);return {closed:true};},stepImage:async direction=>({direction}),ctx:{openDialog:id=>calls.push(id)}});
+  vm.runInContext(source.slice(start,end),context);
+  for(const override of [{generation:6},{parentPreview:"old"},{parentKey:"frame:one:0"}])assert.equal((await handler({generation:7,parentPreview:"new",parentKey:"frame:one:2",close:true,...override})).stale,true);
+  assert.equal(calls.length,0);
+  await handler({generation:7,parentPreview:"new",parentKey:"frame:one:2",close:true});assert.deepEqual(calls,["image.close"],"Even a parent prepared by an ordinary video card must be cleared on whole close");calls.length=0;
+  assert.equal((await handler({generation:7,parentPreview:"new",parentKey:"frame:one:2",direction:-1})).direction,-1);assert.deepEqual(calls,["image-dialog"]);
+});
+
+test("image navigation commits the displayed target atomically and accumulates fast next actions",async()=>{
+  const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf("async function stepImage("),end=source.indexOf("function refreshImage()",start),pending=[];
+  const session={args:{kind:"gallery"},index:0,total:4,current:{id:"frame-0",kind:"frame",path:"/storage/0.webp"}};
+  const context=vm.createContext({imageSession:session,imageToken:0,RHVideoModel:{playback:{step:(at,direction,total)=>(at+direction+total)%total}},send:(_name,args)=>new Promise((resolve,reject)=>pending.push({args,resolve,reject})),native:async(_name,args)=>args.paths.map(path=>"resolved:"+path),refreshImage(){},ctx:{resetImageZoom(){}},prefs:{},I:{key:item=>item.id},save(){},Error});
+  vm.runInContext(source.slice(start,end),context);
+  const first=context.stepImage(1);assert.equal(session.loading,true);assert.equal(session.index,0);assert.equal(session.current.id,"frame-0");assert.equal(session.pendingIndex,1);
+  const second=context.stepImage(1);assert.equal(session.pendingIndex,2);assert.equal(pending[1].args.offset,2);
+  pending[1].resolve({items:[{id:"frame-2",kind:"frame",path:"/storage/2.webp"}]});assert.equal((await second).index,2);assert.equal(session.current.id,"frame-2");assert.equal(session.index,2);assert.equal(session.loading,false);assert.equal(session.pendingIndex,undefined);
+  pending[0].resolve({items:[{id:"frame-1",kind:"frame",path:"/storage/1.webp"}]});assert.equal((await first).stale,true);assert.equal(session.current.id,"frame-2");assert.equal(session.index,2);
+  const failed=context.stepImage(1);pending[2].reject(Error("offline"));await assert.rejects(failed,/offline/);assert.equal(session.loading,false);assert.equal(session.current.id,"frame-2");assert.equal(session.index,2);
+  const closed=context.stepImage(1);context.imageSession=null;context.imageToken++;pending[3].resolve({items:[{id:"frame-3"}]});assert.equal((await closed).stale,true);assert.equal(context.imageSession,null);
+});
+
+test("a screenshot cannot start its old video while switching, closing or changing account",async()=>{
+  const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf("async function playImageVideo("),end=source.indexOf('action("image.playFrame"',start);
+  for(const invalidate of [context=>{context.imageSession.loading=true;},context=>{context.imageSession=null;},context=>{context.epoch++;},context=>{context.imageSession.current={kind:"frame",videoId:"new"};}]){
+    let ready;const calls=[],session={previewId:"preview",total:8,current:{id:"frame",kind:"frame",videoId:"old",seconds:10}};
+    const context=vm.createContext({imageSession:session,epoch:1,$:()=>({open:true}),I:{key:item=>item.id},prepareQueue:()=>new Promise(resolve=>{ready=resolve;}),native:async(...args)=>calls.push(args),Error});vm.runInContext(source.slice(start,end),context);
+    const playing=context.playImageVideo(false,true);invalidate(context);ready("ticket");await assert.rejects(playing,/预览目标已改变/);assert.equal(calls.length,0);
+  }
+  let prepared=0;const context=vm.createContext({imageSession:{loading:true},epoch:1,prepareQueue:()=>{prepared++;},Error});vm.runInContext(source.slice(start,end),context);await assert.rejects(context.playImageVideo(false,false),/正在切换/);assert.equal(prepared,0);
+});
+
+test("the mobile native player's visible menu has a public, input-guarded operation",async()=>{
+  const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf('if (ctx.mobile) {\n        action(\n          "grid.target"'),end=source.indexOf("async function image(media)",start),actions=new Map(),calls=[];
+  assert(start>=0&&end>start);
+  const context=vm.createContext({ctx:{mobile:true},action:(name,schema,handler)=>actions.set(name,{schema,handler}),object:(properties={},required=[])=>({properties,required}),native:async(...args)=>calls.push(args)});vm.runInContext(source.slice(start,end),context);
+  const control=actions.get("player.control");assert(control.schema.properties.command.enum.includes("options"));assert.equal(control.schema.properties.expectedInputId.type,"integer");
+  await control.handler({command:"options",expectedInputId:17});assert.deepEqual(calls,[["player.control",{command:"options",expectedInputId:17}]]);
+});

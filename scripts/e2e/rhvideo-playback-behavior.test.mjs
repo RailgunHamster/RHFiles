@@ -22,6 +22,7 @@ async function target(app,file){
   await until(()=>view.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==='+JSON.stringify(action)+')'),'behavior APIs ready');
   const codes={'rhvideo.html':['rhvideo-model.js','rhvideo-workbench.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
   for(const code of codes){const served=await view.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=value=>createHash('sha256').update(value).digest('hex');assert.equal(hash(served),hash(source),'behavior tests must run the current '+code);}
+  if(file==='rhvideo-player.html'&&process.env.RHFILES_EXPECT_RENDERER){const actual=await invoke(view,'player.state');assert.equal(actual.renderer,process.env.RHFILES_EXPECT_RENDERER,'verify the actual renderer, not only the requested environment');}
   return view;
 }
 async function setup(options={}){
@@ -206,6 +207,45 @@ test('a normal video card retains its first matching screenshot as the parent, w
   }finally{player?.close();await s.close();}
 });
 
+test('ordinary video clicks start at zero by default, without removing explicit playback history',native,async()=>{
+  const s=await setup();let player;
+  try{
+    assert.equal((await invoke(s.view,'preferences.state')).resume,false,'automatic resume is opt-in; RHVideo ordinary playback starts from zero');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await until(async()=>(await invoke(player,'player.state')).renderedFrames>0,'first native picture',25000);
+    await invoke(player,'player.control',{command:'seek',value:6500});
+    await until(async()=>(await invoke(player,'player.state')).decoderPositionMs>=6400,'native history seek',25000);
+    await invoke(player,'player.control',{command:'pause'});await invoke(s.view,'player.close');player.close();player=null;
+    const history=await command(s.app,'playback.history');assert(history['video-0'].seconds>=6,'the separate history/continue action keeps its saved position');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    const restarted=await until(async()=>{const state=await invoke(player,'player.state');return state.renderedFrames>0?state:null;},'new native input from ordinary click',25000);
+    assert(restarted.positionMs<3000,'an ordinary click must not silently restore the old 6.5-second point');
+  }finally{player?.close();await s.close();}
+});
+
+test('a delayed screenshot switch cannot play, favorite or mark the old target; fast arrows retain their intended order',native,async()=>{
+  const s=await setup();let player;
+  try{
+    await s.view.send('Emulation.setFocusEmulationEnabled',{enabled:true});
+    await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:7});
+    await until(()=>s.view.evaluate("document.getElementById('full-image').naturalWidth>0"),'decoded old screenshot');
+    // Hold only the worker transport for frame 8. Real parsing/resolution and
+    // native playback are unchanged; frame 9 may complete ahead of this read.
+    await s.view.evaluate("window.__imagePost=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...rest){if(message.action==='query'&&message.args.kind==='gallery'&&message.args.offset===8&&!message.args.allKeys){window.__heldImage={worker:this,message,rest};return;}return window.__imagePost.call(this,message,...rest);};window.__imageFirst=RHFilesAPI.invoke('rhvideo.image.step',{direction:1});true");
+    await until(()=>s.view.evaluate('!!window.__heldImage'),'delayed real image query');
+    const pending=await invoke(s.view,'image.state');assert.equal(pending.loading,true);assert.equal(pending.index,7);assert.equal(pending.requestedIndex,8);assert.equal(pending.current.videoId,'video-0');
+    const point=await s.view.evaluate("(()=>{const r=document.getElementById('full-image').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+    await s.view.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await s.view.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
+    for(const name of ['image.playVideo','image.favorite','selection.markCurrent'])await assert.rejects(invoke(s.view,name),/正在切换/);
+    assert.equal((await invoke(s.view,'preview.pending')).items.length,0);assert.equal(s.fixture.favorites.size,0);assert.equal(s.fixture.requests.filter(r=>r.path.endsWith('/play')).length,0,'clicking a pending screenshot must not launch its previous video');
+    await invoke(s.view,'image.step',{direction:1});const latest=await invoke(s.view,'image.state');assert.equal(latest.index,9);assert.equal(latest.loading,false);assert.equal(latest.current.videoId,'video-1');
+    await s.view.evaluate('Worker.prototype.postMessage=window.__imagePost;window.__imagePost.call(window.__heldImage.worker,window.__heldImage.message,...window.__heldImage.rest);true');
+    assert.equal((await s.view.evaluate('window.__imageFirst')).stale,true);assert.equal((await invoke(s.view,'image.state')).index,9);
+    await invoke(s.view,'image.playVideo');player=await target(s.app,'rhvideo-player.html');assert.equal((await invoke(player,'player.state')).queue.id,'video-1');
+    await until(async()=>(await invoke(player,'player.state')).renderedFrames>0,'actual new screenshot source frame',25000);
+  }finally{player?.close();await s.close();}
+});
+
 test('slideshow preview marks use the same one-shot close lifecycle as image and video previews',native,async()=>{
   const s=await setup();
   try{
@@ -228,7 +268,7 @@ test('the screenshot collection scrubber, Home/End, wheel and swipe navigate ima
   const key=async(name,code,eventCode=name)=>{await s.view.send('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:eventCode,windowsVirtualKeyCode:code});await s.view.send('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:eventCode,windowsVirtualKeyCode:code});};
   try{
     await s.view.send('Emulation.setFocusEmulationEnabled',{enabled:true});
-    assert.deepEqual(await invoke(s.view,'image.state'),{opened:false,previewId:null,index:0,total:0,current:null},'closed preview state is valid JSON');
+    assert.deepEqual(await invoke(s.view,'image.state'),{opened:false,loading:false,requestedIndex:null,previewId:null,index:0,total:0,current:null},'closed preview state is valid JSON');
     await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:0});
     const count=(await invoke(s.view,'image.state')).total;assert.equal(count,32);
     await until(()=>s.view.evaluate("document.getElementById('full-image').complete&&document.getElementById('full-image').naturalWidth>0"),'first screenshot actually decoded');
@@ -477,8 +517,11 @@ test('clicking the screenshot itself plays its source from the start; the explic
     await s.view.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const point=await s.view.evaluate("(()=>{const r=document.getElementById('full-image').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
     await s.view.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await s.view.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
-    player=await target(s.app,'rhvideo-player.html');const start=await invoke(player,'player.state');assert.equal(start.queue.id,image.current.videoId);assert(start.positionMs<3000,'the reference screenshot click plays the source, not the selected frame timestamp');
+    player=await target(s.app,'rhvideo-player.html');const start=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'actual source frame from screenshot click',25000);assert.equal(start.queue.id,image.current.videoId);assert(start.positionMs<3000,'the reference screenshot click plays the source, not the selected frame timestamp');
     await command(s.app,'player.back');player.close();player=null;
-    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');const frame=await invoke(player,'player.state');assert(frame.positionMs>=5900,'the separate play-this-frame action retains timestamp seeking');
+    // Native close emits the parent-return event asynchronously. Do not issue
+    // a second play while that image is still resolving its new capability.
+    await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading&&value.current?.id===image.current.id;},'parent screenshot ready before a new play');
+    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');const frame=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0&&value.positionMs>=5900?value:null;},'actual explicit screenshot-time frame',25000);assert.equal(frame.queue.id,image.current.videoId);
   }finally{player?.close();await s.close();}
 });

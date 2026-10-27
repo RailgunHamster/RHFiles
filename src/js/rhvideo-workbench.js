@@ -88,7 +88,7 @@
         rotation: 0,
         gridCount: 0,
         volume: 20,
-        resume: true,
+        resume: false,
       };
       const config = () => ({ ...defaults, ...prefs });
       function el(tag, text, cls) {
@@ -712,7 +712,7 @@
             if (viewer.running)
               await native("presentation.control", { command: "resume" });
           }
-          if(id==="wb-viewer"&&!ctx.mobile&&!$("image-dialog").open)await invoke("preview.commit");
+          if(id==="wb-viewer"&&!$("image-dialog").open)await invoke("preview.commit");
           return { closed: true };
         },
       );
@@ -885,6 +885,7 @@
       );
       action("selection.result", object(), () => lastBatch, "read");
       action("selection.markCurrent", object(), async () => {
+        if(!$("wb-viewer")?.open&&imageSession?.loading)throw Error("图片正在切换，请稍候再标记");
         const item = $("wb-viewer")?.open
           ? viewer?.current
           : imageSession?.current;
@@ -893,7 +894,6 @@
           id = item.kind === "frame" ? item.videoId : item.id;
         if (!["video", "picture", "novel"].includes(kind) || !id)
           throw Error("此预览没有源文件标识");
-        if(ctx.mobile){const enabled=!selected.has(kind+":"+id);return invoke("selection.toggle",{kind,id,enabled});}
         const result=await invoke("preview.mark",{kind,id,title:item.title||id});
         notice(result.enabled?"已标记；关闭预览时移入 RHVideo 暂存区（非永久删除）":"已取消暂存标记",true);
         return result;
@@ -1080,7 +1080,7 @@
             min: [0, 30],
             max: [0, 30],
             ratio: [0, 1],
-            segment: ctx.mobile?[0.1,3600]:[1,300],
+            segment: [1,300],
             scrollSpeed: [0, 1000],
             seed: [0, 4294967295],
           };
@@ -1165,10 +1165,10 @@
               ["fullLength", "播放全长", "bool"],
               ["segment", "分段秒数", "number"],
               ["portraitOnly", "仅竖屏视频", "bool"],
-              ["loop", ctx.mobile ? "循环队列" : "循环当前视频 / 片段", "bool"],
+              ["loop", "循环当前视频 / 片段", "bool"],
               ["super", "同屏／自动放映使用低带宽版本", "bool"],
               ["rotation", "旋转角度", "number"],
-              ["resume", "记住播放断点", "bool"],
+              ["resume", "单视频自动续播", "bool"],
             ],
           ],
           [
@@ -2421,7 +2421,7 @@
         const c=config(),version=epoch;
         const title=media.title+(low?" (超压)":"");
         let parent={};
-        if(!ctx.mobile){
+        {
           // playVideoLocal also pushes the first matching gallery screenshot.
           // Load metadata only: do not flash a gallery or decode its thumbnails
           // merely because a video card was clicked.
@@ -2606,6 +2606,10 @@
         action("player.state", object(), () => native("player.state"), "read");
         action("player.seekQueue",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),({ratio})=>native("player.control",{command:"seekQueue",value:ratio}));
         action("player.options",object({fullLength:{type:"boolean"},portraitOnly:{type:"boolean"},segment:{type:"number",minimum:1,maximum:300},loop:{type:"boolean"},rate:{type:"number",minimum:.25,maximum:4}}),args=>native("player.control",{command:"playlist.options",options:args}));
+        const inputGuard={expectedInputId:{type:"integer",minimum:0}};
+        action("player.back",object(inputGuard),args=>native("player.control",{command:"back",...args}));
+        action("player.favorite",object(inputGuard),args=>native("player.control",{command:"favorite",...args}),"write");
+        action("player.mark",object({...inputGuard,enabled:{type:"boolean"}}),args=>native("player.control",{command:"mark",...args}));
         action(
           "player.control",
           object(
@@ -2627,10 +2631,12 @@
                   "fill",
                   "controls.show",
                   "controls.hide",
+                  "options",
                 ],
               },
               value: { type: "number" },
               enabled: { type: "boolean" },
+              ...inputGuard,
             },
             ["command"],
           ),
@@ -2669,15 +2675,18 @@
         if(!imageSession.args&&imageSession.total===1)return {index:0,total:1};
         const ticket = ++imageToken,
           session = imageSession,
-          index = targetIndex??RHVideoModel.playback.step(session.index,direction,session.total);
-        session.index = index;
-        const value = await send("query", {
+          index = targetIndex??RHVideoModel.playback.step(session.pendingIndex??session.index,direction,session.total);
+        session.pendingIndex=index;
+        session.loading=true;
+        refreshImage();
+        try{
+          const value = await send("query", {
           ...session.args,
           allKeys: false,
           offset: index,
           limit: 1,
         });
-        if (value.stale || ticket !== imageToken) return { stale: true };
+        if (value.stale || ticket !== imageToken || session !== imageSession) return { stale: true };
         if (!value.items.length)
           throw Error("当前筛选结果中没有这张图片，请刷新清单");
         const result = session.args.kind==="gallery"
@@ -2691,12 +2700,20 @@
         ctx.resetImageZoom();
         refreshImage();
         return { index, total: session.total };
+        }finally{
+          if(ticket===imageToken&&session===imageSession){session.loading=false;delete session.pendingIndex;refreshImage();}
+        }
       }
       function refreshImage() {
+        const loading=imageSession?.loading===true;
+        $("image-dialog").setAttribute("aria-busy",String(loading));
+        $("full-image").setAttribute("aria-disabled",String(loading));
         const frame=imageSession?.current?.kind==="frame";for(const id of ["wb-frame-play","wb-frame-play-low"])if($(id))$(id).hidden=!frame;
+        for(const id of ["wb-frame-play","wb-frame-play-low","wb-image-mark","wb-image-reveal"])if($(id))$(id).disabled=loading;
         const item=imageSession?.current,kind=frame?"video":item?.kind,id=frame?item?.videoId:item?.id,key=kind+":"+id,favorite=$("wb-image-favorite");
-        if(favorite){favorite.hidden=!["video","picture","novel"].includes(kind)||!id;favorite.textContent=state.favorites.has(key)?"取消收藏":"收藏";favorite.setAttribute("aria-pressed",String(state.favorites.has(key)));favorite.disabled=state.favoriteBusy.has(key);}
-        if (imageSession?.current)
+        if(favorite){favorite.hidden=!["video","picture","novel"].includes(kind)||!id;favorite.textContent=state.favorites.has(key)?"取消收藏":"收藏";favorite.setAttribute("aria-pressed",String(state.favorites.has(key)));favorite.disabled=loading||state.favoriteBusy.has(key);}
+        if($("wb-image-mark"))$("wb-image-mark").hidden=!["video","picture","novel"].includes(kind)||!id;
+        if (imageSession?.current&&!loading)
           showImage(
             imageSession.current,
             imageSession.index,
@@ -2711,8 +2728,7 @@
           imageSession.args.seed = random
             ? crypto.getRandomValues(new Uint32Array(1))[0] || 1
             : 0;
-          imageSession.index = 0;
-          return stepImage(0);
+          return stepImage(0,0);
         },
       );
       $("image-dialog")
@@ -2720,24 +2736,25 @@
         .prepend(
           button("随机", "image.order", { random: true }, "text-button"),
           button("还原顺序", "image.order", { random: false }, "text-button"),
-          button("标记/取消待删除", "selection.markCurrent", {}, "text-button"),
         );
+      const imageMark=button("标记/取消待删除", "selection.markCurrent", {}, "text-button");imageMark.id="wb-image-mark";
       const framePlay=button("播放此刻","image.playFrame",{},"text-button");framePlay.id="wb-frame-play";framePlay.hidden=true;
       const frameLow=button("超压播放此刻","image.playFrame",{super:true},"text-button");frameLow.id="wb-frame-play-low";frameLow.hidden=true;
       const imageFavorite=button("收藏","image.favorite",{},"text-button");imageFavorite.id="wb-image-favorite";imageFavorite.hidden=true;
-      $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,frameLow,imageFavorite,button("在清单中定位","image.reveal",{},"text-button"));
-      action("image.favorite",object(),async()=>{const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有可收藏的媒体");return invoke("favorite.toggle",{kind:item.kind==="frame"?"video":item.kind,id:item.kind==="frame"?item.videoId:item.id});},"write");
-      action("image.state",object(),()=>({opened:$("image-dialog").open,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null}),"read");
+      const imageReveal=button("在清单中定位","image.reveal",{},"text-button");imageReveal.id="wb-image-reveal";
+      $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,frameLow,imageFavorite,imageMark,imageReveal);
+      action("image.favorite",object(),async()=>{if(imageSession?.loading)throw Error("图片正在切换，请稍候再收藏");const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有可收藏的媒体");return invoke("favorite.toggle",{kind:item.kind==="frame"?"video":item.kind,id:item.kind==="frame"?item.videoId:item.id});},"write");
+      action("image.state",object(),()=>({opened:$("image-dialog").open,loading:imageSession?.loading===true,requestedIndex:imageSession?.pendingIndex??null,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null}),"read");
       action("image.seek",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),async({ratio})=>{if(!$("image-dialog").open||!imageSession)throw Error("图片查看器未打开");return stepImage(0,RHVideoModel.playback.imageSeek(imageSession.total,ratio));});
-      async function playImageVideo(low,atFrame){const item=imageSession?.current;if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");const ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentPreview:imageSession.previewId,parentTotal:imageSession.total});return native("play",{id:item.videoId,title:item.title,seconds:atFrame?item.seconds:0,super:low,playlist:ticket});}
+      async function playImageVideo(low,atFrame){const session=imageSession,item=session?.current,version=epoch;if(session?.loading)throw Error("图片正在切换，请稍候再播放");if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");const ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentPreview:session.previewId,parentTotal:session.total});if(version!==epoch||imageSession!==session||session.current!==item||session.loading||!$("image-dialog").open)throw Error("预览目标已改变，旧播放未执行");return native("play",{id:item.videoId,title:item.title,seconds:atFrame?item.seconds:0,super:low,playlist:ticket});}
       action("image.playFrame",object({super:{type:"boolean"}}),({super:low=false})=>playImageVideo(low,true),"external");
       action("image.playVideo",object({super:{type:"boolean"}}),({super:low=false})=>playImageVideo(low,false),"external");
       action("image.returnFromVideo",object({generation:{type:"integer",minimum:0},parentKey:string,parentPreview:string,direction:{type:"integer",enum:[-1,0,1]},close:{type:"boolean"}},["generation","parentKey","parentPreview"]),async({generation,parentKey,parentPreview,direction=0,close=false})=>{
-        if(generation!==state.generation||!imageSession?.current||imageSession.previewId!==parentPreview||I.key(imageSession.current)!==parentKey)return {stale:true};
-        if(close)return $("image-dialog").open?invoke("image.close"):{closed:true};
+        if(generation!==state.generation||!imageSession?.current||imageSession.loading||imageSession.previewId!==parentPreview||I.key(imageSession.current)!==parentKey)return {stale:true};
+        if(close)return invoke("image.close");
         const result=await stepImage(direction);if(!result.stale)ctx.openDialog("image-dialog");return result;
       });
-      action("image.reveal",object(),()=>{const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有源媒体");return invoke("media.reveal",{id:item.kind==="frame"?item.videoId:item.id,kind:item.kind==="frame"?"video":item.kind});});
+      action("image.reveal",object(),()=>{if(imageSession?.loading)throw Error("图片正在切换，请稍候再定位");const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有源媒体");return invoke("media.reveal",{id:item.kind==="frame"?item.videoId:item.id,kind:item.kind==="frame"?"video":item.kind});});
       action(
         "image.preview",
         object({ path: string, title: string }, ["path", "title"]),
@@ -4118,7 +4135,7 @@
         stepImage,
         refreshImage,
         closeImage(){const id=imageSession?.previewId;imageSession=null;imageToken++;return id;},
-        canPlayImage(){return imageSession?.current?.kind==="frame";},
+        canPlayImage(){return !imageSession?.loading&&imageSession?.current?.kind==="frame";},
         previewTarget(kind,id){const item=$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},
         async receivePreviewResult(result){showPreviewResult(result);if(!result.running&&result.items.some(i=>i.success)){invalidateCatalog();await load();}},
         invalidate(kind) {
