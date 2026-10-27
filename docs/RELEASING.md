@@ -95,6 +95,10 @@ dotnet tool install --global vpk --version 1.2.0
 
 Keep the version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` aligned, add `docs/release-notes/<version>.md`, then push an annotated `v<version>` tag. `.github/workflows/release.yml` packages and publishes the release, including the cumulative history asset used by the Settings client. It downloads the previous package first so Velopack can generate a delta when possible.
 
+Local publishing and the CI fallback both use `scripts/publish-windows-github.ps1`. Before a new Windows draft becomes repository-wide Latest, the publisher stages the newest stable Android feed **and its verified APKs** so older Android clients can still update. It rejects corrupt/mismatched payloads, uses semantic version ordering and rechecks the Android snapshot before promotion; a concurrent Android release leaves the Windows release as a draft. Windows payloads remain immutable. Only an older Android index in an unpublished draft can be replaced, with a recovery rename/rollback. Gitee publishing remains separate.
+
+本地和 CI 的 GitHub 发布统一走上述脚本：先带上已核验的安卓清单和 APK，再切换 Windows Latest，避免安卓检查更新 404。若安卓在上传期间又发布了新版本，Windows 保持草稿，刷新清单后再提交；不覆盖已发布的安装包。该流程不使用 Gitee 账号或令牌。
+
 The first Velopack portable build is a bootstrap release: users of the old hand-made ZIP must replace it once. Every Velopack release after that can update itself.
 
 ## Gitee Windows / Windows 的 Gitee 更新
