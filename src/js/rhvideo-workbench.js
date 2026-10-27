@@ -2429,11 +2429,11 @@
             if(!gallery.loaded)await loadGallery(false,false);
             const args={kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1};
             const result=await send("query",args),index=result.queue.findIndex(f=>f.videoId===media.id);
-            if(index>=0){imageSession={args,index,total:result.total,current:result.queue[index],previewId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(imageSession.current),parentPreview:imageSession.previewId,parentTotal:result.total};}
+            if(index>=0){imageSession={args,index,total:result.total,current:result.queue[index],previewId:crypto.randomUUID(),playbackId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(imageSession.current),parentPreview:imageSession.previewId,parentPlayback:imageSession.playbackId,parentTotal:result.total};}
           }catch(error){if(version===epoch)notice("截图队列不可用，视频仍可单独播放："+String(error));}
         }
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
-        const ticket=await prepareQueue([{...media,title}],{fullLength:true,loop:false,super:low,rotation:c.rotation,...parent});
+        const ticket=await prepareQueue([{...media,title}],{fullLength:true,super:low,rotation:c.rotation,...parent});
         return native("play",{id:media.id,title,playlist:ticket,super:low,resume:c.resume});
       }
       action("media.playLow",object({id:string},["id"]),({id})=>{const item=state.items.find(v=>v.id===id&&v.kind==="video");if(!item)throw Error("视频已不在当前清单，请刷新");return play(item,true);},"external");
@@ -2746,11 +2746,25 @@
       action("image.favorite",object(),async()=>{if(imageSession?.loading)throw Error("图片正在切换，请稍候再收藏");const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有可收藏的媒体");return invoke("favorite.toggle",{kind:item.kind==="frame"?"video":item.kind,id:item.kind==="frame"?item.videoId:item.id});},"write");
       action("image.state",object(),()=>({opened:$("image-dialog").open,loading:imageSession?.loading===true,requestedIndex:imageSession?.pendingIndex??null,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null}),"read");
       action("image.seek",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),async({ratio})=>{if(!$("image-dialog").open||!imageSession)throw Error("图片查看器未打开");return stepImage(0,RHVideoModel.playback.imageSeek(imageSession.total,ratio));});
-      async function playImageVideo(low,atFrame){const session=imageSession,item=session?.current,version=epoch;if(session?.loading)throw Error("图片正在切换，请稍候再播放");if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");const ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentPreview:session.previewId,parentTotal:session.total});if(version!==epoch||imageSession!==session||session.current!==item||session.loading||!$("image-dialog").open)throw Error("预览目标已改变，旧播放未执行");return native("play",{id:item.videoId,title:item.title,seconds:atFrame?item.seconds:0,super:low,playlist:ticket});}
+      async function playImageVideo(low,atFrame){
+        const session=imageSession,item=session?.current,version=epoch;
+        if(session?.loading)throw Error("图片正在切换，请稍候再播放");if(!$("image-dialog").open||item?.kind!=="frame")throw Error("当前不是视频截图");
+        const playbackId=crypto.randomUUID();session.playAttempt=playbackId;let previous,installed=false;
+        try{
+          const ticket=await prepareQueue([{id:item.videoId,title:item.title,duration:item.duration}],{fullLength:true,super:low,origin:"frame",deferPreviewCommit:true,parentKey:I.key(item),parentPreview:session.previewId,parentPlayback:playbackId,parentTotal:session.total});
+          if(version!==epoch||imageSession!==session||session.current!==item||session.loading||session.playAttempt!==playbackId||!$("image-dialog").open)throw Error("预览目标已改变，旧播放未执行");
+          // Preparing a replacement must not retire the still-playing child's
+          // return. Only install its capability once the new source is ready.
+          previous=session.playbackId;session.playbackId=playbackId;installed=true;
+          return await native("play",{id:item.videoId,title:item.title,seconds:atFrame?item.seconds:0,super:low,playlist:ticket});
+        }catch(error){if(installed&&imageSession===session&&session.playbackId===playbackId)session.playbackId=previous;throw error;}
+        finally{if(session.playAttempt===playbackId)delete session.playAttempt;}
+      }
       action("image.playFrame",object({super:{type:"boolean"}}),({super:low=false})=>playImageVideo(low,true),"external");
       action("image.playVideo",object({super:{type:"boolean"}}),({super:low=false})=>playImageVideo(low,false),"external");
-      action("image.returnFromVideo",object({generation:{type:"integer",minimum:0},parentKey:string,parentPreview:string,direction:{type:"integer",enum:[-1,0,1]},close:{type:"boolean"}},["generation","parentKey","parentPreview"]),async({generation,parentKey,parentPreview,direction=0,close=false})=>{
-        if(generation!==state.generation||!imageSession?.current||imageSession.loading||imageSession.previewId!==parentPreview||I.key(imageSession.current)!==parentKey)return {stale:true};
+      action("image.returnFromVideo",object({generation:{type:"integer",minimum:0},parentKey:string,parentPreview:string,parentPlayback:string,direction:{type:"integer",enum:[-1,0,1]},close:{type:"boolean"}},["generation","parentKey","parentPreview"]),async({generation,parentKey,parentPreview,parentPlayback,direction=0,close=false})=>{
+        if(generation!==state.generation||!imageSession?.current||imageSession.loading||imageSession.previewId!==parentPreview||!parentPlayback||imageSession.playbackId!==parentPlayback||I.key(imageSession.current)!==parentKey)return {stale:true};
+        imageSession.playbackId=null;
         if(close)return invoke("image.close");
         const result=await stepImage(direction);if(!result.stale)ctx.openDialog("image-dialog");return result;
       });

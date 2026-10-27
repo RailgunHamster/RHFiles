@@ -104,7 +104,7 @@ class PlaybackActivity:AppCompatActivity() {
     WindowInsetsControllerCompat(window,window.decorView).apply{hide(WindowInsetsCompat.Type.systemBars());systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE}
     val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK)}
     playerView=PlayerView(this).apply {
-      val parent=rhWindow?.options?.let{it.optString("origin")=="frame"&&it.optInt("parentTotal")>1}==true
+      val parent=rhWindow?.options?.let{it.optString("origin")=="frame"&&it.optInt("parentTotal")>0}==true
       setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);setShowNextButton(queue.size>1||parent);setShowPreviousButton(queue.size>1||parent)
       setShowSubtitleButton(true);setShowRewindButton(true);setShowFastForwardButton(true)
       controllerShowTimeoutMs=3500;setKeepContentOnPlayerReset(true);resizeMode=resize
@@ -186,10 +186,10 @@ class PlaybackActivity:AppCompatActivity() {
       "seek"->{val value=args.getDouble("value");require(value.isFinite()&&value>=0&&engine.duration!=C.TIME_UNSET&&value<=engine.duration){"跳转位置超出范围（毫秒）"};val w=rhWindow;val i=engine.currentMediaItemIndex;if(w?.options?.optBoolean("reference")==true&&w.options.optBoolean("loop")&&(value<w.starts[i]-500||value>w.ends[i]+1000))rhSetOptions(JSONObject().put("loop",false));engine.seekTo(value.toLong());armRhEnd()}
       "seekQueue"->{val w=rhWindow?:error("当前不是连播");val target=RhVideoClient.get(this).playbackTarget(rhTicket!!,w.lease,args.getDouble("value"));rebuildRhWindow(target.index,target.positionMs,engine.playWhenReady)}
       "playlist.options"->rhSetOptions(args.getJSONObject("options"))
-      "rate"->{val value=args.getDouble("value");require(value.isFinite()&&value in .25..4.0){"播放速度应为 0.25–4"};engine.setPlaybackSpeed(value.toFloat());if(rhWindow?.options?.optBoolean("reference")==true)rhSetOptions(JSONObject().put("rate",value))}
+      "rate"->{val value=args.getDouble("value");require(value.isFinite()&&value in .25..4.0){"播放速度应为 0.25–4"};if(rhWindow!=null)rhSetOptions(JSONObject().put("rate",value))else engine.setPlaybackSpeed(value.toFloat())}
       "volume"->{val value=args.getDouble("value");require(value.isFinite()&&value in 0.0..100.0);RhVideoVolume.setLocal(engine,(value/100).toFloat())}
       "rotate"->{val value=args.getInt("value");require(value in listOf(0,90,180,270));playerView.videoSurfaceView?.rotation=value.toFloat()}
-      "repeat"->{if(rhWindow?.options?.optBoolean("reference")==true)rhSetOptions(JSONObject().put("loop",args.getBoolean("enabled")))else engine.repeatMode=if(args.getBoolean("enabled"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF}
+      "repeat"->{if(rhWindow!=null)rhSetOptions(JSONObject().put("loop",args.getBoolean("enabled")))else engine.repeatMode=if(args.getBoolean("enabled"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF}
       "fit"->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
       "fill"->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
       "controls.show"->playerView.showController();"controls.hide"->playerView.hideController()
@@ -219,7 +219,7 @@ class PlaybackActivity:AppCompatActivity() {
       .setMediaSourceFactory(mediaFactory)
       .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000).build()
     player=engine;rhInputId=nextRhInput.incrementAndGet();rhRendered=false
-    playerView.player=if(rhWindow?.options?.let{it.optBoolean("reference")||it.optString("origin")=="frame"}==true)object:ForwardingPlayer(engine){
+    playerView.player=if(rhWindow!=null)object:ForwardingPlayer(engine){
       override fun seekToNextMediaItem(){rhUiAction(JSONObject().put("command","next"))}
       override fun seekToNext(){seekToNextMediaItem()}
       override fun seekToPreviousMediaItem(){rhUiAction(JSONObject().put("command","previous"))}
@@ -231,7 +231,7 @@ class PlaybackActivity:AppCompatActivity() {
       override fun seekTo(positionMs:Long){rhUiAction(JSONObject().put("command","seek").put("value",positionMs))}
       override fun seekTo(mediaItemIndex:Int,positionMs:Long){if(mediaItemIndex==engine.currentMediaItemIndex)seekTo(positionMs)else rebuildRhWindow(rhWindow!!.offset+mediaItemIndex,positionMs,engine.playWhenReady)}
       override fun isCommandAvailable(command:Int)=getAvailableCommands().contains(command)
-      override fun getAvailableCommands()=super.getAvailableCommands().buildUpon().addAll(Player.COMMAND_SEEK_TO_NEXT,Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,Player.COMMAND_SEEK_TO_PREVIOUS,Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM).build()
+      override fun getAvailableCommands():Player.Commands{val commands=super.getAvailableCommands().buildUpon();if(rhWindow?.options?.let{it.optBoolean("reference")||it.optString("origin")=="frame"}==true)commands.addAll(Player.COMMAND_SEEK_TO_NEXT,Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,Player.COMMAND_SEEK_TO_PREVIOUS,Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM);return commands.build()}
     }else engine
     if(path.startsWith("rhvideo://"))RhVideoVolume.track(engine,rhLocalGain)
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
@@ -273,7 +273,7 @@ class PlaybackActivity:AppCompatActivity() {
   private fun rhNavigate(direction:Int){val w=rhWindow?:return;val current=w.offset+(player?.currentMediaItemIndex?:w.index);rebuildRhWindow(Math.floorMod(current+direction,w.total))}
   private fun rememberRhPlaylist(){val w=rhWindow?:return;if(w.options.optBoolean("reference"))runCatching{RhVideoClient.get(this).rememberPlaylist(rhTicket!!,w.lease,w.offset+(player?.currentMediaItemIndex?:w.index))}}
   private fun rhSetOptions(patch:JSONObject){
-    val w=rhWindow?:error("当前不是连播");require(w.options.optBoolean("reference")){"当前不是参考连播"};val engine=player?:error("播放器尚未就绪");val current=w.offset+engine.currentMediaItemIndex
+    val w=rhWindow?:error("当前不是媒体库播放");require(w.options.optBoolean("reference")||patch.keys().asSequence().all{it in setOf("loop","rate")}){"单视频只能修改循环和速度"};val engine=player?:error("播放器尚未就绪");val current=w.offset+engine.currentMediaItemIndex
     rememberRhCurrent()
     val selected=RhVideoClient.get(this).playbackOptions(rhTicket!!,w.lease,current,patch)
     val updated=RhVideoClient.get(this).playbackWindow(rhTicket!!,selected,w.lease)
@@ -318,6 +318,7 @@ class PlaybackActivity:AppCompatActivity() {
     val menu=PopupMenu(this,anchor)
     listOf("适应画面","填满画面（可能裁切）","播放速度","循环播放","用其他播放器打开").forEachIndexed{i,label->menu.menu.add(0,i,i,label)}
     menu.menu.findItem(4).isVisible=source.scheme !in listOf("remote","rhvideo")
+    menu.menu.findItem(3).setCheckable(true).setChecked(player?.repeatMode==Player.REPEAT_MODE_ONE)
     rhWindow?.let{w->val error=RhVideoClient.get(this).favoriteState("video",currentRhId(),w.generation).optString("favoriteError");if(error.isNotEmpty()&&error!="null")menu.menu.add("收藏失败：$error").isEnabled=false}
     rhWindow?.takeIf{it.options.optBoolean("reference")}?.let{w->
       menu.menu.findItem(3).setTitle("循环当前${if(w.options.optBoolean("fullLength",true))"视频"else "片段"}").setCheckable(true).setChecked(w.options.optBoolean("loop"))

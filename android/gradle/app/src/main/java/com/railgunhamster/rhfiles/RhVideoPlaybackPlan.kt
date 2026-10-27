@@ -21,6 +21,7 @@ internal class RhVideoPlaybackPlan(rows:List<JSONObject>,settings:JSONObject) {
     for(key in listOf("reference","fullLength","portraitOnly","loop","closeAtEnd","super","deferPreviewCommit"))if(options.has(key))require(options.get(key) is Boolean){"播放开关无效"}
     if(options.optString("origin")=="frame"){
       require(options.optString("parentKey").let{it.isNotEmpty()&&it.length<=1024}&&options.optString("parentPreview").matches(Regex("[A-Za-z0-9_-]{1,128}"))&&options.optInt("parentTotal") in 1..10000000){"父截图上下文无效"}
+      if(options.has("parentPlayback"))require(options.get("parentPlayback") is String&&options.getString("parentPlayback").matches(Regex("[A-Za-z0-9_-]{1,128}"))){"子播放标识无效"}
     }
     val seen=HashSet<String>()
     val all=source.mapIndexed{index,row->

@@ -42,7 +42,7 @@
   async function currentTarget(){if(state.opened&&state.queue?.id)return state;const value=await native('player.state');paint(value);if(!value.opened||!value.queue?.id)throw Error('视频正在准备，请稍候');return value;}
   const register=(name,params,handler)=>api.register('rhvideo.player.'+name,handler,{params,risk:['state','preloadState'].includes(name)?'read':'ui',description:'Native RHVideo player '+name});
   register('state',object(),async()=>{const value=await native('player.state');paint(value);return value;});
-  register('control',object({command:{type:'string',enum:['pause','resume','seek','rate','volume','rotate']},value:{type:'number'}},['command']),async args=>{const value=await native('player.control',args);paint(value);return value;});
+  register('control',object({command:{type:'string',enum:['pause','resume','seek','rate','volume','rotate']},value:{type:'number'},expectedInput:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['command']),async args=>{const value=await native('player.control',args);paint(value);return value;});
   register('options',object({loop:{type:'boolean'},fullLength:{type:'boolean'},segment:{type:'number',minimum:1,maximum:300},super:{type:'boolean'},portraitOnly:{type:'boolean'}}),async args=>{const current=await currentTarget();await native('player.options',{options:args,expectedId:current.queue.id,expectedRevision:current.queue.revision});const value=await native('player.state');paint(value);return value.queue;});
   register('mute',object(),async()=>{const current=await currentTarget();return control({command:'volume',value:current.volume?0:audibleVolume});});
   register('rotate',object(),async()=>{const current=await currentTarget();return control({command:'rotate',value:((current.rotation||0)+90)%360});});
@@ -80,7 +80,7 @@
   window.__TAURI__.event.listen('rhvideo-native-input',({payload})=>{void api.invoke('rhvideo.player.input',{inputId:payload.inputId,intent:payload.intent}).catch(error);}).catch(error);
   for(const [id,name]of Object.entries({back:'back',toggle:'control',next:'next',previous:'previous',seek:'control',rate:'control',volume:'control',fullscreen:'fullscreen','queue-seek':'seekQueue','full-length':'options','segment-length':'options','portrait-only':'options'}))$(id).dataset.apiAction='rhvideo.player.'+name;
   api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...document.querySelectorAll('button,input,select')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native player UI/public API coverage'});
-  const control=args=>api.invoke('rhvideo.player.control',args).catch(error);
+  const control=args=>api.invoke('rhvideo.player.control',{...(Number.isSafeInteger(state.inputId)?{expectedInput:state.inputId}:{}),...args}).catch(error);
   RHFilesUI.listen($('toggle'),'click',()=>control({command:state.state===4||state.state===6?'resume':'pause'}),undefined,'rhvideo.player.toggle');
   for(const name of ['next','previous'])RHFilesUI.listen($(name),'click',()=>api.invoke('rhvideo.player.'+name).catch(error),undefined,'rhvideo.player.'+name);
   RHFilesUI.listen($('seek'),'input',()=>{dragging=true;$('position').textContent=RHVideoModel.clock(Number($('seek').value)/1000*state.durationMs/1000);},undefined,'rhvideo.player.seek.preview');

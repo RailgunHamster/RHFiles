@@ -28,6 +28,19 @@ class RhVideoClientTest {
   private fun json(value:String)=server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(value))
   private fun awaitState(check:()->Boolean){val end=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);while(!check()){assertTrue("Native operation did not finish",System.nanoTime()<end);Thread.sleep(10)}}
   private fun login(){json("""{"access_token":"test-native-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));assertEquals("/api/v1/auth/login",server.takeRequest().path)}
+  @Test fun singleControlsAreTransientAndIndependentOfReferenceQueueMemories(){
+    login()
+    fun open(ticket:String,reference:Boolean=false):RhVideoClient.Window {
+      val row=JSONObject().put("id","one").put("duration",20).put("segmentStart",0).put("segmentLength",20)
+      val options=JSONObject().put("fullLength",true);if(reference)options.put("reference",true).put("mode","segments").put("loop",false).put("rate",1.0)
+      client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",JSONArray().put(row)).put("options",options));client.playback(JSONObject().put("playlist",ticket).put("id","one"));return client.playbackWindow(ticket,0)
+    }
+    var window=open("single-one");client.playbackOptions("single-one",window.lease,0,JSONObject().put("loop",true).put("rate",1.5));client.closePlayback("single-one",window.lease,0,true)
+    window=open("single-two");assertTrue(window.options.getBoolean("loop"));assertEquals(1.5,window.options.getDouble("rate"),.001);client.closePlayback("single-two",window.lease,0,true)
+    window=open("independent-playlist",true);assertFalse(window.options.getBoolean("loop"));assertEquals(1.0,window.options.getDouble("rate"),.001);client.closePlayback("independent-playlist",window.lease,0,true)
+    window=open("single-again");assertTrue(window.options.getBoolean("loop"));assertEquals(1.5,window.options.getDouble("rate"),.001)
+    client.logout();login();window=open("new-account-session");assertFalse(window.options.getBoolean("loop"));assertEquals(1.0,window.options.getDouble("rate"),.001)
+  }
   @Test fun staleSessionCannotWriteOrRevokeANewerLogin(){
     login();val old=client.state().getLong("generation");login();val active=client.state().getLong("generation");assertNotEquals(old,active)
     for(action in listOf("preferences","operation"))try{
@@ -95,13 +108,14 @@ class RhVideoClientTest {
   }
   @Test fun parentReturnsAreBoundToTheOriginalPreviewAndBackDefersTheCommit(){
     login();val returns=java.util.concurrent.CopyOnWriteArrayList<JSONObject>();client.listen{name,value->if(name=="rhvideo-parent-preview")returns.add(value)}
-    fun open(ticket:String){client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",JSONArray().put(JSONObject().put("id","one"))).put("options",JSONObject().put("fullLength",true).put("origin","frame").put("parentKey","frame:one:2").put("parentPreview","preview-snapshot").put("parentTotal",8).put("deferPreviewCommit",true)));client.playback(JSONObject().put("playlist",ticket).put("id","one"))}
+    fun open(ticket:String){client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",JSONArray().put(JSONObject().put("id","one"))).put("options",JSONObject().put("fullLength",true).put("origin","frame").put("parentKey","frame:one:2").put("parentPreview","preview-snapshot").put("parentPlayback","child-"+ticket).put("parentTotal",8).put("deferPreviewCommit",true)));client.playback(JSONObject().put("playlist",ticket).put("id","one"))}
     open("parent");val w=client.playbackWindow("parent",0);client.request("preview.mark",JSONObject().put("kind","video").put("id","one").put("title","一"))
     client.closePlayback("parent",w.lease,-1,false)
+    assertEquals("child-parent",returns.single().getString("parentPlayback"))
     assertEquals(1,returns.size);assertEquals(-1,returns.single().getInt("direction"));assertFalse(returns.single().getBoolean("close"));assertEquals("preview-snapshot",returns.single().getString("parentPreview"));assertEquals(1,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length());assertEquals(1,server.requestCount)
     try{client.closePlayback("parent",w.lease,0,true);fail("Old closure accepted")}catch(_:IllegalStateException){}
     open("reopened");json("{}");client.closePlayback("reopened",client.playbackWindow("reopened",0).lease,0,true)
-    awaitState{(client.request("preview.result",JSONObject()) as JSONObject).optInt("completed")==1};assertTrue(returns.last().getBoolean("close"));assertEquals(2,server.requestCount)
+    awaitState{(client.request("preview.result",JSONObject()) as JSONObject).optInt("completed")==1};assertTrue(returns.last().getBoolean("close"));assertEquals("child-reopened",returns.last().getString("parentPlayback"));assertEquals(2,server.requestCount)
   }
   @Test fun previewMarksConsumeOnceAndFailuresRemainTerminalWithVisibleResults(){
     login();val events=java.util.concurrent.CopyOnWriteArrayList<JSONObject>();client.listen{name,value->if(name=="rhvideo-preview-result")events.add(value)}

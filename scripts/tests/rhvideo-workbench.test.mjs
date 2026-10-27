@@ -390,12 +390,14 @@ test("Android native events are allowlisted, unsubscribable, and cannot complete
 
 test("parent-video returns require the exact account, source and preview nonce, including unopened parents",async()=>{
   const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf('action("image.returnFromVideo"'),end=source.indexOf('action("image.reveal"',start),calls=[];
-  let handler;const context=vm.createContext({action:(name,schema,callback)=>{handler=callback;},object:v=>v,string:{type:"string"},state:{generation:7},imageSession:{previewId:"new",current:{key:"frame:one:2"}},I:{key:item=>item.key},invoke:async name=>{calls.push(name);return {closed:true};},stepImage:async direction=>({direction}),ctx:{openDialog:id=>calls.push(id)}});
+  let handler;const context=vm.createContext({action:(name,schema,callback)=>{handler=callback;},object:v=>v,string:{type:"string"},state:{generation:7},imageSession:{previewId:"new",playbackId:"child-new",current:{key:"frame:one:2"}},I:{key:item=>item.key},invoke:async name=>{calls.push(name);return {closed:true};},stepImage:async direction=>({direction}),ctx:{openDialog:id=>calls.push(id)}});
   vm.runInContext(source.slice(start,end),context);
-  for(const override of [{generation:6},{parentPreview:"old"},{parentKey:"frame:one:0"}])assert.equal((await handler({generation:7,parentPreview:"new",parentKey:"frame:one:2",close:true,...override})).stale,true);
+  const event={generation:7,parentPreview:"new",parentKey:"frame:one:2",parentPlayback:"child-new"};
+  for(const override of [{generation:6},{parentPreview:"old"},{parentKey:"frame:one:0"},{parentPlayback:"child-old"},{parentPlayback:undefined}])assert.equal((await handler({...event,close:true,...override})).stale,true);
   assert.equal(calls.length,0);
-  await handler({generation:7,parentPreview:"new",parentKey:"frame:one:2",close:true});assert.deepEqual(calls,["image.close"],"Even a parent prepared by an ordinary video card must be cleared on whole close");calls.length=0;
-  assert.equal((await handler({generation:7,parentPreview:"new",parentKey:"frame:one:2",direction:-1})).direction,-1);assert.deepEqual(calls,["image-dialog"]);
+  await handler({...event,close:true});assert.deepEqual(calls,["image.close"],"Even a parent prepared by an ordinary video card must be cleared on whole close");calls.length=0;
+  assert.equal((await handler({...event,direction:1})).stale,true,'an already-consumed return cannot navigate twice');context.imageSession.playbackId='child-new';
+  assert.equal((await handler({...event,direction:-1})).direction,-1);assert.deepEqual(calls,["image-dialog"]);
 });
 
 test("image navigation commits the displayed target atomically and accumulates fast next actions",async()=>{
@@ -415,16 +417,36 @@ test("a screenshot cannot start its old video while switching, closing or changi
   const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf("async function playImageVideo("),end=source.indexOf('action("image.playFrame"',start);
   for(const invalidate of [context=>{context.imageSession.loading=true;},context=>{context.imageSession=null;},context=>{context.epoch++;},context=>{context.imageSession.current={kind:"frame",videoId:"new"};}]){
     let ready;const calls=[],session={previewId:"preview",total:8,current:{id:"frame",kind:"frame",videoId:"old",seconds:10}};
-    const context=vm.createContext({imageSession:session,epoch:1,$:()=>({open:true}),I:{key:item=>item.id},prepareQueue:()=>new Promise(resolve=>{ready=resolve;}),native:async(...args)=>calls.push(args),Error});vm.runInContext(source.slice(start,end),context);
+    const context=vm.createContext({imageSession:session,epoch:1,crypto:{randomUUID:()=>"child-new"},$:()=>({open:true}),I:{key:item=>item.id},prepareQueue:()=>new Promise(resolve=>{ready=resolve;}),native:async(...args)=>calls.push(args),Error});vm.runInContext(source.slice(start,end),context);
     const playing=context.playImageVideo(false,true);invalidate(context);ready("ticket");await assert.rejects(playing,/预览目标已改变/);assert.equal(calls.length,0);
   }
   let prepared=0;const context=vm.createContext({imageSession:{loading:true},epoch:1,prepareQueue:()=>{prepared++;},Error});vm.runInContext(source.slice(start,end),context);await assert.rejects(context.playImageVideo(false,false),/正在切换/);assert.equal(prepared,0);
 });
 
+test("overlapping plays from the same screenshot cannot revive an older child or consume a newer return",async()=>{
+  const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf("async function playImageVideo("),end=source.indexOf('action("image.playFrame"',start),pending=[],calls=[],session={previewId:"preview",playbackId:"previous",total:1,current:{id:"frame",kind:"frame",videoId:"one",seconds:10}};let sequence=0;
+  const context=vm.createContext({imageSession:session,epoch:1,crypto:{randomUUID:()=>"child-"+(++sequence)},$:()=>({open:true}),I:{key:item=>item.id},prepareQueue:(_items,options)=>new Promise((resolve,reject)=>pending.push({resolve,reject,options})),native:async(...args)=>{calls.push(args);return {opened:true};},Error});vm.runInContext(source.slice(start,end),context);
+  const older=context.playImageVideo(false,false),newer=context.playImageVideo(false,true);assert.equal(session.playbackId,'previous');assert.equal(session.playAttempt,'child-2');assert.equal(pending[0].options.parentPlayback,'child-1');assert.equal(pending[1].options.parentPlayback,'child-2');pending[0].resolve('older');await assert.rejects(older,/预览目标已改变/);assert.equal(session.playbackId,'previous');pending[1].resolve('newer');assert.equal((await newer).opened,true);assert.equal(session.playbackId,'child-2');assert.equal(session.playAttempt,undefined);assert.equal(calls.length,1);assert.equal(calls[0][1].playlist,'newer');
+  const failed=context.playImageVideo(false,false);pending[2].reject(Error('prepare failed'));await assert.rejects(failed,/prepare failed/);assert.equal(session.playbackId,'child-2','a rejected new preparation preserves the still-current child return');
+});
+
+test("two failed screenshot preparations leave the current child's return intact",async()=>{
+  const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf("async function playImageVideo("),end=source.indexOf('action("image.playFrame"',start),pending=[],session={previewId:"preview",playbackId:"live-child",total:1,current:{id:"frame",kind:"frame",videoId:"one",seconds:10}};let sequence=0;
+  const context=vm.createContext({imageSession:session,epoch:1,crypto:{randomUUID:()=>"attempt-"+(++sequence)},$:()=>({open:true}),I:{key:item=>item.id},prepareQueue:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),native:async()=>{throw Error("Must not play an unprepared source");},Error});vm.runInContext(source.slice(start,end),context);
+  const first=context.playImageVideo(false,false),second=context.playImageVideo(false,true),firstRejected=assert.rejects(first,/prepare failed/),secondRejected=assert.rejects(second,/prepare failed/);
+  pending[0].reject(Error("prepare failed"));await firstRejected;pending[1].reject(Error("prepare failed"));await secondRejected;
+  assert.equal(session.playbackId,"live-child","Failed preparations must not replace the already-playing child's return capability");
+});
+
 test("the mobile native player's visible menu has a public, input-guarded operation",async()=>{
-  const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf('if (ctx.mobile) {\n        action(\n          "grid.target"'),end=source.indexOf("async function image(media)",start),actions=new Map(),calls=[];
-  assert(start>=0&&end>start);
-  const context=vm.createContext({ctx:{mobile:true},action:(name,schema,handler)=>actions.set(name,{schema,handler}),object:(properties={},required=[])=>({properties,required}),native:async(...args)=>calls.push(args)});vm.runInContext(source.slice(start,end),context);
-  const control=actions.get("player.control");assert(control.schema.properties.command.enum.includes("options"));assert.equal(control.schema.properties.expectedInputId.type,"integer");
-  await control.handler({command:"options",expectedInputId:17});assert.deepEqual(calls,[["player.control",{command:"options",expectedInputId:17}]]);
+  const original=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8");
+  // Windows Git checkouts can use CRLF. The executable contract is identical;
+  // normalize before finding a multiline boundary, and exercise both forms.
+  for(const checkout of [original.replace(/\r?\n/g,"\n"),original.replace(/\r?\n/g,"\r\n")]){
+    const source=checkout.replace(/\r\n/g,"\n"),start=source.indexOf('if (ctx.mobile) {\n        action(\n          "grid.target"'),end=source.indexOf("async function image(media)",start),actions=new Map(),calls=[];
+    assert(start>=0&&end>start);
+    const context=vm.createContext({ctx:{mobile:true},action:(name,schema,handler)=>actions.set(name,{schema,handler}),object:(properties={},required=[])=>({properties,required}),native:async(...args)=>calls.push(args)});vm.runInContext(source.slice(start,end),context);
+    const control=actions.get("player.control");assert(control.schema.properties.command.enum.includes("options"));assert.equal(control.schema.properties.expectedInputId.type,"integer");
+    await control.handler({command:"options",expectedInputId:17});assert.deepEqual(calls,[["player.control",{command:"options",expectedInputId:17}]]);
+  }
 });

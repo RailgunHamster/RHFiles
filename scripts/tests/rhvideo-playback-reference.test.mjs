@@ -62,3 +62,15 @@ test('differential: execute RHVideo actual playback functions against the same i
     assert.deepEqual(P.initial(mode,saved),{portraitOnly:control('pl-portrait').checked,fullLength:control('pl-fullseg').checked,segment:Number(control('playlist-seg-dur').value),loop:context.playlistLoopOn,rate:context.playlistSpeed});
   }
 });
+
+test('differential: actual media controls apply to successive sources and one-item parents still pop',{skip:!fs.existsSync(source)},()=>{
+  const html=fs.readFileSync(source,'utf8'),wanted=new Set(['toggleMediaLoop','cycleMediaSpeed','renderMediaItem','navMedia','popMediaViewer']),functions=[];
+  for(const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){const body=match[1];if(!body.trim())continue;for(const node of parse(body,{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&wanted.has(node.id.name))functions.push(body.slice(node.start,node.end));}
+  assert.equal(functions.length,wanted.size);
+  let video={videoWidth:640,paused:false,addEventListener(){},play:()=>Promise.resolve()},nodes=new Map();
+  const context=vm.createContext({mediaLoopOn:false,mediaSpeed:1,mediaRotated:false,mediaItems:[{type:'video',url:'a',videoId:'a'}],mediaIndex:0,mediaStack:[],gridMedia:[],document:{getElementById:id=>{if(!nodes.has(id))nodes.set(id,{style:{},classList:{remove(){}},querySelector:()=>video});return nodes.get(id);},querySelector:()=>video},mediaStarBtn:()=>'',mediaDeleteBtn:()=>'',updateMediaProgressVisibility(){},updateMediaProgress(){},pageVolumeBind(){},updateMediaRotBtn(){},shouldRotate:()=>false,setTimeout:fn=>fn(),saveMediaState(){},saveBrowsePosition(){}});
+  vm.runInContext(functions.join('\n'),context);vm.runInContext('toggleMediaLoop();cycleMediaSpeed();renderMediaItem()',context);assert.equal(video.loop,true);assert.equal(video.playbackRate,1.5);
+  video={videoWidth:640,paused:false,addEventListener(){},play:()=>Promise.resolve()};context.mediaItems=[{type:'video',url:'b',videoId:'b'}];vm.runInContext('renderMediaItem()',context);assert.equal(video.loop,true);assert.equal(video.playbackRate,1.5);
+  // The arrow is a stack pop even when modulo navigation stays at index zero.
+  context.mediaStack=[{items:[{type:'image',url:'frame',videoId:'b'}],index:0}];vm.runInContext('navMedia(1)',context);assert.equal(context.mediaStack.length,0);assert.equal(context.mediaItems[0].url,'frame');assert.equal(context.mediaIndex,0);
+});

@@ -288,11 +288,18 @@ struct Session {
     videos: tokio::sync::Mutex<Option<VideoCatalog>>,
     favorites: Mutex<HashSet<String>>,
     preview: Mutex<PreviewState>,
+    single_controls: Mutex<SingleControls>,
+}
+#[derive(Clone,Copy)]
+struct SingleControls { looping:bool, rate:f64 }
+impl Default for SingleControls {fn default()->Self{Self{looping:false,rate:1.}}}
+impl SingleControls {
+    fn apply(&self,options:&mut Value){if options.get("loop").is_none(){options["loop"]=json!(self.looping);}if options.get("rate").is_none(){options["rate"]=json!(self.rate);}}
 }
 #[derive(Default)]
 struct PreviewState{pending:HashMap<String,Value>,next:u64,running:bool,result:Value}
 fn emit_parent_preview(app:&AppHandle,generation:u64,options:&Value,direction:i64,close:bool){
-    if options["origin"]=="frame" {let _=app.emit_to("window-rhvideo","rhvideo-parent-preview",json!({"generation":generation,"parentKey":options["parentKey"],"parentPreview":options["parentPreview"],"direction":direction,"close":close}));}
+    if options["origin"]=="frame" {let mut event=json!({"generation":generation,"parentKey":options["parentKey"],"parentPreview":options["parentPreview"],"direction":direction,"close":close});if let Some(id)=options.get("parentPlayback"){event["parentPlayback"]=id.clone();}let _=app.emit_to("window-rhvideo","rhvideo-parent-preview",event);}
 }
 async fn update_favorite(app:&AppHandle,session:&Session,kind:&str,id:&str,enabled:bool)->Result<Value,String>{
     let result=session.request(if enabled{reqwest::Method::PUT}else{reqwest::Method::DELETE},&format!("api/v1/favorites/{kind}/{id}"),&[],None).await?;
@@ -1158,7 +1165,7 @@ pub(crate) async fn client_window(
 }
 fn queue_info() -> Value {
     PLAYBACK.lock().ok().and_then(|slot|slot.as_ref().map(|q|{
-        let parent=q.options["origin"]=="frame"&&q.options["parentTotal"].as_u64().unwrap_or(0)>1;
+        let parent=q.options["origin"]=="frame"&&q.options["parentTotal"].as_u64().unwrap_or(0)>0;
         json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),
             "sourceTotal":q.pool.as_ref().map(|p|p.items.len()),"portraitTotal":q.pool.as_ref().map(|p|p.portraits.iter().filter(|v|**v).count()),
             "hasPrevious":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index>0},
@@ -1186,6 +1193,8 @@ fn reference_segment_length(duration:f64,options:&Value)->f64{
     if duration>0.{((if options["fullLength"]!=false{duration}else{segment.min(duration)})*10.).round().max(1.)/10.}else if options["fullLength"]!=false{86400.}else{segment}
 }
 fn validate_reference_options(options:&Value)->Result<(),String>{
+    if !options.is_object(){return Err("播放设置必须是对象".into());}
+    if options.get("loop").is_some_and(|value|!value.is_boolean())||options.get("rate").is_some_and(|value|!value.as_f64().is_some_and(|rate|rate.is_finite()&&(0.25..=4.).contains(&rate))){return Err("播放循环或速度设置无效".into());}
     if options["reference"]!=true{return Ok(());}
     if options.get("portraitOnly").is_some_and(|value|!value.is_boolean()){return Err("竖屏选项必须是布尔值".into());}
     if !options["mode"].as_str().is_some_and(|s|["segments","sequential","sequential-super"].contains(&s))
@@ -1668,6 +1677,7 @@ pub async fn rhvideo_request(
                 videos: tokio::sync::Mutex::new(None),
                 favorites: Mutex::new(HashSet::new()),
                 preview: Mutex::new(PreviewState::default()),
+                single_controls: Mutex::new(SingleControls::default()),
             });
             session
                 .request(reqwest::Method::GET, "api/v1/auth/me", &[], None)
@@ -2078,7 +2088,7 @@ pub async fn rhvideo_request(
             let segments=prepared.as_ref().map(|q|q.segments.clone()).unwrap_or_default();
             let prefix=prepared.as_ref().map(|q|q.prefix.clone()).unwrap_or_default();
             let pool=prepared.as_ref().filter(|q|q.options["reference"]==true).map(|q|Arc::new(PlaylistPool{items:q.items.clone(),durations:q.durations.clone(),portraits:q.portraits.clone(),segments:q.segments.clone()}));
-            let options = prepared
+            let mut options = prepared
                 .as_ref()
                 .map(|q| q.options.clone())
                 .unwrap_or(json!({}));
@@ -2105,6 +2115,7 @@ pub async fn rhvideo_request(
                 .iter()
                 .position(|(item, _)| item == id)
                 .ok_or("当前视频不在播放队列中")?;
+            if options["reference"]!=true{session.single_controls.lock().map_err(|_|"单视频设置不可用")?.apply(&mut options);}
             let mut playback=Playback{generation:session.generation,revision:PLAYBACK_REVISION.fetch_add(1,Ordering::SeqCst),items,index,durations,segments,prefix,options,start_seconds:seconds,pool};
             if playback.options["portraitOnly"]==true{
                 playback.project_portrait(true,false)?;
@@ -2141,6 +2152,7 @@ pub async fn rhvideo_request(
                 }
             }
             playback.start_seconds=seconds;
+            if playback.options["reference"]!=true{*session.single_controls.lock().map_err(|_|"单视频设置不可用")?=SingleControls{looping:playback.options["loop"]==true,rate:playback.options["rate"].as_f64().unwrap_or(1.)};}
             *PLAYBACK.lock().map_err(|_| "播放队列状态不可用")? = Some(playback);
             let _=app.emit_to("window-rhvideo-player","rhvideo-player-session",json!({"generation":session.generation}));
             if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
@@ -2363,6 +2375,7 @@ pub async fn rhvideo_request(
             }
             #[cfg(not(windows))]let _=reposition;
             save_queue_state(&session)?;
+            if let Ok(slot)=PLAYBACK.lock(){if let Some(q)=slot.as_ref().filter(|q|q.generation==session.generation&&q.options["reference"]!=true){session.single_controls.lock().map_err(|_|"单视频设置不可用")?.looping=q.options["loop"]==true;}}
             #[cfg(windows)] if repeating {crate::rhvideo_player::clear_preload();}
             wake_playback_monitor(&app);
             Ok(queue_info())
@@ -2370,6 +2383,9 @@ pub async fn rhvideo_request(
         "player.state" | "player.control" => {
             #[cfg(windows)]
             {
+                // Publish engine state and queue identity from the same
+                // transaction as play/options/close, not two different inputs.
+                let _play=PLAY_LOCK.lock().await;
                 let mut value = crate::rhvideo_player::command(&action, &args)?;
                 value["queue"] = queue_info();
                 value["automationError"]=PLAY_MONITOR_ERROR.lock().ok().and_then(|e|e.clone()).unwrap_or(Value::Null);
@@ -2380,8 +2396,9 @@ pub async fn rhvideo_request(
                 }
                 if action=="player.control" {wake_playback_monitor(&app);}
                 if action=="player.control"&&args["command"]=="rate" {
-                    if let Ok(mut slot)=PLAYBACK.lock(){if let Some(q)=slot.as_mut(){q.options["rate"]=value["rate"].clone();}}
+                    if let Ok(mut slot)=PLAYBACK.lock(){if let Some(q)=slot.as_mut(){q.options["rate"]=value["rate"].clone();if q.generation==session.generation&&q.options["reference"]!=true{session.single_controls.lock().map_err(|_|"单视频设置不可用")?.rate=value["rate"].as_f64().unwrap_or(1.);}}}
                     save_queue_state(&session)?;
+                    value["queue"]=queue_info();
                 }
                 if action=="player.control"&&args["command"]=="seek" {
                     if let Ok(mut slot)=PLAYBACK.lock(){if let Some(q)=slot.as_mut(){
@@ -2488,6 +2505,7 @@ mod tests {
             videos: tokio::sync::Mutex::new(None),
             favorites: Mutex::new(HashSet::new()),
             preview: Mutex::new(PreviewState::default()),
+            single_controls: Mutex::new(SingleControls::default()),
         };
         let first = session.video_catalog(false).await.unwrap();
         let warm = session.video_catalog(false).await.unwrap();
@@ -2649,6 +2667,12 @@ mod tests {
         let valid=json!({"reference":true,"mode":"segments","signature":"a".repeat(64),"fullLength":false,"loop":false,"segment":3,"rate":1});
         assert!(validate_reference_options(&valid).is_ok());
         for(key,value)in [("mode",json!("unknown")),("signature",json!("short")),("rate",json!(0)),("segment",json!(301)),("loop",json!("false"))]{let mut bad=valid.clone();bad[key]=value;assert!(validate_reference_options(&bad).is_err());}
+    }
+    #[test]
+    fn ordinary_media_control_defaults_do_not_overwrite_explicit_options(){
+        let controls=SingleControls{looping:true,rate:1.5};let mut empty=json!({});controls.apply(&mut empty);assert_eq!(empty,json!({"loop":true,"rate":1.5}));
+        let mut explicit=json!({"loop":false,"rate":2});controls.apply(&mut explicit);assert_eq!(explicit,json!({"loop":false,"rate":2}));
+        for invalid in [json!(null),json!([]),json!({"loop":"true"}),json!({"rate":0}),json!({"rate":true})]{assert!(validate_reference_options(&invalid).is_err());}
     }
     #[test]
     fn empty_ended_http_input_is_a_failure_not_a_repeatable_finished_segment(){

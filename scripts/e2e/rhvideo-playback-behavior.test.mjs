@@ -223,6 +223,49 @@ test('ordinary video clicks start at zero by default, without removing explicit 
   }finally{player?.close();await s.close();}
 });
 
+test('single-video loop and speed survive a different source without leaking into playlist modes or another login',native,async()=>{
+  const s=await setup({videoDuration:20});let player;
+  try{
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(player,'player.options',{loop:true});const changed=await invoke(player,'player.control',{command:'rate',value:1.5});assert.equal(changed.rate,1.5);assert.equal(changed.queue.options.rate,1.5,'the control acknowledgement must describe the updated queue too');
+    await invoke(s.view,'player.close');player.close();player=null;
+    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
+    let state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,true,'closing the media viewer must not reset its own repeat toggle');assert.equal(state.rate,1.5,'a different source inherits the media-viewer speed');
+    await invoke(s.view,'player.close');player.close();player=null;
+    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,false);assert.equal(state.rate,1,'gallery playlist controls are independent');
+    await invoke(s.view,'player.close');player.close();player=null;
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,true);assert.equal(state.rate,1.5);
+    await invoke(s.view,'player.close');player.close();player=null;
+    await invoke(s.view,'connection.logout');await invoke(s.view,'connection.connect',{server:s.fixture.url,username:'preview',password:'fixture-only'});
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,false);assert.equal(state.rate,1,'new login has its own transient media controls');
+  }finally{player?.close();await s.close();}
+});
+
+test('video arrows still pop the parent preview when that parent collection contains exactly one screenshot',native,async()=>{
+  const s=await setup({videoCount:1,galleryVideoCount:1,galleryFrameCount:1});let player;
+  try{
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    const state=await invoke(player,'player.state');assert.equal(state.queue.options.parentTotal,1);assert.equal(state.queue.hasPrevious,true);assert.equal(state.queue.hasNext,true);
+    await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const point=await player.evaluate("(()=>{const button=document.getElementById('next'),r=button.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disabled:button.disabled}})()");assert.equal(point.disabled,false);assert.equal(await player.evaluate(`document.elementFromPoint(${point.x},${point.y})===document.getElementById('next')`),true);
+    await player.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:point.x,y:point.y});await player.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x:point.x,y:point.y});player.close();player=null;
+    const image=await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading?value:null;},'single-item parent returns through the actual arrow');assert.equal(image.index,0);assert.equal(image.total,1);assert.equal(image.current.videoId,'video-0');
+  }finally{player?.close();await s.close();}
+});
+
+test('replaying the same screenshot uses a new child identity and consumes each return only once',native,async()=>{
+  const s=await setup();let player;
+  try{
+    await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:3});await invoke(s.view,'image.playVideo');player=await target(s.app,'rhvideo-player.html');const first=await invoke(player,'player.state');
+    await command(s.app,'player.back');player.close();player=null;await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading;},'first child returns before replay');
+    await invoke(s.view,'image.playVideo');player=await target(s.app,'rhvideo-player.html');const second=await invoke(player,'player.state');assert.equal(second.queue.options.parentPreview,first.queue.options.parentPreview);assert.notEqual(second.queue.options.parentPlayback,first.queue.options.parentPlayback);
+    const event={generation:first.generation,parentKey:first.queue.options.parentKey,parentPreview:first.queue.options.parentPreview,parentPlayback:first.queue.options.parentPlayback,close:true};assert.equal((await invoke(s.view,'image.returnFromVideo',event)).stale,true);
+    const actual=await invoke(player,'player.state');assert.equal(actual.opened,true);assert.equal(actual.inputId,second.inputId,'an old whole-close cannot stop a newer child of the same image');
+    await command(s.app,'player.back');player.close();player=null;await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading&&value.index===3;},'current child return accepted');
+    const duplicate={...event,parentPlayback:second.queue.options.parentPlayback,direction:1,close:false};assert.equal((await invoke(s.view,'image.returnFromVideo',duplicate)).stale,true);assert.equal((await invoke(s.view,'image.state')).index,3);
+  }finally{player?.close();await s.close();}
+});
+
 test('a delayed screenshot switch cannot play, favorite or mark the old target; fast arrows retain their intended order',native,async()=>{
   const s=await setup();let player;
   try{
@@ -373,7 +416,7 @@ test('native-input public APIs bind single and grid intents to exact decoder ins
 });
 
 test('default grid uses the gallery pool and reference layouts, retains per-cell state only while open, and restores the saved group',native,async()=>{
-  const s=await setup({videoCount:8,galleryVideoCount:6,portraitIndices:[0,1,3],videoDuration:18});let grid,other;
+  const s=await setup({videoCount:8,galleryVideoCount:6,portraitIndices:[0,1,3],videoDuration:18});let grid,other,phase='initial group';
   try{
     await invoke(s.view,'sort',{value:'nameAsc'});
     await invoke(s.view,'selection.toggle',{kind:'video',id:'video-7',enabled:true});
@@ -403,40 +446,40 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
     // decoder budget before the one-shot background observation.
     await sleep(first.cells.some(c=>c.renderer==='native-hardware-auto')?12000:2500);
     const backgroundState=await command(s.app,'grid.state'),background=backgroundState.cells;console.log(JSON.stringify({backgroundMonitorTicks:backgroundState.monitorTicks,cells:background.map(v=>({phase:v.restorePhase,frames:v.renderedFrames,state:v.state,position:v.positionMs}))}));assert(background.every(v=>!v.restoringPausedFrame&&v.renderedFrames>0&&v.state===4),'every paused cell must restore without any controls WebView timers or state polling');
-    await grid.send('Emulation.setVirtualTimePolicy',{policy:'advance'});
-    const restored=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&Math.abs(v.positionMs-saved.positionMs)<500?v:null;},'paused cell displays an actual restored frame after paging',25000);
+    phase='resume controls WebView clock';await grid.send('Emulation.setVirtualTimePolicy',{policy:'advance'});
+    phase='read restored paused cell';const restored=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&Math.abs(v.positionMs-saved.positionMs)<500?v:null;},'paused cell displays an actual restored frame after paging',25000);
     assert.equal(restored.volume,37);assert.equal(restored.muted,true);assert.equal(restored.rate,1.5);assert.equal(restored.seekError,null);assert.notEqual(restored.inputId,saved.inputId);
-    const boundary=await invoke(grid,'grid.page',{direction:-1});assert.equal(boundary.cells[0].inputId,restored.inputId,'clamped navigation cannot restart the current group');
+    phase='page after paused restore';const boundary=await invoke(grid,'grid.page',{direction:-1});assert.equal(boundary.cells[0].inputId,restored.inputId,'clamped navigation cannot restart the current group');
     await invoke(grid,'grid.page',{direction:1});
     // Observe close from the owner: the closed WebView cannot deliver its own
     // final CDP response after destroying its transport.
-    await command(s.app,'grid.close');grid.close();grid=null;
+    phase='close first grid';await command(s.app,'grid.close');grid.close();grid=null;
     await until(async()=>!(await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json()).some(t=>new URL(t.url).pathname.endsWith('/rhvideo-grid.html')),'closed grid window retired');
-    await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    phase='reopen saved group';await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     const reopened=await invoke(grid,'grid.state');assert.equal(reopened.groupIndex,1);assert.deepEqual(reopened.cells.map(c=>c.id),groups[1].map(v=>v.id));
-    await invoke(grid,'grid.page',{direction:-1});
+    phase='return to fresh first group';await invoke(grid,'grid.page',{direction:-1});
     const fresh=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.renderedFrames>0?v:null;},'fresh viewer resumes default cell playback',25000);
     assert.equal(fresh.volume,100);assert.equal(fresh.muted,false);assert.equal(fresh.rate,1);assert.notEqual(fresh.state,4);assert(fresh.decoderPositionMs<4800,'close/reopen restores the group, not old per-cell playback state');
-    await invoke(grid,'grid.target',{index:0});await invoke(grid,'grid.favorite',{target:0});assert(s.fixture.favorites.has('video:'+fresh.id));
+    phase='favorite and mark controls';await invoke(grid,'grid.target',{index:0});await invoke(grid,'grid.favorite',{target:0});assert(s.fixture.favorites.has('video:'+fresh.id));
     await invoke(grid,'grid.favorite',{target:0});assert.equal(s.fixture.favorites.size,0);
     await invoke(grid,'grid.input',{target:0,inputId:fresh.inputId,intent:'mark'});assert.equal((await invoke(grid,'grid.state')).cells[0].marked,true);assert.equal(s.fixture.trash.length,0,'marking does not delete a source immediately');
     await invoke(grid,'grid.mark',{target:0});assert.equal((await invoke(grid,'grid.state')).cells[0].marked,false);
     assert.deepEqual((await invoke(grid,'ui.contract')).missing,[]);
-    await invoke(grid,'grid.control',{target:0,command:'pause'});await invoke(grid,'grid.control',{target:0,command:'seek',value:8000});
+    phase='supersede in-flight paused restore';await invoke(grid,'grid.control',{target:0,command:'pause'});await invoke(grid,'grid.control',{target:0,command:'seek',value:8000});
     await invoke(grid,'grid.page',{direction:1});const priming=await invoke(grid,'grid.page',{direction:-1});
     assert.equal(priming.cells[0].restoringPausedFrame,true);assert.equal(priming.cells[0].decoderVolume,0,'priming a paused frame must never emit audio');
     await invoke(grid,'grid.control',{target:0,command:'seek',value:9000});await invoke(grid,'grid.control',{target:0,command:'resume'});
     await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===3&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&v.decoderPositionMs>=8800;},'explicit resume supersedes pending pause restoration but retains the latest seek target',25000);
     const oldSession=await invoke(grid,'grid.state');
     other=await rhvideoFixture({videoFile:path.join(s.app.directory,'behavior.mp4'),videoDuration:18,videoCount:6,galleryVideoCount:6});
-    await invoke(s.view,'connection.connect',{server:other.url,username:'preview',password:'fixture-only'});await invoke(s.view,'grid.open');
+    phase='switch account and reuse window';await invoke(s.view,'connection.connect',{server:other.url,username:'preview',password:'fixture-only'});await invoke(s.view,'grid.open');
     const switched=await until(async()=>{const v=await invoke(grid,'grid.state');return v.generation>oldSession.generation?v:null;},'reused grid adopts the new account session');
     assert.equal(switched.groupIndex,0,'another server must not inherit this server’s saved group');
     await invoke(grid,'grid.favorite',{target:0});assert(other.favorites.has('video:'+switched.cells[0].id));assert.equal(s.fixture.favorites.size,0,'the reused controls must never write to their former server');
-    await invoke(grid,'grid.mark',{target:0});await command(s.app,'grid.close');grid.close();grid=null;
+    phase='close new-account preview';await invoke(grid,'grid.mark',{target:0});await command(s.app,'grid.close');grid.close();grid=null;
     await until(()=>other.trash.length===1,'closing the native grid commits its preview mark');assert.equal(other.trash[0].id,switched.cells[0].id);
     await command(s.app,'grid.close');await sleep(100);assert.equal(other.trash.length,1,'a duplicate/late close cannot submit the mark twice');
-  }catch(error){console.log(JSON.stringify({scenario:'reference default grid',state:await command(s.app,'grid.state').catch(e=>({error:String(e)}))}));throw error;}
+  }catch(error){console.log(JSON.stringify({scenario:'reference default grid',phase,state:await command(s.app,'grid.state').catch(e=>({error:String(e)}))}));throw error;}
   finally{grid?.close();await s.close();await other?.close();}
 });
 
