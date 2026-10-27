@@ -3,12 +3,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {once} from 'node:events';
 import pathModule from 'node:path';
-export async function rhvideoFixture({videoFile=null,failTrashIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeLogin=null,beforeTrash=null,taskState=null,referenceStatic=null,authState=null}={}){
+export async function rhvideoFixture({videoFile=null,videoDuration=null,failTrashIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null}={}){
   const favorites=new Set(),progress=[],requests=[];
   const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
   const folders=['山野与旅途','日常片段','城市观察','慢生活'];
   const names=['沿着山脊，看见清晨','海边的蓝色时刻','森林里的一场小雨','城市醒来之前','周末，留一点空白','穿过落日的列车','湖面与风的形状','路过人间烟火','一个很慢的下午','远山，云与自由','星空下的营地','把日子过成风景'];
-  const videos=Array.from({length:videoCount},(_,i)=>({id:'video-'+i,original_filename:names[i%names.length]+(i>11?' · '+(i+1):'')+'.mp4',duration_seconds:126+i*31,original_resolution:i%3?'1920×1080':'3840×2160',folder_label:folders[i%folders.length],status:'completed'}));
+  const videos=Array.from({length:videoCount},(_,i)=>({id:'video-'+i,original_filename:names[i%names.length]+(i>11?' · '+(i+1):'')+'.mp4',duration_seconds:videoDuration??126+i*31,original_resolution:i%3?'1920×1080':'3840×2160',folder_label:folders[i%folders.length],status:'completed'}));
   const pictures=Array.from({length:pictureCount},(_,i)=>({id:'picture-'+i,original_filename:['山间留白','远行手记','夏日的海','微光森林'][i%4]+'.webp',webp_path:'pictures/'+i+'.svg',folder_label:folders[i%4],original_resolution:'2560×1600',status:'active'}));
   const novels=[{id:'novel-0',title:'沿途的风景',folder_label:'旅行与散文',word_count:216000,chapter_count:chapterCount,status:'active',progress:null},{id:'novel-1',title:'城市以外',folder_label:'小说书架',word_count:128000,chapter_count:chapterCount,status:'active',progress:{chapter_index:1,scroll_ratio:.2,percent:40}}];
   const svg=(index)=>{
@@ -82,8 +82,19 @@ export async function rhvideoFixture({videoFile=null,failTrashIds=[],pictureCoun
     const chapter=path.match(/\/chapters\/(\d+)$/);
     if(chapter){const index=Number(chapter[1]);return send(200,{index,title:'第'+(index+1)+'章 山间来信',text:('清晨的光越过山脊，落在还未醒来的小路上。\n\n我们把行程放慢，让风景自己走近。远处的云在缓缓移动，像是一封尚未写完的信。\n\n').repeat(30),has_prev:index>0,has_next:index<chapterCount-1,total_chapters:chapterCount});}
     if(path.startsWith('/api/v1/screenshots/video/'))return send(200,{screenshots:Array.from({length:8},(_,i)=>({url:'/storage/pictures/'+i+'.svg',time_seconds:i*2}))});
-    if(path.endsWith('/thumbnail')||path.startsWith('/storage/pictures/')){res.writeHead(200,{'content-type':'image/svg+xml'});return res.end(svg(Number(path.match(/\d+/g)?.at(-1))||0));}
+    if(path.endsWith('/thumbnail')||path.startsWith('/storage/pictures/')){
+      const override=await beforeMedia?.({path,range:req.headers.range,image:true});
+      if(override?.status)return send(override.status,{detail:override.detail||'Fixture image failure'});
+      if(override?.body){
+        res.writeHead(200,{'content-type':override.contentType||'application/octet-stream','content-length':override.body.length});
+        if(override.splitAt){res.write(override.body.subarray(0,override.splitAt));await new Promise(resolve=>setTimeout(resolve,20));res.end(override.body.subarray(override.splitAt));}
+        else res.end(override.body);
+        return;
+      }
+      res.writeHead(200,{'content-type':'image/svg+xml'});return res.end(svg(Number(path.match(/\d+/g)?.at(-1))||0));
+    }
     if(path.endsWith('/play')&&videoFile){
+      await beforeMedia?.({path,range:req.headers.range,image:false});
       const size=fs.statSync(videoFile).size,range=req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
       const start=range?Number(range[1]):0,end=range&&range[2]?Math.min(Number(range[2]),size-1):size-1;
       if(start>=size){res.writeHead(416,{'content-range':'bytes */'+size});return res.end();}

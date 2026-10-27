@@ -1142,7 +1142,7 @@
               ["fullLength", "播放全长", "bool"],
               ["segment", "分段秒数", "number"],
               ["portraitOnly", "仅竖屏视频", "bool"],
-              ["loop", "循环队列", "bool"],
+              ["loop", ctx.mobile ? "循环队列" : "循环当前视频 / 片段", "bool"],
               ["super", "超压低带宽版本", "bool"],
               ["rotation", "旋转角度", "number"],
               ["resume", "记住播放断点", "bool"],
@@ -2392,8 +2392,16 @@
         },
         "write",
       );
-      // Full-library queues and images retain the active filtering/order snapshot.
+      // Direct playback means the clicked video, exactly as playVideoLocal in
+      // RHVideo. Selection/portrait/segment rules only belong to explicit queues.
       async function play(media) {
+        const c=config();
+        const ticket=await prepareQueue([media],{fullLength:true,loop:false,super:c.super,rotation:c.rotation});
+        return native("play",{id:media.id,title:media.title,playlist:ticket,super:c.super,resume:c.resume});
+      }
+      // Explicit playlists retain the full filtering/order snapshot, not just
+      // the current card page. Never silently substitute a clicked item's ID.
+      async function startPlaylist() {
         const c = config(),
           result = await query({
             kind: state.kind,
@@ -2405,9 +2413,7 @@
             limit: 1,
           });
         if (!result.queue.length) throw Error("没有符合条件的视频");
-        const current = result.queue.some((v) => v.id === media.id)
-          ? media.id
-          : result.queue[0].id;
+        const current=result.queue[0];
         const ticket = await prepareQueue(result.queue, {
           super: c.super,
           loop: c.loop,
@@ -2416,8 +2422,8 @@
           rotation: c.rotation,
         });
         return native("play", {
-          id: current,
-          title: media.title,
+          id: current.id,
+          title: current.title,
           playlist: ticket,
           super: c.super,
           resume: c.resume,
@@ -2483,11 +2489,7 @@
       action(
         "playlist.start",
         object(),
-        async () => {
-          const result = await query({ mediaType: "video", limit: 1 });
-          if (!result.items.length) throw Error("没有符合条件的视频");
-          return play(result.items[0]);
-        },
+        startPlaylist,
         "external",
       );
       action(

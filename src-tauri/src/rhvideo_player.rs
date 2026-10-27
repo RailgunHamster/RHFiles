@@ -20,6 +20,7 @@ use windows::{
 };
 
 const LABEL: &str = "window-rhvideo-player";
+static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
 static PAGE_VOLUME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
 fn effective_volume(local: i32) -> i32 {
@@ -160,6 +161,7 @@ struct Api {
     player_new: unsafe extern "C" fn(Ptr) -> Ptr,
     player_release: unsafe extern "C" fn(Ptr),
     set_media: unsafe extern "C" fn(Ptr, Ptr),
+    set_audio_output: unsafe extern "C" fn(Ptr, *const c_char) -> i32,
     set_hwnd: unsafe extern "C" fn(Ptr, Ptr),
     play: unsafe extern "C" fn(Ptr) -> i32,
     set_pause: unsafe extern "C" fn(Ptr, i32),
@@ -259,6 +261,7 @@ impl Api {
                 player_new: function!("libvlc_media_player_new"),
                 player_release: function!("libvlc_media_player_release"),
                 set_media: function!("libvlc_media_player_set_media"),
+                set_audio_output: function!("libvlc_audio_output_set"),
                 set_hwnd: function!("libvlc_media_player_set_hwnd"),
                 play: function!("libvlc_media_player_play"),
                 set_pause: function!("libvlc_media_player_set_pause"),
@@ -295,6 +298,8 @@ struct Engine {
     media: usize,
     rotation: i32,
     url: String,
+    open_started: std::time::Instant,
+    first_frame_ms: std::sync::atomic::AtomicU64,
 }
 impl Engine {
     fn new(child: usize) -> Result<Self, String> {
@@ -312,6 +317,12 @@ impl Engine {
             CString::new("--no-media-library").unwrap(),
             CString::new("--no-osd").unwrap(),
             CString::new("--ignore-config").unwrap(),
+            // MMDevice volume is an OS audio-session setting shared by native
+            // players. DirectSound has independent stream/buffer gain, so a
+            // silent preload cannot mute the active video or another grid cell.
+            CString::new("--aout=directsound").unwrap(),
+            CString::new("--directx-volume=0").unwrap(),
+            CString::new("--no-volume-save").unwrap(),
         ];
         let pointers = options.iter().map(|s| s.as_ptr()).collect::<Vec<_>>();
         let instance = unsafe { (api.new)(pointers.len() as i32, pointers.as_ptr()) };
@@ -357,9 +368,13 @@ impl Engine {
             media: 0,
             rotation: 0,
             url: String::new(),
+            open_started: std::time::Instant::now(),
+            first_frame_ms: std::sync::atomic::AtomicU64::new(0),
         })
     }
     fn open(&mut self, url: &str, title: String, seconds: f64) -> Result<(), String> {
+        self.open_started=std::time::Instant::now();
+        self.first_frame_ms.store(0,std::sync::atomic::Ordering::Relaxed);
         self.url = url.to_owned();
         self.clock.lock().map_err(|_| "播放时钟不可用")?.reset(
             (seconds * 1000.) as i64,
@@ -409,6 +424,13 @@ impl Engine {
                 (self.api.media_release)(self.media as Ptr);
             }
             self.media = media as usize;
+            // Initialize the independent audio output before setting gain. Its
+            // deferred initialization otherwise reports the backend's default
+            // 100%, overwriting a volume set before the first audio format.
+            let output=CString::new("directsound").unwrap();
+            if (self.api.set_audio_output)(self.player as Ptr,output.as_ptr())!=0 {
+                return Err("无法初始化独立的音频输出".into());
+            }
             (self.api.set_volume)(self.player as Ptr,effective_volume(self.requested_volume));
             if (self.api.play)(self.player as Ptr) != 0 {
                 return Err("原生播放器无法开始播放".into());
@@ -425,6 +447,14 @@ impl Engine {
             let raw = (self.api.time)(p).max(0);
             let duration = (self.api.length)(p).max(0);
             let state = (self.api.state)(p);
+            // Audio modules may initialize asynchronously after play(). Start
+            // silent and reconcile the existing desired gain once they report
+            // a usable output; never write the OS session/master volume.
+            let desired=effective_volume(self.requested_volume);
+            let actual=(self.api.volume)(p);
+            if matches!(state,3|4)&&actual>=0&&actual!=desired {
+                (self.api.set_volume)(p,desired);
+            }
             let mut stats = MediaStats::default();
             if self.media != 0 {
                 (self.api.media_stats)(self.media as Ptr, &mut stats);
@@ -432,6 +462,8 @@ impl Engine {
             if !self.compatibility {
                 self.frame.observe_native(stats.displayed.max(0) as u64);
             }
+            let rendered=if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64};
+            if rendered>0 {let _=self.first_frame_ms.compare_exchange(0,self.open_started.elapsed().as_millis().max(1) as u64,std::sync::atomic::Ordering::Relaxed,std::sync::atomic::Ordering::Relaxed);}
             let position = {
                 self.clock
                     .lock()
@@ -448,10 +480,20 @@ impl Engine {
                     .unwrap_or(raw)
             };
             json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
-            "state":state,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,
-            "rate":(self.api.rate)(p),"volume":self.requested_volume,"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
+            "state":state,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
+            "rate":(self.api.rate)(p),"volume":self.requested_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
         }
     }
+}
+pub fn maintain_independent_outputs()->bool{
+    let mut active=false;
+    if let Ok(grid)=GRID.try_lock(){
+        for player in &grid.players {let state=player.state();active|=!matches!(state["state"].as_i64(),Some(4|6|7));}
+    }
+    if let Ok(slot)=PRESENTATION.try_lock(){
+        if let Some(player)=slot.as_ref(){let state=player.state();active|=!matches!(state["state"].as_i64(),Some(4|6|7));}
+    }
+    active
 }
 impl Drop for Engine {
     fn drop(&mut self) {
@@ -469,20 +511,18 @@ pub fn stop() {
     crate::rhvideo::flush_playback();
     stop_grid();
     stop_presentation();
+    stop_single();
+}
+pub fn stop_single() {
     clear_preload();
     let engine = PLAYER.lock().ok().and_then(|mut player| player.take());
     if let Some(engine) = engine {
-        let child = engine.child;
-        drop(engine);
-        unsafe {
-            let _ = PostMessageW(
-                Some(HWND(child as Ptr)),
-                WM_CLOSE,
-                Default::default(),
-                Default::default(),
-            );
-        }
+        release_surface(engine);
     }
+}
+pub fn retire_window(lease:u64)->bool{
+    if WINDOW_EPOCH.load(std::sync::atomic::Ordering::SeqCst)!=lease{return false;}
+    stop_single();true
 }
 fn release_surface(engine: Engine) {
     let child = engine.child;
@@ -515,6 +555,27 @@ pub fn preload_state() -> Value {
 pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value, String> {
     clear_preload();
     let ticket = WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
+    // Like RHVideo's onplaying handler, do not compete for upstream bandwidth,
+    // decoder initialization or GPU resources before the active first frame.
+    *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
+        Some(json!({"state":"waiting-current-frame","title":title}));
+    let first_frame_deadline=std::time::Instant::now()+std::time::Duration::from_secs(15);
+    loop {
+        if ticket!=WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(json!({"state":"cancelled"}));
+        }
+        let ready=PLAYER.try_lock().ok().and_then(|p|p.as_ref().map(Engine::state))
+            .is_some_and(|s|s["renderedFrames"].as_u64().unwrap_or(0)>0&&s["state"]==3);
+        if ready {break;}
+        if std::time::Instant::now()>=first_frame_deadline {
+            let value=json!({"state":"skipped","reason":"当前视频尚未显示首帧，不占用其网络和解码资源"});
+            if ticket==WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst) {
+                *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")?=Some(value.clone());
+            }
+            return Ok(value);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     let Ok(_build) = WARM_BUILD.try_lock() else {
         let value = json!({"state":"skipped","reason":"上一项预加载正在释放，不启动并行预加载"});
         *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? = Some(value.clone());
@@ -1062,10 +1123,11 @@ pub async fn play(
         )
         .await?;
         let view = window.clone();
+        let lease=WINDOW_EPOCH.fetch_add(1,std::sync::atomic::Ordering::SeqCst)+1;
         window.on_window_event(move |event| match event {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => resize(&view),
             WindowEvent::Destroyed => {
-                tauri::async_runtime::spawn_blocking(stop);
+                tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(lease));
             }
             _ => {}
         });
@@ -1204,6 +1266,27 @@ pub async fn play(
     .await
     .map_err(|_| "原生播放任务意外结束".to_owned())?
 }
+pub fn repeat_from(milliseconds:i64)->Result<Value,String>{
+    let mut slot=PLAYER.lock().map_err(|_|"播放器状态不可用")?;
+    let player=slot.as_mut().ok_or("播放器未打开")?;
+    unsafe {
+        let p=player.player as Ptr;
+        if milliseconds<0||milliseconds>(player.api.length)(p){return Err("循环起点超出范围".into());}
+        if (player.api.state)(p)==6 {
+            // VLC can ignore a seek sent immediately after restarting an ended
+            // input. Recreate only this already-ended media with an explicit
+            // start-time; normal looping seeks before EOF without reopening.
+            let url=player.url.clone();let title=player.title.clone();let rate=(player.api.rate)(p);
+            player.open(&url,title,milliseconds as f64/1000.)?;
+            if rate>0. {(player.api.set_rate)(p,rate);}
+        }else{
+            (player.api.set_time)(p,milliseconds);
+            (player.api.set_pause)(p,0);
+        }
+    }
+    player.clock.lock().map_err(|_|"播放时钟不可用")?.reset(milliseconds,player.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));
+    Ok(player.state())
+}
 pub fn command(action: &str, args: &Value) -> Result<Value, String> {
     let mut player = PLAYER.lock().map_err(|_| "播放器状态不可用")?;
     let Some(player) = player.as_mut() else {
@@ -1252,7 +1335,13 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                     .lock()
                     .map_err(|_| "播放时钟不可用")?
                     .discontinuity();
-                (player.api.set_pause)(p, 0);
+                if (player.api.state)(p)==6 {
+                    let url=player.url.clone();let title=player.title.clone();let rate=(player.api.rate)(p);
+                    player.open(&url,title,0.)?;
+                    if rate>0. {(player.api.set_rate)(p,rate);}
+                }else{
+                    (player.api.set_pause)(p, 0);
+                }
             }
             "seek" => {
                 let ms = args

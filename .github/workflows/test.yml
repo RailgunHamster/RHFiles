@@ -40,7 +40,22 @@ jobs:
       - name: Stage bundled archive engine for the test application
         shell: pwsh
         run: Copy-Item -LiteralPath src-tauri/thirdparty/7z.exe, src-tauri/thirdparty/7z.dll -Destination target/debug
+      - name: Prepare real native media test dependencies
+        shell: pwsh
+        run: |
+          choco upgrade vlc --version=3.0.23 --allow-downgrade --yes --no-progress --limit-output
+          if ($LASTEXITCODE -notin 0,3010) { throw "VLC test dependency installation failed: $LASTEXITCODE" }
+          $vlc = Get-Item -LiteralPath "$env:ProgramFiles/VideoLAN/VLC/libvlc.dll"
+          if ($vlc.VersionInfo.FileVersion -notlike '3.0.23*') { throw 'Unexpected native test engine version' }
+          ./scripts/prepare-ffmpeg.ps1
+          "FFMPEG=$pwd/src-tauri/thirdparty/ffmpeg.exe" >> $env:GITHUB_ENV
       - name: Real WebView2 file workflows including tab drag and delete confirmations
+        env:
+          RHFILES_NATIVE_PLAYER_QA: '1'
+          # CI has no physical GPU/display: actual decode and bounded GDI frames,
+          # not a hardware-renderer performance claim. Local acceptance also
+          # exercises the ordinary native-hardware-auto output path.
+          RHFILES_VLC_COMPATIBILITY: '1'
         run: npm run test:e2e
       - name: Markdown PDF built-in and external converter workflows
         run: npm run test:pdf

@@ -28,6 +28,8 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 static SESSION: Mutex<Option<Arc<Session>>> = Mutex::new(None);
 static BROKER: tokio::sync::OnceCell<u16> = tokio::sync::OnceCell::const_new();
 static CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+static IMAGE_CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+static MEDIA_WAITERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 static CATALOG_CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 static PLAYBACK: Mutex<Option<Playback>> = Mutex::new(None);
 static PLAY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -37,6 +39,65 @@ static GRID_LOAD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static PREFERENCES_LOCK: Mutex<()> = Mutex::new(());
 static RESUME: Mutex<Option<(Value, Instant)>> = Mutex::new(None);
 static PLAYBACK_REVISION: AtomicU64 = AtomicU64::new(1);
+static PLAY_MONITOR: OnceLock<Result<std::thread::Thread,String>> = OnceLock::new();
+static PLAY_MONITOR_ERROR: Mutex<Option<Value>> = Mutex::new(None);
+
+// Native playback progression cannot depend on a WebView timer: Chromium may
+// throttle an occluded/unfocused controls window. One worker sleeps while idle
+// or paused; reads state only while active, and uses revision-guarded actions.
+#[cfg(windows)]
+fn wake_playback_monitor(app:&AppHandle){
+    let monitor=PLAY_MONITOR.get_or_init(||{
+        let app=app.clone();
+        std::thread::Builder::new().name("rhvideo-playback".into()).spawn(move||{
+            let mut handled=None;
+            loop {
+                let independent_active=crate::rhvideo_player::maintain_independent_outputs();
+                let wait_for_activity=||if independent_active {std::thread::park_timeout(Duration::from_millis(100));}else{std::thread::park();};
+                let snapshot=PLAYBACK.lock().ok().and_then(|slot|slot.as_ref().map(|q|(
+                    q.generation,q.revision,q.items[q.index].0.clone(),(q.start_seconds*1000.) as i64,
+                    if q.options["fullLength"]==false{Some((q.options["segment"].as_f64().unwrap_or(15.)*1000.) as i64)}else{None},
+                    q.options["loop"]==true,q.index+1<q.items.len()
+                )));
+                let Some((generation,revision,id,start,segment,repeating,has_next))=snapshot else {wait_for_activity();continue};
+                if !current().is_ok_and(|s|s.generation==generation){wait_for_activity();continue;}
+                let Ok(state)=crate::rhvideo_player::command("player.state",&json!({})) else {wait_for_activity();continue};
+                if state["opened"]!=true || state["state"]==7 {wait_for_activity();continue;}
+                if state["state"]==4 {std::thread::park_timeout(if independent_active{Duration::from_millis(100)}else{Duration::from_secs(1)});continue;}
+                let duration=state["durationMs"].as_i64().unwrap_or(0);
+                let end=segment.map(|length|(start+length).min(duration)).unwrap_or(duration);
+                let lead=((end-start)/4).clamp(1,200);
+                let position=state["decoderPositionMs"].as_i64().unwrap_or(0);
+                let ending=state["state"]==6 || (end>0&&state["renderedFrames"].as_u64().unwrap_or(0)>0&&position>=end-lead&&(repeating||segment.is_some()));
+                if !ending {
+                    if end>0&&position<end-lead {handled=None;}
+                    std::thread::park_timeout(Duration::from_millis(100));continue;
+                }
+                if handled==Some(revision){if state["state"]==6 {wait_for_activity();}else{std::thread::park_timeout(Duration::from_millis(100));}continue;}
+                let action=if repeating {"player.repeatCurrent"}else if has_next {"player.next"}else if segment.is_some(){"player.finishSegment"}else{wait_for_activity();continue};
+                handled=Some(revision);
+                let result=tauri::async_runtime::block_on(rhvideo_request(app.clone(),action.into(),json!({"expectedId":id,"expectedRevision":revision})));
+                if PLAYBACK.lock().ok().is_some_and(|q|q.as_ref().is_some_and(|q|q.generation==generation&&q.revision==revision)) {
+                    if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=result.err().map(|message|json!({"revision":revision,"message":message}));}
+                }
+            }
+        }).map(|handle|handle.thread().clone()).map_err(|_|"无法启动原生播放控制器".to_string())
+    });
+    match monitor {
+        Ok(thread)=>thread.unpark(),
+        Err(message)=>if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=Some(json!({"message":message}));},
+    }
+}
+#[cfg(not(windows))]
+fn wake_playback_monitor(_app:&AppHandle){}
+#[cfg(windows)]
+pub(crate) async fn player_window_destroyed(lease:u64){
+    let _play=PLAY_LOCK.lock().await;
+    if crate::rhvideo_player::retire_window(lease){
+        flush_playback();
+        if let Ok(mut queue)=PLAYBACK.lock(){*queue=None;}
+    }
+}
 struct PreparedPlaylist {
     ticket: String,
     generation: u64,
@@ -581,6 +642,23 @@ async fn broker() -> Result<u16, String> {
         .await
         .copied()
 }
+fn raster_mime(bytes:&[u8])->Option<&'static str>{
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n"){Some("image/png")}
+    else if bytes.starts_with(b"\xff\xd8\xff"){Some("image/jpeg")}
+    else if bytes.len()>=12&&&bytes[..4]==b"RIFF"&&&bytes[8..12]==b"WEBP"{Some("image/webp")}
+    else if bytes.starts_with(b"GIF87a")||bytes.starts_with(b"GIF89a"){Some("image/gif")}
+    else if bytes.starts_with(b"BM"){Some("image/bmp")}
+    else if bytes.starts_with(b"\0\0\x01\0"){Some("image/x-icon")}
+    else if bytes.starts_with(b"II*\0")||bytes.starts_with(b"MM\0*"){Some("image/tiff")}
+    else if bytes.len()>=12&&&bytes[4..8]==b"ftyp"&&bytes[8..].chunks_exact(4).any(|b|b==b"avif"||b==b"avis"){Some("image/avif")}
+    else{None}
+}
+fn svg_prefix(bytes:&[u8])->bool{
+    // A byte-limited probe may end halfway through a UTF-8 character. Only
+    // inspect the ASCII XML/SVG opening, not UTF-8 validity of the whole prefix.
+    let bytes=bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes).trim_ascii_start();
+    bytes.starts_with(b"<svg")||bytes.starts_with(b"<?xml")
+}
 async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMap) -> Response {
     let failure = |status| {
         Response::builder()
@@ -613,15 +691,34 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
     else {
         return failure(StatusCode::NOT_FOUND);
     };
-    // Slow image/video streams must not starve navigation/search metadata.
+    // Long native video streams must not starve covers (or metadata). A full
+    // local budget is backpressure, not an immediate permanent broken image.
     let semaphore = if path.starts_with("@catalog:") {
         CATALOG_CAPACITY.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(3)))
+    } else if image {
+        IMAGE_CAPACITY.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(12)))
     } else {
         CAPACITY.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(12)))
     };
-    let Ok(permit) = semaphore.clone().try_acquire_owned() else {
-        return failure(StatusCode::SERVICE_UNAVAILABLE);
+    let permit = match semaphore.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            // Bound both the number of queued requests and their wait. This
+            // never retries an upstream request or buffers an entire movie.
+            let Ok(_waiting) = MEDIA_WAITERS
+                .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)))
+                .clone().try_acquire_owned() else {
+                    return failure(StatusCode::TOO_MANY_REQUESTS);
+                };
+            match tokio::time::timeout(Duration::from_secs(10),semaphore.clone().acquire_owned()).await {
+                Ok(Ok(permit)) => permit,
+                _ => return failure(StatusCode::SERVICE_UNAVAILABLE),
+            }
+        }
     };
+    if !current().is_ok_and(|active| active.generation == session.generation) {
+        return failure(StatusCode::UNAUTHORIZED);
+    }
     // Catalogs go straight to the worker over an opaque, session-revoked
     // capability. Do not serialize 50k rows through the UI's IPC/DOM thread.
     if let Some(spec) = path.strip_prefix("@catalog:") {
@@ -688,7 +785,7 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
         }
         request = request.header("range", range);
     }
-    let Ok(response) = request.send().await else {
+    let Ok(mut response) = request.send().await else {
         return failure(StatusCode::BAD_GATEWAY);
     };
     if !response.status().is_success() {
@@ -706,20 +803,40 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
             StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
         );
     }
-    let content_type = response
+    let claimed_type = response
         .headers()
         .get("content-type")
         .and_then(|s| s.to_str().ok())
-        .unwrap_or("application/octet-stream");
-    if image && !content_type.starts_with("image/") {
-        return failure(StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    }
+        .unwrap_or("application/octet-stream").to_owned();
+    // Windows/Python's extension MIME registry can serve valid WebP as an
+    // octet-stream. Inspect only a small prefix and replay every consumed byte;
+    // never download the whole image first or trust an HTML error's MIME label.
+    let mut first_chunks=Vec::new();let mut prefix=Vec::with_capacity(64);
+    let content_type=if image {
+        let sniff_deadline=tokio::time::Instant::now()+Duration::from_secs(5);
+        while prefix.len()<64 {
+            match tokio::time::timeout_at(sniff_deadline,response.chunk()).await {
+                Ok(Ok(Some(chunk)))=>{
+                    if chunk.is_empty(){continue;}
+                    let remaining=64-prefix.len();prefix.extend_from_slice(&chunk[..remaining.min(chunk.len())]);first_chunks.push(chunk);
+                    if raster_mime(&prefix).is_some(){break;}
+                }
+                Ok(Ok(None))=>break,
+                Ok(Err(_))=>return failure(StatusCode::BAD_GATEWAY),
+                Err(_)=>return failure(StatusCode::GATEWAY_TIMEOUT),
+            }
+        }
+        if let Some(detected)=raster_mime(&prefix){detected.to_owned()}
+        else if claimed_type.split(';').next().is_some_and(|t|t.trim().eq_ignore_ascii_case("image/svg+xml"))&&svg_prefix(&prefix){"image/svg+xml".to_owned()}
+        else{return failure(StatusCode::UNSUPPORTED_MEDIA_TYPE)}
+    }else{claimed_type};
     let mut output = Response::builder()
         .status(response.status())
         .header("x-content-type-options", "nosniff")
+        .header("content-type",content_type)
         .header("cache-control", "private, no-store");
+    if image {output=output.header("content-security-policy","sandbox; default-src 'none'; style-src 'unsafe-inline'");}
     for name in [
-        "content-type",
         "content-length",
         "content-range",
         "accept-ranges",
@@ -730,7 +847,7 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
     }
     // The permit lives as long as the stream, with no buffering of the whole movie.
     use futures_util::StreamExt;
-    let stream = response.bytes_stream().map(move |chunk| {
+    let stream = futures_util::stream::iter(first_chunks.into_iter().map(Ok::<_,reqwest::Error>)).chain(response.bytes_stream()).map(move |chunk| {
         let _keep_permit = &permit;
         let live = SESSION.lock().ok().is_some_and(|s| {
             s.as_ref()
@@ -856,7 +973,7 @@ pub(crate) async fn client_window(
     }
 }
 fn queue_info() -> Value {
-    PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),"hasPrevious":q.index>0||q.options["loop"]==true,"hasNext":q.index+1<q.items.len()||q.options["loop"]==true,"options":q.options,"segmentDuration":q.durations.get(q.index),"segmentStartMs":(q.start_seconds*1000.) as i64}))).unwrap_or(Value::Null)
+    PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|json!({"id":q.items[q.index].0,"revision":q.revision,"index":q.index,"total":q.items.len(),"hasPrevious":q.index>0,"hasNext":q.index+1<q.items.len(),"options":q.options,"segmentDuration":q.durations.get(q.index),"segmentStartMs":(q.start_seconds*1000.) as i64}))).unwrap_or(Value::Null)
 }
 fn segment_start(duration: f64, options: &Value) -> f64 {
     if options["fullLength"] != false {
@@ -878,15 +995,10 @@ fn schedule_preload(app: AppHandle, session: Arc<Session>) -> Result<Value, Stri
             .lock()
             .map_err(|_| "播放队列不可用")?
             .as_ref()
-            .filter(|q| q.generation == session.generation)
+            .filter(|q| q.generation == session.generation && q.options["loop"] != true)
             .and_then(|q| {
                 q.items
                     .get(q.index + 1)
-                    .or_else(|| {
-                        (q.options["loop"] == true)
-                            .then(|| q.items.first())
-                            .flatten()
-                    })
                     .map(|(id, title)| (id.clone(), title.clone(), q.options["super"] == true))
             });
         if let Some((id, title, low)) = next {
@@ -980,10 +1092,12 @@ pub async fn rhvideo_request(
             #[cfg(not(windows))] { let _=value;return Err("此平台尚未接入原生音量".into()); }
         }
         "player.close" => {
+            let _play=PLAY_LOCK.lock().await;
             flush_playback();
             *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
-            #[cfg(windows)] { crate::rhvideo_player::stop(); }
+            #[cfg(windows)] { crate::rhvideo_player::stop_single(); }
             if let Some(window)=app.get_webview_window("window-rhvideo-player") { let _=window.close(); }
+            if let Some(window)=app.get_webview_window("window-rhvideo") {let _=window.show();let _=window.set_focus();}
             return Ok(json!({"closed":true}));
         }
         "player.preloadState" => {
@@ -1021,7 +1135,8 @@ pub async fn rhvideo_request(
             )?;
             #[cfg(windows)]
             {
-                return crate::rhvideo_player::presentation_open(app, url, title, seconds).await;
+                let result=crate::rhvideo_player::presentation_open(app.clone(), url, title, seconds).await;
+                wake_playback_monitor(&app);return result;
             }
             #[cfg(not(windows))]
             {
@@ -1051,7 +1166,9 @@ pub async fn rhvideo_request(
             current()?;
             #[cfg(windows)]
             {
-                return crate::rhvideo_player::presentation_command(&action, &args);
+                let result=crate::rhvideo_player::presentation_command(&action, &args);
+                if action=="presentation.control" {wake_playback_monitor(&app);}
+                return result;
             }
             #[cfg(not(windows))]
             {
@@ -1141,7 +1258,8 @@ pub async fn rhvideo_request(
                 .collect::<Result<Vec<_>, String>>()?;
             #[cfg(windows)]
             {
-                let result = crate::rhvideo_player::grid_open(app, sources).await?;
+                let result = crate::rhvideo_player::grid_open(app.clone(), sources).await?;
+                wake_playback_monitor(&app);
                 if current()?.generation != session.generation {
                     return Err("媒体账户已更改".into());
                 }
@@ -1160,6 +1278,7 @@ pub async fn rhvideo_request(
             #[cfg(windows)]
             {
                 let value = crate::rhvideo_player::grid_command(&action, &args)?;
+                if action=="grid.control" {wake_playback_monitor(&app);}
                 if action == "grid.expand" {
                     crate::rhvideo_player::grid_relayout(&app)?;
                 }
@@ -1740,8 +1859,36 @@ pub async fn rhvideo_request(
                 options,
                 start_seconds: seconds,
             });
-            schedule_preload(app, session.clone())?;
+            if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
+            schedule_preload(app.clone(), session.clone())?;
+            wake_playback_monitor(&app);
             Ok(result)
+        }
+        "player.repeatCurrent" | "player.finishSegment" => {
+            let _play=PLAY_LOCK.lock().await;
+            let expected_id=identifier(text(&args,"expectedId",128)?)?;
+            let expected_revision=number(&args,"expectedRevision",0,u64::MAX)?;
+            let (start,segment,enabled)={
+                let queue=PLAYBACK.lock().map_err(|_|"播放队列不可用")?;
+                let queue=queue.as_ref().filter(|q|expected_playback(q,session.generation,Some(expected_id),Some(expected_revision)));
+                queue.map(|q|((q.start_seconds*1000.) as i64,if q.options["fullLength"]==false{q.options["segment"].as_f64().map(|s|(s*1000.) as i64)}else{None},q.options["loop"]==true)).unwrap_or((0,None,false))
+            };
+            #[cfg(windows)] {
+                let mut value=crate::rhvideo_player::command("player.state",&json!({}))?;
+                let duration=value["durationMs"].as_i64().unwrap_or(0);
+                let end=segment.map(|length|(start+length).min(duration)).unwrap_or(duration);
+                let lead=((end-start)/4).clamp(1,200);
+                let valid=if action=="player.repeatCurrent" {enabled}else{!enabled&&segment.is_some()};
+                if !valid || (value["state"]!=6&&(end<=0||value["decoderPositionMs"].as_i64().unwrap_or(0)<end-lead)) {
+                    value["stale"]=json!(true);
+                } else if action=="player.finishSegment" {
+                    value=crate::rhvideo_player::command("player.control",&json!({"command":"pause"}))?;
+                } else {
+                    value=crate::rhvideo_player::repeat_from(start)?;
+                }
+                value["queue"]=queue_info();return Ok(value);
+            }
+            #[cfg(not(windows))] {let _=(start,segment,enabled);return Err("此平台暂未接入原生播放器".into());}
         }
         "player.next" | "player.previous" => {
             let _play = PLAY_LOCK.lock().await;
@@ -1790,11 +1937,8 @@ pub async fn rhvideo_request(
                         .index
                         .checked_add(1)
                         .filter(|v| *v < queue.items.len())
-                        .or_else(|| (queue.options["loop"] == true).then_some(0))
                 } else {
-                    queue.index.checked_sub(1).or_else(|| {
-                        (queue.options["loop"] == true).then_some(queue.items.len() - 1)
-                    })
+                    queue.index.checked_sub(1)
                 }
                 .ok_or("已经到达播放队列边界")?;
                 (
@@ -1827,6 +1971,7 @@ pub async fn rhvideo_request(
                     queue.revision = PLAYBACK_REVISION.fetch_add(1, Ordering::SeqCst);
                 }
             }
+            if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
             schedule_preload(app, session.clone())?;
             result["queue"] = queue_info();
             Ok(result)
@@ -1855,7 +2000,10 @@ pub async fn rhvideo_request(
                 q.options[k] = v.clone();
             }
             q.revision = PLAYBACK_REVISION.fetch_add(1, Ordering::SeqCst);
+            let repeating=q.options["loop"]==true;
             drop(slot);
+            #[cfg(windows)] if repeating {crate::rhvideo_player::clear_preload();}
+            wake_playback_monitor(&app);
             Ok(queue_info())
         }
         "player.state" | "player.control" => {
@@ -1863,6 +2011,8 @@ pub async fn rhvideo_request(
             {
                 let mut value = crate::rhvideo_player::command(&action, &args)?;
                 value["queue"] = queue_info();
+                value["automationError"]=PLAY_MONITOR_ERROR.lock().ok().and_then(|e|e.clone()).unwrap_or(Value::Null);
+                if action=="player.control" {wake_playback_monitor(&app);}
                 if let Some(id) = value["queue"]["id"].as_str() {
                     let pos = value["positionMs"].as_f64().unwrap_or(0.) / 1000.;
                     let duration = value["durationMs"].as_f64().unwrap_or(0.) / 1000.;
@@ -1894,6 +2044,16 @@ pub async fn rhvideo_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_content_detection_does_not_depend_on_a_windows_mime_registry(){
+        assert_eq!(raster_mime(b"RIFF\x10\0\0\0WEBPVP8 "),Some("image/webp"));
+        assert_eq!(raster_mime(b"\x89PNG\r\n\x1a\nrest"),Some("image/png"));
+        assert_eq!(raster_mime(b"\xff\xd8\xff\xe0JPEG"),Some("image/jpeg"));
+        assert_eq!(raster_mime(b"GIF89a"),Some("image/gif"));
+        assert!(svg_prefix(b"\xef\xbb\xbf <svg><title>\xe4\xb8"));
+        assert!(!svg_prefix(b"<html>sign in</html>"));
+        for error in [b"<html>login required</html>".as_slice(),b"{\"detail\":\"not found\"}",b"not an image",b"RIFFshort"]{assert_eq!(raster_mime(error),None);}
+    }
     #[test]
     fn task_image_paths_whitelist_only_native_thumbnail_gets_and_storage() {
         assert_eq!(safe_image_path("/api/v1/videos/video_123/thumbnail").unwrap(),"api/v1/videos/video_123/thumbnail");

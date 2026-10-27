@@ -229,7 +229,7 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
     const connected=await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
     assert.equal(connected.nativePlayback,true,'VLC 3.x must be installed for native acceptance');
-    await invoke(view,'media.open',{id:'video-0',kind:'video'});player=await target(app,'rhvideo-player.html');
+    await invoke(view,'playlist.start');player=await target(app,'rhvideo-player.html');
     let lastState,samples=[];
     const playing=await until(async()=>{
       lastState=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.state')");if(samples.length<10)samples.push(lastState);return lastState.nativeSurface&&lastState.durationMs>0&&lastState.positionMs>500?lastState:null;
@@ -275,7 +275,7 @@ test('native 1080p H.264 and 4K HEVC streams decode actual input frames',{skip:p
       fixture=await rhvideoFixture({videoFile:sample});await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
       await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});const start=performance.now();await invoke(view,'timeline.play',{id:'video-0',seconds:0});player=await target(app,'rhvideo-player.html');
       const decoded=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.videoWidth===entry.width&&s.videoHeight===entry.height?s:null;},entry.name+' real native decoded frames',20000);
-      records.push({codec:entry.name,firstFrameMs:performance.now()-start,renderer:decoded.renderer,width:decoded.videoWidth,height:decoded.videoHeight,displayed:decoded.renderedFrames,decoded:decoded.decodedFrames,lost:decoded.lostFrames});
+      records.push({codec:entry.name,firstFrameMs:performance.now()-start,nativeOpenToFrameMs:decoded.firstFrameMs,renderer:decoded.renderer,width:decoded.videoWidth,height:decoded.videoHeight,displayed:decoded.renderedFrames,decoded:decoded.decodedFrames,lost:decoded.lostFrames});
       await invoke(player,'player.control',{command:'pause'});await invoke(view,'connection.logout');
     }finally{player?.close();view?.close();if(fixture)await fixture.close();app.close();}
   }
@@ -315,6 +315,7 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
   try{
     const server=net.createServer();server.listen(0,'127.0.0.1');await once(server,'listening');const port=server.address().port;await new Promise(r=>server.close(r));
     const directory=path.join(app.directory,'actual-rhvideo');fs.mkdirSync(directory);
+    execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-t','14','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',path.join(directory,'sample.mp4')],{windowsHide:true,timeout:30000});
     const script=fileURLToPath(new URL('../testing/rhvideo-real-server.py',import.meta.url));
     child=spawn('uv',['run','--project',realSource,'--no-sync','python',script,realSource,directory,String(port)],{windowsHide:true,cwd:directory,stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);
@@ -322,8 +323,19 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
     const result=await invoke(view,'connection.connect',{server:'http://127.0.0.1:'+port,username:'preview',password:'fixture-only'});
     assert.equal(result.total,1);assert.equal(result.items[0].title,'真实接口视频.mp4');
+    if(process.env.RHFILES_NATIVE_PLAYER_QA==='1'){
+      await invoke(view,'media.open',{id:'real-video',kind:'video'});const native=await target(app,'rhvideo-player.html');
+      try{await until(async()=>{const s=await invoke(native,'player.state');return s.renderedFrames>0&&s.durationMs>13000;},'actual RHVideo FileResponse streamed into native decoder',25000);}finally{await invoke(view,'player.close');native.close();}
+    }
     await invoke(view,'favorite.toggle',{id:'real-video',kind:'video'});assert.equal((await invoke(view,'category',{kind:'favorite'})).total,1);
     assert.equal((await invoke(view,'category',{kind:'picture'})).items[0].id,'real-picture');
+    await invoke(view,'media.open',{id:'real-picture',kind:'picture'});
+    await until(()=>view.evaluate("document.getElementById('full-image').naturalWidth===1600&&document.getElementById('full-image').naturalHeight===1000"),'actual processed WebP decode').catch(async error=>{
+      const image=await view.evaluate("(()=>{const n=document.getElementById('full-image');return {src:n.src,complete:n.complete,width:n.naturalWidth,height:n.naturalHeight};})()");
+      const response=await fetch(image.src),bytes=Buffer.from(await response.arrayBuffer());
+      const direct=await fetch('http://127.0.0.1:'+port+'/storage/covers/preview.webp'),directBytes=Buffer.from(await direct.arrayBuffer());
+      console.log(JSON.stringify({processedImage:{complete:image.complete,width:image.width,height:image.height,status:response.status,type:response.headers.get('content-type'),bytes:bytes.length,prefix:bytes.subarray(0,16).toString('hex'),directStatus:direct.status,directType:direct.headers.get('content-type'),directBytes:directBytes.length,directPrefix:directBytes.subarray(0,16).toString('hex')}}));throw error;
+    });await invoke(view,'image.close');
     await invoke(view,'category',{kind:'novel'});await invoke(view,'media.open',{id:'real-novel',kind:'novel'});
     await until(()=>view.evaluate("document.getElementById('chapter-text').textContent.includes('真实后端')"),'actual chapter text');
     await until(async()=>{const v=await invoke(view,'state');return v.reader?.loaded;},'actual chapter settled');

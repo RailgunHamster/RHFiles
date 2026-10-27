@@ -11,6 +11,8 @@
 5. 图片支持全列表前后切换、随机、缩放、横/竖向虚拟条带和自动放映；小说支持目录搜索、章节/滚动进度、主题/字号/行距及分章速览。
 6. “服务器”内管理监控目录、处理队列、原片替换、30 天暂存、存储统计及服务状态。删除和替换先预览、再确认，不在本机直接操作服务器文件。
 
+单击视频只打开点击的文件，不受连播的多选、竖屏或分段条件影响。只有显式启动连播才准备完整队列。“循环”指当前视频或片段，不是回绕整个队列。Windows 的结束切换/循环由原生控制器推进，界面只读取状态，不依赖 WebView 定时器；失败在 `player.state.automationError` 中可见，不自动重放失败切换。播放器的返回入口不会停止独立的同屏播放。
+
 当前 Windows 原生播放使用 64 位 VLC 3.x 的 libVLC。自动检测系统安装目录或程序旁的 vlc/ 目录。不启动 vlc.exe，没有 HTML video 或网页播放器兜底。未安装内核时，浏览、图片和阅读仍可使用，播放会明确提示缺失。
 
 普通 Windows 桌面采用原生硬件自动解码/输出，不经过网页像素传输或 1080p 帧缓冲限制。RDP 或显式兼容模式保留有界 GDI 画布。仅在确实收到显示帧之间插值进度；无帧、暂停或缓冲时不凭墙钟伪造进度。4K/HDR、设备间性能比较仍需独立实测，不能仅因启用原生模式就认定性能达标。
@@ -80,9 +82,12 @@ Android 原生播放界面的控件通过 `native.media.state/control`、网格�
     cargo test -p rhfiles-tauri --locked rhvideo::
     cargo test --manifest-path android/src-tauri/Cargo.toml --locked --test webview_startup
     node --test --test-concurrency=1 scripts/e2e/rhvideo.test.mjs
+    node --test --test-concurrency=1 scripts/e2e/rhvideo-media-pressure.test.mjs
 
 Windows E2E 使用隔离配置，不操作已安装的 RHFiles。设置 RHFILES_NATIVE_PLAYER_QA=1 可启用真实 libVLC 播放验收，需要已安装 64 位 VLC 和 FFmpeg。测试生成专用 MP4，检查真实进度、暂停、跳转、前后切换，不以模拟播放代替。
 
 同级有 RHVideo 源码时，还会通过它的 uv 环境启动真实 FastAPI，使用独立临时 SQLite、生成的媒体及测试账号核对 API 契约。测试工作目录不含生产 .env，不连接或写入正式媒体库。
+
+体验回归另外覆盖慢请求并发、错误 MIME 与真实 WebP 解码、点击目标、多播放器关闭隔离、实际独立音量和控制界面虚拟时钟暂停后的连播／循环。`player.state.firstFrameMs` 为原生 open 到首次观测显示帧的毫秒数（未显示时为 0），用于与窗口／接口总耗时区分，不是网络吞吐或跨设备性能保证。
 
 Android 的 RhVideoClientTest/RhVideoContractTest 覆盖账户偏好/断点隔离、固定 API 契约、缓存、路径安全、原生 Range 跳转、21 项播放窗口、9 项同屏分组和退出撤销。scripts/testing/rhvideo-android.mjs 仅接受模拟器，核对已安装 APK 字节哈希，使用临时服务器与生成的视频验收；开机尚未完成、系统/应用错误弹窗、解码失败都不能算通过。它不会连接真机或正式媒体库。
