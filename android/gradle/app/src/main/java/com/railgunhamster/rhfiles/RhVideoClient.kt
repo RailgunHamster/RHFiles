@@ -67,14 +67,39 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private var videoCache:VideoCatalog?=null
   private data class Prepared(val ticket:String,val generation:Long,val entries:MutableList<JSONObject>,val options:JSONObject)
   private var prepared:Prepared?=null
+  private data class GridSession(val queue:Prepared,val plan:RhVideoGridPlan,val lease:String)
+  private var gridSession:GridSession?=null
+  fun checkGrid(ticket:String,lease:String){val s=current();synchronized(lock){check(gridSession?.let{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}==true){"同屏会话已改变，请重新打开"}}}
+  fun gridGroupOffset(ticket:String,lease:String,index:Int):Int {val s=current();return synchronized(lock){val grid=gridSession?.takeIf{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}?:error("同屏会话已改变");require(index in grid.plan.groups.indices){"同屏组号无效"};grid.plan.groups[index].first}}
   data class Window(val items:List<PlaybackQueue.Item>,val offset:Int,val index:Int,val total:Int,val options:JSONObject,val starts:List<Long>,val ends:List<Long>)
+  fun openGrid(ticket:String,count:Int,lowBandwidth:Boolean):JSONObject {
+    val s=current();return synchronized(lock){
+      val source=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("同屏队列已失效")
+      val q=source.copy(entries=source.entries.map{JSONObject(it.toString())}.toMutableList(),options=JSONObject(source.options.toString()))
+      val plan=RhVideoGridPlan(q.entries,count);val candidate=GridSession(q,plan,UUID.randomUUID().toString())
+      val saved=runCatching{JSONArray(prefs.getString(accountKey(s)+"-grid-group","[]"))}.getOrNull()
+      val offset=plan.restore(q.entries,saved)
+      gridSession=candidate
+      gridWindow(ticket,offset,count,lowBandwidth)
+    }
+  }
+  fun rememberGrid(ticket:String,lease:String,offset:Int){
+    val s=current();synchronized(lock){
+      val grid=gridSession?.takeIf{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}?:error("同屏会话已改变")
+      val range=grid.plan.groups[grid.plan.groupAt(offset)]
+      prefs.edit().putString(accountKey(s)+"-grid-group",JSONArray(range.map{grid.queue.entries[it].getString("id")}).toString()).apply()
+    }
+  }
   fun gridWindow(ticket:String,offset:Int,count:Int,lowBandwidth:Boolean):JSONObject {
     val s=current();require(count in 1..9)
     return synchronized(lock){
-      val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation&&it.entries.isNotEmpty()}?:error("网格队列已失效")
-      require(offset>=0&&offset<q.entries.size&&offset%count==0){"网格位置无效"}
-      val items=(offset until (offset+count).coerceAtMost(q.entries.size)).map{n->val entry=q.entries[n];PlaybackQueue.Item(asset(s,"api/v1/videos/${id(entry)}/play"+(if(lowBandwidth)"?super=true"else""),false),entry.optString("title","视频"))}
-      JSONObject().put("items",JSONArray(PlaybackQueue.json(items))).put("offset",offset).put("total",q.entries.size).put("count",count)
+      val active=gridSession?.takeIf{it.queue.ticket==ticket&&it.queue.generation==s.generation}
+      val q=active?.queue?:prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation&&it.entries.isNotEmpty()}?:error("网格队列已失效")
+      val plan=active?.plan?:RhVideoGridPlan(q.entries,count);val group=plan.groupAt(offset);val range=plan.groups[group]
+      val items=JSONArray();for(n in range){val entry=q.entries[n];items.put(JSONObject().put("id",id(entry)).put("name",entry.optString("title","视频")).put("path",asset(s,"api/v1/videos/${id(entry)}/play"+(if(lowBandwidth)"?super=true"else""),false)).put("rect",JSONArray(plan.rects[n])))}
+      JSONObject().put("items",items).put("offset",offset).put("total",q.entries.size).put("count",range.count()).put("groupIndex",group).put("groupTotal",plan.groups.size)
+        .put("previousOffset",if(group>0)plan.groups[group-1].first else JSONObject.NULL).put("nextOffset",if(group+1<plan.groups.size)plan.groups[group+1].first else JSONObject.NULL)
+        .put("generation",s.generation).put("lease",active?.lease?:"")
     }
   }
   fun playbackWindow(ticket:String,index:Int):Window {
@@ -176,7 +201,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   fun validateContext(args:JSONObject,allowDisconnected:Boolean=false){check(contextMatches(args,allowDisconnected)){"媒体账户已改变，操作未执行，请刷新后重新操作"}}
   fun logout(expected:Long?=null):JSONObject {synchronized(lock){
     if(expected!=null&&expected!=generation){check(session==null){"媒体账户已改变，退出操作未执行"};return state()}
-    ++generation;session=null;assets.clear();videoCache=null;prepared=null};return state()}
+    ++generation;session=null;assets.clear();videoCache=null;prepared=null;gridSession=null};return state()}
   private fun asset(s:Session,path:String,image:Boolean):String=synchronized(lock){
     check(live(s)){"连接已结束"}
     val key=assets.entries.firstOrNull{it.value.session.generation==s.generation&&it.value.path==path&&it.value.image==image}?.key?:UUID.randomUUID().toString().also{key->

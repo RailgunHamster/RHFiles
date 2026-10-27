@@ -67,6 +67,21 @@ class RhVideoClientTest {
     try{client.gridWindow("grid-qa",9,4,false);fail("Misaligned grid page accepted")}catch(_:IllegalArgumentException){}
     client.logout();try{client.gridWindow("grid-qa",0,4,false);fail("Old grid accepted")}catch(_:Exception){}
   }
+  @Test fun nativeGridRetainsItsOwnPlanAndRestoresOnlyTheSameOrderedGroup(){
+    login()
+    val rows=JSONArray();for(i in 0..4)rows.put(JSONObject().put("id","video-$i").put("title","视频 $i").put("gridEnd",i==2||i==4).put("gridRect",JSONArray(listOf(0,0,1,1))))
+    fun prepare(ticket:String,items:JSONArray=rows){client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",items).put("options",JSONObject().put("grid",true)))}
+    prepare("first");val first=client.openGrid("first",4,false);assertEquals(3,first.getInt("count"));assertEquals(2,first.getInt("groupTotal"));assertEquals(3,first.getInt("nextOffset"))
+    val next=client.gridWindow("first",3,4,false);assertEquals(2,next.getInt("count"));assertEquals("video-3",next.getJSONArray("items").getJSONObject(0).getString("id"))
+    client.rememberGrid("first",first.getString("lease"),3)
+    prepare("single",JSONArray().put(JSONObject().put("id","other")))
+    assertEquals(2,client.gridWindow("first",3,4,false).getInt("count"));client.checkGrid("first",first.getString("lease"))
+    prepare("second");val second=client.openGrid("second",4,true);assertEquals(3,second.getInt("offset"));assertNotEquals(first.getString("lease"),second.getString("lease"))
+    try{client.checkGrid("first",first.getString("lease"));fail("Old viewer accepted")}catch(_:IllegalStateException){}
+    val reversed=JSONArray();for(i in listOf(0,1,2,4,3))reversed.put(JSONObject(rows.getJSONObject(i).toString()).put("gridEnd",reversed.length()==2||reversed.length()==4))
+    prepare("third",reversed);assertEquals(0,client.openGrid("third",4,false).getInt("offset"))
+    client.logout();try{client.checkGrid("third",second.getString("lease"));fail("Logged-out viewer accepted")}catch(_:IllegalStateException){}
+  }
   @Test fun nativePlaybackHistoryIsAccountScopedAndNearEndDoesNotResumeAtEnd(){
     login();val rows=JSONArray().put(JSONObject().put("id","video-0").put("title","播放记录"))
     client.request("playlist.prepare",JSONObject().put("ticket","history-qa").put("reset",true).put("items",rows).put("options",JSONObject().put("fullLength",true)))

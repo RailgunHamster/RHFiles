@@ -77,6 +77,10 @@ Windows 多视频默认 `gridCount:0`，按参考客户端的画面比例评分�
 
 同一次打开中翻组保留逐项位置、暂停、音量、静音和速度；关闭重开只恢复完全匹配的有序组 ID，逐项控制重置。恢复位置按实际媒体时长限制，不把过期位置无限排队。正常结束循环使用同一个 VLC 输入，失败不循环重试。`grid.favorite {"target":0}` 和 `grid.mark {"target":0}` 操作单格，原生画布 Delete 使用相同标记动作，关闭时只提交一次暂存；不是永久删除。复用窗口时更新会话，旧解码输入和旧窗口销毁事件不能控制替代项。这部分为 Windows 开发实现，不能当作 Android 已同步或发行包已发布。
 
+Android 开发实现也接收共享模型的 `gridRect`／`gridEnd`，默认 `gridCount:0`，不再丢弃布局并按固定数量重排。`grid.seekGroup {"ratio":0.5}` 定位分组；原生 `native.grid.control` 的 `seekGroup`／`controls` 分别对应分组定位和展开调节。状态返回实际子画布的 `surfaceBounds`、`visible`、`canvasWidth/Height`，以及会话 `lease`；`expectedLease` 与已有 `expectedOffset` 可拒绝旧会话／旧组操作。各格默认均有声音，翻组保留状态；普通结束由 Media3 的单项循环处理，读取失败不自动重放。独立网格快照不受后来准备的单视频队列覆盖，关闭重开只恢复相同的有序组。该范围不包含 Android 网格收藏／暂存标记，不能当作该端全功能已完成。
+
+Android 网格状态另有 `inputId`、`playbackState`、`isLoading`、`bufferedPositionMs` 与 `suppressionReason`。`renderedFrames` 读取 Media3 的 [DecoderCounters](https://developer.android.com/reference/androidx/media3/exoplayer/DecoderCounters) 并进行跨线程可见性同步；`submittedFrames`／`frameTimeMs` 是独立的送显元数据回调计数／时间，不冒充实际输出帧数。`rendered` 表示该原生表面已收到首次渲染事件。定位使用 `positionMs`，而不是帧诊断时间。旋转通过显式创建的 ViewModel 保留同次逐项状态，不向系统 Bundle 写入随长时间浏览而不断增大的状态表；关闭后创建新会话仍重置逐项控制。`expectedOffset`／`expectedLease` 只校验位置／会话，不是回到同组之后的输入版本保证；对应的输入版本控制仍待补。
+
 暂停画面恢复通过原生控制器完成：先静音、隐藏过渡帧，建立画面后定位并保持暂停；`restoringPausedFrame` 和 `restoreTargetMs` 分别返回进行状态和目标毫秒数，最多等待 15 秒，失败写入 `seekError` 且不自动重试。控制界面后台／暂停计时器时仍处理已接受的恢复。用户新的 seek 或 resume 可接管旧恢复意图；快速离开时保存请求的暂停状态，而不是把内部预备解码当成用户已开始播放。显示时间与实际输入的循环一起归零，暂停时不使用解码器的预读时间改写显示位置。
 
 视频尚未报告实际时长时，显式 seek 最多等待当前解码输入就绪 15 秒，消费一次。新输入会丢弃旧计划；`pendingSeekMs`、`seekError` 可分别查询等待位置和终态原因，失败不会重新排队。该行为修复了 CI 兼容渲染下切换后立即改片段造成的“跳转越界”。接口／原生解码测试与真实窗口物理鼠标验收分开记录。
