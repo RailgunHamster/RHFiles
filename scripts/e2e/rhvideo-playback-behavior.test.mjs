@@ -358,7 +358,10 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
     const next=await invoke(grid,'grid.page',{direction:1});assert.deepEqual(next.cells.map(c=>c.id),groups[1].map(v=>v.id));
     await grid.send('Emulation.setVirtualTimePolicy',{policy:'pause'});
     await invoke(grid,'grid.page',{direction:-1});
-    await sleep(process.env.RHFILES_EXPECT_RENDERER==='native-hardware-auto'?12000:2500);
+    // The expected-renderer environment variable is an optional assertion, not
+    // the renderer selection. Default native runs also need their real cold
+    // decoder budget before the one-shot background observation.
+    await sleep(first.cells.some(c=>c.renderer==='native-hardware-auto')?12000:2500);
     const backgroundState=await command(s.app,'grid.state'),background=backgroundState.cells;console.log(JSON.stringify({backgroundMonitorTicks:backgroundState.monitorTicks,cells:background.map(v=>({phase:v.restorePhase,frames:v.renderedFrames,state:v.state,position:v.positionMs}))}));assert(background.every(v=>!v.restoringPausedFrame&&v.renderedFrames>0&&v.state===4),'every paused cell must restore without any controls WebView timers or state polling');
     await grid.send('Emulation.setVirtualTimePolicy',{policy:'advance'});
     const restored=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&Math.abs(v.positionMs-saved.positionMs)<500?v:null;},'paused cell displays an actual restored frame after paging',25000);

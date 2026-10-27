@@ -2442,7 +2442,7 @@
       async function startPlaylist(mode="segments") {
         const version=epoch,c=config(),sequential=mode!=="segments",low=mode==="sequential-super",P=RHVideoModel.playback;
         if(sequential&&selected.size)throw Error("请先退出多选，再按当前列表顺序连播");
-        const saved=ctx.mobile?null:await native("playlist.state",{mode});
+        const saved=await native("playlist.state",{mode});
         const initial=P.initial(mode,saved,c),{portraitOnly,fullLength,segment}=initial;
         const result=await query({kind:"video",mediaType:"video",allKeys:true,portraitOnly:false,selected:[],offset:0,limit:1});
         let ids;
@@ -2460,7 +2460,7 @@
         if(visibleIds.length<(portraitOnly?2:sequential?1:2))throw Error(portraitOnly?"竖屏视频不足 2 个，无法连播":sequential?"当前列表没有可播放的视频":"需要至少 2 个视频才能分段连播");
         const signature=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(visibleIds))))).map(b=>b.toString(16).padStart(2,"0")).join("");
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
-        const entries=P.entries(ctx.mobile?visibleIds:ids,all.queue,{segment,fullLength,super:low});
+        const entries=P.entries(ids,all.queue,{segment,fullLength,super:low});
         const index=saved?.signature===signature?Math.max(0,Math.min(visibleIds.length-1,saved.index||0)):0,current=entries.find(e=>e.id===visibleIds[index]);
         const ticket = await prepareQueue(entries, {
           reference:true,mode,signature,closeAtEnd:true,
@@ -2604,6 +2604,8 @@
             native("grid.control", { target: index, command: "target" }),
         );
         action("player.state", object(), () => native("player.state"), "read");
+        action("player.seekQueue",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),({ratio})=>native("player.control",{command:"seekQueue",value:ratio}));
+        action("player.options",object({fullLength:{type:"boolean"},portraitOnly:{type:"boolean"},segment:{type:"number",minimum:1,maximum:300},loop:{type:"boolean"},rate:{type:"number",minimum:.25,maximum:4}}),args=>native("player.control",{command:"playlist.options",options:args}));
         action(
           "player.control",
           object(

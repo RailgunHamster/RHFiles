@@ -69,9 +69,11 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private var prepared:Prepared?=null
   private data class GridSession(val queue:Prepared,val plan:RhVideoGridPlan,val lease:String)
   private var gridSession:GridSession?=null
+  private data class PlaybackSession(val ticket:String,val generation:Long,val plan:RhVideoPlaybackPlan,val lease:String)
+  private var playbackSession:PlaybackSession?=null
   fun checkGrid(ticket:String,lease:String){val s=current();synchronized(lock){check(gridSession?.let{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}==true){"同屏会话已改变，请重新打开"}}}
   fun gridGroupOffset(ticket:String,lease:String,index:Int):Int {val s=current();return synchronized(lock){val grid=gridSession?.takeIf{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}?:error("同屏会话已改变");require(index in grid.plan.groups.indices){"同屏组号无效"};grid.plan.groups[index].first}}
-  data class Window(val items:List<PlaybackQueue.Item>,val offset:Int,val index:Int,val total:Int,val options:JSONObject,val starts:List<Long>,val ends:List<Long>)
+  data class Window(val items:List<PlaybackQueue.Item>,val offset:Int,val index:Int,val total:Int,val options:JSONObject,val starts:List<Long>,val ends:List<Long>,val ids:List<String>,val beforeMs:List<Long>,val totalMs:Long,val lease:String)
   fun openGrid(ticket:String,count:Int,lowBandwidth:Boolean):JSONObject {
     val s=current();return synchronized(lock){
       val source=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("同屏队列已失效")
@@ -102,22 +104,37 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
         .put("generation",s.generation).put("lease",active?.lease?:"")
     }
   }
-  fun playbackWindow(ticket:String,index:Int):Window {
+  private fun playbackPlan(s:Session,ticket:String,lease:String?=null):PlaybackSession {
+    val active=playbackSession?.takeIf{it.ticket==ticket&&it.generation==s.generation}
+    if(lease!=null)check(active?.lease==lease){"播放会话已改变，请重新读取状态"}
+    return active?:run{val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("播放列表已结束");PlaybackSession(ticket,s.generation,RhVideoPlaybackPlan(q.entries,q.options),UUID.randomUUID().toString()).also{playbackSession=it}}
+  }
+  fun playbackWindow(ticket:String,index:Int,lease:String?=null):Window {
     val s=current();return synchronized(lock){
-      val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("播放列表已结束")
-      require(index in q.entries.indices);val offset=(index-10).coerceAtLeast(0);val last=(offset+21).coerceAtMost(q.entries.size);val options=q.options
+      val active=playbackPlan(s,ticket,lease);val plan=active.plan
+      require(index in plan.entries.indices);val offset=(index-10).coerceAtLeast(0);val last=(offset+21).coerceAtMost(plan.entries.size);val options=plan.options
       val starts=mutableListOf<Long>();val ends=mutableListOf<Long>()
-      val items=(offset until last).map{n->val entry=q.entries[n];val duration=entry.optDouble("duration",0.0);val full=options.optBoolean("fullLength",true);val segment=options.optDouble("segment",15.0).coerceIn(.1,3600.0)
-        val start=if(full||duration<=segment+1)0L else (1000*(1+java.util.Random(RhVideoClient::class.java.name.hashCode().toLong()+n).nextDouble()*(duration-segment-1))).toLong();starts.add(start);ends.add(if(full)-1 else start+(segment*1000).toLong())
-        PlaybackQueue.Item(asset(s,"api/v1/videos/${id(entry)}/play"+(if(options.optBoolean("super"))"?super=true"else""),false),entry.optString("title","视频"))}
-      Window(items,offset,index-offset,q.entries.size,JSONObject(options.toString()),starts,ends)
+      val items=(offset until last).map{n->val entry=plan.entries[n];starts.add(entry.startMs);ends.add(if(!plan.reference&&options.optBoolean("fullLength",true))-1 else entry.startMs+entry.lengthMs)
+        PlaybackQueue.Item(asset(s,"api/v1/videos/${entry.id}/play"+(if(options.optBoolean("super"))"?super=true"else""),false),entry.title)}
+      Window(items,offset,index-offset,plan.entries.size,JSONObject(options.toString()),starts,ends,(offset until last).map{plan.entries[it].id},(offset until last).map{plan.beforeMs[it]},plan.totalMs,active.lease)
+    }
+  }
+  fun playbackTarget(ticket:String,lease:String,ratio:Double):RhVideoPlaybackPlan.Target {val s=current();return synchronized(lock){playbackPlan(s,ticket,lease).plan.seek(ratio)}}
+  fun checkPlayback(ticket:String,lease:String){val s=current();synchronized(lock){playbackPlan(s,ticket,lease)}}
+  fun playbackOptions(ticket:String,lease:String,index:Int,patch:JSONObject):Int {
+    val s=current();return synchronized(lock){val active=playbackPlan(s,ticket,lease);val old=active.plan.entries[index].id;val next=active.plan.changed(patch);playbackSession=active.copy(plan=next);next.entries.indexOfFirst{it.id==old}.coerceAtLeast(0)}
+  }
+  fun rememberPlaylist(ticket:String,lease:String,index:Int){
+    val s=current();synchronized(lock){val active=playbackPlan(s,ticket,lease);val plan=active.plan;require(index in plan.entries.indices)
+      val mode=plan.options.optString("mode","segments");require(mode in listOf("segments","sequential","sequential-super"))
+      prefs.edit().putString(accountKey(s)+"-playlist-"+mode,JSONObject(plan.options.toString()).put("signature",plan.signature).put("index",index).toString()).apply()
     }
   }
   private fun current()=synchronized(lock){session?:error("请先连接并登录 RHVideo")}
   fun sessionGeneration():Long=current().generation
   private fun accountKey(s:Session)="account-"+java.security.MessageDigest.getInstance("SHA-256").digest("${s.base}\n${s.username}".toByteArray()).joinToString(""){"%02x".format(it)}
   fun rememberPlayback(ticket:String,index:Int,position:Long,duration:Long){
-    try{val s=current();synchronized(lock){val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:return;val entry=q.entries.getOrNull(index)?:return;val key=accountKey(s)+"-playback";val data=JSONObject(prefs.getString(key,"{}")?:"{}");data.put(id(entry),JSONObject().put("title",entry.optString("title")).put("seconds",if(duration>0&&position>=duration-1000)0 else position.coerceAtLeast(0)/1000.0).put("savedAt",System.currentTimeMillis()));while(data.length()>1000){val oldest=data.keys().asSequence().minByOrNull{data.optJSONObject(it)?.optLong("savedAt")?:0}?:break;data.remove(oldest)};prefs.edit().putString(key,data.toString()).apply()}}
+    try{val s=current();synchronized(lock){val active=playbackSession?.takeIf{it.ticket==ticket&&it.generation==s.generation};val entry=active?.plan?.entries?.getOrNull(index)?.let{JSONObject().put("id",it.id).put("title",it.title)}?:prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?.entries?.getOrNull(index)?:return;val key=accountKey(s)+"-playback";val data=JSONObject(prefs.getString(key,"{}")?:"{}");data.put(id(entry),JSONObject().put("title",entry.optString("title")).put("seconds",if(duration>0&&position>=duration-1000)0 else position.coerceAtLeast(0)/1000.0).put("savedAt",System.currentTimeMillis()));while(data.length()>1000){val oldest=data.keys().asSequence().minByOrNull{data.optJSONObject(it)?.optLong("savedAt")?:0}?:break;data.remove(oldest)};prefs.edit().putString(key,data.toString()).apply()}}
     catch(_:Exception){}
   }
   private fun resume(s:Session,id:String)=JSONObject(prefs.getString(accountKey(s)+"-playback","{}")?:"{}").optJSONObject(id)?.optDouble("seconds",0.0)?.takeIf{it.isFinite()&&it in 0.0..604800.0}?:0.0
@@ -134,7 +151,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
     }
   }
   private fun expire(s:Session,code:Int){
-    if(code==401)synchronized(lock){if(session?.generation==s.generation){++generation;session=null;assets.clear();videoCache=null}}
+    if(code==401)synchronized(lock){if(session?.generation==s.generation){++generation;session=null;assets.clear();videoCache=null;prepared=null;gridSession=null;playbackSession=null}}
   }
   fun state():JSONObject=synchronized(lock){JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:prefs.getString("server","")).put("username",session?.username?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",false).put("generation",generation).put("assetRevision",assetRevision)}
   private fun json(s:Session,path:String,method:String="GET",body:JSONObject?=null):Any {
@@ -183,7 +200,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   fun connect(args:JSONObject,register:Boolean=false):JSONObject {
     val base=base(args.getString("server"));val user=args.getString("username").trim();val password=args.getString("password")
     require(user.isNotEmpty()&&user.length<=256&&password.isNotEmpty()&&password.length<=4096){"请填写有效的用户名和密码"}
-    val ticket=synchronized(lock){++generation;session=null;assets.clear();videoCache=null;generation}
+    val ticket=synchronized(lock){++generation;session=null;assets.clear();videoCache=null;prepared=null;gridSession=null;playbackSession=null;generation}
     if(register){
       val body=JSONObject().put("username",user).put("password",password).put("email",args.getString("email"))
       http.newCall(Request.Builder().url(base.resolve("api/v1/auth/register")!!).post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use{r->check(r.isSuccessful){"注册失败（HTTP ${r.code}）"}}
@@ -201,7 +218,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   fun validateContext(args:JSONObject,allowDisconnected:Boolean=false){check(contextMatches(args,allowDisconnected)){"媒体账户已改变，操作未执行，请刷新后重新操作"}}
   fun logout(expected:Long?=null):JSONObject {synchronized(lock){
     if(expected!=null&&expected!=generation){check(session==null){"媒体账户已改变，退出操作未执行"};return state()}
-    ++generation;session=null;assets.clear();videoCache=null;prepared=null;gridSession=null};return state()}
+    ++generation;session=null;assets.clear();videoCache=null;prepared=null;gridSession=null;playbackSession=null};return state()}
   private fun asset(s:Session,path:String,image:Boolean):String=synchronized(lock){
     check(live(s)){"连接已结束"}
     val key=assets.entries.firstOrNull{it.value.session.generation==s.generation&&it.value.path==path&&it.value.image==image}?.key?:UUID.randomUUID().toString().also{key->
@@ -233,14 +250,16 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       }
       "playlist.prepare"->{
         val ticket=id(JSONObject().put("id",args.getString("ticket")));val values=args.getJSONArray("items");require(values.length() in 1..200)
+        val chunk=(0 until values.length()).map{val v=values.getJSONObject(it);id(v);require(v.optString("title").length<=1024);JSONObject(v.toString())}
         synchronized(lock){
-          if(args.optBoolean("reset"))prepared=Prepared(ticket,s.generation,mutableListOf(),args.getJSONObject("options"))
+          if(args.optBoolean("reset"))prepared=Prepared(ticket,s.generation,mutableListOf(),JSONObject(args.getJSONObject("options").toString()))
           val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("播放列表准备已失效")
           require(q.entries.size+values.length()<=100000)
-          for(i in 0 until values.length()){val v=values.getJSONObject(i);id(v);require(v.optString("title").length<=1024);q.entries.add(JSONObject(v.toString()))}
+          q.entries.addAll(chunk)
           JSONObject().put("count",q.entries.size)
         }
       }
+      "playlist.state"->{val mode=args.optString("mode","segments");require(mode in listOf("segments","sequential","sequential-super"));JSONObject(prefs.getString(accountKey(s)+"-playlist-"+mode,"{}")?:"{}")}
       "operation"->{
         val call=contract.request(args)
         if(args.getString("name")=="index.video")videoCatalog(s,args.optJSONObject("query")?.optBoolean("refresh")?:false) else {
@@ -303,8 +322,10 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   fun playback(args:JSONObject):Playlist {
     val s=current();check(!args.has("_sessionGeneration")||args.getLong("_sessionGeneration")==s.generation){"媒体账户已改变，操作未执行"};val selected=id(args);val queue=args.optJSONArray("queue")?:JSONArray();require(queue.length()<=500){"播放列表过大"}
     if(args.has("playlist")){
-      val ticket=args.getString("playlist");val index=synchronized(lock){val q=prepared?.takeIf{it.ticket==ticket&&it.generation==s.generation}?:error("播放列表准备已失效");q.entries.indexOfFirst{it.optString("id")==selected}}
-      require(index>=0);val window=playbackWindow(ticket,index);return Playlist(window.items,window.items[window.index].path,if(args.optBoolean("resume")&&window.options.optBoolean("fullLength",true))(resume(s,selected)*1000).toLong()else 0,ticket,index)
+      val ticket=args.getString("playlist");val index=synchronized(lock){playbackPlan(s,ticket).plan.entries.indexOfFirst{it.id==selected}}
+      require(index>=0);val window=playbackWindow(ticket,index)
+      val position=if(args.has("seconds")){val seconds=args.getDouble("seconds");require(seconds.isFinite()&&seconds in 0.0..604800.0);(seconds*1000).toLong()}else if(args.optBoolean("resume")&&window.options.optBoolean("fullLength",true))(resume(s,selected)*1000).toLong()else if(window.options.optBoolean("reference"))window.starts[window.index]else 0
+      return Playlist(window.items,window.items[window.index].path,position,ticket,index)
     }
     val entries=linkedMapOf<String,String>()
     for(i in 0 until queue.length()){val item=queue.getJSONObject(i);entries[id(item)]=item.optString("title","视频").take(512)}

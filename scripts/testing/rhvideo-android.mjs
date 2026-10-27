@@ -8,6 +8,7 @@ import {execFileSync,spawn} from 'node:child_process';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
 const gridMode=process.argv[5]==='grid';
+const playlistMode=process.argv[5]==='playlist';
 assert.match(serial,/^emulator-\d+$/);assert(apk&&probe,'Provide release APK and instrumentation APK');
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME||path.join(process.env.LOCALAPPDATA,'Android/Sdk');
 const adb=path.join(sdk,'platform-tools/adb.exe');
@@ -35,11 +36,11 @@ assert.doesNotMatch(run(['shell','dumpsys','window','windows']),/Application Not
 const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-rhvideo-android-'));
 const video=path.join(temporary,'sample.mp4');
 const make=(file,size)=>execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size='+size+':rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-t','20','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
-make(video,'640x360');const portrait=path.join(temporary,'portrait.mp4');if(gridMode)make(portrait,'360x640');
-const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(gridMode?{galleryVideoCount:6,videoDuration:20,videoFiles:Object.fromEntries([0,1,3].map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:52},(_,i)=>[0,1,3].includes(i)?'360x640':'640x360')}:{})}),port=new URL(fixture.url).port;
+make(video,'640x360');const portrait=path.join(temporary,'portrait.mp4');if(gridMode||playlistMode)make(portrait,'360x640');
+const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(gridMode||playlistMode?{galleryVideoCount:6,videoDuration:20,videoFiles:Object.fromEntries([0,1,3].map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:52},(_,i)=>[0,1,3].includes(i)?'360x640':'640x360')}:{})}),port=new URL(fixture.url).port;
 const failedFixture=gridMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
-const artifact=path.resolve('test-artifacts/rhvideo-android'+(gridMode?'-grid':'')+'-release');fs.mkdirSync(artifact,{recursive:true});
+const artifact=path.resolve('test-artifacts/rhvideo-android'+(gridMode?'-grid':playlistMode?'-playlist':'')+'-release');fs.mkdirSync(artifact,{recursive:true});
 function installExact(packageId,file){
   const expectedHash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const installedHash=()=>{const installed=run(['shell','pm','path',packageId]).trim().split(/\r?\n/);assert(installed.length===1&&/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(installed[0]),'Expected one installed universal APK for '+packageId);return run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64);};
@@ -65,16 +66,16 @@ try{
   run(['shell','svc','power','stayon','true']);run(['shell','input','keyevent','224']);run(['shell','wm','dismiss-keyguard']);
   run(['reverse','tcp:'+port,'tcp:'+port]);run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
   if(failedPort)run(['reverse','tcp:'+failedPort,'tcp:'+failedPort]);
-  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...(gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:[]),'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...(gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:[]),'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='';child.stdout.on('data',data=>{output+=data;process.stdout.write(data);});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   const timer=setTimeout(()=>child.kill(),360000);
   try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0?resolve():reject(Error('Instrumentation exit '+code)));});}finally{clearTimeout(timer);}
   fs.writeFileSync(path.join(artifact,'instrumentation.log'),output);
-  assert.match(output,gridMode?/PASS: reference grid/:/PASS: native HTTP/);assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED/);
+  assert.match(output,gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:/PASS: native HTTP/);assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED/);
   assert.doesNotMatch(run(['shell','dumpsys','window','windows']),/Application Not Responding:|Application Error:/,'A system/app dialog invalidates visual acceptance');
-  for(const name of gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
+  for(const name of gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
   assert(fixture.requests.some(r=>r.path.endsWith('/play')&&r.authorization==='Bearer fixture-bearer-do-not-persist'));
-  if(!gridMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
+  if(!gridMode&&!playlistMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
   if(failedFixture){const reads=failedFixture.requests.filter(r=>r.path.endsWith('/play')).length;assert(reads>=2&&reads<=4,'Failed grid inputs must have bounded reads');await new Promise(resolve=>setTimeout(resolve,2000));assert.equal(failedFixture.requests.filter(r=>r.path.endsWith('/play')).length,reads,'No hidden traffic loop after terminal grid errors');}
   console.log('PASS: release APK end-to-end, artifacts '+artifact);
 }finally{try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();fs.rmSync(temporary,{recursive:true,force:true});}

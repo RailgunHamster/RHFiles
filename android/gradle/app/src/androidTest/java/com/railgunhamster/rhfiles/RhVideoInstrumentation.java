@@ -60,6 +60,64 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{try{grid=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=grid.getJSONArray("cells");failed=cells.length()==2;for(int i=0;i<cells.length();i++)failed&=!cells.getJSONObject(i).isNull("error")&&!cells.getJSONObject(i).optBoolean("rendered");if(failed)break;}catch(Exception ignored){}Thread.sleep(200);}while(System.currentTimeMillis()<end);
     require(failed,"Both HTTP failures must settle visibly without a synthetic success frame: "+grid);Thread.sleep(2000);screenshot("rhvideo-grid-error-qa.png");action("grid.close",new JSONObject());library=waitView("RhVideoActivity");
   }
+  private JSONObject waitPlayer(String id,boolean playing)throws Exception{
+    long end=System.currentTimeMillis()+30000;JSONObject state=null;
+    do{try{state=(JSONObject)action("player.state",new JSONObject());if((id==null||id.equals(state.optString("id")))&&state.optBoolean("rendered")&&state.optInt("playbackState")==3&&state.optLong("renderedFrames")>0&&state.optBoolean("playing")==playing)return state;}catch(Exception ignored){}Thread.sleep(150);}while(System.currentTimeMillis()<end);
+    throw new Exception("Native reference player did not settle: "+state);
+  }
+  private void touchPlayerButton(String resource)throws Exception{
+    action("player.control",new JSONObject().put("command","controls.show"));
+    int[] center={-1,-1};runOnMainSync(()->{int id=current.getResources().getIdentifier(resource,"id",getTargetContext().getPackageName());View button=current.findViewById(id);if(button!=null&&button.isShown()&&button.isEnabled()&&button.getWidth()>0){button.getLocationOnScreen(center);center[0]+=button.getWidth()/2;center[1]+=button.getHeight()/2;}});
+    require(center[0]>=0&&center[1]>=0,"Native player button must be visible and enabled: "+resource);
+    long now=SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,center[0],center[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,center[0],center[1],0);
+    try{sendPointerSync(down);sendPointerSync(up);}finally{down.recycle();up.recycle();}
+  }
+  private void clickPlayerText(String... labels)throws Exception{
+    long end=System.currentTimeMillis()+8000;
+    do{android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();if(root!=null&&getTargetContext().getPackageName().equals(String.valueOf(root.getPackageName())))for(String label:labels)for(android.view.accessibility.AccessibilityNodeInfo node:root.findAccessibilityNodeInfosByText(label)){
+      if(!node.isVisibleToUser())continue;android.view.accessibility.AccessibilityNodeInfo target=node;for(int level=0;level<5&&target!=null;level++,target=target.getParent())if(target.isClickable()&&target.isEnabled()&&target.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))return;
+    }Thread.sleep(150);}while(System.currentTimeMillis()<end);throw new Exception("Native controller menu item not available: "+java.util.Arrays.toString(labels));
+  }
+  private void checkReferencePlaylist()throws Exception{
+    action("preferences.set",new JSONObject().put("key","segment").put("value",15));
+    action("preferences.set",new JSONObject().put("key","fullLength").put("value",false));
+    action("gallery.open",new JSONObject());action("playlist.start",new JSONObject());JSONObject state=waitPlayer("video-0",true);
+    require(state.getInt("count")==6&&state.getJSONObject("options").getString("mode").equals("segments"),"Segment queue is the full gallery snapshot, not a card page");
+    require(state.getLong("segmentEndMs")-state.getLong("segmentStartMs")==15000&&state.getLong("durationMs")>=19500,"Whole-file seekbar must not be replaced by clip-relative time: "+state);
+    action("player.control",new JSONObject().put("command","pause"));action("player.control",new JSONObject().put("command","seek").put("value",500));state=waitPlayer("video-0",false);
+    require(state.getLong("positionMs")>=400&&state.getLong("positionMs")<1000,"Can seek before the planned segment, in whole-file milliseconds");
+    long input=state.getLong("inputId");action("player.options",new JSONObject().put("rate",1.5).put("loop",true));state=(JSONObject)action("player.state",new JSONObject());
+    require(state.getLong("inputId")==input&&!state.getBoolean("playWhenReady"),"Rate/repeat must not rebuild or resume a paused decoder");
+    action("player.control",new JSONObject().put("command","seek").put("value",state.getLong("segmentEndMs")-1500));waitPlayer("video-0",false);action("player.control",new JSONObject().put("command","resume"));
+    // The one-shot observation includes the emulator's cold seek/decode, not
+    // just delivery of the endpoint message. No intermediate status calls or
+    // WebView timers can drive the transition during this interval.
+    runOnMainSync(()->library.pauseTimers());try{Thread.sleep(8000);}finally{runOnMainSync(()->library.resumeTimers());}
+    state=(JSONObject)action("player.state",new JSONObject());require(state.getString("id").equals("video-0")&&state.getLong("inputId")==input&&state.getBoolean("playing")&&state.getLong("positionMs")<state.getLong("segmentStartMs")+14000,"Native segment endpoint must loop without web timers or status polling: "+state);
+    action("player.previous",new JSONObject());state=waitPlayer("video-5",true);require(state.getInt("index")==5,"Previous wraps around the full queue");
+    require(Boolean.TRUE.equals(expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke('native.media.control',{command:'volume',value:13,expectedInputId:"+input+"}).then(()=>false,()=>true)")),"Late controls cannot mutate a replacement decoder even if the same video returns later");
+    action("player.next",new JSONObject());waitPlayer("video-0",true);
+    action("player.control",new JSONObject().put("command","pause"));action("player.options",new JSONObject().put("portraitOnly",true));state=waitPlayer("video-0",false);require(state.getInt("count")==3&&state.getJSONObject("options").getBoolean("fullLength"),"Portrait projection keeps only the three actual portrait sources");
+    action("player.close",new JSONObject());library=waitView("RhVideoActivity");action("playlist.start",new JSONObject());state=waitPlayer("video-0",true);require(state.getInt("count")==3,"Reopen preserves the portrait mode, without discarding the original source pool");action("player.control",new JSONObject().put("command","pause"));
+    action("player.options",new JSONObject().put("portraitOnly",false));state=waitPlayer("video-0",false);require(state.getInt("count")==6&&!state.getJSONObject("options").getBoolean("fullLength"),"Unfilter restores the original full gallery pool without resuming");
+    action("player.seekQueue",new JSONObject().put("ratio",.5));state=waitPlayer("video-3",false);require(state.getInt("index")==3,"Total progress seeks over all weighted segment lengths");
+    String lease=state.getString("lease");expression(library,"RHVideoNative.request('playlist.prepare',{ticket:'other-view-qa',reset:true,items:[{id:'video-51',title:'other viewer'}],options:{fullLength:true}})");
+    action("player.next",new JSONObject());state=waitPlayer("video-4",true);require(state.getString("lease").equals(lease),"Preparing another viewer cannot destroy an active native queue");
+    action("player.control",new JSONObject().put("command","pause"));action("player.control",new JSONObject().put("command","controls.show"));
+    // Exercise the actual controller menu, not an SDK method R8 may inline
+    // away from the minified APK's public interface used by a separate probe.
+    touchPlayerButton("exo_settings");clickPlayerText("Speed","播放速度");clickPlayerText("1.25");require(Math.abs(((JSONObject)action("player.state",new JSONObject())).getJSONObject("options").getDouble("rate")-1.25)<.01,"Native controller speed settings must use the same persistent mode options");
+    screenshot("rhvideo-playlist-qa.png");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+    action("playlist.start",new JSONObject());state=waitPlayer("video-4",true);require(Math.abs(state.getDouble("rate")-1.25)<.01&&state.getBoolean("repeat"),"Reopen restores the same ordered queue's mode controls and cursor");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+    action("playlist.sequential",new JSONObject());state=waitPlayer(null,true);require(state.getInt("count")==52&&state.getJSONObject("options").getBoolean("fullLength")&&!state.getJSONObject("options").getBoolean("portraitOnly"),"Sequential queue is independent and uses the full current list");
+    action("player.control",new JSONObject().put("command","pause"));action("player.seekQueue",new JSONObject().put("ratio",1));state=waitPlayer(null,false);require(state.getInt("index")==51&&state.getLong("positionMs")<1000,"Queue endpoint selects the last item's start, like reference");
+    touchPlayerButton("exo_next");state=waitPlayer(null,true);require(state.getInt("index")==0,"Actual native Next button wraps globally beyond the 21-item decoder window");
+    touchPlayerButton("exo_prev");state=waitPlayer(null,true);require(state.getInt("index")==51,"Actual native Previous button wraps globally beyond the decoder window");
+    action("player.control",new JSONObject().put("command","seek").put("value",19500));library=waitView("RhVideoActivity");
+    // Screenshot frame playback uses an explicit source time, not the queue's
+    // default segment position; no fabricated HTML media element is involved.
+    action("gallery.inspect",new JSONObject().put("index",1));JSONObject frame=((JSONObject)action("image.state",new JSONObject())).getJSONObject("current");long frameMs=Math.round(frame.getDouble("seconds")*1000);require(frameMs>0&&frameMs<17000,"Fixture must exercise a non-zero screenshot timestamp");action("image.playFrame",new JSONObject());state=waitPlayer(null,true);require(state.getLong("durationMs")>=19500&&state.getLong("positionMs")>=frameMs-200&&state.getLong("positionMs")<frameMs+3000,"Frame entry uses the submitted source time in native whole-file media: "+state);action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+  }
   private WebView find(View v){if(v instanceof WebView)return (WebView)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){WebView w=find(((ViewGroup)v).getChildAt(i));if(w!=null)return w;}return null;}
   private String eval(WebView web,String script)throws Exception{
     CountDownLatch latch=new CountDownLatch(1);String[] result={"null"};runOnMainSync(()->web.evaluateJavascript(script,r->{result[0]=r;latch.countDown();}));
@@ -72,7 +130,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       if(result.has("error"))throw new Exception(result.getString("error"));if(result.has("value"))return result.get("value");Thread.sleep(100);
     }while(System.currentTimeMillis()<end);throw new Exception("Action timed out");
   }
-  private Object action(String name,JSONObject p)throws Exception{Bundle step=new Bundle();step.putString("stream","STEP: rhvideo."+name);sendStatus(0,step);return expression(library,"RHFilesAPI.invoke("+JSONObject.quote("rhvideo."+name)+","+p+")");}
+  private Object action(String name,JSONObject p)throws Exception{Bundle step=new Bundle();step.putString("stream","STEP: rhvideo."+name+"\n");sendStatus(0,step);return expression(library,"RHFilesAPI.invoke("+JSONObject.quote("rhvideo."+name)+","+p+")");}
   private void step(String name){Bundle value=new Bundle();value.putString("stream","STEP: "+name+"\n");sendStatus(0,value);}
   private Object nativeCall(String name,JSONObject p)throws Exception{step("native."+name);return expression(main,"api.native("+JSONObject.quote(name)+","+p+")");}
   private Object mainAction(String name,JSONObject p)throws Exception{step("files."+name);return expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke("+JSONObject.quote(name)+","+p+")");}
@@ -155,11 +213,12 @@ public class RhVideoInstrumentation extends Instrumentation {
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
-      if(!"grid".equals(args.getString("mode")))checkFileTaskAndSort();
+      if(!"grid".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
       JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==52,"Video catalog count");
       if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, audible cells, native frames, pause/seek/mute/rate restoration, independent queue, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}
+      if("playlist".equals(args.getString("mode"))){checkReferencePlaylist();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference playlist segments, whole-file seek, native segment loop, global navigation, immutable pool, portrait projection, mode memory and native EOF close");finish(Activity.RESULT_OK,result);return;}
       require(Boolean.TRUE.equals(expression(library,"RHVideoNative.request('folders',{kind:'video'}).then(Array.isArray)")),"Folder API must return a real array");
       if(Build.VERSION.SDK_INT>=30){int[] location={0,0},top={0};runOnMainSync(()->{library.getLocationOnScreen(location);top[0]=library.getRootWindowInsets().getInsets(WindowInsets.Type.statusBars()|WindowInsets.Type.displayCutout()).top;});require(location[1]>=top[0],"Status bar must not cover the library header");}
       require(eval(library,"(()=>{const side=document.querySelector('.library-sidebar').getBoundingClientRect(),main=document.querySelector('.library-main').getBoundingClientRect();return main.x<20&&side.bottom<=main.top+1&&document.documentElement.scrollWidth<=innerWidth+1;})()").equals("true"),"Phone layout must stack navigation above full-width content");

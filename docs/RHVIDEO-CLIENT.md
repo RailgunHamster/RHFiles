@@ -97,6 +97,12 @@ Android 网格状态另有 `inputId`、`playbackState`、`isLoading`、`buffered
 
 Android 原生播放界面的控件通过 `native.media.state/control`、网格通过 `native.grid.state/control` 调用。`track.select`、`track.auto`、`subtitles` 分别选择实际轨道、恢复自动选择和控制字幕；状态返回实际格式、语言、支持及选中信息。单视频可传 `expectedPath`、网格可传 `expectedOffset`，拒绝迟到的旧目标控制。系统返回、旋转属于生命周期行为，不伪装成重复的远程写操作。
 
+Android 连播开发实现不再重算前端提交的 `segmentStart`／`segmentLength`，也不再用 Media3 裁剪时间轴冒充整文件进度。[原生时间消息](https://developer.android.com/reference/androidx/media3/exoplayer/PlayerMessage)处理片段结束，循环当前片段；手动前后切换在完整队列回绕，自动末项结束关闭连播。附近最多 21 项只是解码窗口，不是播放队列的范围。活动队列有独立快照和 `lease`，后来准备网格或单视频队列不使它失效。
+
+`rhvideo.player.seekQueue {"ratio":0.5}` 定位加权的整个队列；`ratio:1` 与参考客户端一致，选中末项起点。`rhvideo.player.options` 接收 `fullLength`、`segment`（1–300 秒）、`portraitOnly`、`loop`、`rate`，与原生选项菜单使用同一实现。仅竖屏保留完整原池，取消后恢复全部项目，不足两项时拒绝且不改变播放。分段／顺序／超压顺序各自记忆设置、队列签名和游标，顺序模式的新启动仍恢复全长及完整池。
+
+本机 `native.media.control` 对应 `seekQueue`／`playlist.options`，可带 `expectedInputId` 拒绝迟到的输入。状态中的 `positionMs`／`durationMs` 是整视频时间；`segmentStartMs`／`segmentEndMs` 是片段边界，`queuePositionMs`／`queueDurationMs` 是整队列时间。`id`、`lease`、`inputId` 与实际输出帧计数用于核对原生媒体，不把创建了播放器当作已出现画面。该范围尚不含 Android 完整父预览返回栈、收藏／暂存标记，也不是发行包已通过全部验收的声明。
+
 清单由可撤销的只读临时资源直接交给 Worker，避免全量 JSON 在界面桥接中来回复制；缩略图卡片与已解析媒体都有容量/字节上限。显式刷新、失效授权和账号切换会清空相关缓存。
 
 ## 验证

@@ -60,6 +60,40 @@ class RhVideoClientTest {
     assertEquals(0,(client.request("preferences",JSONObject()) as JSONObject).length())
     val stored=RuntimeEnvironment.getApplication().getSharedPreferences("rhvideo-client-v1",0).all.toString();assertFalse(stored.contains("test-native-token"));assertFalse(stored.contains("different-account-token"));assertFalse(stored.contains("other-password"))
   }
+  @Test fun preparedReferenceSegmentsAreNotRandomizedOrExtendedByTheNativeWindow(){
+    login()
+    val rows=JSONArray().put(JSONObject().put("id","planned").put("duration",20).put("segmentStart",7.2).put("segmentLength",3))
+      .put(JSONObject().put("id","short").put("duration",1.5).put("segmentStart",0).put("segmentLength",1.5))
+      .put(JSONObject().put("id","unknown").put("duration",0).put("segmentStart",0).put("segmentLength",86400))
+    client.request("playlist.prepare",JSONObject().put("ticket","exact-plan").put("reset",true).put("items",rows).put("options",JSONObject().put("reference",true).put("fullLength",false).put("segment",3)))
+    client.playback(JSONObject().put("playlist","exact-plan").put("id","planned"))
+    val w=client.playbackWindow("exact-plan",0)
+    assertEquals(listOf(7200L,0L,0L),w.starts)
+    assertEquals(listOf(10200L,1500L,86400000L),w.ends)
+    assertEquals(7200L,client.playback(JSONObject().put("playlist","exact-plan").put("id","planned")).position)
+  }
+  @Test fun activePlaylistIsIndependentOfLaterPreparedQueues(){
+    login()
+    client.request("playlist.prepare",JSONObject().put("ticket","playing").put("reset",true).put("items",JSONArray().put(JSONObject().put("id","one"))).put("options",JSONObject().put("fullLength",true)))
+    client.playback(JSONObject().put("playlist","playing").put("id","one"))
+    client.request("playlist.prepare",JSONObject().put("ticket","later-grid").put("reset",true).put("items",JSONArray().put(JSONObject().put("id","other"))).put("options",JSONObject().put("grid",true)))
+    assertEquals(1,client.playbackWindow("playing",0).total)
+    assertEquals(7500L,client.playback(JSONObject().put("playlist","playing").put("id","one").put("seconds",7.5)).position)
+    assertEquals(0L,client.playback(JSONObject().put("playlist","playing").put("id","one").put("seconds",0).put("resume",true)).position)
+  }
+  @Test fun playlistModesHaveIndependentAccountScopedMemoriesAndLeases(){
+    login()
+    fun prepare(ticket:String,mode:String){client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",JSONArray().put(JSONObject().put("id","one").put("duration",20).put("segmentStart",2).put("segmentLength",3))).put("options",JSONObject().put("reference",true).put("mode",mode).put("fullLength",false).put("segment",3)))}
+    prepare("segments","segments");client.playback(JSONObject().put("playlist","segments").put("id","one"));val segment=client.playbackWindow("segments",0)
+    client.playbackOptions("segments",segment.lease,0,JSONObject().put("loop",true).put("rate",1.5));client.rememberPlaylist("segments",segment.lease,0)
+    val saved=client.request("playlist.state",JSONObject().put("mode","segments")) as JSONObject;assertTrue(saved.getBoolean("loop"));assertEquals(1.5,saved.getDouble("rate"),0.0)
+    assertEquals(0,(client.request("playlist.state",JSONObject().put("mode","sequential")) as JSONObject).length())
+    prepare("sequential","sequential");client.playback(JSONObject().put("playlist","sequential").put("id","one"))
+    try{client.playbackTarget("segments",segment.lease,.5);fail("Old playback lease accepted")}catch(_:IllegalStateException){}
+    assertEquals(saved.toString(),client.request("playlist.state",JSONObject().put("mode","segments")).toString())
+    client.logout();json("""{"access_token":"other"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","test"));server.takeRequest()
+    assertEquals(0,(client.request("playlist.state",JSONObject().put("mode","segments")) as JSONObject).length())
+  }
   @Test fun gridResolvesOnlyOneBoundedGroupAndRevokesItsCapabilitiesOnLogout(){
     login();val rows=JSONArray();for(i in 0 until 10)rows.put(JSONObject().put("id","video-$i").put("title","视频 $i"))
     client.request("playlist.prepare",JSONObject().put("ticket","grid-qa").put("reset",true).put("items",rows).put("options",JSONObject()))
