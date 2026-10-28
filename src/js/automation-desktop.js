@@ -2,6 +2,7 @@
  * The complete live UI surface remains available through ui.list/ui.invoke. */
 (() => {
   const api=window.RHFilesAPI,ErrorType=RHFilesAutomationCore.ActionError;
+  api.provideRunLookup(query=>call('automation_receipt',{query}));
   const string={type:'string',minLength:1,maxLength:8192},boolean={type:'boolean'},integer={type:'integer',minimum:0};
   const pane={type:'string',enum:['active','left','right']};
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});

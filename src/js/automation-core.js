@@ -37,8 +37,8 @@
   }
   function result(value){if(value===undefined)return null;if(value&&typeof value==='object'&&typeof value.nodeType==='number')return {uiChanged:true};try{return json(value);}catch{fail('INVALID_RESULT','Action did not return serializable JSON');}}
   const errorOf=e=>({code:typeof e?.code==='string'?e.code:'ACTION_FAILED',message:String(e?.message||e),...(e?.details===undefined?{}:{details:redact(e.details)})});
-  function create({instanceId=uuid(),now=Date.now,maxRuns=128,maxActive=32}={}){
-    const commands=new Map(),runs=new Map(),keys=new Map(),states=new Map();let sequence=0,completionSequence=0;
+  function create({instanceId=uuid(),now=Date.now,maxRuns=128,maxActive=32,lookupRun=null}={}){
+    const commands=new Map(),runs=new Map(),keys=new Map(),states=new Map();let sequence=0,completionSequence=0,activeRun=null;
     function register(id,handler,description={}){
       if(!/^[a-zA-Z][a-zA-Z0-9_.-]{0,199}$/.test(id)||typeof handler!=='function')fail('INVALID_ACTION','Invalid action registration');
       if(commands.has(id))fail('DUPLICATE_ACTION','Action already registered: '+id);
@@ -48,7 +48,8 @@
     function describe(id){const command=commands.get(id);if(!command)fail('ACTION_NOT_FOUND','Unknown action: '+id);return json(command.spec);}
     function list(){return [...commands.keys()].sort().map(describe);}
     function checked(id,params){const command=commands.get(id);if(!command)fail('ACTION_NOT_FOUND','Unknown action: '+id);const copy=json(params);if(JSON.stringify(copy).length>262144)fail('INVALID_PARAMS','Action request exceeds 256 KiB');validate(copy,command.spec.params);return {command,copy};}
-    async function invoke(id,params={}){const {command,copy}=checked(id,params);return result(await command.handler(copy));}
+    function execute(command,copy,context=activeRun){const previous=activeRun;activeRun=context;try{return command.handler(copy,context);}finally{activeRun=previous;}}
+    async function invoke(id,params={}){const {command,copy}=checked(id,params);return result(await execute(command,copy));}
     function summary(run){return {id:run.id,action:run.action,state:run.state,startedAt:run.startedAt,finishedAt:run.finishedAt,...(run.error?{error:run.error}:{}),...(run.state==='succeeded'?{result:run.result}:{})};}
     function prune(){for(const [key,entry]of keys)if(now()-entry.at>30*60*1000&&!runs.get(entry.id)?.active)keys.delete(key);const finished=[...runs.values()].filter(r=>!r.active).sort((a,b)=>a.completionOrder-b.completionOrder);for(const r of finished.slice(0,Math.max(0,runs.size-maxRuns)))runs.delete(r.id);}
     function completed(state,key){state.active=false;state.finishedAt=now();state.completionOrder=++completionSequence;if(key&&keys.get(key)?.id===state.id)keys.get(key).at=state.finishedAt;prune();}
@@ -59,13 +60,26 @@
       if([...runs.values()].filter(r=>r.active).length>=maxActive)fail('BUSY','Too many active automation actions');
       const state={id:instanceId+':'+(++sequence),action:id,state:'running',active:true,startedAt:now(),finishedAt:null};runs.set(state.id,state);if(key)keys.set(key,{id:state.id,fingerprint,at:now()});
       // Begin immediately, but return an ID before dialogs or long work complete.
-      try{state.promise=Promise.resolve(command.handler(copy)).then(v=>{state.result=result(v);state.state='succeeded';},e=>{state.error=errorOf(e);state.state='failed';}).catch(e=>{state.error=errorOf(e);state.state='failed';}).finally(()=>completed(state,key));}
+      const context=Object.freeze({id:state.id,action:id,key,fingerprint,startedAt:state.startedAt,...(id==='ui.invoke'?{completionResult:Object.freeze({controlId:copy.controlId,event:copy.event??'click'})}:{})});
+      try{state.promise=Promise.resolve(execute(command,copy,context)).then(v=>{state.result=result(v);state.state='succeeded';},e=>{state.error=errorOf(e);state.state='failed';}).catch(e=>{state.error=errorOf(e);state.state='failed';}).finally(()=>completed(state,key));}
       catch(e){state.error=errorOf(e);state.state='failed';completed(state,key);}
       prune();return summary(state);
     }
     function status(id){const entry=runs.get(id);if(!entry)fail('RUN_NOT_FOUND','Run is unknown, expired, or belongs to a previous app instance');return summary(entry);}
     function lookup(key){const entry=keys.get(key);if(!entry)fail('RUN_NOT_FOUND','No request with this key in this app instance');if(!runs.has(entry.id))fail('RESULT_EXPIRED','This result expired; do not automatically repeat the operation');return status(entry.id);}
     async function wait(id,timeoutMs=30000){if(!Number.isSafeInteger(timeoutMs)||timeoutMs<0||timeoutMs>30000)fail('INVALID_PARAMS','Wait is limited to 0–30000 ms');const entry=runs.get(id);if(!entry)fail('RUN_NOT_FOUND','Unknown run');let timer;try{if(entry.active&&timeoutMs)await Promise.race([entry.promise,new Promise(resolve=>{timer=setTimeout(resolve,timeoutMs);})]);return status(id);}finally{clearTimeout(timer);}}
+    function provideRunLookup(read){if(lookupRun||typeof read!=='function')fail('INVALID_RUN_LOOKUP','Only one process run lookup can be registered');lookupRun=read;}
+    async function readRun(method,p){
+      try{return method==='runs.status'?status(p.runId):method==='runs.lookup'?lookup(p.key):await wait(p.runId,p.timeoutMs??30000);}
+      catch(error){
+        if(error.code!=='RUN_NOT_FOUND'||!lookupRun)throw error;
+        const query=method==='runs.lookup'?{key:p.key}:{runId:p.runId,...(method==='runs.wait'?{timeoutMs:p.timeoutMs??30000}:{})};
+        const value=await lookupRun(query);if(value==null)throw error;
+        let receipt;try{receipt=json(value);validate(receipt,{type:'object',properties:{id:{type:'string',minLength:1,maxLength:240},action:{type:'string',minLength:1,maxLength:200},state:{type:'string',enum:['running','succeeded','failed']},startedAt:{type:'integer',minimum:0,maximum:Number.MAX_SAFE_INTEGER},finishedAt:{},result:{},error:{}},required:['id','action','state','startedAt','finishedAt'],additionalProperties:false});}catch{fail('INVALID_RESULT','Malformed process receipt');}
+        if(query.runId&&receipt.id!==query.runId)fail('INVALID_RESULT','A process receipt belongs to a different run');
+        if(receipt.state==='succeeded'&&!Object.hasOwn(receipt,'result')||receipt.state==='failed'&&(!receipt.error||typeof receipt.error.code!=='string'||typeof receipt.error.message!=='string')||receipt.state!=='running'&&(!Number.isSafeInteger(receipt.finishedAt)||receipt.finishedAt<0))fail('INVALID_RESULT','A process receipt has no confirmed completion');return receipt;
+      }
+    }
     function provideState(name,read){if(states.has(name))fail('DUPLICATE_ACTION','Duplicate state provider');states.set(name,read);}
     function snapshot(){const out={};for(const [name,read]of states)try{out[name]=redact(result(read()));}catch(e){out[name]={error:errorOf(e)};}return {apiVersion:VERSION,instanceId,state:out};}
     async function rpc(request){
@@ -78,15 +92,15 @@
         else if(input.method==='actions.list'){validate(p,{type:'object',properties:{},additionalProperties:false});value=list();}
         else if(input.method==='actions.describe'){validate(p,{type:'object',properties:{action:{type:'string'}},required:['action'],additionalProperties:false});value=describe(p.action);}
         else if(input.method==='actions.run'){validate(p,{type:'object',properties:{action:{type:'string'},args:{type:'object'},key:{type:'string'}},required:['action'],additionalProperties:false});value=run(p.action,p.args??{},{key:p.key});}
-        else if(input.method==='runs.status'){validate(p,{type:'object',properties:{runId:{type:'string'}},required:['runId'],additionalProperties:false});value=status(p.runId);}
-        else if(input.method==='runs.lookup'){validate(p,{type:'object',properties:{key:{type:'string',minLength:1,maxLength:200}},required:['key'],additionalProperties:false});value=lookup(p.key);}
-        else if(input.method==='runs.wait'){validate(p,{type:'object',properties:{runId:{type:'string'},timeoutMs:{type:'integer',minimum:0,maximum:30000}},required:['runId'],additionalProperties:false});value=await wait(p.runId,p.timeoutMs??30000);}
+        else if(input.method==='runs.status'){validate(p,{type:'object',properties:{runId:{type:'string'}},required:['runId'],additionalProperties:false});value=await readRun(input.method,p);}
+        else if(input.method==='runs.lookup'){validate(p,{type:'object',properties:{key:{type:'string',minLength:1,maxLength:200}},required:['key'],additionalProperties:false});value=await readRun(input.method,p);}
+        else if(input.method==='runs.wait'){validate(p,{type:'object',properties:{runId:{type:'string'},timeoutMs:{type:'integer',minimum:0,maximum:30000}},required:['runId'],additionalProperties:false});value=await readRun(input.method,p);}
         else if(input.method==='state.get'){validate(p,{type:'object',properties:{},additionalProperties:false});value=snapshot();}
         else fail('METHOD_NOT_FOUND','Unknown JSON-RPC method');
         return {jsonrpc:'2.0',id,result:value};
       }catch(error){const detail=errorOf(error),codes={INVALID_REQUEST:-32600,METHOD_NOT_FOUND:-32601,INVALID_PARAMS:-32602};return {jsonrpc:'2.0',id,error:{code:codes[detail.code]??-32000,message:detail.message,data:{code:detail.code,...(detail.details===undefined?{}:{details:detail.details})}}};}
     }
-    return {version:VERSION,instanceId,register,list,describe,invoke,run,status,lookup,wait,provideState,snapshot,rpc};
+    return {version:VERSION,instanceId,register,list,describe,invoke,run,status,lookup,wait,provideRunLookup,provideState,snapshot,rpc};
   }
 
   function surface(document,registry){

@@ -3,6 +3,7 @@
   'use strict';
   const api=window.RHFilesAPI,model=RHVideoModel,$=id=>document.getElementById(id);
   const mobile=!!window.RHVideoNative;
+  if(!mobile)api.provideRunLookup(query=>window.__TAURI__.core.invoke('automation_receipt',{query}));
   const cardCache=new Map();
   function clearCards(){for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();}
   function trimCards(){let detached=0;for(const {node} of cardCache.values())if(!node.isConnected){const image=node.querySelector('img');detached+=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;}for(const [key,entry] of cardCache){if(cardCache.size<=72&&detached<=16*1024*1024)break;if(!entry.node.isConnected){const image=entry.node.querySelector('img');detached-=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;image?.removeAttribute('src');cardCache.delete(key);}}}

@@ -41,9 +41,11 @@ test('rejected ordinary preparation leaves the active parent preview intact',asy
   const {context,calls}=create({imageSession:parent,prepareQueue:async()=>{throw failure;}});
   await assert.rejects(context.play(rows[0]),/prepare failed/);assert.equal(context.imageSession,parent);assert.equal(calls.length,0);
 });
-test('a new ordinary click supersedes an older prepared playlist, not just another ordinary click',async()=>{
-  let release;const {context,calls}=create({prepareQueue:(_items,options)=>options.reference?new Promise(resolve=>release=resolve):Promise.resolve('new')});
-  const old=context.startPlaylist('sequential');await ready(()=>release);await context.play(rows[1]);release('old');
+test('a new ordinary click supersedes an older prepared playlist, not just another ordinary click',{timeout:5000},async()=>{
+  // The real WebCrypto digest uses native work; thirty setImmediate turns are
+  // not a readiness guarantee under load. Observe the actual preparation gate.
+  let release,entered;const preparation=new Promise(resolve=>entered=resolve),{context,calls}=create({prepareQueue:(_items,options)=>options.reference?new Promise(resolve=>{release=resolve;entered();}):Promise.resolve('new')});
+  const old=context.startPlaylist('sequential');await Promise.race([preparation,old.then(()=>{throw Error('Old playlist completed without reaching its preparation gate');})]);await context.play(rows[1]);release('old');
   assert.equal((await old).stale,true);assert.deepEqual(calls.map(c=>c.id),['b']);
 });
 test('starting a playlist supersedes a still-preparing screenshot video',async()=>{

@@ -2,6 +2,7 @@
   'use strict';
   const api=window.RHFilesAPI,$=id=>document.getElementById(id),object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const native=(action,args={})=>window.__TAURI__.core.invoke('rhvideo_request',{action,args:state.generation?{...args,_sessionGeneration:state.generation}:args});
+  api.provideRunLookup(query=>window.__TAURI__.core.invoke('automation_receipt',{query}));
   api.provideState('application',()=>({platform:'windows',window:'window-rhvideo-player',ready:true}));
   let state={opened:false},busy=false,dragging=false,volumeDragging=false,queueDragging=false,closed=false;
   function error(value){delete $('error').dataset.automation;$('error').textContent=String(value?.message||value);}
@@ -61,11 +62,11 @@
   register('repeatCurrent',object({expectedId:{type:'string',maxLength:128},expectedRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['expectedId','expectedRevision']),async args=>{const value=await native('player.repeatCurrent',args);paint(value);return value;});
   register('finishSegment',object({expectedId:{type:'string',maxLength:128},expectedRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['expectedId','expectedRevision']),async args=>{const value=await native('player.finishSegment',args);paint(value);return value;});
   register('preload',object(),()=>native('player.preload'));
-  register('close',object(),()=>native('player.close'));
-  register('back',object(),()=>native('player.back'));
+  register('close',object(),(_,run)=>native('player.close',run?{_automationRun:run}:{}));
+  register('back',object(),(_,run)=>native('player.back',run?{_automationRun:run}:{}));
   register('seekQueue',object({ratio:{type:'number',minimum:0,maximum:1},expectedPlanRevision:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['ratio']),async args=>{const value=await native('player.seekQueue',args);paint(value);return value;});
   let inputBusy=false;
-  register('input',object({inputId:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER},intent:{type:'string',enum:['next','previous','first','last','toggle','close','expand','mark']}},['inputId','intent']),async({inputId,intent})=>{
+  register('input',object({inputId:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER},intent:{type:'string',enum:['next','previous','first','last','toggle','close','expand','mark']}},['inputId','intent']),async({inputId,intent},run)=>{
     if(inputBusy)return {ignored:true};inputBusy=true;
     try{
       const current=await native('player.state');paint(current);
@@ -75,7 +76,7 @@
       if(['next','previous'].includes(intent))result=await native('player.'+intent,guard);
       else if(intent==='first'||intent==='last'){if(!current.queue?.options?.reference)return {ignored:true};result=await native('player.seekQueue',{...guard,ratio:intent==='first'?0:1});}
       else if(intent==='toggle')result=await native('player.control',{expectedInput:inputId,command:toggleCommand(current)});
-      else if(intent==='close')return await native('player.close',{expectedInput:inputId});
+      else if(intent==='close')return await native('player.close',{expectedInput:inputId,...(run?{_automationRun:run}:{})});
       else if(intent==='expand')return await native('player.fullscreen',{expectedInput:inputId});
       else if(intent==='mark')return await native('preview.mark',{expectedInput:inputId,id:current.queue.id,kind:'video',title:current.title});
       if(result?.opened)paint(result);return result;

@@ -1,4 +1,5 @@
 mod archive;
+mod automation_receipts;
 mod clipboard;
 #[cfg_attr(target_os = "macos", path = "macos/cloud.rs")]
 mod cloud;
@@ -171,6 +172,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            automation_receipts::automation_receipt,
             rhvideo::rhvideo_open,
             rhvideo::rhvideo_request,
             lan_service::lan_service_state,

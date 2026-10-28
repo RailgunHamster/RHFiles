@@ -63,6 +63,14 @@ node scripts/rhfiles-api.mjs status 'INSTANCE:RUN'
 
 JSON 输出包含 `result` 或结构化 `error`，失败返回非零退出码。`--wait` 最多等一次 30 秒；仍在运行就继续查询运行 ID。客户端断线或超时不会取消已经提交的工作，更不能自动重复写操作。多窗口必须用 `--target` 或桌面的 `--window` 明确选择，避免修改错误窗口。
 
+### 会关闭自身的 RHVideo 窗口
+
+Windows 播放器的 `rhvideo.player.close`／`back` 和同屏窗口的 `rhvideo.grid.close` 会真正销毁对应窗口、释放原生播放器，不保留隐藏 WebView 来维持脚本连接。这些通过 `run` 发起的操作把完成回执保存在应用进程里；`ui.invoke` 点击返回按钮仍返回原来的 `{controlId,event}` 格式。
+
+若该请求因为窗口消失而断开，命令行在剩余超时预算内、最多检查八个可信的同实例界面，只查询运行 ID／key 和完成状态，**不重发动作**。只有查到匹配动作的回执才报告结果，不能仅凭“窗口不见了”猜测成功；没有记录仍报未确认。后续查询应选择仍存在的主窗口或媒体库，例如 `--window window-rhvideo lookup KEY`，而不是已经销毁的播放器。
+
+回执仅在当前进程内保留：最多 32 个活动项、128 个完整结果，以及 4096 个用于阻止旧 key 被自动执行的淘汰标记，保留期为完成后 30 分钟。空间不足会拒绝新的脚本关闭请求，不会悄悄丢掉未过期标识再执行。参数只保存摘要，不落盘；这不是跨应用崩溃或永久的事务日志。物理点击、普通关闭及其他窗口原有的本地动作记录机制不因此改成全局任务调度器。
+
 ## 接口覆盖与测试
 
 Windows 回收站提供 `recycle.open`、`recycle.list`（分页）、`recycle.filter`、`recycle.sort`、`recycle.select`、`recycle.restore`、`recycle.deleteSelected`、`recycle.empty`、`recycle.copyPaths` 等语义接口。先打开或刷新，再按不透明 `id` 选择；不要把 `id` 当成文件路径。恢复默认跳过同名项目，`keepBoth:true` 保留两份。永久删除仍须完成两次 UI 确认，清空只影响本次确认快照，不影响新进入回收站的项目。
@@ -84,3 +92,5 @@ Desktop requires an explicit `RHFILES_CDP_PORT` launch environment variable. And
 Actions call existing business functions or registered UI callbacks, not coordinate-based clicking. Long operations return run IDs. Query their results instead of retrying writes after a timeout. Idempotency keys prevent duplicate submission only within the current app process, not across crashes.
 
 Use semantic actions for production scripts. UI callback completion may only mean that a dialog opened or a background job was submitted. Confirm task results and filesystem state. Destructive confirmations remain in place; system-owned permission, installer and chooser windows cannot be bypassed.
+
+Windows RHVideo player/grid self-close runs retain bounded process-owned completion receipts. If the producer disappears, the CLI only reads matching run/key status from remaining trusted app views; it never resubmits the action or assumes disappearance means success. Select a surviving main/library window for later lookups. Receipts are memory-only and do not provide a cross-crash transaction guarantee.

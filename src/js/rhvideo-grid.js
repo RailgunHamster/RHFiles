@@ -12,6 +12,7 @@
       window.__TAURI__.core.invoke("rhvideo_request", { action, args:state.generation?{...args,_sessionGeneration:state.generation}:args });
   let state = { cells: [] },
     closed = false;
+  api.provideRunLookup(query=>window.__TAURI__.core.invoke('automation_receipt',{query}));
   function paused(value){return value.pauseRequested??(value.state===4);}
   function toggleCommand(value){return value.cells.every(v=>!paused(v)&&![5,6,7].includes(v.state))?'pause':'resume';}
   api.provideState("application", () => ({
@@ -103,7 +104,7 @@
     ]),
     async (args) => paint(await native("grid.expand", args)),
   );
-  register("close", object(), () => native("grid.close"));
+  register("close", object(), (_,run) => native("grid.close",run?{_automationRun:run}:{}));
   let mutationBusy=false;
   for(const name of ['favorite','mark'])register(name,object({target:{type:'integer',minimum:0,maximum:8}},['target']),async({target})=>{
     if(mutationBusy)throw Error('视频标记正在处理');mutationBusy=true;

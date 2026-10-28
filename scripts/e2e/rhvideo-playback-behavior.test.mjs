@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
@@ -58,6 +58,43 @@ async function setup(options={}){
     return {app,fixture,view,close:async()=>{view.close();app.close();await fixture.close();}};
   }catch(error){view?.close();app.close();await fixture?.close();throw error;}
 }
+const runCli=(app,window,action,args,key)=>new Promise((resolve,reject)=>{
+  const child=spawn(process.execPath,['scripts/rhfiles-api.mjs','--port',String(app.port),'--window',window,'--timeout','5000','--wait','--key',key,'run',action,JSON.stringify(args)],{windowsHide:true});let stdout='',stderr='';
+  child.stdout.on('data',part=>stdout+=part);child.stderr.on('data',part=>stderr+=part);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
+});
+test('player-owned close and back complete their public CLI runs instead of losing the result with the window',native,async()=>{
+  const s=await setup();let player;
+  try{
+    const cli=(action,args,key)=>runCli(s.app,'window-rhvideo-player',action,args,key);
+    for(const name of ['close','back','ui-back']){
+      await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+      await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0;},'real native frame before self-close',25000);
+      const control=name==='ui-back'?await player.evaluate("RHFilesAPI.invoke('ui.list').then(rows=>rows.find(row=>row.id==='back'))"):null;
+      const output=await cli(control?'ui.invoke':'rhvideo.player.'+name,control?{controlId:control.controlId}: {},'self-'+name);
+      assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout.trim());assert.equal(reply.result.state,'succeeded',JSON.stringify(reply));if(control)assert.deepEqual(reply.result.result,{controlId:control.controlId,event:'click'});else assert.equal(reply.result.result.closed,true);
+      assert.equal((await command(s.app,'player.state')).opened,false);
+      await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !pages.some(page=>new URL(page.url).pathname.endsWith('/rhvideo-player.html'));},'Close retires the player window, not a hidden polling WebView',3000);
+      player.close();player=null;
+      if(name==='close'){
+        await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');const replacement=await invoke(player,'player.state');
+        const replay=await cli('rhvideo.player.close',{},'self-close');assert.equal(replay.code,0,JSON.stringify(replay));assert.equal(JSON.parse(replay.stdout).result.state,'succeeded');const after=await invoke(player,'player.state');assert.equal(after.opened,true,'The old request key must not close a later player');assert.equal(after.inputId,replacement.inputId);
+        await command(s.app,'player.close');player.close();player=null;
+      }
+    }
+  }finally{player?.close();await s.close();}
+});
+
+test('grid-owned close returns its completed CLI receipt and releases every native player',native,async()=>{
+  const s=await setup();let grid;
+  try{
+    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'both real grid frames before self-close',25000);
+    const output=await runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'grid-self-close');assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
+    assert.equal((await command(s.app,'grid.state')).cells.length,0);
+    await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !pages.some(page=>new URL(page.url).pathname.endsWith('/rhvideo-grid.html'));},'retire the grid WebView instead of keeping it hidden',3000);
+  }finally{grid?.close();await s.close();}
+});
+
 test('sequential playback keeps the visible full-list order, wraps manually, seeks across entries and resumes its own cursor',native,async()=>{
   const s=await setup();let player;
   try{

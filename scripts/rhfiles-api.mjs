@@ -92,14 +92,36 @@ async function connection(options){
     endpoint='http://127.0.0.1:'+port;cleanup=()=>{try{run(['forward','--remove','tcp:'+port]);}catch{}};
   }
   if(options.launch){const child=spawn(options.launch,[],{windowsHide:true,detached:true,stdio:'ignore',env:{...process.env,RHFILES_CDP_PORT:String(options.port),RHFILES_AUTORUN_TESTS:'0'}});let spawnError;child.on('error',e=>{spawnError=e;});child.unref();const end=Date.now()+options.timeout;while(Date.now()<end){if(spawnError)throw new ClientError('LAUNCH_FAILED',spawnError.message);try{const r=await fetch(endpoint+'/json/list',{signal:AbortSignal.timeout(700)});if(r.ok)break;}catch{}await sleep(150);}}
-  try{const session=await selectSession(endpoint,options);return {...session,close(){session.close();cleanup();}};}catch(error){cleanup();throw error;}
+  try{const session=await selectSession(endpoint,options);return {...session,endpoint,close(){session.close();cleanup();}};}catch(error){cleanup();throw error;}
+}
+export function isReceiptTargetURL(value){
+  try{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&['tauri.localhost','localhost'].includes(u.hostname)&&!u.username&&!u.password&&!u.search&&!u.hash&&['/','/index.html','/rhvideo.html','/rhvideo-player.html','/rhvideo-grid.html'].includes(u.pathname);}catch{return false;}
+}
+// Read only: a disappearing target never authorizes resubmitting its action.
+export async function recoverRun(endpoint,options,request,runId,deadline,{fetchTargets=async()=>{const r=await fetch(endpoint+'/json/list',{signal:AbortSignal.timeout(Math.max(1,deadline-Date.now()))});return r.ok?r.json():[];},openSession=cdpSession}={}){
+  if(request.method!=='actions.run'||!request.params?.key||Date.now()>=deadline)return null;
+  let targets;try{targets=await fetchTargets();}catch{return null;}
+  for(const target of targets.filter(t=>t.type==='page'&&isReceiptTargetURL(t.url)).slice(0,8)){
+    if(Date.now()>=deadline)break;let borrowed;
+    try{
+      borrowed=await openSession(target,Math.max(1,deadline-Date.now()));
+      const query={jsonrpc:'2.0',id:randomUUID(),method:runId?'runs.status':'runs.lookup',params:runId?{runId}:{key:request.params.key}};
+      let reply=await borrowed.evaluate(expressionFor(query,'host')),receipt=reply?.result;
+      if(reply?.error?.data?.code==='RESULT_EXPIRED')return {...reply,id:request.id};
+      if(!receipt||receipt.action!==request.params.action||runId&&receipt.id!==runId)continue;
+      if(options.wait&&receipt.state==='running'&&Date.now()<deadline){reply=await borrowed.evaluate(expressionFor({...query,method:'runs.wait',params:{runId:receipt.id,timeoutMs:Math.min(30000,Math.max(0,deadline-Date.now()-25))}},'host'));receipt=reply?.result;}
+      if(!receipt||typeof receipt.id!=='string'||!['running','succeeded','failed'].includes(receipt.state)||receipt.state==='succeeded'&&!Object.hasOwn(receipt,'result')||receipt.state==='failed'&&typeof receipt.error?.code!=='string'||receipt.action!==request.params.action||runId&&receipt.id!==runId)continue;
+      return {jsonrpc:'2.0',id:request.id,result:receipt};
+    }catch{}finally{borrowed?.close();}
+  }
+  return null;
 }
 export async function main(argv=process.argv.slice(2),{write=value=>process.stdout.write(JSON.stringify(value)+'\n')}={}){
   const {options,position}=parseArguments(argv),command=position[0];
   if(options.help||!command||command==='help'){write({apiVersion:'1.0',requires:'Node.js 22+',usage:'node scripts/rhfiles-api.mjs [--port 9222 | --android SERIAL] [--pane active|left|right|host] list|describe ACTION|run ACTION JSON|status RUN_ID|wait RUN_ID|state|ui|batch',examples:['run navigation.open {"path":"D:\\\\Data"}','run selection.set {"paths":["D:\\\\Data\\\\readme.md"]}','run command.file.delete {}','status RUN_ID'],safety:'Local opt-in only. --wait never cancels an operation. Destructive UI confirmation requires its current token. No arbitrary JS evaluation, auto-install, screen clicking, or automatic write retries.'});return;}
   const request=command==='batch'?null:requestFor(position,options.key);
   const session=await connection(options);
-  const execute=async request=>{let value;try{value=await session.evaluate(expressionFor(request,options.pane));}catch(error){if(request.method==='actions.run')error.details={...(error.details||{}),key:request.params?.key??null,action:request.params?.action??null};throw error;}if(options.wait&&request.method==='actions.run'&&value?.result?.id){value=await session.evaluate(expressionFor({jsonrpc:'2.0',id:request.id,method:'runs.wait',params:{runId:value.result.id,timeoutMs:Math.min(options.timeout,30000)}},options.pane));}write(value);if(value?.error||value?.result?.state==='failed')process.exitCode=1;};
+  const execute=async request=>{let value,runId;const deadline=Date.now()+options.timeout;try{value=await session.evaluate(expressionFor(request,options.pane));runId=value?.result?.id;if(options.wait&&request.method==='actions.run'&&runId){value=await session.evaluate(expressionFor({jsonrpc:'2.0',id:request.id,method:'runs.wait',params:{runId,timeoutMs:Math.min(options.timeout,30000)}},options.pane));}}catch(error){const recovered=['CONNECTION_LOST','CDP_ERROR','REQUEST_TIMEOUT'].includes(error.code)?await recoverRun(session.endpoint,options,request,runId,deadline):null;if(recovered)value=recovered;else{if(request.method==='actions.run')error.details={...(error.details||{}),key:request.params?.key??null,action:request.params?.action??null,...(runId?{runId}:{})};throw error;}}write(value);if(value?.error||value?.result?.state==='failed')process.exitCode=1;};
   try{if(command==='batch'){for await(const line of createInterface({input:process.stdin,crlfDelay:Infinity})){if(!line.trim())continue;let request;try{request=JSON.parse(line);}catch{write({jsonrpc:'2.0',id:null,error:{code:-32700,message:'Invalid JSON line',data:{code:'PARSE_ERROR'}}});process.exitCode=1;continue;}await execute(request);}}else await execute(request);}finally{session.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(error=>{process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:null,error:{code:-32000,message:error.message,data:{code:error.code||'CLIENT_ERROR',...(error.details?{details:error.details}:{})}}})+'\n');process.exitCode=1;});

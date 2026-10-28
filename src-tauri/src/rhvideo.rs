@@ -1376,6 +1376,15 @@ pub async fn rhvideo_request(
     action: String,
     mut args: Value,
 ) -> Result<Value, String> {
+    if let Some(run)=args.as_object_mut().and_then(|v|v.remove("_automationRun")) {
+        let id=run["id"].as_str().unwrap_or_default().to_owned();
+        if let Some(previous)=crate::automation_receipts::begin(run,&action)? {return previous;}
+        let completion=crate::automation_receipts::Completion::new(id);
+        let result=rhvideo_dispatch(app,action,args).await;completion.finish(&result);return result;
+    }
+    rhvideo_dispatch(app,action,args).await
+}
+async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Value,String>{
     let expected = args
         .as_object_mut()
         .and_then(|a| a.remove("_sessionGeneration"))
@@ -1403,7 +1412,7 @@ pub async fn rhvideo_request(
             flush_playback();
             *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
             #[cfg(windows)] { crate::rhvideo_player::stop_single(); }
-            if let Some(window)=app.get_webview_window("window-rhvideo-player") { let _=window.close(); }
+            if let Some(window)=app.get_webview_window("window-rhvideo-player") { window.close().map_err(|e|format!("播放器已停止，但窗口关闭失败：{e}"))?; }
             focus_library(&app);
             if let Some((generation,options))=context {
                 emit_parent_preview(&app,generation,&options,0,action=="player.close");
@@ -1632,7 +1641,7 @@ pub async fn rhvideo_request(
             {
                 crate::rhvideo_player::stop_grid();
                 if let Some(w) = app.get_webview_window("window-rhvideo-grid") {
-                    let _ = w.close();
+                    w.close().map_err(|e|format!("同屏播放已停止，但窗口关闭失败：{e}"))?;
                 }
             }
             start_preview_commit(app,session)?;
