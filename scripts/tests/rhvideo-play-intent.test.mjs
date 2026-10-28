@@ -5,15 +5,21 @@ import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {createRequire} from 'node:module';
 const model=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
+const index=createRequire(import.meta.url)('../../src/js/rhvideo-index.js');
 const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');
 const code=(name,end)=>source.slice(source.indexOf('async function '+name+'('),source.indexOf(end,source.indexOf('async function '+name+'(')));
 const rows=['a','b','c'].map(id=>({id,title:id,kind:'video',status:'ready',resolution:'640x360',duration:20}));
 const frames=rows.map(v=>({id:'frame-'+v.id,key:'frame-'+v.id,kind:'frame',videoId:v.id,title:v.id,seconds:2}));
+function reply(args,items){
+  if(!args.locate)return {queue:items,total:items.length};
+  const at=items.findIndex(v=>args.locate.videoId!==undefined?v.kind==='frame'&&v.videoId===args.locate.videoId:index.key(v)===args.locate.key);
+  return {located:at<0?null:{index:at,item:items[at]},total:items.length};
+}
 function create(overrides={}){
   let sequence=0;const calls=[],discarded=[];
-  const context=vm.createContext({epoch:1,singlePlayIntent:0,imageSession:null,gallery:{loaded:true,seed:0,offset:0},state:{search:''},prefs:{},selected:new Set(),RHVideoModel:model,I:{key:item=>item.key||item.id},crypto:{subtle:webcrypto.subtle,randomUUID:()=>String(++sequence)},TextEncoder,Error,
+  const context=vm.createContext({epoch:1,singlePlayIntent:0,imageSession:null,gallery:{loaded:true,seed:0,offset:0},state:{search:''},prefs:{},selected:new Set(),RHVideoModel:model,I:index,crypto:{subtle:webcrypto.subtle,randomUUID:()=>String(++sequence)},TextEncoder,Error,
     config:()=>({rule:{},sort:'nameAsc',rotation:0,resume:false,segment:3,fullLength:false,portraitOnly:false,loop:false}),
-    $:()=>({open:true}),ctx:{openDialog(){}},criteria:args=>args,stepImage:async()=>({index:0}),notice(){},query:async()=>({queue:rows,total:3}),send:async()=>({queue:frames,total:3}),prepareQueue:async()=>String(++sequence),
+    $:()=>({open:true}),ctx:{openDialog(){}},criteria:args=>args,stepImage:async()=>({index:0}),notice(){},query:async args=>reply(args,rows),send:async(_action,args)=>reply(args,frames),prepareQueue:async()=>String(++sequence),
     native:async(name,args)=>{if(name==='playlist.state')return {};if(name==='playlist.discard'){discarded.push(args.ticket);return {removed:true};}assert.equal(name,'play');calls.push(args);return {opened:true,id:args.id};},...overrides});
   vm.runInContext('function galleryReady(){return gallery.loaded;}\n'+code('play','action("media.playLow"')+code('startPlaylist','async function prepareQueue(')+code('playImageVideo','action("image.playFrame"')+code('image','async function stepImage(')+code('discardPrepared','      action('),context);
   return {context,calls,discarded};
@@ -21,8 +27,8 @@ function create(overrides={}){
 async function ready(check){for(let i=0;i<30;i++){if(check())return;await new Promise(setImmediate);}throw Error('Preparation was not reached');}
 
 test('a delayed old gallery lookup cannot replace the latest clicked video or its parent',async()=>{
-  let release,count=0;const {context,calls}=create({send:()=>++count===1?new Promise(resolve=>release=resolve):Promise.resolve({queue:frames,total:3})});
-  const old=context.play(rows[0]);await context.play(rows[1]);release({queue:frames,total:3});
+  let release,count=0;const {context,calls}=create({send:(_action,args)=>++count===1?new Promise(resolve=>release=()=>resolve(reply(args,frames))):Promise.resolve(reply(args,frames))});
+  const old=context.play(rows[0]);await context.play(rows[1]);release();
   assert.equal((await old).stale,true);assert.equal(context.imageSession.current.videoId,'b');assert.deepEqual(calls.map(c=>c.id),['b']);
 });
 test('a late prepared ordinary video cannot play over a newer click',async()=>{
@@ -52,7 +58,7 @@ test('a delayed picture lookup cannot pop over a newer video',async()=>{
   assert.equal((await old).stale,true);assert.equal(opened,0);assert.equal(context.imageSession.current.videoId,'b');assert.deepEqual(calls.map(c=>c.id),['b']);
 });
 test('a resolved old picture cannot reopen its dialog after the user starts another video',async()=>{
-  let release,opened=0;const {context}=create({query:async()=>({queue:[{id:'picture'}],total:1}),stepImage:()=>new Promise(resolve=>release=resolve),ctx:{openDialog(){opened++;}}});
+  let release,opened=0;const {context}=create({query:async args=>reply(args,[{id:'picture',kind:'picture'}]),stepImage:()=>new Promise(resolve=>release=resolve),ctx:{openDialog(){opened++;}}});
   const old=context.image({id:'picture',kind:'picture'});await ready(()=>release);await context.play(rows[1]);release({index:0});
   assert.equal((await old).stale,true);assert.equal(opened,0);assert.equal(context.imageSession.current.videoId,'b');
 });

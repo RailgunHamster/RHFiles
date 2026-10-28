@@ -14,7 +14,7 @@ async function port(cached){
   const calls=[],metadata=[],scope=vm.createContext({gallery:{loaded:cached,seed:1},state:{search:''},epoch:1,singlePlayIntent:0,imageSession:null,
     config:()=>({rule:null,sort:'dateDesc',resume:false}),I:{key:row=>'frame:'+row.id},crypto:{randomUUID:()=> 'test-parent'},
     loadGallery:async()=>{metadata.push('loadGallery');throw Error('An uncached screenshot pool must not delay direct playback');},
-    send:async(action)=>{metadata.push(action);assert(cached,'Do not query an unprepared screenshot dataset');return {queue:[frame],total:1};},
+    send:async(action,args)=>{metadata.push(action);assert(cached,'Do not query an unprepared screenshot dataset');assert.notEqual(args.allKeys,true);assert.equal(args.locate.videoId,video.id);return {located:{index:0,item:frame},total:1};},
     notice(){},prepareQueue:async(items,options)=>{calls.push({items,options});return 'test-ticket';},discardPrepared:async()=>{},
     native:async(action,args)=>{calls.push({action,args});return {opened:true};}});
   vm.runInContext('function galleryReady(){return gallery.loaded;}\n'+play,scope);await scope.play(video);

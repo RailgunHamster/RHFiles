@@ -14,7 +14,7 @@ async function setup(options){
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
     const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
     view=await cdpSession(target,30000);await until(()=>view.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==="rhvideo.gallery.state")'),'gallery state API');
-    for(const file of ['rhvideo-client.js','rhvideo-workbench.js']){const served=await view.evaluate('fetch('+JSON.stringify('js/'+file)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+file,import.meta.url),'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');assert.equal(hash(served),hash(source),'Use the actual embedded '+file);}
+    for(const file of ['rhvideo-client.js','rhvideo-workbench.js','rhvideo-index.js','rhvideo-worker.js']){const served=await view.evaluate('fetch('+JSON.stringify('js/'+file)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+file,import.meta.url),'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');assert.equal(hash(served),hash(source),'Use the actual embedded '+file);}
     await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
     return {fixture,app,view,close:async()=>{view.close();await app.close();await fixture.close();}};
   }catch(error){view?.close();await app.close();await fixture.close();throw error;}
@@ -71,4 +71,19 @@ test('a late pre-refresh response cannot replace the new gallery even in the sam
     assert.equal(await s.view.evaluate("document.querySelector('#wb-gallery .wb-frame').textContent"),'NEW current metadata');gate.resolve();await until(()=>oldFinished,'the old HTTP response actually finishes');await sleep(150);
     await invoke(s.view,'gallery.open');assert.equal(reads(s.fixture),2);assert.equal(await s.view.evaluate("document.querySelector('#wb-gallery .wb-frame').textContent"),'NEW current metadata','the current worker must not contain the late old snapshot');
   }finally{gate.resolve();await s?.close();}
+});
+
+test('a fifty-thousand screenshot pool keeps exact end-to-start navigation without transferring the full pool to the UI',async()=>{
+  let s;const count=50000;
+  try{
+    s=await setup({beforeGallery:()=>({data:[{video_id:'video-0',filename:'Large generated pool',folder:'test',duration:count,resolution:'640x360',screenshots:Array.from({length:count},(_,i)=>({url:'/storage/pictures/0.svg',time_seconds:i}))}]})});
+    await until(async()=>(await invoke(s.view,'gallery.state')).count===count,'large background pool ready',30000);
+    await s.view.evaluate(`(()=>{const original=Worker.prototype.postMessage,seen=new WeakSet(),pending=new Map();window.__locateReplies=[];Worker.prototype.postMessage=function(message,...rest){if(!seen.has(this)){seen.add(this);this.addEventListener('message',event=>{if(pending.has(event.data.id)){window.__locateReplies.push({selector:pending.get(event.data.id),bytes:new TextEncoder().encode(JSON.stringify(event.data)).byteLength,queued:!!event.data.result?.queue,index:event.data.result?.located?.index});pending.delete(event.data.id);}});}if(message.action==='query'&&message.args.locate){if(message.args.allKeys)throw Error('A target lookup must not ask for the whole pool');pending.set(message.id,message.args.locate);}return original.call(this,message,...rest);};return true;})()`);
+    await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.jump',{page:Math.ceil(count/36)});await invoke(s.view,'gallery.inspect',{index:(count-1)%36});
+    const image=await invoke(s.view,'image.state');assert.equal(image.total,count);assert.equal(image.index,count-1);assert.equal(image.current.seconds,count-1);
+    await until(()=>s.view.evaluate('document.getElementById("full-image").naturalWidth===800'),'last actual image decoded');
+    await invoke(s.view,'image.step',{direction:1});const wrapped=await invoke(s.view,'image.state');assert.equal(wrapped.index,0);assert.equal(wrapped.current.seconds,0);
+    const replies=await s.view.evaluate('window.__locateReplies');assert.equal(replies.length,1);assert.equal(replies[0].index,count-1);assert.equal(replies[0].queued,false);assert(replies[0].bytes<2000,'actual worker target reply stays bounded');
+    assert.equal(reads(s.fixture),1,'navigation never refetches the all-library metadata');console.log(JSON.stringify({pass:true,screenshotPool:count,workerTargetBytes:replies[0].bytes,endToStart:true}));
+  }finally{await s?.close();}
 });

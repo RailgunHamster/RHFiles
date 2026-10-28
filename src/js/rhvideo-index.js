@@ -120,7 +120,16 @@
       portraitOnly = false,
       selected = [],
       allKeys = false,
+      locate = null,
     }) {
+      if (locate !== null) {
+        const fields = typeof locate === "object" && !Array.isArray(locate)
+          ? Object.keys(locate) : [];
+        if (fields.length !== 1 || !(
+          fields[0] === "key" && typeof locate.key === "string" && /^(video|picture|novel|frame):[A-Za-z0-9_-]{1,128}$/.test(locate.key) ||
+          fields[0] === "videoId" && typeof locate.videoId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(locate.videoId)
+        )) throw Error("媒体定位参数无效");
+      }
       if (
         !sorts.includes(sort) ||
         !Number.isSafeInteger(offset) ||
@@ -189,9 +198,17 @@
           this.orderCache.delete(this.orderCache.keys().next().value);
         this.orderCache.set(cacheKey, order);
       }
+      let located = null;
+      if (locate !== null) {
+        const index = order.findIndex(i => locate.key !== undefined
+          ? key(rows[i]) === locate.key
+          : rows[i].kind === "frame" && rows[i].videoId === locate.videoId);
+        if (index >= 0) located = { index, item: rows[order[index]] };
+      }
       return {
         items: order.slice(offset, offset + limit).map((i) => rows[i]),
         total: order.length,
+        ...(locate !== null ? { located } : {}),
         ...(allKeys
           ? {
               queue: order.map((i) => {

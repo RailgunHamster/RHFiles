@@ -2443,10 +2443,10 @@
           // The original synchronous click never fetches the whole gallery
           // before starting a video; a cold pool means no implicit parent.
           try{
-            const args={kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1};
-            const result=await send("query",args),index=result.queue.findIndex(f=>f.videoId===media.id);
+            const args={kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,offset:0,limit:1};
+            const result=await send("query",{...args,locate:{videoId:media.id}}),match=result.located;
             if(intent!==singlePlayIntent)return {stale:true};
-            if(index>=0){parentSession={args,index,total:result.total,current:result.queue[index],previewId:crypto.randomUUID(),playbackId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(parentSession.current),parentPreview:parentSession.previewId,parentPlayback:parentSession.playbackId,parentTotal:result.total};}
+            if(match){parentSession={args,index:match.index,total:result.total,current:match.item,previewId:crypto.randomUUID(),playbackId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(parentSession.current),parentPreview:parentSession.previewId,parentPlayback:parentSession.playbackId,parentTotal:result.total};}
           }catch(error){if(version===epoch&&intent===singlePlayIntent)notice("截图队列不可用，视频仍可单独播放："+String(error));}
         }
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
@@ -2684,19 +2684,16 @@
         const args = criteria({
             kind: state.kind === "favorite" ? "favorite" : "picture",
             mediaType: "picture",
-            allKeys: true,
             offset: 0,
             limit: 1,
           }),
-          result = await query(args);
+          result = await query({...args,locate:{key:I.key(media)}});
         if(version!==epoch||intent!==singlePlayIntent)return {stale:true};
+        if(!result.located)throw Error("这张图片已不在当前清单中，请刷新");
         const session=imageSession = {
           previewId:crypto.randomUUID(),
           args,
-          index: Math.max(
-            0,
-            result.queue.findIndex((v) => v.id === media.id),
-          ),
+          index: result.located.index,
           total: result.total,
           current: null,
         };
@@ -3237,10 +3234,16 @@
       action("gallery.open", object(), () => loadGallery());
       action("gallery.state",object(),()=>({loaded:galleryReady(),loading:!!gallery.pending,error:gallery.error,count:gallery.count,total:gallery.total,revision:gallery.revision}),"read");
       action("gallery.inspect",object({index:{type:"integer",minimum:0,maximum:99}},["index"]),async({index})=>{
+        const version=epoch,intent=++singlePlayIntent,view=gallery.load,revision=gallery.revision;
         const media=gallery.items[index];if(!media)throw Error("截图不在当前页");
-        const args={kind:"gallery",search:state.search,rule:config().rule,sort:config().sort,seed:gallery.seed,offset:0,limit:1,allKeys:true};
-        const result=await send("query",args),at=result.queue.findIndex(v=>v.id===media.id&&v.kind===media.kind);
-        if(at<0)throw Error("截图筛选结果已改变，请刷新");imageSession={args,index:at,total:result.total,current:null,previewId:crypto.randomUUID()};await stepImage(0);ctx.openDialog("image-dialog");return {opened:true,total:result.total,index:at};
+        const args={kind:"gallery",search:state.search,rule:config().rule,sort:config().sort,seed:gallery.seed,offset:0,limit:1};
+        const result=await send("query",{...args,locate:{key:I.key(media)}});
+        const current=()=>version===epoch&&intent===singlePlayIntent&&view===gallery.load&&revision===gallery.revision;
+        if(result.stale||!current())return {stale:true};
+        if(!result.located)throw Error("截图筛选结果已改变，请刷新");
+        const at=result.located.index,session=imageSession={args,index:at,total:result.total,current:null,previewId:crypto.randomUUID()};
+        const displayed=await stepImage(0);if(displayed.stale||!current()||imageSession!==session)return {stale:true};
+        ctx.openDialog("image-dialog");return {opened:true,total:result.total,index:at};
       });
       action("gallery.orders", object(), () => {
         const root = dialog("wb-settings", "截图浏览顺序"),

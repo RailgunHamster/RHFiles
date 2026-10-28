@@ -54,6 +54,14 @@ function fixture(fetch) {
 }
 const url = "http://127.0.0.1:1234/abc123/1",
   response = (items) => ({ ok: true, json: async () => ({ items }) });
+
+test("a later page paint cannot cancel the exact lookup used by a clicked media target", async () => {
+  const f=fixture(async()=>response([])),items=[{id:'one'}];
+  await f.send('set',{kind:'picture',items});
+  const located=f.send('query',{kind:'picture',locate:{key:'picture:one'}});
+  const page=f.send('query',{kind:'picture',offset:0});
+  assert.deepEqual(await located,items);assert.deepEqual(await page,items);
+});
 test("a slow resource never blocks another collection or diagnostics", async () => {
   let release;
   const f = fixture(async (value) =>

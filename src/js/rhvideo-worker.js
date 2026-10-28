@@ -50,11 +50,14 @@ self.onmessage = (event) => {
     for (const read of resourceReads.values())
       if (read.revision < revision) read.controller.abort();
   const collection = args.kind || "";
-  if (action === "query") latest.set(collection, id);
+  // A lookup belongs to a clicked target, not the list's latest paint. A later
+  // page render must not silently remove that target's parent/return position.
+  const cancellable = action === "query" && !args.locate;
+  if (cancellable) latest.set(collection, id);
   const enqueue = (resource) => {
     work = work.then(async () => {
       try {
-        if (action === "query" && latest.get(collection) !== id) {
+        if (cancellable && latest.get(collection) !== id) {
           self.postMessage({
             id,
             result: { items: [], total: 0, stale: true },
