@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import {parse} from 'acorn';
+import {createRequire} from 'node:module';
+const Index=createRequire(import.meta.url)('../../src/js/rhvideo-index.js');
 const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');
-const names=new Set(['loadGallery','prepareGallery','invalidateGallery','galleryScope','galleryReady','warmGallery','paintGalleryStatus']),functions=[];
+const names=new Set(['loadGallery','prepareGallery','invalidateGallery','galleryScope','galleryReady','warmGallery','paintGalleryStatus','rememberGalleryBrowser']),functions=[];
 function walk(n){if(!n||typeof n!=='object')return;if(n.type==='FunctionDeclaration'&&names.has(n.id?.name))functions.push(source.slice(n.start,n.end));for(const v of Object.values(n))if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}
 walk(parse(source,{ecmaVersion:'latest'}));
 const rows=id=>[{video_id:id,filename:id,folder:'test',duration:10,resolution:'640x360',screenshots:[{url:'/storage/'+id+'.webp',time_seconds:2}]}];
@@ -14,9 +16,9 @@ async function reached(check){for(let i=0;i<50;i++){if(check())return;await new 
 function harness(overrides={}){
   const reads=[],sets=[],pending=[],notices=[],dialogs=[];
   const scope=vm.createContext({epoch:1,state:{connected:true,search:''},gallery:{loaded:false,load:0,revision:0,pending:null,scope:'',error:'',count:0,items:[],total:0,offset:0,limit:36,seed:0},preferences:{perVideo:8,mixPictures:false,rule:{}},
-    config:()=>scope.preferences,ensure:async()=>scope.epoch,I:{canonical:JSON.stringify},queueMicrotask,$:()=>null,
+    config:()=>scope.preferences,ensure:async()=>scope.epoch,I:{canonical:JSON.stringify},queueMicrotask,$:()=>null,prefs:{},save(){},crypto:{getRandomValues:values=>{values[0]=0x1234abcd;return values;}},
     remote:async(name,args)=>{const p=deferred();reads.push({name,args});pending.push(p);return p.promise;},
-    send:async(action,args)=>{if(action==='set'){sets.push(args);return {};}return {items:[],queue:[],total:0};},
+    send:async(action,args)=>{if(action==='gallery'){const c=new Index.Catalog(),result=c.setGallery(args.videos,args.pictures);sets.push({kind:'gallery',items:c.collections.get('gallery')});return result;}return {items:[],queue:[],total:0};},
     native:async()=>[],notice:message=>notices.push(String(message)),el:()=>({setAttribute(){}}),dialog:()=>{dialogs.push('opened');return {replaceChildren(){},setAttribute(){},removeAttribute(){}};},
     ...overrides});vm.runInContext(functions.join('\n'),scope);return {scope,reads,sets,pending,notices,dialogs};
 }
@@ -64,6 +66,10 @@ test('the primary gallery renders a page, and leaving it invalidates late displa
 });
 test('default primary gallery preparation starts without blocking or opening an unrelated dialog',async()=>{
   const root={replaceChildren(){},setAttribute(){},removeAttribute(){}},h=harness({$:id=>id==='gallery-content'?root:null});h.scope.state.view='gallery';h.scope.warmGallery();await reached(()=>h.reads.length===1);assert.equal(h.dialogs.length,0);h.scope.state.view='catalog';h.pending[0].resolve(rows('warm'));await reached(()=>h.scope.gallery.loaded);assert.equal(h.dialogs.length,0);
+});
+test('the actual loader chooses a reference-style seed for a first mixed snapshot, without forcing a popup',async()=>{
+  const h=harness();h.scope.preferences.mixPictures=true;h.scope.gallery.autoShufflePending=true;const loading=h.scope.loadGallery(false,false);await reached(()=>h.reads.length===1);h.pending[0].resolve(rows('mixed'));await reached(()=>h.reads.length===2);h.pending[1].resolve({items:[{id:'picture',webp_path:'picture.webp'}]});await loading;
+  assert.equal(h.scope.gallery.seed,'1234abcd');assert.equal(h.scope.prefs.galleryBrowser.seed,'1234abcd');assert.equal(h.sets[0].items[0].kind,'picture');assert.equal(h.dialogs.length,0);
 });
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html');
 test('reference showApp starts its gallery read without awaiting it or blocking the video list',{skip:!fs.existsSync(reference)},()=>{

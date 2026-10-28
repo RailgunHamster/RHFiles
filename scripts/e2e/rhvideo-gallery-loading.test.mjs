@@ -99,8 +99,8 @@ test('a late pre-refresh response cannot replace the new gallery even in the sam
   try{
     s=await setup({beforeGallery:async({response})=>{const call=++calls;if(call===1){response.once('finish',()=>oldFinished=true);await gate.promise;return {data:data('OLD delayed metadata')};}return {data:data('NEW current metadata')};}});
     await until(()=>calls===1,'old background metadata request held');await invoke(s.view,'gallery.refresh');
-    assert.equal(await s.view.evaluate("document.querySelector('#wb-gallery .wb-frame').textContent"),'NEW current metadata');gate.resolve();await until(()=>oldFinished,'the old HTTP response actually finishes');await sleep(150);
-    await invoke(s.view,'gallery.open');assert.equal(reads(s.fixture),2);assert.equal(await s.view.evaluate("document.querySelector('#wb-gallery .wb-frame').textContent"),'NEW current metadata','the current worker must not contain the late old snapshot');
+    assert.equal(await s.view.evaluate("document.querySelector('#wb-gallery .wb-frame-title').textContent"),'NEW current metadata');gate.resolve();await until(()=>oldFinished,'the old HTTP response actually finishes');await sleep(150);
+    await invoke(s.view,'gallery.open');assert.equal(reads(s.fixture),2);assert.equal(await s.view.evaluate("document.querySelector('#wb-gallery .wb-frame-title').textContent"),'NEW current metadata','the current worker must not contain the late old snapshot');
   }finally{gate.resolve();await s?.close();}
 });
 
@@ -116,5 +116,30 @@ test('a fifty-thousand screenshot pool keeps exact end-to-start navigation witho
     await invoke(s.view,'image.step',{direction:1});const wrapped=await invoke(s.view,'image.state');assert.equal(wrapped.index,0);assert.equal(wrapped.current.seconds,0);
     const replies=await s.view.evaluate('window.__locateReplies');assert.equal(replies.length,1);assert.equal(replies[0].index,count-1);assert.equal(replies[0].queued,false);assert(replies[0].bytes<2000,'actual worker target reply stays bounded');
     assert.equal(reads(s.fixture),1,'navigation never refetches the all-library metadata');console.log(JSON.stringify({pass:true,screenshotPool:count,workerTargetBytes:replies[0].bytes,endToStart:true}));
+  }finally{await s?.close();}
+});
+
+test('real gallery source order, mixed pictures, durable scoped names and exact continue-browsing survive a refreshed library and login',async()=>{
+  let inserted=false,s;
+  const data=()=>[
+    ...(inserted?[{video_id:'video-3',filename:'Inserted',folder:'test',duration:20,resolution:'640x360',screenshots:[{url:'/storage/pictures/300.svg',time_seconds:0}]}]:[]),
+    ...[2,0,1].map(id=>({video_id:'video-'+id,filename:['A','B','Z'][id]+'.mp4',folder:'test',duration:20,resolution:'640x360',screenshots:(id===2?[9,1,0,2,3,4,5,6,7,8,...Array.from({length:10},(_,i)=>i+10)]:Array.from({length:20},(_,i)=>i)).map(i=>({url:'/storage/pictures/'+(id*100+i)+'.svg',time_seconds:i}))}))];
+  try{
+    s=await setup({pictureCount:2,beforeGallery:()=>({data:data()})},{catalog:false});await until(async()=>(await invoke(s.view,'gallery.state')).total===60,'source gallery ready');
+    await invoke(s.view,'gallery.inspect',{index:0});let image=await invoke(s.view,'image.state');assert.equal(image.current.videoId,'video-2');assert.equal(image.current.seconds,9);await invoke(s.view,'image.close');
+    assert.equal(await s.view.evaluate("document.querySelector('#gallery-content .wb-frame-info').textContent"),'0:09 / 0:20');
+    await invoke(s.view,'sort',{value:'nameAsc'});await invoke(s.view,'gallery.inspect',{index:0});assert.equal((await invoke(s.view,'image.state')).current.videoId,'video-2','video-list sorting cannot reorder screenshot browsing');await invoke(s.view,'image.close');
+    await invoke(s.view,'preferences.set',{key:'mixPictures',value:true});assert.match((await invoke(s.view,'gallery.state')).seed,/^[a-f0-9]{8}$/,'a first mixed pool auto-shuffles like loadGrid');await invoke(s.view,'gallery.restore');
+    await invoke(s.view,'gallery.inspect',{index:0});assert.equal((await invoke(s.view,'image.state')).current.id,'picture-0','restoring defaults places pictures before screenshot rows');await invoke(s.view,'image.close');
+    await invoke(s.view,'gallery.orders');await invoke(s.view,'gallery.save',{name:'Default'});assert(await s.view.evaluate("document.querySelector('#wb-settings .wb-content').textContent.includes('Default')"),'saving updates the actual order UI');await invoke(s.view,'panel.close',{id:'wb-settings'});
+    await invoke(s.view,'gallery.shuffle');const seed=(await invoke(s.view,'gallery.state')).seed;await invoke(s.view,'gallery.save',{name:'Seed'});const persisted=await s.app.evaluate("call('rhvideo_request',{action:'preferences',args:{}})");assert.equal(persisted.galleryOrdersByScope['|pictures'].Seed.seed,seed,'acknowledge only actual native persistence');
+    await invoke(s.view,'gallery.page',{direction:1});await invoke(s.view,'gallery.resume',{name:'Default'});assert.equal((await invoke(s.view,'gallery.state')).offset,0);assert.equal((await invoke(s.view,'gallery.state')).seed,0,'named order does not restore an unrelated old page');
+    await invoke(s.view,'gallery.page',{direction:1});await invoke(s.view,'gallery.inspect',{index:0});const prior=await invoke(s.view,'image.state');assert.equal(prior.index,36);await invoke(s.view,'image.close');
+    inserted=true;await invoke(s.view,'gallery.refresh');await invoke(s.view,'gallery.restore');await invoke(s.view,'gallery.resume');image=await invoke(s.view,'image.state');assert.equal(image.index,37);assert.deepEqual(image.current,prior.current,'resume finds the exact URL instead of the reused frame index');await invoke(s.view,'image.close');
+    await invoke(s.view,'gallery.save',{name:'Checkpoint'});await invoke(s.view,'connection.logout');await invoke(s.view,'connection.connect',{server:s.fixture.url,username:'preview',password:'fixture-only'});await until(async()=>{const g=await invoke(s.view,'gallery.state');return g.loaded&&g.total===63&&g.offset===36;},'login restores the remembered gallery page');
+    await invoke(s.view,'gallery.resume');assert.equal((await invoke(s.view,'image.state')).index,37);await invoke(s.view,'image.close');
+    await invoke(s.view,'preferences.set',{key:'perVideo',value:2});assert((await invoke(s.view,'gallery.state')).orders.includes('Seed'),'shot-count changes do not discard names');
+    await invoke(s.view,'preferences.set',{key:'mixPictures',value:false});assert.deepEqual((await invoke(s.view,'gallery.state')).orders,[],'named orders are isolated by mixed-picture scope');
+    assert.deepEqual((await invoke(s.view,'ui.contract')).missing,[]);console.log(JSON.stringify({pass:true,sourceOrder:['video-2','video-0','video-1'],exactResume:[36,37],scopedOrders:true,nativePersistence:true}));
   }finally{await s?.close();}
 });

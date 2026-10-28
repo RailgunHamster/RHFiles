@@ -70,6 +70,10 @@ Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连
 
 Windows 原生 `player.state`／`grid.state.cells` 的 `pauseRequested` 表示已接受的暂停意图，`state` 仍表示解码器实际状态。暂停/继续是异步的，翻组快照和快捷键遵循前者；验证真正暂停仍应检查 `state===4`、暂停画面恢复结束及当前 `inputId`，不能拿“已接受暂停”冒充解码器已完成。Android 原生状态沿用 Media3 的 `playWhenReady`。
 
+图库与视频清单的排序独立：默认保留服务器的截图顺序，混合池默认图片在前；首次混合自动打乱，也可显式还原。`gallery.state` 另返回 `offset`、`limit`、`seed`、`orderScope` 和当前分区的命名 `orders`。新种子为八位十六进制字符串，旧数字种子仍可恢复；按原版的视频 ID+截图 URL／图片 ID 排名，新增内容不改变已有项目的相对次序。
+
+`gallery.save {"name":"名称"}` 保存当前标签/混合图片分区的顺序，等原生存储完成才应答；同名会更新。`gallery.resume {"name":"名称"}` 恢复顺序并回到第一页。**不传 name 的 `gallery.resume` 是继续浏览，会打开上次那张图**，优先精确匹配原截图 URL，找不到时退回同视频首张或有效索引。图库页码/种子另行记忆，不再由普通翻页覆盖图片书签。命名顺序不受每视频截图数量影响；旧名称与数字种子会迁入当前分区。Windows/Android 共用这些前端语义与公开接口。
+
 批量暂存使用 `selection.toggle` → `selection.snapshot` → `selection.stage`，最后返回一次性 ticket，须显式调用两次 `confirm.advance`。ticket 与账户、当前会话、选中快照绑定并在提交前消费，2 分钟后失效；失败只返回逐项结果，不自动重试。`selection.result` 可查询本次结果。正常复制/移动等文件任务的终态规则不受媒体库功能影响。
 
 Windows 0.1.88 的播放行为单独对齐参考源码：`playlist.start` 是截图浏览位置开始的去重分段队列，`playlist.sequential` 是当前过滤后完整视频列表的顺序队列，传 `{ "super": true }` 使用独立的超压顺序队列；不再把它们合并到一个模式下拉中。三者分别保存位置和设置，只有 ID 与顺序完全一致才恢复游标。`player.seekQueue` 以 `ratio: 0..1` 定位整个队列，普通 `player.control` 的 seek 仍按当前视频的毫秒数定位。

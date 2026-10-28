@@ -15,6 +15,7 @@
   };
   api.provideState('application',()=>({platform:mobile?'android':'windows',window:'window-rhvideo',ready:true}));
   const icons={
+    gallery:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     library:'<rect x="3" y="4" width="18" height="16" rx="4"/><path d="m10 8 6 4-6 4z"/>',
     video:'<rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-3v10l-4-3"/>',
     picture:'<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/>',
@@ -234,7 +235,7 @@
   }
   function showImage(media=images[imageIndex],index=imageIndex,total=images.length){
     $('image-title').textContent=media.title;if($('full-image').src!==media.cover)$('full-image').src=media.cover;$('full-image').alt=media.title;
-    $('image-position').textContent=(index+1)+' / '+total;$('image-previous').disabled=total<=1;$('image-next').disabled=total<=1;
+    $('image-position').textContent=(index+1)+' / '+total+(media.kind==='frame'?' · '+model.clock(media.seconds)+' / '+model.clock(media.duration):'');$('image-previous').disabled=total<=1;$('image-next').disabled=total<=1;
     const collection=$('image-collection-seek');if(collection){collection.value=String(total>1?Math.round(index/(total-1)*1000):0);collection.disabled=total<=1;}
     $('full-image').style.cursor=media.kind==='frame'?'pointer':'';
     $('full-image').style.transform='scale('+imageZoom+')';$('image-fit').textContent=imageZoom===1?'适应画面':Math.round(imageZoom*100)+'%';

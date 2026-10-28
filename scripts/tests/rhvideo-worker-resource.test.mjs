@@ -59,8 +59,15 @@ test("a later page paint cannot cancel the exact lookup used by a clicked media 
   const f=fixture(async()=>response([])),items=[{id:'one'}];
   await f.send('set',{kind:'picture',items});
   const located=f.send('query',{kind:'picture',locate:{key:'picture:one'}});
-  const page=f.send('query',{kind:'picture',offset:0});
+  const page=f.send('query',{kind:'picture',offset:0,latest:true});
   assert.deepEqual(await located,items);assert.deepEqual(await page,items);
+});
+test("only obsolete paints coalesce; playlist/export/save snapshots are never replaced by another paint", async () => {
+  const f=fixture(async()=>response([])),items=[{id:'one'}];await f.send('set',{kind:'picture',items});
+  const oldPaint=f.send('query',{kind:'picture',latest:true});
+  const snapshot=f.send('query',{kind:'picture',allKeys:true});
+  const currentPaint=f.send('query',{kind:'picture',latest:true});
+  assert.equal((await oldPaint).stale,true);assert.deepEqual(await snapshot,items);assert.deepEqual(await currentPaint,items);
 });
 test("a slow resource never blocks another collection or diagnostics", async () => {
   let release;

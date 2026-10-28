@@ -27,6 +27,18 @@
   function key(v) {
     return (v.kind || v.type || "video") + ":" + v.id;
   }
+  function galleryKey(v) {
+    if (v.kind === "picture" || v.pictureId != null) return "picture:" + String(v.pictureId ?? v.id);
+    if (v.videoId != null) return "video:" + String(v.videoId) + "|url:" + String(v.path ?? v.url ?? "");
+    return "url:" + String(v.path ?? v.url ?? "");
+  }
+  function galleryRank(seed, row) {
+    let rank = 2166136261;
+    const text = String(seed) + "|" + galleryKey(row);
+    // The reference hashes UTF-16 code units, not UTF-8 or code points.
+    for (let i = 0; i < text.length; i++) rank = Math.imul(rank ^ text.charCodeAt(i), 16777619);
+    return rank >>> 0;
+  }
   function canonical(value) {
     return JSON.stringify(value, (_key, v) =>
       v && typeof v === "object" && !Array.isArray(v)
@@ -86,6 +98,23 @@
       this.orderCache.clear();
       return { count: rows.length };
     }
+    setGallery(videos, pictures = []) {
+      if (!Array.isArray(videos) || !Array.isArray(pictures)) throw Error("截图库清单无效");
+      const rows = [];
+      const append = row => { if (rows.length >= 1000000) throw Error("媒体清单无效或超出上限"); rows.push(row); };
+      // loadGrid uses picture catalog order first, then each video's shot order.
+      for (const p of pictures) append({ ...p, kind: "picture", path: "/storage/" + p.webp_path });
+      for (const v of videos) {
+        const shots = v.frames ?? v.screenshots ?? [];
+        if (!Array.isArray(shots)) throw Error("视频截图清单无效");
+        for (let i = 0; i < shots.length; i++) {
+          const shot = shots[i], compact = Array.isArray(v.frames);
+          append({id:v.video_id + "-frame" + i,kind:"frame",videoId:v.video_id,title:v.filename,folder_label:v.folder,
+            resolution:v.resolution,duration:v.duration,seconds:compact?shot[1]:shot.time_seconds,path:compact?v.base_url+shot[0]:shot.url});
+        }
+      }
+      return this.set("gallery", rows);
+    }
     async search(kind, text) {
       if (!text) return null;
       if (!this.searchCore || !this.dictionary)
@@ -112,7 +141,7 @@
       search = "",
       rule = {},
       folder = "",
-      sort = "dateDesc",
+      sort = kind === "gallery" ? "source" : "dateDesc",
       offset = 0,
       limit = 36,
       seed = 0,
@@ -127,11 +156,12 @@
           ? Object.keys(locate) : [];
         if (fields.length !== 1 || !(
           fields[0] === "key" && typeof locate.key === "string" && /^(video|picture|novel|frame):[A-Za-z0-9_-]{1,128}$/.test(locate.key) ||
+          fields[0] === "orderKey" && typeof locate.orderKey === "string" && locate.orderKey.length > 0 && locate.orderKey.length <= 32768 ||
           fields[0] === "videoId" && typeof locate.videoId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(locate.videoId)
         )) throw Error("媒体定位参数无效");
       }
       if (
-        !sorts.includes(sort) ||
+        !(sorts.includes(sort) || kind === "gallery" && sort === "source") ||
         !Number.isSafeInteger(offset) ||
         offset < 0 ||
         !Number.isSafeInteger(limit) ||
@@ -139,6 +169,8 @@
         limit > 100
       )
         throw Error("分页或排序参数无效");
+      if (!(Number.isSafeInteger(seed) && seed >= 0 && seed <= 4294967295 || kind === "gallery" && typeof seed === "string" && /^[a-f0-9]{8}$/.test(seed)))
+        throw Error("随机种子无效");
       const rows = this.collections.get(kind) || [];
       const cacheKey = JSON.stringify([
         kind,
@@ -182,16 +214,18 @@
                 ? "size"
                 : "duration",
           direction = sort.endsWith("Desc") ? -1 : 1;
-        order.sort((ai, bi) => {
+        const ranks = seed ? new Uint32Array(rows.length) : null;
+        if (ranks) for (const i of order) ranks[i] = typeof seed === "string" ? galleryRank(seed, rows[i]) : hash(key(rows[i]), seed);
+        if (seed || sort !== "source") order.sort((ai, bi) => {
           const a = rows[ai],
             b = rows[bi];
           return (
             (seed
-              ? hash(key(a), seed) - hash(key(b), seed)
+              ? ranks[ai] - ranks[bi]
               : direction *
                 (field === "title"
                   ? collator.compare(a.title, b.title)
-                  : a[field] - b[field])) || collator.compare(key(a), key(b))
+                  : a[field] - b[field])) || (typeof seed === "string" ? ai - bi : collator.compare(key(a), key(b)))
           );
         });
         if (this.orderCache.size >= 8)
@@ -202,6 +236,7 @@
       if (locate !== null) {
         const index = order.findIndex(i => locate.key !== undefined
           ? key(rows[i]) === locate.key
+          : locate.orderKey !== undefined ? galleryKey(rows[i]) === locate.orderKey
           : rows[i].kind === "frame" && rows[i].videoId === locate.videoId);
         if (index >= 0) located = { index, item: rows[order[index]] };
       }
@@ -228,6 +263,7 @@
                     ? { videoId: v.videoId, seconds: v.seconds }
                     : {}),
                   key: key(v),
+                  ...(kind === "gallery" ? { orderKey: galleryKey(v) } : {}),
                 };
               }),
             }
@@ -394,6 +430,8 @@
     sorts,
     hash,
     key,
+    galleryKey,
+    galleryRank,
     canonical,
     normalize,
     portrait,

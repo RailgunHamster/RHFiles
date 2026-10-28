@@ -403,7 +403,7 @@ test("parent-video returns require the exact account, source and preview nonce, 
 test("image navigation commits the displayed target atomically and accumulates fast next actions",async()=>{
   const source=fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js",import.meta.url),"utf8"),start=source.indexOf("async function stepImage("),end=source.indexOf("function refreshImage()",start),pending=[];
   const session={args:{kind:"gallery"},index:0,total:4,current:{id:"frame-0",kind:"frame",path:"/storage/0.webp"}};
-  const context=vm.createContext({imageSession:session,imageToken:0,RHVideoModel:{playback:{step:(at,direction,total)=>(at+direction+total)%total}},send:(_name,args)=>new Promise((resolve,reject)=>pending.push({args,resolve,reject})),native:async(_name,args)=>args.paths.map(path=>"resolved:"+path),refreshImage(){},ctx:{resetImageZoom(){}},prefs:{},I:{key:item=>item.id},save(){},Error});
+  const context=vm.createContext({imageSession:session,imageToken:0,gallery:{limit:36},RHVideoModel:{playback:{step:(at,direction,total)=>(at+direction+total)%total}},send:(_name,args)=>new Promise((resolve,reject)=>pending.push({args,resolve,reject})),native:async(_name,args)=>args.paths.map(path=>"resolved:"+path),refreshImage(){},ctx:{resetImageZoom(){}},prefs:{},I,save(){},Error});
   vm.runInContext(source.slice(start,end),context);
   const first=context.stepImage(1);assert.equal(session.loading,true);assert.equal(session.index,0);assert.equal(session.current.id,"frame-0");assert.equal(session.pendingIndex,1);
   const second=context.stepImage(1);assert.equal(session.pendingIndex,2);assert.equal(pending[1].args.offset,2);

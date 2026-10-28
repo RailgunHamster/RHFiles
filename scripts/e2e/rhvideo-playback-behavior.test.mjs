@@ -229,6 +229,19 @@ test('native playback from the primary screenshot page returns to its exact imag
   }finally{player?.close();await s.close();}
 });
 
+test('native segment and multi-video queues use server screenshot order rather than a separately sorted video list',native,async()=>{
+  const metadata=[2,0,1].map(id=>({video_id:'video-'+id,filename:'Source '+id,folder:'test',duration:14,resolution:'640x360',screenshots:[{url:'/storage/pictures/'+id+'.svg',time_seconds:1}]}));
+  const s=await setup({primaryGallery:true,beforeGallery:()=>({data:metadata})});let player,grid;
+  try{
+    await until(async()=>(await invoke(s.view,'gallery.state')).total===3,'non-alphabetical source gallery');await invoke(s.view,'sort',{value:'nameAsc'});await invoke(s.view,'gallery.inspect',{index:1});await invoke(s.view,'image.close');
+    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    for(const id of ['video-0','video-1','video-2']){const actual=await until(async()=>{const v=await invoke(player,'player.state');return v.queue?.id===id&&v.renderedFrames>0?v:null;},'actual source-ordered segment '+id,25000);assert.equal(actual.queue.total,3);if(id!=='video-2')await invoke(player,'player.next');}
+    await invoke(s.view,'player.close');player.close();player=null;await invoke(s.view,'preferences.set',{key:'gridCount',value:3});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    const actual=await until(async()=>{const v=await invoke(grid,'grid.state');return v.cells?.length===3&&v.cells.every(c=>c.renderedFrames>0)?v:null;},'all source-ordered grid inputs really render',25000);assert.deepEqual(actual.cells.map(c=>c.id),['video-2','video-0','video-1']);
+    if(process.env.RHFILES_EXPECT_RENDERER)assert(actual.cells.every(c=>c.renderer===process.env.RHFILES_EXPECT_RENDERER));await invoke(s.view,'grid.close');grid.close();grid=null;
+  }finally{player?.close();grid?.close();await s.close();}
+});
+
 test('a cold normal video card never waits for the background gallery or manufactures a screenshot parent',native,async()=>{
   let release,s,player;const held=new Promise(resolve=>release=resolve);
   try{
@@ -597,7 +610,7 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
   try{
     await invoke(s.view,'sort',{value:'nameAsc'});
     await invoke(s.view,'selection.toggle',{kind:'video',id:'video-7',enabled:true});
-    const collator=new Intl.Collator('zh-CN',{numeric:true,sensitivity:'base'}),ordered=s.fixture.videos.slice(0,6).sort((a,b)=>collator.compare(a.original_filename,b.original_filename));
+    const ordered=s.fixture.videos.slice(0,6); // Reference loadGrid preserves server order; list sorting is independent.
     const groups=Grid.groups(Grid.entries(ordered.map(v=>({videoId:v.id})),s.fixture.videos));assert(groups.length>1);assert.equal(groups.flat().length,6);
     await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:5});
     await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');

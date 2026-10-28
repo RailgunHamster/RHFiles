@@ -50,9 +50,9 @@ self.onmessage = (event) => {
     for (const read of resourceReads.values())
       if (read.revision < revision) read.controller.abort();
   const collection = args.kind || "";
-  // A lookup belongs to a clicked target, not the list's latest paint. A later
-  // page render must not silently remove that target's parent/return position.
-  const cancellable = action === "query" && !args.locate;
+  // Only obsolete paints may coalesce. Playback/export/order snapshots and exact
+  // lookups must not be silently cancelled by an unrelated page render.
+  const cancellable = action === "query" && args.latest === true && !args.locate;
   if (cancellable) latest.set(collection, id);
   const enqueue = (resource) => {
     work = work.then(async () => {
@@ -78,6 +78,8 @@ self.onmessage = (event) => {
               ? { revision }
               : action === "set"
                 ? catalog.set(args.kind, args.items)
+                : action === "gallery"
+                  ? catalog.setGallery(args.videos, args.pictures)
                 : action === "query"
                   ? await catalog.query(args)
                   : catalog.info();

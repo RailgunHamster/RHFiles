@@ -287,6 +287,7 @@
           if(version!==epoch)return {stale:true};
           prefs = saved;
           applyPreferences();
+          restoreGalleryPreferences();
           warmGallery();
         }
         return { reset: true };
@@ -370,19 +371,23 @@
         $("reader-font").value = String(c.readerFont);
         void syncVolume().catch(error=>{volumeKey="";notice(error);});
       }
-      function save() {
+      function save(immediate = false) {
         clearTimeout(saveTimer);
         const session = epoch;
-        saveTimer = setTimeout(() => {
+        const enqueue = () => {
+          saveTimer = 0;
           const value = structuredClone(prefs);
-          saveChain = saveChain
+          const pending = saveChain
             .catch(() => {})
             .then(() => {
-              if (session === epoch && state.connected)
-                return native("preferences", { value });
-            })
-            .catch(notice);
-        }, 150);
+              if (session !== epoch || !state.connected) throw Error("媒体账户已改变，偏好未保存");
+              return native("preferences", { value });
+            });
+          saveChain = pending.catch(error=>{if(!immediate&&session===epoch)notice(error);});
+          return pending;
+        };
+        if(immediate)return enqueue();
+        saveTimer = setTimeout(enqueue, 150);
       }
       function invalidateCatalog(kind) {
         catalogRevision++;
@@ -479,7 +484,7 @@
         await rawCatalog(state.kind, refresh);
         const version = epoch,
           revision = catalogRevision;
-        const result = await query({}, token);
+        const result = await query({latest:true}, token);
         const cached = result.items.map((item) =>
           resolutions.get(I.key(item), JSON.stringify(item)),
         );
@@ -1109,6 +1114,7 @@
             await native("playlist.settings",{mode:"segments",options:{[key]:value}});
           }
           prefs[key] = value;
+          if(key==="mixPictures"&&value&&!gallery.seed)gallery.autoShufflePending=true;
           save();
           applyPreferences();
           if(key==="volume")await syncVolume();
@@ -2444,7 +2450,7 @@
           // The original synchronous click never fetches the whole gallery
           // before starting a video; a cold pool means no implicit parent.
           try{
-            const args={kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,offset:0,limit:1};
+            const args={kind:"gallery",search:state.search,rule:c.rule,sort:"source",seed:gallery.seed,offset:0,limit:1};
             const result=await send("query",{...args,locate:{videoId:media.id}}),match=result.located;
             if(intent!==singlePlayIntent)return {stale:true};
             if(match){parentSession={args,index:match.index,total:result.total,current:match.item,previewId:crypto.randomUUID(),playbackId:crypto.randomUUID()};parent={origin:"frame",deferPreviewCommit:true,parentKey:I.key(parentSession.current),parentPreview:parentSession.previewId,parentPlayback:parentSession.playbackId,parentTotal:result.total};}
@@ -2472,9 +2478,12 @@
         if(sequential)ids=P.listIds(result.queue);
         else{
           if(!galleryReady())await loadGallery(false,false);
-          const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,offset:0,limit:1,allKeys:true});
-          const anchor=prefs.galleryResume?.mediaKey,at=anchor?frames.queue.findIndex(f=>f.key===anchor):-1;
-          ids=P.galleryIds(frames.queue,at>=0?at:gallery.offset);
+          const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:"source",seed:gallery.seed,offset:0,limit:1,allKeys:true});
+          const position=prefs.galleryResume;
+          let at=position?.orderKey?frames.queue.findIndex(f=>f.orderKey===position.orderKey):position?.mediaKey?frames.queue.findIndex(f=>f.key===position.mediaKey):-1;
+          if(at<0&&position?.videoId)at=frames.queue.findIndex(f=>f.videoId===position.videoId);
+          if(at<0)at=Number.isSafeInteger(position?.index)&&position.index>=0&&position.index<frames.total?position.index:0;
+          ids=P.galleryIds(frames.queue,at);
         }
         // Metadata is resolved in the worker once, not by fetching each video.
         const all=await send("query",{kind:"video",sort:"nameAsc",allKeys:true,offset:0,limit:1});
@@ -2575,7 +2584,7 @@
         object(),
         async () => {
           const version=epoch,c=config();if(!galleryReady())await loadGallery(false,false);
-          const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1});
+          const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:"source",seed:gallery.seed,allKeys:true,offset:0,limit:1});
           const videos=await send("query",{kind:"video",sort:"nameAsc",allKeys:true,offset:0,limit:1});
           const entries=RHVideoModel.grid.entries(frames.queue,videos.queue);if(entries.length<2)throw Error("需要至少 2 个图库视频才能同屏播放");
           if(version!==epoch)throw Error("媒体账户已改变，未开始同屏播放");
@@ -2729,7 +2738,7 @@
           return { stale: true };
         session.index = index;
         session.current = result.items[0];
-        if(session.args.kind==="gallery"){prefs.galleryResume={...prefs.galleryResume,mediaKey:session.current.key||I.key(session.current)};save();}
+        if(session.args.kind==="gallery"){prefs.galleryResume={mediaKey:I.key(session.current),orderKey:I.galleryKey(session.current),videoId:session.current.videoId??null,index,offset:Math.floor(index/gallery.limit)*gallery.limit};save();}
         ctx.resetImageZoom();
         refreshImage();
         return { index, total: session.total };
@@ -2758,9 +2767,9 @@
         object({ random: { type: "boolean" } }, ["random"]),
         async ({ random }) => {
           if (!imageSession?.args) throw Error("当前图片没有可排序的浏览队列");
-          imageSession.args.seed = random
-            ? crypto.getRandomValues(new Uint32Array(1))[0] || 1
-            : 0;
+          const value=random?crypto.getRandomValues(new Uint32Array(1))[0]:0;
+          imageSession.args.seed=random&&imageSession.args.kind==="gallery"?value.toString(16).padStart(8,"0"):value;
+          if(imageSession.args.kind==="gallery"){gallery.seed=imageSession.args.seed;gallery.offset=0;rememberGalleryBrowser();save();}
           return stepImage(0,0);
         },
       );
@@ -3079,6 +3088,48 @@
         return I.canonical({perVideo:c.perVideo,mixPictures:c.mixPictures,rule:c.rule});
       }
       function galleryReady(){return gallery.loaded&&gallery.scope===galleryScope();}
+      function galleryOrderScope(c=config()){
+        const rule=RHTagFilter.normalize(c.rule),single=!(rule.groups||[]).some(RHTagFilter.active)&&!rule.exclude.length&&rule.include.length<=1;
+        return (single?rule.include[0]||"":"tags:"+RHTagFilter.key(rule))+"|"+(c.mixPictures?"pictures":"videos");
+      }
+      function validGallerySeed(seed){return Number.isSafeInteger(seed)&&seed>=0&&seed<=4294967295||typeof seed==="string"&&/^[a-f0-9]{8}$/.test(seed);}
+      function galleryOrders(create=false){
+        const scope=galleryOrderScope(),scopes=prefs.galleryOrdersByScope;
+        if(scopes&&Object.hasOwn(scopes,scope)&&scopes[scope]&&typeof scopes[scope]==="object")return scopes[scope];
+        if(!create)return {};
+        prefs.galleryOrdersByScope={...scopes,[scope]:{}};return prefs.galleryOrdersByScope[scope];
+      }
+      function restoreGalleryPreferences(){
+        if(prefs.galleryOrders&&typeof prefs.galleryOrders==="object"){
+          const scope=galleryOrderScope();prefs.galleryOrdersByScope={...prefs.galleryOrdersByScope,[scope]:{...prefs.galleryOrders,...galleryOrders()}};
+          delete prefs.galleryOrders;
+        }
+        const saved=prefs.galleryBrowser??prefs.galleryResume;
+        gallery.seed=validGallerySeed(saved?.seed)?saved.seed:0;
+        gallery.offset=Number.isSafeInteger(saved?.offset)&&saved.offset>=0?Math.floor(saved.offset/gallery.limit)*gallery.limit:0;
+        gallery.autoShufflePending=!saved||!Object.hasOwn(saved,"seed");
+      }
+      function rememberGalleryBrowser(){prefs.galleryBrowser={version:2,seed:gallery.seed,offset:gallery.offset};}
+      async function resumeGallery(saved){
+        const version=await ensure(),intent=++singlePlayIntent,revision=gallery.revision,view=state.view;
+        let expectedView=gallery.load;
+        const args={kind:"gallery",search:state.search,rule:config().rule,sort:"source",seed:gallery.seed,offset:0,limit:1};
+        const scope=I.canonical({rule:args.rule,search:args.search,seed:args.seed});
+        const current=()=>version===epoch&&intent===singlePlayIntent&&revision===gallery.revision&&view===state.view&&expectedView===gallery.load&&scope===I.canonical({rule:config().rule,search:state.search,seed:gallery.seed});
+        await loadGallery(false,false);if(!current())return {stale:true};
+        let value,match;
+        const selectors=saved.orderKey?[{orderKey:saved.orderKey}]:saved.mediaKey?[{key:saved.mediaKey}]:[];
+        if(saved.videoId)selectors.push({videoId:saved.videoId});
+        for(const locate of selectors){value=await send("query",{...args,locate});if(!current())return {stale:true};if(value.located){match=value.located;break;}}
+        if(!value){value=await send("query",args);if(!current())return {stale:true};}
+        if(!value.total)throw Error("当前图库没有可恢复的图片");
+        const index=match?.index??(Number.isSafeInteger(saved.index)&&saved.index>=0&&saved.index<value.total?saved.index:0);
+        gallery.offset=Math.floor(index/gallery.limit)*gallery.limit;expectedView++;
+        const shown=await loadGallery();if(shown.stale||!current())return {stale:true};
+        const session=imageSession={args,index,total:value.total,current:null,previewId:crypto.randomUUID()};
+        const displayed=await stepImage(0);if(displayed.stale||!current()||imageSession!==session)return {stale:true};
+        ctx.openDialog("image-dialog");return {opened:true,index,total:value.total};
+      }
       function paintGalleryStatus(){
         const node=$("wb-gallery-status");if(!node)return;
         node.hidden=!gallery.error;node.textContent=gallery.error?"截图库加载失败："+gallery.error:"";
@@ -3112,44 +3163,21 @@
             },
           });
           if(!current())return {stale:true};
-          const frames = [];
-          for (const video of values) {
-            const screenshots =
-              video.screenshots ||
-              video.frames?.map(([name, time]) => ({
-                url: video.base_url + name,
-                time_seconds: time,
-              })) ||
-              [];
-            for (let i = 0; i < screenshots.length; i++) {
-              const f = screenshots[i];
-              frames.push({
-                id: video.video_id + "-frame" + i,
-                kind: "frame",
-                videoId: video.video_id,
-                title: video.filename,
-                folder_label: video.folder,
-                resolution: video.resolution,
-                duration: video.duration,
-                seconds: f.time_seconds,
-                path: f.url,
-              });
-            }
-          }
+          let pictures=[];
           if (c.mixPictures) {
             const p = await remote("index.picture");
             if(!current())return {stale:true};
-            frames.push(
-              ...p.items.map((v) => ({
-                ...v,
-                kind: "picture",
-                path: "/storage/" + v.webp_path,
-              })),
-            );
+            pictures=p.items;
           }
-          await send("set", { kind: "gallery", items: frames });
+          // Flatten compact rows in the worker, not on the interactive thread.
+          const installed=await send("gallery", { videos: values, pictures });
           if(!current())return {stale:true};
-          gallery.loaded = true;gallery.scope=scope;gallery.count=frames.length;
+          if(c.mixPictures&&pictures.length&&gallery.autoShufflePending&&!gallery.seed){
+            gallery.seed=crypto.getRandomValues(new Uint32Array(1))[0].toString(16).padStart(8,"0");
+            rememberGalleryBrowser();save();
+          }
+          if(c.mixPictures)gallery.autoShufflePending=false;
+          gallery.loaded = true;gallery.scope=scope;gallery.count=installed.count;
           return {loaded:true};
         }catch(error){if(!current())return {stale:true};gallery.error=String(error?.message||error);paintGalleryStatus();throw error;}
         finally{if(gallery.pending===task)gallery.pending=null;}})();
@@ -3171,10 +3199,11 @@
           kind: "gallery",
           search: state.search,
           rule: c.rule,
-          sort: c.sort,
+          sort: "source",
           seed: gallery.seed,
           offset: gallery.offset,
           limit: gallery.limit,
+          latest: true,
         });
         if (!current()) return { stale: true };
         if(value.total>0&&gallery.offset>=value.total){gallery.offset=Math.floor((value.total-1)/gallery.limit)*gallery.limit;return loadGallery(false,display);}
@@ -3207,7 +3236,7 @@
         for (let i = 0; i < value.items.length; i++) {
           const f = value.items[i],
             card = button(
-              f.title,
+              "",
               "gallery.openItem",
               { index: i },
               "wb-frame",
@@ -3216,7 +3245,10 @@
           image.src = urls[i];
           image.loading = "lazy";
           image.alt = f.title;
-          card.prepend(image);
+          const title=(f.folder?"["+f.folder+"] ":"")+f.title;
+          const info=f.kind==="frame"?RHVideoModel.clock(f.seconds)+" / "+RHVideoModel.clock(f.duration):f.resolution+(f.size?" · "+(f.size/1048576).toFixed(1)+" MB":"");
+          card.title=title+" · "+info;card.setAttribute("aria-label",title+"，"+info);
+          card.append(image,el("span",f.title,"wb-frame-title"),el("span",info,"wb-frame-info"));
           grid.append(card);
         }
         const navigation=el("div",undefined,"wb-gallery-nav");
@@ -3228,7 +3260,7 @@
         const submit=el("button","跳转","button secondary");submit.type="submit";submit.dataset.apiAction="rhvideo.gallery.jump";
         page.disabled=!gallery.total;submit.disabled=page.disabled;
         jump.append(field("跳到页",page),submit);listen(jump,"submit",event=>{event.preventDefault();invoke("gallery.jump",{page:Number(page.value)}).catch(notice);},"gallery.jump");navigation.append(jump);root.append(grid,navigation);
-        prefs.galleryResume = { ...prefs.galleryResume,offset: gallery.offset, seed: gallery.seed };
+        rememberGalleryBrowser();
         save();
         return { total: gallery.total, offset: gallery.offset };
         }catch(error){
@@ -3242,11 +3274,11 @@
         gallery.load++;state.view="gallery";$("wb-gallery")?.close();ctx.syncSection();
         return state.connected?loadGallery():{view:"gallery",connected:false};
       });
-      action("gallery.state",object(),()=>({loaded:galleryReady(),loading:!!gallery.pending,error:gallery.error,count:gallery.count,total:gallery.total,revision:gallery.revision}),"read");
+      action("gallery.state",object(),()=>({loaded:galleryReady(),loading:!!gallery.pending,error:gallery.error,count:gallery.count,total:gallery.total,revision:gallery.revision,offset:gallery.offset,limit:gallery.limit,seed:gallery.seed,orderScope:galleryOrderScope(),orders:Object.keys(galleryOrders())}),"read");
       action("gallery.inspect",object({index:{type:"integer",minimum:0,maximum:99}},["index"]),async({index})=>{
         const version=epoch,intent=++singlePlayIntent,view=gallery.load,revision=gallery.revision;
         const media=gallery.items[index];if(!media)throw Error("截图不在当前页");
-        const args={kind:"gallery",search:state.search,rule:config().rule,sort:config().sort,seed:gallery.seed,offset:0,limit:1};
+        const args={kind:"gallery",search:state.search,rule:config().rule,sort:"source",seed:gallery.seed,offset:0,limit:1};
         const result=await send("query",{...args,locate:{key:I.key(media)}});
         const current=()=>version===epoch&&intent===singlePlayIntent&&view===gallery.load&&revision===gallery.revision;
         if(result.stale||!current())return {stale:true};
@@ -3262,7 +3294,7 @@
           field("名称", name),
           button("保存当前顺序", "gallery.save", () => ({ name: name.value })),
         );
-        for (const name of Object.keys(prefs.galleryOrders || {})) {
+        for (const name of Object.keys(galleryOrders())) {
           const row = serverRow(name, "截图顺序与浏览位置");
           row.append(
             button("恢复", "gallery.resume", { name }),
@@ -3270,16 +3302,18 @@
           );
           root.append(row);
         }
-        return { names: Object.keys(prefs.galleryOrders || {}) };
+        return { names: Object.keys(galleryOrders()) };
       });
       action(
         "gallery.deleteOrder",
         object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
           "name",
         ]),
-        ({ name }) => {
-          delete prefs.galleryOrders?.[name];
-          save();
+        async ({ name }) => {
+          const version=epoch,orders=galleryOrders(),previous=Object.hasOwn(orders,name)?orders[name]:undefined;
+          delete orders[name];
+          try{await save(true);}catch(error){if(version===epoch&&!Object.hasOwn(orders,name)&&previous!==undefined)orders[name]=previous;throw error;}
+          if(version===epoch&&$("wb-settings")?.querySelector(".wb-dialog-head h2")?.textContent==="截图浏览顺序")await invoke("gallery.orders");
           return { removed: name };
         },
       );
@@ -3305,37 +3339,46 @@
         },
       );
       action("gallery.shuffle", object(), () => {
-        gallery.seed = crypto.getRandomValues(new Uint32Array(1))[0] || 1;
+        gallery.seed = crypto.getRandomValues(new Uint32Array(1))[0].toString(16).padStart(8,"0");
+        gallery.autoShufflePending=false;
         gallery.offset = 0;
         return loadGallery();
       });
       action("gallery.restore", object(), () => {
         gallery.seed = 0;
+        gallery.autoShufflePending=false;
         gallery.offset = 0;
         return loadGallery();
       });
       action(
         "gallery.save",
         object({ name: { type: "string", maxLength: 100 } }),
-        ({ name = "默认顺序" }) => {
-          prefs.galleryOrders = {
-            ...(prefs.galleryOrders || {}),
-            [name]: { seed: gallery.seed, offset: gallery.offset },
-          };
-          save();
+        async ({ name = "默认顺序" }) => {
+          name=name.trim().slice(0,80);if(!name)throw Error("请输入顺序名称");
+          const version=await ensure();await loadGallery(false,false);
+          const content=await send("query",{kind:"gallery",search:state.search,rule:config().rule,sort:"source",seed:gallery.seed,limit:1});
+          if(version!==epoch)throw Error("媒体账户已改变，顺序未保存");if(!content.total)throw Error("当前没有可保存的截图顺序");
+          const orders=galleryOrders(true),previous=Object.hasOwn(orders,name)?orders[name]:undefined;
+          const record=orders[name]={version:2,seed:gallery.seed,scope:galleryOrderScope(),savedAt:Date.now()};
+          try{await save(true);}catch(error){if(version===epoch&&orders[name]===record){if(previous===undefined)delete orders[name];else orders[name]=previous;}throw error;}
+          if(version===epoch&&$("wb-settings")?.querySelector(".wb-dialog-head h2")?.textContent==="截图浏览顺序")await invoke("gallery.orders");
           return { saved: name };
         },
       );
       action(
         "gallery.resume",
         object({ name: { type: "string", maxLength: 100 } }),
-        ({ name }) => {
-          const saved = name
-            ? prefs.galleryOrders?.[name]
-            : prefs.galleryResume;
+        async ({ name }) => {
+          const requestVersion=epoch;await ensure();if(requestVersion!==epoch)return {stale:true};
+          const orders=galleryOrders(),saved=name?(Object.hasOwn(orders,name)?orders[name]:null):prefs.galleryResume;
           if (!saved) throw Error("没有保存的浏览进度");
-          Object.assign(gallery, saved);
-          return loadGallery();
+          if(!name)return resumeGallery(saved);
+          if(!validGallerySeed(saved.seed))throw Error("保存的随机种子无效");
+          gallery.seed=saved.seed;gallery.offset=0;
+          gallery.autoShufflePending=false;
+          const result=await loadGallery();if(result.stale)return result;await save(true);
+          if($("wb-settings")?.querySelector(".wb-dialog-head h2")?.textContent==="截图浏览顺序")await invoke("panel.close",{id:"wb-settings"});
+          return result;
         },
       );
       action(
@@ -3408,6 +3451,8 @@
           const args = {
             ...criteria(),
             kind,
+            sort:kind==="gallery"?"source":c.sort,
+            seed:kind==="gallery"?gallery.seed:c.seed,
             mediaType:
               mode === "strip" && kind !== "gallery"
                 ? "picture"

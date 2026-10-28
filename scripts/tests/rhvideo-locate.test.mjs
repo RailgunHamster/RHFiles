@@ -53,13 +53,13 @@ function harness(){
   vm.runInContext([...functions.values()].join('\n')+'\nvar inspect=('+inspect+');',scope);return {scope,c,calls};
 }
 test('the shipped ordinary click keeps its first matching screenshot parent without a full worker transfer',async()=>{
-  const h=harness();await h.scope.play({id:'a',kind:'video',title:'A'});assert.equal(h.scope.imageSession.index,0);assert.equal(h.scope.imageSession.current.id,'a');assert.equal(h.scope.imageSession.total,4);assert.equal(h.calls[0].locate.videoId,'a');
+  const h=harness();await h.scope.play({id:'a',kind:'video',title:'A'});assert.equal(h.scope.imageSession.index,0);assert.equal(h.scope.imageSession.current.id,'z');assert.equal(h.scope.imageSession.total,4);assert.equal(h.calls[0].locate.videoId,'a');
 });
 test('the shipped picture click rejects a disappeared target instead of opening another file',async()=>{
   const h=harness();await h.scope.image(rows[3]);assert.equal(h.scope.imageSession.index,0);assert.equal(h.calls[0].locate.key,'picture:p');h.c.set('picture',[]);await assert.rejects(h.scope.image(rows[3]),/图片|清单/);
 });
 test('gallery inspect uses the exact ordered target and discards a delayed lookup after closing',async()=>{
-  const h=harness();await h.scope.inspect({index:0});assert.equal(h.scope.imageSession.index,3);assert.equal(h.calls[0].locate.key,'frame:z');
+  const h=harness();await h.scope.inspect({index:0});assert.equal(h.scope.imageSession.index,0);assert.equal(h.calls[0].locate.key,'frame:z');
   let release;h.scope.send=()=>new Promise(resolve=>release=resolve);const old=h.scope.inspect({index:2});h.scope.gallery.load++;release({located:{index:0,item:rows[2]},total:4});assert.equal((await old).stale,true);assert.equal(h.calls.filter(c=>c==='opened').length,1);
 });
 test('gallery inspect cannot reopen a decoded old picture after another media intent or account change',async()=>{

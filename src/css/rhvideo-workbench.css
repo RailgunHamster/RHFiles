@@ -194,6 +194,8 @@ body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
   display: block;
   margin-bottom: 8px;
 }
+.wb-frame-title, .wb-frame-info { display: block; margin: 0 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wb-frame-info { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 #wb-chapter-search {
   width: 100%;
   border: 1px solid var(--line);
