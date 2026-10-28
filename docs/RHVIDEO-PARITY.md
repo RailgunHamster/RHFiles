@@ -14,6 +14,8 @@
 
 后续源码的完整 Node **521/521**、Android JVM **361/361** 已通过，均零跳过／失败；包括实际执行原版收藏函数、接受后固定目标、接受前旧输入拒绝、账号撤销、一次性关闭及输入数组。证据 `rhvideo-grid-admission-full-node.log`、短路径 QA 的 `rhvideo-grid-admission-build.log` 及 Gradle XML。新增原生阶段／超时线程栈的压缩发行主 APK SHA-256 `82b7826ac3a3793da40af1f01a17a49ba0e8824571972e9e1f0accf3e9110b2e`、探测 APK `3722d8cb019b0c1d2cdef9012510d8989c2b13d100c4b4893b1f1f9b51bbfd5b` 仍在定向诊断，不能提前记为原生通过。开发源码保存在 `codex/rhvideo-startup-pixels`，暂不推进正式 main／更新源。
 
+相同 APK 后续通过一次独立 `grid-restore` 定向场景：实际原生收藏／取消、显式暂存／取消、三格实际播放与暂停、保持手势翻组 `A → B → A`、新旧解码输入区分、松手拒绝旧输入且保存的音量／位置／静音／速度不被修改。`rhvideo-grid-admission-diagnostic-native.log` 有明确的实际手势释放断言，安装哈希也核对；`rhvideo-android-grid-restore-release/rhvideo-grid-restore-qa.png` 已查看，包含三个真实彩条视频及原生按钮、旧输入拒绝提示。原生创建／prepare 返回约在一秒内，首次三格帧约 5.5／8.0／9.0 秒。这只是一次通过，不解释前面的间歇失败、不证明性能合格；同一 APK 的完整同屏场景继续独立运行，不能把定向通过倒写成此前整轮成功。
+
 **Android 新整轮没有通过。** APK `698d52cc…` 的首轮在新增账号场景前达到脚本六分钟总预算，被终止，不能算成功。只扩大新增整套业务场景的预算，不改变单格帧／seek／EOF 超时后，同一产品 APK、加强手势的探测 APK `cd874d0a…` 又实际复现暂停组回访失败：三格仍在 BUFFERING、出帧为零，约 27 秒后才建立解码器。随后只加本机 opt-in 网络计时的 APK `6782487e…` 在首次同屏打开遇到 JavaScript 回执超时。日志 `rhvideo-mobile-grid-native.log`、`rhvideo-mobile-grid-held-gesture-native.log`、`rhvideo-grid-restore-trace-native.log`（均在短路径 QA 目录），以及 `rhvideo-mobile-grid-stall-logcat.log`、`rhvideo-grid-restore-network-trace.log` 保留失败事实。后者已有连接复用失败／重连及明显等待，但还不足以断言唯一根因。主机仍有约 52 GiB 可用内存，普通 ADB shell 约 137 ms，不能泛称内存不足。
 
 继续增加不含 URL、文件名、令牌的原生创建／准备阶段和超时线程栈，缩短到同一暂停回访场景诊断；这不是删除原有验收。当前不发布正式包，不把新增入口、Windows 通过、旧 Android 包或旧 JVM 结果当作 Android 整轮已通过；首帧性能、其他业务组与完整目标仍未完成。
