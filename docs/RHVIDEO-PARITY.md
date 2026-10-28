@@ -108,7 +108,11 @@ Android 压缩主包 SHA-256 `fb883cdfe950ef57a523a19cc0a1cd2e57b3856504c43dd1cb
 
 安卓首次扩展触摸验收未通过（`rhvideo-picture-order-cached-android-strip.log`），没有把 Windows 专项的绿色推及手机。增加只读诊断后确认相同 ID 顺序仍在，但记录位置 1000 px 被恢复成约 840.38 px，当前最大距离 1645 px，不是超过末端的合法截断（`rhvideo-picture-order-android-resume-diagnostic.log`）。实际 opener 的执行红测复现：先测量图片布局，再向工具栏添加位置滑块、向弹层添加导航 canvas；初始较大的布局恢复位置后，ResizeObserver 又按新尺寸成比例缩放。现控件和导航准备完成后才测量，切换方向时也先设置影响尺寸的可见性，校验失败则还原这些可见性。安卓断言仍检查原位置，只允许原版明确的 `min(保存位置, 新最大距离)` 截断；该次 1000→840 的失败不会被此修正掩盖。
 
-另一个执行红测验证了持久化 await 期间尺寸变化会提交旧测量结果（`rhvideo-picture-order-async-layout-red.log`）。现写事务结束后重读当前尺寸／方向／行数，仅在变化时重建几何；若磁盘已提交而新尺寸布局失败，返回明确的 `saved:true,displayed:false` 警告并保留旧可见队列，不能假装保存未发生或偷偷重放。最新完整 Node **611/611，零跳过／失败**（`rhvideo-picture-order-final-geometry-node.log`）。两次中间单测错误来自新增 opener 模拟环境漏了 notice／tick，分别补齐后才记绿色，不把它们归为产品错误。新几何版本的 Windows 与安卓原生验收继续进行。
+另一个执行红测验证了持久化 await 期间尺寸变化会提交旧测量结果（`rhvideo-picture-order-async-layout-red.log`）。现写事务结束后重读当前尺寸／方向／行数，仅在变化时重建几何；若磁盘已提交而新尺寸布局失败，返回明确的 `saved:true,displayed:false` 警告并保留旧可见队列，不能假装保存未发生或偷偷重放。最新完整 Node **611/611，零跳过／失败**（`rhvideo-picture-order-final-geometry-node.log`）。两次中间单测错误来自新增 opener 模拟环境漏了 notice／tick，分别补齐后才记绿色，不把它们归为产品错误。
+
+最终几何版本 Windows 扩大回归 **31/31，零跳过／失败**（`rhvideo-picture-order-final-geometry-windows-regression.log`），EXE SHA-256 `a0bf6f11aa36933ddd199f0f4f2d21e2a255545b196e00cf9ccf118deedef409`。十二项图片专项和其余收藏混合浏览、原生四画面／切换、账户边界、五万图末端、真实 RHVideo／隔离 SQLite 均经过实际窗口与后端验证，截图已检查。1080p H.264／4K HEVC 首帧约 4.25／5.64 秒，**仍不是性能已对齐**；本轮 End 通过仍不能证明此前的间歇丢键根因已消失。
+
+Android 主包 SHA-256 `aa904459b5ce96df953b99994747c9b741a713244b7225f8b46e05886dd9c249`，探测包 `841de36962d74149454b29deae6834c8c23a8db1cf039d7cd7f5b93e3a64a6a1`。`rhvideo-picture-order-final-geometry-android-strip.log` 与 `rhvideo-picture-order-final-geometry-android-single.log` 均实际通过：真实触摸星标／打乱／还原、末端前 200 px 的自动滚动与停止、旋转后的同一快照和选择、关闭长卷→同序图片放映→返回长卷后的原位置、一致的公共接口、旧身份拒绝及一次性暂存；Single 同时保留 Media3、真实菜单、内容探测／HTML 拒绝、截图子播放器返回、放映类型筛选及打开时快照。只在自有模拟器安装并核对实际字节，无构建或另一原生套件并发，截图已检查。Windows 五万项的立即结束／重开证明不能自动推广为所有安卓设备的杀进程恢复，手机工具栏的拥挤也仍不是最终视觉验收。
 
 本节仍非完整目标验收：喜爱源文件 ZIP 打包导出、图片／截图放映全部续播索引边界、既有间歇键盘／回执／解码问题、同质量性能与手机生命周期仍保留。未发布新正式包，未替换正式实例或操作真机。
 
