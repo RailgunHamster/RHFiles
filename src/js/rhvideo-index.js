@@ -161,7 +161,7 @@
         )) throw Error("媒体定位参数无效");
       }
       if (
-        !(sorts.includes(sort) || kind === "gallery" && sort === "source") ||
+        !(sorts.includes(sort) || ["gallery","picture"].includes(kind) && sort === "source") ||
         !Number.isSafeInteger(offset) ||
         offset < 0 ||
         !Number.isSafeInteger(limit) ||
@@ -248,6 +248,7 @@
       return {
         items: order.slice(offset, offset + limit).map((i) => rows[i]),
         total: order.length,
+        sourceTotal: rows.length,
         ...(locate !== null ? { located } : {}),
         ...(allKeys
           ? {
@@ -284,6 +285,22 @@
         orders: this.orderCache.size,
       };
     }
+  }
+  function pictureOrder(items,saved=null){
+    if(!Array.isArray(items)||items.length>1000000||saved!==null&&(!Array.isArray(saved)||saved.length>1000000))throw Error("图片顺序无效或超出上限");
+    const remaining=new Map(items.map(item=>[item.id,item])),result=[];
+    if(saved)for(const id of saved)if(remaining.has(id)){result.push(remaining.get(id));remaining.delete(id);}
+    for(const item of items)if(remaining.has(item.id)){result.push(item);remaining.delete(item.id);}
+    return result;
+  }
+  function shufflePictures(items,random=Math.random){
+    if(!Array.isArray(items)||items.length>1000000)throw Error("图片顺序无效或超出上限");
+    const result=items.slice();for(let i=result.length-1;i>0;i--){const value=random();if(!Number.isFinite(value)||value<0||value>=1)throw Error("随机数无效");const j=Math.floor(value*(i+1));[result[i],result[j]]=[result[j],result[i]];}return result;
+  }
+  function pictureOrderSignature(saved,total){
+    if(saved===null)return "seq:"+total;
+    if(!Array.isArray(saved)||saved.length>1000000)throw Error("图片顺序无效或超出上限");
+    let hash=0;for(const id of saved){if(typeof id!=="string")throw Error("图片编号无效");for(let i=0;i<id.length;i++)hash=(hash*31+id.charCodeAt(i))|0;}return "rnd:"+saved.length+":"+hash;
   }
   function stripLayout(
     items,
@@ -461,6 +478,9 @@
     canonical,
     normalize,
     portrait,
+    pictureOrder,
+    shufflePictures,
+    pictureOrderSignature,
     stripLayout,
     stripAdvance,
     stripInput,

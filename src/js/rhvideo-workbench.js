@@ -225,6 +225,7 @@
         configuration?.reset();
         ctx.invalidateReads();
         const version=++epoch;
+        abortPictureOrders();
         resolutions.clear();
         sessionSnapshot = null;
         sessionCheckedAt = 0;
@@ -3459,29 +3460,54 @@
       let viewer = null,
         animation = 0,
         viewerToken = 0;
+      const pictureOrderTransactions=new Map();
+      function abortPictureOrders(owner){for(const [transaction,record]of pictureOrderTransactions)if(arguments.length===0||record===owner)try{transaction.abort();}catch{}}
+      function pictureOrderStorage(mode,key,ids=null,valid=()=>true,owner=null){
+        return new Promise((resolve,reject)=>{
+          let db=null,transaction=null,settled=false,result=null;
+          const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);if(transaction)pictureOrderTransactions.delete(transaction);db?.close();error?reject(error):resolve(value);};
+          const timer=setTimeout(()=>{try{transaction?.abort();}catch{}finish(Error("图片顺序存储超时，未自动重试"));},15000);
+          let opening;try{opening=indexedDB.open("rhfiles-rhvideo-orders",1);}catch(error){finish(error);return;}
+          opening.onupgradeneeded=()=>{if(!opening.result.objectStoreNames.contains("pictures"))opening.result.createObjectStore("pictures");};
+          opening.onblocked=()=>finish(Error("图片顺序数据库被另一窗口占用"));opening.onerror=()=>finish(opening.error||Error("无法打开图片顺序数据库"));
+          opening.onsuccess=()=>{
+            db=opening.result;if(settled){db.close();return;}db.onversionchange=()=>db.close();if(!valid()){finish(null,{stale:true});return;}
+            try{
+              // Unlike an acknowledged localStorage write, transaction
+              // completion with strict durability is a disk-commit boundary.
+              transaction=mode==="read"?db.transaction("pictures","readonly"):db.transaction("pictures","readwrite",{durability:"strict"});pictureOrderTransactions.set(transaction,owner);
+              transaction.onabort=()=>finish(transaction.error||Error("图片顺序存储已中止"));transaction.onerror=()=>finish(transaction.error||Error("无法保存图片顺序"));transaction.oncomplete=()=>finish(null,{ids:result});
+              const store=transaction.objectStore("pictures");if(mode==="read"){const request=store.get(key);request.onsuccess=()=>{result=request.result??null;};}else if(ids===null)store.delete(key);else store.put(ids,key);
+            }catch(error){try{transaction?.abort();}catch{}finish(error);}
+          };
+        });
+      }
+      function pictureOrderKey(){if(!account)throw Error("媒体账户尚未就绪");return "rhfiles.rhvideo.picture-order.v1:"+encodeURIComponent(account);}
+      async function readPictureOrder(valid=()=>true){
+        try{const result=await pictureOrderStorage("read",pictureOrderKey(),null,valid);if(result.stale)return {ids:null,warning:"",stale:true};const ids=result.ids;if(ids===null)return {ids:null,warning:""};if(!Array.isArray(ids)||ids.length>1000000||ids.some(id=>typeof id!=="string"||!/^[A-Za-z0-9_-]{1,128}$/.test(id)))throw Error("保存的图片编号无效");return {ids,warning:""};}
+        catch(error){if(!valid())return {ids:null,warning:"",stale:true};const warning="无法读取已保存的图片顺序，正在使用默认顺序："+String(error.message||error);notice(warning);return {ids:null,warning};}
+      }
+      function pictureStripSignature(v){return I.canonical({version:2,rule:RHTagFilter.key(v.args.rule),search:v.args.search||"",folder:v.args.folder||"",vertical:v.vertical,lanes:v.lanes,order:v.pictureOrder.signature});}
+      function rememberViewer(v){
+        if(!state.connected||!account||viewer!==v||!v.signature)return;
+        if(v.mode==="strip"&&!v.rows?.[0])return;
+        prefs.viewerResume={...(prefs.viewerResume||{}),[v.mode+":"+v.source]:{signature:v.mode==="strip"&&v.source==="picture"?pictureStripSignature(v):v.signature,index:v.index,key:v.queue[v.index]?.key,ratio:v.mode==="strip"?stripRatio(v):0,...(v.mode==="strip"?{position:stripPosition(v,v.rows[0])}:{})}};save();
+      }
+      function restoreStripPosition(v,resume=prefs.viewerResume?.[v.mode+":"+v.source]){
+        const signature=v.source==="picture"?pictureStripSignature(v):v.signature;
+        if(resume?.signature!==signature)return;
+        const first=v.rows[0];if(Number.isFinite(resume.position)&&resume.position>=0)setStripPosition(v,first,resume.position);else if(Number.isFinite(resume.ratio))setStripPosition(v,first,Math.max(0,Math.min(1,resume.ratio))*(v.vertical?first.metrics.logicalMax:first.model.mainLength));syncStripRows(v,first);
+      }
       function stopViewer(invalidate=true) {
         if(invalidate)viewerToken++;
         cancelAnimationFrame(animation);
         animation = 0;
         if (viewer) {
-          if (state.connected && account && viewer.signature) {
-            const v = viewer,
-              extent = v.vertical
-                ? v.surface.clientHeight
-                : v.surface.clientWidth;
-            prefs.viewerResume = {
-              ...(prefs.viewerResume || {}),
-              [v.mode + ":" + v.source]: {
-                signature: v.signature,
-                index: v.index,
-                key: v.queue[v.index]?.key,
-                ratio: v.mode === "strip" ? stripRatio(v) : 0,
-              },
-            };
-            save();
-          }
+          abortPictureOrders(viewer);
+          rememberViewer(viewer);
           viewer.running = false;
           viewer.layoutRevision=(viewer.layoutRevision||0)+1;
+          for(const node of viewer.tiles.values())retireStripTile(node);
           viewer.tiles.clear();
           viewer.observer?.disconnect();
           clearTimeout(viewer.resizeTimer);
@@ -3513,8 +3539,8 @@
           const args = {
             ...criteria(),
             kind,
-            sort:kind==="gallery"?"source":c.sort,
-            seed:kind==="gallery"?gallery.seed:c.seed,
+            sort:["gallery","picture"].includes(kind)?"source":c.sort,
+            seed:kind==="gallery"?gallery.seed:kind==="picture"?0:c.seed,
             mediaType:
               mode === "strip" && kind !== "gallery"
                 ? "picture"
@@ -3529,14 +3555,19 @@
           };
           let result = await send("query", args);
           if (token !== viewerToken || version!==epoch) return { stale: true };
-          const queue=result.queue.filter(item=>item.kind!=="novel");
+          let queue=result.queue.filter(item=>item.kind!=="novel");
           if(!queue.length){notice("当前筛选中没有符合条件的图片或视频");return {opened:false,total:0,empty:true};}
+          const pictureOrder=source==="picture"?await readPictureOrder(()=>token===viewerToken&&version===epoch):null;
+          if(token!==viewerToken||version!==epoch||pictureOrder?.stale)return {stale:true};
+          if(pictureOrder)pictureOrder.signature=I.pictureOrderSignature(pictureOrder.ids,result.sourceTotal??result.total);
+          if(pictureOrder)queue=I.pictureOrder(queue,pictureOrder.ids);
           stopViewer(false);
           const signature = I.canonical({
               ...args,
               offset: 0,
               limit: 1,
               allKeys: true,
+              ...(pictureOrder?{pictureOrder:pictureOrder.signature}:{}),
             }),
             resume = prefs.viewerResume?.[mode + ":" + source];
           const root = dialog(
@@ -3545,14 +3576,17 @@
           );
           root.replaceChildren();
           const controls = el("div", undefined, "wb-viewer-controls");
-          const favorite=button("收藏","viewer.favorite",{expectedViewer:token});favorite.id="wb-viewer-favorite";favorite.hidden=mode!=="slideshow";
+          const toggle=button(mode==="strip"?"自动滚动":"暂停", "viewer.toggle");toggle.id="wb-viewer-toggle";
+          const favorite=button("收藏","viewer.favorite",{expectedViewer:token});favorite.id="wb-viewer-favorite";favorite.disabled=mode==="strip";
           const mark=button("标记/取消待删除", "selection.markCurrent",{expectedViewer:token});mark.id="wb-viewer-mark";mark.disabled=mode==="strip";
           const lanesButton=button("单列/双列", "viewer.lanes");lanesButton.id="wb-viewer-lanes";lanesButton.hidden=c.vertical;
+          const shuffle=button("随机打乱","viewer.order",{random:true,expectedViewer:token}),restore=button("恢复顺序","viewer.order",{random:false,expectedViewer:token});shuffle.id="wb-viewer-shuffle";restore.id="wb-viewer-restore";
           controls.append(
-            button("暂停/继续", "viewer.toggle"),
+            toggle,
             button("上一个", "viewer.step", { direction: -1 }),
             button("下一个", "viewer.step", { direction: 1 }),
             ...(mode==='strip'?[button("切换方向", "viewer.direction"),lanesButton]:[]),
+            ...(mode==='strip'&&source==='picture'?[shuffle,restore]:[]),
             favorite,
             mark,
             button("从头浏览", "viewer.restart"),
@@ -3570,7 +3604,9 @@
             args,
             queue,
             index: 0,
-            running: true,
+            running: mode!=="strip",
+            pictureOrder,
+            pictureSourceTotal:result.sourceTotal??result.total,
             clock: performance.now(),
             surface,
             tiles: new Map(),
@@ -3599,7 +3635,6 @@
             const speed=input("range",c.scrollSpeed,"wb-strip-speed"),label=el("span");speed.min=0;speed.max=2000;speed.step="any";speed.setAttribute("aria-label","连续浏览速度倍率");speed.dataset.apiAction="rhvideo.preferences.set";viewer.speed=speed;viewer.speedLabel=label;paintStripSpeed(viewer);
             listen(speed,"input",()=>{if(viewer?.token!==token)return;label.textContent="×"+(Number(speed.value)/200).toFixed(1);void invoke("preferences.set",{key:"scrollSpeed",value:Number(speed.value)}).catch(notice);},"viewer.speed");controls.append(speed,label);
             viewer.lanes=c.lanes;viewer.rowLookup=new Map(viewer.queue.map((item,index)=>[item.key||I.key(item),{item,index}]));
-            layoutStrip();
             const map = el("input");
             map.type = "range";
             map.min = 0;
@@ -3637,11 +3672,9 @@
             root.append(minimap);
             viewer.minimap = minimap;
             minimap.hidden=viewer.vertical;
+            layoutStrip();
             await renderStrip();
-            if (resume?.signature === signature)
-              await invoke("viewer.seek", {
-                ratio: Math.max(0, Math.min(1, resume.ratio || 0)),
-              });
+            restoreStripPosition(viewer,resume);void renderStrip().catch(notice);
           } else {
             const progress=input("range",0,"wb-slideshow-progress");progress.min=0;progress.max=1000;progress.setAttribute("aria-label","放映总进度");progress.dataset.apiAction="rhvideo.viewer.seek";
             const label=el("span");label.id="wb-slideshow-position";
@@ -3659,10 +3692,14 @@
       );
       function layoutStrip(options={}) {
         const v=viewer;if(!v||v.mode!=="strip")return;
-        const vertical=options.vertical??v.vertical,lanes=options.lanes??v.lanes,size=stripDimensions(v),layout=I.stripLayout(v.queue,{vertical,lanes,extent:vertical?size[0]:size[1],viewport:vertical?size[1]:size[0]});
-        v.vertical=vertical;v.lanes=lanes;v.layoutRevision=(v.layoutRevision||0)+1;v.stripSize=size;v.tiles.clear();
+        const vertical=options.vertical??v.vertical,lanes=options.lanes??v.lanes,queue=options.queue??v.queue,lanesControl=$("wb-viewer-lanes"),oldMapHidden=v.minimap?.hidden,oldLanesHidden=lanesControl?.hidden;
+        if(v.minimap)v.minimap.hidden=vertical;if(lanesControl)lanesControl.hidden=vertical;
+        let size,layout;try{size=stripDimensions(v);layout=options.layout??I.stripLayout(queue,{vertical,lanes,extent:vertical?size[0]:size[1],viewport:vertical?size[1]:size[0]});}catch(error){if(v.minimap)v.minimap.hidden=oldMapHidden;if(lanesControl)lanesControl.hidden=oldLanesHidden;throw error;}
+        if(options.queue){const current=v.current&&I.key(v.current);v.queue=queue;v.length=queue.length;v.rowLookup=new Map(queue.map((item,index)=>[I.key(item),{item,index}]));const selected=v.rowLookup.get(current);v.current=selected?.item;v.index=selected?.index??0;}
+        v.vertical=vertical;v.lanes=lanes;v.layoutRevision=(v.layoutRevision||0)+1;v.stripSize=size;for(const node of v.tiles.values())retireStripTile(node);v.tiles.clear();
         v.stripUrls??=new Map();v.failedPaths??=new Map();
         v.surface.classList.add("strip");v.surface.classList.toggle("vertical",v.vertical);
+        v.surface.classList.toggle("paused",!v.running);
         v.layout=layout;
         v.rows=v.layout.rows.map(model=>{
           const node=el("div",undefined,"wb-strip-row"),spacer=el("div",undefined,"wb-strip-spacer"),viewport=v.vertical?v.stripSize[1]:v.stripSize[0],metrics=I.scrollMetrics(model.length,viewport),row={model,node,spacer,metrics,expected:null};
@@ -3672,7 +3709,7 @@
           listen(node,"scroll",()=>{
             if(viewer!==v||!v.rows.includes(row))return;
             const position=v.vertical?node.scrollTop:node.scrollLeft;
-            if(row.expected===null||Math.abs(position-row.expected)>1){pauseStrip(v);syncStripRows(v,row);}
+            if(row.expected===null||Math.abs(position-row.expected)>1){pauseStrip(v);syncStripRows(v,row);rememberViewer(v);}
             void renderStrip().catch(notice);
           },"viewer.scroll");
           RHFilesUI.listen(node,"wheel",event=>{
@@ -3684,14 +3721,19 @@
         });
         v.surface.replaceChildren(...v.rows.map(row=>row.node));
         if(v.minimap)v.minimap.hidden=v.vertical;
-        const lanesControl=$("wb-viewer-lanes");if(lanesControl)lanesControl.hidden=v.vertical;
+        if(lanesControl)lanesControl.hidden=v.vertical;
         v.minimapBase=null;
       }
       function stripDimensions(v){return [Math.max(1,v.surface.clientWidth),Math.max(1,v.surface.clientHeight)];}
+      function retireStripTile(node){node.dataset.retired="true";const img=node.querySelector("img");if(img){img.__stripRetired=true;img.removeAttribute("src");}node.remove();}
+      function failStripSource(v,path,message){
+        v.failedPaths.set(path,message);
+        for(const node of v.tiles.values())if(node.dataset.mediaPath===path){const img=node.querySelector("img");if(img){img.__stripRetired=true;img.removeAttribute("src");}node.classList.add("error");node.title=message;if(!node.querySelector(".wb-strip-error"))node.append(el("span","图片加载失败","wb-strip-error"));}
+      }
       function paintStripSpeed(v){if(!v?.speed)return;const value=config().scrollSpeed;if(Number(v.speed.value)!==value)v.speed.value=String(value);v.speed.title=value+" px/s";v.speedLabel.textContent="×"+(value/200).toFixed(1);}
       function stripPosition(v,row){return (v.vertical?row.node.scrollTop:row.node.scrollLeft)*row.metrics.scale;}
       function stripRatio(v){const row=v.rows?.[0];return row?Math.max(0,Math.min(1,stripPosition(v,row)/Math.max(1,v.vertical?row.metrics.logicalMax:row.model.mainLength))):0;}
-      function pauseStrip(v){v.running=false;v.surface.classList.add("paused");}
+      function pauseStrip(v){v.running=false;v.surface.classList.add("paused");refreshViewer();}
       function setStripPosition(v,row,value){const property=v.vertical?"scrollTop":"scrollLeft";row.node[property]=Math.max(0,Math.min(row.metrics.logicalMax,value))/row.metrics.scale;row.expected=row.node[property];}
       function syncStripRows(v,source){
         const ratio=source.metrics.logicalMax?stripPosition(v,source)/source.metrics.logicalMax:0;
@@ -3700,7 +3742,20 @@
       function requireStrip(expected){if(!viewer||viewer.mode!=="strip")throw Error("图片连续浏览未打开");if(expected!==undefined&&viewer.token!==expected)throw Error("浏览窗口已改变，旧操作未执行");return viewer;}
       const stripGuard={expectedViewer:{type:"integer",minimum:1}};
       action("viewer.scroll",object({...stripGuard,row:{type:"integer",minimum:0,maximum:1},delta:{type:"number",minimum:-1000000,maximum:1000000}},["delta"]),({delta,row:index=0,expectedViewer})=>{
-        const v=requireStrip(expectedViewer),row=v.rows[index];if(!row)throw Error("图片条带行不存在");pauseStrip(v);setStripPosition(v,row,stripPosition(v,row)+I.stripInput(delta,config().scrollSpeed));syncStripRows(v,row);void renderStrip().catch(notice);return viewerSnapshot();
+        const v=requireStrip(expectedViewer),row=v.rows[index];if(!row)throw Error("图片条带行不存在");pauseStrip(v);setStripPosition(v,row,stripPosition(v,row)+I.stripInput(delta,config().scrollSpeed));syncStripRows(v,row);rememberViewer(v);void renderStrip().catch(notice);return viewerSnapshot();
+      });
+      action("viewer.items",object({...stripGuard,offset:{type:"integer",minimum:0,maximum:1000000},limit:{type:"integer",minimum:1,maximum:100}}),({expectedViewer,offset=0,limit=100}={})=>{const v=viewer;if(!v)throw Error("浏览器未打开");if(expectedViewer!==undefined&&v.token!==expectedViewer)throw Error("浏览窗口已改变，旧操作未执行");return {total:v.queue.length,items:v.queue.slice(offset,offset+limit).map(item=>({key:I.key(item),id:item.id,kind:item.kind,title:item.title}))};},"read");
+      action("viewer.order",object({...stripGuard,random:{type:"boolean"}},["random"]),async({random,expectedViewer})=>{
+        const v=requireStrip(expectedViewer);if(v.source!=="picture")throw Error("此顺序操作仅适用于图片连续浏览");const version=epoch,intent=v.orderIntent=(v.orderIntent||0)+1;abortPictureOrders(v);pauseStrip(v);const valid=()=>viewer===v&&version===epoch&&intent===v.orderIntent;
+        // The reference Restore uses the complete server picture catalog, not
+        // the active strip's filtered pool. Card filters themselves stay put.
+        const result=random?null:await query({kind:"picture",sort:"source",seed:0,search:"",folder:"",rule:{},mediaType:"picture",allKeys:true,offset:0,limit:1},version);
+        if(viewer!==v||version!==epoch||intent!==v.orderIntent)return {stale:true};
+        const queue=random?I.shufflePictures(v.queue):result.queue,vertical=v.vertical,lanes=v.lanes,size=stripDimensions(v),layout=I.stripLayout(queue,{vertical,lanes,extent:vertical?size[0]:size[1],viewport:vertical?size[1]:size[0]}),ids=random?queue.map(item=>item.id):null;
+        try{const persisted=await pictureOrderStorage("write",pictureOrderKey(),ids,valid,v);if(persisted.stale||!valid())return {stale:true};}catch(error){if(!valid())return {stale:true};throw Error("无法保存图片顺序，当前队列未更改："+String(error.message||error));}
+        const currentSize=stripDimensions(v);let committedLayout=layout;
+        if(v.vertical!==vertical||v.lanes!==lanes||size.some((value,index)=>value!==currentSize[index]))try{committedLayout=I.stripLayout(queue,{vertical:v.vertical,lanes:v.lanes,extent:v.vertical?currentSize[0]:currentSize[1],viewport:v.vertical?currentSize[1]:currentSize[0]});}catch(error){const warning="图片顺序已保存，但新窗口尺寸下无法显示："+String(error.message||error);notice(warning);return {saved:true,displayed:false,warning};}
+        if(result)v.pictureSourceTotal=result.sourceTotal;v.pictureOrder={ids,warning:"",signature:I.pictureOrderSignature(ids,v.pictureSourceTotal)};layoutStrip({queue,layout:committedLayout});rememberViewer(v);await renderStrip();if(viewer!==v||intent!==v.orderIntent)return {stale:true};refreshViewer();return viewerSnapshot();
       });
       action("viewer.select",object({...stripGuard,key:string},["key"]),({key,expectedViewer})=>{
         const v=requireStrip(expectedViewer),target=v.rowLookup.get(key);if(!target)throw Error("图片已不在当前浏览队列中");v.current=target.item;v.index=target.index;refreshViewer();return viewerSnapshot();
@@ -3721,7 +3776,7 @@
           const other=tile.tail?tile.baseKey:tile.baseKey+":tail",node=v.tiles.get(other);
           if(node&&!keys.has(other)){v.tiles.delete(other);v.tiles.set(tile.key,node);node.dataset.key=tile.key;row.spacer.append(node);}
         }
-        for(const [key,node]of v.tiles)if(!keys.has(key)){node.remove();v.tiles.delete(key);}
+        for(const [key,node]of v.tiles)if(!keys.has(key)){retireStripTile(node);v.tiles.delete(key);}
         for(const entry of visible){const node=v.tiles.get(entry.tile.key);if(node)positionStripTile(v,entry,node);}
         if(v.map&&document.activeElement!==v.map)v.map.value=String(Math.round(stripRatio(v)*1000));
         const first=v.rows[0];if(first)drawMinimap(v,stripPosition(v,first),v.vertical?first.node.clientHeight:first.node.clientWidth,visible.filter(entry=>entry.row===first).map(entry=>entry.tile));
@@ -3768,11 +3823,12 @@
             const path=tile.item.path||"/storage/"+tile.item.webp_path,url=v.stripUrls.get(path),failure=v.failedPaths.get(path);if(!url&&!failure){v.renderAgain=true;continue;}
             const node=el("div",undefined,"wb-strip-tile"),img=el("img"),key=I.key(tile.item);
             node.dataset.key = tile.key;
+            node.dataset.mediaPath=path;
             node.dataset.apiAction="rhvideo.viewer.select";node.title=(tile.item.title||tile.item.id)+" · 双击放大";
             listen(node,"click",event=>{if(!event.target.closest("button"))void invoke("viewer.select",{key,expectedViewer:v.token}).catch(notice);},"viewer.select");
             listen(node,"dblclick",event=>{if(event.target.closest("button"))return;event.preventDefault();event.stopPropagation();void invoke("viewer.inspect",{key,expectedViewer:v.token}).catch(notice);},"viewer.inspect");
-            if(failure){node.classList.add("error");node.append(el("span","图片加载失败"));node.title=failure;}
-            else{img.src=url;img.alt=tile.item.title;img.decoding="async";img.draggable=false;listen(img,"error",()=>{if(viewer===v){v.failedPaths.set(path,"图片解码或读取失败");node.classList.add("error");node.title="图片解码或读取失败";if(!node.querySelector(".wb-strip-error"))node.append(el("span","图片加载失败","wb-strip-error"));}},"viewer.imageError");node.append(img);}
+            if(failure){node.classList.add("error");node.append(el("span","图片加载失败","wb-strip-error"));node.title=failure;}
+            else{img.src=url;img.alt=tile.item.title;img.decoding="async";img.draggable=false;listen(img,"error",()=>{if(viewer===v&&!img.__stripRetired)failStripSource(v,path,"图片解码或读取失败");},"viewer.imageError");node.append(img);}
             const favorite=button("收藏","viewer.favorite",{key,expectedViewer:v.token},"wb-strip-favorite");favorite.setAttribute("aria-label","收藏 "+(tile.item.title||tile.item.id));node.append(favorite);
             row.spacer.append(node);
             v.tiles.set(tile.key, node);
@@ -3851,11 +3907,12 @@
       }
       function refreshViewer(){
         const v=viewer,button=$("wb-viewer-favorite");if(!v||!button)return;
+        const toggle=$("wb-viewer-toggle");if(toggle){toggle.textContent=v.mode==="strip"?(v.running?"暂停滚动":"自动滚动"):(v.running?"暂停":"继续");toggle.setAttribute("aria-pressed",String(v.running));}
         const item=v.current,target=item?.kind==="frame"?{kind:"video",id:item.videoId}:item,key=target&&I.key(target);
-        button.hidden=!["video","picture"].includes(target?.kind)||!target?.id;
+        const eligible=["video","picture"].includes(target?.kind)&&!!target?.id;button.hidden=v.mode!=="strip"&&!eligible;
         button.textContent=state.favorites.has(key)?"取消收藏":"收藏";
         button.setAttribute("aria-pressed",String(state.favorites.has(key)));
-        button.disabled=!!v.loadingMedia||state.favoriteBusy.has(key);
+        button.disabled=!eligible||!!v.loadingMedia||state.favoriteBusy.has(key);
         if(v.mode==="strip"){
           const mark=$("wb-viewer-mark");if(mark)mark.disabled=!target?.id;
           for(const node of v.tiles.values()){
@@ -3951,7 +4008,7 @@
       function tick(now) {
         const v = viewer;
         if (!v) return;
-        const dt = Math.min(0.1, (now - v.last) / 1000);
+        const dt = Math.max(0,Math.min(0.1, (now - v.last) / 1000));
         v.last = now;
         if (v.running && !document.hidden && !v.loadingMedia && viewerIsTop()) {
           const c = I.slideshowSettings(config(),v.source);
@@ -4009,6 +4066,7 @@
         if (!viewer) throw Error("浏览器未打开");
         viewer.running = !viewer.running;
         viewer.surface.classList.toggle("paused", !viewer.running);
+        refreshViewer();
         if (viewer.videoActive)
           void native("presentation.control", {
             command: viewer.running ? "resume" : "pause",
@@ -4023,17 +4081,19 @@
           : v.surface.clientWidth;
         return {
           opened: true,
+          token:v.token,
           mode: v.mode,
           source: v.source,
           index: v.index,
           total: v.length,
+          ...(v.pictureOrder?{order:{random:v.pictureOrder.ids!==null,warning:v.pictureOrder.warning||"",sourceTotal:v.pictureSourceTotal}}:{}),
           running: v.running,
           loading: !!v.loadingMedia,
           nativeVideo: !!v.videoActive,
           ...(v.current?{current:{id:v.current.id,kind:v.current.kind,title:v.current.title,...(v.current.kind==="frame"?{videoId:v.current.videoId}:{})},favorite:state.favorites.has(v.current.kind==="frame"?"video:"+v.current.videoId:I.key(v.current))}:{}),
           ...(v.mode==='slideshow'?{elapsed:v.elapsed,duration:slideshowPlan(v).durations[v.index],totalDuration:slideshowPlan(v).total}:{}),
           tiles: v.tiles.size,
-          ...(v.mode==="strip"?{token:v.token,vertical:v.vertical,lanes:v.rows?.length||0,rows:v.rows?.map(row=>({position:stripPosition(v,row),maximum:row.metrics.logicalMax,loopOffset:row.model.mainLength,tail:row.model.items.length-row.model.cells.length,viewport:v.vertical?row.node.clientHeight:row.node.clientWidth})),errors:Array.from(v.failedPaths?.entries()||[]).slice(0,10).map(([path,message])=>({path,message}))}:{}),
+          ...(v.mode==="strip"?{vertical:v.vertical,lanes:v.rows?.length||0,rows:v.rows?.map(row=>({position:stripPosition(v,row),maximum:row.metrics.logicalMax,loopOffset:row.model.mainLength,tail:row.model.items.length-row.model.cells.length,viewport:v.vertical?row.node.clientHeight:row.node.clientWidth})),errors:Array.from(v.failedPaths?.entries()||[]).slice(0,10).map(([path,message])=>({path,message}))}:{}),
           ratio: v.mode === "strip"
             ? stripRatio(v)
             : ((slideshowPlan(v).prefix[v.index]||0)+v.elapsed)/Math.max(0.001,slideshowPlan(v).total),
@@ -4071,14 +4131,14 @@
             v = viewer;
           if (v.mode === "slideshow")
             {const target=I.slideshowTarget(slideshowPlan(v),ratio);return slide(target.index,target.elapsed);}
-          const row=v.rows[0];setStripPosition(v,row,ratio*(v.vertical?row.metrics.logicalMax:row.model.mainLength));void renderStrip().catch(notice);
+          const row=v.rows[0];setStripPosition(v,row,ratio*(v.vertical?row.metrics.logicalMax:row.model.mainLength));syncStripRows(v,row);rememberViewer(v);void renderStrip().catch(notice);
           return { ratio };
         },
       );
       action("viewer.direction", object(), () => {
         if(viewer&&viewer.mode!=='strip')throw Error("切换方向仅适用于连续浏览");
         const vertical=viewer?!viewer.vertical:!config().vertical;
-        if(viewer){layoutStrip({vertical});pauseStrip(viewer);}
+        if(viewer){layoutStrip({vertical});pauseStrip(viewer);restoreStripPosition(viewer);}
         prefs.vertical = vertical;
         save();
         if(viewer){void renderStrip().catch(notice);return viewerSnapshot();}
@@ -4088,7 +4148,7 @@
         if(viewer&&viewer.mode!=='strip')throw Error("单列／双列仅适用于连续浏览");
         if(viewer?.vertical)throw Error("竖卷始终为单列；请切换为横向后调整行数");
         const lanes=(viewer?viewer.lanes:config().lanes)===1?2:1;
-        if(viewer){layoutStrip({lanes});pauseStrip(viewer);}
+        if(viewer){layoutStrip({lanes});pauseStrip(viewer);restoreStripPosition(viewer);}
         prefs.lanes = lanes;
         save();
         if(viewer){void renderStrip().catch(notice);return viewerSnapshot();}

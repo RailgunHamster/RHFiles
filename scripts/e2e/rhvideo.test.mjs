@@ -304,7 +304,7 @@ test('fifty-thousand packaged image entries remain reachable and bounded in the 
   try{
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
     await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await invoke(view,'category',{kind:'picture'});
-    const started=performance.now();await invoke(view,'viewer.open',{mode:'strip',source:'picture'});await invoke(view,'viewer.toggle');
+    const started=performance.now();await invoke(view,'viewer.open',{mode:'strip',source:'picture'});assert.equal((await invoke(view,'viewer.state')).running,false,'Continuous picture browsing starts paused, as in the reference');
     for(let i=0;i<30;i++)await invoke(view,'viewer.seek',{ratio:(i%2)?.99:.01});await invoke(view,'viewer.seek',{ratio:1});
     await until(()=>view.evaluate("(()=>{const nodes=[...document.querySelectorAll('.wb-strip-tile')];return nodes.length>0&&nodes.every(n=>Number(n.dataset.logicalStart)>1000000);})()"),'last logical image window resolves',20000);
     const state=await invoke(view,'viewer.state');assert.equal(state.total,50000);assert(state.ratio>.99);assert(state.tiles<=80);
