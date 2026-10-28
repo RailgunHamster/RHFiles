@@ -46,8 +46,8 @@ async function target(app,file){
 async function setup(options={}){
   const app=await launchApp({emulateFocus:true});let fixture,view;
   try{
-    const {portraitIndices=[],picturesOnly=false,videoMetadataDuration,...fixtureOptions}=options,duration=options.videoDuration??14,file=path.join(app.directory,'behavior.mp4');
-    const make=(file,size)=>execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size='+size+':rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-t',String(duration),'-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
+    const {portraitIndices=[],picturesOnly=false,rotationMarkers=false,videoMetadataDuration,...fixtureOptions}=options,duration=options.videoDuration??14,file=path.join(app.directory,'behavior.mp4');
+    const make=(file,size)=>execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size='+size+':rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000',...(rotationMarkers?['-vf','drawbox=x=20:y=20:w=60:h=60:color=0xff0000:t=fill,drawbox=x=iw-80:y=20:w=60:h=60:color=0x00ff00:t=fill,drawbox=x=20:y=ih-80:w=60:h=60:color=0x0000ff:t=fill,drawbox=x=iw-80:y=ih-80:w=60:h=60:color=0xffff00:t=fill']:[]),'-t',String(duration),'-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
     if(!picturesOnly)make(file,'640x360');
     const portrait=path.join(app.directory,'portrait.mp4');
     if(portraitIndices.length)make(portrait,'360x640');
@@ -298,6 +298,51 @@ test('a delayed real video-card click cannot take over a newer clicked video or 
     await until(()=>s.view.evaluate('window.__oldPlayDelivered===true'),'old gallery response delivered');
     const current=await invoke(player,'player.state');assert.equal(current.inputId,shown.inputId);assert.equal(current.queue.id,'video-1');assert.equal((await invoke(s.view,'image.state')).current.videoId,'video-1');
     assert.equal(s.fixture.requests.filter(r=>r.path==='/api/v1/videos/video-0/play').length,0,'an obsolete click must never start an old stream after the new one');
+  }finally{player?.close();await s.close();}
+});
+
+test('single-video smart rotation toggles back, preserves pause/time/rate, and persists without rotating an already-fitting source',native,async()=>{
+  const s=await setup({portraitIndices:[0],videoDuration:20,rotationMarkers:true,loginUsers:['preview','other']});let player;
+  const capture=async(state,name)=>{
+    const image=await command(s.app,'player.diagnosticFrame',{expectedInput:state.inputId});assert.equal(path.dirname(image.path),s.app.directory,'only this fixture working directory may receive diagnostic files');
+    const data=fs.readFileSync(image.path);assert.equal(data.subarray(0,2).toString(),'BM');const width=data.readInt32LE(18),height=-data.readInt32LE(22);assert.equal(data.length,54+width*height*4);
+    const saved=path.join(s.app.artifactDir,name+'.png');execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',image.path,'-frames:v','1',saved],{windowsHide:true,timeout:10000});
+    const sw=360,sh=640,quarter=state.rotation===90,dw=quarter?sh:sw,dh=quarter?sw:sh,scale=Math.min(width/dw,height/dh),left=(width-dw*scale)/2,top=(height-dh*scale)/2,colors=[];
+    for(let corner=0;corner<4;corner++){
+      const x=corner%2?310:50,y=corner<2?50:590,px=Math.round(left+(quarter?sh-y:x)*scale),py=Math.round(top+(quarter?x:y)*scale),offset=54+(py*width+px)*4;
+      const [b,g,r]=data.subarray(offset,offset+3);colors.push([r,g,b]);
+      assert(corner===0?r>160&&g<90&&b<90:corner===1?g>160&&r<90&&b<90:corner===2?b>160&&r<90&&g<90:r>160&&g>160&&b<90,`actual ${state.renderer} corner ${corner} at ${state.rotation} degrees: ${r},${g},${b}; canvas ${width}x${height}`);
+    }
+    console.log(JSON.stringify({nativeRotationScreenshot:saved,width,height,colors}));
+  };
+  try{
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0&&v.videoHeight>v.videoWidth;},'actual portrait source before rotation',25000);
+    await invoke(player,'player.control',{command:'rate',value:1.5});await invoke(player,'player.control',{command:'pause'});await invoke(player,'player.control',{command:'seek',value:5000});
+    await until(async()=>{const v=await invoke(player,'player.state');return v.state===4&&Math.abs(v.positionMs-5000)<250;},'initial paused position');
+    await invoke(player,'player.rotate');
+    const rotated=await until(async()=>{const v=await invoke(player,'player.state');return v.rotation===90&&v.state===4&&!v.restoringPausedFrame&&v.renderedFrames>0?v:null;},'actual rotated paused frame',25000);
+    console.log(JSON.stringify({rotatedNativeState:rotated}));
+    if(rotated.renderer==='gdi-compatibility')assert(rotated.presentedWidth>rotated.presentedHeight,'the actual GDI presenter must draw the landscape geometry, not only set an angle flag');
+    await capture(rotated,'rhvideo-rotation-on');
+    await invoke(player,'player.rotate');
+    const off=await until(async()=>{const v=await invoke(player,'player.state');return v.state===4&&!v.restoringPausedFrame&&v.renderedFrames>0?v:null;},'second toggle settled',25000);
+    assert.equal(off.rotation,0,'a second toggle means off, not 180 degrees');assert.equal(off.autoRotate,false);assert.equal(off.rate,1.5);assert(Math.abs(off.positionMs-5000)<500);
+    if(off.renderer==='gdi-compatibility')assert(off.presentedHeight>off.presentedWidth);
+    await capture(off,'rhvideo-rotation-off');
+    await invoke(player,'player.rotate');await until(async()=>{const v=await invoke(player,'player.state');return v.rotation===90&&v.renderedFrames>0&&!v.restoringPausedFrame;},'enabled rotation reapplied',25000);
+    await invoke(s.view,'player.close');player.close();player=null;
+    await invoke(s.view,'media.open',{kind:'video',id:'video-2'});player=await target(s.app,'rhvideo-player.html');
+    const landscape=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'next source actually renders',25000);
+    assert.equal(landscape.autoRotate,true);assert.equal(landscape.rotation,0,'a wide source must not inherit the portrait angle');
+    const oldSnapshot=await command(s.app,'preferences');await command(s.app,'preferences',{value:{...oldSnapshot,autoRotate:false}});assert.equal((await invoke(s.view,'rotation.state')).enabled,true,'a stale library save cannot overwrite the newer player choice');
+    await invoke(s.view,'player.close');player.close();player=null;
+    await invoke(s.view,'connection.logout');await invoke(s.view,'connection.connect',{server:s.fixture.url,username:'preview',password:'fixture-only'});
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    const reopened=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'rotation preference survives reopening same account',25000);assert.equal(reopened.autoRotate,true);assert.equal(reopened.rotation,90);
+    await assert.rejects(invoke(player,'player.control',{command:'autoRotate',enabled:false,expectedInput:rotated.inputId}),/播放输入已改变/);assert.equal((await invoke(s.view,'rotation.state')).enabled,true);
+    await invoke(s.view,'player.close');player.close();player=null;await invoke(s.view,'connection.logout');await invoke(s.view,'connection.connect',{server:s.fixture.url,username:'other',password:'fixture-only'});
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');const other=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'other account default actual frame',25000);assert.equal(other.autoRotate,false);assert.equal(other.rotation,0);
   }finally{player?.close();await s.close();}
 });
 

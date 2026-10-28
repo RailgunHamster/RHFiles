@@ -17,10 +17,12 @@
     if(state.pendingSeekMs!=null)$('status').textContent='正在定位…';
     if(state.state===5)$('status').textContent='播放已停止';
     if(state.restoringPausedFrame)$('status').textContent='正在恢复暂停画面…';
+    if(state.presentationError)$('status').textContent='画面显示失败';
     if(state.volume>0)audibleVolume=state.volume;
     if(!volumeDragging)$('volume').value=String(state.volume);$('rate').value=String(state.rate);
     $('previous').disabled=!state.queue?.hasPrevious;$('next').disabled=!state.queue?.hasNext;
     const repeat=$('player-loop');if(repeat){repeat.textContent=state.queue?.options?.fullLength===false?'循环当前片段':'循环当前视频';repeat.setAttribute('aria-pressed',String(state.queue?.options?.loop===true));}
+    const rotate=$('player-rotate');if(rotate){rotate.textContent='智能旋转';rotate.setAttribute('aria-pressed',String(state.autoRotate===true));rotate.title='仅在更适合当前画面比例时旋转 90°；按媒体库账号记住开关';rotate.hidden=state.rotationAvailable===false;}
     const q=state.queue,reference=q?.options?.reference===true;
     $('back').textContent=q?.options?.origin==='frame'?'返回截图':'返回媒体库';
     if($('player-favorite')){$('player-favorite').textContent=state.favorite?'取消收藏':'收藏';$('player-favorite').setAttribute('aria-pressed',String(!!state.favorite));}
@@ -36,16 +38,16 @@
       if(document.activeElement!==$('segment-length'))$('segment-length').value=String(q.options.segment||3);
       $('segment-length').disabled=q.options.fullLength!==false;
     }
-    if(state.seekError){$('error').dataset.automation='true';$('error').textContent='跳转失败：'+state.seekError;}else if(state.automationError){$('error').dataset.automation='true';$('error').textContent='自动播放失败：'+state.automationError.message;}else if($('error').dataset.automation){delete $('error').dataset.automation;$('error').textContent='';}
+    if(state.presentationError){$('error').dataset.automation='true';$('error').textContent=state.presentationError;}else if(state.seekError){$('error').dataset.automation='true';$('error').textContent='跳转失败：'+state.seekError;}else if(state.automationError){$('error').dataset.automation='true';$('error').textContent='自动播放失败：'+state.automationError.message;}else if($('error').dataset.automation){delete $('error').dataset.automation;$('error').textContent='';}
   }
   api.provideState('player',()=>state);
   async function currentTarget(){if(state.opened&&state.queue?.id)return state;const value=await native('player.state');paint(value);if(!value.opened||!value.queue?.id)throw Error('视频正在准备，请稍候');return value;}
   const register=(name,params,handler)=>api.register('rhvideo.player.'+name,handler,{params,risk:['state','preloadState'].includes(name)?'read':'ui',description:'Native RHVideo player '+name});
   register('state',object(),async()=>{const value=await native('player.state');paint(value);return value;});
-  register('control',object({command:{type:'string',enum:['pause','resume','seek','rate','volume','rotate']},value:{type:'number'},expectedInput:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['command']),async args=>{const value=await native('player.control',args);paint(value);return value;});
+  register('control',object({command:{type:'string',enum:['pause','resume','seek','rate','volume','rotate','autoRotate']},value:{type:'number'},enabled:{type:'boolean'},expectedInput:{type:'integer',minimum:1,maximum:Number.MAX_SAFE_INTEGER}},['command']),async args=>{const value=await native('player.control',args);paint(value);return value;});
   register('options',object({loop:{type:'boolean'},fullLength:{type:'boolean'},segment:{type:'number',minimum:1,maximum:300},super:{type:'boolean'},portraitOnly:{type:'boolean'}}),async args=>{const current=await currentTarget();await native('player.options',{options:args,expectedId:current.queue.id,expectedRevision:current.queue.revision});const value=await native('player.state');paint(value);return value.queue;});
   register('mute',object(),async()=>{const current=await currentTarget();return control({command:'volume',value:current.volume?0:audibleVolume});});
-  register('rotate',object(),async()=>{const current=await currentTarget();return control({command:'rotate',value:((current.rotation||0)+90)%360});});
+  register('rotate',object(),async()=>{const current=await currentTarget();return control({command:'autoRotate',enabled:!current.autoRotate,expectedInput:current.inputId});});
   register('loop',object(),async()=>{const current=await currentTarget();return api.invoke('rhvideo.player.options',{loop:!current.queue.options?.loop});});
   let favoriteBusy=false;
   register('favorite',object(),async()=>{if(favoriteBusy)throw Error('收藏请求正在处理');favoriteBusy=true;try{const current=await currentTarget();await native('player.favorite',{id:current.queue.id,revision:current.queue.revision});return api.invoke('rhvideo.player.state');}finally{favoriteBusy=false;}});

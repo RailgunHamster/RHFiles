@@ -21,6 +21,7 @@ pub mod network_io;
 mod profile;
 mod recycle;
 mod rhvideo;
+mod rhvideo_rotation;
 #[cfg(windows)]
 mod rhvideo_clock;
 #[cfg(windows)]

@@ -86,7 +86,7 @@
         portraitOnly: false,
         loop: false,
         super: false,
-        rotation: 0,
+        autoRotate: false,
         gridCount: 0,
         volume: 20,
         resume: false,
@@ -1089,12 +1089,12 @@
             throw Error("设置数值超出范围");
           if (
             (["perVideo", "gridCount", "readerFont", "volume"].includes(key) &&
-              !Number.isSafeInteger(value)) ||
-            (key === "rotation" && ![0, 90, 180, 270].includes(value))
+              !Number.isSafeInteger(value))
           )
             throw Error("设置数值无效");
           if (key === "rule")
             await send("query", { ...criteria(), rule: value, limit: 1 });
+          if(key==="autoRotate")await native("rotation.preference",{enabled:value});
           if(!ctx.mobile&&["segment","fullLength","loop","portraitOnly"].includes(key)){
             const current=await native("player.state");if(current.queue?.options?.mode==="segments")await native("player.options",{options:{[key]:value},expectedId:current.queue.id,expectedRevision:current.queue.revision});
             await native("playlist.settings",{mode:"segments",options:{[key]:value}});
@@ -1122,6 +1122,8 @@
       );
       action("volume.set",object({value:{type:"integer",minimum:0,maximum:100}},["value"]),({value})=>invoke("preferences.set",{key:"volume",value}));
       action("volume.state",object(),()=>({volume:config().volume}),"read");
+      action("rotation.state",object(),()=>native("rotation.preference"),"read");
+      action("rotation.set",object({enabled:{type:"boolean"}},["enabled"]),async({enabled})=>{const value=await native("rotation.preference",{enabled});prefs.autoRotate=value.enabled;applyPreferences();return value;});
       action(
         "preferences.flush",
         object(),
@@ -1141,6 +1143,7 @@
         "write",
       );
       action("preferences.reset", object(), async () => {
+        await native("rotation.preference",{enabled:false});
         prefs = {};
         save();
         applyPreferences();
@@ -1168,7 +1171,7 @@
               ["portraitOnly", "仅竖屏视频", "bool"],
               ["loop", "循环当前视频 / 片段", "bool"],
               ["super", "同屏／自动放映使用低带宽版本", "bool"],
-              ["rotation", "旋转角度", "number"],
+              ["autoRotate", "智能旋转（更适合窗口比例时旋转）", "bool"],
               ["resume", "单视频自动续播", "bool"],
             ],
           ],
@@ -1228,6 +1231,7 @@
                 "settings." + key,
               );
             }
+            control.dataset.preference=key;
             grid.append(field(label, control));
           }
           root.append(grid);
@@ -2436,7 +2440,7 @@
         }
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
         if(intent!==singlePlayIntent)return {stale:true};
-        const ticket=await prepareQueue([{...media,title}],{fullLength:true,super:low,rotation:c.rotation,...parent});
+        const ticket=await prepareQueue([{...media,title}],{fullLength:true,super:low,...parent});
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
         if(intent!==singlePlayIntent){await discardPrepared(ticket,version);return {stale:true};}
         const previous=imageSession;imageSession=parentSession;
@@ -2473,7 +2477,7 @@
         const ticket = await prepareQueue(entries, {
           reference:true,mode,signature,closeAtEnd:true,
           super:low,loop:initial.loop,rate:initial.rate,
-          fullLength,segment,portraitOnly,rotation:c.rotation,
+          fullLength,segment,portraitOnly,
         });
         if(version!==epoch)throw Error("媒体账户已更改，播放未开始");
         if(intent!==singlePlayIntent){await discardPrepared(ticket,version);return {stale:true};}
@@ -2622,6 +2626,7 @@
         action("player.seekQueue",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),({ratio})=>native("player.control",{command:"seekQueue",value:ratio}));
         action("player.options",object({fullLength:{type:"boolean"},portraitOnly:{type:"boolean"},segment:{type:"number",minimum:1,maximum:300},loop:{type:"boolean"},rate:{type:"number",minimum:.25,maximum:4}}),args=>native("player.control",{command:"playlist.options",options:args}));
         const inputGuard={expectedInputId:{type:"integer",minimum:0}};
+        action("player.rotate",object({...inputGuard,enabled:{type:"boolean"}}),args=>native("player.control",{command:"autoRotate",...args}));
         action("player.back",object(inputGuard),args=>native("player.control",{command:"back",...args}));
         action("player.favorite",object(inputGuard),args=>native("player.control",{command:"favorite",...args}),"write");
         action("player.mark",object({...inputGuard,enabled:{type:"boolean"}}),args=>native("player.control",{command:"mark",...args}));
@@ -2640,6 +2645,7 @@
                   "volume",
                   "rate",
                   "rotate",
+                  "autoRotate",
                   "repeat",
                   "fullscreen",
                   "fit",
@@ -4167,6 +4173,7 @@
         stepImage,
         refreshImage,
         cancelPendingPlayback(){singlePlayIntent++;},
+        rotationChanged(enabled){prefs.autoRotate=!!enabled;const control=document.querySelector('[data-preference="autoRotate"]');if(control)control.checked=!!enabled;},
         closeImage(){const id=imageSession?.previewId;singlePlayIntent++;imageSession=null;imageToken++;return id;},
         canPlayImage(){return !imageSession?.loading&&imageSession?.current?.kind==="frame";},
         previewTarget(kind,id){const item=$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},

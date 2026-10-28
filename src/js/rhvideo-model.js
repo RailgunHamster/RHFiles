@@ -40,5 +40,10 @@
     rects(ars){const n=ars.length,total=ars.reduce((a,b)=>a+b,0),pct=v=>Math.round(v*1000)/1000;if(n===1)return [[0,0,1,1]];if(n===2||n===3){if(n===3&&Math.min(...ars)/total<.30){const pair=[[0,1,2],[0,2,1],[1,2,0]].sort((a,b)=>Math.abs(ars[a[0]]-ars[a[1]])-Math.abs(ars[b[0]]-ars[b[1]]))[0],w=pct(ars[pair[0]]/(ars[pair[0]]+ars[pair[1]])),r=[];r[pair[0]]=[0,0,w,.5];r[pair[1]]=[w,0,1-w,.5];r[pair[2]]=[0,.5,1,.5];return r;}let x=0;return ars.map(a=>{const width=pct(a/total),r=[x,0,width,1];x+=width;return r;});}const cols=Math.ceil(Math.sqrt(n)),rows=Math.ceil(n/cols);return ars.map((_,i)=>[(i%cols)/cols,Math.floor(i/cols)/rows,1/cols,1/rows]);},
     plan(entries,count=0){return grid.groups(entries,count).flatMap(group=>{const rects=grid.rects(group.map(v=>v.aspectRatio));return group.map((v,i)=>({...v,gridRect:rects[i],gridEnd:i===group.length-1}));});},
   };
-  return {kinds,clock,page,itemKey,favoriteSet,validateCatalog,imageIndex,playback,grid};
+  function rotation(width,height,containerWidth,containerHeight,enabled=false){
+    if(!(width>0&&height>0&&containerWidth>0&&containerHeight>0))return {angle:0,available:true};
+    const vr=width/height,cr=containerWidth/containerHeight,normal=Math.min(cr/vr,vr/cr),rotated=Math.min(cr*vr,1/(cr*vr));
+    return {angle:enabled&&rotated>normal*1.05?90:0,available:!!enabled||(!(vr>.9&&vr<1.1)&&Math.abs(normal-rotated)>=.05)};
+  }
+  return {kinds,clock,page,itemKey,favoriteSet,validateCatalog,imageIndex,playback,grid,rotation};
 });

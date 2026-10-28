@@ -283,6 +283,7 @@
   listenNative('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
   listenNative('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);
   listenNative('rhvideo-parent-preview',({payload})=>{if(payload.generation===state.generation)void invoke('image.returnFromVideo',payload).catch(notice);}).catch(notice);
+  listenNative('rhvideo-rotation-preference',({payload})=>{if(payload.generation===state.generation)workbench.rotationChanged(payload.enabled);}).catch(notice);
   listenNative('rhvideo-playback-error',({payload})=>{if(payload.generation===state.generation)notice(payload.message);}).catch(notice);
   if(mobile)listenNative('rhvideo-media-action',({payload})=>{if(payload.generation===state.generation&&payload.error)notice(payload.error);}).catch(notice);
   bind('connection-open','click','connection.open');bind('connection-close','click','connection.close');

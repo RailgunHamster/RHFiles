@@ -1273,6 +1273,7 @@ fn schedule_preload(app: AppHandle, session: Arc<Session>) -> Result<Value, Stri
                     .map(|(id, title)| (id.clone(), title.clone(), q.options["super"] == true))
             });
         if let Some((id, title, low)) = next {
+            let rotation=rotation_policy(&session,&id)?;
             let url = session.asset(
                 format!(
                     "api/v1/videos/{id}/play{}",
@@ -1282,7 +1283,7 @@ fn schedule_preload(app: AppHandle, session: Arc<Session>) -> Result<Value, Stri
             )?;
             tauri::async_runtime::spawn(async move {
                 if GENERATION.load(Ordering::SeqCst) == session.generation {
-                    let _ = crate::rhvideo_player::preload(app, url, title).await;
+                    let _ = crate::rhvideo_player::preload(app, url, title,rotation).await;
                 }
             });
             return Ok(json!({"scheduled":true}));
@@ -1294,6 +1295,29 @@ fn schedule_preload(app: AppHandle, session: Arc<Session>) -> Result<Value, Stri
         let _ = (app, session);
     }
     Ok(json!({"scheduled":false}))
+}
+fn native_preferences(session:&Session,replacement:Option<&Value>,rotation:Option<bool>)->Result<Value,String>{
+    let _guard=PREFERENCES_LOCK.lock().map_err(|_|"偏好状态不可用")?;
+    let account=format!("{}\n{}",session.base,session.username);
+    let path=config_path()?.with_file_name("rhvideo-preferences.json");
+    let mut accounts:Value=std::fs::read(&path).ok().and_then(|b|serde_json::from_slice(&b).ok()).filter(Value::is_object).unwrap_or(json!({}));
+    let previous=accounts.get(&account).cloned().unwrap_or(json!({}));
+    let mut value=replacement.cloned().unwrap_or_else(||previous.clone());
+    if !value.is_object()||serde_json::to_vec(&value).map_err(|_|"偏好无效")?.len()>256*1024{return Err("偏好数据过大".into());}
+    // This switch is also changed by a separate native player window. An old
+    // library preference snapshot must never undo that newer explicit choice.
+    value["autoRotate"]=json!(rotation.unwrap_or_else(||crate::rhvideo_rotation::preference(&previous)));
+    if replacement.is_some()||rotation.is_some(){
+        accounts[&account]=value.clone();let temp=path.with_extension("tmp");
+        std::fs::write(&temp,serde_json::to_vec(&accounts).map_err(|_|"无法保存偏好")?).map_err(|_|"无法保存偏好")?;
+        std::fs::rename(temp,&path).map_err(|_|"无法保存偏好")?;
+    }
+    Ok(value)
+}
+#[cfg(windows)]
+fn rotation_policy(session:&Session,id:&str)->Result<crate::rhvideo_rotation::Policy,String>{
+    let source=session.videos.try_lock().ok().and_then(|cache|cache.as_ref().and_then(|cache|cache.rows.as_array()).and_then(|rows|rows.iter().find(|v|v["id"].as_str()==Some(id))).map(|row|crate::rhvideo_rotation::source_size(row["original_resolution"].as_str().or_else(||row["resolution"].as_str()).unwrap_or("")))).unwrap_or((0,0));
+    Ok(crate::rhvideo_rotation::Policy{enabled:crate::rhvideo_rotation::preference(&native_preferences(session,None,None)?),source})
 }
 async fn native_play(
     app: AppHandle,
@@ -1310,7 +1334,8 @@ async fn native_play(
     let url = session.asset(path, false)?;
     #[cfg(windows)]
     {
-        let result=crate::rhvideo_player::play(app, url, title, seconds).await?;
+        let rotation=rotation_policy(session,id)?;
+        let result=crate::rhvideo_player::play(app, url, title, seconds,rotation).await?;
         if !current().is_ok_and(|s|s.generation==session.generation){crate::rhvideo_player::stop_single();return Err("播放期间媒体账户已更改；旧播放已停止".into());}
         Ok(result)
     }
@@ -1825,31 +1850,18 @@ pub async fn rhvideo_request(
             Ok(json!(urls))
         }
         "preferences" => {
-            let _guard = PREFERENCES_LOCK.lock().map_err(|_| "偏好状态不可用")?;
-            let account = format!("{}\n{}", session.base, session.username);
-            let path = config_path()?.with_file_name("rhvideo-preferences.json");
-            let mut accounts: Value = std::fs::read(&path)
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-                .filter(Value::is_object)
-                .unwrap_or(json!({}));
-            if let Some(value) = args.get("value") {
-                let bytes = serde_json::to_vec(value).map_err(|_| "偏好无效")?;
-                if !value.is_object() || bytes.len() > 256 * 1024 {
-                    return Err("偏好数据过大".into());
-                }
-                accounts[&account] = value.clone();
-                let temp = path.with_extension("tmp");
-                std::fs::write(
-                    &temp,
-                    serde_json::to_vec(&accounts).map_err(|_| "无法保存偏好")?,
-                )
-                .map_err(|_| "无法保存偏好")?;
-                std::fs::rename(temp, &path).map_err(|_| "无法保存偏好")?;
-                Ok(json!({"saved":true}))
-            } else {
-                Ok(accounts.get(&account).cloned().unwrap_or(json!({})))
+            let value=native_preferences(&session,args.get("value"),None)?;
+            Ok(if args.get("value").is_some(){json!({"saved":true})}else{value})
+        }
+        "rotation.preference"=>{
+            let _play=PLAY_LOCK.lock().await;
+            let enabled=args.get("enabled").map(|v|v.as_bool().ok_or("旋转开关无效")).transpose()?;
+            #[cfg(windows)] if let Some(enabled)=enabled{
+                if PLAYBACK.lock().map_err(|_|"播放状态不可用")?.as_ref().is_some_and(|q|q.generation==session.generation){crate::rhvideo_player::command("player.control",&json!({"command":"autoRotate","enabled":enabled}))?;}
             }
+            let value=native_preferences(&session,None,enabled)?;let enabled=crate::rhvideo_rotation::preference(&value);
+            if args.get("enabled").is_some(){let _=app.emit_to("window-rhvideo","rhvideo-rotation-preference",json!({"generation":session.generation,"enabled":enabled}));}
+            Ok(json!({"enabled":enabled}))
         }
         "playback.history" => playback_history(&session, None, None, false),
         "playlist.state"=>queue_state(&session,text(&args,"mode",32)?,None),
@@ -2146,14 +2158,6 @@ pub async fn rhvideo_request(
             #[cfg(windows)]
             {
                 if let Some(rate)=playback.options["rate"].as_f64().filter(|r|(0.25..=4.).contains(r)){crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
-                let rotation = playback.options["rotation"].as_i64().unwrap_or(0);
-                let actual = crate::rhvideo_player::command("player.state", &json!({}))?;
-                if actual["rotation"].as_i64() != Some(rotation) {
-                    crate::rhvideo_player::command(
-                        "player.control",
-                        &json!({"command":"rotate","value":rotation}),
-                    )?;
-                }
             }
             playback.start_seconds=seconds;
             if playback.options["reference"]!=true{*session.single_controls.lock().map_err(|_|"单视频设置不可用")?=SingleControls{looping:playback.options["loop"]==true,rate:playback.options["rate"].as_f64().unwrap_or(1.)};}
@@ -2393,6 +2397,10 @@ pub async fn rhvideo_request(
             wake_playback_monitor(&app);
             Ok(queue_info())
         }
+        "player.diagnosticFrame"=>{
+            #[cfg(windows)]{let _play=PLAY_LOCK.lock().await;crate::rhvideo_player::diagnostic_frame(&args)}
+            #[cfg(not(windows))]{Err("此平台未接入该诊断".into())}
+        }
         "player.state" | "player.control" => {
             #[cfg(windows)]
             {
@@ -2400,6 +2408,12 @@ pub async fn rhvideo_request(
                 // transaction as play/options/close, not two different inputs.
                 let _play=PLAY_LOCK.lock().await;
                 let mut value = crate::rhvideo_player::command(&action, &args)?;
+                if action=="player.control"&&args["command"]=="autoRotate"{
+                    let enabled=value["autoRotate"].as_bool().ok_or("旋转状态不可用")?;
+                    native_preferences(&session,None,Some(enabled))?;
+                    let _=app.emit_to("window-rhvideo","rhvideo-rotation-preference",json!({"generation":session.generation,"enabled":enabled}));
+                    crate::rhvideo_player::clear_preload();schedule_preload(app.clone(),session.clone())?;
+                }
                 value["queue"] = queue_info();
                 value["automationError"]=PLAY_MONITOR_ERROR.lock().ok().and_then(|e|e.clone()).unwrap_or(Value::Null);
                 value["generation"]=json!(session.generation);

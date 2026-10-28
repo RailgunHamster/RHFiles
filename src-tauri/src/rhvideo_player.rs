@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager, WindowEvent, Emitter};
 use windows::{
     core::w,
     Win32::{
-        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,RECT},
         Graphics::Gdi::{BeginPaint, EndPaint, PatBlt, BLACKNESS, PAINTSTRUCT},
         System::LibraryLoader::GetModuleHandleW,
         UI::{WindowsAndMessaging::*, Input::KeyboardAndMouse::{SetFocus,GetKeyState,VK_CONTROL,VK_SHIFT,VK_MENU}},
@@ -239,6 +239,8 @@ struct Api {
     time: unsafe extern "C" fn(Ptr) -> i64,
     position: unsafe extern "C" fn(Ptr) -> f32,
     video_size: unsafe extern "C" fn(Ptr, u32, *mut u32, *mut u32) -> i32,
+    has_vout:unsafe extern "C" fn(Ptr)->u32,
+    set_aspect:unsafe extern "C" fn(Ptr,*const c_char),
     length: unsafe extern "C" fn(Ptr) -> i64,
     set_time: unsafe extern "C" fn(Ptr, i64),
     state: unsafe extern "C" fn(Ptr) -> i32,
@@ -340,6 +342,8 @@ impl Api {
                 time: function!("libvlc_media_player_get_time"),
                 position: function!("libvlc_media_player_get_position"),
                 video_size: function!("libvlc_video_get_size"),
+                has_vout:function!("libvlc_media_player_has_vout"),
+                set_aspect:function!("libvlc_video_set_aspect_ratio"),
                 length: function!("libvlc_media_player_get_length"),
                 set_time: function!("libvlc_media_player_set_time"),
                 state: function!("libvlc_media_player_get_state"),
@@ -375,6 +379,10 @@ struct Engine {
     compatibility: bool,
     media: usize,
     rotation: i32,
+    rotation_policy:crate::rhvideo_rotation::Policy,
+    rotation_viewport:(u32,u32),
+    rotation_resolved:bool,
+    aspect_input:std::sync::atomic::AtomicU64,
     url: String,
     open_started: std::time::Instant,
     first_frame_ms: std::sync::atomic::AtomicU64,
@@ -392,8 +400,12 @@ impl Engine {
         self.hold_audio.store(false,std::sync::atomic::Ordering::Relaxed);Ok(())
     }
     fn new(child: usize) -> Result<Self, String> {
+        Self::new_with_rotation(child,0)
+    }
+    fn new_with_rotation(child:usize,rotation:i32)->Result<Self,String>{
         let api = unsafe { Api::load()? };
-        let options = [
+        let compatibility=unsafe{GetSystemMetrics(SM_REMOTESESSION)!=0}||std::env::var_os("RHFILES_VLC_COMPATIBILITY").is_some();
+        let mut options = vec![
             CString::new(
                 if cfg!(debug_assertions) && std::env::var_os("RHFILES_VLC_DEBUG").is_some() {
                     "--verbose=2"
@@ -412,7 +424,12 @@ impl Engine {
             CString::new("--aout=directsound").unwrap(),
             CString::new("--directx-volume=0").unwrap(),
             CString::new("--no-volume-save").unwrap(),
+            CString::new(if compatibility{"--avcodec-hw=none"}else{"--avcodec-hw=any"}).unwrap(),
         ];
+        // libVLC 3 creates the player's video-filter from its INSTANCE, not
+        // an individual media option (see lib/media_player.c). Passing this
+        // only to media_add_option changes our flag but not rendered pixels.
+        if rotation!=0&&!compatibility{options.push(CString::new("--video-filter=transform").unwrap());options.push(CString::new(format!("--transform-type={rotation}")).unwrap());}
         let pointers = options.iter().map(|s| s.as_ptr()).collect::<Vec<_>>();
         let instance = unsafe { (api.new)(pointers.len() as i32, pointers.as_ptr()) };
         if instance.is_null() {
@@ -424,11 +441,10 @@ impl Engine {
             return Err("无法创建原生播放器".into());
         }
         let mut frame = Box::new(crate::rhvideo_frame::Frame::new(child));
+        frame.rotation.store(rotation,std::sync::atomic::Ordering::Relaxed);
         // Keep the bounded GDI presenter for RDP/headless sessions. Ordinary
         // desktops use VLC's own native video output and hardware selection;
         // no RGBA copy, browser transport or artificial 1080p ceiling there.
-        let compatibility = unsafe { GetSystemMetrics(SM_REMOTESESSION) != 0 }
-            || std::env::var_os("RHFILES_VLC_COMPATIBILITY").is_some();
         unsafe {
             (api.set_hwnd)(player, child as Ptr);
             (api.key_input)(player, 0);
@@ -459,11 +475,60 @@ impl Engine {
             clock: Mutex::new(crate::rhvideo_clock::Clock::new()),
             compatibility,
             media: 0,
-            rotation: 0,
+            rotation,
+            rotation_policy:Default::default(),rotation_viewport:(0,0),rotation_resolved:false,aspect_input:std::sync::atomic::AtomicU64::new(0),
             url: String::new(),
             open_started: std::time::Instant::now(),
             first_frame_ms: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+    fn viewport(&self)->(u32,u32){
+        let mut rect=RECT::default();unsafe{if GetClientRect(HWND(self.child as Ptr),&mut rect).is_ok(){return ((rect.right-rect.left).max(1) as u32,(rect.bottom-rect.top).max(1) as u32);}}
+        self.rotation_viewport
+    }
+    fn replace_rotation_renderer(&mut self,angle:i32)->Result<(),String>{
+        let mut next=Self::new_with_rotation(self.child,angle)?;
+        next.requested_volume=self.requested_volume;next.muted=self.muted;next.last_volume=self.last_volume;next.repeat_input=self.repeat_input;
+        next.rotation_policy=self.rotation_policy;next.rotation_viewport=self.rotation_viewport;next.rotation_resolved=self.rotation_resolved;
+        let rate=unsafe{(self.api.rate)(self.player as Ptr)};
+        unsafe{(self.api.stop)(self.player as Ptr);(next.api.set_rate)(next.player as Ptr,rate);}
+        std::mem::swap(self,&mut next);drop(next);Ok(())
+    }
+    fn configure_rotation(&mut self,policy:crate::rhvideo_rotation::Policy,viewport:(u32,u32))->Result<bool,String>{
+        let angle=crate::rhvideo_rotation::angle(policy.source,viewport,policy.enabled);let changed=angle!=self.rotation;
+        if changed{if self.compatibility{self.rotation=angle;self.frame.rotation.store(angle,std::sync::atomic::Ordering::Relaxed);}else{self.replace_rotation_renderer(angle)?;}}
+        self.rotation_policy=policy;self.rotation_viewport=viewport;self.rotation_resolved=policy.source.0>0&&policy.source.1>0;self.rotation_aspect()?;Ok(changed)
+    }
+    fn rotation_aspect(&self)->Result<(),String>{
+        if self.compatibility{return Ok(());}
+        // VLC 3's interactive transform converts back to the input format.
+        // Its output aspect must therefore be swapped explicitly as well;
+        // otherwise rotated pixels are squeezed into the old portrait box.
+        let(w,h)=self.rotation_policy.source;
+        let aspect=if self.rotation%180!=0&&w>0&&h>0{Some(CString::new(format!("{h}:{w}")).map_err(|_|"旋转画面比例无效")?)}else{None};
+        unsafe{(self.api.set_aspect)(self.player as Ptr,aspect.as_ref().map_or(std::ptr::null(),|value|value.as_ptr()));if (self.api.has_vout)(self.player as Ptr)>0{self.aspect_input.store(self.input_id,std::sync::atomic::Ordering::Release);}}Ok(())
+    }
+    fn resolve_rotation(&mut self)->Result<(),String>{
+        if self.rotation_resolved{return Ok(());}
+        let(mut width,mut height)=(0,0);unsafe{(self.api.video_size)(self.player as Ptr,0,&mut width,&mut height);}
+        if width==0||height==0{return Ok(());}
+        self.rotation_policy.source=(width,height);self.rotation_resolved=true;
+        let angle=crate::rhvideo_rotation::angle(self.rotation_policy.source,self.rotation_viewport,self.rotation_policy.enabled);
+        self.apply_rotation(angle)
+    }
+    fn apply_rotation(&mut self,angle:i32)->Result<(),String>{
+        if angle==self.rotation{return Ok(());}
+        if self.compatibility{self.rotation=angle;self.frame.rotation.store(angle,std::sync::atomic::Ordering::Relaxed);let _=self.frame.render();return Ok(());}
+        let before=self.state();let paused=before["state"]==4||before["restoringPausedFrame"]==true;
+        let target=before["positionMs"].as_i64().unwrap_or(0).max(0);let rate=before["rate"].as_f64().unwrap_or(1.) as f32;
+        self.cancel_pause_restore()?;self.hold_audio.store(paused,std::sync::atomic::Ordering::Relaxed);
+        let url=self.url.clone();let title=self.title.clone();self.replace_rotation_renderer(angle)?;
+        self.rotation_aspect()?;
+        self.hold_audio.store(paused,std::sync::atomic::Ordering::Relaxed);
+        self.open(&url,title,if paused{0.}else{target as f64/1000.})?;
+        unsafe{(self.api.set_rate)(self.player as Ptr,rate);}
+        if paused{self.begin_pause_restore(target)?;}
+        Ok(())
     }
     fn open(&mut self, url: &str, title: String, seconds: f64) -> Result<(), String> {
         self.input_id=INPUT_SEQUENCE.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
@@ -479,12 +544,15 @@ impl Engine {
                 .last_display
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
-        self.frame
-            .count
-            .store(0, std::sync::atomic::Ordering::Relaxed);
         let url = CString::new(url).map_err(|_| "媒体地址无效")?;
         unsafe {
             (self.api.stop)(self.player as Ptr);
+            // stop joins callbacks from the previous input. Reset AFTER that
+            // join, otherwise its last frame can impersonate a new first frame.
+            self.frame.count.store(0,std::sync::atomic::Ordering::Relaxed);
+            self.frame.format.store(0,std::sync::atomic::Ordering::Release);
+            self.frame.presented.store(0,std::sync::atomic::Ordering::Release);
+            self.clock.lock().map_err(|_|"播放时钟不可用")?.reset((seconds*1000.) as i64,self.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));
             let media = (self.api.media_new)(self.instance as Ptr, url.as_ptr());
             if media.is_null() {
                 return Err("无法打开媒体流".into());
@@ -507,15 +575,6 @@ impl Engine {
             } {
                 let option = CString::new(option).unwrap();
                 (self.api.media_option_flag)(media, option.as_ptr(), 0x2);
-            }
-            if self.rotation != 0 {
-                for option in [
-                    ":video-filter=transform".to_owned(),
-                    format!(":transform-type={}", self.rotation),
-                ] {
-                    let option = CString::new(option).unwrap();
-                    (self.api.media_option_flag)(media, option.as_ptr(), 0x2);
-                }
             }
             let start = CString::new(format!(":start-time={seconds:.3}")).unwrap();
             (self.api.media_option)(media, start.as_ptr());
@@ -544,6 +603,9 @@ impl Engine {
             let p = self.player as Ptr;
             let (mut width, mut height) = (0, 0);
             (self.api.video_size)(p, 0, &mut width, &mut height);
+            // A newly created vout can reset aspect after play(). Apply once
+            // to that actual output, not just to the not-yet-open player.
+            if !self.compatibility&&self.aspect_input.load(std::sync::atomic::Ordering::Acquire)!=self.input_id&&(self.api.has_vout)(p)>0{let _=self.rotation_aspect();}
             let raw = (self.api.time)(p).max(0);
             let duration = (self.api.length)(p).max(0);
             let state = (self.api.state)(p);
@@ -624,7 +686,9 @@ impl Engine {
                     })
                     .unwrap_or(raw)
             };
-            json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
+            let source=if self.rotation_policy.source.0>0{self.rotation_policy.source}else{(width,height)};let viewport=self.viewport();let format=self.frame.presented.load(std::sync::atomic::Ordering::Acquire);
+            json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"autoRotate":self.rotation_policy.enabled,"rotationAvailable":crate::rhvideo_rotation::available(source,viewport,self.rotation_policy.enabled),"sourceWidth":source.0,"sourceHeight":source.1,"viewportWidth":viewport.0,"viewportHeight":viewport.1,"presentedWidth":if self.compatibility{Some((format>>32) as u32)}else{None},"presentedHeight":if self.compatibility{Some(format as u32)}else{None},"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
+            "presentationError":if self.compatibility&&self.frame.render_error.load(std::sync::atomic::Ordering::Relaxed){Some("无法显示原生兼容画面，请检查显示会话后重新打开视频")}else{None},
             "state":(self.api.state)(p),"restoringPausedFrame":restoring,"restorePhase":restore_phase,"restoreTargetMs":restore_target,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
             "rate":restore_rate.unwrap_or_else(||(self.api.rate)(p)),"decoderRate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
         }
@@ -705,7 +769,7 @@ pub fn preload_state() -> Value {
         .and_then(|s| s.clone())
         .unwrap_or(json!({"state":"idle"}))
 }
-pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value, String> {
+pub async fn preload(app: AppHandle, url: String, title: String,rotation:crate::rhvideo_rotation::Policy) -> Result<Value, String> {
     clear_preload();
     let ticket = WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     // Like RHVideo's onplaying handler, do not compete for upstream bandwidth,
@@ -737,6 +801,7 @@ pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value
     *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
         Some(json!({"state":"loading","title":title}));
     let view = app.get_webview_window(LABEL).ok_or("播放器没有打开")?;
+    let rotation_viewport=window_viewport(&view)?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         let result = (|| {
@@ -773,13 +838,9 @@ pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value
     })
     .map_err(|e| e.to_string())?;
     let child = rx.await.map_err(|_| "播放器已关闭")??;
-    let rotation = PLAYER
-        .lock()
-        .ok()
-        .and_then(|p| p.as_ref().map(|p| p.rotation))
-        .unwrap_or(0);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut engine = match Engine::new(child) {
+        let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
+        let mut engine = match Engine::new_with_rotation(child,angle) {
             Ok(e) => e,
             Err(e) => {
                 unsafe {
@@ -793,7 +854,7 @@ pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value
                 return Err(e);
             }
         };
-        engine.rotation = rotation;
+        engine.configure_rotation(rotation,rotation_viewport)?;
         if let Err(error) = control_engine(&mut engine, &json!({"command":"volume","value":0})) {
             release_surface(engine);
             return Err(error);
@@ -822,6 +883,7 @@ pub async fn preload(app: AppHandle, url: String, title: String) -> Result<Value
             tauri::async_runtime::spawn_blocking(move || release_surface(engine));
             return Ok(json!({"state":"cancelled"}));
         }
+        if let Err(error)=engine.resolve_rotation(){release_surface(engine);return Err(error);}
         let status = engine.state();
         // Transparent native windows can be GPU-occluded. Readiness is actual
         // decoder output; ordinary playback still requires displayed frames.
@@ -1232,14 +1294,19 @@ pub fn grid_relayout(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 fn resize(window: &tauri::WebviewWindow) {
-    let Ok(player) = PLAYER.try_lock() else {
+    let Ok(mut player) = PLAYER.try_lock() else {
         return;
     };
-    let Some(player) = player.as_ref() else {
+    let Some(player) = player.as_mut() else {
         return;
     };
     layout(window, player.child);
+    if let Ok(viewport)=window_viewport(window){player.rotation_viewport=viewport;}
     player.frame.render();
+}
+fn window_viewport(window:&tauri::WebviewWindow)->Result<(u32,u32),String>{
+    let size=window.inner_size().map_err(|e|e.to_string())?;let scale=window.scale_factor().map_err(|e|e.to_string())?;
+    Ok((size.width.max(1),size.height.saturating_sub((CONTROLS_HEIGHT*scale).round() as u32).max(1)))
 }
 fn layout(window: &tauri::WebviewWindow, child: usize) {
     if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
@@ -1280,6 +1347,7 @@ pub async fn play(
     url: String,
     title: String,
     seconds: f64,
+    rotation:crate::rhvideo_rotation::Policy,
 ) -> Result<Value, String> {
     let _=INPUT_APP.set(app.clone());
     if !available() {
@@ -1317,6 +1385,7 @@ pub async fn play(
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     let webview:&tauri::Webview=window.as_ref();webview.set_focus().map_err(|e|e.to_string())?;
+    let rotation_viewport=window_viewport(&window)?;
     let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
     let mut guard = SurfaceGuard(vec![]);
     WARM_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1328,10 +1397,8 @@ pub async fn play(
                 .ok()
                 .and_then(|p| p.as_ref().map(Engine::state))
                 .unwrap_or(json!({"volume":100,"rate":1,"rotation":0}));
-            let rotation = settings["rotation"].as_i64().unwrap_or(0) as i32;
-            let reconfigured = warmed.rotation != rotation;
+            let reconfigured = warmed.configure_rotation(rotation,rotation_viewport)?;
             if reconfigured {
-                warmed.rotation = rotation;
                 warmed.open(&url, title.clone(), seconds)?;
             }
             control_engine(
@@ -1423,7 +1490,8 @@ pub async fn play(
     tauri::async_runtime::spawn_blocking(move || {
         let mut slot = PLAYER.lock().map_err(|_| "播放器状态不可用")?;
         if slot.is_none() {
-            match Engine::new(child) {
+            let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
+            match Engine::new_with_rotation(child,angle) {
                 Ok(engine) => *slot = Some(engine),
                 Err(error) => {
                     unsafe {
@@ -1439,6 +1507,7 @@ pub async fn play(
             }
         }
         let engine = slot.as_mut().unwrap();
+        engine.configure_rotation(rotation,rotation_viewport)?;
         engine.open(&url, title, seconds)?;
         Ok(engine.state())
     })
@@ -1479,7 +1548,20 @@ pub fn command(action: &str, args: &Value) -> Result<Value, String> {
         if args.get("expectedInput").is_some_and(|expected|expected.as_u64()!=Some(player.input_id)){return Err("播放输入已改变，旧操作未执行".into());}
         control_engine(player, args)?;
     }
+    if action=="player.state"{player.resolve_rotation()?;}
     Ok(player.state())
+}
+pub fn diagnostic_frame(args:&Value)->Result<Value,String>{
+    // Test-only, opt-in readback from the actual native output. No filename,
+    // URL or arbitrary destination can be supplied by a WebView/server.
+    if !cfg!(debug_assertions)||std::env::var("RHFILES_NATIVE_PLAYER_QA").as_deref()!=Ok("1"){return Err("原生画面诊断仅在隔离调试测试中可用".into());}
+    let slot=PLAYER.lock().map_err(|_|"播放器状态不可用")?;let player=slot.as_ref().ok_or("播放器没有打开")?;
+    if args.get("expectedInput").is_some_and(|v|v.as_u64()!=Some(player.input_id)){return Err("播放输入已改变，旧诊断未执行".into());}
+    let mut random=[0u8;16];getrandom::fill(&mut random).map_err(|_|"无法创建诊断文件名")?;
+    let name=format!("rhvideo-native-{}.bmp",random.iter().map(|v|format!("{v:02x}")).collect::<String>());
+    let path=std::env::current_dir().map_err(|_|"无法读取隔离测试目录")?.join(name);
+    #[cfg(debug_assertions)]{let(width,height)=crate::rhvideo_frame::diagnostic_capture(player.child,&path,player.compatibility)?;return Ok(json!({"path":path,"width":width,"height":height,"inputId":player.input_id,"rotation":player.rotation,"renderer":if player.compatibility{"gdi-compatibility"}else{"native-hardware-auto"}}));}
+    #[cfg(not(debug_assertions))]Err("诊断画面不包含在发行构建中".into())
 }
 fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
     let _ = player.state();
@@ -1490,21 +1572,19 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
     unsafe {
         let p = player.player as Ptr;
         match command {
+            "autoRotate"=>{
+                let enabled=args["enabled"].as_bool().ok_or("旋转开关无效")?;
+                player.rotation_policy.enabled=enabled;player.rotation_viewport=player.viewport();
+                player.resolve_rotation()?;
+                let angle=crate::rhvideo_rotation::angle(player.rotation_policy.source,player.rotation_viewport,enabled);
+                player.apply_rotation(angle)?;
+            }
             "rotate" => {
                 let value = args["value"]
                     .as_i64()
                     .filter(|v| [0, 90, 180, 270].contains(v))
                     .ok_or("旋转角度无效")?;
-                let paused=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.is_some()||(player.api.state)(p)==4;
-                let target=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.as_ref().map(|plan|plan.target).unwrap_or_else(||(player.api.time)(p).max(0));
-                player.cancel_pause_restore()?;
-                player.hold_audio.store(paused,std::sync::atomic::Ordering::Relaxed);
-                player.rotation = value as i32;
-                let url = player.url.clone();
-                let title = player.title.clone();
-                let seconds = (player.api.time)(p).max(0) as f64 / 1000.;
-                player.open(&url, title, if paused{0.}else{seconds})?;
-                if paused{player.begin_pause_restore(target)?;}
+                player.apply_rotation(value as i32)?;
             }
             "pause" => {
                 if player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.is_some(){return Ok(());}

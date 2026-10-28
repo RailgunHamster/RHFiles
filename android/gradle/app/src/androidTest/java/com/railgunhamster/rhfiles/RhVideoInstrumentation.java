@@ -65,6 +65,44 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{try{state=(JSONObject)action("player.state",new JSONObject());if((id==null||id.equals(state.optString("id")))&&state.optBoolean("rendered")&&state.optInt("playbackState")==3&&state.optLong("renderedFrames")>0&&state.optBoolean("playing")==playing)return state;}catch(Exception ignored){}Thread.sleep(150);}while(System.currentTimeMillis()<end);
     throw new Exception("Native reference player did not settle: "+state);
   }
+  private void checkReferenceRotation()throws Exception{
+    action("rotation.set",new JSONObject().put("enabled",false));action("playlist.sequential",new JSONObject());waitPlayer("video-0",true);
+    action("player.control",new JSONObject().put("command","fullscreen").put("enabled",true));
+    long end=System.currentTimeMillis()+15000;JSONObject state=null;do{state=(JSONObject)action("player.state",new JSONObject());if(state.optInt("viewportWidth")>state.optInt("viewportHeight"))break;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    require(state.getInt("viewportWidth")>state.getInt("viewportHeight"),"Native rotation test must have a real wide viewport");
+    action("player.control",new JSONObject().put("command","rate").put("value",1.5));action("player.control",new JSONObject().put("command","volume").put("value",37));action("player.control",new JSONObject().put("command","pause"));long frames=((JSONObject)action("player.state",new JSONObject())).getLong("renderedFrames");action("player.control",new JSONObject().put("command","seek").put("value",5000));state=waitPausedPlayerFrame("video-0",5000,frames);long input=state.getLong("inputId");
+    action("player.control",new JSONObject().put("command","controls.hide"));assertRotationPixels(0);
+    state=(JSONObject)action("player.rotate",new JSONObject());require(state.getBoolean("autoRotate")&&state.getInt("rotation")==90,"A portrait source in a wide viewport rotates once, not through four angles");require(state.getString("surfaceType").equals("SurfaceView"),"Keep the native SurfaceView output, not a default TextureView downgrade");require(state.getLong("inputId")==input&&!state.getBoolean("playWhenReady")&&Math.abs(state.getLong("positionMs")-5000)<250&&Math.abs(state.getDouble("rate")-1.5)<.01,"Rotation must retain the media input/session, paused time and speed: "+state);
+    action("player.control",new JSONObject().put("command","controls.hide"));assertRotationPixels(90);state=(JSONObject)action("player.state",new JSONObject());require(state.getLong("inputId")==input&&Math.abs(state.getDouble("volume")-37)<.01&&Math.abs(state.getDouble("decoderVolume")-7.4)<.02,"Actual rotated output retains input identity and local/master gain: "+state);screenshot("rhvideo-rotation-on-qa.png");
+    require("surface-compositor".equals(state.getString("rotationRenderer"))&&!state.getBoolean("rotationPipeline"),"Android 10+ must rotate existing native buffers, not recreate a filtered decoder");
+      long rendered=state.getLong("renderedFrames");action("player.control",new JSONObject().put("command","resume"));end=System.currentTimeMillis()+8000;do{state=(JSONObject)action("player.state",new JSONObject());if(state.getLong("renderedFrames")>rendered+4)break;Thread.sleep(100);}while(System.currentTimeMillis()<end);require(state.getLong("renderedFrames")>rendered+4,"Rotated playback must continue to render new buffers");assertRotationPixels(90);action("player.control",new JSONObject().put("command","pause"));frames=((JSONObject)action("player.state",new JSONObject())).getLong("renderedFrames");action("player.control",new JSONObject().put("command","seek").put("value",5000));waitPausedPlayerFrame("video-0",5000,frames);
+    action("player.control",new JSONObject().put("command","options"));clickPlayerText("智能旋转");state=(JSONObject)action("player.state",new JSONObject());require(!state.getBoolean("autoRotate")&&state.getInt("rotation")==0&&state.getLong("inputId")==input,"Actual native More menu turns rotation OFF, not 180 degrees: "+state);action("player.control",new JSONObject().put("command","controls.hide"));assertRotationPixels(0);screenshot("rhvideo-rotation-off-qa.png");
+    action("player.rotate",new JSONObject());action("player.next",new JSONObject());waitPlayer("video-1",true);action("player.next",new JSONObject());state=waitPlayer("video-2",true);require(state.getBoolean("autoRotate")&&state.getInt("rotation")==0,"An already-fitting landscape source cannot inherit the prior portrait angle");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+    JSONObject old=(JSONObject)mediaNative("preferences",new JSONObject());old.put("autoRotate",false);mediaNative("preferences",new JSONObject().put("value",old));require(((JSONObject)action("rotation.state",new JSONObject())).getBoolean("enabled"),"A stale library settings save cannot overwrite a newer player choice");
+    action("connection.logout",new JSONObject());action("connection.connect",new JSONObject().put("server",args.getString("server")).put("username","preview").put("password","fixture-only"));require(((JSONObject)action("rotation.state",new JSONObject())).getBoolean("enabled"),"Same-account rotation switch persists across login");action("media.open",new JSONObject().put("kind","video").put("id","video-0"));state=waitPlayer("video-0",true);require(state.getBoolean("autoRotate"),"Reopened native player uses the canonical account preference");
+    require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.player.rotate',{expectedInputId:"+input+"}).then(()=>false,error=>String(error).includes('播放输入已改变'))")),"An old menu/input cannot turn off a newer viewer");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+    action("connection.logout",new JSONObject());action("connection.connect",new JSONObject().put("server",args.getString("server")).put("username","other").put("password","fixture-only"));require(!((JSONObject)action("rotation.state",new JSONObject())).getBoolean("enabled"),"A different account defaults OFF");
+  }
+  private SurfaceView videoSurface(View view){if(view instanceof SurfaceView)return (SurfaceView)view;if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++){SurfaceView found=videoSurface(((ViewGroup)view).getChildAt(i));if(found!=null)return found;}return null;}
+  private void assertRotationPixels(int angle)throws Exception{
+    // Actual compositor pixels, not a View.rotation property or decoder flag.
+    // The owned portrait fixture has four solid, distinct corner markers.
+    long end=System.currentTimeMillis()+8000;String diagnostic="";
+    do{
+      int[] bounds={0,0,0,0};runOnMainSync(()->{SurfaceView surface=videoSurface(current.getWindow().getDecorView());if(surface!=null){surface.getLocationOnScreen(bounds);bounds[2]=surface.getWidth();bounds[3]=surface.getHeight();}});
+      android.graphics.Bitmap image=getUiAutomation().takeScreenshot();boolean valid=image!=null&&bounds[2]>0&&bounds[3]>0;StringBuilder colors=new StringBuilder();
+      if(valid)for(int corner=0;corner<4;corner++){
+        double x=(corner%2==0?50.0:310.0)/360,y=(corner<2?50.0:590.0)/640;
+        double u=angle==90?1-y:x,v=angle==90?x:y;double vw=angle==90?640:360,vh=angle==90?360:640,scale=Math.min(bounds[2]/vw,bounds[3]/vh),left=(bounds[2]-vw*scale)/2,top=(bounds[3]-vh*scale)/2;int px=bounds[0]+(int)(left+u*vw*scale),py=bounds[1]+(int)(top+v*vh*scale);
+        if(px<0||py<0||px>=image.getWidth()||py>=image.getHeight()){valid=false;break;}
+        int pixel=image.getPixel(px,py),r=(pixel>>16)&255,g=(pixel>>8)&255,b=pixel&255;colors.append(String.format(" %06x",pixel&0xffffff));
+        valid&=corner==0?r>160&&g<90&&b<90:corner==1?g>160&&r<90&&b<90:corner==2?b>160&&r<90&&g<90:r>160&&g>160&&b<90;
+      }
+      if(image!=null)image.recycle();if(valid)return;
+      diagnostic="bounds="+java.util.Arrays.toString(bounds)+", pixels="+colors;Thread.sleep(100);
+    }while(System.currentTimeMillis()<end);
+    throw new Exception("Actual video pixels did not rotate clockwise/fit without cropping at "+angle+" degrees: "+diagnostic+"; "+action("player.state",new JSONObject()));
+  }
   private void checkLatestPlayIntent()throws Exception{
     action("category",new JSONObject().put("kind","video"));action("sort",new JSONObject().put("value","dateDesc"));
     action("gallery.open",new JSONObject());action("panel.close",new JSONObject().put("id","wb-gallery"));
@@ -336,10 +374,11 @@ public class RhVideoInstrumentation extends Instrumentation {
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
-      if(!"grid".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode")))checkFileTaskAndSort();
+      if(!"grid".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
       JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==("single".equals(args.getString("mode"))?3:52),"Video catalog count");
+      if("rotation".equals(args.getString("mode"))){checkReferenceRotation();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference rotation toggle, actual native SurfaceView, paused time/speed, next source, stale inputs/settings and per-account persistence");finish(Activity.RESULT_OK,result);return;}
       if("tickets".equals(args.getString("mode"))){checkPreparedTickets();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: prepared ticket lifetime and native player replacement");finish(Activity.RESULT_OK,result);return;}
       if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, audible cells, native frames, pause/seek/mute/rate restoration, independent queue, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}
       if("playlist".equals(args.getString("mode"))){checkReferencePlaylist();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference playlist segments, whole-file seek, native segment loop, global navigation, immutable pool, portrait projection, mode memory and native EOF close");finish(Activity.RESULT_OK,result);return;}

@@ -54,6 +54,9 @@ require(updateProbeCode == null || (providers.gradleProperty("rhfilesReleaseProb
 }
 
 android {
+    // Native view tests must inflate the real Media3/app resources, rather
+    // than passing against a resource-less Robolectric environment.
+    testOptions { unitTests.isIncludeAndroidResources = true }
     if (providers.gradleProperty("rhfilesReleaseProbe").isPresent) {
         testBuildType = "release"
         defaultConfig { testInstrumentationRunner = if(providers.gradleProperty("rhfilesAutomationProbe").isPresent) "com.railgunhamster.rhfiles.AutomationInstrumentation" else "com.railgunhamster.rhfiles.SmbUpdateInstrumentation" }
@@ -163,6 +166,7 @@ dependencies {
     implementation("androidx.window:window-java:1.5.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-effect:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.ow2.asm:asm:9.8")

@@ -28,6 +28,12 @@ class RhVideoClientTest {
   private fun json(value:String)=server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(value))
   private fun awaitState(check:()->Boolean){val end=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);while(!check()){assertTrue("Native operation did not finish",System.nanoTime()<end);Thread.sleep(10)}}
   private fun login(){json("""{"access_token":"test-native-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));assertEquals("/api/v1/auth/login",server.takeRequest().path)}
+  @Test fun rotationIsAccountScopedAndStalePreferenceSnapshotsCannotUndoThePlayer(){
+    login();val generation=client.sessionGeneration();val old=client.request("preferences",JSONObject()) as JSONObject;assertFalse(old.getBoolean("autoRotate"))
+    assertTrue(client.rotationPreference(generation,true));client.request("preferences",JSONObject().put("value",old));assertTrue((client.request("preferences",JSONObject()) as JSONObject).getBoolean("autoRotate"))
+    client.logout();login();assertTrue(client.rotationPreference(client.sessionGeneration()));try{client.rotationPreference(generation,false);fail("Old account changed rotation")}catch(_:IllegalStateException){};assertTrue(client.rotationPreference(client.sessionGeneration()))
+    client.logout();json("""{"access_token":"other-test-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","test-only"));server.takeRequest();assertFalse(client.rotationPreference(client.sessionGeneration()))
+  }
   private fun draft(ticket:String,reset:Boolean,vararg ids:String)=client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",reset).put("items",JSONArray(ids.map{id->JSONObject().put("id",id).put("title",id).put("duration",20)})).put("options",JSONObject().put("fullLength",true))) as JSONObject
   @Test fun preparedTicketsCanInterleaveAndDiscardDoesNotCloseAnActiveInput(){
     login();draft("a",true,"one");draft("b",true,"two");assertEquals(2,draft("a",false,"three").getInt("count"))
@@ -102,7 +108,7 @@ class RhVideoClientTest {
     login();client.request("preferences",JSONObject().put("value",JSONObject().put("sort","nameDesc")))
     assertEquals("nameDesc",(client.request("preferences",JSONObject()) as JSONObject).getString("sort"));client.logout()
     json("""{"access_token":"different-account-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","other-password"));server.takeRequest()
-    assertEquals(0,(client.request("preferences",JSONObject()) as JSONObject).length())
+    val other=client.request("preferences",JSONObject()) as JSONObject;assertEquals(1,other.length());assertFalse(other.getBoolean("autoRotate"));assertFalse(other.has("sort"))
     val stored=RuntimeEnvironment.getApplication().getSharedPreferences("rhvideo-client-v1",0).all.toString();assertFalse(stored.contains("test-native-token"));assertFalse(stored.contains("different-account-token"));assertFalse(stored.contains("other-password"))
   }
   @Test fun preparedReferenceSegmentsAreNotRandomizedOrExtendedByTheNativeWindow(){

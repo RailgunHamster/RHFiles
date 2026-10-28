@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {once} from 'node:events';
 import pathModule from 'node:path';
-export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null}={}){
+export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview']}={}){
   const favorites=new Set(),progress=[],requests=[];
   const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
   const folders=['山野与旅途','日常片段','城市观察','慢生活'];
@@ -29,7 +29,7 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     }
     const body=async()=>{const chunks=[];for await(const part of req)chunks.push(part);return JSON.parse(Buffer.concat(chunks).toString()||'{}');};
     if(path==='/api/v1/auth/login'){
-      const value=await body();await beforeLogin?.(value);return value.username==='preview'&&value.password==='fixture-only'?send(200,{access_token:'fixture-bearer-do-not-persist',token_type:'bearer'}):send(401,{detail:'Wrong credentials'});
+      const value=await body();await beforeLogin?.(value);return loginUsers.includes(value.username)&&value.password==='fixture-only'?send(200,{access_token:'fixture-bearer-do-not-persist',token_type:'bearer'}):send(401,{detail:'Wrong credentials'});
     }
     if(authState?.active===false||req.headers.authorization!=='Bearer fixture-bearer-do-not-persist')return send(401,{detail:'Unauthorized'});
     if(path==='/api/v1/auth/me')return send(200,{username:'preview',user_id:'fixture-user'});

@@ -206,6 +206,11 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private fun current()=synchronized(lock){session?:error("请先连接并登录 RHVideo")}
   fun sessionGeneration():Long=current().generation
   private fun accountKey(s:Session)="account-"+java.security.MessageDigest.getInstance("SHA-256").digest("${s.base}\n${s.username}".toByteArray()).joinToString(""){"%02x".format(it)}
+  fun rotationPreference(generation:Long,enabled:Boolean?=null):Boolean {
+    val s=current();val value=synchronized(lock){check(live(s)&&s.generation==generation){"媒体账户已改变，旋转未应用"};val key=accountKey(s);val value=JSONObject(prefs.getString(key,"{}")?:"{}");val choice=enabled?:RhVideoRotation.preference(value);if(enabled!=null){value.put("autoRotate",enabled);check(prefs.edit().putString(key,value.toString()).commit()){"无法保存旋转偏好"}};choice}
+    if(enabled!=null)emit("rhvideo-rotation-preference",JSONObject().put("generation",s.generation).put("enabled",value))
+    return value
+  }
   fun rememberPlayback(ticket:String,index:Int,position:Long,duration:Long){
     try{val s=current();synchronized(lock){val active=playbackSession?.takeIf{it.ticket==ticket&&it.generation==s.generation};val entry=active?.plan?.entries?.getOrNull(index)?.let{JSONObject().put("id",it.id).put("title",it.title)}?:prepared[ticket]?.takeIf{it.generation==s.generation}?.entries?.getOrNull(index)?:return;val key=accountKey(s)+"-playback";val data=JSONObject(prefs.getString(key,"{}")?:"{}");data.put(id(entry),JSONObject().put("title",entry.optString("title")).put("seconds",if(duration>0&&position>=duration-1000)0 else position.coerceAtLeast(0)/1000.0).put("savedAt",System.currentTimeMillis()));while(data.length()>1000){val oldest=data.keys().asSequence().minByOrNull{data.optJSONObject(it)?.optLong("savedAt")?:0}?:break;data.remove(oldest)};prefs.edit().putString(key,data.toString()).apply()}}
     catch(_:Exception){}
@@ -357,9 +362,10 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       }
       "images"->{val paths=args.getJSONArray("paths");require(paths.length()<=100);JSONArray().also{out->for(i in 0 until paths.length())out.put(asset(s,imagePath(paths.getString(i)),true))}}
       "preferences"->{
-        val key=accountKey(s)
-        if(args.has("value")){val value=args.getJSONObject("value");require(value.toString().length<=256*1024);check(prefs.edit().putString(key,value.toString()).commit()){"无法保存偏好"};JSONObject().put("saved",true)}else JSONObject(prefs.getString(key,"{}")?:"{}")
+        synchronized(lock){check(live(s)){"媒体账户已改变"};val key=accountKey(s);val previous=JSONObject(prefs.getString(key,"{}")?:"{}")
+          if(args.has("value")){val value=JSONObject(args.getJSONObject("value").toString());require(value.toString().length<=256*1024);value.put("autoRotate",RhVideoRotation.preference(previous));check(prefs.edit().putString(key,value.toString()).commit()){"无法保存偏好"};JSONObject().put("saved",true)}else previous.put("autoRotate",RhVideoRotation.preference(previous))}
       }
+      "rotation.preference"->{val enabled=if(args.has("enabled")){require(args.get("enabled") is Boolean){"旋转开关无效"};args.getBoolean("enabled")}else null;JSONObject().put("enabled",rotationPreference(s.generation,enabled))}
       "playback.history"->JSONObject(prefs.getString(accountKey(s)+"-playback","{}")?:"{}")
       "playback.clear"->{prefs.edit().remove(accountKey(s)+"-playback").apply();JSONObject()}
       "catalog"->{

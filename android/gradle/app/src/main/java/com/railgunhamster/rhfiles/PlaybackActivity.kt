@@ -49,7 +49,7 @@ class PlaybackActivity:AppCompatActivity() {
       // queue or treating replacement as a user-requested staging commit.
       active.get()?.takeIf{it.isRhVideo()}?.let{old->
         old.rhClosing=true;old.rhUi.removeCallbacks(old.rhTick);old.rhEndMessage?.cancel();old.rhEndMessage=null
-        old.player?.let{engine->RhVideoVolume.untrack(engine);old.playerView.player=null;old.player=null;engine.release()}
+        old.player?.let{engine->RhVideoVolume.untrack(engine);old.playerView.player=null;(old.playerView as? RhVideoPlayerView)?.unbindRotationEngine(engine);old.player=null;engine.release()}
         old.finish()
       }
       owner.startActivity(intent)
@@ -115,7 +115,8 @@ class PlaybackActivity:AppCompatActivity() {
     WindowCompat.setDecorFitsSystemWindows(window,false)
     WindowInsetsControllerCompat(window,window.decorView).apply{hide(WindowInsetsCompat.Type.systemBars());systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE}
     val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK)}
-    playerView=PlayerView(this).apply {
+    playerView=(if(rhWindow!=null)RhVideoPlayerView(this)else PlayerView(this)).apply {
+      if(this is RhVideoPlayerView){setAutoRotation(RhVideoClient.get(this@PlaybackActivity).rotationPreference(rhWindow!!.generation));onRotationRendererChanged={requestRhRotationRestart()};onPresentationFailure={message->showError(PlaybackException(message,null,PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED))}}
       val parent=rhWindow?.options?.let{it.optString("origin")=="frame"&&it.optInt("parentTotal")>0}==true
       setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);setShowNextButton(queue.size>1||parent);setShowPreviousButton(queue.size>1||parent)
       setShowSubtitleButton(true);setShowRewindButton(true);setShowFastForwardButton(true)
@@ -135,7 +136,7 @@ class PlaybackActivity:AppCompatActivity() {
       rhFavorite=actionButton(R.drawable.ic_player_favorite,"收藏","favorite");rhMark=actionButton(R.drawable.ic_player_mark,"标记待暂存","mark")
       header.addView(rhFavorite,LinearLayout.LayoutParams(dp(48),dp(48)));header.addView(rhMark,LinearLayout.LayoutParams(dp(48),dp(48)))
       header.addView(actionButton(R.drawable.ic_player_close,"关闭预览","close"),LinearLayout.LayoutParams(dp(48),dp(48)))
-      rhEvents=RhVideoClient.get(this).listen{name,payload->if(payload.optLong("generation")==rhWindow?.generation)runOnUiThread{if(!isDestroyed&&!rhClosing){paintRhActions();if(name=="rhvideo-media-action"&&!payload.isNull("error")&&payload.optString("operation")!=rhFavoriteNotice){rhFavoriteNotice=payload.optString("operation");Toast.makeText(this,payload.optString("error"),Toast.LENGTH_LONG).show()}}}}
+      rhEvents=RhVideoClient.get(this).listen{name,payload->if(payload.optLong("generation")==rhWindow?.generation)runOnUiThread{if(!isDestroyed&&!rhClosing){if(name=="rhvideo-rotation-preference")(playerView as? RhVideoPlayerView)?.setAutoRotation(payload.getBoolean("enabled"));paintRhActions();if(name=="rhvideo-media-action"&&!payload.isNull("error")&&payload.optString("operation")!=rhFavoriteNotice){rhFavoriteNotice=payload.optString("operation");Toast.makeText(this,payload.optString("error"),Toast.LENGTH_LONG).show()}}}}
     }
     header.addView(more,LinearLayout.LayoutParams(dp(48),dp(48)))
     root.addView(header,FrameLayout.LayoutParams(-1,-2,Gravity.TOP))
@@ -167,7 +168,7 @@ class PlaybackActivity:AppCompatActivity() {
     // Release the streamed file before a whole-close can submit its source to
     // the server's staging area; do not depend on the later Activity.onStop.
     rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null
-    player?.let{rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;player=null;it.release()}
+    player?.let{rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);player=null;it.release()}
     return try{RhVideoClient.get(this).closePlayback(rhTicket!!,w.lease,direction,whole)}finally{finish()}
   }
   internal fun automationState():JSONObject {
@@ -176,6 +177,7 @@ class PlaybackActivity:AppCompatActivity() {
     return JSONObject().put("opened",!rhClosing).put("path",path).put("index",engine.currentMediaItemIndex+(rhWindow?.offset?:0)).put("count",rhWindow?.total?:queue.size).put("playing",engine.isPlaying).put("playWhenReady",engine.playWhenReady).put("playbackState",engine.playbackState).put("suppressionReason",engine.playbackSuppressionReason).put("error",engine.playerError?.let{JSONObject().put("code",it.errorCodeName).put("message",it.cause?.message?:it.message?:"") }?:JSONObject.NULL).put("positionMs",engine.currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
       .put("volume",RhVideoVolume.local(engine)*100).put("decoderVolume",engine.volume*100).put("tracks",PlayerTracks.state(engine.currentTracks,engine.trackSelectionParameters))
       .put("rendered",rhRendered).put("renderedFrames",engine.videoDecoderCounters?.renderedOutputBufferCount?:0).put("inputId",rhInputId)
+      .also{state->(playerView as? RhVideoPlayerView)?.rotationState()?.let{rotation->rotation.keys().forEach{state.put(it,rotation.get(it))}}}
       .also{state->rhWindow?.let{w->val local=engine.currentMediaItemIndex.coerceIn(0,w.items.lastIndex);state.put("id",w.ids[local]).put("lease",w.lease).put("options",JSONObject(w.options.toString())).put("segmentStartMs",w.starts[local]).put("segmentEndMs",w.ends[local]).put("queueDurationMs",w.totalMs).put("queuePositionMs",rhQueuePosition(w,local,engine.currentPosition));state.put("queue",JSONObject().put("id",w.ids[local]).put("index",w.offset+local).put("total",w.total).put("options",JSONObject(w.options.toString())).put("generation",w.generation));val favorite=RhVideoClient.get(this).favoriteState("video",w.ids[local],w.generation);favorite.keys().forEach{state.put(it,favorite.get(it))};state.put("marked",RhVideoClient.get(this).previewMarked("video",w.ids[local],w.generation))}}
   }
   internal fun automationControl(args:JSONObject):JSONObject {
@@ -200,7 +202,8 @@ class PlaybackActivity:AppCompatActivity() {
       "playlist.options"->rhSetOptions(args.getJSONObject("options"))
       "rate"->{val value=args.getDouble("value");require(value.isFinite()&&value in .25..4.0){"播放速度应为 0.25–4"};if(rhWindow!=null)rhSetOptions(JSONObject().put("rate",value))else engine.setPlaybackSpeed(value.toFloat())}
       "volume"->{val value=args.getDouble("value");require(value.isFinite()&&value in 0.0..100.0);RhVideoVolume.setLocal(engine,(value/100).toFloat())}
-      "rotate"->{val value=args.getInt("value");require(value in listOf(0,90,180,270));playerView.videoSurfaceView?.rotation=value.toFloat()}
+      "rotate"->{val value=args.getInt("value");require(value in listOf(0,90,180,270));(playerView as? RhVideoPlayerView)?.setManualRotation(value)?:run{playerView.videoSurfaceView?.rotation=value.toFloat()}}
+      "autoRotate"->{val w=rhWindow?:error("当前不是媒体库视频");val view=playerView as? RhVideoPlayerView?:error("原生旋转尚未就绪");val enabled=if(args.has("enabled")){require(args.get("enabled") is Boolean);args.getBoolean("enabled")}else !view.autoRotate;val selected=RhVideoClient.get(this).rotationPreference(w.generation,enabled);view.setAutoRotation(selected)}
       "repeat"->{if(rhWindow!=null)rhSetOptions(JSONObject().put("loop",args.getBoolean("enabled")))else engine.repeatMode=if(args.getBoolean("enabled"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF}
       "fit"->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
       "fill"->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
@@ -224,14 +227,27 @@ class PlaybackActivity:AppCompatActivity() {
     return super.dispatchKeyEvent(event)
   }
   override fun onStart(){super.onStart();if(::source.isInitialized)try{rhWindow?.let{RhVideoClient.get(this).checkPlayback(rhTicket!!,it.lease)};startPlayer()}catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish()}}
-  private fun startPlayer(){
+  private fun requestRhRotationRestart(){
+    val owner=player?:return;val input=rhInputId
+    rhUi.post{if(player===owner&&rhInputId==input&&!rhClosing&&!isFinishing)restartRhRotation(owner)}
+  }
+  private fun restartRhRotation(old:ExoPlayer){
+    index=old.currentMediaItemIndex;position=old.currentPosition;play=old.playWhenReady;val rate=old.playbackParameters.speed;val repeat=old.repeatMode
+    rhLocalGain=RhVideoVolume.local(old);rhEndMessage?.cancel();rhEndMessage=null;playerView.player=null
+    (playerView as? RhVideoPlayerView)?.unbindRotationEngine(old,true);RhVideoVolume.untrack(old);player=null;old.release()
+    startPlayer(true,rate,repeat)
+  }
+  private fun startPlayer(keepInput:Boolean=false,restoredRate:Float?=null,restoredRepeat:Int?=null){
     val mediaFactory=DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)}))
     if(path.startsWith("rhvideo://"))mediaFactory.setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
     val engine=ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true))
       .setMediaSourceFactory(mediaFactory)
       .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000).build()
-    player=engine;rhInputId=nextRhInput.incrementAndGet();rhRendered=false
+    player=engine;if(!keepInput)rhInputId=nextRhInput.incrementAndGet();rhRendered=false
+    (playerView as? RhVideoPlayerView)?.bindRotationEngine(engine)
     playerView.player=if(rhWindow!=null)object:ForwardingPlayer(engine){
+      override fun setVideoSurfaceView(surface:android.view.SurfaceView?){if((playerView as? RhVideoPlayerView)?.bindNativeSurface(engine,surface)!=true)super.setVideoSurfaceView(surface)}
+      override fun clearVideoSurfaceView(surface:android.view.SurfaceView?){if((playerView as? RhVideoPlayerView)?.bindNativeSurface(engine,null)!=true)super.clearVideoSurfaceView(surface)}
       override fun seekToNextMediaItem(){rhUiAction(JSONObject().put("command","next"))}
       override fun seekToNext(){seekToNextMediaItem()}
       override fun seekToPreviousMediaItem(){rhUiAction(JSONObject().put("command","previous"))}
@@ -248,23 +264,27 @@ class PlaybackActivity:AppCompatActivity() {
     if(path.startsWith("rhvideo://"))RhVideoVolume.track(engine,rhLocalGain)
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
     engine.setHandleAudioBecomingNoisy(true)
+    var restoredRotationSource=if(keepInput)queue[index].path else null
     engine.addListener(object:Player.Listener {
       override fun onPositionDiscontinuity(old:Player.PositionInfo,next:Player.PositionInfo,reason:Int){val ticket=rhTicket;val w=rhWindow;if(!rebuildingWindow&&ticket!=null&&w!=null)RhVideoClient.get(this@PlaybackActivity).rememberPlayback(ticket,w.offset+old.mediaItemIndex,old.positionMs,0)}
       override fun onMediaItemTransition(item:MediaItem?,reason:Int){
+        val restoredInput=restoredRotationSource!=null&&item?.mediaId==restoredRotationSource&&reason==Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED
+        restoredRotationSource=null
         index=engine.currentMediaItemIndex.coerceIn(0,queue.lastIndex);path=queue[index].path;source=sources[index];titleView.text=queue[index].name;title=queue[index].name
         failure.visibility=View.GONE;paintRhActions()
         val w=rhWindow
         if(!rebuildingWindow&&w!=null){
           if((index<=1&&w.offset>0)||(index>=queue.lastIndex-1&&w.offset+queue.size<w.total))rebuildRhWindow(w.offset+index,if(w.options.optBoolean("reference"))w.starts[index]else 0,engine.playWhenReady)
-          else{if(reason!=Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT){rhInputId=nextRhInput.incrementAndGet();rhRendered=false};if(w.options.optBoolean("reference")&&reason in listOf(Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT))engine.seekTo(w.starts[index]);armRhEnd();rememberRhPlaylist()}
+          else{if(reason!=Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT&&!restoredInput){rhInputId=nextRhInput.incrementAndGet();rhRendered=false};if(w.options.optBoolean("reference")&&reason in listOf(Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT))engine.seekTo(w.starts[index]);armRhEnd();rememberRhPlaylist()}
         }
       }
-      override fun onRenderedFirstFrame(){rhRendered=true;playerView.videoSurfaceView?.rotation=(rhWindow?.options?.optInt("rotation",0)?:0).toFloat();if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","First video frame rendered")}
+      override fun onRenderedFirstFrame(){rhRendered=true;if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","First video frame rendered")}
       override fun onPlaybackStateChanged(state:Int){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","Playback state=$state");if(state==Player.STATE_ENDED&&rhWindow!=null){if(rhWindow!!.options.optBoolean("loop")){engine.seekTo(engine.currentMediaItemIndex,rhWindow!!.starts[engine.currentMediaItemIndex]);engine.play()}else if(rhWindow!!.options.optBoolean("closeAtEnd"))rhUiAction(JSONObject().put("command","close"))}}
       override fun onIsPlayingChanged(isPlaying:Boolean){if(isPlaying)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
       override fun onPlayerError(error:PlaybackException){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback",error.errorCodeName);showError(error);val w=rhWindow;if(w?.options?.optBoolean("reference")==true){Toast.makeText(this@PlaybackActivity,"视频加载失败：${queue[index].name}（${error.errorCodeName}）",Toast.LENGTH_LONG).show();val input=rhInputId;rhUi.post{if(player===engine&&rhInputId==input&&!isFinishing){if(w.offset+index+1<w.total)rebuildRhWindow(w.offset+index+1)else rhUiAction(JSONObject().put("command","close"))}}}}
     })
     rhWindow?.options?.let{engine.setPlaybackSpeed(it.optDouble("rate",1.0).toFloat());engine.repeatMode=if(it.optBoolean("loop"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF}
+    restoredRate?.let{engine.setPlaybackSpeed(it)};restoredRepeat?.let{engine.repeatMode=it}
     engine.setMediaItems(sources.mapIndexed{i,uri->rhItem(i,uri)},index,position);engine.prepare();engine.playWhenReady=play;armRhEnd();playerView.hideController()
   }
   private fun rhItem(i:Int,uri:Uri):MediaItem {
@@ -331,6 +351,8 @@ class PlaybackActivity:AppCompatActivity() {
     listOf("适应画面","填满画面（可能裁切）","播放速度","循环播放","用其他播放器打开").forEachIndexed{i,label->menu.menu.add(0,i,i,label)}
     menu.menu.findItem(4).isVisible=source.scheme !in listOf("remote","rhvideo")
     menu.menu.findItem(3).setCheckable(true).setChecked(player?.repeatMode==Player.REPEAT_MODE_ONE)
+    val rotateInput=rhInputId
+    (playerView as? RhVideoPlayerView)?.let{view->menu.menu.add(0,8,2,"智能旋转").setCheckable(true).setChecked(view.autoRotate)}
     rhWindow?.let{w->val error=RhVideoClient.get(this).favoriteState("video",currentRhId(),w.generation).optString("favoriteError");if(error.isNotEmpty()&&error!="null")menu.menu.add("收藏失败：$error").isEnabled=false}
     rhWindow?.takeIf{it.options.optBoolean("reference")}?.let{w->
       menu.menu.findItem(3).setTitle("循环当前${if(w.options.optBoolean("fullLength",true))"视频"else "片段"}").setCheckable(true).setChecked(w.options.optBoolean("loop"))
@@ -347,9 +369,10 @@ class PlaybackActivity:AppCompatActivity() {
       5->rhUiAction(JSONObject().put("command","playlist.options").put("options",JSONObject().put("fullLength",rhWindow?.options?.optBoolean("fullLength",true)!=true)))
       6->{val input=EditText(this).apply{inputType=android.text.InputType.TYPE_CLASS_NUMBER;setText((rhWindow?.options?.optDouble("segment",3.0)?:3.0).toInt().toString());hint="1–300 秒"};androidx.appcompat.app.AlertDialog.Builder(this).setTitle("片段长度（秒）").setView(input).setNegativeButton("取消",null).setPositiveButton("确定"){_,_->rhUiAction(JSONObject().put("command","playlist.options").put("options",JSONObject().put("segment",input.text.toString().toDoubleOrNull()?:0)))}.show()}
       7->rhUiAction(JSONObject().put("command","playlist.options").put("options",JSONObject().put("portraitOnly",rhWindow?.options?.optBoolean("portraitOnly")!=true)))
+      8->rhUiAction(JSONObject().put("command","autoRotate").put("expectedInputId",rotateInput))
     };true};menu.show()
   }
   override fun onSaveInstanceState(outState:Bundle){outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
-  override fun onStop(){rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null;rememberRhPlaylist();player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);it.release()};if(::playerView.isInitialized)playerView.player=null;player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
+  override fun onStop(){rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null;rememberRhPlaylist();player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);it.release()};player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
   override fun onDestroy(){rhEvents?.close();rhEvents=null;if(active.get()===this)active.clear();super.onDestroy()}
 }
