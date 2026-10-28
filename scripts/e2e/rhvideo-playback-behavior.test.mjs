@@ -5,12 +5,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import {execFileSync,spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
+import {listenBrowserLoopback} from '../testing/browser-loopback.mjs';
 const native={skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'};
 const {grid:Grid}=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
@@ -58,8 +60,9 @@ async function setup(options={}){
     return {app,fixture,view,close:async()=>{view.close();app.close();await fixture.close();}};
   }catch(error){view?.close();app.close();await fixture?.close();throw error;}
 }
-const runCli=(app,window,action,args,key)=>new Promise((resolve,reject)=>{
-  const child=spawn(process.execPath,['scripts/rhfiles-api.mjs','--port',String(app.port),'--window',window,'--timeout','5000','--wait','--key',key,'run',action,JSON.stringify(args)],{windowsHide:true});let stdout='',stderr='';
+const runCli=(app,window,action,args,key,options={})=>new Promise((resolve,reject)=>{
+  const endpoint=options.endpoint?['--endpoint',options.endpoint]:['--port',String(app.port)],selector=options.target?['--target',options.target]:['--window',window];
+  const child=spawn(process.execPath,['scripts/rhfiles-api.mjs',...endpoint,...selector,'--timeout','5000','--wait','--key',key,'run',action,JSON.stringify(args)],{windowsHide:true,env:{...process.env,...(options.trace?{RHFILES_CLI_TRACE:'1'}:{})}});let stdout='',stderr='';
   child.stdout.on('data',part=>stdout+=part);child.stderr.on('data',part=>stderr+=part);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
 });
 test('native startup keeps real WebView keyboard focus without a second controller focus transition',native,async()=>{
@@ -120,10 +123,38 @@ test('grid-owned close returns its completed CLI receipt and releases every nati
   try{
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'both real grid frames before self-close',25000);
-    const output=await runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'grid-self-close');assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
+    const output=await runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'grid-self-close');if(process.env.RHFILES_CLI_TRACE==='1')console.log(JSON.stringify({scenario:'grid self-close CLI',...output}));assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
     assert.equal((await command(s.app,'grid.state')).cells.length,0);
     await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !pages.some(page=>new URL(page.url).pathname.endsWith('/rhvideo-grid.html'));},'retire the grid WebView instead of keeping it hidden',3000);
   }finally{grid?.close();await s.close();}
+});
+
+test('grid close recovers through a real survivor when the first view is paused and target rediscovery is unavailable',native,async()=>{
+  const s=await setup();let grid,server;
+  try{
+    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'two actual grid frames before recovery fault',25000);
+    // Drop only the producer's wait reply. The action, native players, process
+    // receipt and survivor API all remain real. Without this transport fault a
+    // prompt, valid producer reply may win the race, not exercise recovery.
+    await grid.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;api.rpc=request=>request.method==="runs.wait"?new Promise(()=>{}):rpc.call(api,request);return true;})()');
+    const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json(),isMain=page=>/^\/(index\.html)?$/.test(new URL(page.url).pathname);
+    const main=pages.find(isMain),gridPage=pages.find(page=>new URL(page.url).pathname==='/rhvideo-grid.html');assert(main&&gridPage);
+    const ordered=[main,...pages.filter(page=>page.id!==main.id)];let requests=0;
+    // Real WebViews and real WebSocket endpoints; only discovery is faulted.
+    // Debugger pause survives the close handler's native window activation;
+    // lifecycle freezing can be undone by that activation, hiding the fault.
+    server=http.createServer((req,res)=>{if(req.url!=='/json/list'){res.writeHead(404).end();return;}requests++;if(requests>1){res.writeHead(503).end();return;}res.setHeader('Content-Type','application/json');res.end(JSON.stringify(ordered));});
+    await listenBrowserLoopback(server);
+    await s.app.send('Debugger.enable');await s.app.send('Debugger.pause');let output;
+    try{output=await runCli(s.app,null,'rhvideo.grid.close',{},'grid-close-fault',{endpoint:`http://127.0.0.1:${server.address().port}`,target:gridPage.id,trace:true});}finally{await s.app.send('Debugger.resume');await s.app.send('Debugger.disable');}
+    console.log(JSON.stringify({scenario:'grid close with paused survivor/discovery fault',...output}));assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
+    const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line));assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Never resubmit the close action');
+    assert(trace.some(row=>row.rhfilesClientTrace==='recovery.unavailable'&&row.target===main.id&&row.code==='REQUEST_TIMEOUT'),'The paused first survivor must actually time out');
+    assert(trace.some(row=>['recovery.read','recovery.wait'].includes(row.rhfilesClientTrace)&&row.target!==main.id&&row.state==='succeeded'),'Completion must come from a real surviving view, not disappearance');assert.equal(requests,1,'Previously enumerated survivors must not need a fresh target list');
+    assert.equal((await command(s.app,'grid.state')).cells.length,0);
+    await until(async()=>{const current=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !current.some(page=>page.id===gridPage.id);},'the closed grid WebView is really destroyed',3000);
+  }finally{server?.closeAllConnections();if(server)await new Promise(resolve=>server.close(resolve));grid?.close();await s.close();}
 });
 
 test('sequential playback keeps the visible full-list order, wraps manually, seeks across entries and resumes its own cursor',native,async()=>{
