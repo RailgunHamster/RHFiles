@@ -64,4 +64,35 @@ class RhVideoRotationTest {
     }
     assertEquals(1,RhVideoSurface.bounds(1.0/16384,1600,900,false).width());assertEquals(1,RhVideoSurface.bounds(16384.0,1600,900,false).height())
   }
+  @Test @Config(sdk=[28,34]) fun manualCellRotationSurvivesLateFormatAndViewportChangesUntilAutoIsExplicitlyChosen(){
+    val context=RuntimeEnvironment.getApplication();context.setTheme(com.google.android.material.R.style.Theme_MaterialComponents_DayNight_NoActionBar)
+    val view=RhVideoPlayerView(context)
+    for(angle in listOf(90,180,270,0)){
+      view.setManualRotation(angle,fixed=true)
+      view.sourceFormat(Format.Builder().setWidth(360).setHeight(640).build())
+      view.measure(View.MeasureSpec.makeMeasureSpec(1600,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(900,View.MeasureSpec.EXACTLY));view.layout(0,0,1600,900)
+      assertEquals("A decoder format event must not silently undo manual rotation",angle,view.videoRotation)
+      assertEquals(0f,view.rotation,0f);assertEquals(0f,view.videoSurfaceView!!.rotation,0f)
+    }
+    view.setManualRotation(180,fixed=true);view.setAutoRotation(true);assertEquals(90,view.videoRotation)
+    view.setAutoRotation(false);assertEquals(0,view.videoRotation)
+  }
+  @Test @Config(sdk=[28]) fun oldAndroidRebindsEffectsBeforePrepareWithoutAFormatDrivenRestartLoop(){
+    val context=RuntimeEnvironment.getApplication();context.setTheme(com.google.android.material.R.style.Theme_MaterialComponents_DayNight_NoActionBar)
+    val view=RhVideoPlayerView(context);view.setManualRotation(90,fixed=true);var restarts=0;view.onRotationRendererChanged={restarts++}
+    val first=ExoPlayer.Builder(context).build();view.bindRotationEngine(first)
+    assertTrue(view.rotationState().getBoolean("rotationPipeline"));view.sourceFormat(Format.Builder().setWidth(360).setHeight(640).build());assertEquals(0,restarts)
+    view.setManualRotation(270,fixed=true);assertEquals(1,restarts);view.setManualRotation(270,fixed=true);assertEquals(1,restarts)
+    view.unbindRotationEngine(first,true);first.release();val next=ExoPlayer.Builder(context).build();view.bindRotationEngine(next)
+    view.sourceFormat(Format.Builder().setWidth(360).setHeight(640).build());assertEquals(270,view.videoRotation);assertEquals(1,restarts)
+    assertEquals("media3-effects",view.rotationState().getString("rotationRenderer"));assertTrue(view.rotationState().getBoolean("rotationPipeline"))
+    view.unbindRotationEngine(next);next.release()
+  }
+  @Test fun ordinarySingleVideoManualCommandDoesNotReplaceTheNextSourceSmartPolicy(){
+    val context=RuntimeEnvironment.getApplication();context.setTheme(com.google.android.material.R.style.Theme_MaterialComponents_DayNight_NoActionBar)
+    val view=RhVideoPlayerView(context);view.measure(View.MeasureSpec.makeMeasureSpec(1600,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(900,View.MeasureSpec.EXACTLY));view.layout(0,0,1600,900)
+    view.setAutoRotation(true);view.sourceFormat(Format.Builder().setWidth(360).setHeight(640).build());assertEquals(90,view.videoRotation)
+    view.setManualRotation(180);assertEquals(180,view.videoRotation)
+    view.sourceFormat(Format.Builder().setWidth(640).setHeight(360).build());assertEquals(0,view.videoRotation);assertTrue(view.autoRotate)
+  }
 }

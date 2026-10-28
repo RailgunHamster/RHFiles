@@ -20,7 +20,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
-import androidx.media3.ui.PlayerView
 import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
@@ -42,7 +41,7 @@ class RhVideoGridActivity:AppCompatActivity(){
   }
   private val client by lazy{RhVideoClient.get(this)}
   private val players=mutableListOf<ExoPlayer>()
-  private val views=mutableListOf<PlayerView>()
+  private val views=mutableListOf<RhVideoPlayerView>()
   private val containers=mutableListOf<FrameLayout>()
   private val rendered=mutableSetOf<Int>()
   private val errors=mutableMapOf<Int,String>()
@@ -163,15 +162,47 @@ class RhVideoGridActivity:AppCompatActivity(){
     target.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("全部视频")+(0 until entries.length()).map{"${it+1} · ${entries.getJSONObject(it).getString("name")}"});target.setSelection(selected+1)
   }
   override fun onStart(){super.onStart();active=WeakReference(this);try{client.checkGrid(ticket,lease);startPlayers();handler.removeCallbacks(update);handler.post(update)}catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish()}}
+  private fun createEngine(storage:NativeStorage):ExoPlayer{
+    val factory=DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
+    return ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true)).setMediaSourceFactory(factory).build()
+  }
+  private fun bindEngine(i:Int,engine:ExoPlayer,view:RhVideoPlayerView,message:TextView,storage:NativeStorage){
+    val saved=cell(i);val item=entries.getJSONObject(i);val input=inputIds[i]
+    view.setManualRotation(saved.getInt("rotation"),fixed=true);view.bindRotationEngine(engine)
+    view.player=object:ForwardingPlayer(engine){
+      override fun setVideoSurfaceView(surface:android.view.SurfaceView?){if(!view.bindNativeSurface(engine,surface))super.setVideoSurfaceView(surface)}
+      override fun clearVideoSurfaceView(surface:android.view.SurfaceView?){if(!view.bindNativeSurface(engine,null))super.clearVideoSurfaceView(surface)}
+    }
+    view.onPresentationFailure={failure->if(players.getOrNull(i)===engine){errors[i]=failure;message.text="视频 ${i+1} 画面显示失败\n$failure";message.visibility=View.VISIBLE}}
+    // API 29+ changes only the app-owned compositor layer. Older Android uses
+    // Media3 effects, which must be set before prepare: replace only this cell's
+    // renderer, keeping the logical input identity and all user control state.
+    view.onRotationRendererChanged={handler.post{if(!stopped&&!isFinishing&&players.getOrNull(i)===engine&&inputIds.getOrNull(i)==input)safe{
+      val next=createEngine(storage)
+      saved.put("positionMs",engine.currentPosition.coerceAtLeast(0)).put("paused",!engine.playWhenReady).put("rate",engine.playbackParameters.speed.toDouble())
+      next.trackSelectionParameters=engine.trackSelectionParameters
+      view.player=null;view.unbindRotationEngine(engine,true);RhVideoVolume.untrack(engine);engine.release()
+      players[i]=next;rendered.remove(i);errors.remove(i);message.visibility=View.GONE;frameCounts[i]=AtomicLong(0);frameTimes[i]=AtomicLong(-1)
+      bindEngine(i,next,view,message,storage)
+    }}}
+    val frames=frameCounts[i];val frameTime=frameTimes[i]
+    engine.setVideoFrameMetadataListener{timeUs,_,_,_->frameTime.set(timeUs/1000);frames.incrementAndGet()}
+    var restored=false
+    engine.addListener(object:Player.Listener{
+      override fun onRenderedFirstFrame(){if(players.getOrNull(i)===engine&&rendered.add(i))trace("frame-$i")}
+      override fun onPlaybackStateChanged(state:Int){if(players.getOrNull(i)===engine&&state==Player.STATE_READY&&!restored){restored=true;val end=engine.duration;if(end>0&&saved.getLong("positionMs")>end-50)engine.seekTo((end-50).coerceAtLeast(0))}}
+      override fun onPlayerError(e:PlaybackException){if(players.getOrNull(i)!==engine)return;errors[i]=e.errorCodeName;message.text="视频 ${i+1} 播放失败\n${e.errorCodeName}\n${e.cause?.message?:e.message?:""}";message.visibility=View.VISIBLE}
+    })
+    RhVideoVolume.track(engine,if(saved.getBoolean("muted"))0f else saved.getInt("volume")/100f)
+    engine.repeatMode=Player.REPEAT_MODE_ONE;engine.setPlaybackSpeed(saved.getDouble("rate").toFloat());engine.setMediaItem(MediaItem.fromUri(item.getString("path")),saved.getLong("positionMs"));engine.playWhenReady=!saved.getBoolean("paused");trace("prepare-$i-start");engine.prepare();trace("prepare-$i-returned");view.hideController()
+  }
   private fun startPlayers(){
     if(!stopped)return;stopped=false;trace("storage-start");val storage=NativeStorage(applicationContext);trace("storage-ready")
     for(i in 0 until entries.length()){
-      val item=entries.getJSONObject(i);val saved=cell(i)
-      val factory=DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
-      trace("engine-$i-start");val engine=ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true)).setMediaSourceFactory(factory).build();trace("engine-$i-ready")
-      val view=PlayerView(this).apply{player=engine;controllerShowTimeoutMs=2500;controllerAutoShow=false;contentDescription="视频 ${i+1} · ${item.getString("name")}"}
+      val item=entries.getJSONObject(i)
+      trace("engine-$i-start");val engine=createEngine(storage);trace("engine-$i-ready")
+      val view=RhVideoPlayerView(this).apply{controllerShowTimeoutMs=2500;controllerAutoShow=false;contentDescription="视频 ${i+1} · ${item.getString("name")}"}
       players.add(engine);views.add(view);inputIds.add(inputSequence.getAndIncrement());val frames=AtomicLong(0);val frameTime=AtomicLong(-1);frameCounts.add(frames);frameTimes.add(frameTime)
-      engine.setVideoFrameMetadataListener{timeUs,_,_,_->frameTime.set(timeUs/1000);frames.incrementAndGet()}
       val container=FrameLayout(this);val message=TextView(this).apply{setTextColor(Color.WHITE);setBackgroundColor(0xcc151b27.toInt());setPadding(16,16,16,16);visibility=View.GONE}
       container.addView(view,FrameLayout.LayoutParams(-1,-1));container.addView(message,FrameLayout.LayoutParams(-1,-2,android.view.Gravity.CENTER));containers.add(container);grid.addView(container)
       val header=LinearLayout(this).apply{gravity=android.view.Gravity.CENTER_VERTICAL;setBackgroundColor(0x99151b27.toInt())}
@@ -179,14 +210,7 @@ class RhVideoGridActivity:AppCompatActivity(){
       val input=inputIds[i];val size=(40*resources.displayMetrics.density).toInt()
       fun icon(drawable:Int,command:String)=ImageButton(this).apply{setImageResource(drawable);setColorFilter(Color.WHITE);setBackgroundColor(Color.TRANSPARENT);bindControl(this){JSONObject().put("target",i).put("command",command).put("expectedInput",input)}}
       favoriteButtons.add(icon(R.drawable.ic_player_favorite,"favorite").also{header.addView(it,LinearLayout.LayoutParams(size,size))});markButtons.add(icon(R.drawable.ic_player_mark,"mark").also{header.addView(it,LinearLayout.LayoutParams(size,size))});container.addView(header,FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP))
-      var restored=false
-      engine.addListener(object:Player.Listener{
-        override fun onRenderedFirstFrame(){if(players.getOrNull(i)===engine&&rendered.add(i))trace("frame-$i")}
-        override fun onPlaybackStateChanged(state:Int){if(players.getOrNull(i)===engine&&state==Player.STATE_READY&&!restored){restored=true;val end=engine.duration;if(end>0&&saved.getLong("positionMs")>end-50)engine.seekTo((end-50).coerceAtLeast(0))}}
-        override fun onPlayerError(e:PlaybackException){if(players.getOrNull(i)!==engine)return;errors[i]=e.errorCodeName;message.text="视频 ${i+1} 播放失败\n${e.errorCodeName}\n${e.cause?.message?:e.message?:""}";message.visibility=View.VISIBLE}
-      })
-      RhVideoVolume.track(engine,if(saved.getBoolean("muted"))0f else saved.getInt("volume")/100f)
-      engine.repeatMode=Player.REPEAT_MODE_ONE;engine.setPlaybackSpeed(saved.getDouble("rate").toFloat());engine.setMediaItem(MediaItem.fromUri(item.getString("path")),saved.getLong("positionMs"));engine.playWhenReady=!saved.getBoolean("paused");trace("prepare-$i-start");engine.prepare();trace("prepare-$i-returned");view.videoSurfaceView?.rotation=saved.getInt("rotation").toFloat();view.hideController()
+      bindEngine(i,engine,view,message,storage)
     };liveInputs=inputIds.toList();paintControls();layout();runCatching{client.rememberGrid(ticket,lease,data.getInt("offset"))}
   }
   private fun capture(){players.forEachIndexed{i,p->cell(i).put("positionMs",p.currentPosition.coerceAtLeast(0)).put("paused",!p.playWhenReady).put("rate",p.playbackParameters.speed.toDouble())}}
@@ -204,7 +228,7 @@ class RhVideoGridActivity:AppCompatActivity(){
           .put("playing",p.isPlaying).put("paused",!p.playWhenReady).put("rendered",i in rendered).put("renderedFrames",counters?.renderedOutputBufferCount?:0).put("submittedFrames",frameCounts[i].get()).put("frameTimeMs",frameTimes[i].get())
           .put("repeat",p.repeatMode==Player.REPEAT_MODE_ONE).put("positionMs",p.currentPosition).put("durationMs",if(p.duration==C.TIME_UNSET)0 else p.duration).put("rate",p.playbackParameters.speed)
           .put("volume",saved.getInt("volume")).put("muted",saved.getBoolean("muted")).put("lastVolume",saved.getInt("lastVolume")).put("decoderVolume",p.volume*100)
-          .put("tracks",PlayerTracks.state(p.currentTracks,p.trackSelectionParameters)).put("error",errors[i]?:JSONObject.NULL)
+          .put("tracks",PlayerTracks.state(p.currentTracks,p.trackSelectionParameters)).put("error",errors[i]?:JSONObject.NULL).put("presentation",views[i].rotationState())
       }))
   }
   fun control(args:JSONObject):JSONObject {
@@ -233,7 +257,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     for((i,p)in players.withIndex())if(t<0||t==i){val saved=cell(i);when(command){
       "track.select","track.auto","subtitles"->{require(command!="track.select"||t>=0){"请指定单个视频后选择轨道"};p.trackSelectionParameters=PlayerTracks.change(p.currentTracks,p.trackSelectionParameters,args)}
       "pause"->p.pause();"resume","play"->p.play()
-      "rotate"->{require(value.toInt() in listOf(0,90,180,270));saved.put("rotation",value.toInt());views[i].videoSurfaceView?.rotation=value.toFloat()}
+      "rotate"->{require(value==value.toInt().toDouble()&&value.toInt() in listOf(0,90,180,270));saved.put("rotation",value.toInt());views[i].setManualRotation(value.toInt(),fixed=true)}
       "volume"->{require(value in 0.0..100.0);saved.put("volume",value.toInt());if(value>0)saved.put("lastVolume",value.toInt()).put("muted",false);RhVideoVolume.setLocal(p,if(saved.getBoolean("muted"))0f else value.toFloat()/100)}
       "mute"->{val muted=!saved.getBoolean("muted")&&saved.getInt("volume")>0;saved.put("muted",muted);if(!muted&&saved.getInt("volume")==0)saved.put("volume",saved.optInt("lastVolume",50).coerceAtLeast(1));RhVideoVolume.setLocal(p,if(muted)0f else saved.getInt("volume")/100f)}
       "rate"->{require(value in .25..4.0);p.setPlaybackSpeed(value.toFloat())}
@@ -244,7 +268,7 @@ class RhVideoGridActivity:AppCompatActivity(){
   }
   override fun onSaveInstanceState(out:Bundle){capture();out.putInt("offset",data.getInt("offset"));out.putInt("expanded",expanded);out.putInt("selected",selected);out.putBoolean("controlsExpanded",controlsExpanded);super.onSaveInstanceState(out)}
   private fun releasePlayers(){
-    liveInputs=emptyList();capture();runCatching{client.rememberGrid(ticket,lease,data.getInt("offset"))};views.forEach{it.player=null};val retired=players.toList();players.clear();retired.forEach{RhVideoVolume.untrack(it);it.release()};views.clear();containers.clear();rendered.clear();errors.clear();inputIds.clear();favoriteButtons.clear();markButtons.clear();cellLabels.clear();frameCounts.clear();frameTimes.clear();grid.removeAllViews();stopped=true
+    liveInputs=emptyList();capture();runCatching{client.rememberGrid(ticket,lease,data.getInt("offset"))};views.forEachIndexed{i,view->view.player=null;view.unbindRotationEngine(players[i])};val retired=players.toList();players.clear();retired.forEach{RhVideoVolume.untrack(it);it.release()};views.clear();containers.clear();rendered.clear();errors.clear();inputIds.clear();favoriteButtons.clear();markButtons.clear();cellLabels.clear();frameCounts.clear();frameTimes.clear();grid.removeAllViews();stopped=true
   }
   override fun onStop(){handler.removeCallbacks(update);releasePlayers();super.onStop()}
   override fun onDestroy(){if(isFinishing&&!memory.closed){memory.closed=true;runCatching{client.closeGrid(ticket,lease,commit=false)}};if(active.get()===this)active.clear();super.onDestroy()}

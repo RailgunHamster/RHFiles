@@ -129,7 +129,31 @@ public class RhVideoInstrumentation extends Instrumentation {
     action("connection.logout",new JSONObject());action("connection.connect",new JSONObject().put("server",args.getString("server")).put("username","other").put("password","fixture-only"));require(!((JSONObject)action("rotation.state",new JSONObject())).getBoolean("enabled"),"A different account defaults OFF");
   }
   private SurfaceView videoSurface(View view){if(view instanceof SurfaceView)return (SurfaceView)view;if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++){SurfaceView found=videoSurface(((ViewGroup)view).getChildAt(i));if(found!=null)return found;}return null;}
+  private void checkGridRotation()throws Exception{
+    // Isolate pixel geometry from the separate automatic three-cell stress
+    // scenario; that full scenario remains unchanged and must also pass.
+    action("preferences.set",new JSONObject().put("key","gridCount").put("value",2));
+    action("gallery.open",new JSONObject());action("grid.open",new JSONObject());waitGrid(2,false);
+    gridControl(0,"expand",0);gridControl(-1,"pause",0);gridControl(0,"volume",37);gridControl(0,"rate",1.5);
+    JSONObject before=waitGrid(2,true).getJSONArray("cells").getJSONObject(0);long oldFrames=before.getLong("submittedFrames");gridControl(0,"seek",5000);
+    long end=System.currentTimeMillis()+25000;JSONObject cell=null;
+    do{cell=((JSONObject)action("grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(0);if(cell.getBoolean("paused")&&cell.getLong("submittedFrames")>oldFrames&&Math.abs(cell.getLong("positionMs")-5000)<250)break;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    require(cell.getLong("submittedFrames")>oldFrames&&Math.abs(cell.getLong("positionMs")-5000)<250,"Actual paused grid frame before rotation: "+cell);
+    long input=cell.getLong("inputId");
+    for(int angle:new int[]{0,90,180,270,0}){
+      gridControl(0,"rotate",angle);assertRotationPixels(angle,"grid");cell=((JSONObject)action("grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(0);
+      require(cell.getLong("inputId")==input&&cell.getBoolean("paused")&&Math.abs(cell.getLong("positionMs")-5000)<250&&Math.abs(cell.getDouble("rate")-1.5)<.01&&cell.getInt("volume")==37,"Rotation cannot change the input, pause, position, speed or volume: "+cell);
+    }
+    if(Build.VERSION.SDK_INT>=29){JSONObject presentation=cell.getJSONObject("presentation");require("surface-compositor".equals(presentation.getString("rotationRenderer"))&&presentation.getBoolean("nativeLayerAttached")&&!presentation.getBoolean("rotationPipeline"),"Keep native buffers and a compositor layer instead of copying/reopening the decoder: "+presentation);}
+    require(Boolean.TRUE.equals(expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke('native.grid.control',{target:0,command:'rotate',value:90.5}).then(()=>false,()=>true)")),"Fractional angles cannot silently turn into a different valid operation");
+    gridControl(0,"rotate",270);assertRotationPixels(270,"grid");screenshot("rhvideo-grid-rotation-qa.png");
+    gridControl(-1,"page",1);waitGrid(2,false);gridControl(-1,"page",-1);waitGrid(2,true);gridControl(0,"expand",0);gridControl(0,"pause",0);assertRotationPixels(270,"grid");
+    action("grid.close",new JSONObject());library=waitView("RhVideoActivity");
+  }
   private void assertRotationPixels(int angle)throws Exception{
+    assertRotationPixels(angle,"player");
+  }
+  private void assertRotationPixels(int angle,String scope)throws Exception{
     // Actual compositor pixels, not a View.rotation property or decoder flag.
     // The owned portrait fixture has four solid, distinct corner markers.
     long end=System.currentTimeMillis()+8000;String diagnostic="";
@@ -138,7 +162,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       android.graphics.Bitmap image=getUiAutomation().takeScreenshot();boolean valid=image!=null&&bounds[2]>0&&bounds[3]>0;StringBuilder colors=new StringBuilder();
       if(valid)for(int corner=0;corner<4;corner++){
         double x=(corner%2==0?50.0:310.0)/360,y=(corner<2?50.0:590.0)/640;
-        double u=angle==90?1-y:x,v=angle==90?x:y;double vw=angle==90?640:360,vh=angle==90?360:640,scale=Math.min(bounds[2]/vw,bounds[3]/vh),left=(bounds[2]-vw*scale)/2,top=(bounds[3]-vh*scale)/2;int px=bounds[0]+(int)(left+u*vw*scale),py=bounds[1]+(int)(top+v*vh*scale);
+        double u=angle==90?1-y:angle==180?1-x:angle==270?y:x,v=angle==90?x:angle==180?1-y:angle==270?1-x:y;double vw=angle%180!=0?640:360,vh=angle%180!=0?360:640,scale=Math.min(bounds[2]/vw,bounds[3]/vh),left=(bounds[2]-vw*scale)/2,top=(bounds[3]-vh*scale)/2;int px=bounds[0]+(int)(left+u*vw*scale),py=bounds[1]+(int)(top+v*vh*scale);
         if(px<0||py<0||px>=image.getWidth()||py>=image.getHeight()){valid=false;break;}
         int pixel=image.getPixel(px,py),r=(pixel>>16)&255,g=(pixel>>8)&255,b=pixel&255;colors.append(String.format(" %06x",pixel&0xffffff));
         valid&=corner==0?r>160&&g<90&&b<90:corner==1?g>160&&r<90&&b<90:corner==2?b>160&&r<90&&g<90:r>160&&g>160&&b<90;
@@ -146,7 +170,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       if(image!=null)image.recycle();if(valid)return;
       diagnostic="bounds="+java.util.Arrays.toString(bounds)+", pixels="+colors;Thread.sleep(100);
     }while(System.currentTimeMillis()<end);
-    throw new Exception("Actual video pixels did not rotate clockwise/fit without cropping at "+angle+" degrees: "+diagnostic+"; "+action("player.state",new JSONObject()));
+    throw new Exception("Actual "+scope+" video pixels did not rotate clockwise/fit without cropping at "+angle+" degrees: "+diagnostic+"; "+action(scope+".state",new JSONObject()));
   }
   private void checkLatestPlayIntent()throws Exception{
     action("category",new JSONObject().put("kind","video"));action("sort",new JSONObject().put("value","dateDesc"));
@@ -469,13 +493,14 @@ public class RhVideoInstrumentation extends Instrumentation {
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
-      if(!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
+      if(!"grid-rotation".equals(args.getString("mode"))&&!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
       JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==("single".equals(args.getString("mode"))?3:52),"Video catalog count");
       require("gallery".equals(catalog.getString("view")),"Fresh Android libraries keep the reference primary screenshot view");
       if(!"single".equals(args.getString("mode")))action("category",new JSONObject().put("kind","video"));
       if("rotation".equals(args.getString("mode"))){checkReferenceRotation();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference rotation toggle, actual native SurfaceView, paused time/speed, next source, stale inputs/settings and per-account persistence");finish(Activity.RESULT_OK,result);return;}
+      if("grid-rotation".equals(args.getString("mode"))){checkGridRotation();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid native pixel rotation, paused input/time/speed/volume and group restoration");finish(Activity.RESULT_OK,result);return;}
       if("grid-restore".equals(args.getString("mode"))){checkReferenceGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid restore with actual held-slider ABA and native paused frames");finish(Activity.RESULT_OK,result);return;}
       if("tickets".equals(args.getString("mode"))){checkPreparedTickets();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: prepared ticket lifetime and native player replacement");finish(Activity.RESULT_OK,result);return;}
       if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, native frames, actual held-slider ABA, favorite/mark buttons and APIs, one-shot close, account dismissal, per-cell restoration, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}

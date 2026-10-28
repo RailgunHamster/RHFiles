@@ -22,6 +22,7 @@ internal open class RhVideoPlayerView(context:Context):PlayerView(context) {
   var autoRotate=false;private set
   var videoRotation=0;private set
   private var sourceAspect=0.0
+  private var manualRotation:Int?=null
   private var engine:ExoPlayer?=null
   private var formats:AnalyticsListener?=null
   private var pipeline=false
@@ -49,9 +50,9 @@ internal open class RhVideoPlayerView(context:Context):PlayerView(context) {
     if(engine!==value)return
     formats?.let{value.removeAnalyticsListener(it)}
     if(nativeComposition){compositor?.detach();compositor=null};engine=null;formats=null;pipeline=false
-    if(!keepSource){sourceAspect=0.0;videoRotation=0}
+    if(!keepSource){sourceAspect=0.0;videoRotation=0;manualRotation=null}
   }
-  fun setAutoRotation(enabled:Boolean){autoRotate=enabled;chooseRotation()}
+  fun setAutoRotation(enabled:Boolean){manualRotation=null;autoRotate=enabled;chooseRotation()}
   internal fun sourceFormat(format:Format){
     val pixelRatio= format.pixelWidthHeightRatio.takeIf{it.isFinite()&&it>0}?:1f
     val ratio=if(format.width>0&&format.height>0)format.width.toDouble()*pixelRatio/format.height else 0.0
@@ -59,7 +60,7 @@ internal open class RhVideoPlayerView(context:Context):PlayerView(context) {
     if(nativeComposition)compositor?.source(sourceAspect)
     chooseRotation()
   }
-  private fun chooseRotation(){applyRotation(RhVideoRotation.angle(sourceAspect,width,height,autoRotate));applyContentAspect()}
+  private fun chooseRotation(){applyRotation(manualRotation?:RhVideoRotation.angle(sourceAspect,width,height,autoRotate));applyContentAspect()}
   override fun onContentAspectRatioChanged(contentFrame:AspectRatioFrameLayout?,aspectRatio:Float){
     // Media3's effect VideoSink currently omits processed VideoSize callbacks
     // (MediaCodecVideoRenderer.configureVideoSink). Size the native surface
@@ -68,7 +69,7 @@ internal open class RhVideoPlayerView(context:Context):PlayerView(context) {
     super.onContentAspectRatioChanged(contentFrame,ratio.toFloat())
   }
   private fun applyContentAspect(){onContentAspectRatioChanged(findViewById(androidx.media3.ui.R.id.exo_content_frame),sourceAspect.toFloat())}
-  fun setManualRotation(angle:Int){require(angle in listOf(0,90,180,270));applyRotation(angle)}
+  fun setManualRotation(angle:Int,fixed:Boolean=false){require(angle in listOf(0,90,180,270));manualRotation=if(fixed)angle else null;applyRotation(angle)}
   private fun applyRotation(angle:Int){
     if(videoRotation==angle)return
     videoRotation=angle
