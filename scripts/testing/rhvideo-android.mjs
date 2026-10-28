@@ -23,7 +23,7 @@ assert(aapt,'Android aapt is required to validate the native runtime');
 const apkEntries=execFileSync(aapt,['list',path.resolve(apk)],{encoding:'utf8',windowsHide:true}).split(/\r?\n/),abis=new Set(apkEntries.filter(v=>v.startsWith('lib/')).map(v=>v.split('/')[1]));
 assert(abis.size>0,'Release APK has no native libraries');
 for(const abi of abis)assert(apkEntries.includes('lib/'+abi+'/librhfiles_android_lib.so'),'Missing RHFiles runtime for '+abi+'; use the same ABI filters as the completed Rust build');
-for(const relative of ['rhvideo.html','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-client.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
+for(const relative of ['rhvideo.html','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-client.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(apk),'assets/rhvideo/'+relative],{windowsHide:true,maxBuffer:8*1024*1024});
   const expected=fs.readFileSync(path.resolve('src',relative));
   assert.equal(createHash('sha256').update(packaged).digest('hex'),createHash('sha256').update(expected).digest('hex'),'APK must include the current '+relative);
@@ -46,7 +46,11 @@ const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-rhvideo-android-')
 const video=path.join(temporary,'sample.mp4');
 const make=(file,size)=>execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size='+size+':rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000',...(rotationMode?['-vf','drawbox=x=20:y=20:w=60:h=60:color=0xff0000:t=fill,drawbox=x=iw-80:y=20:w=60:h=60:color=0x00ff00:t=fill,drawbox=x=20:y=ih-80:w=60:h=60:color=0x0000ff:t=fill,drawbox=x=iw-80:y=ih-80:w=60:h=60:color=0xffff00:t=fill']:[]),'-t','20','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
 make(video,'640x360');const portrait=path.join(temporary,'portrait.mp4');if(mediaMode)make(portrait,'360x640');
-const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(mediaMode?{galleryVideoCount:6,videoDuration:20,videoFiles:Object.fromEntries([0,1,3].map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:52},(_,i)=>[0,1,3].includes(i)?'360x640':'640x360')}:{ }),...(previewMode?{failTrashIds:['video:video-2'],failFavoriteIds:['video:video-3']}:{ }),...(singleMode?{videoCount:3,galleryVideoCount:1,galleryFrameCount:1}:{}),...(rotationMode?{loginUsers:['preview','other']}:{})}),port=new URL(fixture.url).port;
+let releaseGallery;const galleryGate=singleMode?new Promise(resolve=>releaseGallery=resolve):null;
+// In the cold-click scenario the first native stream releases the held gallery.
+// Waiting for that gallery before starting video would deadlock and fail the
+// existing bounded player wait; no arbitrary sleep makes this case look cold.
+const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(mediaMode?{galleryVideoCount:6,videoDuration:20,videoFiles:Object.fromEntries([0,1,3].map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:52},(_,i)=>[0,1,3].includes(i)?'360x640':'640x360')}:{ }),...(previewMode?{failTrashIds:['video:video-2'],failFavoriteIds:['video:video-3']}:{ }),...(singleMode?{videoCount:3,galleryVideoCount:1,galleryFrameCount:1,beforeGallery:()=>galleryGate,beforeMedia:({image})=>{if(!image)releaseGallery();}}:{}),...(rotationMode?{loginUsers:['preview','other']}:{})}),port=new URL(fixture.url).port;
 const failedFixture=gridMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
 const artifact=path.resolve('test-artifacts/rhvideo-android'+(gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-release');fs.mkdirSync(artifact,{recursive:true});
@@ -97,6 +101,7 @@ try{
   if(failedFixture){const reads=failedFixture.requests.filter(r=>r.path.endsWith('/play')).length;assert(reads>=2&&reads<=4,'Failed grid inputs must have bounded reads');await new Promise(resolve=>setTimeout(resolve,2000));assert.equal(failedFixture.requests.filter(r=>r.path.endsWith('/play')).length,reads,'No hidden traffic loop after terminal grid errors');}
   console.log('PASS: release APK end-to-end, artifacts '+artifact);
 }finally{
+  releaseGallery?.();
   // Keep transport evidence on failure too; never persist bearer/passwords.
   fs.writeFileSync(path.join(artifact,'requests.json'),JSON.stringify(fixture.requests.map(({method,path,query,range})=>({method,path,query,range})),null,2));
   try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();fs.rmSync(temporary,{recursive:true,force:true});

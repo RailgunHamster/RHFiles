@@ -77,7 +77,7 @@ fn wake_playback_monitor(app:&AppHandle){
                 if state["state"]==5&&state["seekError"].is_string(){wait_for_activity();continue;}
                 let failed=failed_media(&state);
                 if failed&&!close_at_end {wait_for_activity();continue;}
-                if state["state"]==4 {std::thread::park_timeout(if independent_active{Duration::from_millis(100)}else{Duration::from_secs(1)});continue;}
+                if state["pauseRequested"]==true||state["state"]==4 {std::thread::park_timeout(if independent_active{Duration::from_millis(100)}else{Duration::from_secs(1)});continue;}
                 let duration=state["durationMs"].as_i64().unwrap_or(0);
                 let end=segment.map(|length|(start+length).min(duration)).unwrap_or(duration);
                 let lead=((end-start)/4).clamp(1,200);

@@ -17,7 +17,7 @@ async function port(cached){
     send:async(action)=>{metadata.push(action);assert(cached,'Do not query an unprepared screenshot dataset');return {queue:[frame],total:1};},
     notice(){},prepareQueue:async(items,options)=>{calls.push({items,options});return 'test-ticket';},discardPrepared:async()=>{},
     native:async(action,args)=>{calls.push({action,args});return {opened:true};}});
-  vm.runInContext(play,scope);await scope.play(video);
+  vm.runInContext('function galleryReady(){return gallery.loaded;}\n'+play,scope);await scope.play(video);
   return {metadata,calls,parent:scope.imageSession?{count:scope.imageSession.total,index:scope.imageSession.index,videoId:scope.imageSession.current.videoId}:null};
 }
 test('ordinary video click never starts a cold screenshot request, while a cached return position is retained',async()=>{

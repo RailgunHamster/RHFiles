@@ -173,8 +173,9 @@
     try{
       const value=await native('connect',args);if(connection!==connectionEpoch)return {stale:true};updateConnection(value);$('connection-dialog').close();state.offset=0;state.search='';state.folder='';$('search').value='';
       await workbench?.reset(true);
-      let favoriteError;try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){state.favorites.clear();favoriteError=error;}
-      await load(true,true);if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));return snapshot();
+      if(connection!==connectionEpoch)return {stale:true};
+      let favoriteError;try{const favorites=model.favoriteSet(await native('favorites'));if(connection!==connectionEpoch)return {stale:true};state.favorites=favorites;}catch(error){if(connection!==connectionEpoch)return {stale:true};state.favorites.clear();favoriteError=error;}
+      await load(true,true);if(connection!==connectionEpoch)return {stale:true};if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));return snapshot();
     }catch(error){if(connection!==connectionEpoch)throw error;state.connected=false;state.generation=0;state.items=[];state.total=0;state.favorites.clear();await workbench?.reset(false);$('connection-open').classList.remove('connected');$('connection-label').textContent='尚未连接';await load();$('connection-error').textContent=String(error);throw error;}
     finally{if(connection===connectionEpoch){$('connect').disabled=false;$('disconnect').disabled=false;$('password').value='';}}
   },'external');

@@ -135,7 +135,16 @@ public class RhVideoInstrumentation extends Instrumentation {
   }
   private void checkReferenceSingle()throws Exception{
     action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject cold=waitPlayer("video-0",true);require(!cold.getJSONObject("options").has("origin"),"Like the reference, a cold video click does not load or manufacture a screenshot parent");action("player.close",new JSONObject());library=waitView("RhVideoActivity");require(!((JSONObject)action("image.state",new JSONObject())).getBoolean("opened"),"A cold direct video leaves no hidden screenshot parent");
-    action("gallery.open",new JSONObject());action("panel.close",new JSONObject().put("id","wb-gallery"));
+    long galleryDeadline=System.currentTimeMillis()+8000;JSONObject prepared;
+    do{prepared=(JSONObject)action("gallery.state",new JSONObject());if(prepared.getBoolean("loaded"))break;Thread.sleep(100);}while(System.currentTimeMillis()<galleryDeadline);
+    require(prepared.getBoolean("loaded")&&prepared.getInt("count")==1,"Login prepares the gallery in the background without blocking the first video: "+prepared);
+    require("false".equals(eval(library,"!!document.querySelector('#wb-gallery[open]')")),"Background completion cannot pop a gallery in front of the library");
+    action("gallery.open",new JSONObject());
+    action("rules.apply",new JSONObject().put("rule",new JSONObject().put("mode","and").put("include",new JSONArray().put("no-such-fixture-folder")).put("exclude",new JSONArray())));
+    require(((JSONObject)action("gallery.state",new JSONObject())).getInt("total")==0,"Changing a filter updates the already-open native library gallery");
+    require("0".equals(eval(library,"document.querySelectorAll('#wb-gallery .wb-frame').length")),"The old screenshot cards cannot remain after filtering");
+    action("rules.apply",new JSONObject().put("rule",new JSONObject()));require(((JSONObject)action("gallery.state",new JSONObject())).getInt("total")==1,"Clearing the filter restores the parent pool");
+    action("panel.close",new JSONObject().put("id","wb-gallery"));
     action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject first=waitPlayer("video-0",true);JSONObject parent=first.getJSONObject("options");require(parent.getInt("parentTotal")==1,"Fixture must expose an actual one-item parent");
     touchPlayerButton("exo_next");library=waitView("RhVideoActivity");JSONObject image=waitImage(0);require(image.getInt("total")==1,"An arrow pops the parent even when modulo position does not change");
     action("image.playVideo",new JSONObject());JSONObject current=waitPlayer("video-0",true);require(!current.getJSONObject("options").getString("parentPlayback").equals(parent.getString("parentPlayback")),"Every child launch must have a new identity");long input=current.getLong("inputId");

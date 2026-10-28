@@ -377,6 +377,7 @@ struct Engine {
     muted:bool,last_volume:i32,
     repeat_input:bool,
     paused_preview:Mutex<Option<PauseFrame>>,
+    pause_requested:std::sync::atomic::AtomicBool,
     hold_audio:std::sync::atomic::AtomicBool,
     title: String,
     frame: Box<crate::rhvideo_frame::Frame>,
@@ -397,6 +398,7 @@ impl Engine {
     fn begin_pause_restore(&self,target:i64)->Result<(),String>{
         self.hold_audio.store(true,std::sync::atomic::Ordering::Relaxed);
         *self.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?=Some(PauseFrame{target,rate:unsafe{(self.api.rate)(self.player as Ptr)},deadline:std::time::Instant::now()+std::time::Duration::from_secs(15),phase:PauseFramePhase::Priming});
+        self.pause_requested.store(true,std::sync::atomic::Ordering::Relaxed);
         unsafe{let h=HWND(self.child as Ptr);let style=GetWindowLongPtrW(h,GWL_EXSTYLE);SetWindowLongPtrW(h,GWL_EXSTYLE,style|WS_EX_LAYERED.0 as isize);let _=SetLayeredWindowAttributes(h,windows::Win32::Foundation::COLORREF(0),0,LWA_ALPHA);}
         Ok(())
     }
@@ -478,7 +480,7 @@ impl Engine {
             seek:Mutex::new(SeekState::default()),
             requested_volume: 100,
             muted:false,last_volume:100,repeat_input:false,
-            paused_preview:Mutex::new(None),hold_audio:std::sync::atomic::AtomicBool::new(false),
+            paused_preview:Mutex::new(None),pause_requested:std::sync::atomic::AtomicBool::new(false),hold_audio:std::sync::atomic::AtomicBool::new(false),
             title: String::new(),
             frame,
             clock: Mutex::new(crate::rhvideo_clock::Clock::new()),
@@ -528,7 +530,7 @@ impl Engine {
     fn apply_rotation(&mut self,angle:i32)->Result<(),String>{
         if angle==self.rotation{return Ok(());}
         if self.compatibility{self.rotation=angle;self.frame.rotation.store(angle,std::sync::atomic::Ordering::Relaxed);let _=self.frame.render();return Ok(());}
-        let before=self.state();let paused=before["state"]==4||before["restoringPausedFrame"]==true;
+        let before=self.state();let paused=pause_intent(&before);
         let target=before["positionMs"].as_i64().unwrap_or(0).max(0);let rate=before["rate"].as_f64().unwrap_or(1.) as f32;
         self.cancel_pause_restore()?;self.hold_audio.store(paused,std::sync::atomic::Ordering::Relaxed);
         let url=self.url.clone();let title=self.title.clone();self.replace_rotation_renderer(angle)?;
@@ -586,6 +588,7 @@ impl Engine {
             // first open, and forces device/vout initialization on each source
             // switch that cannot consume an already-decoded preload.
             (self.api.set_media)(self.player as Ptr, media);
+            self.pause_requested.store(false,std::sync::atomic::Ordering::Relaxed);
             trace_startup(self.open_started,"previous-input-joined");
             // Reset AFTER that join: a late old callback must not impersonate
             // this input's first frame. No old decoder runs past set_media.
@@ -706,12 +709,19 @@ impl Engine {
                     .unwrap_or(raw)
             };
             let source=if self.rotation_policy.source.0>0{self.rotation_policy.source}else{(width,height)};let viewport=self.viewport();let format=self.frame.presented.load(std::sync::atomic::Ordering::Acquire);
-            json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"autoRotate":self.rotation_policy.enabled,"rotationAvailable":crate::rhvideo_rotation::available(source,viewport,self.rotation_policy.enabled),"sourceWidth":source.0,"sourceHeight":source.1,"viewportWidth":viewport.0,"viewportHeight":viewport.1,"presentedWidth":if self.compatibility{Some((format>>32) as u32)}else{None},"presentedHeight":if self.compatibility{Some(format as u32)}else{None},"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
+            let mut value=json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"autoRotate":self.rotation_policy.enabled,"rotationAvailable":crate::rhvideo_rotation::available(source,viewport,self.rotation_policy.enabled),"sourceWidth":source.0,"sourceHeight":source.1,"viewportWidth":viewport.0,"viewportHeight":viewport.1,"presentedWidth":if self.compatibility{Some((format>>32) as u32)}else{None},"presentedHeight":if self.compatibility{Some(format as u32)}else{None},"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
             "presentationError":if self.compatibility&&self.frame.render_error.load(std::sync::atomic::Ordering::Relaxed){Some("无法显示原生兼容画面，请检查显示会话后重新打开视频")}else{None},
             "state":(self.api.state)(p),"restoringPausedFrame":restoring,"restorePhase":restore_phase,"restoreTargetMs":restore_target,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
-            "rate":restore_rate.unwrap_or_else(||(self.api.rate)(p)),"decoderRate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0})
+            "rate":restore_rate.unwrap_or_else(||(self.api.rate)(p)),"decoderRate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0});
+            value["pauseRequested"]=json!(self.pause_requested.load(std::sync::atomic::Ordering::Relaxed));value
         }
     }
+}
+fn pause_intent(state:&Value)->bool{
+    // libVLC pause/resume is asynchronous. Snapshot the accepted user command,
+    // not a decoder state that may still describe the preceding command. The
+    // fallback is for older diagnostic/legacy values without an intent field.
+    state["pauseRequested"].as_bool().unwrap_or(state["state"]==4||state["restoringPausedFrame"]==true)
 }
 fn independent_active(state:&Value)->bool{
     state["restoringPausedFrame"]==true||state["pendingSeekMs"].is_i64()||
@@ -1123,7 +1133,7 @@ pub fn retire_grid_window(lease:u64)->bool{
     for engine in players{release_surface(engine);}true
 }
 pub fn grid_snapshot()->std::collections::HashMap<String,Value>{
-    let Ok(grid)=GRID.lock() else{return Default::default();};grid.ids.iter().zip(&grid.players).map(|(id,p)|{let s=p.state();(id.clone(),json!({"positionMs":if s["restoringPausedFrame"]==true{s["restoreTargetMs"].clone()}else{s["positionMs"].clone()},"volume":s["volume"],"muted":s["muted"],"lastVolume":s["lastVolume"],"rate":s["rate"],"paused":s["state"]==4||s["restoringPausedFrame"]==true}))}).collect()
+    let Ok(grid)=GRID.lock() else{return Default::default();};grid.ids.iter().zip(&grid.players).map(|(id,p)|{let s=p.state();(id.clone(),json!({"positionMs":if s["restoringPausedFrame"]==true{s["restoreTargetMs"].clone()}else{s["positionMs"].clone()},"volume":s["volume"],"muted":s["muted"],"lastVolume":s["lastVolume"],"rate":s["rate"],"paused":pause_intent(&s)}))}).collect()
 }
 fn layout_grid(window: &tauri::WebviewWindow) {
     let Ok(grid) = GRID.try_lock() else { return };
@@ -1299,7 +1309,7 @@ pub fn grid_command(action: &str, args: &Value) -> Result<Value, String> {
         } else {
             Some(target as usize)
         };
-        if let Some(index)=grid.expanded{if grid.players[index].state()["state"]==4{control_engine(&mut grid.players[index],&json!({"command":"resume"}))?;}}
+        if let Some(index)=grid.expanded{if pause_intent(&grid.players[index].state()){control_engine(&mut grid.players[index],&json!({"command":"resume"}))?;}}
     }
     Ok(
         json!({"cells":grid.players.iter().enumerate().map(|(i,p)|{let mut s=p.state();s["id"]=json!(grid.ids.get(i));s["rect"]=json!(grid.rects.get(i));s}).collect::<Vec<_>>(),"expanded":grid.expanded,"windowLease":grid.lease}),
@@ -1606,17 +1616,19 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                 player.apply_rotation(value as i32)?;
             }
             "pause" => {
-                if player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.is_some(){return Ok(());}
+                if player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.is_some(){player.pause_requested.store(true,std::sync::atomic::Ordering::Relaxed);return Ok(());}
                 player
                     .clock
                     .lock()
                     .map_err(|_| "播放时钟不可用")?
                     .discontinuity();
+                player.pause_requested.store(true,std::sync::atomic::Ordering::Relaxed);
                 (player.api.set_pause)(p, 1);
             }
             "resume" => {
                 let restore_target=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.as_ref().map(|plan|plan.target);
                 player.cancel_pause_restore()?;
+                player.pause_requested.store(false,std::sync::atomic::Ordering::Relaxed);
                 if let Some(target)=restore_target{player.seek.lock().map_err(|_|"跳转状态不可用")?.prepare_clamped(player.input_id,target,std::time::Instant::now());}
                 player
                     .clock
@@ -1644,7 +1656,7 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                         plan.phase=PauseFramePhase::Seeking{not_before:std::time::Instant::now()+std::time::Duration::from_millis(250)};
                     }return Ok(());
                 }
-                if (player.api.state)(p)==4{player.begin_pause_restore(ms)?;let _=player.state();return Ok(());}
+                if player.pause_requested.load(std::sync::atomic::Ordering::Relaxed){player.begin_pause_restore(ms)?;let _=player.state();return Ok(());}
                 player.seek.lock().map_err(|_|"跳转状态不可用")?.prepare(player.input_id,ms,std::time::Instant::now());
                 let _=player.state();
             }
@@ -1685,6 +1697,16 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
 #[cfg(test)]
 mod input_tests{
     use super::*;
+    #[test]
+    fn accepted_pause_or_resume_wins_over_the_lagging_decoder_state(){
+        for state in [0,1,2,3,4]{
+            assert!(pause_intent(&json!({"state":state,"pauseRequested":true})),"an accepted pause must survive immediate group paging, including decoder state {state}");
+            assert!(!pause_intent(&json!({"state":state,"pauseRequested":false})),"an accepted resume must not save an old paused state {state}");
+        }
+        assert!(pause_intent(&json!({"state":3,"restoringPausedFrame":true})));
+        assert!(!pause_intent(&json!({"state":3})));
+        assert!(pause_intent(&json!({"state":4})));
+    }
     #[test]
     fn native_canvas_decodes_only_media_keys_and_never_replays_key_repeat(){
         for(key,intent)in [(0x1b,"close"),(0x20,"toggle"),(0x25,"previous"),(0x27,"next"),(0x24,"first"),(0x23,"last"),(0x2e,"mark")]{

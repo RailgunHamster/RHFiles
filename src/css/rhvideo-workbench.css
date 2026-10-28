@@ -1,3 +1,6 @@
+.wb-gallery-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.wb-gallery-tools, .wb-gallery-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.wb-gallery-nav { justify-content: space-between; }
 .wb-toolbar {
   display: flex;
   flex-wrap: wrap;

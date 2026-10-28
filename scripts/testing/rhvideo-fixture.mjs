@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {once} from 'node:events';
 import pathModule from 'node:path';
-export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview']}={}){
+export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview']}={}){
   const favorites=new Set(),progress=[],requests=[];
   const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
   const folders=['山野与旅途','日常片段','城市观察','慢生活'];
@@ -54,7 +54,11 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     if(path==='/api/v1/system/replacement-savings')return send(200,{saved_bytes:500});
     if(path==='/api/v1/system/health')return send(200,{status:'healthy'});
     if(path==='/api/v1/system/config')return send(200,{app_name:'RHVideo fixture'});
-    if(path==='/api/v1/screenshots/grid')return send(200,videos.slice(0,galleryVideoCount).map(v=>({video_id:v.id,filename:v.original_filename,folder:v.folder_label,resolution:v.original_resolution,duration:v.duration_seconds,screenshots:Array.from({length:galleryFrameCount},(_,i)=>({url:'/storage/pictures/'+i+'.svg',time_seconds:i*2}))})));
+    if(path==='/api/v1/screenshots/grid'){
+      const failure=await beforeGallery?.({query:url.searchParams,response:res});if(failure?.status)return send(failure.status,failure);
+      if(Array.isArray(failure?.data))return send(200,failure.data);
+      return send(200,videos.slice(0,galleryVideoCount).map(v=>({video_id:v.id,filename:v.original_filename,folder:v.folder_label,resolution:v.original_resolution,duration:v.duration_seconds,screenshots:Array.from({length:galleryFrameCount},(_,i)=>({url:'/storage/pictures/'+i+'.svg',time_seconds:i*2}))})));
+    }
     const preview=path.match(/^\/api\/v1\/novels\/(novel-\d+)\/previews$/);
     if(preview){const skip=Number(url.searchParams.get('skip')||0),limit=Number(url.searchParams.get('limit')||40);return send(200,{title:'章节速览',total:chapterCount,items:Array.from({length:Math.max(0,Math.min(limit,chapterCount-skip))},(_,j)=>{const i=j+skip;return {index:i,title:'第'+(i+1)+'章 速览',preview:'真实 API 形状的章节摘录 duanluo'+i,word_count:1000};})});}
     if(path.match(/^\/api\/v1\/videos\/[^/]+\/replace-source\/estimate$/))return send(200,{before_size:10000,estimated_size:5000,saved_bytes:5000});

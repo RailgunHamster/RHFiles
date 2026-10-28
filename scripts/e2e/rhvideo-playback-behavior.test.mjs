@@ -165,15 +165,19 @@ test('gallery segment playback starts at the browsed item, deduplicates videos a
   }finally{player?.close();await s.close();}
 });
 test('the final non-looped segment closes playback and returns to the library instead of remaining paused',native,async()=>{
+  for(const existingGallery of [false,true]){
   const s=await setup({videoDuration:6,videoCount:2});let player;
   try{
+    if(existingGallery)await invoke(s.view,'gallery.open');
+    const before=await s.view.evaluate("[...document.querySelectorAll('.wb-dialog[open]')].map(n=>n.id)");
     await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
     await invoke(player,'player.seekQueue',{ratio:1});
     const current=await until(async()=>{const v=await invoke(player,'player.state');return v.queue.index===1&&v.renderedFrames>0?v:null;},'actual final segment displays',25000);
     await invoke(player,'player.control',{command:'seek',value:current.queue.segmentStartMs+current.queue.segmentLengthMs-50});
     await until(async()=>!(await command(s.app,'player.state')).opened,'final segment closes natively',8000);
-    assert.equal(await s.view.evaluate("document.querySelectorAll('.wb-dialog[open]').length>0"),true,'existing gallery context survives');
+    assert.deepEqual(await s.view.evaluate("[...document.querySelectorAll('.wb-dialog[open]')].map(n=>n.id)"),before,'an existing gallery survives; starting from the list must not invent a gallery popup');
   }finally{player?.close();await s.close();}
+  }
 });
 test('video from a screenshot returns to that exact image; arrows pop to the parent image queue; closing commits marks only once',native,async()=>{
   const s=await setup();let player;
@@ -212,16 +216,20 @@ test('player favorites update the library, and a failed preview write is termina
   }finally{player?.close();await s.close();}
 });
 
-test('a cold normal video card starts without fetching or manufacturing a screenshot parent',native,async()=>{
-  const s=await setup();let player;
+test('a cold normal video card never waits for the background gallery or manufactures a screenshot parent',native,async()=>{
+  let release,s,player;const held=new Promise(resolve=>release=resolve);
   try{
-    assert.equal(s.fixture.requests.filter(r=>r.path.startsWith('/api/v1/screenshots/')).length,0);
+    s=await setup({beforeGallery:()=>held});
+    await until(()=>s.fixture.requests.some(r=>r.path==='/api/v1/screenshots/grid'),'reference-style background gallery request starts');
+    assert.equal((await invoke(s.view,'gallery.state')).loading,true);
     await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
     const state=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'cold direct video really renders',25000);
     assert.equal(state.queue.id,'video-1');assert.equal(state.queue.total,1);assert.equal(state.queue.options.origin,undefined);
-    assert.equal(s.fixture.requests.filter(r=>r.path.startsWith('/api/v1/screenshots/')).length,0,'reference direct playback does not need an all-gallery request');
+    assert.equal(s.fixture.requests.filter(r=>r.path==='/api/v1/screenshots/grid').length,1,'the click neither duplicates nor waits for the background read');
     await command(s.app,'player.back');player.close();player=null;assert.equal((await invoke(s.view,'image.state')).opened,false,'no uncached parent is invented on Back');
-  }finally{player?.close();await s.close();}
+    release();await until(async()=>(await invoke(s.view,'gallery.state')).loaded,'background metadata completes without a popup');
+    assert.equal(await s.view.evaluate("!!document.querySelector('#wb-gallery[open]')"),false);
+  }finally{release();player?.close();await s?.close();}
 });
 
 test('a normal video card reuses its cached first matching screenshot without reopening the gallery before playback',native,async()=>{
@@ -593,7 +601,8 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
     await invoke(grid,'grid.control',{target:0,command:'volume',value:37});
     await invoke(grid,'grid.control',{target:0,command:'mute'});
     const saved=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&v.decoderPositionMs>=4800?v:null;},'actual paused cell position');
-    await invoke(grid,'grid.control',{target:-1,command:'pause'});
+    const acceptedPause=await invoke(grid,'grid.control',{target:-1,command:'pause'});
+    assert(acceptedPause.cells.every(c=>c.pauseRequested===true),'paging must remember the accepted pause even before the decoder acknowledges it');
     const next=await invoke(grid,'grid.page',{direction:1});assert.deepEqual(next.cells.map(c=>c.id),groups[1].map(v=>v.id));
     phase='restore paused group while controls are frozen';await withSuspendedControls(grid,async()=>{
       // A frozen page cannot answer its own JS bridge. Invoke the same native

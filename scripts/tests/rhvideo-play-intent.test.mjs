@@ -15,7 +15,7 @@ function create(overrides={}){
     config:()=>({rule:{},sort:'nameAsc',rotation:0,resume:false,segment:3,fullLength:false,portraitOnly:false,loop:false}),
     $:()=>({open:true}),ctx:{openDialog(){}},criteria:args=>args,stepImage:async()=>({index:0}),notice(){},query:async()=>({queue:rows,total:3}),send:async()=>({queue:frames,total:3}),prepareQueue:async()=>String(++sequence),
     native:async(name,args)=>{if(name==='playlist.state')return {};if(name==='playlist.discard'){discarded.push(args.ticket);return {removed:true};}assert.equal(name,'play');calls.push(args);return {opened:true,id:args.id};},...overrides});
-  vm.runInContext(code('play','action("media.playLow"')+code('startPlaylist','async function prepareQueue(')+code('playImageVideo','action("image.playFrame"')+code('image','async function stepImage(')+code('discardPrepared','      action('),context);
+  vm.runInContext('function galleryReady(){return gallery.loaded;}\n'+code('play','action("media.playLow"')+code('startPlaylist','async function prepareQueue(')+code('playImageVideo','action("image.playFrame"')+code('image','async function stepImage(')+code('discardPrepared','      action('),context);
   return {context,calls,discarded};
 }
 async function ready(check){for(let i=0;i<30;i++){if(check())return;await new Promise(setImmediate);}throw Error('Preparation was not reached');}

@@ -6,14 +6,16 @@
   let state={opened:false},busy=false,dragging=false,volumeDragging=false,queueDragging=false,closed=false;
   function error(value){delete $('error').dataset.automation;$('error').textContent=String(value?.message||value);}
   let audibleVolume=100;
+  function paused(value){return value.pauseRequested??(value.state===4);}
+  function toggleCommand(value){return value.state===6||paused(value)?'resume':'pause';}
   function paint(value){
     const generation=value.generation??state.generation;if(generation&&state.generation&&generation<state.generation)return;
     for(const node of document.querySelectorAll('#controls button,#controls input,#controls select'))if(node.id!=='back')node.disabled=!value.opened||!value.queue?.id;
     state={...value,generation};if(!state.opened){$('status').textContent='播放已停止';return;}
     $('title').textContent=state.title;$('position').textContent=RHVideoModel.clock(state.positionMs/1000);$('duration').textContent=RHVideoModel.clock(state.durationMs/1000);
     if(!dragging)$('seek').value=state.durationMs>0?Math.round(state.positionMs/state.durationMs*1000):0;
-    $('toggle').textContent=state.state===6?'重新播放':state.state===4?'继续':'暂停';
-    $('status').textContent=state.state===7?'播放失败，请检查服务器或媒体编码':state.state===6?'播放结束':state.state===4?'已暂停':state.state===1||state.state===2?'正在缓冲…':'播放中';
+    $('toggle').textContent=state.state===6?'重新播放':paused(state)?'继续':'暂停';
+    $('status').textContent=state.state===7?'播放失败，请检查服务器或媒体编码':state.state===6?'播放结束':paused(state)?state.state===4?'已暂停':'正在暂停…':state.state===4?'正在继续…':state.state===1||state.state===2?'正在缓冲…':'播放中';
     if(state.pendingSeekMs!=null)$('status').textContent='正在定位…';
     if(state.state===5)$('status').textContent='播放已停止';
     if(state.restoringPausedFrame)$('status').textContent='正在恢复暂停画面…';
@@ -72,7 +74,7 @@
       let result;
       if(['next','previous'].includes(intent))result=await native('player.'+intent,guard);
       else if(intent==='first'||intent==='last'){if(!current.queue?.options?.reference)return {ignored:true};result=await native('player.seekQueue',{...guard,ratio:intent==='first'?0:1});}
-      else if(intent==='toggle')result=await native('player.control',{expectedInput:inputId,command:current.state===4||current.state===6?'resume':'pause'});
+      else if(intent==='toggle')result=await native('player.control',{expectedInput:inputId,command:toggleCommand(current)});
       else if(intent==='close')return await native('player.close',{expectedInput:inputId});
       else if(intent==='expand')return await native('player.fullscreen',{expectedInput:inputId});
       else if(intent==='mark')return await native('preview.mark',{expectedInput:inputId,id:current.queue.id,kind:'video',title:current.title});
@@ -104,7 +106,7 @@
     },undefined,'rhvideo.player.'+id+'.commit');
     RHFilesUI.listen(node,'pointercancel',()=>{if(target)target.cancelled=true;active=false;setLocked(false);},undefined,'rhvideo.player.'+id+'.cancel');
   }
-  RHFilesUI.listen($('toggle'),'click',()=>control({command:state.state===4||state.state===6?'resume':'pause'}),undefined,'rhvideo.player.toggle');
+  RHFilesUI.listen($('toggle'),'click',()=>control({command:toggleCommand(state)}),undefined,'rhvideo.player.toggle');
   for(const name of ['next','previous'])RHFilesUI.listen($(name),'click',()=>api.invoke('rhvideo.player.'+name).catch(error),undefined,'rhvideo.player.'+name);
   bindSourceRange('seek',(value,started)=>({command:'seek',value:Math.round(value/1000*started.durationMs)}),locked=>{dragging=locked;},started=>{$('position').textContent=RHVideoModel.clock(Number($('seek').value)/1000*started.durationMs/1000);});
   RHFilesUI.listen($('rate'),'change',()=>control({command:'rate',value:Number($('rate').value)}),undefined,'rhvideo.player.rate');
@@ -115,7 +117,7 @@
   RHFilesUI.listen($('segment-length'),'change',()=>api.invoke('rhvideo.player.options',{segment:Number($('segment-length').value),fullLength:false}).catch(error),undefined,'rhvideo.player.options.segment');
   RHFilesUI.listen($('portrait-only'),'change',()=>api.invoke('rhvideo.player.options',{portraitOnly:$('portrait-only').checked}).catch(value=>{paint(state);error(value);}),undefined,'rhvideo.player.options.portrait');
   RHFilesUI.listen($('back'),'click',()=>api.invoke('rhvideo.player.back').catch(error),undefined,'rhvideo.player.back');
-  RHFilesUI.listen(document,'keydown',event=>{if(event.code==='Escape'){event.preventDefault();void api.invoke('rhvideo.player.close').catch(error);return;}if(event.target.matches('input,select,textarea')||event.target.isContentEditable)return;let name,args={};if(event.code==='Space'){name='control';args={command:state.state===4||state.state===6?'resume':'pause'};}else if(event.code==='Delete'&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey)name='mark';else if(event.code==='ArrowLeft')name='previous';else if(event.code==='ArrowRight')name='next';else if(state.queue?.options?.reference&&['Home','End'].includes(event.code)){name='seekQueue';args={ratio:event.code==='Home'?0:1};}if(!name)return;event.preventDefault();void api.invoke('rhvideo.player.'+name,args).catch(error);},undefined,'rhvideo.player.keyboard');
+  RHFilesUI.listen(document,'keydown',event=>{if(event.code==='Escape'){event.preventDefault();void api.invoke('rhvideo.player.close').catch(error);return;}if(event.target.matches('input,select,textarea')||event.target.isContentEditable)return;let name,args={};if(event.code==='Space'){name='control';args={command:toggleCommand(state)};}else if(event.code==='Delete'&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey)name='mark';else if(event.code==='ArrowLeft')name='previous';else if(event.code==='ArrowRight')name='next';else if(state.queue?.options?.reference&&['Home','End'].includes(event.code)){name='seekQueue';args={ratio:event.code==='Home'?0:1};}if(!name)return;event.preventDefault();void api.invoke('rhvideo.player.'+name,args).catch(error);},undefined,'rhvideo.player.keyboard');
   let wheelAt=0;RHFilesUI.listen(document,'wheel',event=>{if((!state.queue?.options?.reference&&state.queue?.options?.origin!=='frame')||event.target.closest('input,select,textarea'))return;event.preventDefault();if(performance.now()-wheelAt<180)return;wheelAt=performance.now();void api.invoke('rhvideo.player.'+(event.deltaY>0?'next':'previous')).catch(error);},{passive:false},'rhvideo.player.wheel');
   RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.player.contextmenu');
   async function poll(){

@@ -52,6 +52,7 @@ Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套媒体
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.category '{"kind":"picture"}' --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.sort '{"value":"dateAsc"}' --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.ui.contract --wait
+    node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.gallery.state --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo run rhvideo.server.open '{"page":"tasks"}' --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo-player run rhvideo.player.next --wait
     node scripts/rhfiles-api.mjs --port 9222 --window window-rhvideo-grid run rhvideo.grid.page '{"direction":1}' --wait
@@ -62,6 +63,10 @@ Android 开启设置中的“ADB 自动化”后，可通过已授权的 ADB 连
     node scripts/rhfiles-api.mjs --android SERIAL --window window-rhvideo list
 
 接口仅在用户显式启用本机自动化后可调用。不要把真实密码写进命令行历史，可使用 CLI 的 JSON 行输入。UI 与脚本走同一原生接口。
+
+登录后的截图库元数据会在后台准备，不等待它才显示视频，也不自动弹出截图库。`gallery.state` 返回 `loaded`、`loading`、`error`、缓存项数 `count`、当前浏览结果数 `total` 及数据 `revision`；这些不是原图解码进度。相同条件的进入操作共用在途读取，刷新/筛选/账号变化会使旧响应失效。失败保留在工具栏，且不自动重试；明确点击进入/重新读取才会再读。用户进入时先显示可关闭的加载界面，关闭不会被迟到结果重新打开。
+
+Windows 原生 `player.state`／`grid.state.cells` 的 `pauseRequested` 表示已接受的暂停意图，`state` 仍表示解码器实际状态。暂停/继续是异步的，翻组快照和快捷键遵循前者；验证真正暂停仍应检查 `state===4`、暂停画面恢复结束及当前 `inputId`，不能拿“已接受暂停”冒充解码器已完成。Android 原生状态沿用 Media3 的 `playWhenReady`。
 
 批量暂存使用 `selection.toggle` → `selection.snapshot` → `selection.stage`，最后返回一次性 ticket，须显式调用两次 `confirm.advance`。ticket 与账户、当前会话、选中快照绑定并在提交前消费，2 分钟后失效；失败只返回逐项结果，不自动重试。`selection.result` 可查询本次结果。正常复制/移动等文件任务的终态规则不受媒体库功能影响。
 

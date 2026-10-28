@@ -12,6 +12,8 @@
       window.__TAURI__.core.invoke("rhvideo_request", { action, args:state.generation?{...args,_sessionGeneration:state.generation}:args });
   let state = { cells: [] },
     closed = false;
+  function paused(value){return value.pauseRequested??(value.state===4);}
+  function toggleCommand(value){return value.cells.every(v=>!paused(v)&&![5,6,7].includes(v.state))?'pause':'resume';}
   api.provideState("application", () => ({
     platform: "windows",
     window: "window-rhvideo-grid",
@@ -63,7 +65,7 @@
             Math.floor(v.positionMs / 1000) +
             "s · " +
             v.renderedFrames +
-            " 帧 · " + (v.state===7||(v.state===6&&!v.durationMs&&!v.renderedFrames)?"加载失败":v.seekError?"定位失败："+v.seekError:v.restoringPausedFrame?"正在恢复暂停画面":v.state===4?"已暂停":v.state===1||v.state===2?"缓冲中":"播放中"),
+            " 帧 · " + (v.state===7||(v.state===6&&!v.durationMs&&!v.renderedFrames)?"加载失败":v.seekError?"定位失败："+v.seekError:v.restoringPausedFrame?"正在恢复暂停画面":paused(v)?v.state===4?"已暂停":"正在暂停":v.state===4?"正在继续":v.state===1||v.state===2?"缓冲中":"播放中"),
         )
         .join("　");
     return value;
@@ -121,7 +123,7 @@
       else if(intent==='close'){if(current.expanded!=null)value=await native('grid.expand',{...guard,target:-1});else return await native('grid.close',guard);}
       else if(intent==='next'||intent==='previous')value=await native('grid.page',{...guard,direction:intent==='next'?1:-1});
       else if(intent==='first'||intent==='last')value=await native('grid.seekGroup',{...guard,ratio:intent==='first'?0:1});
-      else if(intent==='toggle')value=await native('grid.control',{...guard,target:-1,command:current.cells.every(v=>[1,2,3].includes(v.state))?'pause':'resume'});
+      else if(intent==='toggle')value=await native('grid.control',{...guard,target:-1,command:toggleCommand(current)});
       else if(intent==='mark'){await native('grid.mark',{...guard,target});value=await native('grid.state');}
       else return {ignored:true};
       return paint(value);

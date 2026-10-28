@@ -220,7 +220,7 @@
       }
       async function reset(authenticated) {
         ctx.invalidateReads();
-        epoch++;
+        const version=++epoch;
         resolutions.clear();
         sessionSnapshot = null;
         sessionCheckedAt = 0;
@@ -255,8 +255,7 @@
         preview.load++;
         thumbnailTicket++;
         preview.items = [];
-        gallery.load++;
-        gallery.loaded = false;
+        invalidateGallery();
         gallery.items = [];
         gallery.offset = 0;
         gallery.total = 0;
@@ -275,6 +274,7 @@
         clearTimeout(saveTimer);
         if (authenticated) {
           const s = await native("state");
+          if(version!==epoch)return {stale:true};
           ctx.updateConnection(s);
           sessionSnapshot = s;
           sessionCheckedAt = performance.now();
@@ -282,8 +282,11 @@
           accountGeneration = s.generation ?? null;
           resolutionRevision =
             String(s.generation) + ":" + String(s.assetRevision);
-          prefs = await native("preferences");
+          const saved=await native("preferences");
+          if(version!==epoch)return {stale:true};
+          prefs = saved;
           applyPreferences();
+          warmGallery();
         }
         return { reset: true };
       }
@@ -318,7 +321,7 @@
           (accountGeneration !== null && s.generation !== accountGeneration)
         ) {
           ctx.updateConnection(s);
-          await reset(true);
+          if((await reset(true)).stale)throw Error("媒体账户已更改，已丢弃旧读取");
         }
         const active = sessionSnapshot || s;
         const revision =
@@ -328,7 +331,9 @@
           resolutionRevision = revision;
         }
         resolutionGeneration = active.generation ?? state.generation;
+        const version=epoch;
         await ready;
+        if(version!==epoch)throw Error("媒体账户已更改，已丢弃旧读取");
         return epoch;
       }
       let volumeChain=Promise.resolve(),volumeKey="";
@@ -626,7 +631,7 @@
                 );
               if (s.risk === "write" || s.risk === "destructive") {
                 invalidateCatalog();
-                gallery.loaded = false;
+                invalidateGallery();
                 const scope = mutations;
                 scope.catalog ||= !!s.invalidatesCatalog;
                 scope.server ||= !!$("wb-server")?.open;
@@ -705,6 +710,7 @@
           if (id === "wb-confirm") pendingConfirmation = null;
           if (id === "wb-info") detailJob = null;
           if (id === "wb-preview") { preview.load++; preview.searchTicket++; }
+          if (id === "wb-gallery") gallery.load++;
           if (id === "wb-image-preview") { thumbnailTicket++; $(id)?.querySelector('img')?.removeAttribute('src'); }
           $(id)?.close();
           liveRefresh.configure(liveRefresh.enabled);
@@ -794,6 +800,8 @@
           prefs.seed = saved.seed;
           prefs.sort = saved.sort;
           prefs.rule = saved.rule;
+          invalidateGallery();gallery.offset=0;
+          if($("wb-gallery")?.open)await loadGallery();else warmGallery();
           save();
           return load();
         },
@@ -1011,7 +1019,7 @@
           const version=await ensure();
           await invoke("category",{kind});
           let result=await query({allKeys:true,offset:0,limit:1}),index=result.queue.findIndex(v=>v.id===id);
-          if(index<0){prefs.rule={};save();result=await query({allKeys:true,offset:0,limit:1});index=result.queue.findIndex(v=>v.id===id);}
+          if(index<0){prefs.rule={};invalidateGallery();warmGallery();save();result=await query({allKeys:true,offset:0,limit:1});index=result.queue.findIndex(v=>v.id===id);}
           if(version!==epoch)throw Error("媒体账户已改变");if(index<0)throw Error("源媒体已不在服务器清单中");
           state.offset=Math.floor(index/state.limit)*state.limit;await load();
           if(version!==epoch)return {stale:true};
@@ -1103,9 +1111,11 @@
           save();
           applyPreferences();
           if(key==="volume")await syncVolume();
-          if (["perVideo", "mixPictures"].includes(key)) {
-            gallery.loaded = false;
-            if ($("wb-gallery")?.open) await loadGallery(true);
+          if (["perVideo", "mixPictures", "rule"].includes(key)) {
+            invalidateGallery();
+            gallery.offset=0;
+            if ($("wb-gallery")?.open) await loadGallery();
+            else warmGallery();
           }
           if (["rule", "sort", "mediaType", "seed"].includes(key)) {
             state.offset = 0;
@@ -1403,6 +1413,8 @@
         async ({ rule }) => {
           const result = await send("query", { ...criteria(), rule, limit: 1 });
           prefs.rule = rule;
+          invalidateGallery();gallery.offset=0;
+          if($("wb-gallery")?.open)await loadGallery();else warmGallery();
           state.offset = 0;
           save();
           await load();
@@ -2426,7 +2438,7 @@
         const c=config(),version=epoch,intent=++singlePlayIntent;
         const title=media.title+(low?" (超压)":"");
         let parent={},parentSession=null;
-        if(gallery.loaded){
+        if(galleryReady()){
           // Like playVideoLocal, borrow an ALREADY loaded screenshot snapshot.
           // The original synchronous click never fetches the whole gallery
           // before starting a video; a cold pool means no implicit parent.
@@ -2458,7 +2470,7 @@
         let ids;
         if(sequential)ids=P.listIds(result.queue);
         else{
-          if(!gallery.loaded)await loadGallery();
+          if(!galleryReady())await loadGallery(false,false);
           const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,offset:0,limit:1,allKeys:true});
           const anchor=prefs.galleryResume?.mediaKey,at=anchor?frames.queue.findIndex(f=>f.key===anchor):-1;
           ids=P.galleryIds(frames.queue,at>=0?at:gallery.offset);
@@ -2561,7 +2573,7 @@
         "grid.open",
         object(),
         async () => {
-          const version=epoch,c=config();if(!gallery.loaded)await loadGallery(false,false);
+          const version=epoch,c=config();if(!galleryReady())await loadGallery(false,false);
           const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1});
           const videos=await send("query",{kind:"video",sort:"nameAsc",allKeys:true,offset:0,limit:1});
           const entries=RHVideoModel.grid.entries(frames.queue,videos.queue);if(entries.length<2)throw Error("需要至少 2 个图库视频才能同屏播放");
@@ -3059,12 +3071,40 @@
         items: [],
         loaded: false,
         load: 0,
+        revision: 0,
+        pending: null,
+        scope: "",
+        error: "",
+        count: 0,
       };
-      async function loadGallery(refresh = false, display = true) {
-        await ensure();
-        const ticket = ++gallery.load,
-          c = config();
-        if (!gallery.loaded || refresh) {
+      function galleryScope(c=config()){
+        return I.canonical({perVideo:c.perVideo,mixPictures:c.mixPictures,rule:c.rule});
+      }
+      function galleryReady(){return gallery.loaded&&gallery.scope===galleryScope();}
+      function paintGalleryStatus(){
+        const node=$("wb-gallery-status");if(!node)return;
+        node.hidden=!gallery.error;node.textContent=gallery.error?"截图库加载失败："+gallery.error:"";
+      }
+      function invalidateGallery(keepSnapshot=false){
+        gallery.revision++;gallery.pending=null;gallery.error="";
+        if(!keepSnapshot){gallery.loaded=false;gallery.scope="";gallery.count=0;}
+        paintGalleryStatus();
+      }
+      function warmGallery(){
+        const version=epoch;
+        // Like showApp/loadGrid(false): prepare metadata in the background,
+        // never await it on login/video clicks or open a gallery dialog.
+        queueMicrotask(()=>{if(version===epoch&&state.connected)void loadGallery(false,false).catch(error=>{if(version===epoch)notice("截图库后台加载失败："+String(error));});});
+      }
+      async function prepareGallery(refresh,version){
+        if(version!==epoch)return {stale:true};
+        if(refresh)invalidateGallery(true);
+        const c=config(),scope=galleryScope(c);
+        if(gallery.pending?.scope===scope)return gallery.pending.promise;
+        if(!refresh&&galleryReady())return {loaded:true};
+        const task={scope,version,revision:gallery.revision,promise:null};gallery.pending=task;gallery.error="";paintGalleryStatus();
+        const current=()=>task===gallery.pending&&version===epoch&&task.revision===gallery.revision&&scope===galleryScope();
+        task.promise=(async()=>{try{
           const values = await remote("frames.grid", {
             query: {
               per_video: Math.max(1, Math.min(100, c.perVideo)),
@@ -3072,6 +3112,7 @@
               rules: JSON.stringify(c.rule),
             },
           });
+          if(!current())return {stale:true};
           const frames = [];
           for (const video of values) {
             const screenshots =
@@ -3098,6 +3139,7 @@
           }
           if (c.mixPictures) {
             const p = await remote("index.picture");
+            if(!current())return {stale:true};
             frames.push(
               ...p.items.map((v) => ({
                 ...v,
@@ -3107,9 +3149,25 @@
             );
           }
           await send("set", { kind: "gallery", items: frames });
-          gallery.loaded = true;
-        }
+          if(!current())return {stale:true};
+          gallery.loaded = true;gallery.scope=scope;gallery.count=frames.length;
+          return {loaded:true};
+        }catch(error){if(!current())return {stale:true};gallery.error=String(error?.message||error);paintGalleryStatus();throw error;}
+        finally{if(gallery.pending===task)gallery.pending=null;}})();
+        return task.promise;
+      }
+      async function loadGallery(refresh = false, display = true) {
+        const version=await ensure(),ticket=display?++gallery.load:gallery.load,c=config();
+        const loadingRoot=display?dialog("wb-gallery","截图库"):null;
+        if(loadingRoot){const message=el("p","正在读取截图库…");message.setAttribute("role","status");loadingRoot.replaceChildren(message);loadingRoot.setAttribute("aria-busy","true");}
+        let viewRevision;
+        const ownsView=()=>display&&ticket===gallery.load&&version===epoch&&galleryScope(c)===galleryScope()&&(viewRevision===undefined||viewRevision===gallery.revision);
+        try{
+        const prepared=await prepareGallery(refresh,version);
+        if(prepared.stale||version!==epoch)return {stale:true};
         if(!display)return {loaded:true};
+        const revision=gallery.revision,scope=galleryScope(c);viewRevision=revision;
+        const current=()=>ticket===gallery.load&&version===epoch&&revision===gallery.revision&&scope===galleryScope();
         const value = await send("query", {
           kind: "gallery",
           search: state.search,
@@ -3119,14 +3177,17 @@
           offset: gallery.offset,
           limit: gallery.limit,
         });
-        if (ticket !== gallery.load) return { stale: true };
-        gallery.total = value.total;
-        gallery.items = value.items;
+        if (!current()) return { stale: true };
+        if(value.total>0&&gallery.offset>=value.total){gallery.offset=Math.floor((value.total-1)/gallery.limit)*gallery.limit;return loadGallery(false,display);}
         const urls = await native("images", {
           paths: value.items.map((v) => v.path),
         });
+        if(!current())return {stale:true};
+        gallery.total = value.total;
+        gallery.items = value.items;
         const root = dialog("wb-gallery", "截图库");
-        root.replaceChildren(
+        const tools=el("div",undefined,"wb-gallery-tools");
+        tools.append(
           button("重新读取", "gallery.refresh"),
           button("随机排列", "gallery.shuffle"),
           button("还原顺序", "gallery.restore"),
@@ -3138,6 +3199,7 @@
           }),
           button("显示设置", "settings.open"),
         );
+        root.replaceChildren(tools);
         const grid = el("div", undefined, "wb-gallery-grid");
         for (let i = 0; i < value.items.length; i++) {
           const f = value.items[i],
@@ -3154,21 +3216,26 @@
           card.prepend(image);
           grid.append(card);
         }
-        root.append(
-          grid,
-          button("上一页", "gallery.page", { direction: -1 }),
-          el("span", gallery.offset + 1 + " / " + gallery.total),
-          button("下一页", "gallery.page", { direction: 1 }),
-        );
+        const navigation=el("div",undefined,"wb-gallery-nav");
+        const previous=button("上一页","gallery.page",{direction:-1}),next=button("下一页","gallery.page",{direction:1});
+        previous.disabled=gallery.offset<=0;next.disabled=gallery.offset+gallery.limit>=gallery.total;
+        navigation.append(previous,el("span",gallery.total?`${gallery.offset+1} / ${gallery.total}`:"没有符合条件的截图"),next);
         const jump=el("form",undefined,"page-jump"),page=input("number",Math.floor(gallery.offset/gallery.limit)+1,"wb-gallery-page"),last=Math.max(1,Math.ceil(gallery.total/gallery.limit));
         page.min="1";page.max=String(last);page.required=true;page.setAttribute("aria-label","截图页码");page.dataset.apiAction="rhvideo.gallery.jump";
         const submit=el("button","跳转","button secondary");submit.type="submit";submit.dataset.apiAction="rhvideo.gallery.jump";
-        jump.append(field("跳到页",page),submit);listen(jump,"submit",event=>{event.preventDefault();invoke("gallery.jump",{page:Number(page.value)}).catch(notice);},"gallery.jump");root.append(jump);
+        page.disabled=!gallery.total;submit.disabled=page.disabled;
+        jump.append(field("跳到页",page),submit);listen(jump,"submit",event=>{event.preventDefault();invoke("gallery.jump",{page:Number(page.value)}).catch(notice);},"gallery.jump");navigation.append(jump);root.append(grid,navigation);
         prefs.galleryResume = { ...prefs.galleryResume,offset: gallery.offset, seed: gallery.seed };
         save();
         return { total: gallery.total, offset: gallery.offset };
+        }catch(error){
+          if(display&&!ownsView())return {stale:true};
+          if(ownsView())loadingRoot.replaceChildren(el("p","截图库加载失败："+String(error?.message||error),"wb-gallery-error"));
+          throw error;
+        }finally{if(ownsView())loadingRoot.removeAttribute("aria-busy");}
       }
       action("gallery.open", object(), () => loadGallery());
+      action("gallery.state",object(),()=>({loaded:galleryReady(),loading:!!gallery.pending,error:gallery.error,count:gallery.count,total:gallery.total,revision:gallery.revision}),"read");
       action("gallery.inspect",object({index:{type:"integer",minimum:0,maximum:99}},["index"]),async({index})=>{
         const media=gallery.items[index];if(!media)throw Error("截图不在当前页");
         const args={kind:"gallery",search:state.search,rule:config().rule,sort:config().sort,seed:gallery.seed,offset:0,limit:1,allKeys:true};
@@ -3323,7 +3390,7 @@
           const token = ++viewerToken,
             c = config(),
             kind = source === "gallery" ? "gallery" : source;
-          if (kind === "gallery" && !gallery.loaded) await loadGallery();
+          if (kind === "gallery" && !galleryReady()) await loadGallery(false,false);
           if (kind !== "gallery") await rawCatalog(kind);
           const args = {
             ...criteria(),
@@ -3953,6 +4020,7 @@
           : null,
       }));
       const toolbar = el("div", undefined, "wb-toolbar");
+      const galleryStatus=el("span",undefined,"wb-gallery-error");galleryStatus.id="wb-gallery-status";galleryStatus.hidden=true;galleryStatus.setAttribute("role","status");
       action(
         "browse.mode",
         object(
@@ -4029,6 +4097,7 @@
         button("多视频同屏", "grid.open"),
         button("多选", "selection.mode"),
       );
+      toolbar.append(galleryStatus);
       $("library-controls")?.after(toolbar);
       if (!toolbar.isConnected)
         document.querySelector(".library-controls").after(toolbar);
@@ -4082,7 +4151,9 @@
             ctx.updateConnection(result);
             $("connection-dialog").close();
             await reset(true);
+            if(!ctx.connectionCurrent(connection))return {stale:true};
             await load(true, true);
+            if(!ctx.connectionCurrent(connection))return {stale:true};
             return result;
           } catch (error) {
             if (ctx.connectionCurrent(connection)) {
