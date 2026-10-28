@@ -370,6 +370,25 @@
             ),
     };
   }
+  function slideshowSettings(settings={},source='picture'){
+    if(source!=='favorite')return {...settings,...transition(settings)};
+    const number=(value,min,max,fallback)=>Math.max(min,Math.min(max,Number.isFinite(Number(value))?Number(value):fallback));
+    return {...settings,stay:Math.round(number(settings.favoriteStay,1,60,5)),videoStay:Math.round(number(settings.videoStay,1,300,15)),fade:Math.round(number(settings.favoriteFadeMs,100,5000,800))/1000,overlap:true,kenBurns:false};
+  }
+  function slideshowPlan(items,settings={},source='picture'){
+    const c=slideshowSettings(settings,source),durations=items.map(item=>(item.kind||item.mediaType)==='video'?c.videoStay:c.stay),prefix=[0];
+    for(const value of durations)prefix.push(prefix.at(-1)+value);
+    return {durations,prefix,total:prefix.at(-1)};
+  }
+  function slideshowTarget(plan,ratio){
+    if(!plan.durations.length)return {index:0,elapsed:0};
+    const time=Math.max(0,Math.min(1,Number(ratio)||0))*plan.total;let low=0,high=plan.durations.length;
+    // The reference's End action selects the last item from its beginning;
+    // placing it at its dwell boundary immediately wraps to the first item.
+    if(time>=plan.total)return {index:plan.durations.length-1,elapsed:0};
+    while(low+1<high){const mid=(low+high)>>1;if(plan.prefix[mid]<=time)low=mid;else high=mid;}
+    return {index:low,elapsed:Math.max(0,Math.min(plan.durations[low],time-plan.prefix[low]))};
+  }
   function scrollMetrics(length, extent) {
     const logicalMax = Math.max(0, length - extent),
       physicalMax = Math.min(8000000, logicalMax);
@@ -438,6 +457,9 @@
     stripLayout,
     visible,
     transition,
+    slideshowSettings,
+    slideshowPlan,
+    slideshowTarget,
     scrollMetrics,
     exportText,
     ResolveCache,

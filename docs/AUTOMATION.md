@@ -2,6 +2,19 @@
 
 Windows 和 Android 使用同一套 JSON 动作协议（`apiVersion: 1.0`）。接口调用业务函数或控件原有回调，不依赖鼠标坐标、屏幕尺寸或翻译文本。动作名称和参数可在运行时查询。桌面网页动作表也适用于 macOS，但本命令行传输尚不支持 WKWebView。
 
+### RHVideo 配置备份动作（开发版）
+
+媒体库窗口提供 `rhvideo.configuration.export`、`rhvideo.configuration.preview`、`rhvideo.configuration.restore` 和只读 `rhvideo.configuration.state`。导出／预览可省略 `path` 使用原生选择器；脚本也可直接指定 Windows 本机完整文件路径，或 Android 已获授权的 `content://` 文档 URI。Windows 脚本导出不会覆盖已有文件。备份正文不经过命令行参数或 Android 消息桥，最多读取 20 MiB。
+
+```powershell
+node scripts/rhfiles-api.mjs --window window-rhvideo --wait run rhvideo.configuration.export '{"path":"D:\\Backups\\RHVideo.json"}'
+node scripts/rhfiles-api.mjs --window window-rhvideo --wait run rhvideo.configuration.preview '{"path":"D:\\Backups\\RHVideo.json"}'
+# 先检查 preview 中的匹配／冲突，再使用这次返回的 ticket 确认合并。
+node scripts/rhfiles-api.mjs --window window-rhvideo --wait run rhvideo.configuration.restore '{"ticket":"本次预览返回的标识"}'
+```
+
+Android 选择器可能返回 `requested: true`；应读取 `configuration.state` 的 `busy`、`waiting` 和 `message` 获取最终结果，不要重复提交。预览不会修改服务器记录，恢复确认只消费一次；已经合并但偏好保存或列表刷新失败时返回 `applied: true` 和 `clientWarning`，不能把它当成尚未执行的写操作自动重试。以上接口不提供任意 URL、SQL 或服务器文件路径代理。
+
 ## 开启与调用
 
 需要 Node.js 22 或更新版本。默认没有自动化网络监听器；调试接口仅供受信任的本机脚本使用。调试本身拥有很高权限，不能向局域网转发端口，也不要给不可信网页或程序访问。
@@ -82,6 +95,8 @@ Windows 回收站提供 `recycle.open`、`recycle.list`（分页）、`recycle.f
 `npm run test:automation-ui` 在真实浏览器中核对接口/物理点击的回调一致性、顺序、输入校验、禁用/隐藏状态、一次性监听、动态控件失效和删除确认。Android 原生入口另有 JVM/模拟器验证。
 
 ---
+
+放映的当前项目通过 `rhvideo.viewer.state` 的 `current`、`favorite`、`loading` 查询；`rhvideo.viewer.favorite` 与界面收藏按钮调用同一动作。截图收藏作用于源视频，不会播放视频。切换未完成时拒绝收藏／标记，不把新索引误当作已经显示的内容。收藏放映的队列取自开启时的完整筛选结果，取消收藏不改变正在播放的快照；重新开启收藏放映从第一项开始。普通图片放映的进度记忆独立保留。
 
 ## English
 

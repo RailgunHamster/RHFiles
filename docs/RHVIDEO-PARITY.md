@@ -1,10 +1,48 @@
 # RHVideo 功能对齐与体验验收
 
-对照源码：同级 RHVideo 的 `a8caab2`，以 `static/index.html`、独立 UI 模块和实际 FastAPI 路由为准，不以旧 README 中已移除的上传/导入接口为准。
+原对照基线是同级 RHVideo 的 `a8caab2`；2026-10-28 重新核对时其实际 HEAD 已为 `869d632`，新增了喜爱文件 ZIP 导出、配置备份／恢复及替换失败重试。以下历史测试不能自动代表这些新增功能已完成。以实际 UI 模块和 FastAPI 路由为准，不以旧 README 或仅有 API 名称的映射为准；仍遵守用户不提供失败请求重试按钮的明确要求。
 
 目标是 Windows 和 Android 都具有 RHVideo 的全部业务能力，视频保持原生播放。不嵌套网站、不直接修改服务端数据库，也不把服务器的工作目录当成本机目录。
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
+
+## 2026-10-28 继续补业务功能与放映语义（整体仍未完成）
+
+实际源版本检查发现新旧清单漂移：`rhvideo-reference-audit.mjs` 仍固定在旧基线，当前参考源码有 185 个被扫描的控件调用，明确缺少 `RHFavoriteExports.open`，且多个源文件哈希不再匹配（`rhvideo-current-reference-inventory-gaps.log`）。没有把哈希直接更新成“通过”，也不把普通 Node 单测绿色当作最新版全部功能已经相同。**喜爱源文件 ZIP 打包导出仍须继续实现**。
+
+Windows／Android 现接入原版的配置备份 API，并增加媒体库偏好内的保存、选择备份预览、确认合并及四类匹配统计 UI。它与 RHFiles 全量配置导入／WebDAV 同步是不同功能。版本 1 元数据文档上限 20 MiB，不把正文塞进命令行参数或 Android 消息桥；服务器决定匹配、冲突和合并规则。偏好以原版十六个名称／字符串格式互通，未在本客户端呈现的标签抽屉偏好仍保留，不导出密码／令牌或源文件。预览由随机标识绑定账户，五分钟有效、换文件替换旧标识、确认只消费一次；退出／重连撤销旧预览，错误或异常服务器结果不制造成功。
+
+手机保存／选择采用原生文档选择器；`requested` 不代表已经保存，界面继续等待实际结果，取消或错误后解除忙碌，旧账户回调不能修改新界面。已有合并得到服务器确认、但偏好保存或列表刷新失败时保留 `applied: true` 和明确警告，不诱导重放写操作。相关原生缓存、固定路由／Bearer、一次性确认、JavaScript 选择器忙碌和刷新失败都有独立测试。脚本有 `configuration.export/preview/restore/state`，提供本机路径或已授权文档 URI 可不经过选择器；未指定路径则走 UI 的同一选择器。
+
+放映的旧实现确有业务混用：收藏混合放映共用了普通图片放映的停留／淡化参数，集合定位按文件数量等分，放映里还出现了无效的条带方向／列数按钮。现按原版分别保留图片秒数、视频秒数和淡化毫秒数，收藏放映不套 Ken Burns；以每项停留时长构造累计时间轴，增加真实进度控件，Home／End 与控件共用公开动作。新差分直接运行原版 `favshowProgressCommit`，还拦住了新增实现把 End 放到最后一项的结束点、立即绕回首项的错误；修正为最后一项开头。关闭条带控制没有删除条带功能，仅不在不适用的放映模式显示／执行。
+
+最终完整 Node **559/559、零跳过／失败**（`rhvideo-config-final-all-node.log`）；桌面 Rust **249 通过、10 个原有忽略项**（`rhvideo-config-slideshow-rust-final.log`）；Android JVM **376/376、零跳过／失败**，由最终 Gradle XML 统计，日志为短路径 QA 的 `rhvideo-configuration-final-android-build.log`。Windows EXE SHA-256 `e048aa9f4fed3f07a526babed4eb65b800f83de635e49b8d42106dfba2b31e37`，实际界面／后端专项 **2/2**（`rhvideo-config-final-assets-windows-e2e.log`）：真实 RHVideo／隔离 SQLite 中导出、移除收藏、预览不写入、合并恢复、即时刷新及旧确认拒绝；另用真正键盘 Home／End、实际范围控件及解码图片验证放映参数／进度，截图已检查。首次使用过时 EXE 被字节检查拒绝，新增断言中的字符串转义错误也保留在中间失败日志；没有删除断言或把它们冒充产品通过。
+
+Android 新压缩 APK 首次直接复用 Rust ABI 时误带了没有应用运行库的第三方 32 位 ABI；严格安装前检查拒绝了它。改为已完成编译的 ARM64／x86_64 后，又拦住了旧 CSS 与当前源不一致，失败证据为 `rhvideo-configuration-android-single-regression.log`、`rhvideo-configuration-supported-android-single.log`。之后完整同步共享资源，主包 `0618bcf0…` 的原完整 Single 场景已实际通过（`rhvideo-configuration-all-assets-android-single.log`），核对实际安装字节，只用自有模拟器。前两次不能仅凭 Gradle 成功算作安装通过。Java 的本机管道构建故障使用本次 QA 独立临时目录解决，没有修改系统 DNS、代理、安全配置或重启机器。
+
+### 同轮继续：不能以公共组件改变原版业务
+
+新的 Windows 实际红测确认“仅视频”收藏筛选下仍返回 43 项，重新打开放映又续到第 42 项，而不是从首项开始；证据 `rhvideo-slideshow-filter-snapshot-red.log`、`rhvideo-slideshow-reopen-red.log`。已保留当前类型筛选，计数排除小说；直接使用开启时的轻量队列快照，不再切换时重新查询可能已变化的收藏清单。新增放映内收藏／取消收藏，跨当前卡片页也有效；图库截图收藏其源视频，不启动视频。显示项目仅在解码完成且切换身份仍有效后提交，切换期间拒绝收藏／标记。通过 `viewer.favorite` 与 UI 同一动作验证，重新开启仅收藏放映从首项开始，普通图片的进度记忆不变。
+
+直接执行原版 `openFavSlideshow`、`favshowProgressCommit`、`updateKenburnsFadeCfg`、`picStripAutoTick`，不仅用本项目模型自证。新差分还复现备份把速度倍率当每秒像素、把百分比当 0..1 的单位错误（`rhvideo-backup-reference-units-red.log`）。现明确按 200 px/s 基准／百分数双向转换；设置支持原版 60 秒淡化上限、2000 px/s 的速度，新安装默认值按原版 2 倍速，已有设置不被重置。合法原版值的恢复及实际滚动位移均做差分断言；不把客户端扩展边界值视为原版 UI 已支持的值。
+
+配置恢复的真实服务器红测还发现：被拒绝的旧账户 logout 会清空当前预览（`rhvideo-configuration-stale-logout-red.log`）；清理现位于会话校验通过之后。新的四项真实界面／隔离后端专项通过（`rhvideo-configuration-generation-slideshow-green.log`），包含 42 张跨页图片、一次点击一次写入、取消收藏后回访、截图源视频收藏及旧账户不能撤销当前预览。第一次新放映整轮仍发生一次 End 键超时；保留 `rhvideo-slideshow-filter-snapshot-green.log` 中的失败，追加被动键盘／焦点诊断后连续五轮两项通过（`rhvideo-slideshow-snapshot-repeat-[1-5].log`），**不据此断言间歇焦点问题的根因已修复**。
+
+最新完整 Node **561/561、零跳过／失败**（`rhvideo-reference-business-final-node.log`）；桌面 Rust **249 通过、10 个原有忽略项**（`rhvideo-configuration-snapshot-final-rust.log`）；Android JVM **376/376**，最终 Gradle XML 统计，构建 `rhvideo-configuration-snapshot-probe-final-apk.log`。另有常规 Windows 媒体库 **12 通过、3 跳过**（`rhvideo-slideshow-snapshot-final-e2e.log`）；两项原生视频分支和未提供路径时的真实后端跳过不算通过，真实后端随后在上述四项中指定实际路径独立执行。
+
+单位修正阶段曾生成 Windows EXE `fc26b0c4…`、主 APK `fd6a3146…`、探测 APK `cc918a7b…`。该安卓包的解码／接口场景虽然通过（`rhvideo-favorite-snapshot-units-android-single.log`），随后实际检查截图却发现暂停后切图仍是黑屏；**该轮不能作为可见画面验收通过**。
+
+### 2026-10-29 实际像素发现“已解码但黑屏”
+
+保留失败截图 `rhvideo-slideshow-paused-black-android.png`。新增 Windows 像素红测同样捕捉四个采样点全为背景 `[13,18,29]`（`rhvideo-slideshow-paused-pixels-red.log`）；不是只看 `naturalWidth`／状态。原因是 `.paused *` 连新图层的淡入动画也暂停在 opacity 0。现只暂停 Ken Burns 图片运动，手动切换的可见性过渡继续，不改变暂停状态或自动前进计时。Windows 像素专项已通过并检查截图 `rhfiles-e2e-26ORHf/paused-slideshow-pixels.png`；当前图层必须达到可见 opacity，随后四个真实像素都匹配，不能拿正在退出的旧图层冒充新图。
+
+Android 同样加入实际截图、contain 内容区域换算、当前图层 opacity 及四个颜色标记检查。第一轮新断言误把仍为旧插画的 5/6/7 号测试文件当标记图（`rhvideo-slideshow-paused-pixels-android-final.log` 记录真实插画颜色）；没有删除断言，而是将这三个专用夹具也统一为分段传输标记 PNG。**同一产品主 APK** `6acb73fdbf073fe2f309736fc48a060929446bbfa560eb38b7d8436af1e00a51`、最终探测包 `2c9e58c5015e5a35395db4fdedfd0f0fcb795eef62e168716bba6f15ed6e1e3f` 的完整 Single 场景已通过（`rhvideo-slideshow-marker-pixels-android-final.log`）：含旧原生视频／菜单／返回／账号用例和新增收藏筛选、小说排除、独立参数、暂停切换、队列快照、UI/API 收藏及重开首项。安装字节核对一致，仅自有模拟器；修复后的真实截图已检查。最新完整 Node **561/561、零跳过／失败**（`rhvideo-business-pixels-final-node.log`）。
+
+Windows 当前 EXE 为 `c8b551601fa2802e67ca9b86acbc5c101c4014b38c623e82772e5a1c628b958f`。该 EXE 的五项专项曾 **4 通过、1 失败**（`rhvideo-business-pixels-final-windows.log`），失败仍为 End：页面自己报告焦点正常，但窗口级被动观察没有收到键。等待自然焦点没有修好它。后续将测试键包补齐为现有原生键盘测试同样的 `nativeVirtualKeyCode`，并观察主窗／媒体库两边实际输入；不以主动聚焦、点击或直接调用业务接口代替按键，也不将这次字段修正未经实测就算作产品焦点修复。
+
+补齐键包后首轮五项 **5/5**（`rhvideo-slideshow-complete-native-key-packet-final.log`），随后追加投递目标断言的连续验证第一轮仍失败（`rhvideo-native-key-packet-repeat-1.log`）：主窗口／媒体库窗口均未捕获 End，自然焦点已就绪，放映计时持续正常。**完整键包不是根因修复**，三轮计划在首个失败后终止，没有声称重复三轮通过。最新完整 Node 仍为 **561/561、零跳过／失败**（`rhvideo-business-pixels-verified-node.log`）。已修复的像素／收藏用例与这一未解决输入问题分别记录，不用单测数或一轮绿色覆盖实际失败。
+
+仍须继续：新 ZIP 导出、普通收藏点击浏览与原版 `openFavBrowse` 混合图片／视频队列的对应、连续条带的竖向末端停止／横向无缝循环及按键／滚轮倍率、其余全量功能／参数边界核对、手机文档选择器的旋转／折叠／页面销毁、Android 媒体库自身关闭回执、最新版完整原生回归和同质量性能等。此前完整原生 67/68 的间歇失败、4–5 秒首帧没有被本轮参数／备份修复证明已消失。尚未发布新包，也未替换正式 Windows 实例或操作真机。
 
 ## 2026-10-28 回执读取的串行饥饿（专项通过，整轮仍有失败）
 

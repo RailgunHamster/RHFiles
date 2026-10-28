@@ -28,6 +28,16 @@ class RhVideoClientTest {
   private fun json(value:String)=server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody(value))
   private fun awaitState(check:()->Boolean){val end=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);while(!check()){assertTrue("Native operation did not finish",System.nanoTime()<end);Thread.sleep(10)}}
   private fun login(){json("""{"access_token":"test-native-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));assertEquals("/api/v1/auth/login",server.takeRequest().path)}
+  @Test fun configurationUsesAuthenticatedFixedRoutesAndNeverReplaysConsumedRestore(){
+    login();val document=JSONObject("""{"format":"RHVideo.config-backup","version":1,"created_at":"2026-10-28T00:00:00Z","favorites":[],"watch_folders":[],"reading_progress":[],"ui_preferences":{"page_volume":"0.2"}}""")
+    json(document.toString());val exported=client.request("configuration.export",JSONObject().put("preferences",document.getJSONObject("ui_preferences"))) as JSONObject
+    val download=server.takeRequest();assertEquals("/api/v1/config-backups/export",download.path);assertEquals("Bearer test-native-token",download.getHeader("Authorization"));assertFalse(exported.toString().contains("test-native-token"))
+    json("""{"applied":false,"favorites":{"total":0,"add":0,"existing":0,"unmatched":0},"watch_folders":{"total":0,"add":0,"existing":0,"skipped":0},"reading_progress":{"total":0,"update":0,"kept":0,"unmatched":0},"preferences":1,"issues":[],"ui_preferences":{"page_volume":"0.2"}}""")
+    val preview=client.request("configuration.preview",JSONObject().put("document",document)) as JSONObject;assertEquals("/api/v1/config-backups/preview",server.takeRequest().path)
+    json("""{"applied":true,"favorites":{"total":0,"add":0,"existing":0,"unmatched":0},"watch_folders":{"total":0,"add":0,"existing":0,"skipped":0},"reading_progress":{"total":0,"update":0,"kept":0,"unmatched":0},"preferences":1,"issues":[],"ui_preferences":{"page_volume":"0.2"}}""");json("""{"video_ids":[],"picture_ids":[],"novel_ids":[]}""")
+    assertTrue((client.request("configuration.restore",JSONObject().put("ticket",preview.getString("ticket"))) as JSONObject).getBoolean("applied"));assertEquals("/api/v1/config-backups/restore",server.takeRequest().path);assertEquals("/api/v1/favorites/ids",server.takeRequest().path)
+    val count=server.requestCount;try{client.request("configuration.restore",JSONObject().put("ticket",preview.getString("ticket")));fail("Consumed restore replayed")}catch(_:IllegalStateException){};assertEquals(count,server.requestCount)
+  }
   @Test fun rotationIsAccountScopedAndStalePreferenceSnapshotsCannotUndoThePlayer(){
     login();val generation=client.sessionGeneration();val old=client.request("preferences",JSONObject()) as JSONObject;assertFalse(old.getBoolean("autoRotate"))
     assertTrue(client.rotationPreference(generation,true));client.request("preferences",JSONObject().put("value",old));assertTrue((client.request("preferences",JSONObject()) as JSONObject).getBoolean("autoRotate"))

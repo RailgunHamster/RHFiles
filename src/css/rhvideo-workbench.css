@@ -309,7 +309,9 @@ body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
   transition: none;
   animation: none;
 }
-.wb-viewer-surface.paused * {
+/* Pause content motion, not the visibility transition of a manually selected
+ * slide: freezing the new layer at opacity 0 leaves a decoded picture black. */
+.wb-viewer-surface.paused .ken-burns > img {
   animation-play-state: paused;
 }
 .wb-content progress {
@@ -380,3 +382,4 @@ body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
 .mobile-client .library-header{flex-wrap:wrap;gap:8px}
 .mobile-client .header-actions{flex-wrap:wrap;justify-content:flex-end;max-width:100%}
 #wb-image-preview .wb-content{width:100%;min-width:0}
+.wb-configuration{margin-top:24px;border-top:1px solid var(--line,#dfe4ed);padding-top:16px}.wb-configuration>p{color:var(--muted,#697386);line-height:1.7}.wb-configuration .wb-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.wb-configuration .wb-metrics article{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line,#dfe4ed);padding:12px;border-radius:12px}.wb-configuration .wb-metrics strong{font-size:24px}.wb-configuration .wb-metrics small{color:var(--muted,#697386);line-height:1.6}#wb-slideshow-progress{min-width:130px;flex:1}#wb-slideshow-position{font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap}

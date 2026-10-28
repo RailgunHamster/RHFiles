@@ -3,7 +3,7 @@
   'use strict';
   let sequence=0;
   const pending=new Map();
-  const listeners=new Map(),events=new Set(['rhvideo-favorite','rhvideo-preview-mark','rhvideo-preview-result','rhvideo-parent-preview','rhvideo-playback-error','rhvideo-media-action']);
+  const listeners=new Map(),events=new Set(['rhvideo-favorite','rhvideo-preview-mark','rhvideo-preview-result','rhvideo-parent-preview','rhvideo-playback-error','rhvideo-media-action','rhvideo-configuration-preview','rhvideo-configuration-export']);
   window.RHVideoBridge.onmessage=event=>{
     let response;try{response=JSON.parse(event.data);}catch{return;}
     const job=pending.get(response.id);if(!job)return;

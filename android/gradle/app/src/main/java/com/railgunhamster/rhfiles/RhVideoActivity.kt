@@ -27,13 +27,36 @@ class RhVideoActivity:AppCompatActivity() {
   private val io=Executors.newFixedThreadPool(4)
   private val client by lazy{RhVideoClient.get(this)}
   private var exportText:String?=null
+  private var exportConfiguration:JSONObject?=null
+  private var configurationPick:JSONObject?=null
   private data class ExportBuffer(val ticket:String,val generation:Long,val text:StringBuilder=StringBuilder(),var index:Int=0,var bytes:Int=0,var touched:Long=android.os.SystemClock.elapsedRealtime())
   private var exportBuffer:ExportBuffer?=null
   private var presentation:RhVideoPresentation?=null
   private var mediaEvents:java.io.Closeable?=null
   private val exportDocument=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->
-    val text=exportText;exportText=null
-    if(uri!=null&&text!=null)io.execute{try{contentResolver.openOutputStream(uri,"wt")?.use{it.write(text.toByteArray(Charsets.UTF_8))}?:error("无法写入文件");runOnUiThread{android.widget.Toast.makeText(this,"已导出",android.widget.Toast.LENGTH_SHORT).show()}}catch(e:Exception){runOnUiThread{android.widget.Toast.makeText(this,"导出失败：${e.message}",android.widget.Toast.LENGTH_LONG).show()}}}
+    val text=exportText;val context=exportConfiguration;exportText=null;exportConfiguration=null
+    if(uri==null){if(context!=null)configurationEvent("export",context,JSONObject().put("saved",false));return@registerForActivityResult}
+    if(text!=null)io.execute{try{
+      if(context!=null)check(client.contextMatches(context,true)){"媒体账户已改变，备份未保存"}
+      contentResolver.openOutputStream(uri,"wt")?.use{it.write(text.toByteArray(Charsets.UTF_8))}?:error("无法写入文件")
+      if(context!=null)configurationEvent("export",context,JSONObject().put("saved",true).put("path",uri.toString()))
+      else runOnUiThread{android.widget.Toast.makeText(this,"已导出",android.widget.Toast.LENGTH_SHORT).show()}
+    }catch(e:Exception){if(context!=null)configurationEvent("export",context,JSONObject().put("error",e.message?:"备份写入失败"))else runOnUiThread{android.widget.Toast.makeText(this,"导出失败：${e.message}",android.widget.Toast.LENGTH_LONG).show()}}}
+  }
+  private val configurationDocument=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->
+    val context=configurationPick;configurationPick=null
+    if(context!=null){if(uri==null)configurationEvent("preview",context,JSONObject().put("picked",false))else io.execute{try{configurationEvent("preview",context,previewConfiguration(uri,context))}catch(e:Exception){configurationEvent("preview",context,JSONObject().put("error",e.message?:"配置备份读取失败"))}}}
+  }
+  private fun configurationEvent(kind:String,context:JSONObject,value:JSONObject){
+    runOnUiThread{if(!isDestroyed&&client.contextMatches(context,true))web.evaluateJavascript("window.RHVideoNative?.dispatch(${JSONObject.quote("rhvideo-configuration-$kind")},${JSONObject().put("generation",client.sessionGeneration()).put("result",value)})",null)}
+  }
+  private fun configurationUri(value:String)=Uri.parse(value).also{require(it.scheme=="content"&&!it.authority.isNullOrEmpty()){ "请选择系统文件选择器提供的配置文件位置" }}
+  private fun previewConfiguration(uri:Uri,context:JSONObject):JSONObject{
+    check(client.contextMatches(context,true)){"媒体账户已改变，未读取备份"}
+    val bytes=contentResolver.openInputStream(uri)?.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(16384);while(true){val size=input.read(buffer);if(size<0)break;require(out.size()+size<=RhVideoBackups.LIMIT){"配置备份不能超过 20 MB"};out.write(buffer,0,size)};out.toByteArray()}?:error("无法读取配置文件")
+    val document=try{JSONObject(bytes.toString(Charsets.UTF_8))}catch(_:Exception){error("文件不是有效的 JSON 配置备份")}
+    check(client.contextMatches(context,true)){"媒体账户已改变，未预览备份"}
+    return client.request("configuration.preview",JSONObject(context.toString()).put("document",document)) as JSONObject
   }
   override fun onCreate(savedInstanceState:Bundle?){
     super.onCreate(savedInstanceState)
@@ -63,7 +86,7 @@ class RhVideoActivity:AppCompatActivity() {
             val media=client.media(key,image=true)
             WebResourceResponse(media.type.substringBefore(';'),null,200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff","Content-Security-Policy" to "sandbox; default-src 'none'; style-src 'unsafe-inline'"),media.stream)
           }else{
-            require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json","/rhvideo/css/rhvideo.css","/rhvideo/css/rhvideo-mobile.css","/rhvideo/css/rhvideo-workbench.css","/rhvideo/js/automation-core.js","/rhvideo/js/rhvideo-model.js","/rhvideo/js/rhvideo-client.js","/rhvideo/js/rhvideo-mobile.js","/rhvideo/js/rhvideo-workbench.js","/rhvideo/js/rhvideo-index.js","/rhvideo/js/rhvideo-refresh.js","/rhvideo/js/rhvideo-worker.js","/rhvideo/js/rhvideo-search.js","/rhvideo/js/rhvideo-tags.js","/rhvideo/vendor/pinyin-pro/pinyin-pro.js"))
+require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json","/rhvideo/css/rhvideo.css","/rhvideo/css/rhvideo-mobile.css","/rhvideo/css/rhvideo-workbench.css","/rhvideo/js/automation-core.js","/rhvideo/js/rhvideo-model.js","/rhvideo/js/rhvideo-client.js","/rhvideo/js/rhvideo-mobile.js","/rhvideo/js/rhvideo-configuration.js","/rhvideo/js/rhvideo-workbench.js","/rhvideo/js/rhvideo-index.js","/rhvideo/js/rhvideo-refresh.js","/rhvideo/js/rhvideo-worker.js","/rhvideo/js/rhvideo-search.js","/rhvideo/js/rhvideo-tags.js","/rhvideo/vendor/pinyin-pro/pinyin-pro.js"))
             val mime=when{path.endsWith(".html")->"text/html";path.endsWith(".css")->"text/css";path.endsWith(".json")->"application/json";else->"application/javascript"}
             val input=if(path.endsWith(".html")){
               val html=assets.open(path.removePrefix("/")).bufferedReader().use{it.readText()}
@@ -94,6 +117,17 @@ class RhVideoActivity:AppCompatActivity() {
             val outgoingGridGeneration=if(action in listOf("connect","register","logout"))runCatching{client.sessionGeneration()}.getOrNull()else null
             if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}}
             val value=when(action){
+              "configuration.preview"->{
+                if(args.has("path"))previewConfiguration(configurationUri(args.getString("path")),contextArgs)
+                else{check(configurationPick==null){"已有配置文件选择器打开"};configurationPick=contextArgs;runOnUiThread{try{configurationDocument.launch(arrayOf("application/json","text/plain","application/octet-stream"))}catch(e:Exception){configurationPick=null;configurationEvent("preview",contextArgs,JSONObject().put("error",e.message?:"无法打开系统文件选择器"))}};JSONObject().put("requested",true)}
+              }
+              "configuration.export"->{
+                val backup=client.request(action,args) as JSONObject;val text=backup.toString(2);require(text.toByteArray(Charsets.UTF_8).size<=RhVideoBackups.LIMIT){"配置备份超过 20 MB"}
+                if(args.has("path")){
+                  val uri=configurationUri(args.getString("path"));check(client.contextMatches(contextArgs,true)){"媒体账户已改变，未保存备份"}
+                  contentResolver.openOutputStream(uri,"wt")?.use{it.write(text.toByteArray(Charsets.UTF_8))}?:error("无法写入配置文件");JSONObject().put("saved",true).put("path",uri.toString())
+                }else{check(exportText==null){"已有导出操作"};exportText=text;exportConfiguration=contextArgs;runOnUiThread{try{exportDocument.launch("RHVideo-configuration.json")}catch(e:Exception){exportText=null;exportConfiguration=null;configurationEvent("export",contextArgs,JSONObject().put("error",e.message?:"无法打开系统保存选择器"))}};JSONObject().put("requested",true)}
+              }
               "player.close","player.back"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(PlaybackActivity.rhControl(JSONObject().put("command",if(action=="player.back")"back"else"close")))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "page.volume"->{val value=args.getInt("value");require(value in 0..100);val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(RhVideoVolume.set(value))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "export.chunk"->{

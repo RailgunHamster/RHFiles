@@ -23,6 +23,8 @@ use tauri::{AppHandle, Manager, Emitter};
 use url::Url;
 #[path = "rhvideo_contract.rs"]
 mod contract;
+#[path = "rhvideo_config.rs"]
+mod configuration;
 
 const JSON_LIMIT: usize = 32 * 1024 * 1024;
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -1127,7 +1129,25 @@ fn native_available() -> bool {
     }
 }
 #[cfg(windows)]
+fn configuration_picker()->Result<Option<String>,String>{
+    use windows::{core::PCWSTR,Win32::{System::Com::*,UI::Shell::*}};
+    unsafe{
+        CoInitializeEx(None,COINIT_APARTMENTTHREADED).ok().map_err(|e|e.to_string())?;
+        struct Com;impl Drop for Com{fn drop(&mut self){unsafe{CoUninitialize()}}}let _com=Com;
+        let dialog:IFileOpenDialog=CoCreateInstance(&FileOpenDialog,None,CLSCTX_INPROC_SERVER).map_err(|e|e.to_string())?;
+        let title:Vec<u16>="选择 RHVideo 配置备份\0".encode_utf16().collect();dialog.SetTitle(PCWSTR(title.as_ptr())).map_err(|e|e.to_string())?;
+        dialog.SetOptions(dialog.GetOptions().map_err(|e|e.to_string())?|FOS_FORCEFILESYSTEM|FOS_FILEMUSTEXIST).map_err(|e|e.to_string())?;
+        if let Err(e)=dialog.Show(None){if e.code().0 as u32==0x800704c7{return Ok(None);}return Err(e.to_string());}
+        let p=dialog.GetResult().map_err(|e|e.to_string())?.GetDisplayName(SIGDN_FILESYSPATH).map_err(|e|e.to_string())?;
+        let path=p.to_string().map_err(|e|e.to_string());CoTaskMemFree(Some(p.0.cast()));path.map(Some)
+    }
+}
+#[cfg(windows)]
 fn export_dialog(text: &str) -> Result<Value, String> {
+    export_dialog_named(text,"RHVideo-selection.json")
+}
+#[cfg(windows)]
+fn export_dialog_named(text: &str,name:&str) -> Result<Value, String> {
     use windows::{
         core::PCWSTR,
         Win32::{System::Com::*, UI::Shell::*},
@@ -1145,7 +1165,7 @@ fn export_dialog(text: &str) -> Result<Value, String> {
         let _com = Com;
         let dialog: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)
             .map_err(|e| e.to_string())?;
-        let name: Vec<u16> = "RHVideo-selection.json\0".encode_utf16().collect();
+        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
         dialog
             .SetFileName(PCWSTR(name.as_ptr()))
             .map_err(|e| e.to_string())?;
@@ -1674,6 +1694,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                     Ok(state())
                 };
             }
+            configuration::clear();
             GENERATION.fetch_add(1, Ordering::SeqCst);
             slot.take();
             drop(slot);
@@ -1684,6 +1705,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             return Ok(state());
         }
         "connect" | "register" => {
+            configuration::clear();
             flush_playback();
             let generation = {
                 let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
@@ -1858,6 +1880,35 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 .map(|p| session.asset(safe_image_path(p.as_str().ok_or("图片路径无效")?)?, true))
                 .collect::<Result<Vec<_>, String>>()?;
             Ok(json!(urls))
+        }
+        "configuration.export" => {
+            let preferences=args.get("preferences").cloned().unwrap_or(json!({}));configuration::preferences(&preferences)?;
+            let value=session.request(reqwest::Method::POST,"api/v1/config-backups/export",&[],Some(json!({"ui_preferences":preferences}))).await?;
+            configuration::document(&value)?;let text=serde_json::to_string_pretty(&value).map_err(|_|"无法生成配置备份")?;
+            if text.len()>configuration::LIMIT{return Err("配置备份超过 20 MB".into());}
+            if let Some(path)=args["path"].as_str(){
+                use std::io::Write;
+                if !std::path::Path::new(path).is_absolute(){return Err("导出位置必须是本机完整路径".into());}
+                // A script's explicit path never silently replaces an existing file.
+                let mut output=std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e|format!("无法创建配置备份：{e}"))?;
+                output.write_all(text.as_bytes()).map_err(|e|format!("配置备份写入失败：{e}"))?;return Ok(json!({"saved":true,"path":path}));
+            }
+            #[cfg(windows)]{return tauri::async_runtime::spawn_blocking(move||export_dialog_named(&text,"RHVideo-configuration.json")).await.map_err(|_|"备份保存结束")?;}
+            #[cfg(not(windows))]{let _=text;Err("当前平台尚未接入配置保存选择器".into())}
+        }
+        "configuration.preview" => {
+            let path=if let Some(path)=args.get("path"){Some(path.as_str().filter(|v|v.len()<=32768).ok_or("备份路径无效")?.to_owned())}else{
+                #[cfg(windows)]{tauri::async_runtime::spawn_blocking(configuration_picker).await.map_err(|_|"备份选择结束")??}
+                #[cfg(not(windows))]{return Err("当前平台尚未接入配置文件选择器".into());}
+            };
+            let Some(path)=path else{return Ok(json!({"picked":false}));};
+            let value=tauri::async_runtime::spawn_blocking(move||configuration::read(&path)).await.map_err(|_|"备份读取任务结束")??;
+            let result=session.request(reqwest::Method::POST,"api/v1/config-backups/preview",&[],Some(value.clone())).await?;
+            configuration::stage(session.generation,value,result)
+        }
+        "configuration.restore" => {
+            let value=configuration::consume(session.generation,text(&args,"ticket",128)?)?;
+            let result=session.request(reqwest::Method::POST,"api/v1/config-backups/restore",&[],Some(value)).await?;configuration::summary(&result,true)?;Ok(result)
         }
         "preferences" => {
             let value=native_preferences(&session,args.get("value"),None)?;

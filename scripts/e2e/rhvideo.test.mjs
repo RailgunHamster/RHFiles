@@ -17,7 +17,7 @@ async function target(app,file){
   },file+' packaged app window');
   const session=await cdpSession(found,30000);
   await until(()=>session.evaluate("!!globalThis.RHFilesAPI?.list().some(a=>['rhvideo.state','rhvideo.player.state','rhvideo.grid.state'].includes(a.id))"),'view actions registered');
-  const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
+  const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js','rhvideo-index.js','rhvideo-configuration.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
   for(const code of codes){const served=await session.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=text=>createHash('sha256').update(text).digest('hex');assert.equal(hash(served),hash(source),'The tested executable must embed the current '+code);}
   // These are video-list workflows. The independent primary-gallery cases
   // verify the reference default; do not rely on a hidden list being clickable.
@@ -332,6 +332,17 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
       try{await until(async()=>{const s=await invoke(native,'player.state');return s.renderedFrames>0&&s.durationMs>13000;},'actual RHVideo FileResponse streamed into native decoder',25000);}finally{await invoke(view,'player.close');native.close();}
     }
     await invoke(view,'favorite.toggle',{id:'real-video',kind:'video'});assert.equal((await invoke(view,'category',{kind:'favorite'})).total,1);
+    const backupFile=path.join(app.directory,'rhvideo-configuration.json');assert.equal((await invoke(view,'configuration.export',{path:backupFile})).saved,true);
+    const backup=JSON.parse(fs.readFileSync(backupFile,'utf8'));assert.equal(backup.format,'RHVideo.config-backup');assert.equal(backup.version,1);assert.equal(backup.favorites.length,1);assert(!JSON.stringify(backup).includes('fixture-only'),'Passwords never enter a metadata backup');
+    await invoke(view,'favorite.toggle',{id:'real-video',kind:'video'});assert.equal((await invoke(view,'category',{kind:'favorite'})).total,0);
+    const stagedBackup=await invoke(view,'configuration.preview',{path:backupFile});assert.equal(stagedBackup.preview.applied,false);assert.equal(stagedBackup.preview.favorites.add,1);assert.equal((await invoke(view,'state')).total,0,'Preview must not mutate favorites');
+    const previewGeneration=(await invoke(view,'state')).generation;
+    await assert.rejects(()=>view.evaluate('window.__TAURI__.core.invoke("rhvideo_request",'+JSON.stringify({action:'logout',args:{_sessionGeneration:previewGeneration-1}})+')'),/账户已改变/,'Rejected logout from an older account must not revoke the current backup preview');
+    await invoke(view,'settings.open');assert.equal(await view.evaluate('document.querySelectorAll(".wb-configuration .wb-metrics article").length'),4);assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);
+    await view.evaluate('document.querySelector(".wb-configuration").scrollIntoView({block:"center"});true');
+    const backupShot=await view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'rhvideo-configuration-preview.png'),Buffer.from(backupShot.data,'base64'));
+    const restoredBackup=await invoke(view,'configuration.restore',{ticket:stagedBackup.ticket});assert.equal(restoredBackup.applied,true);assert.equal(restoredBackup.favorites.add,1);assert.equal((await invoke(view,'state')).total,1,'Restore refreshes the real favorite catalog immediately');
+    await assert.rejects(()=>invoke(view,'configuration.restore',{ticket:stagedBackup.ticket}),/预览已改变|预览已失效/,'A consumed confirmation cannot restore again');await invoke(view,'panel.close',{id:'wb-settings'});
     assert.equal((await invoke(view,'category',{kind:'picture'})).items[0].id,'real-picture');
     await invoke(view,'media.open',{id:'real-picture',kind:'picture'});
     await until(()=>view.evaluate("document.getElementById('full-image').naturalWidth===1600&&document.getElementById('full-image').naturalHeight===1000"),'actual processed WebP decode').catch(async error=>{

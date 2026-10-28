@@ -29,6 +29,7 @@
             "rhvideo.workbench." + site,
           );
       const resolutions = new I.ResolveCache();
+      let configuration=null;
       let resolutionRevision = "",
         accountGeneration = null,
         resolutionGeneration = 0;
@@ -67,6 +68,8 @@
         mediaType: "",
         seed: 0,
         stay: 5,
+        favoriteStay: 5,
+        favoriteFadeMs: 800,
         videoStay: 15,
         overlap: true,
         ratio: 0.3,
@@ -75,7 +78,7 @@
         kenBurns: true,
         lanes: 1,
         vertical: false,
-        scrollSpeed: 60,
+        scrollSpeed: 400,
         perVideo: 8,
         mixPictures: false,
         readerTheme: "day",
@@ -219,6 +222,7 @@
         });
       }
       async function reset(authenticated) {
+        configuration?.reset();
         ctx.invalidateReads();
         const version=++epoch;
         resolutions.clear();
@@ -900,6 +904,7 @@
       );
       action("selection.result", object(), () => lastBatch, "read");
       action("selection.markCurrent", object(), async () => {
+        if($("wb-viewer")?.open&&viewer?.loadingMedia)throw Error("放映正在切换，请稍候再标记");
         if(!$("wb-viewer")?.open&&imageSession?.loading)throw Error("图片正在切换，请稍候再标记");
         const item = $("wb-viewer")?.open
           ? viewer?.current
@@ -1092,11 +1097,13 @@
             volume: [0, 100],
             stay: [0.1, 30],
             videoStay: [1, 300],
+            favoriteStay: [1, 60],
+            favoriteFadeMs: [100, 5000],
             min: [0, 30],
-            max: [0, 30],
+            max: [0, 60],
             ratio: [0, 1],
             segment: [1,300],
-            scrollSpeed: [0, 1000],
+            scrollSpeed: [0, 2000],
             seed: [0, 4294967295],
           };
           if (bounds[key] && (value < bounds[key][0] || value > bounds[key][1]))
@@ -1198,14 +1205,17 @@
               ["vertical", "竖向长卷", "bool"],
               ["lanes", "列数", "number"],
               ["scrollSpeed", "每秒滚动像素", "number"],
-              ["stay", "每张停留秒数", "number"],
-              ["videoStay", "混合放映每段视频秒数", "number"],
+              ["stay", "图片放映每张停留秒数", "number"],
               ["kenBurns", "缓慢缩放平移", "bool"],
               ["overlap", "重叠过渡", "bool"],
               ["ratio", "过渡时长比例", "number"],
               ["min", "过渡下限秒数", "number"],
               ["max", "过渡上限秒数", "number"],
             ],
+          ],
+          [
+            "喜爱自动放映",
+            [["favoriteStay","每张图片停留秒数","number"],["videoStay","每段视频停留秒数","number"],["favoriteFadeMs","交叉淡化毫秒数","number"]],
           ],
           [
             "阅读",
@@ -1270,6 +1280,7 @@
           ),
           button("重置当前账户偏好", "preferences.reset"),
         );
+        configuration.render(root);
         return { opened: true };
       });
       const shortcutDefaults = {
@@ -1381,6 +1392,7 @@
                 ? "image"
                 : null;
           if (!scope) return;
+          if(scope==='viewer'&&['Home','End'].includes(event.code)&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey){event.preventDefault();event.stopImmediatePropagation();void invoke('viewer.seek',{ratio:event.code==='Home'?0:1}).catch(notice);return;}
           const combo =
             (event.ctrlKey ? "Ctrl+" : "") +
             (event.altKey ? "Alt+" : "") +
@@ -3459,7 +3471,7 @@
               mode === "strip" && kind !== "gallery"
                 ? "picture"
                 : kind === "favorite"
-                  ? ""
+                  ? c.mediaType
                   : kind === "gallery"
                     ? ""
                     : "picture",
@@ -3482,12 +3494,13 @@
           );
           root.replaceChildren();
           const controls = el("div", undefined, "wb-viewer-controls");
+          const favorite=button("收藏","viewer.favorite");favorite.id="wb-viewer-favorite";favorite.hidden=mode!=="slideshow";
           controls.append(
             button("暂停/继续", "viewer.toggle"),
             button("上一个", "viewer.step", { direction: -1 }),
             button("下一个", "viewer.step", { direction: 1 }),
-            button("切换方向", "viewer.direction"),
-            button("单列/双列", "viewer.lanes"),
+            ...(mode==='strip'?[button("切换方向", "viewer.direction"),button("单列/双列", "viewer.lanes")]:[]),
+            favorite,
             button("标记/取消待删除", "selection.markCurrent"),
             button("从头浏览", "viewer.restart"),
             button("设置", "settings.open"),
@@ -3586,14 +3599,18 @@
                 ratio: Math.max(0, Math.min(1, resume.ratio || 0)),
               });
           } else {
+            const progress=input("range",0,"wb-slideshow-progress");progress.min=0;progress.max=1000;progress.setAttribute("aria-label","放映总进度");progress.dataset.apiAction="rhvideo.viewer.seek";
+            const label=el("span");label.id="wb-slideshow-position";
+            listen(progress,"change",()=>viewer?.token===token?invoke("viewer.seek",{ratio:Number(progress.value)/1000}).catch(notice):{stale:true},"viewer.progress");
+            controls.append(progress,label);viewer.progress=progress;viewer.progressLabel=label;
             const remembered =
-              resume?.signature === signature
+              source!=="favorite"&&resume?.signature === signature
                 ? viewer.queue.findIndex((v) => v.key === resume.key)
                 : -1;
             await slide(remembered >= 0 ? remembered : 0);
           }
           animation = requestAnimationFrame(tick);
-          return { total: result.total, mode };
+          return { total: viewer.length, mode };
         },
       );
       function layoutStrip() {
@@ -3751,28 +3768,49 @@
         paint.lineWidth = 2;
         paint.strokeRect(start * scale, 1, Math.max(3, length * scale), 38);
       }
-      async function slide(index) {
+      function slideshowPlan(v){
+        const c=config(),signature=JSON.stringify([v.source,c.stay,c.favoriteStay,c.videoStay]);
+        if(v.planSignature!==signature){v.planSignature=signature;v.plan=I.slideshowPlan(v.queue,c,v.source);}
+        return v.plan;
+      }
+      function paintSlideshowProgress(v){
+        if(!v.progress)return;
+        const plan=slideshowPlan(v),elapsed=(plan.prefix[v.index]||0)+Math.min(plan.durations[v.index]||0,v.elapsed);
+        if(document.activeElement!==v.progress)v.progress.value=String(Math.round(elapsed/Math.max(0.001,plan.total)*1000));
+        v.progressLabel.textContent=`${v.index+1}/${v.length} · ${RHVideoModel.clock(elapsed)} / ${RHVideoModel.clock(plan.total)}`;
+      }
+      function refreshViewer(){
+        const v=viewer,button=$("wb-viewer-favorite");if(!v||!button)return;
+        const item=v.current,target=item?.kind==="frame"?{kind:"video",id:item.videoId}:item,key=target&&I.key(target);
+        button.hidden=v.mode!=="slideshow"||!["video","picture"].includes(target?.kind)||!target?.id;
+        button.textContent=state.favorites.has(key)?"取消收藏":"收藏";
+        button.setAttribute("aria-pressed",String(state.favorites.has(key)));
+        button.disabled=!!v.loadingMedia||state.favoriteBusy.has(key);
+      }
+      action("viewer.favorite",object(),async()=>{
+        const v=viewer,current=v?.current,item=current?.kind==="frame"?{kind:"video",id:current.videoId}:current;
+        if(!$("wb-viewer")?.open||v.mode!=="slideshow"||!item||!["video","picture"].includes(item.kind))throw Error("当前没有可收藏的放映项目");
+        if(v.loadingMedia)throw Error("放映正在切换，请稍候再收藏");
+        try{return await invoke("favorite.toggle",{kind:item.kind,id:item.id});}
+        finally{if(viewer===v)refreshViewer();}
+      },"write");
+      async function slide(index,elapsed=0) {
         const v = viewer;
         if (!v) return;
-        const c = config();
+        if(!v.length)throw Error("没有符合筛选条件的放映项目");
+        const c = I.slideshowSettings(config(),v.source);
         const transitionTicket = (v.transitionTicket || 0) + 1;
         v.transitionTicket = transitionTicket;
         v.index = (index + v.length) % v.length;
         v.elapsed = 0;
         v.loadingMedia = true;
-        const result = await send("query", {
-            ...v.args,
-            allKeys: false,
-            selected: [v.queue[v.index].key],
-            offset: 0,
-            limit: 1,
-          }),
-          media = result.items[0];
-        if (viewer !== v) return;
-        v.current = media;
+        refreshViewer();
+        // Like favshowItems, this is the queue captured when opening the viewer.
+        // Removing a favorite must not remove it from an already-open slideshow.
+        const media = v.queue[v.index];
         const layer = el("div", undefined, "wb-slide");
         layer.style.setProperty("--stay", c.stay + "s");
-        layer.style.setProperty("--fade", I.transition(c).fade + "s");
+        layer.style.setProperty("--fade", c.fade + "s");
         layer.classList.toggle("ken-burns", c.kenBurns);
         if (media.kind === "video") {
           await invoke("viewer.video", { id: media.id, title: media.title });
@@ -3788,7 +3826,7 @@
             await new Promise((resolve) => setTimeout(resolve, 200));
           }
           v.videoFadeStart = performance.now();
-          v.videoFadeSeconds = I.transition(c).fade;
+          v.videoFadeSeconds = c.fade;
           await syncPresentation(c.overlap ? 0 : 1);
           if (!v.running)
             await native("presentation.control", { command: "pause" });
@@ -3813,18 +3851,21 @@
         // Slow networks and rapid manual navigation must not fade to black.
         const old = v.surface.querySelector(".wb-slide:not(.outgoing)");
         v.surface.append(layer);
-        v.elapsed = 0;
+        v.elapsed = Math.max(0,Math.min(slideshowPlan(v).durations[v.index],elapsed));
+        v.current = media;
         v.loadingMedia = false;
+        refreshViewer();
         if (old) {
           old.classList.add("outgoing");
-          if (c.overlap) old.classList.add("holding");
-          setTimeout(() => old.remove(), I.transition(c).fade * 1000 + 50);
+          if (c.overlap&&v.source!=='favorite') old.classList.add("holding");
+          setTimeout(() => old.remove(), c.fade * 1000 + 50);
         }
         while (v.surface.children.length > 3) v.surface.firstChild.remove();
         v.surface.style.setProperty(
           "--slide-progress",
           (v.index + 1) / v.length,
         );
+        paintSlideshowProgress(v);
         return { index: v.index, total: v.length };
       }
       function tick(now) {
@@ -3833,7 +3874,7 @@
         const dt = Math.min(0.1, (now - v.last) / 1000);
         v.last = now;
         if (v.running && !document.hidden && !v.loadingMedia && viewerIsTop()) {
-          const c = config();
+          const c = I.slideshowSettings(config(),v.source);
           if (v.mode === "strip") {
             const prop = c.vertical ? "scrollTop" : "scrollLeft",
               extent = c.vertical
@@ -3868,7 +3909,7 @@
               v.elapsed >=
                 (v.current?.kind === "video"
                   ? c.videoStay
-                  : I.transition(c).stay) &&
+                  : c.stay) &&
               !v.busy
             ) {
               v.busy = true;
@@ -3883,6 +3924,7 @@
                 });
             }
           }
+          if(v.mode==='slideshow')paintSlideshowProgress(v);
         }
         animation = requestAnimationFrame(tick);
       }
@@ -3911,11 +3953,13 @@
           running: v.running,
           loading: !!v.loadingMedia,
           nativeVideo: !!v.videoActive,
+          ...(v.current?{current:{id:v.current.id,kind:v.current.kind,title:v.current.title,...(v.current.kind==="frame"?{videoId:v.current.videoId}:{})},favorite:state.favorites.has(v.current.kind==="frame"?"video:"+v.current.videoId:I.key(v.current))}:{}),
+          ...(v.mode==='slideshow'?{elapsed:v.elapsed,duration:slideshowPlan(v).durations[v.index],totalDuration:slideshowPlan(v).total}:{}),
           tiles: v.tiles.size,
           ratio: v.layout
             ? (v.vertical ? v.surface.scrollTop : v.surface.scrollLeft) /
               Math.max(1, v.physicalMax)
-            : (v.index + 1) / Math.max(1, v.length),
+            : ((slideshowPlan(v).prefix[v.index]||0)+v.elapsed)/Math.max(0.001,slideshowPlan(v).total),
         };
       }
       action("viewer.state", object(), viewerSnapshot, "read");
@@ -3965,13 +4009,14 @@
           const c = config(),
             v = viewer;
           if (v.mode === "slideshow")
-            return slide(Math.min(v.length - 1, Math.floor(ratio * v.length)));
+            {const target=I.slideshowTarget(slideshowPlan(v),ratio);return slide(target.index,target.elapsed);}
           v.surface[c.vertical ? "scrollTop" : "scrollLeft"] =
             ratio * v.physicalMax;
           return { ratio };
         },
       );
       action("viewer.direction", object(), () => {
+        if(viewer&&viewer.mode!=='strip')throw Error("切换方向仅适用于连续浏览");
         prefs.vertical = !config().vertical;
         save();
         if (viewer)
@@ -3982,6 +4027,7 @@
         return { vertical: prefs.vertical };
       });
       action("viewer.lanes", object(), () => {
+        if(viewer&&viewer.mode!=='strip')throw Error("单列／双列仅适用于连续浏览");
         prefs.lanes = config().lanes === 1 ? 2 : 1;
         save();
         if (viewer)
@@ -4285,6 +4331,12 @@
         worker?.terminate();
         clearTimeout(saveTimer);
       });
+      configuration=RHVideoConfiguration.install({api,action,native,object,string,state,button,el,listen,notice,mobile:ctx.mobile,config,
+        rawPreferences:()=>prefs.referencePreferences||{},
+        async applyPreferences(patch,original){const version=epoch;await ensure();if(version!==epoch)throw Error("媒体账户已改变");clearTimeout(saveTimer);await saveChain.catch(()=>{});if(version!==epoch)throw Error("媒体账户已改变");
+          const value={...prefs,...patch,referencePreferences:original};await native("preferences",{value});if(version!==epoch)throw Error("媒体账户已改变");prefs=value;if(Object.hasOwn(patch,"autoRotate"))await native("rotation.preference",{enabled:patch.autoRotate});applyPreferences();await syncVolume();},
+        async refresh(){invalidateCatalog();await load();}
+      });
       return {
         leaveGallery(){gallery.load++;},
         refreshGallery(refresh=false,resetPage=false){if(resetPage)gallery.offset=0;return loadGallery(refresh);},
@@ -4308,7 +4360,8 @@
         rotationChanged(enabled){prefs.autoRotate=!!enabled;const control=document.querySelector('[data-preference="autoRotate"]');if(control)control.checked=!!enabled;},
         closeImage(){const id=imageSession?.previewId;singlePlayIntent++;imageSession=null;imageToken++;return id;},
         canPlayImage(){return !imageSession?.loading&&imageSession?.current?.kind==="frame";},
-        previewTarget(kind,id){const item=$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},
+        refreshViewer,
+        previewTarget(kind,id){const item=$("wb-viewer")?.open&&!viewer?.loadingMedia?viewer?.current:$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},
         async receivePreviewResult(result){showPreviewResult(result);if(!result.running&&result.items.some(i=>i.success)){invalidateCatalog();await load();}},
         invalidate(kind) {
           invalidateCatalog(kind);

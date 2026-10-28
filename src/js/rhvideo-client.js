@@ -165,6 +165,7 @@
     trimCards();
   }
   function paintFavorite(key){
+    workbench?.refreshViewer();
     if($('image-dialog').open)workbench?.refreshImage();
     if(reader.book&&key==='novel:'+reader.book.id){const button=$('reader-favorite');if(button){button.classList.toggle('active',state.favorites.has(key));button.setAttribute('aria-pressed',String(state.favorites.has(key)));button.title=state.favorites.has(key)?'取消收藏本书':'收藏本书';}}
     // Updating one heart must not discard decoded images or scroll/card state.
