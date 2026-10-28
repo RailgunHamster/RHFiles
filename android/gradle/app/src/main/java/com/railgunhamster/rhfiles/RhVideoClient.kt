@@ -479,8 +479,9 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       expire(value.session,response.code)
       check(response.isSuccessful&&live(value.session)){"媒体读取失败（HTTP ${response.code}）"}
       if(position>0)require(response.code==206&&response.header("Content-Range")?.startsWith("bytes $position-")==true){"服务器未正确支持视频跳转"}
-      val body=response.body?:error("媒体为空");val type=body.contentType()?.toString()?:"application/octet-stream"
-      if(image)require(type.startsWith("image/")&&body.contentLength()<=32*1024*1024){"无效或过大的图片"}
+      val body=response.body?:error("媒体为空");val claimed=body.contentType()?.toString()?:"application/octet-stream"
+      if(image)require(body.contentLength()<=32*1024*1024){"图片超过 32 MiB"}
+      val type=if(image)RhVideoImageMime.sniff(body.source(),claimed)else claimed
       val stream=object:FilterInputStream(body.byteStream()){
         var read=0L
         private fun checkSession(){if(!live(value.session))throw IOException("RHVideo 登录已结束")}

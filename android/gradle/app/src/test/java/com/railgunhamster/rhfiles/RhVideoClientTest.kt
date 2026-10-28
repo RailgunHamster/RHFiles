@@ -322,6 +322,19 @@ class RhVideoClientTest {
     client.logout();try{client.media(key,0,false);fail()}catch(_:Exception){}
     try{client.request("catalog",JSONObject());fail()}catch(_:Exception){}
   }
+  private fun thumbnailKey():String=(client.request("images",JSONObject().put("paths",JSONArray().put("/api/v1/videos/one/thumbnail"))) as JSONArray).getString(0).substringAfterLast('/')
+  @Test fun imageContentOverridesAnIncorrectServerMimeWithoutLosingThePrefix(){
+    login();val key=thumbnailKey();val bytes="RIFF\u0010\u0000\u0000\u0000WEBPVP8 body-图片".toByteArray()
+    server.enqueue(MockResponse().setHeader("Content-Type","application/octet-stream").setChunkedBody(okio.Buffer().write(bytes),3))
+    client.media(key,image=true).use{assertEquals("image/webp",it.type);assertArrayEquals(bytes,it.stream.readBytes())};server.takeRequest()
+  }
+  @Test fun anHtmlErrorCannotBecomeAnImageJustBecauseTheServerLabelsItAsOne(){
+    login();val key=thumbnailKey()
+    for(type in listOf("image/png","image/svg+xml","application/octet-stream")){
+      server.enqueue(MockResponse().setHeader("Content-Type",type).setBody("<!DOCTYPE html><html>upstream login failed</html>"))
+      try{client.media(key,image=true).use{};fail("Accepted an HTML error as $type")}catch(_:IllegalArgumentException){};server.takeRequest()
+    }
+  }
   @Test fun ignoresNeitherWrongRangeNorRedirectNorFailedLogin(){
     server.enqueue(MockResponse().setResponseCode(401));try{client.connect(JSONObject().put("server",server.url("/").toString()).put("username","x").put("password","y"));fail()}catch(_:Exception){}
     assertFalse(client.state().getBoolean("connected"));server.takeRequest()

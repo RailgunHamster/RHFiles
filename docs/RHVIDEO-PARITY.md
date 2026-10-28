@@ -4,6 +4,16 @@
 
 目标是 Windows 和 Android 都具有 RHVideo 的全部业务能力，界面可以重新组织，视频保持原生播放。不嵌套网站、不直接修改服务端数据库，也不把服务器的工作目录当成本机目录。
 
+## 2026-10-28 图片类型兼容与原生失败诊断（仍未完成整体验收）
+
+Android 曾只相信上游的 `Content-Type`：两条新增集成测试首先全部失败，分别复现有效 WebP 被 `application/octet-stream` 标签拒绝，以及 HTML 错误页被 `image/png` 标签接受。现与 Windows 一样检查内容：最多探测 64 字节前缀、五秒探测上限，不消费流中的字节、不先下载整图，仍保留 32 MiB 图片上限和账号失效检查；已知栅格签名决定 MIME，SVG 还须匹配显式 MIME 与 XML/SVG 开头。图片响应附加受限 CSP。完整 Android JVM **368/368**、Node **521/521**，零失败／跳过。原生单视频场景新增实际加载分段传输、错标类型 PNG 的断言及错误页面可见失败断言，不能用单元测试替代真实解码。
+
+完整同屏仍未通过。原主 APK `82b7826a…` 配合探测包 `5805ff6e…` 在失败诊断中又触发 `NoSuchFieldError: Companion`，是独立编译的探测包直接引用了发行 APK 被 R8 优化的 Kotlin 成员；已移除这条直接引用，保留公开 API 失败断言，诊断改为界面附着状态及媒体库自身公开 `grid.state`。随后同一产品 APK／探测包 `3d19538e…` 真正报告首组两格 `ERROR_CODE_DECODER_INIT_FAILED`，日志明确是 `c2.android.aac.decoder` 分配超时，不是图片或假成功状态。证据为短路径 QA 的 `rhvideo-grid-state-public-diagnostic-native.log`、`rhvideo-grid-state-public-failure-logcat.log`；不能据此解释此前有画面但主接口回执超时的全部现象。
+
+专用模拟器随后在没有启动 RHFiles 时也出现 SystemUI／系统服务 ANR，启动检查正确拒绝验收。仅重启自己创建的 `RHFilesRhVideoQA20261027`，随后用 6 GiB／6 vCPU 启动仍遇到系统级迟滞，说明不能把原因定为低内存；启动日志、原配置和失败保留。未修改生产 Windows 实例或真机。新图片修复 APK `03cb45a311bf5468550730f1de757bcd82b1ccff6aae5d68719f6c83363af7fc` 还须完成原生验收，不发布更新源、不将重建环境算成产品性能修复。
+
+另已核实正式主分支 `1a2e1a9` 的 Windows CI **40641064216**、macOS CI **40641064209** 均完成且 success；这不代表后续开发分支的 Android 验收已绿。
+
 ## 2026-10-28 Android 同屏操作与输入边界（新增 APK 验收尚未通过）
 
 开发代码补入每格原生收藏／暂存标记按钮，与共享 `grid.favorite`／`grid.mark`、`native.grid.control` 的同名命令使用同一业务入口。状态包括收藏忙碌／错误及暂存标记；正常关闭先释放播放器再一次性提交暂存，重复关闭不重放，切换账号的强制关闭不提交。切账号时按离开的 generation 关闭旧 Activity，迟到关闭不能作用于新账号。旧播放器回调也不能给替换后的格子添加首次画面／错误。另按实际原版 `toggleFavorite` 纠偏：过期输入须在接受操作前拒绝；已接受的收藏绑定固定媒体 ID，普通导航不能撤销它，后台仍校验账号有效性。

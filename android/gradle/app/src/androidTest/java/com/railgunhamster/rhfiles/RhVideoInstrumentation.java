@@ -16,9 +16,15 @@ public class RhVideoInstrumentation extends Instrumentation {
   private void require(boolean ok,String message)throws Exception{if(!ok)throw new Exception(message);}
   private boolean gridReady(JSONObject state)throws Exception{if(state==null)return false;JSONArray cells=state.optJSONArray("cells");if(cells==null||cells.length()!=4)return false;for(int i=0;i<cells.length();i++)if(!cells.getJSONObject(i).optBoolean("rendered"))return false;return cells.getJSONObject(0).optLong("positionMs")>500;}
   private JSONObject waitGrid(int count,boolean paused)throws Exception{
-    long end=System.currentTimeMillis()+30000;JSONObject state=null;
-    do{try{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==count;for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.optBoolean("rendered")&&cell.optBoolean("paused")==paused&&cell.optInt("playbackState")==3&&cell.optLong("renderedFrames")>0;if(!paused)ready&=cell.optBoolean("playing")&&cell.optLong("positionMs")>250&&cell.optLong("renderedFrames")>1;}if(ready)return state;}catch(Exception ignored){}Thread.sleep(200);}while(System.currentTimeMillis()<end);
-    android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("Native grid frames/state did not settle: "+state);
+    long end=System.currentTimeMillis()+30000;JSONObject state=null;String lastError="none";
+    do{try{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==count;for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.optBoolean("rendered")&&cell.optBoolean("paused")==paused&&cell.optInt("playbackState")==3&&cell.optLong("renderedFrames")>0;if(!paused)ready&=cell.optBoolean("playing")&&cell.optLong("positionMs")>250&&cell.optLong("renderedFrames")>1;}if(ready)return state;}catch(Exception error){lastError=error.toString();}Thread.sleep(200);}while(System.currentTimeMillis()<end);
+    // The release APK is R8-minified. Do not link a Kotlin Companion from the
+    // separately compiled probe: R8 can inline/remove it in the product APK.
+    android.util.Log.e("RHVideoQA","Grid public API failure: "+lastError+"; state="+state);
+    JSONObject diagnostic=new JSONObject();runOnMainSync(()->{try{diagnostic.put("activity",current==null?"none":current.getClass().getSimpleName());diagnostic.put("mainAttached",main!=null&&main.isAttachedToWindow());diagnostic.put("libraryAttached",library!=null&&library.isAttachedToWindow());}catch(Exception error){try{diagnostic.put("viewError",error.toString());}catch(Exception ignored){}}});
+    try{diagnostic.put("main",expression(main,"({hidden:document.hidden,bridge:!!window.RHFilesNative,api:typeof api,native:typeof api?.native})"));}catch(Exception error){diagnostic.put("mainError",error.toString());}
+    try{diagnostic.put("libraryGrid",action("grid.state",new JSONObject()));}catch(Exception error){diagnostic.put("libraryError",error.toString());}
+    android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("Native grid frames/state did not settle: "+state+"; API error: "+lastError+"; diagnostic: "+diagnostic);
   }
   private JSONArray gridIds(JSONObject state)throws Exception{JSONArray ids=new JSONArray();JSONArray cells=state.getJSONArray("cells");for(int i=0;i<cells.length();i++)ids.put(cells.getJSONObject(i).getString("id"));return ids;}
   private JSONObject gridControl(int target,String command,double value)throws Exception{return (JSONObject)mainAction("native.grid.control",new JSONObject().put("target",target).put("command",command).put("value",value));}
@@ -355,6 +361,33 @@ public class RhVideoInstrumentation extends Instrumentation {
   private void step(String name){Bundle value=new Bundle();value.putString("stream","STEP: "+name+"\n");sendStatus(0,value);}
   private Object nativeCall(String name,JSONObject p)throws Exception{step("native."+name);return expression(main,"api.native("+JSONObject.quote(name)+","+p+")");}
   private Object mainAction(String name,JSONObject p)throws Exception{step("files."+name);return expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke("+JSONObject.quote(name)+","+p+")");}
+  private void assertPreviewPixels()throws Exception{
+    long end=System.currentTimeMillis()+8000;String diagnostic="";
+    do{
+      JSONObject rect=(JSONObject)expression(library,"(()=>{const d=document.getElementById('wb-image-preview'),r=d?.querySelector('img')?.getBoundingClientRect();return {open:!!d?.open,viewport:innerWidth,x:r?.x||0,y:r?.y||0,width:r?.width||0,height:r?.height||0};})()");
+      int[] web={0,0,0};runOnMainSync(()->{library.getLocationOnScreen(web);web[2]=library.getWidth();});double scale=web[2]/rect.getDouble("viewport");
+      android.graphics.Bitmap pixels=getUiAutomation().takeScreenshot();boolean valid=pixels!=null&&rect.getBoolean("open")&&rect.getDouble("width")>0&&rect.getDouble("height")>0;StringBuilder colors=new StringBuilder();
+      if(valid)for(int corner=0;corner<4;corner++){
+        int x=web[0]+(int)((rect.getDouble("x")+rect.getDouble("width")*(corner%2==0?.25:.75))*scale),y=web[1]+(int)((rect.getDouble("y")+rect.getDouble("height")*(corner<2?.25:.75))*scale);
+        if(x<0||y<0||x>=pixels.getWidth()||y>=pixels.getHeight()){valid=false;break;}
+        int color=pixels.getPixel(x,y),r=(color>>16)&255,g=(color>>8)&255,b=color&255;colors.append(String.format(" %06x",color&0xffffff));
+        valid&=corner==0?r>160&&g<90&&b<90:corner==1?g>160&&r<90&&b<90:corner==2?b>160&&r<90&&g<90:r>160&&g>160&&b<90;
+      }
+      if(valid){try(FileOutputStream out=new FileOutputStream(new File(getTargetContext().getExternalFilesDir(null),"rhvideo-image-content-qa.png"))){pixels.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}finally{pixels.recycle();}return;}
+      if(pixels!=null)pixels.recycle();diagnostic=rect+"; actual pixels="+colors;Thread.sleep(100);
+    }while(System.currentTimeMillis()<end);
+    throw new Exception("Decoded image never appeared in the actual native screenshot: "+diagnostic);
+  }
+  private void checkImageContent()throws Exception{
+    action("image.preview",new JSONObject().put("path","/storage/pictures/0.svg").put("title","内容探测图片"));
+    long end=System.currentTimeMillis()+10000;boolean decoded=false;
+    do{decoded="true".equals(eval(library,"document.querySelector('#wb-image-preview img')?.naturalWidth===800&&document.querySelector('#wb-image-preview img')?.naturalHeight===500"));if(decoded)break;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    require(decoded,"A split, octet-stream PNG must decode through the real image proxy");assertPreviewPixels();action("panel.close",new JSONObject().put("id","wb-image-preview"));
+    action("image.preview",new JSONObject().put("path","/storage/pictures/owned-error.svg").put("title","错误响应"));
+    end=System.currentTimeMillis()+10000;boolean rejected=false;
+    do{rejected="true".equals(eval(library,"document.querySelector('#wb-image-preview .wb-content')?.textContent==='预览加载失败'"));if(rejected)break;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    require(rejected,"A mislabeled HTML error must settle visibly, never become an image: "+eval(library,"document.getElementById('wb-image-preview')?.textContent"));action("panel.close",new JSONObject().put("id","wb-image-preview"));
+  }
   private void checkNativeTrackControls(JSONObject state)throws Exception{
     JSONArray groups=state.getJSONObject("tracks").getJSONArray("groups");require(groups.length()>0,"Actual Media3 track list must be enumerable");
     for(int i=0;i<groups.length();i++){JSONObject group=groups.getJSONObject(i);if(!group.getString("type").equals("video"))continue;
@@ -448,7 +481,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, native frames, actual held-slider ABA, favorite/mark buttons and APIs, one-shot close, account dismissal, per-cell restoration, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}
       if("playlist".equals(args.getString("mode"))){checkReferencePlaylist();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference playlist segments, whole-file seek, native segment loop, global navigation, immutable pool, portrait projection, mode memory and native EOF close");finish(Activity.RESULT_OK,result);return;}
       if("preview".equals(args.getString("mode"))){checkPreparedTickets();checkLatestPlayIntent();checkReferencePreview();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference preview parent stack, native favorite and mark controls, one-shot stage results, independent prepared tickets, late preparation isolation and account boundaries");finish(Activity.RESULT_OK,result);return;}
-      if("single".equals(args.getString("mode"))){checkReferenceSingle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference single controls, native menus, one-item parents, per-child return identity and independent mode/account state");finish(Activity.RESULT_OK,result);return;}
+      if("single".equals(args.getString("mode"))){checkImageContent();checkReferenceSingle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference single controls, actual sniffed image decode/rejected HTML, native menus, one-item parents, per-child return identity and independent mode/account state");finish(Activity.RESULT_OK,result);return;}
       require(Boolean.TRUE.equals(expression(library,"RHVideoNative.request('folders',{kind:'video'}).then(Array.isArray)")),"Folder API must return a real array");
       if(Build.VERSION.SDK_INT>=30){int[] location={0,0},top={0};runOnMainSync(()->{library.getLocationOnScreen(location);top[0]=library.getRootWindowInsets().getInsets(WindowInsets.Type.statusBars()|WindowInsets.Type.displayCutout()).top;});require(location[1]>=top[0],"Status bar must not cover the library header");}
       require(eval(library,"(()=>{const side=document.querySelector('.library-sidebar').getBoundingClientRect(),main=document.querySelector('.library-main').getBoundingClientRect();return main.x<20&&side.bottom<=main.top+1&&document.documentElement.scrollWidth<=innerWidth+1;})()").equals("true"),"Phone layout must stack navigation above full-width content");
