@@ -1288,7 +1288,8 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option
         .map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
-    let webview:&tauri::Webview=window.as_ref();webview.set_focus().map_err(|e|e.to_string())?;
+    // The new WebView and its parent focus hook already handle keyboard focus.
+    // A duplicate COM MoveFocus can block initialization of the native outputs.
     grid_command("grid.state", &json!({}))
 }
 pub fn grid_command(action: &str, args: &Value) -> Result<Value, String> {
@@ -1417,15 +1418,31 @@ pub async fn play(
         window
     };
     trace_open(started,"window-ready");
-    window
-        .set_title(&format!("{title} · RHFiles"))
-        .map_err(|e| e.to_string())?;
-    window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())?;
-    let webview:&tauri::Webview=window.as_ref();webview.set_focus().map_err(|e|e.to_string())?;
-    trace_open(started,"window-focused");
-    let rotation_viewport=window_viewport(&window)?;
-    trace_open(started,"viewport-ready");
+    // Keep activation and its geometry read in one GUI transaction. Each
+    // separate getter otherwise waits behind newly queued WebView startup and
+    // focus work, before the native input has even been allowed to open.
+    // Wry already focuses the newly built WebView and handles WM_SETFOCUS on
+    // its parent. Repeating controller.MoveFocus while it is still starting can
+    // synchronously stall this GUI thread for two seconds. Keep native window
+    // activation; do not request the same COM focus transition a second time.
+    let view=window.clone();let display_title=format!("{title} · RHFiles");
+    let(tx,rx)=tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move||{
+        trace_open(started,"activation-main-entered");
+        let result=(||{
+            view.set_title(&display_title).map_err(|e|e.to_string())?;
+            view.show().map_err(|e|e.to_string())?;
+            trace_open(started,"window-shown");
+            view.set_focus().map_err(|e|e.to_string())?;
+            trace_open(started,"native-focus-ready");
+            trace_open(started,"window-focused");
+            let viewport=window_viewport(&view)?;
+            trace_open(started,"viewport-ready");
+            Ok::<_,String>(viewport)
+        })();let _=tx.send(result);
+    }).map_err(|e|e.to_string())?;
+    trace_open(started,"activation-dispatched");
+    let rotation_viewport=rx.await.map_err(|_|"播放器窗口已关闭".to_owned())??;
     let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
     trace_open(started,"warm-slot-ready");
     let mut guard = SurfaceGuard(vec![]);

@@ -62,6 +62,37 @@ const runCli=(app,window,action,args,key)=>new Promise((resolve,reject)=>{
   const child=spawn(process.execPath,['scripts/rhfiles-api.mjs','--port',String(app.port),'--window',window,'--timeout','5000','--wait','--key',key,'run',action,JSON.stringify(args)],{windowsHide:true});let stdout='',stderr='';
   child.stdout.on('data',part=>stdout+=part);child.stderr.on('data',part=>stderr+=part);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
 });
+test('native startup keeps real WebView keyboard focus without a second controller focus transition',native,async()=>{
+  const s=await setup({videoDuration:30});let player;
+  const key=async(code,key,windowsVirtualKeyCode)=>{await player.send('Input.dispatchKeyEvent',{type:'rawKeyDown',code,key,windowsVirtualKeyCode,nativeVirtualKeyCode:windowsVirtualKeyCode});await player.send('Input.dispatchKeyEvent',{type:'keyUp',code,key,windowsVirtualKeyCode,nativeVirtualKeyCode:windowsVirtualKeyCode});};
+  try{
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    // No Page.bringToFront, focus emulation, DOM focus(), or preparatory click:
+    // those would conceal a real keyboard-focus regression at startup.
+    await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0;},'initial actual native frame',25000);
+    const focus=await player.evaluate('({focused:document.hasFocus(),visible:document.visibilityState,active:document.activeElement?.tagName})');assert.equal(focus.focused,true,JSON.stringify(focus));assert.equal(focus.visible,'visible');assert(!['BUTTON','INPUT','SELECT','TEXTAREA'].includes(focus.active),'A new viewer starts on its keyboard surface, not a previously focused command');
+    await key('Space',' ',32);await until(async()=>{const value=await invoke(player,'player.state');return value.state===4;},'Space pauses the actual native input');
+    await key('Space',' ',32);await until(async()=>{const value=await invoke(player,'player.state');return value.state===3&&!value.pauseRequested;},'Space resumes the actual native input');
+    await key('Tab','Tab',9);assert.equal(await player.evaluate('document.activeElement.id'),'back','Tab can enter the real control strip without a mouse click');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});await until(async()=>{const value=await invoke(player,'player.state');return value.queue?.id==='video-1'&&value.renderedFrames>0;},'reused viewer really displays the next source',25000);
+    assert.equal(await player.evaluate('document.hasFocus()'),true);assert.equal(await player.evaluate('document.activeElement.id'),'back','Reusing the viewer keeps the existing focused control');
+    await invoke(s.view,'player.close');
+  }finally{player?.close();await s.close();}
+});
+
+test('grid startup keeps real WebView keyboard focus and keyboard-only control/close access',native,async()=>{
+  const s=await setup({videoDuration:30});let grid;
+  try{
+    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'two actual grid video outputs',25000);
+    const focus=await grid.evaluate('({focused:document.hasFocus(),visible:document.visibilityState,first:[...document.querySelectorAll("button")].find(node=>!node.disabled)?.id})');assert.equal(focus.focused,true,JSON.stringify(focus));assert.equal(focus.visible,'visible');
+    await grid.send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});await grid.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});assert.equal(await grid.evaluate('document.activeElement.id'),focus.first,'The first enabled grid command is keyboard accessible without a click');
+    await grid.send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await grid.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await until(async()=>{const value=await command(s.app,'grid.state');return value.cells.length===0;},'Escape really releases all grid players');
+    await until(async()=>!(await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json()).some(t=>new URL(t.url).pathname.endsWith('/rhvideo-grid.html')),'Keyboard close destroys the grid WebView',3000);
+  }finally{grid?.close();await s.close();}
+});
+
 test('player-owned close and back complete their public CLI runs instead of losing the result with the window',native,async()=>{
   const s=await setup();let player;
   try{

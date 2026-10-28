@@ -14,8 +14,9 @@ import {markerPixels} from './native-startup-pixels.mjs';
 import {startupScenarios,generateStartupMedia} from './rhvideo-startup-media.mjs';
 assert.equal(process.env.RHFILES_NATIVE_PLAYER_QA,'1','Opt in to the owned native-output diagnostic');
 const scenario=process.argv[2]||'h264-1080',format=startupScenarios[scenario];assert(format,'Unknown fixed startup scenario');
+const captureMode=process.argv[3]||'poll';assert(['poll','after-stats'].includes(captureMode),'Use poll or after-stats pixel sampling');
 const mediaRoot=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-startup-source-')),sourceFile=path.join(mediaRoot,'startup.mp4');
-let app,fixture,library,opening,started;const receipt={scenario,source:format,measure:'new process/player, library already ready',traceClock:'host pipe receipt, not exact VLC producer time',samplePeriodMs:200,samples:[],mediaRequests:[]};let failure;
+let app,fixture,library,opening,started;const receipt={scenario,source:format,captureMode,measure:'new process/player, library already ready',traceClock:'host pipe receipt, not exact VLC producer time',samplePeriodMs:200,samples:[],mediaRequests:[]};let failure;
 const action=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
 const command=(name,args={})=>app.evaluate('call("rhvideo_request",'+JSON.stringify({action:name,args})+')');
 try{
@@ -44,7 +45,13 @@ try{
       const windowState=await app.evaluate("window.__TAURI__.window.Window.getByLabel('window-rhvideo-player').then(async w=>w?{visible:await w.isVisible(),minimized:await w.isMinimized()}:null)");
       const sample={atMs:performance.now()-started,statsFrames:state.renderedFrames,decodedFrames:state.decodedFrames,reportedFirstFrameMs:state.firstFrameMs,window:windowState};
       if(!receipt.firstStatsObservedMs&&state.renderedFrames>0){receipt.firstStatsObservedMs=sample.atMs;receipt.reportedFirstFrameMs=state.firstFrameMs;}
-      if(!receipt.firstPixelIntervalMs&&windowState?.visible&&!windowState.minimized){
+      // PrintWindow is synchronous. Compare against a run which makes NO image
+      // readback until VLC reports displayed frames, rather than assuming the
+      // act of observing pixels cannot perturb decoder/window initialization.
+      // With after-stats there is no negative image sample before that point:
+      // the interval's lower bound correctly stays zero, not the last zero
+      // statistic (VLC publishes those counters only periodically).
+      if(!receipt.firstPixelIntervalMs&&windowState?.visible&&!windowState.minimized&&(captureMode==='poll'||state.renderedFrames>0)){
         const began=performance.now()-started,image=await command('player.diagnosticFrame',{expectedInput:state.inputId});
         assert.equal(path.dirname(image.path),app.directory);assert.match(path.basename(image.path),/^rhvideo-native-[a-f0-9]{32}\.bmp$/);
         const bytes=fs.readFileSync(image.path),pixels=markerPixels(bytes,width,height);sample.captureMs=performance.now()-started-began;sample.pixels=pixels;
@@ -76,5 +83,5 @@ finally{
   // This exact directory was created above for generated media, never a user path.
   if(path.dirname(fs.realpathSync(mediaRoot))===fs.realpathSync(os.tmpdir())&&path.basename(mediaRoot).startsWith('rhfiles-startup-source-'))fs.rmSync(mediaRoot,{recursive:true});
 }
-console.log(JSON.stringify({measured:!failure,scenario,renderer:receipt.renderer,firstPixelIntervalMs:receipt.firstPixelIntervalMs,firstStatsObservedMs:receipt.firstStatsObservedMs,reportedFirstFrameMs:receipt.reportedFirstFrameMs,openReplyMs:receipt.openReplyMs,mediaRequests:receipt.mediaRequests,artifactDir:receipt.artifactDir,error:receipt.error}));
+console.log(JSON.stringify({measured:!failure,scenario,captureMode,renderer:receipt.renderer,firstPixelIntervalMs:receipt.firstPixelIntervalMs,firstStatsObservedMs:receipt.firstStatsObservedMs,reportedFirstFrameMs:receipt.reportedFirstFrameMs,openReplyMs:receipt.openReplyMs,mediaRequests:receipt.mediaRequests,artifactDir:receipt.artifactDir,error:receipt.error}));
 if(failure)throw failure;

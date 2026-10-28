@@ -4,6 +4,25 @@
 
 目标是 Windows 和 Android 都具有 RHVideo 的全部业务能力，界面可以重新组织，视频保持原生播放。不嵌套网站、不直接修改服务端数据库，也不把服务器的工作目录当成本机目录。
 
+## 2026-10-28 Windows 取流前的重复焦点阻塞（整轮回归中）
+
+先排除测量方式：原生像素探测使用同步 [PrintWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-printwindow)，新增 `rhvideo-startup-probe.mjs SCENARIO after-stats` 模式，在显示计数出现前不取画面，之后仍核对实际红绿蓝黄标记。这个模式没有前置负像素样本，因此像素时间下界保持 0；不能把周期性统计的零值当作尚未显示。原 `poll` 模式保留作干扰对照。
+
+交错样本再次出现：窗口约 256 ms 创建好，视口读取却到 2294 ms。将激活／读取合入一次 GUI 调用后，进一步抓到 **native-focus-ready 287 ms → window-focused 2298 ms**，确认约两秒发生在显式 WebView `MoveFocus`，而非尺寸计算；只合并调用并没有修好。所锁定的 Wry 0.54.4 已在创建 WebView 时请求焦点，并处理父窗口 `WM_SETFOCUS`。现在单视频和同屏去掉重复 COM 调用，保留正常窗口激活及键盘焦点机制。
+
+同一 H.264/1080p、源 SHA-256 `4206d583658a64f9cb490339638f0fe67cb4229f21cef1310ceb1d090e775a7e`，旧 EXE `6cfc3d8d…` 与单视频修正 EXE `6d4b5ec6…` 交错各三次。各次是新进程／播放器、媒体库已就绪，不是冷系统／磁盘测试；均为实际 `native-hardware-auto`，没有更改内核、缓存、输出质量或分辨率：
+
+| 指标（ms，按各自运行顺序） | 旧版 | 修正后 |
+|---|---|---|
+| 上游首次取流 | 2361／4502／366 | 372／354／297 |
+| 首次观测到显示计数 | 5496／8002／3860 | 4119／3826／4247 |
+
+这说明移除了一处可重现的取流前阻塞，**不是整体首帧均更快或已经等同原版**。统计按内核周期发布，窗口负载也有波动，三次样本不是发行版 P50/P95。最终 EXE SHA-256 `6291fd7835594be3a4e3c6a4d15c74e39f0d495770d0a4b030d1d4ae9970a444` 又测得首次取流 384 ms、首次显示统计 3702 ms；打开接口应答仍在 2325 ms，不能将应答等待也宣称已经消除。日志为 `rhvideo-startup-capture-*`、`rhvideo-startup-activation-*`、`rhvideo-startup-focus-[1-6]-*`、`rhvideo-native-focus-final-startup.log`。
+
+最终新单视频／同屏焦点用例 **2/2** 通过：没有 `Page.bringToFront`、焦点仿真、DOM `focus()` 或预先点击，检查实际 `document.hasFocus()`、空格暂停／继续、Tab 进入控制条、切源保留当前控件，以及 Esc 真正释放两格并销毁窗口。Node **535/535**，桌面 Rust lib **246 通过、10 个原有忽略项**。五份完整默认原生回归仍运行于上述最终 EXE，未记整轮成功；未发包、未替换正式实例。解码／显示等待、应答尾延迟和先前其他未验证项继续保留。
+
+整轮已出现 `grid-owned close returns its completed CLI receipt` 失败，当前仍在运行，尚未取得最终具体错误；该断言没有删除或放宽。单视频自身关闭及两项真实焦点用例在同轮通过，也不能掩盖同屏回执失败。需继续区分请求／关闭是否执行、原生回执和命令行恢复链路，不因窗口消失就猜成功。
+
 ## 2026-10-28 Android 同屏实际画面旋转（本轮原生回归通过，整体目标仍未完成）
 
 新增红测先复现手动角度被迟到的媒体尺寸回调从 90° 改回 0°。压缩发行 APK `e9da2ee0…` 的实际截图测试又复现：90° 后 SurfaceView 的屏幕横坐标成为 1439，超出 1080 像素屏幕，接口仍报告暂停、定位及播放正常。日志为短路径 QA 的 `rhvideo-grid-manual-rotation-jvm-red.log`、`rhvideo-grid-pixels-isolated-red-native.log`；不是只从源码猜测裁切。
