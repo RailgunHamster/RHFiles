@@ -92,6 +92,7 @@
         <service android:name=".NearbyService" android:exported="false" android:foregroundServiceType="dataSync" />
 
         <service android:name=".FileTaskService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".RhVideoDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".AppUpdateService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".UsageAnalysisService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name=".PlaybackActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|density|fontScale" />

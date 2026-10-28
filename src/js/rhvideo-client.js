@@ -336,5 +336,5 @@
   RHFilesUI.listen(imageStage,'touchstart',event=>{imageTouch=event.touches.length===1?{x:event.touches[0].clientX,y:event.touches[0].clientY}:null;},{passive:true},'rhvideo.image.touchstart');
   RHFilesUI.listen(imageStage,'touchend',event=>{const start=imageTouch;imageTouch=null;if(!start||modalTop()!=='image-dialog'||event.changedTouches.length!==1)return;const dx=event.changedTouches[0].clientX-start.x,dy=event.changedTouches[0].clientY-start.y;if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)){event.preventDefault();invoke('image.step',{direction:dx<0?1:-1}).catch(notice);}},{passive:false},'rhvideo.image.touchend');
   RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.contextmenu');
-  (async()=>{updateConnection(await native('state'));let favoriteError;if(state.connected)try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){favoriteError=error;}await load(false,true);if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));})().catch(notice);
+  (async()=>{updateConnection(await native('state'));let favoriteError;if(state.connected)try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){favoriteError=error;}await load(false,true);if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));})().catch(notice).finally(()=>workbench?.ready()).catch(notice);
 })();

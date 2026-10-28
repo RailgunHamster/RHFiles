@@ -49,7 +49,11 @@ Windows 使用本机文件选择器；Android 使用系统文档选择器。手�
 
 开发分支新增喜爱源文件 ZIP 的脚本动作：`rhvideo.exports.create`（`scope: "filtered"` 或 `"all"`）、`rhvideo.exports.list`（可选 `limit: 1..100`）、`rhvideo.exports.get`／`rhvideo.exports.cancel`（`id`）和 `rhvideo.exports.state`。`filtered` 重新读取服务端收藏，使用操作开始时的筛选条件，涵盖所有页、视频、图片与小说；不是多选卡片的 JSON 元数据导出。创建是服务端持久化后台任务，退出登录不会删除任务；取消只处理这个 ZIP 任务，不删除媒体源文件。
 
-此项目前仍在开发，尚未发布：任务协议和脚本动作已接入，**下载流式保存、导出界面及完整的两端原生验收仍待完成**，不能将这些脚本动作当作完整 ZIP 导出功能。失败不自动重发创建请求，没有失败后“重试”按钮；请求结果不明确时先查询最近导出核对。
+开发分支的收藏页另有“打包导出”面板，对应 `rhvideo.exports.open/close`；`scope {"scope":"filtered"}`／`{"scope":"all"}` 选择打开时完整筛选快照或全部收藏，`refresh` 手动读取任务。关闭／隐藏面板不继续定时读取，也不取消服务端任务或本机下载。活动打包每秒、空闲每十秒读取，连续三次失败停止；只对活动任务提供取消，不自动重发失败创建请求。结果不明确时先查询最近导出核对。
+
+`rhvideo.exports.download {"id":"导出 UUID"}` 启动系统保存选择，脚本可额外传完整 `path` 跳过选择器。返回排队下载或 Android 的 `requested/pickId` **不等于已经保存**；`rhvideo.exports.downloads` 返回当前账户的本机记录及警告，只有任务 `state: "saved"` 表示已完整保存。`rhvideo.exports.download.cancel {"taskId":"本机下载 UUID"}` 只接受活动下载，提交文件或终态拒绝旧取消。记录包含字节、总量、速度、位置、失败原因和递增 `revision`，不是服务端打包任务本身。没有失败后“重试”按钮，新的保存必须是新的显式操作。
+
+ZIP 字节直接由原生会话流式写入，不经过渲染器，不覆盖已有本地文件；进程中断不自动恢复下载。Windows 后台线程、Android 前台服务不依赖导出界面是否打开，Android 通知可回到导出面板。记录按服务器和账户隔离、不存令牌。此功能尚未正式发包：Windows 真实后端 UI／显式路径后台保存已验收，Android JVM 及现有原生播放回归通过；**Android 实际 ZIP 选择器、前后台／进程边界和 Windows 系统保存选择器仍待专门原生验收**，不能将脚本或播放测试当作这些流程已通过。见 `RHVIDEO-PARITY.md` 的具体证据及剩余缺口。
 
 新增的页码跳转、摘录搜索、截图逐张浏览/原清单定位、任务图片放大、阅读器目录/收藏及统一音量，同样是公开动作，不是只能点 UI 的特殊逻辑：`rhvideo.page.jump`、`rhvideo.gallery.jump`、`rhvideo.novel.previewSearch`、`rhvideo.gallery.inspect`、`rhvideo.image.reveal`、`rhvideo.image.preview`、`rhvideo.reader.toc`、`rhvideo.reader.favorite`、`rhvideo.volume.set`。统一音量默认 20%，与单个视频的音量相乘，静音后恢复不会丢失各格音量；不修改 Windows/Android 系统音量或普通本地播放器。
 

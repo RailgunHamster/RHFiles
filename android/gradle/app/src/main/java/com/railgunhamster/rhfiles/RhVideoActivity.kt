@@ -29,6 +29,7 @@ class RhVideoActivity:AppCompatActivity() {
   private var exportText:String?=null
   private var exportConfiguration:JSONObject?=null
   private var configurationPick:JSONObject?=null
+  private var zipPick:JSONObject?=null
   private data class ExportBuffer(val ticket:String,val generation:Long,val text:StringBuilder=StringBuilder(),var index:Int=0,var bytes:Int=0,var touched:Long=android.os.SystemClock.elapsedRealtime())
   private var exportBuffer:ExportBuffer?=null
   private var presentation:RhVideoPresentation?=null
@@ -47,6 +48,17 @@ class RhVideoActivity:AppCompatActivity() {
     val context=configurationPick;configurationPick=null
     if(context!=null){if(uri==null)configurationEvent("preview",context,JSONObject().put("picked",false))else io.execute{try{configurationEvent("preview",context,previewConfiguration(uri,context))}catch(e:Exception){configurationEvent("preview",context,JSONObject().put("error",e.message?:"配置备份读取失败"))}}}
   }
+  private val zipDocument=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")){uri->
+    val pending=synchronized(this){zipPick.also{zipPick=null}}
+    if(pending==null){if(uri!=null)RhVideoZipDestination.document(applicationContext,uri).failed();return@registerForActivityResult}
+    if(uri==null){zipEvent(pending,JSONObject().put("picked",false));return@registerForActivityResult}
+    val app=applicationContext;val destination=RhVideoZipDestination.document(app,uri);val downloads=RhVideoDownloads.get(app)
+    try{downloads.prepare{
+      try{check(pending.optString("process")==client.processIdentity()){ "应用进程已重启，请重新选择保存位置" };check(client.contextMatches(pending)){"媒体账户已改变，未保存 ZIP"};val args=JSONObject().put("id",pending.getString("id")).put("_sessionGeneration",pending.getLong("_sessionGeneration"));zipEvent(pending,client.startZip(args,destination))}
+      catch(e:Exception){val cleanup=destination.failed();val text=(e.message?:"ZIP 下载未启动")+if(cleanup.isEmpty())"" else "；$cleanup";downloads.reportWarning(text);zipEvent(pending,JSONObject().put("error",text))}
+    }}catch(e:Exception){val cleanup=destination.failed();val text="保存准备队列已满：${e.message}"+if(cleanup.isEmpty())"" else "；$cleanup";downloads.reportWarning(text);zipEvent(pending,JSONObject().put("error",text))}
+  }
+  private fun zipEvent(pending:JSONObject,result:JSONObject){runOnUiThread{if(!isDestroyed&&::web.isInitialized)web.evaluateJavascript("window.RHVideoNative?.dispatch('rhvideo-download-picker',${JSONObject().put("generation",pending.optLong("_sessionGeneration",-1)).put("pickId",pending.optString("pickId")).put("result",result)})",null)}}
   private fun configurationEvent(kind:String,context:JSONObject,value:JSONObject){
     runOnUiThread{if(!isDestroyed&&client.contextMatches(context,true))web.evaluateJavascript("window.RHVideoNative?.dispatch(${JSONObject.quote("rhvideo-configuration-$kind")},${JSONObject().put("generation",client.sessionGeneration()).put("result",value)})",null)}
   }
@@ -60,6 +72,7 @@ class RhVideoActivity:AppCompatActivity() {
   }
   override fun onCreate(savedInstanceState:Bundle?){
     super.onCreate(savedInstanceState)
+    zipPick=savedInstanceState?.getString("rhvideo-zip-pick")?.let{runCatching{JSONObject(it)}.getOrNull()}
     WindowCompat.setDecorFitsSystemWindows(window,false)
     window.statusBarColor=Color.rgb(247,249,253);window.navigationBarColor=Color.rgb(247,249,253)
     WindowCompat.getInsetsController(window,window.decorView).apply{isAppearanceLightStatusBars=true;isAppearanceLightNavigationBars=true}
@@ -117,6 +130,16 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
             val outgoingGridGeneration=if(action in listOf("connect","register","logout"))runCatching{client.sessionGeneration()}.getOrNull()else null
             if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}}
             val value=when(action){
+              "exports.uiReady"->{val open=intent.getBooleanExtra("rhvideoExportPanel",false);intent.removeExtra("rhvideoExportPanel");JSONObject().put("open",open).put("pending",synchronized(this){zipPick?.takeIf{it.optString("process")==client.processIdentity()}?.let{JSONObject(it.toString())}?:JSONObject.NULL})}
+              "exports.download"->{
+                if(args.has("path"))client.startZip(args,RhVideoZipDestination.local(applicationContext,args.getString("path")))
+                else{
+                  val meta=client.prepareZip(args);val pending=JSONObject().put("id",meta.getString("id")).put("pickId",java.util.UUID.randomUUID().toString()).put("process",client.processIdentity()).put("_sessionGeneration",meta.getLong("generation"))
+                  synchronized(this){check(zipPick==null){"已有 ZIP 保存选择器打开"};zipPick=pending}
+                  runOnUiThread{try{zipDocument.launch(meta.getString("name"))}catch(e:Exception){synchronized(this){if(zipPick===pending)zipPick=null};zipEvent(pending,JSONObject().put("error",e.message?:"无法打开系统保存选择器"))}}
+                  JSONObject().put("requested",true).put("pickId",pending.getString("pickId"))
+                }
+              }
               "configuration.preview"->{
                 if(args.has("path"))previewConfiguration(configurationUri(args.getString("path")),contextArgs)
                 else{check(configurationPick==null){"已有配置文件选择器打开"};configurationPick=contextArgs;runOnUiThread{try{configurationDocument.launch(arrayOf("application/json","text/plain","application/octet-stream"))}catch(e:Exception){configurationPick=null;configurationEvent("preview",contextArgs,JSONObject().put("error",e.message?:"无法打开系统文件选择器"))}};JSONObject().put("requested",true)}
@@ -179,6 +202,8 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
     web.loadUrl("https://appassets.androidplatform.net/rhvideo/rhvideo.html")
   }
   private fun denied()=WebResourceResponse("text/plain","UTF-8",403,"Forbidden",mapOf("Cache-Control" to "no-store"),ByteArrayInputStream(ByteArray(0)))
+  override fun onSaveInstanceState(outState:Bundle){synchronized(this){zipPick?.let{outState.putString("rhvideo-zip-pick",it.toString())}};super.onSaveInstanceState(outState)}
+  override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra("rhvideoExportPanel",false)&&::web.isInitialized)web.evaluateJavascript("window.RHVideoNative?.dispatch('rhvideo-export-open',{})",null)}
   override fun onStop(){presentation?.pause();super.onStop()}
   override fun onDestroy(){mediaEvents?.close();mediaEvents=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();web.destroy()};super.onDestroy()}
 }

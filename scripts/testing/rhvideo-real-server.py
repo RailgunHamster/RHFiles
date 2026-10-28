@@ -1,6 +1,7 @@
 """Run the actual sibling RHVideo API against an isolated, generated database."""
 import os
 import sys
+import asyncio
 from pathlib import Path
 
 source, directory, port = sys.argv[1:4]
@@ -29,6 +30,31 @@ from app.models.database import AsyncSessionLocal
 from app.models.user import User
 from app.models.models import Video, Picture, Novel, NovelChapter
 from app.core.auth import auth_handler
+
+
+class ExportTransportQA:
+    """Real route/auth/archive, but bounded transport latency to exercise closing
+    the client UI during a live download. This is not a throughput benchmark."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        slow = (scope["type"] == "http" and "/api/v1/favorite-exports/" in scope.get("path", "")
+                and scope["path"].endswith("/download"))
+        if slow:
+            scope = dict(scope)
+            scope["extensions"] = {k: v for k, v in scope.get("extensions", {}).items()
+                                   if k not in {"http.response.pathsend", "http.response.zerocopysend"}}
+
+        async def transport(message):
+            if slow and message["type"] == "http.response.body" and message.get("body"):
+                await asyncio.sleep(0.05)
+            await send(message)
+
+        await self.app(scope, receive, transport)
+
+
+app.add_middleware(ExportTransportQA)
 
 original_lifespan = app.router.lifespan_context
 

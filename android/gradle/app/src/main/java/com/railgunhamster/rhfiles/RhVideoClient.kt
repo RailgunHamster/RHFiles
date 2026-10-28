@@ -22,7 +22,9 @@ import java.util.concurrent.TimeUnit
 /** RHFiles client of RHVideo's API. No database access, persisted password or
  * bearer in the WebView/Intent. Only registered opaque media IDs can be read. */
 internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null) {
+  private val appContext=context.applicationContext
   companion object {
+    private val processId=UUID.randomUUID().toString()
     @Volatile private var instance:RhVideoClient?=null
     fun get(context:Context):RhVideoClient=instance?:synchronized(this){instance?:RhVideoClient(context.applicationContext).also{instance=it}}
     fun base(value:String):HttpUrl {
@@ -61,6 +63,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val http=OkHttpClient.Builder().proxy(Proxy.NO_PROXY).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(true)
     .connectTimeout(8,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
   private val mediaHttp=http.newBuilder().callTimeout(0,TimeUnit.SECONDS).eventListenerFactory(RhVideoMediaTrace(context.applicationContext)).build()
+  private val zipHttp=mediaHttp.newBuilder().retryOnConnectionFailure(false).build()
   // Non-replayable writes must not reuse an idle socket that the server may
   // already have closed. Use a fresh connection, not a hidden retry after an
   // ambiguous response. Read/media traffic keeps its independent pooled path.
@@ -336,12 +339,60 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       .put("cover",cover).put("duration",v.optDouble("duration_seconds",0.0)).put("resolution",v.optString("original_resolution","")).put("status",v.optString("status",""))
       .put("progress",v.optJSONObject("progress")?:JSONObject.NULL).put("wordCount",v.optInt("word_count")).put("chapters",v.optInt("chapter_count"))
   }
+  private fun downloadOwner(s:Session)=java.security.MessageDigest.getInstance("SHA-256").digest("${s.base}\n${s.username}".toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it.toInt()and 255)}
+  private fun zipMetadata(s:Session,args:JSONObject):JSONObject {
+    require(args.keys().asSequence().all{it in setOf("id","path","_sessionGeneration")}){"下载参数无效"};validateContext(args)
+    val id=args.getString("id");require(RhVideoExports.uuid(id)){"导出任务标识无效"}
+    val job=RhVideoExports.job(json(s,"api/v1/favorite-exports/$id",exportErrors=true)as JSONObject);RhVideoExports.identity(job,"id",id)
+    check(job.getBoolean("can_download")){"ZIP 尚未完成或已过期，不能下载"};check(job.getLong("archive_bytes")>=4){"导出文件大小无效"}
+    val date=java.time.OffsetDateTime.parse(job.getString("created_at")).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmm",java.util.Locale.ROOT))
+    return JSONObject().put("id",id).put("name","RHVideo-喜爱-$date.zip").put("total",job.getLong("archive_bytes")).put("generation",s.generation)
+  }
+  fun prepareZip(args:JSONObject):JSONObject=zipMetadata(current(),args)
+  fun processIdentity():String=processId
+  fun startZip(args:JSONObject,destination:RhVideoZipDestination):JSONObject {
+    try{
+      val s=current();val meta=zipMetadata(s,args);val manager=RhVideoDownloads.get(appContext)
+      return manager.start(downloadOwner(s),s.generation,meta.getString("id"),meta.getString("name"),meta.getLong("total"),destination,
+        {task->emit("rhvideo-download-progress",JSONObject().put("generation",s.generation).put("task",task))},
+        {job->try{streamZip(s,meta.getString("id"),meta.getLong("total"),destination,manager,job)}catch(e:Exception){val cleanup=destination.failed();throw java.io.IOException((e.message?:"ZIP 下载失败")+if(cleanup.isEmpty())"" else "；$cleanup",e)}})
+    }catch(e:Exception){val cleanup=destination.failed();throw java.io.IOException((e.message?:"ZIP 下载未启动")+if(cleanup.isEmpty())"" else "；$cleanup",e)}
+  }
+  private fun streamZip(s:Session,id:String,expected:Long,destination:RhVideoZipDestination,manager:RhVideoDownloads,job:RhVideoDownloads.Job){
+    fun checkCurrent(){manager.checkpoint(job);check(live(s)){"媒体账户已改变，下载停止；不会自动恢复"}}
+    checkCurrent();val call=zipHttp.newCall(Request.Builder().url(s.base.resolve("api/v1/favorite-exports/$id/download")!!).header("Authorization","Bearer ${token(s)}").build())
+    job.interrupt={call.cancel()};checkCurrent()
+    call.execute().use{response->
+      expire(s,response.code);check(response.code==200){"ZIP 下载失败（HTTP ${response.code}），未自动重试"}
+      val body=response.body?:error("ZIP 下载响应为空");val mime=response.header("Content-Type").orEmpty().substringBefore(';').trim()
+      require(mime in setOf("application/zip","application/x-zip-compressed","application/octet-stream")){"服务器未返回 ZIP 文件，未保存 HTML 或错误页面"}
+      require(body.contentLength()<0||body.contentLength()==expected){"ZIP 大小与导出记录不一致，未保存"}
+      val started=android.os.SystemClock.elapsedRealtime();var last=started;var bytes=0L
+      body.byteStream().use{input->
+        val prefix=ByteArray(4);var size=0
+        while(size<4){checkCurrent();val n=input.read(prefix,size,4-size);check(n>0){"ZIP 下载不完整"};size+=n}
+        require(prefix[0]==80.toByte()&&prefix[1]==75.toByte()&&((prefix[2]==3.toByte()&&prefix[3]==4.toByte())||(prefix[2]==5.toByte()&&prefix[3]==6.toByte())||(prefix[2]==7.toByte()&&prefix[3]==8.toByte()))){"下载内容不是 ZIP，未保存"}
+        checkCurrent();destination.open().use{output->
+          output.write(prefix);bytes=4;val buffer=ByteArray(64*1024)
+          while(true){
+            checkCurrent();val n=input.read(buffer);if(n<0)break;if(n==0)continue
+            require(bytes+n<=expected){"ZIP 超过声明大小，下载停止"};output.write(buffer,0,n);bytes+=n
+            val now=android.os.SystemClock.elapsedRealtime();if(now-last>=500||bytes==expected){manager.progress(job,bytes,bytes*1000.0/(now-started).coerceAtLeast(1));last=now}
+          }
+          checkCurrent();check(bytes==expected){"ZIP 下载不完整，未自动重试"};manager.progress(job,bytes,0.0);manager.committing(job);output.flush()
+          if(!destination.path.startsWith("content:")&&output is java.io.FileOutputStream)output.fd.sync()
+        }
+      }
+    }
+  }
   fun request(action:String,args:JSONObject):Any {
     val expected=if(args.has("_sessionGeneration"))args.getLong("_sessionGeneration").also{args.remove("_sessionGeneration")}else null
     when(action){"state"->return state();"connect"->return connect(args);"register"->return connect(args,true);"logout"->return logout(expected)}
     val s=current()
     check(expected==null||expected==s.generation){"媒体账户已改变，操作未执行，请刷新后重新操作"}
     return when(action){
+      "exports.downloads"->RhVideoDownloads.get(appContext).list(downloadOwner(s))
+      "exports.download.cancel"->{require(args.keys().asSequence().all{it=="taskId"});val task=args.getString("taskId");require(RhVideoExports.uuid(task));RhVideoDownloads.get(appContext).cancel(downloadOwner(s),task)}
       "exports.prepare"->synchronized(lock){check(live(s)){"媒体账户已改变"};exports.prepare(s.generation,args)}
       "exports.discard"->synchronized(lock){check(live(s)){"媒体账户已改变"};exports.discard(s.generation,args)}
       "exports.create"->{

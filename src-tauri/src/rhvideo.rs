@@ -27,6 +27,8 @@ mod contract;
 mod configuration;
 #[path = "rhvideo_exports.rs"]
 mod exports;
+#[path = "rhvideo_downloads.rs"]
+mod downloads;
 
 const JSON_LIMIT: usize = 32 * 1024 * 1024;
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -1916,6 +1918,9 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             Ok(value)
         }
         "exports.prepare" | "exports.discard" => export_draft(&session, &action, &args),
+        "exports.download" => downloads::start(app, session, &args).await,
+        "exports.downloads" => downloads::list(&session),
+        "exports.download.cancel" => downloads::cancel(&app, &session, &args),
         "exports.create" => {
             let body = export_draft(&session, &action, &args)?;
             let request_id = body["request_id"].as_str().unwrap().to_owned();

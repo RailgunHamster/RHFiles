@@ -713,6 +713,7 @@
                 "wb-viewer",
                 "wb-image-preview",
                 "wb-preview-results",
+                "wb-exports",
               ],
             },
           },
@@ -938,6 +939,7 @@
       action("preview.state",object(),()=>native("preview.result"),"read");
       action("preview.result",object(),async()=>showPreviewResult(await native("preview.result"),true));
       function paintCards() {
+        favoriteExports?.sync();
         for (const card of $("media-grid").querySelectorAll(".media-card")) {
           const key = card.dataset.kind + ":" + card.dataset.id;
           let checkbox = card.querySelector(".wb-select");
@@ -4457,7 +4459,9 @@
         await rawCatalog('favorite',true);
         return query(snapshot,version);
       }
-      favoriteExports=RHVideoExports.install({action,object,native,selection:favoriteExportSelection});
+      favoriteExports=RHVideoExports.install({action,object,native,selection:favoriteExportSelection,dialog,el,button,listen,invoke,notice,state,toolbar,mobile:ctx.mobile,Refresh:RHVideoRefresh,
+        listenNative:(name,fn)=>(ctx.mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen)(name,fn)
+      });
       configuration=RHVideoConfiguration.install({api,action,native,object,string,state,button,el,listen,notice,mobile:ctx.mobile,config,
         rawPreferences:()=>prefs.referencePreferences||{},
         async applyPreferences(patch,original){const version=epoch;await ensure();if(version!==epoch)throw Error("媒体账户已改变");clearTimeout(saveTimer);await saveChain.catch(()=>{});if(version!==epoch)throw Error("媒体账户已改变");
@@ -4465,6 +4469,7 @@
         async refresh(){invalidateCatalog();await load();}
       });
       return {
+        ready(){return favoriteExports.ready();},
         leaveGallery(){gallery.load++;},
         refreshGallery(refresh=false,resetPage=false){if(resetPage)gallery.offset=0;return loadGallery(refresh);},
         invalidateSession() {

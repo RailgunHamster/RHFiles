@@ -1,0 +1,62 @@
+package com.railgunhamster.rhfiles
+
+import android.content.Context
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.json.JSONObject
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.android.controller.ServiceController
+import org.robolectric.annotation.Config
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk=[28])
+class RhVideoDownloadsTest {
+  private lateinit var context:Context
+  private lateinit var client:RhVideoClient
+  private lateinit var server:MockWebServer
+  private var service:ServiceController<RhVideoDownloadService>?=null
+  private val exportId="c8f17f3e-28c5-4fca-9fb2-204fb8713980"
+  private val zip="PK\u0003\u0004zip-data"
+  @Before fun setup(){context=RuntimeEnvironment.getApplication();server=MockWebServer();server.start();client=RhVideoClient(context);server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody("""{"access_token":"download-native-only"}"""));client.connect(JSONObject().put("server",server.url("/").toString()).put("username","demo").put("password","test-only"));server.takeRequest()}
+  @After fun close(){client.logout();service?.destroy();server.shutdown()}
+  private fun output(name:String)=File(File(context.cacheDir,"exports").apply{mkdirs()},name)
+  private fun ready(){server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody("""{"id":"$exportId","request_id":"dafcc457-e7ac-42f6-a808-53841219d5ec","status":"completed","total":1,"archive_bytes":12,"cancel_requested":false,"can_download":true,"created_at":"2026-10-29T00:00:00Z","finished_at":"2026-10-29T00:00:01Z","expires_at":"2026-10-30T00:00:00Z","progress":{"percent":100}}"""))}
+  private fun start(file:File):String{
+    val reply=client.startZip(JSONObject().put("id",exportId),RhVideoZipDestination.local(context,file.path));val id=reply.getJSONObject("task").getString("id")
+    service=Robolectric.buildService(RhVideoDownloadService::class.java).create().also{it.get().onStartCommand(null,0,1)};return id
+  }
+  private fun task(id:String):JSONObject {val list=(client.request("exports.downloads",JSONObject())as JSONObject).getJSONArray("items");return (0 until list.length()).map{list.getJSONObject(it)}.first{it.getString("id")==id}}
+  private fun awaitTerminal(id:String):JSONObject {val end=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);while(System.nanoTime()<end){val value=task(id);if(value.getString("state") in setOf("saved","failed","cancelled"))return value;Thread.sleep(10)};error("Download did not reach a terminal state: ${task(id)}")}
+  @Test fun foregroundDownloadStreamsToANewFileAndKeepsTokensOutOfTasksAndJournal(){
+    ready();server.enqueue(MockResponse().setHeader("Content-Type","application/zip").setBody(zip));val file=output("native.zip");val id=start(file)
+    val result=awaitTerminal(id);assertEquals("saved",result.getString("state"));assertEquals(zip,file.readText());assertEquals(12,result.getLong("bytes"));assertFalse(result.toString().contains("download-native-only"))
+    val metadata=server.takeRequest(5,TimeUnit.SECONDS)!!;assertEquals("/api/v1/favorite-exports/$exportId",metadata.path)
+    val download=server.takeRequest(5,TimeUnit.SECONDS)!!;assertEquals("/api/v1/favorite-exports/$exportId/download",download.path);assertEquals("Bearer download-native-only",download.getHeader("Authorization"));assertFalse(download.path!!.contains("token"))
+    assertFalse(File(context.filesDir,"rhvideo-downloads.json").readText().contains("download-native-only"))
+    try{client.request("exports.download.cancel",JSONObject().put("taskId",id));fail("A completed file was cancelled")}catch(_:IllegalStateException){};assertEquals(zip,file.readText())
+  }
+  @Test fun aPreexistingPathIsNeverTruncatedAndErrorPagesCannotBecomeZipFiles(){
+    val file=output("existing.zip");file.writeText("user data");ready();server.enqueue(MockResponse().setHeader("Content-Type","application/zip").setBody(zip));val id=start(file);assertEquals("failed",awaitTerminal(id).getString("state"));assertEquals("user data",file.readText())
+    service?.destroy();service=null;ready();server.enqueue(MockResponse().setHeader("Content-Type","text/html").setBody("login screen"));val other=output("not-html.zip");val failed=start(other);assertEquals("failed",awaitTerminal(failed).getString("state"));assertFalse(other.exists())
+  }
+  @Test fun explicitCancellationStopsTheExactTaskWithoutReplayingTheRequest(){
+    ready();server.enqueue(MockResponse().setHeader("Content-Type","application/zip").setBody(zip).throttleBody(2,250,TimeUnit.MILLISECONDS));val file=output("cancel.zip");val id=start(file)
+    val end=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);while(task(id).getLong("bytes")<4&&System.nanoTime()<end)Thread.sleep(10)
+    client.request("exports.download.cancel",JSONObject().put("taskId",id));assertEquals("cancelled",awaitTerminal(id).getString("state"));assertEquals(3,server.requestCount)
+  }
+  @Test fun cancellingBeforeServiceAdmissionFinishesImmediatelyAndCannotLeaveAnActiveGhost(){
+    ready();val file=output("not-started.zip");val reply=client.startZip(JSONObject().put("id",exportId),RhVideoZipDestination.local(context,file.path));val id=reply.getJSONObject("task").getString("id")
+    assertEquals("cancelled",(client.request("exports.download.cancel",JSONObject().put("taskId",id))as JSONObject).getString("state"))
+    service=Robolectric.buildService(RhVideoDownloadService::class.java).create().also{it.get().onStartCommand(null,0,1)}
+    assertEquals("cancelled",task(id).getString("state"));assertFalse(RhVideoDownloads.get(context).hasActive());assertFalse(file.exists());assertEquals(2,server.requestCount)
+  }
+}

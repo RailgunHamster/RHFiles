@@ -346,21 +346,38 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
     for(const kind of ['picture','novel']){await invoke(view,'category',{kind});await invoke(view,'favorite.toggle',{id:'real-'+kind,kind});}
     assert.equal((await invoke(view,'category',{kind:'favorite'})).total,3);
     await invoke(view,'preferences.set',{key:'mediaType',value:'novel'});
-    const filtered=await invoke(view,'exports.create',{scope:'filtered'});assert.equal(filtered.total,1);
+    await invoke(view,'exports.open');assert.equal((await invoke(view,'exports.state')).selectionCount,1);
+    const zipCreate=await view.evaluate('RHFilesAPI.invoke("ui.list").then(rows=>rows.find(row=>row.id==="wb-export-create"))');assert(zipCreate,'The visible ZIP button has a public UI control');
+    await view.evaluate('RHFilesAPI.invoke("ui.invoke",'+JSON.stringify({controlId:zipCreate.controlId})+')');
+    const filtered=await until(async()=>{const job=(await invoke(view,'exports.state')).lastJob;return job?.total===1?job:null;},'The actual ZIP button creates the filtered job',20000);assert.equal(filtered.total,1);
+    const activeExports=await invoke(view,'exports.state');if(activeExports.jobs.some(v=>['queued','running'].includes(v.status)))assert.equal(activeExports.pollDelay,1000,'A newly submitted job must immediately switch from idle polling to the reference active cadence');
     const completedFiltered=await until(async()=>{const job=await invoke(view,'exports.get',{id:filtered.id});assert(!['failed','cancelled'].includes(job.status),JSON.stringify(job));return job.status==='completed'?job:null;},'actual filtered favorite ZIP backend job',20000);
     assert.equal(completedFiltered.can_download,true);assert.equal(completedFiltered.progress.included,1);
-    const all=await invoke(view,'exports.create',{scope:'all'});assert.equal(all.total,3,'All favorites ignores the active novel-only filter');
+    await invoke(view,'exports.scope',{value:'all'});assert.equal(await view.evaluate('document.querySelector("input[name=rhvideo-export-scope]:checked").value'),'all');
+    await view.evaluate('RHFilesAPI.invoke("ui.invoke",'+JSON.stringify({controlId:zipCreate.controlId})+')');
+    const all=await until(async()=>{const job=(await invoke(view,'exports.state')).lastJob;return job?.id!==filtered.id&&job?.total===3?job:null;},'The same ZIP button uses the selected all-favorites scope',20000);assert.equal(all.total,3,'All favorites ignores the active novel-only filter');
     const completedAll=await until(async()=>{const job=await invoke(view,'exports.get',{id:all.id});assert(!['failed','cancelled'].includes(job.status),JSON.stringify(job));return job.status==='completed'?job:null;},'actual full favorite ZIP backend job',20000);
     assert.equal(completedAll.progress.included,3);assert.equal(completedAll.progress.percent,100);
     const zipTool=path.resolve('src-tauri/thirdparty/7z.exe');
     for(const [job,types]of [[filtered,['novel']],[all,['video','picture','novel']]]){
-      // Inspect the server's private output to prove packing, not client saving.
-      // Native streamed download/save has its own pending acceptance work.
       const archive=path.join(directory,'temp/favorite-exports',job.id,'favorites.zip');
       const manifest=JSON.parse(execFileSync(zipTool,['e','-so',archive,'导出清单.json'],{windowsHide:true,encoding:'utf8'}));
       assert.deepEqual(new Set(manifest.files.map(v=>v.type)),new Set(types));assert(manifest.files.every(v=>v.status==='included'&&v.bytes>0));
     }
     assert.equal((await invoke(view,'exports.list',{limit:100})).items.length,2);
+    const savedZip=path.join(app.directory,'native-favorites.zip');const transfer=await invoke(view,'exports.download',{id:all.id,path:savedZip});assert(transfer.task.id);
+    const admittedTransfer=(await invoke(view,'exports.downloads')).items.find(t=>t.id===transfer.task.id);assert(['queued','downloading'].includes(admittedTransfer.state),'The deliberately throttled real download must still be active before closing its UI');
+    await invoke(view,'exports.close');
+    const saved=await until(async()=>{const result=await invoke(view,'exports.downloads'),task=result.items.find(t=>t.id===transfer.task.id);assert(!['failed','cancelled'].includes(task?.state),JSON.stringify(task));return task?.state==='saved'?task:null;},'Native streamed ZIP completes while the export dialog is closed',20000);
+    assert.equal(saved.bytes,completedAll.archive_bytes);assert.equal(fs.statSync(savedZip).size,saved.bytes);
+    const zipHash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');assert.equal(zipHash(savedZip),zipHash(path.join(directory,'temp/favorite-exports',all.id,'favorites.zip')));
+    execFileSync(zipTool,['t',savedZip],{windowsHide:true,stdio:'pipe'});
+    const originalZipHash=zipHash(savedZip);await assert.rejects(()=>invoke(view,'exports.download',{id:all.id,path:savedZip}),/已.*存在|未覆盖/);assert.equal(zipHash(savedZip),originalZipHash);
+    await assert.rejects(()=>invoke(view,'exports.download.cancel',{taskId:transfer.task.id}),/已结束|正在提交/);assert.equal(zipHash(savedZip),originalZipHash);
+    await invoke(view,'exports.open');await invoke(view,'exports.refresh');assert.equal((await invoke(view,'exports.state')).downloads.find(t=>t.id===saved.id).state,'saved');
+    assert.equal(await view.evaluate('document.querySelectorAll('+JSON.stringify('#wb-exports [data-api-action="rhvideo.exports.download.cancel"]')+').length'),0,'Saved and failed tasks never offer retry/cancel');
+    fs.writeFileSync(path.join(app.artifactDir,'rhvideo-favorite-exports.png'),Buffer.from((await view.send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await invoke(view,'exports.close');
     assert.equal((await invoke(view,'exports.cancel',{id:all.id})).status,'completed','A late cancellation does not turn a completed job into a source-file operation');
     for(const file of ['sample.mp4','original.png','book.txt'])assert(fs.existsSync(path.join(directory,file)),'ZIP operations must leave original '+file+' intact');
     await invoke(view,'connection.logout');await invoke(view,'connection.connect',{server:'http://127.0.0.1:'+port,username:'preview',password:'fixture-only'});
@@ -390,7 +407,7 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
     await invoke(view,'category',{kind:'video'});const videoStage=await invoke(view,'confirm.begin',{name:'trash.stage',params:{kind:'video',id:'real-video'}});await invoke(view,'confirm.advance',{ticket:videoStage.ticket});await invoke(view,'confirm.advance',{ticket:videoStage.ticket});assert.equal((await invoke(view,'state')).total,0,'a successful source write must invalidate the native catalog and refresh the UI immediately');assert.equal(fs.existsSync(path.join(directory,'sample.mp4')),false);
     await invoke(view,'remote.trash.restore',{params:{kind:'video',id:'real-video'}});assert.equal((await invoke(view,'state')).total,1,'restoring must immediately return the item without a manual refresh');
     assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);
-    console.log(JSON.stringify({pass:true,checks:'actual sibling RHVideo service, isolated SQLite, login, media lists, favorites write, actual chapter reads/progress, frames',favoriteExports:{filtered:completedFiltered.total,all:completedAll.total,included:completedAll.progress.included,percent:completedAll.progress.percent,manifestTypes:['video','picture','novel'],persistedAfterReconnect:true,originalsUntouched:true,nativeDownloadAcceptance:false}}));
+    console.log(JSON.stringify({pass:true,checks:'actual sibling RHVideo service, isolated SQLite, login, media lists, favorites write, actual chapter reads/progress, frames',favoriteExports:{filtered:completedFiltered.total,all:completedAll.total,included:completedAll.progress.included,percent:completedAll.progress.percent,manifestTypes:['video','picture','novel'],persistedAfterReconnect:true,originalsUntouched:true,nativeDownloadAcceptance:true,downloadBytes:saved.bytes,downloadHash:originalZipHash}}));
   }finally{
     view?.close();
     // uv may exit between exitCode inspection and taskkill. Cleanup failures

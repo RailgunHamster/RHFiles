@@ -10,12 +10,33 @@ const require=createRequire(import.meta.url),E=require('../../src/js/rhvideo-exp
 const search=require('../../src/js/rhvideo-search.js'),dictionary=require('../../src/vendor/pinyin-pro/pinyin-pro.js'),tags=require('../../src/js/rhvideo-tags.js');
 const id=n=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
 const rows=length=>Array.from({length},(_,n)=>({id:String(n),kind:['video','picture','novel'][n%3]}));
-function client({queue=rows(43),native,selection,changed}={}){
-  const actions=new Map(),schemas=new Map(),calls=[];let next=1;
-  const module=E.install({action:(name,schema,handler)=>{actions.set(name,handler);schemas.set(name,schema);},object:(properties,required)=>({properties,required}),requestId:()=>id(next++),selection:selection||(()=>({queue,total:queue.length})),changed,
+function client({queue=rows(43),native,selection,changed,mobile=false}={}){
+  const actions=new Map(),schemas=new Map(),calls=[],listeners=new Map();let next=1;
+  const module=E.install({action:(name,schema,handler)=>{actions.set(name,handler);schemas.set(name,schema);},object:(properties,required)=>({properties,required}),requestId:()=>id(next++),selection:selection||(()=>({queue,total:queue.length})),changed,mobile,state:{generation:7,kind:'favorite'},listenNative:(name,fn)=>{listeners.set(name,fn);return Promise.resolve(()=>{});},notice:()=>{},
     native:async(name,args)=>{calls.push({name,args});if(native)return native(name,args);if(name==='exports.prepare')return {ticket:args.ticket,total:args.total,count:args.offset+args.items.length,ready:args.offset+args.items.length===args.total};if(name==='exports.create')return {id:id(99),status:'queued'};return {removed:true};}});
-  return {module,actions,schemas,calls,invoke:(name,args={})=>actions.get('exports.'+name)(args)};
+  return {module,actions,schemas,calls,listeners,invoke:(name,args={})=>actions.get('exports.'+name)(args)};
 }
+const downloadTask=(extra={})=>({id:id(501),exportId:id(99),state:'queued',bytes:0,total:12,revision:0,started:1,path:'D:/native.zip',...extra});
+
+test('late queued acknowledgements and old history snapshots cannot resurrect a finished download',()=>{
+  const tasks=new Map();E.mergeTask(tasks,downloadTask({state:'saved',bytes:12,revision:4}));assert.equal(E.mergeTask(tasks,downloadTask()),false);assert.equal(tasks.get(id(501)).state,'saved');
+  assert.throws(()=>E.mergeTask(tasks,downloadTask({bytes:13})),/状态无效/);assert.throws(()=>E.mergeTask(tasks,downloadTask({revision:-1})),/状态无效/);
+});
+test('download starts native streaming without buffering archives in the renderer',async()=>{
+  const c=client({native:async(name)=>name==='exports.download'?{task:downloadTask()}:{items:[downloadTask()],warning:''}});
+  const reply=await c.invoke('download',{id:id(99),path:'D:/native.zip'});assert.equal(reply.task.state,'queued');assert.equal(c.module.state().busy,false);assert.equal(c.module.state().downloads.length,1);assert.deepEqual(c.calls,[{name:'exports.download',args:{id:id(99),path:'D:/native.zip'}}]);
+});
+test('an Android picker callback before its acknowledgement is matched by picker ID, not mistaken for saved',async()=>{
+  let c;c=client({mobile:true,native:async(name)=>{if(name==='exports.download'){c.listeners.get('rhvideo-download-picker')({payload:{generation:7,pickId:id(700),result:{task:downloadTask()}}});return {requested:true,pickId:id(700)};}throw Error('unexpected '+name);}});
+  await c.invoke('download',{id:id(99)});assert.equal(c.module.state().busy,false);assert.equal(c.module.state().downloads[0].state,'queued');assert(!c.module.state().message.includes('已保存'));
+});
+test('old account progress and late saved-task acknowledgements never retarget the current download',async()=>{
+  const c=client({native:async()=>({task:downloadTask()})});await c.invoke('download',{id:id(99)});
+  c.listeners.get('rhvideo-download-progress')({payload:{generation:7,task:downloadTask({revision:4,state:'saved',bytes:12})}});
+  c.listeners.get('rhvideo-download-progress')({payload:{generation:7,task:downloadTask({revision:1,state:'downloading',bytes:5})}});
+  c.listeners.get('rhvideo-download-progress')({payload:{generation:6,task:downloadTask({revision:100,state:'failed'})}});
+  assert.equal(c.module.state().downloads[0].state,'saved');assert.equal(c.module.state().downloads[0].revision,4);
+});
 
 test('filtered ZIP export includes every page and all three media types, never just visible cards',async()=>{
   const c=client();await c.invoke('create',{scope:'filtered'});
