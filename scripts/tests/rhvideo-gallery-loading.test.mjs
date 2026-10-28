@@ -57,6 +57,14 @@ test('a failed explicit refresh retains the previous valid pool just as the refe
   const h=harness();h.scope.gallery.loaded=true;h.scope.gallery.scope=h.scope.galleryScope();h.scope.gallery.count=8;
   const refreshing=h.scope.loadGallery(true,false);await reached(()=>h.reads.length===1);h.pending[0].reject(Error('refresh failed'));await assert.rejects(refreshing,/refresh failed/);assert.equal(h.scope.galleryReady(),true);assert.equal(h.scope.gallery.count,8);assert.match(h.scope.gallery.error,/refresh failed/);
 });
+test('the primary gallery renders a page, and leaving it invalidates late display without discarding the background snapshot',async()=>{
+  const root={replaceChildren(){},setAttribute(){},removeAttribute(){}},h=harness({$:id=>id==='gallery-content'?root:null});h.scope.state.view='gallery';
+  const opening=h.scope.loadGallery();await reached(()=>h.reads.length===1);assert.equal(h.dialogs.length,0,'the primary view must never create a modal');h.scope.state.view='catalog';h.pending[0].resolve(rows('background'));
+  assert.equal((await opening).stale,true);assert.equal(h.scope.gallery.loaded,true);assert.equal(h.dialogs.length,0);assert.equal(h.scope.gallery.items.length,0);
+});
+test('default primary gallery preparation starts without blocking or opening an unrelated dialog',async()=>{
+  const root={replaceChildren(){},setAttribute(){},removeAttribute(){}},h=harness({$:id=>id==='gallery-content'?root:null});h.scope.state.view='gallery';h.scope.warmGallery();await reached(()=>h.reads.length===1);assert.equal(h.dialogs.length,0);h.scope.state.view='catalog';h.pending[0].resolve(rows('warm'));await reached(()=>h.scope.gallery.loaded);assert.equal(h.dialogs.length,0);
+});
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html');
 test('reference showApp starts its gallery read without awaiting it or blocking the video list',{skip:!fs.existsSync(reference)},()=>{
   const html=fs.readFileSync(reference,'utf8');let original;

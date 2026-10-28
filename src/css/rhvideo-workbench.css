@@ -1,6 +1,9 @@
 .wb-gallery-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .wb-gallery-tools, .wb-gallery-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .wb-gallery-nav { justify-content: space-between; }
+body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
+#gallery-content { display: grid; gap: 18px; min-width: 0; }
+#gallery-content[aria-busy="true"] { min-height: 160px; color: var(--muted); }
 .wb-toolbar {
   display: flex;
   flex-wrap: wrap;

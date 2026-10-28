@@ -10,7 +10,8 @@
     <div class="library-brand"><span class="brand-mark" data-icon="library"></span><div><strong>RHFiles</strong><small>RHVideo 媒体库</small></div></div>
     <div class="nav-label">我的媒体</div>
     <nav id="library-nav" aria-label="媒体分类">
-      <button data-kind="video" class="nav-item active"><span data-icon="video"></span>视频<span class="nav-count" id="video-count"></span></button>
+      <button id="gallery-nav" class="nav-item active"><span data-icon="picture"></span>截图浏览</button>
+      <button data-kind="video" class="nav-item"><span data-icon="video"></span>视频<span class="nav-count" id="video-count"></span></button>
       <button data-kind="picture" class="nav-item"><span data-icon="picture"></span>图片</button>
       <button data-kind="novel" class="nav-item"><span data-icon="book"></span>小说</button>
       <button data-kind="favorite" class="nav-item"><span data-icon="heart"></span>我的收藏</button>
@@ -22,6 +23,7 @@
     <section class="library-controls"><label class="search"><span data-icon="search"></span><input type="search" id="search" placeholder="搜索名称或文件夹…" autocomplete="off" aria-label="搜索媒体"></label><label class="folder-filter"><span data-icon="folder"></span><select id="folder" aria-label="按文件夹筛选"><option value="">所有文件夹</option></select></label><span class="result-count" id="result-count"></span></section>
     <div id="notice" class="notice" role="status" hidden></div>
     <div id="library-status" class="library-status" role="status"></div>
+    <section id="gallery-panel" aria-label="截图浏览" hidden><div id="gallery-content"></div></section>
     <section id="media-grid" class="media-grid" aria-label="媒体内容" aria-busy="false"></section>
     <footer class="pagination"><span id="page-count"></span><form id="page-jump-form" class="page-jump"><label>跳到 <input id="page-number" type="number" min="1" value="1" aria-label="页码" required></label><button class="button secondary" type="submit">跳转</button></form><div><button class="button secondary" id="previous-page">上一页</button><button class="button secondary" id="next-page">下一页</button></div></footer>
   </main>

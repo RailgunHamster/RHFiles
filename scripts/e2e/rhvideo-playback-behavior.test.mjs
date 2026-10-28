@@ -46,7 +46,7 @@ async function target(app,file){
 async function setup(options={}){
   const app=await launchApp({emulateFocus:true});let fixture,view;
   try{
-    const {portraitIndices=[],picturesOnly=false,rotationMarkers=false,videoMetadataDuration,...fixtureOptions}=options,duration=options.videoDuration??14,file=path.join(app.directory,'behavior.mp4');
+    const {portraitIndices=[],picturesOnly=false,rotationMarkers=false,primaryGallery=false,videoMetadataDuration,...fixtureOptions}=options,duration=options.videoDuration??14,file=path.join(app.directory,'behavior.mp4');
     const make=(file,size)=>execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size='+size+':rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000',...(rotationMarkers?['-vf','drawbox=x=20:y=20:w=60:h=60:color=0xff0000:t=fill,drawbox=x=iw-80:y=20:w=60:h=60:color=0x00ff00:t=fill,drawbox=x=20:y=ih-80:w=60:h=60:color=0x0000ff:t=fill,drawbox=x=iw-80:y=ih-80:w=60:h=60:color=0xffff00:t=fill']:[]),'-t',String(duration),'-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
     if(!picturesOnly)make(file,'640x360');
     const portrait=path.join(app.directory,'portrait.mp4');
@@ -54,7 +54,7 @@ async function setup(options={}){
     const orientation=portraitIndices.length?{videoFiles:Object.fromEntries(portraitIndices.map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:options.videoCount??6},(_,i)=>portraitIndices.includes(i)?'360x640':'640x360')}:{};
     fixture=await rhvideoFixture({videoFile:picturesOnly?null:file,videoCount:6,...fixtureOptions,...orientation,videoDuration:videoMetadataDuration??duration});
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
-    await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+    if(!primaryGallery)await invoke(view,'category',{kind:'video'});await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
     return {app,fixture,view,close:async()=>{view.close();app.close();await fixture.close();}};
   }catch(error){view?.close();app.close();await fixture?.close();throw error;}
 }
@@ -213,6 +213,19 @@ test('player favorites update the library, and a failed preview write is termina
     await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
     await invoke(s.view,'player.close');player.close();player=null;await sleep(300);
     assert.equal(s.fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/video-0').length,1,'no automatic replay or ABA rearming');
+  }finally{player?.close();await s.close();}
+});
+
+test('native playback from the primary screenshot page returns to its exact image and page without opening another gallery',native,async()=>{
+  const s=await setup({primaryGallery:true,galleryVideoCount:6});let player;
+  try{
+    await until(async()=>(await invoke(s.view,'gallery.state')).total===48,'primary screenshot page ready');
+    await invoke(s.view,'gallery.page',{direction:1});await invoke(s.view,'gallery.inspect',{index:0});const image=await invoke(s.view,'image.state');assert.equal(image.index,36);assert.equal(image.current.seconds,8);
+    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');
+    const playing=await until(async()=>{const state=await invoke(player,'player.state');return state.renderedFrames>0&&state.positionMs>=7900?state:null;},'primary screenshot time really displays native frames',25000);
+    assert.equal(playing.queue.id,image.current.videoId);assert.equal(playing.queue.options.parentTotal,48);
+    await command(s.app,'player.back');player.close();player=null;await until(async()=>{const v=await invoke(s.view,'image.state');return v.opened&&!v.loading&&v.index===36;},'native Back restores that exact primary image');await invoke(s.view,'image.close');
+    assert.equal((await invoke(s.view,'state')).view,'gallery');assert.equal(await s.view.evaluate("!document.getElementById('gallery-panel').hidden&&document.querySelector('#gallery-content .wb-gallery-nav').textContent.includes('37 / 48')"),true);assert.equal(await s.view.evaluate("document.querySelectorAll('dialog[open]').length"),0);
   }finally{player?.close();await s.close();}
 });
 

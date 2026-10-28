@@ -36,7 +36,7 @@
   const icon=name=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+(icons[name]||icons.library)+'</svg>';
   document.querySelectorAll('[data-icon]').forEach(node=>node.innerHTML=icon(node.dataset.icon));
   const titles={video:'视频',picture:'图片',novel:'小说',favorite:'我的收藏'};
-  const state={kind:'video',offset:0,limit:36,total:0,items:[],favorites:new Set(),favoriteBusy:new Set(),loading:false,error:'',connected:false,nativePlayback:false,loadId:0,search:'',folder:'',generation:0,server:'',username:''};
+  const state={view:'gallery',kind:'video',offset:0,limit:36,total:0,items:[],favorites:new Set(),favoriteBusy:new Set(),loading:false,error:'',connected:false,nativePlayback:false,loadId:0,search:'',folder:'',generation:0,server:'',username:''};
   const reader={book:null,chapter:0,loaded:false,token:0,saveTimer:0,ratio:0};
   let workbench=null;
   let readSaveChain=Promise.resolve();
@@ -73,12 +73,24 @@
     $('server').value=value.server||'';$('username').value=value.username||'';
     $('disconnect').hidden=!value.connected;
     $('engine-status').textContent=mobile?'视频使用 Android 原生播放器。':value.nativePlayback?'原生视频内核：VLC。':'视频播放需要安装 64 位 VLC 3.x。';
+    syncSection();
+  }
+  function syncSection(){
+    const gallery=state.view==='gallery',visible=gallery&&state.connected;
+    document.body.dataset.libraryView=state.view;
+    $('gallery-panel').hidden=!visible;$('media-grid').hidden=visible;$('library-status').hidden=visible;
+    document.querySelector('.pagination').hidden=gallery;
+    $('folder').closest('label').hidden=gallery||state.kind==='favorite';
+    $('page-title').textContent=gallery?'截图浏览':titles[state.kind];
+    $('gallery-nav').classList.toggle('active',gallery);$('gallery-nav').setAttribute('aria-pressed',String(gallery));
+    document.querySelectorAll('[data-kind].nav-item').forEach(n=>{const active=!gallery&&n.dataset.kind===state.kind;n.classList.toggle('active',active);n.setAttribute('aria-pressed',String(active));});
+    if(!visible)$('result-count').textContent=state.connected?state.total.toLocaleString()+' 项内容':'';
   }
   async function loadFolders(){
     const kind=state.kind,token=++folderLoadId;
     $('folder').replaceChildren(new Option('所有文件夹',''));$('folder').value='';
     if(kind==='favorite'){$('folder').closest('label').hidden=true;return;}
-    $('folder').closest('label').hidden=false;
+    $('folder').closest('label').hidden=state.view==='gallery';
     try{
       const values=await native('folders',{kind});
       if(kind!==state.kind||token!==folderLoadId)return;
@@ -105,7 +117,7 @@
   }
   function pagination(){
     const page=model.page(state.total,state.offset,state.limit);
-    $('result-count').textContent=state.connected?state.total.toLocaleString()+' 项内容':'';
+    if(state.view!=='gallery'||!state.connected)$('result-count').textContent=state.connected?state.total.toLocaleString()+' 项内容':'';
     $('page-count').textContent=state.connected&&state.total?'第 '+page.number+' / '+page.pages+' 页 · 每页 '+state.limit+' 项':'';
     $('page-number').max=String(Math.max(1,page.pages));$('page-number').disabled=!state.connected||state.loading||!state.total;
     if(document.activeElement!==$('page-number')&&!state.loading)$('page-number').value=String(page.number||1);
@@ -162,7 +174,7 @@
       heart.setAttribute('aria-label',(state.favorites.has(key)?'取消收藏 ':'收藏 ')+(media?.title||''));
     }
   }
-  function snapshot(){return {kind:state.kind,connected:state.connected,server:state.server,username:state.username,generation:state.generation,nativePlayback:state.nativePlayback,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
+  function snapshot(){return {view:state.view,kind:state.kind,connected:state.connected,server:state.server,username:state.username,generation:state.generation,nativePlayback:state.nativePlayback,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
   action('state',object(),snapshot,'read');api.provideState('rhvideo',snapshot);
   action('render.state',object(),()=>{let detachedBytes=0,detachedCards=0;for(const {node} of cardCache.values())if(!node.isConnected){detachedCards++;const image=node.querySelector('img');detachedBytes+=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;}return {cachedCards:cardCache.size,detachedCards,detachedBytes,currentCards:$('media-grid').children.length,loading:state.loading};},'read');
   action('connection.open',object(),async()=>{updateConnection(await native('state'));$('connection-error').textContent='';openDialog('connection-dialog');return {opened:true};});
@@ -189,11 +201,11 @@
     const value=await native('logout');if(connection!==connectionEpoch)return {stale:true};updateConnection(value);state.items=[];state.total=0;state.favorites.clear();$('connection-dialog').close();await load();return snapshot();
   },'external');
   action('category',object({kind:{type:'string',enum:model.kinds}},['kind']),async({kind})=>{
-    clearTimeout(searchTimer);state.kind=kind;state.offset=0;state.search='';state.folder='';$('search').value='';$('folder').value='';
-    $('page-title').textContent=titles[kind];document.querySelectorAll('[data-kind].nav-item').forEach(n=>n.classList.toggle('active',n.dataset.kind===kind));return load(false,true);
+    clearTimeout(searchTimer);workbench?.leaveGallery();state.view='catalog';state.kind=kind;state.offset=0;state.search='';state.folder='';$('search').value='';$('folder').value='';
+    syncSection();return load(false,true);
   });
-  action('refresh',object(),async()=>{if(state.connected)try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){notice(error);}return load(true);},'read');
-  action('search',object({query:{type:'string',maxLength:256}},['query']),({query})=>{state.search=query;state.offset=0;$('search').value=query;return load();});
+  action('refresh',object(),async()=>{if(state.connected)try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){notice(error);}return state.view==='gallery'&&state.connected?workbench.refreshGallery(true):load(true);},'read');
+  action('search',object({query:{type:'string',maxLength:256}},['query']),({query})=>{state.search=query;state.offset=0;$('search').value=query;return state.view==='gallery'&&state.connected?workbench.refreshGallery(false,true):load();});
   action('filter',object({folder:{type:'string',maxLength:1024}},['folder']),({folder})=>{state.folder=folder;state.offset=0;$('folder').value=folder;return load();});
   action('page',object({direction:{type:'integer',enum:[-1,1]}},['direction']),({direction})=>{const p=model.page(state.total,state.offset,state.limit);if(state.loading||direction<0&&!p.previous||direction>0&&!p.next)return snapshot();state.offset+=direction*state.limit;window.scrollTo(0,0);return load();});
   action('page.jump',object({page:{type:'integer',minimum:1,maximum:1000000}},['page']),({page})=>{const p=model.page(state.total,state.offset,state.limit);if(state.loading)throw Error('媒体清单正在读取，请稍后跳转');if(page>p.pages)throw Error('页码超出当前筛选范围');state.offset=(page-1)*state.limit;window.scrollTo(0,0);return load();});
@@ -279,7 +291,7 @@
     if(mobile)return native('close');return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
-  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,saveRead,chapter,icon,bind});
+  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
   const listenNative=mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen;
   listenNative('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
   listenNative('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);
@@ -290,6 +302,7 @@
   bind('connection-open','click','connection.open');bind('connection-close','click','connection.close');
   bind('connection-form','submit','connection.connect',()=>({server:$('server').value,username:$('username').value,password:$('password').value}));
   bind('disconnect','click','connection.logout');bind('refresh','click','refresh');
+  bind('gallery-nav','click','gallery.show');
   for(const button of document.querySelectorAll('nav [data-kind]')){button.dataset.apiAction='rhvideo.category';RHFilesUI.listen(button,'click',()=>invoke('category',{kind:button.dataset.kind}).catch(notice),undefined,'rhvideo.nav.'+button.dataset.kind);}
   $('search').dataset.apiAction='rhvideo.search';
   RHFilesUI.listen($('search'),'input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>invoke('search',{query:$('search').value}).catch(notice),300);},undefined,'rhvideo.search.input');

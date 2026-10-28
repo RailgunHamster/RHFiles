@@ -21,7 +21,7 @@ test('native source replacement displays new pixels and dimensions without carry
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
     const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
     view=await cdpSession(target,30000);await until(()=>view.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==="rhvideo.media.open")'),'library API');
-    await invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await invoke('rotation.set',{enabled:false});
+    await invoke('category',{kind:'video'});await invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await invoke('rotation.set',{enabled:false});
     const center=async state=>{
       const frame=await native('player.diagnosticFrame',{expectedInput:state.inputId});assert.equal(path.dirname(frame.path),app.directory);assert.match(path.basename(frame.path),/^rhvideo-native-[a-f0-9]{32}\.bmp$/);
       try{const bytes=fs.readFileSync(frame.path),width=bytes.readInt32LE(18),height=-bytes.readInt32LE(22);assert.equal(bytes.length,54+width*height*4);const offset=54+(Math.floor(height/2)*width+Math.floor(width/2))*4;const [b,g,r]=bytes.subarray(offset,offset+3);return [r,g,b];}finally{fs.unlinkSync(frame.path);}

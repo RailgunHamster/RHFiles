@@ -96,6 +96,7 @@ try {
           "reference list must be visible, not a hidden background tab",
         );
       } else {
+        await page.evaluate('RHFilesAPI.invoke("rhvideo.category",{kind:"video"})');
         const result = await page.evaluate(
           'RHFilesAPI.invoke("rhvideo.connection.connect",' +
             JSON.stringify({

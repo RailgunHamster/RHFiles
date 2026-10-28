@@ -19,6 +19,9 @@ async function target(app,file){
   await until(()=>session.evaluate("!!globalThis.RHFilesAPI?.list().some(a=>['rhvideo.state','rhvideo.player.state','rhvideo.grid.state'].includes(a.id))"),'view actions registered');
   const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
   for(const code of codes){const served=await session.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=text=>createHash('sha256').update(text).digest('hex');assert.equal(hash(served),hash(source),'The tested executable must embed the current '+code);}
+  // These are video-list workflows. The independent primary-gallery cases
+  // verify the reference default; do not rely on a hidden list being clickable.
+  if(file==='rhvideo.html')await session.evaluate('RHFilesAPI.invoke("rhvideo.category",{kind:"video"})');
   return session;
 }
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');

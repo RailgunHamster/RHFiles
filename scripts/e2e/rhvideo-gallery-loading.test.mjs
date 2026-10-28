@@ -8,18 +8,49 @@ import {cdpSession} from '../rhfiles-api.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
-async function setup(options){
+async function setup(options,{catalog=true}={}){
   const fixture=await rhvideoFixture(options),app=await launchApp({emulateFocus:true});let view;
   try{
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
     const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
     view=await cdpSession(target,30000);await until(()=>view.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==="rhvideo.gallery.state")'),'gallery state API');
     for(const file of ['rhvideo-client.js','rhvideo-workbench.js','rhvideo-index.js','rhvideo-worker.js']){const served=await view.evaluate('fetch('+JSON.stringify('js/'+file)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+file,import.meta.url),'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');assert.equal(hash(served),hash(source),'Use the actual embedded '+file);}
+    if(catalog)await invoke(view,'category',{kind:'video'});
     await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
     return {fixture,app,view,close:async()=>{view.close();await app.close();await fixture.close();}};
   }catch(error){view?.close();await app.close();await fixture.close();throw error;}
 }
 const reads=fixture=>fixture.requests.filter(r=>r.path==='/api/v1/screenshots/grid').length;
+
+test('reference primary screenshot browser is a real main section, not a popup or a video list',async()=>{
+  const s=await setup({galleryVideoCount:6},{catalog:false});
+  const click=async selector=>{const p=await s.view.evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)}),r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);await s.view.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...p});await s.view.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...p});};
+  try{
+    assert.equal((await invoke(s.view,'state')).view,'gallery');
+    await until(()=>s.view.evaluate("document.querySelectorAll('#gallery-content .wb-frame').length===36"),'primary screenshot cards ready');
+    assert.equal(await s.view.evaluate("document.getElementById('media-grid').hidden&&document.getElementById('gallery-panel').getBoundingClientRect().width>0"),true);
+    assert.equal(await s.view.evaluate("document.querySelectorAll('dialog[open]').length"),0,'the reference default is a page, not an extra modal');
+    await until(()=>s.view.evaluate("[...document.querySelectorAll('#gallery-content img')].some(i=>i.complete&&i.naturalWidth===800)"),'actual visible primary screenshots decode');
+    await invoke(s.view,'gallery.page',{direction:1});await invoke(s.view,'gallery.inspect',{index:0});assert.equal((await invoke(s.view,'image.state')).index,36);await invoke(s.view,'image.close');
+    assert.equal(await s.view.evaluate("document.querySelector('#gallery-content .wb-gallery-nav').textContent.includes('37 / 48')"),true);
+    await click('nav [data-kind=video]');await until(async()=>{const v=await invoke(s.view,'state');return v.view==='catalog'&&!v.loading;},'real video navigation');
+    assert.equal(await s.view.evaluate("!document.getElementById('media-grid').hidden&&document.getElementById('gallery-panel').hidden"),true);
+    await click('#gallery-nav');await until(()=>s.view.evaluate("!document.getElementById('gallery-panel').hidden&&document.querySelector('#gallery-content .wb-gallery-nav').textContent.includes('37 / 48')"),'primary navigation preserves its own screenshot page');
+    await invoke(s.view,'search',{query:'no such screenshot fixture'});assert.equal(await s.view.evaluate("document.querySelectorAll('#gallery-content .wb-frame').length"),0);await invoke(s.view,'search',{query:''});assert.equal(await s.view.evaluate("document.querySelectorAll('#gallery-content .wb-frame').length"),36);
+    assert.deepEqual((await invoke(s.view,'ui.contract')).missing,[]);await s.view.send('Page.captureScreenshot',{format:'png'}).then(r=>fs.writeFileSync(path.join(s.app.artifactDir,'primary-gallery.png'),Buffer.from(r.data,'base64')));
+  }finally{await s.close();}
+});
+
+test('a slow primary gallery never traps navigation or pops a late modal after switching to videos',async()=>{
+  const gate=deferred();let s;
+  try{
+    s=await setup({beforeGallery:()=>gate.promise},{catalog:false});assert.equal((await invoke(s.view,'state')).view,'gallery');await until(()=>reads(s.fixture)===1,'primary metadata held');
+    assert.equal(await s.view.evaluate("document.querySelector('#gallery-content[aria-busy=true]')!==null"),true);
+    await invoke(s.view,'category',{kind:'video'});assert.equal((await invoke(s.view,'state')).total,52);gate.resolve();await until(async()=>(await invoke(s.view,'gallery.state')).loaded,'background snapshot completes');
+    assert.equal((await invoke(s.view,'state')).view,'catalog');assert.equal(await s.view.evaluate("document.querySelectorAll('dialog[open]').length"),0);assert.equal(await s.view.evaluate("document.getElementById('gallery-panel').hidden"),true);
+    await invoke(s.view,'gallery.show');assert.equal(await s.view.evaluate("document.querySelectorAll('#gallery-content .wb-frame').length"),32);assert.equal(reads(s.fixture),1);
+  }finally{gate.resolve();await s?.close();}
+});
 
 test('login prepares gallery metadata without blocking cards or popping a dialog; opening joins that same read',async()=>{
   const gate=deferred();let s;

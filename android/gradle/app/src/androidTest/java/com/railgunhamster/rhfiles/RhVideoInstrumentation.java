@@ -134,17 +134,23 @@ public class RhVideoInstrumentation extends Instrumentation {
     throw new Exception("Actual paused seek frame did not settle: "+state);
   }
   private void checkReferenceSingle()throws Exception{
+    require("gallery".equals(((JSONObject)action("state",new JSONObject())).getString("view")),"Like RHVideo, the default main section is screenshot browsing");
+    require("true".equals(eval(library,"!document.getElementById('gallery-panel').hidden&&document.querySelectorAll('dialog[open]').length===0")),"The primary gallery is a page, not a modal overlay");
+    action("category",new JSONObject().put("kind","video"));
     action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject cold=waitPlayer("video-0",true);require(!cold.getJSONObject("options").has("origin"),"Like the reference, a cold video click does not load or manufacture a screenshot parent");action("player.close",new JSONObject());library=waitView("RhVideoActivity");require(!((JSONObject)action("image.state",new JSONObject())).getBoolean("opened"),"A cold direct video leaves no hidden screenshot parent");
     long galleryDeadline=System.currentTimeMillis()+8000;JSONObject prepared;
     do{prepared=(JSONObject)action("gallery.state",new JSONObject());if(prepared.getBoolean("loaded"))break;Thread.sleep(100);}while(System.currentTimeMillis()<galleryDeadline);
     require(prepared.getBoolean("loaded")&&prepared.getInt("count")==1,"Login prepares the gallery in the background without blocking the first video: "+prepared);
     require("false".equals(eval(library,"!!document.querySelector('#wb-gallery[open]')")),"Background completion cannot pop a gallery in front of the library");
-    action("gallery.open",new JSONObject());
+    action("gallery.show",new JSONObject());
     action("rules.apply",new JSONObject().put("rule",new JSONObject().put("mode","and").put("include",new JSONArray().put("no-such-fixture-folder")).put("exclude",new JSONArray())));
     require(((JSONObject)action("gallery.state",new JSONObject())).getInt("total")==0,"Changing a filter updates the already-open native library gallery");
-    require("0".equals(eval(library,"document.querySelectorAll('#wb-gallery .wb-frame').length")),"The old screenshot cards cannot remain after filtering");
+    require("0".equals(eval(library,"document.querySelectorAll('#gallery-content .wb-frame').length")),"The old screenshot cards cannot remain after filtering");
     action("rules.apply",new JSONObject().put("rule",new JSONObject()));require(((JSONObject)action("gallery.state",new JSONObject())).getInt("total")==1,"Clearing the filter restores the parent pool");
-    action("panel.close",new JSONObject().put("id","wb-gallery"));
+    require("true".equals(eval(library,"!document.getElementById('gallery-panel').hidden&&document.querySelectorAll('dialog[open]').length===0")),"Filtering preserves the primary page rather than opening a hidden modal");
+    long primaryDeadline=System.currentTimeMillis()+10000;while(!"true".equals(eval(library,"[...document.querySelectorAll('#gallery-content img')].some(i=>i.complete&&i.naturalWidth===800)"))&&System.currentTimeMillis()<primaryDeadline)Thread.sleep(100);
+    require("true".equals(eval(library,"[...document.querySelectorAll('#gallery-content img')].some(i=>i.complete&&i.naturalWidth===800)")),"The actual primary screenshot must decode");screenshot("rhvideo-primary-gallery-qa.png");
+    action("category",new JSONObject().put("kind","video"));
     action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject first=waitPlayer("video-0",true);JSONObject parent=first.getJSONObject("options");require(parent.getInt("parentTotal")==1,"Fixture must expose an actual one-item parent");
     touchPlayerButton("exo_next");library=waitView("RhVideoActivity");JSONObject image=waitImage(0);require(image.getInt("total")==1,"An arrow pops the parent even when modulo position does not change");
     action("image.playVideo",new JSONObject());JSONObject current=waitPlayer("video-0",true);require(!current.getJSONObject("options").getString("parentPlayback").equals(parent.getString("parentPlayback")),"Every child launch must have a new identity");long input=current.getLong("inputId");
@@ -389,6 +395,8 @@ public class RhVideoInstrumentation extends Instrumentation {
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
       JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==("single".equals(args.getString("mode"))?3:52),"Video catalog count");
+      require("gallery".equals(catalog.getString("view")),"Fresh Android libraries keep the reference primary screenshot view");
+      if(!"single".equals(args.getString("mode")))action("category",new JSONObject().put("kind","video"));
       if("rotation".equals(args.getString("mode"))){checkReferenceRotation();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference rotation toggle, actual native SurfaceView, paused time/speed, next source, stale inputs/settings and per-account persistence");finish(Activity.RESULT_OK,result);return;}
       if("tickets".equals(args.getString("mode"))){checkPreparedTickets();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: prepared ticket lifetime and native player replacement");finish(Activity.RESULT_OK,result);return;}
       if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, audible cells, native frames, pause/seek/mute/rate restoration, independent queue, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}

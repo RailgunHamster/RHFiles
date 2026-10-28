@@ -260,6 +260,7 @@
         gallery.offset = 0;
         gallery.total = 0;
         gallery.seed = 0;
+        $("gallery-content")?.replaceChildren();
         state.search = "";
         state.folder = "";
         state.offset = 0;
@@ -732,7 +733,7 @@
           state.offset = 0;
           save();
           applyPreferences();
-          return load();
+          const result=await load();if(galleryVisible())await loadGallery();return result;
         },
       );
       action(
@@ -801,7 +802,7 @@
           prefs.sort = saved.sort;
           prefs.rule = saved.rule;
           invalidateGallery();gallery.offset=0;
-          if($("wb-gallery")?.open)await loadGallery();else warmGallery();
+          if(galleryVisible())await loadGallery();else warmGallery();
           save();
           return load();
         },
@@ -1114,7 +1115,7 @@
           if (["perVideo", "mixPictures", "rule"].includes(key)) {
             invalidateGallery();
             gallery.offset=0;
-            if ($("wb-gallery")?.open) await loadGallery();
+            if (galleryVisible()) await loadGallery();
             else warmGallery();
           }
           if (["rule", "sort", "mediaType", "seed"].includes(key)) {
@@ -1414,7 +1415,7 @@
           const result = await send("query", { ...criteria(), rule, limit: 1 });
           prefs.rule = rule;
           invalidateGallery();gallery.offset=0;
-          if($("wb-gallery")?.open)await loadGallery();else warmGallery();
+          if(galleryVisible())await loadGallery();else warmGallery();
           state.offset = 0;
           save();
           await load();
@@ -3091,8 +3092,9 @@
         const version=epoch;
         // Like showApp/loadGrid(false): prepare metadata in the background,
         // never await it on login/video clicks or open a gallery dialog.
-        queueMicrotask(()=>{if(version===epoch&&state.connected)void loadGallery(false,false).catch(error=>{if(version===epoch)notice("截图库后台加载失败："+String(error));});});
+        queueMicrotask(()=>{if(version===epoch&&state.connected)void loadGallery(false,state.view==="gallery").catch(error=>{if(version===epoch)notice("截图库后台加载失败："+String(error));});});
       }
+      function galleryVisible(){return state.view==="gallery"||$("wb-gallery")?.open;}
       async function prepareGallery(refresh,version){
         if(version!==epoch)return {stale:true};
         if(refresh)invalidateGallery(true);
@@ -3154,17 +3156,17 @@
         return task.promise;
       }
       async function loadGallery(refresh = false, display = true) {
-        const version=await ensure(),ticket=display?++gallery.load:gallery.load,c=config();
-        const loadingRoot=display?dialog("wb-gallery","截图库"):null;
+        const version=await ensure(),ticket=display?++gallery.load:gallery.load,c=config(),inline=state.view==="gallery";
+        const loadingRoot=display?(inline?$("gallery-content"):dialog("wb-gallery","截图库")):null;
         if(loadingRoot){const message=el("p","正在读取截图库…");message.setAttribute("role","status");loadingRoot.replaceChildren(message);loadingRoot.setAttribute("aria-busy","true");}
         let viewRevision;
-        const ownsView=()=>display&&ticket===gallery.load&&version===epoch&&galleryScope(c)===galleryScope()&&(viewRevision===undefined||viewRevision===gallery.revision);
+        const ownsView=()=>display&&inline===(state.view==="gallery")&&ticket===gallery.load&&version===epoch&&galleryScope(c)===galleryScope()&&(viewRevision===undefined||viewRevision===gallery.revision);
         try{
         const prepared=await prepareGallery(refresh,version);
         if(prepared.stale||version!==epoch)return {stale:true};
         if(!display)return {loaded:true};
         const revision=gallery.revision,scope=galleryScope(c);viewRevision=revision;
-        const current=()=>ticket===gallery.load&&version===epoch&&revision===gallery.revision&&scope===galleryScope();
+        const current=()=>inline===(state.view==="gallery")&&ticket===gallery.load&&version===epoch&&revision===gallery.revision&&scope===galleryScope();
         const value = await send("query", {
           kind: "gallery",
           search: state.search,
@@ -3182,9 +3184,13 @@
         if(!current())return {stale:true};
         gallery.total = value.total;
         gallery.items = value.items;
-        const root = dialog("wb-gallery", "截图库");
+        if(inline)$("result-count").textContent=value.total.toLocaleString()+" 张截图";
+        const root = loadingRoot;
         const tools=el("div",undefined,"wb-gallery-tools");
         tools.append(
+          button("标签筛选", "rules.open"),
+          button("分段连播", "playlist.start"),
+          button("多视频同屏", "grid.open"),
           button("重新读取", "gallery.refresh"),
           button("随机排列", "gallery.shuffle"),
           button("还原顺序", "gallery.restore"),
@@ -3232,6 +3238,10 @@
         }finally{if(ownsView())loadingRoot.removeAttribute("aria-busy");}
       }
       action("gallery.open", object(), () => loadGallery());
+      action("gallery.show",object(),()=>{
+        gallery.load++;state.view="gallery";$("wb-gallery")?.close();ctx.syncSection();
+        return state.connected?loadGallery():{view:"gallery",connected:false};
+      });
       action("gallery.state",object(),()=>({loaded:galleryReady(),loading:!!gallery.pending,error:gallery.error,count:gallery.count,total:gallery.total,revision:gallery.revision}),"read");
       action("gallery.inspect",object({index:{type:"integer",minimum:0,maximum:99}},["index"]),async({index})=>{
         const version=epoch,intent=++singlePlayIntent,view=gallery.load,revision=gallery.revision;
@@ -4229,6 +4239,8 @@
         clearTimeout(saveTimer);
       });
       return {
+        leaveGallery(){gallery.load++;},
+        refreshGallery(refresh=false,resetPage=false){if(resetPage)gallery.offset=0;return loadGallery(refresh);},
         invalidateSession() {
           sessionSnapshot = null;
           sessionCheckedAt = 0;

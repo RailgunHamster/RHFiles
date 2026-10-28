@@ -22,7 +22,7 @@ const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.string
 async function library(app,fixture){
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
   const view=await viewFor(app,'rhvideo.html');
-  await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+  await invoke(view,'category',{kind:'video'});await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
   return view;
 }
 function makeVideo(directory,duration=12){

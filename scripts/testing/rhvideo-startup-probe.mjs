@@ -27,7 +27,7 @@ try{
   const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
   library=await cdpSession(target,30000);
   await until(()=>library.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==="rhvideo.media.open")'),'library actions');
-  await action(library,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await action(library,'rotation.set',{enabled:false});
+  await action(library,'category',{kind:'video'});await action(library,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await action(library,'rotation.set',{enabled:false});
   await until(()=>library.evaluate("(()=>{const images=[...document.querySelectorAll('.cover-button img')];return images.length===1&&images.every(i=>i.complete&&i.naturalWidth>0);})()"),'one real initial cover finishes before timing');
   const served=await library.evaluate("fetch('js/rhvideo-workbench.js').then(r=>r.text())"),expected=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');assert.equal(createHash('sha256').update(served).digest('hex'),createHash('sha256').update(expected).digest('hex'),'Measure the actual current embedded frontend');
   assert.equal(await app.evaluate('typeof window.__TAURI__.window.Window.getByLabel'), 'function','Use actual window visibility, not a hidden/offscreen readback alone');
