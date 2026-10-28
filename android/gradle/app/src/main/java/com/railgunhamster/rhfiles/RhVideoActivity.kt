@@ -91,7 +91,8 @@ class RhVideoActivity:AppCompatActivity() {
             val action=request.getString("action");val args=request.optJSONObject("args")?:JSONObject()
             client.validateContext(args,action=="logout")
             val contextArgs=JSONObject(args.toString())
-            if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}}}
+            val outgoingGridGeneration=if(action in listOf("connect","register","logout"))runCatching{client.sessionGeneration()}.getOrNull()else null
+            if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}}
             val value=when(action){
               "player.close","player.back"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(PlaybackActivity.rhControl(JSONObject().put("command",if(action=="player.back")"back"else"close")))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "page.volume"->{val value=args.getInt("value");require(value in 0..100);val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(RhVideoVolume.set(value))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
@@ -124,8 +125,8 @@ class RhVideoActivity:AppCompatActivity() {
                 val data=client.openGrid(ticket,count,low)
                 runOnUiThread{startActivity(Intent(this,RhVideoGridActivity::class.java).putExtra("grid",data.toString()).putExtra("playlist",ticket).putExtra("count",count).putExtra("super",low))};JSONObject().put("opened",true).put("offset",data.getInt("offset"))
               }
-              "grid.state","grid.control","grid.expand","grid.page","grid.seekGroup"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{result.complete(if(action=="grid.state")RhVideoGridActivity.state()else RhVideoGridActivity.control(JSONObject(args.toString()).also{if(action=="grid.expand")it.put("command","expand");if(action=="grid.page")it.put("command","page").put("value",args.getInt("direction"));if(action=="grid.seekGroup")it.put("command","seekGroup").put("value",args.getDouble("ratio"))}))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
-              "grid.close"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{result.complete(RhVideoGridActivity.close())};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
+              "grid.state","grid.control","grid.expand","grid.page","grid.seekGroup","grid.favorite","grid.mark"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(if(action=="grid.state")RhVideoGridActivity.state()else RhVideoGridActivity.control(JSONObject(args.toString()).also{if(action=="grid.expand")it.put("command","expand");if(action=="grid.page")it.put("command","page").put("value",args.getInt("direction"));if(action=="grid.seekGroup")it.put("command","seekGroup").put("value",args.getDouble("ratio"));if(action=="grid.favorite")it.put("command","favorite");if(action=="grid.mark")it.put("command","mark")}))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
+              "grid.close"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(RhVideoGridActivity.close())}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "player.state","player.control"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(if(action=="player.state")PlaybackActivity.rhState()else PlaybackActivity.rhControl(JSONObject(args.toString()).also{if(it.optString("command")=="resume")it.put("command","play")}))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "close"->{runOnUiThread{finish()};true}
               "play"->{val playback=client.playback(args);runOnUiThread{if(!isFinishing)PlaybackActivity.launchRhVideo(this,Intent(this,PlaybackActivity::class.java).putExtra("path",playback.path).putExtra("name",args.optString("title","视频")).putExtra("kind","video").putExtra("positionMs",playback.position).putExtra("queue",PlaybackQueue.json(playback.items)).putExtra("rhvideoPlaylist",playback.ticket).putExtra("rhvideoIndex",playback.globalIndex))};JSONObject().put("opened",true)}
@@ -133,7 +134,7 @@ class RhVideoActivity:AppCompatActivity() {
               else->client.request(action,args)
             }
             response.put("result",value)
-            if(action=="logout")runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo();RhVideoGridActivity.close()}}
+            if(action=="logout")runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}
           }catch(e:Exception){response.put("error",e.message?:"RHVideo 操作失败")}
           runOnUiThread{if(!isDestroyed)try{reply.postMessage(response.toString())}catch(_:Exception){}}
         }

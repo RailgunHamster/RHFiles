@@ -584,6 +584,12 @@ test('native-input public APIs bind single and grid intents to exact decoder ins
     await invoke(s.view,'preferences.set',{key:'gridCount',value:4});
     await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     const state=await invoke(grid,'grid.state'),old=state.cells[1].inputId;
+    const guard={target:0,inputTarget:0,expectedInput:state.cells[0].inputId};
+    await invoke(s.view,'grid.favorite',guard);assert(s.fixture.favorites.has('video:'+state.cells[0].id));
+    await invoke(s.view,'grid.favorite',guard);assert.equal(s.fixture.favorites.size,0);
+    await invoke(s.view,'grid.mark',{...guard,enabled:true});assert.equal((await invoke(grid,'grid.state')).cells[0].marked,true);
+    await invoke(s.view,'grid.mark',{...guard,enabled:false});assert.equal((await invoke(grid,'grid.state')).cells[0].marked,false);
+    console.log(JSON.stringify({sharedGridActions:'workbench and controller observe the same favorite/mark state',input:guard.expectedInput}));
     assert.deepEqual((await invoke(grid,'grid.seekGroup',{ratio:0})).cells.map(v=>v.inputId),state.cells.map(v=>v.inputId),'seeking to the current group must not restart its decoders');
     assert.equal((await invoke(grid,'grid.input',{target:1,inputId:old,intent:'expand'})).expanded,1);
     assert.equal((await invoke(grid,'grid.input',{target:1,inputId:old,intent:'close'})).expanded,null,'Escape restores an expanded cell before closing the entire grid');

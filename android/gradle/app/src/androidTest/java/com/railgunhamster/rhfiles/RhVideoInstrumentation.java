@@ -18,10 +18,29 @@ public class RhVideoInstrumentation extends Instrumentation {
   private JSONObject waitGrid(int count,boolean paused)throws Exception{
     long end=System.currentTimeMillis()+30000;JSONObject state=null;
     do{try{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==count;for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.optBoolean("rendered")&&cell.optBoolean("paused")==paused&&cell.optInt("playbackState")==3&&cell.optLong("renderedFrames")>0;if(!paused)ready&=cell.optBoolean("playing")&&cell.optLong("positionMs")>250&&cell.optLong("renderedFrames")>1;}if(ready)return state;}catch(Exception ignored){}Thread.sleep(200);}while(System.currentTimeMillis()<end);
-    throw new Exception("Native grid frames/state did not settle: "+state);
+    android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("Native grid frames/state did not settle: "+state);
   }
   private JSONArray gridIds(JSONObject state)throws Exception{JSONArray ids=new JSONArray();JSONArray cells=state.getJSONArray("cells");for(int i=0;i<cells.length();i++)ids.put(cells.getJSONObject(i).getString("id"));return ids;}
   private JSONObject gridControl(int target,String command,double value)throws Exception{return (JSONObject)mainAction("native.grid.control",new JSONObject().put("target",target).put("command",command).put("value",value));}
+  private void clickNativeLabel(String label)throws Exception{
+    long end=System.currentTimeMillis()+5000;JSONArray controls=null;
+    do{controls=(JSONArray)mainAction("native.ui.list",new JSONObject());for(int i=0;i<controls.length();i++){JSONObject control=controls.getJSONObject(i);if(label.equals(control.optString("label"))&&control.getBoolean("enabled")){mainAction("native.ui.invoke",new JSONObject().put("controlId",control.getString("controlId")));return;}}Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    throw new Exception("Visible native control missing: "+label+"; "+controls);
+  }
+  private JSONObject waitGridFavorite(int target,boolean enabled,boolean failed)throws Exception{
+    long end=System.currentTimeMillis()+10000;JSONObject cell=null;
+    do{cell=((JSONObject)action("grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(target);if(!cell.getBoolean("favoriteBusy")&&cell.getBoolean("favorite")==enabled&&cell.isNull("favoriteError")!=failed)return cell;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    throw new Exception("Native grid favorite did not settle: "+cell);
+  }
+  private long gridGestureDown;private float gridGestureX,gridGestureY;
+  private View described(View view,String label){if(label.contentEquals(view.getContentDescription()==null?"":view.getContentDescription()))return view;if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++){View found=described(group.getChildAt(i),label);if(found!=null)return found;}}return null;}
+  private void beginGridVolumeGesture()throws Exception{
+    boolean[] found={false};runOnMainSync(()->{View view=described(current.getWindow().getDecorView(),"同屏音量调节");if(!(view instanceof android.widget.SeekBar))return;android.widget.SeekBar slider=(android.widget.SeekBar)view;int[] xy=new int[2];slider.getLocationOnScreen(xy);gridGestureX=xy[0]+slider.getPaddingLeft()+(slider.getWidth()-slider.getPaddingLeft()-slider.getPaddingRight())*slider.getProgress()/slider.getMax();gridGestureY=xy[1]+slider.getHeight()/2f;found[0]=true;});require(found[0],"Actual native volume slider missing");
+    gridGestureDown=SystemClock.uptimeMillis();require(getUiAutomation().injectInputEvent(MotionEvent.obtain(gridGestureDown,gridGestureDown,MotionEvent.ACTION_DOWN,gridGestureX,gridGestureY,0),true),"Owned grid DOWN was rejected");gridGestureX+=30*getTargetContext().getResources().getDisplayMetrics().density;
+    require(getUiAutomation().injectInputEvent(MotionEvent.obtain(gridGestureDown,SystemClock.uptimeMillis(),MotionEvent.ACTION_MOVE,gridGestureX,gridGestureY,0),true),"Owned grid MOVE was rejected");Thread.sleep(150);
+    require(((JSONObject)action("grid.state",new JSONObject())).getJSONArray("dragging").toString().contains("volume"),"An actual native slider drag must start before testing stale release");
+  }
+  private void endGridVolumeGesture(boolean cancel)throws Exception{if(gridGestureDown!=0){long down=gridGestureDown;gridGestureDown=0;require(getUiAutomation().injectInputEvent(MotionEvent.obtain(down,SystemClock.uptimeMillis(),cancel?MotionEvent.ACTION_CANCEL:MotionEvent.ACTION_UP,gridGestureX,gridGestureY,0),true),"Owned grid gesture release was rejected");}}
   private void checkReferenceGrid()throws Exception{
     require(((JSONObject)action("preferences.state",new JSONObject())).getInt("gridCount")==0,"Android must default to reference automatic grouping");
     action("gallery.open",new JSONObject());action("grid.open",new JSONObject());JSONObject first=waitGrid(3,false);
@@ -29,18 +48,32 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(gridIds(first).toString().equals("[\"video-0\",\"video-1\",\"video-2\"]"),"Native grid must preserve gallery order: "+first);
     JSONArray firstIds=gridIds(first);String lease=first.getString("lease");
     require(first.getString("engine").equals("Media3")&&first.getBoolean("nativeSurface"),"Use actual native players, not an HTML grid");
+    JSONArray currentInputs=new JSONArray();for(int i=0;i<first.getJSONArray("cells").length();i++)currentInputs.put(first.getJSONArray("cells").getJSONObject(i).getLong("inputId"));
+    mainAction("native.grid.control",new JSONObject().put("target",0).put("command","volume").put("value",100).put("expectedInput",currentInputs.getLong(0)).put("expectedInputs",currentInputs).put("expectedOffset",0).put("expectedLease",lease));
     require(((JSONObject)mainAction("native.grid.control",new JSONObject().put("command","controls").put("enabled",true))).getBoolean("controlsExpanded"),"Playback adjustment disclosure must have a typed public API");mainAction("native.grid.control",new JSONObject().put("command","controls").put("enabled",false));
     for(int i=0;i<3;i++){JSONObject cell=first.getJSONArray("cells").getJSONObject(i);require(cell.getInt("volume")==100&&!cell.getBoolean("muted")&&cell.getBoolean("repeat"),"Every cell starts audible and repeats normal EOF");}
     require(first.getJSONArray("cells").getJSONObject(2).getJSONArray("rect").getDouble(2)==1.0,"Mixed proportions require a spanning row, not a square grid");
     require(first.getJSONArray("cells").getJSONObject(2).getJSONArray("surfaceBounds").getInt(2)>first.getJSONArray("cells").getJSONObject(0).getJSONArray("surfaceBounds").getInt(2)*1.8,"Actual native child bounds must apply the spanning layout");
+    require(Boolean.TRUE.equals(expression(library,"['rhvideo.grid.favorite','rhvideo.grid.mark'].every(id=>RHFilesAPI.list().some(action=>action.id===id))")),"Native mobile operations cannot disappear from the shared public API");
+    clickNativeLabel("视频 1 · 加入收藏");waitGridFavorite(0,true,false);clickNativeLabel("视频 1 · 取消收藏");waitGridFavorite(0,false,false);
+    clickNativeLabel("视频 2 · 标记暂存");require(((JSONObject)action("grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(1).getBoolean("marked"),"Actual native mark button must use the public operation");
+    action("grid.mark",new JSONObject().put("target",1).put("expectedInput",first.getJSONArray("cells").getJSONObject(1).getLong("inputId")).put("enabled",false));require(!((JSONObject)action("grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(1).getBoolean("marked"),"Explicit unmark is the same state as the visible button");
     gridControl(-1,"pause",0);gridControl(0,"seek",5000);gridControl(0,"volume",37);gridControl(0,"mute",0);gridControl(0,"rate",1.5);
     JSONObject before=waitGrid(3,true);require(before.getJSONArray("cells").getJSONObject(0).getLong("positionMs")>=4900,"Paused native seek must reach the requested target");
+    gridControl(0,"target",0);mainAction("native.grid.control",new JSONObject().put("command","controls").put("enabled",true));beginGridVolumeGesture();
     JSONObject other=gridControl(-1,"page",1);require(other.getInt("offset")==3,"Variable group boundary");waitGrid(3,false);
     require(Boolean.TRUE.equals(expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke('native.grid.control',{command:'volume',target:0,value:99,expectedOffset:0,expectedLease:"+JSONObject.quote(lease)+"}).then(()=>false,()=>true)")),"A late slider must not change the next group");
     // A different, later prepared single-video queue must not erase this grid.
     expression(library,"RHVideoNative.request('playlist.prepare',{ticket:'owned-single-qa',reset:true,items:[{id:'video-7',title:'independent queue'}],options:{fullLength:true}})");
     gridControl(-1,"page",-1);JSONObject restored=waitGrid(3,true);require(gridIds(restored).toString().equals(firstIds.toString()),"Restored group order");JSONObject cell=restored.getJSONArray("cells").getJSONObject(0);
+    require(restored.getJSONArray("dragging").toString().contains("volume"),"The actual finger gesture must remain held across A -> B -> A, not silently cancel before release");
+    endGridVolumeGesture(false);Thread.sleep(200);restored=(JSONObject)action("grid.state",new JSONObject());cell=restored.getJSONArray("cells").getJSONObject(0);mainAction("native.grid.control",new JSONObject().put("command","controls").put("enabled",false));
+    require(restored.getJSONArray("dragging").length()==0,"Native slider release must actually complete the held gesture");step("actual slider A -> B -> A release checked against original decoder inputs");
+    long staleInput=before.getJSONArray("cells").getJSONObject(0).getLong("inputId");require(cell.getLong("inputId")!=staleInput,"A -> B -> A must allocate a new actual decoder");
+    require(Boolean.TRUE.equals(expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke('native.grid.control',{command:'volume',target:0,value:99,expectedOffset:0,expectedLease:"+JSONObject.quote(lease)+",expectedInput:"+staleInput+"}).then(()=>false,()=>true)")),"Same offset and lease cannot resurrect a stale input after A -> B -> A");
+    require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.grid.mark',{target:0,expectedInput:"+staleInput+"}).then(()=>false,()=>true)")),"A stale preview mark cannot target the replacement decoder");require(!((JSONObject)action("grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(0).getBoolean("marked"),"Rejected marks cannot change current state");
     require(Math.abs(cell.getLong("positionMs")-5000)<500&&cell.getInt("volume")==37&&cell.getBoolean("muted")&&cell.getDouble("decoderVolume")==0&&Math.abs(cell.getDouble("rate")-1.5)<.01,"Per-cell pause/time/volume/mute/speed must survive group changes: "+cell);
+    if("grid-restore".equals(args.getString("mode"))){screenshot("rhvideo-grid-restore-qa.png");action("grid.close",new JSONObject());library=waitView("RhVideoActivity");return;}
     gridControl(1,"expand",0);require(!((JSONObject)nativeCall("automation.grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(1).getBoolean("paused"),"Expanding a paused cell resumes it");nativeCall("automation.back",new JSONObject());require(((JSONObject)nativeCall("automation.grid.state",new JSONObject())).isNull("expanded"),"First back shrinks the expanded cell");gridControl(-1,"pause",0);
     getUiAutomation().setRotation(UiAutomation.ROTATION_FREEZE_90);Thread.sleep(1200);restored=waitGrid(3,true);require(restored.getString("lease").equals(lease)&&gridIds(restored).toString().equals(firstIds.toString()),"Rotation keeps the same native grid session");getUiAutomation().setRotation(UiAutomation.ROTATION_FREEZE_0);Thread.sleep(1200);restored=waitGrid(3,true);require(restored.getInt("canvasHeight")>restored.getInt("canvasWidth"),"Portrait rotation must settle before seeking a new decoder");
     long input=restored.getJSONArray("cells").getJSONObject(1).getLong("inputId"),frames=restored.getJSONArray("cells").getJSONObject(1).getLong("submittedFrames");
@@ -51,7 +84,13 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(reopened.getInt("offset")==3&&!reopened.getString("lease").equals(lease),"Reopen restores only the exact group, with a new session");
     for(int i=0;i<3;i++){cell=reopened.getJSONArray("cells").getJSONObject(i);require(cell.getInt("volume")==100&&!cell.getBoolean("muted")&&cell.getDouble("rate")==1,"Fresh viewer resets cell controls");}
     action("grid.seekGroup",new JSONObject().put("ratio",0));require(waitGrid(3,false).getInt("offset")==0,"Shared public group seek reaches the first group");action("grid.seekGroup",new JSONObject().put("ratio",1));waitGrid(3,false);
-    screenshot("rhvideo-grid-qa.png");action("grid.close",new JSONObject());library=waitView("RhVideoActivity");
+    action("grid.favorite",new JSONObject().put("target",0));waitGridFavorite(0,false,true);screenshot("rhvideo-grid-favorite-error-qa.png");
+    action("grid.mark",new JSONObject().put("target",2).put("enabled",true));require(((JSONObject)action("grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(2).getBoolean("marked"),"Last visible cell can be marked through the shared API");
+    screenshot("rhvideo-grid-qa.png");action("grid.close",new JSONObject());library=waitView("RhVideoActivity");JSONObject committed=waitPreviewResult();require(committed.getInt("completed")==1&&committed.getJSONArray("items").getJSONObject(0).getBoolean("success"),"Closing grid consumes exactly its pending preview mark");action("grid.close",new JSONObject());require(((JSONObject)action("preview.state",new JSONObject())).getLong("run")==committed.getLong("run"),"Repeated grid close cannot start another write run");
+    action("preferences.set",new JSONObject().put("key","gridCount").put("value",2));action("grid.open",new JSONObject());waitGrid(2,false);action("grid.mark",new JSONObject().put("target",0).put("enabled",true));
+    action("connection.logout",new JSONObject());library=waitView("RhVideoActivity");action("connection.connect",new JSONObject().put("server",args.getString("server")).put("username","preview").put("password","fixture-only"));
+    require(((JSONObject)action("preview.pending",new JSONObject())).getJSONArray("items").length()==0,"Logging out of an active grid discards old uncommitted marks instead of submitting them");
+    require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.grid.state').then(()=>false,()=>true)")),"An account switch must really close the old native viewer, not merely reject its buttons");
   }
   private void checkFailedGrid()throws Exception{
     String server=args.getString("failureServer");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an owned loopback failure fixture is allowed");
@@ -298,8 +337,9 @@ public class RhVideoInstrumentation extends Instrumentation {
   private WebView find(View v){if(v instanceof WebView)return (WebView)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){WebView w=find(((ViewGroup)v).getChildAt(i));if(w!=null)return w;}return null;}
   private String eval(WebView web,String script)throws Exception{
     CountDownLatch latch=new CountDownLatch(1);String[] result={"null"};runOnMainSync(()->web.evaluateJavascript(script,r->{result[0]=r;latch.countDown();}));
-    require(latch.await(15,TimeUnit.SECONDS),"JavaScript evaluation timed out");return result[0];
+    if(!latch.await(15,TimeUnit.SECONDS)){android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("JavaScript evaluation timed out");}return result[0];
   }
+  private String playbackThreads(){StringBuilder text=new StringBuilder("Native playback thread snapshot (no arguments or media addresses)");for(java.util.Map.Entry<Thread,StackTraceElement[]> entry:Thread.getAllStackTraces().entrySet()){String name=entry.getKey().getName();if(!name.equals("main")&&!name.equals("RenderThread")&&!name.startsWith("ExoPlayer:")&&!name.startsWith("Loader:"))continue;text.append("\nTHREAD ").append(name).append(" ").append(entry.getKey().getState());for(StackTraceElement frame:entry.getValue())text.append("\n  ").append(frame);}return text.toString();}
   private Object expression(WebView web,String expression)throws Exception{
     String request=java.util.UUID.randomUUID().toString(),nonce=JSONObject.quote(request);
     // Reset separately: a syntax error in the next script must never leave a
@@ -396,15 +436,16 @@ public class RhVideoInstrumentation extends Instrumentation {
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
-      if(!"grid".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
+      if(!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
       JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==("single".equals(args.getString("mode"))?3:52),"Video catalog count");
       require("gallery".equals(catalog.getString("view")),"Fresh Android libraries keep the reference primary screenshot view");
       if(!"single".equals(args.getString("mode")))action("category",new JSONObject().put("kind","video"));
       if("rotation".equals(args.getString("mode"))){checkReferenceRotation();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference rotation toggle, actual native SurfaceView, paused time/speed, next source, stale inputs/settings and per-account persistence");finish(Activity.RESULT_OK,result);return;}
+      if("grid-restore".equals(args.getString("mode"))){checkReferenceGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid restore with actual held-slider ABA and native paused frames");finish(Activity.RESULT_OK,result);return;}
       if("tickets".equals(args.getString("mode"))){checkPreparedTickets();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: prepared ticket lifetime and native player replacement");finish(Activity.RESULT_OK,result);return;}
-      if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, audible cells, native frames, pause/seek/mute/rate restoration, independent queue, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}
+      if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, native frames, actual held-slider ABA, favorite/mark buttons and APIs, one-shot close, account dismissal, per-cell restoration, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}
       if("playlist".equals(args.getString("mode"))){checkReferencePlaylist();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference playlist segments, whole-file seek, native segment loop, global navigation, immutable pool, portrait projection, mode memory and native EOF close");finish(Activity.RESULT_OK,result);return;}
       if("preview".equals(args.getString("mode"))){checkPreparedTickets();checkLatestPlayIntent();checkReferencePreview();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference preview parent stack, native favorite and mark controls, one-shot stage results, independent prepared tickets, late preparation isolation and account boundaries");finish(Activity.RESULT_OK,result);return;}
       if("single".equals(args.getString("mode"))){checkReferenceSingle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference single controls, native menus, one-item parents, per-child return identity and independent mode/account state");finish(Activity.RESULT_OK,result);return;}
@@ -465,6 +506,6 @@ public class RhVideoInstrumentation extends Instrumentation {
       require(!((JSONObject)action("state",new JSONObject())).getBoolean("connected"),"Logout");action("back",new JSONObject());waitView("MainActivity");
       nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native HTTP, images, paging, favorite, reader/progress, back, Media3 streaming/seek/queue and logout");finish(Activity.RESULT_OK,result);
     }catch(Throwable error){try{screenshot("rhvideo-failure-qa.png");}catch(Exception ignored){}result.putString("stream","FAIL: "+error);android.util.Log.e("RHVideoQA","Failed",error);finish(Activity.RESULT_CANCELED,result);}
-    finally{app.unregisterActivityLifecycleCallbacks(observer);}
+    finally{try{endGridVolumeGesture(true);getUiAutomation().setRotation(UiAutomation.ROTATION_UNFREEZE);}catch(Exception ignored){}app.unregisterActivityLifecycleCallbacks(observer);}
   }
 }

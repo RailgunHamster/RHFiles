@@ -35,6 +35,32 @@ class RhVideoClientTest {
     client.logout();json("""{"access_token":"other-test-token"}""");client.connect(JSONObject().put("server",server.url("/").toString()).put("username","other").put("password","test-only"));server.takeRequest();assertFalse(client.rotationPreference(client.sessionGeneration()))
   }
   private fun draft(ticket:String,reset:Boolean,vararg ids:String)=client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",reset).put("items",JSONArray(ids.map{id->JSONObject().put("id",id).put("title",id).put("duration",20)})).put("options",JSONObject().put("fullLength",true))) as JSONObject
+  @Test fun gridMarksWaitForViewerClosureAndCommitExactlyOnce(){
+    login();draft("grid",true,"one","two","three");val first=client.openGrid("grid",2,false)
+    client.request("preview.mark",JSONObject().put("kind","video").put("id","one").put("title","一"));client.gridWindow("grid",2,2,false)
+    assertEquals(1,server.requestCount);assertEquals(1,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length())
+    json("{}");client.closeGrid("grid",first.getString("lease"));client.closeGrid("grid",first.getString("lease"))
+    awaitState{(client.request("preview.result",JSONObject()) as JSONObject).optInt("completed")==1}
+    assertEquals("/api/v1/trash/video/one",server.takeRequest().path);assertEquals(2,server.requestCount)
+    try{client.checkGrid("grid",first.getString("lease"));fail("Closed grid retained authority")}catch(_:IllegalStateException){}
+  }
+  @Test fun anOldGridCloseCannotCommitMarksOrRevokeANewerViewer(){
+    login();draft("old",true,"one","two");val old=client.openGrid("old",2,false);draft("new",true,"three","four");val current=client.openGrid("new",2,false)
+    client.request("preview.mark",JSONObject().put("kind","video").put("id","three").put("title","三"));client.closeGrid("old",old.getString("lease"))
+    client.checkGrid("new",current.getString("lease"));assertEquals(1,server.requestCount);assertEquals(1,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length())
+    json("{}");client.closeGrid("new",current.getString("lease"));awaitState{(client.request("preview.result",JSONObject()) as JSONObject).optInt("completed")==1};assertEquals("/api/v1/trash/video/three",server.takeRequest().path)
+  }
+  @Test fun failedGridCloseWritesAreTerminalAndNeverReplayedByAnotherClose(){
+    login();draft("grid",true,"one","two");val grid=client.openGrid("grid",2,false);client.request("preview.mark",JSONObject().put("kind","video").put("id","one").put("title","一"))
+    server.enqueue(MockResponse().setResponseCode(500).setBody("failed"));client.closeGrid("grid",grid.getString("lease"));awaitState{(client.request("preview.result",JSONObject()) as JSONObject).optInt("completed")==1}
+    assertFalse((client.request("preview.result",JSONObject()) as JSONObject).getJSONArray("items").getJSONObject(0).getBoolean("success"));client.closeGrid("grid",grid.getString("lease"));assertEquals(2,server.requestCount)
+  }
+  @Test fun forcedSessionDismissalNeverSubmitsUncommittedGridMarks(){
+    login();draft("grid",true,"one","two");val grid=client.openGrid("grid",2,false);client.request("preview.mark",JSONObject().put("kind","video").put("id","one").put("title","一"))
+    client.closeGrid("grid",grid.getString("lease"),commit=false);client.closeGrid("grid",grid.getString("lease"))
+    assertEquals(1,server.requestCount);assertEquals(1,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length());client.logout();login()
+    assertEquals(0,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length());assertEquals(2,server.requestCount)
+  }
   @Test fun preparedTicketsCanInterleaveAndDiscardDoesNotCloseAnActiveInput(){
     login();draft("a",true,"one");draft("b",true,"two");assertEquals(2,draft("a",false,"three").getInt("count"))
     client.playback(JSONObject().put("playlist","b").put("id","two"));val b=client.playbackWindow("b",0);assertEquals(listOf("two"),b.ids)
@@ -195,11 +221,20 @@ class RhVideoClientTest {
     server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST));json("""{"video_ids":["one"],"picture_ids":[],"novel_ids":[]}""")
     assertEquals("one",(client.request("favorites",JSONObject()) as JSONObject).getJSONArray("video_ids").getString(0));assertEquals("GET",server.takeRequest().method);assertEquals("GET",server.takeRequest().method);assertEquals(4,server.requestCount)
   }
-  @Test fun aQueuedNativeFavoriteCannotWriteAfterItsInputChanges(){
+  @Test fun anAcceptedNativeFavoriteKeepsItsCapturedTargetAfterViewerNavigation(){
     login();val current=java.util.concurrent.atomic.AtomicBoolean(true);val generation=client.sessionGeneration()
     server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody("""{"video_ids":[],"picture_ids":[],"novel_ids":[]}""").setBodyDelay(500,java.util.concurrent.TimeUnit.MILLISECONDS))
     client.toggleFavorite("video","one",generation){current.get()};assertEquals("/api/v1/favorites/ids",server.takeRequest(3,java.util.concurrent.TimeUnit.SECONDS)?.path);current.set(false)
-    awaitState{!client.favoriteState("video","one",generation).getBoolean("favoriteBusy")};assertFalse(client.favoriteState("video","one",generation).isNull("favoriteError"));assertEquals(2,server.requestCount)
+    json("{}");awaitState{!client.favoriteState("video","one",generation).getBoolean("favoriteBusy")};assertTrue(client.favoriteState("video","one",generation).getBoolean("favorite"));assertTrue(client.favoriteState("video","one",generation).isNull("favoriteError"));assertEquals("/api/v1/favorites/video/one",server.takeRequest().path);assertEquals(3,server.requestCount)
+  }
+  @Test fun aStaleFavoriteRejectedBeforeAdmissionCannotIssueAnyRequest(){
+    login();try{client.toggleFavorite("video","one",client.sessionGeneration()){false};fail("Late input accepted")}catch(_:IllegalStateException){};assertEquals(1,server.requestCount)
+  }
+  @Test fun accountRevocationStillStopsAnAcceptedFavoriteBeforeSubmission(){
+    login();val finished=java.util.concurrent.CountDownLatch(1);val old=client.sessionGeneration();client.listen{name,value->if(name=="rhvideo-media-action"&&value.optString("id")=="one"&&value.optLong("generation")==old)finished.countDown()}
+    server.enqueue(MockResponse().setHeader("Content-Type","application/json").setBody("""{"video_ids":[],"picture_ids":[],"novel_ids":[]}""").setBodyDelay(500,java.util.concurrent.TimeUnit.MILLISECONDS))
+    client.toggleFavorite("video","one",old){true};assertEquals("/api/v1/favorites/ids",server.takeRequest(3,java.util.concurrent.TimeUnit.SECONDS)?.path);client.logout();login()
+    assertTrue("Old native job must settle without writing",finished.await(5,java.util.concurrent.TimeUnit.SECONDS));assertEquals(3,server.requestCount);assertFalse(client.favoriteState("video","one",client.sessionGeneration()).getBoolean("favorite"))
   }
   @Test fun playlistModesHaveIndependentAccountScopedMemoriesAndLeases(){
     login()

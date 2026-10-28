@@ -58,7 +58,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val refreshLock=Any()
   private val http=OkHttpClient.Builder().proxy(Proxy.NO_PROXY).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(true)
     .connectTimeout(8,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
-  private val mediaHttp=http.newBuilder().callTimeout(0,TimeUnit.SECONDS).build()
+  private val mediaHttp=http.newBuilder().callTimeout(0,TimeUnit.SECONDS).eventListenerFactory(RhVideoMediaTrace(context.applicationContext)).build()
   // Non-replayable writes must not reuse an idle socket that the server may
   // already have closed. Use a fresh connection, not a hidden retry after an
   // ambiguous response. Read/media traffic keeps its independent pooled path.
@@ -90,6 +90,14 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private fun emit(name:String,payload:JSONObject){listeners.forEach{listener->runCatching{listener(name,JSONObject(payload.toString()))}}}
   private fun resetMediaState(){preview=RhVideoPreviewState();favoriteIds.clear();favoriteLoaded=false;favoriteRevision++;favoriteJobs.clear();singleLoop=false;singleRate=1.0}
   fun checkGrid(ticket:String,lease:String){val s=current();synchronized(lock){check(gridSession?.let{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}==true){"同屏会话已改变，请重新打开"}}}
+  fun closeGrid(ticket:String,lease:String,commit:Boolean=true):JSONObject {
+    val owner=synchronized(lock){
+      val s=session?:return JSONObject().put("closed",true)
+      if(gridSession?.let{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}!=true)return JSONObject().put("closed",true)
+      gridSession=null;s
+    }
+    return JSONObject().put("closed",true).also{if(commit)it.put("preview",commitPreview(owner))}
+  }
   fun gridGroupOffset(ticket:String,lease:String,index:Int):Int {val s=current();return synchronized(lock){val grid=gridSession?.takeIf{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}?:error("同屏会话已改变");require(index in grid.plan.groups.indices){"同屏组号无效"};grid.plan.groups[index].first}}
   data class Window(val items:List<PlaybackQueue.Item>,val offset:Int,val index:Int,val total:Int,val options:JSONObject,val starts:List<Long>,val ends:List<Long>,val ids:List<String>,val beforeMs:List<Long>,val totalMs:Long,val lease:String,val generation:Long)
   fun openGrid(ticket:String,count:Int,lowBandwidth:Boolean):JSONObject {
@@ -179,10 +187,13 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
     require(kind in listOf("video","picture","novel")&&id.matches(Regex("[A-Za-z0-9_-]{1,128}"))){"收藏目标无效"}
     val s=current();check(s.generation==generation&&guard()){"播放目标已改变，收藏未执行"};val key="$kind:$id";val operation=UUID.randomUUID().toString()
     val job=JSONObject().put("operation",operation).put("running",true)
-    synchronized(lock){check(favoriteJobs[key]?.optBoolean("running")!=true){"收藏操作正在处理"};while(favoriteJobs.size>=128){val old=favoriteJobs.entries.firstOrNull{!it.value.optBoolean("running") }?.key?:error("收藏操作过多");favoriteJobs.remove(old)};favoriteJobs[key]=job}
+    val acceptedEnabled=synchronized(lock){check(live(s)&&guard()){"播放目标已改变，收藏未执行"};check(favoriteJobs[key]?.optBoolean("running")!=true){"收藏操作正在处理"};while(favoriteJobs.size>=128){val old=favoriteJobs.entries.firstOrNull{!it.value.optBoolean("running") }?.key?:error("收藏操作过多");favoriteJobs.remove(old)};favoriteJobs[key]=job;if(favoriteLoaded)!favoriteIds.contains(key)else null}
     val work=Runnable{
       var error:String?=null
-      try{check(live(s)&&guard()){"播放目标已改变，收藏未执行"};if(!synchronized(lock){favoriteLoaded})readFavorites(s);check(live(s)&&guard()){"播放目标已改变，收藏未执行"};val enabled=synchronized(lock){check(favoriteLoaded){"收藏状态已改变，请重新读取后再操作"};!favoriteIds.contains(key)};updateFavorite(s,kind,id,enabled)}catch(e:Exception){error=e.message?:"收藏失败"}
+      // Admission owns an immutable media ID, not the future visible decoder.
+      // Reject stale UI before admission; after acceptance navigation must not
+      // silently cancel that explicit favorite. Account revocation still wins.
+      try{check(live(s)){"媒体账户已改变，收藏未执行"};if(acceptedEnabled==null&&!synchronized(lock){favoriteLoaded})readFavorites(s);check(live(s)){"媒体账户已改变，收藏未执行"};val enabled=acceptedEnabled?:synchronized(lock){check(favoriteLoaded){"收藏状态已改变，请重新读取后再操作"};!favoriteIds.contains(key)};updateFavorite(s,kind,id,enabled)}catch(e:Exception){error=e.message?:"收藏失败"}
       synchronized(lock){if(live(s)&&favoriteJobs[key]?.optString("operation")==operation){job.put("running",false);if(error!=null)job.put("error",error)}}
       emit("rhvideo-media-action",JSONObject().put("generation",s.generation).put("kind",kind).put("id",id).put("operation",operation).put("error",error?:JSONObject.NULL))
     }

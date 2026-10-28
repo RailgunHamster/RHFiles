@@ -7,7 +7,8 @@ import {createHash} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
-const gridMode=process.argv[5]==='grid';
+const gridRestoreMode=process.argv[5]==='grid-restore';
+const gridMode=process.argv[5]==='grid'||gridRestoreMode;
 const playlistMode=process.argv[5]==='playlist';
 const previewMode=process.argv[5]==='preview';
 const singleMode=process.argv[5]==='single';
@@ -50,10 +51,10 @@ let releaseGallery;const galleryGate=singleMode?new Promise(resolve=>releaseGall
 // In the cold-click scenario the first native stream releases the held gallery.
 // Waiting for that gallery before starting video would deadlock and fail the
 // existing bounded player wait; no arbitrary sleep makes this case look cold.
-const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(mediaMode?{galleryVideoCount:6,videoDuration:20,videoFiles:Object.fromEntries([0,1,3].map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:52},(_,i)=>[0,1,3].includes(i)?'360x640':'640x360')}:{ }),...(previewMode?{failTrashIds:['video:video-2'],failFavoriteIds:['video:video-3']}:{ }),...(singleMode?{videoCount:3,galleryVideoCount:1,galleryFrameCount:1,beforeGallery:()=>galleryGate,beforeMedia:({image})=>{if(!image)releaseGallery();}}:{}),...(rotationMode?{loginUsers:['preview','other']}:{})}),port=new URL(fixture.url).port;
-const failedFixture=gridMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
+const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(mediaMode?{galleryVideoCount:6,videoDuration:20,videoFiles:Object.fromEntries([0,1,3].map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:52},(_,i)=>[0,1,3].includes(i)?'360x640':'640x360')}:{ }),...(previewMode?{failTrashIds:['video:video-2'],failFavoriteIds:['video:video-3']}:{ }),...(gridMode?{failFavoriteIds:['video:video-3']}:{ }),...(singleMode?{videoCount:3,galleryVideoCount:1,galleryFrameCount:1,beforeGallery:()=>galleryGate,beforeMedia:({image})=>{if(!image)releaseGallery();}}:{}),...(rotationMode?{loginUsers:['preview','other']}:{})}),port=new URL(fixture.url).port;
+const failedFixture=gridMode&&!gridRestoreMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
-const artifact=path.resolve('test-artifacts/rhvideo-android'+(gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-release');fs.mkdirSync(artifact,{recursive:true});
+const artifact=path.resolve('test-artifacts/rhvideo-android'+(gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-release');fs.mkdirSync(artifact,{recursive:true});
 function installExact(packageId,file){
   const expectedHash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const installedHash=()=>{const installed=run(['shell','pm','path',packageId]).trim().split(/\r?\n/);assert(installed.length===1&&/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(installed[0]),'Expected one installed universal APK for '+packageId);return run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64);};
@@ -82,14 +83,18 @@ try{
   run(['shell','svc','power','stayon','true']);run(['shell','input','keyevent','224']);run(['shell','wm','dismiss-keyguard']);
   run(['reverse','tcp:'+port,'tcp:'+port]);run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
   if(failedPort)run(['reverse','tcp:'+failedPort,'tcp:'+failedPort]);
-  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...(gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[]),'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...(gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[]),'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='';child.stdout.on('data',data=>{output+=data;process.stdout.write(data);});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
-  const timer=setTimeout(()=>child.kill(),previewMode?600000:360000);
-  try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0?resolve():reject(Error('Instrumentation exit '+code)));});}finally{clearTimeout(timer);}
-  fs.writeFileSync(path.join(artifact,'instrumentation.log'),output);
+  // Grid now also checks real held gestures, favorite writes/failures, preview
+  // commits and an active-viewer account switch. Budget the expanded scenario,
+  // not slower individual frame/seek waits (those stay unchanged in the probe).
+  const budgetMs=previewMode||(gridMode&&!gridRestoreMode)?600000:360000;let expired=false;
+  const timer=setTimeout(()=>{expired=true;child.kill();},budgetMs);
+  try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0&&!expired?resolve():reject(Error(expired?'Owned instrumentation exceeded whole-scenario budget '+budgetMs+' ms':'Instrumentation exit '+code)));});}
+  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,'instrumentation.log'),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);}
   assert.match(output,gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: reference single/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED/);
   assert.doesNotMatch(run(['shell','dumpsys','window','windows']),/Application Not Responding:|Application Error:/,'A system/app dialog invalidates visual acceptance');
-  for(const name of gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:previewMode?['rhvideo-parent-qa.png','rhvideo-preview-result-qa.png','rhvideo-favorite-error-qa.png']:singleMode?['rhvideo-single-qa.png']:ticketsMode?[]:rotationMode?['rhvideo-rotation-on-qa.png','rhvideo-rotation-off-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
+  for(const name of gridRestoreMode?['rhvideo-grid-restore-qa.png']:gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png','rhvideo-grid-favorite-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:previewMode?['rhvideo-parent-qa.png','rhvideo-preview-result-qa.png','rhvideo-favorite-error-qa.png']:singleMode?['rhvideo-single-qa.png']:ticketsMode?[]:rotationMode?['rhvideo-rotation-on-qa.png','rhvideo-rotation-off-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
   assert(fixture.requests.some(r=>r.path.endsWith('/play')&&r.authorization==='Bearer fixture-bearer-do-not-persist'));
   if(!mediaMode&&!ticketsMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
   if(previewMode){
@@ -97,6 +102,12 @@ try{
     assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/video-1').length,0,'Logout discards uncommitted old-account marks');
     assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-3').length,1,'A failed favorite is not retried');
     assert(fixture.requests.some(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-0'));
+  }
+  if(gridMode&&!gridRestoreMode){
+    assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-0').length,1,'One native favorite button -> one server write');
+    assert.equal(fixture.requests.filter(r=>r.method==='DELETE'&&r.path==='/api/v1/favorites/video/video-0').length,1,'Unfavorite uses the same visible control');
+    assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-3').length,1,'A failed grid favorite cannot be retried on close');
+    assert.deepEqual(fixture.requests.filter(r=>r.method==='POST'&&r.path.startsWith('/api/v1/trash/')).map(r=>r.path),['/api/v1/trash/video/video-5'],'Unmarked/stale inputs never submit; final viewer close commits once');
   }
   if(failedFixture){const reads=failedFixture.requests.filter(r=>r.path.endsWith('/play')).length;assert(reads>=2&&reads<=4,'Failed grid inputs must have bounded reads');await new Promise(resolve=>setTimeout(resolve,2000));assert.equal(failedFixture.requests.filter(r=>r.path.endsWith('/play')).length,reads,'No hidden traffic loop after terminal grid errors');}
   console.log('PASS: release APK end-to-end, artifacts '+artifact);
