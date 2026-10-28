@@ -134,6 +134,8 @@ public class RhVideoInstrumentation extends Instrumentation {
     throw new Exception("Actual paused seek frame did not settle: "+state);
   }
   private void checkReferenceSingle()throws Exception{
+    action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject cold=waitPlayer("video-0",true);require(!cold.getJSONObject("options").has("origin"),"Like the reference, a cold video click does not load or manufacture a screenshot parent");action("player.close",new JSONObject());library=waitView("RhVideoActivity");require(!((JSONObject)action("image.state",new JSONObject())).getBoolean("opened"),"A cold direct video leaves no hidden screenshot parent");
+    action("gallery.open",new JSONObject());action("panel.close",new JSONObject().put("id","wb-gallery"));
     action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject first=waitPlayer("video-0",true);JSONObject parent=first.getJSONObject("options");require(parent.getInt("parentTotal")==1,"Fixture must expose an actual one-item parent");
     touchPlayerButton("exo_next");library=waitView("RhVideoActivity");JSONObject image=waitImage(0);require(image.getInt("total")==1,"An arrow pops the parent even when modulo position does not change");
     action("image.playVideo",new JSONObject());JSONObject current=waitPlayer("video-0",true);require(!current.getJSONObject("options").getString("parentPlayback").equals(parent.getString("parentPlayback")),"Every child launch must have a new identity");long input=current.getLong("inputId");

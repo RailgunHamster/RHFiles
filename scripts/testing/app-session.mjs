@@ -13,7 +13,7 @@ export async function until(check,label,timeout=15000) {
   while(Date.now()<end){try{const value=await check();if(value)return value;}catch(e){last=e;}await sleep(100);}
   throw Error(`Timed out: ${label}${last?' — '+last.message:''}`);
 }
-export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',profileDirectory=null,args=[]}={}) {
+export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',profileDirectory=null,args=[],traceOutput=false}={}) {
   if(process.platform!=='win32')throw Error('Real RHFiles E2E requires Windows and WebView2');
   const executable=process.env.RHFILES_TEST_EXECUTABLE
     ? path.resolve(process.env.RHFILES_TEST_EXECUTABLE)
@@ -32,15 +32,22 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
   const port=server.address().port;await new Promise(resolve=>server.close(resolve));
   const child=spawn(executable,args,{cwd:directory,windowsHide:true,env:{...process.env,...releaseEnvironment,
     RHFILES_TEST_PROFILE_ROOT:profileRoot,RHFILES_TEST_DESKTOP_ID:desktopId,RHFILES_CDP_PORT:String(port),RHFILES_AUTORUN_TESTS:'0'}});
-  let output='';child.stdout.on('data',x=>output+=x);child.stderr.on('data',x=>output+=x);
+  let output='';const outputEvents=[];
+  const append=(stream,data)=>{const text=String(data);output+=text;if(traceOutput&&outputEvents.length<4096)outputEvents.push({at:performance.now(),stream,text});};
+  child.stdout.on('data',data=>append('stdout',data));child.stderr.on('data',data=>append('stderr',data));
   let spawnError;child.on('error',e=>spawnError=e);
-  let socket;let next=0;const pending=new Map(),events=[];
+  let socket;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
+  const closed=new Promise(resolve=>resolveClosed=resolve);
+  const flush=()=>{fs.writeFileSync(path.join(artifactDir,'app.log'),output);fs.writeFileSync(path.join(artifactDir,'page-events.json'),JSON.stringify(events,null,2));};
+  // close is emitted only after stdout/stderr have drained. The synchronous
+  // taskkill return alone can leave the last hardware-init messages unread.
+  child.once('close',()=>{if(closing)flush();resolveClosed();});
   const close=()=>{
+    if(closing)return closed;closing=true;
     socket?.close();for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('Session closed'));}pending.clear();
     // Only the PID this fixture spawned and its private WebView children.
     if(child.pid && child.exitCode===null)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
-    fs.writeFileSync(path.join(artifactDir,'app.log'),output);
-    fs.writeFileSync(path.join(artifactDir,'page-events.json'),JSON.stringify(events,null,2));
+    flush();return closed;
   };
   try {
     const target=await until(async()=>{
@@ -123,6 +130,6 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
         await send('Input.setInterceptDrags',{enabled:false});
       }
     };
-    return {directory,artifactDir,profile,profileRoot,port,close,evaluate,send,events,screenshot,hover,click,drag};
+    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag};
   } catch(e){close();throw e;}
 }

@@ -2426,12 +2426,11 @@
         const c=config(),version=epoch,intent=++singlePlayIntent;
         const title=media.title+(low?" (超压)":"");
         let parent={},parentSession=null;
-        {
-          // playVideoLocal also pushes the first matching gallery screenshot.
-          // Load metadata only: do not flash a gallery or decode its thumbnails
-          // merely because a video card was clicked.
+        if(gallery.loaded){
+          // Like playVideoLocal, borrow an ALREADY loaded screenshot snapshot.
+          // The original synchronous click never fetches the whole gallery
+          // before starting a video; a cold pool means no implicit parent.
           try{
-            if(!gallery.loaded)await loadGallery(false,false);
             const args={kind:"gallery",search:state.search,rule:c.rule,sort:c.sort,seed:gallery.seed,allKeys:true,offset:0,limit:1};
             const result=await send("query",args),index=result.queue.findIndex(f=>f.videoId===media.id);
             if(intent!==singlePlayIntent)return {stale:true};

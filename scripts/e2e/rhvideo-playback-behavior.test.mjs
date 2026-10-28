@@ -212,9 +212,22 @@ test('player favorites update the library, and a failed preview write is termina
   }finally{player?.close();await s.close();}
 });
 
-test('a normal video card retains its first matching screenshot as the parent, without displaying the gallery before playback',native,async()=>{
+test('a cold normal video card starts without fetching or manufacturing a screenshot parent',native,async()=>{
   const s=await setup();let player;
   try{
+    assert.equal(s.fixture.requests.filter(r=>r.path.startsWith('/api/v1/screenshots/')).length,0);
+    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
+    const state=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'cold direct video really renders',25000);
+    assert.equal(state.queue.id,'video-1');assert.equal(state.queue.total,1);assert.equal(state.queue.options.origin,undefined);
+    assert.equal(s.fixture.requests.filter(r=>r.path.startsWith('/api/v1/screenshots/')).length,0,'reference direct playback does not need an all-gallery request');
+    await command(s.app,'player.back');player.close();player=null;assert.equal((await invoke(s.view,'image.state')).opened,false,'no uncached parent is invented on Back');
+  }finally{player?.close();await s.close();}
+});
+
+test('a normal video card reuses its cached first matching screenshot without reopening the gallery before playback',native,async()=>{
+  const s=await setup();let player;
+  try{
+    await invoke(s.view,'gallery.open');await invoke(s.view,'panel.close',{id:'wb-gallery'});
     await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
     const queue=(await invoke(player,'player.state')).queue;assert.equal(queue.id,'video-1');assert.equal(queue.options.origin,'frame');
     assert.equal(await s.view.evaluate("!!document.querySelector('#wb-gallery[open]')"),false,'metadata preparation cannot pop a gallery in front of the clicked video');
@@ -262,6 +275,7 @@ test('single-video loop and speed survive a different source without leaking int
 test('video arrows still pop the parent preview when that parent collection contains exactly one screenshot',native,async()=>{
   const s=await setup({videoCount:1,galleryVideoCount:1,galleryFrameCount:1});let player;
   try{
+    await invoke(s.view,'gallery.open');await invoke(s.view,'panel.close',{id:'wb-gallery'});
     await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
     const state=await invoke(player,'player.state');assert.equal(state.queue.options.parentTotal,1);assert.equal(state.queue.hasPrevious,true);assert.equal(state.queue.hasNext,true);
     await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');

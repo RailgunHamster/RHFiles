@@ -24,6 +24,11 @@ const CONTROLS_HEIGHT:f64=196.;
 // 0.25x stretches the 1 s network delay beyond VLC 3's 3 s audio clock bound.
 // Hidden/silent restoration must prepare at a normal, supported clock rate.
 const PAUSE_PREPARE_RATE:f32=1.;
+fn trace_startup(started:std::time::Instant,stage:&str){
+    if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
+        eprintln!("RHFILES_VLC_STAGE {stage} {}",started.elapsed().as_millis());
+    }
+}
 static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static GRID_WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
@@ -403,7 +408,9 @@ impl Engine {
         Self::new_with_rotation(child,0)
     }
     fn new_with_rotation(child:usize,rotation:i32)->Result<Self,String>{
+        let started=std::time::Instant::now();
         let api = unsafe { Api::load()? };
+        trace_startup(started,"library-loaded");
         let compatibility=unsafe{GetSystemMetrics(SM_REMOTESESSION)!=0}||std::env::var_os("RHFILES_VLC_COMPATIBILITY").is_some();
         let mut options = vec![
             CString::new(
@@ -421,7 +428,7 @@ impl Engine {
             // MMDevice volume is an OS audio-session setting shared by native
             // players. DirectSound has independent stream/buffer gain, so a
             // silent preload cannot mute the active video or another grid cell.
-            CString::new("--aout=directsound").unwrap(),
+            CString::new("--aout=directsound,none").unwrap(),
             CString::new("--directx-volume=0").unwrap(),
             CString::new("--no-volume-save").unwrap(),
             CString::new(if compatibility{"--avcodec-hw=none"}else{"--avcodec-hw=any"}).unwrap(),
@@ -432,10 +439,12 @@ impl Engine {
         if rotation!=0&&!compatibility{options.push(CString::new("--video-filter=transform").unwrap());options.push(CString::new(format!("--transform-type={rotation}")).unwrap());}
         let pointers = options.iter().map(|s| s.as_ptr()).collect::<Vec<_>>();
         let instance = unsafe { (api.new)(pointers.len() as i32, pointers.as_ptr()) };
+        trace_startup(started,"instance-created");
         if instance.is_null() {
             return Err("VLC 原生内核初始化失败".into());
         }
         let player = unsafe { (api.player_new)(instance) };
+        trace_startup(started,"player-created");
         if player.is_null() {
             unsafe { (api.release)(instance) };
             return Err("无法创建原生播放器".into());
@@ -546,13 +555,6 @@ impl Engine {
         );
         let url = CString::new(url).map_err(|_| "媒体地址无效")?;
         unsafe {
-            (self.api.stop)(self.player as Ptr);
-            // stop joins callbacks from the previous input. Reset AFTER that
-            // join, otherwise its last frame can impersonate a new first frame.
-            self.frame.count.store(0,std::sync::atomic::Ordering::Relaxed);
-            self.frame.format.store(0,std::sync::atomic::Ordering::Release);
-            self.frame.presented.store(0,std::sync::atomic::Ordering::Release);
-            self.clock.lock().map_err(|_|"播放时钟不可用")?.reset((seconds*1000.) as i64,self.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));
             let media = (self.api.media_new)(self.instance as Ptr, url.as_ptr());
             if media.is_null() {
                 return Err("无法打开媒体流".into());
@@ -578,22 +580,39 @@ impl Engine {
             }
             let start = CString::new(format!(":start-time={seconds:.3}")).unwrap();
             (self.api.media_option)(media, start.as_ptr());
+            // libVLC 3 set_media joins the old input and its callbacks, while
+            // retaining reusable audio/video output resources. A preceding
+            // stop() unnecessarily destroys those resources, even on the very
+            // first open, and forces device/vout initialization on each source
+            // switch that cannot consume an already-decoded preload.
             (self.api.set_media)(self.player as Ptr, media);
+            trace_startup(self.open_started,"previous-input-joined");
+            // Reset AFTER that join: a late old callback must not impersonate
+            // this input's first frame. No old decoder runs past set_media.
+            self.frame.count.store(0,std::sync::atomic::Ordering::Relaxed);
+            self.frame.format.store(0,std::sync::atomic::Ordering::Release);
+            self.frame.presented.store(0,std::sync::atomic::Ordering::Release);
+            self.clock.lock().map_err(|_|"播放时钟不可用")?.reset((seconds*1000.) as i64,self.frame.last_display.load(std::sync::atomic::Ordering::Relaxed));
             if self.media != 0 {
                 (self.api.media_release)(self.media as Ptr);
             }
             self.media = media as usize;
-            // Initialize the independent audio output before setting gain. Its
-            // deferred initialization otherwise reports the backend's default
-            // 100%, overwriting a volume set before the first audio format.
-            let output=CString::new("directsound").unwrap();
-            if (self.api.set_audio_output)(self.player as Ptr,output.as_ptr())!=0 {
-                return Err("无法初始化独立的音频输出".into());
+            // Reuse the independent DirectSound output when present. If a
+            // prior explicit stop terminated it, initialize before gain/play.
+            // Never fall back to MMDevice's shared OS-session gain or silently
+            // unmute a preload.
+            if (self.api.volume)(self.player as Ptr)<0{
+                let output=CString::new("directsound").unwrap();
+                if (self.api.set_audio_output)(self.player as Ptr,output.as_ptr())!=0 {
+                    return Err("无法初始化独立的音频输出".into());
+                }
             }
+            trace_startup(self.open_started,"audio-ready");
             (self.api.set_volume)(self.player as Ptr,self.output_gain());
             if (self.api.play)(self.player as Ptr) != 0 {
                 return Err("原生播放器无法开始播放".into());
             }
+            trace_startup(self.open_started,"play-requested");
         }
         self.title = title;
         Ok(())
