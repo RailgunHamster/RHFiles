@@ -6,6 +6,20 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-28 Windows 打开应答分段（定位有进展，延迟尚未修复）
+
+此前约两秒的打开应答尾延迟不是已经修好。新增仅在 debug 构建且 `RHFILES_VLC_DEBUG` 开启时记录的内核状态、请求收尾、窗口布局／消息及主线程排队计时，不记录业务参数。已有状态读取、播放选项、事件发送、队列保存及预加载顺序均未改变。
+
+已复现内核状态在约 358 ms 读完、后端约 329 ms 完成（不同轮样本），前端却约 2266 ms 才收到结果。为排除诊断通道，探测同时记录页面自己的 `performance.now()`：慢样本的 CDP 额外传递仅约 5–12 ms，延迟确实存在于前端收到应答之前，不是把观察者等待误算为业务耗时。`fetch` 包装只记录 `play` 应答头／正文到达时间，不改请求、响应数据或重放；长任务观察没有捕捉到 50 ms 以上 JavaScript 工作。证据为 `rhvideo-state-stages-probe-*`、`rhvideo-request-stages-probe-*`、`rhvideo-frontend-reply-probe-*`、`rhvideo-window-message-probe-*`。
+
+曾做一个只将三种媒体窗口的小型交互命令改走框架已有 postMessage 通道的候选。原来三次全通道 fallback 对照都很快，但不能据此采纳：随后使用同一个 H.264/1080p 文件，SHA-256 `4206d583658a64f9cb490339638f0fe67cb4229f21cef1310ceb1d090e775a7e`，两份可执行文件交错各三次，旧版前端打开应答为约 **329／2218／2245 ms**，候选仍为 **317／2264／2249 ms**。候选确认没有走该条 fetch，依然出现等待，故没有证明它是修复。其 16 项单元测试通过不替代实际效果；候选已从产品入口及正式测试集合撤下，实验源码／二进制只保留在忽略的 `test-artifacts/rhvideo-ipc-rejected-candidate*`、`rhvideo-startup-ipc-scoped-candidate/`，正式 IPC、安全策略和业务行为保持原样。证据 `rhvideo-scoped-ipc-ab-[1-6]-*`。
+
+回撤后的诊断 EXE SHA-256 `cfd558a1e0aa97b427464ba842d522d6e0aabd1bce80b5533cbfd9e3c5334c31`，三个实际原生样本均显示四块标记；慢样本前端约 2256 ms 收到结果，而应答头约 2251 ms、正文约 2251 ms，后端约 313 ms 已完成。主线程探测在排入后约 0–1 ms 被处理（414／815／1315／1815／2315 ms 一带），没有两秒连续阻塞；布局真实排队边界约 0–2 ms。不能继续归因于 VLC 状态 getter、队列保存或播放业务持续卡死 GUI。下一步须继续区分 WebView2 应答交付、后台／遮挡状态与 IPC 调度，不因此降低画质、放宽等待或关闭系统安全功能。`rhvideo-gui-queue-verified-[1-3].log` 是新 EXE 的有效记录；较早误在编译失败后启动的 `rhvideo-gui-queue-probe-*` 实际仍为旧候选字节，已排除，不作新诊断证据。
+
+`rhvideo-startup-probe.mjs` 新支持 `RHFILES_STARTUP_MEDIA`：先核对视频尺寸／编码，再复制进本次自有临时目录使用，跨二进制可比较完全相同的字节；不会删除提供的源文件。第四个位置参数 `postmessage` 仅供隔离实验，通过在发送前拒绝一次只读调用选择框架现有 fallback，不能用来重放已发送操作，也不是产品默认。原生像素取样与显示统计仍各自记录，`after-stats` 的像素时间下界仍为 0，不将统计更新时间当成精确首帧。暂未完成与原版同质量的发行包性能验收，未发包／替换正式实例。
+
+回撤后的本轮验证：完整 Node **548/548、零跳过**，桌面 Rust lib **246 通过、10 个原有忽略项**，实际普通 GUI **234/234**，命令行／文件生命周期／侧栏真实操作 **14/14**。原生焦点／关闭专项则是 **4/5**，不是全绿：最后的暂停首个视图＋丢失生产者回复用例再次返回 `CONNECTION_LOST`，首个视图约 2.5 秒耗尽切片后，真实媒体库查询又等满剩余约 2.5 秒。此前三次通过不证明所有情况下已恢复。失败断言和原五秒预算保留，不能从测试进程退出／窗口消失推断操作已完成；下一步必须检查串行读取者是否使健康来源错过全局预算，并保留不重放动作的约束。证据 `rhvideo-response-phases-final-node.log`、`rhvideo-response-phases-final-rust.log`、`rhvideo-response-phases-gui.log`、`rhvideo-response-phases-file-business.log`、`rhvideo-response-phases-native.log`。
+
 ## 2026-10-28 Windows 取流前的重复焦点阻塞（原整轮 66/67，回执恢复继续修正）
 
 先排除测量方式：原生像素探测使用同步 [PrintWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-printwindow)，新增 `rhvideo-startup-probe.mjs SCENARIO after-stats` 模式，在显示计数出现前不取画面，之后仍核对实际红绿蓝黄标记。这个模式没有前置负像素样本，因此像素时间下界保持 0；不能把周期性统计的零值当作尚未显示。原 `poll` 模式保留作干扰对照。

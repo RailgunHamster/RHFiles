@@ -1197,6 +1197,7 @@ pub(crate) async fn client_window(
                     .with_environment(platform.environment()),
             )
             .build()
+            .inspect(crate::rhvideo_player::install_window_trace)
             .map_err(|e| e.to_string());
             let _ = tx.send(result);
         })
@@ -2091,7 +2092,10 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             Ok(json!({"frames":frames}))
         }
         "play" => {
+            let started=Instant::now();let trace=|stage:&str|{if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_REQUEST_STAGE play {stage} {}",started.elapsed().as_millis());}};
+            trace("entry");
             let _play = PLAY_LOCK.lock().await;
+            trace("play-lock");
             let id = identifier(text(&args, "id", 128)?)?;
             let title = text(&args, "title", 1024)?.to_owned();
             let mut seconds = args.get("seconds").and_then(Value::as_f64).unwrap_or(0.0);
@@ -2164,18 +2168,27 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 args.get("super").and_then(Value::as_bool) == Some(true),
             )
             .await?;
+            trace("native-ready");
             #[cfg(windows)]
             {
                 if let Some(rate)=playback.options["rate"].as_f64().filter(|r|(0.25..=4.).contains(r)){crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
             }
+            trace("options-ready");
             playback.start_seconds=seconds;
             if playback.options["reference"]!=true{*session.single_controls.lock().map_err(|_|"单视频设置不可用")?=SingleControls{looping:playback.options["loop"]==true,rate:playback.options["rate"].as_f64().unwrap_or(1.)};}
             *PLAYBACK.lock().map_err(|_| "播放队列状态不可用")? = Some(playback);
+            trace("queue-ready");
             let _=app.emit_to("window-rhvideo-player","rhvideo-player-session",json!({"generation":session.generation}));
+            trace("event-sent");
             if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
             save_queue_state(&session)?;
+            trace("history-ready");
             schedule_preload(app.clone(), session.clone())?;
+            trace("preload-ready");
             wake_playback_monitor(&app);
+            trace("complete");
+            if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){let _=app.run_on_main_thread(move||eprintln!("RHFILES_REQUEST_STAGE play main-drain {}",started.elapsed().as_millis()));}
+            if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){let app=app.clone();std::thread::spawn(move||{let mut previous=0;for at in [100,500,1000,1500,2000]{std::thread::sleep(Duration::from_millis(at-previous));previous=at;let queued=started.elapsed().as_millis();let _=app.run_on_main_thread(move||eprintln!("RHFILES_GUI_QUEUE {queued} {}",started.elapsed().as_millis()));}});}
             Ok(result)
         }
         "player.repeatCurrent" | "player.finishSegment" | "player.finishQueue" => {

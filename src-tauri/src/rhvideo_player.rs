@@ -39,6 +39,25 @@ static GRID_WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
 static INPUT_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 static INPUT_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static STATE_PROBE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+#[cfg(debug_assertions)]
+unsafe extern "system" fn trace_window_proc(hwnd:HWND,message:u32,wparam:WPARAM,lparam:LPARAM,id:usize,role:usize)->LRESULT{
+    unsafe{
+        let started=std::time::Instant::now();
+        if message==WM_NCDESTROY{let _=windows::Win32::UI::Shell::RemoveWindowSubclass(hwnd,Some(trace_window_proc),id);}
+        let result=windows::Win32::UI::Shell::DefSubclassProc(hwnd,message,wparam,lparam);
+        if started.elapsed().as_millis()>=20{eprintln!("RHFILES_WINDOW_STAGE {role} {message:#x} {}",started.elapsed().as_millis());}
+        result
+    }
+}
+pub(crate) fn install_window_trace(window:&tauri::WebviewWindow){
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
+        let role=match window.label(){"window-rhvideo"=>1,"window-rhvideo-player"=>2,"window-rhvideo-grid"=>3,_=>0};
+        if let Ok(hwnd)=window.hwnd(){unsafe{let _=windows::Win32::UI::Shell::SetWindowSubclass(HWND(hwnd.0),Some(trace_window_proc),0x52485052,role);}}
+    }
+    #[cfg(not(debug_assertions))]let _=window;
+}
 static INPUT_AT: std::sync::LazyLock<Mutex<std::collections::HashMap<usize,std::time::Instant>>> = std::sync::LazyLock::new(||Mutex::new(std::collections::HashMap::new()));
 // Only recognized media intents leave the native canvas. Never forward raw
 // keystrokes, install global hooks, or read input from another application.
@@ -626,16 +645,22 @@ impl Engine {
         Ok(())
     }
     fn state(&self) -> Value {
+        let probe=if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){Some((std::time::Instant::now(),STATE_PROBE_SEQUENCE.fetch_add(1,std::sync::atomic::Ordering::Relaxed)))}else{None};
+        let trace=|stage:&str|{if let Some((started,sequence))=probe{eprintln!("RHFILES_STATE_STAGE {} {sequence} {stage} {}",self.input_id,started.elapsed().as_millis());}};
+        trace("entered");
         unsafe {
             let p = self.player as Ptr;
             let (mut width, mut height) = (0, 0);
             (self.api.video_size)(p, 0, &mut width, &mut height);
+            trace("video-size");
             // A newly created vout can reset aspect after play(). Apply once
             // to that actual output, not just to the not-yet-open player.
             if !self.compatibility&&self.aspect_input.load(std::sync::atomic::Ordering::Acquire)!=self.input_id&&(self.api.has_vout)(p)>0{let _=self.rotation_aspect();}
+            trace("aspect");
             let raw = (self.api.time)(p).max(0);
             let duration = (self.api.length)(p).max(0);
             let state = (self.api.state)(p);
+            trace("clock");
             // A bounded readiness transition, not a network retry: consume the
             // latest explicit seek exactly once, only on its decoder lease.
             let (pending_seek,seek_error)=if let Ok(mut seek)=self.seek.lock(){
@@ -645,18 +670,22 @@ impl Engine {
                 }
                 (seek.pending.as_ref().map(|s|s.ms),seek.error.clone())
             }else{(None,Some("跳转状态不可用".into()))};
+            trace("seek");
             // Audio modules may initialize asynchronously after play().
             // Reconcile the existing desired gain once they report
             // a usable output; never write the OS session/master volume.
             let desired=self.output_gain();
             let actual=(self.api.volume)(p);
+            trace("volume-read");
             if matches!(state,3|4)&&actual>=0&&actual!=desired {
                 (self.api.set_volume)(p,desired);
             }
+            trace("volume-ready");
             let mut stats = MediaStats::default();
             if self.media != 0 {
                 (self.api.media_stats)(self.media as Ptr, &mut stats);
             }
+            trace("stats");
             if !self.compatibility {
                 self.frame.observe_native(stats.displayed.max(0) as u64);
             }
@@ -695,6 +724,7 @@ impl Engine {
                 }}
                 if complete{*slot=None;self.hold_audio.store(false,std::sync::atomic::Ordering::Relaxed);let _=SetLayeredWindowAttributes(HWND(self.child as Ptr),windows::Win32::Foundation::COLORREF(0),255,LWA_ALPHA);}else{restoring=true;restore_target=Some(plan.target);restore_rate=Some(plan.rate);restore_phase=Some(match plan.phase{PauseFramePhase::Priming=>"priming",PauseFramePhase::Seeking{..}=>"seeking",PauseFramePhase::Presenting{..}=>"presenting",PauseFramePhase::Pausing=>"pausing"});}
             }}
+            trace("restore");
             if rendered>0 {let _=self.first_frame_ms.compare_exchange(0,self.open_started.elapsed().as_millis().max(1) as u64,std::sync::atomic::Ordering::Relaxed,std::sync::atomic::Ordering::Relaxed);}
             let position = if restoring {restore_target.unwrap_or(0)}else{
                 self.clock
@@ -714,11 +744,12 @@ impl Engine {
                     .unwrap_or(raw)
             };
             let source=if self.rotation_policy.source.0>0{self.rotation_policy.source}else{(width,height)};let viewport=self.viewport();let format=self.frame.presented.load(std::sync::atomic::Ordering::Acquire);
+            trace("viewport");
             let mut value=json!({"opened":true,"title":self.title,"engine":"libVLC","renderer":if self.compatibility{"gdi-compatibility"}else{"native-hardware-auto"},"rotation":self.rotation,"autoRotate":self.rotation_policy.enabled,"rotationAvailable":crate::rhvideo_rotation::available(source,viewport,self.rotation_policy.enabled),"sourceWidth":source.0,"sourceHeight":source.1,"viewportWidth":viewport.0,"viewportHeight":viewport.1,"presentedWidth":if self.compatibility{Some((format>>32) as u32)}else{None},"presentedHeight":if self.compatibility{Some(format as u32)}else{None},"videoWidth":width,"videoHeight":height,"renderedFrames":if self.compatibility{self.frame.count.load(std::sync::atomic::Ordering::Relaxed)}else{stats.displayed.max(0) as u64},"decodedFrames":stats.decoded_video.max(0),"lostFrames":stats.lost.max(0),"inputBitrateMbps":stats.input_bitrate,"decoderPositionFraction":(self.api.position)(p),"positionFraction":if duration>0{position as f64/duration as f64}else{0.0},
             "presentationError":if self.compatibility&&self.frame.render_error.load(std::sync::atomic::Ordering::Relaxed){Some("无法显示原生兼容画面，请检查显示会话后重新打开视频")}else{None},
             "state":(self.api.state)(p),"restoringPausedFrame":restoring,"restorePhase":restore_phase,"restoreTargetMs":restore_target,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
             "rate":restore_rate.unwrap_or_else(||(self.api.rate)(p)),"decoderRate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0});
-            value["pauseRequested"]=json!(self.pause_requested.load(std::sync::atomic::Ordering::Relaxed));value
+            value["pauseRequested"]=json!(self.pause_requested.load(std::sync::atomic::Ordering::Relaxed));trace("complete");value
         }
     }
 }
@@ -1344,18 +1375,25 @@ fn window_viewport(window:&tauri::WebviewWindow)->Result<(u32,u32),String>{
     Ok((size.width.max(1),size.height.saturating_sub((CONTROLS_HEIGHT*scale).round() as u32).max(1)))
 }
 fn layout(window: &tauri::WebviewWindow, child: usize) {
+    let started=std::time::Instant::now();let trace=|stage:&str|{if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_LAYOUT_STAGE {stage} {}",started.elapsed().as_millis());}};
+    trace("entered");
     if let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+        trace("geometry");
         let controls = (CONTROLS_HEIGHT * scale).round() as u32;
         let video_height = size.height.saturating_sub(controls).max(1);
         // WebView2 is a native compositor surface: a full-window webview can
         // cover the HWND even when its HTML "video area" is empty. Give the
         // webview ONLY the control strip, and the native HWND the video area.
         let webview: &tauri::Webview = window.as_ref();
+        if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){let _=window.with_webview(move|_|eprintln!("RHFILES_LAYOUT_STAGE before-queued-bounds {}",started.elapsed().as_millis()));}
         let _ = webview.set_auto_resize(false);
+        trace("auto-resize");
         let _ = webview.set_bounds(tauri::Rect {
             position: tauri::PhysicalPosition::new(0, video_height as i32).into(),
             size: tauri::PhysicalSize::new(size.width, controls).into(),
         });
+        trace("webview-bounds");
+        if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){let _=window.with_webview(move|_|eprintln!("RHFILES_LAYOUT_STAGE after-queued-bounds {}",started.elapsed().as_millis()));}
         unsafe {
             let _ = MoveWindow(
                 HWND(child as Ptr),
@@ -1365,6 +1403,7 @@ fn layout(window: &tauri::WebviewWindow, child: usize) {
                 video_height as i32,
                 true,
             );
+            trace("surface-bounds");
             let _ = SetWindowPos(
                 HWND(child as Ptr),
                 Some(HWND_TOP),
@@ -1376,6 +1415,7 @@ fn layout(window: &tauri::WebviewWindow, child: usize) {
             );
         }
     }
+    trace("complete");
 }
 pub async fn play(
     app: AppHandle,
@@ -1574,7 +1614,7 @@ pub async fn play(
         engine.configure_rotation(rotation,rotation_viewport)?;
         engine.open(&url, title, seconds)?;
         trace_open(started,"input-started");
-        Ok(engine.state())
+        let value=engine.state();trace_open(started,"state-ready");Ok(value)
     })
     .await
     .map_err(|_| "原生播放任务意外结束".to_owned())?

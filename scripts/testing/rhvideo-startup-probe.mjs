@@ -15,12 +15,20 @@ import {startupScenarios,generateStartupMedia} from './rhvideo-startup-media.mjs
 assert.equal(process.env.RHFILES_NATIVE_PLAYER_QA,'1','Opt in to the owned native-output diagnostic');
 const scenario=process.argv[2]||'h264-1080',format=startupScenarios[scenario];assert(format,'Unknown fixed startup scenario');
 const captureMode=process.argv[3]||'poll';assert(['poll','after-stats'].includes(captureMode),'Use poll or after-stats pixel sampling');
+const ipcMode=process.argv[4]||'default';assert(['default','postmessage'].includes(ipcMode),'Use default or isolated postmessage transport comparison');
 const mediaRoot=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-startup-source-')),sourceFile=path.join(mediaRoot,'startup.mp4');
-let app,fixture,library,opening,started;const receipt={scenario,source:format,captureMode,measure:'new process/player, library already ready',traceClock:'host pipe receipt, not exact VLC producer time',samplePeriodMs:200,samples:[],mediaRequests:[]};let failure;
+let app,fixture,library,opening,started;const receipt={scenario,source:format,captureMode,ipcMode,measure:'new process/player, library already ready',traceClock:'host pipe receipt, not exact VLC producer time',samplePeriodMs:200,samples:[],mediaRequests:[]};let failure;
 const action=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
 const command=(name,args={})=>app.evaluate('call("rhvideo_request",'+JSON.stringify({action:name,args})+')');
 try{
-  const {width,height}=generateStartupMedia(sourceFile,scenario);
+  let source=format;
+  if(process.env.RHFILES_STARTUP_MEDIA){
+    const provided=path.resolve(process.env.RHFILES_STARTUP_MEDIA);
+    const metadata=JSON.parse(execFileSync(process.env.FFPROBE||'ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height,codec_name','-of','json',provided],{encoding:'utf8',windowsHide:true,timeout:10000})).streams?.[0];
+    assert.equal(metadata?.width,format.width);assert.equal(metadata?.height,format.height);assert.equal(metadata?.codec_name,format.codec==='libx265'?'hevc':'h264');
+    fs.copyFileSync(provided,sourceFile);receipt.sourceMode='reused byte-identical fixture';
+  }else{source=generateStartupMedia(sourceFile,scenario);receipt.sourceMode='generated before timing';}
+  const {width,height}=source;
   receipt.sourceSha256=createHash('sha256').update(fs.readFileSync(sourceFile)).digest('hex');
   app=await launchApp({emulateFocus:true,traceOutput:true});
   fixture=await rhvideoFixture({videoFile:sourceFile,videoCount:1,pictureCount:0,galleryVideoCount:1,galleryFrameCount:1,videoDuration:12,videoResolutions:[`${width}x${height}`],beforeMedia:({path:request,range})=>{if(started!==undefined&&request.endsWith('/play'))receipt.mediaRequests.push({atMs:performance.now()-started,range:range||null});}});
@@ -28,13 +36,37 @@ try{
   const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
   library=await cdpSession(target,30000);
   await until(()=>library.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==="rhvideo.media.open")'),'library actions');
+  if(ipcMode==='postmessage'){
+    // Diagnostic only: reject one READ before fetch sends anything, allowing
+    // Tauri's own existing fallback to select postMessage. Never fail a sent
+    // request or replay a mutating action, and don't replace any handler.
+    await library.evaluate(`(()=>{window.__startupOriginalFetch=window.fetch;window.__startupRejectedBeforeSend=0;window.fetch=function(input,init){const url=new URL(typeof input==='string'?input:input.url,location.href);if(url.hostname==='ipc.localhost'&&!window.__startupRejectedBeforeSend){window.__startupRejectedBeforeSend++;return Promise.reject(new TypeError('Owned pre-send transport comparison'));}return window.__startupOriginalFetch.call(this,input,init);};return true;})()`);
+    await library.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"state",args:{}})');receipt.rejectedBeforeSend=await library.evaluate('(()=>{window.fetch=window.__startupOriginalFetch;return window.__startupRejectedBeforeSend;})()');assert.equal(receipt.rejectedBeforeSend,1,'Select the real framework fallback before any measured action');
+  }
   await action(library,'category',{kind:'video'});await action(library,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await action(library,'rotation.set',{enabled:false});
   await until(()=>library.evaluate("(()=>{const images=[...document.querySelectorAll('.cover-button img')];return images.length===1&&images.every(i=>i.complete&&i.naturalWidth>0);})()"),'one real initial cover finishes before timing');
   const served=await library.evaluate("fetch('js/rhvideo-workbench.js').then(r=>r.text())"),expected=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');assert.equal(createHash('sha256').update(served).digest('hex'),createHash('sha256').update(expected).digest('hex'),'Measure the actual current embedded frontend');
+  await library.evaluate(`(()=>{
+    const original=window.fetch;window.__startupIPC=[];window.__startupLongTasks=[];
+    window.fetch=function(input,init){
+      let timed=false;try{const url=new URL(typeof input==='string'?input:input.url,location.href);timed=url.hostname==='ipc.localhost'&&JSON.parse(init?.body||'{}').action==='play';}catch{}
+      if(!timed)return original.call(this,input,init);
+      const started=performance.now(),row={};window.__startupIPC.push(row);
+      return original.call(this,input,init).then(response=>{
+        row.headersMs=performance.now()-started;const json=response.json.bind(response);
+        response.json=()=>json().then(value=>{row.bodyMs=performance.now()-started;return value;});return response;
+      });
+    };
+    new PerformanceObserver(list=>{for(const item of list.getEntries())if(window.__startupLongTasks.length<64)window.__startupLongTasks.push({at:item.startTime,duration:item.duration});}).observe({type:'longtask',buffered:false});return true;
+  })()`);
   assert.equal(await app.evaluate('typeof window.__TAURI__.window.Window.getByLabel'), 'function','Use actual window visibility, not a hidden/offscreen readback alone');
   receipt.artifactDir=app.artifactDir;receipt.executable=process.env.RHFILES_TEST_EXECUTABLE||path.resolve('target/debug/rhfiles.exe');receipt.executableSha256=createHash('sha256').update(fs.readFileSync(receipt.executable)).digest('hex');
   started=performance.now();const requestStart=fixture.requests.length;let openError;
-  opening=action(library,'media.open',{kind:'video',id:'video-0'}).then(value=>{receipt.openReplyMs=performance.now()-started;return value;},error=>{openError=error;return null;});
+  // Separate the page's own action latency from delivery of its CDP reply to
+  // this observer. An unfocused view / debugger transport may delay the latter;
+  // it must not be reported as time spent inside the UI operation itself.
+  const expression='(async()=>{const started=window.__startupActionAt=performance.now();const value=await RHFilesAPI.invoke("rhvideo.media.open",{kind:"video",id:"video-0"});return {value,frontendReplyMs:performance.now()-started};})()';
+  opening=library.evaluate(expression).then(measured=>{receipt.openReplyMs=performance.now()-started;receipt.frontendReplyMs=measured.frontendReplyMs;receipt.observerDeliveryOverheadMs=Math.max(0,receipt.openReplyMs-measured.frontendReplyMs);return measured.value;},error=>{openError=error;return null;});
   let lastMissingMs=0,lastState;
   while(performance.now()-started<15000){
     if(openError)throw openError;
@@ -65,6 +97,7 @@ try{
     await sleep(receipt.samplePeriodMs);
   }
   await opening;if(openError)throw openError;
+  receipt.frontendTransport=await library.evaluate('({ipc:window.__startupIPC,longTasks:window.__startupLongTasks.map(row=>({atMs:row.at-window.__startupActionAt,durationMs:row.duration}))})');
   receipt.finalState=lastState;receipt.nonStreamRequests=fixture.requests.slice(requestStart).filter(r=>!r.path.endsWith('/play')).map(r=>r.path);
   assert(receipt.firstPixelIntervalMs,'No four-marker native frame appeared inside the bounded observation');assert(receipt.firstStatsObservedMs,'No native display statistic appeared inside the bounded observation');
   assert(receipt.mediaRequests.length>0,'The measured input really reached the owned upstream');
@@ -76,6 +109,8 @@ finally{
     const log=fs.readFileSync(path.join(app.artifactDir,'app.log'),'utf8');receipt.hardwareLog=log.split(/\r?\n/).filter(line=>/hardware decoding|using.*D3D11VA|using video output|using hw|using vout display|frame thread mode|Direct3D11 Open/i.test(line)).slice(0,12);
     receipt.startupStages=[...log.matchAll(/RHFILES_VLC_STAGE ([a-z-]+) (\d+)/g)].map(([,stage,elapsedMs])=>({stage,elapsedMs:Number(elapsedMs)}));
     receipt.openStages=[...log.matchAll(/RHFILES_PLAY_STAGE ([a-z-]+) (\d+)/g)].map(([,stage,elapsedMs])=>({stage,elapsedMs:Number(elapsedMs)}));
+    receipt.requestStages=[...log.matchAll(/RHFILES_REQUEST_STAGE ([a-z.-]+) ([a-z-]+) (\d+)/g)].map(([,action,stage,elapsedMs])=>({action,stage,elapsedMs:Number(elapsedMs)}));
+    receipt.stateStages=[...log.matchAll(/RHFILES_STATE_STAGE (\d+) (\d+) ([a-z-]+) (\d+)/g)].slice(0,2048).map(([,input,probe,stage,elapsedMs])=>({input:Number(input),probe:Number(probe),stage,elapsedMs:Number(elapsedMs)}));
     receipt.audioOutputInitializations=(log.match(/main generic debug: creating audio output/g)||[]).length;
     fs.writeFileSync(path.join(app.artifactDir,'startup-measurement.json'),JSON.stringify(receipt,null,2));
     const bitmap=path.join(app.artifactDir,'first-visible.bmp');if(fs.existsSync(bitmap))execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',bitmap,'-frames:v','1',path.join(app.artifactDir,'first-visible.png')],{windowsHide:true,timeout:10000});
@@ -83,5 +118,5 @@ finally{
   // This exact directory was created above for generated media, never a user path.
   if(path.dirname(fs.realpathSync(mediaRoot))===fs.realpathSync(os.tmpdir())&&path.basename(mediaRoot).startsWith('rhfiles-startup-source-'))fs.rmSync(mediaRoot,{recursive:true});
 }
-console.log(JSON.stringify({measured:!failure,scenario,captureMode,renderer:receipt.renderer,firstPixelIntervalMs:receipt.firstPixelIntervalMs,firstStatsObservedMs:receipt.firstStatsObservedMs,reportedFirstFrameMs:receipt.reportedFirstFrameMs,openReplyMs:receipt.openReplyMs,mediaRequests:receipt.mediaRequests,artifactDir:receipt.artifactDir,error:receipt.error}));
+console.log(JSON.stringify({measured:!failure,scenario,captureMode,ipcMode,rejectedBeforeSend:receipt.rejectedBeforeSend,renderer:receipt.renderer,firstPixelIntervalMs:receipt.firstPixelIntervalMs,firstStatsObservedMs:receipt.firstStatsObservedMs,reportedFirstFrameMs:receipt.reportedFirstFrameMs,openReplyMs:receipt.openReplyMs,frontendReplyMs:receipt.frontendReplyMs,observerDeliveryOverheadMs:receipt.observerDeliveryOverheadMs,frontendTransport:receipt.frontendTransport,mediaRequests:receipt.mediaRequests,artifactDir:receipt.artifactDir,error:receipt.error}));
 if(failure)throw failure;
