@@ -14,11 +14,17 @@
 
 Android 当前压缩发行主 APK SHA-256 `2fc6676ad0dd3ad75f83fc1a16a371107c98659f2dd2cff1d6543a5abbbb1367`，探测 APK 为 `367ef91270dddeba7435917d1287e59d79626aa11b3d18763c72ccff7aafc08e`。只安装到自有 `emulator-5584`，安装字节/共享前端与源码逐一核对；短路径构建缓存的 173 个受跟踪 Android/core 原生文本输入与干净工作树一致（仅规范化行尾），JVM **348/348**、零失败/跳过。完整 single 场景通过，包含原生实际帧、首次混合/显式默认顺序、命名种子保存/分区恢复、继续浏览实际图片及原先单项父层、菜单、逐次返回、账号隔离断言。日志 `D:/git/RHFiles-connection-QA-20261025/test-artifacts/rhvideo-gallery-order-android-single.log`；实际首页截图仍能看到过密工具按钮，未把美观/易用性判为通过。当前没有 Android 全部原生场景或真机验收，没有正式发包，完整功能与性能目标保持未完成。
 
+### 默认原生输出与等待分段（性能仍未达标）
+
+在 debug-only 启动诊断增加不含地址/媒体身份的打开阶段，区分内核查找、WebView 窗口、焦点、原生画布、工作线程与发出播放；发行版不开启。仅该诊断变更后的 EXE SHA-256 `2214c8111728a109311db308d32f036e4ec45cc42b8379665a9ecebbb2500526`，默认 `native-hardware-auto` 四项定向实际播放 **4/4**、零跳过，包含主图库父层返回、服务器顺序片段/同屏、缓存父图及迟到点击。相关 Rust 单元 **41/41**、零忽略（另 207 项被名称过滤，不是整份 Rust 集通过）。日志 `rhvideo-gallery-order-default-native.log`、`rhvideo-startup-stages-rust.log`。
+
+相同 1080p H.264 生成文件的单次新进程测量：窗口就绪约 **985 ms**、原生画布 **1040 ms**、内核准备 **1090 ms**、动作应答 **1111 ms**，首个实际四角可见画面区间仍为 **4.70–5.05 秒**。不是仅靠预加载计数或显示统计；解码前窗口等待与随后原生呈现等待都存在，不能再把全部时间归于读取全图库。主机有 Arc B580 与虚拟显示适配器，结果不能外推为所有 Windows 机器的显卡根因。单次缓存/调度波动不构成相对旧测量的加速结论，也没有同几何/同质量参考性能通过。证据 `rhvideo-startup-stages-native.log`、`rhfiles-e2e-HhwsfW/startup-measurement.json`。
+
 ## 2026-10-28 修正阻断 Windows CI 的冷却测试
 
 `1736bd2` 的 Windows CI `40634883532` 最终为 failure，macOS `40634883298` success。Windows 失败在服务连接恢复集成测试，未进入 GUI 阶段：`manual_retry_can_recover_while_automatic_calls_are_cooling_down` 在观察两秒冷却后才重启 TLS 服务，CI 上启动耗时使冷却先到期，却仍断言必须记录绕过冷却。现预先准备真实 TLS 服务及签名地址，通过 TCP 门控制造连接失败；观察自动请求仍为 cooldown/零尝试后，同步开放已有通道，再要求手动请求完成真实身份验证并保留 `manual_retry_allowed` 断言。没有改生产重试/授权逻辑、延长冷却期或删除断言。
 
-本地完整连接恢复 **11/11**、零跳过，并连续 **8 次**通过该真实 TLS 冷却用例。证据为 `ci-1736bd2-windows.log`、`ci-cooldown-gate-tests.log` 及 `ci-cooldown-gate-1.log` 至 `-8.log`。远端新运行仍须独立核对。
+本地完整连接恢复 **11/11**、零跳过，并连续 **8 次**通过该真实 TLS 冷却用例。证据为 `ci-1736bd2-windows.log`、`ci-cooldown-gate-tests.log` 及 `ci-cooldown-gate-1.log` 至 `-8.log`。随后已独立核对 `9df01c9` 的 Windows CI `40639263385`、macOS CI `40639263378` 均为 **success**；Windows 已实际执行文件系统/恢复、构建、GUI 和 PDF 步骤，不只是排队或通过前半段。这个结果不代替之后新提交的远端结果。
 
 ## 2026-10-28 恢复默认一级截图浏览（仍非完整对齐）
 

@@ -29,6 +29,11 @@ fn trace_startup(started:std::time::Instant,stage:&str){
         eprintln!("RHFILES_VLC_STAGE {stage} {}",started.elapsed().as_millis());
     }
 }
+fn trace_open(started:std::time::Instant,stage:&str){
+    if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
+        eprintln!("RHFILES_PLAY_STAGE {stage} {}",started.elapsed().as_millis());
+    }
+}
 static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static GRID_WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
@@ -1378,12 +1383,15 @@ pub async fn play(
     seconds: f64,
     rotation:crate::rhvideo_rotation::Policy,
 ) -> Result<Value, String> {
+    let started=std::time::Instant::now();
+    trace_open(started,"entry");
     let _=INPUT_APP.set(app.clone());
     if !available() {
         return Err(
             "未检测到原生播放内核。此体验版请先安装 64 位 VLC 3.x；不会打开网页播放。".into(),
         );
     }
+    trace_open(started,"kernel-located");
     let window = if let Some(window) = app.get_webview_window(LABEL) {
         window
     } else {
@@ -1408,12 +1416,14 @@ pub async fn play(
         });
         window
     };
+    trace_open(started,"window-ready");
     window
         .set_title(&format!("{title} · RHFiles"))
         .map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     let webview:&tauri::Webview=window.as_ref();webview.set_focus().map_err(|e|e.to_string())?;
+    trace_open(started,"window-focused");
     let rotation_viewport=window_viewport(&window)?;
     let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
     let mut guard = SurfaceGuard(vec![]);
@@ -1468,6 +1478,7 @@ pub async fn play(
             .map_err(|e| e.to_string())?;
             *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
                 Some(json!({"state":"consumed"}));
+            trace_open(started,"preload-consumed");
             return Ok(state);
         } else {
             tauri::async_runtime::spawn_blocking(move || release_surface(warmed));
@@ -1476,6 +1487,7 @@ pub async fn play(
     let view = window.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
+        trace_open(started,"surface-main-entered");
         let result: Result<usize, String> = (|| {
             let existing = PLAYER
                 .lock()
@@ -1516,7 +1528,9 @@ pub async fn play(
     })
     .map_err(|e| e.to_string())?;
     let child = rx.await.map_err(|_| "播放器窗口已关闭".to_owned())??;
+    trace_open(started,"surface-ready");
     tauri::async_runtime::spawn_blocking(move || {
+        trace_open(started,"engine-worker-entered");
         let mut slot = PLAYER.lock().map_err(|_| "播放器状态不可用")?;
         if slot.is_none() {
             let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
@@ -1535,9 +1549,11 @@ pub async fn play(
                 }
             }
         }
+        trace_open(started,"engine-ready");
         let engine = slot.as_mut().unwrap();
         engine.configure_rotation(rotation,rotation_viewport)?;
         engine.open(&url, title, seconds)?;
+        trace_open(started,"input-started");
         Ok(engine.state())
     })
     .await

@@ -68,6 +68,7 @@ finally{
     if(started!==undefined)receipt.nativeTrace=app.outputEvents.filter(event=>event.at>=started).map(({at,stream,text})=>({atMs:at-started,stream,text}));
     const log=fs.readFileSync(path.join(app.artifactDir,'app.log'),'utf8');receipt.hardwareLog=log.split(/\r?\n/).filter(line=>/hardware decoding|using.*D3D11VA|using video output|using hw|using vout display|frame thread mode|Direct3D11 Open/i.test(line)).slice(0,12);
     receipt.startupStages=[...log.matchAll(/RHFILES_VLC_STAGE ([a-z-]+) (\d+)/g)].map(([,stage,elapsedMs])=>({stage,elapsedMs:Number(elapsedMs)}));
+    receipt.openStages=[...log.matchAll(/RHFILES_PLAY_STAGE ([a-z-]+) (\d+)/g)].map(([,stage,elapsedMs])=>({stage,elapsedMs:Number(elapsedMs)}));
     receipt.audioOutputInitializations=(log.match(/main generic debug: creating audio output/g)||[]).length;
     fs.writeFileSync(path.join(app.artifactDir,'startup-measurement.json'),JSON.stringify(receipt,null,2));
     const bitmap=path.join(app.artifactDir,'first-visible.bmp');if(fs.existsSync(bitmap))execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',bitmap,'-frames:v','1',path.join(app.artifactDir,'first-visible.png')],{windowsHide:true,timeout:10000});
