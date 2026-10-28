@@ -71,3 +71,16 @@ test('differential: compare the actual reference shouldRotate across source/view
     assert.equal(model.rotation(w,h,cw,ch,true).angle,expected?90:0,`${w}x${h} in ${cw}x${ch}`);
   }
 });
+
+test('reference viewport resize refits the selected rotation rather than silently choosing a new angle',{skip:!fs.existsSync(reference)},()=>{
+  const html=fs.readFileSync(reference,'utf8'),functions=[];
+  for(const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(match[1],{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&['shouldRotate','applyVideoRotate'].includes(node.id.name))functions.push(match[1].slice(node.start,node.end));
+  assert.equal(functions.length,2);const viewport={clientWidth:1600,clientHeight:900},classes=new Set(),listeners=new Map();
+  const video={videoWidth:360,videoHeight:640,parentNode:{},style:{},classList:{add:name=>classes.add(name),remove:name=>classes.delete(name)}};
+  const context=vm.createContext({video,Math,_rotResizeBound:null,document:{getElementById:id=>{assert.equal(id,'media-content');return viewport;}},window:{addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:(type,fn)=>{if(listeners.get(type)===fn)listeners.delete(type);}}});
+  vm.runInContext(functions.join('\n'),context);assert.equal(vm.runInContext('shouldRotate(video)',context),true);vm.runInContext('applyVideoRotate(video,true)',context);
+  Object.assign(viewport,{clientWidth:900,clientHeight:1600});assert.equal(vm.runInContext('shouldRotate(video)',context),false,'The new viewport would choose another angle for a newly opened video');
+  listeners.get('resize')();assert(classes.has('rotated'),'Resizing an existing viewer must not make that new-source choice');assert.equal(video.style.width,'1600px');assert.equal(video.style.height,'900px');
+  vm.runInContext('applyVideoRotate(video,false)',context);assert(!classes.has('rotated'));assert.equal(listeners.size,0);assert.equal(video.style.width,'');assert.equal(video.style.height,'');
+  vm.runInContext('applyVideoRotate(video,true)',context);video.parentNode=null;listeners.get('resize')();assert.equal(listeners.size,0,'A detached viewer cannot retain its resize listener');
+});
