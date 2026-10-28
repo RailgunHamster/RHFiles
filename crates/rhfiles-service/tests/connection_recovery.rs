@@ -196,6 +196,14 @@ async fn proxy(
     delay: Duration,
     drop_first: bool,
 ) -> (String, tokio::task::JoinHandle<()>) {
+    proxy_with_gate(f, delay, drop_first, None).await
+}
+async fn proxy_with_gate(
+    f: &Fixture,
+    delay: Duration,
+    drop_first: bool,
+    gate: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("https://{}", listener.local_addr().unwrap());
     let port = f.server.status().port;
@@ -212,6 +220,10 @@ async fn proxy(
     let handle = tokio::spawn(async move {
         let mut first = true;
         while let Ok((mut incoming, _)) = listener.accept().await {
+            if gate.as_ref().is_some_and(|gate| !gate.load(std::sync::atomic::Ordering::SeqCst)) {
+                drop(incoming);
+                continue;
+            }
             if first && drop_first {
                 first = false;
                 drop(incoming);
@@ -282,29 +294,23 @@ async fn last_success_is_restored_without_persisting_session_credentials() {
 #[tokio::test]
 async fn manual_retry_can_recover_while_automatic_calls_are_cooling_down() {
     let f = setup();
-    let status = f.server.status();
-    let host = f.server.groups();
-    f.server.stop();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Prepare the actual TLS service, signed address and tunnel BEFORE starting
+    // the two-second cooldown. Restarting a service here took longer than that
+    // budget on CI, so the test incorrectly demanded a bypass after expiry.
+    // Opening an already prepared gate is synchronous: no key/cert or listener
+    // setup occurs between observing cooldown and making the manual request.
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (url, task) = proxy_with_gate(&f, Duration::ZERO, false, Some(gate.clone())).await;
     let c = Connector::new(f.client.clone());
     let failed = c.connect(&f.id, &f.peer, None, "file_request").await;
     assert_eq!(failed.outcome, "unreachable", "{failed:?}");
     let blocked = c.connect(&f.id, &f.peer, None, "file_request").await;
     assert_eq!(blocked.outcome, "cooldown");
     assert_eq!(blocked.attempts, 0);
-    let root = f._dir.path().canonicalize().unwrap();
-    let _restarted = Service::start_grouped(
-        &root.join("server"),
-        vec![ShareConfig {
-            name: "Files".into(),
-            path: root.join("files"),
-        }],
-        format!("127.0.0.1:{}", status.port).parse().unwrap(),
-        &[],
-        host,
-    )
-    .unwrap();
+    gate.store(true, std::sync::atomic::Ordering::SeqCst);
     let r = c.connect(&f.id, &f.peer, None, "manual").await;
+    task.abort();
     assert_eq!(r.outcome, "connected", "{r:?}");
-    assert!(r.steps.iter().any(|s| s.code == "manual_retry_allowed"));
+    assert_eq!(r.endpoint, Some(url));
+    assert!(r.steps.iter().any(|s| s.code == "manual_retry_allowed"), "{r:?}");
 }
