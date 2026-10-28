@@ -6,6 +6,7 @@ import net from 'node:net';
 import {spawn,spawnSync} from 'node:child_process';
 import {once} from 'node:events';
 import {root} from './source.mjs';
+import {listenBrowserLoopback} from './browser-loopback.mjs';
 
 export const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 export async function until(check,label,timeout=15000) {
@@ -28,7 +29,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
   const releaseEnvironment=process.env.RHFILES_TEST_EXECUTABLE
     ? {APPDATA:path.join(profileRoot,'roaming'),LOCALAPPDATA:path.join(profileRoot,'local')}
     : {};
-  const server=net.createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
+  const server=net.createServer();await listenBrowserLoopback(server);
   const port=server.address().port;await new Promise(resolve=>server.close(resolve));
   const child=spawn(executable,args,{cwd:directory,windowsHide:true,env:{...process.env,...releaseEnvironment,
     RHFILES_TEST_PROFILE_ROOT:profileRoot,RHFILES_TEST_DESKTOP_ID:desktopId,RHFILES_CDP_PORT:String(port),RHFILES_AUTORUN_TESTS:'0'}});

@@ -1,7 +1,7 @@
 // Isolated server contract fixture. Never touches a real RHVideo database.
 import http from 'node:http';
 import fs from 'node:fs';
-import {once} from 'node:events';
+import {listenBrowserLoopback} from './browser-loopback.mjs';
 import pathModule from 'node:path';
 export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview']}={}){
   const favorites=new Set(),progress=[],requests=[];
@@ -109,6 +109,6 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     }
     send(404,{detail:'Fixture route not found'});
   });
-  server.listen(0,'127.0.0.1');await once(server,'listening');
+  await listenBrowserLoopback(server);
   return {server,url:'http://127.0.0.1:'+server.address().port,videos,favorites,progress,requests,watch,trash,batches,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
 }
