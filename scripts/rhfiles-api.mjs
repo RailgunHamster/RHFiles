@@ -46,16 +46,25 @@ export function expressionFor(request,pane='active'){
   return '(()=>{const api=globalThis.RHFilesAPI;if(!api)throw Error("RHFiles action API is not loaded");const target=api.forPane?api.forPane('+JSON.stringify(pane)+'):api;return target.rpc(JSON.parse('+JSON.stringify(JSON.stringify(request))+'));})()';
 }
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-export async function cdpSession(target,timeout){
+export async function cdpSession(target,timeout,{signal}={}){
+  if(signal?.aborted)throw new ClientError('READ_ABORTED','The receipt read was ended');
   const url=new URL(target.webSocketDebuggerUrl);
   if(url.protocol!=='ws:'||!['127.0.0.1','localhost','[::1]'].includes(url.hostname)||url.username||url.password)throw new ClientError('INVALID_ENDPOINT','Refusing a non-loopback WebSocket');
   const socket=new WebSocket(url);let next=0,closed=false;const pending=new Map();
   const rejectAll=()=>{for(const item of pending.values()){clearTimeout(item.timer);item.reject(new ClientError('CONNECTION_LOST','Connection lost; a submitted action may still be running. Query its key/run; never blindly repeat it.'));}pending.clear();};
   socket.addEventListener('message',event=>{let value;try{value=JSON.parse(event.data);}catch{return;}const item=pending.get(value.id);if(!item)return;pending.delete(value.id);clearTimeout(item.timer);value.error?item.reject(new ClientError('CDP_ERROR',value.error.message)):item.resolve(value.result);});
-  socket.addEventListener('close',()=>{closed=true;rejectAll();});socket.addEventListener('error',()=>rejectAll());
-  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{socket.close();reject(new ClientError('CONNECTION_TIMEOUT','Local DevTools connection timed out'));},timeout);socket.addEventListener('open',()=>{clearTimeout(timer);resolve();},{once:true});socket.addEventListener('error',()=>{clearTimeout(timer);reject(new ClientError('CONNECTION_FAILED','Cannot connect to the local app target'));},{once:true});});
-  const send=(method,params,requestTimeout=timeout)=>new Promise((resolve,reject)=>{if(closed)return reject(new ClientError('CONNECTION_LOST','Session is closed'));const id=++next,timer=setTimeout(()=>{pending.delete(id);reject(new ClientError('REQUEST_TIMEOUT','Request timed out; the action may still be running. Do not automatically repeat it.'));},requestTimeout);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
-  return {send,async evaluate(expression,requestTimeout){const value=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},requestTimeout);if(value.exceptionDetails)throw new ClientError('API_NOT_READY',value.exceptionDetails.exception?.description||value.exceptionDetails.exception?.value||value.exceptionDetails.text);return value.result?.value;},close(){socket.close();rejectAll();}};
+  socket.addEventListener('close',()=>{closed=true;rejectAll();});socket.addEventListener('error',()=>{closed=true;rejectAll();});
+  await new Promise((resolve,reject)=>{
+    let settled=false;
+    const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);socket.removeEventListener('open',opened);socket.removeEventListener('error',failed);socket.removeEventListener('close',ended);signal?.removeEventListener('abort',aborted);if(error){socket.close();reject(error);}else resolve();};
+    const opened=()=>finish(),failed=()=>finish(new ClientError('CONNECTION_FAILED','Cannot connect to the local app target')),ended=()=>finish(new ClientError('CONNECTION_LOST','The target closed before the connection opened')),aborted=()=>finish(new ClientError('READ_ABORTED','The receipt read was ended'));
+    const timer=setTimeout(()=>finish(new ClientError('CONNECTION_TIMEOUT','Local DevTools connection timed out')),timeout);
+    socket.addEventListener('open',opened,{once:true});socket.addEventListener('error',failed,{once:true});socket.addEventListener('close',ended,{once:true});signal?.addEventListener('abort',aborted,{once:true});if(signal?.aborted)aborted();
+  });
+  const close=()=>{closed=true;signal?.removeEventListener('abort',close);socket.close();rejectAll();};
+  signal?.addEventListener('abort',close,{once:true});if(signal?.aborted){close();throw new ClientError('READ_ABORTED','The receipt read was ended');}
+  const send=(method,params,requestTimeout=timeout)=>new Promise((resolve,reject)=>{if(closed)return reject(new ClientError('CONNECTION_LOST','Session is closed'));const id=++next,timer=setTimeout(()=>{pending.delete(id);reject(new ClientError('REQUEST_TIMEOUT','Request timed out; the action may still be running. Do not automatically repeat it.'));},requestTimeout);pending.set(id,{resolve,reject,timer});try{socket.send(JSON.stringify({id,method,params}));}catch{pending.delete(id);clearTimeout(timer);reject(new ClientError('CONNECTION_LOST','Session is closed'));}});
+  return {send,async evaluate(expression,requestTimeout){const value=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},requestTimeout);if(value.exceptionDetails)throw new ClientError('API_NOT_READY',value.exceptionDetails.exception?.description||value.exceptionDetails.exception?.value||value.exceptionDetails.text);return value.result?.value;},close};
 }
 export function isAppTargetURL(value,options={}){
   try{
@@ -119,30 +128,53 @@ export async function recoverRun(endpoint,options,request,runId,deadline,{fetchT
       candidates=eligible(targets);trace('recovery.discovered',{targets:candidates.map(t=>t.id),remainingMs:Math.max(0,deadline-Date.now())});
       if(!candidates.length)break;
     }
-    for(const [index,target]of candidates.entries()){
-      if(Date.now()>=deadline||signal?.aborted)break;let borrowed,abort;
-      visited.add(target.id);
-      try{
-        // Opening and the first read share this target's fair slice. A frozen
-        // main view must not consume the entire deadline before a healthy library
-        // view can supply the process-owned receipt. Still only one pass, <=8
-        // targets, and no resubmission of the original operation.
-        const slice=Math.max(1,Math.floor((deadline-Date.now())/(candidates.length-index))),probeDeadline=Math.min(deadline,Date.now()+slice);
-        trace('recovery.target',{target:target.id,budgetMs:slice});
-        borrowed=await openSession(target,slice);
-        if(Date.now()>=probeDeadline||signal?.aborted)continue;
-        abort=()=>borrowed.close();signal?.addEventListener('abort',abort,{once:true});
-        const query={jsonrpc:'2.0',id:randomUUID(),method:runId?'runs.status':'runs.lookup',params:runId?{runId}:{key:request.params.key}};
-        let reply=await borrowed.evaluate(expressionFor(query,'host'),Math.max(1,probeDeadline-Date.now())),receipt=reply?.result;
-        trace('recovery.read',{target:target.id,state:receipt?.state??null,code:reply?.error?.data?.code??null,remainingMs:Math.max(0,deadline-Date.now())});
-        if(reply?.error?.data?.code==='RESULT_EXPIRED')return {...reply,id:request.id};
-        if(!receipt||receipt.action!==request.params.action||runId&&receipt.id!==runId)continue;
-        if(options.wait&&receipt.state==='running'&&Date.now()<deadline){reply=await borrowed.evaluate(expressionFor({...query,method:'runs.wait',params:{runId:receipt.id,timeoutMs:Math.min(30000,Math.max(0,deadline-Date.now()-25))}},'host'),Math.max(1,deadline-Date.now()));receipt=reply?.result;trace('recovery.wait',{target:target.id,state:receipt?.state??null,code:reply?.error?.data?.code??null,remainingMs:Math.max(0,deadline-Date.now())});}
-        if(reply?.error?.data?.code==='RESULT_EXPIRED')return {...reply,id:request.id};
-        if(!receipt||typeof receipt.id!=='string'||!['running','succeeded','failed'].includes(receipt.state)||receipt.state==='succeeded'&&!Object.hasOwn(receipt,'result')||receipt.state==='failed'&&typeof receipt.error?.code!=='string'||receipt.action!==request.params.action||runId&&receipt.id!==runId)continue;
-        return {jsonrpc:'2.0',id:request.id,result:receipt};
-      }catch(error){trace('recovery.unavailable',{target:target.id,code:error?.code??'READ_FAILED',remainingMs:Math.max(0,deadline-Date.now())});}finally{if(abort)signal?.removeEventListener('abort',abort);borrowed?.close();}
-    }
+    // Probe the already bounded set concurrently. Sequential time slices still
+    // starve a healthy view whose own reply needs most of the shared deadline.
+    // Only the first running source performs a wait. Other already-started
+    // status reads can still deliver a confirmed completion if that wait stalls.
+    const valid=receipt=>receipt&&typeof receipt.id==='string'&&receipt.action===request.params.action&&(!runId||receipt.id===runId)&&['running','succeeded','failed'].includes(receipt.state)&&(receipt.state!=='succeeded'||Object.hasOwn(receipt,'result')&&receipt.result!==undefined)&&(receipt.state!=='failed'||typeof receipt.error?.code==='string');
+    const probes=candidates.map(target=>{
+      visited.add(target.id);const controller=new AbortController(),linked=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
+      const entry={target,controller,signal:linked,borrowed:null,closed:false};
+      entry.close=()=>{if(entry.closed)return;entry.closed=true;linked.removeEventListener('abort',entry.close);entry.borrowed?.close();};
+      linked.addEventListener('abort',entry.close,{once:true});entry.dispose=()=>{controller.abort();entry.close();};return entry;
+    });
+    let winner;
+    try{
+      const readings=probes.map(async entry=>{
+        const {target}=entry;
+        try{
+          if(entry.signal.aborted||Date.now()>=deadline)throw new ClientError('READ_ABORTED','The receipt read was ended');
+          const budget=Math.max(1,deadline-Date.now());trace('recovery.target',{target:target.id,budgetMs:budget});
+          const borrowed=await openSession(target,budget,{signal:entry.signal});entry.borrowed=borrowed;
+          if(entry.signal.aborted){borrowed.close();throw new ClientError('READ_ABORTED','The receipt read was ended');}
+          const query={jsonrpc:'2.0',id:randomUUID(),method:runId?'runs.status':'runs.lookup',params:runId?{runId}:{key:request.params.key}};
+          trace('recovery.reading',{target:target.id,method:query.method});
+          const reply=await borrowed.evaluate(expressionFor(query,'host'),Math.max(1,deadline-Date.now())),receipt=reply?.result;
+          trace('recovery.read',{target:target.id,state:receipt?.state??null,code:reply?.error?.data?.code??null,remainingMs:Math.max(0,deadline-Date.now())});
+          if(reply?.error?.data?.code!=='RESULT_EXPIRED'&&!valid(receipt))throw new ClientError(reply?.error?.data?.code??'RECEIPT_MISMATCH','No matching process receipt');
+          entry.reply=reply;entry.query=query;return entry;
+        }catch(error){trace(entry.signal.aborted?'recovery.cancelled':'recovery.unavailable',{target:target.id,code:error?.code??'READ_FAILED',remainingMs:Math.max(0,deadline-Date.now())});entry.dispose();throw error;}
+      });
+      winner=await Promise.any(readings);
+      if(signal?.aborted)return null;
+      let reply=winner.reply,receipt=reply?.result;
+      if(reply?.error?.data?.code==='RESULT_EXPIRED')return {...reply,id:request.id};
+      if(options.wait&&receipt.state==='running'&&Date.now()<deadline){
+        const waiting=winner;
+        const selected=await waitWithReceipt(async()=>{
+          const reply=await waiting.borrowed.evaluate(expressionFor({...waiting.query,method:'runs.wait',params:{runId:receipt.id,timeoutMs:Math.min(30000,Math.max(0,deadline-Date.now()-25))}},'host'),Math.max(1,deadline-Date.now()));
+          trace('recovery.wait',{target:waiting.target.id,state:reply?.result?.state??null,code:reply?.error?.data?.code??null,remainingMs:Math.max(0,deadline-Date.now())});return {entry:waiting,reply};
+        },()=>Promise.any(readings.map(async reading=>{
+          const entry=await reading;
+          if(entry===waiting||entry.reply?.result?.state==='running')throw new ClientError('NO_COMPLETION','This source has not confirmed completion');
+          return {entry,reply:entry.reply};
+        })).catch(()=>null));
+        winner=selected.entry;reply=selected.reply;receipt=reply?.result;
+      }
+      if(reply?.error?.data?.code==='RESULT_EXPIRED')return {...reply,id:request.id};
+      if(valid(receipt))return {jsonrpc:'2.0',id:request.id,result:receipt};
+    }catch(error){if(winner)trace('recovery.unavailable',{target:winner.target.id,code:error?.code??'READ_FAILED',remainingMs:Math.max(0,deadline-Date.now())});}finally{for(const entry of probes)entry.dispose();}
     candidates=[];
   }
   return null;
@@ -163,7 +195,7 @@ export async function main(argv=process.argv.slice(2),{write=value=>process.stdo
   const session=await connection(options);
   const execute=async request=>{
     let value,runId,recoveryAttempted=false;const deadline=Date.now()+options.timeout,controller=new AbortController();
-    const recover=()=>{recoveryAttempted=true;return recoverRun(session.endpoint,options,request,runId,deadline,{knownTargets:session.receiptTargets,signal:controller.signal,openSession:(target,timeout)=>{const cached=session.receiptSessions?.get(target.id);if(cached){session.receiptSessions.delete(target.id);trace('recovery.reuse',{target:target.id});return cached;}return cdpSession(target,timeout);}});};
+    const recover=()=>{recoveryAttempted=true;return recoverRun(session.endpoint,options,request,runId,deadline,{knownTargets:session.receiptTargets,signal:controller.signal,openSession:(target,timeout,options)=>{const cached=session.receiptSessions?.get(target.id);if(cached){session.receiptSessions.delete(target.id);trace('recovery.reuse',{target:target.id});return cached;}return cdpSession(target,timeout,options);}});};
     trace('request.send',{method:request.method,action:request.params?.action,timeoutMs:options.timeout});
     try{
       value=await session.evaluate(expressionFor(request,options.pane));runId=value?.result?.id;trace('request.reply',{state:value?.result?.state??null,remainingMs:Math.max(0,deadline-Date.now())});

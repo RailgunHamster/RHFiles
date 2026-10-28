@@ -21,12 +21,12 @@ for(const phase of ['connect','query'])test(`a stalled first ${phase} cannot con
   assert.deepEqual(JSON.parse(JSON.stringify(result.result)),receipt);assert.equal(result.id,'original');assert.deepEqual(opened,['1','2']);assert(closed.includes('2'));assert(calls.every(query=>query.method==='runs.lookup'),'Recovery must never replay the close action');
 });
 
-test('a matched live receipt can use the remaining wait budget instead of the short discovery slice',async()=>{
-  const calls=[],harness={fetchTargets:async()=>Array.from({length:8},(_,i)=>({...targets[0],id:String(i)})),openSession:async(_target,discoveryTimeout)=>({
-    async evaluate(expression,timeout=discoveryTimeout){const query=read(expression);calls.push(query.method);if(query.method==='runs.lookup')return {jsonrpc:'2.0',id:query.id,result:{...receipt,state:'running',finishedAt:null}};
+test('one matched live receipt can use the remaining wait budget even when a reserved transport has a short default',async()=>{
+  const calls=[],harness={fetchTargets:async()=>Array.from({length:8},(_,i)=>({...targets[0],id:String(i)})),openSession:async()=>({
+    async evaluate(expression,timeout=10){const query=read(expression);calls.push(query.method);if(query.method==='runs.lookup')return {jsonrpc:'2.0',id:query.id,result:{...receipt,state:'running',finishedAt:null}};
       let expiry,completion;try{return await Promise.race([new Promise((_,reject)=>expiry=setTimeout(()=>reject(Error('Wait budget spent')),timeout)),new Promise(resolve=>completion=setTimeout(()=>resolve({jsonrpc:'2.0',id:query.id,result:receipt}),120))]);}finally{clearTimeout(expiry);clearTimeout(completion);}},close(){}
   })};
-  const result=await recoverRun('',{wait:true},request,undefined,Date.now()+500,harness);assert(result);assert.deepEqual(JSON.parse(JSON.stringify(result.result)),receipt);assert.deepEqual(calls,['runs.lookup','runs.wait']);
+  const result=await recoverRun('',{wait:true},request,undefined,Date.now()+500,harness);assert(result);assert.deepEqual(JSON.parse(JSON.stringify(result.result)),receipt);assert.equal(calls.filter(method=>method==='runs.lookup').length,8);assert.equal(calls.filter(method=>method==='runs.wait').length,1,'Only the selected matching source may perform a long wait');
 });
 
 test('a receipt expiring during the one read-only wait keeps its precise error',async()=>{
@@ -41,7 +41,7 @@ test('known surviving views recover a close without depending on another target-
   }};
   const result=await recoverRun('',{wait:true},request,receipt.id,Date.now()+500,harness);
   assert(result,'A previously enumerated survivor must supply the real receipt even if discovery is unavailable');
-  assert.equal(discovery,0);assert.deepEqual(opened,['1']);assert.deepEqual(calls,['runs.status']);assert.deepEqual(JSON.parse(JSON.stringify(result.result)),receipt);
+  assert.equal(discovery,0);assert.deepEqual(opened,['1','2']);assert.deepEqual(calls,['runs.status','runs.status']);assert.deepEqual(JSON.parse(JSON.stringify(result.result)),receipt);
 });
 
 test('stale known views allow one new discovery without querying any view twice',async()=>{

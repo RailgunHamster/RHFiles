@@ -5,15 +5,23 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {launchApp,until} from './app-session.mjs';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
-import {generateStartupMedia} from './rhvideo-startup-media.mjs';
+import {startupScenarios,generateStartupMedia} from './rhvideo-startup-media.mjs';
 const scenario=process.argv[2]||'h264-1080',reference=path.resolve(process.env.RHVIDEO_SOURCE||'../RHVideo');
 assert(fs.existsSync(path.join(reference,'static/index.html')),'Provide the actual RHVideo source');
 const directory=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-reference-startup-')),file=path.join(directory,'startup.mp4');
 let app,fixture,failure;const receipt={scenario,measure:'reference page, fresh process, library ready; rVFC plus visible screenshot evidence',physicalScreenTiming:false,mediaRequests:[]};
 try{
-  receipt.source=generateStartupMedia(file,scenario);receipt.sourceSha256=createHash('sha256').update(fs.readFileSync(file)).digest('hex');receipt.referenceSHA256=createHash('sha256').update(fs.readFileSync(path.join(reference,'static/index.html'))).digest('hex');
+  if(process.env.RHFILES_STARTUP_MEDIA){
+    const provided=path.resolve(process.env.RHFILES_STARTUP_MEDIA),format=startupScenarios[scenario];assert(format,'Unknown fixed startup scenario');
+    const metadata=JSON.parse(execFileSync(process.env.FFPROBE||'ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height,codec_name','-of','json',provided],{encoding:'utf8',windowsHide:true,timeout:10000})).streams?.[0];
+    assert.equal(metadata?.width,format.width);assert.equal(metadata?.height,format.height);assert.equal(metadata?.codec_name,format.codec==='libx265'?'hevc':'h264');
+    fs.copyFileSync(provided,file);receipt.source=format;receipt.sourceMode='reused byte-identical fixture';
+  }else{receipt.source=generateStartupMedia(file,scenario);receipt.sourceMode='generated before timing';}
+  receipt.sourceSha256=createHash('sha256').update(fs.readFileSync(file)).digest('hex');receipt.referenceSHA256=createHash('sha256').update(fs.readFileSync(path.join(reference,'static/index.html'))).digest('hex');
+  receipt.executable=process.env.RHFILES_TEST_EXECUTABLE||path.resolve('target/debug/rhfiles.exe');receipt.executableSha256=createHash('sha256').update(fs.readFileSync(receipt.executable)).digest('hex');
   app=await launchApp({emulateFocus:true});receipt.artifactDir=app.artifactDir;
   let started;
   fixture=await rhvideoFixture({referenceStatic:path.join(reference,'static'),videoFile:file,videoCount:1,pictureCount:0,galleryVideoCount:1,galleryFrameCount:1,videoDuration:12,beforeMedia:({path:request,range})=>{if(started!==undefined&&request.endsWith('/play'))receipt.mediaRequests.push({atMs:performance.now()-started,range:range||null});}});

@@ -105,13 +105,14 @@ test('player-owned close and back complete their public CLI runs instead of losi
       await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0;},'real native frame before self-close',25000);
       const control=name==='ui-back'?await player.evaluate("RHFilesAPI.invoke('ui.list').then(rows=>rows.find(row=>row.id==='back'))"):null;
       const output=await cli(control?'ui.invoke':'rhvideo.player.'+name,control?{controlId:control.controlId}: {},'self-'+name);
+      if(process.env.RHFILES_CLI_TRACE==='1')console.log(JSON.stringify({scenario:'player self-'+name,...output}));
       assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout.trim());assert.equal(reply.result.state,'succeeded',JSON.stringify(reply));if(control)assert.deepEqual(reply.result.result,{controlId:control.controlId,event:'click'});else assert.equal(reply.result.result.closed,true);
       assert.equal((await command(s.app,'player.state')).opened,false);
       await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !pages.some(page=>new URL(page.url).pathname.endsWith('/rhvideo-player.html'));},'Close retires the player window, not a hidden polling WebView',3000);
       player.close();player=null;
       if(name==='close'){
         await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');const replacement=await invoke(player,'player.state');
-        const replay=await cli('rhvideo.player.close',{},'self-close');assert.equal(replay.code,0,JSON.stringify(replay));assert.equal(JSON.parse(replay.stdout).result.state,'succeeded');const after=await invoke(player,'player.state');assert.equal(after.opened,true,'The old request key must not close a later player');assert.equal(after.inputId,replacement.inputId);
+        const replay=await cli('rhvideo.player.close',{},'self-close');if(process.env.RHFILES_CLI_TRACE==='1')console.log(JSON.stringify({scenario:'player old-key receipt, no replay',...replay}));assert.equal(replay.code,0,JSON.stringify(replay));assert.equal(JSON.parse(replay.stdout).result.state,'succeeded');const after=await invoke(player,'player.state');assert.equal(after.opened,true,'The old request key must not close a later player');assert.equal(after.inputId,replacement.inputId);
         await command(s.app,'player.close');player.close();player=null;
       }
     }
@@ -141,20 +142,48 @@ test('grid close recovers through a real survivor when the first view is paused 
     const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json(),isMain=page=>/^\/(index\.html)?$/.test(new URL(page.url).pathname);
     const main=pages.find(isMain),gridPage=pages.find(page=>new URL(page.url).pathname==='/rhvideo-grid.html');assert(main&&gridPage);
     const ordered=[main,...pages.filter(page=>page.id!==main.id)];let requests=0;
-    // Real WebViews and real WebSocket endpoints; only discovery is faulted.
+    // Real WebViews, native operations and real WebSocket endpoints; the
+    // injected faults affect reply delivery, the paused view and discovery.
     // Debugger pause survives the close handler's native window activation;
     // lifecycle freezing can be undone by that activation, hiding the fault.
     server=http.createServer((req,res)=>{if(req.url!=='/json/list'){res.writeHead(404).end();return;}requests++;if(requests>1){res.writeHead(503).end();return;}res.setHeader('Content-Type','application/json');res.end(JSON.stringify(ordered));});
     await listenBrowserLoopback(server);
     await s.app.send('Debugger.enable');await s.app.send('Debugger.pause');let output;
+    await until(()=>s.app.events.some(event=>event.method==='Debugger.paused'),'the first real view is actually debugger-paused',3000);
     try{output=await runCli(s.app,null,'rhvideo.grid.close',{},'grid-close-fault',{endpoint:`http://127.0.0.1:${server.address().port}`,target:gridPage.id,trace:true});}finally{await s.app.send('Debugger.resume');await s.app.send('Debugger.disable');}
     console.log(JSON.stringify({scenario:'grid close with paused survivor/discovery fault',...output}));assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
     const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line));assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Never resubmit the close action');
-    assert(trace.some(row=>row.rhfilesClientTrace==='recovery.unavailable'&&row.target===main.id&&row.code==='REQUEST_TIMEOUT'),'The paused first survivor must actually time out');
+    const healthyStart=trace.findIndex(row=>row.rhfilesClientTrace==='recovery.target'&&row.target!==main.id),pausedEnd=trace.findIndex(row=>['recovery.cancelled','recovery.unavailable'].includes(row.rhfilesClientTrace)&&row.target===main.id);
+    assert(healthyStart>=0&&pausedEnd>healthyStart,'The healthy survivor must start before the paused source finishes or is cancelled, not wait for its time slice');
     assert(trace.some(row=>['recovery.read','recovery.wait'].includes(row.rhfilesClientTrace)&&row.target!==main.id&&row.state==='succeeded'),'Completion must come from a real surviving view, not disappearance');assert.equal(requests,1,'Previously enumerated survivors must not need a fresh target list');
     assert.equal((await command(s.app,'grid.state')).cells.length,0);
     await until(async()=>{const current=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !current.some(page=>page.id===gridPage.id);},'the closed grid WebView is really destroyed',3000);
   }finally{server?.closeAllConnections();if(server)await new Promise(resolve=>server.close(resolve));grid?.close();await s.close();}
+});
+
+test('a later real completion is not discarded after an earlier survivor reports running but loses its wait reply',native,async()=>{
+  const s=await setup();let grid,closing;
+  try{
+    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    await until(async()=>{const state=await invoke(grid,'grid.state');return state.cells.length===2&&state.cells.every(cell=>cell.renderedFrames>0);},'two real outputs before late-receipt fault',25000);
+    // Only reply delivery is faulted. The original close and all receipts are
+    // real. Main answers its first status normally but drops the subsequent
+    // wait; the library holds its one status until the real close is complete.
+    await grid.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;api.rpc=request=>request.method==="runs.wait"?new Promise(()=>{}):rpc.call(api,request);return true;})()');
+    await s.app.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;window.__receiptWaitStarted=false;api.rpc=request=>{if(request.method==="runs.wait"){window.__receiptWaitStarted=true;return new Promise(()=>{});}return rpc.call(api,request);};return true;})()');
+    await s.view.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;window.__releaseReceiptStatus=null;api.rpc=async request=>{if(request.method==="runs.status")await new Promise(resolve=>window.__releaseReceiptStatus=resolve);return rpc.call(api,request);};return true;})()');
+    closing=runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'late-native-completion',{trace:true});
+    await until(()=>s.app.evaluate('window.__receiptWaitStarted'),'the early running source really starts its stalled wait',3000);
+    await until(async()=>{const value=await s.view.evaluate('RHFilesAPI.rpc({jsonrpc:"2.0",id:"read-only-observer",method:"runs.lookup",params:{key:"late-native-completion"}})');return value.result?.state==='succeeded';},'the actual process close receipt is complete',4000);
+    assert.equal(await s.view.evaluate('(()=>{if(!window.__releaseReceiptStatus)return false;window.__releaseReceiptStatus();return true;})()'),true,'Release the already-started status response, not a new query');
+    const output=await closing;console.log(JSON.stringify({scenario:'real later completion after running-source wait loss',...output}));assert.equal(output.code,0,JSON.stringify(output));
+    const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
+    const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line)),reads=trace.filter(row=>row.rhfilesClientTrace==='recovery.read');
+    assert(reads.some(row=>row.state==='running')&&reads.some(row=>row.state==='succeeded'),'An early running receipt must not discard the later confirmed native result');
+    assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Do not replay the accepted close');
+    assert.equal((await command(s.app,'grid.state')).cells.length,0);
+    await until(async()=>!(await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json()).some(page=>new URL(page.url).pathname==='/rhvideo-grid.html'),'the original close really destroys its view',3000);
+  }finally{grid?.close();await s.close();await closing;}
 });
 
 test('sequential playback keeps the visible full-list order, wraps manually, seeks across entries and resumes its own cursor',native,async()=>{
