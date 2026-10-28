@@ -353,7 +353,20 @@ impl SingleControls {
 #[derive(Default)]
 struct PreviewState{pending:HashMap<String,Value>,next:u64,running:bool,result:Value}
 fn emit_parent_preview(app:&AppHandle,generation:u64,options:&Value,direction:i64,close:bool){
-    if options["origin"]=="frame" {let mut event=json!({"generation":generation,"parentKey":options["parentKey"],"parentPreview":options["parentPreview"],"direction":direction,"close":close});if let Some(id)=options.get("parentPlayback"){event["parentPlayback"]=id.clone();}let _=app.emit_to("window-rhvideo","rhvideo-parent-preview",event);}
+    emit_parent_target(app,generation,options,direction,close,None);
+}
+fn has_parent_preview(options:&Value)->bool{matches!(options["origin"].as_str(),Some("frame"|"favorite"))}
+fn owns_parent_preview(options:&Value,args:&Value)->bool{
+    has_parent_preview(options)&&options["parentPreview"].as_str().is_some_and(|id|!id.is_empty()&&args["parentPreview"].as_str()==Some(id))&&args.get("parentPlayback").is_none_or(|id|id.as_str().is_some_and(|id|!id.is_empty()&&options["parentPlayback"].as_str()==Some(id)))
+}
+fn favorite_parent_index(options:&Value,ratio:f64)->Result<u64,String>{
+    if options["origin"]!="favorite"{return Err("当前视频没有收藏浏览进度".into());}
+    let count=options["parentTotal"].as_u64().filter(|n|(1..=1000000).contains(n)).ok_or("收藏浏览队列无效")?;
+    if !ratio.is_finite()||!(0.0..=1.0).contains(&ratio){return Err("收藏浏览进度无效".into());}
+    Ok((ratio*(count-1)as f64).round()as u64)
+}
+fn emit_parent_target(app:&AppHandle,generation:u64,options:&Value,direction:i64,close:bool,index:Option<u64>){
+    if has_parent_preview(options) {let mut event=json!({"generation":generation,"parentKey":options["parentKey"],"parentPreview":options["parentPreview"],"direction":direction,"close":close||(options["origin"]=="favorite"&&direction==0&&index.is_none())});if let Some(id)=options.get("parentPlayback"){event["parentPlayback"]=id.clone();}if let Some(index)=index{event["targetIndex"]=json!(index);}let _=app.emit_to("window-rhvideo","rhvideo-parent-preview",event);}
 }
 async fn update_favorite(app:&AppHandle,session:&Session,kind:&str,id:&str,enabled:bool)->Result<Value,String>{
     let result=session.request(if enabled{reqwest::Method::PUT}else{reqwest::Method::DELETE},&format!("api/v1/favorites/{kind}/{id}"),&[],None).await?;
@@ -1238,7 +1251,7 @@ pub(crate) async fn client_window(
 }
 fn queue_info() -> Value {
     PLAYBACK.lock().ok().and_then(|slot|slot.as_ref().map(|q|{
-        let parent=q.options["origin"]=="frame"&&q.options["parentTotal"].as_u64().unwrap_or(0)>0;
+        let parent=has_parent_preview(&q.options)&&q.options["parentTotal"].as_u64().unwrap_or(0)>0;
         json!({"id":q.items[q.index].0,"revision":q.revision,"planRevision":q.plan_revision,"index":q.index,"total":q.items.len(),
             "sourceTotal":q.pool.as_ref().map(|p|p.items.len()),"portraitTotal":q.pool.as_ref().map(|p|p.portraits.iter().filter(|v|**v).count()),
             "hasPrevious":parent||if q.options["reference"]==true{q.items.len()>1}else{q.index>0},
@@ -1268,6 +1281,13 @@ fn reference_segment_length(duration:f64,options:&Value)->f64{
 fn validate_reference_options(options:&Value)->Result<(),String>{
     if !options.is_object(){return Err("播放设置必须是对象".into());}
     if options.get("loop").is_some_and(|value|!value.is_boolean())||options.get("rate").is_some_and(|value|!value.as_f64().is_some_and(|rate|rate.is_finite()&&(0.25..=4.).contains(&rate))){return Err("播放循环或速度设置无效".into());}
+    if options["origin"]=="favorite"{
+        let count=options["parentTotal"].as_u64().filter(|n|(1..=1000000).contains(n)).ok_or("收藏浏览队列无效")?;
+        if !options["parentIndex"].as_u64().is_some_and(|index|index<count){return Err("收藏浏览位置无效".into());}
+        for key in ["parentPreview","parentPlayback"]{identifier(text(options,key,128)?)?;}
+        let key=text(options,"parentKey",1024)?;
+        identifier(key.strip_prefix("video:").ok_or("收藏源视频无效")?)?;
+    }
     if options["reference"]!=true{return Ok(());}
     if options.get("portraitOnly").is_some_and(|value|!value.is_boolean()){return Err("竖屏选项必须是布尔值".into());}
     if !options["mode"].as_str().is_some_and(|s|["segments","sequential","sequential-super"].contains(&s))
@@ -1440,6 +1460,16 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 if action=="player.close"||options["deferPreviewCommit"]!=true {if let Ok(session)=current(){let _=start_preview_commit(app,session);}}
             }
             return Ok(json!({"closed":true}));
+        }
+        "player.closeParent"=>{
+            let _play=PLAY_LOCK.lock().await;
+            text(&args,"parentPreview",128)?;
+            let matches=PLAYBACK.lock().map_err(|_|"播放队列不可用")?.as_ref().is_some_and(|q|owns_parent_preview(&q.options,&args));
+            if !matches{return Ok(json!({"closed":false,"stale":true}));}
+            flush_playback();*PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
+            #[cfg(windows)]crate::rhvideo_player::stop_single();
+            if let Some(window)=app.get_webview_window("window-rhvideo-player"){window.close().map_err(|e|format!("播放器已停止，但窗口关闭失败：{e}"))?;}
+            focus_library(&app);return Ok(json!({"closed":true}));
         }
         "player.preloadState" => {
             current()?;
@@ -2277,7 +2307,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             }
             #[cfg(not(windows))] {let _=(start,segment,enabled,close_at_end);return Err("此平台暂未接入原生播放器".into());}
         }
-        "player.next" | "player.previous" | "player.seekQueue" => {
+        "player.next" | "player.previous" | "player.seekQueue" | "player.seekParent" => {
             let _play = PLAY_LOCK.lock().await;
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             if let Some(value)=args.get("expectedPlanRevision"){
@@ -2325,15 +2355,19 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                     if !failed_media(&value)||args.get("expectedId").is_none()||args.get("expectedRevision").is_none()||action!="player.next"{return Err("失败视频的队列位置已更改".into());}
                 }
             }
-            let parent=PLAYBACK.lock().ok().and_then(|q|q.as_ref().filter(|q|q.options["origin"]=="frame"&&action!="player.seekQueue").map(|q|q.options.clone()));
+            let parent=PLAYBACK.lock().ok().and_then(|q|q.as_ref().filter(|q|has_parent_preview(&q.options)&&action!="player.seekQueue").map(|q|q.options.clone()));
             if let Some(options)=parent{
+                let target=if action=="player.seekParent"{
+                    Some(favorite_parent_index(&options,args["ratio"].as_f64().ok_or("收藏浏览进度无效")?)?)
+                }else{None};
                 flush_playback();*PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
                 #[cfg(windows)]crate::rhvideo_player::stop_single();
                 if let Some(w)=app.get_webview_window("window-rhvideo-player"){let _=w.close();}
-                emit_parent_preview(&app,session.generation,&options,if action=="player.next"{1}else{-1},false);
+                emit_parent_target(&app,session.generation,&options,if action=="player.seekParent"{0}else if action=="player.next"{1}else{-1},false,target);
                 focus_library(&app);
                 return Ok(json!({"closed":true,"returned":true}));
             }
+            if action=="player.seekParent"{return Err("当前视频没有收藏浏览队列".into());}
             let (id, title, index) = {
                 let queue = PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?;
                 let queue = queue
@@ -2540,6 +2574,20 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn favorite_parent_collection_seek_uses_reference_rounding_not_video_time(){
+        let options=json!({"origin":"favorite","parentTotal":5});assert_eq!(favorite_parent_index(&options,0.).unwrap(),0);assert_eq!(favorite_parent_index(&options,0.125).unwrap(),1);assert_eq!(favorite_parent_index(&options,0.5).unwrap(),2);assert_eq!(favorite_parent_index(&options,1.).unwrap(),4);
+        for ratio in [f64::NAN,f64::INFINITY,-0.01,1.01]{assert!(favorite_parent_index(&options,ratio).is_err());}assert!(favorite_parent_index(&json!({"origin":"frame","parentTotal":5}),0.).is_err());
+    }
+    #[test]fn old_preview_and_old_child_cannot_retire_a_different_parent(){
+        let options=json!({"origin":"favorite","parentPreview":"new-preview","parentPlayback":"new-child"});assert!(owns_parent_preview(&options,&json!({"parentPreview":"new-preview"})));assert!(owns_parent_preview(&options,&json!({"parentPreview":"new-preview","parentPlayback":"new-child"})));
+        for args in [json!({"parentPreview":"old-preview"}),json!({"parentPreview":"new-preview","parentPlayback":"old-child"}),json!({}),json!({"parentPreview":"new-preview","parentPlayback":false})]{assert!(!owns_parent_preview(&options,&args));}
+        assert!(!owns_parent_preview(&json!({"origin":"frame"}),&json!({})));
+    }
+    #[test]fn favorite_parent_settings_are_validated_before_preparing_a_replacement(){
+        let valid=json!({"origin":"favorite","parentKey":"video:one","parentPreview":"preview-one","parentPlayback":"child-one","parentIndex":2,"parentTotal":4});
+        assert!(validate_reference_options(&valid).is_ok());
+        for(key,value)in [("parentIndex",json!(-1)),("parentIndex",json!(4)),("parentIndex",json!(1.5)),("parentTotal",json!("4")),("parentTotal",json!(1000001)),("parentPlayback",json!(null)),("parentPreview",json!("")),("parentKey",json!(false))]{let mut bad=valid.clone();bad[key]=value.clone();assert!(validate_reference_options(&bad).is_err(),"accepted {key}={value}");}
+    }
     #[test]
     fn image_content_detection_does_not_depend_on_a_windows_mime_registry(){
         assert_eq!(raster_mime(b"RIFF\x10\0\0\0WEBPVP8 "),Some("image/webp"));

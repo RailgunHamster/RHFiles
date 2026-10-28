@@ -42,6 +42,15 @@ class PlaybackActivity:AppCompatActivity() {
     fun rhState()=active.get()?.takeIf{it.isRhVideo()&&!it.rhClosing}?.automationState()?:JSONObject().put("opened",false)
     fun rhControl(args:JSONObject):JSONObject {val target=active.get()?.takeIf{it.isRhVideo()&&!it.rhClosing};if(target==null){if(args.optString("command") in listOf("back","close"))return JSONObject().put("closed",true);error("原生播放器没有打开")};return target.automationControl(args)}
     fun closeRhVideo(){active.get()?.let{if(it.isRhVideo()){it.rhClosing=true;it.finish()}}}
+    fun retireRhParent(context:android.content.Context,args:JSONObject):JSONObject{
+      check(android.os.Looper.myLooper()==android.os.Looper.getMainLooper());val client=RhVideoClient.get(context);val old=active.get()?.takeIf{it.isRhVideo()}
+      old?.takeIf{it.rhWindow?.options?.optString("parentPreview")==args.optString("parentPreview")&&(!args.has("parentPlayback")||it.rhWindow?.options?.optString("parentPlayback")==args.optString("parentPlayback"))}?.rememberRhCurrent()
+      val retired=client.retireParent(args)
+      if(retired.optBoolean("closed")&&old!=null&&old.rhTicket==retired.optString("ticket")&&old.rhWindow?.lease==retired.optString("lease")){
+        old.rhClosing=true;old.rhUi.removeCallbacks(old.rhTick);old.rhEndMessage?.cancel();old.rhEndMessage=null
+        old.player?.let{engine->RhVideoVolume.untrack(engine);old.playerView.player=null;(old.playerView as? RhVideoPlayerView)?.unbindRotationEngine(engine);old.player=null;engine.release()};old.finish()
+      };return retired
+    }
     fun launchRhVideo(owner:android.app.Activity,intent:Intent){
       check(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())
       // The client has already atomically selected the new queue. Retire the
@@ -102,8 +111,8 @@ class PlaybackActivity:AppCompatActivity() {
       queue=PlaybackQueue.parse(JSONObject().put("path",path).put("name",intent.getStringExtra("name")).put("queue",JSONArray(intent.getStringExtra("queue")?:"[]")))
       rhTicket=intent.getStringExtra("rhvideoPlaylist")
       rhTicket?.let{ticket->
-        val first=RhVideoClient.get(this).playbackWindow(ticket,0)
-        rhWindow=RhVideoClient.get(this).playbackWindow(ticket,(savedInstanceState?.getInt("rhGlobalIndex")?:intent.getIntExtra("rhvideoIndex",0)).coerceAtLeast(first.offset))
+        val lease=intent.getStringExtra("rhvideoLease");val first=RhVideoClient.get(this).playbackWindow(ticket,0,lease)
+        rhWindow=RhVideoClient.get(this).playbackWindow(ticket,(savedInstanceState?.getInt("rhGlobalIndex")?:intent.getIntExtra("rhvideoIndex",0)).coerceAtLeast(first.offset),lease)
         queue=rhWindow!!.items
       }
       sources=queue.map{item->if(storage.isRemote(item.path)||item.path.startsWith("rhvideo://"))Uri.parse(item.path)else if(storage.isDocument(item.path))storage.docUri(item.path)else Uri.fromFile(storage.local(item.path))}
@@ -117,7 +126,7 @@ class PlaybackActivity:AppCompatActivity() {
     val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK)}
     playerView=(if(rhWindow!=null)RhVideoPlayerView(this)else PlayerView(this)).apply {
       if(this is RhVideoPlayerView){setAutoRotation(RhVideoClient.get(this@PlaybackActivity).rotationPreference(rhWindow!!.generation));onRotationRendererChanged={requestRhRotationRestart()};onPresentationFailure={message->showError(PlaybackException(message,null,PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED))}}
-      val parent=rhWindow?.options?.let{it.optString("origin")=="frame"&&it.optInt("parentTotal")>0}==true
+      val parent=rhWindow?.options?.let{it.optString("origin") in listOf("frame","favorite")&&it.optInt("parentTotal")>0}==true
       setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);setShowNextButton(queue.size>1||parent);setShowPreviousButton(queue.size>1||parent)
       setShowSubtitleButton(true);setShowRewindButton(true);setShowFastForwardButton(true)
       controllerShowTimeoutMs=3500;setKeepContentOnPlayerReset(true);resizeMode=resize
@@ -126,7 +135,7 @@ class PlaybackActivity:AppCompatActivity() {
     }
     root.addView(playerView,FrameLayout.LayoutParams(-1,-1))
     header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(18),dp(8),dp(10));background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0xBB000000.toInt(),0x00000000))}
-    val back=ImageButton(this).apply{contentDescription="返回";setImageResource(R.drawable.ic_player_back);setColorFilter(Color.WHITE);setBackgroundColor(Color.TRANSPARENT);setOnClickListener{if(isRhVideo())rhUiAction(JSONObject().put("command","back"))else finish()}}
+    val back=ImageButton(this).apply{contentDescription=when(rhWindow?.options?.optString("origin")){"favorite"->"返回收藏";"frame"->"返回截图";else->"返回"};setImageResource(R.drawable.ic_player_back);setColorFilter(Color.WHITE);setBackgroundColor(Color.TRANSPARENT);setOnClickListener{if(isRhVideo())rhUiAction(JSONObject().put("command","back"))else finish()}}
     titleView=TextView(this).apply{text=queue[index].name;setTextColor(Color.WHITE);textSize=16f;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
     val more=ImageButton(this).apply{contentDescription="播放选项";setImageResource(R.drawable.ic_player_more);setColorFilter(Color.WHITE);setBackgroundColor(Color.TRANSPARENT);setOnClickListener{options(this)}}
     moreButton=more
@@ -140,13 +149,14 @@ class PlaybackActivity:AppCompatActivity() {
     }
     header.addView(more,LinearLayout.LayoutParams(dp(48),dp(48)))
     root.addView(header,FrameLayout.LayoutParams(-1,-2,Gravity.TOP))
-    if(rhWindow?.options?.optBoolean("reference")==true){
+    if(rhWindow?.options?.let{it.optBoolean("reference")||it.optString("origin")=="favorite"}==true){
       rhProgress=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(8),dp(12),dp(8));setBackgroundColor(0xDD15171D.toInt());visibility=View.GONE}
       rhQueueLabel=TextView(this).apply{setTextColor(Color.WHITE);textSize=12f}
-      rhQueueSeek=SeekBar(this).apply{contentDescription="连播总进度";max=10000;setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
-        override fun onStartTrackingTouch(bar:SeekBar){}
+      val favorite=rhWindow?.options?.optString("origin")=="favorite";var input=0L
+      rhQueueSeek=SeekBar(this).apply{contentDescription=if(favorite)"收藏浏览位置"else"连播总进度";max=10000;setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
+        override fun onStartTrackingTouch(bar:SeekBar){input=rhInputId}
         override fun onProgressChanged(bar:SeekBar,value:Int,fromUser:Boolean){}
-        override fun onStopTrackingTouch(bar:SeekBar){rhUiAction(JSONObject().put("command","seekQueue").put("value",bar.progress/10000.0))}
+        override fun onStopTrackingTouch(bar:SeekBar){rhUiAction(JSONObject().put("command",if(favorite)"seekParent"else"seekQueue").put("value",bar.progress/10000.0).also{if(favorite)it.put("expectedInputId",input)})}
       })}
       rhProgress!!.addView(rhQueueLabel);rhProgress!!.addView(rhQueueSeek,LinearLayout.LayoutParams(-1,dp(36)))
       root.addView(rhProgress,FrameLayout.LayoutParams(-1,-2,Gravity.TOP).apply{topMargin=dp(76)})
@@ -161,7 +171,7 @@ class PlaybackActivity:AppCompatActivity() {
   private fun currentRhId():String {val w=rhWindow?:error("当前不是媒体库视频");return w.ids[(player?.currentMediaItemIndex?:w.index).coerceIn(0,w.ids.lastIndex)]}
   private fun paintRhActions(){val w=rhWindow?:return;val id=currentRhId();val client=RhVideoClient.get(this);val favorite=client.favoriteState("video",id,w.generation);rhFavorite?.apply{val busy=favorite.optBoolean("favoriteBusy");isEnabled=!busy;alpha=if(busy).4f else 1f;contentDescription=if(busy)"正在更新收藏"else if(favorite.optBoolean("favorite"))"取消收藏"else"收藏";setColorFilter(if(favorite.optBoolean("favorite"))0xFFFFCE61.toInt()else Color.WHITE)};val marked=client.previewMarked("video",id,w.generation);rhMark?.apply{contentDescription=if(marked)"取消暂存标记"else"标记待暂存";setColorFilter(if(marked)0xFFFF7979.toInt()else Color.WHITE)}}
   private fun rememberRhCurrent(){val engine=player?:return;val w=rhWindow?:return;RhVideoClient.get(this).rememberPlayback(rhTicket!!,w.offset+engine.currentMediaItemIndex,engine.currentPosition,engine.duration)}
-  private fun closeRhPlayback(direction:Int=0,whole:Boolean=false):JSONObject {
+  private fun closeRhPlayback(direction:Int=0,whole:Boolean=false,targetIndex:Int?=null):JSONObject {
     if(rhClosing)return JSONObject().put("closed",true)
     val w=rhWindow?:run{finish();return JSONObject().put("closed",true)}
     rememberRhCurrent();rememberRhPlaylist();rhClosing=true
@@ -169,7 +179,7 @@ class PlaybackActivity:AppCompatActivity() {
     // the server's staging area; do not depend on the later Activity.onStop.
     rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null
     player?.let{rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);player=null;it.release()}
-    return try{RhVideoClient.get(this).closePlayback(rhTicket!!,w.lease,direction,whole)}finally{finish()}
+    return try{RhVideoClient.get(this).closePlayback(rhTicket!!,w.lease,direction,whole,targetIndex)}finally{finish()}
   }
   internal fun automationState():JSONObject {
     val engine=player?:error("播放器尚未就绪")
@@ -193,8 +203,9 @@ class PlaybackActivity:AppCompatActivity() {
       "forward"->{if(rhWindow?.options?.optBoolean("reference")==true)automationControl(JSONObject().put("command","seek").put("value",(engine.currentPosition+10000).coerceAtMost(engine.duration)))else engine.seekForward()}
       "toggle"->if(engine.playWhenReady)engine.pause()else engine.play()
       "play"->engine.play();"pause"->engine.pause()
-      "next"->{if(rhWindow?.options?.optString("origin")=="frame")return closeRhPlayback(1)else if(rhWindow?.options?.optBoolean("reference")==true)rhNavigate(1)else{check(engine.hasNextMediaItem()){"没有下一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToNextMediaItem();if(failed){engine.prepare();engine.play()}}}
-      "previous"->{if(rhWindow?.options?.optString("origin")=="frame")return closeRhPlayback(-1)else if(rhWindow?.options?.optBoolean("reference")==true)rhNavigate(-1)else{check(engine.hasPreviousMediaItem()){"没有上一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToPreviousMediaItem();if(failed){engine.prepare();engine.play()}}}
+      "next"->{if(rhWindow?.options?.optString("origin") in listOf("frame","favorite"))return closeRhPlayback(1)else if(rhWindow?.options?.optBoolean("reference")==true)rhNavigate(1)else{check(engine.hasNextMediaItem()){"没有下一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToNextMediaItem();if(failed){engine.prepare();engine.play()}}}
+      "previous"->{if(rhWindow?.options?.optString("origin") in listOf("frame","favorite"))return closeRhPlayback(-1)else if(rhWindow?.options?.optBoolean("reference")==true)rhNavigate(-1)else{check(engine.hasPreviousMediaItem()){"没有上一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToPreviousMediaItem();if(failed){engine.prepare();engine.play()}}}
+      "seekParent"->{val w=rhWindow?:error("没有收藏浏览队列");val value=args.getDouble("value");require(w.options.optString("origin")=="favorite"&&value.isFinite()&&value in 0.0..1.0){"收藏浏览进度无效"};return closeRhPlayback(targetIndex=Math.round(value*(w.options.getInt("parentTotal")-1)).toInt())}
       "favorite"->{val w=rhWindow?:error("当前不是媒体库视频");val input=rhInputId;val client=RhVideoClient.get(this);val ticket=rhTicket!!;client.toggleFavorite("video",currentRhId(),w.generation){!rhClosing&&rhInputId==input&&runCatching{client.checkPlayback(ticket,w.lease)}.isSuccess};paintRhActions()}
       "mark"->{val w=rhWindow?:error("当前不是媒体库视频");val params=JSONObject().put("_sessionGeneration",w.generation).put("kind","video").put("id",currentRhId()).put("title",queue[engine.currentMediaItemIndex].name);if(args.has("enabled"))params.put("enabled",args.getBoolean("enabled"));val result=RhVideoClient.get(this).request("preview.mark",params) as JSONObject;paintRhActions();Toast.makeText(this,if(result.getBoolean("enabled"))"已标记；关闭预览时移入 RHVideo 暂存区（非永久删除）"else"已取消暂存标记",Toast.LENGTH_LONG).show()}
       "seek"->{val value=args.getDouble("value");require(value.isFinite()&&value>=0&&engine.duration!=C.TIME_UNSET&&value<=engine.duration){"跳转位置超出范围（毫秒）"};val w=rhWindow;val i=engine.currentMediaItemIndex;if(w?.options?.optBoolean("reference")==true&&w.options.optBoolean("loop")&&(value<w.starts[i]-500||value>w.ends[i]+1000))rhSetOptions(JSONObject().put("loop",false));engine.seekTo(value.toLong());armRhEnd()}
@@ -259,7 +270,7 @@ class PlaybackActivity:AppCompatActivity() {
       override fun seekTo(positionMs:Long){rhUiAction(JSONObject().put("command","seek").put("value",positionMs))}
       override fun seekTo(mediaItemIndex:Int,positionMs:Long){if(mediaItemIndex==engine.currentMediaItemIndex)seekTo(positionMs)else rebuildRhWindow(rhWindow!!.offset+mediaItemIndex,positionMs,engine.playWhenReady)}
       override fun isCommandAvailable(command:Int)=getAvailableCommands().contains(command)
-      override fun getAvailableCommands():Player.Commands{val commands=super.getAvailableCommands().buildUpon();if(rhWindow?.options?.let{it.optBoolean("reference")||it.optString("origin")=="frame"}==true)commands.addAll(Player.COMMAND_SEEK_TO_NEXT,Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,Player.COMMAND_SEEK_TO_PREVIOUS,Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM);return commands.build()}
+      override fun getAvailableCommands():Player.Commands{val commands=super.getAvailableCommands().buildUpon();if(rhWindow?.options?.let{it.optBoolean("reference")||it.optString("origin") in listOf("frame","favorite")}==true)commands.addAll(Player.COMMAND_SEEK_TO_NEXT,Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,Player.COMMAND_SEEK_TO_PREVIOUS,Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM);return commands.build()}
     }else engine
     if(path.startsWith("rhvideo://"))RhVideoVolume.track(engine,rhLocalGain)
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
@@ -329,7 +340,7 @@ class PlaybackActivity:AppCompatActivity() {
     else rhEndMessage=engine.createMessage{_,_->ended()}.setLooper(engine.applicationLooper).setPosition(local,threshold).send()
   }
   private fun rhQueuePosition(w:RhVideoClient.Window,local:Int,positionMs:Long)=w.beforeMs[local]+(positionMs-w.starts[local]).coerceIn(0,(w.ends[local]-w.starts[local]).coerceAtLeast(0))
-  private fun updateRhProgress(){val engine=player?:return;val w=rhWindow?:return;val local=engine.currentMediaItemIndex.coerceIn(0,w.items.lastIndex);rhQueueLabel?.text="${w.offset+local+1} / ${w.total} · ${if(w.options.optBoolean("fullLength",true))"全长"else "${w.options.optDouble("segment",3.0)} 秒片段"}";if(rhQueueSeek?.isPressed!=true)rhQueueSeek?.progress=(rhQueuePosition(w,local,engine.currentPosition)*10000/w.totalMs.coerceAtLeast(1)).toInt()}
+  private fun updateRhProgress(){val engine=player?:return;val w=rhWindow?:return;val local=engine.currentMediaItemIndex.coerceIn(0,w.items.lastIndex);if(w.options.optString("origin")=="favorite"){val count=w.options.getInt("parentTotal");val selected=w.options.getInt("parentIndex");rhQueueLabel?.text="${selected+1} / $count";if(rhQueueSeek?.isPressed!=true)rhQueueSeek?.progress=if(count>1)(selected*10000.0/(count-1)).toInt()else 0;return};rhQueueLabel?.text="${w.offset+local+1} / ${w.total} · ${if(w.options.optBoolean("fullLength",true))"全长"else "${w.options.optDouble("segment",3.0)} 秒片段"}";if(rhQueueSeek?.isPressed!=true)rhQueueSeek?.progress=(rhQueuePosition(w,local,engine.currentPosition)*10000/w.totalMs.coerceAtLeast(1)).toInt()}
   private fun showError(error:PlaybackException){
     failure.removeAllViews();failure.visibility=View.VISIBLE;header.visibility=View.VISIBLE
     val format=player?.videoFormat;val codecs=listOfNotNull(format?.sampleMimeType,format?.codecs,player?.audioFormat?.sampleMimeType).distinct().joinToString(" · ")
@@ -337,7 +348,7 @@ class PlaybackActivity:AppCompatActivity() {
     val detail=TextView(this).apply{text="MP4 等后缀表示容器，不代表内部编码一定受设备支持。\n"+codecs+"\n"+error.errorCodeName+"\n"+(error.cause?.message ?: error.message ?: "读取失败");setTextColor(0xFFB9BEC8.toInt());textSize=13f;setPadding(0,dp(16),0,dp(16));setTextIsSelectable(true)}
     failure.addView(title);failure.addView(detail)
     if(source.scheme !in listOf("remote","rhvideo"))failure.addView(Button(this).apply{text="用其他播放器打开";setOnClickListener{external()}})
-    if(player?.hasNextMediaItem()==true||rhWindow?.options?.optString("origin")=="frame")failure.addView(Button(this).apply{text="下一个";setOnClickListener{rhUiAction(JSONObject().put("command","next"))}})
+    if(player?.hasNextMediaItem()==true||rhWindow?.options?.optString("origin") in listOf("frame","favorite"))failure.addView(Button(this).apply{text="下一个";setOnClickListener{rhUiAction(JSONObject().put("command","next"))}})
     failure.addView(Button(this).apply{text=if(isRhVideo())"返回"else"返回文件列表";setOnClickListener{if(isRhVideo())rhUiAction(JSONObject().put("command","back"))else finish()}})
   }
   private fun external(){try{

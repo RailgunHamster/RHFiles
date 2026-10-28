@@ -161,13 +161,18 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       prefs.edit().putString(accountKey(s)+"-playlist-"+mode,JSONObject(plan.options.toString()).put("signature",plan.signature).put("index",index).toString()).apply()
     }
   }
-  fun closePlayback(ticket:String,lease:String,direction:Int,whole:Boolean):JSONObject {
+  fun closePlayback(ticket:String,lease:String,direction:Int,whole:Boolean,targetIndex:Int?=null):JSONObject {
     require(direction in -1..1)
-    val s=current();val options=synchronized(lock){val active=playbackPlan(s,ticket,lease);val options=JSONObject(active.plan.options.toString());playbackSession=null;options}
-    if(options.optString("origin")=="frame")emit("rhvideo-parent-preview",JSONObject().put("generation",s.generation).put("parentKey",options.getString("parentKey")).put("parentPreview",options.getString("parentPreview")).put("direction",direction).put("close",whole).also{if(options.has("parentPlayback"))it.put("parentPlayback",options.getString("parentPlayback"))})
+    val s=current();val options=synchronized(lock){val active=playbackPlan(s,ticket,lease);val options=JSONObject(active.plan.options.toString());if(targetIndex!=null)require(options.optString("origin")=="favorite"&&targetIndex in 0 until options.getInt("parentTotal")){"收藏浏览位置无效"};playbackSession=null;options}
+    if(options.optString("origin") in listOf("frame","favorite"))emit("rhvideo-parent-preview",JSONObject().put("generation",s.generation).put("parentKey",options.getString("parentKey")).put("parentPreview",options.getString("parentPreview")).put("direction",direction).put("close",whole||(options.optString("origin")=="favorite"&&direction==0&&targetIndex==null)).also{if(options.has("parentPlayback"))it.put("parentPlayback",options.getString("parentPlayback"));if(targetIndex!=null)it.put("targetIndex",targetIndex)})
     if(whole||!options.optBoolean("deferPreviewCommit"))commitPreview(s)
     return JSONObject().put("closed",true)
   }
+  fun retireParent(args:JSONObject):JSONObject{
+    val s=current();val preview=args.getString("parentPreview");require(preview.matches(Regex("[A-Za-z0-9_-]{1,128}"))){"浏览上下文无效"}
+    return synchronized(lock){val active=playbackSession?.takeIf{it.generation==s.generation&&it.plan.options.optString("origin") in listOf("frame","favorite")&&it.plan.options.optString("parentPreview")==preview&&(!args.has("parentPlayback")||it.plan.options.optString("parentPlayback")==args.getString("parentPlayback"))}?:return@synchronized JSONObject().put("closed",false).put("stale",true);playbackSession=null;JSONObject().put("closed",true).put("ticket",active.ticket).put("lease",active.lease)}
+  }
+  fun playbackActive(ticket:String,lease:String?):Boolean=synchronized(lock){playbackSession?.let{it.ticket==ticket&&it.lease==lease&&it.generation==session?.generation}==true}
   fun previewMarked(kind:String,id:String,generation:Long):Boolean=synchronized(lock){session?.generation==generation&&preview.marked(kind,id)}
   fun favoriteState(kind:String,id:String,generation:Long):JSONObject=synchronized(lock){
     val key="$kind:$id";val job=favoriteJobs[key]?.takeIf{session?.generation==generation}
@@ -420,7 +425,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       else->error("未知的 RHVideo 操作")
     }
   }
-  data class Playlist(val items:List<PlaybackQueue.Item>,val path:String,val position:Long,val ticket:String?=null,val globalIndex:Int=0)
+  data class Playlist(val items:List<PlaybackQueue.Item>,val path:String,val position:Long,val ticket:String?=null,val globalIndex:Int=0,val lease:String?=null)
   fun playback(args:JSONObject,track:Boolean=true):Playlist {
     val s=current();check(!args.has("_sessionGeneration")||args.getLong("_sessionGeneration")==s.generation){"媒体账户已改变，操作未执行"};val selected=id(args);val queue=args.optJSONArray("queue")?:JSONArray();require(queue.length()<=500){"播放列表过大"}
     if(args.has("seconds")){val seconds=args.getDouble("seconds");require(seconds.isFinite()&&seconds in 0.0..604800.0)}
@@ -429,7 +434,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
       val ticket=args.getString("playlist");val index=synchronized(lock){playbackPlan(s,ticket,selected=selected).plan.entries.indexOfFirst{it.id==selected}}
       require(index>=0);val window=playbackWindow(ticket,index)
       val position=if(args.has("seconds")){val seconds=args.getDouble("seconds");require(seconds.isFinite()&&seconds in 0.0..604800.0);(seconds*1000).toLong()}else if(args.optBoolean("resume")&&window.options.optBoolean("fullLength",true))(resume(s,selected)*1000).toLong()else if(window.options.optBoolean("reference"))window.starts[window.index]else 0
-      return Playlist(window.items,window.items[window.index].path,position,ticket,index)
+      return Playlist(window.items,window.items[window.index].path,position,ticket,index,window.lease)
     }
     val entries=linkedMapOf<String,String>()
     for(i in 0 until queue.length()){val item=queue.getJSONObject(i);entries[id(item)]=item.optString("title","视频").take(512)}
@@ -441,7 +446,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
     val plan=RhVideoPlaybackPlan(rows,options);val index=plan.entries.indexOfFirst{it.id==selected}
     synchronized(lock){check(live(s)){"媒体账户已改变"};playbackSession=PlaybackSession(ticket,s.generation,plan,UUID.randomUUID().toString())}
     val window=playbackWindow(ticket,index)
-    return Playlist(window.items,window.items[window.index].path,(seconds*1000).toLong(),ticket,index)
+    return Playlist(window.items,window.items[window.index].path,(seconds*1000).toLong(),ticket,index,window.lease)
   }
   class Media(val stream:InputStream,val length:Long,val type:String,private val response:Response):java.io.Closeable {override fun close(){response.close()}}
   fun catalogResource(key:String):InputStream {

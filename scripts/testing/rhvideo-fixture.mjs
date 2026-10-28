@@ -110,5 +110,5 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     send(404,{detail:'Fixture route not found'});
   });
   await listenBrowserLoopback(server);
-  return {server,url:'http://127.0.0.1:'+server.address().port,videos,favorites,progress,requests,watch,trash,batches,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
+  return {server,url:'http://127.0.0.1:'+server.address().port,videos,pictures,favorites,progress,requests,watch,trash,batches,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
 }

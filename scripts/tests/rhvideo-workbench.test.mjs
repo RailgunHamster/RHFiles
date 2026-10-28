@@ -12,6 +12,15 @@ const require = createRequire(import.meta.url),
   dictionary = require("../../src/vendor/pinyin-pro/pinyin-pro.js");
 const create = () => new I.Catalog({ tags, search, dictionary });
 
+test("favorite dates mean the time favorited, not the source media creation date",async()=>{
+  const catalog=create();catalog.set("favorite",[{id:"new-favorite",type:"video",created_at:"2020-01-01T00:00:00Z",favorited_at:"2026-10-29T00:00:00Z"},{id:"old-favorite",type:"video",created_at:"2026-10-29T00:00:00Z",favorited_at:"2020-01-01T00:00:00Z"}]);
+  assert.deepEqual((await catalog.query({kind:"favorite",sort:"dateDesc"})).items.map(row=>row.id),["new-favorite","old-favorite"]);assert.deepEqual((await catalog.query({kind:"favorite",sort:"dateAsc"})).items.map(row=>row.id),["old-favorite","new-favorite"]);
+});
+test("favorite date ties keep the backend's stable order rather than reorder by media IDs",async()=>{
+  const catalog=create();catalog.set("favorite",[{id:"z",type:"picture",favorited_at:"2026-10-29T00:00:00.123002Z"},{id:"a",type:"picture",favorited_at:"2026-10-29T00:00:00.123001Z"}]);
+  assert.deepEqual((await catalog.query({kind:"favorite",sort:"dateDesc"})).items.map(row=>row.id),["z","a"]);assert.deepEqual((await catalog.query({kind:"favorite",sort:"dateAsc"})).items.map(row=>row.id),["a","z"]);
+});
+
 test("cached filtered ordering skips repeated full-index searches and invalidates on catalog writes", async () => {
   const catalog = create();
   catalog.set("video", [{ id: "one", original_filename: "山野.mp4" }]);

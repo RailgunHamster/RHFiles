@@ -10,6 +10,12 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[28])
 class RhVideoPlaybackPlanTest {
+  @Test fun favoriteParentsRequireAnExactMixedCollectionPositionAndChildIdentity(){
+    val settings=JSONObject().put("fullLength",true).put("origin","favorite").put("parentKey","video:one").put("parentPreview","mixed-preview").put("parentPlayback","child-one").put("parentIndex",2).put("parentTotal",4)
+    val plan=RhVideoPlaybackPlan(listOf(JSONObject().put("id","one")),settings);assertEquals(2,plan.options.getInt("parentIndex"));assertEquals(4,plan.options.getInt("parentTotal"));assertFalse(plan.reference)
+    for((key,value)in listOf("parentIndex" to -1,"parentIndex" to 4,"parentIndex" to 1.5,"parentTotal" to "4","parentTotal" to 1000001,"parentPlayback" to 123))try{RhVideoPlaybackPlan(listOf(JSONObject().put("id","one")),JSONObject(settings.toString()).put(key,value));fail("Accepted invalid $key=$value")}catch(_:IllegalArgumentException){}
+    val missing=JSONObject(settings.toString());missing.remove("parentPlayback");try{RhVideoPlaybackPlan(listOf(JSONObject().put("id","one")),missing);fail("Missing child identity accepted")}catch(_:IllegalArgumentException){}
+  }
   private fun row(id:String,start:Double,length:Double,portrait:Boolean=false)=JSONObject().put("id",id).put("duration",20).put("segmentStart",start).put("segmentLength",length).put("portrait",portrait)
   private fun options()=JSONObject().put("reference",true).put("fullLength",false).put("segment",3)
   @Test fun queueSeekUsesWeightedSegmentsAndWholeFilePositions(){

@@ -17,6 +17,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[28])
 class RhVideoClientTest {
+  private fun favoriteWindow(ticket:String,preview:String="favorite-preview",child:String="child-$ticket",id:String="one"):RhVideoClient.Window{
+    val options=JSONObject().put("fullLength",true).put("origin","favorite").put("parentKey","video:$id").put("parentPreview",preview).put("parentPlayback",child).put("parentIndex",2).put("parentTotal",5).put("deferPreviewCommit",true)
+    client.request("playlist.prepare",JSONObject().put("ticket",ticket).put("reset",true).put("items",JSONArray().put(JSONObject().put("id",id))).put("options",options));client.playback(JSONObject().put("playlist",ticket).put("id",id));return client.playbackWindow(ticket,0)
+  }
+  @Test fun favoriteCollectionSeekAndBackUseDifferentReturnSemanticsWithoutPrematureCommit(){
+    login();val events=java.util.concurrent.CopyOnWriteArrayList<JSONObject>();client.listen{name,value->if(name=="rhvideo-parent-preview")events.add(value)}
+    val first=favoriteWindow("favorite-first");client.request("preview.mark",JSONObject().put("kind","video").put("id","one").put("title","一"))
+    try{client.closePlayback("favorite-first",first.lease,0,false,5);fail("Invalid target closed the active input")}catch(_:IllegalArgumentException){};client.checkPlayback("favorite-first",first.lease)
+    client.closePlayback("favorite-first",first.lease,0,false,0);assertEquals(0,events.single().getInt("targetIndex"));assertFalse(events.single().getBoolean("close"));assertEquals("child-favorite-first",events.single().getString("parentPlayback"))
+    val next=favoriteWindow("favorite-back");client.closePlayback("favorite-back",next.lease,0,false);assertTrue(events.last().getBoolean("close"));assertFalse(events.last().has("targetIndex"));assertEquals(1,server.requestCount);assertEquals(1,(client.request("preview.pending",JSONObject()) as JSONObject).getJSONArray("items").length())
+  }
+  @Test fun retiringAnOldParentCannotCloseANewerInputOrAuthorizeAnOldQueuedLaunch(){
+    login();val old=favoriteWindow("same-ticket","old-preview","old-child")
+    assertTrue(client.retireParent(JSONObject().put("parentPreview","old-preview").put("parentPlayback","old-child")).getBoolean("closed"))
+    val current=favoriteWindow("same-ticket","new-preview","new-child","two")
+    assertFalse(client.playbackActive("same-ticket",old.lease));assertTrue(client.playbackActive("same-ticket",current.lease))
+    assertFalse(client.retireParent(JSONObject().put("parentPreview","old-preview")).getBoolean("closed"));assertFalse(client.retireParent(JSONObject().put("parentPreview","new-preview").put("parentPlayback","old-child")).getBoolean("closed"));client.checkPlayback("same-ticket",current.lease)
+    val closed=client.retireParent(JSONObject().put("parentPreview","new-preview").put("parentPlayback","new-child"));assertTrue(closed.getBoolean("closed"));assertEquals(current.lease,closed.getString("lease"));assertFalse(client.playbackActive("same-ticket",current.lease));assertFalse(client.retireParent(JSONObject().put("parentPreview","new-preview")).getBoolean("closed"));assertEquals(1,server.requestCount)
+  }
   @Test fun taskImagePathsDoNotExposeArbitraryAuthenticatedApis(){
     assertEquals("api/v1/videos/video_123/thumbnail",RhVideoClient.imagePath("/api/v1/videos/video_123/thumbnail"))
     for(value in listOf("/api/v1/auth/login","/api/v1/videos/../thumbnail","/api/v1/videos/a/thumbnail?x=1","/api/v1/videos/a%2fb/thumbnail","https://evil.invalid/a","/storage/../secret"))try{RhVideoClient.imagePath(value);fail(value)}catch(_:IllegalArgumentException){}

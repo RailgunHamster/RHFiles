@@ -4,10 +4,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {createRequire} from 'node:module';
+import {parse} from 'acorn';
 const model=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
 const index=createRequire(import.meta.url)('../../src/js/rhvideo-index.js');
 const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');
-const code=(name,end)=>source.slice(source.indexOf('async function '+name+'('),source.indexOf(end,source.indexOf('async function '+name+'(')));
+const functions=new Map();
+function collect(node){if(!node||typeof node!=='object')return;if(node.type==='FunctionDeclaration')functions.set(node.id.name,source.slice(node.start,node.end));for(const value of Object.values(node))if(Array.isArray(value))value.forEach(collect);else if(value&&typeof value==='object')collect(value);}
+collect(parse(source,{ecmaVersion:'latest'}));
+const code=name=>{assert(functions.has(name),'Test the actual '+name+' function');return functions.get(name);};
 const rows=['a','b','c'].map(id=>({id,title:id,kind:'video',status:'ready',resolution:'640x360',duration:20}));
 const frames=rows.map(v=>({id:'frame-'+v.id,key:'frame-'+v.id,kind:'frame',videoId:v.id,title:v.id,seconds:2}));
 function reply(args,items){
@@ -21,7 +25,7 @@ function create(overrides={}){
     config:()=>({rule:{},sort:'nameAsc',rotation:0,resume:false,segment:3,fullLength:false,portraitOnly:false,loop:false}),
     $:()=>({open:true}),ctx:{openDialog(){}},criteria:args=>args,stepImage:async()=>({index:0}),notice(){},query:async args=>reply(args,rows),send:async(_action,args)=>reply(args,frames),prepareQueue:async()=>String(++sequence),
     native:async(name,args)=>{if(name==='playlist.state')return {};if(name==='playlist.discard'){discarded.push(args.ticket);return {removed:true};}assert.equal(name,'play');calls.push(args);return {opened:true,id:args.id};},...overrides});
-  vm.runInContext('function galleryReady(){return gallery.loaded;}\n'+code('play','action("media.playLow"')+code('startPlaylist','async function prepareQueue(')+code('playImageVideo','action("image.playFrame"')+code('image','async function stepImage(')+code('discardPrepared','      action('),context);
+  vm.runInContext('function galleryReady(){return gallery.loaded;}\n'+['play','startPlaylist','playImageVideo','image','discardPrepared'].map(code).join('\n'),context);
   return {context,calls,discarded};
 }
 async function ready(check){for(let i=0;i<30;i++){if(check())return;await new Promise(setImmediate);}throw Error('Preparation was not reached');}
@@ -72,7 +76,7 @@ test('a failed native open cannot restore an old parent into a newly logged-in a
 });
 test('a failed later chunk discards only its partial draft without retrying',async()=>{
   let chunks=0;const discarded=[],{context}=create({native:async(name,args)=>{if(name==='playlist.discard'){discarded.push(args.ticket);return {removed:true};}assert.equal(name,'playlist.prepare');if(++chunks===2)throw Error('chunk failed');return {count:200};}});
-  vm.runInContext(code('prepareQueue','async function discardPrepared('),context);
+  vm.runInContext(code('prepareQueue'),context);
   await assert.rejects(context.prepareQueue(Array.from({length:201},(_,i)=>({id:String(i),title:String(i)}))),/chunk failed/);assert.equal(chunks,2);assert.equal(discarded.length,1);
 });
 function resumeAction(context){

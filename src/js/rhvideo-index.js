@@ -58,7 +58,7 @@
       title: String(v.title || v.original_filename || v.filename || v.id || ""),
       folder: String(v.folder_label || v.folder || ""),
       size: Number(v.original_filesize || v.source_size || v.filesize || 0),
-      date: Date.parse(v.created_at) || 0,
+      date: Date.parse(kind === "favorite" ? v.favorited_at : v.created_at) || 0,
       duration: Number(
         v.duration_seconds || v.original_duration || v.duration || 0,
       ),
@@ -225,7 +225,12 @@
               : direction *
                 (field === "title"
                   ? collator.compare(a.title, b.title)
-                  : a[field] - b[field])) || (typeof seed === "string" ? ai - bi : collator.compare(key(a), key(b)))
+                  : a[field] - b[field])) || (typeof seed === "string" ? ai - bi
+                    // Favorites arrive newest-added first. Preserve that rank
+                    // when JS milliseconds lose the server's date precision.
+                    : !seed && kind === "favorite" && field === "date"
+                      ? (sort === "dateDesc" ? ai - bi : bi - ai)
+                      : collator.compare(key(a), key(b)))
           );
         });
         if (this.orderCache.size >= 8)

@@ -19,9 +19,10 @@ internal class RhVideoPlaybackPlan(rows:List<JSONObject>,settings:JSONObject) {
     require(source.isNotEmpty()&&source.size<=100000){"播放队列为空或过大"}
     require(options.optDouble("rate",1.0).let{it.isFinite()&&it in .25..4.0}){"播放速度无效"}
     for(key in listOf("reference","fullLength","portraitOnly","loop","closeAtEnd","super","deferPreviewCommit"))if(options.has(key))require(options.get(key) is Boolean){"播放开关无效"}
-    if(options.optString("origin")=="frame"){
+    if(options.optString("origin") in listOf("frame","favorite")){
       require(options.optString("parentKey").let{it.isNotEmpty()&&it.length<=1024}&&options.optString("parentPreview").matches(Regex("[A-Za-z0-9_-]{1,128}"))&&options.optInt("parentTotal") in 1..10000000){"父截图上下文无效"}
       if(options.has("parentPlayback"))require(options.get("parentPlayback") is String&&options.getString("parentPlayback").matches(Regex("[A-Za-z0-9_-]{1,128}"))){"子播放标识无效"}
+      if(options.optString("origin")=="favorite")require(options.opt("parentIndex") is Number&&options.getDouble("parentIndex")==options.getInt("parentIndex").toDouble()&&options.opt("parentTotal") is Number&&options.getDouble("parentTotal")==options.getInt("parentTotal").toDouble()&&options.getInt("parentIndex") in 0 until options.getInt("parentTotal")&&options.getInt("parentTotal")<=1000000&&options.has("parentPlayback")){"收藏浏览上下文无效"}
     }
     val seen=HashSet<String>()
     val all=source.mapIndexed{index,row->

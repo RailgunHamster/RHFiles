@@ -244,7 +244,7 @@
   }
   action('image.step',object({direction:{type:'integer',enum:[-1,1]}},['direction']),({direction})=>{if(!$('image-dialog').open)throw Error('图片查看器未打开');if(workbench)return workbench.stepImage(direction);imageIndex=Math.max(0,Math.min(images.length-1,imageIndex+direction));imageZoom=1;showImage();return {index:imageIndex,total:images.length};});
   action('image.zoom',object({delta:{type:'number',minimum:-1,maximum:1}},['delta']),({delta})=>{if(!$('image-dialog').open)throw Error('图片查看器未打开');imageZoom=delta===0?1:Math.max(.5,Math.min(4,imageZoom+delta));if(workbench)workbench.refreshImage();else showImage();return {zoom:imageZoom};});
-  action('image.close',object(),async()=>{const previewId=workbench?.closeImage();$('image-dialog').close();$('full-image').removeAttribute('src');images=[];const player=await native('player.state');if(previewId&&player.queue?.options?.parentPreview===previewId)await native('player.close');await invoke('preview.commit');return {closed:true};});
+  action('image.close',object(),async()=>{const previewId=workbench?.closeImage();$('image-dialog').close();$('full-image').removeAttribute('src');images=[];if(previewId)await native('player.closeParent',{parentPreview:previewId});await invoke('preview.commit');return {closed:true};});
   action('timeline.open',object({id:string,kind:{type:'string'}},['id']),async({id})=>{
     const media=item(id,'video'),token=++timelineLoadId;$('timeline-title').textContent=media.title;$('timeline-frames').textContent='正在读取时间轴…';openDialog('timeline-dialog');
     const value=await native('frames',{id});if(!$('timeline-dialog').open||token!==timelineLoadId)return {cancelled:true};
