@@ -77,4 +77,15 @@
   for(const [id,handler]of Object.entries(ACTION_HANDLERS)){
     register('command.'+id,object({pane}),async p=>{focus(p.pane);await handler();return {accepted:true};},/delete/.test(id)?'destructive':/copy|cut|paste|rename|undo|redo/.test(id)?'write':'ui','The existing keyboard/UI command: '+id);
   }
+  function bindSidebarShortcuts(){
+    const recycle=document.getElementById('sidebar-recycle');
+    if(recycle){
+      RHFilesUI.listen(recycle,'click',event=>openRecycleBin(undefined,event.ctrlKey||event.metaKey),undefined,'desktop.sidebar.recycle.click');
+      RHFilesUI.listen(recycle,'mousedown',event=>{if(event.button===1)event.preventDefault();},undefined,'desktop.sidebar.recycle.middle-press');
+      RHFilesUI.listen(recycle,'auxclick',event=>{if(event.button===1){event.preventDefault();return openRecycleBin(undefined,true);}},undefined,'desktop.sidebar.recycle.middle');
+    }
+    const groups=document.getElementById('device-group-settings');
+    if(groups)RHFilesUI.listen(groups,'click',()=>api.invoke('devices.settings').catch(error=>showNotice(String(error))),undefined,'desktop.sidebar.device-groups');
+  }
+  bindSidebarShortcuts();
 })();

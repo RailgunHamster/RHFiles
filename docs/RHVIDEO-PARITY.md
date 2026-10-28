@@ -4,15 +4,23 @@
 
 目标是 Windows 和 Android 都具有 RHVideo 的全部业务能力，界面可以重新组织，视频保持原生播放。不嵌套网站、不直接修改服务端数据库，也不把服务器的工作目录当成本机目录。
 
-## 2026-10-28 播放器关闭接口的结果丢失（后续整轮仍在验证）
+## 2026-10-28 播放器关闭接口的结果丢失（默认原生整轮已通过，整体目标未完成）
 
 新用真正命令行 `--window window-rhvideo-player --wait` 的红测复现：视频窗口实际关闭，但运行结果随该 WebView 消失，客户端只得到 `CONNECTION_LOST`。此前从主窗口代为关闭，漏测了这个调用边界。现将关闭操作的完成回执保存在当前应用进程中，命令行断线后只查回执，不重放动作、不把窗口消失当作成功，也不保留隐藏播放器。回执有容量、完成后过期、淘汰标记及重复 key 保护，参数仅保留摘要；回执作用域不是跨崩溃事务。原生窗口关闭失败不再静默吞掉。
 
-Node **530/530**、回执 Rust 专项 **8/8** 已通过；完整桌面 Rust lib 是 **246 通过、10 个原有忽略项**，不是零跳过。真实原生输出专项 EXE `22e9dfe5…` 通过关闭／返回／UI 接口返回三种调用，还验证重新打开另一视频后重复旧 key 不会关闭新输入，窗口确实被销毁。后续最终 EXE SHA-256 `01a8b18ecf2ad2dd8190c5e1662822358472a56a41a07609b4b1c368cbe80220` 正在五份完整默认硬件输出回归中，目前新的单视频／同屏自身关闭场景也已通过，不提前记整轮成功。日志为 `rhvideo-self-close-cli-red.log`、`rhvideo-self-close-cli-green.log`、`rhvideo-close-receipts-full-default-native.log`。
+Node **530/530**、回执 Rust 专项 **8/8** 已通过；完整桌面 Rust lib 是 **246 通过、10 个原有忽略项**，不是零跳过。真实原生输出专项 EXE `22e9dfe5…` 通过关闭／返回／UI 接口返回三种调用，还验证重新打开另一视频后重复旧 key 不会关闭新输入，窗口确实被销毁。随后最终 EXE SHA-256 `01a8b18ecf2ad2dd8190c5e1662822358472a56a41a07609b4b1c368cbe80220` 的五份完整默认硬件输出回归已结束，**65/65、零失败／跳过**，逐窗确认 `native-hardware-auto`，没有以兼容输出替代。日志为 `rhvideo-self-close-cli-red.log`、`rhvideo-self-close-cli-green.log`、`rhvideo-close-receipts-full-default-native.log`。
 
-完整 Node 中曾出现已有播放意图用例“固定 30 次 setImmediate 后准备未到达”的失败，实际前置步骤使用异步 WebCrypto。现在该用例等待真实准备节点，若旧操作提前结束／失败立即报错，整例仍有五秒上限；原先“旧播放不能覆盖新点击”的断言保留，没有延长产品播放等待。共享协议的 Android 两份镜像同步更新，新的发行 APK 仍须重新编译／验收，旧 APK 通过不能沿用。
+完整 Node 中曾出现已有播放意图用例“固定 30 次 setImmediate 后准备未到达”的失败，实际前置步骤使用异步 WebCrypto。现在该用例等待真实准备节点，若旧操作提前结束／失败立即报错，整例仍有五秒上限；原先“旧播放不能覆盖新点击”的断言保留，没有延长产品播放等待。共享协议的 Android 两份镜像同步后，已重新构建两个原生 ABI 及压缩发行 APK；主 APK SHA-256 `e9da2ee0122354eaa0cf2fd38407fa4a8cd1e081693313af17813e1dafccb13f`、探测 APK `c1505c41455ea2ef7e9ce2aa3002e5ef98082bd11bba55e1b5354de2926d4c8c`。JVM **368/368**，相同新主 APK 的完整 `single` 与 `grid` 原生场景均通过，安装字节核对一致，只使用自有模拟器。日志为短路径 QA 的 `rhvideo-close-receipts-android-target-build.log`、`rhvideo-close-receipts-android-probe-unit.log`、`rhvideo-close-receipts-android-single.log`、`rhvideo-close-receipts-android-grid.log`。这只证明共享协议没有破坏这些场景；Android 媒体库自身销毁时的脚本回执尚未独立验收，不能套用 Windows 的进程回执结论。
 
 此项不等于首帧性能或全部交互已经等价，也没有发布新包。Windows 原生冷首帧、长期后台／低资源，以及 Android 实际同屏媒体旋转等前述未完成项继续保留。
+
+### 同轮普通文件界面回归与首帧分段
+
+普通文件界面回归首次 **233/234**，查出回收站及设备组侧栏仍使用内联回调，违反原有监听注册断言；改为登记同一业务回调后，完整 GUI **234/234**（`rhvideo-sidebar-bindings-full-gui.log`）。未修改回收站／设备组导航语义，也没有删掉失败断言。随后真实 CDP 鼠标测试进一步复现中键只有 down/up、没有 auxclick，回收站没有打开新标签；在中键按下时阻止 WebView 默认自动滚动后，普通、Ctrl、中键及 UI 接口场景通过，日志 `rhvideo-sidebar-middle-default-prevented.log`。专用单元测试也保留 Meta 行为及按下时不能提前导航的断言。
+
+最终相关 debug EXE SHA-256 `6cfc3d8d063dc109c12586f69887d7ad7edd257daf8e04543a7f54451fb3b4ff`，相对上述 65 项整轮只增加侧栏监听修正及三个调试阶段时间戳，**不是在这份 EXE 上又跑完 65 项**。完整 Node 在提供真实 `RHVIDEO_SOURCE` 后 **534/534、零跳过**（`rhvideo-sidebar-final-with-reference-node.log`）；首次忘记提供该路径时有 12 个差分用例跳过，不将那次记录当作完整通过。
+
+同一新 EXE 的 H.264/1080p 首帧探测确认仍为默认硬件输出，实际红绿蓝黄标记画面出现在 **5.040–5.417 秒**区间，打开应答约 **0.699 秒**；并非打开应答就已有画面。新增阶段显示窗口就绪 459 ms、视口 570 ms、预加载锁 570 ms、主线程画布 575–595 ms、输入启动 675 ms。本次没有复现上一轮主线程前约两秒的间隙，但首帧仍慢，不能把它算成已修复。流缓冲日志为 1250 ms 内容在 31 ms 读完，硬件解码准备仍有长等待；缓冲读取快也不证明时钟缓存与显示调度没有贡献，更不能据此修改驱动或盲目缩短缓存。证据为 `rhvideo-startup-stage-boundaries.log`、`rhfiles-e2e-cwM8HI/startup-measurement.json`。这是一次开发构建诊断，不是同质量、相同视口的发行版 P50/P95 对照，性能目标继续未完成。
 
 ## 2026-10-28 图片类型兼容与原生失败诊断（仍未完成整体验收）
 

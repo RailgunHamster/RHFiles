@@ -1425,7 +1425,9 @@ pub async fn play(
     let webview:&tauri::Webview=window.as_ref();webview.set_focus().map_err(|e|e.to_string())?;
     trace_open(started,"window-focused");
     let rotation_viewport=window_viewport(&window)?;
+    trace_open(started,"viewport-ready");
     let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
+    trace_open(started,"warm-slot-ready");
     let mut guard = SurfaceGuard(vec![]);
     WARM_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if let Some(mut warmed) = warmed {
@@ -1527,6 +1529,7 @@ pub async fn play(
         let _ = tx.send(result);
     })
     .map_err(|e| e.to_string())?;
+    trace_open(started,"surface-dispatched");
     let child = rx.await.map_err(|_| "播放器窗口已关闭".to_owned())??;
     trace_open(started,"surface-ready");
     tauri::async_runtime::spawn_blocking(move || {

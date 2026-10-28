@@ -214,7 +214,7 @@
         <div id="tag-list" class="tag-list"></div>
       </div>
       <div class="sidebar-section" id="recycle-sidebar-section">
-        <button class="sidebar-item" id="sidebar-recycle" onclick="openRecycleBin(undefined,event.ctrlKey||event.metaKey)" onauxclick="if(event.button===1){event.preventDefault();openRecycleBin(undefined,true)}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg><span data-i18n="recycle.title">Recycle Bin</span></button>
+        <button class="sidebar-item" id="sidebar-recycle" data-api-action="recycle.open"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg><span data-i18n="recycle.title">Recycle Bin</span></button>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.recent">Recent</div>
@@ -252,7 +252,7 @@
       <div class="sidebar-section" id="device-group-section">
         <div class="sidebar-heading"><span id="device-group-heading">RHFiles devices</span><button type="button" id="device-group-refresh" class="icon-btn" onclick="RHFilesAPI.invoke('devices.refresh').catch(e=>showNotice(String(e)))" data-api-action="devices.refresh" aria-label="Refresh RHFiles devices"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M13 7a5 5 0 1 0-1 4M13 2v5H8"/></svg></button></div>
         <div id="device-group-locations"></div>
-        <button type="button" id="device-group-settings" class="sidebar-item" onclick="RHFilesAPI.invoke('devices.settings')" data-api-action="devices.settings">Manage device groups</button>
+        <button type="button" id="device-group-settings" class="sidebar-item" data-api-action="devices.settings">Manage device groups</button>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.devices">Devices</div>
