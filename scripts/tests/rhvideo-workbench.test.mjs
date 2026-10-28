@@ -205,7 +205,7 @@ test("virtual strip handles long images, two lanes and bounded viewport tiles", 
   }));
   for (const vertical of [false, true]) {
     const layout = I.stripLayout(items, { vertical, lanes: 2, extent: 800 });
-    assert(layout.items.length > 50000);
+    assert.equal(layout.items.length,vertical?50000:124000,"Vertical pictures remain whole; horizontal 100:1 pictures keep all 75 reference crops");
     const visible = I.visible(layout, 15000, 800);
     assert(visible.length < 100);
     assert(

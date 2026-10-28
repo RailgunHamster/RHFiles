@@ -255,6 +255,25 @@ body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
   overflow-x: hidden;
   overflow-y: auto;
 }
+.wb-viewer-surface.strip {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+.wb-strip-row {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+.vertical > .wb-strip-row {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
 .wb-strip-spacer {
   position: relative;
   contain: layout paint;
@@ -283,6 +302,12 @@ body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
   height: 100%;
   object-fit: contain;
 }
+.wb-strip-tile { cursor: pointer; }
+.wb-strip-tile.selected { box-shadow: inset 0 0 0 3px #a5bfff; }
+.wb-strip-tile.error { display: flex; align-items: center; justify-content: center; color: #ffc5bf; background: #261c25; }
+.wb-strip-error { position: absolute; inset: 0; display: grid; place-items: center; background: #261c25; }
+.wb-strip-favorite { position: absolute; right: 6px; top: 6px; border: 0; border-radius: 50%; background: #101723bb; color: #ffda82; font-size: 24px; width: 40px; height: 40px; cursor: pointer; }
+.wb-strip-favorite:disabled { opacity: .5; }
 .wb-slide {
   position: absolute;
   inset: 0;

@@ -373,6 +373,7 @@
             new Option(String(c.readerFont), String(c.readerFont)),
           );
         $("reader-font").value = String(c.readerFont);
+        paintStripSpeed(viewer);
         void syncVolume().catch(error=>{volumeKey="";notice(error);});
       }
       function save(immediate = false) {
@@ -903,7 +904,8 @@
         "destructive",
       );
       action("selection.result", object(), () => lastBatch, "read");
-      action("selection.markCurrent", object(), async () => {
+      action("selection.markCurrent", object({expectedViewer:{type:"integer",minimum:1}}), async ({expectedViewer}={}) => {
+        if(expectedViewer!==undefined&&viewer?.token!==expectedViewer)throw Error("浏览窗口已改变，旧标记未执行");
         if($("wb-viewer")?.open&&viewer?.loadingMedia)throw Error("放映正在切换，请稍候再标记");
         if(!$("wb-viewer")?.open&&imageSession?.loading)throw Error("图片正在切换，请稍候再标记");
         const item = $("wb-viewer")?.open
@@ -1115,6 +1117,7 @@
             throw Error("设置数值无效");
           if (key === "rule")
             await send("query", { ...criteria(), rule: value, limit: 1 });
+          if(viewer?.mode==="strip"&&["vertical","lanes"].includes(key)){layoutStrip({[key]:value});pauseStrip(viewer);void renderStrip().catch(notice);}
           if(key==="autoRotate")await native("rotation.preference",{enabled:value});
           if(!ctx.mobile&&["segment","fullLength","loop","portraitOnly"].includes(key)){
             const current=await native("player.state");if(current.queue?.options?.mode==="segments")await native("player.options",{options:{[key]:value},expectedId:current.queue.id,expectedRevision:current.queue.revision});
@@ -3456,8 +3459,8 @@
       let viewer = null,
         animation = 0,
         viewerToken = 0;
-      function stopViewer() {
-        viewerToken++;
+      function stopViewer(invalidate=true) {
+        if(invalidate)viewerToken++;
         cancelAnimationFrame(animation);
         animation = 0;
         if (viewer) {
@@ -3472,15 +3475,13 @@
                 signature: v.signature,
                 index: v.index,
                 key: v.queue[v.index]?.key,
-                ratio: v.layout
-                  ? (v.vertical ? v.surface.scrollTop : v.surface.scrollLeft) /
-                    Math.max(1, v.physicalMax)
-                  : 0,
+                ratio: v.mode === "strip" ? stripRatio(v) : 0,
               },
             };
             save();
           }
           viewer.running = false;
+          viewer.layoutRevision=(viewer.layoutRevision||0)+1;
           viewer.tiles.clear();
           viewer.observer?.disconnect();
           clearTimeout(viewer.resizeTimer);
@@ -3504,8 +3505,7 @@
         async ({ mode, source }) => {
           if(mode==="strip"&&source==="favorite")return invoke("favorite.browse");
           await ensure();
-          stopViewer();
-          const token = ++viewerToken,
+          const version=epoch,token = ++viewerToken,
             c = config(),
             kind = source === "gallery" ? "gallery" : source;
           if (kind === "gallery" && !galleryReady()) await loadGallery(false,false);
@@ -3528,7 +3528,10 @@
             limit: 1,
           };
           let result = await send("query", args);
-          if (token !== viewerToken) return { stale: true };
+          if (token !== viewerToken || version!==epoch) return { stale: true };
+          const queue=result.queue.filter(item=>item.kind!=="novel");
+          if(!queue.length){notice("当前筛选中没有符合条件的图片或视频");return {opened:false,total:0,empty:true};}
+          stopViewer(false);
           const signature = I.canonical({
               ...args,
               offset: 0,
@@ -3542,14 +3545,16 @@
           );
           root.replaceChildren();
           const controls = el("div", undefined, "wb-viewer-controls");
-          const favorite=button("收藏","viewer.favorite");favorite.id="wb-viewer-favorite";favorite.hidden=mode!=="slideshow";
+          const favorite=button("收藏","viewer.favorite",{expectedViewer:token});favorite.id="wb-viewer-favorite";favorite.hidden=mode!=="slideshow";
+          const mark=button("标记/取消待删除", "selection.markCurrent",{expectedViewer:token});mark.id="wb-viewer-mark";mark.disabled=mode==="strip";
+          const lanesButton=button("单列/双列", "viewer.lanes");lanesButton.id="wb-viewer-lanes";lanesButton.hidden=c.vertical;
           controls.append(
             button("暂停/继续", "viewer.toggle"),
             button("上一个", "viewer.step", { direction: -1 }),
             button("下一个", "viewer.step", { direction: 1 }),
-            ...(mode==='strip'?[button("切换方向", "viewer.direction"),button("单列/双列", "viewer.lanes")]:[]),
+            ...(mode==='strip'?[button("切换方向", "viewer.direction"),lanesButton]:[]),
             favorite,
-            button("标记/取消待删除", "selection.markCurrent"),
+            mark,
             button("从头浏览", "viewer.restart"),
             button("设置", "settings.open"),
           );
@@ -3563,14 +3568,14 @@
             vertical: c.vertical,
             kind,
             args,
-            queue: result.queue.filter((v) => v.kind !== "novel"),
+            queue,
             index: 0,
             running: true,
             clock: performance.now(),
             surface,
             tiles: new Map(),
             loading: new Set(),
-            length: result.queue.filter((v) => v.kind !== "novel").length,
+            length: queue.length,
             at: 0,
             elapsed: 0,
             last: performance.now(),
@@ -3578,33 +3583,23 @@
           viewer.observer = new ResizeObserver(() => {
             if (viewer?.token === token && viewer.videoActive)
               void syncPresentation().catch(notice);
+            if(viewer?.token===token&&viewer.mode==="strip"){
+              const v=viewer,size=stripDimensions(v);
+              if(v.stripSize&&size.every((value,index)=>Math.abs(value-v.stripSize[index])<1))return;
+              clearTimeout(v.resizeTimer);v.resizeTimer=setTimeout(()=>{
+                if(viewer!==v)return;const positions=v.rows?.map(row=>stripPosition(v,row))||[];
+                const ratios=v.rows?.map(row=>row.metrics.logicalMax?stripPosition(v,row)/row.metrics.logicalMax:0)||[];
+                layoutStrip();for(let i=0;i<v.rows.length;i++)setStripPosition(v,v.rows[i],v.vertical?positions[i]||0:(ratios[i]||0)*v.rows[i].metrics.logicalMax);
+                void renderStrip().catch(notice);
+              },150);
+            }
           });
           viewer.observer.observe(surface);
-          if (!viewer.length) {
-            surface.textContent = "没有符合筛选条件的图片或视频";
-            return { total: 0 };
-          }
           if (mode === "strip") {
-            const raws = viewer.queue;
-            viewer.layoutItems = raws;
-            viewer.lanes = c.lanes;
-            viewer.layout = I.stripLayout(raws, {
-              vertical: c.vertical,
-              lanes: c.lanes,
-              extent: c.vertical ? surface.clientWidth : surface.clientHeight,
-            });
-            const spacer = el("div", undefined, "wb-strip-spacer");
-            surface.append(spacer);
-            viewer.spacer = spacer;
+            const speed=input("range",c.scrollSpeed,"wb-strip-speed"),label=el("span");speed.min=0;speed.max=2000;speed.step="any";speed.setAttribute("aria-label","连续浏览速度倍率");speed.dataset.apiAction="rhvideo.preferences.set";viewer.speed=speed;viewer.speedLabel=label;paintStripSpeed(viewer);
+            listen(speed,"input",()=>{if(viewer?.token!==token)return;label.textContent="×"+(Number(speed.value)/200).toFixed(1);void invoke("preferences.set",{key:"scrollSpeed",value:Number(speed.value)}).catch(notice);},"viewer.speed");controls.append(speed,label);
+            viewer.lanes=c.lanes;viewer.rowLookup=new Map(viewer.queue.map((item,index)=>[item.key||I.key(item),{item,index}]));
             layoutStrip();
-            listen(
-              surface,
-              "scroll",
-              () => {
-                if (viewer?.token === token) void renderStrip().catch(notice);
-              },
-              "viewer.scroll",
-            );
             const map = el("input");
             map.type = "range";
             map.min = 0;
@@ -3641,6 +3636,7 @@
             );
             root.append(minimap);
             viewer.minimap = minimap;
+            minimap.hidden=viewer.vertical;
             await renderStrip();
             if (resume?.signature === signature)
               await invoke("viewer.seek", {
@@ -3661,23 +3657,86 @@
           return { total: viewer.length, mode };
         },
       );
-      function layoutStrip() {
-        const v = viewer,
-          c = config();
-        if (!v?.layout) return;
-        const metrics = I.scrollMetrics(
-          v.layout.length,
-          c.vertical ? v.surface.clientHeight : v.surface.clientWidth,
-        );
-        v.scrollScale = metrics.scale;
-        v.physicalMax = metrics.physicalMax;
-        v.surface.classList.toggle("vertical", c.vertical);
-        v.spacer.style.width = c.vertical ? "100%" : metrics.spacer + "px";
-        v.spacer.style.height = c.vertical ? metrics.spacer + "px" : "100%";
+      function layoutStrip(options={}) {
+        const v=viewer;if(!v||v.mode!=="strip")return;
+        const vertical=options.vertical??v.vertical,lanes=options.lanes??v.lanes,size=stripDimensions(v),layout=I.stripLayout(v.queue,{vertical,lanes,extent:vertical?size[0]:size[1],viewport:vertical?size[1]:size[0]});
+        v.vertical=vertical;v.lanes=lanes;v.layoutRevision=(v.layoutRevision||0)+1;v.stripSize=size;v.tiles.clear();
+        v.stripUrls??=new Map();v.failedPaths??=new Map();
+        v.surface.classList.add("strip");v.surface.classList.toggle("vertical",v.vertical);
+        v.layout=layout;
+        v.rows=v.layout.rows.map(model=>{
+          const node=el("div",undefined,"wb-strip-row"),spacer=el("div",undefined,"wb-strip-spacer"),viewport=v.vertical?v.stripSize[1]:v.stripSize[0],metrics=I.scrollMetrics(model.length,viewport),row={model,node,spacer,metrics,expected:null};
+          node.dataset.row=String(model.lane);node.dataset.apiAction="rhvideo.viewer.scroll";node.tabIndex=0;node.setAttribute("aria-label",v.vertical?"图片竖卷":"图片条带第 "+(model.lane+1)+" 行");
+          node.style.flex=v.vertical?"1 1 0":"0 0 "+model.cross+"px";
+          spacer.style.width=v.vertical?"100%":metrics.spacer+"px";spacer.style.height=v.vertical?metrics.spacer+"px":"100%";node.append(spacer);
+          listen(node,"scroll",()=>{
+            if(viewer!==v||!v.rows.includes(row))return;
+            const position=v.vertical?node.scrollTop:node.scrollLeft;
+            if(row.expected===null||Math.abs(position-row.expected)>1){pauseStrip(v);syncStripRows(v,row);}
+            void renderStrip().catch(notice);
+          },"viewer.scroll");
+          RHFilesUI.listen(node,"wheel",event=>{
+            if(viewer!==v||!v.rows.includes(row))return;event.preventDefault();event.stopPropagation();
+            const delta=Math.abs(event.deltaY)>Math.abs(event.deltaX)?event.deltaY:event.deltaX;
+            void invoke("viewer.scroll",{delta,row:model.lane,expectedViewer:v.token}).catch(notice);
+          },{passive:false},"rhvideo.workbench.viewer.wheel");
+          return row;
+        });
+        v.surface.replaceChildren(...v.rows.map(row=>row.node));
+        if(v.minimap)v.minimap.hidden=v.vertical;
+        const lanesControl=$("wb-viewer-lanes");if(lanesControl)lanesControl.hidden=v.vertical;
+        v.minimapBase=null;
+      }
+      function stripDimensions(v){return [Math.max(1,v.surface.clientWidth),Math.max(1,v.surface.clientHeight)];}
+      function paintStripSpeed(v){if(!v?.speed)return;const value=config().scrollSpeed;if(Number(v.speed.value)!==value)v.speed.value=String(value);v.speed.title=value+" px/s";v.speedLabel.textContent="×"+(value/200).toFixed(1);}
+      function stripPosition(v,row){return (v.vertical?row.node.scrollTop:row.node.scrollLeft)*row.metrics.scale;}
+      function stripRatio(v){const row=v.rows?.[0];return row?Math.max(0,Math.min(1,stripPosition(v,row)/Math.max(1,v.vertical?row.metrics.logicalMax:row.model.mainLength))):0;}
+      function pauseStrip(v){v.running=false;v.surface.classList.add("paused");}
+      function setStripPosition(v,row,value){const property=v.vertical?"scrollTop":"scrollLeft";row.node[property]=Math.max(0,Math.min(row.metrics.logicalMax,value))/row.metrics.scale;row.expected=row.node[property];}
+      function syncStripRows(v,source){
+        const ratio=source.metrics.logicalMax?stripPosition(v,source)/source.metrics.logicalMax:0;
+        for(const row of v.rows)if(row!==source)setStripPosition(v,row,ratio*row.metrics.logicalMax);
+      }
+      function requireStrip(expected){if(!viewer||viewer.mode!=="strip")throw Error("图片连续浏览未打开");if(expected!==undefined&&viewer.token!==expected)throw Error("浏览窗口已改变，旧操作未执行");return viewer;}
+      const stripGuard={expectedViewer:{type:"integer",minimum:1}};
+      action("viewer.scroll",object({...stripGuard,row:{type:"integer",minimum:0,maximum:1},delta:{type:"number",minimum:-1000000,maximum:1000000}},["delta"]),({delta,row:index=0,expectedViewer})=>{
+        const v=requireStrip(expectedViewer),row=v.rows[index];if(!row)throw Error("图片条带行不存在");pauseStrip(v);setStripPosition(v,row,stripPosition(v,row)+I.stripInput(delta,config().scrollSpeed));syncStripRows(v,row);void renderStrip().catch(notice);return viewerSnapshot();
+      });
+      action("viewer.select",object({...stripGuard,key:string},["key"]),({key,expectedViewer})=>{
+        const v=requireStrip(expectedViewer),target=v.rowLookup.get(key);if(!target)throw Error("图片已不在当前浏览队列中");v.current=target.item;v.index=target.index;refreshViewer();return viewerSnapshot();
+      });
+      action("viewer.inspect",object({...stripGuard,key:string},["key"]),async args=>{
+        const v=requireStrip(args.expectedViewer),item=v.rowLookup.get(args.key)?.item;if(!item)throw Error("图片已不在当前浏览队列中");await invoke("viewer.select",args);if(viewer!==v)return {stale:true};pauseStrip(v);return invoke("image.preview",{path:item.path||"/storage/"+item.webp_path,title:item.title||item.id});
+      });
+      function stripWindow(v){
+        const candidates=[];
+        for(const row of v.rows){
+          const start=stripPosition(v,row),extent=v.vertical?row.node.clientHeight:row.node.clientWidth;
+          for(const tile of I.visible({lanes:[row.model.items]},start,extent,Math.max(1200,extent*1.5)))candidates.push({tile,row,start,extent,distance:Math.max(0,start-(tile.start+tile.length),tile.start-(start+extent))});
+        }
+        candidates.sort((a,b)=>a.distance-b.distance);const visible=candidates.slice(0,80),keys=new Set(visible.map(entry=>entry.tile.key));
+        // Reuse the decoded leading-copy nodes at the loop boundary before any
+        // asynchronous image resolution, so wrapping cannot expose a blank gap.
+        for(const {tile,row}of visible)if(!v.tiles.has(tile.key)){
+          const other=tile.tail?tile.baseKey:tile.baseKey+":tail",node=v.tiles.get(other);
+          if(node&&!keys.has(other)){v.tiles.delete(other);v.tiles.set(tile.key,node);node.dataset.key=tile.key;row.spacer.append(node);}
+        }
+        for(const [key,node]of v.tiles)if(!keys.has(key)){node.remove();v.tiles.delete(key);}
+        for(const entry of visible){const node=v.tiles.get(entry.tile.key);if(node)positionStripTile(v,entry,node);}
+        if(v.map&&document.activeElement!==v.map)v.map.value=String(Math.round(stripRatio(v)*1000));
+        const first=v.rows[0];if(first)drawMinimap(v,stripPosition(v,first),v.vertical?first.node.clientHeight:first.node.clientWidth,visible.filter(entry=>entry.row===first).map(entry=>entry.tile));
+        return visible;
+      }
+      function positionStripTile(v,{tile,row,start},node){
+        const position=(v.vertical?row.node.scrollTop:row.node.scrollLeft)+tile.start-start;
+        node.style.cssText=v.vertical?`top:${position}px;left:0;width:${tile.cross}px;height:${tile.length}px`:`left:${position}px;top:0;width:${tile.length}px;height:${tile.cross}px`;
+        node.dataset.logicalStart=String(tile.start);node.dataset.tail=String(tile.tail);node.dataset.mediaKey=I.key(tile.item);node.classList.toggle("selected",I.key(v.current||{})===I.key(tile.item));
+        const image=node.querySelector("img");if(image)image.style.cssText=tile.cuts>1?`position:absolute;left:0;top:${-tile.part*tile.cross}px;width:100%;height:${tile.cross*tile.cuts}px;object-fit:fill`:"";
       }
       async function renderStrip() {
         const v = viewer;
-        if (!v?.layout) return;
+        if (!v?.rows) return;
+        stripWindow(v);
         if (v.renderBusy) {
           v.renderAgain = true;
           return;
@@ -3693,85 +3752,48 @@
         }
       }
       async function renderStripFrame(v) {
-        if (!v?.layout) return;
-        const c = config(),
-          position = c.vertical ? v.surface.scrollTop : v.surface.scrollLeft,
-          start = position * v.scrollScale,
-          length = c.vertical ? v.surface.clientHeight : v.surface.clientWidth,
-          visible = I.visible(v.layout, start, length).slice(0, 80),
-          keys = new Set(visible.map((t) => t.key));
-        for (const [key, node] of v.tiles)
-          if (!keys.has(key)) {
-            node.remove();
-            v.tiles.delete(key);
-          }
-        const missing = visible.filter(
-          (t) => !v.tiles.has(t.key) && !v.loading.has(t.key),
-        );
-        missing.forEach((t) => v.loading.add(t.key));
+        if (!v?.rows) return;
+        const revision=v.layoutRevision,visible=stripWindow(v),missing=visible.filter(({tile})=>!v.tiles.has(tile.key)),paths=[...new Set(missing.map(({tile})=>tile.item.path||"/storage/"+tile.item.webp_path))].filter(path=>!v.stripUrls.has(path)&&!v.failedPaths.has(path));
         try {
-          const paths = missing.map(
-            (t) => t.item.path || "/storage/" + t.item.webp_path,
-          );
-          const urls = paths.length ? await native("images", { paths }) : [];
-          if (viewer !== v) return;
-          const currentPosition = c.vertical
-            ? v.surface.scrollTop
-            : v.surface.scrollLeft;
-          if (
-            Math.abs(currentPosition - position) * v.scrollScale >
-            length / 2
-          ) {
-            v.renderAgain = true;
-            return;
+          if(paths.length){
+            try{
+              const urls=await native("images",{paths});if(viewer!==v||revision!==v.layoutRevision)return;
+              for(let i=0;i<paths.length;i++)if(typeof urls[i]==="string"&&urls[i]){v.stripUrls.delete(paths[i]);v.stripUrls.set(paths[i],urls[i]);}else v.failedPaths.set(paths[i],"图片地址未返回");
+            }catch(error){if(viewer!==v||revision!==v.layoutRevision)return;for(const path of paths)v.failedPaths.set(path,String(error.message||error));notice(error);}
           }
-          for (let i = 0; i < missing.length; i++) {
-            const tile = missing[i],
-              node = el("div", undefined, "wb-strip-tile"),
-              img = el("img");
+          if(viewer!==v||revision!==v.layoutRevision)return;
+          const current=stripWindow(v);
+          for(const entry of current){
+            const {tile,row}=entry;if(v.tiles.has(tile.key))continue;
+            const path=tile.item.path||"/storage/"+tile.item.webp_path,url=v.stripUrls.get(path),failure=v.failedPaths.get(path);if(!url&&!failure){v.renderAgain=true;continue;}
+            const node=el("div",undefined,"wb-strip-tile"),img=el("img"),key=I.key(tile.item);
             node.dataset.key = tile.key;
-            node.dataset.logicalStart = String(tile.start);
-            img.src = urls[i];
-            img.alt = tile.item.title;
-            img.decoding = "async";
-            node.style.cssText = c.vertical
-              ? `top:${tile.start - start + position}px;left:${tile.lane * (tile.cross + 8)}px;width:${tile.cross}px;height:${tile.length}px`
-              : `left:${tile.start - start + position}px;top:${tile.lane * (tile.cross + 8)}px;height:${tile.cross}px;width:${tile.length}px`;
-            if (tile.cuts > 1) {
-              img.style.height = 100 * tile.cuts + "%";
-              img.style.width = "100%";
-              img.style.transform = `translateY(-${(tile.part * 100) / tile.cuts}%)`;
-            }
-            node.append(img);
-            v.spacer.append(node);
+            node.dataset.apiAction="rhvideo.viewer.select";node.title=(tile.item.title||tile.item.id)+" · 双击放大";
+            listen(node,"click",event=>{if(!event.target.closest("button"))void invoke("viewer.select",{key,expectedViewer:v.token}).catch(notice);},"viewer.select");
+            listen(node,"dblclick",event=>{if(event.target.closest("button"))return;event.preventDefault();event.stopPropagation();void invoke("viewer.inspect",{key,expectedViewer:v.token}).catch(notice);},"viewer.inspect");
+            if(failure){node.classList.add("error");node.append(el("span","图片加载失败"));node.title=failure;}
+            else{img.src=url;img.alt=tile.item.title;img.decoding="async";img.draggable=false;listen(img,"error",()=>{if(viewer===v){v.failedPaths.set(path,"图片解码或读取失败");node.classList.add("error");node.title="图片解码或读取失败";if(!node.querySelector(".wb-strip-error"))node.append(el("span","图片加载失败","wb-strip-error"));}},"viewer.imageError");node.append(img);}
+            const favorite=button("收藏","viewer.favorite",{key,expectedViewer:v.token},"wb-strip-favorite");favorite.setAttribute("aria-label","收藏 "+(tile.item.title||tile.item.id));node.append(favorite);
+            row.spacer.append(node);
             v.tiles.set(tile.key, node);
+            positionStripTile(v,entry,node);
           }
-          for (const tile of visible) {
-            const node = v.tiles.get(tile.key);
-            if (node)
-              node.style[c.vertical ? "top" : "left"] =
-                tile.start - start + position + "px";
-          }
-          if (v.map)
-            v.map.value = String(
-              Math.round(
-                (start / Math.max(1, v.layout.length - length)) * 1000,
-              ),
-            );
-          drawMinimap(v, start, length, visible);
+          refreshViewer();stripWindow(v);
         } finally {
-          missing.forEach((t) => v.loading.delete(t.key));
+          while(v.stripUrls.size>512)v.stripUrls.delete(v.stripUrls.keys().next().value);
+          while(v.failedPaths.size>512)v.failedPaths.delete(v.failedPaths.keys().next().value);
         }
       }
       function drawMinimap(v, start, length, visible) {
         const canvas = v.minimap;
-        if (!canvas) return;
+        if (!canvas || v.vertical || !v.rows?.[0]) return;
+        const first=v.rows[0].model;
         const width = Math.min(
             2048,
             Math.max(1, Math.round(canvas.clientWidth)),
           ),
-          scale = width / Math.max(1, v.layout.length),
-          lanes = config().lanes;
+          scale = width / Math.max(1, first.mainLength),
+          lanes = 1;
         if (!v.minimapBase || v.minimapBase.width !== width) {
           const base = document.createElement("canvas");
           base.width = width;
@@ -3781,15 +3803,15 @@
           paint.fillStyle = "#182332";
           paint.fillRect(0, 0, width, 40);
           // One sample per pixel/lane. This is drawn only once, never per frame.
-          for (const tile of v.layout.items) {
+          for (const tile of first.cells) {
             const x = Math.floor(tile.start * scale),
-              key = tile.lane + ":" + x;
+              key = x;
             if (used.has(key)) continue;
             used.add(key);
-            paint.fillStyle = tile.lane % 2 ? "#789fae" : "#8e9ab9";
+            paint.fillStyle = "hsl("+(I.hash(tile.item.folder_label||tile.item.id)%360)+",35%,48%)";
             paint.fillRect(
               x,
-              (tile.lane * 40) / lanes,
+              0,
               Math.max(1, tile.length * scale),
               40 / lanes - 2,
             );
@@ -3807,7 +3829,7 @@
             paint.drawImage(
               image,
               tile.start * scale,
-              (tile.lane * 40) / lanes,
+              0,
               Math.max(1, tile.length * scale),
               40 / lanes - 2,
             );
@@ -3830,14 +3852,24 @@
       function refreshViewer(){
         const v=viewer,button=$("wb-viewer-favorite");if(!v||!button)return;
         const item=v.current,target=item?.kind==="frame"?{kind:"video",id:item.videoId}:item,key=target&&I.key(target);
-        button.hidden=v.mode!=="slideshow"||!["video","picture"].includes(target?.kind)||!target?.id;
+        button.hidden=!["video","picture"].includes(target?.kind)||!target?.id;
         button.textContent=state.favorites.has(key)?"取消收藏":"收藏";
         button.setAttribute("aria-pressed",String(state.favorites.has(key)));
         button.disabled=!!v.loadingMedia||state.favoriteBusy.has(key);
+        if(v.mode==="strip"){
+          const mark=$("wb-viewer-mark");if(mark)mark.disabled=!target?.id;
+          for(const node of v.tiles.values()){
+            node.classList.toggle("selected",node.dataset.mediaKey===I.key(v.current||{}));
+            const item=v.rowLookup.get(node.dataset.mediaKey)?.item,target=item?.kind==="frame"?{kind:"video",id:item.videoId}:item,star=node.querySelector(".wb-strip-favorite");if(!star||!target)continue;
+            const key=I.key(target),enabled=state.favorites.has(key);star.textContent=enabled?"★":"☆";star.setAttribute("aria-label",(enabled?"取消收藏 ":"收藏 ")+(item.title||item.id));star.setAttribute("aria-pressed",String(enabled));star.disabled=state.favoriteBusy.has(key);
+          }
+        }
       }
-      action("viewer.favorite",object(),async()=>{
-        const v=viewer,current=v?.current,item=current?.kind==="frame"?{kind:"video",id:current.videoId}:current;
-        if(!$("wb-viewer")?.open||v.mode!=="slideshow"||!item||!["video","picture"].includes(item.kind))throw Error("当前没有可收藏的放映项目");
+      action("viewer.favorite",object({...stripGuard,key:string}),async({key,expectedViewer}={})=>{
+        const v=viewer;if(expectedViewer!==undefined&&v?.token!==expectedViewer)throw Error("浏览窗口已改变，旧收藏操作未执行");
+        if(key&&v?.mode!=="strip")throw Error("指定图片收藏仅适用于连续浏览");
+        const current=key&&v?.mode==="strip"?v.rowLookup.get(key)?.item:v?.current,item=current?.kind==="frame"?{kind:"video",id:current.videoId}:current;
+        if(!$("wb-viewer")?.open||!item||!["video","picture"].includes(item.kind))throw Error("当前没有可收藏的浏览项目");
         if(v.loadingMedia)throw Error("放映正在切换，请稍候再收藏");
         try{return await invoke("favorite.toggle",{kind:item.kind,id:item.id});}
         finally{if(viewer===v)refreshViewer();}
@@ -3924,12 +3956,9 @@
         if (v.running && !document.hidden && !v.loadingMedia && viewerIsTop()) {
           const c = I.slideshowSettings(config(),v.source);
           if (v.mode === "strip") {
-            const prop = c.vertical ? "scrollTop" : "scrollLeft",
-              extent = c.vertical
-                ? v.surface.clientHeight
-                : v.surface.clientWidth;
-            v.surface[prop] += (dt * c.scrollSpeed) / v.scrollScale;
-            if (v.surface[prop] >= v.physicalMax) v.surface[prop] = 0;
+            let running=false;
+            for(const row of v.rows){const next=I.stripAdvance(stripPosition(v,row),dt*c.scrollSpeed,{maximum:row.metrics.logicalMax,loopOffset:v.vertical?0:row.model.mainLength,vertical:v.vertical});setStripPosition(v,row,next.position);running||=next.running;}
+            if(!running)pauseStrip(v);void renderStrip().catch(notice);
           } else {
             v.elapsed += dt;
             if (
@@ -4004,9 +4033,9 @@
           ...(v.current?{current:{id:v.current.id,kind:v.current.kind,title:v.current.title,...(v.current.kind==="frame"?{videoId:v.current.videoId}:{})},favorite:state.favorites.has(v.current.kind==="frame"?"video:"+v.current.videoId:I.key(v.current))}:{}),
           ...(v.mode==='slideshow'?{elapsed:v.elapsed,duration:slideshowPlan(v).durations[v.index],totalDuration:slideshowPlan(v).total}:{}),
           tiles: v.tiles.size,
-          ratio: v.layout
-            ? (v.vertical ? v.surface.scrollTop : v.surface.scrollLeft) /
-              Math.max(1, v.physicalMax)
+          ...(v.mode==="strip"?{token:v.token,vertical:v.vertical,lanes:v.rows?.length||0,rows:v.rows?.map(row=>({position:stripPosition(v,row),maximum:row.metrics.logicalMax,loopOffset:row.model.mainLength,tail:row.model.items.length-row.model.cells.length,viewport:v.vertical?row.node.clientHeight:row.node.clientWidth})),errors:Array.from(v.failedPaths?.entries()||[]).slice(0,10).map(([path,message])=>({path,message}))}:{}),
+          ratio: v.mode === "strip"
+            ? stripRatio(v)
             : ((slideshowPlan(v).prefix[v.index]||0)+v.elapsed)/Math.max(0.001,slideshowPlan(v).total),
         };
       }
@@ -4026,25 +4055,9 @@
         ]),
         ({ direction }) => {
           if (!viewer) throw Error("浏览器未打开");
-          return viewer.mode === "slideshow"
-            ? slide(viewer.index + direction)
-            : invoke("viewer.seek", {
-                ratio: Math.max(
-                  0,
-                  Math.min(
-                    1,
-                    viewerSnapshot().ratio +
-                      (direction * 500) /
-                        Math.max(
-                          1,
-                          viewer.layout.length -
-                            (viewer.vertical
-                              ? viewer.surface.clientHeight
-                              : viewer.surface.clientWidth),
-                        ),
-                  ),
-                ),
-              });
+          if(viewer.mode==="slideshow")return slide(viewer.index+direction);
+          const v=viewer,row=v.rows[0],delta=I.stripInput(direction*innerWidth*.8,config().scrollSpeed),target=Math.max(0,Math.min(row.metrics.logicalMax,stripPosition(v,row)+delta));pauseStrip(v);row.expected=null;
+          row.node.scrollBy({[v.vertical?"top":"left"]:delta/row.metrics.scale,behavior:"smooth"});return {target,running:false};
         },
       );
       action(
@@ -4058,31 +4071,27 @@
             v = viewer;
           if (v.mode === "slideshow")
             {const target=I.slideshowTarget(slideshowPlan(v),ratio);return slide(target.index,target.elapsed);}
-          v.surface[c.vertical ? "scrollTop" : "scrollLeft"] =
-            ratio * v.physicalMax;
+          const row=v.rows[0];setStripPosition(v,row,ratio*(v.vertical?row.metrics.logicalMax:row.model.mainLength));void renderStrip().catch(notice);
           return { ratio };
         },
       );
       action("viewer.direction", object(), () => {
         if(viewer&&viewer.mode!=='strip')throw Error("切换方向仅适用于连续浏览");
-        prefs.vertical = !config().vertical;
+        const vertical=viewer?!viewer.vertical:!config().vertical;
+        if(viewer){layoutStrip({vertical});pauseStrip(viewer);}
+        prefs.vertical = vertical;
         save();
-        if (viewer)
-          return invoke("viewer.open", {
-            mode: viewer.mode,
-            source: viewer.source,
-          });
+        if(viewer){void renderStrip().catch(notice);return viewerSnapshot();}
         return { vertical: prefs.vertical };
       });
       action("viewer.lanes", object(), () => {
         if(viewer&&viewer.mode!=='strip')throw Error("单列／双列仅适用于连续浏览");
-        prefs.lanes = config().lanes === 1 ? 2 : 1;
+        if(viewer?.vertical)throw Error("竖卷始终为单列；请切换为横向后调整行数");
+        const lanes=(viewer?viewer.lanes:config().lanes)===1?2:1;
+        if(viewer){layoutStrip({lanes});pauseStrip(viewer);}
+        prefs.lanes = lanes;
         save();
-        if (viewer)
-          return invoke("viewer.open", {
-            mode: viewer.mode,
-            source: viewer.source,
-          });
+        if(viewer){void renderStrip().catch(notice);return viewerSnapshot();}
         return { lanes: prefs.lanes };
       });
       action(

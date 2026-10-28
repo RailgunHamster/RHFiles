@@ -72,7 +72,7 @@ test('favorite slideshow respects type filters and retains its opening snapshot 
   await invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await invoke('category',{kind:'favorite'});
   await invoke('preferences.set',{key:'favoriteStay',value:60});
   for(const filter of ['video','novel']){
-   await invoke('preferences.set',{key:'mediaType',value:filter});const opened=await invoke('viewer.open',{mode:'slideshow',source:'favorite'});assert.equal(opened.total,0,'Do not play pictures hidden by the current '+filter+' filter');await invoke('panel.close',{id:'wb-viewer'});
+   await invoke('preferences.set',{key:'mediaType',value:filter});const opened=await invoke('viewer.open',{mode:'slideshow',source:'favorite'});assert.equal(opened.total,0,'Do not play pictures hidden by the current '+filter+' filter');assert.equal(opened.opened,false);assert.equal((await invoke('viewer.state')).opened,false,'An empty favorite filter cannot open a blank slideshow or hidden source');await invoke('panel.close',{id:'wb-viewer'});
   }
   await invoke('preferences.set',{key:'mediaType',value:''});const opened=await invoke('viewer.open',{mode:'slideshow',source:'favorite'});assert.equal(opened.total,42,'Novels are not counted as playable media');
   await invoke('viewer.toggle');await invoke('viewer.seek',{ratio:1});

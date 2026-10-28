@@ -3,16 +3,17 @@
   const api=window.RHFilesAPI,$=id=>document.getElementById(id),object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const native=(action,args={})=>window.__TAURI__.core.invoke('rhvideo_request',{action,args:state.generation?{...args,_sessionGeneration:state.generation}:args});
   api.provideRunLookup(query=>window.__TAURI__.core.invoke('automation_receipt',{query}));
-  api.provideState('application',()=>({platform:'windows',window:'window-rhvideo-player',ready:true}));
-  let state={opened:false},busy=false,dragging=false,volumeDragging=false,queueDragging=false,favoriteDragging=false,closed=false;
+  api.provideState('application',()=>({platform:'windows',window:'window-rhvideo-player',ready}));
+  let state={opened:false},ready=false,busy=false,dragging=false,volumeDragging=false,queueDragging=false,favoriteDragging=false,closed=false;
   function error(value){delete $('error').dataset.automation;$('error').textContent=String(value?.message||value);}
   let audibleVolume=100;
   function paused(value){return value.pauseRequested??(value.state===4);}
   function toggleCommand(value){return value.state===6||paused(value)?'resume':'pause';}
+  function sourceControls(enabled){for(const node of document.querySelectorAll('#controls button,#controls input,#controls select'))if(node.id!=='back')node.disabled=!enabled;}
   function paint(value){
     const generation=value.generation??state.generation;if(generation&&state.generation&&generation<state.generation)return;
-    for(const node of document.querySelectorAll('#controls button,#controls input,#controls select'))if(node.id!=='back')node.disabled=!value.opened||!value.queue?.id;
-    state={...value,generation};if(!state.opened){$('status').textContent='播放已停止';return;}
+    sourceControls(value.opened&&value.queue?.id);
+    state={...value,generation};ready=true;if(!state.opened){$('status').textContent='播放已停止';return;}
     $('title').textContent=state.title;$('position').textContent=RHVideoModel.clock(state.positionMs/1000);$('duration').textContent=RHVideoModel.clock(state.durationMs/1000);
     if(!dragging)$('seek').value=state.durationMs>0?Math.round(state.positionMs/state.durationMs*1000):0;
     $('toggle').textContent=state.state===6?'重新播放':paused(state)?'继续':'暂停';
@@ -139,6 +140,9 @@
   }
   // The existing poll owns the sole timer chain. A session event invalidates
   // cached identity, but must not start another recurring loop on every switch.
-  window.__TAURI__.event.listen('rhvideo-player-session',({payload})=>{if(Number.isSafeInteger(payload.generation)&&payload.generation>(state.generation||0)){state={opened:false,generation:payload.generation};$('error').textContent='';}}).catch(error);
-  window.addEventListener('pagehide',()=>{closed=true;});void poll();
+  window.__TAURI__.event.listen('rhvideo-player-session',({payload})=>{if(Number.isSafeInteger(payload.generation)&&payload.generation>(state.generation||0)){state={opened:false,generation:payload.generation};ready=false;sourceControls(false);$('back').textContent='返回';$('error').textContent='';}}).catch(error);
+  // A loaded WebView is not yet an initialized player. Until the first native
+  // state arrives, do not offer controls with an unknown source or parent.
+  sourceControls(false);
+  window.addEventListener('pagehide',()=>{closed=true;ready=false;});void poll();
 })();

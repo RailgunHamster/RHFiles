@@ -287,55 +287,57 @@
   }
   function stripLayout(
     items,
-    { vertical = false, lanes = 1, extent = 600, gap = 8, longRatio = 5 } = {},
+    { vertical = false, lanes = 1, extent = 600, viewport = 0 } = {},
   ) {
-    if (![1, 2].includes(lanes) || !Number.isFinite(extent) || extent < 1)
+    if (!Array.isArray(items) || items.length > 1000000 || ![1, 2].includes(lanes) || !Number.isFinite(extent) || extent < 1 || !Number.isFinite(viewport) || viewport < 0)
       throw Error("布局参数无效");
-    const cross = (extent - gap * (lanes - 1)) / lanes,
-      positions = Array(lanes).fill(0),
-      out = [];
-    for (const item of items) {
-      const [w, h] = String(
-          item.resolution || item.original_resolution || "1x1",
-        )
-          .split(/[x×X]/)
-          .map(Number),
-        ratio =
-          Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0
-            ? Math.max(0.00001, Math.min(100000, w / h))
-            : 1;
-      const cuts =
-        ratio < 1 / longRatio
-          ? Math.min(100, Math.ceil(1 / ratio / longRatio))
-          : 1;
-      for (let part = 0; part < cuts; part++) {
-        const lane = positions.indexOf(Math.min(...positions)),
-          length = Math.max(
-            32,
-            vertical ? cross / ratio / cuts : cross * ratio * cuts,
-          );
-        out.push({
-          key: key(item) + ":" + part,
-          item,
-          lane,
-          start: positions[lane],
-          length,
-          cross,
-          part,
-          cuts,
-          vertical,
-        });
-        positions[lane] += length + gap;
+    const count=vertical?1:lanes,cross=extent/count,mid=Math.ceil(items.length/2),rows=[],out=[];
+    let budget=0;
+    for(let lane=0;lane<count;lane++){
+      const source=count===1?items:lane===0?items.slice(0,mid):items.slice(mid),cells=[];
+      let position=0;
+      for(const item of source){
+        const [w,h]=String(item.resolution||item.original_resolution||'').split(/[x×X]/).map(Number),valid=Number.isFinite(w)&&Number.isFinite(h)&&w>0&&h>0;
+        const cuts=!vertical&&valid&&h/w>5?Math.ceil(h/w*.75):1;
+        if(!Number.isSafeInteger(cuts)||cuts<1||budget+cuts>1000000)throw Error("长图分段过多，未创建超出预算的浏览布局");
+        const length=vertical?(valid?cross*h/w:cross*.75):(valid?cross*w/h*cuts:cross*.75);
+        if(!Number.isFinite(length)||length<=0||!Number.isFinite(position+length*cuts)||position+length*cuts>Number.MAX_SAFE_INTEGER)throw Error("图片尺寸超出浏览布局范围");
+        for(let part=0;part<cuts;part++){
+          const baseKey=key(item)+':'+part;
+          cells.push({key:baseKey,baseKey,item,lane,start:position,length,cross,part,cuts,vertical,tail:false});position+=length;
+        }
+        budget+=cuts;
       }
+      const mainLength=position,tiles=cells.slice();
+      if(!vertical&&viewport>0){
+        // Like psTailCellCount, copy complete leading pictures until the end
+        // covers a viewport. Never materialize another copy of the full pool.
+        let tailLength=0,end=0;
+        while(end<cells.length&&end<4000&&tailLength<viewport){
+          const item=cells[end].item;let next=end+1;
+          while(next<cells.length&&cells[next].item===item)next++;
+          tailLength+=cells[next-1].start+cells[next-1].length-cells[end].start;end=next;
+        }
+        end=Math.min(end,4000);
+        for(let i=0;i<end;i++){const tile=cells[i];tiles.push({...tile,key:tile.baseKey+':tail',start:mainLength+tile.start,tail:true});}
+      }
+      const length=tiles.length?tiles.at(-1).start+tiles.at(-1).length:0;
+      rows.push({items:tiles,cells,mainLength,length,lane,cross});for(const tile of tiles)out.push(tile);
     }
-    const laneItems = Array.from({ length: lanes }, () => []);
-    for (const item of out) laneItems[item.lane].push(item);
-    return {
-      items: out,
-      lanes: laneItems,
-      length: Math.max(0, ...positions) - gap,
-      cross,
-    };
+    return {items:out,lanes:rows.map(row=>row.items),rows,length:Math.max(0,...rows.map(row=>row.length)),cross};
+  }
+  function stripAdvance(position,delta,{maximum,loopOffset=0,vertical=false}={}){
+    if(![position,delta,maximum,loopOffset].every(Number.isFinite)||position<0||delta<0||maximum<0||loopOffset<0)throw Error("滚动参数无效");
+    if(maximum===0)return {position:0,running:false};
+    let target=position+delta;
+    if(!Number.isFinite(target))throw Error("滚动位移超出范围");
+    if(vertical)return {position:Math.min(maximum,target),running:target<maximum};
+    if(loopOffset>0&&target>=loopOffset)target%=loopOffset;
+    return {position:Math.min(maximum,target),running:true};
+  }
+  function stripInput(delta,speed){
+    if(!Number.isFinite(delta)||!Number.isFinite(speed)||speed<0||speed>2000)throw Error("滚动速度或位移无效");
+    const distance=delta*speed/200;if(!Number.isFinite(distance))throw Error("滚动位移超出范围");return distance;
   }
   function visible(layout, start, length, overscan = 800) {
     const found = [];
@@ -460,6 +462,8 @@
     normalize,
     portrait,
     stripLayout,
+    stripAdvance,
+    stripInput,
     visible,
     transition,
     slideshowSettings,

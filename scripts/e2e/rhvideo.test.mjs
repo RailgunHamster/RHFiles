@@ -256,7 +256,7 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
     await until(async()=>{afterNext=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.state')");return afterNext.queue?.index===1&&afterNext.title.includes('海边');},'next video in native queue').catch(error=>{console.log(JSON.stringify({preloaded,afterNext}));throw error;});
     await player.evaluate("RHFilesAPI.invoke('rhvideo.player.previous')");
     await invoke(view,'favorite.toggle',{id:'video-0',kind:'video'});await invoke(view,'category',{kind:'picture'});await invoke(view,'favorite.toggle',{id:'picture-0',kind:'picture'});await invoke(view,'category',{kind:'favorite'});
-    await invoke(view,'viewer.open',{mode:'slideshow',source:'favorite'});await invoke(view,'viewer.toggle');await invoke(view,'viewer.step',{direction:1});
+    await invoke(view,'viewer.open',{mode:'slideshow',source:'favorite'});await invoke(view,'viewer.toggle');assert.equal((await invoke(view,'viewer.state')).current.kind,'picture','The most recently added favorite picture comes first, as on the real backend');await invoke(view,'viewer.step',{direction:1});assert.equal((await invoke(view,'viewer.state')).current.kind,'video');
     await until(async()=>{const s=await invoke(view,'viewer.mediaState');return s.nativeSurface&&s.renderedFrames>0;},'native video inside the mixed slideshow',20000);
     assert.equal(await view.evaluate("document.querySelectorAll('#wb-viewer video,iframe').length"),0);await invoke(view,'viewer.mediaControl',{command:'pause'});await invoke(view,'viewer.step',{direction:1});assert.equal((await invoke(view,'viewer.mediaState')).opened,false);await invoke(view,'panel.close',{id:'wb-viewer'});await invoke(view,'category',{kind:'video'});
     await invoke(view,'preferences.set',{key:'gridCount',value:4});
@@ -308,7 +308,7 @@ test('fifty-thousand packaged image entries remain reachable and bounded in the 
     for(let i=0;i<30;i++)await invoke(view,'viewer.seek',{ratio:(i%2)?.99:.01});await invoke(view,'viewer.seek',{ratio:1});
     await until(()=>view.evaluate("(()=>{const nodes=[...document.querySelectorAll('.wb-strip-tile')];return nodes.length>0&&nodes.every(n=>Number(n.dataset.logicalStart)>1000000);})()"),'last logical image window resolves',20000);
     const state=await invoke(view,'viewer.state');assert.equal(state.total,50000);assert(state.ratio>.99);assert(state.tiles<=80);
-    const geometry=await view.evaluate("(()=>{const s=document.querySelector('.wb-viewer-surface');return {scrollWidth:s.scrollWidth,children:document.querySelectorAll('.wb-strip-tile').length};})()");assert(geometry.scrollWidth<8100000);assert(geometry.children<=80);
+    const geometry=await view.evaluate("(()=>{const rows=[...document.querySelectorAll('.wb-strip-row')];return {scrollWidth:Math.max(...rows.map(row=>row.scrollWidth)),children:document.querySelectorAll('.wb-strip-tile').length};})()");assert(geometry.scrollWidth<8100000);assert(geometry.children<=80);
     const requests=fixture.requests.filter(r=>r.path.startsWith('/storage/pictures/')).length;assert(requests<250,'rapid scrolling coalesces media requests');
     assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);await invoke(view,'panel.close',{id:'wb-viewer'});
     console.log(JSON.stringify({pass:true,imageStripBrowser:{count:50000,elapsedMs:performance.now()-started,...geometry,requests},note:'generated SVGs/browser geometry, not a real-device codec comparison'}));

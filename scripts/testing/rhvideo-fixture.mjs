@@ -5,6 +5,8 @@ import {listenBrowserLoopback} from './browser-loopback.mjs';
 import pathModule from 'node:path';
 export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview']}={}){
   const favorites=new Set(),progress=[],requests=[];
+  const favoriteDates=new Map();let favoriteSerial=0;
+  const syncFavoriteDates=()=>{for(const key of favoriteDates.keys())if(!favorites.has(key))favoriteDates.delete(key);for(const key of favorites)if(!favoriteDates.has(key)){const serial=++favoriteSerial;favoriteDates.set(key,{serial,date:new Date(Date.UTC(2026,0,1)+serial).toISOString()});}};
   const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
   const folders=['山野与旅途','日常片段','城市观察','慢生活'];
   const names=['沿着山脊，看见清晨','海边的蓝色时刻','森林里的一场小雨','城市醒来之前','周末，留一点空白','穿过落日的列车','湖面与风的形状','路过人间烟火','一个很慢的下午','远山，云与自由','星空下的营地','把日子过成风景'];
@@ -74,12 +76,12 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     if(path==='/api/v1/pictures/catalog'){const rows=active('picture',pictures),failure=await beforeCatalog?.('picture',rows);return failure?send(failure.status,failure):send(200,{items:rows,total:rows.length});}
     if(path==='/api/v1/pictures')return send(200,paginate(pictures));
     if(path==='/api/v1/novels')return send(200,url.searchParams.get('summary')==='true'?{items:novels,total:novels.length}:paginate(novels));
-    if(path==='/api/v1/favorites/ids')return send(200,{video_ids:[...favorites].filter(k=>k.startsWith('video:')).map(k=>k.slice(6)),picture_ids:[...favorites].filter(k=>k.startsWith('picture:')).map(k=>k.slice(8)),novel_ids:[]});
+    if(path==='/api/v1/favorites/ids')return send(200,{video_ids:[...favorites].filter(k=>k.startsWith('video:')).map(k=>k.slice(6)),picture_ids:[...favorites].filter(k=>k.startsWith('picture:')).map(k=>k.slice(8)),novel_ids:[...favorites].filter(k=>k.startsWith('novel:')).map(k=>k.slice(6))});
     if(path==='/api/v1/favorites'){
-      const all=[...videos.map(v=>({...v,type:'video'})),...pictures.map(p=>({...p,type:'picture'})),...novels.map(n=>({...n,type:'novel'}))].filter(v=>favorites.has(v.type+':'+v.id));return send(200,paginate(all));
+      syncFavoriteDates();const all=[...videos.map(v=>({...v,type:'video'})),...pictures.map(p=>({...p,type:'picture'})),...novels.map(n=>({...n,type:'novel'}))].filter(v=>favorites.has(v.type+':'+v.id)).map(row=>({...row,favorited_at:row.favorited_at||favoriteDates.get(row.type+':'+row.id).date}));all.sort((a,b)=>Date.parse(b.favorited_at)-Date.parse(a.favorited_at)||favoriteDates.get(b.type+':'+b.id).serial-favoriteDates.get(a.type+':'+a.id).serial);return send(200,paginate(all));
     }
     const favorite=path.match(/^\/api\/v1\/favorites\/(video|picture|novel)\/([^/]+)$/);
-    if(favorite){const key=favorite[1]+':'+favorite[2];if(failFavoriteIds.includes(key))return send(503,{detail:'Owned favorite failure'});if(req.method==='PUT')favorites.add(key);else if(req.method==='DELETE')favorites.delete(key);else return send(405,{detail:'Use PUT or DELETE'});return send(200,{ok:true});}
+    if(favorite){const key=favorite[1]+':'+favorite[2];if(failFavoriteIds.includes(key))return send(503,{detail:'Owned favorite failure'});syncFavoriteDates();if(req.method==='PUT')favorites.add(key);else if(req.method==='DELETE')favorites.delete(key);else return send(405,{detail:'Use PUT or DELETE'});syncFavoriteDates();return send(200,{ok:true});}
     const novel=path.match(/^\/api\/v1\/novels\/(novel-\d+)$/);
     if(novel)return send(200,{...novels.find(n=>n.id===novel[1]),chapters:Array.from({length:chapterCount},(_,i)=>({index:i,title:'第'+(i+1)+'章 '+['清晨出发','山间来信','回到日常'][i%3],word_count:1500}))});
     if(path.endsWith('/progress')){progress.push({path,...await body()});return send(200,{saved:true});}
