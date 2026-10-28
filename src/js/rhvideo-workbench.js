@@ -29,7 +29,7 @@
             "rhvideo.workbench." + site,
           );
       const resolutions = new I.ResolveCache();
-      let configuration=null;
+      let configuration=null,favoriteExports=null;
       let resolutionRevision = "",
         accountGeneration = null,
         resolutionGeneration = 0;
@@ -223,6 +223,7 @@
       }
       async function reset(authenticated) {
         configuration?.reset();
+        favoriteExports?.reset();
         ctx.invalidateReads();
         const version=++epoch;
         abortPictureOrders();
@@ -4448,6 +4449,15 @@
         worker?.terminate();
         clearTimeout(saveTimer);
       });
+      async function favoriteExportSelection(){
+        const snapshot=structuredClone(criteria({kind:'favorite',allKeys:true,offset:0,limit:1}));
+        const version=await ensure();
+        // The original export dialog reloads favorites before capturing its
+        // filtered snapshot. Another client may have changed server favorites.
+        await rawCatalog('favorite',true);
+        return query(snapshot,version);
+      }
+      favoriteExports=RHVideoExports.install({action,object,native,selection:favoriteExportSelection});
       configuration=RHVideoConfiguration.install({api,action,native,object,string,state,button,el,listen,notice,mobile:ctx.mobile,config,
         rawPreferences:()=>prefs.referencePreferences||{},
         async applyPreferences(patch,original){const version=epoch;await ensure();if(version!==epoch)throw Error("媒体账户已改变");clearTimeout(saveTimer);await saveChain.catch(()=>{});if(version!==epoch)throw Error("媒体账户已改变");

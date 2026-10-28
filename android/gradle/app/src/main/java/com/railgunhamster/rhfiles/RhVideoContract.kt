@@ -8,6 +8,7 @@ internal class RhVideoContract(private val manifest:JSONObject) {
   data class Call(val method:String,val path:String,val query:Map<String,String>,val body:JSONObject?,val invalidatesCatalog:Boolean=false)
   private fun valid(v:Any?,rule:String):Boolean = when {
     rule=="bool" -> v is Boolean
+    rule=="uuid" -> v is String && RhVideoExports.uuid(v)
     rule=="id" -> v is String && v.matches(Regex("[A-Za-z0-9_-]{1,128}"))
     rule=="task" -> v is String && v.matches(Regex("(video|run|replace):[A-Za-z0-9_-]{1,128}"))
     rule=="resolution" -> v==null || v==JSONObject.NULL || v is String && (v.isEmpty() || v.matches(Regex("[1-9][0-9]{1,3}x[1-9][0-9]{1,3}")))

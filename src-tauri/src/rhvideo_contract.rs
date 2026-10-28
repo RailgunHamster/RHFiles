@@ -14,6 +14,9 @@ fn valid(value: &Value, rule: &str) -> bool {
     if rule == "bool" {
         return value.is_boolean();
     }
+    if rule == "uuid" {
+        return value.as_str().is_some_and(super::exports::uuid);
+    }
     if rule == "id" {
         return value.as_str().is_some_and(|s| {
             !s.is_empty()
@@ -172,5 +175,16 @@ mod tests {
         .is_ok());
         assert!(request(&json!({"name":"tasks.list","query":{"limit":51}})).is_err());
         assert!(request(&json!({"name":"batches.create","body":{"video_ids":[],"crf":39},"confirmation":"RHVIDEO:batches.create"})).is_err());
+    }
+    #[test]
+    fn exports_only_use_fixed_routes_canonical_ids_and_bounded_private_lists() {
+        let id = "c8f17f3e-28c5-4fca-9fb2-204fb8713980";
+        let call = request(&json!({"name":"exports.cancel","params":{"id":id}})).unwrap();
+        assert_eq!(call.method, reqwest::Method::DELETE);
+        assert_eq!(call.path, format!("api/v1/favorite-exports/{id}"));
+        assert!(!call.invalidates_catalog); // Cancelling a ZIP never deletes source media.
+        for args in [json!({"name":"exports.get","params":{"id":"../auth/me"}}),json!({"name":"exports.get","params":{"id":"archive.zip"}}),json!({"name":"exports.list","query":{"limit":101}}),json!({"name":"exports.list","query":{"user_id":"other-owner"}}),json!({"name":"exports.create","body":{"request_id":id}})] {
+            assert!(request(&args).is_err(), "{args}");
+        }
     }
 }

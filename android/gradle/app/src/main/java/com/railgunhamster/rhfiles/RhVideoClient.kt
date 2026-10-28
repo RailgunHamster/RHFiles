@@ -57,6 +57,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val contract by lazy{RhVideoContract(operationManifest?:JSONObject(context.assets.open("rhvideo/rhvideo-operations.json").bufferedReader().use{it.readText()}))}
   private val refreshLock=Any()
   private val configuration=RhVideoBackups()
+  private val exports=RhVideoExports()
   private val http=OkHttpClient.Builder().proxy(Proxy.NO_PROXY).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(true)
     .connectTimeout(8,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
   private val mediaHttp=http.newBuilder().callTimeout(0,TimeUnit.SECONDS).eventListenerFactory(RhVideoMediaTrace(context.applicationContext)).build()
@@ -89,7 +90,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val writes=java.util.concurrent.ThreadPoolExecutor(2,2,0,TimeUnit.MILLISECONDS,java.util.concurrent.ArrayBlockingQueue<Runnable>(32),{job->Thread(job,"RHVideo-write").apply{isDaemon=true}},java.util.concurrent.ThreadPoolExecutor.AbortPolicy())
   fun listen(listener:(String,JSONObject)->Unit):java.io.Closeable {listeners.add(listener);return java.io.Closeable{listeners.remove(listener)}}
   private fun emit(name:String,payload:JSONObject){listeners.forEach{listener->runCatching{listener(name,JSONObject(payload.toString()))}}}
-  private fun resetMediaState(){configuration.clear();preview=RhVideoPreviewState();favoriteIds.clear();favoriteLoaded=false;favoriteRevision++;favoriteJobs.clear();singleLoop=false;singleRate=1.0}
+  private fun resetMediaState(){configuration.clear();exports.clear();preview=RhVideoPreviewState();favoriteIds.clear();favoriteLoaded=false;favoriteRevision++;favoriteJobs.clear();singleLoop=false;singleRate=1.0}
   fun checkGrid(ticket:String,lease:String){val s=current();synchronized(lock){check(gridSession?.let{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}==true){"同屏会话已改变，请重新打开"}}}
   fun closeGrid(ticket:String,lease:String,commit:Boolean=true):JSONObject {
     val owner=synchronized(lock){
@@ -249,12 +250,16 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
     if(code==401)synchronized(lock){if(session?.generation==s.generation){++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState()}}
   }
   fun state():JSONObject=synchronized(lock){JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:prefs.getString("server","")).put("username",session?.username?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",false).put("generation",generation).put("assetRevision",assetRevision)}
-  private fun json(s:Session,path:String,method:String="GET",body:JSONObject?=null):Any {
+  private fun json(s:Session,path:String,method:String="GET",body:JSONObject?=null,exportErrors:Boolean=false):Any {
     val url=s.base.resolve(path)?:error("无效的 API 路径")
     val builder=Request.Builder().url(url).header("Authorization","Bearer ${token(s)}").header("Accept","application/json")
     if(method!="GET")builder.method(method,if(method=="DELETE")null else (body?:JSONObject()).toString().toRequestBody("application/json".toMediaType()))
     (if(method=="GET")http else writeHttp).newCall(builder.build()).execute().use{response->
       expire(s,response.code)
+      if(!response.isSuccessful && exportErrors && response.code in listOf(400,404,409,410)){
+        val detail=try{(readJson(response) as? JSONObject)?.opt("detail") as? String}catch(_:Exception){null}
+        if(detail!=null && detail.length in 1..2048 && detail.none{it=='<'||it=='>'||it.code<32 && it!='\n' && it!='\t'})error("RHVideo 导出失败（HTTP ${response.code}）：$detail")
+      }
       check(response.isSuccessful){if(response.code==401)"登录已过期，请重新登录"else "RHVideo 请求失败（HTTP ${response.code}）"}
       val result=readJson(response)
       check(live(s)){"连接已经更改，请重试"}
@@ -337,6 +342,12 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
     val s=current()
     check(expected==null||expected==s.generation){"媒体账户已改变，操作未执行，请刷新后重新操作"}
     return when(action){
+      "exports.prepare"->synchronized(lock){check(live(s)){"媒体账户已改变"};exports.prepare(s.generation,args)}
+      "exports.discard"->synchronized(lock){check(live(s)){"媒体账户已改变"};exports.discard(s.generation,args)}
+      "exports.create"->{
+        val body=synchronized(lock){check(live(s)){"媒体账户已改变"};exports.consume(s.generation,args)}
+        RhVideoExports.identity(RhVideoExports.job(json(s,"api/v1/favorite-exports","POST",body,exportErrors=true) as JSONObject),"request_id",body.getString("request_id"))
+      }
       "configuration.export"->{val values=args.optJSONObject("preferences")?:JSONObject();RhVideoBackups.preferences(values);val result=json(s,"api/v1/config-backups/export","POST",JSONObject().put("ui_preferences",values)) as JSONObject;RhVideoBackups.document(result);require(result.toString().toByteArray(Charsets.UTF_8).size<=RhVideoBackups.LIMIT){"配置备份超过 20 MB"};result}
       "configuration.preview"->{val document=args.getJSONObject("document");RhVideoBackups.document(document);val result=json(s,"api/v1/config-backups/preview","POST",document) as JSONObject;synchronized(lock){check(live(s)){"媒体账户已改变"};configuration.stage(s.generation,document,result)}}
 "configuration.restore"->{val document=configuration.consume(s.generation,args.getString("ticket"));val result=json(s,"api/v1/config-backups/restore","POST",document) as JSONObject;RhVideoBackups.summary(result,true);synchronized(lock){check(live(s)){"媒体账户已改变"};favoriteLoaded=false;favoriteIds.clear();favoriteRevision++};try{readFavorites(s)}catch(e:Exception){result.put("clientWarning","记录已恢复，但收藏状态刷新失败：${e.message}")};result}
@@ -370,7 +381,11 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
         val call=contract.request(args)
         if(args.getString("name")=="index.video")videoCatalog(s,args.optJSONObject("query")?.optBoolean("refresh")?:false) else {
           val url=s.base.resolve(call.path)!!.newBuilder();call.query.forEach{(key,value)->url.addQueryParameter(key,value)}
-          val value=json(s,url.build().toString(),call.method,call.body)
+          val value=json(s,url.build().toString(),call.method,call.body,exportErrors=args.getString("name").startsWith("exports."))
+          if(args.getString("name").startsWith("exports.")){
+            RhVideoExports.response(args.getString("name"),value)
+            if(args.getString("name")!="exports.list")RhVideoExports.identity(value as JSONObject,"id",args.getJSONObject("params").getString("id"))
+          }
           if(call.invalidatesCatalog)synchronized(catalogLock){synchronized(lock){if(live(s))videoCache=null}}
           value
         }

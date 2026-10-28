@@ -57,6 +57,16 @@ test('an actual HTTP image failure stays visibly failed without a per-frame netw
   await qa.invoke('viewer.lanes');await qa.invoke('viewer.seek',{ratio:0});const after=await until(visibleFailure,'The cached failure remains labelled after rebuilding its rows');await sleep(1000);console.log(JSON.stringify({stripFailure:{before,after,requestsBefore:count,requestsAfter:qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').map(({method,range})=>({method,range})),state:await qa.invoke('viewer.state')},artifacts:qa.app.artifactDir}));assert.equal(qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').length,count,'No hidden asset retry per animation frame or after a cached layout rebuild');fs.writeFileSync(path.join(qa.app.artifactDir,'strip-failed.png'),Buffer.from((await qa.view.send('Page.captureScreenshot',{format:'png'})).data,'base64'));await qa.invoke('panel.close',{id:'wb-viewer'});
  }finally{await qa.close();}
 });
+test('a new explicit strip view can load a source after its earlier card thumbnail failed',async()=>{
+ let unavailable=true;const qa=await openStrip({beforeMedia:({image,path})=>image&&path==='/storage/pictures/0.svg'&&unavailable?{status:503,detail:'Owned transient thumbnail failure'}:undefined});
+ try{
+  await until(()=>qa.view.evaluate('(()=>{const n=document.querySelector(".media-card[data-id=picture-0] img");return n?.complete&&n.hidden;})()'),'The original card request has actually failed');
+  unavailable=false;await qa.invoke('viewer.open',{mode:'strip',source:'picture'});await qa.invoke('viewer.seek',{ratio:0});
+  await until(()=>qa.view.evaluate('(()=>{const n=[...document.querySelectorAll(".wb-strip-tile")].find(n=>n.dataset.mediaPath==="/storage/pictures/0.svg"),img=n?.querySelector("img");return img?.complete&&img.naturalWidth>0&&!n.classList.contains("error");})()'),'New user action actually loads the recovered source',8000);
+  assert(!(await qa.invoke('viewer.state')).errors.some(v=>v.path==='/storage/pictures/0.svg'));
+  await qa.invoke('panel.close',{id:'wb-viewer'});
+ }finally{await qa.close();}
+});
 test('the real strip speed control reflects restored/API preferences and writes through its public UI action',async()=>{
  const qa=await openStrip();try{
   await qa.invoke('preferences.set',{key:'scrollSpeed',value:400});await qa.invoke('viewer.open',{mode:'strip',source:'picture'});assert.equal(await qa.view.evaluate('Number(document.getElementById("wb-strip-speed").value)'),400,'Range defaults must not clamp a restored speed before max is configured');

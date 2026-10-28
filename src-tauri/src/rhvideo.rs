@@ -25,6 +25,8 @@ use url::Url;
 mod contract;
 #[path = "rhvideo_config.rs"]
 mod configuration;
+#[path = "rhvideo_exports.rs"]
+mod exports;
 
 const JSON_LIMIT: usize = 32 * 1024 * 1024;
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -421,6 +423,22 @@ fn current() -> Result<Arc<Session>, String> {
         .clone()
         .filter(|s| s.generation == GENERATION.load(Ordering::SeqCst))
         .ok_or_else(|| "请先连接并登录 RHVideo".into())
+}
+fn export_draft(session: &Session, action: &str, args: &Value) -> Result<Value, String> {
+    // Same lock order as logout: session, then drafts. A delayed old-account
+    // request must not prune or consume the new account's prepared selection.
+    let active = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
+    if !active.as_ref().is_some_and(|s| s.generation == session.generation)
+        || GENERATION.load(Ordering::SeqCst) != session.generation {
+        return Err("媒体账户已改变，导出准备未执行".into());
+    }
+    let mut drafts = exports::store().lock().map_err(|_| "导出准备不可用")?;
+    match action {
+        "exports.prepare" => drafts.prepare(session.generation, args),
+        "exports.discard" => drafts.discard(session.generation, args),
+        "exports.create" => drafts.consume(session.generation, args),
+        _ => Err("导出准备操作无效".into()),
+    }
 }
 fn config_path() -> Result<std::path::PathBuf, String> {
     Ok(crate::profile::data_dir()?.join("rhvideo-client.json"))
@@ -1725,6 +1743,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 };
             }
             configuration::clear();
+            exports::clear();
             GENERATION.fetch_add(1, Ordering::SeqCst);
             slot.take();
             drop(slot);
@@ -1741,6 +1760,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
                 let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
                 slot.take();
+                exports::clear();
                 generation
             };
             PREPARED.lock().map_err(|_| "播放队列状态不可用")?.clear();
@@ -1884,9 +1904,24 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 .map(|(k, v)| (k.as_str(), v.clone()))
                 .collect();
             let value = session.request(r.method, &r.path, &query, r.body).await?;
+            if args["name"].as_str().is_some_and(|name| name.starts_with("exports.")) {
+                exports::response(args["name"].as_str().unwrap(), &value)?;
+                if args["name"] != "exports.list" {
+                    exports::identity(&value, "id", args["params"]["id"].as_str().unwrap())?;
+                }
+            }
             if r.invalidates_catalog {
                 *session.videos.lock().await = None;
             }
+            Ok(value)
+        }
+        "exports.prepare" | "exports.discard" => export_draft(&session, &action, &args),
+        "exports.create" => {
+            let body = export_draft(&session, &action, &args)?;
+            let request_id = body["request_id"].as_str().unwrap().to_owned();
+            let value = session.request(reqwest::Method::POST, "api/v1/favorite-exports", &[], Some(body)).await?;
+            exports::job(&value)?;
+            exports::identity(&value, "request_id", &request_id)?;
             Ok(value)
         }
         "resolve" => {

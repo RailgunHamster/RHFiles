@@ -17,7 +17,7 @@ async function target(app,file){
   },file+' packaged app window');
   const session=await cdpSession(found,30000);
   await until(()=>session.evaluate("!!globalThis.RHFilesAPI?.list().some(a=>['rhvideo.state','rhvideo.player.state','rhvideo.grid.state'].includes(a.id))"),'view actions registered');
-  const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js','rhvideo-index.js','rhvideo-configuration.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
+  const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js','rhvideo-index.js','rhvideo-configuration.js','rhvideo-exports.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
   for(const code of codes){const served=await session.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=text=>createHash('sha256').update(text).digest('hex');assert.equal(hash(served),hash(source),'The tested executable must embed the current '+code);}
   // These are video-list workflows. The independent primary-gallery cases
   // verify the reference default; do not rely on a hidden list being clickable.
@@ -343,6 +343,30 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
     const backupShot=await view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'rhvideo-configuration-preview.png'),Buffer.from(backupShot.data,'base64'));
     const restoredBackup=await invoke(view,'configuration.restore',{ticket:stagedBackup.ticket});assert.equal(restoredBackup.applied,true);assert.equal(restoredBackup.favorites.add,1);assert.equal((await invoke(view,'state')).total,1,'Restore refreshes the real favorite catalog immediately');
     await assert.rejects(()=>invoke(view,'configuration.restore',{ticket:stagedBackup.ticket}),/预览已改变|预览已失效/,'A consumed confirmation cannot restore again');await invoke(view,'panel.close',{id:'wb-settings'});
+    for(const kind of ['picture','novel']){await invoke(view,'category',{kind});await invoke(view,'favorite.toggle',{id:'real-'+kind,kind});}
+    assert.equal((await invoke(view,'category',{kind:'favorite'})).total,3);
+    await invoke(view,'preferences.set',{key:'mediaType',value:'novel'});
+    const filtered=await invoke(view,'exports.create',{scope:'filtered'});assert.equal(filtered.total,1);
+    const completedFiltered=await until(async()=>{const job=await invoke(view,'exports.get',{id:filtered.id});assert(!['failed','cancelled'].includes(job.status),JSON.stringify(job));return job.status==='completed'?job:null;},'actual filtered favorite ZIP backend job',20000);
+    assert.equal(completedFiltered.can_download,true);assert.equal(completedFiltered.progress.included,1);
+    const all=await invoke(view,'exports.create',{scope:'all'});assert.equal(all.total,3,'All favorites ignores the active novel-only filter');
+    const completedAll=await until(async()=>{const job=await invoke(view,'exports.get',{id:all.id});assert(!['failed','cancelled'].includes(job.status),JSON.stringify(job));return job.status==='completed'?job:null;},'actual full favorite ZIP backend job',20000);
+    assert.equal(completedAll.progress.included,3);assert.equal(completedAll.progress.percent,100);
+    const zipTool=path.resolve('src-tauri/thirdparty/7z.exe');
+    for(const [job,types]of [[filtered,['novel']],[all,['video','picture','novel']]]){
+      // Inspect the server's private output to prove packing, not client saving.
+      // Native streamed download/save has its own pending acceptance work.
+      const archive=path.join(directory,'temp/favorite-exports',job.id,'favorites.zip');
+      const manifest=JSON.parse(execFileSync(zipTool,['e','-so',archive,'导出清单.json'],{windowsHide:true,encoding:'utf8'}));
+      assert.deepEqual(new Set(manifest.files.map(v=>v.type)),new Set(types));assert(manifest.files.every(v=>v.status==='included'&&v.bytes>0));
+    }
+    assert.equal((await invoke(view,'exports.list',{limit:100})).items.length,2);
+    assert.equal((await invoke(view,'exports.cancel',{id:all.id})).status,'completed','A late cancellation does not turn a completed job into a source-file operation');
+    for(const file of ['sample.mp4','original.png','book.txt'])assert(fs.existsSync(path.join(directory,file)),'ZIP operations must leave original '+file+' intact');
+    await invoke(view,'connection.logout');await invoke(view,'connection.connect',{server:'http://127.0.0.1:'+port,username:'preview',password:'fixture-only'});
+    assert.equal((await invoke(view,'exports.list')).items.length,2,'Backend jobs survive client logout and reconnect');
+    await invoke(view,'preferences.set',{key:'mediaType',value:''});
+    for(const kind of ['picture','novel']){await invoke(view,'category',{kind});await invoke(view,'favorite.toggle',{id:'real-'+kind,kind});}
     assert.equal((await invoke(view,'category',{kind:'picture'})).items[0].id,'real-picture');
     await invoke(view,'media.open',{id:'real-picture',kind:'picture'});
     await until(()=>view.evaluate("document.getElementById('full-image').naturalWidth===1600&&document.getElementById('full-image').naturalHeight===1000"),'actual processed WebP decode').catch(async error=>{
@@ -366,7 +390,7 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
     await invoke(view,'category',{kind:'video'});const videoStage=await invoke(view,'confirm.begin',{name:'trash.stage',params:{kind:'video',id:'real-video'}});await invoke(view,'confirm.advance',{ticket:videoStage.ticket});await invoke(view,'confirm.advance',{ticket:videoStage.ticket});assert.equal((await invoke(view,'state')).total,0,'a successful source write must invalidate the native catalog and refresh the UI immediately');assert.equal(fs.existsSync(path.join(directory,'sample.mp4')),false);
     await invoke(view,'remote.trash.restore',{params:{kind:'video',id:'real-video'}});assert.equal((await invoke(view,'state')).total,1,'restoring must immediately return the item without a manual refresh');
     assert.deepEqual((await invoke(view,'ui.contract')).missing,[]);
-    console.log(JSON.stringify({pass:true,checks:'actual sibling RHVideo service, isolated SQLite, login, media lists, favorites write, actual chapter reads/progress, frames'}));
+    console.log(JSON.stringify({pass:true,checks:'actual sibling RHVideo service, isolated SQLite, login, media lists, favorites write, actual chapter reads/progress, frames',favoriteExports:{filtered:completedFiltered.total,all:completedAll.total,included:completedAll.progress.included,percent:completedAll.progress.percent,manifestTypes:['video','picture','novel'],persistedAfterReconnect:true,originalsUntouched:true,nativeDownloadAcceptance:false}}));
   }finally{
     view?.close();
     // uv may exit between exitCode inspection and taskkill. Cleanup failures

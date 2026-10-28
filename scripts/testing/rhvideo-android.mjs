@@ -27,7 +27,7 @@ assert(aapt,'Android aapt is required to validate the native runtime');
 const apkEntries=execFileSync(aapt,['list',path.resolve(apk)],{encoding:'utf8',windowsHide:true}).split(/\r?\n/),abis=new Set(apkEntries.filter(v=>v.startsWith('lib/')).map(v=>v.split('/')[1]));
 assert(abis.size>0,'Release APK has no native libraries');
 for(const abi of abis)assert(apkEntries.includes('lib/'+abi+'/librhfiles_android_lib.so'),'Missing RHFiles runtime for '+abi+'; use the same ABI filters as the completed Rust build');
-for(const relative of ['rhvideo.html','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-tags.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
+for(const relative of ['rhvideo.html','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-tags.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-exports.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(apk),'assets/rhvideo/'+relative],{windowsHide:true,maxBuffer:8*1024*1024});
   const expected=fs.readFileSync(path.resolve('src',relative));
   assert.equal(createHash('sha256').update(packaged).digest('hex'),createHash('sha256').update(expected).digest('hex'),'APK must include the current '+relative);

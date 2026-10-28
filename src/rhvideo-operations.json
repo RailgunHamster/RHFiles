@@ -1,6 +1,15 @@
 {
   "version": 1,
   "operations": {
+    "exports.list": {
+      "method": "GET", "path": "favorite-exports", "query": {"limit": "int:1:100"}
+    },
+    "exports.get": {
+      "method": "GET", "path": "favorite-exports/{id}", "params": {"id": "uuid"}
+    },
+    "exports.cancel": {
+      "method": "DELETE", "path": "favorite-exports/{id}", "params": {"id": "uuid"}, "risk": "write"
+    },
     "account.me": { "method": "GET", "path": "auth/me" },
     "account.refresh": {
       "method": "POST",
