@@ -38,7 +38,7 @@ class RhVideoDownloadsTest {
   private fun awaitTerminal(id:String):JSONObject {val end=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);while(System.nanoTime()<end){val value=task(id);if(value.getString("state") in setOf("saved","failed","cancelled"))return value;Thread.sleep(10)};error("Download did not reach a terminal state: ${task(id)}")}
   @Test fun foregroundDownloadStreamsToANewFileAndKeepsTokensOutOfTasksAndJournal(){
     ready();server.enqueue(MockResponse().setHeader("Content-Type","application/zip").setBody(zip));val file=output("native.zip");val id=start(file)
-    val result=awaitTerminal(id);assertEquals("saved",result.getString("state"));assertEquals(zip,file.readText());assertEquals(12,result.getLong("bytes"));assertFalse(result.toString().contains("download-native-only"))
+    val result=awaitTerminal(id);assertEquals("saved",result.getString("state"));assertEquals(file.name,result.getString("name"));assertEquals(zip,file.readText());assertEquals(12,result.getLong("bytes"));assertFalse(result.toString().contains("download-native-only"))
     val metadata=server.takeRequest(5,TimeUnit.SECONDS)!!;assertEquals("/api/v1/favorite-exports/$exportId",metadata.path)
     val download=server.takeRequest(5,TimeUnit.SECONDS)!!;assertEquals("/api/v1/favorite-exports/$exportId/download",download.path);assertEquals("Bearer download-native-only",download.getHeader("Authorization"));assertFalse(download.path!!.contains("token"))
     assertFalse(File(context.filesDir,"rhvideo-downloads.json").readText().contains("download-native-only"))
@@ -58,5 +58,29 @@ class RhVideoDownloadsTest {
     assertEquals("cancelled",(client.request("exports.download.cancel",JSONObject().put("taskId",id))as JSONObject).getString("state"))
     service=Robolectric.buildService(RhVideoDownloadService::class.java).create().also{it.get().onStartCommand(null,0,1)}
     assertEquals("cancelled",task(id).getString("state"));assertFalse(RhVideoDownloads.get(context).hasActive());assertFalse(file.exists());assertEquals(2,server.requestCount)
+  }
+  private fun pending(metadata:JSONObject)=JSONObject().put("id",exportId).put("ticket",metadata.getString("ticket")).put("process",client.processIdentity()).put("_sessionGeneration",metadata.getLong("generation"))
+  @Test fun pickerPreparationIsConsumedOnceAndStartsForegroundWorkWithoutASecondMetadataRequest(){
+    ready();val pick=pending(client.prepareZip(JSONObject().put("id",exportId)));server.enqueue(MockResponse().setHeader("Content-Type","application/zip").setBody(zip))
+    val file=output("from-picker.zip");val reply=client.startPreparedZip(pick,RhVideoZipDestination.local(context,file.path));val id=reply.getJSONObject("task").getString("id")
+    assertEquals("queued",reply.getJSONObject("task").getString("state"));assertEquals(2,server.requestCount)
+    try{client.startPreparedZip(pick,RhVideoZipDestination.local(context,output("replayed.zip").path));fail("Picker preparation replayed")}catch(_:java.io.IOException){}
+    service=Robolectric.buildService(RhVideoDownloadService::class.java).create().also{it.get().onStartCommand(null,0,1)}
+    assertEquals("saved",awaitTerminal(id).getString("state"));assertEquals(zip,file.readText());assertEquals(3,server.requestCount);assertFalse(output("replayed.zip").exists())
+    assertEquals("/api/v1/favorite-exports/$exportId",server.takeRequest(5,TimeUnit.SECONDS)!!.path);assertEquals("/api/v1/favorite-exports/$exportId/download",server.takeRequest(5,TimeUnit.SECONDS)!!.path)
+  }
+  @Test fun anExpiredCancelledOrOldProcessPickerCannotStartAnyDownload(){
+    ready();val expired=pending(client.prepareZip(JSONObject().put("id",exportId)));org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMinutes(6))
+    try{client.startPreparedZip(expired,RhVideoZipDestination.local(context,output("expired.zip").path));fail("Expired preparation accepted")}catch(_:java.io.IOException){}
+    ready();val cancelled=pending(client.prepareZip(JSONObject().put("id",exportId)));client.discardZipPick(cancelled.getString("ticket"))
+    try{client.startPreparedZip(cancelled,RhVideoZipDestination.local(context,output("discarded.zip").path));fail("Discarded preparation accepted")}catch(_:java.io.IOException){}
+    ready();val old=pending(client.prepareZip(JSONObject().put("id",exportId))).put("process","old-process")
+    try{client.startPreparedZip(old,RhVideoZipDestination.local(context,output("old-process.zip").path));fail("Old process preparation accepted")}catch(_:java.io.IOException){}
+    assertEquals(4,server.requestCount);assertFalse(RhVideoDownloads.get(context).hasActive());assertFalse(output("expired.zip").exists());assertFalse(output("discarded.zip").exists());assertFalse(output("old-process.zip").exists())
+  }
+  @Test fun accountChangeInvalidatesPreparedPickerWithoutRetainingItsAuthority(){
+    ready();val pick=pending(client.prepareZip(JSONObject().put("id",exportId)));client.logout()
+    try{client.startPreparedZip(pick,RhVideoZipDestination.local(context,output("old-account.zip").path));fail("An old account picker started a download")}catch(_:java.io.IOException){}
+    assertEquals(2,server.requestCount);assertFalse(output("old-account.zip").exists());assertFalse(RhVideoDownloads.get(context).hasActive())
   }
 }

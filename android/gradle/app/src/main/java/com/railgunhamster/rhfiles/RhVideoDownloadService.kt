@@ -20,22 +20,23 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 /** A picker result is a NEW document, not permission to truncate an arbitrary URI. */
-internal class RhVideoZipDestination private constructor(val path:String,private val opener:()->OutputStream,private val cleanup:()->String) {
+internal class RhVideoZipDestination private constructor(val path:String,private val readName:()->String?,private val opener:()->OutputStream,private val cleanup:()->String) {
   var opened=false;private set
   private var cleaned=false
   fun open():OutputStream=opener().also{opened=true}
+  fun displayName():String?=readName()?.take(512)
   @Synchronized fun failed():String{if(cleaned)return "";cleaned=true;return cleanup()}
   companion object {
     fun document(context:Context,uri:Uri):RhVideoZipDestination {
       require(uri.scheme=="content"){"保存位置不是系统文档"}
-      return RhVideoZipDestination(uri.toString(),{context.contentResolver.openOutputStream(uri,"wt")?:error("无法打开新建文档")},{
+      return RhVideoZipDestination(uri.toString(),{context.contentResolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),null,null,null)?.use{cursor->if(cursor.moveToFirst())cursor.getString(0)else null}},{context.contentResolver.openOutputStream(uri,"wt")?:error("无法打开新建文档")},{
         try{if(DocumentsContract.deleteDocument(context.contentResolver,uri))"" else "未完成的新文档未能清理，请手动删除"}catch(_:Exception){"未完成的新文档未能清理，请手动删除"}
       })
     }
     fun local(context:Context,path:String):RhVideoZipDestination {
       val file=NativeStorage(context).local(path);require(file.parentFile?.isDirectory==true){"保存目录不存在"}
       var created=false
-      return RhVideoZipDestination(file.path,{
+      return RhVideoZipDestination(file.path,{file.name},{
         check(!file.exists()){ "目标已经存在，未覆盖；请选择新的文件名" }
         // Atomic O_EXCL admission: never truncate a file created by another task.
         FileOutputStream(Os.open(file.path,OsConstants.O_WRONLY or OsConstants.O_CREAT or OsConstants.O_EXCL,0x180)).also{created=true}
@@ -107,6 +108,7 @@ internal class RhVideoDownloads private constructor(private val context:Context)
   fun progress(job:Job,bytes:Long,speed:Double){
     synchronized(lock){checkpoint(job);job.data.put("bytes",bytes).put("speed",speed)};publish(job)
   }
+  fun name(job:Job,name:String){synchronized(lock){checkpoint(job);job.data.put("name",name)};publish(job)}
   fun committing(job:Job){synchronized(lock){checkpoint(job);job.data.put("state","publishing")};publish(job)}
   private fun publish(job:Job){
     val snapshot=synchronized(lock){job.data.put("revision",job.data.optLong("revision")+1);persist();JSONObject(job.data.toString())}

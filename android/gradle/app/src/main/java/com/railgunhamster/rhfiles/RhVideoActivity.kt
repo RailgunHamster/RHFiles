@@ -51,12 +51,12 @@ class RhVideoActivity:AppCompatActivity() {
   private val zipDocument=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")){uri->
     val pending=synchronized(this){zipPick.also{zipPick=null}}
     if(pending==null){if(uri!=null)RhVideoZipDestination.document(applicationContext,uri).failed();return@registerForActivityResult}
-    if(uri==null){zipEvent(pending,JSONObject().put("picked",false));return@registerForActivityResult}
+    if(uri==null){client.discardZipPick(pending.optString("ticket"));zipEvent(pending,JSONObject().put("picked",false));return@registerForActivityResult}
     val app=applicationContext;val destination=RhVideoZipDestination.document(app,uri);val downloads=RhVideoDownloads.get(app)
     try{downloads.prepare{
-      try{check(pending.optString("process")==client.processIdentity()){ "应用进程已重启，请重新选择保存位置" };check(client.contextMatches(pending)){"媒体账户已改变，未保存 ZIP"};val args=JSONObject().put("id",pending.getString("id")).put("_sessionGeneration",pending.getLong("_sessionGeneration"));zipEvent(pending,client.startZip(args,destination))}
+      try{zipEvent(pending,client.startPreparedZip(pending,destination))}
       catch(e:Exception){val cleanup=destination.failed();val text=(e.message?:"ZIP 下载未启动")+if(cleanup.isEmpty())"" else "；$cleanup";downloads.reportWarning(text);zipEvent(pending,JSONObject().put("error",text))}
-    }}catch(e:Exception){val cleanup=destination.failed();val text="保存准备队列已满：${e.message}"+if(cleanup.isEmpty())"" else "；$cleanup";downloads.reportWarning(text);zipEvent(pending,JSONObject().put("error",text))}
+    }}catch(e:Exception){client.discardZipPick(pending.optString("ticket"));val cleanup=destination.failed();val text="保存准备队列已满：${e.message}"+if(cleanup.isEmpty())"" else "；$cleanup";downloads.reportWarning(text);zipEvent(pending,JSONObject().put("error",text))}
   }
   private fun zipEvent(pending:JSONObject,result:JSONObject){runOnUiThread{if(!isDestroyed&&::web.isInitialized)web.evaluateJavascript("window.RHVideoNative?.dispatch('rhvideo-download-picker',${JSONObject().put("generation",pending.optLong("_sessionGeneration",-1)).put("pickId",pending.optString("pickId")).put("result",result)})",null)}}
   private fun configurationEvent(kind:String,context:JSONObject,value:JSONObject){
@@ -134,9 +134,9 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
               "exports.download"->{
                 if(args.has("path"))client.startZip(args,RhVideoZipDestination.local(applicationContext,args.getString("path")))
                 else{
-                  val meta=client.prepareZip(args);val pending=JSONObject().put("id",meta.getString("id")).put("pickId",java.util.UUID.randomUUID().toString()).put("process",client.processIdentity()).put("_sessionGeneration",meta.getLong("generation"))
-                  synchronized(this){check(zipPick==null){"已有 ZIP 保存选择器打开"};zipPick=pending}
-                  runOnUiThread{try{zipDocument.launch(meta.getString("name"))}catch(e:Exception){synchronized(this){if(zipPick===pending)zipPick=null};zipEvent(pending,JSONObject().put("error",e.message?:"无法打开系统保存选择器"))}}
+                  val meta=client.prepareZip(args);val pending=JSONObject().put("id",meta.getString("id")).put("ticket",meta.getString("ticket")).put("pickId",java.util.UUID.randomUUID().toString()).put("process",client.processIdentity()).put("_sessionGeneration",meta.getLong("generation"))
+                  try{synchronized(this){check(zipPick==null){"已有 ZIP 保存选择器打开"};zipPick=pending}}catch(e:Exception){client.discardZipPick(meta.getString("ticket"));throw e}
+                  runOnUiThread{try{zipDocument.launch(meta.getString("name"))}catch(e:Exception){client.discardZipPick(meta.getString("ticket"));synchronized(this){if(zipPick===pending)zipPick=null};zipEvent(pending,JSONObject().put("error",e.message?:"无法打开系统保存选择器"))}}
                   JSONObject().put("requested",true).put("pickId",pending.getString("pickId"))
                 }
               }

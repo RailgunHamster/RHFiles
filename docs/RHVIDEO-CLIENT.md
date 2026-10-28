@@ -55,6 +55,8 @@ Windows 使用本机文件选择器；Android 使用系统文档选择器。手�
 
 ZIP 字节直接由原生会话流式写入，不经过渲染器，不覆盖已有本地文件；进程中断不自动恢复下载。Windows 后台线程、Android 前台服务不依赖导出界面是否打开，Android 通知可回到导出面板。记录按服务器和账户隔离、不存令牌。此功能尚未正式发包：Windows 真实后端 UI／显式路径后台保存已验收，Android JVM 及现有原生播放回归通过；**Android 实际 ZIP 选择器、前后台／进程边界和 Windows 系统保存选择器仍待专门原生验收**，不能将脚本或播放测试当作这些流程已通过。见 `RHVIDEO-PARITY.md` 的具体证据及剩余缺口。
 
+Android 保存选择器使用原生内存中的一次性准备票据（最多四个、五分钟有效）；选择器返回后不再进行第二次元数据请求才启动服务。选择耗时太久、账户／进程变化时明确失败，重新操作会创建新的保存意图，不重放过时选择。传输任务的 `name` 在后台读取实际保存位置的显示名，界面不需要解析 `content:` URI。
+
 新增的页码跳转、摘录搜索、截图逐张浏览/原清单定位、任务图片放大、阅读器目录/收藏及统一音量，同样是公开动作，不是只能点 UI 的特殊逻辑：`rhvideo.page.jump`、`rhvideo.gallery.jump`、`rhvideo.novel.previewSearch`、`rhvideo.gallery.inspect`、`rhvideo.image.reveal`、`rhvideo.image.preview`、`rhvideo.reader.toc`、`rhvideo.reader.favorite`、`rhvideo.volume.set`。统一音量默认 20%，与单个视频的音量相乘，静音后恢复不会丢失各格音量；不修改 Windows/Android 系统音量或普通本地播放器。
 
 章节速览每页 40 章、每章最多 720 字，搜索标题和摘录，支持拼音；界面明确显示“本页”范围，可以继续翻页查找，不无限拉取整本正文。截图浏览支持完整筛选队列的前后切换、“播放此刻”以及定位到源视频所在的清单页。

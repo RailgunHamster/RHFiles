@@ -60,6 +60,8 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val refreshLock=Any()
   private val configuration=RhVideoBackups()
   private val exports=RhVideoExports()
+  private data class ZipPick(val metadata:JSONObject,val expires:Long)
+  private val zipPicks=linkedMapOf<String,ZipPick>()
   private val http=OkHttpClient.Builder().proxy(Proxy.NO_PROXY).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(true)
     .connectTimeout(8,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
   private val mediaHttp=http.newBuilder().callTimeout(0,TimeUnit.SECONDS).eventListenerFactory(RhVideoMediaTrace(context.applicationContext)).build()
@@ -93,7 +95,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val writes=java.util.concurrent.ThreadPoolExecutor(2,2,0,TimeUnit.MILLISECONDS,java.util.concurrent.ArrayBlockingQueue<Runnable>(32),{job->Thread(job,"RHVideo-write").apply{isDaemon=true}},java.util.concurrent.ThreadPoolExecutor.AbortPolicy())
   fun listen(listener:(String,JSONObject)->Unit):java.io.Closeable {listeners.add(listener);return java.io.Closeable{listeners.remove(listener)}}
   private fun emit(name:String,payload:JSONObject){listeners.forEach{listener->runCatching{listener(name,JSONObject(payload.toString()))}}}
-  private fun resetMediaState(){configuration.clear();exports.clear();preview=RhVideoPreviewState();favoriteIds.clear();favoriteLoaded=false;favoriteRevision++;favoriteJobs.clear();singleLoop=false;singleRate=1.0}
+  private fun resetMediaState(){configuration.clear();exports.clear();zipPicks.clear();preview=RhVideoPreviewState();favoriteIds.clear();favoriteLoaded=false;favoriteRevision++;favoriteJobs.clear();singleLoop=false;singleRate=1.0}
   fun checkGrid(ticket:String,lease:String){val s=current();synchronized(lock){check(gridSession?.let{it.queue.ticket==ticket&&it.lease==lease&&it.queue.generation==s.generation}==true){"同屏会话已改变，请重新打开"}}}
   fun closeGrid(ticket:String,lease:String,commit:Boolean=true):JSONObject {
     val owner=synchronized(lock){
@@ -348,18 +350,43 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
     val date=java.time.OffsetDateTime.parse(job.getString("created_at")).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmm",java.util.Locale.ROOT))
     return JSONObject().put("id",id).put("name","RHVideo-喜爱-$date.zip").put("total",job.getLong("archive_bytes")).put("generation",s.generation)
   }
-  fun prepareZip(args:JSONObject):JSONObject=zipMetadata(current(),args)
+  fun prepareZip(args:JSONObject):JSONObject {
+    val s=current();val metadata=zipMetadata(s,args);val ticket=UUID.randomUUID().toString()
+    return synchronized(lock){
+      check(live(s)){"媒体账户已改变"};val now=android.os.SystemClock.elapsedRealtime();zipPicks.entries.removeAll{it.value.expires<=now}
+      check(zipPicks.size<4){"已有过多 ZIP 保存选择，请先完成或取消"};zipPicks[ticket]=ZipPick(JSONObject(metadata.toString()),now+300000)
+      JSONObject(metadata.toString()).put("ticket",ticket)
+    }
+  }
+  fun discardZipPick(ticket:String){synchronized(lock){zipPicks.remove(ticket)}}
   fun processIdentity():String=processId
+  /** Consume native preparation once. Never wait for a second metadata GET after
+   * returning from the system picker, before foreground-service admission. */
+  fun startPreparedZip(pending:JSONObject,destination:RhVideoZipDestination):JSONObject {
+    try{
+      val s=current();val metadata=synchronized(lock){
+        val pick=zipPicks.remove(pending.getString("ticket"))?:error("ZIP 保存准备已失效，请重新选择")
+        check(pending.optString("process")==processIdentity()&&live(s)&&pick.metadata.getLong("generation")==s.generation&&pending.getLong("_sessionGeneration")==s.generation){"媒体账户或进程已改变，未保存 ZIP"}
+        check(pick.expires>android.os.SystemClock.elapsedRealtime()){ "ZIP 保存准备已过期，请重新选择" }
+        check(pending.getString("id")==pick.metadata.getString("id")){"ZIP 保存目标已改变"};pick.metadata
+      }
+      return enqueueZip(s,metadata,destination)
+    }catch(e:Exception){val cleanup=destination.failed();throw java.io.IOException((e.message?:"ZIP 下载未启动")+if(cleanup.isEmpty())"" else "；$cleanup",e)}
+  }
   fun startZip(args:JSONObject,destination:RhVideoZipDestination):JSONObject {
     try{
-      val s=current();val meta=zipMetadata(s,args);val manager=RhVideoDownloads.get(appContext)
+      val s=current();return enqueueZip(s,zipMetadata(s,args),destination)
+    }catch(e:Exception){val cleanup=destination.failed();throw java.io.IOException((e.message?:"ZIP 下载未启动")+if(cleanup.isEmpty())"" else "；$cleanup",e)}
+  }
+  private fun enqueueZip(s:Session,meta:JSONObject,destination:RhVideoZipDestination):JSONObject {
+      check(live(s)){"媒体账户已改变，未启动下载"};val manager=RhVideoDownloads.get(appContext)
       return manager.start(downloadOwner(s),s.generation,meta.getString("id"),meta.getString("name"),meta.getLong("total"),destination,
         {task->emit("rhvideo-download-progress",JSONObject().put("generation",s.generation).put("task",task))},
         {job->try{streamZip(s,meta.getString("id"),meta.getLong("total"),destination,manager,job)}catch(e:Exception){val cleanup=destination.failed();throw java.io.IOException((e.message?:"ZIP 下载失败")+if(cleanup.isEmpty())"" else "；$cleanup",e)}})
-    }catch(e:Exception){val cleanup=destination.failed();throw java.io.IOException((e.message?:"ZIP 下载未启动")+if(cleanup.isEmpty())"" else "；$cleanup",e)}
   }
   private fun streamZip(s:Session,id:String,expected:Long,destination:RhVideoZipDestination,manager:RhVideoDownloads,job:RhVideoDownloads.Job){
     fun checkCurrent(){manager.checkpoint(job);check(live(s)){"媒体账户已改变，下载停止；不会自动恢复"}}
+    checkCurrent();try{destination.displayName()?.takeIf{it.isNotBlank()}?.let{manager.name(job,it)}}catch(e:Exception){manager.reportWarning("无法读取保存位置的显示名：${e.message}")};checkCurrent()
     checkCurrent();val call=zipHttp.newCall(Request.Builder().url(s.base.resolve("api/v1/favorite-exports/$id/download")!!).header("Authorization","Bearer ${token(s)}").build())
     job.interrupt={call.cancel()};checkCurrent()
     call.execute().use{response->
