@@ -1794,7 +1794,13 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             *GRID_QUEUE.lock().map_err(|_| "网格队列不可用")? = None;
             #[cfg(windows)]
             {
-                crate::rhvideo_player::stop_grid();
+                // VLC stop/release can wait for decoder and network threads.
+                // Do not occupy an async runtime worker while survivors are
+                // querying the process-owned completion. Still await the real
+                // release; neither window disappearance nor enqueueing is a
+                // successful close receipt.
+                tauri::async_runtime::spawn_blocking(crate::rhvideo_player::stop_grid)
+                    .await.map_err(|_|"停止同屏播放未能确认完成")?;
                 if let Some(w) = app.get_webview_window("window-rhvideo-grid") {
                     w.close().map_err(|e|format!("同屏播放已停止，但窗口关闭失败：{e}"))?;
                 }

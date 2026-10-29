@@ -6,6 +6,18 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 关闭释放隔离与 codec 对照（验证继续，未发包）
+
+Windows `grid.close` 的同步 VLC 释放现移到阻塞工作线程；仍先校验会话／输入、撤销队列，等待真实释放和原生窗口关闭后，才开始一次性暂存提交并发布完成，不将已发送命令或消失的 WebView 当作成功。新增派发顺序策略检查，RHVideo Rust **67/67** 通过，开发 EXE 构建成功（`rhvideo-grid-close-blocking-rust.log`、`rhvideo-grid-close-blocking-build.log`）。独立私有快照 EXE SHA-256 为 `9be25ff8c6c4e46d3dc2a817d04b827700e9530ef930a24171e5cf96682c7d35`，使用已校验的应用内 VLC 3.0.24；实际关闭／存活页恢复四项定向回归 **4/4、零跳过**，原 5000 ms 期限不变（`rhvideo-grid-close-blocking-focused.log`）。这只证明该轮路径可用，**未证明先前完整回归的间歇关闭超时已根治**，新 EXE 的完整串行回归仍需单独执行。
+
+Android 新增仅 QA 可选的同步 codec 队列对照，使用 Media3 1.11.1 公开 `forceDisableMediaCodecAsynchronousQueueing()` 与工厂覆写，不反射私有成员、不改变音频水位、不允许两种实验混用。每路须记录实际音频／视频 adapter 类型，宿主、BuildConfig 和每格回执都一致才接受实验结果；默认构建仍走原有工厂。新增四项 JVM 检查，保证配置和 adapter 原样传递、工厂只调用一次，失败不重放，不记不存在的完成。
+
+同步实验 QA 构建 **6 分 14 秒成功，447/447 JVM、零失败／错误／跳过**（短路径 QA 的 `rhvideo-sync-codec-build.log`）。主 APK SHA-256 `afab043f209ed0a7a306e94e1ce3ecd822cb1f71c0dec6df7dd0b518a7bd9a5f`、探针 `5d78f62c5573edbc22897f4dcac5f1157bc43c5b4e3901187993ad5c8978c074` 在自有 `emulator-5586` 安装核对；三路实际均为同步 adapter，但严格 grid **仍失败**：5.419 秒只推进 **1011／891／1442 ms**、新增 **16／14／20 帧**（`rhvideo-sync-codec-grid.log`、`rhvideo-android-grid-1793313463612-release`）。这不是实质改善，**不采用为产品默认值**。
+
+共享业务当前 **854/854、零跳过**（`rhvideo-codec-close-final-node.log`）。随后恢复默认 codec、音频实验值 0，并增加仅失败时、计时器恢复后的五秒只读采样；原先暂停 WebView 计时器的五秒判定不变，后续采样不能把失败改成通过，不 seek／重开／重试。默认构建 **7 分 3 秒成功，447/447 JVM、零失败／错误／跳过**（短路径 QA 的 `rhvideo-default-codec-control-build.log`），主 APK `2ccd46ded8bd6f502a2ba7bb506d5b96a36df0c3e4b56c44e81c9de97b4026d8`、探针 `dc34138dc63b0b2bca51495df6f71e2777a0197afb388de66cfd5a53bd222bf4` 实际安装核对；BuildConfig 确认 `default`／`0`。
+
+默认原生回归仍 **失败**（`rhvideo-default-codec-active-control-grid.log`、`rhvideo-android-grid-1793314232760-release`）：原 5.620 秒推进 **390／414／448 ms**、新增 **7／8／10 帧**；恢复计时器后的 5.218 秒推进 **997／1015／1045 ms**、新增 **16／14／23 帧**，同输入未更换。因此暂停 WebView 计时器不能单独解释这次停滞，后一次采样也未达正常速度。继续检查解码输出／供给，不将默认恢复或小幅推进当作修复。新 Windows EXE 的完整串行原生验收已启动，日志 `rhvideo-grid-close-blocking-full-windows.log`、材料目录 `rhvideo-windows-1Lb2m0`；未终止前不计完整通过。正式 Windows 实例、实体手机、主机／模拟器／音频服务均未重启或替换；没有发布新包，完整目标仍未完成。
+
 ## 2026-10-30 最新完整 Windows 失败与 Android 原生控件（验证继续，未发包）
 
 前轮仍在运行的最新 EXE `22b5e6d9f107e3c9a208f03ae42d41f6b3711bb84610b48265a0aad269c1ebbd` 完整串行验收现已终止：**102/103 通过、1 失败、零跳过**，24 分 45 秒（`rhvideo-client-capture-full-windows.log`，`rhvideo-windows-UGmf58`）。唯一失败是同屏自身关闭、首个存活 WebView 被 debugger 暂停且重新发现不可用的真实故障场景：命令只发送一次，健康的媒体库页已返回 running，但原有 5000 ms 内未取回终态。不借旧 EXE 的 103/103 为新 EXE 背书，也不放宽时限或重复关闭。

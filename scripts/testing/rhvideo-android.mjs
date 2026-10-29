@@ -33,6 +33,8 @@ const rhvideoFixture=options=>actualMode?realRhVideoService({directory:path.join
 const mediaMode=gridMode||playlistMode||previewMode||singleMode||rotationMode||favoritesMode||stripMode||lifecycleMode;
 const audioStartMs=Number(process.env.RHFILES_QA_AUDIO_START_MS||0);
 assert(Number.isInteger(audioStartMs)&&audioStartMs>=0&&audioStartMs<=100&&(audioStartMs===0||gridMode),'Audio waterline experiment requires grid mode and an explicit 1..100 ms value');
+const codecMode=process.env.RHFILES_QA_CODEC_MODE||'default';
+assert(['default','synchronous'].includes(codecMode)&&(codecMode==='default'||gridMode&&audioStartMs===0),'Codec queueing experiment requires grid mode, synchronous codecs and unchanged audio startup');
 function verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode=false,lifecycleMode=false}){
   if(actualMode)return;
   const authorized=r=>r.authorization==='Bearer fixture-bearer-do-not-persist';
@@ -46,13 +48,17 @@ function verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMo
     if(!mediaMode&&!ticketsMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
   }
 }
-function verifyGridAudioParameters(output,expected){
+function verifyGridAudioParameters(output,expected,expectedCodecMode='default'){
   const states=output.split(/\r?\n/).filter(line=>line.startsWith('STEP: grid settled ')).map(line=>JSON.parse(line.slice('STEP: grid settled '.length)));
   assert(states.length>0,'Grid acceptance requires actual rendered-state checkpoints');
   for(const state of states){
     assert.equal(state.qaAudioStartMs,expected,'Experimental output must not pass the default grid gate');
+    assert.equal(state.qaCodecMode,expectedCodecMode,'A codec experiment cannot pass the default grid gate');
     assert(state.cells.length>0);
     for(const cell of state.cells){
+      const adapters=cell.diagnostics?.codecAdapters;
+      if(expectedCodecMode==='default')assert.equal(adapters,null,'The default build cannot instantiate the codec experiment');
+      else{assert.equal(expected,0);for(const type of ['audio','video'])assert.equal(adapters?.[type],'androidx.media3.exoplayer.mediacodec.SynchronousMediaCodecAdapter','Verify actual adapter implementation');}
       const receipt=cell.diagnostics?.audioStartExperiment;
       if(expected===0){assert.equal(receipt,null,'Default output must not contain an experimental waterline');continue;}
       assert.equal(receipt?.requestedMs,expected);
@@ -113,7 +119,7 @@ if(favoritesMode)for(const key of ['video:video-0','video:video-1','picture:pict
 const failedFixture=gridMode&&!gridRestoreMode&&!gridRotationMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
 const artifact=path.resolve('test-artifacts/rhvideo-android'+(lifecycleMode?'-lifecycle':taskCenterMode?'-task-center':rulesMode?'-rules':actualMode?(loginMode?'-login':duplicatesMode?'-duplicates':priorityMode?'-task-priority':'-exports'):gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
-fs.writeFileSync(path.join(artifact,'qa-parameters.json'),JSON.stringify({audioStartMs,productDefault:audioStartMs===0},null,2));
+fs.writeFileSync(path.join(artifact,'qa-parameters.json'),JSON.stringify({audioStartMs,codecMode,productDefault:audioStartMs===0&&codecMode==='default'},null,2));
 fs.writeFileSync(path.join(artifact,'fixture-media.json'),JSON.stringify([['landscape',video],['portrait',mediaMode?portrait:null]].filter(([,file])=>file&&fs.existsSync(file)).map(([kind,file])=>({kind,bytes:fs.statSync(file).size,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')})),null,2));
 function captureGridAudio(expectedPid){
   // Only after owned-emulator validation and a failed grid assertion. Keep
@@ -163,7 +169,7 @@ try{
     if(priorityMode)modeArgs=['-e','mode','task-priority'];
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
-  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,'-e','audioStartMs',String(audioStartMs),...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='',armedTaskFailures=false,gridAudioCapture=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}const failure=output.match(/^STEP: QA: grid-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode)&&!gridAudioCapture&&failure)gridAudioCapture=captureGridAudio(Number(failure[1])).catch(error=>{console.error('Live grid audio diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
@@ -176,7 +182,7 @@ try{
   }
   const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
   assert.match(output,lifecycleMode?/PASS: native HTTP lifecycle, single and grid/:taskCenterMode?/PASS: packaged task center/:priorityMode?/PASS: actual task priority/:duplicatesMode?/PASS: actual duplicates/:rulesMode?/PASS: native tag rules/:loginMode?/PASS: native login phase login/:exportsMode?/PASS: favorite exports recovery armed/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: contextual workflow entries and real card selection, reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
-  if(gridMode||lifecycleMode)verifyGridAudioParameters(output,audioStartMs);
+  if(gridMode||lifecycleMode)verifyGridAudioParameters(output,audioStartMs,codecMode);
   async function stopOwnedProcess(){
     run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
     let stoppedPid='',stopDeadline=Date.now()+5000;do{try{stoppedPid=run(['shell','pidof','com.railgunhamster.rhfiles']);}catch(error){assert.equal(error.status,1);stoppedPid=String(error.stdout||'');}if(!stoppedPid.trim())break;await new Promise(resolve=>setTimeout(resolve,100));}while(Date.now()<stopDeadline);assert.equal(stoppedPid.trim(),'','The target process must actually be stopped before recovery');

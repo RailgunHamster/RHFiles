@@ -19,6 +19,12 @@ public class RhVideoInstrumentation extends Instrumentation {
   private void checkAudioStartExperiment(JSONObject state)throws Exception{
     int expected=Integer.parseInt(args.getString("audioStartMs","0"));
     require(state.getInt("qaAudioStartMs")==expected,"QA audio start setting must match the explicit host request; experimental playback cannot pass the default gate");
+    String codecMode=args.getString("codecMode","default");require(codecMode.equals(state.getString("qaCodecMode")),"The actual native codec mode must match the host request");
+    for(int i=0;i<state.getJSONArray("cells").length();i++){
+      JSONObject diagnostic=state.getJSONArray("cells").getJSONObject(i).getJSONObject("diagnostics");
+      if(codecMode.equals("default"))require(diagnostic.isNull("codecAdapters"),"Default playback cannot contain a codec queueing experiment");
+      else{JSONObject adapters=diagnostic.getJSONObject("codecAdapters");for(String type:new String[]{"audio","video"})require(adapters.getString(type).equals("androidx.media3.exoplayer.mediacodec.SynchronousMediaCodecAdapter"),"Verify the actual live codec adapter for "+type+", not only BuildConfig");}
+    }
     if(expected==0)return;
     JSONArray cells=state.getJSONArray("cells");
     for(int i=0;i<cells.length();i++){
@@ -89,7 +95,22 @@ public class RhVideoInstrumentation extends Instrumentation {
       advancing&=a.getString("id").equals(b.getString("id"))&&a.getLong("inputId")==b.getLong("inputId")&&b.getBoolean("playing")&&!b.getBoolean("paused")&&b.isNull("error")&&position>=4000&&pts>=4000&&frames>=60;
     }
     step("grid continuity "+new JSONObject().put("elapsedMs",elapsed).put("samples",samples));
-    if(!advancing){step("QA: grid-failure-audio-snapshot pid="+android.os.Process.myPid());android.util.Log.e("RHVideoQA",playbackThreads());}
+    if(!advancing){
+      step("QA: grid-failure-audio-snapshot pid="+android.os.Process.myPid());android.util.Log.e("RHVideoQA",playbackThreads());
+      // Failure-only control observation, not a second chance to pass. Timers
+      // are already restored. Never seek/restart/retry or replace the failed
+      // five-second sample with this later diagnostic interval.
+      try{
+        long controlStarted=SystemClock.elapsedRealtime();Thread.sleep(5000);
+        JSONObject control=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray controlSamples=new JSONArray();
+        for(int i=0;i<after.getJSONArray("cells").length();i++){
+          JSONObject a=after.getJSONArray("cells").getJSONObject(i),b=control.getJSONArray("cells").getJSONObject(i);
+          controlSamples.put(new JSONObject().put("id",b.getString("id")).put("inputId",b.getLong("inputId")).put("sameInput",a.getLong("inputId")==b.getLong("inputId"))
+            .put("positionDeltaMs",b.getLong("positionMs")-a.getLong("positionMs")).put("frameDelta",b.getLong("renderedFrames")-a.getLong("renderedFrames")));
+        }
+        step("grid active-timer failure control "+new JSONObject().put("elapsedMs",SystemClock.elapsedRealtime()-controlStarted).put("samples",controlSamples));
+      }catch(Exception diagnosticError){step("grid active-timer failure control unavailable: "+diagnosticError.getClass().getSimpleName());}
+    }
     require(advancing,"All grid inputs must advance real media time and render at least 60 new frames during five seconds without web timers: "+after);
     return after;
   }

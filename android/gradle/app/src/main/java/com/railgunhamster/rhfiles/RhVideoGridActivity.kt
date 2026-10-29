@@ -202,7 +202,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     val source=DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})
     if(diagnostics.enabled)source.setTransferListener(diagnostics)
     val factory=DefaultMediaSourceFactory(source).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
-    val renderers=if(BuildConfig.RHVIDEO_QA_AUDIO_START_MS==0)DefaultRenderersFactory(this)else object:DefaultRenderersFactory(this){
+    val renderers=if(BuildConfig.RHVIDEO_QA_CODEC_MODE=="synchronous")RhVideoSynchronousCodecProbe(this,diagnostics)else if(BuildConfig.RHVIDEO_QA_AUDIO_START_MS==0)DefaultRenderersFactory(this)else object:DefaultRenderersFactory(this){
       override fun buildAudioSink(context:android.content.Context,enableFloatOutput:Boolean,enableAudioOutputPlaybackParams:Boolean):AudioSink =
         DefaultAudioSink.Builder(context).setEnableFloatOutput(enableFloatOutput).setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
           .setAudioOutputProvider(RhVideoAudioStartProbe(AudioTrackAudioOutputProvider.Builder(context).build(),BuildConfig.RHVIDEO_QA_AUDIO_START_MS,diagnostics)).build()
@@ -262,6 +262,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     client.checkGrid(ticket,lease)
     return JSONObject().put("engine","Media3").put("nativeSurface",true).put("controlsExpanded",controlsExpanded).put("dragging",JSONArray(dragging.toList())).put("canvasWidth",grid.width).put("canvasHeight",grid.height).put("offset",data.getInt("offset")).put("total",data.getInt("total")).put("count",entries.length()).put("groupIndex",data.getInt("groupIndex")).put("groupTotal",data.getInt("groupTotal")).put("hasPrevious",previous.isEnabled).put("hasNext",next.isEnabled).put("lease",lease).put("generation",data.getLong("generation")).put("expanded",if(expanded<0)JSONObject.NULL else expanded).put("target",selected)
       .put("qaAudioStartMs",BuildConfig.RHVIDEO_QA_AUDIO_START_MS)
+      .put("qaCodecMode",BuildConfig.RHVIDEO_QA_CODEC_MODE)
       .put("cells",JSONArray(players.mapIndexed{i,p->
         val saved=cell(i);val item=entries.getJSONObject(i);val id=item.getString("id");val surface=containers[i]
         val counters=p.videoDecoderCounters?.also{it.ensureUpdated()};val favorite=client.favoriteState("video",id,data.getLong("generation"))

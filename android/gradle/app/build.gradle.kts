@@ -57,6 +57,10 @@ val rhVideoAudioStartMs = providers.gradleProperty("rhfilesRhVideoAudioStartMs")
 require(rhVideoAudioStartMs == null || (providers.gradleProperty("rhfilesRhVideoProbe").isPresent && rhVideoAudioStartMs in 1..100)) {
     "Audio start experiments require rhfilesRhVideoProbe and 1..100 ms"
 }
+val rhVideoCodecMode = providers.gradleProperty("rhfilesRhVideoCodecMode").orNull
+require(rhVideoCodecMode == null || (providers.gradleProperty("rhfilesRhVideoProbe").isPresent && rhVideoCodecMode == "synchronous" && rhVideoAudioStartMs == null)) {
+    "Codec experiments require rhfilesRhVideoProbe, synchronous mode and unchanged audio startup"
+}
 
 android {
     // Native view tests must inflate the real Media3/app resources, rather
@@ -79,6 +83,7 @@ android {
     sourceSets.getByName("main").assets.srcDir(rootProject.file("../../../reader"))
     defaultConfig {
         buildConfigField("int", "RHVIDEO_QA_AUDIO_START_MS", (rhVideoAudioStartMs ?: 0).toString())
+        buildConfigField("String", "RHVIDEO_QA_CODEC_MODE", "\"${rhVideoCodecMode ?: "default"}\"")
         if(providers.gradleProperty("rhfilesLanServiceProbe").isPresent) testInstrumentationRunner="com.railgunhamster.rhfiles.LanServiceInstrumentation"
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.railgunhamster.rhfiles"

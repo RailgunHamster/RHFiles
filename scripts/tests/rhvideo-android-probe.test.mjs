@@ -55,7 +55,10 @@ test('grid continuity observes real time and frames while WebView timers are sus
   assert.match(continuity,/a\.getLong\("inputId"\)==b\.getLong\("inputId"\)/);
   assert.match(continuity,/grid-failure-audio-snapshot/);
   assert.doesNotMatch(continuity,/gridControl\(|mainAction\(|action\(|\.performClick\(/);
-  assert.equal([...continuity.matchAll(/nativeCall\(/g)].length,1,'Only read after the uninterrupted observation interval');
+  const original=continuity.slice(0,continuity.indexOf('if(!advancing)'));
+  assert.equal([...original.matchAll(/nativeCall\(/g)].length,1,'Only read after the uninterrupted observation interval');
+  assert.match(continuity,/if\(!advancing\)\{[^]*Thread\.sleep\(5000\)[^]*grid active-timer failure control/);
+  assert.match(continuity,/require\(advancing,/,'A later diagnostic cannot replace the original failed sample');
   assert.match(source,/JSONObject first=checkGridContinuity\(waitGrid\(3,false\)\)/);
 });
 test('ordinary grid resizing retains codecs but keeps real background and explicit recreation release paths',()=>{

@@ -20,3 +20,6 @@
 -keep class com.railgunhamster.rhfiles.NearbyService { *; }
 # NDR structures and union arms are instantiated reflectively by the RPC codec.
 -keep class com.rapid7.client.dcerpc.** { *; }
+# The opt-in codec diagnostic must report the actual implementation, not an
+# invented mode label. Retain only its class name, never private members.
+-keepnames class androidx.media3.exoplayer.mediacodec.SynchronousMediaCodecAdapter

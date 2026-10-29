@@ -27,6 +27,13 @@ internal class RhVideoInputDiagnostics(val enabled:Boolean,private val now:()->L
   private var video:JSONObject?=null;private var audio:JSONObject?=null
   private var underruns=0L;private var loadErrors=0L;private var lastLoadError:String?=null
   @Volatile private var audioStartExperiment:String?=null
+  @Volatile private var audioAdapter:String?=null
+  @Volatile private var videoAdapter:String?=null
+  fun recordCodecAdapter(mime:String?,name:String){
+    if(!enabled)return
+    val value=if(name.matches(Regex("[A-Za-z0-9_.$]{1,192}")))name else "unrecognized-adapter"
+    when{mime?.startsWith("audio/")==true->audioAdapter=value;mime?.startsWith("video/")==true->videoAdapter=value}
+  }
   fun recordAudioStartExperiment(before:Int,after:Int,requested:Int,capacity:Int,bufferSize:Int,sampleRate:Int,milliseconds:Int){
     if(enabled)audioStartExperiment=JSONObject().put("beforeFrames",before).put("afterFrames",after).put("requestedFrames",requested)
       .put("capacityFrames",capacity).put("bufferSizeFrames",bufferSize).put("sampleRate",sampleRate).put("requestedMs",milliseconds).toString()
@@ -61,5 +68,6 @@ internal class RhVideoInputDiagnostics(val enabled:Boolean,private val now:()->L
       .put("videoCounters",counters(videoCounters)).put("audioCounters",counters(audioCounters)).put("audioUnderruns",underruns)
       .put("loadErrors",loadErrors).put("lastLoadErrorClass",lastLoadError?:JSONObject.NULL)
       .put("audioStartExperiment",audioStartExperiment?.let{JSONObject(it)}?:JSONObject.NULL)
+      .put("codecAdapters",if(audioAdapter==null&&videoAdapter==null)JSONObject.NULL else JSONObject().put("audio",audioAdapter?:JSONObject.NULL).put("video",videoAdapter?:JSONObject.NULL))
   }
 }
