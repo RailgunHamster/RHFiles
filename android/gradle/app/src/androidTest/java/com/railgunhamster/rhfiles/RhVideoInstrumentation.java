@@ -126,14 +126,16 @@ public class RhVideoInstrumentation extends Instrumentation {
     String script="RHFilesAPI.run("+JSONObject.quote(action)+","+input+",{key:"+JSONObject.quote(key)+"})";
     // A self-closing producer need not survive long enough to acknowledge eval.
     // Send once; only the surviving main page's real RPC may prove completion.
-    runOnMainSync(()->library.evaluateJavascript(script,null));long started=SystemClock.elapsedRealtime(),end=started+5000;JSONObject receipt=null;
+    step("library close dispatch elapsedMs="+SystemClock.elapsedRealtime()+" ui="+ui);
+    runOnMainSync(()->library.evaluateJavascript(script,null));long started=SystemClock.elapsedRealtime(),end=started+5000,lookupMs=0;int reads=0;JSONObject receipt=null;
     do{
       JSONObject query=new JSONObject().put("jsonrpc","2.0").put("id","close-qa").put("method","runs.lookup").put("params",new JSONObject().put("key",key));
-      JSONObject reply=(JSONObject)expression(main,"RHFilesAPI.rpc("+query+")");
+      long queryStarted=SystemClock.elapsedRealtime();JSONObject reply=(JSONObject)expression(main,"RHFilesAPI.rpc("+query+")");lookupMs+=SystemClock.elapsedRealtime()-queryStarted;reads++;
       if(reply.has("result")){receipt=reply.getJSONObject("result");if(!receipt.getString("state").equals("running"))break;}
       else require(reply.getJSONObject("error").getJSONObject("data").getString("code").equals("RUN_NOT_FOUND"),"Do not hide a failed receipt lookup: "+reply);
       Thread.sleep(100);
     }while(SystemClock.elapsedRealtime()<end);
+    step("library close observation "+new JSONObject().put("elapsedMs",SystemClock.elapsedRealtime()-started).put("lookupMs",lookupMs).put("reads",reads));
     require(receipt!=null&&receipt.getString("state").equals("succeeded")&&SystemClock.elapsedRealtime()-started<=5000,"The completed close must be retrieved within the original five-second budget: "+receipt);
     require(receipt.getString("action").equals(action)&&destroyedActivities.contains(producer)&&producer.isDestroyed(),"A sent finish or a disappearing WebView cannot manufacture completion");
     if(ui)require(receipt.getJSONObject("result").getString("controlId").equals(input.getString("controlId")),"UI close returns the original control result");else require(receipt.getBoolean("result"),"Semantic Back preserves its confirmed result");

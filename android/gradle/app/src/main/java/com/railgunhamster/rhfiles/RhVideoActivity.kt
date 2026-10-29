@@ -35,6 +35,8 @@ class RhVideoActivity:AppCompatActivity() {
   private var presentation:RhVideoPresentation?=null
   private var mediaEvents:java.io.Closeable?=null
   private var closeReceipt:RhVideoCloseReceiptStore.Ticket?=null
+  private val closeTraceEnabled by lazy{NativeAutomation.enabled(this)}
+  private fun closeStage(phase:String){try{if(closeTraceEnabled)android.util.Log.i("RHVideoCloseTiming",phase+" elapsedMs="+android.os.SystemClock.elapsedRealtime())}catch(_:Exception){}}
   private val exportDocument=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->
     val text=exportText;val context=exportConfiguration;exportText=null;exportConfiguration=null
     if(uri==null){if(context!=null)configurationEvent("export",context,JSONObject().put("saved",false));return@registerForActivityResult}
@@ -122,10 +124,12 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
     WebViewCompat.addWebMessageListener(web,"RHVideoBridge",setOf("https://appassets.androidplatform.net")){source,message,origin,main,reply->
       if(main&&source===web&&origin.host=="appassets.androidplatform.net"&&!io.isShutdown){
         val request=try{val raw=message.data?:"";require(raw.length<=256*1024);JSONObject(raw)}catch(_:Exception){null}
+        if(request?.optString("action")=="close")closeStage("bridge-received")
         if(request!=null)io.execute{
           val response=JSONObject().put("id",request.optInt("id"))
           try{
             val action=request.getString("action");val args=request.optJSONObject("args")?:JSONObject()
+            if(action=="close")closeStage("worker-entered")
             if(action=="automation.receipt"){
               check(NativeAutomation.enabled(this)){"请先开启 ADB 自动化"}
               response.put("result",RhVideoCloseReceipts.read(args)?:JSONObject.NULL)
@@ -198,8 +202,9 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
                 else when(val admitted=RhVideoCloseReceipts.begin(args.getJSONObject("_automationRun"))){
                   is RhVideoCloseReceiptStore.Admission.Confirmed->admitted.result
                   is RhVideoCloseReceiptStore.Admission.Start->{
+                    closeStage("finish-enqueued")
                     runOnUiThread{
-                      try{check(!isDestroyed&&closeReceipt==null){"媒体库已在关闭"};closeReceipt=admitted.ticket;finish()}
+                      try{closeStage("finish-called");check(!isDestroyed&&closeReceipt==null){"媒体库已在关闭"};closeReceipt=admitted.ticket;finish()}
                       catch(_:Exception){admitted.ticket.finish(false);if(closeReceipt===admitted.ticket)closeReceipt=null;if(!isDestroyed)try{reply.postMessage(response.put("error","未能关闭媒体库；没有自动重试").toString())}catch(_:Exception){}}
                     }
                     // This producer is about to disappear. Only onDestroy can
@@ -228,7 +233,8 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
   override fun onStop(){presentation?.pause();super.onStop()}
   override fun onDestroy(){
     val receipt=closeReceipt;closeReceipt=null;var cleaned=false;var destroyed=false
-    try{mediaEvents?.close();mediaEvents=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();web.destroy()};cleaned=true}
-    finally{try{super.onDestroy();destroyed=true}finally{receipt?.finish(cleaned&&destroyed&&isFinishing&&!isChangingConfigurations)}}
+    if(receipt!=null)closeStage("destroy-started")
+    try{mediaEvents?.close();mediaEvents=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();if(receipt!=null)closeStage("web-destroy-started");web.destroy();if(receipt!=null)closeStage("web-destroyed")};cleaned=true}
+    finally{try{super.onDestroy();destroyed=true;if(receipt!=null)closeStage("super-destroyed")}finally{receipt?.finish(cleaned&&destroyed&&isFinishing&&!isChangingConfigurations);if(receipt!=null)closeStage("receipt-published")}}
   }
 }

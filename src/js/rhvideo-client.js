@@ -62,7 +62,13 @@
   function bind(id,event,name,args=()=>({})){
     $(id).dataset.apiAction='rhvideo.'+name;
     if($(id).tagName==='FORM')for(const button of $(id).querySelectorAll('button[type=submit]'))button.dataset.apiAction='rhvideo.'+name;
-    RHFilesUI.listen($(id),event,e=>{if(event==='submit')e.preventDefault();Promise.resolve(invoke(name,args(e))).catch(notice);},undefined,'rhvideo.'+id+'.'+event);
+    RHFilesUI.listen($(id),event,e=>{
+      if(event==='submit')e.preventDefault();
+      const pending=Promise.resolve(invoke(name,args(e)));
+      // DOM dispatch ignores returned promises; attach the normal UI notice
+      // without replacing the original promise awaited by ui.invoke.
+      void pending.catch(notice);return pending;
+    },undefined,'rhvideo.'+id+'.'+event);
   }
   function item(id,kind){const value=state.items.find(item=>item.id===id&&(!kind||item.kind===kind));if(!value)throw Error('媒体已不在当前列表中，请刷新');return value;}
   function status(title,description,kind='library',button=false){

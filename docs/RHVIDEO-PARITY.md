@@ -6,6 +6,16 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 按钮异步结果与 Android 实际关闭超时（验证继续，未发包）
+
+又发现媒体库通用 `bind()` 发起异步操作却不返回 Promise，泛用 `ui.invoke` 可能在操作结束前报告完成。现将正常界面报错订阅与返回值分开：实际点击仍显示 notice，自动化拿到原操作的 Promise／失败，不再被 `.catch(notice)` 转为成功。新增两个直接执行生产 `bind()` 的回归，验证未完成时不提前完成、失败既显示又向接口传递。共享业务 **865/865、零跳过**（`rhvideo-library-close-bind-final-node.log`）；后续计时诊断的相关策略 **17/17** 通过，原门槛和断言保留。
+
+arm64＋x86_64 的完整 Android CLI 构建已返回 **0**，重新构建了内嵌主文件页的 Rust／JNI；探针另构建 **51 秒成功**。完成 CLI 后遗留的空闲 Gradle daemon 占着输出管道，已核对具体 PID／启动时间／空闲栈，只清理本轮自己的该进程，未动 RHFiles、主机或模拟器服务。随后仅更新 RHVideo assets 的重打包 **1 分 20 秒成功**（短路径 QA 的 `rhvideo-library-close-full-android-build.log`、`rhvideo-library-close-probe-build.log`、`rhvideo-library-close-bind-apk-build.log`），复用的是本轮新编译、主页面未再变更的两套 JNI，并非前轮旧库。
+
+主 APK `0b6df848b05b9e732692a3fc86a90cefec0a25cd002500487405b4392ff307e9`／探针 `74cc445d36031d06cbd149867f63d4c9a234537183674cd7100eadd47fb563ff` 在自有 `emulator-5586` 实际安装核对；ZIP 内 `rhvideo-client.js` 也与生产源码逐字节匹配（SHA-256 `22960ef47484683be8ca1bec551c840aa4cb054811c877abd5463a8264ac0380`）。原生 `close-receipt` **失败**（`rhvideo-library-close-native.log`、`rhvideo-android-close-receipt-1793317096573-release`）：主页面确实取回 `rhvideo.back` 的成功终态，`startedAt` 到 `finishedAt` 为 **4377 ms**，但完整取回超过原五秒预算。**不算通过；UI 按钮关闭／旧 key 后续步骤因此未执行。** 实际包／mapping 保留于 `rhvideo-library-close-baseline-bc86d85882df4382a7ca315fe6db9284`。
+
+现补入只在 ADB 自动化开启时记录的原生桥接接收、后台进入、finish 入队／调用、WebView 销毁、Activity 销毁及回执发布阶段；仅静态阶段名和单调时间，无参数／URL／密码，日志失败不改变关闭结果。探针另汇总查询次数和耗时，原五秒门槛不变，不 seek／重开／重复关闭。带诊断的构建仍在运行，尚无定位或修复结论。前节 `b09d4232…` Windows 冻结对早于此次 `bind()` 修正，不能为新按钮语义背书；后续须重新编译并冻结新对再完整验收。没有发布新包，完整目标仍未完成。
+
 ## 2026-10-30 Android 页面关闭回执及验收源码隔离（验证继续，未发包）
 
 Android 媒体库的 `close` 原先排队 `finish()` 后，仍向即将销毁的 WebView 回应，生产者可能先消失。现为命令行 `rhvideo.back`／实际 Back 按钮的 `ui.invoke` 保留进程内关闭回执，主文件页及分屏宿主页可经原 `runs.lookup/status/wait` 只读查询。只有媒体清理、WebView 销毁及 `super.onDestroy()` 均完成，且不是配置重建，才确认成功；排队／窗口消失不能代替确认。等待查询在后台，不占用 UI 线程；无操作重发、失败重试或新监听端口。普通子面板／图片 Back 仍先关闭原子层，不提前关闭整库。
