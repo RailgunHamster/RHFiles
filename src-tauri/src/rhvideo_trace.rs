@@ -20,15 +20,16 @@ fn owned()->bool{
     std::env::var_os("RHFILES_TEST_PROFILE_ROOT").is_some()&&
     std::env::var("RHFILES_QA_READBACK_NONCE").is_ok_and(|v|v.len()==32&&v.bytes().all(|c|c.is_ascii_hexdigit()&&!c.is_ascii_uppercase()))
 }
+pub(crate) fn host_enabled()->bool{enabled()||(owned()&&std::env::var("RHFILES_PLAY_NATIVE_TRACE").as_deref()==Ok("1"))}
 pub(crate) fn stage(family:&str,origin:Instant,stage:&str){
-    if !(enabled()||(owned()&&std::env::var("RHFILES_PLAY_NATIVE_TRACE").as_deref()==Ok("1"))){return;}
+    if !host_enabled(){return;}
     let now=Instant::now();let epoch=*HOST_ORIGIN.get_or_init(||origin);
     if let Ok(mut stages)=HOST_STAGES.lock(){if stages.len()<128{stages.push(HostStage{at_ms:now.saturating_duration_since(epoch).as_secs_f64()*1000.,elapsed_ms:now.saturating_duration_since(origin).as_secs_f64()*1000.,family:family.into(),stage:stage.into()});}}
 }
 pub(crate) fn host_snapshot()->Result<Value,String>{
     if !owned(){return Err("Owned startup trace is not enabled".into());}
     let stages=HOST_STAGES.lock().map_err(|_|"Owned startup trace unavailable")?;
-    Ok(json!({"hostStages":*stages,"hostStageLimit":128}))
+    Ok(json!({"hostStages":*stages,"hostStageLimit":128,"hostScope":"bounded-process-lifetime"}))
 }
 #[derive(Clone,serde::Serialize)]
 struct Event { at_ms:f64,module:String,template:String }

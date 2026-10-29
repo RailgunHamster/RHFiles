@@ -1503,13 +1503,18 @@ pub async fn rhvideo_request(
     action: String,
     mut args: Value,
 ) -> Result<Value, String> {
+    #[cfg(all(windows,debug_assertions))]
+    let command_trace=(action=="play"&&crate::rhvideo_trace::host_enabled()).then(Instant::now);
     if let Some(run)=args.as_object_mut().and_then(|v|v.remove("_automationRun")) {
         let id=run["id"].as_str().unwrap_or_default().to_owned();
         if let Some(previous)=crate::automation_receipts::begin(run,&action)? {return previous;}
         let completion=crate::automation_receipts::Completion::new(id);
         let result=rhvideo_dispatch(app,action,args).await;completion.finish(&result);return result;
     }
-    rhvideo_dispatch(app,action,args).await
+    let result=rhvideo_dispatch(app,action,args).await;
+    #[cfg(all(windows,debug_assertions))]
+    if let Some(started)=command_trace{crate::rhvideo_trace::stage("command-return",started,"dispatch-returned");}
+    result
 }
 async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Value,String>{
     let expected = args
@@ -2349,6 +2354,18 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             trace("preload-ready");
             wake_playback_monitor(&app);
             trace("complete");
+            #[cfg(all(windows,debug_assertions))]
+            if crate::rhvideo_trace::host_enabled(){
+                let _=app.run_on_main_thread(move||crate::rhvideo_trace::stage("gui-drain",started,"after-request-complete"));
+                let owner=app.clone();
+                tauri::async_runtime::spawn(async move{
+                    // Five finite observations, no busy loop or UI activation.
+                    for(delay,label)in[(100,"100ms"),(400,"500ms"),(500,"1000ms"),(500,"1500ms"),(500,"2000ms")]{
+                        tokio::time::sleep(Duration::from_millis(delay)).await;
+                        let queued=Instant::now();let _=owner.run_on_main_thread(move||crate::rhvideo_trace::stage("gui-queue",queued,label));
+                    }
+                });
+            }
             if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){let _=app.run_on_main_thread(move||eprintln!("RHFILES_REQUEST_STAGE play main-drain {}",started.elapsed().as_millis()));}
             if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){let app=app.clone();std::thread::spawn(move||{let mut previous=0;for at in [100,500,1000,1500,2000]{std::thread::sleep(Duration::from_millis(at-previous));previous=at;let queued=started.elapsed().as_millis();let _=app.run_on_main_thread(move||eprintln!("RHFILES_GUI_QUEUE {queued} {}",started.elapsed().as_millis()));}});}
             Ok(result)

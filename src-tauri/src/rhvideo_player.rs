@@ -65,15 +65,26 @@ unsafe extern "system" fn trace_window_proc(hwnd:HWND,message:u32,wparam:WPARAM,
         let started=std::time::Instant::now();
         if message==WM_NCDESTROY{let _=windows::Win32::UI::Shell::RemoveWindowSubclass(hwnd,Some(trace_window_proc),id);}
         let result=windows::Win32::UI::Shell::DefSubclassProc(hwnd,message,wparam,lparam);
-        if started.elapsed().as_millis()>=20{eprintln!("RHFILES_WINDOW_STAGE {role} {message:#x} {}",started.elapsed().as_millis());}
+        if started.elapsed().as_millis()>=20{
+            if crate::rhvideo_trace::host_enabled(){crate::rhvideo_trace::stage(&format!("window-{role}"),started,&format!("message-{message:#x}"));}
+            if std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_WINDOW_STAGE {role} {message:#x} {}",started.elapsed().as_millis());}
+        }
         result
     }
 }
 pub(crate) fn install_window_trace(window:&tauri::WebviewWindow){
     #[cfg(debug_assertions)]
-    if std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
+    if std::env::var_os("RHFILES_VLC_DEBUG").is_some()||crate::rhvideo_trace::host_enabled(){
         let role=match window.label(){"window-rhvideo"=>1,"window-rhvideo-player"=>2,"window-rhvideo-grid"=>3,_=>0};
         if let Ok(hwnd)=window.hwnd(){unsafe{let _=windows::Win32::UI::Shell::SetWindowSubclass(HWND(hwnd.0),Some(trace_window_proc),0x52485052,role);}}
+        // Wry dispatches protocol responses on its own controller container,
+        // not on Tauri's outer HWND. Observe that self-owned window as well.
+        let _=window.with_webview(move|platform|unsafe{
+            let mut parent=windows61::Win32::Foundation::HWND::default();
+            if platform.controller().ParentWindow(&mut parent).is_ok()&&!parent.0.is_null(){
+                let _=windows::Win32::UI::Shell::SetWindowSubclass(HWND(parent.0),Some(trace_window_proc),0x52485052,role+10);
+            }
+        });
     }
     #[cfg(not(debug_assertions))]let _=window;
 }

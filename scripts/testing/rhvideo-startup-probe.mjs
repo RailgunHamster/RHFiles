@@ -12,12 +12,18 @@ import {rhvideoFixture} from './rhvideo-fixture.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {markerPixels} from './native-startup-pixels.mjs';
 import {startupScenarios,generateStartupMedia} from './rhvideo-startup-media.mjs';
+import {observeOwnedIpc} from './cdp-ipc-timing.mjs';
+let networkObserver;
 assert.equal(process.env.RHFILES_NATIVE_PLAYER_QA,'1','Opt in to the owned native-output diagnostic');
 const scenario=process.argv[2]||'h264-1080',format=startupScenarios[scenario];assert(format,'Unknown fixed startup scenario');
 const captureMode=process.argv[3]||'poll';assert(['poll','after-stats'].includes(captureMode),'Use poll or after-stats pixel sampling');
 const ipcMode=process.argv[4]||'default';assert(['default','postmessage'].includes(ipcMode),'Use default or isolated postmessage transport comparison');
 const stateObserver=process.argv[5]||'main';assert(['main','player'].includes(stateObserver),'Observe through the main or actual player WebView');
 const readback=process.env.RHFILES_QA_READBACK||'ipc';assert(['ipc','stdio'].includes(readback),'Use IPC or the owned debug-only stdin readback');
+const emulateFocus=process.env.RHFILES_QA_EMULATE_FOCUS!=='0';
+assert(['0','1',undefined].includes(process.env.RHFILES_QA_EMULATE_FOCUS),'Use an explicit focus comparison, not an arbitrary browser option');
+const emulateLibraryFocus=process.env.RHFILES_QA_LIBRARY_EMULATE_FOCUS==='1';
+assert(['0','1',undefined].includes(process.env.RHFILES_QA_LIBRARY_EMULATE_FOCUS),'Use an explicit library focus comparison');
 const mediaRoot=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-startup-source-')),sourceFile=path.join(mediaRoot,'startup.mp4');
 let app,fixture,library,player,opening,started;const receipt={scenario,source:format,captureMode,ipcMode,stateObserver,requestedDebugNetworkCacheMs:process.env.RHFILES_VLC_NETWORK_CACHE_MS??null,requestedDebugDecoderThreads:process.env.RHFILES_VLC_DECODE_THREADS??null,requestedNativeDebugLogging:!!process.env.RHFILES_VLC_DEBUG,measure:'new process/player, library already ready',traceClock:'host pipe receipt, not exact VLC producer time',samplePeriodMs:200,samples:[],mediaRequests:[]};let failure;
 const action=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
@@ -33,11 +39,13 @@ try{
   }else{source=generateStartupMedia(sourceFile,scenario);receipt.sourceMode='generated before timing';}
   const {width,height}=source;
   receipt.sourceSha256=createHash('sha256').update(fs.readFileSync(sourceFile)).digest('hex');
-  app=await launchApp({emulateFocus:true,traceOutput:true,nativeDiagnostics:readback==='stdio'});receipt.readback=readback;
+  app=await launchApp({emulateFocus,traceOutput:true,nativeDiagnostics:readback==='stdio'});receipt.readback=readback;receipt.mainFocusEmulation=emulateFocus;
   fixture=await rhvideoFixture({videoFile:sourceFile,videoCount:1,pictureCount:0,galleryVideoCount:1,galleryFrameCount:1,videoDuration:12,videoResolutions:[`${width}x${height}`],beforeMedia:({path:request,range})=>{if(started!==undefined&&request.endsWith('/play'))receipt.mediaRequests.push({atMs:performance.now()-started,range:range||null});}});
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
   const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
   library=await cdpSession(target,30000);
+  receipt.libraryFocusEmulation=emulateLibraryFocus;
+  if(emulateLibraryFocus)await library.send('Emulation.setFocusEmulationEnabled',{enabled:true});
   await until(()=>library.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==="rhvideo.media.open")'),'library actions');
   if(ipcMode==='postmessage'){
     // Diagnostic only: reject one READ before fetch sends anything, allowing
@@ -54,7 +62,7 @@ try{
     window.fetch=function(input,init){
       let timed=false;try{const url=new URL(typeof input==='string'?input:input.url,location.href);timed=url.hostname==='ipc.localhost'&&JSON.parse(init?.body||'{}').action==='play';}catch{}
       if(!timed)return original.call(this,input,init);
-      const started=performance.now(),row={};window.__startupIPC.push(row);
+      const started=performance.now(),row={startMs:started-window.__startupActionAt};window.__startupIPC.push(row);
       return original.call(this,input,init).then(response=>{
         row.headersMs=performance.now()-started;const json=response.json.bind(response);
         response.json=()=>json().then(value=>{row.bodyMs=performance.now()-started;return value;});return response;
@@ -64,6 +72,7 @@ try{
   })()`);
   assert.equal(await app.evaluate('typeof window.__TAURI__.window.Window.getByLabel'), 'function','Use actual window visibility, not a hidden/offscreen readback alone');
   receipt.artifactDir=app.artifactDir;receipt.executable=process.env.RHFILES_TEST_EXECUTABLE||path.resolve('target/debug/rhfiles.exe');receipt.executableSha256=createHash('sha256').update(fs.readFileSync(receipt.executable)).digest('hex');
+  if(process.env.RHFILES_QA_NETWORK_TIMING==='1')networkObserver=await observeOwnedIpc(target,app.port);
   started=performance.now();const requestStart=fixture.requests.length;let openError;
   // Separate the page's own action latency from delivery of its CDP reply to
   // this observer. An unfocused view / debugger transport may delay the latter;
@@ -111,8 +120,9 @@ try{
     await sleep(receipt.samplePeriodMs);
   }
   await opening;if(openError)throw openError;
-  receipt.frontendTransport=await library.evaluate('({ipc:window.__startupIPC,longTasks:window.__startupLongTasks.map(row=>({atMs:row.at-window.__startupActionAt,durationMs:row.duration}))})');
+  receipt.frontendTransport=await library.evaluate(`({ipc:window.__startupIPC,longTasks:window.__startupLongTasks.map(row=>({atMs:row.at-window.__startupActionAt,durationMs:row.duration})),resources:performance.getEntriesByType('resource').filter(row=>{try{const url=new URL(row.name);return url.hostname==='ipc.localhost'&&url.pathname==='/rhvideo_request'&&row.startTime>=window.__startupActionAt;}catch{return false;}}).slice(0,64).map(row=>({startMs:row.startTime-window.__startupActionAt,durationMs:row.duration,requestStartMs:row.requestStart?row.requestStart-window.__startupActionAt:null,responseStartMs:row.responseStart?row.responseStart-window.__startupActionAt:null,responseEndMs:row.responseEnd-window.__startupActionAt,transferSize:row.transferSize,encodedBodySize:row.encodedBodySize,decodedBodySize:row.decodedBodySize}))})`);
   receipt.finalState=lastState;receipt.nonStreamRequests=fixture.requests.slice(requestStart).filter(r=>!r.path.endsWith('/play')).map(r=>r.path);
+  if(networkObserver)receipt.browserIpc=networkObserver.snapshot();
   if(process.env.RHFILES_VLC_NATIVE_TRACE==='1'||process.env.RHFILES_PLAY_NATIVE_TRACE==='1'){
     assert.equal(readback,'stdio','Producer trace stays on the owned debug-only readback');
     receipt.producerTrace=await app.diagnostic('player.trace',{expectedInput:lastState.inputId});
@@ -142,6 +152,7 @@ try{
   receipt.nativeClosedBeforeProcessExit=true;
 }catch(error){failure=error;receipt.error=String(error?.stack||error);}
 finally{
+  networkObserver?.close();
   player?.close();library?.close();if(app){app.close();let timer;try{await Promise.race([app.closed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned process output did not drain')),5000);})]);}catch(error){failure??=error;receipt.cleanupError=String(error);}finally{clearTimeout(timer);}}await fixture?.close();
   if(app){
     if(started!==undefined)receipt.nativeTrace=app.outputEvents.filter(event=>event.at>=started).map(({at,stream,text})=>({atMs:at-started,stream,text}));
