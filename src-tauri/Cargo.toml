@@ -22,7 +22,8 @@ semver = "1"
 serde_json = "1"
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
+# GHSA-w28w-mhc8-qvjv: cross-WebView channel responses need the 2.11.6 fix.
+tauri = { version = "=2.11.6", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }

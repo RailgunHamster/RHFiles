@@ -12,6 +12,10 @@
 
 新 Windows 开发 EXE `5d40e6ac7c7b07d86051996b8a95aca0aa15e91d01240dbfc2d1fd3af5e93d35` 已通过实际 RHVideo FastAPI／隔离 SQLite 的完整用例（`rhvideo-sdk-actual-backend.log`）：真实原生解码、备份预览／恢复、损坏规则保留、音量 31、实际面板警告、确认不可重放，以及原有喜爱 ZIP／后台下载均检查了。失败规则导入后的截图已查看。共享 Node 全部 **707/707、零跳过**，本机使用当前 `RHVIDEO_SOURCE`，不是缺少参考源码的 CI 结果。该测试不代替 Android 安装包验证或下面仍未解决的播放性能。
 
+Windows 原锁定 2.10.3、Android 原锁定 2.11.5 都在官方 [GHSA-w28w-mhc8-qvjv](https://github.com/tauri-apps/tauri/security/advisories/GHSA-w28w-mhc8-qvjv) 范围内。两端及 Android 测试 SDK 现统一精确锁定 **Tauri 2.11.6**，配套 runtime/runtime-wry 为 2.11.3／2.11.4，utils 为 2.9.3，保留现有 WebView2 COM 接口版本。新增版本下限／锁文件／两端一致性门禁。实际 SDK 的 channel 队列按 WebView 隔离，并在读取／销毁时使用窗口身份；没有修改应用自己的 IPC 传输实现。尝试在本工作区直接运行外部 tauri 的单测未成功（`rhvideo-sdk-upstream-channel-tests.log`），不能声称已运行上游隔离测试或完成全部安全证明。Windows 应用自己的 RHVideo Rust 测试 **38/38** 通过；完整多窗口回归结果另记。
+
+Android 通过正常 Tauri Android 构建重新生成 2.11.6 的 Gradle 依赖及 **ARM64、x86_64** 原生库，不是只替换共享 JS 后沿用旧内核。原生构建日志为短路径 QA 的 `rhvideo-sdk-android-native-build.log`；后续 JVM／探测构建 `rhvideo-sdk-android-jvm-probe-build.log` 成功，新生成的 62 份 XML 共 **410/410、零失败／错误／跳过**。主 APK SHA-256 为 `d1acf6a9829738805459541066d26a53184dac94c6891abe9a849abd346c6657`，探测仍为 `f053e3317f7046c4e9d73a91622d728c966940308bbcb73c94b15078cc9c6f81`。此字节组合已在同一自有模拟器通过标签整条场景（`rhvideo-sdk-native-android-rules.log`），包含损坏已保存偏好重连、搜索焦点和连续触摸浏览；不是新的播放器通过结果，也未安装到真机或正式发布。
+
 ## 2026-10-29 已保存规则恢复、初始搜索焦点与启动性能对照（完整目标未完成）
 
 实际窗口红测 `rhvideo-rules-recovery-red.log` 复现两处行为退化：标签打开后打字没有进入搜索框；已保存的 `rule.include` 损坏后，重新连接在 `Editor.sync → updateConnection` 抛错，正常媒体也无法浏览。现按实际参考 `loadMediaTagFilter` 的兜底行为，仅在**读取已有偏好**时规范化规则，损坏时恢复全部内容并说明原因，不清空音量、排序、收藏规则等其他设置，也不修改传入对象。用户/API 主动提交的无效规则仍拒绝，不能用兜底掩盖失败。标签打开后立即聚焦搜索；编辑和滚动不反复抢焦点。旧 `rules.page` 在关闭时给出明确错误；返回有效缓存窗口不再残留其他窗口读取失败的提示。
