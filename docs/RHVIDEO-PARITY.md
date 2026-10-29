@@ -6,6 +6,16 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-29 手机原生菜单的稳定反馈与语言（本轮通过，完整目标未完成）
+
+先用原主 APK `d1acf6a9829738805459541066d26a53184dac94c6891abe9a849abd346c6657` 和新探测 APK `c8a8d2d8ed00fa92df97b71d8515bbfc4164866a2ed719a15aade3def70e235b` 在自有模拟器跑完整 Single，通过（短路径 QA 的 `rhvideo-menu-stable-native-android-single.log`、`rhvideo-android-single-1793267913912-release/`）。倍率设置后等待真实设置／弹窗消失，再重新打开菜单核对选中项与旧项取消；截图实际勾选 **1.25×**，不是仅靠下一次 API 读取代替视觉反馈。未修改主包、未重启模拟器或操作物理手机。
+
+该图仍显示英文 `Normal`。新的真实资源单测先红（`rhvideo-native-labels-red.log`，预期“速度”、实际 `Speed`）；开发代码现只给 `RhVideoPlayerView` 传入与内置中文页面一致的局部资源上下文，保留原主题，不修改 Activity／系统语言或播放引擎。Android 全部 JVM **411/411、62 份 XML、零失败／错误／跳过**（`rhvideo-mobile-chrome-android-build.log`），包含原有播放、旋转与队列测试。手机放映窗另外只改 CSS：全屏深色控件、弹性剩余画布，不改变操作顺序、按钮与接口；运行截图仍须核对。
+
+新主 APK SHA-256 `4694a6422bb5da65764ecb4f9042024d801efb7a4d9bccce7421728b53074b72`，首轮探测 `d3b76f63ace367772b665979f38c82823aba7b193fcf6770c2f5808711084489` 的实际 Single **失败**（`rhvideo-mobile-chrome-native-android-single.log`、`rhvideo-android-single-1793268839315-release/`）：视频已有帧，但在一个截图父层视频中，显示控制栏后通过后台页面反复读取 fully-visible 状态，未能在自动隐藏前进入真实按钮点击。没有删该断言或改隐藏时长。后续探测只发一次原有 `controls.show`，记录其应答耗时，直接使用已有的原生 alpha／裁剪／屏幕／焦点／稳定位置条件观测并点击；不反复显示、不用 performClick 代替实际触摸，总等待预算也没有增加。主包不变，仅探测 APK 改为 `23462d825868e4c44ffc25051c3c2eaf66a8fc915c7585c4ea59d25e1dfce5c9`。
+
+第二轮 **Single 完整通过**（`rhvideo-mobile-chrome-native-android-single-2.log`、`rhvideo-android-single-1793269347887-release/`），包含原有分类／真实卡片选择、原生播放／菜单、单项父层／逐次返回、账户与模式隔离、内容探测图片／拒绝 HTML、收藏放映。已查看新的原生播放器与放映实际截图：中文“正常／1.25 倍”且勾选 1.25，所有原有放映按钮保留、图片确有像素、白色按钮／圆角弹窗已改为整页深色布局。应答记录中可见 fullyVisible=false 后真实按钮于后续稳定位置可点击，不将应答当成已绘制。运行前后 `media.resource_manager` 在 5 秒内返回（`rhvideo-native-hit-target-{before,after}-media-resources.txt`）；没有重启或重置模拟器，也不据此宣称旧媒体资源分配间歇故障已经定位。主包版本仍为本地开发构建，没有正式发布或物理手机安装，完整功能与性能目标仍未完成。
+
 ## 2026-10-29 实际发行包的原生内核与插件索引（完整目标未完成）
 
 Windows 发包现准备官方非 GPL `VideoLAN.LibVLC.Windows 3.0.24`，固定来源／SHA-256，构建时生成匹配的插件索引，附带 LGPL、来源／源码链接和动态替换说明。GPL cachegen 仅作隔离构建工具，不进入运行目录；不安装或修改系统 VLC。准备脚本拒绝无效旧目录、越界路径和链接，不在失败时覆盖已有目录。清单记录精确文件集合／大小／哈希，stage、实际便携 ZIP 和实际完整更新包均校验；不是仅验证压缩前目录。

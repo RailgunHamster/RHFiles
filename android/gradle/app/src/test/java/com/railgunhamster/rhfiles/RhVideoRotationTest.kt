@@ -16,6 +16,16 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[34])
 class RhVideoRotationTest {
+  @Test fun nativeControlLabelsMatchTheChineseLibraryWithoutChangingTheSystemLocale(){
+    val app=RuntimeEnvironment.getApplication()
+    val english=app.createConfigurationContext(android.content.res.Configuration(app.resources.configuration).apply{setLocale(java.util.Locale.US)})
+    english.setTheme(com.google.android.material.R.style.Theme_MaterialComponents_DayNight_NoActionBar)
+    val view=RhVideoPlayerView(english)
+    assertEquals("速度",view.context.resources.getString(androidx.media3.ui.R.string.exo_controls_playback_speed))
+    val speeds=view.context.resources.getStringArray(androidx.media3.ui.R.array.exo_controls_playback_speeds)
+    assertEquals(7,speeds.size);assertEquals("正常",speeds[3]);assertEquals("1.25 倍",speeds[4])
+    assertEquals("en",english.resources.configuration.locales[0].language)
+  }
   @Test fun onlyRotateWhenFitImprovesByFivePercent(){
     for((w,h,width,height,angle)in listOf(listOf(360,640,1600,900,90),listOf(640,360,1600,900,0),listOf(640,360,900,1600,90),listOf(360,640,900,1600,0),listOf(100,100,1600,900,0),listOf(100,101,101,100,0),listOf(100,106,106,100,90))){assertEquals(angle,RhVideoRotation.angle(w.toDouble()/h,width,height,true));assertEquals(0,RhVideoRotation.angle(w.toDouble()/h,width,height,false))}
     assertEquals(0,RhVideoRotation.angle(Double.NaN,1600,900,true));assertEquals(0,RhVideoRotation.angle(0.0,1600,900,true));assertFalse(RhVideoRotation.available(1.0,1600,900,false));assertTrue(RhVideoRotation.available(1.0,1600,900,true))

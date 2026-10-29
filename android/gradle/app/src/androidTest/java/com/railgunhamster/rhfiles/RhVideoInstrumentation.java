@@ -463,9 +463,14 @@ public class RhVideoInstrumentation extends Instrumentation {
     JSONObject oldReturn=new JSONObject().put("generation",first.getJSONObject("queue").getLong("generation")).put("parentKey",parent.getString("parentKey")).put("parentPreview",parent.getString("parentPreview")).put("parentPlayback",parent.getString("parentPlayback")).put("close",true);
     require(((JSONObject)action("image.returnFromVideo",oldReturn)).optBoolean("stale")&&((JSONObject)action("player.state",new JSONObject())).getLong("inputId")==input,"Old whole-close cannot stop another child of the same screenshot");
     action("player.control",new JSONObject().put("command","options"));clickPlayerText("循环播放");current=(JSONObject)action("player.state",new JSONObject());require(current.getBoolean("repeat")&&current.getJSONObject("options").getBoolean("loop"),"The native repeat menu changes the same media controls as the public API");
-    touchPlayerButton("exo_settings");clickPlayerText("Speed","播放速度");clickPlayerText("1.5");current=(JSONObject)action("player.state",new JSONObject());require(Math.abs(current.getDouble("rate")-1.5)<.01&&Math.abs(current.getJSONObject("options").getDouble("rate")-1.5)<.01,"Actual controller speed is remembered, not just applied to one decoder");
+    touchPlayerButton("exo_settings");clickPlayerText("速度","Speed","播放速度");clickPlayerText("1.5");current=(JSONObject)action("player.state",new JSONObject());require(Math.abs(current.getDouble("rate")-1.5)<.01&&Math.abs(current.getJSONObject("options").getDouble("rate")-1.5)<.01,"Actual controller speed is remembered, not just applied to one decoder");
     touchPlayerButton("rhvideo_player_close");library=waitView("RhVideoActivity");action("media.open",new JSONObject().put("kind","video").put("id","video-1"));current=waitPlayer("video-1",true);require(current.getBoolean("repeat")&&Math.abs(current.getDouble("rate")-1.5)<.01&&!current.getJSONObject("options").has("origin"),"A source without a parent inherits ordinary-video controls too");
-    touchPlayerButton("exo_settings");clickPlayerText("Speed","播放速度");clickPlayerText("1.25");screenshot("rhvideo-single-qa.png");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+    touchPlayerButton("exo_settings");clickPlayerText("速度","Speed","播放速度");clickPlayerText("1.25");waitNativeRateAndDismissal(1.25);
+    // A screenshot taken immediately after touch-up can contain the old
+    // popup/checkmark even though the rate was accepted. Reopen the actual
+    // controller and verify its selected row, not only the persisted API value.
+    touchPlayerButton("exo_settings");clickPlayerText("速度","Speed","播放速度");waitSelectedNativeSpeed("1.25 倍","1.5 倍");screenshot("rhvideo-single-qa.png");clickPlayerText("1.25");waitNativeRateAndDismissal(1.25);
+    action("player.close",new JSONObject());library=waitView("RhVideoActivity");
     action("playlist.sequential",new JSONObject());current=waitPlayer(null,true);require(!current.getBoolean("repeat")&&Math.abs(current.getDouble("rate")-1)<.01,"Sequential mode has separate controls");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
     action("media.open",new JSONObject().put("kind","video").put("id","video-0"));current=waitPlayer("video-0",true);require(current.getBoolean("repeat")&&Math.abs(current.getDouble("rate")-1.25)<.01,"A playlist cannot erase single-video control memory");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
     action("connection.logout",new JSONObject());action("connection.connect",new JSONObject().put("server",args.getString("server")).put("username","preview").put("password","fixture-only"));action("media.open",new JSONObject().put("kind","video").put("id","video-0"));current=waitPlayer("video-0",true);require(!current.getBoolean("repeat")&&Math.abs(current.getDouble("rate")-1)<.01,"Transient controls do not leak across logins");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
@@ -484,6 +489,26 @@ public class RhVideoInstrumentation extends Instrumentation {
     JSONArray controls=(JSONArray)expression(library,"RHFilesAPI.invoke('ui.list')");String controlId=null;for(int i=0;i<controls.length();i++)if("wb-viewer-favorite".equals(controls.getJSONObject(i).optString("id")))controlId=controls.getJSONObject(i).getString("controlId");require(controlId!=null,"Favorite button is a public UI control");expression(library,"RHFilesAPI.invoke('ui.invoke',"+new JSONObject().put("controlId",controlId)+")");require(((JSONObject)action("viewer.state",new JSONObject())).getBoolean("favorite"),"The visible button and typed action share the same favorite state");
     assertPreviewPixels("#wb-viewer .wb-slide:not(.outgoing) img","rhvideo-favorite-slideshow-qa.png");action("panel.close",new JSONObject().put("id","wb-viewer"));action("viewer.open",new JSONObject().put("mode","slideshow").put("source","favorite"));require(((JSONObject)action("viewer.state",new JSONObject())).getInt("index")==0,"Reopening starts a new favorite slideshow, like the reference");action("panel.close",new JSONObject().put("id","wb-viewer"));
   }
+  private void waitNativeRateAndDismissal(double rate)throws Exception{
+    long end=SystemClock.uptimeMillis()+5000;JSONObject state=null;boolean[] focused={false};
+    do{state=(JSONObject)action("player.state",new JSONObject());runOnMainSync(()->focused[0]=current!=null&&!current.isFinishing()&&current.getWindow().getDecorView().hasWindowFocus());if(focused[0]&&Math.abs(state.optDouble("rate")-rate)<.01&&Math.abs(state.getJSONObject("options").optDouble("rate")-rate)<.01)return;Thread.sleep(50);}while(SystemClock.uptimeMillis()<end);
+    throw new Exception("Selected native rate must be applied and its popup dismissed: expected="+rate+" focus="+focused[0]+" state="+state);
+  }
+  private boolean selectedNativeRow(android.view.accessibility.AccessibilityNodeInfo node){
+    for(int depth=0;node!=null&&depth<5;depth++,node=node.getParent())if(node.isSelected())return true;
+    return false;
+  }
+  private void waitSelectedNativeSpeed(String selected,String old)throws Exception{
+    long end=SystemClock.uptimeMillis()+5000;StringBuilder last=new StringBuilder();
+    do{android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();boolean found=false,stale=false;
+      if(root!=null&&getTargetContext().getPackageName().equals(String.valueOf(root.getPackageName()))){
+        for(android.view.accessibility.AccessibilityNodeInfo row:root.findAccessibilityNodeInfosByText(selected))if(row.isVisibleToUser()&&selected.equals(String.valueOf(row.getText())))found|=selectedNativeRow(row);
+        for(android.view.accessibility.AccessibilityNodeInfo row:root.findAccessibilityNodeInfosByText(old))if(row.isVisibleToUser()&&old.equals(String.valueOf(row.getText())))stale|=selectedNativeRow(row);
+        if(found&&!stale)return;last.setLength(0);collectNativeText(root,last);
+      };Thread.sleep(50);
+    }while(SystemClock.uptimeMillis()<end);
+    throw new Exception("Visible native speed selection must move from "+old+" to "+selected+": "+last);
+  }
   private void touchPlayerButton(String resource)throws Exception{
     // A selected PopupMenu row may return before its window has finished
     // dismissing. A touch during that interval only dismisses that old popup;
@@ -493,9 +518,12 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{runOnMainSync(()->focused[0]=current!=null&&!current.isFinishing()&&current.getWindow().getDecorView().hasWindowFocus());if(focused[0])break;Thread.sleep(50);}while(SystemClock.uptimeMillis()<focusEnd);
     require(focused[0],"Player window must regain focus after the previous popup before touching "+resource);
     step("native touch "+resource+" focusWaitMs="+(SystemClock.uptimeMillis()-focusStart));
-    JSONObject shown=(JSONObject)action("player.control",new JSONObject().put("command","controls.show"));
-    long visibleEnd=System.currentTimeMillis()+5000;while(!shown.optBoolean("controls")&&System.currentTimeMillis()<visibleEnd){Thread.sleep(100);shown=(JSONObject)action("player.state",new JSONObject());}
-    require(shown.optBoolean("controls"),"Wait for the actual controller reveal animation before touching "+resource+": "+shown);
+    long showAt=SystemClock.uptimeMillis();JSONObject shown=(JSONObject)action("player.control",new JSONObject().put("command","controls.show"));
+    step("native controller reveal replyMs="+(SystemClock.uptimeMillis()-showAt)+" fullyVisibleAtReply="+shown.optBoolean("controls"));
+    // That reply may precede the reveal animation. Repeated state calls via
+    // the background library can consume the entire 3.5 s auto-hide interval.
+    // Observe the actual native hit target below instead: the same stricter
+    // alpha/clipping/screen/focus guard, with no repeat reveal or longer timeout.
     // A controller state flag / isShown() is not a screen-space hit target:
     // Media3 can still translate a child outside the window. Do not inject
     // there or replace a real touch with performClick(). Observe a visible,
@@ -575,7 +603,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     action("player.control",new JSONObject().put("command","pause"));action("player.control",new JSONObject().put("command","controls.show"));
     // Exercise the actual controller menu, not an SDK method R8 may inline
     // away from the minified APK's public interface used by a separate probe.
-    touchPlayerButton("exo_settings");clickPlayerText("Speed","播放速度");clickPlayerText("1.25");require(Math.abs(((JSONObject)action("player.state",new JSONObject())).getJSONObject("options").getDouble("rate")-1.25)<.01,"Native controller speed settings must use the same persistent mode options");
+    touchPlayerButton("exo_settings");clickPlayerText("速度","Speed","播放速度");clickPlayerText("1.25");require(Math.abs(((JSONObject)action("player.state",new JSONObject())).getJSONObject("options").getDouble("rate")-1.25)<.01,"Native controller speed settings must use the same persistent mode options");
     screenshot("rhvideo-playlist-qa.png");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
     action("playlist.start",new JSONObject());state=waitPlayer("video-4",true);require(Math.abs(state.getDouble("rate")-1.25)<.01&&state.getBoolean("repeat"),"Reopen restores the same ordered queue's mode controls and cursor");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
     action("playlist.sequential",new JSONObject());state=waitPlayer(null,true);require(state.getInt("count")==52&&state.getJSONObject("options").getBoolean("fullLength")&&!state.getJSONObject("options").getBoolean("portraitOnly"),"Sequential queue is independent and uses the full current list");

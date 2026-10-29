@@ -13,12 +13,19 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import org.json.JSONObject
 
+// The embedded mobile library is zh-CN. Media3 must use that same language,
+// including its speed/track menus, without changing the Activity/system locale.
+private fun rhVideoControlContext(context:Context):Context {
+  val configuration=android.content.res.Configuration(context.resources.configuration).apply{setLocale(java.util.Locale.SIMPLIFIED_CHINESE)}
+  return android.view.ContextThemeWrapper(context.createConfigurationContext(configuration),context.theme)
+}
+
 /** Transform our own compositor layer, never the SurfaceView-owned parent or
  * controls. Android 9 and earlier retain the Media3-effect fallback. The input
  * format (not transformed output size) decides whether rotation improves fit.
  */
 @UnstableApi
-internal open class RhVideoPlayerView(context:Context):PlayerView(context) {
+internal open class RhVideoPlayerView(context:Context):PlayerView(rhVideoControlContext(context)) {
   var autoRotate=false;private set
   var videoRotation=0;private set
   private var sourceAspect=0.0
