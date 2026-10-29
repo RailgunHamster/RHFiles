@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import vm from 'node:vm';import {parse} from 'acorn';
-const source=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8'),java=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');let success,artifact,traffic,failure;
-function walk(node){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&node.callee.object?.name==='assert'&&node.arguments[0]?.name==='output'){if(node.callee.property?.name==='match')success=node.arguments[1];if(node.callee.property?.name==='doesNotMatch')failure=node.arguments[1];}if(node.type==='VariableDeclarator'&&node.id?.name==='artifact')artifact=node.init;if(node.type==='FunctionDeclaration'&&node.id?.name==='verifyContractTraffic')traffic=node;for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}walk(parse(source,{ecmaVersion:'latest',sourceType:'module'}));
+const source=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8'),java=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');let success,artifact,traffic,failure,audioCapture;
+function walk(node){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&node.callee.object?.name==='assert'&&node.arguments[0]?.name==='output'){if(node.callee.property?.name==='match')success=node.arguments[1];if(node.callee.property?.name==='doesNotMatch')failure=node.arguments[1];}if(node.type==='VariableDeclarator'&&node.id?.name==='artifact')artifact=node.init;if(node.type==='FunctionDeclaration'&&node.id?.name==='verifyContractTraffic')traffic=node;if(node.type==='FunctionDeclaration'&&node.id?.name==='captureGridAudio')audioCapture=node;for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}walk(parse(source,{ecmaVersion:'latest',sourceType:'module'}));
 const modes={actualMode:false,lifecycleMode:false,taskCenterMode:false,priorityMode:false,duplicatesMode:false,rulesMode:false,loginMode:false,exportsMode:false,gridRotationMode:false,gridRestoreMode:false,gridMode:false,playlistMode:false,previewMode:false,singleMode:true,favoritesMode:false,stripMode:false,ticketsMode:false,rotationMode:false};
 test('Android runner recognizes the actual expanded Single success receipt, not an obsolete label',()=>{
   assert(success);const pattern=vm.runInNewContext(source.slice(success.start,success.end),modes),message=[...java.matchAll(/result\.putString\("stream","((?:\\.|[^"\\])*)"\)/g)].map(v=>v[1]).find(v=>v.startsWith('PASS: contextual workflow entries'));
@@ -63,4 +63,15 @@ test('lifecycle acceptance requires its own real-media receipt and cannot hide s
   assert.throws(()=>verify({requests:[request,{method:'POST',path:'/api/v1/trash/video/video-2'}]},{lifecycleMode:true}),/cannot replay/);
   verify({requests:[request,{method:'POST',path:'/api/v1/auth/login'}]},{lifecycleMode:true});
   assert.throws(()=>verify({requests:[request,{method:'DELETE',path:'/api/v1/auth/login'}]},{lifecycleMode:true}),/cannot replay/);
+});
+
+for(const failed of [false,true])test(`live grid audio snapshot is a bounded asynchronous read with a truthful ${failed?'failed':'captured'} receipt`,async()=>{
+  assert(audioCapture);const writes=new Map();let calls=0;
+  const capture=vm.runInNewContext('('+source.slice(audioCapture.start,audioCapture.end)+')',{
+    adb:'owned-adb.exe',serial:'emulator-5584',artifact:'artifact',path,fs:{writeFileSync:(file,text)=>writes.set(path.basename(file),text)},
+    execFile:(file,args,options,done)=>{calls++;assert.equal(file,'owned-adb.exe');assert.deepEqual(Array.from(args),['-s','emulator-5584','shell','dumpsys','media.audio_flinger']);assert.equal(options.timeout,10000);assert.equal(options.maxBuffer,4*1024*1024);assert.equal(options.encoding,'utf8');assert.equal(options.windowsHide,true);const error=failed?Object.assign(new Error('secret-diagnostic-message'),{code:'ETIMEDOUT'}):null;queueMicrotask(()=>done(error,'owned audio tracks'));}
+  });
+  const receipt=await capture(321);assert.equal(calls,1);assert.equal(receipt.expectedPid,321);assert.equal(receipt.captured,!failed);assert.equal(receipt.reason,failed?'ETIMEDOUT':null);
+  assert.equal(writes.get('native-audio-flinger-at-failure.log'),'owned audio tracks');const saved=JSON.parse(writes.get('native-audio-flinger-receipt.json'));assert.equal(saved.captured,!failed);assert(!JSON.stringify(saved).includes('secret-diagnostic-message'));
+  assert.match(source,/if\(gridAudioCapture\)await gridAudioCapture/,'The host must drain its own in-flight read before ending instrumentation');
 });

@@ -141,6 +141,10 @@ Android release 验收使用同一个受限模拟器入口，将模式改为 `ta
 
 原生按钮测试先等待弹窗真正退出并恢复焦点，必要时通过一次真实画面触摸唤出控制栏，然后核对透明度、裁剪、屏幕坐标、稳定中心和窗口归属再注入按钮触摸。不依赖后台 WebView 的显示控制栏回执、不延长自动隐藏时间、不以 `performClick()` 代替实际触摸；公开控制接口的其他行为测试保留。模式成功回执和截图必须匹配本次场景，旧的仅单播放器生命周期成功不能通过扩展后的同屏验收。错误模式在访问 SDK 或安装任何包前失败，失败日志保留。
 
+Android 同屏 `grid.state`／`native.grid.state` 的每格 `diagnostics` 仅在 debug 或已显式开启 ADB 自动化时采集。它属于本次解码器 incarnation（`epoch`），不复用共享 BandwidthMeter 的其他播放器计数；保留实际读取字节／范围起点、解码器初始化时间与回调到达时间、音视频 DecoderCounters、音频会话 ID 和 underrun 数。缺失阶段是 null，不伪造零；无事件队列、媒体 URI、请求头或异常正文。`droppedTotal` 按 [Media3 的真实定义](https://github.com/androidx/media/blob/1.11.1/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/DecoderCounters.java)包含 droppedInput，不能误称为仅输出端丢帧。
+
+同屏就绪阶段写入探针 stream，失败则保留原断言状态和线程栈。在既有失败诊断期间，宿主收到明确 PID 标记后最多启动一次异步只读 `dumpsys media.audio_flinger`，10 秒／4 MiB 上限，退出前等待该读取结束；不会阻塞 Node 夹具继续供流、扩大逐帧等待或重启音频服务。快照及其 captured／failed receipt 单独保存；必须核对相同 PID／audioSessionId，不能把进程已退出后的空输出当成失败当时的音频状态。同屏收藏与暂存现也通过可见、裁剪、透明度、焦点及稳定中心校验后的真实触摸验证，不再用 `native.ui.invoke` 冒充手指操作。
+
 ## RHVideo 完整 Windows 原生验收入口
 
 不要把漏设环境标志后跳过的原生用例计入完整验收。`rhvideo-windows.mjs` 强制启用实际原生用例，串行运行全部 `rhvideo*.test.mjs`，核对随包 3.0.24 的文件清单、哈希和预建插件索引，并要求最终 TAP 全部通过且没有跳过、取消或待办。40 分钟及 8 MiB 日志上限只限制自有测试进程树，不重启测试来抹掉失败。

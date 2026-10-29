@@ -6,6 +6,20 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 同屏停滞的逐输入和现场音频证据（未修复、未发包）
+
+给每次原生解码器 incarnation 增加独立、定长、可关闭的诊断：实际 H.264／AAC 解码器名、生产者初始化时间与主线程收到回调的时间、真实 Media3 counters、传输字节／首末字节时间、音频会话 ID、underrun 和读取错误数。只有 debug 或显式启用原生自动化时采集；不记录地址、令牌、文件名、异常正文或事件队列，不改变播放／重试策略。缺失阶段返回 null，`droppedTotal` 按 [Media3 DecoderCounters](https://developer.android.com/reference/androidx/media3/exoplayer/DecoderCounters#droppedBufferCount) 表示输入与输出丢帧总计，不误称只有输出。
+
+中间包 `c0f51ac43a23679b83fb7dcaa4ba739f3bc03d02ab3b7b0693bf86b01d0cb668`／探针 `0776576abf01b6e0d427e5041b5716fbfa3efebb0357209627eee31e3799fa58` 的完整 grid 在初始三路推进断言失败（`rhvideo-input-diagnostics-grid-first.log`）：两格仅一帧／0 秒，另一格约 1.39 秒／20 帧。三路已初始化真实 H.264／AAC 解码器、读取数 MB，无 Media3 loadError；不能据此排除慢读取或断言唯一音频根因。该中间诊断的 `droppedOutput` 实际映射总计，随后已更正键名。
+
+最终增量 QA 构建 **5 分 25 秒成功，429/429 JVM，零失败／错误／跳过**（`rhvideo-input-diagnostics-final-build.log`）；Node **841/841、零跳过**（`rhvideo-input-diagnostics-final-node.log`）。主包 SHA-256 `6d3b3658f9a0b4545ea5d855906891d34e8af741137c4a4701fd3ec57b196220`，探针 `02a47e1f5a2e43fb2370852399aa4af71a80c8b6e12e98570b47ca8003759136`。308 项 Android 输入逐一比较，仅未打包的测试夹具不同；产品／原生／新增测试相符。参考 RHVideo 仍干净且为 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`，模块指纹审计通过，不把库存当成功能验收。
+
+最终完整 grid 仍失败（`rhvideo-input-diagnostics-live-grid.log`，`rhvideo-android-grid-1793304380628-release`）：三格 READY／playing、0 秒／1 帧，视频各 queuedInput 20，音频 renderedOutput 11／4／4。每路均为 `c2.goldfish.h264.decoder`＋`c2.android.aac.decoder`，读取约 4.08／3.30／3.22 MB，未报 loadError。音频 renderedOutput 仅表示解码输出已提交，不等于声音已经输出。
+
+本次在失败仍存活时异步读取 AudioFlinger，有 10 秒／4 MiB 上限，不阻塞夹具 HTTP。回执匹配 PID **21632**，会话 **3377／3385／3393** 与三格状态一致；三条音轨 server frame count 均零、active 均 no，flags 均 `0x008`，队列仅 10240／3072／3072 帧，缓冲容量 24000。它将下一步缩小到音频起播／补缓冲与真实播放时钟的关系，但**尚不能认定唯一根因或已修复**；需用同一媒体和完整流程做独立对照，不删音轨、伪造时钟或放宽帧预算。
+
+grid 收藏／标记探针现要求真实可见、可命中、稳定的原生按钮 down/up，不再只调用 native.ui.invoke；但最终运行在初始播放就失败，**未执行到这些按钮，不能记作物理触摸通过**。没有重启模拟器／系统音频／电脑、操作真机或替换正式 Windows；未发布新包。以上改变是诊断进展，不是完整目标完成。
+
 ## 2026-10-30 Android 真实后台／重建时的字幕选择丢失（单播放器已验证，同屏仍有失败）
 
 继续前一轮的 Android 原生验收，而非用 Windows 结果代替。未修改前的 QA 主 APK `d3939c10907da93f380490ccf2bedebe8e23b32823295670f8d304ca619846e5` 在完整 `grid` 中失败（短路径 QA 的 `rhvideo-current-android-full-grid.log`，`rhvideo-android-grid-1793298500860-release`）：三格都报告 READY／playing、20 秒已缓冲且没有错误，但两格时间为零、只渲染一帧，另一格约 1.2 秒／19 帧。线程栈和音频日志已保留，包含 underrun 和时间戳修正；这**没有证明单一网络／音频／合成层根因，也没有修好持续播放停滞**。同主包的旧 `single` 通过（`rhvideo-current-android-single.log`），但当时只要求首帧，不把它描述成持续播放通过。

@@ -18,9 +18,10 @@ public class RhVideoInstrumentation extends Instrumentation {
   private boolean gridReady(JSONObject state)throws Exception{if(state==null)return false;JSONArray cells=state.optJSONArray("cells");if(cells==null||cells.length()!=4)return false;for(int i=0;i<cells.length();i++)if(!cells.getJSONObject(i).optBoolean("rendered"))return false;return cells.getJSONObject(0).optLong("positionMs")>500;}
   private JSONObject waitGrid(int count,boolean paused)throws Exception{
     long end=System.currentTimeMillis()+30000;JSONObject state=null;String lastError="none";
-    do{try{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==count;for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.optBoolean("rendered")&&cell.optBoolean("paused")==paused&&cell.optInt("playbackState")==3&&cell.optLong("renderedFrames")>0;if(!paused)ready&=cell.optBoolean("playing")&&cell.optLong("positionMs")>250&&cell.optLong("renderedFrames")>1;}if(ready)return state;}catch(Exception error){lastError=error.toString();}Thread.sleep(200);}while(System.currentTimeMillis()<end);
+    do{try{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==count;for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.optBoolean("rendered")&&cell.optBoolean("paused")==paused&&cell.optInt("playbackState")==3&&cell.optLong("renderedFrames")>0;if(!paused)ready&=cell.optBoolean("playing")&&cell.optLong("positionMs")>250&&cell.optLong("renderedFrames")>1;}if(ready){step("grid settled "+state);return state;}}catch(Exception error){lastError=error.toString();}Thread.sleep(200);}while(System.currentTimeMillis()<end);
     // The release APK is R8-minified. Do not link a Kotlin Companion from the
     // separately compiled probe: R8 can inline/remove it in the product APK.
+    step("QA: grid-failure-audio-snapshot pid="+android.os.Process.myPid());
     android.util.Log.e("RHVideoQA","Grid public API failure: "+lastError+"; state="+state);
     JSONObject diagnostic=new JSONObject();runOnMainSync(()->{try{diagnostic.put("activity",current==null?"none":current.getClass().getSimpleName());diagnostic.put("mainAttached",main!=null&&main.isAttachedToWindow());diagnostic.put("libraryAttached",library!=null&&library.isAttachedToWindow());}catch(Exception error){try{diagnostic.put("viewError",error.toString());}catch(Exception ignored){}}});
     try{diagnostic.put("main",expression(main,"({hidden:document.hidden,bridge:!!window.RHFilesNative,api:typeof api,native:typeof api?.native})"));}catch(Exception error){diagnostic.put("mainError",error.toString());}
@@ -30,9 +31,16 @@ public class RhVideoInstrumentation extends Instrumentation {
   private JSONArray gridIds(JSONObject state)throws Exception{JSONArray ids=new JSONArray();JSONArray cells=state.getJSONArray("cells");for(int i=0;i<cells.length();i++)ids.put(cells.getJSONObject(i).getString("id"));return ids;}
   private JSONObject gridControl(int target,String command,double value)throws Exception{return (JSONObject)mainAction("native.grid.control",new JSONObject().put("target",target).put("command",command).put("value",value));}
   private void clickNativeLabel(String label)throws Exception{
-    long end=System.currentTimeMillis()+5000;JSONArray controls=null;
-    do{controls=(JSONArray)mainAction("native.ui.list",new JSONObject());for(int i=0;i<controls.length();i++){JSONObject control=controls.getJSONObject(i);if(label.equals(control.optString("label"))&&control.getBoolean("enabled")){mainAction("native.ui.invoke",new JSONObject().put("controlId",control.getString("controlId")));return;}}Thread.sleep(100);}while(System.currentTimeMillis()<end);
-    throw new Exception("Visible native control missing: "+label+"; "+controls);
+    long end=SystemClock.uptimeMillis()+5000;Activity owner=current;int[] center={-1,-1},previous={-1,-1};int stable=0;
+    do{center[0]=center[1]=-1;runOnMainSync(()->{
+      if(owner==null||owner!=current||owner.isFinishing())return;View decor=owner.getWindow().getDecorView(),button=described(decor,label);if(button==null||!button.isShown()||!button.isEnabled()||!decor.hasWindowFocus()||button.getWindowToken()!=decor.getWindowToken())return;
+      for(View node=button;node!=null;node=node.getParent() instanceof View?(View)node.getParent():null)if(node.getAlpha()<.95f)return;
+      android.graphics.Rect visible=new android.graphics.Rect(),window=new android.graphics.Rect();if(!button.getGlobalVisibleRect(visible)||!decor.getGlobalVisibleRect(window))return;
+      int[] xy={0,0},root={0,0};button.getLocationOnScreen(xy);decor.getRootView().getLocationOnScreen(root);visible.offset(root[0],root[1]);window.offset(root[0],root[1]);android.graphics.Point screen=new android.graphics.Point();if(decor.getDisplay()!=null)decor.getDisplay().getRealSize(screen);
+      int x=xy[0]+button.getWidth()/2,y=xy[1]+button.getHeight()/2;if(button.getWidth()>0&&button.getHeight()>0&&visible.contains(x,y)&&window.contains(x,y)&&x>=0&&y>=0&&x<screen.x&&y<screen.y){center[0]=x;center[1]=y;}
+    });if(center[0]>=0&&center[0]==previous[0]&&center[1]==previous[1])stable++;else stable=0;if(stable>=1)break;previous[0]=center[0];previous[1]=center[1];Thread.sleep(50);}while(SystemClock.uptimeMillis()<end);
+    require(stable>=1&&current==owner,"A stable focused native touch target must exist: "+label);long now=SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,center[0],center[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,center[0],center[1],0);
+    try{sendPointerSync(down);sendPointerSync(up);}finally{down.recycle();up.recycle();}step("native label touched once: "+label);
   }
   private JSONObject waitGridFavorite(int target,boolean enabled,boolean failed)throws Exception{
     long end=System.currentTimeMillis()+10000;JSONObject cell=null;

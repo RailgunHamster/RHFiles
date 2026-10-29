@@ -27,6 +27,12 @@ test('physical player-button acceptance reveals controls with one native gesture
 test('a cold first-click acceptance precedes unrelated image checks while its gallery is intentionally held',()=>{
   assert.match(source,/if\("single"\.equals\(args\.getString\("mode"\)\)\)\{checkReferenceSingle\(\);checkImageContent\(\);checkContextControls\(\);checkFavoriteSlideshow\(\);/);
 });
+
+test('grid star and mark acceptance uses actual guarded touches rather than native.ui.invoke',()=>{
+  const touch=source.slice(source.indexOf('private void clickNativeLabel('),source.indexOf('private JSONObject waitGridFavorite('));
+  assert.doesNotMatch(touch,/native\.ui\.invoke|performClick\(/);for(const guard of ['hasWindowFocus','getAlpha','getGlobalVisibleRect','getLocationOnScreen','getWindowToken'])assert(touch.includes(guard),guard);
+  assert.equal([...touch.matchAll(/sendPointerSync\(down\)/g)].length,1);assert.equal([...touch.matchAll(/sendPointerSync\(up\)/g)].length,1);
+});
 test('constant Android probe expressions parse as expressions, not standalone statements',()=>{
   const failures=[];let count=0;
   for(const match of source.matchAll(/\bexpression\(\w+,\s*("(?:\\.|[^"\\])*")\s*\)/g)){

@@ -59,6 +59,7 @@ class RhVideoGridActivity:AppCompatActivity(){
   private val cellLabels=mutableListOf<TextView>()
   private val frameCounts=mutableListOf<AtomicLong>()
   private val frameTimes=mutableListOf<AtomicLong>()
+  private val inputDiagnostics=mutableListOf<RhVideoInputDiagnostics>()
   // A long browsing session can visit thousands of cells. Retain that state
   // in-process across rotation, never serialize it into a size-limited Bundle.
   private val memory by lazy {ViewModelProvider(this,object:ViewModelProvider.Factory{
@@ -169,9 +170,11 @@ class RhVideoGridActivity:AppCompatActivity(){
     target.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("全部视频")+(0 until entries.length()).map{"${it+1} · ${entries.getJSONObject(it).getString("name")}"});target.setSelection(selected+1)
   }
   override fun onStart(){super.onStart();active=WeakReference(this);try{client.checkGrid(ticket,lease);startPlayers();handler.removeCallbacks(update);handler.post(update)}catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish()}}
-  private fun createEngine(storage:NativeStorage):ExoPlayer{
-    val factory=DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
-    return ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true)).setMediaSourceFactory(factory).build()
+  private fun createEngine(storage:NativeStorage,diagnostics:RhVideoInputDiagnostics):ExoPlayer{
+    val source=DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})
+    if(diagnostics.enabled)source.setTransferListener(diagnostics)
+    val factory=DefaultMediaSourceFactory(source).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
+    return ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true)).setMediaSourceFactory(factory).build().also{if(diagnostics.enabled)it.addAnalyticsListener(diagnostics)}
   }
   private fun bindEngine(i:Int,engine:ExoPlayer,view:RhVideoPlayerView,message:TextView,storage:NativeStorage){
     val saved=cell(i);val item=entries.getJSONObject(i);val input=inputIds[i]
@@ -185,11 +188,11 @@ class RhVideoGridActivity:AppCompatActivity(){
     // Media3 effects, which must be set before prepare: replace only this cell's
     // renderer, keeping the logical input identity and all user control state.
     view.onRotationRendererChanged={handler.post{if(!stopped&&!isFinishing&&players.getOrNull(i)===engine&&inputIds.getOrNull(i)==input)safe{
-      val next=createEngine(storage)
+      val diagnostics=RhVideoInputDiagnostics(tracing);val next=createEngine(storage,diagnostics)
       saved.put("positionMs",engine.currentPosition.coerceAtLeast(0)).put("paused",!engine.playWhenReady).put("rate",engine.playbackParameters.speed.toDouble())
       next.trackSelectionParameters=engine.trackSelectionParameters
       view.player=null;view.unbindRotationEngine(engine,true);RhVideoVolume.untrack(engine);engine.release()
-      players[i]=next;rendered.remove(i);errors.remove(i);message.visibility=View.GONE;frameCounts[i]=AtomicLong(0);frameTimes[i]=AtomicLong(-1)
+      players[i]=next;inputDiagnostics[i]=diagnostics;rendered.remove(i);errors.remove(i);message.visibility=View.GONE;frameCounts[i]=AtomicLong(0);frameTimes[i]=AtomicLong(-1)
       bindEngine(i,next,view,message,storage)
     }}}
     val frames=frameCounts[i];val frameTime=frameTimes[i]
@@ -207,9 +210,10 @@ class RhVideoGridActivity:AppCompatActivity(){
     if(!stopped)return;stopped=false;trace("storage-start");val storage=NativeStorage(applicationContext);trace("storage-ready")
     for(i in 0 until entries.length()){
       val item=entries.getJSONObject(i)
-      trace("engine-$i-start");val engine=createEngine(storage);memory.restoreTracks(item.getString("id"),engine);trace("engine-$i-ready")
+      val diagnostics=RhVideoInputDiagnostics(tracing)
+      trace("engine-$i-start");val engine=createEngine(storage,diagnostics);memory.restoreTracks(item.getString("id"),engine);trace("engine-$i-ready")
       val view=RhVideoPlayerView(this).apply{controllerShowTimeoutMs=2500;controllerAutoShow=false;contentDescription="视频 ${i+1} · ${item.getString("name")}"}
-      players.add(engine);views.add(view);inputIds.add(inputSequence.getAndIncrement());val frames=AtomicLong(0);val frameTime=AtomicLong(-1);frameCounts.add(frames);frameTimes.add(frameTime)
+      players.add(engine);inputDiagnostics.add(diagnostics);views.add(view);inputIds.add(inputSequence.getAndIncrement());val frames=AtomicLong(0);val frameTime=AtomicLong(-1);frameCounts.add(frames);frameTimes.add(frameTime)
       val container=FrameLayout(this);val message=TextView(this).apply{setTextColor(Color.WHITE);setBackgroundColor(0xcc151b27.toInt());setPadding(16,16,16,16);visibility=View.GONE}
       container.addView(view,FrameLayout.LayoutParams(-1,-1));container.addView(message,FrameLayout.LayoutParams(-1,-2,android.view.Gravity.CENTER));containers.add(container);grid.addView(container)
       val header=LinearLayout(this).apply{gravity=android.view.Gravity.CENTER_VERTICAL;setBackgroundColor(0x99151b27.toInt())}
@@ -236,6 +240,7 @@ class RhVideoGridActivity:AppCompatActivity(){
           .put("repeat",p.repeatMode==Player.REPEAT_MODE_ONE).put("positionMs",p.currentPosition).put("durationMs",if(p.duration==C.TIME_UNSET)0 else p.duration).put("rate",p.playbackParameters.speed)
           .put("volume",saved.getInt("volume")).put("muted",saved.getBoolean("muted")).put("lastVolume",saved.getInt("lastVolume")).put("decoderVolume",p.volume*100)
           .put("tracks",PlayerTracks.state(p.currentTracks,p.trackSelectionParameters)).put("error",errors[i]?:JSONObject.NULL).put("presentation",views[i].rotationState())
+          .put("diagnostics",inputDiagnostics[i].snapshot(counters,p.audioDecoderCounters)?.put("audioSessionId",p.audioSessionId.takeIf{it>0}?:JSONObject.NULL)?:JSONObject.NULL)
       }))
   }
   fun control(args:JSONObject):JSONObject {
@@ -275,7 +280,7 @@ class RhVideoGridActivity:AppCompatActivity(){
   }
   override fun onSaveInstanceState(out:Bundle){capture();out.putInt("offset",data.getInt("offset"));out.putInt("expanded",expanded);out.putInt("selected",selected);out.putBoolean("controlsExpanded",controlsExpanded);super.onSaveInstanceState(out)}
   private fun releasePlayers(){
-    liveInputs=emptyList();capture();runCatching{client.rememberGrid(ticket,lease,data.getInt("offset"))};views.forEachIndexed{i,view->view.player=null;view.unbindRotationEngine(players[i])};val retired=players.toList();players.clear();retired.forEach{RhVideoVolume.untrack(it);it.release()};views.clear();containers.clear();rendered.clear();errors.clear();inputIds.clear();favoriteButtons.clear();markButtons.clear();cellLabels.clear();frameCounts.clear();frameTimes.clear();grid.removeAllViews();stopped=true
+    liveInputs=emptyList();capture();runCatching{client.rememberGrid(ticket,lease,data.getInt("offset"))};views.forEachIndexed{i,view->view.player=null;view.unbindRotationEngine(players[i])};val retired=players.toList();players.clear();retired.forEach{RhVideoVolume.untrack(it);it.release()};inputDiagnostics.clear();views.clear();containers.clear();rendered.clear();errors.clear();inputIds.clear();favoriteButtons.clear();markButtons.clear();cellLabels.clear();frameCounts.clear();frameTimes.clear();grid.removeAllViews();stopped=true
   }
   override fun onStop(){handler.removeCallbacks(update);releasePlayers();super.onStop()}
   override fun onDestroy(){if(isFinishing&&!memory.closed){memory.closed=true;runCatching{client.closeGrid(ticket,lease,commit=false)}};if(active.get()===this)active.clear();super.onDestroy()}

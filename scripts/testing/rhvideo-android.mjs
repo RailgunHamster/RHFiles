@@ -5,7 +5,7 @@ import os from 'node:os';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {execFileSync,spawn} from 'node:child_process';
+import {execFile,execFileSync,spawn} from 'node:child_process';
 import {rhvideoFixture as contractFixture} from './rhvideo-fixture.mjs';
 import {realRhVideoService} from './rhvideo-real-service.mjs';
 import {taskFixture} from './rhvideo-task-fixture.mjs';
@@ -92,6 +92,16 @@ if(favoritesMode)for(const key of ['video:video-0','video:video-1','picture:pict
 const failedFixture=gridMode&&!gridRestoreMode&&!gridRotationMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
 const artifact=path.resolve('test-artifacts/rhvideo-android'+(lifecycleMode?'-lifecycle':taskCenterMode?'-task-center':rulesMode?'-rules':actualMode?(loginMode?'-login':duplicatesMode?'-duplicates':priorityMode?'-task-priority':'-exports'):gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
+function captureGridAudio(expectedPid){
+  // Only after owned-emulator validation and a failed grid assertion. Keep
+  // Node's fixture server responsive while querying the live audio service;
+  // this is not an audio reset, a playback retry, or a longer frame budget.
+  return new Promise((resolve,reject)=>execFile(adb,['-s',serial,'shell','dumpsys','media.audio_flinger'],{encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:4*1024*1024},(error,stdout)=>{
+    try{const receipt={expectedPid,captured:!error,reason:error?String(error.code||'terminated'):null};
+      fs.writeFileSync(path.join(artifact,'native-audio-flinger-at-failure.log'),stdout||'');fs.writeFileSync(path.join(artifact,'native-audio-flinger-receipt.json'),JSON.stringify(receipt,null,2));resolve(receipt);
+    }catch(error){reject(error);}
+  }));
+}
 // This exact generated diagnostic belongs to the already-verified QA emulator.
 // A later failed run must never inherit an earlier run's menu screenshot.
 if(singleMode||playlistMode)for(const name of ['rhvideo-menu-failure-qa.png','rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
@@ -130,14 +140,14 @@ try{
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
   const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
-  let output='',armedTaskFailures=false;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
+  let output='',armedTaskFailures=false,gridAudioCapture=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}const failure=output.match(/^STEP: QA: grid-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode)&&!gridAudioCapture&&failure)gridAudioCapture=captureGridAudio(Number(failure[1])).catch(error=>{console.error('Live grid audio diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
   // not slower individual frame/seek waits (those stay unchanged in the probe).
   const budgetMs=previewMode||(gridMode&&!gridRestoreMode)?600000:360000;let expired=false;
   const timer=setTimeout(()=>{expired=true;child.kill();},budgetMs);
   try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0&&!expired?resolve():reject(Error(expired?'Owned instrumentation exceeded whole-scenario budget '+budgetMs+' ms':'Instrumentation exit '+code)));});}
-  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);}
+  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;}
   assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED|keyDispatchingTimedOut|Input dispatching timed out/);return output;
   }
   const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
