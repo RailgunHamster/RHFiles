@@ -1,5 +1,5 @@
 //! RHVideo client, not a bundled server or a direct database connection.
-//! Passwords are used once; bearer tokens stay in native process memory.
+//! Passwords are used once; bearer tokens never enter the renderer or backups.
 use axum::{
     body::Body,
     extract::Path,
@@ -29,6 +29,8 @@ mod configuration;
 mod exports;
 #[path = "rhvideo_downloads.rs"]
 mod downloads;
+#[path = "rhvideo_credentials.rs"]
+mod credentials;
 
 const JSON_LIMIT: usize = 32 * 1024 * 1024;
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -51,6 +53,71 @@ static PLAY_MONITOR_ERROR: Mutex<Option<Value>> = Mutex::new(None);
 static PLAY_MONITOR_TICKS:AtomicU64=AtomicU64::new(0);
 static QUEUE_STATE_LOCK: Mutex<()> = Mutex::new(());
 static PREVIEW_RUN: AtomicU64 = AtomicU64::new(1);
+struct LoginState {attempted:bool,restoring:bool,warning:String}
+static LOGIN_STATE:Mutex<LoginState>=Mutex::new(LoginState{attempted:false,restoring:false,warning:String::new()});
+static RESTORE_LOCK:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+static LOGIN_TRANSITION:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+
+fn login_deadline(expires:u64)->u64{chrono::Utc::now().timestamp().max(0)as u64+expires.min(31_536_000).saturating_sub(60).max(1)}
+// Caller holds SESSION: persistence is part of the same account transaction.
+fn store_login(session:&Session){
+    let result=(||{
+        let value=credentials::Record{version:1,server:session.base.to_string(),username:session.username.clone(),token:session.token.lock().map_err(|_|"登录状态不可用")?.clone(),refresh_at:session.refresh_at.load(Ordering::Relaxed)};
+        credentials::Vault::profile()?.save(&value)
+    })();
+    if let Ok(mut state)=LOGIN_STATE.lock(){state.warning=result.err().map(|e|format!("本机登录未保存：{e}")).unwrap_or_default();}
+}
+fn store_active_login(session:&Session){
+    if let Ok(slot)=SESSION.lock(){if slot.as_ref().is_some_and(|s|s.generation==session.generation)&&GENERATION.load(Ordering::SeqCst)==session.generation{store_login(session);}}
+}
+fn expire_login(session:&Session){
+    if let Ok(mut slot)=SESSION.lock(){if GENERATION.load(Ordering::SeqCst)==session.generation&&(slot.as_ref().is_some_and(|s|s.generation==session.generation)||slot.is_none()&&LOGIN_STATE.lock().is_ok_and(|v|v.restoring)){
+        slot.take();GENERATION.fetch_add(1,Ordering::SeqCst);
+        let result=credentials::Vault::profile().and_then(|v|v.clear());
+        if let Ok(mut state)=LOGIN_STATE.lock(){state.attempted=true;state.restoring=false;state.warning=result.err().unwrap_or_else(||"保存的登录已失效，请重新登录".into());}
+    }}
+}
+async fn session_from(base:Url,username:String,token:String,generation:u64,refresh_at:u64,client:reqwest::Client)->Result<Arc<Session>,String>{
+    let mut bytes=[0u8;32];getrandom::fill(&mut bytes).map_err(|_|"无法生成安全的本机媒体通道")?;
+    Ok(Arc::new(Session{base,username,token:Mutex::new(token),refresh_at:AtomicU64::new(refresh_at),refresh_lock:tokio::sync::Mutex::new(()),capability:bytes.iter().map(|b|format!("{b:02x}")).collect(),port:broker().await?,generation,client,assets:Mutex::new(HashMap::new()),next_asset:AtomicU64::new(1),asset_revision:AtomicU64::new(0),videos:tokio::sync::Mutex::new(None),favorites:Mutex::new(HashSet::new()),preview:Mutex::new(PreviewState::default()),single_controls:Mutex::new(SingleControls::default())}))
+}
+async fn restore_login(fresh:bool)->Result<Value,String>{
+    let observed=GENERATION.load(Ordering::SeqCst);let joined=LOGIN_STATE.lock().is_ok_and(|v|v.restoring);
+    let _restore=RESTORE_LOCK.lock().await;
+    let ticket={
+        let _transition=LOGIN_TRANSITION.lock().await;
+        let slot=SESSION.lock().map_err(|_|"媒体库状态不可用")?;let mut status=LOGIN_STATE.lock().map_err(|_|"登录恢复状态不可用")?;
+        if slot.is_some()||status.attempted&&(!fresh||joined||observed!=GENERATION.load(Ordering::SeqCst)){drop(status);drop(slot);return Ok(state());}
+        status.attempted=true;status.restoring=true;status.warning.clear();GENERATION.fetch_add(1,Ordering::SeqCst)+1
+    };
+    let result=async{
+        let saved={let _slot=SESSION.lock().map_err(|_|"媒体库状态不可用")?;if GENERATION.load(Ordering::SeqCst)!=ticket{return Ok(None);}credentials::Vault::profile()?.read()?};
+        let Some(saved)=saved else{return Ok(None)};
+        let session=session_from(base_url(&saved.server)?,saved.username,saved.token,ticket,saved.refresh_at,client()?).await?;
+        let identity=session.request(reqwest::Method::GET,"api/v1/auth/me",&[],None).await?;
+        if identity["username"].as_str()!=Some(session.username.as_str())||identity["is_active"]==false{
+            return Err("已保存的登录账户与服务器身份不一致，请重新登录".into());
+        }
+        Ok::<_,String>(Some(session))
+    }.await;
+    let _transition=LOGIN_TRANSITION.lock().await;
+    let mut slot=SESSION.lock().map_err(|_|"媒体库状态不可用")?;
+    if GENERATION.load(Ordering::SeqCst)!=ticket||slot.is_some(){drop(slot);return Ok(state());}
+    match result {
+        Ok(Some(session))=>{store_login(&session);*slot=Some(session);}
+        Ok(None)=>{},
+        Err(error)=>{
+            // A network outage is not a logout. Keep the protected record for
+            // a later app launch; do not loop or replay a password login.
+            let denied=error.contains("HTTP 401")||error.contains("身份不一致");
+            let cleanup=if denied{credentials::Vault::profile().and_then(|v|v.clear()).err()}else{None};
+            let safe=error.split_once("HTTP ").and_then(|(_,tail)|tail.get(..3)).filter(|code|code.bytes().all(|b|b.is_ascii_digit())).map(|code|format!("服务器验证失败（HTTP {code}）")).unwrap_or(error);
+            if let Ok(mut status)=LOGIN_STATE.lock(){status.warning=format!("恢复登录失败：{safe}{}",cleanup.map(|e|format!("；{e}")).unwrap_or_default());}
+        }
+    }
+    if let Ok(mut status)=LOGIN_STATE.lock(){status.restoring=false;}
+    drop(slot);Ok(state())
+}
 
 fn failed_media(state:&Value)->bool{
     // libVLC can report HTTP 404 as Ended, not Error. An input that ends
@@ -703,21 +770,20 @@ impl Session {
             .send()
             .await
             .map_err(network_error)?;
+        if response.status()==reqwest::StatusCode::UNAUTHORIZED{expire_login(self);}
         let value = json_response(response).await?;
         let next = value["access_token"]
             .as_str()
             .filter(|s| !s.is_empty() && s.len() < 32768 && !s.chars().any(char::is_control))
             .ok_or("刷新登录令牌失败")?
             .to_owned();
+        if self.generation!=GENERATION.load(Ordering::SeqCst){return Err("媒体账户已改变，旧登录刷新未应用".into());}
         *self.token.lock().map_err(|_| "登录状态不可用")? = next.clone();
         self.refresh_at.store(
-            now + value["expires_in"]
-                .as_u64()
-                .unwrap_or(1800)
-                .saturating_sub(60)
-                .max(1),
+            login_deadline(value["expires_in"].as_u64().unwrap_or(1800)),
             Ordering::Relaxed,
         );
+        store_active_login(self);
         Ok(next)
     }
     async fn video_catalog(&self, refresh: bool) -> Result<Arc<Value>, String> {
@@ -758,13 +824,7 @@ impl Session {
                 .clone()
         } else {
             if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-                let mut active = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
-                if active
-                    .as_ref()
-                    .is_some_and(|s| s.generation == self.generation)
-                {
-                    active.take();
-                }
+                expire_login(self);
             }
             let value = json_response(response).await?;
             if !value.is_array() {
@@ -810,13 +870,7 @@ impl Session {
         }
         let response = request.send().await.map_err(network_error)?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
-            if slot
-                .as_ref()
-                .is_some_and(|s| s.generation == self.generation)
-            {
-                slot.take();
-            }
+            expire_login(self);
         }
         let value = json_response(response).await?;
         if GENERATION.load(Ordering::SeqCst) != self.generation {
@@ -1068,14 +1122,7 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
     };
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            if let Ok(mut slot) = SESSION.lock() {
-                if slot
-                    .as_ref()
-                    .is_some_and(|s| s.generation == session.generation)
-                {
-                    slot.take();
-                }
-            }
+            expire_login(&session);
         }
         return failure(
             StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -1146,9 +1193,11 @@ fn state() -> Value {
     } else {
         read_config()
     };
+    let status=LOGIN_STATE.lock().ok();
     json!({"server":session.as_ref().map(|s|s.base.as_str()).unwrap_or(&config.server),
         "username":session.as_ref().map(|s|s.username.as_str()).unwrap_or(&config.username),
-        "connected":session.is_some(),"nativePlayback":native_available(),"credentialsPersisted":false,
+        "connected":session.is_some(),"nativePlayback":native_available(),"credentialsPersisted":credentials::Vault::profile().is_ok_and(|v|v.exists()),
+        "restoring":status.as_ref().is_some_and(|v|v.restoring),"loginWarning":status.as_ref().map(|v|v.warning.as_str()).unwrap_or(""),
         "generation":session.as_ref().map(|s|s.generation),"assetRevision":session.as_ref().map(|s|s.asset_revision.load(Ordering::Relaxed))})
 }
 fn native_available() -> bool {
@@ -1452,7 +1501,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         .map(|v| v.as_u64().ok_or("媒体会话参数无效"))
         .transpose()?;
     if let Some(generation) = expected {
-        if action != "logout" && current()?.generation != generation {
+        if action != "logout" && action!="restore" && current()?.generation != generation {
             return Err("媒体账户已改变，操作未执行，请刷新后重新操作".into());
         }
     }
@@ -1703,6 +1752,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             update_favorite(&app,&session,"video",&id,enabled).await?;return Ok(json!({"id":id,"favorite":enabled}));
         }
         "state" => return Ok(state()),
+        "restore" => {if args.as_object().is_some_and(|v|v.keys().any(|k|k!="fresh"))||args.get("fresh").is_some_and(|v|!v.is_boolean()){return Err("恢复登录仅接受 fresh 布尔参数，不接受账号、密码或令牌".into());}return restore_login(args["fresh"]==true).await;},
         "grid.close" => {
             let _loading=GRID_LOAD.lock().await;
             #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
@@ -1731,6 +1781,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             return Ok(json!({"fullscreen":fullscreen}));
         }
         "logout" => {
+            let _transition=LOGIN_TRANSITION.lock().await;
             flush_playback();
             let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
             if expected.is_some_and(|g| g != GENERATION.load(Ordering::SeqCst)) {
@@ -1744,6 +1795,8 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                     Ok(state())
                 };
             }
+            credentials::Vault::profile()?.clear()?;
+            {let mut status=LOGIN_STATE.lock().map_err(|_|"登录恢复状态不可用")?;status.attempted=true;status.restoring=false;status.warning.clear();}
             configuration::clear();
             exports::clear();
             GENERATION.fetch_add(1, Ordering::SeqCst);
@@ -1755,43 +1808,45 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             crate::rhvideo_player::stop();
             return Ok(state());
         }
-        "connect" | "register" => {
-            configuration::clear();
-            flush_playback();
+        "register" => {
+            let base=base_url(text(&args,"server",4096)?)?;
+            let username=text(&args,"username",256)?.trim().to_owned();
+            let password=text(&args,"password",4096)?;
+            if username.chars().count()<3||password.chars().count()<6{return Err("用户名至少3字符，密码至少6字符".into());}
+            let email=if args.get("email").is_some(){text(&args,"email",320)?.to_owned()}else{format!("{username}@temp.com")};
+            // Registration creates a server account. It must neither revoke
+            // the current local login nor log in with the supplied password.
+            let response=client()?.post(base.join("api/v1/auth/register").map_err(|_|"服务器地址无效")?)
+                .json(&json!({"username":username,"password":password,"email":email}))
+                .timeout(Duration::from_secs(20)).send().await.map_err(network_error)?;
+            if !response.status().is_success(){return Err(format!("注册失败（HTTP {}）",response.status().as_u16()));}
+            let result=json_response(response).await?;
+            if result["user_id"].as_str().is_none_or(|v|v.is_empty()){return Err("服务器未确认注册结果；请在服务器核对，未自动重复注册".into());}
+            return Ok(json!({"registered":true}));
+        }
+        "connect" => {
+            let base=base_url(text(&args,"server",4096)?)?;
+            let username=text(&args,"username",256)?.trim().to_owned();
+            let password=text(&args,"password",4096)?;
+            if username.is_empty()||password.is_empty(){return Err("请填写 RHVideo 用户名和密码".into());}
             let generation = {
+                let _transition=LOGIN_TRANSITION.lock().await;
+                configuration::clear();flush_playback();
+                let generation={
                 let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
+                credentials::Vault::profile()?.clear()?;
+                {let mut status=LOGIN_STATE.lock().map_err(|_|"登录恢复状态不可用")?;status.attempted=true;status.restoring=false;status.warning.clear();}
                 let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
                 slot.take();
                 exports::clear();
                 generation
+                };
+                PREPARED.lock().map_err(|_| "播放队列状态不可用")?.clear();
+                PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
+                #[cfg(windows)]crate::rhvideo_player::stop();
+                generation
             };
-            PREPARED.lock().map_err(|_| "播放队列状态不可用")?.clear();
-            PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
-            #[cfg(windows)]
-            crate::rhvideo_player::stop();
-            let base = base_url(text(&args, "server", 4096)?)?;
-            let username = text(&args, "username", 256)?.trim().to_owned();
-            let password = text(&args, "password", 4096)?;
-            if username.is_empty() || password.is_empty() {
-                return Err("请填写 RHVideo 用户名和密码".into());
-            }
             let client = client()?;
-            if action == "register" {
-                let email = text(&args, "email", 320)?;
-                json_response(
-                    client
-                        .post(
-                            base.join("api/v1/auth/register")
-                                .map_err(|_| "服务器地址无效")?,
-                        )
-                        .json(&json!({"username":username,"password":password,"email":email}))
-                        .timeout(Duration::from_secs(20))
-                        .send()
-                        .await
-                        .map_err(network_error)?,
-                )
-                .await?;
-            }
             let response = client
                 .post(
                     base.join("api/v1/auth/login")
@@ -1812,60 +1867,23 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 .filter(|s| !s.is_empty() && s.len() < 32768)
                 .ok_or("服务器未返回有效登录令牌")?
                 .to_owned();
-            let mut bytes = [0u8; 32];
-            getrandom::fill(&mut bytes).map_err(|_| "无法生成安全的本机媒体通道")?;
-            let session = Arc::new(Session {
-                base,
-                username: username.clone(),
-                token: Mutex::new(token),
-                refresh_at: AtomicU64::new(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                        + login["expires_in"]
-                            .as_u64()
-                            .unwrap_or(1800)
-                            .saturating_sub(60)
-                            .max(1),
-                ),
-                refresh_lock: tokio::sync::Mutex::new(()),
-                capability: bytes.iter().map(|b| format!("{b:02x}")).collect(),
-                port: broker().await?,
-                generation,
-                client,
-                assets: Mutex::new(HashMap::new()),
-                next_asset: AtomicU64::new(1),
-                asset_revision: AtomicU64::new(0),
-                videos: tokio::sync::Mutex::new(None),
-                favorites: Mutex::new(HashSet::new()),
-                preview: Mutex::new(PreviewState::default()),
-                single_controls: Mutex::new(SingleControls::default()),
-            });
+            let session=session_from(base,username.clone(),token,generation,login_deadline(login["expires_in"].as_u64().unwrap_or(1800)),client).await?;
             session
                 .request(reqwest::Method::GET, "api/v1/auth/me", &[], None)
                 .await?;
             if GENERATION.load(Ordering::SeqCst) != generation {
                 return Err("此登录请求已被新的操作取消".into());
             }
-            let config = Config {
-                server: session.base.to_string(),
-                username,
-            };
-            let path = config_path()?;
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|_| "无法保存媒体库地址")?;
-            }
-            std::fs::write(&path, serde_json::to_vec(&config).map_err(|_| "配置无效")?)
-                .map_err(|_| "无法保存媒体库地址")?;
-            #[cfg(windows)]
-            crate::rhvideo_player::stop();
-            PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
             {
+                let _transition=LOGIN_TRANSITION.lock().await;
                 let mut slot = SESSION.lock().map_err(|_| "媒体库状态不可用")?;
                 if generation != GENERATION.load(Ordering::SeqCst) {
                     return Err("连接已取消，未切换媒体账户".into());
                 }
+                let config=Config{server:session.base.to_string(),username};let path=config_path()?;
+                if let Some(parent)=path.parent(){std::fs::create_dir_all(parent).map_err(|_|"无法保存媒体库地址")?;}
+                std::fs::write(&path,serde_json::to_vec(&config).map_err(|_|"配置无效")?).map_err(|_|"无法保存媒体库地址")?;
+                store_login(&session);
                 *slot = Some(session);
             }
             return Ok(state());

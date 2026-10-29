@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 
 /** RHFiles client of RHVideo's API. No database access, persisted password or
  * bearer in the WebView/Intent. Only registered opaque media IDs can be read. */
-internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null) {
+internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,private val credentialStore:RhVideoCredentials=RhVideoCredentials(context.applicationContext),private val loginClock:()->Long=System::currentTimeMillis) {
   private val appContext=context.applicationContext
   companion object {
     private val processId=UUID.randomUUID().toString()
@@ -58,6 +58,11 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val prefs=context.getSharedPreferences("rhvideo-client-v1",Context.MODE_PRIVATE)
   private val contract by lazy{RhVideoContract(operationManifest?:JSONObject(context.assets.open("rhvideo/rhvideo-operations.json").bufferedReader().use{it.readText()}))}
   private val refreshLock=Any()
+  private val restoreLock=Any()
+  private var restoreAttempted=false
+  private var restoring=false
+  private var loginWarning=""
+  private class LoginRestoreFailure(message:String):java.io.IOException(message)
   private val configuration=RhVideoBackups()
   private val exports=RhVideoExports()
   private data class ZipPick(val metadata:JSONObject,val expires:Long)
@@ -242,21 +247,57 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   }
   private fun resume(s:Session,id:String)=JSONObject(prefs.getString(accountKey(s)+"-playback","{}")?:"{}").optJSONObject(id)?.optDouble("seconds",0.0)?.takeIf{it.isFinite()&&it in 0.0..604800.0}?:0.0
   private fun live(value:Session)=synchronized(lock){session?.generation==value.generation}
+  private fun deadline(expires:Long)=loginClock()+(expires.coerceIn(1,31536000)-60).coerceAtLeast(1)*1000
+  // Caller holds the account lock: an old refresh cannot re-save after logout.
+  private fun persistLogin(s:Session){
+    loginWarning=try{credentialStore.save(RhVideoCredentials.Record(s.base.toString(),s.username,s.token,s.refreshAt));""}catch(_:Exception){"本机登录未保存：系统无法保护或写入登录记录；本次仍可使用，重启后需重新登录"}
+  }
   private fun token(s:Session):String=synchronized(refreshLock){
     check(live(s)){"登录已结束"}
-    if(System.currentTimeMillis()<s.refreshAt)return@synchronized s.token
+    if(loginClock()<s.refreshAt)return@synchronized s.token
     val request=Request.Builder().url(s.base.resolve("api/v1/auth/refresh")!!).header("Authorization","Bearer ${s.token}").post("{}".toRequestBody("application/json".toMediaType())).build()
     writeHttp.newCall(request).execute().use{r->
       expire(s,r.code);check(r.isSuccessful){"刷新登录失败（HTTP ${r.code}）"}
       val value=readJson(r) as JSONObject;val next=value.getString("access_token")
       require(next.isNotEmpty()&&next.length<=32768&&!next.any{it.code<32}){"登录令牌无效"}
-      check(live(s)){"登录已结束"};s.token=next;s.refreshAt=System.currentTimeMillis()+(value.optLong("expires_in",1800)-60).coerceAtLeast(1)*1000;next
+      synchronized(lock){check(live(s)){"登录已结束"};s.token=next;s.refreshAt=deadline(value.optLong("expires_in",1800));persistLogin(s)};next
     }
   }
   private fun expire(s:Session,code:Int){
-    if(code==401)synchronized(lock){if(session?.generation==s.generation){++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState()}}
+    if(code==401)synchronized(lock){if(generation==s.generation&&(session?.generation==s.generation||session==null&&restoring)){++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState();restoreAttempted=true;restoring=false;loginWarning=try{credentialStore.clear();"保存的登录已失效，请重新登录"}catch(_:Exception){"登录已失效，但无法移除本机记录；请检查应用存储权限"}}}
   }
-  fun state():JSONObject=synchronized(lock){JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:prefs.getString("server","")).put("username",session?.username?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",false).put("generation",generation).put("assetRevision",assetRevision)}
+  fun state():JSONObject=synchronized(lock){JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:prefs.getString("server","")).put("username",session?.username?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",credentialStore.exists()).put("restoring",restoring).put("loginWarning",loginWarning).put("generation",generation).put("assetRevision",assetRevision)}
+  fun restore(fresh:Boolean=false):JSONObject{
+    val(observed,joined)=synchronized(lock){generation to restoring}
+    return synchronized(restoreLock) restoreAttempt@{
+    val ticket=synchronized(lock){if(session!=null||restoreAttempted&&(!fresh||joined||observed!=generation))return@restoreAttempt state();restoreAttempted=true;restoring=true;loginWarning="";++generation}
+    // No shared account lock is held across HTTP. An explicit connect/logout
+    // remains usable and invalidates this attempt while the server is slow.
+    var restored:Session?=null;var error:String?=null;var denied=false
+    try{
+      val saved=synchronized(lock){if(generation!=ticket)return@restoreAttempt state();try{credentialStore.read()}catch(_:Exception){throw LoginRestoreFailure("本机受保护登录无法读取：密钥不可用或记录受损；请重新登录")}}
+      if(saved!=null){
+        var token=saved.token;var refreshAt=saved.refreshAt;val base=base(saved.server)
+        if(loginClock()>=refreshAt){
+          val request=Request.Builder().url(base.resolve("api/v1/auth/refresh")!!).header("Authorization","Bearer $token").post("{}".toRequestBody("application/json".toMediaType())).build()
+          writeHttp.newCall(request).execute().use{r->denied=r.code==401;if(!r.isSuccessful)throw LoginRestoreFailure(if(denied)"保存的登录已失效（HTTP 401），请重新登录" else "验证已保存登录失败（HTTP ${r.code}）");val value=readJson(r)as JSONObject;token=value.getString("access_token");require(token.isNotBlank()&&token.length<=32768&&token.none{it.code<32}){"登录令牌无效"};refreshAt=deadline(value.optLong("expires_in",1800))}
+        }
+        http.newCall(Request.Builder().url(base.resolve("api/v1/auth/me")!!).header("Authorization","Bearer $token").build()).execute().use{r->
+          denied=r.code==401;if(!r.isSuccessful)throw LoginRestoreFailure(if(denied)"保存的登录已失效（HTTP 401），请重新登录" else "验证已保存登录失败（HTTP ${r.code}）");val identity=readJson(r)as JSONObject
+          if(identity.optString("username")!=saved.username||identity.opt("is_active")==false){denied=true;throw LoginRestoreFailure("已保存登录与服务器账户身份不一致，请重新登录")}
+        }
+        restored=Session(base,saved.username,token,ticket,refreshAt)
+      }
+    }catch(e:Exception){error=when(e){is LoginRestoreFailure->e.message;is java.io.InterruptedIOException->"恢复登录超时，请检查网络；没有清除已保存登录";is java.net.UnknownHostException->"无法解析 RHVideo 主机名；没有清除已保存登录";is java.net.ConnectException->"暂时无法连接服务器；没有清除已保存登录";is javax.net.ssl.SSLException->"服务器 TLS 安全连接验证失败；没有清除已保存登录";else->if(denied)"保存的登录已失效，请重新登录" else "服务器返回的登录信息无效或不完整；没有清除已保存登录"}}
+    synchronized(lock){
+      if(generation==ticket&&session==null){
+        restoring=false
+        if(denied)try{credentialStore.clear()}catch(_:Exception){error="登录已失效，但无法移除本机记录；请检查应用存储权限"}
+        if(restored!=null&&error==null){session=restored;persistLogin(restored!!)}else loginWarning=error.orEmpty()
+      }
+    };state()
+    }
+  }
   private fun json(s:Session,path:String,method:String="GET",body:JSONObject?=null,exportErrors:Boolean=false):Any {
     val url=s.base.resolve(path)?:error("无效的 API 路径")
     val builder=Request.Builder().url(url).header("Authorization","Bearer ${token(s)}").header("Accept","application/json")
@@ -304,19 +345,26 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
     val out=java.io.ByteArrayOutputStream();val buf=ByteArray(16384)
     while(true){val size=read(buf);if(size<0)break;require(out.size()+size<=limit){"服务器响应过大"};out.write(buf,0,size)};return out.toByteArray()
   }
-  fun connect(args:JSONObject,register:Boolean=false):JSONObject {
+  private fun register(args:JSONObject):JSONObject {
+    val base=base(args.getString("server"));val user=args.getString("username").trim();val password=args.getString("password")
+    require(user.length in 3..256&&password.length in 6..4096){"用户名至少3字符，密码至少6字符"}
+    val email=if(args.has("email"))args.getString("email")else "$user@temp.com";require(email.length<=320){"邮箱地址过长"}
+    val body=JSONObject().put("username",user).put("password",password).put("email",email)
+    writeHttp.newCall(Request.Builder().url(base.resolve("api/v1/auth/register")!!).post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use{r->
+      check(r.isSuccessful){"注册失败（HTTP ${r.code}）"};val result=readJson(r) as JSONObject
+      check(result.optString("user_id").isNotEmpty()){"服务器未确认注册结果；请在服务器核对，未自动重复注册"}
+    }
+    return JSONObject().put("registered",true)
+  }
+  fun connect(args:JSONObject):JSONObject {
     val base=base(args.getString("server"));val user=args.getString("username").trim();val password=args.getString("password")
     require(user.isNotEmpty()&&user.length<=256&&password.isNotEmpty()&&password.length<=4096){"请填写有效的用户名和密码"}
-    val ticket=synchronized(lock){++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState();generation}
-    if(register){
-      val body=JSONObject().put("username",user).put("password",password).put("email",args.getString("email"))
-      writeHttp.newCall(Request.Builder().url(base.resolve("api/v1/auth/register")!!).post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use{r->check(r.isSuccessful){"注册失败（HTTP ${r.code}）"}}
-    }
+    val ticket=synchronized(lock){credentialStore.clear();restoreAttempted=true;restoring=false;loginWarning="";++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState();generation}
     val request=Request.Builder().url(base.resolve("api/v1/auth/login")!!).post(JSONObject().put("username",user).put("password",password).toString().toRequestBody("application/json".toMediaType())).build()
     var expires=1800L
     val token=writeHttp.newCall(request).execute().use{r->check(r.isSuccessful){if(r.code==401)"用户名或密码不正确"else "登录失败（HTTP ${r.code}）"};val value=readJson(r) as JSONObject;expires=value.optLong("expires_in",1800);value.getString("access_token")}
     require(token.isNotBlank()&&token.length<=32768&&!token.any{it.code<32}){"服务器返回了无效的登录令牌"}
-    synchronized(lock){check(ticket==generation){"登录已取消"};session=Session(base,user,token,ticket,System.currentTimeMillis()+(expires-60).coerceAtLeast(1)*1000);prefs.edit().putString("server",base.toString()).putString("username",user).apply()}
+    synchronized(lock){check(ticket==generation){"登录已取消"};session=Session(base,user,token,ticket,deadline(expires));persistLogin(session!!);prefs.edit().putString("server",base.toString()).putString("username",user).apply()}
     return state()
   }
   fun contextMatches(args:JSONObject,allowDisconnected:Boolean=false):Boolean=synchronized(lock){
@@ -325,7 +373,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   fun validateContext(args:JSONObject,allowDisconnected:Boolean=false){check(contextMatches(args,allowDisconnected)){"媒体账户已改变，操作未执行，请刷新后重新操作"}}
   fun logout(expected:Long?=null):JSONObject {synchronized(lock){
     if(expected!=null&&expected!=generation){check(session==null){"媒体账户已改变，退出操作未执行"};return state()}
-    ++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState()};return state()}
+    credentialStore.clear();restoreAttempted=true;restoring=false;loginWarning="";++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState()};return state()}
   private fun asset(s:Session,path:String,image:Boolean):String=synchronized(lock){
     check(live(s)){"连接已结束"}
     val key=assets.entries.firstOrNull{it.value.session.generation==s.generation&&it.value.path==path&&it.value.image==image}?.key?:UUID.randomUUID().toString().also{key->
@@ -416,7 +464,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   }
   fun request(action:String,args:JSONObject):Any {
     val expected=if(args.has("_sessionGeneration"))args.getLong("_sessionGeneration").also{args.remove("_sessionGeneration")}else null
-    when(action){"state"->return state();"connect"->return connect(args);"register"->return connect(args,true);"logout"->return logout(expected)}
+    when(action){"state"->return state();"restore"->{require(args.keys().asSequence().all{it=="fresh"}&&(!args.has("fresh")||args.get("fresh")is Boolean)){"恢复登录仅接受 fresh 布尔参数，不接受账号、密码或令牌"};return restore(args.optBoolean("fresh"))};"connect"->return connect(args);"register"->return register(args);"logout"->return logout(expected)}
     val s=current()
     check(expected==null||expected==s.generation){"媒体账户已改变，操作未执行，请刷新后重新操作"}
     return when(action){

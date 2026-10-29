@@ -44,6 +44,7 @@
         saveTimer = 0,
         saveChain = Promise.resolve(),
         selected = new Set(),
+        selectionMode = false,
         raw = new Map(),
         imageSession = null,
         imageToken = 0,
@@ -243,6 +244,7 @@
         account = "";
         invalidateCatalog();
         selected.clear();
+        selectionMode = false;
         lastBatch = null;
         imageSession = null;
         imageToken++;
@@ -299,6 +301,7 @@
         return { reset: true };
       }
       async function ensure(force = false) {
+        if(ctx.connectionReady)await ctx.connectionReady();
         if (!state.connected) throw Error("请先连接并登录 RHVideo");
         const readEpoch = epoch;
         const cached =
@@ -761,6 +764,7 @@
         ),
         ({ id, kind, enabled }) => {
           const key = kind + ":" + id;
+          if (enabled) selectionMode = true;
           enabled ? selected.add(key) : selected.delete(key);
           paintCards();
           return { count: selected.size };
@@ -858,6 +862,7 @@
         return { count: 0 };
       });
       action("selection.page", object(), () => {
+        selectionMode = true;
         for (const row of state.items) selected.add(I.key(row));
         paintCards();
         return { count: selected.size };
@@ -939,6 +944,7 @@
       action("preview.state",object(),()=>native("preview.result"),"read");
       action("preview.result",object(),async()=>showPreviewResult(await native("preview.result"),true));
       function paintCards() {
+        syncContext();
         favoriteExports?.sync();
         for (const card of $("media-grid").querySelectorAll(".media-card")) {
           const key = card.dataset.kind + ":" + card.dataset.id;
@@ -946,6 +952,7 @@
           if (!checkbox) {
             checkbox = input("checkbox", "");
             checkbox.className = "wb-select";
+            checkbox.dataset.apiAction = "rhvideo.selection.toggle";
             checkbox.setAttribute(
               "aria-label",
               "选择 " + card.querySelector(".card-title").textContent,
@@ -974,12 +981,17 @@
               );
           }
           checkbox.checked = selected.has(key);
+          checkbox.hidden = !selectionMode;
           card.classList.toggle("selected", checkbox.checked);
         }
         $("wb-selection-count").textContent = selected.size
           ? "已选 " + selected.size + " 项"
           : "";
-        if ($("wb-selection")) $("wb-selection").hidden = selected.size === 0;
+        if ($("wb-selection")) $("wb-selection").hidden = !selectionMode || !state.connected || state.view === "gallery";
+      }
+      function selectCard(media) {
+        if (!selectionMode) return null;
+        return invoke("selection.toggle", { id: media.id, kind: media.kind, enabled: !selected.has(I.key(media)) });
       }
       action(
         "media.actions",
@@ -4279,10 +4291,11 @@
             ? { mode }
             : mode==="grid"?invoke("grid.open"):mode==="playlist"?invoke("playlist.start"):invoke("playlist.sequential",{super:mode==="sequential-super"}),
       );
-      action("selection.mode", object(), () => {
-        const bar = $("wb-selection");
-        bar.hidden = !bar.hidden;
-        return { visible: !bar.hidden };
+      action("selection.mode", object({ enabled: { type: "boolean" } }), ({ enabled } = {}) => {
+        selectionMode = enabled ?? !selectionMode;
+        if (!selectionMode) selected.clear();
+        paintCards();
+        return { visible: selectionMode, count: selected.size };
       });
       const sortLabels = [
         "名称 A→Z",
@@ -4301,26 +4314,32 @@
         defaults.sort,
       );
       sort.id = "wb-sort";
+      const contextualControls = [];
+      function contextButton(label, name, args, kinds) {
+        const node = button(label, name, args);
+        node.dataset.libraryKinds = kinds.join(" ");
+        contextualControls.push(node);
+        return node;
+      }
+      function syncContext() {
+        const visible = state.connected && state.view !== "gallery";
+        toolbar.hidden = !visible;
+        for (const node of contextualControls)
+          node.hidden = !visible || !node.dataset.libraryKinds.split(" ").includes(state.kind);
+        const toggle = toolbar.querySelector('[data-api-action="rhvideo.selection.mode"]');
+        if (toggle) { toggle.textContent = selectionMode ? "退出多选" : "多选"; toggle.setAttribute("aria-pressed", String(selectionMode)); }
+        const bar = $("wb-selection");
+        if (bar) bar.hidden = !visible || !selectionMode;
+      }
       toolbar.append(
         sort,
         button("标签筛选", "rules.open"),
         button("顺序", "order.open"),
         button("播放记录", "playback.history"),
-        select(
-          [
-            ["cards", "卡片浏览"],
-            ["screenshots", "截图库"],
-            ["strip", "连续浏览"],
-            ["slideshow", "自动放映"],
-          ],
-          "browse.mode",
-          (mode) => ({ mode }),
-          "cards",
-        ),
-        button("分段连播", "playlist.start"),
-        button("按列表顺序连播", "playlist.sequential"),
-        button("按列表顺序连播（超压）", "playlist.sequential", {super:true}),
-        button("多视频同屏", "grid.open"),
+        contextButton("按列表顺序连播", "playlist.sequential", {}, ["video"]),
+        contextButton("按列表顺序连播（超压）", "playlist.sequential", {super:true}, ["video"]),
+        contextButton("连续浏览", "browse.mode", {mode:"strip"}, ["picture", "favorite"]),
+        contextButton("自动放映", "browse.mode", {mode:"slideshow"}, ["picture", "favorite"]),
         button("多选", "selection.mode"),
       );
       toolbar.append(galleryStatus);
@@ -4349,15 +4368,13 @@
       const master=input("range",config().volume,"wb-page-volume");master.min="0";master.max="100";master.step="1";master.setAttribute("aria-label","统一音量");master.dataset.apiAction="rhvideo.volume.set";
       const masterField=field("音量",master);masterField.classList.add("rhvideo-master-volume");document.querySelector(".header-actions").prepend(masterField);
       listen(master,"input",()=>invoke("volume.set",{value:Number(master.value)}).catch(notice),"page.volume");
-      const register = button("注册并连接", "account.register", () => ({
+      let registrationBusy = false;
+      const register = button("注册", "account.register", () => ({
         server: $("server").value,
         username: $("username").value,
         password: $("password").value,
-        email: $("wb-register-email").value,
       }));
-      const email = input("email", "", "wb-register-email");
-      email.placeholder = "注册邮箱（仅注册时填写）";
-      $("connection-form").append(field("注册新账户", email), register);
+      $("connection-form").querySelector(".dialog-actions").prepend(register);
       action(
         "account.register",
         object(
@@ -4367,37 +4384,25 @@
             password: { type: "string", maxLength: 4096 },
             email: { type: "string", maxLength: 320 },
           },
-          ["server", "username", "password", "email"],
+          ["server", "username", "password"],
         ),
         async (args) => {
-          const connection = ctx.beginConnection();
+          if (registrationBusy) throw Error("正在提交注册，请稍候");
+          const connection = ctx.connectionVersion();
+          registrationBusy = true; register.disabled = true;
+          const message = $("connection-error");message.textContent = "";message.classList.remove("success");
           try {
+            if (args.username.trim().length < 3 || args.password.length < 6) throw Error("用户名至少3字符，密码至少6字符");
             const result = await native("register", args);
             if (!ctx.connectionCurrent(connection)) return { stale: true };
-            ctx.updateConnection(result);
-            $("connection-dialog").close();
-            await reset(true);
-            if(!ctx.connectionCurrent(connection))return {stale:true};
-            await load(true, true);
-            if(!ctx.connectionCurrent(connection))return {stale:true};
+            if (result.registered !== true) throw Error("服务器未确认注册结果，请在服务器核对");
+            message.textContent = "注册成功，请登录";message.classList.add("success");
             return result;
           } catch (error) {
-            if (ctx.connectionCurrent(connection)) {
-              ctx.updateConnection({
-                connected: false,
-                nativePlayback: state.nativePlayback,
-                server: args.server,
-                username: args.username,
-                generation: 0,
-              });
-              await reset(false);
-              state.total = 0;
-              state.items = [];
-              await load();
-            }
+            if (ctx.connectionCurrent(connection)) message.textContent = String(error.message || error);
             throw error;
           } finally {
-            if (ctx.connectionCurrent(connection)) $("password").value = "";
+            registrationBusy = false; register.disabled = false;
           }
         },
         "external",
@@ -4469,6 +4474,8 @@
         async refresh(){invalidateCatalog();await load();}
       });
       return {
+        syncContext,
+        selectCard,
         ready(){return favoriteExports.ready();},
         leaveGallery(){gallery.load++;},
         refreshGallery(refresh=false,resetPage=false){if(resetPage)gallery.offset=0;return loadGallery(refresh);},

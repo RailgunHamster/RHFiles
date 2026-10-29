@@ -31,7 +31,7 @@
     <form id="connection-form"><div class="dialog-heading"><div><h2>连接 RHVideo</h2></div><button type="button" class="icon-button" id="connection-close" aria-label="关闭"><span data-icon="close"></span></button></div>
       <label class="field">服务器地址<input id="server" type="url" placeholder="http://server-home:8000" required spellcheck="false" autocomplete="url"></label>
       <div class="fields-row"><label class="field">用户名<input id="username" required maxlength="256" autocomplete="username"></label><label class="field">密码<input id="password" type="password" required maxlength="4096" autocomplete="off"></label></div>
-      <div class="privacy-note"><span data-icon="shield"></span><p>只记住服务器地址和用户名。密码不保存，登录令牌仅保存在本次应用运行的原生内存中。HTTP 登录为明文传输，外网请使用 HTTPS 或可信 VPN。</p></div>
+      <div class="privacy-note"><span data-icon="shield"></span><p>密码不保存；登录由本机系统保护，重启后自动恢复，不进入配置备份或同步。退出登录会移除本机保存的登录。HTTP 为明文传输，外网请使用 HTTPS 或可信 VPN。</p></div>
       <div class="engine-status" id="engine-status"></div><p class="form-error" id="connection-error" role="alert"></p>
       <footer class="dialog-actions"><button class="button secondary" id="disconnect" type="button" hidden>退出登录</button><span></span><button class="button primary" id="connect" type="submit">连接并登录<span data-icon="arrow"></span></button></footer>
     </form>

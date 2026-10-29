@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 import pathModule from 'node:path';
 export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview']}={}){
-  const favorites=new Set(),progress=[],requests=[];
+  const favorites=new Set(),progress=[],requests=[],validTokens=new Set(['fixture-bearer-do-not-persist']);
+  if(authState?.token)validTokens.add(authState.token);
   const favoriteDates=new Map();let favoriteSerial=0;
   const syncFavoriteDates=()=>{for(const key of favoriteDates.keys())if(!favorites.has(key))favoriteDates.delete(key);for(const key of favorites)if(!favoriteDates.has(key)){const serial=++favoriteSerial;favoriteDates.set(key,{serial,date:new Date(Date.UTC(2026,0,1)+serial).toISOString()});}};
   const watch=[{id:'watch-0',path:'D:\\FixtureMedia',enabled:true,last_scan_result:{videos:3,pictures:2}}],trash=[],batches=[];
@@ -31,10 +32,11 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     }
     const body=async()=>{const chunks=[];for await(const part of req)chunks.push(part);return JSON.parse(Buffer.concat(chunks).toString()||'{}');};
     if(path==='/api/v1/auth/login'){
-      const value=await body();await beforeLogin?.(value);return loginUsers.includes(value.username)&&value.password==='fixture-only'?send(200,{access_token:'fixture-bearer-do-not-persist',token_type:'bearer'}):send(401,{detail:'Wrong credentials'});
+      const value=await body();await beforeLogin?.(value);return loginUsers.includes(value.username)&&value.password==='fixture-only'?send(200,{access_token:authState?.token||'fixture-bearer-do-not-persist',token_type:'bearer',expires_in:authState?.expiresIn??1800}):send(401,{detail:'Wrong credentials'});
     }
-    if(authState?.active===false||req.headers.authorization!=='Bearer fixture-bearer-do-not-persist')return send(401,{detail:'Unauthorized'});
-    if(path==='/api/v1/auth/me')return send(200,{username:'preview',user_id:'fixture-user'});
+    if(authState?.active===false||!req.headers.authorization?.startsWith('Bearer ')||!validTokens.has(req.headers.authorization.slice(7)))return send(401,{detail:'Unauthorized'});
+    if(path==='/api/v1/auth/refresh'){await authState?.beforeRefresh?.();const token=authState?.refreshToken||'fixture-bearer-do-not-persist';validTokens.add(token);if(authState)authState.token=token;return send(200,{access_token:token,expires_in:1800});}
+    if(path==='/api/v1/auth/me'){await authState?.beforeIdentity?.();if(authState?.validationStatus)return send(authState.validationStatus,{detail:'Owned identity validation failure'});return send(200,{username:'preview',user_id:'fixture-user'});}
     if(path==='/api/v1/watch-folders'){
       if(req.method==='POST'){const v=await body();const folder={id:'watch-'+watch.length,path:v.path,enabled:true};watch.push(folder);return send(200,{folder,scan_started:true});}return send(200,{folders:watch,queue_size:0});
     }

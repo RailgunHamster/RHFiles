@@ -220,7 +220,7 @@ test('RHVideo packaged UI, real native HTTP bridge, reader, favorites, paging an
     assert.equal((await fetch(catalogCapability)).status,401,'catalog capabilities must be revoked with the native session');
     await assert.rejects(app.evaluate("call('rhvideo_request',{action:'catalog',args:{kind:'video'}})"),/请先/);
     assert(fixture.requests.some(r=>r.authorization==='Bearer fixture-bearer-do-not-persist'&&r.path.endsWith('/thumbnail')));
-    console.log(JSON.stringify({pass:true,artifacts:app.artifactDir,checks:'packaged UI, native bearer broker, favorite writes, pagination, image viewer, chapter/progress, timeline, logout capability revocation, no credential persistence'}));
+    console.log(JSON.stringify({pass:true,artifacts:app.artifactDir,checks:'packaged UI, native bearer broker, favorite writes, pagination, image viewer, chapter/progress, timeline, logout capability revocation, no renderer or ordinary-configuration credentials'}));
   }finally{view?.close();await fixture.close();app.close();}
 });
 test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTML video',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'},async()=>{

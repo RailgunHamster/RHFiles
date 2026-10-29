@@ -127,8 +127,8 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
             val action=request.getString("action");val args=request.optJSONObject("args")?:JSONObject()
             client.validateContext(args,action=="logout")
             val contextArgs=JSONObject(args.toString())
-            val outgoingGridGeneration=if(action in listOf("connect","register","logout"))runCatching{client.sessionGeneration()}.getOrNull()else null
-            if(action in listOf("connect","register","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}}
+            val outgoingGridGeneration=if(action in listOf("connect","logout"))runCatching{client.sessionGeneration()}.getOrNull()else null
+            if(action in listOf("connect","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}}
             val value=when(action){
               "exports.uiReady"->{val open=intent.getBooleanExtra("rhvideoExportPanel",false);intent.removeExtra("rhvideoExportPanel");JSONObject().put("open",open).put("pending",synchronized(this){zipPick?.takeIf{it.optString("process")==client.processIdentity()}?.let{JSONObject(it.toString())}?:JSONObject.NULL})}
               "exports.download"->{

@@ -316,7 +316,7 @@ class RhVideoClientTest {
     json("{}");client.request("operation",JSONObject().put("name","trash.stage").put("params",JSONObject().put("kind","video").put("id","1")).put("confirmation","RHVIDEO:trash.stage"));assertEquals("/api/v1/trash/video/1",server.takeRequest().path)
     json("[]");assertEquals(0,(client.request("catalog",JSONObject()) as JSONObject).getInt("total"));assertEquals("/api/v1/videos?summary=true",server.takeRequest().path)
   }
-  @Test fun loginIsNativeAndOnlyServerAndUserPersist(){
+  @Test fun loginKeepsOnlyServerAndUserInOrdinarySettingsAndNewClientsDoNotAssumeAuthentication(){
     login();assertTrue(client.state().getBoolean("connected"))
     val prefs=RuntimeEnvironment.getApplication().getSharedPreferences("rhvideo-client-v1",0)
     assertEquals(setOf("server","username"),prefs.all.keys);assertFalse(prefs.all.toString().contains("test-native-token"))

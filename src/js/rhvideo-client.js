@@ -11,10 +11,11 @@
   const modalTop=()=>modalOrder.filter(id=>$(id)?.open).at(-1);
   function openDialog(id){const node=$(id);if(id==='image-dialog'&&node.open&&modalTop()!==id)node.close();if(!node.open){node.showModal();modalOrder=modalOrder.filter(v=>$(v)?.open&&v!==id);modalOrder.push(id);}if(id==='image-dialog')node.querySelector('.image-stage').focus({preventScroll:true});return node;}
   const native=(action,args={})=>{
-    if(state.generation>0&&!['state','connect','register','close','presentation.close','grid.close'].includes(action))args={...args,_sessionGeneration:state.generation};
+    if(state.generation>0&&!['state','connect','register','restore','close','presentation.close','grid.close'].includes(action))args={...args,_sessionGeneration:state.generation};
     return (mobile?window.RHVideoNative.request(action,args):window.__TAURI__.core.invoke('rhvideo_request',{action,args})).catch(error=>{workbench?.invalidateSession();throw error;});
   };
-  api.provideState('application',()=>({platform:mobile?'android':'windows',window:'window-rhvideo',ready:true}));
+  let libraryReady=false;
+  api.provideState('application',()=>({platform:mobile?'android':'windows',window:'window-rhvideo',ready:libraryReady}));
   const icons={
     gallery:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     library:'<rect x="3" y="4" width="18" height="16" rx="4"/><path d="m10 8 6 4-6 4z"/>',
@@ -38,12 +39,18 @@
   const icon=name=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+(icons[name]||icons.library)+'</svg>';
   document.querySelectorAll('[data-icon]').forEach(node=>node.innerHTML=icon(node.dataset.icon));
   const titles={video:'视频',picture:'图片',novel:'小说',favorite:'我的收藏'};
-  const state={view:'gallery',kind:'video',offset:0,limit:36,total:0,items:[],favorites:new Set(),favoriteBusy:new Set(),loading:false,error:'',connected:false,nativePlayback:false,loadId:0,search:'',folder:'',generation:0,server:'',username:''};
+  const state={view:'gallery',kind:'video',offset:0,limit:36,total:0,items:[],favorites:new Set(),favoriteBusy:new Set(),loading:false,error:'',connected:false,nativePlayback:false,loadId:0,search:'',folder:'',generation:0,server:'',username:'',credentialsPersisted:false,restoring:false,loginWarning:''};
   const reader={book:null,chapter:0,loaded:false,token:0,saveTimer:0,ratio:0};
   let workbench=null;
   let readSaveChain=Promise.resolve();
   let readEpoch=0;
   let connectionEpoch=0;
+  let connectionPreparation=null;
+  function prepareConnection(authenticated){
+    const pending={version:connectionEpoch,promise:Promise.resolve(workbench?.reset(authenticated))};connectionPreparation=pending;
+    return pending.promise.finally(()=>{if(connectionPreparation===pending)connectionPreparation=null;});
+  }
+  async function connectionReady(){const version=connectionEpoch,pending=connectionPreparation;if(pending?.version===version)await pending.promise;if(version!==connectionEpoch)throw Error('媒体账户已改变，旧读取未继续');}
   function beginConnection(){readEpoch++;clearMediaViews();return ++connectionEpoch;}
   let searchTimer=0,folderLoadId=0,timelineLoadId=0,images=[],imageIndex=0,imageZoom=1;
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
@@ -65,8 +72,9 @@
   }
   function updateConnection(value){
     state.connected=value.connected;state.nativePlayback=value.nativePlayback;
-    state.generation=value.generation??0;
+    state.generation=value.connected?(value.generation??0):0;
     state.server=value.server||'';state.username=value.username||'';
+    state.credentialsPersisted=!!value.credentialsPersisted;state.restoring=!!value.restoring;state.loginWarning=value.loginWarning||'';
     workbench?.acceptSession(value);
     $('connection-open').classList.toggle('connected',value.connected);
     $('connection-label').textContent=value.connected?(value.username||'已连接'):'尚未连接';
@@ -75,9 +83,11 @@
     $('server').value=value.server||'';$('username').value=value.username||'';
     $('disconnect').hidden=!value.connected;
     $('engine-status').textContent=mobile?'视频使用 Android 原生播放器。':value.nativePlayback?'原生视频内核：VLC。':'视频播放需要安装 64 位 VLC 3.x。';
+    if(value.loginWarning)notice(value.loginWarning);
     syncSection();
   }
   function syncSection(){
+    workbench?.syncContext();
     const gallery=state.view==='gallery',visible=gallery&&state.connected;
     document.body.dataset.libraryView=state.view;
     $('gallery-panel').hidden=!visible;$('media-grid').hidden=visible;$('library-status').hidden=visible;
@@ -147,7 +157,7 @@
         const duration=document.createElement('span');duration.className='duration';duration.textContent=model.clock(media.duration);cover.append(duration);
         const hint=document.createElement('span');hint.className='play-hint';hint.innerHTML='<span>'+icon('play')+'</span>';cover.append(hint);
       }
-      const open=()=>invoke('media.open',{id:media.id,kind:media.kind}).catch(notice);
+      const open=()=>(workbench?.selectCard(media)||invoke('media.open',{id:media.id,kind:media.kind})).catch(notice);
       cover.dataset.apiAction='rhvideo.media.open';RHFilesUI.listen(cover,'click',open,undefined,'rhvideo.card.open');card.append(cover);
       const info=document.createElement('div');info.className='card-info';
       const title=document.createElement('button');title.dataset.apiAction='rhvideo.media.open';title.className='card-title';title.textContent=media.title;title.title=media.title;RHFilesUI.listen(title,'click',open,undefined,'rhvideo.card.title');info.append(title);
@@ -177,27 +187,44 @@
       heart.setAttribute('aria-label',(state.favorites.has(key)?'取消收藏 ':'收藏 ')+(media?.title||''));
     }
   }
-  function snapshot(){return {view:state.view,kind:state.kind,connected:state.connected,server:state.server,username:state.username,generation:state.generation,nativePlayback:state.nativePlayback,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
+  function snapshot(){return {view:state.view,kind:state.kind,connected:state.connected,server:state.server,username:state.username,generation:state.generation,nativePlayback:state.nativePlayback,credentialsPersisted:state.credentialsPersisted,restoring:state.restoring,loginWarning:state.loginWarning,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}
   action('state',object(),snapshot,'read');api.provideState('rhvideo',snapshot);
   action('render.state',object(),()=>{let detachedBytes=0,detachedCards=0;for(const {node} of cardCache.values())if(!node.isConnected){detachedCards++;const image=node.querySelector('img');detachedBytes+=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;}return {cachedCards:cardCache.size,detachedCards,detachedBytes,currentCards:$('media-grid').children.length,loading:state.loading};},'read');
   action('connection.open',object(),async()=>{updateConnection(await native('state'));$('connection-error').textContent='';openDialog('connection-dialog');return {opened:true};});
   action('connection.close',object(),()=>{$('connection-dialog').close();$('password').value='';return {closed:true};});
+  action('connection.restore',object({fresh:{type:'boolean'}}),async({fresh=false}={})=>{
+    if(state.connected)return snapshot();
+    const connection=beginConnection();state.restoring=true;$('connection-label').textContent='正在恢复登录…';
+    let value;try{value=await native('restore',{fresh});}catch(error){if(connection!==connectionEpoch)return {stale:true};state.restoring=false;state.loginWarning=String(error?.message||error);$('connection-label').textContent='尚未连接';throw error;}
+    if(connection!==connectionEpoch)return {stale:true};updateConnection(value);
+    let initialRead=state.loadId;
+    if(state.connected){
+      const preparing=prepareConnection(true);initialRead=state.loadId;await preparing;if(connection!==connectionEpoch)return {stale:true};
+      try{const favorites=model.favoriteSet(await native('favorites'));if(connection!==connectionEpoch)return {stale:true};state.favorites=favorites;}catch(error){if(connection!==connectionEpoch)return {stale:true};notice('收藏状态读取失败：'+String(error));}
+    }
+    if(initialRead===state.loadId)await load(false,true);if(connection!==connectionEpoch)return {stale:true};if(value.loginWarning)notice(value.loginWarning);return snapshot();
+  },'external');
   action('connection.connect',object({server:string,username:string,password:{type:'string',maxLength:4096}},['server','username','password']),async args=>{
     const connection=beginConnection();
-    $('connect').disabled=true;$('disconnect').disabled=true;$('connection-error').textContent='';
+    $('connect').disabled=true;$('disconnect').disabled=true;$('connection-error').textContent='';$('connection-error').classList.remove('success');
     try{
       const value=await native('connect',args);if(connection!==connectionEpoch)return {stale:true};updateConnection(value);$('connection-dialog').close();state.offset=0;state.search='';state.folder='';$('search').value='';
-      await workbench?.reset(true);
+      const preparing=prepareConnection(true),initialRead=state.loadId;await preparing;
       if(connection!==connectionEpoch)return {stale:true};
       let favoriteError;try{const favorites=model.favoriteSet(await native('favorites'));if(connection!==connectionEpoch)return {stale:true};state.favorites=favorites;}catch(error){if(connection!==connectionEpoch)return {stale:true};state.favorites.clear();favoriteError=error;}
-      await load(true,true);if(connection!==connectionEpoch)return {stale:true};if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));return snapshot();
-    }catch(error){if(connection!==connectionEpoch)throw error;state.connected=false;state.generation=0;state.items=[];state.total=0;state.favorites.clear();await workbench?.reset(false);$('connection-open').classList.remove('connected');$('connection-label').textContent='尚未连接';await load();$('connection-error').textContent=String(error);throw error;}
+      if(initialRead===state.loadId)await load(true,true);if(connection!==connectionEpoch)return {stale:true};if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));if(value.loginWarning)notice(value.loginWarning);return snapshot();
+    }catch(error){
+      if(connection!==connectionEpoch)return {stale:true};let actual;
+      try{actual=await native('state');}catch{actual={connected:false,generation:0};}
+      if(connection!==connectionEpoch)return {stale:true};updateConnection(actual);state.items=[];state.total=0;state.favorites.clear();const preparing=prepareConnection(state.connected),initialRead=state.loadId;await preparing;
+      if(connection!==connectionEpoch)return {stale:true};if(initialRead===state.loadId)await load();$('connection-error').textContent=String(error);throw error;
+    }
     finally{if(connection===connectionEpoch){$('connect').disabled=false;$('disconnect').disabled=false;$('password').value='';}}
   },'external');
   action('connection.logout',object(),async()=>{
     const connection=++connectionEpoch;
     readEpoch++;
-    await workbench?.reset(false);
+    await prepareConnection(false);
     ++state.loadId;++reader.token;++folderLoadId;++timelineLoadId;state.loading=false;state.search='';state.folder='';$('search').value='';$('folder').replaceChildren(new Option('所有文件夹',''));
     clearTimeout(searchTimer);clearTimeout(reader.saveTimer);for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();reader.book=null;
     $('full-image').removeAttribute('src');$('chapter-text').replaceChildren();images=[];
@@ -207,7 +234,7 @@
     clearTimeout(searchTimer);workbench?.leaveGallery();state.view='catalog';state.kind=kind;state.offset=0;state.search='';state.folder='';$('search').value='';$('folder').value='';
     syncSection();return load(false,true);
   });
-  action('refresh',object(),async()=>{if(state.connected)try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){notice(error);}return state.view==='gallery'&&state.connected?workbench.refreshGallery(true):load(true);},'read');
+  action('refresh',object(),async()=>{if(!state.connected)return invoke('connection.restore',{fresh:true});try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){notice(error);}return state.view==='gallery'?workbench.refreshGallery(true):load(true);},'read');
   action('search',object({query:{type:'string',maxLength:256}},['query']),({query})=>{state.search=query;state.offset=0;$('search').value=query;return state.view==='gallery'&&state.connected?workbench.refreshGallery(false,true):load();});
   action('filter',object({folder:{type:'string',maxLength:1024}},['folder']),({folder})=>{state.folder=folder;state.offset=0;$('folder').value=folder;return load();});
   action('page',object({direction:{type:'integer',enum:[-1,1]}},['direction']),({direction})=>{const p=model.page(state.total,state.offset,state.limit);if(state.loading||direction<0&&!p.previous||direction>0&&!p.next)return snapshot();state.offset+=direction*state.limit;window.scrollTo(0,0);return load();});
@@ -294,7 +321,7 @@
     if(mobile)return native('close');return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
-  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
+  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
   const listenNative=mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen;
   listenNative('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
   listenNative('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);
@@ -336,5 +363,5 @@
   RHFilesUI.listen(imageStage,'touchstart',event=>{imageTouch=event.touches.length===1?{x:event.touches[0].clientX,y:event.touches[0].clientY}:null;},{passive:true},'rhvideo.image.touchstart');
   RHFilesUI.listen(imageStage,'touchend',event=>{const start=imageTouch;imageTouch=null;if(!start||modalTop()!=='image-dialog'||event.changedTouches.length!==1)return;const dx=event.changedTouches[0].clientX-start.x,dy=event.changedTouches[0].clientY-start.y;if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)){event.preventDefault();invoke('image.step',{direction:dx<0?1:-1}).catch(notice);}},{passive:false},'rhvideo.image.touchend');
   RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.contextmenu');
-  (async()=>{updateConnection(await native('state'));let favoriteError;if(state.connected)try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){favoriteError=error;}await load(false,true);if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));})().catch(notice).finally(()=>workbench?.ready()).catch(notice);
+  (async()=>{const connection=connectionEpoch,value=await native('state');if(connection!==connectionEpoch)return;updateConnection(value);if(!state.connected){await invoke('connection.restore',{fresh:true});return;}const preparing=prepareConnection(true),initialRead=state.loadId;await preparing;if(connection!==connectionEpoch)return;let favoriteError;try{state.favorites=model.favoriteSet(await native('favorites'));}catch(error){favoriteError=error;}if(connection!==connectionEpoch)return;if(initialRead===state.loadId)await load(false,true);if(favoriteError)notice('收藏状态读取失败：'+String(favoriteError));if(value.loginWarning)notice(value.loginWarning);})().catch(notice).then(async()=>{try{await workbench?.ready();}catch(error){notice(error);}libraryReady=true;});
 })();

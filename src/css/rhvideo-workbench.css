@@ -1,4 +1,5 @@
 .wb-gallery-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.form-error.success { color: var(--accent, #276b43); }
 .wb-gallery-tools, .wb-gallery-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .wb-gallery-nav { justify-content: space-between; }
 body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
@@ -12,6 +13,9 @@ body[data-library-view="gallery"] .library-main > .wb-toolbar { display: none; }
   margin: -3px 0 20px;
 }
 .wb-selection[hidden] {
+  display: none;
+}
+.wb-toolbar[hidden], .wb-toolbar > [hidden], .wb-select[hidden] {
   display: none;
 }
 .wb-selection {
