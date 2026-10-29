@@ -1,6 +1,7 @@
 package com.railgunhamster.rhfiles
 
 import android.graphics.Color
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
 import android.view.MotionEvent
@@ -18,6 +19,9 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import org.json.JSONArray
@@ -140,7 +144,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     pages.addView(previous,LinearLayout.LayoutParams(0,-2,1f));pages.addView(counter);pages.addView(next,LinearLayout.LayoutParams(0,-2,1f));pages.addView(Button(this).apply{text="调节";contentDescription="展开或收起播放调节";setOnClickListener{safe{control(JSONObject().put("command","controls"))}}},LinearLayout.LayoutParams(0,-2,1f));toolbar.addView(pages)
     val adjustmentRows=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
     adjustments=ScrollView(this).apply{addView(adjustmentRows);visibility=if(controlsExpanded)View.VISIBLE else View.GONE}
-    toolbar.addView(adjustments,LinearLayout.LayoutParams(-1,(resources.displayMetrics.heightPixels*.25).toInt().coerceAtMost((200*resources.displayMetrics.density).toInt())))
+    toolbar.addView(adjustments,LinearLayout.LayoutParams(-1,adjustmentHeight()))
     fun slider(label:String,max:Int,initial:Int,command:String){val row=LinearLayout(this);row.addView(TextView(this).apply{text=label});row.addView(SeekBar(this).apply{
       this.max=max;progress=initial;contentDescription="同屏${label}调节";sliders[command]=this;var gesture:JSONObject?=null
       setOnTouchListener{_,event->if(event.actionMasked==MotionEvent.ACTION_CANCEL){gesture=null;dragging.remove(command)};false}
@@ -165,6 +169,15 @@ class RhVideoGridActivity:AppCompatActivity(){
     set("seekRatio",if(p.duration>0)(p.currentPosition*1000/p.duration).toInt().coerceIn(0,1000)else 0);set("volume",saved.getInt("volume"));set("rate",(p.playbackParameters.speed*100).toInt())
   }
   private fun layout(){containers.forEachIndexed{i,v->v.visibility=if(expanded<0||i==expanded)View.VISIBLE else View.GONE};grid.requestLayout()}
+  private fun adjustmentHeight()=(resources.displayMetrics.heightPixels*.25).toInt().coerceAtMost((200*resources.displayMetrics.density).toInt())
+  override fun onConfigurationChanged(newConfig:Configuration){
+    super.onConfigurationChanged(newConfig)
+    // These layouts are resource-independent, normalized native surfaces.
+    // Resize them in place instead of tearing down every codec and downloading
+    // from a previous keyframe. Background/explicit recreation still releases.
+    if(::adjustments.isInitialized)adjustments.layoutParams=adjustments.layoutParams.apply{height=adjustmentHeight()}
+    if(::grid.isInitialized)grid.requestLayout()
+  }
   private fun updatePages(){
     previous.isEnabled=!data.isNull("previousOffset");next.isEnabled=!data.isNull("nextOffset");counter.text="${data.getInt("groupIndex")+1}/${data.getInt("groupTotal")}"
     target.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("全部视频")+(0 until entries.length()).map{"${it+1} · ${entries.getJSONObject(it).getString("name")}"});target.setSelection(selected+1)
@@ -174,7 +187,12 @@ class RhVideoGridActivity:AppCompatActivity(){
     val source=DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)})
     if(diagnostics.enabled)source.setTransferListener(diagnostics)
     val factory=DefaultMediaSourceFactory(source).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
-    return ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true)).setMediaSourceFactory(factory).build().also{if(diagnostics.enabled)it.addAnalyticsListener(diagnostics)}
+    val renderers=if(BuildConfig.RHVIDEO_QA_AUDIO_START_MS==0)DefaultRenderersFactory(this)else object:DefaultRenderersFactory(this){
+      override fun buildAudioSink(context:android.content.Context,enableFloatOutput:Boolean,enableAudioOutputPlaybackParams:Boolean):AudioSink =
+        DefaultAudioSink.Builder(context).setEnableFloatOutput(enableFloatOutput).setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
+          .setAudioOutputProvider(RhVideoAudioStartProbe(AudioTrackAudioOutputProvider.Builder(context).build(),BuildConfig.RHVIDEO_QA_AUDIO_START_MS,diagnostics)).build()
+    }
+    return ExoPlayer.Builder(this,renderers.setEnableDecoderFallback(true)).setMediaSourceFactory(factory).build().also{if(diagnostics.enabled)it.addAnalyticsListener(diagnostics)}
   }
   private fun bindEngine(i:Int,engine:ExoPlayer,view:RhVideoPlayerView,message:TextView,storage:NativeStorage){
     val saved=cell(i);val item=entries.getJSONObject(i);val input=inputIds[i]
@@ -228,6 +246,7 @@ class RhVideoGridActivity:AppCompatActivity(){
   fun snapshot():JSONObject {
     client.checkGrid(ticket,lease)
     return JSONObject().put("engine","Media3").put("nativeSurface",true).put("controlsExpanded",controlsExpanded).put("dragging",JSONArray(dragging.toList())).put("canvasWidth",grid.width).put("canvasHeight",grid.height).put("offset",data.getInt("offset")).put("total",data.getInt("total")).put("count",entries.length()).put("groupIndex",data.getInt("groupIndex")).put("groupTotal",data.getInt("groupTotal")).put("hasPrevious",previous.isEnabled).put("hasNext",next.isEnabled).put("lease",lease).put("generation",data.getLong("generation")).put("expanded",if(expanded<0)JSONObject.NULL else expanded).put("target",selected)
+      .put("qaAudioStartMs",BuildConfig.RHVIDEO_QA_AUDIO_START_MS)
       .put("cells",JSONArray(players.mapIndexed{i,p->
         val saved=cell(i);val item=entries.getJSONObject(i);val id=item.getString("id");val surface=containers[i]
         val counters=p.videoDecoderCounters?.also{it.ensureUpdated()};val favorite=client.favoriteState("video",id,data.getLong("generation"))

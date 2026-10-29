@@ -16,9 +16,26 @@ public class RhVideoInstrumentation extends Instrumentation {
   @Override public void onCreate(Bundle value){super.onCreate(value);args=value;start();}
   private void require(boolean ok,String message)throws Exception{if(!ok)throw new Exception(message);}
   private boolean gridReady(JSONObject state)throws Exception{if(state==null)return false;JSONArray cells=state.optJSONArray("cells");if(cells==null||cells.length()!=4)return false;for(int i=0;i<cells.length();i++)if(!cells.getJSONObject(i).optBoolean("rendered"))return false;return cells.getJSONObject(0).optLong("positionMs")>500;}
+  private void checkAudioStartExperiment(JSONObject state)throws Exception{
+    int expected=Integer.parseInt(args.getString("audioStartMs","0"));
+    require(state.getInt("qaAudioStartMs")==expected,"QA audio start setting must match the explicit host request; experimental playback cannot pass the default gate");
+    if(expected==0)return;
+    JSONArray cells=state.getJSONArray("cells");
+    for(int i=0;i<cells.length();i++){
+      JSONObject receipt=cells.getJSONObject(i).getJSONObject("diagnostics").getJSONObject("audioStartExperiment");
+      require(receipt.getInt("requestedMs")==expected&&receipt.getInt("afterFrames")>0&&receipt.getInt("afterFrames")<=receipt.getInt("capacityFrames"),"Every live grid audio output must report its actual experimental start threshold");
+      require(receipt.getInt("bufferSizeFrames")==receipt.getInt("capacityFrames"),"The waterline experiment must not shrink the PCM buffer");
+    }
+  }
   private JSONObject waitGrid(int count,boolean paused)throws Exception{
+    return waitGrid(count,paused,android.content.res.Configuration.ORIENTATION_UNDEFINED);
+  }
+  private JSONObject waitGrid(int count,boolean paused,int orientation)throws Exception{
     long end=System.currentTimeMillis()+30000;JSONObject state=null;String lastError="none";
-    do{try{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==count;for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.optBoolean("rendered")&&cell.optBoolean("paused")==paused&&cell.optInt("playbackState")==3&&cell.optLong("renderedFrames")>0;if(!paused)ready&=cell.optBoolean("playing")&&cell.optLong("positionMs")>250&&cell.optLong("renderedFrames")>1;}if(ready){step("grid settled "+state);return state;}}catch(Exception error){lastError=error.toString();}Thread.sleep(200);}while(System.currentTimeMillis()<end);
+    do{try{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==count;
+      if(orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE)ready&=state.getInt("canvasWidth")>state.getInt("canvasHeight");
+      if(orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT)ready&=state.getInt("canvasHeight")>state.getInt("canvasWidth");
+      for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.optBoolean("rendered")&&cell.optBoolean("paused")==paused&&cell.optInt("playbackState")==3&&cell.optLong("renderedFrames")>0;if(!paused)ready&=cell.optBoolean("playing")&&cell.optLong("positionMs")>250&&cell.optLong("renderedFrames")>1;}if(ready){checkAudioStartExperiment(state);step("grid settled "+state);return state;}}catch(Exception error){lastError=error.toString();}Thread.sleep(200);}while(System.currentTimeMillis()<end);
     // The release APK is R8-minified. Do not link a Kotlin Companion from the
     // separately compiled probe: R8 can inline/remove it in the product APK.
     step("QA: grid-failure-audio-snapshot pid="+android.os.Process.myPid());
@@ -29,6 +46,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("Native grid frames/state did not settle: "+state+"; API error: "+lastError+"; diagnostic: "+diagnostic);
   }
   private JSONArray gridIds(JSONObject state)throws Exception{JSONArray ids=new JSONArray();JSONArray cells=state.getJSONArray("cells");for(int i=0;i<cells.length();i++)ids.put(cells.getJSONObject(i).getString("id"));return ids;}
+  private JSONArray gridInputs(JSONObject state)throws Exception{JSONArray ids=new JSONArray();JSONArray cells=state.getJSONArray("cells");for(int i=0;i<cells.length();i++)ids.put(cells.getJSONObject(i).getLong("inputId"));return ids;}
   private JSONObject gridControl(int target,String command,double value)throws Exception{return (JSONObject)mainAction("native.grid.control",new JSONObject().put("target",target).put("command",command).put("value",value));}
   private void clickNativeLabel(String label)throws Exception{
     long end=SystemClock.uptimeMillis()+5000;Activity owner=current;int[] center={-1,-1},previous={-1,-1};int stable=0;
@@ -90,7 +108,8 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(Math.abs(cell.getLong("positionMs")-5000)<500&&cell.getInt("volume")==37&&cell.getBoolean("muted")&&cell.getDouble("decoderVolume")==0&&Math.abs(cell.getDouble("rate")-1.5)<.01,"Per-cell pause/time/volume/mute/speed must survive group changes: "+cell);
     if("grid-restore".equals(args.getString("mode"))){screenshot("rhvideo-grid-restore-qa.png");action("grid.close",new JSONObject());library=waitView("RhVideoActivity");return;}
     gridControl(1,"expand",0);require(!((JSONObject)nativeCall("automation.grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(1).getBoolean("paused"),"Expanding a paused cell resumes it");nativeCall("automation.back",new JSONObject());require(((JSONObject)nativeCall("automation.grid.state",new JSONObject())).isNull("expanded"),"First back shrinks the expanded cell");gridControl(-1,"pause",0);
-    getUiAutomation().setRotation(UiAutomation.ROTATION_FREEZE_90);Thread.sleep(1200);restored=waitGrid(3,true);require(restored.getString("lease").equals(lease)&&gridIds(restored).toString().equals(firstIds.toString()),"Rotation keeps the same native grid session");getUiAutomation().setRotation(UiAutomation.ROTATION_FREEZE_0);Thread.sleep(1200);restored=waitGrid(3,true);require(restored.getInt("canvasHeight")>restored.getInt("canvasWidth"),"Portrait rotation must settle before seeking a new decoder");
+    JSONArray rotationInputs=gridInputs((JSONObject)nativeCall("automation.grid.state",new JSONObject()));
+    require(getUiAutomation().setRotation(UiAutomation.ROTATION_FREEZE_90),"Owned landscape rotation request must be accepted");restored=waitGrid(3,true,android.content.res.Configuration.ORIENTATION_LANDSCAPE);require(restored.getString("lease").equals(lease)&&gridIds(restored).toString().equals(firstIds.toString()),"Rotation keeps the same native grid session");require(gridInputs(restored).toString().equals(rotationInputs.toString()),"Ordinary landscape resizing must not recreate decoders or download from a previous keyframe");screenshot("rhvideo-grid-landscape-qa.png");require(getUiAutomation().setRotation(UiAutomation.ROTATION_FREEZE_0),"Owned portrait rotation request must be accepted");restored=waitGrid(3,true,android.content.res.Configuration.ORIENTATION_PORTRAIT);require(gridInputs(restored).toString().equals(rotationInputs.toString()),"Returning to portrait must retain each actual decoder");screenshot("rhvideo-grid-portrait-qa.png");
     long input=restored.getJSONArray("cells").getJSONObject(1).getLong("inputId"),frames=restored.getJSONArray("cells").getJSONObject(1).getLong("submittedFrames");
     gridControl(1,"seek",19500);long end=System.currentTimeMillis()+25000;boolean seekReady=false;
     do{cell=((JSONObject)nativeCall("automation.grid.state",new JSONObject())).getJSONArray("cells").getJSONObject(1);if(cell.getInt("playbackState")==3&&cell.getBoolean("paused")&&cell.getLong("renderedFrames")>0&&cell.getLong("submittedFrames")>frames&&cell.getLong("positionMs")>=19400){seekReady=true;break;}Thread.sleep(150);}while(System.currentTimeMillis()<end);require(seekReady,"Actual paused near-EOF frame must be ready before the loop check: "+cell);

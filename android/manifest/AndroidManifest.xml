@@ -62,7 +62,7 @@
         android:usesCleartextTraffic="true">
         <service android:name=".DeviceFileService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <activity android:name=".RhVideoActivity" android:exported="false" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboardHidden" />
-        <activity android:name=".RhVideoGridActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" />
+        <activity android:name=".RhVideoGridActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" />
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"

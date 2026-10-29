@@ -26,6 +26,11 @@ internal class RhVideoInputDiagnostics(val enabled:Boolean,private val now:()->L
   private val firstByte=AtomicLong(-1);private val lastByte=AtomicLong(-1);private val openPosition=AtomicLong(-1)
   private var video:JSONObject?=null;private var audio:JSONObject?=null
   private var underruns=0L;private var loadErrors=0L;private var lastLoadError:String?=null
+  @Volatile private var audioStartExperiment:String?=null
+  fun recordAudioStartExperiment(before:Int,after:Int,requested:Int,capacity:Int,bufferSize:Int,sampleRate:Int,milliseconds:Int){
+    if(enabled)audioStartExperiment=JSONObject().put("beforeFrames",before).put("afterFrames",after).put("requestedFrames",requested)
+      .put("capacityFrames",capacity).put("bufferSizeFrames",bufferSize).put("sampleRate",sampleRate).put("requestedMs",milliseconds).toString()
+  }
   private fun elapsed()=(now()-created).coerceAtLeast(0)
   private fun value(time:Long):Any=if(time<0)JSONObject.NULL else time
   private fun decoder(name:String,at:Long,duration:Long)=JSONObject()
@@ -55,5 +60,6 @@ internal class RhVideoInputDiagnostics(val enabled:Boolean,private val now:()->L
       .put("videoDecoder",video?.let{JSONObject(it.toString())}?:JSONObject.NULL).put("audioDecoder",audio?.let{JSONObject(it.toString())}?:JSONObject.NULL)
       .put("videoCounters",counters(videoCounters)).put("audioCounters",counters(audioCounters)).put("audioUnderruns",underruns)
       .put("loadErrors",loadErrors).put("lastLoadErrorClass",lastLoadError?:JSONObject.NULL)
+      .put("audioStartExperiment",audioStartExperiment?.let{JSONObject(it)}?:JSONObject.NULL)
   }
 }

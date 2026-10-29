@@ -52,6 +52,11 @@ val updateProbeCode = providers.gradleProperty("rhfilesUpdateProbeCode").orNull?
 require(updateProbeCode == null || (providers.gradleProperty("rhfilesReleaseProbe").isPresent && updateProbeCode > 0)) {
     "Update probe versions require rhfilesReleaseProbe and a positive code"
 }
+// Controlled audio-prefill experiment, never a publisher/default tuning knob.
+val rhVideoAudioStartMs = providers.gradleProperty("rhfilesRhVideoAudioStartMs").orNull?.toInt()
+require(rhVideoAudioStartMs == null || (providers.gradleProperty("rhfilesRhVideoProbe").isPresent && rhVideoAudioStartMs in 1..100)) {
+    "Audio start experiments require rhfilesRhVideoProbe and 1..100 ms"
+}
 
 android {
     // Native view tests must inflate the real Media3/app resources, rather
@@ -73,6 +78,7 @@ android {
     namespace = "com.railgunhamster.rhfiles"
     sourceSets.getByName("main").assets.srcDir(rootProject.file("../../../reader"))
     defaultConfig {
+        buildConfigField("int", "RHVIDEO_QA_AUDIO_START_MS", (rhVideoAudioStartMs ?: 0).toString())
         if(providers.gradleProperty("rhfilesLanServiceProbe").isPresent) testInstrumentationRunner="com.railgunhamster.rhfiles.LanServiceInstrumentation"
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.railgunhamster.rhfiles"

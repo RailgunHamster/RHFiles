@@ -14,6 +14,13 @@ test('unknown Android acceptance modes fail before SDK access or installing any 
     assert.equal(result.status,1);assert.match(result.stderr,/Unknown owned Android acceptance mode/);assert.equal(result.stdout,'');
   }
 });
+test('native acceptance permits only the two explicitly owned QA AVD names',()=>{
+  const runner=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8'),node=parse(runner,{ecmaVersion:'latest',sourceType:'module'}).body.find(node=>node.type==='FunctionDeclaration'&&node.id?.name==='verifyOwnedAvdName');
+  assert(node);const verify=vm.runInNewContext('('+runner.slice(node.start,node.end)+')',{assert});
+  verify('RHFilesRhVideoQA20261027\r\nOK\r\n');verify('RHFilesRhVideoQA20261030Audio\nOK\n');
+  for(const name of ['','Moto','RHFilesQA','RHFilesRhVideoQA20261030Audio-copy','arbitrary-emulator'])assert.throws(()=>verify(name));
+  assert.match(runner,/assert\.equal\(run\(\['shell','getprop','ro\.kernel\.qemu'\]\)\.trim\(\),'1','Physical devices are not allowed'\)/);
+});
 
 test('physical player-button acceptance reveals controls with one native gesture, not a delayed background-WebView acknowledgement',()=>{
   const click=source.slice(source.indexOf('private void touchPlayerButton('),source.indexOf('private void revealPlayerControlsByTouch(')).replace(/^\s*\/\/.*$/gm,'');
@@ -32,6 +39,22 @@ test('grid star and mark acceptance uses actual guarded touches rather than nati
   const touch=source.slice(source.indexOf('private void clickNativeLabel('),source.indexOf('private JSONObject waitGridFavorite('));
   assert.doesNotMatch(touch,/native\.ui\.invoke|performClick\(/);for(const guard of ['hasWindowFocus','getAlpha','getGlobalVisibleRect','getLocationOnScreen','getWindowToken'])assert(touch.includes(guard),guard);
   assert.equal([...touch.matchAll(/sendPointerSync\(down\)/g)].length,1);assert.equal([...touch.matchAll(/sendPointerSync\(up\)/g)].length,1);
+});
+test('rotation acceptance waits for the requested rendered orientation before queuing the opposite rotation',()=>{
+  const wait=source.slice(source.indexOf('private JSONObject waitGrid(int count,boolean paused,int orientation)'),source.indexOf('private JSONArray gridIds('));
+  assert.match(wait,/ORIENTATION_LANDSCAPE\)ready&=state\.getInt\("canvasWidth"\)>state\.getInt\("canvasHeight"\)/);
+  assert.match(wait,/ORIENTATION_PORTRAIT\)ready&=state\.getInt\("canvasHeight"\)>state\.getInt\("canvasWidth"\)/);
+  assert.match(wait,/System\.currentTimeMillis\(\)\+30000/,'The existing per-transition frame budget must not grow');
+  assert.match(source,/setRotation\(UiAutomation\.ROTATION_FREEZE_90\),"Owned landscape rotation request must be accepted"\);restored=waitGrid\(3,true,android\.content\.res\.Configuration\.ORIENTATION_LANDSCAPE\);[^\n]+setRotation\(UiAutomation\.ROTATION_FREEZE_0\),"Owned portrait rotation request must be accepted"\);restored=waitGrid\(3,true,android\.content\.res\.Configuration\.ORIENTATION_PORTRAIT\)/);
+});
+test('ordinary grid resizing retains codecs but keeps real background and explicit recreation release paths',()=>{
+  const manifest=fs.readFileSync(new URL('../../android/manifest/AndroidManifest.xml',import.meta.url),'utf8'),grid=fs.readFileSync(new URL('../../android/gradle/app/src/main/java/com/railgunhamster/rhfiles/RhVideoGridActivity.kt',import.meta.url),'utf8');
+  const declaration=manifest.match(/<activity[^>]+android:name="\.RhVideoGridActivity"[^>]+>/)?.[0];assert(declaration);
+  assert.match(declaration,/android:configChanges="orientation\|screenSize\|smallestScreenSize\|screenLayout"/);
+  const resize=grid.slice(grid.indexOf('override fun onConfigurationChanged('),grid.indexOf('private fun updatePages('));
+  assert.match(resize,/super\.onConfigurationChanged\(newConfig\)/);assert.match(resize,/height=adjustmentHeight\(\)/);assert.match(resize,/grid\.requestLayout\(\)/);
+  assert.doesNotMatch(resize,/releasePlayers\(|startPlayers\(|createEngine\(/);
+  assert.match(grid,/override fun onStop\(\)\{handler\.removeCallbacks\(update\);releasePlayers\(\);super\.onStop\(\)\}/);
 });
 test('constant Android probe expressions parse as expressions, not standalone statements',()=>{
   const failures=[];let count=0;

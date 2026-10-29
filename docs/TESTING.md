@@ -145,6 +145,12 @@ Android 同屏 `grid.state`／`native.grid.state` 的每格 `diagnostics` 仅在
 
 同屏就绪阶段写入探针 stream，失败则保留原断言状态和线程栈。在既有失败诊断期间，宿主收到明确 PID 标记后最多启动一次异步只读 `dumpsys media.audio_flinger`，10 秒／4 MiB 上限，退出前等待该读取结束；不会阻塞 Node 夹具继续供流、扩大逐帧等待或重启音频服务。快照及其 captured／failed receipt 单独保存；必须核对相同 PID／audioSessionId，不能把进程已退出后的空输出当成失败当时的音频状态。同屏收藏与暂存现也通过可见、裁剪、透明度、焦点及稳定中心校验后的真实触摸验证，不再用 `native.ui.invoke` 冒充手指操作。
 
+### 同屏起播水位对照与真实旋转
+
+默认构建的 `RHVIDEO_QA_AUDIO_START_MS` 为 0，仍用原版 DefaultRenderersFactory／平台默认音频输出。仅 `-PrhfilesRhVideoProbe -PrhfilesRhVideoAudioStartMs=20` 才能构建实验包（范围 1–100 ms，需 Android 12+／PCM）；使用 [Media3 公开 AudioTrack](https://github.com/androidx/media/blob/1.11.1/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/audio/AudioTrackAudioOutput.java) 与 [Android 起播阈值 API](https://developer.android.com/reference/android/media/AudioTrack#setStartThresholdInFrames(int))，不通过私有字段、减小 PCM 容量、删音轨、伪造时钟或重试来通过测试。宿主还需显式 `RHFILES_QA_AUDIO_START_MS=20`；每个 checkpoint 的实际配置、每路实际水位／容量都须匹配，实验结果不能通过默认 gate。`qa-parameters.json` 标识实验，`fixture-media.json` 记录生成视频的精确字节哈希，便于对照而非假设每次编码相同。
+
+旋转验收不能用固定 sleep 后旧方向的 READY 状态放行。仍在原有 30 秒预算内，要求对应横／竖画布真实尺寸及所有原生帧就绪，再发下一次旋转；检查配置请求被系统接受。普通尺寸变更应原地调整网格及调节面板高度，不销毁解码器／重取前一个关键帧；核对同一 inputId 并保留横竖屏原生截图。独立的 HOME／onStop 与强制 Activity.recreate 验收仍须保留，不能因普通旋转避免重建就漏测真实释放／恢复。
+
 ## RHVideo 完整 Windows 原生验收入口
 
 不要把漏设环境标志后跳过的原生用例计入完整验收。`rhvideo-windows.mjs` 强制启用实际原生用例，串行运行全部 `rhvideo*.test.mjs`，核对随包 3.0.24 的文件清单、哈希和预建插件索引，并要求最终 TAP 全部通过且没有跳过、取消或待办。40 分钟及 8 MiB 日志上限只限制自有测试进程树，不重启测试来抹掉失败。

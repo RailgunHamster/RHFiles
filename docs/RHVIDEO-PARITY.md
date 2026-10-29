@@ -6,6 +6,22 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 起播水位对照与旋转冷恢复（验证继续，未发包）
+
+首先以公开的 Media3 AudioOutputProvider／AudioTrack API 构建独立 QA 实验，默认构建仍为 0、不改变平台水位；不使用 deprecated provider、私有反射、静音、删音轨、缩小缓冲或重试。实验参数只能搭配 probe 构建，宿主／每格 snapshot／实际水位回执均须一致，不允许实验包冒充默认 gate。新构建 **6 分钟成功，433/433 JVM**（`rhvideo-audio-start-experiment-build.log`）；共享业务含真实参考对照先 **843/843**（`rhvideo-audio-start-node-reference.log`），第一次未指定参考路径的 811 通过／32 跳过另存，不记为完整通过。
+
+主包 `4bc49c677cca4b90092902b6c3f19edd1bc442d504d1ac5c4fd616043d5a3f2d`，初版探针 `fb1a33d341e75a1ed9478aba1d4ed686246df618bc886de5acf68f7d339f2261`。完整 grid 实验 **失败**（`rhvideo-audio-start-experiment-grid.log`，`rhvideo-android-grid-1793305649982-release`）：三路实际起播阈值由 24000 改为 960 帧，容量／bufferSize 均保留 24000；三路分别推进约 298／417／256 ms、6／12／6 帧，但仍有 12／14／11 次音频 underrun。实际收藏／取消收藏／标记触摸及翻组通过，不将它们算作整轮通过。旋转后 input 13／14 仍无帧，15 有帧；因此 **降低水位不是已通过的正式修复**，没有修改产品默认值。
+
+进一步核对系统配置时间线，发现旧探针只 sleep 1200 ms 后就把旧竖屏的 READY 状态当成横屏完成，立即反向旋转，排入两次框架重建。改为原有 30 秒预算内要求真实对应画布尺寸／帧，再发相反方向，并核对系统接受请求；没有加长预算。探针单独构建 **48 秒成功**（`rhvideo-grid-rotation-settle-probe-build.log`），哈希 `9f6ec905b2db37c4c40b3a024b29f7391b362f3d3c5cc61bb0bdf0bb0cef2a9d`，产品 APK 不变。
+
+这轮严格方向重跑仍 **失败**（`rhvideo-audio-start-orientation-verified-grid.log`，`rhvideo-android-grid-1793306146183-release`）：实际横屏画布 **2264×549**、新 input **10／11／12**，不是旧画面误放行；第一格 5 秒、queued 99／skipped 94、零渲染帧，另两格各有一帧，真实 H.264／AAC 均已初始化。失败现场音频匹配 PID **22752**。两轮生成源逐字节相同：横屏 SHA-256 `97cf3a48b50aaa677ee66fd9debca20786021ffbda51d286ebfa5a2aea86bddb`，竖屏 `98c8699ed412be73efb519aa2c8388d56e68c71b5c8edd014fa17d8cd32c24bc`，前轮生成文件已保留在专属 artifact。不能把旧探针竞态当成全部产品根因，也不能将水位改动的起播通过扩展为恢复／流畅性完成。
+
+当前产品修改只让普通方向／窗口大小变更更新网格和调节面板高度，保留实际解码器，避免三路重新下载并从旧关键帧解码；语言／主题／密度等仍走系统正常重建。真实后台停止、关闭及强制 Activity.recreate 继续释放和恢复，既有 ViewModel 轨道记忆不移除。按 [Android 配置变更规则](https://developer.android.com/guide/topics/resources/runtime-changes)自行适配布局，不锁定屏幕方向。新增验收须核对横竖几何、同一 inputId 以及实际截图；**此时原生新包尚在构建，不能写成该修改已通过运行验证**。共享业务最终 **846/846、零跳过**（`rhvideo-grid-inplace-node.log`），不代替原生运行。未重启系统／音频／模拟器，未操作真机、替换正式程序或发包。
+
+随后该包 **5 分 39 秒构建成功、433/433 JVM**（`rhvideo-grid-inplace-experiment-build.log`），主包 `05ea517d739e9c72f0f3783acc1cb94eb65363291324793a52dda0b61bf36b30`／探针 `3b955892369c3bf26cae1b37afb0b49a275e62b19d52fa41ba0d07e0e0061bc3`。251 项 canonical Android 输入比较仅未打包的测试夹具不同，产品／原生源码相符，宿主另逐字节核对已打包的共享 UI。**运行失败，尚未进入网格**（`rhvideo-grid-inplace-experiment-full-grid.log`，`rhvideo-android-grid-1793306827441-release`）：分类 JavaScript evaluation 超时，夹具已经收到清单及 28 张封面请求；PID **23422** 主线程栈停在 `HardwareRenderer.nSyncAndDrawFrame`，media.resource_manager 读取也超时。没有创建本轮播放器，不能将它算成旋转修改的运行失败或成功，也不能仅凭堆栈断言整个系统的唯一根因。
+
+核对旧 QA 实例实际启动命令，含 `-no-audio`，且仍在运行。为排除测试环境干扰，未重启或重置它。SDK 的只读多实例启动被当前版本拒绝，进程已退出、日志保留；随后单独创建 **RHFilesRhVideoQA20261030Audio／emulator-5586**，同为 Android 14／Pixel 7／软件 GPU／6 核／6144 MiB，保留正常音频，首次启动还在等待。旧 **emulator-5584** 未动。宿主只放行这两个明确自有 AVD 名称，物理设备仍被拒绝；另重编译默认水位 **0** 的对照包，不把 20 ms 实验默认化。此阶段新实例尚无播放验证，不能宣称新环境或产品旋转修改已修好；新一轮结果另记。
+
 ## 2026-10-30 同屏停滞的逐输入和现场音频证据（未修复、未发包）
 
 给每次原生解码器 incarnation 增加独立、定长、可关闭的诊断：实际 H.264／AAC 解码器名、生产者初始化时间与主线程收到回调的时间、真实 Media3 counters、传输字节／首末字节时间、音频会话 ID、underrun 和读取错误数。只有 debug 或显式启用原生自动化时采集；不记录地址、令牌、文件名、异常正文或事件队列，不改变播放／重试策略。缺失阶段返回 null，`droppedTotal` 按 [Media3 DecoderCounters](https://developer.android.com/reference/androidx/media3/exoplayer/DecoderCounters#droppedBufferCount) 表示输入与输出丢帧总计，不误称只有输出。
