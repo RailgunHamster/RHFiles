@@ -14,6 +14,10 @@ test('external duplicate controls are audited even though their entry reuses swi
   assert(registrations().has('duplicates.confirm'),'Inspect the real standalone controller registrations');
 });
 
+test('separate task-controller registrations are audited for both mutation and readback',()=>{
+  const actual=registrations();for(const id of ['server.state','task.priorityState','task.prioritize','remote.tasks.prioritize'])assert(actual.has(id),id);
+});
+
 const reference=path.resolve(process.env.RHVIDEO_SOURCE||'../RHVideo');
 test('reference source hashes ignore Windows checkout line endings, not source edits',()=>{
  assert.equal(sourceHash(Buffer.from('const value = "中文";\r\nnext();\r\n')),sourceHash(Buffer.from('const value = "中文";\nnext();\n')));assert.notEqual(sourceHash('next();\n'),sourceHash('changed();\n'));assert.equal(mapping.sourceHash,'sha256-utf8-lf');

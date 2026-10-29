@@ -29,7 +29,7 @@
             "rhvideo.workbench." + site,
           );
       const resolutions = new I.ResolveCache();
-      let configuration=null,favoriteExports=null,rulesEditor=null,duplicates=null;
+      let configuration=null,favoriteExports=null,rulesEditor=null,duplicates=null,taskPriority=null;
       const ruleProcessId=crypto.randomUUID();
       let ruleRefreshTimer=0,ruleRefreshWaiter=null,ruleEditIntent=0,ruleApplyIntent=0;
       let resolutionRevision = "",
@@ -231,6 +231,7 @@
         configuration?.reset();
         favoriteExports?.reset();
         duplicates?.reset();
+        taskPriority?.reset();
         ctx.invalidateReads();
         const version=++epoch;
         abortPictureOrders();
@@ -737,6 +738,7 @@
         ),
         async ({ id }) => {
           if(id==="wb-duplicates")duplicates?.closed();
+          if(id==="wb-server")server.session++;
           if (id === "wb-viewer") stopViewer();
           if (id === "wb-confirm") pendingConfirmation = null;
           if (id === "wb-info") detailJob = null;
@@ -1744,6 +1746,7 @@
       );
       // Server tools share the same registered operation handlers as CLI callers.
       const server = {
+        session: 0,
         page: "watch",
         queue: "default",
         view: "running",
@@ -1752,7 +1755,9 @@
         days: 7,
         status: "all",
         load: 0,
+        renderedLoad: 0,
       };
+      action('server.state',object(),()=>({...server,loading:server.load!==server.renderedLoad}),'read');
       function liveTarget() {
         if (
           document.hidden ||
@@ -1828,7 +1833,7 @@
           if (version !== epoch || detailJob !== target || !$("wb-info")?.open)
             return false;
           const root = $("wb-info").querySelector(".wb-content");
-          if (target.type === "task") paintTaskDetail(root, value);
+          if (target.type === "task") paintTaskDetail(root, value, target.kind);
           else root.replaceChildren(detail(value));
           root.append(
             el("p", "", "wb-live-status"),
@@ -1863,7 +1868,9 @@
           ["page"],
         ),
         async ({ page }) => {
+          server.session++;
           server.page = page;
+          if(page==='replacement')server.queue='replacement';
           server.pageNumber = 1;
           await renderServer();
           liveRefresh.configure(server.live, true);
@@ -1883,7 +1890,9 @@
           ["key", "value"],
         ),
         async ({ key, value }) => {
+          RHVideoTaskPriority.filter(key,value);
           server[key] = value;
+          if(key==='queue'&&value==='default'&&server.page==='replacement')server.page='tasks';
           if (key !== "pageNumber") server.pageNumber = 1;
           await renderServer();
           liveRefresh.configure(server.live, true);
@@ -1983,10 +1992,7 @@
             );
           } else if (page === "tasks" || page === "replacement") {
             const kind = page === "replacement" ? "replacement" : server.queue,
-              view =
-                kind === "replacement" && server.view === "failed"
-                  ? "history"
-                  : server.view;
+              view = server.view;
             const filters = el("div", undefined, "wb-filters");
             filters.append(
               select(
@@ -2002,7 +2008,7 @@
                 [
                   ["running", "运行中"],
                   ["queued", "排队中"],
-                  ...(kind === "default" ? [["failed", "失败"]] : []),
+                  ["failed", "失败"],
                   ["history", "历史"],
                 ],
                 "server.filter",
@@ -2060,13 +2066,16 @@
             });
             active = hasLiveWork(data);
             if (token !== server.load) return;
-            body.replaceChildren(filters, detail(data.counts || {}));
+            body.replaceChildren(taskPriorityMessage(kind),filters, detail(data.counts || {}));
             for (const t of data.items || []) {
               const row = serverRow(t.filename, t.status);
+              row.dataset.taskId=t.id;row.dataset.queue=kind;
               row.append(
                 el("p", t.message || ""),
                 button("处理步骤与进度", "task.detail", { kind, id: t.id }),
               );
+              if(t.prioritized)row.append(el('span','已置顶','wb-badge'));
+              if(t.can_prioritize===true&&t.status==='pending')row.append(taskPriorityButton(t,kind));
               body.append(row);
             }
             body.append(
@@ -2206,6 +2215,8 @@
             target.replaceChildren(...root.childNodes);
             target.scrollTop = scroll;
           }
+          syncTaskPriorityUI();
+          if(token===server.load)server.renderedLoad=token;
           return active;
         } catch (error) {
           if (token === server.load && !background)
@@ -2240,14 +2251,41 @@
         },
         "read",
       );
-      function paintTaskDetail(root, t) {
+      function syncTaskPriorityUI(){
+        const value=taskPriority?.state();if(!value)return;
+        for(const button of document.querySelectorAll('[data-task-priority-key]')){
+          button.disabled=!!value.pending;
+          button.textContent=value.pending&&button.dataset.taskPriorityKey===value.pending.kind+':'+value.pending.id?'正在置顶…':'置顶此项';
+        }
+        for(const node of document.querySelectorAll('.wb-task-priority-message')){
+          node.textContent=value.target?.kind===node.dataset.queue&&value.target.session===Number(node.dataset.prioritySession)?value.error||value.message:'';
+          node.hidden=!node.textContent;node.setAttribute('role',value.error?'alert':'status');
+          node.classList.toggle('wb-error',!!value.error);
+        }
+      }
+      function taskPriorityMessage(kind){const node=el('p',undefined,'wb-task-priority-message');node.dataset.queue=kind;node.dataset.prioritySession=String(server.session);node.hidden=true;queueMicrotask(syncTaskPriorityUI);return node;}
+      function taskPriorityButton(task,kind){
+        const node=button('置顶此项','task.prioritize',{kind,id:task.id,expectedRevision:taskPriority.state().revision});
+        node.dataset.taskPriorityKey=kind+':'+task.id;node.title='移到等待队列最前面，当前任务继续处理';node.disabled=!!taskPriority.state().pending;return node;
+      }
+      function paintTaskDetail(root, t, kind) {
+        const previous=root.querySelector('.wb-thumbnail-preview');
         root.replaceChildren();
+        if(kind){root.append(taskPriorityMessage(kind));if(t.can_prioritize===true&&t.status==='pending')root.append(taskPriorityButton(t,kind));}
         if (typeof t.video_id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(t.video_id)) {
           const path="/api/v1/videos/"+t.video_id+"/thumbnail", title=t.filename||"任务缩略图";
-          const previewButton=button("放大缩略图", "image.preview", {path,title}, "wb-thumbnail-preview");
-          const image=el("img");image.alt=title;previewButton.prepend(image);root.append(previewButton);
-          const version=epoch;
-          void native("images",{paths:[path]}).then(([url])=>{if(version===epoch&&image.isConnected)image.src=url;}).catch(notice);
+          const identity=JSON.stringify([t.video_id,t.status,t.started_at,t.queued_at,t.finished_at]),phase=String(t.progress?.stage||'');
+          if(previous?.dataset.taskThumbnailIdentity===identity&&(previous.dataset.loaded==='true'||previous.dataset.phase===phase))root.append(previous);
+          else {
+            const previewButton=button("", "image.preview", {path,title}, "wb-thumbnail-preview"),image=el("img"),label=el('span','正在读取缩略图…'),fallback=el('span',undefined,'wb-task-thumb-fallback');
+            fallback.innerHTML=icon('video');image.alt=title;previewButton.disabled=true;previewButton.dataset.taskThumbnailIdentity=identity;previewButton.dataset.phase=phase;
+            previewButton.append(image,fallback,label);root.append(previewButton);
+            const failed=()=>{image.hidden=true;fallback.hidden=false;previewButton.disabled=true;label.textContent='暂未生成缩略图';};
+            listen(image,'load',()=>{previewButton.dataset.loaded='true';previewButton.disabled=false;fallback.hidden=true;label.textContent='放大缩略图';},'tasks.thumbnail.loaded');
+            listen(image,'error',failed,'tasks.thumbnail.error');
+            const version=epoch;
+            void native("images",{paths:[path]}).then(([url])=>{if(version===epoch&&image.isConnected)image.src=url;}).catch(()=>{if(version===epoch&&image.isConnected)failed();});
+          }
         }
         if (t.progress) {
           const p = el("progress");
@@ -2288,7 +2326,7 @@
             params: { queue: kind, entry: id },
           });
           if (detailJob !== job || !$("wb-info").open) return { stale: true };
-          paintTaskDetail(root, t);
+          paintTaskDetail(root, t, kind);
           root.append(
             el("p", "", "wb-live-status"),
             button("刷新", "task.detail", { kind, id }),
@@ -4455,6 +4493,16 @@
       });
       duplicates=RHVideoDuplicates.install({action,object,native,dialog,el,button,listen,invoke,notice,icon,entryParent:$("library-nav"),connected:()=>state.connected,ready:ensure,Refresh:RHVideoRefresh,
         async mediaChanged(){invalidateCatalog();await load(true);}
+      });
+      taskPriority=RHVideoTaskPriority.install({action,object,native,ready:ensure,identity:()=>epoch+':'+state.generation,changed:syncTaskPriorityUI,
+        capture:()=>({session:server.session,page:server.page,queue:server.queue,view:server.view,pageNumber:server.pageNumber,q:server.q,days:server.days,status:server.status,detail:detailJob}),
+        async applied(result,target,capture){
+          if(detailJob===capture.detail&&detailJob?.type==='task'&&detailJob.kind===target.kind&&detailJob.id===target.id&&$('wb-info')?.open){await invoke('server.liveRefresh');return;}
+          if(!capture||!$('wb-server')?.open||ctx.modalTop()!=='wb-server'||document.activeElement?.matches('input,select,textarea'))return;
+          if(!Object.keys(capture).filter(key=>key!=='detail').every(key=>server[key]===capture[key])||server.view!=='queued'||(server.page==='replacement'?'replacement':server.queue)!==target.kind)return;
+          server.pageNumber=1;await renderServer(true);liveRefresh.configure(server.live,true);
+          if(server.session===capture.session&&server.pageNumber===1){$('wb-server').scrollTop=0;$('wb-server').querySelector('.wb-content').scrollTop=0;}
+        }
       });
       rulesEditor=RHVideoRules.install({action,object,button,el,input,field,select,listen,invoke,toolbar,dialog,config,identity:ruleIdentity,revision:()=>catalogRevision,ready:ensure,connected:()=>state.connected,source:()=>state.view==='gallery'?'gallery':state.kind,catalog:tagCatalog,publish:publishRule,
         settings(value){if(!ruleIdentity())throw Error("媒体账户已改变，标签偏好未保存");prefs.tagEditor=RHVideoRulesModel.settings(value);save();}

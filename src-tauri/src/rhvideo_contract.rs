@@ -214,4 +214,13 @@ mod tests {
         assert!(request(&json!({"name":"duplicates.members","params":{"id":id},"query":{"limit":25}})).is_err());
         let cancel=request(&json!({"name":"duplicates.cancel","params":{"id":id}})).unwrap();assert_eq!(cancel.method,reqwest::Method::DELETE);assert!(!cancel.invalidates_catalog);
     }
+    #[test]
+    fn queued_task_promotion_is_a_fixed_post_not_a_retry_or_catalog_mutation() {
+        let accepted=request(&json!({"name":"tasks.prioritize","params":{"queue":"default","entry":"video:sample"}})).unwrap();
+        assert_eq!(accepted.method,reqwest::Method::POST);assert_eq!(accepted.path,"api/v1/processing-tasks/default/video:sample/prioritize");assert!(!accepted.invalidates_catalog);
+        assert!(accepted.body.is_none());
+        assert!(request(&json!({"name":"tasks.prioritize","params":{"queue":"default","entry":"video:../escape"}})).is_err());
+        assert!(request(&json!({"name":"tasks.prioritize","params":{"queue":"unknown","entry":"video:sample"}})).is_err());
+        assert!(request(&json!({"name":"tasks.prioritize","params":{"queue":"replacement","entry":"replace:12"},"body":{"retry":true}})).is_err());
+    }
 }

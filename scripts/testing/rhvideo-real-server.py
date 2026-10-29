@@ -5,6 +5,7 @@ import asyncio
 import json
 import shutil
 from pathlib import Path
+from datetime import datetime, timedelta
 
 source, directory, port = sys.argv[1:4]
 root = Path(directory).resolve()
@@ -30,7 +31,7 @@ import uvicorn
 from app.main import app
 from app.models.database import AsyncSessionLocal
 from app.models.user import User
-from app.models.models import Video, Picture, Novel, NovelChapter
+from app.models.models import Video, Picture, Novel, NovelChapter, ReplaceBatch, ReplaceBatchItem, ProcessingRun
 from app.core.auth import auth_handler
 
 
@@ -75,6 +76,15 @@ original_lifespan = app.router.lifespan_context
 @asynccontextmanager
 async def lifespan(application):
     async with original_lifespan(application):
+        task_queue = os.environ.get("RHVIDEO_QA_TASK_QUEUE") == "1"
+        if task_queue:
+            # Only this generated service: keep the waiting fixture stable while
+            # exercising the real HTTP routes. Actual worker claim ordering is
+            # verified separately, not replaced with a mock worker algorithm.
+            from app.services.auto_import import auto_import_service
+            from app.services.replace_queue import replace_queue_service
+            await auto_import_service.stop()
+            await replace_queue_service.stop()
         # Nontrivial, actually encoded media, not a 1x1 PNG and invalid MP4
         # bytes that can validate contracts but never playback/decode behavior.
         image = Image.new("RGB", (1600, 1000), (38, 69, 112))
@@ -133,6 +143,28 @@ async def lifespan(application):
                                     byte_offset=offset, byte_length=len(body), word_count=4000))
                 offset += len(body)
             await db.commit()
+        if task_queue:
+            now = datetime.utcnow()
+            async with AsyncSessionLocal() as db:
+                for index in range(70):
+                    db.add(Video(id=f"queue-{index:03}", user_id="fixture-user", filename=f"队列任务 {index:03}.mp4",
+                                 source_path=str(root / "sample.mp4"), status="pending", queue_priority=0,
+                                 enqueued_at=now + timedelta(seconds=index)))
+                db.add(Video(id="queue-running", user_id="fixture-user", filename="当前正在处理.mp4", source_path=str(root / "sample.mp4"), status="processing"))
+                db.add(Video(id="queue-paused", user_id="fixture-user", filename="暂停批次源.mp4", source_path=str(root / "sample.mp4"), status="completed"))
+                db.add(ProcessingRun(id="queue-running-run", video_id="queue-running", filename="当前正在处理.mp4", status="running", steps=[{"key":"compress","status":"running"}]))
+                db.add_all([ReplaceBatch(id="queue-own", user_id="fixture-user", request_id="queue-own"),
+                            ReplaceBatch(id="queue-paused", user_id="fixture-user", request_id="queue-paused", status="paused"),
+                            ReplaceBatch(id="queue-private", user_id="other-user", request_id="queue-private")])
+                await db.flush()
+                for index in range(60):
+                    db.add(ReplaceBatchItem(id=index+1,batch_id="queue-own",video_id=f"queue-{index:03}",position=index,filename=f"替换任务 {index:03}.mp4",status="pending"))
+                db.add_all([ReplaceBatchItem(id=100,batch_id="queue-own",video_id="queue-060",position=60,filename="替换失败记录.mp4",status="failed",finished_at=now,message="生成的测试错误"),
+                            ReplaceBatchItem(id=101,batch_id="queue-paused",video_id="queue-paused",position=0,filename="已暂停批次的等待任务.mp4",status="pending"),
+                            ReplaceBatchItem(id=102,batch_id="queue-private",video_id="private-source",position=0,filename="其他账号的任务.mp4",status="pending"),
+                            ReplaceBatchItem(id=103,batch_id="queue-own",video_id="queue-061",position=61,filename="当前正在替换.mp4",status="running",started_at=now)])
+                await db.commit()
+            (root / "queue-fixture.json").write_text(json.dumps({"format":"rhfiles-owned-task-queue-v1"}), encoding="utf-8")
         print("RHVIDEO_QA_READY", flush=True)
         yield
 

@@ -146,6 +146,7 @@
       "params": { "queue": "default|replacement", "entry": "task" }
     },
     "tasks.progress": { "method": "GET", "path": "processing-progress" },
+    "tasks.prioritize": { "method": "POST", "path": "processing-tasks/{queue}/{entry}/prioritize", "params": { "queue": "default|replacement", "entry": "task" }, "risk": "write" },
     "batches.list": {
       "method": "GET",
       "path": "replace-batches",

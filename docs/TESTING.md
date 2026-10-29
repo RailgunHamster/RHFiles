@@ -121,3 +121,14 @@ node --test --test-concurrency=1 scripts/e2e/rhvideo-duplicates.test.mjs scripts
 Android 在已压缩的 release APK 上使用同一真实服务验收，入口为 `node scripts/testing/rhvideo-android.mjs emulator-5584 <APK绝对路径> <探针APK绝对路径> duplicates`。执行前严格验证设备为 `RHFilesRhVideoQA20261027` 模拟器、每个打包 ABI 都有 RHFiles 原生库、包内共享资源与当前源码一致，以及安装后的 APK 字节；不会因为 ABI 不全而自动跳过安装前检查。QA 构建的 `-PabiList` 应与实际已完成的 Rust 架构一致；复用旧原生库的增量 QA 包不作为完整重编译的正式发布包。界面操作使用真实触摸，视频必须产生原生帧；扫描、暂存、恢复均由真实后端执行，最终校验全部恢复源文件的 SHA-256 和恰好一次提交。
 
 测试结果同时保留失败轮次。扫描结束、列表投影到达、图片解码和实际播放分别判断；不得因为“任务 completed”就假定界面和文件已经正确，也不得将本节通过扩大成全部 RHVideo 功能、无网络／硬件边界或性能等价的证明。
+
+## RHVideo 任务置顶与实际队列领取
+
+`rhvideo-task-priority.test.mjs` 通过独立实际窗口验证列表／详情按钮、切换队列、替换失败记录、缩略图占位／重复读取抑制、旧面板回执隔离和无写请求重放；`rhvideo-task-priority-real.test.mjs` 使用实际 FastAPI／SQLite 和两个真实队列的领取实现。所有输入仅为本轮生成的测试记录，带单独 marker 的 fixture 才允许运行 `rhvideo-real-task-check.py`；不读取用户数据库，不启动视频编码、不修改实际媒体。
+
+```powershell
+$env:RHVIDEO_SOURCE = 'D:/git/RHVideo'
+node --test --test-concurrency=1 scripts/e2e/rhvideo-task-priority.test.mjs scripts/e2e/rhvideo-task-priority-real.test.mjs
+```
+
+Android release 验收使用同一个受限模拟器入口，将模式改为 `task-priority`。除了真实触摸和公开 API，它还检查服务器恰好接受四次置顶，未发生 retry／resume／pause／cancel 请求；随后独立核对实际默认／替换 worker 的领取顺序、暂停和运行中记录、失败记录及源文件哈希。任务只调整元数据：该 fixture 中停止自动 worker 是保持样本稳定的测试条件，不得把此轮当成编码任务不停顿、低内存或后台生命周期的完整验收。

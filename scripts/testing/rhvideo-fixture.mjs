@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 import pathModule from 'node:path';
-export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoFolders=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview'],duplicates=null}={}){
+export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoFolders=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview'],duplicates=null,tasks=null}={}){
   const favorites=new Set(),progress=[],requests=[],validTokens=new Set(['fixture-bearer-do-not-persist']);
   if(authState?.token)validTokens.add(authState.token);
   const favoriteDates=new Map();let favoriteSerial=0;
@@ -43,6 +43,7 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     }
     const watcher=path.match(/^\/api\/v1\/watch-folders\/([^/]+)(\/scan)?$/);
     if(watcher){const w=watch.find(v=>v.id===watcher[1]);if(!w)return send(404,{detail:'Missing watch folder'});if(watcher[2])return send(200,{scanned:5,added:0});if(req.method==='PATCH')Object.assign(w,await body());if(req.method==='DELETE')watch.splice(watch.indexOf(w),1);return send(200,w);}
+    if(tasks&&path.startsWith('/api/v1/processing-tasks'))return tasks({req,res,path,body,send});
     if(path==='/api/v1/processing-tasks')return send(200,taskState?.list || {items:[{id:'video:video-0',filename:'处理样本.mp4',status:'failed',message:'源文件离线'}],counts:{running:0,queued:0,failed:1,history:1},total:1,page:1,pages:1,limit:25});
     if(path.startsWith('/api/v1/processing-tasks/'))return send(200,taskState?.detail || {id:'video:video-0',filename:'处理样本.mp4',status:'failed',message:'源文件离线',steps:[{key:'compress',label:'压缩',status:'failed',metrics:[]}],progress:null});
     if(path==='/api/v1/replace-batches'){if(req.method==='POST'){const v=await body(),batch={id:'batch-'+batches.length,status:'pending',...v};batches.push(batch);return send(202,batch);}return send(200,batches);}

@@ -820,6 +820,38 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(((JSONObject)action("category",new JSONObject().put("kind","picture"))).getInt("total")==28,"Restoring recovers the full native catalog");
     require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"Every duplicate UI operation has a public API");
   }
+  private JSONObject waitTaskPriority(String id)throws Exception{
+    long end=System.currentTimeMillis()+15000;JSONObject state=null;
+    do{state=(JSONObject)action("task.priorityState",new JSONObject());require(state.optString("error").isEmpty(),"Priority operation failed: "+state);JSONObject receipt=state.optJSONObject("receipt");if(state.isNull("pending")&&receipt!=null&&id.equals(receipt.optString("id")))return state;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    throw new Exception("Priority receipt did not settle: "+id+"; "+state);
+  }
+  private void checkActualTaskPriority()throws Exception{
+    action("server.open",new JSONObject().put("page","tasks"));
+    require(Boolean.TRUE.equals(expression(library,"!!document.querySelector('[data-task-id=\"video:queue-running\"]')&&document.querySelectorAll('#wb-server [data-api-action=\"rhvideo.task.prioritize\"]').length===0")),"Running tasks cannot advertise promotion");
+    action("server.filter",new JSONObject().put("key","view").put("value","queued"));action("server.filter",new JSONObject().put("key","pageNumber").put("value",3));
+    JSONObject before=(JSONObject)action("remote.tasks.detail",new JSONObject().put("params",new JSONObject().put("queue","default").put("entry","video:queue-069")));
+    touchDuplicate("[data-task-id='video:queue-069'] [data-api-action='rhvideo.task.prioritize']");waitTaskPriority("video:queue-069");
+    require(((JSONObject)action("server.state",new JSONObject())).getInt("pageNumber")==1,"Promotion from page three returns the unchanged queue to page one");
+    require(Boolean.TRUE.equals(expression(library,"document.querySelector('#wb-server [data-task-id]')?.dataset.taskId==='video:queue-069'")),"Actual first row shows the promoted task");
+    JSONObject after=(JSONObject)action("remote.tasks.detail",new JSONObject().put("params",new JSONObject().put("queue","default").put("entry","video:queue-069")));require(before.getString("queued_at").equals(after.getString("queued_at")),"Promotion cannot erase original enqueue time");
+    action("task.detail",new JSONObject().put("kind","default").put("id","video:queue-068"));touchDuplicate("#wb-info [data-api-action='rhvideo.task.prioritize']");waitTaskPriority("video:queue-068");
+    action("panel.close",new JSONObject().put("id","wb-info"));action("server.open",new JSONObject().put("page","replacement"));action("server.filter",new JSONObject().put("key","view").put("value","failed"));
+    require("replacement".equals(((JSONObject)action("server.state",new JSONObject())).getString("queue")),"Displayed queue and automation state agree");
+    require(Boolean.TRUE.equals(expression(library,"document.querySelector('#wb-server .wb-server-body').textContent.includes('替换失败记录')&&document.querySelectorAll('#wb-server [data-api-action=\"rhvideo.task.prioritize\"]').length===0")),"Replacement failed records remain reachable without promotion/retry controls");
+    action("server.filter",new JSONObject().put("key","view").put("value","queued"));action("server.filter",new JSONObject().put("key","pageNumber").put("value",3));
+    touchDuplicate("[data-task-id='replace:60'] [data-api-action='rhvideo.task.prioritize']");waitTaskPriority("replace:60");
+    require(Boolean.TRUE.equals(expression(library,"document.querySelector('#wb-server [data-task-id]')?.dataset.taskId==='replace:60'")),"Actual replacement queue order changes across pages");
+    action("task.detail",new JSONObject().put("kind","replacement").put("id","replace:101"));touchDuplicate("#wb-info [data-api-action='rhvideo.task.prioritize']");JSONObject paused=waitTaskPriority("replace:101");
+    require("paused".equals(paused.getJSONObject("receipt").getString("blocked_by")),"Paused queue remains paused after promotion");
+    require(Boolean.TRUE.equals(expression(library,"document.querySelector('#wb-info .wb-task-priority-message').textContent.includes('队列恢复后')")),"Blocked receipt is explained inside the current panel");
+    expression(library,"new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");screenshot("rhvideo-task-priority-qa.png");
+    for(String[] target:new String[][]{{"default","video:queue-running"},{"replacement","replace:100"},{"replacement","replace:102"}}){
+      JSONObject args=new JSONObject().put("kind",target[0]).put("id",target[1]).put("expectedRevision",((JSONObject)action("task.priorityState",new JSONObject())).getString("revision"));
+      require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.task.prioritize',"+args+").then(()=>false,()=>true)")),"Active/failed/private tasks cannot be promoted: "+target[1]);
+    }
+    require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"Every task control has a public API");
+    require(Boolean.TRUE.equals(expression(library,"![...document.querySelectorAll('#wb-server button,#wb-info button')].some(n=>/重试|取消任务/.test(n.textContent))")),"No retry or cancellation of failed tasks");
+  }
   private void checkFileTaskAndSort()throws Exception{
     long end=System.currentTimeMillis()+20000;
     while(System.currentTimeMillis()<end){try{if(((JSONObject)mainAction("navigation.state",new JSONObject())).optBoolean("ready"))break;}catch(Exception ignored){}Thread.sleep(150);}
@@ -877,6 +909,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
+      if("task-priority".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkActualTaskPriority();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual task priority, physical list/detail controls, real default/replacement queues, failed records, preserved enqueue time and paused receipt");finish(Activity.RESULT_OK,result);return;}
       if("rules".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");JSONObject connected=(JSONObject)action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));require(connected.getInt("total")==240,"Complete tag-fixture catalog loaded");checkTagRules();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native tag rules, actual include/OR/collapse controls, nested NOT, pinyin, bounded paging, stale-group rejection, shared filters and native Back");finish(Activity.RESULT_OK,result);return;}
       if("duplicates".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");JSONObject connected=(JSONObject)action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));require(connected.getInt("total")==2,"Actual duplicate video catalog");checkActualDuplicates();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual duplicates, physical controls, native video, fingerprint WebP, bounded member/review pages, one-shot durable review and recoverable sources");finish(Activity.RESULT_OK,result);return;}
       if(!args.getString("mode","").startsWith("login")&&!args.getString("mode","").startsWith("exports")&&!"grid-rotation".equals(args.getString("mode"))&&!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"favorites".equals(args.getString("mode"))&&!"strip".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();

@@ -34,12 +34,13 @@ export function registrations(){
       const values=value(node.right,env),pattern=node.left.declarations?.[0]?.id||node.left;
       if(Array.isArray(values)){for(const v of values){const scope={...env};if(pattern.type==='Identifier')scope[pattern.name]=v;if(pattern.type==='ArrayPattern')pattern.elements.forEach((n,i)=>{if(n?.name)scope[n.name]=v?.[i];});walk(node.body,scope,prefix);}return;}
     }
-    if(node.type==='CallExpression'&&node.callee.type==='Identifier'&&['action','register'].includes(node.callee.name)){
-      const name=value(node.arguments[0],env);if(typeof name==='string')found.add((node.callee.name==='register'?prefix:'')+name);
+    const registration=node.type==='CallExpression'&&(node.callee.type==='Identifier'?node.callee.name:node.callee.type==='MemberExpression'&&node.callee.object?.name==='ctx'&&node.callee.property?.name==='action'?'action':null);
+    if(['action','register'].includes(registration)){
+      const name=value(node.arguments[0],env);if(typeof name==='string')found.add((registration==='register'?prefix:'')+name);
     }
     for(const [key,v] of Object.entries(node))if(!['start','end'].includes(key)){if(Array.isArray(v))v.forEach(n=>walk(n,env,prefix));else if(v&&typeof v==='object')walk(v,env,prefix);}
   }
-for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',''],['rhvideo-exports.js',''],['rhvideo-duplicates.js',''],['rhvideo-rules.js',''],['rhvideo-workbench.js',''],['rhvideo-player.js','player.'],['rhvideo-grid.js','grid.']])walk(parse(fs.readFileSync(path.join(root,'src/js',name),'utf8'),{ecmaVersion:'latest',sourceType:'script'}),{},prefix);
+for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',''],['rhvideo-exports.js',''],['rhvideo-duplicates.js',''],['rhvideo-task-priority.js',''],['rhvideo-rules.js',''],['rhvideo-workbench.js',''],['rhvideo-player.js','player.'],['rhvideo-grid.js','grid.']])walk(parse(fs.readFileSync(path.join(root,'src/js',name),'utf8'),{ecmaVersion:'latest',sourceType:'script'}),{},prefix);
   return found;
 }
 export function audit(reference){

@@ -39,5 +39,11 @@ class RhVideoContractTest {
     for(kind in listOf("picture","video")){val path="api/v1/duplicates/preview/$kind/sample?v="+"ab".repeat(32);assertEquals(path,RhVideoClient.imagePath("/$path"))}
     for(path in listOf("/api/v1/duplicates/scans","/api/v1/duplicates/preview/novel/a","/api/v1/duplicates/preview/video/a%2fb","/api/v1/duplicates/preview/video/../a","/api/v1/duplicates/preview/video/a?v=x","/api/v1/duplicates/preview/video/a?url=https://evil.invalid"))try{RhVideoClient.imagePath(path);fail(path)}catch(_:IllegalArgumentException){}
   }
+  @Test fun queuePromotionIsNotRetryOrAnArbitraryPost(){
+    val c=contract();val args=JSONObject().put("name","tasks.prioritize").put("params",JSONObject().put("queue","default").put("entry","video:sample"));val call=c.request(args)
+    assertEquals("POST",call.method);assertEquals("api/v1/processing-tasks/default/video:sample/prioritize",call.path);assertNull(call.body);assertFalse(call.invalidatesCatalog)
+    for(entry in listOf("video:../escape","video:bad?url")){val bad=JSONObject(args.toString());bad.getJSONObject("params").put("entry",entry);assertRejected(c,bad)}
+    val bad=JSONObject(args.toString()).put("body",JSONObject().put("retry",true));assertRejected(c,bad)
+  }
   private fun assertRejected(c:RhVideoContract,args:JSONObject){try{c.request(args);fail(args.toString())}catch(_:IllegalArgumentException){}catch(_:IllegalStateException){}}
 }

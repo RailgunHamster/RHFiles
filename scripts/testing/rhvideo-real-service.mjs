@@ -7,14 +7,14 @@ import {spawn,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 
-export async function realRhVideoService({directory,video,source=process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),delay=.2,duplicateCopies=0}){
+export async function realRhVideoService({directory,video,source=process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),delay=.2,duplicateCopies=0,taskQueue=false}){
   if(!Number.isSafeInteger(duplicateCopies)||duplicateCopies<0||duplicateCopies>30)throw Error('Bound the generated duplicate fixture to 0..30 copies');
   if(!fs.existsSync(path.join(source,'app/main.py')))throw Error('Actual RHVideo source is required');
   if(!path.isAbsolute(directory)||fs.existsSync(directory))throw Error('Use a new absolute fixture directory');
   fs.mkdirSync(directory);fs.copyFileSync(video,path.join(directory,'sample.mp4'));
   const socket=net.createServer();socket.listen(0,'127.0.0.1');await once(socket,'listening');const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
   const script=fileURLToPath(new URL('./rhvideo-real-server.py',import.meta.url));
-  const child=spawn('uv',['run','--project',source,'--no-sync','python',script,source,directory,String(port)],{cwd:directory,windowsHide:true,env:{...process.env,RHVIDEO_QA_EXPORT_DELAY:String(delay),RHVIDEO_QA_DUPLICATE_COPIES:String(duplicateCopies)},stdio:['ignore','pipe','pipe']});
+  const child=spawn('uv',['run','--project',source,'--no-sync','python',script,source,directory,String(port)],{cwd:directory,windowsHide:true,env:{...process.env,RHVIDEO_QA_EXPORT_DELAY:String(delay),RHVIDEO_QA_DUPLICATE_COPIES:String(duplicateCopies),RHVIDEO_QA_TASK_QUEUE:taskQueue?'1':'0'},stdio:['ignore','pipe','pipe']});
   let output='',spawnError,closed=false;child.stdout.on('data',v=>output+=v);child.stderr.on('data',v=>output+=v);child.on('error',e=>spawnError=e);
   const close=async()=>{if(closed)return;closed=true;if(child.pid&&child.exitCode===null){if(process.platform==='win32')execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore',timeout:10000});else child.kill();}fs.writeFileSync(path.join(directory,'service.log'),output);};
   let sourceHashes;
@@ -23,5 +23,13 @@ export async function realRhVideoService({directory,video,source=process.env.RHV
     while(!output.includes('RHVIDEO_QA_READY')){if(spawnError)throw spawnError;if(child.exitCode!==null)throw Error('Actual RHVideo fixture exited: '+output.slice(-2000));if(Date.now()>=end)throw Error('Actual RHVideo fixture startup exceeded deadline: '+output.slice(-2000));await new Promise(r=>setTimeout(r,100));}
     sourceHashes=Object.fromEntries(['sample.mp4','original.png','book.txt',...(duplicateCopies?['duplicate-video.mp4',...Array.from({length:duplicateCopies},(_,i)=>`duplicate-picture-${i}.png`)]:[])].map(file=>[file,createHash('sha256').update(fs.readFileSync(path.join(directory,file))).digest('hex')]));
   }catch(error){await close();throw error;}
-  return {url:'http://127.0.0.1:'+port,directory,sourceHashes,get requests(){const log=path.join(directory,'requests.jsonl');if(!fs.existsSync(log))return [];const text=fs.readFileSync(log,'utf8');return text.slice(0,text.lastIndexOf('\n')+1).split(/\r?\n/).filter(Boolean).map(v=>JSON.parse(v));},close};
+  const verifyQueue=expected=>{
+    if(!taskQueue)throw Error('This fixture has no generated task queue');
+    const check=fileURLToPath(new URL('./rhvideo-real-task-check.py',import.meta.url));
+    const output=execFileSync('uv',['run','--project',source,'--no-sync','python',check,source,directory,JSON.stringify(expected)],{cwd:directory,encoding:'utf8',windowsHide:true,timeout:30000});
+    fs.writeFileSync(path.join(directory,'queue-claims.log'),output);
+    const replies=output.split(/\r?\n/).filter(line=>line.startsWith('RHFILES_TASK_QUEUE_RESULT '));if(replies.length!==1)throw Error('Actual queue verifier did not return exactly one framed receipt');
+    return JSON.parse(replies[0].slice('RHFILES_TASK_QUEUE_RESULT '.length));
+  };
+  return {url:'http://127.0.0.1:'+port,directory,sourceHashes,verifyQueue,get requests(){const log=path.join(directory,'requests.jsonl');if(!fs.existsSync(log))return [];const text=fs.readFileSync(log,'utf8');return text.slice(0,text.lastIndexOf('\n')+1).split(/\r?\n/).filter(Boolean).map(v=>JSON.parse(v));},close};
 }
