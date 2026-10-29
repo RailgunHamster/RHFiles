@@ -29,7 +29,7 @@
             "rhvideo.workbench." + site,
           );
       const resolutions = new I.ResolveCache();
-      let configuration=null,favoriteExports=null,rulesEditor=null,duplicates=null,taskPriority=null;
+      let configuration=null,favoriteExports=null,rulesEditor=null,duplicates=null,taskPriority=null,taskPresentation=null,taskCenter=null;
       const ruleProcessId=crypto.randomUUID();
       let ruleRefreshTimer=0,ruleRefreshWaiter=null,ruleEditIntent=0,ruleApplyIntent=0;
       let resolutionRevision = "",
@@ -232,6 +232,8 @@
         favoriteExports?.reset();
         duplicates?.reset();
         taskPriority?.reset();
+        taskPresentation?.reset();
+        taskCenter?.reset();
         ctx.invalidateReads();
         const version=++epoch;
         abortPictureOrders();
@@ -738,7 +740,7 @@
         ),
         async ({ id }) => {
           if(id==="wb-duplicates")duplicates?.closed();
-          if(id==="wb-server")server.session++;
+          if(id==="wb-server"){server.session++;server.load++;taskCenter?.closed();}
           if (id === "wb-viewer") stopViewer();
           if (id === "wb-confirm") pendingConfirmation = null;
           if (id === "wb-info") detailJob = null;
@@ -1791,6 +1793,7 @@
         visible: () => !!liveTarget(),
         run: () => invoke("server.liveRefresh"),
         changed: (value) => {
+          taskPresentation?.connection(value.error);
           for (const node of document.querySelectorAll(".wb-live-status"))
             node.textContent = value.error
               ? "自动刷新失败（" +
@@ -1833,9 +1836,8 @@
           if (version !== epoch || detailJob !== target || !$("wb-info")?.open)
             return false;
           const root = $("wb-info").querySelector(".wb-content");
-          if (target.type === "task") paintTaskDetail(root, value, target.kind);
-          else root.replaceChildren(detail(value));
-          root.append(
+          if (target.type === "task") {paintTaskDetail(root, value, target.kind);taskDetailFooter(root,target.kind,target.id);}
+          else {root.replaceChildren(detail(value));root.append(
             el("p", "", "wb-live-status"),
             button(
               "刷新",
@@ -1844,7 +1846,7 @@
                 ? { kind: target.kind, id: target.id }
                 : { id: target.id },
             ),
-          );
+          );}
           return hasLiveWork(value);
         },
         "read",
@@ -1870,7 +1872,8 @@
         async ({ page }) => {
           server.session++;
           server.page = page;
-          if(page==='replacement')server.queue='replacement';
+          taskCenter?.closed();
+          if(['tasks','replacement'].includes(page)){server.queue=page==='replacement'?'replacement':'default';server.view='running';server.q='';server.days=7;server.status='all';}
           server.pageNumber = 1;
           await renderServer();
           liveRefresh.configure(server.live, true);
@@ -1891,6 +1894,8 @@
         ),
         async ({ key, value }) => {
           RHVideoTaskPriority.filter(key,value);
+          if(key==='status'&&server.queue==='default'&&!RHVideoTaskCenter.statusOptions('default').some(([id])=>id===value))throw Error('默认处理队列不支持此历史结果筛选');
+          if(key==='queue'&&value!==server.queue){server.view='running';if(value==='default'&&['skipped','cancelled'].includes(server.status))server.status='all';}
           server[key] = value;
           if(key==='queue'&&value==='default'&&server.page==='replacement')server.page='tasks';
           if (key !== "pageNumber") server.pageNumber = 1;
@@ -1922,6 +1927,9 @@
         await ensure();
         if (background && liveTarget()?.type !== "server")
           return liveRefresh.enabled;
+        if(['tasks','replacement'].includes(server.page))return renderTaskServer(background);
+        $('wb-server')?.classList.remove('rv-task-center-panel');
+        liveRefresh.delay=3000;
         const token = ++server.load,
           target = background
             ? $("wb-server").querySelector(".wb-content")
@@ -1990,124 +1998,6 @@
                 ),
               ),
             );
-          } else if (page === "tasks" || page === "replacement") {
-            const kind = page === "replacement" ? "replacement" : server.queue,
-              view = server.view;
-            const filters = el("div", undefined, "wb-filters");
-            filters.append(
-              select(
-                [
-                  ["default", "默认处理"],
-                  ["replacement", "原片替换"],
-                ],
-                "server.filter",
-                (value) => ({ key: "queue", value }),
-                kind,
-              ),
-              select(
-                [
-                  ["running", "运行中"],
-                  ["queued", "排队中"],
-                  ["failed", "失败"],
-                  ["history", "历史"],
-                ],
-                "server.filter",
-                (value) => ({ key: "view", value }),
-                view,
-              ),
-            );
-            const q = input("search", server.q);
-            q.placeholder = "搜索文件名";
-            listen(
-              q,
-              "change",
-              () =>
-                invoke("server.filter", { key: "q", value: q.value }).catch(
-                  notice,
-                ),
-              "tasks.search",
-            );
-            filters.append(
-              q,
-              select(
-                [
-                  ["7", "7 天"],
-                  ["30", "30 天"],
-                  ["90", "90 天"],
-                  ["0", "全部时间"],
-                ],
-                "server.filter",
-                (value) => ({ key: "days", value: Number(value) }),
-                server.days,
-              ),
-              select(
-                [
-                  ["all", "所有结果"],
-                  ["succeeded", "成功"],
-                  ["issues", "失败/中断"],
-                  ["skipped", "跳过"],
-                  ["cancelled", "已停止"],
-                ],
-                "server.filter",
-                (value) => ({ key: "status", value }),
-                server.status,
-              ),
-            );
-            const data = await remote("tasks.list", {
-              query: {
-                kind,
-                view,
-                page: server.pageNumber,
-                limit: 25,
-                days: server.days,
-                status: server.status,
-                q: server.q,
-              },
-            });
-            active = hasLiveWork(data);
-            if (token !== server.load) return;
-            body.replaceChildren(taskPriorityMessage(kind),filters, detail(data.counts || {}));
-            for (const t of data.items || []) {
-              const row = serverRow(t.filename, t.status);
-              row.dataset.taskId=t.id;row.dataset.queue=kind;
-              row.append(
-                el("p", t.message || ""),
-                button("处理步骤与进度", "task.detail", { kind, id: t.id }),
-              );
-              if(t.prioritized)row.append(el('span','已置顶','wb-badge'));
-              if(t.can_prioritize===true&&t.status==='pending')row.append(taskPriorityButton(t,kind));
-              body.append(row);
-            }
-            body.append(
-              button("上一页", "server.filter", {
-                key: "pageNumber",
-                value: Math.max(1, data.page - 1),
-              }),
-              el("span", data.page + " / " + data.pages),
-              button("下一页", "server.filter", {
-                key: "pageNumber",
-                value: Math.min(data.pages, data.page + 1),
-              }),
-            );
-            if (page === "replacement") {
-              const batches = await remote("batches.list", {
-                query: { limit: 20 },
-              });
-              if (token !== server.load) return;
-              active ||= hasLiveWork(batches);
-              for (const batch of Array.isArray(batches)
-                ? batches
-                : batches.items || []) {
-                const row = serverRow(batch.id, batch.status);
-                row.append(
-                  button("批次详情", "batch.detail", { id: batch.id }),
-                  button("停止剩余项目", "remote.batches.stop", {
-                    params: { id: batch.id },
-                  }),
-                );
-                body.append(row);
-              }
-            }
           } else if (page === "trash") {
             const data = await remote("trash.list");
             if (token !== server.load) return;
@@ -2226,6 +2116,30 @@
           throw error;
         }
       }
+      async function renderTaskServer(background){
+        const token=++server.load,version=epoch,session=server.session;
+        const root=background?$('wb-server').querySelector('.wb-content'):dialog('wb-server','任务中心');
+        $('wb-server').classList.add('rv-task-center-panel');
+        if(!root.querySelector('.rv-task-center')){
+          root.replaceChildren();const nav=el('nav',undefined,'wb-tabs');
+          for(const [page,title]of [['watch','监控目录'],['tasks','处理队列'],['replacement','原片替换'],['trash','暂存区'],['storage','存储'],['system','服务']])nav.append(button(title,'server.open',{page},'button '+(page===server.page?'primary':'secondary')));
+          const body=el('div',undefined,'wb-server-body rv-task-center'),batches=el('details',undefined,'rv-task-batches'),summary=el('summary','替换批次');summary.dataset.apiAction='rhvideo.task.batchesVisibility';listen(summary,'click',event=>{event.preventDefault();invoke('task.batchesVisibility',{visible:!batches.open}).catch(notice);},'tasks.batches.visibility');batches.append(summary,el('div',undefined,'rv-task-batch-list'));batches.hidden=true;
+          root.append(nav,button('刷新','server.refresh'),body,batches,el('p','','wb-live-status'));
+        }
+        [...root.querySelector('.wb-tabs').children].forEach((button,index)=>{const active=['watch','tasks','replacement','trash','storage','system'][index]===server.page;button.classList.toggle('primary',active);button.classList.toggle('secondary',!active);});
+        liveRefresh.delay=server.view==='history'?15000:4000;server.live=true;
+        const valid=()=>version===epoch&&session===server.session&&token===server.load&&$('wb-server')?.open&&['tasks','replacement'].includes(server.page);
+        try{
+          const result=await taskCenter.render(root.querySelector('.rv-task-center'),{...server},valid);if(!valid()||result.stale)return false;
+          const batches=root.querySelector('.rv-task-batches');batches.hidden=server.page!=='replacement';
+          if(server.page==='replacement'){
+            try{const value=await remote('batches.list',{query:{limit:20}});if(!valid())return false;const signature=JSON.stringify(value),list=batches.querySelector('.rv-task-batch-list');if(list.dataset.signature!==signature){list.dataset.signature=signature;list.replaceChildren();for(const batch of Array.isArray(value)?value:value.items||[]){const row=serverRow(batch.id,RHVideoTaskPresentation.labels[batch.status]||batch.status);row.append(button('批次详情','batch.detail',{id:batch.id}));if(['queued','running','stopping','paused'].includes(batch.status))row.append(button('停止剩余项目','remote.batches.stop',{params:{id:batch.id},expectedGeneration:state.generation}));list.append(row);}}}
+            catch(error){if(valid()){const list=batches.querySelector('.rv-task-batch-list');list.replaceChildren(el('p','读取替换批次失败：'+String(error.message||error),'wb-error'));delete list.dataset.signature;}}
+          }
+          syncTaskPriorityUI();return true;
+        }finally{if(valid())server.renderedLoad=token;}
+      }
+      action('task.batchesVisibility',object({visible:{type:'boolean'}},['visible']),({visible})=>{const node=$('wb-server')?.querySelector('.rv-task-batches');if(!$('wb-server')?.open||!node||node.hidden)throw Error('当前没有显示替换批次');node.open=visible;return {visible:node.open};});
       function serverRow(title, badge) {
         const row = el("section", undefined, "wb-row");
         const header = el("header");
@@ -2268,13 +2182,11 @@
         const node=button('置顶此项','task.prioritize',{kind,id:task.id,expectedRevision:taskPriority.state().revision});
         node.dataset.taskPriorityKey=kind+':'+task.id;node.title='移到等待队列最前面，当前任务继续处理';node.disabled=!!taskPriority.state().pending;return node;
       }
-      function paintTaskDetail(root, t, kind) {
-        const previous=root.querySelector('.wb-thumbnail-preview');
+      function paintTaskThumbnail(root,t,previous){
         root.replaceChildren();
-        if(kind){root.append(taskPriorityMessage(kind));if(t.can_prioritize===true&&t.status==='pending')root.append(taskPriorityButton(t,kind));}
         if (typeof t.video_id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(t.video_id)) {
           const path="/api/v1/videos/"+t.video_id+"/thumbnail", title=t.filename||"任务缩略图";
-          const identity=JSON.stringify([t.video_id,t.status,t.started_at,t.queued_at,t.finished_at]),phase=String(t.progress?.stage||'');
+          const identity=JSON.stringify([epoch,state.generation,t.video_id,t.status,t.started_at,t.queued_at,t.finished_at]),phase=String(t.progress?.stage||'');
           if(previous?.dataset.taskThumbnailIdentity===identity&&(previous.dataset.loaded==='true'||previous.dataset.phase===phase))root.append(previous);
           else {
             const previewButton=button("", "image.preview", {path,title}, "wb-thumbnail-preview"),image=el("img"),label=el('span','正在读取缩略图…'),fallback=el('span',undefined,'wb-task-thumb-fallback');
@@ -2287,27 +2199,10 @@
             void native("images",{paths:[path]}).then(([url])=>{if(version===epoch&&image.isConnected)image.src=url;}).catch(()=>{if(version===epoch&&image.isConnected)failed();});
           }
         }
-        if (t.progress) {
-          const p = el("progress");
-          p.max = 100;
-          p.value = Number(t.progress.percent || 0);
-          root.append(p, detail(t.progress));
-        }
-        for (const step of t.steps || [])
-          root.append(
-            serverRow(step.label || step.title || step.key, step.status),
-            detail(step),
-          );
-        root.append(
-          detail(
-            Object.fromEntries(
-              Object.entries(t).filter(
-                ([key]) => !["steps", "progress"].includes(key),
-              ),
-            ),
-          ),
-        );
       }
+      function paintTaskDetail(root,t,kind){return taskPresentation.paint(root,t,kind);}
+      function taskDetailFooter(root,kind,id,name='task.detail'){if(root.querySelector('.rv-task-footer'))return;const footer=el('footer',undefined,'rv-task-footer wb-toolbar');footer.append(el('p','','wb-live-status'),button('刷新',name,name==='task.detail'?{kind,id}:{}));root.append(footer);}
+      action('task.detailState',object(),()=>{const opened=detailJob?.type==='task'&&!!$('wb-info')?.open;return {opened,loading:opened&&!!detailJob.loading,kind:opened?detailJob.kind:null,id:opened?detailJob.id:null,detail:opened?taskPresentation.snapshot($('wb-info').querySelector('.wb-content')):null};},'read');
       action(
         "task.detail",
         object(
@@ -2318,21 +2213,23 @@
           ["kind", "id"],
         ),
         async ({ kind, id }) => {
+          const prior=detailJob;
           const root = dialog("wb-info", "任务详情"),
-            job = { type: "task", kind, id };
+            job = { type: "task", kind, id,loading:true };
           detailJob = job;
-          root.textContent = "正在读取…";
+          if(prior?.type!=='task'||prior.kind!==kind||prior.id!==id)root.textContent = "正在读取…";
+          try {
           const t = await remote("tasks.detail", {
             params: { queue: kind, entry: id },
           });
           if (detailJob !== job || !$("wb-info").open) return { stale: true };
+          job.loading=false;
+          root.querySelector('.rv-task-read-error')?.remove();
           paintTaskDetail(root, t, kind);
-          root.append(
-            el("p", "", "wb-live-status"),
-            button("刷新", "task.detail", { kind, id }),
-          );
+          taskDetailFooter(root,kind,id);
           liveRefresh.configure(hasLiveWork(t), true);
           return t;
+          }catch(error){if(detailJob===job&&$('wb-info')?.open){job.loading=false;let problem=root.querySelector('.rv-task-read-error');if(!problem){problem=el('p',undefined,'rv-task-read-error wb-error');problem.setAttribute('role','alert');root.prepend(problem);}problem.textContent='读取任务失败：'+String(error.message||error);taskPresentation.connection(String(error.message||error));taskDetailFooter(root,kind,id);}throw error;}
         },
         "read",
       );
@@ -4475,6 +4372,7 @@
       );
       window.addEventListener("pagehide", () => {
         duplicates?.closed();
+        taskCenter?.closed();
         liveRefresh.stop();
         stopViewer();
         worker?.terminate();
@@ -4500,9 +4398,15 @@
           if(detailJob===capture.detail&&detailJob?.type==='task'&&detailJob.kind===target.kind&&detailJob.id===target.id&&$('wb-info')?.open){await invoke('server.liveRefresh');return;}
           if(!capture||!$('wb-server')?.open||ctx.modalTop()!=='wb-server'||document.activeElement?.matches('input,select,textarea'))return;
           if(!Object.keys(capture).filter(key=>key!=='detail').every(key=>server[key]===capture[key])||server.view!=='queued'||(server.page==='replacement'?'replacement':server.queue)!==target.kind)return;
-          server.pageNumber=1;await renderServer(true);liveRefresh.configure(server.live,true);
+          taskCenter.retainSelection(target.kind,target.id);server.pageNumber=1;await renderServer(true);liveRefresh.configure(server.live,true);
           if(server.session===capture.session&&server.pageNumber===1){$('wb-server').scrollTop=0;$('wb-server').querySelector('.wb-content').scrollTop=0;}
         }
+      });
+      taskPresentation=RHVideoTaskPresentation.install({el,thumbnail:paintTaskThumbnail,priorityMessage:taskPriorityMessage,changed:syncTaskPriorityUI,visible:root=>!document.hidden&&ctx.modalTop()===root.closest('dialog')?.id,
+        actions(root,task,kind){if(task.can_prioritize===true&&task.status==='pending')root.append(taskPriorityButton(task,kind));if(kind==='replacement'&&['pending','running'].includes(task.status)&&typeof task.batch_id==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(task.batch_id))root.append(button('停止此批次剩余任务','remote.batches.stop',{params:{id:task.batch_id},expectedGeneration:state.generation}));}
+      });
+      taskCenter=RHVideoTaskCenter.install({el,button,select,listen,action,object,invoke,notice,remote,presentation:taskPresentation,P:RHVideoTaskPresentation,thumbnail:paintTaskThumbnail,priorityMessage:taskPriorityMessage,priorityButton:taskPriorityButton,detailFooter:taskDetailFooter,hasLiveWork,changed:syncTaskPriorityUI,
+        identity:()=>epoch+':'+state.generation+':'+server.session,opened:()=>!!$('wb-server')?.open&&['tasks','replacement'].includes(server.page),page:value=>{server.pageNumber=value;}
       });
       rulesEditor=RHVideoRules.install({action,object,button,el,input,field,select,listen,invoke,toolbar,dialog,config,identity:ruleIdentity,revision:()=>catalogRevision,ready:ensure,connected:()=>state.connected,source:()=>state.view==='gallery'?'gallery':state.kind,catalog:tagCatalog,publish:publishRule,
         settings(value){if(!ruleIdentity())throw Error("媒体账户已改变，标签偏好未保存");prefs.tagEditor=RHVideoRulesModel.settings(value);save();}

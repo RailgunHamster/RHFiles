@@ -41,8 +41,10 @@ test('real task controls promote pending work, preserve context and expose failu
   const choose=async(index,value)=>{const before=await invoke('server.state');await view.evaluate(`(()=>{const select=document.querySelectorAll('#wb-server .wb-filters select')[${index}];select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);await until(async()=>{const s=await invoke('server.state');return s.load>before.load&&!s.loading&&s[index===0?'queue':'view']===value&&await view.evaluate(`document.querySelectorAll('#wb-server .wb-filters select')[${index}]?.value===${JSON.stringify(value)}`);},'actual queue select and rendered result');};
   await invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
   await invoke('server.open',{page:'tasks'});await invoke('server.filter',{key:'view',value:'queued'});await invoke('server.filter',{key:'pageNumber',value:3});
+  await invoke('task.select',{kind:'default',id:'video:queued-54'});
   await click('[data-task-id="video:queued-54"] [data-api-action="rhvideo.task.prioritize"]');await settled('video:queued-54');
   assert.equal((await invoke('server.state')).pageNumber,1);assert.equal(await view.evaluate("document.querySelector('[data-task-id]')?.dataset.taskId"),'video:queued-54');
+  assert.equal((await invoke('task.centerState')).selected,'video:queued-54','The promoted inline task stays selected while returning to page one');
   assert.match(await view.evaluate("document.querySelector('.wb-task-priority-message').textContent"),/已置顶/);
   await invoke('task.detail',{kind:'default',id:'video:queued-53'});
   await until(()=>view.evaluate("document.querySelector('#wb-info .wb-thumbnail-preview')?.textContent.includes('暂未生成缩略图')"),'missing thumbnail fallback');
@@ -54,7 +56,7 @@ test('real task controls promote pending work, preserve context and expose failu
   await invoke('panel.close',{id:'wb-info'});await choose(0,'replacement');await choose(1,'failed');
   await until(()=>view.evaluate("document.querySelector('#wb-server [data-task-id]')?.textContent.includes('实际失败记录')"),'replacement failed records stay accessible');
   assert.equal(await view.evaluate("document.querySelectorAll('#wb-server [data-api-action=\"rhvideo.task.prioritize\"]').length"),0);
-  await invoke('server.open',{page:'replacement'});await choose(0,'default');
+  await invoke('server.open',{page:'replacement'});await click('#wb-server .rv-task-batches>summary');await until(async()=>(await invoke('task.centerState')).batchesVisible,'physical batch disclosure has a semantic API');await invoke('server.refresh');assert.equal((await invoke('task.centerState')).batchesVisible,true,'Refreshing the task list does not collapse batch controls');await choose(0,'default');
   assert.equal((await invoke('server.state')).page,'tasks','Queue selector cannot stay locked to replacement page');
   await invoke('server.filter',{key:'view',value:'queued'});fail=true;await invoke('task.detail',{kind:'default',id:'video:queued-52'});
   await click('#wb-info [data-api-action="rhvideo.task.prioritize"]');await until(async()=>(await state()).error.includes('Owned priority unavailable'),'visible uncertain failure');

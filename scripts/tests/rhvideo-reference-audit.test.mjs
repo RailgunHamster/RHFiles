@@ -15,7 +15,7 @@ test('external duplicate controls are audited even though their entry reuses swi
 });
 
 test('separate task-controller registrations are audited for both mutation and readback',()=>{
-  const actual=registrations();for(const id of ['server.state','task.priorityState','task.prioritize','remote.tasks.prioritize'])assert(actual.has(id),id);
+  const actual=registrations();for(const id of ['server.state','task.priorityState','task.prioritize','remote.tasks.prioritize','task.select','task.centerState','task.refreshSelection','task.detailState','task.batchesVisibility'])assert(actual.has(id),id);
 });
 
 const reference=path.resolve(process.env.RHVIDEO_SOURCE||'../RHVideo');

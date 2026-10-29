@@ -144,14 +144,14 @@ class GroupConnectionsTest {
     try{GroupConnections.resolve(f.config(),force=true);fail()}catch(_:java.io.IOException){}
     val count=f.server.requestCount
     try{GroupConnections.resolve(f.config(),force=true);fail()}catch(_:java.io.IOException){}
-    assertEquals(count,f.server.requestCount);assertEquals("cooldown",latest(f).getString("outcome"))
+    assertEquals(latest(f).toString(),count,f.server.requestCount);assertEquals("cooldown",latest(f).getString("outcome"))
   }}
   @Test fun manualRetryCanRecoverImmediatelyAfterAnAutomaticFailure(){fixture{f->
     f.onRequest={if(it.path=="/api/v1/groups/challenge"){org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(16000));MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)}else null}
     try{GroupConnections.resolve(f.config(),force=true);fail()}catch(_:java.io.IOException){}
     f.onRequest=null
     assertEquals(f.url,GroupConnections.resolve(f.config(),trigger="manual",force=true).getString("url"))
-    assertTrue(latest(f).toString().contains("manual_retry_allowed"))
+    assertTrue(latest(f).toString(),latest(f).toString().contains("manual_retry_allowed"))
   }}
   @Test fun repeatedFailedManualClicksAreRateLimited(){fixture{f->
     f.onRequest={if(it.path=="/api/v1/groups/challenge"){org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(16000));MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)}else null}

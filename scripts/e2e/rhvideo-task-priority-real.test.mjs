@@ -31,7 +31,9 @@ test('actual queue promotions persist, cross pages/batches and preserve active a
   assert.equal(await view.evaluate("document.querySelectorAll('#wb-server [data-api-action=\"rhvideo.task.prioritize\"]').length"),0);
   await invoke('server.filter',{key:'view',value:'queued'});await invoke('server.filter',{key:'pageNumber',value:3});
   const before=await detail('default','video:queue-069');
+  await invoke('task.select',{kind:'default',id:'video:queue-069'});
   await click('[data-task-id="video:queue-069"] [data-api-action="rhvideo.task.prioritize"]');await settled('video:queue-069');
+  assert.equal((await invoke('task.centerState')).selected,'video:queue-069','Actual backend promotion retains the selected inline workflow');
   assert.equal((await invoke('server.state')).pageNumber,1);assert.equal(await view.evaluate("document.querySelector('[data-task-id]')?.dataset.taskId"),'video:queue-069');
   assert.equal((await detail('default','video:queue-069')).queued_at,before.queued_at);
   await invoke('task.detail',{kind:'default',id:'video:queue-068'});await click('#wb-info [data-api-action="rhvideo.task.prioritize"]');await settled('video:queue-068');

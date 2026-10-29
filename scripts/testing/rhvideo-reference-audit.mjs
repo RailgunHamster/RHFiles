@@ -40,7 +40,7 @@ export function registrations(){
     }
     for(const [key,v] of Object.entries(node))if(!['start','end'].includes(key)){if(Array.isArray(v))v.forEach(n=>walk(n,env,prefix));else if(v&&typeof v==='object')walk(v,env,prefix);}
   }
-for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',''],['rhvideo-exports.js',''],['rhvideo-duplicates.js',''],['rhvideo-task-priority.js',''],['rhvideo-rules.js',''],['rhvideo-workbench.js',''],['rhvideo-player.js','player.'],['rhvideo-grid.js','grid.']])walk(parse(fs.readFileSync(path.join(root,'src/js',name),'utf8'),{ecmaVersion:'latest',sourceType:'script'}),{},prefix);
+for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',''],['rhvideo-exports.js',''],['rhvideo-duplicates.js',''],['rhvideo-task-priority.js',''],['rhvideo-task-presentation.js',''],['rhvideo-task-center.js',''],['rhvideo-rules.js',''],['rhvideo-workbench.js',''],['rhvideo-player.js','player.'],['rhvideo-grid.js','grid.']])walk(parse(fs.readFileSync(path.join(root,'src/js',name),'utf8'),{ecmaVersion:'latest',sourceType:'script'}),{},prefix);
   return found;
 }
 export function audit(reference){
