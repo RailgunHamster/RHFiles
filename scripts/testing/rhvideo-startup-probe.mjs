@@ -17,11 +17,12 @@ const scenario=process.argv[2]||'h264-1080',format=startupScenarios[scenario];as
 const captureMode=process.argv[3]||'poll';assert(['poll','after-stats'].includes(captureMode),'Use poll or after-stats pixel sampling');
 const ipcMode=process.argv[4]||'default';assert(['default','postmessage'].includes(ipcMode),'Use default or isolated postmessage transport comparison');
 const stateObserver=process.argv[5]||'main';assert(['main','player'].includes(stateObserver),'Observe through the main or actual player WebView');
+const readback=process.env.RHFILES_QA_READBACK||'ipc';assert(['ipc','stdio'].includes(readback),'Use IPC or the owned debug-only stdin readback');
 const mediaRoot=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-startup-source-')),sourceFile=path.join(mediaRoot,'startup.mp4');
 let app,fixture,library,player,opening,started;const receipt={scenario,source:format,captureMode,ipcMode,stateObserver,requestedDebugNetworkCacheMs:process.env.RHFILES_VLC_NETWORK_CACHE_MS??null,requestedDebugDecoderThreads:process.env.RHFILES_VLC_DECODE_THREADS??null,requestedNativeDebugLogging:!!process.env.RHFILES_VLC_DEBUG,measure:'new process/player, library already ready',traceClock:'host pipe receipt, not exact VLC producer time',samplePeriodMs:200,samples:[],mediaRequests:[]};let failure;
 const action=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
 const observer=()=>stateObserver==='player'?player:app;
-const command=(name,args={})=>observer().evaluate((stateObserver==='player'?'window.__TAURI__.core.invoke':'call')+'("rhvideo_request",'+JSON.stringify({action:name,args})+')');
+const command=(name,args={})=>readback==='stdio'?app.diagnostic(name==='player.diagnosticFrame'?'player.frame':name,args):observer().evaluate((stateObserver==='player'?'window.__TAURI__.core.invoke':'call')+'("rhvideo_request",'+JSON.stringify({action:name,args})+')');
 try{
   let source=format;
   if(process.env.RHFILES_STARTUP_MEDIA){
@@ -32,7 +33,7 @@ try{
   }else{source=generateStartupMedia(sourceFile,scenario);receipt.sourceMode='generated before timing';}
   const {width,height}=source;
   receipt.sourceSha256=createHash('sha256').update(fs.readFileSync(sourceFile)).digest('hex');
-  app=await launchApp({emulateFocus:true,traceOutput:true});
+  app=await launchApp({emulateFocus:true,traceOutput:true,nativeDiagnostics:readback==='stdio'});receipt.readback=readback;
   fixture=await rhvideoFixture({videoFile:sourceFile,videoCount:1,pictureCount:0,galleryVideoCount:1,galleryFrameCount:1,videoDuration:12,videoResolutions:[`${width}x${height}`],beforeMedia:({path:request,range})=>{if(started!==undefined&&request.endsWith('/play'))receipt.mediaRequests.push({atMs:performance.now()-started,range:range||null});}});
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
   const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
@@ -69,7 +70,8 @@ try{
   // it must not be reported as time spent inside the UI operation itself.
   const expression='(async()=>{const started=window.__startupActionAt=performance.now();const value=await RHFilesAPI.invoke("rhvideo.media.open",{kind:"video",id:"video-0"});return {value,frontendReplyMs:performance.now()-started};})()';
   opening=library.evaluate(expression).then(measured=>{receipt.openReplyMs=performance.now()-started;receipt.frontendReplyMs=measured.frontendReplyMs;receipt.observerDeliveryOverheadMs=Math.max(0,receipt.openReplyMs-measured.frontendReplyMs);return measured.value;},error=>{openError=error;return null;});
-  if(stateObserver==='player'){
+  if(readback==='stdio'){receipt.observerReadyMs=0;receipt.observerState={transport:'owned-native-stdio',readyBeforeTiming:true};}
+  if(stateObserver==='player'&&readback!=='stdio'){
     // Do not focus/emulate/activate this view: observe the window selected by
     // the real open workflow. This separates an occluded observer's response
     // latency from the decoder's actual pixel availability.
@@ -86,7 +88,7 @@ try{
     if(state.opened){
       if(process.env.RHFILES_EXPECT_RENDERER)assert.equal(state.renderer,process.env.RHFILES_EXPECT_RENDERER,'Confirm the renderer actually selected');
       receipt.renderer=state.renderer;
-      const windowState=await observer().evaluate("window.__TAURI__.window.Window.getByLabel('window-rhvideo-player').then(async w=>w?{visible:await w.isVisible(),minimized:await w.isMinimized()}:null)");
+      const windowState=readback==='stdio'?await app.diagnostic('player.window'):await observer().evaluate("window.__TAURI__.window.Window.getByLabel('window-rhvideo-player').then(async w=>w?{visible:await w.isVisible(),minimized:await w.isMinimized()}:null)");
       const sample={atMs:performance.now()-started,statsFrames:state.renderedFrames,decodedFrames:state.decodedFrames,reportedFirstFrameMs:state.firstFrameMs,window:windowState};
       if(!receipt.firstStatsObservedMs&&state.renderedFrames>0){receipt.firstStatsObservedMs=sample.atMs;receipt.reportedFirstFrameMs=state.firstFrameMs;}
       // PrintWindow is synchronous. Compare against a run which makes NO image
@@ -130,5 +132,5 @@ finally{
   // This exact directory was created above for generated media, never a user path.
   if(path.dirname(fs.realpathSync(mediaRoot))===fs.realpathSync(os.tmpdir())&&path.basename(mediaRoot).startsWith('rhfiles-startup-source-'))fs.rmSync(mediaRoot,{recursive:true});
 }
-console.log(JSON.stringify({measured:!failure,scenario,captureMode,ipcMode,stateObserver,requestedDebugNetworkCacheMs:receipt.requestedDebugNetworkCacheMs,requestedDebugDecoderThreads:receipt.requestedDebugDecoderThreads,requestedNativeDebugLogging:receipt.requestedNativeDebugLogging,observerReadyMs:receipt.observerReadyMs,observerState:receipt.observerState,rejectedBeforeSend:receipt.rejectedBeforeSend,renderer:receipt.renderer,firstPixelIntervalMs:receipt.firstPixelIntervalMs,firstStatsObservedMs:receipt.firstStatsObservedMs,reportedFirstFrameMs:receipt.reportedFirstFrameMs,openReplyMs:receipt.openReplyMs,frontendReplyMs:receipt.frontendReplyMs,observerDeliveryOverheadMs:receipt.observerDeliveryOverheadMs,frontendTransport:receipt.frontendTransport,mediaRequests:receipt.mediaRequests,artifactDir:receipt.artifactDir,error:receipt.error}));
+console.log(JSON.stringify({measured:!failure,scenario,captureMode,ipcMode,stateObserver,readback,requestedDebugNetworkCacheMs:receipt.requestedDebugNetworkCacheMs,requestedDebugDecoderThreads:receipt.requestedDebugDecoderThreads,requestedNativeDebugLogging:receipt.requestedNativeDebugLogging,observerReadyMs:receipt.observerReadyMs,observerState:receipt.observerState,rejectedBeforeSend:receipt.rejectedBeforeSend,renderer:receipt.renderer,firstPixelIntervalMs:receipt.firstPixelIntervalMs,firstStatsObservedMs:receipt.firstStatsObservedMs,reportedFirstFrameMs:receipt.reportedFirstFrameMs,openReplyMs:receipt.openReplyMs,frontendReplyMs:receipt.frontendReplyMs,observerDeliveryOverheadMs:receipt.observerDeliveryOverheadMs,frontendTransport:receipt.frontendTransport,mediaRequests:receipt.mediaRequests,artifactDir:receipt.artifactDir,error:receipt.error}));
 if(failure)throw failure;

@@ -5,6 +5,8 @@ import path from 'node:path';
 import net from 'node:net';
 import {spawn,spawnSync} from 'node:child_process';
 import {once} from 'node:events';
+import {randomBytes} from 'node:crypto';
+import {nativeQaChannel} from './native-qa-channel.mjs';
 import {root} from './source.mjs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 
@@ -14,8 +16,10 @@ export async function until(check,label,timeout=15000) {
   while(Date.now()<end){try{const value=await check();if(value)return value;}catch(e){last=e;}await sleep(100);}
   throw Error(`Timed out: ${label}${last?' — '+last.message:''}`);
 }
-export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',profileDirectory=null,args=[],traceOutput=false}={}) {
+export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',profileDirectory=null,args=[],traceOutput=false,nativeDiagnostics=false}={}) {
   if(process.platform!=='win32')throw Error('Real RHFiles E2E requires Windows and WebView2');
+  if(nativeDiagnostics&&process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned native diagnostics require the explicit QA opt-in');
+  const nativeNonce=nativeDiagnostics?randomBytes(16).toString('hex'):null;
   const executable=process.env.RHFILES_TEST_EXECUTABLE
     ? path.resolve(process.env.RHFILES_TEST_EXECUTABLE)
     : path.join(root,'target/debug/rhfiles.exe');
@@ -32,19 +36,23 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
   const server=net.createServer();await listenBrowserLoopback(server);
   const port=server.address().port;await new Promise(resolve=>server.close(resolve));
   const child=spawn(executable,args,{cwd:directory,windowsHide:true,env:{...process.env,...releaseEnvironment,
+    RHFILES_QA_READBACK_NONCE:nativeNonce||'',
     RHFILES_TEST_PROFILE_ROOT:profileRoot,RHFILES_TEST_DESKTOP_ID:desktopId,RHFILES_CDP_PORT:String(port),RHFILES_AUTORUN_TESTS:'0'}});
   let output='';const outputEvents=[];
   const append=(stream,data)=>{const text=String(data);output+=text;if(traceOutput&&outputEvents.length<4096)outputEvents.push({at:performance.now(),stream,text});};
-  child.stdout.on('data',data=>append('stdout',data));child.stderr.on('data',data=>append('stderr',data));
+  const nativeChannel=nativeDiagnostics?nativeQaChannel(child.stdin,nativeNonce):null;
+  child.stdout.on('data',data=>{append('stdout',data);nativeChannel?.feed(data);});child.stderr.on('data',data=>append('stderr',data));
+  if(nativeChannel)child.stdin.on('error',error=>nativeChannel.close(error));
   let spawnError;child.on('error',e=>spawnError=e);
   let socket;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
   const closed=new Promise(resolve=>resolveClosed=resolve);
   const flush=()=>{fs.writeFileSync(path.join(artifactDir,'app.log'),output);fs.writeFileSync(path.join(artifactDir,'page-events.json'),JSON.stringify(events,null,2));};
   // close is emitted only after stdout/stderr have drained. The synchronous
   // taskkill return alone can leave the last hardware-init messages unread.
-  child.once('close',()=>{if(closing)flush();resolveClosed();});
+  child.once('close',()=>{nativeChannel?.close();if(closing)flush();resolveClosed();});
   const close=()=>{
     if(closing)return closed;closing=true;
+    nativeChannel?.close();
     socket?.close();for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('Session closed'));}pending.clear();
     // Only the PID this fixture spawned and its private WebView children.
     if(child.pid && child.exitCode===null)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
@@ -131,6 +139,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
         await send('Input.setInterceptDrags',{enabled:false});
       }
     };
-    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag};
+    if(nativeChannel){const capabilities=await nativeChannel.request('ping');if(capabilities?.protocol!==1||capabilities.scope!=='self-windows')throw Error('Owned native readback handshake mismatch');}
+    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,diagnostic:nativeChannel?nativeChannel.request:null};
   } catch(e){close();throw e;}
 }

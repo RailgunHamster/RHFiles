@@ -29,6 +29,8 @@ mod rhvideo_clock;
 mod rhvideo_player;
 #[cfg(windows)]
 mod rhvideo_frame;
+#[cfg(all(windows,debug_assertions))]
+mod rhvideo_diagnostics;
 mod search;
 #[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]
 mod shell;
@@ -97,6 +99,8 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            #[cfg(all(windows,debug_assertions))]
+            rhvideo_diagnostics::install(app.handle().clone());
             std::thread::spawn(lan_service::restore_if_enabled);
             std::thread::spawn(documents::cleanup_stale_workspaces);
             file_dialog_integration::initialize(app.handle().clone())?;
