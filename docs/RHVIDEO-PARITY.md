@@ -6,6 +6,20 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-29 系统原生接口的实际对照与新增外部模块缺口（完整目标未完成）
+
+新增独立 C++ 对照使用微软 [MediaEngine / DirectComposition 接口](https://learn.microsoft.com/en-us/windows/win32/api/mfmediaengine/nf-mfmediaengine-imfmediaengineex-enablewindowlessswapchainmode)，不是 HTML video、嵌套网站或替换当前产品后端。`scripts/testing/build-mf-probe.ps1` 只在本地生成测试程序，`rhvideo-mf-probe.mjs` 只用自身的回环 HTTP 源／固定本地副本、自有窗口和临时目录。进程内 15 秒上限、宿主 20 秒兜底；仅在显示统计后读取自有窗口，不读其他窗口、不装解码器或改变系统／正式实例。回调在销毁窗口前解除绑定，释放媒体引擎及 COM 后才结束。源码不进入发行目录。
+
+最终对照程序 SHA-256 为 `97e8b0ee5927962bc08e7c872d8f57da1f43c9a2c414e4907c37cb6dd607e540`。同字节 1080p H.264／AAC 的本地文件与 HTTP 轮次均通过实际窗口四角像素、原分辨率、音轨存在、暂停、定位、倍率及恢复后时间确实继续前进的检查；不是只看方法返回成功。日志分别为 `rhvideo-mf-final-h264-file.log`／`rhvideo-mf-final-h264-http.log`。显示统计首次观测为 **5.303／2.799 s**，正像素取图的上界为 **6.006／3.096 s**；取图本身分别占约 703／297 ms。没有早期负像素样本，不能把统计时间冒充精确首帧。更早同源 HTTP／本地轮次还观测过约 4.98／4.49 s，不能挑选最快一轮称作稳定优化。独立程序没有 WebView／RHVideo 代理，因此也不能把它直接当成与完整客户端同口径的胜出基准。AAC 流未删除，未测量实际声音输出。
+
+同一最终程序的 4K HEVC／AAC 对照**失败**（`rhvideo-mf-final-hevc-http.log`）：约 0.778 秒收到 `0xC00D5212 / MF_E_TOPO_CODEC_NOT_FOUND`，本机当前系统管线没有找到该源的解码器，随后正常释放结束。没有自动安装系统组件，也没有降分辨率、删音轨或以 H.264 通过代替 HEVC。当前证据不支持用此系统内核直接替换现有 libVLC；产品播放流程／内核／参数未因此更改，启动性能仍未解决。
+
+另一项新的权威差异来自正在修改的 `D:\git\RHVideo`：HEAD 仍是 `869d632`，但未提交工作目录已增加 `static/duplicates.js`、疑似重复 UI 和 8 个 duplicates 路由，并改变设置／契约。**RHFiles 尚未实现该新增功能组**，不更新映射哈希来把它伪装成已完成。当前审计原始报告是 `rhvideo-current-reference-drift-with-modules.log`。
+
+原来的 inline 控件总数仍为 185，因为新按钮复用了 `switchTab`；只数 inline 回调会漏掉整个外部功能模块。新增红测 `rhvideo-external-module-inventory-red.log` 后，审计现合并 HTML script、契约 `sources` 和 `script_order`，明确报告没有清单的外部文件；旧基线另外补齐配置备份、自动化适配和搜索客户端／Worker 的实际文件哈希。固定参考版本共 13 个文件均核对，新增模块不能靠更新 index 指纹蒙混通过。当前工作目录的结果明确包含 `unmappedModules: ["static/duplicates.js"]` 及 index／settings／operation-contract 的变化，审计保持失败。
+
+固定提交的独立参考副本下，共享 Node **749/749、零跳过**（`rhvideo-mf-module-node-regression.log`）；这不意味着当前正在改动的 RHVideo 已全量对齐，也不是 97 项 Windows 回归／Android 发行验收在新内核上的通过。此轮没有发布或操作真机。后续仍须补入当前缺失业务，并继续解决原生首帧、应答等待以及下文保留的实际生命周期验收缺口。
+
 ## 2026-10-29 应答延迟的继续定位（没有性能修复结论）
 
 正式运行实例和手机未动，后续改动仍限隔离调试观测及测试脚本。主窗口焦点模拟 0／1／1／0 四轮均有约 1.96 秒的“播放分支末尾→网页收到”间隔；媒体库自己的焦点模拟对照也没有稳定消除它。原始记录为 `h264-host-focus-{1..4}-*.log` 和 `h264-library-focus-{1..4}-*.log`，报告另存是否启用了主窗口／媒体库焦点模拟，不把仿真结果冒充真实输入归属。

@@ -34,6 +34,10 @@
     {"feature":"关闭与返回","reference":["closeCleanupModal","closeFavshow","closeGridOrderSaveModal","closeGridTagDrawer","closeGridViewer","closeInfoModal","closeKenburns","closeMediaViewer","closeNovelPreview","closeNovelReader","closePicStrip","closePlaylistViewer","closeReplaceModal","closeStageDeleteModal","closeTimeline","closeTrashModal","closeTrashPreview","closeWatchModal"],"api":["panel.close","back","image.close","reader.close","timeline.close","grid.close","player.close"]}
   ],
   "modules": [
+    {"file":"static/automation-api.js","sha256":"fffd42fd5ccebc4ef54e8c8a156d3b041e3fec624f21837dfe236131a042250a","scope":"参考控件枚举与自动化适配本身也纳入版本变化检查；不把可枚举当成业务验收"},
+    {"file":"static/config-backups.js","sha256":"0027fec342eb2d4a684ab2d004610d4be7145fb4993dd6428f684835f6473ae9","scope":"配置导出、读取备份、合并预览及显式提交，已有运行回归之外继续核对独立模块变化"},
+    {"file":"static/search-client.js","sha256":"c096a7b1379a3311d209495ffe7b8cf4278dda529a58ece145638854675bfec0","scope":"异步搜索请求代次与取消，不能只核对搜索核心算法"},
+    {"file":"static/search-worker.js","sha256":"2b30be628808f91f0ecbb4b73a3840083e519ffe67e2c563e2ba869d3ec32491","scope":"Worker 数据与查询入口，文件清单变化必须触发重新对齐检查"},
     {"file":"static/index.html","sha256":"f6f9d8fa74c48e8038f634094297c34d48c53057085fdad3bda456390f402238","scope":"静态与模板生成的 click/change/input/keydown/dblclick/wheel 控件，按调用函数逐项对应"},
     {"file":"static/settings.js","sha256":"7535fb74fb6d7cb8c464ad8164cfd7602af8dddac43292b1a75ea492e70cf65f","scope":"重启模式、安排取消、状态和权限，配置备份／合并恢复使用独立预览确认；实际流程另测"},
     {"file":"static/task-center.js","sha256":"002ec88463b779257d32c4a5a787c35b44fdd5448760d1e9b3d0507118546c11","scope":"队列/视图/搜索/分页/详情/步骤/缩略图；依用户要求排除失败任务重试"},

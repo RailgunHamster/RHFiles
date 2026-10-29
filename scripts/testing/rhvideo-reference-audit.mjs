@@ -11,6 +11,20 @@ export const sourceHash=source=>createHash('sha256').update(source.toString('utf
 export function referenceControls(html){
   return [...new Set([...html.matchAll(/\bon(?:click|change|input|keydown|dblclick|wheel)="([^"]+)"/g)].flatMap(m=>[...m[1].matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g)].map(v=>v[1])))].filter(v=>!v.startsWith('event.')&&!v.startsWith('document.')).sort();
 }
+// A new external module can reuse an existing inline switchTab handler. The
+// inline control count alone would miss that entire new business feature.
+export function referenceScriptModules(html){
+  const modules=new Set();
+  for(const match of html.matchAll(/<script\b[^>]*\bsrc\s*=\s*(["'])([^"']+)\1/gi)){
+    try{const url=new URL(match[2],'http://rhvideo.invalid/');if(url.origin==='http://rhvideo.invalid'&&url.pathname.startsWith('/static/')&&url.pathname.endsWith('.js'))modules.add(decodeURIComponent(url.pathname.slice(1)));}catch{}
+  }
+  return [...modules].sort();
+}
+export function unmappedReferenceModules(html,contract,inventory){
+  const declared=new Set([...Object.keys(contract.sources||{}),...(contract.script_order||[]),...referenceScriptModules(html)]);
+  const known=new Set(inventory.map(module=>module.file));
+  return [...declared].filter(file=>!known.has(file)).sort();
+}
 export function registrations(){
   const found=new Set(Object.keys(JSON.parse(fs.readFileSync(path.join(root,'src/rhvideo-operations.json'),'utf8')).operations).map(v=>'remote.'+v));
   function value(node,env){if(!node)return;if(node.type==='Literal')return node.value;if(node.type==='Identifier')return env[node.name];if(node.type==='ArrayExpression')return node.elements.map(v=>value(v,env));if(node.type==='BinaryExpression'&&node.operator==='+'){const a=value(node.left,env),b=value(node.right,env);if(a!==undefined&&b!==undefined)return a+b;}}
@@ -31,10 +45,11 @@ for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',
 export function audit(reference){
   if(mapping.sourceHash!=='sha256-utf8-lf')throw Error('Unknown reference source hash mode');
   const apis=registrations(),mapped=mapping.groups.flatMap(g=>g.reference),known=new Set([...mapped,...mapping.ignoredHelpers]);
-  const controls=referenceControls(fs.readFileSync(path.join(reference,'static/index.html'),'utf8'));
-  return {referenceCommit:mapping.referenceCommit,actualCommit:execFileSync('git',['-C',reference,'rev-parse','HEAD'],{encoding:'utf8',windowsHide:true}).trim(),sourceHash:mapping.sourceHash,referenceControls:controls.length,features:mapping.groups.length,missingControls:controls.filter(v=>!known.has(v)),staleMappings:mapped.filter(v=>!controls.includes(v)),missingAPIs:mapping.groups.flatMap(g=>g.api.filter(id=>!apis.has(id)).map(id=>({feature:g.feature,api:'rhvideo.'+id}))),modules:mapping.modules.map(m=>({...m,matched:fs.existsSync(path.join(reference,m.file))&&sourceHash(fs.readFileSync(path.join(reference,m.file)))===m.sha256}))};
+  const html=fs.readFileSync(path.join(reference,'static/index.html'),'utf8'),controls=referenceControls(html);
+  const contract=JSON.parse(fs.readFileSync(path.join(reference,'static/operation-contract.json'),'utf8'));
+  return {referenceCommit:mapping.referenceCommit,actualCommit:execFileSync('git',['-C',reference,'rev-parse','HEAD'],{encoding:'utf8',windowsHide:true}).trim(),sourceHash:mapping.sourceHash,referenceControls:controls.length,features:mapping.groups.length,missingControls:controls.filter(v=>!known.has(v)),staleMappings:mapped.filter(v=>!controls.includes(v)),missingAPIs:mapping.groups.flatMap(g=>g.api.filter(id=>!apis.has(id)).map(id=>({feature:g.feature,api:'rhvideo.'+id}))),unmappedModules:unmappedReferenceModules(html,contract,mapping.modules),modules:mapping.modules.map(m=>({...m,matched:fs.existsSync(path.join(reference,m.file))&&sourceHash(fs.readFileSync(path.join(reference,m.file)))===m.sha256}))};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const reference=process.argv[2];if(!reference)throw Error('Usage: node scripts/testing/rhvideo-reference-audit.mjs D:/git/RHVideo');
-  const result=audit(reference);console.log(JSON.stringify(result,null,2));if(result.actualCommit!==result.referenceCommit||result.missingControls.length||result.staleMappings.length||result.missingAPIs.length||result.modules.some(m=>!m.matched))process.exitCode=1;
+  const result=audit(reference);console.log(JSON.stringify(result,null,2));if(result.actualCommit!==result.referenceCommit||result.missingControls.length||result.staleMappings.length||result.missingAPIs.length||result.unmappedModules.length||result.modules.some(m=>!m.matched))process.exitCode=1;
 }
