@@ -25,12 +25,20 @@ const CONTROLS_HEIGHT:f64=196.;
 // Hidden/silent restoration must prepare at a normal, supported clock rate.
 const PAUSE_PREPARE_RATE:f32=1.;
 fn trace_startup(started:std::time::Instant,stage:&str){
+    #[cfg(debug_assertions)]
+    crate::rhvideo_trace::stage("engine",started,stage);
     if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
         eprintln!("RHFILES_VLC_STAGE {stage} {}",started.elapsed().as_millis());
     }
 }
 // Controlled startup comparisons only. Release playback must not inherit an
 // arbitrary environment option, and a media server cannot change this value.
+fn diagnostic_logging()->bool{
+    #[cfg(debug_assertions)]
+    {std::env::var_os("RHFILES_VLC_DEBUG").is_some()||crate::rhvideo_trace::enabled()}
+    #[cfg(not(debug_assertions))]
+    {false}
+}
 fn network_cache_ms()->u32{
     #[cfg(debug_assertions)]
     if let Some(value)=std::env::var_os("RHFILES_VLC_NETWORK_CACHE_MS"){
@@ -39,6 +47,8 @@ fn network_cache_ms()->u32{
     1000
 }
 fn trace_open(started:std::time::Instant,stage:&str){
+    #[cfg(debug_assertions)]
+    crate::rhvideo_trace::stage("play",started,stage);
     if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
         eprintln!("RHFILES_PLAY_STAGE {stage} {}",started.elapsed().as_millis());
     }
@@ -336,6 +346,16 @@ fn directory() -> Option<PathBuf> {
 pub fn available() -> bool {
     directory().is_some()
 }
+#[cfg(debug_assertions)]
+pub(crate) fn diagnostic_trace(args:&Value)->Result<Value,String>{
+    let slot=PLAYER.lock().map_err(|_|"播放器不可用")?;
+    let player=slot.as_ref().ok_or("播放器未打开")?;
+    if args.get("expectedInput").is_some_and(|id|id.as_u64()!=Some(player.input_id)){return Err("播放输入已改变，旧读取未执行".into());}
+    let mut result=crate::rhvideo_trace::host_snapshot()?;
+    result["inputId"]=json!(player.input_id);
+    if let Some(trace)=&player.startup_trace{result["vlc"]=trace.snapshot()?;}
+    Ok(result)
+}
 fn bundled_plugin_index(path:&std::path::Path,version:&str)->bool{
     let manifest=path.join("RHFiles-libVLC.json");
     if !std::fs::metadata(&manifest).is_ok_and(|m|m.is_file()&&m.len()<=1024*1024){return false;}
@@ -440,6 +460,8 @@ struct Engine {
     url: String,
     open_started: std::time::Instant,
     first_frame_ms: std::sync::atomic::AtomicU64,
+    #[cfg(debug_assertions)]
+    startup_trace:Option<crate::rhvideo_trace::Binding>,
 }
 impl Engine {
     fn output_gain(&self)->i32{effective_volume(if self.muted||self.hold_audio.load(std::sync::atomic::Ordering::Relaxed){0}else{self.requested_volume})}
@@ -464,7 +486,7 @@ impl Engine {
         let compatibility=unsafe{GetSystemMetrics(SM_REMOTESESSION)!=0}||std::env::var_os("RHFILES_VLC_COMPATIBILITY").is_some();
         let mut options = vec![
             CString::new(
-                if cfg!(debug_assertions) && std::env::var_os("RHFILES_VLC_DEBUG").is_some() {
+                if diagnostic_logging() {
                     "--verbose=2"
                 } else {
                     "--quiet"
@@ -505,9 +527,15 @@ impl Engine {
         if instance.is_null() {
             return Err("VLC 原生内核初始化失败".into());
         }
+        #[cfg(debug_assertions)]
+        let startup_trace=match unsafe{crate::rhvideo_trace::Binding::install(&api._library,instance as usize)}{
+            Ok(trace)=>trace,Err(error)=>{unsafe{(api.release)(instance)};return Err(error);}
+        };
         let player = unsafe { (api.player_new)(instance) };
         trace_startup(started,"player-created");
         if player.is_null() {
+            #[cfg(debug_assertions)]
+            drop(startup_trace);
             unsafe { (api.release)(instance) };
             return Err("无法创建原生播放器".into());
         }
@@ -551,6 +579,8 @@ impl Engine {
             url: String::new(),
             open_started: std::time::Instant::now(),
             first_frame_ms: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(debug_assertions)]
+            startup_trace,
         })
     }
     fn viewport(&self)->(u32,u32){
@@ -648,6 +678,8 @@ impl Engine {
             // first open, and forces device/vout initialization on each source
             // switch that cannot consume an already-decoded preload.
             (self.api.set_media)(self.player as Ptr, media);
+            #[cfg(debug_assertions)]
+            if let Some(trace)=&self.startup_trace{trace.reset(self.input_id,self.open_started);}
             self.pause_requested.store(false,std::sync::atomic::Ordering::Relaxed);
             trace_startup(self.open_started,"previous-input-joined");
             // Reset AFTER that join: a late old callback must not impersonate
@@ -818,6 +850,8 @@ pub fn maintain_independent_outputs()->bool{
 }
 impl Drop for Engine {
     fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        drop(self.startup_trace.take());
         unsafe {
             (self.api.stop)(self.player as Ptr);
             (self.api.player_release)(self.player as Ptr);

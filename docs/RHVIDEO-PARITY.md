@@ -6,7 +6,25 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-29 最终只读取图构建的完整业务回归（性能仍未完成）
+
+原样运行 `ecf876045d20992d863be7d3d27d5d2fec7c780a96b3031357522b53f57622d7` 对应的开发构建及真实 ZIP 中的 3.0.24 运行库，全部 Windows RHVideo 用例串行为 **97/97、零跳过**，耗时约 19 分 50 秒（`rhvideo-owned-readback-windows-regression.log`）。本轮正常用例未启用新的 stdin 取图通道；实际图片、源切换、原生物理输入／返回关系、连播／同屏、五万项可达性及真实 FastAPI／SQLite 均经过检查。该结果不抹除上一轮 95/97 的失败，也不将观测就绪条件的修正称作产品间歇故障根因修复。
+
+本轮 H.264／HEVC 专项从原生输入打开到显示计数分别约 **4.14／6.73 s**，仍有明显启动开销；这不是无干扰独占性能基准，更不是已达到原版性能的证据。测试使用开发 EXE 与发行运行库的组合，不是最新 release ZIP 的整包验收。界面、接口与业务回归不能代替性能及最终分发验收，完整目标仍未完成，正式实例未替换、未发新包。
+
 ## 2026-10-29 冷启动测量边界与自有进程只读取图（完整目标未完成）
+
+后续增加仅隔离 Windows debug 生效的 `player.trace` 只读诊断：VLC 回调只复制有界的模块名／未展开的启动阶段格式模板并记录生产时单调时钟，不读取 `va_list`、不保存 URL／令牌参数、不在回调中做 I/O。每个输入最多 96 条、12 秒，32 KiB 应答上限；换源先等待旧输入结束再重置，销毁引擎先卸载回调并等待在途调用结束。另有最多 128 条进程级 Rust 启动阶段，可在 VLC 保持 quiet、完全不装日志回调的情况下读取。正式构建不编译这些模块，也没有新网络监听。
+
+新增协议用例包含预期输入与禁止修改诊断设置；共享 Node **731/731**（`rhvideo-producer-trace-node-regression.log`）、RHVideo Rust **63/63**（`rhvideo-producer-trace-rust-final-2.log`）均通过，零跳过。首个实际 trace 构建为 `a857614d63d3daa90cbcd79739b09d28f07e6c8681ad202d492797b6fb47b5c8`；H.264 首轮显示计数观测约 6.19 秒、同构建复测 2.42 秒，HEVC 3.62 秒；关闭回调的 H.264 为 2.21 秒。生产阶段记录显示模块加载、D3D11 创建设备／纹理池和首图准备都占时间，**没有足够证据把波动归因于其中唯一一项或称作优化完成**。完整原始回执及模板在对应 `startup-measurement.json`，不能用主机 stderr 的批量收到时间替代。
+
+后续 host-only 构建 `0bbcbfab70cbb9dd0118f7b11a25b80e272ec8a812f0ecf0ddf6664730ee1d34` 在完全 quiet 下分别于 0.260／0.308 秒结束后端播放请求，前端约 0.271／0.316 秒返回，但 H.264／HEVC 的显示计数仍晚至约 4.36／9.58 秒（`h264-host-quiet-after-stats.log`、`hevc-host-quiet-after-stats.log`）。输入读取已较早开始，不能将返回快说成出画快。两轮通过实际公开关闭入口释放原生播放器后才结束进程；这些时间均为共享主机上的观测，不是独占 GPU 对照。慢结果之后的只读采样确有其他进程占用 GPU，但不能据后来的采样推定此前卡顿根因。没有更改解码、画质、缓存或音轨默认值，性能目标继续未完成。
+
+同一最终 debug 的真实生命周期探测已通过（`h264-producer-trace-lifecycle.log`、`rhfiles-e2e-ZScVIp/startup-measurement.json`）：同源重开输入从 1 变为 2，旧输入的 trace 读取被拒绝，新输入有 45 条实际阶段，公开关闭后确认播放器未打开，才结束进程。此轮又复现后端 0.300 秒完成、前端 2.256 秒才接收的间隔；不是将前端等待记成原生打开本身耗时。仅在测量前让一条未发送的安全读取选用框架已有 fallback 后，对照 postMessage 的前端两轮为 **2.261／0.337 s**，默认传输复测 **0.375 s**（`h264-host-ipc-{1,2}-postmessage.log`、`h264-host-ipc-3-default.log`）；两条路径都可能快慢，不能据此替换正式 IPC 或说传输根因已找到。没有重发已送出的写操作。
+
+最终分发验收另复现了 Windows PowerShell 5.1 缺少 `Path.GetRelativePath`／`Dictionary.TryAdd` 的兼容问题（`rhvideo-final-readback-velopack.log`、新增红测 `rhvideo-libvlc-powershell51-red.log`）。清单现用经过边界检查的字面子路径及单线程 ContainsKey／Add，保留大小写／重复／junction／字节校验；新测试还验证中文、空格、# 和 % 文件名。重复项夹具保持总文件数不变，确保真正进入重复键检查，而非被数量不符提前拒绝。策略 **18/18**（`rhvideo-libvlc-powershell51-policy-final.log`）、全部 Node **732/732、零跳过**（`rhvideo-final-readback-node-regression.log`）。兼容修复 `e95e0fb` 已推送两个远端。
+
+随后 Windows PowerShell 5.1 真正打包与压缩后便携／完整更新包校验通过（`rhvideo-final-readback-velopack-final.log`）。输出只在本机 `dist/rhvideo-native-velopack-20261029-final-readback/`；full nupkg SHA-256 为 `459c94aa3d5a7c8128002b4119176c15663b9c0e4927c3a20e3905ceb32b6e8f`。从实际 ZIP 提取的 release EXE 为 `a60c0fd747888d9baa8d308d18790a56a7a1cc87950d0bf097f4d3e2e851b3de`，整包 **13/13、零跳过**（`rhvideo-final-readback-portable-release-e2e.log`），实际默认硬件输出、3.0.24／索引／AAC、真实服务写入及 ZIP 下载均包括。此轮 H.264／HEVC 统计首帧约 **2.81／5.13 s**，仍不代表同性能。实际该 release 拒绝私有读取通道，debug 自有主窗口实际取图通过（`rhvideo-producer-trace-actual-smoke.log`）。没有正式发布或替换正式实例，完整目标未完成。
 
 保持原带 AAC 的同字节 H.264 1080p／HEVC 4K、默认线程及实际硬件输出，随包 3.0.24 下再串行对照 1000／300 ms 缓冲。H.264 默认第一轮像素只有 **[0,2.526 s] 上界**，300 ms 为 **2.306–2.618 s**、默认复测 **2.767–3.155 s**；HEVC 默认 **4.384–4.706 s**、300 ms **4.663–4.990 s**、默认复测 **5.238–5.557 s**。每轮实际版本／索引模式和 AAC 解码块均核对；没有稳定加速证据，**发行默认仍为 1000 ms**。原始日志在配对目录的 `*-prebuilt-cache*-{a,b}.log`，不能把改变缓存参数本身当成性能修复。
 

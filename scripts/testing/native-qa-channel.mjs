@@ -2,7 +2,7 @@
 // a network transport or a replacement for the application's business APIs.
 import {StringDecoder} from 'node:string_decoder';
 const prefix='RHFILES_NATIVE_QA ';
-const allowed=new Set(['ping','player.state','player.frame','player.window','main.frame']);
+const allowed=new Set(['ping','player.state','player.frame','player.trace','player.window','main.frame']);
 export function nativeQaChannel(input,nonce){
  if(!/^[a-f0-9]{32}$/.test(nonce))throw Error('Invalid owned QA nonce');
  let sequence=0,pending=null,buffer='',discard=false,closed=false;const decoder=new StringDecoder('utf8');
@@ -26,7 +26,7 @@ export function nativeQaChannel(input,nonce){
  function request(action,args={},timeout=5000){
   if(closed)return Promise.reject(Error('Owned QA channel closed'));
   if(pending)return Promise.reject(Error('Only one readback may be pending'));
-  if(!allowed.has(action)||!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>action!=='player.frame'||k!=='expectedInput')||('expectedInput' in args&&(!Number.isSafeInteger(args.expectedInput)||args.expectedInput<=0)))return Promise.reject(Error('Only fixed read-only QA operations are allowed'));
+  if(!allowed.has(action)||!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>!['player.frame','player.trace'].includes(action)||k!=='expectedInput')||('expectedInput' in args&&(!Number.isSafeInteger(args.expectedInput)||args.expectedInput<=0)))return Promise.reject(Error('Only fixed read-only QA operations are allowed'));
   if(!Number.isInteger(timeout)||timeout<1||timeout>10000)return Promise.reject(Error('Invalid QA timeout'));
   if(sequence>=512){close();return Promise.reject(Error('Owned QA request budget exhausted'));}
   const id=String(++sequence);

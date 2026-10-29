@@ -2250,7 +2250,11 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             Ok(json!({"frames":frames}))
         }
         "play" => {
-            let started=Instant::now();let trace=|stage:&str|{if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_REQUEST_STAGE play {stage} {}",started.elapsed().as_millis());}};
+            let started=Instant::now();let trace=|stage:&str|{
+                #[cfg(all(windows,debug_assertions))]
+                crate::rhvideo_trace::stage("request",started,stage);
+                if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_REQUEST_STAGE play {stage} {}",started.elapsed().as_millis());}
+            };
             trace("entry");
             let _play = PLAY_LOCK.lock().await;
             trace("play-lock");

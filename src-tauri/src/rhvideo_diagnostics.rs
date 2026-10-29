@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 const MAX_LINE:usize=4096;
 const MAX_REQUESTS:usize=512;
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
-enum Command { Ping, PlayerState, PlayerFrame(Option<u64>), PlayerWindow, MainFrame }
+enum Command { Ping, PlayerState, PlayerFrame(Option<u64>), PlayerTrace(Option<u64>), PlayerWindow, MainFrame }
 #[derive(Debug,PartialEq,Eq)]
 struct Request { id:String, command:Result<Command,String> }
 fn valid_nonce(value:&str)->bool { value.len()==32&&value.bytes().all(|c|c.is_ascii_hexdigit()&&!c.is_ascii_uppercase()) }
@@ -22,10 +22,10 @@ fn parse(line:&[u8],nonce:&str)->Result<Request,String>{
         let args=value.get("args").cloned().unwrap_or_else(||json!({}));
         let args=args.as_object().ok_or("QA arguments must be an object")?;
         match value["action"].as_str(){
-            Some("player.frame")=>{
+            Some(action @ ("player.frame"|"player.trace"))=>{
                 if args.keys().any(|k|k!="expectedInput"){return Err("Unknown QA frame argument".into());}
                 let input=args.get("expectedInput").map(|v|v.as_u64().filter(|n|*n>0).ok_or("Invalid QA input identity")).transpose()?;
-                Ok(Command::PlayerFrame(input))
+                Ok(if action=="player.frame"{Command::PlayerFrame(input)}else{Command::PlayerTrace(input)})
             }
             Some(action @ ("ping"|"player.state"|"player.window"|"main.frame")) if args.is_empty()=>Ok(match action{"ping"=>Command::Ping,"player.state"=>Command::PlayerState,"player.window"=>Command::PlayerWindow,_=>Command::MainFrame}),
             _=>Err("Only fixed read-only QA operations are allowed".into())
@@ -49,6 +49,7 @@ fn execute_inner(app:&AppHandle,command:Command)->Result<Value,String>{
         Command::Ping=>Ok(json!({"protocol":1,"scope":"self-windows","maxRequests":MAX_REQUESTS})),
         Command::PlayerState=>crate::rhvideo_player::command("player.state",&json!({})),
         Command::PlayerFrame(input)=>crate::rhvideo_player::diagnostic_frame(&input.map(|id|json!({"expectedInput":id})).unwrap_or_else(||json!({}))),
+        Command::PlayerTrace(input)=>crate::rhvideo_player::diagnostic_trace(&input.map(|id|json!({"expectedInput":id})).unwrap_or_else(||json!({}))),
         Command::PlayerWindow=>{
             use windows::Win32::{Foundation::HWND,UI::WindowsAndMessaging::{IsWindowVisible,IsIconic}};
             let Some(window)=app.get_webview_window("window-rhvideo-player") else{return Ok(json!({"visible":false,"minimized":false}));};
@@ -92,7 +93,7 @@ mod tests{
     const NONCE:&str="0123456789abcdef0123456789abcdef";
     fn request(action:&str,args:Value)->Vec<u8>{json!({"nonce":NONCE,"id":"1","action":action,"args":args}).to_string().into_bytes()}
     #[test]fn qa_protocol_accepts_only_fixed_readback_operations(){
-        for(action,command)in[("ping",Command::Ping),("player.state",Command::PlayerState),("player.window",Command::PlayerWindow),("main.frame",Command::MainFrame),("player.frame",Command::PlayerFrame(None))]{assert_eq!(parse(&request(action,json!({})),NONCE).unwrap().command,Ok(command));}
+        for(action,command)in[("ping",Command::Ping),("player.state",Command::PlayerState),("player.window",Command::PlayerWindow),("main.frame",Command::MainFrame),("player.frame",Command::PlayerFrame(None)),("player.trace",Command::PlayerTrace(None))]{assert_eq!(parse(&request(action,json!({})),NONCE).unwrap().command,Ok(command));}
         assert_eq!(parse(&request("player.frame",json!({"expectedInput":7})),NONCE).unwrap().command,Ok(Command::PlayerFrame(Some(7))));
         for(action,args)in[("player.control",json!({"command":"play"})),("main.frame",json!({"hwnd":123})),("player.frame",json!({"path":"C:/outside.bmp"})),("player.frame",json!({"expectedInput":0})),("player.frame",json!({"expectedInput":"7"})),("ping",json!([]))]{assert!(parse(&request(action,args),NONCE).unwrap().command.is_err());}
     }

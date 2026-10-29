@@ -113,8 +113,33 @@ try{
   await opening;if(openError)throw openError;
   receipt.frontendTransport=await library.evaluate('({ipc:window.__startupIPC,longTasks:window.__startupLongTasks.map(row=>({atMs:row.at-window.__startupActionAt,durationMs:row.duration}))})');
   receipt.finalState=lastState;receipt.nonStreamRequests=fixture.requests.slice(requestStart).filter(r=>!r.path.endsWith('/play')).map(r=>r.path);
+  if(process.env.RHFILES_VLC_NATIVE_TRACE==='1'||process.env.RHFILES_PLAY_NATIVE_TRACE==='1'){
+    assert.equal(readback,'stdio','Producer trace stays on the owned debug-only readback');
+    receipt.producerTrace=await app.diagnostic('player.trace',{expectedInput:lastState.inputId});
+    assert.equal(receipt.producerTrace.inputId,lastState.inputId);
+    assert(receipt.producerTrace.hostStages.length>0,'Real host startup stages must reach the bounded trace');
+    if(process.env.RHFILES_VLC_NATIVE_TRACE==='1'){
+      assert.equal(receipt.producerTrace.vlc.clock,'producer-monotonic');
+      assert(receipt.producerTrace.vlc.events.length>0,'Real libVLC startup events must reach the bounded callback');
+    }
+  }
   assert(receipt.firstPixelIntervalMs,'No four-marker native frame appeared inside the bounded observation');assert(receipt.firstStatsObservedMs,'No native display statistic appeared inside the bounded observation');
   assert(receipt.mediaRequests.length>0,'The measured input really reached the owned upstream');
+  if(process.env.RHFILES_QA_TRACE_LIFECYCLE==='1'){
+    assert.equal(readback,'stdio');assert.equal(process.env.RHFILES_VLC_NATIVE_TRACE,'1');
+    const before=lastState.inputId;
+    await action(library,'media.open',{kind:'video',id:'video-0'});
+    const replacement=await until(async()=>{const value=await command('player.state');return value.opened&&value.inputId!==before&&value.renderedFrames>0?value:null;},'replacement native input actually renders',15000);
+    await assert.rejects(app.diagnostic('player.trace',{expectedInput:before}),/播放输入已改变/);
+    const trace=await app.diagnostic('player.trace',{expectedInput:replacement.inputId});
+    assert.equal(trace.vlc.inputId,replacement.inputId);assert(trace.vlc.events.length>0);
+    receipt.traceLifecycle={oldInput:before,newInput:replacement.inputId,oldReadRejected:true,newEvents:trace.vlc.events.length};
+  }
+  // Exercise log_unset's in-flight callback barrier through the real public
+  // close path, rather than validating only process termination by taskkill.
+  await app.evaluate('call("rhvideo_request",{action:"player.close",args:{}})');
+  assert.equal((await app.evaluate('call("rhvideo_request",{action:"player.state",args:{}})')).opened,false);
+  receipt.nativeClosedBeforeProcessExit=true;
 }catch(error){failure=error;receipt.error=String(error?.stack||error);}
 finally{
   player?.close();library?.close();if(app){app.close();let timer;try{await Promise.race([app.closed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned process output did not drain')),5000);})]);}catch(error){failure??=error;receipt.cleanupError=String(error);}finally{clearTimeout(timer);}}await fixture?.close();

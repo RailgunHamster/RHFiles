@@ -20,3 +20,11 @@ test('a readback deadline closes the channel instead of queuing retries or accep
 test('closing an owned process rejects an outstanding native readback',async()=>{
  const qa=fixture();const result=qa.request('ping');qa.close();await assert.rejects(result,/closed/);await assert.rejects(qa.request('ping'),/closed/);assert.throws(()=>nativeQaChannel({},'short'),/nonce/);
 });
+test('startup trace reads bind to the expected input and cannot change trace or decoder settings',async()=>{
+ const qa=fixture();try{
+  for(const args of [{path:'outside.json'},{reset:true},{expectedInput:0},{expectedInput:1,verbose:2}])await assert.rejects(qa.request('player.trace',args),/read-only/);
+  const reply=qa.request('player.trace',{expectedInput:9});assert.deepEqual(qa.writes[0].args,{expectedInput:9});
+  qa.feed('RHFILES_NATIVE_QA '+JSON.stringify({nonce,id:'1',result:{inputId:9,clock:'producer-monotonic',events:[]}})+'\n');
+  assert.equal((await reply).inputId,9);
+ }finally{qa.close();}
+});

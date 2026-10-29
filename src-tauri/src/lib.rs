@@ -31,6 +31,8 @@ mod rhvideo_player;
 mod rhvideo_frame;
 #[cfg(all(windows,debug_assertions))]
 mod rhvideo_diagnostics;
+#[cfg(all(windows,debug_assertions))]
+mod rhvideo_trace;
 mod search;
 #[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]
 mod shell;
