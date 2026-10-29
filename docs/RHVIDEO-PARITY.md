@@ -18,6 +18,8 @@ Android 媒体库的 `close` 原先排队 `finish()` 后，仍向即将销毁的
 
 前节 EXE `9be25ff8…` 的完整串行 Windows 回归已终止：**90/103 通过、13 失败、零跳过**，21 分 53 秒（`rhvideo-grid-close-blocking-full-windows.log`、`rhvideo-windows-1Lb2m0`）。十三项均在 `rhvideo-client.js` 源码／内嵌资源 SHA-256 一致性断言终止：运行期间修改了安卓共用脚本，测试随后读取的新文件与冻结 EXE 不同。不能把未执行到的业务称为通过，也不放宽或移除一致性断言；后续须将**测试源码与程序一起冻结**，而不是只复制 EXE。原先的存活页暂停／发现故障关闭场景本轮通过，但这不是完整回归全绿。当前没有完整新源码验收或发包结论，正式 Windows 和真机均未操作。
 
+`a5673a5` 已推送 GitHub／Gitee 开发分支。新 Windows dev 构建 **53.72 秒成功**（`rhvideo-library-close-windows-build.log`），EXE SHA-256 `b09d423258334ee86d7c4cc73d133377a9c1be3aef4f3488639d66338cc80465`。已建立独立源码＋测试树 `test-artifacts/rhvideo-frozen-a5673a5-25509988`：Git 快照后，将已跟踪的 `src/`、`scripts/` 按实际工作文件字节复制，保留构建输入的 CRLF；逐一核对关键脚本 SHA-256，再置入真实 EXE／已校验的 VLC 3.0.24 bundle，目录不使用链接。其完整验收尚未启动，须等 Android 重编译终止，不能将新构建或复制成功算作业务通过。
+
 ## 2026-10-30 关闭释放隔离与 codec 对照（验证继续，未发包）
 
 Windows `grid.close` 的同步 VLC 释放现移到阻塞工作线程；仍先校验会话／输入、撤销队列，等待真实释放和原生窗口关闭后，才开始一次性暂存提交并发布完成，不将已发送命令或消失的 WebView 当作成功。新增派发顺序策略检查，RHVideo Rust **67/67** 通过，开发 EXE 构建成功（`rhvideo-grid-close-blocking-rust.log`、`rhvideo-grid-close-blocking-build.log`）。独立私有快照 EXE SHA-256 为 `9be25ff8c6c4e46d3dc2a817d04b827700e9530ef930a24171e5cf96682c7d35`，使用已校验的应用内 VLC 3.0.24；实际关闭／存活页恢复四项定向回归 **4/4、零跳过**，原 5000 ms 期限不变（`rhvideo-grid-close-blocking-focused.log`）。这只证明该轮路径可用，**未证明先前完整回归的间歇关闭超时已根治**，新 EXE 的完整串行回归仍需单独执行。
