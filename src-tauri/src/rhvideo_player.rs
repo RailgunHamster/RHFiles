@@ -468,6 +468,12 @@ impl Engine {
             CString::new("--no-volume-save").unwrap(),
             CString::new(if compatibility{"--avcodec-hw=none"}else{"--avcodec-hw=any"}).unwrap(),
         ];
+        // Compare decoder queue/pool startup at the same resolution and sound
+        // settings. This is not a shipping software-decoder thread cap.
+        #[cfg(debug_assertions)]
+        if let Some(threads)=std::env::var("RHFILES_VLC_DECODE_THREADS").ok().and_then(|v|v.parse::<u32>().ok()).filter(|v|(1..=32).contains(v)){
+            options.push(CString::new(format!("--avcodec-threads={threads}")).unwrap());
+        }
         // libVLC 3 creates the player's video-filter from its INSTANCE, not
         // an individual media option (see lib/media_player.c). Passing this
         // only to media_add_option changes our flag but not rendered pixels.

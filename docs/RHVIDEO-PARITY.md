@@ -16,6 +16,10 @@ Windows 原锁定 2.10.3、Android 原锁定 2.11.5 都在官方 [GHSA-w28w-mhc8
 
 Android 通过正常 Tauri Android 构建重新生成 2.11.6 的 Gradle 依赖及 **ARM64、x86_64** 原生库，不是只替换共享 JS 后沿用旧内核。原生构建日志为短路径 QA 的 `rhvideo-sdk-android-native-build.log`；后续 JVM／探测构建 `rhvideo-sdk-android-jvm-probe-build.log` 成功，新生成的 62 份 XML 共 **410/410、零失败／错误／跳过**。主 APK SHA-256 为 `d1acf6a9829738805459541066d26a53184dac94c6891abe9a849abd346c6657`，探测仍为 `f053e3317f7046c4e9d73a91622d728c966940308bbcb73c94b15078cc9c6f81`。此字节组合已在同一自有模拟器通过标签整条场景（`rhvideo-sdk-native-android-rules.log`），包含损坏已保存偏好重连、搜索焦点和连续触摸浏览；不是新的播放器通过结果，也未安装到真机或正式发布。
 
+保持同一带 AAC 样本、分辨率、默认缓存和硬件输出，增加仅 debug 生效的 `RHFILES_VLC_DECODE_THREADS`（1–32）诊断参数；探测回执记录“请求的参数”，不把它冒充引擎实际选择。六轮安静串行对照的 H.264 像素区间分别为 auto **3.466–3.815 s**／1 线程 **2.902–3.320 s**／2 线程 **3.677–4.043 s**，HEVC 分别为 **5.797–6.115 s**／**3.958–4.361 s**／**5.230–5.634 s**。后续带日志的反向对照中，1 线程 HEVC 反而为 **5.917–6.274 s**、auto 为 **5.149–5.592 s**。日志确认池从 48 降至 30 个 surface，但没有稳定更快的证据；发行默认线程／缓存／画质／声音均不改变。新 SDK 后仍有约 2.3 s 的页面应答，因此也不能将 SDK 升级说成启动卡顿已修复。所有日志位于已有配对目录的 `*-sdk2116-*`／`hevc-sdk2116-*-verbose.log`，debug EXE 哈希同上；详细日志的主机接收时刻不能当成每行的 VLC 生产时刻。
+
+另外确认 Windows 发包脚本尚未附带 libVLC，现有检测会使用系统 VLC 或程序旁 `vlc/`。当前装有 VLC 3.0.23 的机器通过，不代表全新电脑也能播放；这是正式发布前必须补上的分发验收缺口。已核对 [VideoLAN 官方 3.0.24 发布目录](https://download.videolan.org/pub/videolan/vlc/3.0.24/) 和其非 GPL 的 `VideoLAN.LibVLC.Windows` NuGet 分包方式，不能直接把带 GPL 插件的完整 VLC 播放器复制进来。3.0.24 官方 NuGet 已下载到隔离的 `temp/vlc-3.0.24-inspection/`，SHA-256 `3da3f37ee2b2b10e5c788d830a3b513658c36521ea1b0f966ed86eb69f41ef3c`，`dotnet nuget verify --all` 成功（`rhvideo-libvlc-nuget-verify.log`）；尚未纳入发包或运行验收，未替换系统 VLC 或正在测试的播放内核。后续需保留许可证／源代码获取说明，在屏蔽系统 VLC 回退的隔离副本上验证真实视频／音轨／旋转／同屏及完整包。
+
 ## 2026-10-29 已保存规则恢复、初始搜索焦点与启动性能对照（完整目标未完成）
 
 实际窗口红测 `rhvideo-rules-recovery-red.log` 复现两处行为退化：标签打开后打字没有进入搜索框；已保存的 `rule.include` 损坏后，重新连接在 `Editor.sync → updateConnection` 抛错，正常媒体也无法浏览。现按实际参考 `loadMediaTagFilter` 的兜底行为，仅在**读取已有偏好**时规范化规则，损坏时恢复全部内容并说明原因，不清空音量、排序、收藏规则等其他设置，也不修改传入对象。用户/API 主动提交的无效规则仍拒绝，不能用兜底掩盖失败。标签打开后立即聚焦搜索；编辑和滚动不反复抢焦点。旧 `rules.page` 在关闭时给出明确错误；返回有效缓存窗口不再残留其他窗口读取失败的提示。
