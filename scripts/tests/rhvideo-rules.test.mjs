@@ -1,6 +1,19 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import vm from 'node:vm';import {createRequire} from 'node:module';import {parse} from 'acorn';
 const require=createRequire(import.meta.url),M=require('../../src/js/rhvideo-rules-model.js'),T=require('../../src/js/rhvideo-tags.js'),I=require('../../src/js/rhvideo-index.js'),search=require('../../src/js/rhvideo-search.js'),dictionary=require('../../src/vendor/pinyin-pro/pinyin-pro.js');
 const clone=value=>JSON.parse(JSON.stringify(value));
+
+test('restoring damaged saved rules isolates the damaged filter and preserves every other preference',()=>{
+ for(const rule of [null,[],{include:'not a list'},{mode:'bad'},{groups:[null]},{include:Array.from({length:65},(_,i)=>'tag'+i)}]){
+  const saved={rule,sort:'nameAsc',volume:31,perVideo:3,savedRules:{Valid:{include:['风景']}}},before=clone(saved),restored=M.restorePreferences(T,saved);
+  assert.deepEqual(restored.value,{...saved,rule:T.normalize()});assert.match(restored.warning,/保存的标签筛选无效/);assert.deepEqual(saved,before,'Loading cannot mutate the persisted object');
+  assert.throws(()=>T.normalize(rule),'Explicit edits still use the rejecting normalizer');
+ }
+});
+
+test('restoring a valid nested rule normalizes it once and missing rules remain the ordinary default',()=>{
+ const saved={rule:{mode:'or',include:['风景','风景'],groups:[{mode:'and',exclude:['城市']}]},extra:'keep'},restored=M.restorePreferences(T,saved);
+ assert.deepEqual(restored.value.rule,T.normalize(saved.rule));assert.equal(restored.value.extra,'keep');assert.equal(restored.warning,'');assert.equal(M.restorePreferences(T,{volume:20}).warning,'');assert.deepEqual(M.restorePreferences(T,undefined).value.rule,T.normalize());
+});
 test('nested tag actions preserve empty-group editing, local NOT precedence and explicit selection',()=>{
   const m=new M.Editor(T);m.accept(m.edit('add',{path:[]}));assert.deepEqual(m.path,[0]);assert.equal(m.node().mode,'or');assert.equal(T.active(m.rule),false);m.accept(m.edit('tag',{label:'风景',kind:'include'}));m.accept(m.edit('tag',{label:'风景',kind:'exclude'}));assert.deepEqual(m.node().include,[]);assert.deepEqual(m.node().exclude,['风景']);m.accept(m.edit('mode',{path:[],value:'or'}));assert.equal(T.compile(m.rule)('风景'),false);assert.equal(T.compile(m.rule)('其他'),true);m.accept(m.edit('remove',{path:[0]}));assert.deepEqual(m.path,[]);assert.equal(T.active(m.rule),false);
 });
@@ -52,6 +65,14 @@ test('derived tag windows respect filters, search, sort, folders, cancellation a
   assert.deepEqual((await c.tagQuery({kinds:['video'],search:'旅行'})).rows.map(v=>v.name),['旅行']);const empty=await c.tagQuery({kinds:['video'],folders:['空标签'],sort:'recent',recent:['空标签']});assert.equal(empty.rows[0].name,'空标签');assert.equal(c.tagViews.size,2);c.set('picture',pictures);assert.equal(c.tagViews.size,0);
 });
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html'),functions=new Map();if(fs.existsSync(reference))for(const match of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(match[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration')functions.set(node.id.name,match[1].slice(node.start,node.end));
+
+test('saved-rule recovery matches the actual reference loader for valid and damaged preferences',{skip:!functions.has('loadMediaTagFilter')},()=>{
+ for(const rule of [{include:['风景']},{mode:'or',groups:[{exclude:['城市']}]},{include:'damaged'},null,[],{mode:'bad'},{groups:[null]}]){
+  const original=vm.createContext({RHTagFilter:T,localStorage:{getItem:key=>key==='owned'?JSON.stringify(rule):null},mediaTagStorageKey:()=> 'owned',token:'owned',mediaTagFilter:null,mediaTagGroupPath:[1],JSON});
+  vm.runInContext(functions.get('loadMediaTagFilter')+';loadMediaTagFilter();',original);
+  assert.deepEqual(M.restorePreferences(T,{rule}).value.rule,clone(original.mediaTagFilter));
+ }
+});
 test('nested editor mutations are differential-tested against the actual RHVideo functions',{skip:!functions.size},()=>{
   const names=['mediaTagPath','mediaTagNode','addMediaTagGroup','removeMediaTagGroup','setMediaTagGroupMode','toggleMediaTag'],scope=vm.createContext({structuredClone,RHTagFilter:T,mediaTagFilter:T.normalize(),mediaTagGroupPath:[],gridTagRecent:[],saveGridTagPrefs(){}});scope.updateMediaTagFilter=rule=>{try{scope.mediaTagFilter=T.normalize(rule);return true;}catch{return false;}};vm.runInContext(names.map(n=>functions.get(n)).join('\n'),scope);const m=new M.Editor(T);
   for(const [action,args,original]of [

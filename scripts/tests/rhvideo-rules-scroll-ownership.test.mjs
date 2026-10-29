@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import {createRequire} from 'node:module';import {parse} from 'acorn';
-const require=createRequire(import.meta.url),M=require('../../src/js/rhvideo-rules-model.js'),source=fs.readFileSync(new URL('../../src/js/rhvideo-rules.js',import.meta.url),'utf8'),functions=new Map();let resizeCallback;
-function walk(node){if(!node||typeof node!=='object')return;if(node.type==='FunctionDeclaration')functions.set(node.id.name,node);if(node.type==='NewExpression'&&node.callee.name==='ResizeObserver')resizeCallback=node.arguments[0];for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}walk(parse(source,{ecmaVersion:'latest'}));
+const require=createRequire(import.meta.url),M=require('../../src/js/rhvideo-rules-model.js'),source=fs.readFileSync(new URL('../../src/js/rhvideo-rules.js',import.meta.url),'utf8'),functions=new Map();let resizeCallback,pageAction;
+function walk(node){if(!node||typeof node!=='object')return;if(node.type==='FunctionDeclaration')functions.set(node.id.name,node);if(node.type==='NewExpression'&&node.callee.name==='ResizeObserver')resizeCallback=node.arguments[0];if(node.type==='CallExpression'&&node.callee.name==='action'&&node.arguments[0]?.value==='rules.page')pageAction=node.arguments[2];for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}walk(parse(source,{ecmaVersion:'latest'}));
 const gate=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};},page=(offset,total=1000)=>({rows:Array.from({length:Math.min(80,Math.max(0,total-offset))},(_,i)=>({name:'tag'+(offset+i)})),offset,total,catalogs:[]});
 function controller(){
  const list={scrollTop:0,clientHeight:280},calls=[],paints=[],scope=vm.createContext({M,view:M.viewport({total:1000}),restoreTop:null,offset:0,ticket:0,busy:false,error:'',data:page(0),dataScope:'owner::0',requestedScope:'owner:',pending:null,root:{querySelector:()=>list},settings:{collapsed:{all:false},sort:'name-asc',recent:[]},source:'video',model:{rule:{}},query:'',owner:'owner',metaTimer:0,clearTimeout(){},opened:()=>scope.isOpen,isOpen:true,check(args={}){if(args.expectedOwner&&args.expectedOwner!==scope.owner)throw Error('old owner');},scope:()=>scope.owner+':'+scope.query,snapshot:()=>({viewport:{...scope.view},offset:scope.offset,busy:scope.busy,catalog:scope.data}),paintStatus(){},paintRows(){if(scope.isOpen){paints.push(scope.data.offset);list.scrollTop=scope.view.top;scope.restoreTop=null;}},positionRows(){},fail:e=>{scope.error=String(e);},ctx:{identity:()=>scope.owner,catalog:async(args,current)=>{calls.push({args:{...args},current});return page(args.offset);}}});
@@ -14,6 +14,18 @@ test('an older scrolled window cannot repaint after a newer far-away window has 
 });
 test('returning to the still-cached visible window cancels obsolete pending paint without another read',async()=>{
  const c=controller(),pending=gate();c.scope.ctx.catalog=async(args,current)=>{c.calls.push({args:{...args},current});return pending.promise;};const old=c.scope.scroll({index:100});await Promise.resolve();await c.scope.scroll({index:0});assert.equal(c.scope.view.first,0);assert.equal(c.scope.busy,false);assert.equal(c.calls.length,1);pending.resolve(page(80));assert.equal((await old).stale,true);assert.equal(c.scope.data.offset,0);
+});
+
+test('returning to a valid cached window clears a failed obsolete scroll without rescanning',async()=>{
+ const c=controller();c.scope.dataScope='owner::0';c.scope.error='A different scrolled window failed';const value=await c.scope.refresh();assert.equal(value.busy,false);assert.equal(c.scope.error,'');assert.equal(c.calls.length,0);assert.deepEqual(c.paints,[0]);
+});
+
+test('the legacy page API refuses a closed panel before starting a read or touching its DOM',async()=>{
+ let reads=0;const scope=vm.createContext({run:fn=>fn(),check(){},opened:()=>false,data:null,refresh:()=>reads++});assert(pageAction);const action=vm.runInContext('('+source.slice(pageAction.start,pageAction.end)+')',scope);await assert.rejects(action({direction:1}),/请先打开标签筛选/);assert.equal(reads,0);
+});
+
+test('closing the legacy page API while its initial read is pending cannot move a closed/replaced viewport',async()=>{
+ const pending=gate(),scope=vm.createContext({run:fn=>fn(),check(){},isOpen:true,opened:()=>scope.isOpen,data:null,offset:0,refresh:async()=>{await pending.promise;scope.data=page(0);}});const action=vm.runInContext('('+source.slice(pageAction.start,pageAction.end)+')',scope),work=action({direction:1});scope.isOpen=false;pending.resolve();await assert.rejects(work,/标签筛选已关闭/);assert.equal(scope.offset,0);
 });
 test('a shrinking search result clamps once and fetches only the newly visible bounded window',async()=>{
  const c=controller();await c.scope.scroll({index:900});c.calls.length=0;c.scope.query='filtered';c.scope.ctx.catalog=async(args,current)=>{c.calls.push({args:{...args},current});return page(args.offset,3);};const result=await c.scope.refresh();assert.equal(result.viewport.first,0);assert.equal(result.viewport.last,3);assert.equal(result.catalog.rows.length,3);assert.equal(result.busy,false);assert.deepEqual(c.calls.map(v=>v.args.offset),[880,0]);assert.equal(c.scope.pending,null);

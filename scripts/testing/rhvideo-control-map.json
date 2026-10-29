@@ -1,5 +1,5 @@
 {
-  "referenceCommit": "a8caab27009a0458ff6be12ddd39a88341eeb0fa",
+  "referenceCommit": "869d63244300222750751c1175aab4ce855302dd",
   "description": "Source-to-source control inventory, not a claim that every hardware/network scenario has passed. API names are relative to rhvideo.; each runtime window separately exposes its contract.",
   "ignoredHelpers": ["if", "favEsc", "gridTagJsArg"],
   "groups": [
@@ -9,8 +9,9 @@
     {"feature":"统一音量","reference":["setPageVolume"],"api":["volume.set","volume.state"]},
     {"feature":"媒体设置","reference":["updatePerVideoLabel","saveMixPics","saveGridTagPrefs","favshowCfgChanged","updateKenburnsDuration","updateKenburnsFadeCfg","updateKenburnsOverlap","updatePicStripSpeedUI","onPlaylistFullSeg","onPlaylistPortrait","$playlistSegOnInput","adjSegDur","editSegDur","commitSegDur"],"api":["preferences.set","settings.open","player.options"],"note":"Windows 的播放器内竖屏切换保留不可变原队列；不足两项不改变当前输入；与全长/片段选项分别记忆。Android 原生同等控制仍需实测。"},
     {"feature":"截图页与顺序","reference":["loadGrid","changeGridPage","jumpGridPage","shuffleGrid","saveGridOrder","confirmGridOrderSave","selectGridOrder","restoreSavedGridOrder","deleteSavedGridOrder","restoreGridOrder","resumeBrowse"],"api":["gallery.open","gallery.refresh","gallery.page","gallery.jump","gallery.shuffle","gallery.orders","gallery.save","gallery.resume","gallery.deleteOrder","gallery.restore"]},
-    {"feature":"规则及嵌套分组","reference":["openGridTagDrawer","clearMediaTagFilter","handleMediaTagChip","addMediaTagGroup","selectMediaTagGroup","setMediaTagMode","handleMediaRuleAction","renderGridTagDrawer","selectGridTag","toggleGridTagGroup","toggleMediaTag"],"api":["rules.open","rules.apply","rules.mode","rules.form","rules.json","rules.save","rules.restore","rules.delete"],"note":"嵌套规则由同一结构化规则接口表达，UI 可使用组合表单或 JSON，不要求照搬网页抽屉。"},
+    {"feature":"规则及嵌套分组","reference":["openGridTagDrawer","clearMediaTagFilter","handleMediaTagChip","addMediaTagGroup","selectMediaTagGroup","setMediaTagMode","handleMediaRuleAction","renderGridTagDrawer","selectGridTag","toggleGridTagGroup","toggleMediaTag"],"api":["rules.open","rules.apply","rules.mode","rules.form","rules.json","rules.save","rules.restore","rules.delete","rules.group.add","rules.group.select","rules.group.remove","rules.group.mode","rules.tag.toggle","rules.search","rules.sort","rules.collapse","rules.scroll"],"note":"普通点选、连续滚动、嵌套 AND/OR/NOT 和搜索必须可用；表单与 JSON 只是高级入口，不能替代原有流程。源码映射不代替真实窗口和原生 APK 验收。"},
     {"feature":"多选与导出","reference":["toggleVideoMultiSelect","selectAllPageVideos","clearVideoSelection","exportVideos","togglePreviewDeleteFromButton"],"api":["selection.mode","selection.page","selection.clear","selection.toggle","selection.export","selection.markCurrent"]},
+    {"feature":"喜爱文件 ZIP 导出","reference":["RHFavoriteExports.open"],"api":["exports.open","exports.scope","exports.create","exports.list","exports.get","exports.cancel","exports.download","exports.downloads","exports.download.cancel","exports.refresh","exports.close"],"note":"归档任务、下载文件和 UI 生命周期的实际验收单独记录，不因接口已枚举而视为全部完成。"},
     {"feature":"待删除标记和暂存","reference":["requestStageDeleteVideo","requestStageDeletePicture","requestStageDeleteNovel","requestPicStripDelete","confirmStageDeleteStep","cancelPreviewDeleteExecution"],"api":["confirm.begin","confirm.advance","selection.stage","selection.stop","selection.progress","selection.result"],"note":"停止仅阻止尚未发送的批量项目，不撤销已提交请求；失败项没有自动重放/取消按钮。"},
     {"feature":"暂存区及清理","reference":["loadTrash","openTrashPreview","restoreTrash","showCleanupModal","cleanupConfirmStep"],"api":["server.open","trash.preview","remote.trash.restore","cleanup.preview","confirm.begin","confirm.advance"]},
     {"feature":"监控目录","reference":["showWatchModal","addWatchFolder","toggleWatchFolder","scanWatchFolder","removeWatchFolder"],"api":["server.open","watch.add","remote.watch.update","remote.watch.scan","confirm.begin","confirm.advance"]},
@@ -32,13 +33,14 @@
     {"feature":"关闭与返回","reference":["closeCleanupModal","closeFavshow","closeGridOrderSaveModal","closeGridTagDrawer","closeGridViewer","closeInfoModal","closeKenburns","closeMediaViewer","closeNovelPreview","closeNovelReader","closePicStrip","closePlaylistViewer","closeReplaceModal","closeStageDeleteModal","closeTimeline","closeTrashModal","closeTrashPreview","closeWatchModal"],"api":["panel.close","back","image.close","reader.close","timeline.close","grid.close","player.close"]}
   ],
   "modules": [
-    {"file":"static/index.html","sha256":"36c93492e2ac08d802052c9004a9a4a5acd08df8246854ec1b5f71c060c40601","scope":"静态与模板生成的 click/change/input/keydown/dblclick/wheel 控件，按调用函数逐项对应"},
-    {"file":"static/settings.js","sha256":"efe6454f0f831dfe0874bbe53df39a9f616d53feede220459ca660ee50e86719","scope":"重启模式、安排取消、状态和权限，使用固定服务器操作契约"},
-    {"file":"static/task-center.js","sha256":"6357182e742015c401b02e15ec2bc3d780ba490ffb953323ae26aa11170bfb96","scope":"队列/视图/搜索/分页/详情/步骤/缩略图；依用户要求排除失败任务重试"},
+    {"file":"static/index.html","sha256":"f6f9d8fa74c48e8038f634094297c34d48c53057085fdad3bda456390f402238","scope":"静态与模板生成的 click/change/input/keydown/dblclick/wheel 控件，按调用函数逐项对应"},
+    {"file":"static/settings.js","sha256":"87ae98723b29b30ba9e5cb64c82572f93663637dd373e83f974176b16c5843f6","scope":"重启模式、安排取消、状态和权限，配置备份／合并恢复使用独立预览确认；实际流程另测"},
+    {"file":"static/task-center.js","sha256":"002ec88463b779257d32c4a5a787c35b44fdd5448760d1e9b3d0507118546c11","scope":"队列/视图/搜索/分页/详情/步骤/缩略图；依用户要求排除失败任务重试"},
+    {"file":"static/favorite-exports.js","sha256":"119c96c290e52a8d59ad9df276fc0d5e7291e19519f8681806f4f0165ce343ff","scope":"全部／当前筛选喜爱、归档任务、活动任务取消、ZIP 下载；不将控制项映射当成原生选择器与后台生命周期验收"},
     {"file":"static/storage-savings.js","sha256":"a29109ca345dbc83e337ae715795467fa18032600f9876e30874b033c819b3a9","scope":"替换历史、存储节省、筛选和明细，归入存储/替换面板"},
     {"file":"static/image-preview.js","sha256":"deb276e0057e6664c8b0843011a6ae75f4a24a73f89c725b3e0597a6ffbf9c70","scope":"各面板缩略图全屏预览、关闭及焦点返回"},
     {"file":"static/tag-filter.js","sha256":"9394151bc4c2743d960f055286e90ca078d453a0220af42c920befc71047f685","scope":"嵌套 AND/OR、排除及分组语义，共享衍生业务模型测试"},
     {"file":"static/search-core.js","sha256":"74fc781c94054e5d6a2a3287a0e8dfb07a6e8f3c6861f70b39ca285f98a5f7e0","scope":"中文/多音字/拼音/首字母搜索语义，原始词典与 Worker 测试"},
-    {"file":"static/operation-contract.json","sha256":"442d9452b504bc361e3c54baeeecbdb67b4277ded6461f2c226f70e021e0d80b","scope":"与真实 FastAPI 路由对照，不能仅凭旧契约宣称功能完成"}
+    {"file":"static/operation-contract.json","sha256":"0c27b51336e7607d9e8f9857dfe511a2359a6fbbcfb390c348a88073fed7a646","scope":"与真实 FastAPI 路由对照，不能仅凭旧契约宣称功能完成"}
   ]
 }

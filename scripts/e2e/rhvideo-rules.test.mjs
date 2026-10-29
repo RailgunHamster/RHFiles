@@ -5,6 +5,7 @@ test('native tag list scrolls continuously across the former page boundary and r
  const count=20000,fixture=await rhvideoFixture({videoCount:count,videoFolders:Array.from({length:count},(_,i)=>'目录'+String(i).padStart(5,'0'))});let app,lib;
  try{
   app=await launchApp();lib=await library(app);await lib.invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await lib.invoke('rules.open');await lib.invoke('rules.sort',{value:'name-asc'});
+  assert.equal(await lib.view.evaluate('document.activeElement===document.getElementById("wb-rule-search")'),true,'Opening the reference tag picker puts typing in its search field, not its Close button');
   assert.equal(await lib.view.evaluate('!!document.querySelector("#wb-rules [data-rule-next],#wb-rules [data-rule-previous]")'),false,'The reference uses one continuous list, not replacement paging controls');const catalogReads=fixture.requests.filter(r=>r.method==='GET'&&r.path==='/api/v1/videos').length;
   let value=await lib.invoke('rules.scroll',{index:70});assert.equal(value.viewport.first,70);const geometry=await lib.view.evaluate('(()=>{const n=document.querySelector("#wb-rules [data-rule-list]");n.scrollIntoView({block:"center"});const r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()');
   await lib.view.send('Input.dispatchMouseEvent',{type:'mouseWheel',x:geometry.x,y:geometry.y,deltaX:0,deltaY:1000});await until(async()=>{value=await lib.invoke('rules.state');return !value.busy&&value.viewport.first>80&&value.catalog.offset<=value.viewport.first&&value.catalog.offset+value.catalog.rows.length>=value.viewport.last;},'actual wheel crosses the old page boundary');
@@ -15,6 +16,25 @@ test('native tag list scrolls continuously across the former page boundary and r
   assert.equal(fixture.requests.filter(r=>r.method==='GET'&&r.path==='/api/v1/videos').length,catalogReads,'Scrolling does not refetch the source catalog');await lib.invoke('rules.scroll',{index:100});const remembered=(await lib.invoke('rules.state')).viewport.top;await lib.invoke('panel.close',{id:'wb-rules'});value=await lib.invoke('rules.open');assert.equal(value.viewport.top,remembered,'Closing/reopening the shared drawer preserves its position like RHVideo');assert.equal(value.search,'');await lib.invoke('rules.search',{query:'目录19999'});value=await lib.invoke('rules.state');assert.equal(value.catalog.total,1);assert.equal(value.viewport.top,0);assert.equal(value.catalog.rows[0].name,'目录19999');assert.deepEqual((await lib.invoke('ui.contract')).missing,[]);
   const capped=await lib.view.evaluate('(()=>{const v=RHVideoRulesModel.viewport({total:1000000,extent:280,top:7999999}),probe=document.createElement("div"),spacer=document.createElement("div"),last=document.createElement("div");probe.className="wb-rule-list";probe.style.height="280px";spacer.className="wb-rule-spacer";spacer.style.height=v.spacer+"px";last.className="wb-rule-choice";last.style.top=RHVideoRulesModel.rowTop(999999,v)+"px";spacer.append(last);probe.append(spacer);document.querySelector("#wb-rules .wb-rule-editor").append(probe);const result={overflow:getComputedStyle(spacer).overflow,extra:probe.scrollHeight-probe.clientHeight-v.maxTop};probe.remove();return result;})()');assert.equal(capped.overflow,'clip');assert.equal(capped.extra,0,'Overscan cannot enlarge the physical scroll range at the compressed tail');
   const screenshot=await lib.view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'native-continuous-tags.png'),Buffer.from(screenshot.data,'base64'));console.log(JSON.stringify({continuousTags:count,domLimit:80,actualWheel:true,actualHomeEnd:true,cappedTailGeometry:capped,artifact:app.artifactDir}));
+ }finally{lib?.view.close();await app?.close();await fixture.close();}
+});
+
+test('corrupt saved tag preferences cannot prevent reconnecting or browsing, and explicit invalid edits still fail',{skip:process.platform!=='win32'},async()=>{
+ const fixture=await rhvideoFixture({videoCount:8,galleryVideoCount:8});let app,lib;
+ try{
+  app=await launchApp({emulateFocus:true});lib=await library(app);const credentials={server:fixture.url,username:'preview',password:'fixture-only'};
+  await lib.invoke('connection.connect',credentials);
+  const corrupt={rule:{mode:'and',include:'not-a-tag-list'},sort:'nameAsc',volume:31,perVideo:3,savedRules:{Valid:{mode:'or',include:['风景'],exclude:[]}}};
+  await lib.view.evaluate('window.__TAURI__.core.invoke("rhvideo_request",'+JSON.stringify({action:'preferences',args:{value:corrupt}})+')');
+  await lib.invoke('connection.connect',credentials);await lib.invoke('category',{kind:'video'});
+  const prefs=await lib.invoke('preferences.state');assert.equal(prefs.sort,'nameAsc');assert.equal(prefs.volume,31);assert.equal(prefs.perVideo,3);assert.deepEqual(prefs.rule,{mode:'and',include:[],exclude:[]});assert(prefs.savedRules.Valid);
+  assert.equal(await lib.view.evaluate('document.getElementById("notice").textContent.includes("保存的标签筛选无效")'),true,'Show why only the damaged filter was reset');
+  assert.equal(await lib.view.evaluate('document.querySelectorAll(".media-card").length'),8);
+  await lib.invoke('rules.open');assert.equal(await lib.view.evaluate('document.activeElement===document.getElementById("wb-rule-search")'),true);
+  await lib.view.send('Input.insertText',{text:'fengjing'});await until(async()=>(await lib.invoke('rules.state')).search==='fengjing','actual typing enters tag search');
+  const before=(await lib.invoke('rules.state')).rule;await assert.rejects(lib.invoke('rules.apply',{rule:{mode:'invalid'}}),/标签组合方式/);assert.deepEqual((await lib.invoke('rules.state')).rule,before);
+  await lib.invoke('panel.close',{id:'wb-rules'});await assert.rejects(lib.invoke('rules.page',{direction:1}),/请先打开标签筛选/);
+  console.log(JSON.stringify({corruptSavedFilterRecovered:true,otherPreferencesPreserved:true,actualSearchTyping:true,explicitInvalidRuleRejected:true,artifact:app.artifactDir}));
  }finally{lib?.view.close();await app?.close();await fixture.close();}
 });
 test('native tag picker preserves reference grouping, live cross-catalog rules, pinyin and persisted editor preferences',{skip:process.platform!=='win32'},async()=>{

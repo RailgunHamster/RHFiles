@@ -2,6 +2,14 @@
 (function(root,factory){const value=factory();if(typeof module==='object'&&module.exports)module.exports=value;else root.RHVideoRulesModel=value;})(globalThis,()=>{
   'use strict';
   const sorts=['count-desc','name-asc','name-desc','recent'];
+  // Loading old/local preferences is recovery, not an explicit rule edit.
+  // Match RHVideo's loadMediaTagFilter fallback without discarding unrelated
+  // preferences or weakening the normalizer used by user/API mutations.
+  function restorePreferences(tags,saved){
+    const value=saved&&typeof saved==='object'&&!Array.isArray(saved)?{...saved}:{};
+    let warning='';try{value.rule=tags.normalize(value.rule);}catch(error){value.rule=tags.normalize();warning='保存的标签筛选无效，已恢复为全部内容；其他设置保留。'+String(error?.message||error);}
+    return {value,warning};
+  }
   function settings(value={}){value=value&&typeof value==='object'&&!Array.isArray(value)?value:{};return {sort:sorts.includes(value.sort)?value.sort:'count-desc',recent:Array.isArray(value.recent)?[...new Set(value.recent.filter(v=>typeof v==='string'&&v.length<=1024))].slice(0,30):[],collapsed:{all:!!value.collapsed?.all}};}
   function viewport({total,top=0,extent=280,rowHeight=56,offset=0}){
     if(!Number.isSafeInteger(total)||total<0||!Number.isFinite(top)||top<0||!Number.isFinite(extent)||extent<=0||extent>4096||!Number.isFinite(rowHeight)||rowHeight<=0||extent>80*rowHeight||!Number.isSafeInteger(offset)||offset<0)throw Error('标签滚动参数无效');
@@ -35,5 +43,5 @@
     accept(candidate){this.sync(candidate.rule);this.path=this.node(candidate.path)?[...candidate.path]:[];return this.snapshot();}
     snapshot(){return {revision:this.revision,rule:structuredClone(this.rule),path:[...this.path],expression:this.tags.describe(this.rule),active:this.tags.active(this.rule),terms:this.tags.terms(this.rule).length};}
   }
-  return {Editor,settings,sorts,viewport,rowTop};
+  return {Editor,settings,sorts,viewport,rowTop,restorePreferences};
 });

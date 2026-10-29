@@ -298,7 +298,9 @@
             String(s.generation) + ":" + String(s.assetRevision);
           const saved=await native("preferences");
           if(version!==epoch)return {stale:true};
-          prefs = saved;
+          const restored=RHVideoRulesModel.restorePreferences(RHTagFilter,saved);
+          prefs = restored.value;
+          if(restored.warning)notice(restored.warning);
           applyPreferences();
           restoreGalleryPreferences();
           warmGallery();
