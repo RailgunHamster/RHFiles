@@ -29,7 +29,7 @@
             "rhvideo.workbench." + site,
           );
       const resolutions = new I.ResolveCache();
-      let configuration=null,favoriteExports=null,rulesEditor=null;
+      let configuration=null,favoriteExports=null,rulesEditor=null,duplicates=null;
       const ruleProcessId=crypto.randomUUID();
       let ruleRefreshTimer=0,ruleRefreshWaiter=null,ruleEditIntent=0,ruleApplyIntent=0;
       let resolutionRevision = "",
@@ -230,6 +230,7 @@
         rulesEditor?.reset();
         configuration?.reset();
         favoriteExports?.reset();
+        duplicates?.reset();
         ctx.invalidateReads();
         const version=++epoch;
         abortPictureOrders();
@@ -727,12 +728,15 @@
                 "wb-image-preview",
                 "wb-preview-results",
                 "wb-exports",
+                "wb-duplicates",
+                "wb-duplicate-review",
               ],
             },
           },
           ["id"],
         ),
         async ({ id }) => {
+          if(id==="wb-duplicates")duplicates?.closed();
           if (id === "wb-viewer") stopViewer();
           if (id === "wb-confirm") pendingConfirmation = null;
           if (id === "wb-info") detailJob = null;
@@ -4301,6 +4305,7 @@
         return node;
       }
       function syncContext() {
+        duplicates?.contextChanged();
         rulesEditor?.changed();
         const visible = state.connected && state.view !== "gallery";
         toolbar.hidden = !visible;
@@ -4431,6 +4436,7 @@
         "read",
       );
       window.addEventListener("pagehide", () => {
+        duplicates?.closed();
         liveRefresh.stop();
         stopViewer();
         worker?.terminate();
@@ -4446,6 +4452,9 @@
       }
       favoriteExports=RHVideoExports.install({action,object,native,selection:favoriteExportSelection,dialog,el,button,listen,invoke,notice,state,toolbar,mobile:ctx.mobile,Refresh:RHVideoRefresh,
         listenNative:(name,fn)=>(ctx.mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen)(name,fn)
+      });
+      duplicates=RHVideoDuplicates.install({action,object,native,dialog,el,button,listen,invoke,notice,icon,entryParent:$("library-nav"),connected:()=>state.connected,ready:ensure,Refresh:RHVideoRefresh,
+        async mediaChanged(){invalidateCatalog();await load(true);}
       });
       rulesEditor=RHVideoRules.install({action,object,button,el,input,field,select,listen,invoke,toolbar,dialog,config,identity:ruleIdentity,revision:()=>catalogRevision,ready:ensure,connected:()=>state.connected,source:()=>state.view==='gallery'?'gallery':state.kind,catalog:tagCatalog,publish:publishRule,
         settings(value){if(!ruleIdentity())throw Error("媒体账户已改变，标签偏好未保存");prefs.tagEditor=RHVideoRulesModel.settings(value);save();}

@@ -3,6 +3,7 @@ import os
 import sys
 import asyncio
 import json
+import shutil
 from pathlib import Path
 
 source, directory, port = sys.argv[1:4]
@@ -86,6 +87,17 @@ async def lifespan(application):
         (root / "storage" / "covers" / "preview.png").write_bytes(png)
         image.save(root / "storage" / "covers" / "preview.webp", "WEBP", quality=82)
         (root / "original.png").write_bytes(png)
+        duplicate_copies = int(os.environ.get("RHVIDEO_QA_DUPLICATE_COPIES", "0"))
+        if not 0 <= duplicate_copies <= 30:
+            raise ValueError("Bound the generated duplicate fixture")
+        if duplicate_copies:
+            shutil.copyfile(root / "sample.mp4", root / "duplicate-video.mp4")
+            shutil.copyfile(root / "storage/covers/preview.webp", root / "storage/covers/duplicate-video.webp")
+        for index in range(duplicate_copies):
+            (root / f"duplicate-picture-{index}.png").write_bytes(png)
+            # Every member owns distinct source AND derived paths. Alias paths
+            # are correctly rejected by the real destructive-review service.
+            shutil.copyfile(root / "storage/covers/preview.webp", root / f"storage/covers/duplicate-picture-{index}.webp")
         if not (root / "sample.mp4").is_file():
             raise RuntimeError("Generate the real isolated MP4 before starting the service fixture")
         chapter_data = [("第%d章 真实接口测试" % (i+1), ("这是 RHVideo 真实后端提供的章节正文。\n\n" * 100).encode("utf-8")) for i in range(3)]
@@ -102,6 +114,15 @@ async def lifespan(application):
             db.add(Picture(id="real-picture", user_id="fixture-user", original_filename="真实接口图片.png",
                            original_filesize=len(png), original_resolution="1600x1000", original_format="png",
                            md5_hash="0"*32, webp_path="covers/preview.webp", original_path=str(root / "original.png"), folder_label="真实测试", status="active"))
+            if duplicate_copies:
+                db.add(Video(id="real-video-copy", user_id="fixture-user", filename="真实重复视频.mp4",
+                             source_path=str(root / "duplicate-video.mp4"), source_kind="watch", source_size=(root / "duplicate-video.mp4").stat().st_size,
+                             folder_label="真实测试", duration_seconds=14, resolution="640x360", status="completed",
+                             variants=[], keyframes=["covers/duplicate-video.webp"], thumbnail_path="covers/duplicate-video.webp"))
+            for index in range(duplicate_copies):
+                db.add(Picture(id=f"real-picture-{index}", user_id="fixture-user", original_filename=f"真实重复图片 {index}.png",
+                               original_filesize=len(png), original_resolution="1600x1000", original_format="png",
+                               md5_hash="0"*32, webp_path=f"covers/duplicate-picture-{index}.webp", original_path=str(root / f"duplicate-picture-{index}.png"), folder_label="真实测试", status="active"))
             db.add(Novel(id="real-novel", user_id="fixture-user", title="真实接口小说",
                          source_path=str(novel_path), encoding="utf-8", folder_label="真实测试",
                          word_count=12000, chapter_count=3, status="active"))

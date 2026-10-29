@@ -46,7 +46,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
     internal fun imagePath(value:String):String {
       val path=value.trimStart('/')
       if(path.startsWith("api/")){
-        require(path.matches(Regex("api/v1/videos/[A-Za-z0-9_-]{1,128}/thumbnail"))){"不支持的缩略图接口"}
+        require(path.matches(Regex("api/v1/videos/[A-Za-z0-9_-]{1,128}/thumbnail"))||path.matches(Regex("api/v1/duplicates/preview/(video|picture)/[A-Za-z0-9_-]{1,128}(\\?v=[a-fA-F0-9]{64})?"))){"不支持的缩略图接口"}
         return path
       }
       return storagePath(value)

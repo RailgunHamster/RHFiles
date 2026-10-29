@@ -17,6 +17,7 @@
   let libraryReady=false;
   api.provideState('application',()=>({platform:mobile?'android':'windows',window:'window-rhvideo',ready:libraryReady}));
   const icons={
+    duplicates:'<rect x="3" y="3" width="13" height="13" rx="3"/><path d="M9 20h8a3 3 0 0 0 3-3V9M7 9l2 2 4-4"/>',
     gallery:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     library:'<rect x="3" y="4" width="18" height="16" rx="4"/><path d="m10 8 6 4-6 4z"/>',
     video:'<rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-3v10l-4-3"/>',

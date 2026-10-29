@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 import pathModule from 'node:path';
-export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoFolders=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview']}={}){
+export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoFolders=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview'],duplicates=null}={}){
   const favorites=new Set(),progress=[],requests=[],validTokens=new Set(['fixture-bearer-do-not-persist']);
   if(authState?.token)validTokens.add(authState.token);
   const favoriteDates=new Map();let favoriteSerial=0;
@@ -35,6 +35,7 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
       const value=await body();await beforeLogin?.(value);return loginUsers.includes(value.username)&&value.password==='fixture-only'?send(200,{access_token:authState?.token||'fixture-bearer-do-not-persist',token_type:'bearer',expires_in:authState?.expiresIn??1800}):send(401,{detail:'Wrong credentials'});
     }
     if(authState?.active===false||!req.headers.authorization?.startsWith('Bearer ')||!validTokens.has(req.headers.authorization.slice(7)))return send(401,{detail:'Unauthorized'});
+    if(duplicates&&path.startsWith('/api/v1/duplicates'))return duplicates({req,res,path,body,send,svg});
     if(path==='/api/v1/auth/refresh'){await authState?.beforeRefresh?.();const token=authState?.refreshToken||'fixture-bearer-do-not-persist';validTokens.add(token);if(authState)authState.token=token;return send(200,{access_token:token,expires_in:1800});}
     if(path==='/api/v1/auth/me'){await authState?.beforeIdentity?.();if(authState?.validationStatus)return send(authState.validationStatus,{detail:'Owned identity validation failure'});return send(200,{username:'preview',user_id:'fixture-user'});}
     if(path==='/api/v1/watch-folders'){

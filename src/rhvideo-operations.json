@@ -1,6 +1,13 @@
 {
   "version": 1,
   "operations": {
+    "duplicates.status": {"method":"GET","path":"duplicates"},
+    "duplicates.groups": {"method":"GET","path":"duplicates/groups","query":{"kind":"all|video|picture","page":"int:1:100000","limit":"int:1:12"}},
+    "duplicates.members": {"method":"GET","path":"duplicates/groups/{id}/members","params":{"id":"uuid"},"query":{"page":"int:1:100000","limit":"int:1:24"}},
+    "duplicates.scan": {"method":"POST","path":"duplicates/scans","body":{"request_id":"uuid"},"requiredBody":["request_id"],"risk":"write"},
+    "duplicates.cancel": {"method":"DELETE","path":"duplicates/scans/{id}","params":{"id":"uuid"},"risk":"write"},
+    "duplicates.confirm": {"method":"POST","path":"duplicates/reviews","body":{"request_id":"uuid","group_id":"uuid","scan_id":"uuid","keeper_key":"media-key"},"requiredBody":["request_id","group_id","scan_id","keeper_key"],"risk":"destructive","invalidatesCatalog":true},
+    "duplicates.review": {"method":"GET","path":"duplicates/reviews/{id}","params":{"id":"uuid"},"query":{"page":"int:1:100000"}},
     "exports.list": {
       "method": "GET", "path": "favorite-exports", "query": {"limit": "int:1:100"}
     },

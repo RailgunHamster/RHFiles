@@ -771,6 +771,55 @@ public class RhVideoInstrumentation extends Instrumentation {
       action("selection.clear",new JSONObject());
     }
   }
+  private void touchDuplicate(String selector)throws Exception{
+    expression(library,"(async()=>{document.querySelector("+JSONObject.quote(selector)+").scrollIntoView({block:'center'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));return true;})()");
+    require(Boolean.TRUE.equals(expression(library,"(()=>{const n=document.querySelector("+JSONObject.quote(selector)+"),r=n.getBoundingClientRect();return !n.disabled&&r.width>0&&r.height>0&&n.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()")),"Duplicate control must be a physical enabled hit target: "+selector);
+    touchStrip(selector,false);
+  }
+  private JSONObject waitDuplicate(String condition,String label,long timeout)throws Exception{
+    long end=System.currentTimeMillis()+timeout;JSONObject state=null;
+    do{JSONObject sample=(JSONObject)expression(library,"RHFilesAPI.invoke('rhvideo.duplicates.state').then(s=>({state:s,ready:"+condition+"}))");state=sample.getJSONObject("state");if(sample.getBoolean("ready"))return state;Thread.sleep(150);}while(System.currentTimeMillis()<end);
+    throw new Exception("Duplicate workflow did not settle: "+label+"; "+state);
+  }
+  private void checkActualDuplicates()throws Exception{
+    touchDuplicate("#duplicates-nav");waitDuplicate("s.supported===true","actual duplicate status",10000);
+    touchDuplicate("[data-api-action='rhvideo.duplicates.scan']");
+    JSONObject state=waitDuplicate("['completed','failed','cancelled'].includes(s.scan?.status)","real fingerprints",60000);
+    require("completed".equals(state.getJSONObject("scan").getString("status")),"Actual scan must finish: "+state);
+    state=waitDuplicate("!s.loading&&s.groups.length===2","completed scan group projection",10000);
+    require(state.getJSONObject("scan").getJSONObject("progress").getInt("done")==30&&state.getJSONArray("groups").length()==2,"Actual image/video fingerprint groups");
+    touchDuplicate("[data-duplicate-kind='video']");waitDuplicate("s.groups.length===1&&s.groups[0].media_type==='video'","video filter",10000);
+    touchDuplicate("[data-member-key='video:real-video'] [data-api-action='rhvideo.duplicates.play']");waitPlayer("real-video",true);
+    action("player.back",new JSONObject());library=waitView("RhVideoActivity");
+    touchDuplicate("[data-duplicate-kind='picture']");state=waitDuplicate("s.groups[0]?.media_type==='picture'","picture filter",10000);
+    while(state.getJSONArray("groups").getJSONObject(0).getJSONObject("members").getJSONArray("items").length()<28){
+      int count=state.getJSONArray("groups").getJSONObject(0).getJSONObject("members").getJSONArray("items").length();touchDuplicate("[data-api-action='rhvideo.duplicates.more']");
+      state=waitDuplicate("s.groups[0].members.items.length>"+count,"real member page",10000);
+    }
+    touchDuplicate("[data-member-key='picture:real-picture'] [data-api-action='rhvideo.duplicates.preview']");
+    long end=System.currentTimeMillis()+10000;while(!Boolean.TRUE.equals(expression(library,"!!document.querySelector('#wb-image-preview img')?.naturalWidth"))&&System.currentTimeMillis()<end)Thread.sleep(100);
+    require(Boolean.TRUE.equals(expression(library,"document.querySelector('#wb-image-preview img')?.naturalWidth===320")),"The actual authenticated fingerprint WebP must decode at its source thumbnail size");
+    screenshot("rhvideo-duplicate-preview-qa.png");action("panel.close",new JSONObject().put("id","wb-image-preview"));
+    touchDuplicate("[data-member-key='picture:real-picture'] [data-api-action='rhvideo.duplicates.keep']");
+    state=waitDuplicate("Object.values(s.choices).includes('picture:real-picture')","physical keeper selection",10000);
+    require(Boolean.TRUE.equals(expression(library,"!!document.querySelector('[data-member-key=\"picture:real-picture\"].is-keeper')&&document.querySelector('[data-member-key=\"picture:real-picture\"] [data-api-action=\"rhvideo.duplicates.keep\"]').textContent.includes('已选保留')")),"The selected keeper must also be visibly marked, not only saved in the model");
+    expression(library,"new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    JSONObject group=state.getJSONArray("groups").getJSONObject(0);String revision=state.getString("revision");
+    screenshot("rhvideo-duplicates-qa.png");touchDuplicate("[data-api-action='rhvideo.duplicates.confirm']");waitDuplicate("s.reviews.length===1","real review accepted",10000);
+    action("duplicates.close",new JSONObject());touchDuplicate("#duplicates-nav");
+    state=waitDuplicate("['completed','partial','failed'].includes(s.reviews[0]?.status)","durable recoverable review",45000);
+    JSONObject job=state.getJSONArray("reviews").getJSONObject(0);require("completed".equals(job.getString("status"))&&job.getInt("done")==27&&job.getInt("failed")==0,"Every actual member stages successfully: "+job);
+    JSONObject stale=new JSONObject().put("groupId",group.getString("id")).put("scanId",group.getString("scan_id")).put("keeperKey","picture:real-picture").put("expectedRevision",revision);
+    require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.duplicates.confirm',"+stale+").then(()=>false,()=>true)")),"Old snapshot never replays the destructive action");
+    JSONObject detail=(JSONObject)action("duplicates.review",new JSONObject().put("id",job.getString("id")));require(detail.getJSONArray("items").length()==25&&detail.getInt("pages")==2,"Actual per-file review first page");
+    detail=(JSONObject)action("duplicates.review",new JSONObject().put("id",job.getString("id")).put("page",2));require(detail.getJSONArray("items").length()==2,"Last review results remain reachable");
+    action("panel.close",new JSONObject().put("id","wb-duplicate-review"));
+    JSONObject trash=(JSONObject)action("remote.trash.list",new JSONObject());require(trash.getInt("retention_days")==30&&trash.getJSONArray("items").length()==27,"Actual sources are recoverable for 30 days");
+    require(((JSONObject)action("category",new JSONObject().put("kind","picture"))).getInt("total")==1,"Completed duplicate job invalidates the native picture cache");
+    JSONArray items=trash.getJSONArray("items");for(int i=0;i<items.length();i++){JSONObject item=items.getJSONObject(i);require(item.getBoolean("has_source")&&"picture".equals(item.getString("media_type")),"Trash keeps the real source");action("remote.trash.restore",new JSONObject().put("params",new JSONObject().put("kind","picture").put("id",item.getString("id"))));}
+    require(((JSONObject)action("category",new JSONObject().put("kind","picture"))).getInt("total")==28,"Restoring recovers the full native catalog");
+    require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"Every duplicate UI operation has a public API");
+  }
   private void checkFileTaskAndSort()throws Exception{
     long end=System.currentTimeMillis()+20000;
     while(System.currentTimeMillis()<end){try{if(((JSONObject)mainAction("navigation.state",new JSONObject())).optBoolean("ready"))break;}catch(Exception ignored){}Thread.sleep(150);}
@@ -829,6 +878,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
       if("rules".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");JSONObject connected=(JSONObject)action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));require(connected.getInt("total")==240,"Complete tag-fixture catalog loaded");checkTagRules();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native tag rules, actual include/OR/collapse controls, nested NOT, pinyin, bounded paging, stale-group rejection, shared filters and native Back");finish(Activity.RESULT_OK,result);return;}
+      if("duplicates".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");JSONObject connected=(JSONObject)action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));require(connected.getInt("total")==2,"Actual duplicate video catalog");checkActualDuplicates();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual duplicates, physical controls, native video, fingerprint WebP, bounded member/review pages, one-shot durable review and recoverable sources");finish(Activity.RESULT_OK,result);return;}
       if(!args.getString("mode","").startsWith("login")&&!args.getString("mode","").startsWith("exports")&&!"grid-rotation".equals(args.getString("mode"))&&!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"favorites".equals(args.getString("mode"))&&!"strip".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       if(args.getString("mode","").startsWith("login")){String mode=args.getString("mode");checkLoginContinuity(mode);result.putString("stream","PASS: native login phase "+mode);finish(Activity.RESULT_OK,result);return;}

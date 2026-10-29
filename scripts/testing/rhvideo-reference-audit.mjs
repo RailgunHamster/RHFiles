@@ -39,7 +39,7 @@ export function registrations(){
     }
     for(const [key,v] of Object.entries(node))if(!['start','end'].includes(key)){if(Array.isArray(v))v.forEach(n=>walk(n,env,prefix));else if(v&&typeof v==='object')walk(v,env,prefix);}
   }
-for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',''],['rhvideo-exports.js',''],['rhvideo-rules.js',''],['rhvideo-workbench.js',''],['rhvideo-player.js','player.'],['rhvideo-grid.js','grid.']])walk(parse(fs.readFileSync(path.join(root,'src/js',name),'utf8'),{ecmaVersion:'latest',sourceType:'script'}),{},prefix);
+for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',''],['rhvideo-exports.js',''],['rhvideo-duplicates.js',''],['rhvideo-rules.js',''],['rhvideo-workbench.js',''],['rhvideo-player.js','player.'],['rhvideo-grid.js','grid.']])walk(parse(fs.readFileSync(path.join(root,'src/js',name),'utf8'),{ecmaVersion:'latest',sourceType:'script'}),{},prefix);
   return found;
 }
 export function audit(reference){
@@ -47,7 +47,8 @@ export function audit(reference){
   const apis=registrations(),mapped=mapping.groups.flatMap(g=>g.reference),known=new Set([...mapped,...mapping.ignoredHelpers]);
   const html=fs.readFileSync(path.join(reference,'static/index.html'),'utf8'),controls=referenceControls(html);
   const contract=JSON.parse(fs.readFileSync(path.join(reference,'static/operation-contract.json'),'utf8'));
-  return {referenceCommit:mapping.referenceCommit,actualCommit:execFileSync('git',['-C',reference,'rev-parse','HEAD'],{encoding:'utf8',windowsHide:true}).trim(),sourceHash:mapping.sourceHash,referenceControls:controls.length,features:mapping.groups.length,missingControls:controls.filter(v=>!known.has(v)),staleMappings:mapped.filter(v=>!controls.includes(v)),missingAPIs:mapping.groups.flatMap(g=>g.api.filter(id=>!apis.has(id)).map(id=>({feature:g.feature,api:'rhvideo.'+id}))),unmappedModules:unmappedReferenceModules(html,contract,mapping.modules),modules:mapping.modules.map(m=>({...m,matched:fs.existsSync(path.join(reference,m.file))&&sourceHash(fs.readFileSync(path.join(reference,m.file)))===m.sha256}))};
+  const moduleFeatures=mapping.modules.filter(module=>module.api?.length),features=[...mapping.groups,...moduleFeatures];
+  return {referenceCommit:mapping.referenceCommit,actualCommit:execFileSync('git',['-C',reference,'rev-parse','HEAD'],{encoding:'utf8',windowsHide:true}).trim(),sourceHash:mapping.sourceHash,referenceControls:controls.length,features:features.length,missingControls:controls.filter(v=>!known.has(v)),staleMappings:mapped.filter(v=>!controls.includes(v)),missingAPIs:features.flatMap(g=>g.api.filter(id=>!apis.has(id)).map(id=>({feature:g.feature,api:'rhvideo.'+id}))),unmappedModules:unmappedReferenceModules(html,contract,mapping.modules),modules:mapping.modules.map(m=>({...m,matched:fs.existsSync(path.join(reference,m.file))&&sourceHash(fs.readFileSync(path.join(reference,m.file)))===m.sha256}))};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const reference=process.argv[2];if(!reference)throw Error('Usage: node scripts/testing/rhvideo-reference-audit.mjs D:/git/RHVideo');

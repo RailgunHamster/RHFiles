@@ -671,6 +671,16 @@ fn kind(args: &Value) -> Result<&str, String> {
 fn safe_image_path(path: &str) -> Result<String, String> {
     let api=path.trim_start_matches('/');
     if api.starts_with("api/") {
+        if let Some(tail)=api.strip_prefix("api/v1/duplicates/preview/") {
+            let (source,query)=tail.split_once('?').map_or((tail,None),|(path,query)|(path,Some(query)));
+            let (kind,id)=source.split_once('/').ok_or("重复项预览地址无效")?;
+            if !matches!(kind,"video"|"picture"){return Err("重复项预览类型无效".into());}
+            identifier(id)?;
+            if query.is_some_and(|query| !query.strip_prefix("v=").is_some_and(|revision|revision.len()==64&&revision.bytes().all(|byte|byte.is_ascii_hexdigit()))) {
+                return Err("重复项预览版本无效".into());
+            }
+            return Ok(api.into());
+        }
         let id=api.strip_prefix("api/v1/videos/").and_then(|p|p.strip_suffix("/thumbnail")).ok_or("不支持的缩略图接口")?;
         return Ok(format!("api/v1/videos/{}/thumbnail",identifier(id)?));
     }
@@ -2700,6 +2710,18 @@ mod tests {
     fn task_image_paths_whitelist_only_native_thumbnail_gets_and_storage() {
         assert_eq!(safe_image_path("/api/v1/videos/video_123/thumbnail").unwrap(),"api/v1/videos/video_123/thumbnail");
         for bad in ["/api/v1/auth/login","/api/v1/videos/../thumbnail","/api/v1/videos/a/thumbnail?x=1","/api/v1/videos/a%2fb/thumbnail","https://evil.invalid/a","/storage/../secret"] {
+            assert!(safe_image_path(bad).is_err(),"{bad}");
+        }
+    }
+    #[test]
+    fn duplicate_preview_images_are_fixed_gets_with_only_a_bounded_revision() {
+        let revision="ab".repeat(32);
+        for kind in ["video","picture"] {
+            let path=format!("/api/v1/duplicates/preview/{kind}/sample?v={revision}");
+            assert_eq!(safe_image_path(&path).unwrap(),path.trim_start_matches('/'));
+            assert!(safe_image_path(&format!("/api/v1/duplicates/preview/{kind}/sample")).is_ok());
+        }
+        for bad in ["/api/v1/duplicates/scans","/api/v1/duplicates/preview/novel/a","/api/v1/duplicates/preview/video/a%2fb","/api/v1/duplicates/preview/video/../a","/api/v1/duplicates/preview/video/a?v=x","/api/v1/duplicates/preview/video/a?url=https://evil.invalid"] {
             assert!(safe_image_path(bad).is_err(),"{bad}");
         }
     }

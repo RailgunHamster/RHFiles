@@ -15,7 +15,7 @@ function walk(node){
 walk(tree);
 const text=node=>source.slice(node.start,node.end);
 function context(){
-  const nodes=[],toggle={dataset:{apiAction:'rhvideo.selection.mode'},setAttribute(key,value){this[key]=value;}},bar={},state={connected:true,view:'catalog',kind:'video'},scope=vm.createContext({state,rulesEditor:null,selectionMode:false,contextualControls:[],sort:{},galleryStatus:{},button:(label,name,args)=>{const node=name==='selection.mode'?toggle:{dataset:{apiAction:'rhvideo.'+name}};Object.assign(node,{label,args});nodes.push(node);return node;},toolbar:{append(){},querySelector:()=>toggle},$:()=>bar});
+  const nodes=[],toggle={dataset:{apiAction:'rhvideo.selection.mode'},setAttribute(key,value){this[key]=value;}},bar={},state={connected:true,view:'catalog',kind:'video'},scope=vm.createContext({state,duplicates:null,rulesEditor:null,selectionMode:false,contextualControls:[],sort:{},galleryStatus:{},button:(label,name,args)=>{const node=name==='selection.mode'?toggle:{dataset:{apiAction:'rhvideo.'+name}};Object.assign(node,{label,args});nodes.push(node);return node;},toolbar:{append(){},querySelector:()=>toggle},$:()=>bar});
   assert(toolbar,'Execute the actual toolbar construction, not a duplicate policy fixture');
   for(const name of ['contextButton','syncContext'])vm.runInContext(text(functions.get(name)),scope);
   vm.runInContext(text(toolbar),scope);

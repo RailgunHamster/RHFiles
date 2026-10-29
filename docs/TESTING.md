@@ -108,3 +108,16 @@ cargo test -p rhfiles-tauri bandizip -- --ignored
 - 大型图片/视频/3D 模型解码压力、无障碍、不同 DPI/语言组合、磁盘占用取消等完整验收。
 
 后续扩展优先补这些环境下可复现的业务夹具；每个缺陷先写出会失败的场景，再修复并保留回归用例。
+
+## RHVideo 疑似重复的真实文件验收
+
+`rhvideo-duplicates.test.mjs` 验证实际 Windows 控件与受控响应；`rhvideo-duplicates-real.test.mjs` 另外启动同级 RHVideo 的真实 FastAPI／SQLite，在全新测试目录生成 28 张重复图片、两段同源视频和一部无关小说。必须检查实际扫描、原生播放、25 + 2 逐项结果分页、30 天暂存、保留源不变，以及恢复后所有原始字节一致。测试不连接现有 RHVideo 服务／数据库；缺少实际源码或 ffmpeg 时直接失败，不跳过。
+
+```powershell
+$env:RHVIDEO_SOURCE = 'D:/git/RHVideo'
+node --test --test-concurrency=1 scripts/e2e/rhvideo-duplicates.test.mjs scripts/e2e/rhvideo-duplicates-real.test.mjs
+```
+
+Android 在已压缩的 release APK 上使用同一真实服务验收，入口为 `node scripts/testing/rhvideo-android.mjs emulator-5584 <APK绝对路径> <探针APK绝对路径> duplicates`。执行前严格验证设备为 `RHFilesRhVideoQA20261027` 模拟器、每个打包 ABI 都有 RHFiles 原生库、包内共享资源与当前源码一致，以及安装后的 APK 字节；不会因为 ABI 不全而自动跳过安装前检查。QA 构建的 `-PabiList` 应与实际已完成的 Rust 架构一致；复用旧原生库的增量 QA 包不作为完整重编译的正式发布包。界面操作使用真实触摸，视频必须产生原生帧；扫描、暂存、恢复均由真实后端执行，最终校验全部恢复源文件的 SHA-256 和恰好一次提交。
+
+测试结果同时保留失败轮次。扫描结束、列表投影到达、图片解码和实际播放分别判断；不得因为“任务 completed”就假定界面和文件已经正确，也不得将本节通过扩大成全部 RHVideo 功能、无网络／硬件边界或性能等价的证明。

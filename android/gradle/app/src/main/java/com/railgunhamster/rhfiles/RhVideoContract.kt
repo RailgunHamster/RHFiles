@@ -9,6 +9,7 @@ internal class RhVideoContract(private val manifest:JSONObject) {
   private fun valid(v:Any?,rule:String):Boolean = when {
     rule=="bool" -> v is Boolean
     rule=="uuid" -> v is String && RhVideoExports.uuid(v)
+    rule=="media-key" -> v is String && v.length<=50 && v.matches(Regex("(video|picture):[A-Za-z0-9_-]+"))
     rule=="id" -> v is String && v.matches(Regex("[A-Za-z0-9_-]{1,128}"))
     rule=="task" -> v is String && v.matches(Regex("(video|run|replace):[A-Za-z0-9_-]{1,128}"))
     rule=="resolution" -> v==null || v==JSONObject.NULL || v is String && (v.isEmpty() || v.matches(Regex("[1-9][0-9]{1,3}x[1-9][0-9]{1,3}")))
@@ -29,6 +30,9 @@ internal class RhVideoContract(private val manifest:JSONObject) {
       path=path.replace("{$key}",params.getString(key))
     }
     require(!path.contains('{')&&!path.contains('}')){"缺少路径参数"}
+    spec.optJSONArray("requiredBody")?.let{required->for(index in 0 until required.length()){
+      val key=required.getString(index);require(args.optJSONObject("body")?.has(key)==true){"缺少请求参数：$key"}
+    }}
     val query=linkedMapOf<String,String>()
     for(section in listOf("query","body"))if(args.has(section)){
       val values=args.getJSONObject(section)

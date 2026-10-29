@@ -1,5 +1,5 @@
 {
-  "referenceCommit": "869d63244300222750751c1175aab4ce855302dd",
+  "referenceCommit": "11f8d0a81f540d62763f484244b6dbf91e726c22",
   "sourceHash": "sha256-utf8-lf",
   "description": "Source-to-source control inventory, not a claim that every hardware/network scenario has passed. API names are relative to rhvideo.; each runtime window separately exposes its contract.",
   "ignoredHelpers": ["if", "favEsc", "gridTagJsArg"],
@@ -38,14 +38,15 @@
     {"file":"static/config-backups.js","sha256":"0027fec342eb2d4a684ab2d004610d4be7145fb4993dd6428f684835f6473ae9","scope":"配置导出、读取备份、合并预览及显式提交，已有运行回归之外继续核对独立模块变化"},
     {"file":"static/search-client.js","sha256":"c096a7b1379a3311d209495ffe7b8cf4278dda529a58ece145638854675bfec0","scope":"异步搜索请求代次与取消，不能只核对搜索核心算法"},
     {"file":"static/search-worker.js","sha256":"2b30be628808f91f0ecbb4b73a3840083e519ffe67e2c563e2ba869d3ec32491","scope":"Worker 数据与查询入口，文件清单变化必须触发重新对齐检查"},
-    {"file":"static/index.html","sha256":"f6f9d8fa74c48e8038f634094297c34d48c53057085fdad3bda456390f402238","scope":"静态与模板生成的 click/change/input/keydown/dblclick/wheel 控件，按调用函数逐项对应"},
-    {"file":"static/settings.js","sha256":"7535fb74fb6d7cb8c464ad8164cfd7602af8dddac43292b1a75ea492e70cf65f","scope":"重启模式、安排取消、状态和权限，配置备份／合并恢复使用独立预览确认；实际流程另测"},
+    {"file":"static/index.html","sha256":"0eb40e00c693733fdae8eca79f1bf5026674b2c1e0985cc705e59ecd7794c93a","scope":"静态与模板生成的 click/change/input/keydown/dblclick/wheel 控件，含疑似重复入口／面板与关闭、账户重置；按调用函数逐项对应"},
+    {"file":"static/settings.js","sha256":"3c9d22e0b53fe00c7d5480766574d5dc784b5497971d9e4fadfac96b3e449f06","scope":"重启模式、安排取消、状态和权限，队列计数包含重复检测/复核；配置备份／合并恢复使用独立预览确认；实际流程另测"},
+    {"file":"static/duplicates.js","sha256":"3a6f09f858d2e1b40279f52e1d60b16b7ad80284b5511706fe2728cf1c677d75","feature":"疑似重复","api":["duplicates.state","duplicates.refresh","duplicates.open","duplicates.close","duplicates.filter","duplicates.page","duplicates.keep","duplicates.clear","duplicates.scan","duplicates.cancelScan","duplicates.confirm","duplicates.more","duplicates.preview","duplicates.play","duplicates.review"],"scope":"显式后台扫描、图片画面/视频首帧分组、类型/分页/更多成员、原生播放核对、保留一项及显式暂存其余项、可恢复30天、最近任务和逐项分页结果；有界只读刷新，写操作不自动重发，快照/账户/进程隔离；源码库存不替代真实端到端验收"},
     {"file":"static/task-center.js","sha256":"002ec88463b779257d32c4a5a787c35b44fdd5448760d1e9b3d0507118546c11","scope":"队列/视图/搜索/分页/详情/步骤/缩略图；依用户要求排除失败任务重试"},
     {"file":"static/favorite-exports.js","sha256":"119c96c290e52a8d59ad9df276fc0d5e7291e19519f8681806f4f0165ce343ff","scope":"全部／当前筛选喜爱、归档任务、活动任务取消、ZIP 下载；不将控制项映射当成原生选择器与后台生命周期验收"},
     {"file":"static/storage-savings.js","sha256":"a29109ca345dbc83e337ae715795467fa18032600f9876e30874b033c819b3a9","scope":"替换历史、存储节省、筛选和明细，归入存储/替换面板"},
     {"file":"static/image-preview.js","sha256":"30ef7cc29e52e5a34715ec06e9e6575261bb69a0c9457d6d04f4a6613518bfb2","scope":"各面板缩略图全屏预览、关闭及焦点返回"},
     {"file":"static/tag-filter.js","sha256":"9394151bc4c2743d960f055286e90ca078d453a0220af42c920befc71047f685","scope":"嵌套 AND/OR、排除及分组语义，共享衍生业务模型测试"},
     {"file":"static/search-core.js","sha256":"74fc781c94054e5d6a2a3287a0e8dfb07a6e8f3c6861f70b39ca285f98a5f7e0","scope":"中文/多音字/拼音/首字母搜索语义，原始词典与 Worker 测试"},
-    {"file":"static/operation-contract.json","sha256":"ff477cedbe24c95225ec519302ff0559863e858fcae7d1e1795ac684b0fb16bd","scope":"与真实 FastAPI 路由对照，不能仅凭旧契约宣称功能完成"}
+    {"file":"static/operation-contract.json","sha256":"748df7dccfa8e5526d0425f798855093445b495b30eefdb5e4bcaba110b1cd2a","scope":"与真实 FastAPI 路由对照，含七个重复检测JSON路由及鉴权WebP预览；不能仅凭契约宣称功能完成"}
   ]
 }

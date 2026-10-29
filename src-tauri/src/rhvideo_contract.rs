@@ -17,6 +17,10 @@ fn valid(value: &Value, rule: &str) -> bool {
     if rule == "uuid" {
         return value.as_str().is_some_and(super::exports::uuid);
     }
+    if rule == "media-key" {
+        return value.as_str().is_some_and(|s| s.len() <= 50 && s.split_once(':').is_some_and(|(kind,id)|
+            matches!(kind,"video"|"picture") && valid(&Value::String(id.into()),"id")));
+    }
     if rule == "id" {
         return value.as_str().is_some_and(|s| {
             !s.is_empty()
@@ -117,6 +121,12 @@ pub fn request(args: &Value) -> Result<Request, String> {
     if path.contains(['{', '}']) {
         return Err("缺少路径参数".into());
     }
+    if let Some(required)=spec["requiredBody"].as_array() {
+        for field in required {
+            let key=field.as_str().ok_or("无效的接口契约")?;
+            if args.get("body").and_then(|body|body.get(key)).is_none(){return Err(format!("缺少请求参数：{key}"));}
+        }
+    }
     let mut query = Vec::new();
     for section in ["query", "body"] {
         if let Some(value) = args.get(section) {
@@ -186,5 +196,22 @@ mod tests {
         for args in [json!({"name":"exports.get","params":{"id":"../auth/me"}}),json!({"name":"exports.get","params":{"id":"archive.zip"}}),json!({"name":"exports.list","query":{"limit":101}}),json!({"name":"exports.list","query":{"user_id":"other-owner"}}),json!({"name":"exports.create","body":{"request_id":id}})] {
             assert!(request(&args).is_err(), "{args}");
         }
+    }
+    #[test]
+    fn duplicate_reviews_require_the_snapshot_keeper_and_explicit_confirmation() {
+        let id="c8f17f3e-28c5-4fca-9fb2-204fb8713980";
+        let args=json!({"name":"duplicates.confirm","body":{"request_id":id,"group_id":id,"scan_id":id,"keeper_key":"video:sample"},"confirmation":"RHVIDEO:duplicates.confirm"});
+        let accepted=request(&args).unwrap();assert_eq!(accepted.path,"api/v1/duplicates/reviews");assert!(accepted.invalidates_catalog);
+        for key in ["request_id","group_id","scan_id","keeper_key"] {
+            let mut bad=args.clone();bad["body"].as_object_mut().unwrap().remove(key);assert!(request(&bad).is_err(),"missing {key}");
+        }
+        let mut bad=args.clone();bad.as_object_mut().unwrap().remove("confirmation");assert!(request(&bad).is_err());
+        for key in ["", "other:sample", "video:../file", "picture:bad?url", "video:a:b"] {
+            let mut bad=args.clone();bad["body"]["keeper_key"]=json!(key);assert!(request(&bad).is_err(),"{key}");
+        }
+        assert!(request(&json!({"name":"duplicates.scan"})).is_err());
+        assert!(request(&json!({"name":"duplicates.groups","query":{"kind":"novel"}})).is_err());
+        assert!(request(&json!({"name":"duplicates.members","params":{"id":id},"query":{"limit":25}})).is_err());
+        let cancel=request(&json!({"name":"duplicates.cancel","params":{"id":id}})).unwrap();assert_eq!(cancel.method,reqwest::Method::DELETE);assert!(!cancel.invalidates_catalog);
     }
 }

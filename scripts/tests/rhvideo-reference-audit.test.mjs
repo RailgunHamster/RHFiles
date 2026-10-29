@@ -5,6 +5,13 @@ test('every mapped RHVideo control points to implemented enumerable APIs, not do
   const apis=registrations(),seen=new Set();
   for(const group of mapping.groups){assert(group.api.length);assert(group.reference.length);for(const name of group.reference){assert(!seen.has(name),'Duplicate reference control '+name);seen.add(name);}for(const name of group.api)assert(apis.has(name),group.feature+': missing rhvideo.'+name);}
   assert.equal(seen.size,182);assert.equal(new Set(mapping.modules.map(module=>module.file)).size,mapping.modules.length);
+  for(const module of mapping.modules)for(const name of module.api||[])assert(apis.has(name),module.file+': missing rhvideo.'+name);
+});
+
+test('external duplicate controls are audited even though their entry reuses switchTab',()=>{
+  const module=mapping.modules.find(module=>module.file==='static/duplicates.js');assert(module?.api?.length>=15);
+  for(const operation of ['scan','cancelScan','confirm','more','preview','play','review'])assert(module.api.includes('duplicates.'+operation));
+  assert(registrations().has('duplicates.confirm'),'Inspect the real standalone controller registrations');
 });
 
 const reference=path.resolve(process.env.RHVIDEO_SOURCE||'../RHVideo');
