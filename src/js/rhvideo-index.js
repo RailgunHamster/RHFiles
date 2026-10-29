@@ -83,6 +83,7 @@
       this.indexes = new Map();
       this.orderCache = new Map();
       this.tagCache = new Map();
+      this.tagViews = new Map();
       this.tagRevision = 0;
     }
     set(kind, raw) {
@@ -99,6 +100,7 @@
       this.indexes.delete(kind);
       this.orderCache.clear();
       this.tagCache.clear();
+      this.tagViews.clear();
       this.tagRevision++;
       return { count: rows.length };
     }
@@ -123,6 +125,9 @@
       const revision=this.tagRevision,obsolete=()=>cancel()||revision!==this.tagRevision;
       if(!Array.isArray(kinds)||!kinds.length||kinds.length>4||new Set(kinds).size!==kinds.length||kinds.some(v=>!['video','picture','novel','favorite'].includes(v))||!['','video','picture','novel'].includes(mediaType)||!['count-desc','name-asc','name-desc','recent'].includes(sort)||!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||!Array.isArray(folders)||folders.some(v=>typeof v!=='string')||!Array.isArray(recent)||recent.length>30||recent.some(v=>typeof v!=='string')||typeof search!=='string'||search.length>4096)throw Error('标签清单参数无效');
       const filter=this.tags.normalize(rule),cacheKey=JSON.stringify([kinds,mediaType]),match=this.tags.compile(filter);
+      const viewKey=JSON.stringify([cacheKey,this.tags.key(filter),folders,search,sort,recent]);
+      if(obsolete())return {stale:true};
+      const previous=this.tagViews.get(viewKey);if(previous){this.tagViews.delete(viewKey);this.tagViews.set(viewKey,previous);return {...previous,rows:previous.rows.slice(offset,offset+limit),offset,limit};}
       let cached=this.tagCache.get(cacheKey);
       if(!cached){
         const counts=new Map(),catalogs=[];
@@ -144,7 +149,8 @@
       rows.sort(sort==='name-asc'?compare:sort==='name-desc'?(a,b)=>compare(b,a):sort==='recent'?(a,b)=>(order.get(a.name)??Number.MAX_SAFE_INTEGER)-(order.get(b.name)??Number.MAX_SAFE_INTEGER)||b.count-a.count||compare(a,b):(a,b)=>b.count-a.count||compare(a,b));
       const catalogs=[];for(const source of cached.catalogs){let matchingCount=0;const records=this.collections.get(source.kind)||[];for(let i=0;i<records.length;i++){const row=records[i];if((source.kind!=='favorite'||!mediaType||row.kind===mediaType)&&match(row.folder))matchingCount++;if(i%2048===2047){await new Promise(resolve=>setTimeout(resolve,0));if(obsolete())return {stale:true};}}catalogs.push({...source,matching:matchingCount});}
       if(obsolete())return {stale:true};
-      return {rows:rows.slice(offset,offset+limit),total:rows.length,available:available.size,catalogs,offset,limit};
+      const view={rows,total:rows.length,available:available.size,catalogs};if(this.tagViews.size>=2)this.tagViews.delete(this.tagViews.keys().next().value);this.tagViews.set(viewKey,view);
+      return {...view,rows:rows.slice(offset,offset+limit),offset,limit};
     }
     async search(kind, text) {
       if (!text) return null;

@@ -3,6 +3,14 @@
   'use strict';
   const sorts=['count-desc','name-asc','name-desc','recent'];
   function settings(value={}){value=value&&typeof value==='object'&&!Array.isArray(value)?value:{};return {sort:sorts.includes(value.sort)?value.sort:'count-desc',recent:Array.isArray(value.recent)?[...new Set(value.recent.filter(v=>typeof v==='string'&&v.length<=1024))].slice(0,30):[],collapsed:{all:!!value.collapsed?.all}};}
+  function viewport({total,top=0,extent=280,rowHeight=56,offset=0}){
+    if(!Number.isSafeInteger(total)||total<0||!Number.isFinite(top)||top<0||!Number.isFinite(extent)||extent<=0||extent>4096||!Number.isFinite(rowHeight)||rowHeight<=0||extent>80*rowHeight||!Number.isSafeInteger(offset)||offset<0)throw Error('标签滚动参数无效');
+    const logicalMax=Math.max(0,total*rowHeight-extent),maxTop=Math.min(8000000,logicalMax),scale=maxTop>0?logicalMax/maxTop:1;
+    top=Math.min(top,maxTop);const logicalTop=top*scale,first=Math.min(total,Math.floor(logicalTop/rowHeight)),last=Math.min(total,Math.ceil((logicalTop+extent)/rowHeight));
+    offset=Math.min(offset,Math.max(0,total-80));if(first<offset||last>offset+80)offset=Math.max(0,Math.min(Math.floor((first-8)/40)*40,total-80));
+    return {total,top,logicalTop,extent,rowHeight,first,last,offset,maxTop,scale,spacer:total?maxTop+extent:0};
+  }
+  const rowTop=(index,view)=>view.top+index*view.rowHeight-view.logicalTop;
   class Editor{
     constructor(tags){this.tags=tags;this.revision=0;this.path=[];this.rule=tags.normalize();this.signature=JSON.stringify(this.rule);}
     reset(){this.revision++;this.path=[];this.rule=this.tags.normalize();this.signature=JSON.stringify(this.rule);return this.snapshot();}
@@ -27,5 +35,5 @@
     accept(candidate){this.sync(candidate.rule);this.path=this.node(candidate.path)?[...candidate.path]:[];return this.snapshot();}
     snapshot(){return {revision:this.revision,rule:structuredClone(this.rule),path:[...this.path],expression:this.tags.describe(this.rule),active:this.tags.active(this.rule),terms:this.tags.terms(this.rule).length};}
   }
-  return {Editor,settings,sorts};
+  return {Editor,settings,sorts,viewport,rowTop};
 });

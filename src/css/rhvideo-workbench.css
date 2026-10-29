@@ -6,7 +6,7 @@
 .wb-rule-chip.exclude { color:var(--danger); background:#fff4f5; }
 #wb-rules { width:min(920px,calc(100vw - 32px)); }
 .wb-rule-editor { display:flex; flex-direction:column; gap:14px; min-width:0; }
-.wb-rule-root,.wb-rule-group-head,.wb-rule-tools,.wb-rule-pager,.wb-rule-footer,.wb-rule-saved { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.wb-rule-root,.wb-rule-group-head,.wb-rule-tools,.wb-rule-footer,.wb-rule-saved { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .wb-rule-tree { max-height:38dvh; overflow:auto; padding:2px; }
 .wb-rule-group { border:1px solid var(--line); border-radius:12px; padding:12px; margin:10px 0 0; display:flex; flex-direction:column; gap:8px; }
 .wb-rule-group.editing { border-color:var(--blue); background:var(--blue-soft); }
@@ -16,14 +16,17 @@
 .wb-rule-target,.wb-rule-hint { color:var(--muted); font-size:12px; margin:0; line-height:1.7; }
 .wb-rule-tools input { flex:1 1 220px; min-width:0; padding:10px 12px; border:1px solid var(--line); border-radius:9px; color:var(--ink); background:var(--surface,white); }
 .wb-rule-tools select { padding:10px; border:1px solid var(--line); border-radius:9px; color:var(--ink); background:var(--surface,white); }
-.wb-rule-list { max-height:36dvh; overflow:auto; display:flex; flex-direction:column; gap:6px; padding:2px; }
-.wb-rule-choice { display:flex; gap:8px; align-items:stretch; }
+.wb-rule-list-head { display:flex; flex-direction:column; gap:6px; }
+.wb-rule-list { height:min(32dvh,360px); min-height:120px; overflow-y:auto; overflow-x:hidden; position:relative; overscroll-behavior:contain; overflow-anchor:none; touch-action:pan-y; }
+.wb-rule-list[hidden] { display:none; }
+.wb-rule-list:focus-visible { outline:2px solid var(--blue); outline-offset:2px; border-radius:8px; }
+.wb-rule-spacer { position:relative; width:100%; overflow:clip; }
+.wb-rule-choice { display:flex; gap:8px; align-items:stretch; position:absolute; left:0; right:0; height:56px; padding:0 2px 6px; box-sizing:border-box; }
 .wb-rule-choice>button:first-child { flex:1; display:flex; justify-content:space-between; gap:8px; min-width:0; text-align:left; }
-.wb-rule-choice>button:first-child>span { overflow-wrap:anywhere; }
+.wb-rule-choice>button:first-child>span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wb-rule-choice small { color:var(--muted); flex-shrink:0; }
 .wb-rule-choice .active,.wb-rule-unlimited.active { color:var(--blue); background:var(--blue-soft); border-color:var(--blue); }
 .wb-rule-choice [aria-pressed=true] { color:var(--danger); border-color:var(--danger); background:#fff4f5; }
-.wb-rule-pager { justify-content:space-between; font-size:12px; color:var(--muted); }
 .wb-rule-footer { justify-content:space-between; border-top:1px solid var(--line); padding-top:12px; }
 .wb-rule-saved>span { flex:1; overflow-wrap:anywhere; }
 .wb-rule-editor details { border:1px solid var(--line); border-radius:10px; padding:10px 12px; }

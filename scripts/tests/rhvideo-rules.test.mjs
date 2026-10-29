@@ -41,6 +41,16 @@ test('tag rows are paged, ordered by name/count/recent and invalidated by change
 test('an obsolete tag scan stops without caching a partial table or suppressing the next request',async()=>{
   const c=catalog();c.set('video',Array.from({length:3000},(_,i)=>({id:'v'+i,folder_label:'目录'})));assert.equal((await c.tagQuery({kinds:['video']},()=>true)).stale,true);assert.equal(c.tagCache.size,0);const next=await c.tagQuery({kinds:['video']});assert.equal(next.rows[0].count,3000);
 });
+test('scroll-only tag windows reuse one derived result rather than rescanning every source per wheel event',async()=>{
+  const c=catalog();c.set('video',Array.from({length:5000},(_,i)=>({id:'v'+i,folder_label:'目录'+String(i).padStart(5,'0')})));let scans=0;const records=c.collections.get('video');c.collections.set('video',new Proxy(records,{get(target,key,receiver){if(/^\d+$/.test(String(key)))scans++;return Reflect.get(target,key,receiver);}}));
+  const first=await c.tagQuery({kinds:['video'],sort:'name-asc'});assert.equal(first.total,5000);assert(scans>=5000);const before=scans;for(const offset of [40,80,120,2000,4920,0]){const value=await c.tagQuery({kinds:['video'],sort:'name-asc',offset});assert.equal(value.rows[0].name,'目录'+String(offset).padStart(5,'0'));}assert.equal(scans,before,'Pure scrolling must be a cached slice, not O(source size)');
+  c.set('video',[{id:'changed',folder_label:'新内容'}]);assert.equal((await c.tagQuery({kinds:['video'],sort:'name-asc'})).rows[0].name,'新内容');
+});
+test('derived tag windows respect filters, search, sort, folders, cancellation and a two-view LRU limit',async()=>{
+  const c=catalog();c.set('video',videos);await c.tagQuery({kinds:['video']});assert.equal((await c.tagQuery({kinds:['video']},()=>true)).stale,true);assert.equal(c.tagViews.size,1);
+  assert.equal((await c.tagQuery({kinds:['video'],rule:{include:['旅行']}})).catalogs[0].matching,1);assert.equal((await c.tagQuery({kinds:['video'],rule:{include:['不存在']}})).catalogs[0].matching,0);assert.equal(c.tagViews.size,2);
+  assert.deepEqual((await c.tagQuery({kinds:['video'],search:'旅行'})).rows.map(v=>v.name),['旅行']);const empty=await c.tagQuery({kinds:['video'],folders:['空标签'],sort:'recent',recent:['空标签']});assert.equal(empty.rows[0].name,'空标签');assert.equal(c.tagViews.size,2);c.set('picture',pictures);assert.equal(c.tagViews.size,0);
+});
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html'),functions=new Map();if(fs.existsSync(reference))for(const match of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(match[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration')functions.set(node.id.name,match[1].slice(node.start,node.end));
 test('nested editor mutations are differential-tested against the actual RHVideo functions',{skip:!functions.size},()=>{
   const names=['mediaTagPath','mediaTagNode','addMediaTagGroup','removeMediaTagGroup','setMediaTagGroupMode','toggleMediaTag'],scope=vm.createContext({structuredClone,RHTagFilter:T,mediaTagFilter:T.normalize(),mediaTagGroupPath:[],gridTagRecent:[],saveGridTagPrefs(){}});scope.updateMediaTagFilter=rule=>{try{scope.mediaTagFilter=T.normalize(rule);return true;}catch{return false;}};vm.runInContext(names.map(n=>functions.get(n)).join('\n'),scope);const m=new M.Editor(T);
