@@ -29,6 +29,15 @@ fn trace_startup(started:std::time::Instant,stage:&str){
         eprintln!("RHFILES_VLC_STAGE {stage} {}",started.elapsed().as_millis());
     }
 }
+// Controlled startup comparisons only. Release playback must not inherit an
+// arbitrary environment option, and a media server cannot change this value.
+fn network_cache_ms()->u32{
+    #[cfg(debug_assertions)]
+    if let Some(value)=std::env::var_os("RHFILES_VLC_NETWORK_CACHE_MS"){
+        if let Some(value)=value.to_str().and_then(|v|v.parse::<u32>().ok()).filter(|v|(100..=10_000).contains(v)){return value;}
+    }
+    1000
+}
 fn trace_open(started:std::time::Instant,stage:&str){
     if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
         eprintln!("RHFILES_PLAY_STAGE {stage} {}",started.elapsed().as_millis());
@@ -585,7 +594,7 @@ impl Engine {
             if media.is_null() {
                 return Err("无法打开媒体流".into());
             }
-            for option in [":network-caching=1000", ":http-proxy="] {
+            for option in [format!(":network-caching={}",network_cache_ms()), ":http-proxy=".to_owned()] {
                 let option = CString::new(option).unwrap();
                 (self.api.media_option)(media, option.as_ptr());
             }

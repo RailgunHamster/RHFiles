@@ -39,7 +39,13 @@ try{
   receipt.firstFrame=await until(()=>app.evaluate('window.__firstReferenceFrame'),'reference compositor callback',15000);
   assert.equal(receipt.firstFrame.visible,'visible');assert(receipt.firstFrame.rect.width>0&&receipt.firstFrame.rect.height>0);assert.equal(receipt.firstFrame.width,receipt.source.width);assert.equal(receipt.firstFrame.height,receipt.source.height);
   await app.screenshot('reference-first-frame');assert(receipt.mediaRequests.length>0,'The actual reference reached the fixture stream');
-}catch(error){failure=error;receipt.error=String(error?.stack||error);}
+}catch(error){
+  failure=error;receipt.error=String(error?.stack||error);
+  if(app)try{
+    receipt.playbackFailure=await app.evaluate("(()=>{const v=document.querySelector('#media-content video');return v?{error:v.error?{code:v.error.code,message:v.error.message}:null,readyState:v.readyState,networkState:v.networkState,paused:v.paused,width:v.videoWidth,height:v.videoHeight,visible:document.visibilityState}:null;})()");
+    await app.screenshot('reference-failed-frame');
+  }catch(diagnosticError){receipt.failureDiagnosticError=String(diagnosticError);}
+}
 finally{
   if(app){app.close();await app.closed;fs.writeFileSync(path.join(app.artifactDir,'reference-startup-measurement.json'),JSON.stringify(receipt,null,2));}
   await fixture?.close();if(path.basename(directory).startsWith('rhfiles-reference-startup-')&&path.dirname(fs.realpathSync(directory))===fs.realpathSync(os.tmpdir()))fs.rmSync(directory,{recursive:true});

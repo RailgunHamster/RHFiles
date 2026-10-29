@@ -6,6 +6,42 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-29 已保存规则恢复、初始搜索焦点与启动性能对照（完整目标未完成）
+
+实际窗口红测 `rhvideo-rules-recovery-red.log` 复现两处行为退化：标签打开后打字没有进入搜索框；已保存的 `rule.include` 损坏后，重新连接在 `Editor.sync → updateConnection` 抛错，正常媒体也无法浏览。现按实际参考 `loadMediaTagFilter` 的兜底行为，仅在**读取已有偏好**时规范化规则，损坏时恢复全部内容并说明原因，不清空音量、排序、收藏规则等其他设置，也不修改传入对象。用户/API 主动提交的无效规则仍拒绝，不能用兜底掩盖失败。标签打开后立即聚焦搜索；编辑和滚动不反复抢焦点。旧 `rules.page` 在关闭时给出明确错误；返回有效缓存窗口不再残留其他窗口读取失败的提示。
+
+模型另和实际参考加载函数做有效／损坏偏好的差分。真实窗口用例同时检查直接输入拼音、重新连接后的全部八个真实媒体卡片、其他偏好保留、无效主动编辑不改变现有条件，以及关闭后的旧 API 错误。Android 原生探测同样加入损坏偏好重连和实际搜索焦点，不将共享 JS 单测当成 APK 验收。最终构建／运行结果在本节后续补记。
+
+源码对照门禁也发现旧问题：映射单测只检查旧清单自身，真正对当前参考运行审计仍退出失败（`rhvideo-rules-recovery-reference-inventory.log`），漏掉 `RHFavoriteExports.open` 且多个模块哈希已变。现在明确锁定实际 `869d632` 的 185 个索引页处理项（182 项业务映射、3 项帮助逻辑）和 9 个参考模块，扫描补入独立标签／导出模块；新单测必须核对当前参考提交、未映射项及模块变化。标签映射不再把 JSON 当成点选界面的替代。此门禁只是源码清单一致性，不能把原生选择器、后台下载和所有动态 JS 流程也称为已验收。
+
+提交前另核对了九个参考模块的 Git blob 与工作区字节，发现三个文件因 Windows CRLF 检出而哈希不同。门禁现明确使用 `sha256-utf8-lf`，只规范化 CRLF，仍检测实际内容变化；新增 LF／CRLF 与真实源码变动的反向用例，避免把本机原始字节哈希直接带进其他平台 CI。当前 CI 没有提供 RHVideo 源码时，相关参考用例仍会明确跳过；本机零跳过结果不能冒充 CI 已完成同样的对照。
+
+播放性能调查保留了字节一致、带 AAC 的 H.264 1080p／HEVC 4K 样本（`test-artifacts/rhvideo-startup-pair-1793251613695/`），通过实际 `native-hardware-auto` 输出与参考原页面对照。当前机器 Intel Arc B580，普通桌面没有改成 GDI、降分辨率或关闭声音。默认缓存仍为 1000 ms；新 `RHFILES_VLC_NETWORK_CACHE_MS` 只在 debug 构建接受 100–10000 ms 的有界诊断值，发行构建忽略。探测回执记录请求的诊断参数；请求参数不冒充已生效的发行配置。
+
+旧 EXE `4560245e…` 的安静 H.264 首次标记像素区间为 **2.760–3.068 s**，HEVC 为 **4.652–4.958 s**；此前带调试输出的 H.264 区间为 **3.298–3.653 s**。同字节参考 H.264 `requestVideoFrameCallback` 为 **3.339 s**，这是浏览器回调而非同一种物理首次呈现测量，不能据此宣称性能等价。参考 HEVC 未产生回调，原记录为超时；探测现补存实际媒体错误／尺寸／就绪状态和失败截图，不把它当成原版的首帧耗时。`after-stats` 仅给像素首次观察上界，不能把该时刻当成真实首次显示。
+
+300 ms 缓存试验有 HEVC 约 3.3 s 和 6.7 s 的相反结果，未采用为正式默认值。另试过向实际调用窗口发送一次性播放的最终完成事件：受控延迟响应和同票重发测试通过，但普通四轮对照仍有约 2.25 s 的页面应答，未证明稳定改善；相关桥接代码**已撤回**，不是保留一条未经证明有效的新播放路径。仍须继续定位原生首帧与页面完成延迟，不能把网络读完、控件可用或统计更新等同于画面已显示。
+
+下一项尚未验证的线索：4K 日志实际分配 48 个 DX11 surface；VLC 3 的 [解码器初始化](https://raw.githubusercontent.com/videolan/vlc/3.0.x/modules/codec/avcodec/video.c) 将帧线程数量计入额外图片缓冲，[DirectX 解码池](https://raw.githubusercontent.com/videolan/vlc/3.0.x/modules/codec/avcodec/directx_va.c) 也计入线程相关 surface。应以有界 debug 线程配置做同画质对照，并覆盖软件解码吞吐，不能仅因缓冲数下降就修改发行默认值或称根因已确认。
+
+发布前还须处理当前锁定 Tauri 2.10.3 的官方 [GHSA-w28w-mhc8-qvjv](https://github.com/tauri-apps/tauri/security/advisories/GHSA-w28w-mhc8-qvjv)（修复版至少 2.11.6），并验证 Windows／Android 原生依赖与多窗口隔离。此轮没有升级或声称该风险已修复，不发布正式包。
+
+最终 Windows EXE SHA-256 为 **`a821b4e7277b352ce3215a2cb131b76eb98c4259465047063682bc0dc4aee297`**。当前仓库的 RHVideo Windows 测试完整串行为 **96/96、零跳过**（`rhvideo-rules-recovery-windows-regression.log`），不再只跑之前的 38 项子集；新增损坏偏好重连／直接打字、两万标签连续浏览、实际单视频／连播／同屏、图片／收藏／条带、原生 CLI 关闭回执、登录恢复及真实 FastAPI／SQLite ZIP 下载均包括在内。`native-hardware-auto` 的视频专项为完整分辨率实际显示帧，H.264／HEVC 的统计首帧约 2.49／4.03 s；专项样本没有 AAC，不能与上面的带音频配对样本混用。
+
+同一最终 EXE 的带 AAC 配对补测：H.264 实际标记像素区间 **2.944–3.285 s**，参考页面回调 **1.777 s**；另一次无早期图像读回的 `after-stats` 上界为 4.184 s。两种计量仍不等同，但也没有稳定同性能的证据。参考 HEVC 仍未产生视频回调，失败诊断保存了 `readyState=4 / paused=true / videoWidth=0 / error=null` 及截图，不能虚构为明确解码器错误或可用的性能基线。日志为配对目录的 `h264-final-*`、`h264-reference-final-diagnostic.log`、`hevc-reference-final-diagnostic.log`。
+
+共享源码在 LF／CRLF 回归补齐后最终 **702/702、零跳过**（`rhvideo-rules-recovery-node-final-lf.log`），当前参考源码审计也通过。前一轮默认报告器有一次收藏夹具文件级失败（`rhvideo-rules-recovery-node-accepted.log`，700/701）；没有保留可归因的具体堆栈。该文件单跑以及两次完整 TAP 重跑（701/701、702/702）均通过，但这不是间歇失败已修复的证明，失败记录保留。Android 本轮压缩 APK 验收见下文，不能引用上一包的通过结果。
+
+Android 新共享资源构建通过，JVM **410/410、62 份 XML、零失败／错误／跳过**（短路径 QA 的 `rhvideo-rules-recovery-android-build.log`）。主 APK SHA-256 为 **`c9c418be7074aa5d43fab9f66cae075944462e7a3f6d720130c4917e0001ce4e`**，首次探测包为 `071a8f824b459d2a219484c5503788793c6862902c0edc2e179de304e16933c9`。该字节组合的标签整条回归通过（`rhvideo-rules-recovery-native-android.log`，`rhvideo-android-rules-1793255865873-release/`），包括新增损坏配置重连／保留音量／提示原因／初始搜索焦点，以及原有真实手势、规则、跨分类和 Back。实际截图已检查；手机面板仍偏长，这不代表整体布局易用性已完成。
+
+同一包的 Single 回归**失败**（`rhvideo-rules-recovery-native-android-single.log`，`rhvideo-android-single-1793255951072-release/`）：设置按钮注入点 `(876,2473)` 超出真实 `1080×2400` 屏幕，InputDispatcher 明确记录无目标窗口。失败截图已从自有模拟器补取并查看，视频仍有真实画面；不能由此推断菜单／布局没有问题。旧探测仅凭 `controls` 和 `isShown()` 判定，现增加同一 Activity／窗口、物理屏幕边界、全局裁剪、祖先透明度和连续两次稳定位置的有界等待。仍只发一次真实触摸、不重复显示／点击、不延长隐藏时间或用 `performClick()` 代替。探测同时保留通用失败截图和位置诊断，所有模式都必须验证自有 AVD 名称。**这只是修正无效输入判定与取证，不是已证明修复播放器或旧 ANR**；新探测重编译后的结果另记。
+
+第一轮几何 guard 自身又混用了根视图坐标和物理屏幕坐标（`...single-guarded.log`）：设备根视图受切口偏移 136 px，导致有效箭头被拒绝，等待期间控制条自然隐藏；该失败也保留。已将裁剪范围转换到物理屏幕，再与实际点击点比较。最终探测 APK 为 **`f053e3317f7046c4e9d73a91622d728c966940308bbcb73c94b15078cc9c6f81`**；实际下一项按钮在约 379 ms 后达到稳定可见位置并触摸成功，不是放宽屏幕边界。
+
+该最终探测的完整 Single 仍**失败**（短路径 QA 的 `rhvideo-rules-recovery-native-android-single-coordinates.log`，`rhvideo-android-single-1793257043336-release/`）：后续视频 `inputId=6` 出现 `ERROR_CODE_DECODER_INIT_FAILED`。原生日志显示 goldfish H.264 和软件 AVC 的分配调用都超时，`media.resource_manager` 的 dump 也在 10 s 超时。仍须区分模拟器系统服务异常与应用资源释放／重开问题，不能只归咎于模拟器，也没有通过重启后重跑把失败当作已修复。没有再次触摸菜单，所以旧菜单问题也不能据此宣称全部通过；串行命令已在失败处停止，后续新探测的标签场景没有执行，不冒充同一探测包的整轮通过。
+
+这些提交没有修改正式 Windows 实例或真机，没有发布正式包，完整目标仍未完成。下一轮优先处理 SDK 安全修复、保持音频／分辨率的原生启动对照（本机已确认 libVLC 3.0.23）和 Android 解码资源／菜单可用性；上述系统超时仍保留原状态供诊断。配置备份的规则入站语义校验也仍需补齐，不能把已有偏好的加载兜底说成所有损坏备份导入都已处理。
+
 ## 2026-10-29 恢复连续标签浏览与位置语义（开发分支，完整目标未完成）
 
 参考仍为实际 `869d632` 的 `renderGridTagDrawer` 和 `openGridTagDrawer`：原版连续滚动、重绘保留列表位置／标签焦点，打开时清空搜索但不主动归零滚动位置。此前新增点选功能仍用每页 80 项替代连续列表，属于操作差异。实际 Windows 红测 `rhvideo-rules-continuous-native-red.log` 在仍有翻页按钮处失败；不是仅修改说明或依据新 API 自证完成。

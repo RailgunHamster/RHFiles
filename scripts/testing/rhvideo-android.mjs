@@ -54,7 +54,7 @@ for(const relative of ['js/rhvideo-mobile.js','css/rhvideo-mobile.css']){
 }
 const run=(args)=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
 assert.equal(run(['shell','getprop','ro.kernel.qemu']).trim(),'1','Physical devices are not allowed');
-if(actualMode||rulesMode)assert(run(['emu','avd','name']).split(/\r?\n/).map(v=>v.trim()).includes('RHFilesRhVideoQA20261027'),'Only the owned RHVideo QA AVD is allowed');
+assert(run(['emu','avd','name']).split(/\r?\n/).map(v=>v.trim()).includes('RHFilesRhVideoQA20261027'),'Only the owned RHVideo QA AVD is allowed');
 const bootDeadline=Date.now()+180000;
 while(true){
   let ready=false;try{ready=run(['shell','getprop','sys.boot_completed']).trim()==='1'&&run(['shell','pm','path','android']).includes('package:');}catch{}
@@ -79,7 +79,7 @@ const failedPort=failedFixture?new URL(failedFixture.url).port:null;
 const artifact=path.resolve('test-artifacts/rhvideo-android'+(rulesMode?'-rules':actualMode?(loginMode?'-login':'-exports'):gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
 // This exact generated diagnostic belongs to the already-verified QA emulator.
 // A later failed run must never inherit an earlier run's menu screenshot.
-if(singleMode||playlistMode)run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-menu-failure-qa.png']);
+if(singleMode||playlistMode)for(const name of ['rhvideo-menu-failure-qa.png','rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
 function installExact(packageId,file){
   const expectedHash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const installedHash=()=>{const installed=run(['shell','pm','path',packageId]).trim().split(/\r?\n/);assert(installed.length===1&&/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(installed[0]),'Expected one installed universal APK for '+packageId);return run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64);};
@@ -178,5 +178,6 @@ try{
     const value=execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:16*1024*1024});fs.writeFileSync(path.join(artifact,name),value);
   }catch(error){console.error('Native diagnostics unavailable: '+name+' — '+error.message);}
   if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('Native controller menu item not available:'))try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-menu-failure-qa.png',path.join(artifact,'rhvideo-menu-failure-qa.png')]);}catch{}
+  if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('FAIL:'))for(const name of ['rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
   try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();if(actualMode){fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(artifact,'actual-service.log'));const transport=path.join(fixture.directory,'zip-transport.jsonl');if(fs.existsSync(transport))fs.copyFileSync(transport,path.join(artifact,'zip-transport.jsonl'));}fs.rmSync(temporary,{recursive:true,force:true});
 }

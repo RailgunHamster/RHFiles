@@ -371,7 +371,9 @@ public class RhVideoInstrumentation extends Instrumentation {
   }
   private void checkTagRules()throws Exception{
     long readyEnd=System.currentTimeMillis()+15000;while(!Boolean.TRUE.equals(expression(library,"RHFilesAPI.snapshot().state.application.ready"))&&System.currentTimeMillis()<readyEnd)Thread.sleep(100);require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.snapshot().state.application.ready")),"The full packaged client, not a partially registered API, must initialize");
-    JSONObject rules=(JSONObject)action("rules.open",new JSONObject());require("gallery".equals(rules.getString("source"))&&rules.getJSONObject("catalog").getJSONArray("catalogs").getJSONObject(0).getInt("total")==240,"Tag counts use 240 source videos rather than the screenshot-frame count");require(rules.getJSONObject("catalog").getJSONArray("rows").length()==80,"The actual picker bounds its tag DOM");require(Boolean.TRUE.equals(expression(library,"!document.getElementById('wb-rule-json').closest('details').open")),"JSON is optional advanced UI, not the required editing workflow");
+    expression(library,"RHVideoNative.request('preferences',{}).then(value=>RHVideoNative.request('preferences',{value:{...value,volume:31,rule:{mode:'and',include:'damaged saved list'}}}))");
+    action("connection.connect",new JSONObject().put("server",args.getString("server")).put("username","preview").put("password","fixture-only"));JSONObject recovered=(JSONObject)action("preferences.state",new JSONObject());require(recovered.getInt("volume")==31&&recovered.getJSONObject("rule").getJSONArray("include").length()==0,"A damaged saved filter cannot block the actual release APK or erase other preferences");require(Boolean.TRUE.equals(expression(library,"document.getElementById('notice').textContent.includes('保存的标签筛选无效')")),"Saved-filter recovery is explained in the actual mobile UI");
+    JSONObject rules=(JSONObject)action("rules.open",new JSONObject());require("gallery".equals(rules.getString("source"))&&rules.getJSONObject("catalog").getJSONArray("catalogs").getJSONObject(0).getInt("total")==240,"Tag counts use 240 source videos rather than the screenshot-frame count");require(rules.getJSONObject("catalog").getJSONArray("rows").length()==80,"The actual picker bounds its tag DOM");require(Boolean.TRUE.equals(expression(library,"!document.getElementById('wb-rule-json').closest('details').open")),"JSON is optional advanced UI, not the required editing workflow");require(Boolean.TRUE.equals(expression(library,"document.activeElement===document.getElementById('wb-rule-search')")),"Opening the tag editor focuses search like the reference");
     action("rules.search",new JSONObject().put("query","fengjing"));expression(library,"([...document.querySelectorAll('#wb-rules [role=checkbox]')].find(n=>n.getAttribute('aria-label')==='包含标签：风景').click(),true)");waitRuleTotal(2);
     action("rules.group.add",new JSONObject().put("path",new JSONArray()));action("rules.tag.toggle",new JSONObject().put("kind","include").put("label","城市").put("path",new JSONArray().put(0)));waitRuleTotal(1);expression(library,"(document.querySelector('#wb-rules [data-rule-control=root-or]').click(),true)");waitRuleTotal(3);action("rules.tag.toggle",new JSONObject().put("kind","exclude").put("label","旅行").put("path",new JSONArray()));waitRuleTotal(2);action("rules.save",new JSONObject().put("name","组合验证"));
     rules=(JSONObject)action("rules.state",new JSONObject());long oldRevision=rules.getLong("revision");action("rules.group.remove",new JSONObject().put("path",new JSONArray().put(0)));action("rules.group.add",new JSONObject().put("path",new JSONArray()));require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.rules.tag.toggle',{label:'旧点击',kind:'include',path:[0],expectedRevision:"+oldRevision+"}).then(()=>false,e=>/旧操作/.test(String(e)))")),"A removed/recreated group cannot accept an old rendered click");action("rules.restore",new JSONObject().put("name","组合验证"));waitRuleTotal(2);
@@ -494,10 +496,33 @@ public class RhVideoInstrumentation extends Instrumentation {
     JSONObject shown=(JSONObject)action("player.control",new JSONObject().put("command","controls.show"));
     long visibleEnd=System.currentTimeMillis()+5000;while(!shown.optBoolean("controls")&&System.currentTimeMillis()<visibleEnd){Thread.sleep(100);shown=(JSONObject)action("player.state",new JSONObject());}
     require(shown.optBoolean("controls"),"Wait for the actual controller reveal animation before touching "+resource+": "+shown);
-    long readyAt=SystemClock.uptimeMillis();int[] center={-1,-1};runOnMainSync(()->{int id=current.getResources().getIdentifier(resource,"id",getTargetContext().getPackageName());View button=current.findViewById(id);if(current.getWindow().getDecorView().hasWindowFocus()&&button!=null&&button.isShown()&&button.isEnabled()&&button.getWidth()>0){button.getLocationOnScreen(center);center[0]+=button.getWidth()/2;center[1]+=button.getHeight()/2;}});
-    require(center[0]>=0&&center[1]>=0,"Native player button must be visible and enabled: "+resource);
+    // A controller state flag / isShown() is not a screen-space hit target:
+    // Media3 can still translate a child outside the window. Do not inject
+    // there or replace a real touch with performClick(). Observe a visible,
+    // stable center once; never resend the tap or keep revealing controls.
+    long readyAt=SystemClock.uptimeMillis(),targetEnd=readyAt+5000;Activity targetActivity=current;int[] center={-1,-1},previous={-1,-1};String[] geometry={"not sampled"};int stable=0;
+    do{
+      center[0]=center[1]=-1;
+      runOnMainSync(()->{
+        if(current!=targetActivity||targetActivity==null||targetActivity.isFinishing()){geometry[0]="player Activity changed";return;}
+        View decor=targetActivity.getWindow().getDecorView();int id=targetActivity.getResources().getIdentifier(resource,"id",getTargetContext().getPackageName());View button=targetActivity.findViewById(id);
+        if(button==null){geometry[0]="button missing: "+resource;return;}
+        int[] location={0,0};button.getLocationOnScreen(location);int x=location[0]+button.getWidth()/2,y=location[1]+button.getHeight()/2;
+        android.graphics.Rect visible=new android.graphics.Rect(),window=new android.graphics.Rect();android.graphics.Point displaySize=new android.graphics.Point();if(decor.getDisplay()!=null)decor.getDisplay().getRealSize(displaySize);boolean clipped=button.getGlobalVisibleRect(visible),windowVisible=decor.getGlobalVisibleRect(window),opaque=true;StringBuilder ancestors=new StringBuilder();
+        // getGlobalVisibleRect is ROOT-view space, not physical screen space.
+        // A cutout/inset can put that root at (0,136); touch coordinates from
+        // getLocationOnScreen must be compared with translated clipped bounds.
+        int[] rootScreen={0,0};decor.getRootView().getLocationOnScreen(rootScreen);visible.offset(rootScreen[0],rootScreen[1]);window.offset(rootScreen[0],rootScreen[1]);
+        for(View node=button;node!=null;node=node.getParent() instanceof View?(View)node.getParent():null){opaque&=node.getAlpha()>=.95f;ancestors.append(node.getClass().getSimpleName()).append(" y=").append(node.getY()).append(" ty=").append(node.getTranslationY()).append(" a=").append(node.getAlpha()).append(';');}
+        geometry[0]="activity="+targetActivity.getClass().getName()+" resource="+resource+" center="+x+","+y+" visible="+visible+" window="+window+" rootScreen="+java.util.Arrays.toString(rootScreen)+" display="+displaySize+" focus="+decor.hasWindowFocus()+" shown="+button.isShown()+" ancestors="+ancestors;
+        if(decor.hasWindowFocus()&&button.isShown()&&button.isEnabled()&&button.getWidth()>0&&button.getHeight()>0&&opaque&&clipped&&windowVisible&&visible.contains(x,y)&&window.contains(x,y)&&x>=0&&y>=0&&x<displaySize.x&&y<displaySize.y&&button.getWindowToken()==decor.getWindowToken()){center[0]=x;center[1]=y;}
+      });
+      if(center[0]>=0&&center[0]==previous[0]&&center[1]==previous[1])stable++;else stable=0;
+      if(stable>=1)break;previous[0]=center[0];previous[1]=center[1];Thread.sleep(50);
+    }while(SystemClock.uptimeMillis()<targetEnd);
+    if(stable<1){step("native touch unavailable "+geometry[0]);try{screenshot("rhvideo-native-touch-failure-qa.png");}catch(Exception ignored){}throw new Exception("Native player button has no stable visible hit target: "+geometry[0]);}
     long now=SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,center[0],center[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,center[0],center[1],0);
-    step("native touch "+resource+" center="+center[0]+","+center[1]+" readyToDownMs="+(now-readyAt));
+    step("native touch "+resource+" center="+center[0]+","+center[1]+" readyToDownMs="+(now-readyAt)+" "+geometry[0]);
     try{sendPointerSync(down);sendPointerSync(up);}finally{down.recycle();up.recycle();}
   }
   private void clickPlayerText(String... labels)throws Exception{
