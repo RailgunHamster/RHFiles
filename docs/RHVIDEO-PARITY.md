@@ -22,6 +22,12 @@
 
 核对旧 QA 实例实际启动命令，含 `-no-audio`，且仍在运行。为排除测试环境干扰，未重启或重置它。SDK 的只读多实例启动被当前版本拒绝，进程已退出、日志保留；随后单独创建 **RHFilesRhVideoQA20261030Audio／emulator-5586**，同为 Android 14／Pixel 7／软件 GPU／6 核／6144 MiB，保留正常音频，首次启动还在等待。旧 **emulator-5584** 未动。宿主只放行这两个明确自有 AVD 名称，物理设备仍被拒绝；另重编译默认水位 **0** 的对照包，不把 20 ms 实验默认化。此阶段新实例尚无播放验证，不能宣称新环境或产品旋转修改已修好；新一轮结果另记。
 
+默认水位包随后 **6 分 29 秒构建成功，433/433 JVM、零失败／错误／跳过**（`rhvideo-grid-inplace-default-build.log`），主包 SHA-256 `69295a1f6707a7c2119924f3254ae23590981a9fb946ec8880c450e1f854748c`，探针 `29c6e6eb59fd9c8a6682dc84775cf04ac0b0f10ce4e8fecf33a80e60e92a0cbf`。实际 BuildConfig 为 **0**，R8 usage 显示实验 provider／companion／API outline 已移除。`apksigner verify --verbose` 成功，v2 签名有效、一名签名者。新增精确 AVD 白名单 guard 后，共享测试 **847/847、零跳过**（`rhvideo-grid-inplace-final-node.log`）；代码提交 `6c5de98` 已推送两端开发分支。
+
+新 AVD 保留了默认系统安全设置，没有禁用任何签名／完整性检查。启动完成后，第一轮 **安装阶段失败**（`rhvideo-grid-inplace-default-audio-fresh-grid.log`，`rhvideo-android-grid-1793307829288-release`）：PackageManager 返回 `INSTALL_FAILED_VERIFICATION_FAILURE: Integrity verification timed out`，未创建 RHFiles 进程。确认启动动画停止、GMS 进程已启动、签名有效，且 `pm path` 仍没有 RHFiles 后，新一轮在 **安装前环境 gate** 即失败（`rhvideo-grid-inplace-default-audio-settled-grid.log`）：窗口系统明确存在 **`Application Not Responding: com.android.systemui`**；当时 RHFiles 仍未安装。新实例的 media.resource_manager 能正常读出，但不代表绘制环境已健康。没有关闭／忽略该 ANR、改安全设置、放宽 gate 或再次盲目安装。
+
+因此这轮**未验证到修改后的真实旋转／后台恢复，持续播放问题也未修复**。不能将编译／单测／环境隔离进展说成产品原生验收通过；必须在健康的自有 QA 环境补上完整默认水位 grid、真实横竖截图和独立 lifecycle，并继续核验 Windows 同质量性能等原定缺口。新旧 AVD 均保留现场，没有重启／重置任何现有模拟器、操作真机或替换正式实例；未发布新包。
+
 ## 2026-10-30 同屏停滞的逐输入和现场音频证据（未修复、未发包）
 
 给每次原生解码器 incarnation 增加独立、定长、可关闭的诊断：实际 H.264／AAC 解码器名、生产者初始化时间与主线程收到回调的时间、真实 Media3 counters、传输字节／首末字节时间、音频会话 ID、underrun 和读取错误数。只有 debug 或显式启用原生自动化时采集；不记录地址、令牌、文件名、异常正文或事件队列，不改变播放／重试策略。缺失阶段返回 null，`droppedTotal` 按 [Media3 DecoderCounters](https://developer.android.com/reference/androidx/media3/exoplayer/DecoderCounters#droppedBufferCount) 表示输入与输出丢帧总计，不误称只有输出。
