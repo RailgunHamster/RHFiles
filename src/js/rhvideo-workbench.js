@@ -4406,6 +4406,7 @@
         actions(root,task,kind){if(task.can_prioritize===true&&task.status==='pending')root.append(taskPriorityButton(task,kind));if(kind==='replacement'&&['pending','running'].includes(task.status)&&typeof task.batch_id==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(task.batch_id))root.append(button('停止此批次剩余任务','remote.batches.stop',{params:{id:task.batch_id},expectedGeneration:state.generation}));}
       });
       taskCenter=RHVideoTaskCenter.install({el,button,select,listen,action,object,invoke,notice,remote,presentation:taskPresentation,P:RHVideoTaskPresentation,thumbnail:paintTaskThumbnail,priorityMessage:taskPriorityMessage,priorityButton:taskPriorityButton,detailFooter:taskDetailFooter,hasLiveWork,changed:syncTaskPriorityUI,
+        refreshed:()=>liveRefresh.configure(true,true),
         identity:()=>epoch+':'+state.generation+':'+server.session,opened:()=>!!$('wb-server')?.open&&['tasks','replacement'].includes(server.page),page:value=>{server.pageNumber=value;}
       });
       rulesEditor=RHVideoRules.install({action,object,button,el,input,field,select,listen,invoke,toolbar,dialog,config,identity:ruleIdentity,revision:()=>catalogRevision,ready:ensure,connected:()=>state.connected,source:()=>state.view==='gallery'?'gallery':state.kind,catalog:tagCatalog,publish:publishRule,

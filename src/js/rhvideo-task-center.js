@@ -64,10 +64,10 @@
       if(focusId&&focusAction)for(const row of nodes.list.querySelectorAll('[data-task-id]'))if(row.dataset.taskId===focusId){row.querySelector('[data-api-action="'+focusAction+'"]')?.focus({preventScroll:true});break;}
     }
     function detailProblem(failure){detailError=String(failure.message||failure);let node=nodes.detail.querySelector('.rv-task-read-error');if(!node){node=el('p',undefined,'rv-task-read-error wb-error');node.setAttribute('role','alert');nodes.detail.prepend(node);}node.textContent='读取任务失败：'+detailError;ctx.presentation.connection(detailError);}
-    async function readDetail(){
+    async function readDetail(manual=false){
       if(!current()||!selected)return null;const ticket=++detailTicket,version=generation,key=contextKey(config),id=selected,kind=config.queue;detailLoading=true;nodes.detail.setAttribute('aria-busy','true');
       const valid=()=>current()&&version===generation&&ticket===detailTicket&&key===contextKey(config)&&id===selected;
-      try{const value=await ctx.remote('tasks.detail',{params:{queue:kind,entry:id}});if(!valid())return {stale:true};if(value?.id!==id)throw Error('任务详情回执与所选任务不一致');ctx.presentation.paint(nodes.detail,value,kind);detail=value;detailError='';ctx.detailFooter(nodes.detail,kind,id,'task.refreshSelection');return value;}
+      try{const value=await ctx.remote('tasks.detail',{params:{queue:kind,entry:id}});if(!valid())return {stale:true};if(value?.id!==id)throw Error('任务详情回执与所选任务不一致');ctx.presentation.paint(nodes.detail,value,kind);detail=value;detailError='';ctx.detailFooter(nodes.detail,kind,id,'task.refreshSelection');if(manual)ctx.refreshed?.();return value;}
       catch(failure){if(!valid())return {stale:true};detailProblem(failure);throw failure;}
       finally{if(valid()){detailLoading=false;nodes.detail.setAttribute('aria-busy','false');}}
     }
@@ -91,7 +91,7 @@
     }
     action('task.centerState',object(),snapshot,'read');
     action('task.select',object({kind:{type:'string',enum:['default','replacement']},id:{type:'string',minLength:1,maxLength:160}},['kind','id']),({kind,id})=>selectTask(kind,id,true),'read');
-    action('task.refreshSelection',object(),()=>readDetail(),'read');
+    action('task.refreshSelection',object(),()=>readDetail(true),'read');
     listen(document,'visibilitychange',()=>{if(document.hidden){clearTimeout(searchTimer);searchTimer=null;}else if(current()&&nodes.search.value.trim()!==config.q){clearTimeout(searchTimer);const version=generation;searchTimer=setTimeout(()=>{searchTimer=null;if(version===generation&&current()&&!document.hidden)void ctx.invoke('server.filter',{key:'q',value:nodes.search.value.trim()}).catch(ctx.notice);},250);}},'tasks.visibility');
     return {render,closed,reset:closed,state:snapshot,retainSelection(kind,id){if(current()&&config.queue===kind&&selected===id)promotionSelection={id,identity:config.identity,key:contextKey({...config,pageNumber:1})};}};
   }

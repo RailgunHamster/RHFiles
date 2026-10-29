@@ -846,6 +846,14 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.server.filter',{key:'status',value:'skipped'}).then(()=>false,()=>true)")),"Invalid default history filters are rejected by the public API");
     action("server.filter",new JSONObject().put("key","queue").put("value","replacement"));action("server.filter",new JSONObject().put("key","view").put("value","failed"));value=waitTaskCenter("replace:1");require(value.getJSONObject("detail").getString("statusLabel").equals("失败"),"Replacement failure details remain reachable");
     action("server.filter",new JSONObject().put("key","queue").put("value","default"));waitTaskCenter("video:metrics");
+    Bundle signal=new Bundle();signal.putString("stream","QA: task-recovery-arm\n");sendStatus(0,signal);
+    long end=System.currentTimeMillis()+45000;JSONObject refresh=null;
+    do{refresh=(JSONObject)action("server.refreshState",new JSONObject());if(refresh.optInt("failures")==3&&!refresh.optBoolean("running")&&!refresh.optBoolean("scheduled"))break;Thread.sleep(250);}while(System.currentTimeMillis()<end);
+    require(refresh!=null&&refresh.optInt("failures")==3&&!refresh.optBoolean("scheduled"),"Actual automatic failures must reach the bounded stop: "+refresh);
+    touchDuplicate(".rv-task-inline-detail [data-api-action='rhvideo.task.refreshSelection']");end=System.currentTimeMillis()+15000;
+    do{refresh=(JSONObject)action("server.refreshState",new JSONObject());if(refresh.optInt("failures")==0&&refresh.optString("error").isEmpty()&&refresh.optBoolean("enabled")&&refresh.optBoolean("scheduled"))break;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    require(refresh!=null&&refresh.optInt("failures")==0&&refresh.optBoolean("scheduled"),"The physical detail refresh resumes automatic reads: "+refresh);
+    end=System.currentTimeMillis()+10000;do{value=(JSONObject)action("task.centerState",new JSONObject());if(value.optString("error").isEmpty())break;Thread.sleep(100);}while(System.currentTimeMillis()<end);require(value.optString("error").isEmpty(),"An actual subsequent list read clears the prior read error");
     require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"Every task center UI action has a public API");
     require(Boolean.TRUE.equals(expression(library,"![...document.querySelectorAll('.rv-task-center button')].some(n=>/重试|取消任务/.test(n.textContent))")),"Task inspection does not add failed-task retry/cancel buttons");
     expression(library,"(()=>{document.querySelector('.rv-task-inline-detail').scrollTop=0;document.getElementById('wb-server').scrollTop=0;return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()");screenshot("rhvideo-task-center-qa.png");

@@ -24,8 +24,9 @@ const exportsMode=process.argv[5]==='exports';
 const duplicatesMode=process.argv[5]==='duplicates';
 const priorityMode=process.argv[5]==='task-priority';
 const taskCenterMode=process.argv[5]==='task-center';
+const taskController=taskFixture();
 const loginMode=process.argv[5]==='login',actualMode=exportsMode||loginMode||duplicatesMode||priorityMode;
-const rhvideoFixture=options=>actualMode?realRhVideoService({directory:path.join(temporary,'actual-rhvideo'),video:options.videoFile,duplicateCopies:duplicatesMode?27:0,taskQueue:priorityMode}):contractFixture({...options,...(taskCenterMode?{tasks:taskFixture()}:{}),...(rulesMode?{videoCount:240,videoFolders:Array.from({length:240},(_,i)=>i===0?'风景,旅行':i===1?'风景,城市':i===2?'城市':'目录'+String(i).padStart(3,'0'))}:{})});
+const rhvideoFixture=options=>actualMode?realRhVideoService({directory:path.join(temporary,'actual-rhvideo'),video:options.videoFile,duplicateCopies:duplicatesMode?27:0,taskQueue:priorityMode}):contractFixture({...options,...(taskCenterMode?{tasks:taskController}:{}),...(rulesMode?{videoCount:240,videoFolders:Array.from({length:240},(_,i)=>i===0?'风景,旅行':i===1?'风景,城市':i===2?'城市':'目录'+String(i).padStart(3,'0'))}:{})});
 const mediaMode=gridMode||playlistMode||previewMode||singleMode||rotationMode||favoritesMode||stripMode;
 function verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode=false}){
   if(actualMode)return;
@@ -119,7 +120,7 @@ try{
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
   const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
-  let output='';child.stdout.on('data',data=>{output+=data;process.stdout.write(data);});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
+  let output='',armedTaskFailures=false;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
   // not slower individual frame/seek waits (those stay unchanged in the probe).
@@ -176,6 +177,7 @@ try{
   if(!rulesMode)
   for(const name of taskCenterMode?['rhvideo-task-center-qa.png']:priorityMode?['rhvideo-task-priority-qa.png']:duplicatesMode?['rhvideo-duplicates-qa.png','rhvideo-duplicate-preview-qa.png']:loginMode?['rhvideo-login-connected-qa.png','rhvideo-login-restored-qa.png','rhvideo-login-signedout-qa.png']:exportsMode?['rhvideo-export-qa.png','rhvideo-export-recovery-qa.png']:gridRotationMode?['rhvideo-grid-rotation-qa.png']:gridRestoreMode?['rhvideo-grid-restore-qa.png']:gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png','rhvideo-grid-favorite-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:previewMode?['rhvideo-parent-qa.png','rhvideo-preview-result-qa.png','rhvideo-favorite-error-qa.png']:singleMode?['rhvideo-single-qa.png','rhvideo-image-content-qa.png','rhvideo-favorite-slideshow-qa.png']:favoritesMode?['rhvideo-favorite-picture-qa.png','rhvideo-favorite-video-qa.png']:stripMode?['rhvideo-strip-picture-qa.png','rhvideo-strip-rows-qa.png']:ticketsMode?[]:rotationMode?['rhvideo-rotation-on-qa.png','rhvideo-rotation-off-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
   verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode});
+  if(taskCenterMode){const recovery=taskController.recoveryState();assert.equal(recovery.failureCount,3,'Three real automatic HTTP failures exhaust the budget');assert(recovery.manualRecovered&&!recovery.armed&&recovery.recoveryLists>0,'An actual detail read and a later automatic list read recover, not just a local status reset');fs.writeFileSync(path.join(artifact,'read-recovery.json'),JSON.stringify(recovery,null,2));}
   if(stripMode){assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path.startsWith('/api/v1/favorites/picture/')).length,1,'One actual strip star -> one write');assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path.startsWith('/api/v1/trash/picture/')).length,1,'Closing another strip cannot replay a staged source');}
   if(previewMode){
     for(const id of ['video-0','video-2'])assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/'+id).length,1,'Closing another preview cannot replay '+id);
