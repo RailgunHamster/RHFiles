@@ -14,11 +14,23 @@
 
 Windows 原锁定 2.10.3、Android 原锁定 2.11.5 都在官方 [GHSA-w28w-mhc8-qvjv](https://github.com/tauri-apps/tauri/security/advisories/GHSA-w28w-mhc8-qvjv) 范围内。两端及 Android 测试 SDK 现统一精确锁定 **Tauri 2.11.6**，配套 runtime/runtime-wry 为 2.11.3／2.11.4，utils 为 2.9.3，保留现有 WebView2 COM 接口版本。新增版本下限／锁文件／两端一致性门禁。实际 SDK 的 channel 队列按 WebView 隔离，并在读取／销毁时使用窗口身份；没有修改应用自己的 IPC 传输实现。尝试在本工作区直接运行外部 tauri 的单测未成功（`rhvideo-sdk-upstream-channel-tests.log`），不能声称已运行上游隔离测试或完成全部安全证明。Windows 应用自己的 RHVideo Rust 测试 **38/38** 通过；完整多窗口回归结果另记。
 
+该新 SDK Windows EXE 的全部 RHVideo 窗口回归随后完整串行通过 **96/96、零跳过**，耗时约 22 分钟（`rhvideo-sdk-windows-regression.log`）。实际默认硬件输出、原生 CLI 关闭回执、窗口物理输入、暂停旋转、连播／同屏、图片／标签和真实服务写入／ZIP 都包含在内；原生专项 H.264／HEVC 统计首帧约 **3.40／5.23 s**，并非启动性能已达标。本轮最初与 Android 交叉构建有重叠，不能把总耗时当成独占性能基准；上述独立首帧对照未与构建重叠。Android 宿主 Rust／IPC／启动测试另为 **45+8+3=56 项**，全部通过（短路径 QA 的 `rhvideo-sdk-android-rust-tests.log`），不冒充真机或 Media3 运行验收。
+
 Android 通过正常 Tauri Android 构建重新生成 2.11.6 的 Gradle 依赖及 **ARM64、x86_64** 原生库，不是只替换共享 JS 后沿用旧内核。原生构建日志为短路径 QA 的 `rhvideo-sdk-android-native-build.log`；后续 JVM／探测构建 `rhvideo-sdk-android-jvm-probe-build.log` 成功，新生成的 62 份 XML 共 **410/410、零失败／错误／跳过**。主 APK SHA-256 为 `d1acf6a9829738805459541066d26a53184dac94c6891abe9a849abd346c6657`，探测仍为 `f053e3317f7046c4e9d73a91622d728c966940308bbcb73c94b15078cc9c6f81`。此字节组合已在同一自有模拟器通过标签整条场景（`rhvideo-sdk-native-android-rules.log`），包含损坏已保存偏好重连、搜索焦点和连续触摸浏览；不是新的播放器通过结果，也未安装到真机或正式发布。
+
+等 Windows 解码回归结束、所有构建停止后，此相同 APK／探测组合的 **Single 整条也通过**（`rhvideo-sdk-native-android-single.log`，`rhvideo-android-single-1793261846426-release/`）。包括真实带音轨视频、内容探测图片、实际原生菜单、单项父层／不同子身份返回、普通视频控制记忆与独立连播／账户、过滤后的收藏放映。设置按钮实际触摸点 `(876,2321)` 在 `1080×2400` 屏幕内，使用既有稳定几何 guard，没有重复点击或改 hide timeout。这轮运行前后 `media.resource_manager` 都在 5 s 预算内返回（`rhvideo-sdk-single-{before,after}-media-resources.txt`）；没有重启／重置模拟器，也没有修改播放器 Kotlin 来掩盖旧分配失败。此前超时尚未定位，**这一次通过不证明间歇故障已经修复**。
+
+新 Single 的三张实际截图已查看。视频／图片确有像素，收藏放映工具条仍密集；倍速截图在刚点击 1.25 后仍拍到了待消失的菜单和旧 1.5 勾选，而随后不同入口重开读取到的记忆值已是 1.25。当前探测尚不能据此声明菜单的稳定视觉状态已验收，需补实际设置落地／弹窗消失的有界观测，不能拿瞬时截图或后来的 API 值互相替代。该模拟器英文系统下 Media3 还显示 `Normal`，也不是中文界面已完整汉化的证明。
 
 保持同一带 AAC 样本、分辨率、默认缓存和硬件输出，增加仅 debug 生效的 `RHFILES_VLC_DECODE_THREADS`（1–32）诊断参数；探测回执记录“请求的参数”，不把它冒充引擎实际选择。六轮安静串行对照的 H.264 像素区间分别为 auto **3.466–3.815 s**／1 线程 **2.902–3.320 s**／2 线程 **3.677–4.043 s**，HEVC 分别为 **5.797–6.115 s**／**3.958–4.361 s**／**5.230–5.634 s**。后续带日志的反向对照中，1 线程 HEVC 反而为 **5.917–6.274 s**、auto 为 **5.149–5.592 s**。日志确认池从 48 降至 30 个 surface，但没有稳定更快的证据；发行默认线程／缓存／画质／声音均不改变。新 SDK 后仍有约 2.3 s 的页面应答，因此也不能将 SDK 升级说成启动卡顿已修复。所有日志位于已有配对目录的 `*-sdk2116-*`／`hevc-sdk2116-*-verbose.log`，debug EXE 哈希同上；详细日志的主机接收时刻不能当成每行的 VLC 生产时刻。
 
 另外确认 Windows 发包脚本尚未附带 libVLC，现有检测会使用系统 VLC 或程序旁 `vlc/`。当前装有 VLC 3.0.23 的机器通过，不代表全新电脑也能播放；这是正式发布前必须补上的分发验收缺口。已核对 [VideoLAN 官方 3.0.24 发布目录](https://download.videolan.org/pub/videolan/vlc/3.0.24/) 和其非 GPL 的 `VideoLAN.LibVLC.Windows` NuGet 分包方式，不能直接把带 GPL 插件的完整 VLC 播放器复制进来。3.0.24 官方 NuGet 已下载到隔离的 `temp/vlc-3.0.24-inspection/`，SHA-256 `3da3f37ee2b2b10e5c788d830a3b513658c36521ea1b0f966ed86eb69f41ef3c`，`dotnet nuget verify --all` 成功（`rhvideo-libvlc-nuget-verify.log`）；尚未纳入发包或运行验收，未替换系统 VLC 或正在测试的播放内核。后续需保留许可证／源代码获取说明，在屏蔽系统 VLC 回退的隔离副本上验证真实视频／音轨／旋转／同屏及完整包。
+
+后续只在 `test-artifacts/rhvideo-libvlc324-owned-app/` 复制同一 EXE 与 NuGet 的 `build/x64` 非 GPL 运行库，未修改 `target/debug` 或正式实例。最初屏蔽系统回退时临时重定向了子进程的 ProgramFiles／ProgramW6432：安静 H.264 超时且无媒体请求，下一次 verbose 出现真实像素但初始化达 6754 ms、像素区间 9.887–10.228 s（`h264-1080-libvlc324-private-no-system.log`、`h264-libvlc324-private-initialization-verbose.log`）。日志明确缺少 `plugins/plugins.dat` 并扫描 433 个模块，但环境改动和首次加载也有影响，不能把这两次直接当成无干扰的性能基准或正式包通过。
+
+用官方匹配版本的 cachegen **仅在构建阶段**生成索引：官方 3.0.24 win64 7z SHA-256 `1ed59c09152e78aff84663fa76efab26057716576db74332858810e5ef54ae1f` 与发布校验文件一致；从中取 GPL 的 `vlc-cache-gen.exe` 放在隔离 `temp/.../cachegen-tools/`，配 NuGet 的两个 DLL，不放进应用运行目录。隔离 APPDATA 下生成耗时 630 ms，缓存 260709 字节。后续不再重定向 ProgramFiles，日志确认使用程序旁的 **3.0.24**、接受该索引，实例初始化降至 **46 ms**，AAC 使用 avcodec。这是新的分发构建线索，不是给应用增加每次启动扫描／后台播放。
+
+该带索引私有副本的安静 H.264 首次取图已可见，只有 **[0,2.448 s] 上界**（观察器 2.344 s 才就绪），不能写成准确首帧；HEVC 像素区间 **3.173–3.548 s**。verbose H.264 为 **2.359–2.695 s**。日志为配对目录的 `*-libvlc324-cached-private*`，相同带 AAC 源字节／分辨率、默认线程和缓存、实际硬件输出；没有与其他 GUI 解码或构建并行。需要继续同条件重复、ZIP 解压后的索引有效性、真实音轨／旋转／同屏和全部功能回归。**上面的 96/96 使用系统 3.0.23，不能冒充此 3.0.24 副本已通过整轮**；正式 prepare／stage／许可证及来源说明尚未实现，完整目标仍未完成，没有发布新包。
 
 ## 2026-10-29 已保存规则恢复、初始搜索焦点与启动性能对照（完整目标未完成）
 
