@@ -39,12 +39,17 @@ function Get-RHFilesLibVlcInventory([string]$Directory) {
     # the admitted bundle. A poisoned manifest cannot make us read its paths.
     $pending = [Collections.Generic.Stack[string]]::new()
     $pending.Push($root.FullName)
+    $prefix = $root.FullName.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     $entries = [Collections.Generic.List[object]]::new()
     while ($pending.Count) {
         foreach ($item in Get-ChildItem -LiteralPath $pending.Pop() -Force) {
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'libVLC bundle contains a link' }
             if ($item.PSIsContainer) { $pending.Push($item.FullName); continue }
-            $relative = [IO.Path]::GetRelativePath($root.FullName, $item.FullName).Replace('\', '/')
+            # Windows' built-in PowerShell 5.1 uses .NET Framework, which has
+            # neither Path.GetRelativePath nor Dictionary.TryAdd. All entries
+            # came from the checked traversal; keep literal Unicode/#/% names.
+            if (-not $item.FullName.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'libVLC inventory path escaped its root' }
+            $relative = $item.FullName.Substring($prefix.Length).Replace('\', '/')
             if ($relative -eq 'RHFiles-libVLC.json') { continue }
             $entries.Add([pscustomobject]@{
                 path = $relative
@@ -87,7 +92,8 @@ function Assert-RHFilesLibVlcInventory([string]$Directory, $Document, [ValidateS
         if ($entry.path -isnot [string] -or $entry.path -match '(^/|\\|:|(^|/)(\.|\.\.)($|/)|//)' -or
             [string]::IsNullOrEmpty($entry.path) -or $entry.path.EndsWith('/') -or
             $entry.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $entry.bytes -lt 0 -or
-            -not $expected.TryAdd($entry.path, $entry)) { throw 'libVLC manifest has an invalid/duplicate path or digest' }
+            $expected.ContainsKey($entry.path)) { throw 'libVLC manifest has an invalid/duplicate path or digest' }
+        $expected.Add($entry.path, $entry)
     }
     foreach ($entry in $actual) {
         if (-not $expected.ContainsKey($entry.path)) { throw 'libVLC inventory file set mismatch' }

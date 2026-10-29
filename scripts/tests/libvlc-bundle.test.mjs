@@ -8,8 +8,12 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {root} from '../testing/source.mjs';
 const windows={skip:process.platform!=='win32'?'Windows packaging policy':false};
-function run(code,values={}){
- const result=spawnSync('pwsh',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop';. $env:RHFILES_VLC_POLICY;$case=$env:RHFILES_VLC_CASE|ConvertFrom-Json;"+code],{encoding:'utf8',timeout:20000,env:{...process.env,RHFILES_VLC_POLICY:path.join(root,'scripts/libvlc-bundle.ps1'),RHFILES_VLC_CASE:JSON.stringify(values)}});
+function run(code,values={},shell='pwsh'){
+ const env={...process.env,RHFILES_VLC_POLICY:path.join(root,'scripts/libvlc-bundle.ps1'),RHFILES_VLC_CASE:JSON.stringify(values)};
+ // A pwsh parent can otherwise hand Windows PowerShell only its own v7
+ // module directories, hiding even the legacy built-in Get-FileHash cmdlet.
+ if(shell==='powershell')for(const key of Object.keys(env))if(key.toLowerCase()==='psmodulepath')delete env[key];
+ const result=spawnSync(shell,['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);. $env:RHFILES_VLC_POLICY;$case=$env:RHFILES_VLC_CASE|ConvertFrom-Json;"+code],{encoding:'utf8',timeout:20000,env});
  if(result.error)throw result.error;return result;
 }
 function fixture(){
@@ -21,10 +25,19 @@ function fixture(){
 test('the libVLC manifest inventories exact bytes and paths without absolute build-machine paths',windows,()=>{
  const directory=fixture();try{const r=run('$doc=New-RHFilesLibVlcDocument $case.directory;Assert-RHFilesLibVlcInventory $case.directory $doc;$doc|ConvertTo-Json -Depth 8 -Compress',{directory});assert.equal(r.status,0,r.stderr);const doc=JSON.parse(r.stdout);assert.equal(doc.runtimeVersion,'3.0.24');assert.equal(doc.architecture,'win-x64');assert.deepEqual(doc.files.map(v=>v.path).sort(),['libvlc.dll','plugins/codec/fixture.dll']);assert(!r.stdout.includes(directory));assert(doc.files.every(v=>v.bytes>0&&/^[a-f0-9]{64}$/.test(v.sha256)));}finally{fs.rmSync(directory,{recursive:true});}
 });
+test('Windows PowerShell 5.1 validates exact bundle inventory and still rejects duplicate manifest entries',windows,()=>{
+ const directory=fixture();try{
+  fs.writeFileSync(path.join(directory,'空 格#100%.txt'),'preserve the literal filename');
+  const r=run('$doc=New-RHFilesLibVlcDocument $case.directory;Assert-RHFilesLibVlcInventory $case.directory $doc;$doc|ConvertTo-Json -Depth 8 -Compress',{directory},'powershell');
+  assert.equal(r.status,0,r.stderr);assert(JSON.parse(r.stdout).files.some(v=>v.path==='空 格#100%.txt'));
+  const duplicate=run('$doc=New-RHFilesLibVlcDocument $case.directory;$doc.files[1]=$doc.files[0];Assert-RHFilesLibVlcInventory $case.directory $doc',{directory},'powershell');
+  assert.notEqual(duplicate.status,0);assert.match(duplicate.stderr,/invalid\/duplicate path/);
+ }finally{fs.rmSync(directory,{recursive:true});}
+});
 for(const mutation of ['format','version','architecture','index','source','duplicate','escape','tamper','extra','timestamp'])test('bundle adoption rejects '+mutation,windows,()=>{
  const directory=fixture();try{const r=run(`$doc=New-RHFilesLibVlcDocument $case.directory;switch($case.mutation){
  'format'{$doc.format='other'} 'version'{$doc.runtimeVersion='3.0.23'} 'architecture'{$doc.architecture='win-x86'} 'index'{$doc.pluginIndexMode='scan'} 'source'{$doc.packageSha256='0'*64}
- 'duplicate'{$doc.files+=@($doc.files[0])} 'escape'{$doc.files[0].path='../outside.dll'}
+ 'duplicate'{$doc.files[1]=$doc.files[0]} 'escape'{$doc.files[0].path='../outside.dll'}
  'tamper'{[IO.File]::AppendAllText((Join-Path $case.directory 'libvlc.dll'),'changed')}
  'extra'{[IO.File]::WriteAllText((Join-Path $case.directory 'extra.dll'),'unexpected')}
  'timestamp'{$item=Get-Item -LiteralPath (Join-Path $case.directory 'plugins/codec/fixture.dll');$item.LastWriteTimeUtc=$item.LastWriteTimeUtc.AddSeconds(8)}
