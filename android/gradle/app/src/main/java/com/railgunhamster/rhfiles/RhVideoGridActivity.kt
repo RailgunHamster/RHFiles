@@ -25,7 +25,14 @@ import org.json.JSONObject
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicLong
 
-internal class RhVideoGridMemory:ViewModel(){var lease="";var closed=false;val cells=mutableMapOf<String,JSONObject>()}
+@UnstableApi
+internal class RhVideoGridMemory:ViewModel(){
+  var lease="";var closed=false;val cells=mutableMapOf<String,JSONObject>()
+  private val trackChoices=mutableMapOf<String,TrackSelectionParameters>()
+  fun begin(viewerLease:String){if(lease!=viewerLease){cells.clear();trackChoices.clear();lease=viewerLease;closed=false}}
+  fun rememberTracks(id:String,player:Player){trackChoices[id]=player.trackSelectionParameters}
+  fun restoreTracks(id:String,player:Player){trackChoices[id]?.let{player.trackSelectionParameters=it}}
+}
 
 /** Native surfaces consume the same group/layout plan as Windows. Cell state
  * belongs to one viewer session, while only the ordered group IDs persist. */
@@ -99,7 +106,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     super.onCreate(savedInstanceState);NativeAutomation.install(this);active=WeakReference(this)
     tracing=BuildConfig.DEBUG||NativeAutomation.enabled(this);trace("create")
     data=JSONObject(intent.getStringExtra("grid")?:error("缺少同屏会话"))
-    if(memory.lease!=lease){memory.cells.clear();memory.lease=lease;memory.closed=false}
+    memory.begin(lease)
     val offset=savedInstanceState?.getInt("offset")?:data.getInt("offset")
     if(offset!=data.getInt("offset"))data=client.gridWindow(ticket,offset,intent.getIntExtra("count",4),intent.getBooleanExtra("super",false))
     expanded=savedInstanceState?.getInt("expanded",-1)?:-1
@@ -200,7 +207,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     if(!stopped)return;stopped=false;trace("storage-start");val storage=NativeStorage(applicationContext);trace("storage-ready")
     for(i in 0 until entries.length()){
       val item=entries.getJSONObject(i)
-      trace("engine-$i-start");val engine=createEngine(storage);trace("engine-$i-ready")
+      trace("engine-$i-start");val engine=createEngine(storage);memory.restoreTracks(item.getString("id"),engine);trace("engine-$i-ready")
       val view=RhVideoPlayerView(this).apply{controllerShowTimeoutMs=2500;controllerAutoShow=false;contentDescription="视频 ${i+1} · ${item.getString("name")}"}
       players.add(engine);views.add(view);inputIds.add(inputSequence.getAndIncrement());val frames=AtomicLong(0);val frameTime=AtomicLong(-1);frameCounts.add(frames);frameTimes.add(frameTime)
       val container=FrameLayout(this);val message=TextView(this).apply{setTextColor(Color.WHITE);setBackgroundColor(0xcc151b27.toInt());setPadding(16,16,16,16);visibility=View.GONE}
@@ -213,7 +220,7 @@ class RhVideoGridActivity:AppCompatActivity(){
       bindEngine(i,engine,view,message,storage)
     };liveInputs=inputIds.toList();paintControls();layout();runCatching{client.rememberGrid(ticket,lease,data.getInt("offset"))}
   }
-  private fun capture(){players.forEachIndexed{i,p->cell(i).put("positionMs",p.currentPosition.coerceAtLeast(0)).put("paused",!p.playWhenReady).put("rate",p.playbackParameters.speed.toDouble())}}
+  private fun capture(){players.forEachIndexed{i,p->cell(i).put("positionMs",p.currentPosition.coerceAtLeast(0)).put("paused",!p.playWhenReady).put("rate",p.playbackParameters.speed.toDouble());memory.rememberTracks(entries.getJSONObject(i).getString("id"),p)}}
   fun snapshot():JSONObject {
     client.checkGrid(ticket,lease)
     return JSONObject().put("engine","Media3").put("nativeSurface",true).put("controlsExpanded",controlsExpanded).put("dragging",JSONArray(dragging.toList())).put("canvasWidth",grid.width).put("canvasHeight",grid.height).put("offset",data.getInt("offset")).put("total",data.getInt("total")).put("count",entries.length()).put("groupIndex",data.getInt("groupIndex")).put("groupTotal",data.getInt("groupTotal")).put("hasPrevious",previous.isEnabled).put("hasNext",next.isEnabled).put("lease",lease).put("generation",data.getLong("generation")).put("expanded",if(expanded<0)JSONObject.NULL else expanded).put("target",selected)

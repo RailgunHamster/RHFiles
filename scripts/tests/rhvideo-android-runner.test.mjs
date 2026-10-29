@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import vm from 'node:vm';import {parse} from 'acorn';
 const source=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8'),java=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');let success,artifact,traffic,failure;
 function walk(node){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&node.callee.object?.name==='assert'&&node.arguments[0]?.name==='output'){if(node.callee.property?.name==='match')success=node.arguments[1];if(node.callee.property?.name==='doesNotMatch')failure=node.arguments[1];}if(node.type==='VariableDeclarator'&&node.id?.name==='artifact')artifact=node.init;if(node.type==='FunctionDeclaration'&&node.id?.name==='verifyContractTraffic')traffic=node;for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}walk(parse(source,{ecmaVersion:'latest',sourceType:'module'}));
-const modes={actualMode:false,taskCenterMode:false,priorityMode:false,duplicatesMode:false,rulesMode:false,loginMode:false,exportsMode:false,gridRotationMode:false,gridRestoreMode:false,gridMode:false,playlistMode:false,previewMode:false,singleMode:true,favoritesMode:false,stripMode:false,ticketsMode:false,rotationMode:false};
+const modes={actualMode:false,lifecycleMode:false,taskCenterMode:false,priorityMode:false,duplicatesMode:false,rulesMode:false,loginMode:false,exportsMode:false,gridRotationMode:false,gridRestoreMode:false,gridMode:false,playlistMode:false,previewMode:false,singleMode:true,favoritesMode:false,stripMode:false,ticketsMode:false,rotationMode:false};
 test('Android runner recognizes the actual expanded Single success receipt, not an obsolete label',()=>{
   assert(success);const pattern=vm.runInNewContext(source.slice(success.start,success.end),modes),message=[...java.matchAll(/result\.putString\("stream","((?:\\.|[^"\\])*)"\)/g)].map(v=>v[1]).find(v=>v.startsWith('PASS: contextual workflow entries'));
   assert(message);assert.match(message,pattern);assert(!pattern.test('PASS: native HTTP'),'A weaker unrelated mode result cannot pass Single');
@@ -50,4 +50,17 @@ test('task center acceptance requires its own receipt, namespace and authenticat
   const verify=vm.runInNewContext('('+source.slice(traffic.start,traffic.end)+')',{assert}),request={method:'GET',path:'/api/v1/processing-tasks/default/video:metrics',authorization:'Bearer fixture-bearer-do-not-persist'};
   verify({requests:[request]},{taskCenterMode:true});assert.throws(()=>verify({requests:[{...request,authorization:''}]},{taskCenterMode:true}),/authenticated native HTTP/);
   assert.throws(()=>verify({requests:[request,{method:'POST',path:'/api/v1/processing-tasks/default/video:metrics/prioritize'}]},{taskCenterMode:true}),/never mutates media/);
+});
+
+test('lifecycle acceptance requires its own real-media receipt and cannot hide server writes',()=>{
+  const scope={...modes,lifecycleMode:true,singleMode:false,path,Date},pattern=vm.runInNewContext(source.slice(success.start,success.end),scope);
+  const message=[...java.matchAll(/result\.putString\("stream","((?:\\.|[^"\\])*)"\)/g)].map(v=>v[1]).find(v=>v.startsWith('PASS: native HTTP lifecycle'));
+  assert(message);assert.match(message,pattern);assert(!pattern.test('PASS: native HTTP'));assert(!pattern.test('PASS: packaged task center'));
+  assert(!pattern.test('PASS: native HTTP lifecycle, real subtitle fixture, HOME/stop/resume'),'An older Single-only lifecycle receipt cannot pass the expanded grid coverage');
+  assert.match(vm.runInNewContext(source.slice(artifact.start,artifact.end),scope),/rhvideo-android-lifecycle-/);
+  const verify=vm.runInNewContext('('+source.slice(traffic.start,traffic.end)+')',{assert}),request={method:'GET',path:'/api/v1/videos/video-2/play',authorization:'Bearer fixture-bearer-do-not-persist'};
+  verify({requests:[request]},{lifecycleMode:true});assert.throws(()=>verify({requests:[{...request,authorization:''}]},{lifecycleMode:true}),/authenticated media/);
+  assert.throws(()=>verify({requests:[request,{method:'POST',path:'/api/v1/trash/video/video-2'}]},{lifecycleMode:true}),/cannot replay/);
+  verify({requests:[request,{method:'POST',path:'/api/v1/auth/login'}]},{lifecycleMode:true});
+  assert.throws(()=>verify({requests:[request,{method:'DELETE',path:'/api/v1/auth/login'}]},{lifecycleMode:true}),/cannot replay/);
 });

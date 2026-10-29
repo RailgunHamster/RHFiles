@@ -133,6 +133,14 @@ node --test --test-concurrency=1 scripts/e2e/rhvideo-task-priority.test.mjs scri
 
 Android release 验收使用同一个受限模拟器入口，将模式改为 `task-priority`。除了真实触摸和公开 API，它还检查服务器恰好接受四次置顶，未发生 retry／resume／pause／cancel 请求；随后独立核对实际默认／替换 worker 的领取顺序、暂停和运行中记录、失败记录及源文件哈希。任务只调整元数据：该 fixture 中停止自动 worker 是保持样本稳定的测试条件，不得把此轮当成编码任务不停顿、低内存或后台生命周期的完整验收。
 
+## RHVideo Android 播放生命周期验收
+
+`node scripts/testing/rhvideo-android.mjs emulator-5584 <APK绝对路径> <探针APK绝对路径> lifecycle` 同样只接受自有 QA 模拟器及逐字节核对的压缩 release 包。入口为实际 H.264／AAC 源另加入真实 `mov_text` 字幕，保留原视频、音频，不用空轨道开关冒充字幕恢复。
+
+单播放器和三格同屏分别验证实际 HOME → onStop → 返回同一 Activity，以及框架 `Activity.recreate()`。必须保留真实暂停画面、位置、倍速、循环、逐格音量和字幕关闭状态；保留同一 viewer lease，但释放后解码输入必须换代，旧输入控制被拒绝。格子之间和重新打开的独立 viewer 不得继承其他格子／旧窗口的选择。这是**暂停生命周期**验收，不代替 `single`／`grid` 的持续播放：播放就绪同时要求时间大于 250 ms、实际渲染帧数大于一，不能只看 READY 或 isPlaying。
+
+原生按钮测试先等待弹窗真正退出并恢复焦点，必要时通过一次真实画面触摸唤出控制栏，然后核对透明度、裁剪、屏幕坐标、稳定中心和窗口归属再注入按钮触摸。不依赖后台 WebView 的显示控制栏回执、不延长自动隐藏时间、不以 `performClick()` 代替实际触摸；公开控制接口的其他行为测试保留。模式成功回执和截图必须匹配本次场景，旧的仅单播放器生命周期成功不能通过扩展后的同屏验收。错误模式在访问 SDK 或安装任何包前失败，失败日志保留。
+
 ## RHVideo 完整 Windows 原生验收入口
 
 不要把漏设环境标志后跳过的原生用例计入完整验收。`rhvideo-windows.mjs` 强制启用实际原生用例，串行运行全部 `rhvideo*.test.mjs`，核对随包 3.0.24 的文件清单、哈希和预建插件索引，并要求最终 TAP 全部通过且没有跳过、取消或待办。40 分钟及 8 MiB 日志上限只限制自有测试进程树，不重启测试来抹掉失败。

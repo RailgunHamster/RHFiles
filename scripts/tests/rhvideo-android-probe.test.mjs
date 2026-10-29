@@ -3,7 +3,30 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {parse} from 'acorn';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 const source=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');
+
+test('unknown Android acceptance modes fail before SDK access or installing any APK',()=>{
+  const runner=fileURLToPath(new URL('../testing/rhvideo-android.mjs',import.meta.url));
+  for(const mode of ['grid-rotaton','exports-recover','__proto__','grid;adb']){
+    const result=spawnSync(process.execPath,[runner,'emulator-5584','missing-product.apk','missing-probe.apk',mode],{encoding:'utf8',windowsHide:true,timeout:10000});
+    assert.equal(result.status,1);assert.match(result.stderr,/Unknown owned Android acceptance mode/);assert.equal(result.stdout,'');
+  }
+});
+
+test('physical player-button acceptance reveals controls with one native gesture, not a delayed background-WebView acknowledgement',()=>{
+  const click=source.slice(source.indexOf('private void touchPlayerButton('),source.indexOf('private void revealPlayerControlsByTouch(')).replace(/^\s*\/\/.*$/gm,'');
+  const reveal=source.slice(source.indexOf('private void revealPlayerControlsByTouch('),source.indexOf('private void clickPlayerText(')).replace(/^\s*\/\/.*$/gm,'');
+  assert.match(click,/revealPlayerControlsByTouch\(\)/);assert.doesNotMatch(click,/action\(|controls\.show|performClick\(/);
+  assert.match(reveal,/getGlobalVisibleRect/);assert.match(reveal,/hasWindowFocus/);assert.match(reveal,/getAlpha/);
+  assert.equal([...reveal.matchAll(/sendPointerSync\(down\)/g)].length,1);assert.equal([...reveal.matchAll(/sendPointerSync\(up\)/g)].length,1);
+  assert.doesNotMatch(reveal,/controllerShowTimeoutMs\s*=|\.performClick\(|while\s*\(/);
+});
+
+test('a cold first-click acceptance precedes unrelated image checks while its gallery is intentionally held',()=>{
+  assert.match(source,/if\("single"\.equals\(args\.getString\("mode"\)\)\)\{checkReferenceSingle\(\);checkImageContent\(\);checkContextControls\(\);checkFavoriteSlideshow\(\);/);
+});
 test('constant Android probe expressions parse as expressions, not standalone statements',()=>{
   const failures=[];let count=0;
   for(const match of source.matchAll(/\bexpression\(\w+,\s*("(?:\\.|[^"\\])*")\s*\)/g)){

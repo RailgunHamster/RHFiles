@@ -6,6 +6,26 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 Android 真实后台／重建时的字幕选择丢失（单播放器已验证，同屏仍有失败）
+
+继续前一轮的 Android 原生验收，而非用 Windows 结果代替。未修改前的 QA 主 APK `d3939c10907da93f380490ccf2bedebe8e23b32823295670f8d304ca619846e5` 在完整 `grid` 中失败（短路径 QA 的 `rhvideo-current-android-full-grid.log`，`rhvideo-android-grid-1793298500860-release`）：三格都报告 READY／playing、20 秒已缓冲且没有错误，但两格时间为零、只渲染一帧，另一格约 1.2 秒／19 帧。线程栈和音频日志已保留，包含 underrun 和时间戳修正；这**没有证明单一网络／音频／合成层根因，也没有修好持续播放停滞**。同主包的旧 `single` 通过（`rhvideo-current-android-single.log`），但当时只要求首帧，不把它描述成持续播放通过。
+
+新增 `lifecycle` 使用同一真实 H.264／AAC 源，仅 remux 加入真实 `mov_text` 字幕；视频／音频字节流保留。第一次探针错误地向不接受 subtitles 的共享 player.control 提交，因 schema 拒绝而失败（`rhvideo-lifecycle-before-fix.log`），不是产品缺陷。改为现有公开的 `native.media.control` 后，在原主 APK 上实际 HOME → onStop → 返回同一个 Activity，确定复现 **“after background: explicitly disabled subtitles must not silently turn back on”**（`rhvideo-lifecycle-before-fix-2.log`）。该断言前的暂停源、5 秒位置、1.25 倍、循环与本地音量 37 均保持。
+
+产品修复是当前 viewer 专属的 ViewModel，只保留不可变的完整 TrackSelectionParameters；停止／保存／旋转重建前记忆，在新解码器准备前恢复。不写入全局／账户配置，不把 TrackGroup 或大队列塞进 Bundle，也不承诺进程死亡后的媒体票据恢复。四项 JVM 用例验证完整轨道 override／字幕关闭、最新选择覆盖和独立窗口隔离。全部 Android JVM **418/418、零失败／错误／跳过**（`rhvideo-lifecycle-fix-android-build.log`），共享 Node 先 **836/836**，增加物理控制栏探测策略后为 **837/837、零跳过**（`rhvideo-grid-lifecycle-node.log`）。实际产品仍为1.11.1；[官方当前稳定版本](https://developer.android.com/jetpack/androidx/releases/media3)与此一致。另核对 [#3407](https://github.com/androidx/media/issues/3407) 的 AC-3 passthrough／BUFFERING 场景与本次 PCM／READY 不同，未据相似日志盲目升级 alpha 或套用其 workaround。
+
+新主 APK `16d054007d61b10576719f2d3594816ad8a2464fc993a2416776dab4673d7571`、探针 `df7fbc345a4dc201d807b61b950de0510a8361a0d0e345a92f69f76c7ad0fce2`，安装后逐字节核对，仅在 `RHFilesRhVideoQA20261027`／`emulator-5584` 上通过了**当时单播放器生命周期整条场景**（`rhvideo-lifecycle-after-fix.log`，`rhvideo-android-lifecycle-1793300337647-release`）：真实 HOME／stop／返回，以及框架 Activity.recreate，均保留上述值和字幕关闭；viewer lease 保留、解码器 ID 换代，旧 ID 控制明确被拒绝。已查看实际 5 秒暂停画面的截图。此处暂停恢复通过不等于音频输出质量、同屏或持续播放已经通过。
+
+随后原生播放就绪条件收紧为时间大于 250 ms 且实际帧数大于一。普通 `single` 在实际 Next 按钮处失败（`rhvideo-lifecycle-fixed-single.log`，`rhvideo-android-single-1793300489604-release`）：后台 WebView 的 controls.show 回执耗时约 4590 ms，超过产品 3500 ms 自动隐藏间隔，按钮的祖先实际 alpha 已为零。没有移除实际按钮／严格命中断言或延长产品隐藏时间。探针现在等待窗口焦点恢复，必要时只发一次真实画面触摸唤出控制栏，再按原有透明度／裁剪／屏幕／稳定中心条件注入目标按钮触摸；不调用 View.performClick。该失败和接口延迟保留，后续物理流程结果另记，不能称作产品性能根因已修好。
+
+同一主包与新探针 `e9a17c0008264c8c9a80e791372448c82e7991b9f17c6b127009db2c206a3ead` 的扩展生命周期先再次通过单播放器，再在三格初始化阶段失败（`rhvideo-grid-lifecycle-before-fix.log`，`rhvideo-android-lifecycle-1793300801586-release`）：前两格 c2.android.aac.decoder 报 allocate 超时／Released state，`ERROR_CODE_DECODER_INIT_FAILED`，第三格有真实暂停帧。**尚未走到同屏轨道恢复断言**，不把此轮称为已经复现或修复同屏字幕丢失。当时该包的同屏 capture 未保留轨道参数；后续开发代码已按同一 viewer 的视频 ID 保存／恢复，新增四项独立格子、重排、最新选择及新 lease／新窗口隔离用例，实际同屏生命周期结果仍须另验。扩展入口明确拒绝旧的仅单播放器成功回执，不拿旧通过覆盖新失败。
+
+同主包／探针的下一轮 `single` 又在冷点击前置夹具处失败（`rhvideo-lifecycle-fixed-single-physical.log`）：它在登录后先跑图片检查，故意等待首个视频读取才放行的图库 HTTP 已超过原有读取超时；这轮**尚未走到修改后的物理控制栏逻辑**。探针将原有“登录后立即点第一个视频”流程移到无关图片检查之前，图片内容探测、菜单、父层、上下文和收藏放映断言全部保留，不加长 HTTP 超时或隐藏间隔。相关宿主策略含此顺序检查，共享 Node 随后 **838/838、零跳过**（`rhvideo-track-memory-final-node.log`）；它不是该轮原生 single 已通过的证明。
+
+加入同屏记忆后的整包构建 **5 分 45 秒成功**（`rhvideo-grid-track-memory-build.log`），全部 JVM **422/422、零失败／错误／跳过**；新主包为 `3d0ab192438a0b9568265a2ef5082526a1c31fad0941b20c8eb70190ecb0b0e4`，探针为 `f725c84fc9d5039bd3d5657f3346813ce4fcd3f50eca8bbd8646e4b332552568`。canonical 到短路径 QA 共核对 306 项 Android 输入，文本按 LF、其他文件按精确字节计算 SHA-256，只有未打包的 `android/web/tests/browser-fixture.mjs` 不同；所有产品／原生与新测试输入相符。参考仍为干净的 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`，14 个模块指纹和接口库存检查通过（`rhvideo-track-memory-reference-audit.json`），不将库存通过当作行为完成。新包的完整 `lifecycle`／`single` 正在单台自有模拟器顺序运行，原始日志为 `rhvideo-grid-track-memory-lifecycle.log`／`rhvideo-track-memory-single-final.log`；此句只表示已启动，不宣称已通过。
+
+这轮增量 QA 构建复用未改的 Rust ABI 库，不是完整重编译的正式 APK。没有删除音轨、伪造时钟、增加逐帧预算、自动重试播放，亦未重启模拟器／系统音频或操作实体手机。Windows 正式实例未替换、没有发包；持续播放、同屏生命周期、最终发行和稳定同性能等完整目标仍未完成。
+
 ## 2026-10-30 最新 Windows 103 项完整回归与客户区取图修正（完整目标仍未完成）
 
 上轮启动的 `rhvideo-task-refresh-all-windows.log` 最终为 **54 通过／1 失败／48 跳过**，共 103 项：调用遗漏 `RHFILES_NATIVE_PLAYER_QA=1`，原生场景被跳过；放映 End 按键也没有送达。当时仅 DOM 焦点为 true，没有启用原生输入归属诊断，不能把这一轮当成完整通过或直接归因播放器逻辑。失败原样保留，不重写旧结论。

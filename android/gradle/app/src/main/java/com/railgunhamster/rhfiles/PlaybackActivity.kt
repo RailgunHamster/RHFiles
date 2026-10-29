@@ -19,6 +19,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.doOnLayout
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.media3.common.*
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -65,6 +67,9 @@ class PlaybackActivity:AppCompatActivity() {
     }
   }
   private lateinit var playerView:PlayerView
+  private val selectionMemory by lazy {ViewModelProvider(this,object:ViewModelProvider.Factory{
+    @Suppress("UNCHECKED_CAST") override fun <T:ViewModel> create(modelClass:Class<T>):T {require(modelClass==PlaybackSelectionMemory::class.java);return PlaybackSelectionMemory() as T}
+  })[PlaybackSelectionMemory::class.java]}
   private lateinit var header:LinearLayout
   private lateinit var moreButton:ImageButton
   private lateinit var failure:LinearLayout
@@ -243,6 +248,7 @@ class PlaybackActivity:AppCompatActivity() {
     rhUi.post{if(player===owner&&rhInputId==input&&!rhClosing&&!isFinishing)restartRhRotation(owner)}
   }
   private fun restartRhRotation(old:ExoPlayer){
+    selectionMemory.remember(old)
     index=old.currentMediaItemIndex;position=old.currentPosition;play=old.playWhenReady;val rate=old.playbackParameters.speed;val repeat=old.repeatMode
     rhLocalGain=RhVideoVolume.local(old);rhEndMessage?.cancel();rhEndMessage=null;playerView.player=null
     (playerView as? RhVideoPlayerView)?.unbindRotationEngine(old,true);RhVideoVolume.untrack(old);player=null;old.release()
@@ -254,7 +260,7 @@ class PlaybackActivity:AppCompatActivity() {
     val engine=ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true))
       .setMediaSourceFactory(mediaFactory)
       .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000).build()
-    player=engine;if(!keepInput)rhInputId=nextRhInput.incrementAndGet();rhRendered=false
+    player=engine;selectionMemory.restore(engine);if(!keepInput)rhInputId=nextRhInput.incrementAndGet();rhRendered=false
     (playerView as? RhVideoPlayerView)?.bindRotationEngine(engine)
     playerView.player=if(rhWindow!=null)object:ForwardingPlayer(engine){
       override fun setVideoSurfaceView(surface:android.view.SurfaceView?){if((playerView as? RhVideoPlayerView)?.bindNativeSurface(engine,surface)!=true)super.setVideoSurfaceView(surface)}
@@ -383,7 +389,7 @@ class PlaybackActivity:AppCompatActivity() {
       8->rhUiAction(JSONObject().put("command","autoRotate").put("expectedInputId",rotateInput))
     };true};menu.show()
   }
-  override fun onSaveInstanceState(outState:Bundle){outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
-  override fun onStop(){rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null;rememberRhPlaylist();player?.let{index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);it.release()};player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
+  override fun onSaveInstanceState(outState:Bundle){player?.let(selectionMemory::remember);outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
+  override fun onStop(){rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null;rememberRhPlaylist();player?.let{selectionMemory.remember(it);index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);it.release()};player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
   override fun onDestroy(){rhEvents?.close();rhEvents=null;if(active.get()===this)active.clear();super.onDestroy()}
 }

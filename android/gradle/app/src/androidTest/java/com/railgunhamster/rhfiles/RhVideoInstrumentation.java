@@ -12,6 +12,7 @@ import java.util.concurrent.*;
 /** Emulator acceptance against the minified production bridge, not mocks in UI. */
 public class RhVideoInstrumentation extends Instrumentation {
   private Bundle args;private volatile Activity current;private WebView main,library;
+  private final java.util.Set<Activity> stoppedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
   @Override public void onCreate(Bundle value){super.onCreate(value);args=value;start();}
   private void require(boolean ok,String message)throws Exception{if(!ok)throw new Exception(message);}
   private boolean gridReady(JSONObject state)throws Exception{if(state==null)return false;JSONArray cells=state.optJSONArray("cells");if(cells==null||cells.length()!=4)return false;for(int i=0;i<cells.length();i++)if(!cells.getJSONObject(i).optBoolean("rendered"))return false;return cells.getJSONObject(0).optLong("positionMs")>500;}
@@ -107,7 +108,7 @@ public class RhVideoInstrumentation extends Instrumentation {
   }
   private JSONObject waitPlayer(String id,boolean playing)throws Exception{
     long end=System.currentTimeMillis()+30000;JSONObject state=null;
-    do{try{state=(JSONObject)action("player.state",new JSONObject());if((id==null||id.equals(state.optString("id")))&&state.optBoolean("rendered")&&state.optInt("playbackState")==3&&state.optLong("renderedFrames")>0&&state.optBoolean("playing")==playing)return state;}catch(Exception ignored){}Thread.sleep(150);}while(System.currentTimeMillis()<end);
+    do{try{state=(JSONObject)action("player.state",new JSONObject());if((id==null||id.equals(state.optString("id")))&&state.optBoolean("rendered")&&state.optInt("playbackState")==3&&state.optLong("renderedFrames")>0&&state.optBoolean("playing")==playing&&(!playing||(state.optLong("positionMs")>250&&state.optLong("renderedFrames")>1)))return state;}catch(Exception ignored){}Thread.sleep(150);}while(System.currentTimeMillis()<end);
     throw new Exception("Native reference player did not settle: "+state);
   }
   private void waitFavoritePicture(String id,int index)throws Exception{
@@ -518,12 +519,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{runOnMainSync(()->focused[0]=current!=null&&!current.isFinishing()&&current.getWindow().getDecorView().hasWindowFocus());if(focused[0])break;Thread.sleep(50);}while(SystemClock.uptimeMillis()<focusEnd);
     require(focused[0],"Player window must regain focus after the previous popup before touching "+resource);
     step("native touch "+resource+" focusWaitMs="+(SystemClock.uptimeMillis()-focusStart));
-    long showAt=SystemClock.uptimeMillis();JSONObject shown=(JSONObject)action("player.control",new JSONObject().put("command","controls.show"));
-    step("native controller reveal replyMs="+(SystemClock.uptimeMillis()-showAt)+" fullyVisibleAtReply="+shown.optBoolean("controls"));
-    // That reply may precede the reveal animation. Repeated state calls via
-    // the background library can consume the entire 3.5 s auto-hide interval.
-    // Observe the actual native hit target below instead: the same stricter
-    // alpha/clipping/screen/focus guard, with no repeat reveal or longer timeout.
+    revealPlayerControlsByTouch();
     // A controller state flag / isShown() is not a screen-space hit target:
     // Media3 can still translate a child outside the window. Do not inject
     // there or replace a real touch with performClick(). Observe a visible,
@@ -552,6 +548,25 @@ public class RhVideoInstrumentation extends Instrumentation {
     long now=SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,center[0],center[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,center[0],center[1],0);
     step("native touch "+resource+" center="+center[0]+","+center[1]+" readyToDownMs="+(now-readyAt)+" "+geometry[0]);
     try{sendPointerSync(down);sendPointerSync(up);}finally{down.recycle();up.recycle();}
+  }
+  private void revealPlayerControlsByTouch()throws Exception{
+    // A background WebView's controls.show acknowledgement can arrive after
+    // auto-hide. Exercise the actual user gesture once, without changing the
+    // hide interval, repeatedly revealing, or using View.performClick().
+    Activity owner=current;boolean[] visible={false};int[] point={-1,-1};
+    runOnMainSync(()->{
+      if(owner==null||owner!=current||owner.isFinishing())return;View decor=owner.getWindow().getDecorView();
+      View bar=owner.findViewById(owner.getResources().getIdentifier("exo_bottom_bar","id",getTargetContext().getPackageName()));
+      visible[0]=bar!=null&&bar.isShown();for(View node=bar;node!=null;node=node.getParent() instanceof View?(View)node.getParent():null)visible[0]&=node.getAlpha()>=.95f;
+      if(visible[0])return;
+      View content=owner.findViewById(owner.getResources().getIdentifier("exo_content_frame","id",getTargetContext().getPackageName()));
+      android.graphics.Rect bounds=new android.graphics.Rect();if(content==null||!content.isShown()||!content.getGlobalVisibleRect(bounds)||!decor.hasWindowFocus())return;
+      int[] rootScreen={0,0};decor.getRootView().getLocationOnScreen(rootScreen);bounds.offset(rootScreen[0],rootScreen[1]);android.graphics.Point screen=new android.graphics.Point();if(decor.getDisplay()!=null)decor.getDisplay().getRealSize(screen);
+      int x=bounds.left+bounds.width()/4,y=bounds.top+bounds.height()/2;if(bounds.width()>0&&bounds.height()>0&&x>=0&&y>=0&&x<screen.x&&y<screen.y){point[0]=x;point[1]=y;}
+    });
+    if(visible[0]){step("native controller already visible; no reveal gesture");return;}
+    require(point[0]>=0&&current==owner,"Player content must have a focused on-screen reveal target");long now=SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,point[0],point[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,point[0],point[1],0);
+    try{sendPointerSync(down);sendPointerSync(up);}finally{down.recycle();up.recycle();}step("native controller revealed by one physical tap");
   }
   private void clickPlayerText(String... labels)throws Exception{
     long end=System.currentTimeMillis()+8000;
@@ -736,6 +751,51 @@ public class RhVideoInstrumentation extends Instrumentation {
       if(pixels!=null)pixels.recycle();diagnostic=rect+"; actual pixels="+colors;Thread.sleep(100);
     }while(System.currentTimeMillis()<end);
     throw new Exception("Decoded image never appeared in the actual native screenshot: "+diagnostic);
+  }
+  private void requirePausedLifecycleState(JSONObject state,String phase)throws Exception{
+    require("video-2".equals(state.getString("id"))&&!state.getBoolean("playWhenReady")&&!state.getBoolean("playing"),phase+": restore the actual paused source");
+    require(Math.abs(state.getLong("positionMs")-5000)<500&&state.getLong("renderedFrames")>0,phase+": the restored decoder must produce a frame at the saved position");
+    require(Math.abs(state.getDouble("rate")-1.25)<.01&&state.getBoolean("repeat")&&Math.abs(state.getDouble("volume")-37)<.1,phase+": speed, loop and local volume must survive");
+    require(!state.getJSONObject("tracks").getBoolean("subtitlesEnabled"),phase+": explicitly disabled subtitles must not silently turn back on");
+  }
+  private void checkPlaybackLifecycle()throws Exception{
+    action("media.open",new JSONObject().put("kind","video").put("id","video-2"));action("player.control",new JSONObject().put("command","pause"));
+    JSONObject first=waitPlayer("video-2",false);boolean text=false;JSONArray groups=first.getJSONObject("tracks").getJSONArray("groups");for(int i=0;i<groups.length();i++)text|="text".equals(groups.getJSONObject(i).getString("type"));require(text,"Lifecycle fixture must contain a real subtitle track as well as video and AAC");
+    action("player.control",new JSONObject().put("command","seek").put("value",5000));action("player.control",new JSONObject().put("command","rate").put("value",1.25));action("player.control",new JSONObject().put("command","repeat").put("enabled",true));action("player.control",new JSONObject().put("command","volume").put("value",37));mainAction("native.media.control",new JSONObject().put("command","subtitles").put("enabled",false));
+    JSONObject before=waitPlayer("video-2",false);requirePausedLifecycleState(before,"before background");Activity original=current;Intent resume=new Intent(original.getIntent()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+    require(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"Owned emulator HOME must be accepted");long end=SystemClock.uptimeMillis()+10000;while(!stoppedActivities.contains(original)&&SystemClock.uptimeMillis()<end)Thread.sleep(50);require(stoppedActivities.contains(original),"The actual Android onStop callback must occur before resuming");
+    getTargetContext().startActivity(resume);end=SystemClock.uptimeMillis()+10000;while((stoppedActivities.contains(original)||current!=original)&&SystemClock.uptimeMillis()<end)Thread.sleep(50);require(current==original&&!stoppedActivities.contains(original),"Returning from HOME resumes the same Activity, not a newly opened player");
+    JSONObject returned=waitPlayer("video-2",false);require(returned.getLong("inputId")!=before.getLong("inputId"),"A released native decoder must have a new identity after backgrounding");requirePausedLifecycleState(returned,"after background");
+    Activity retiring=current;runOnMainSync(retiring::recreate);end=SystemClock.uptimeMillis()+15000;while((current==retiring||!current.getClass().getSimpleName().equals("PlaybackActivity"))&&SystemClock.uptimeMillis()<end)Thread.sleep(50);require(current!=retiring&&current.getClass().getSimpleName().equals("PlaybackActivity"),"Framework recreation must produce a new playback Activity");
+    JSONObject recreated=waitPlayer("video-2",false);require(recreated.getString("lease").equals(returned.getString("lease"))&&recreated.getLong("inputId")!=returned.getLong("inputId"),"Recreation retains the viewer lease but not the retired decoder");requirePausedLifecycleState(recreated,"after recreation");
+    boolean stale=false;try{mainAction("native.media.control",new JSONObject().put("command","volume").put("value",91).put("expectedInputId",returned.getLong("inputId")));}catch(Exception expected){stale=expected.toString().contains("播放输入已改变");}require(stale,"An old decoder control cannot alter the restored player");requirePausedLifecycleState((JSONObject)action("player.state",new JSONObject()),"after stale control");
+    screenshot("rhvideo-lifecycle-player-qa.png");step("lifecycle actual HOME/onStop/resume and framework recreation verified");action("player.close",new JSONObject());library=waitView("RhVideoActivity");
+  }
+  private JSONObject waitPausedGridLifecycle(long previousFrames)throws Exception{
+    long end=SystemClock.uptimeMillis()+30000;JSONObject state=null;
+    do{state=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=state.getJSONArray("cells");boolean ready=cells.length()==3;
+      for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);ready&=cell.getBoolean("paused")&&cell.getInt("playbackState")==3&&cell.getBoolean("rendered")&&cell.getLong("renderedFrames")>0;}
+      if(ready){JSONObject cell=cells.getJSONObject(2);if(cell.getLong("submittedFrames")>previousFrames&&Math.abs(cell.getLong("frameTimeMs")-5000)<500&&Math.abs(cell.getLong("positionMs")-5000)<500)return state;}Thread.sleep(150);
+    }while(SystemClock.uptimeMillis()<end);throw new Exception("Actual paused lifecycle grid frames did not settle: "+state);
+  }
+  private void requireGridLifecycleState(JSONObject state,String phase)throws Exception{
+    require(gridIds(state).toString().equals("[\"video-0\",\"video-1\",\"video-2\"]"),phase+": retain the same ordered group");JSONObject cell=state.getJSONArray("cells").getJSONObject(2);
+    require(Math.abs(cell.getDouble("rate")-1.25)<.01&&cell.getBoolean("repeat")&&cell.getInt("volume")==37&&!cell.getBoolean("muted"),phase+": retain each cell's speed, loop and volume");
+    require(!cell.getJSONObject("tracks").getBoolean("subtitlesEnabled"),phase+": the selected grid cell's disabled subtitles must survive decoder replacement");
+    for(int i=0;i<2;i++){JSONObject other=state.getJSONArray("cells").getJSONObject(i);require(other.getInt("volume")==100&&other.getJSONObject("tracks").getBoolean("subtitlesEnabled"),phase+": choices cannot leak into another grid cell");}
+  }
+  private void checkGridLifecycle()throws Exception{
+    action("gallery.open",new JSONObject());action("grid.open",new JSONObject());gridControl(-1,"pause",0);JSONObject initial=waitGrid(3,true);
+    JSONArray groups=initial.getJSONArray("cells").getJSONObject(2).getJSONObject("tracks").getJSONArray("groups");boolean text=false;for(int i=0;i<groups.length();i++)text|="text".equals(groups.getJSONObject(i).getString("type"));require(text,"Lifecycle grid must decode a real subtitle track");
+    long frames=initial.getJSONArray("cells").getJSONObject(2).getLong("submittedFrames");gridControl(2,"seek",5000);gridControl(2,"rate",1.25);gridControl(2,"volume",37);mainAction("native.grid.control",new JSONObject().put("target",2).put("command","subtitles").put("enabled",false));JSONObject before=waitPausedGridLifecycle(frames);requireGridLifecycleState(before,"before grid background");
+    Activity original=current;Intent resume=new Intent(original.getIntent()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+    require(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"Grid HOME must be accepted");long end=SystemClock.uptimeMillis()+10000;while(!stoppedActivities.contains(original)&&SystemClock.uptimeMillis()<end)Thread.sleep(50);require(stoppedActivities.contains(original),"Grid must actually stop before resuming");
+    getTargetContext().startActivity(resume);end=SystemClock.uptimeMillis()+10000;while((stoppedActivities.contains(original)||current!=original)&&SystemClock.uptimeMillis()<end)Thread.sleep(50);require(current==original&&!stoppedActivities.contains(original),"Grid HOME return must resume the same Activity");
+    JSONObject returned=waitPausedGridLifecycle(0);require(returned.getString("lease").equals(before.getString("lease"))&&returned.getJSONArray("cells").getJSONObject(2).getLong("inputId")!=before.getJSONArray("cells").getJSONObject(2).getLong("inputId"),"Grid background retains the lease but replaces the decoder");requireGridLifecycleState(returned,"after grid background");
+    Activity retiring=current;runOnMainSync(retiring::recreate);end=SystemClock.uptimeMillis()+15000;while((current==retiring||!current.getClass().getSimpleName().equals("RhVideoGridActivity"))&&SystemClock.uptimeMillis()<end)Thread.sleep(50);require(current!=retiring&&current.getClass().getSimpleName().equals("RhVideoGridActivity"),"Grid recreation must produce a new Activity");
+    JSONObject recreated=waitPausedGridLifecycle(0);require(recreated.getString("lease").equals(returned.getString("lease"))&&recreated.getJSONArray("cells").getJSONObject(2).getLong("inputId")!=returned.getJSONArray("cells").getJSONObject(2).getLong("inputId"),"Grid recreation retains its viewer lease but replaces the decoder");requireGridLifecycleState(recreated,"after grid recreation");
+    boolean stale=false;try{mainAction("native.grid.control",new JSONObject().put("command","volume").put("target",2).put("value",91).put("expectedInput",returned.getJSONArray("cells").getJSONObject(2).getLong("inputId")));}catch(Exception expected){stale=expected.toString().contains("播放输入已改变");}require(stale,"Retired grid controls cannot modify a replacement decoder");requireGridLifecycleState((JSONObject)action("grid.state",new JSONObject()),"after stale grid control");
+    screenshot("rhvideo-lifecycle-grid-qa.png");action("grid.close",new JSONObject());library=waitView("RhVideoActivity");action("grid.open",new JSONObject());gridControl(-1,"pause",0);JSONObject reopened=waitGrid(3,true);for(int i=0;i<3;i++)require(reopened.getJSONArray("cells").getJSONObject(i).getJSONObject("tracks").getBoolean("subtitlesEnabled"),"A fresh viewer cannot inherit the old grid's track choices");action("grid.close",new JSONObject());library=waitView("RhVideoActivity");step("lifecycle grid HOME/onStop/resume and recreation verified without leaking cell or viewer choices");
   }
   private void checkImageContent()throws Exception{
     action("image.preview",new JSONObject().put("path","/storage/pictures/0.svg").put("title","内容探测图片"));
@@ -937,12 +997,13 @@ public class RhVideoInstrumentation extends Instrumentation {
     android.graphics.BitmapFactory.Options options=new android.graphics.BitmapFactory.Options();options.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(),options);require(options.outWidth>0&&options.outHeight>0,"Screenshot unavailable");
   }
   @Override public void onStart(){Bundle result=new Bundle();Application app=(Application)getTargetContext().getApplicationContext();
-    Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){}};
+    Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){stoppedActivities.remove(a);}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){stoppedActivities.add(a);}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){}};
     app.registerActivityLifecycleCallbacks(observer);
     try{
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
+      if("lifecycle".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkPlaybackLifecycle();checkGridLifecycle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native HTTP lifecycle, single and grid, real subtitles, HOME/stop/resume, Activity recreation, actual paused frames, isolated choices and retired-decoder rejection");finish(Activity.RESULT_OK,result);return;}
       if("task-center".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkTaskCenter();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: packaged task center, inline selection, readable workflow metrics, stable reading, unknown progress, queue/history filters and public actions");finish(Activity.RESULT_OK,result);return;}
       if("task-priority".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkActualTaskPriority();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual task priority, physical list/detail controls, real default/replacement queues, failed records, preserved enqueue time and paused receipt");finish(Activity.RESULT_OK,result);return;}
       if("rules".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");JSONObject connected=(JSONObject)action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));require(connected.getInt("total")==240,"Complete tag-fixture catalog loaded");checkTagRules();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native tag rules, actual include/OR/collapse controls, nested NOT, pinyin, bounded paging, stale-group rejection, shared filters and native Back");finish(Activity.RESULT_OK,result);return;}
@@ -964,7 +1025,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       if("grid".equals(args.getString("mode"))){checkReferenceGrid();checkFailedGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid pool/layout, native frames, actual held-slider ABA, favorite/mark buttons and APIs, one-shot close, account dismissal, per-cell restoration, rotation, EOF loop, exact-group reopening and terminal HTTP errors");finish(Activity.RESULT_OK,result);return;}
       if("playlist".equals(args.getString("mode"))){checkReferencePlaylist();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference playlist segments, whole-file seek, native segment loop, global navigation, immutable pool, portrait projection, mode memory and native EOF close");finish(Activity.RESULT_OK,result);return;}
       if("preview".equals(args.getString("mode"))){checkPreparedTickets();checkLatestPlayIntent();checkReferencePreview();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference preview parent stack, native favorite and mark controls, one-shot stage results, independent prepared tickets, late preparation isolation and account boundaries");finish(Activity.RESULT_OK,result);return;}
-      if("single".equals(args.getString("mode"))){checkImageContent();checkReferenceSingle();checkContextControls();checkFavoriteSlideshow();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: contextual workflow entries and real card selection, reference single controls, actual sniffed image decode/rejected HTML, native menus, one-item parents, per-child return identity, independent mode/account state and filtered favorite slideshow snapshots");finish(Activity.RESULT_OK,result);return;}
+      if("single".equals(args.getString("mode"))){checkReferenceSingle();checkImageContent();checkContextControls();checkFavoriteSlideshow();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: contextual workflow entries and real card selection, reference single controls, actual sniffed image decode/rejected HTML, native menus, one-item parents, per-child return identity, independent mode/account state and filtered favorite slideshow snapshots");finish(Activity.RESULT_OK,result);return;}
       require(Boolean.TRUE.equals(expression(library,"RHVideoNative.request('folders',{kind:'video'}).then(Array.isArray)")),"Folder API must return a real array");
       if(Build.VERSION.SDK_INT>=30){int[] location={0,0},top={0};runOnMainSync(()->{library.getLocationOnScreen(location);top[0]=library.getRootWindowInsets().getInsets(WindowInsets.Type.statusBars()|WindowInsets.Type.displayCutout()).top;});require(location[1]>=top[0],"Status bar must not cover the library header");}
       require(eval(library,"(()=>{const side=document.querySelector('.library-sidebar').getBoundingClientRect(),main=document.querySelector('.library-main').getBoundingClientRect();return main.x<20&&side.bottom<=main.top+1&&document.documentElement.scrollWidth<=innerWidth+1;})()").equals("true"),"Phone layout must stack navigation above full-width content");
