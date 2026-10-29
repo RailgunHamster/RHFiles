@@ -47,6 +47,17 @@ test('rotation acceptance waits for the requested rendered orientation before qu
   assert.match(wait,/System\.currentTimeMillis\(\)\+30000/,'The existing per-transition frame budget must not grow');
   assert.match(source,/setRotation\(UiAutomation\.ROTATION_FREEZE_90\),"Owned landscape rotation request must be accepted"\);restored=waitGrid\(3,true,android\.content\.res\.Configuration\.ORIENTATION_LANDSCAPE\);[^\n]+setRotation\(UiAutomation\.ROTATION_FREEZE_0\),"Owned portrait rotation request must be accepted"\);restored=waitGrid\(3,true,android\.content\.res\.Configuration\.ORIENTATION_PORTRAIT\)/);
 });
+
+test('grid continuity observes real time and frames while WebView timers are suspended, without driving the player',()=>{
+  const continuity=source.slice(source.indexOf('private JSONObject checkGridContinuity('),source.indexOf('private void checkReferenceGrid('));
+  assert.match(continuity,/library\.pauseTimers\(\).*Thread\.sleep\(5000\).*finally\{runOnMainSync\(\(\)->library\.resumeTimers\(\)\)/);
+  assert.match(continuity,/position>=4000&&pts>=4000&&frames>=60/);
+  assert.match(continuity,/a\.getLong\("inputId"\)==b\.getLong\("inputId"\)/);
+  assert.match(continuity,/grid-failure-audio-snapshot/);
+  assert.doesNotMatch(continuity,/gridControl\(|mainAction\(|action\(|\.performClick\(/);
+  assert.equal([...continuity.matchAll(/nativeCall\(/g)].length,1,'Only read after the uninterrupted observation interval');
+  assert.match(source,/JSONObject first=checkGridContinuity\(waitGrid\(3,false\)\)/);
+});
 test('ordinary grid resizing retains codecs but keeps real background and explicit recreation release paths',()=>{
   const manifest=fs.readFileSync(new URL('../../android/manifest/AndroidManifest.xml',import.meta.url),'utf8'),grid=fs.readFileSync(new URL('../../android/gradle/app/src/main/java/com/railgunhamster/rhfiles/RhVideoGridActivity.kt',import.meta.url),'utf8');
   const declaration=manifest.match(/<activity[^>]+android:name="\.RhVideoGridActivity"[^>]+>/)?.[0];assert(declaration);

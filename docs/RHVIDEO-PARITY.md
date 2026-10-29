@@ -18,6 +18,20 @@ Android 原生媒体 Activity 改用专属深色主题，不修改文件浏览�
 
 自有新 AVD 在 RHFiles 尚未安装时遗留两个开机期系统 ANR，已分别保存截图／层级并只对明确的 System UI 与 Process system 对话框各选择一次“等待”；没有关闭系统进程、重启／重置模拟器或修改安全设置。随后两次窗口读取已无错误弹窗，但仍须按原安装／运行 gate 验证，不能把消失的旧对话框当成绘制／音频健康证明。正式 Windows 实例和实体手机均未操作；没有发布新包，完整目标未完成。
 
+随后同一 `0056517a…` 主 APK／`29c6e6eb…` 探针在 **emulator-5586 / RHFilesRhVideoQA20261030Audio** 安装并逐字节核对成功；默认音频实验值 **0** 的**完整 grid 通过**（`rhvideo-media-chrome-default-audio-grid.log`，`rhvideo-android-grid-1793310622638-release`）。包括真实收藏／取消收藏／暂存触摸、持指 A→B→A 后拒绝旧 decoder 操作、暂停 5 秒帧恢复、循环、精确组重开、一次性暂存提交、账户关闭与 HTTP 失败。横屏 **2400×514** → 竖屏 **1080×1834** 的 canvas 已实际确认，输入始终为 **7／8／9**，均有实际帧；两张原生截图已经检查。这验证了普通旋转不重建解码器的修改，但不证明旧环境的唯一根因是 `-no-audio`、真实声音质量或持续播放性能已经完成。
+
+截图还暴露横屏三排控制占高过大的问题。后续已改为按可用宽度／字体大小自动单行或多行，只更改同一批 View 的测量参数，不重建父子关系／事件／播放器；新增实际原生测量及大字体测试。另收紧 grid：禁止中途状态读取，在暂停 WebView 计时器的五秒实时时间内，每路须保留同输入、媒体／帧时间推进至少四秒，并输出至少 60 帧，不能以首帧或 READY 代替；失败仍保留现场音频。此前完整通过**没有这一项新门槛**，新构建和原生结果另记。新增策略后共享业务 **850/850、零跳过**（`rhvideo-compact-controls-node.log`），此时 Android 构建仍在运行。
+
+随后紧凑布局的 QA 构建 **6 分 10 秒成功，443/443 JVM、零失败／错误／跳过**（短路径 QA 的 `rhvideo-compact-controls-native-build.log`）。主 APK `2079fded3e5da44c7ab4edfbea4f0c33c194ffed9a4ed572adaa660a5c553fec`／初版探针 `500cd6952c839cb12c7ea5e57716adc0b4dabae18f4ca3822f0efe040ea6b22d` 实际安装字节已核对。新的完整 grid **失败**（`rhvideo-compact-controls-continuity-grid.log`，`rhvideo-android-grid-1793311415164-release`）：5.892 秒只推进 **256／234／256 ms**，只新增 **5／0／4 帧**，不是五秒正常播放。三路已缓冲约 19–20 秒、读取 4.36–4.86 MB、无 loadError，仍有音频 underrun，不能只凭缓冲量把唯一根因定为音频或排除所有读取性能问题。
+
+同一主 APK 的独立 **grid-rotation 通过**（`rhvideo-compact-controls-rotation-pixels.log`，`rhvideo-android-grid-rotation-1793311744104-release`），验证真实 0/90/180/270 度像素及暂停时间／音量／速度、翻组恢复；此场景不是屏幕横竖切换，**不能冒充紧凑横屏布局的实际整窗验收或持续播放通过**。横屏单行目前只有原生组件测量通过，完整实窗需在持续播放问题处理后继续核验。
+
+为进一步保留失败栈，探针单独重编译 **58 秒成功**（`rhvideo-continuity-stack-probe-build.log`），哈希 `22bf61a201bcb9ca4e16b54bf3696e62fbc28bf342e373fb07ec5152413d1e20`，主包不变。复测仍 **失败**（`rhvideo-continuity-stack-grid.log`，`rhvideo-android-grid-1793312260984-release`）：5.254 秒推进 **1218／1392／1166 ms**，新增 **22／28／29 帧**。已用对应产品 mapping 还原 234 行现场栈；三条 ExoPlayer Playback 线程当时都在 `MediaCodec.releaseOutputBuffer`，一条视频、两条音频，另有异步音频入队。**单次栈不是阻塞时长或死锁证明**，但下一步应核对 codec 供给／缓冲释放路径，不应继续靠降低音频水位掩盖问题。
+
+新增独立 `scripts/testing/rhvideo-audio-clock.mjs`＋公开 [AudioTrack API](https://developer.android.com/reference/android/media/AudioTrack) 的 PCM 对照，不安装／访问 RHFiles、没有 Media3／网络／解码器，不改音量、起播水位或系统服务；明确只允许两个自有 AVD。保持 48 kHz、双声道 PCM16、24000 帧容量与默认 24000 帧起播水位。有效轮次单路／三路均在约五秒推进约 **242624–244800 帧**、零 underrun，进程正常退出（`rhvideo-platform-pcm-clock-explicit-exit.log`，`rhvideo-pcm-clock-2F64nv/receipt.json`）。首轮虽然采样正常，但诊断 VM 返回 main 后没有及时退出、被 15 秒 guest timeout 终止，未记作通过；已改为**仅在释放所有自建音轨后退出此 VM**，不重置其他进程。该对照 UID 为 shell **2000**，不是 RHFiles 的 app UID，也没有同时解码视频，所以只证明平台在此负载／身份下可正常供给 PCM，不能扩展为整个平台无问题或产品播放已修好。
+
+新增独立诊断准入测试后，共享业务最终 **852/852、零跳过**（`rhvideo-compact-controls-audio-node.log`）。主题／控件提交 `768f4e3` 已推送两端开发分支；本节其余源码与结果继续保存。未降低五秒门槛、默认化音频实验、重启音频／模拟器／主机、操作真机或替换正式 Windows；没有发布新包，目标仍未完成。
+
 ## 2026-10-30 起播水位对照与旋转冷恢复（验证继续，未发包）
 
 首先以公开的 Media3 AudioOutputProvider／AudioTrack API 构建独立 QA 实验，默认构建仍为 0、不改变平台水位；不使用 deprecated provider、私有反射、静音、删音轨、缩小缓冲或重试。实验参数只能搭配 probe 构建，宿主／每格 snapshot／实际水位回执均须一致，不允许实验包冒充默认 gate。新构建 **6 分钟成功，433/433 JVM**（`rhvideo-audio-start-experiment-build.log`）；共享业务含真实参考对照先 **843/843**（`rhvideo-audio-start-node-reference.log`），第一次未指定参考路径的 811 通过／32 跳过另存，不记为完整通过。

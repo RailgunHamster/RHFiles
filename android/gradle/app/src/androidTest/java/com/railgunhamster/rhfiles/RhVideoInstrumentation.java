@@ -74,9 +74,28 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(((JSONObject)action("grid.state",new JSONObject())).getJSONArray("dragging").toString().contains("volume"),"An actual native slider drag must start before testing stale release");
   }
   private void endGridVolumeGesture(boolean cancel)throws Exception{if(gridGestureDown!=0){long down=gridGestureDown;gridGestureDown=0;require(getUiAutomation().injectInputEvent(MotionEvent.obtain(down,SystemClock.uptimeMillis(),cancel?MotionEvent.ACTION_CANCEL:MotionEvent.ACTION_UP,gridGestureX,gridGestureY,0),true),"Owned grid gesture release was rejected");}}
+  private JSONObject checkGridContinuity(JSONObject before)throws Exception{
+    // Real elapsed time without intermediate state reads or WebView timers.
+    // No seek, audio-waterline experiment, mute or decoder replacement may
+    // turn a stalled first frame into an apparent successful playback check.
+    long started=SystemClock.elapsedRealtime();
+    runOnMainSync(()->library.pauseTimers());try{Thread.sleep(5000);}finally{runOnMainSync(()->library.resumeTimers());}
+    JSONObject after=(JSONObject)nativeCall("automation.grid.state",new JSONObject());long elapsed=SystemClock.elapsedRealtime()-started;
+    JSONArray samples=new JSONArray();boolean advancing=elapsed>=5000&&elapsed<10000;
+    for(int i=0;i<before.getJSONArray("cells").length();i++){
+      JSONObject a=before.getJSONArray("cells").getJSONObject(i),b=after.getJSONArray("cells").getJSONObject(i);
+      long position=b.getLong("positionMs")-a.getLong("positionMs"),frames=b.getLong("renderedFrames")-a.getLong("renderedFrames"),pts=b.getLong("frameTimeMs")-a.getLong("frameTimeMs");
+      samples.put(new JSONObject().put("id",b.getString("id")).put("inputId",b.getLong("inputId")).put("positionDeltaMs",position).put("frameDelta",frames).put("frameTimeDeltaMs",pts));
+      advancing&=a.getString("id").equals(b.getString("id"))&&a.getLong("inputId")==b.getLong("inputId")&&b.getBoolean("playing")&&!b.getBoolean("paused")&&b.isNull("error")&&position>=4000&&pts>=4000&&frames>=60;
+    }
+    step("grid continuity "+new JSONObject().put("elapsedMs",elapsed).put("samples",samples));
+    if(!advancing){step("QA: grid-failure-audio-snapshot pid="+android.os.Process.myPid());android.util.Log.e("RHVideoQA",playbackThreads());}
+    require(advancing,"All grid inputs must advance real media time and render at least 60 new frames during five seconds without web timers: "+after);
+    return after;
+  }
   private void checkReferenceGrid()throws Exception{
     require(((JSONObject)action("preferences.state",new JSONObject())).getInt("gridCount")==0,"Android must default to reference automatic grouping");
-    action("gallery.open",new JSONObject());action("grid.open",new JSONObject());JSONObject first=waitGrid(3,false);
+    action("gallery.open",new JSONObject());action("grid.open",new JSONObject());JSONObject first=checkGridContinuity(waitGrid(3,false));
     require(first.getInt("total")==6&&first.getInt("groupTotal")==2,"Grid pool must contain only the six gallery videos, not the 52-item list");
     require(gridIds(first).toString().equals("[\"video-0\",\"video-1\",\"video-2\"]"),"Native grid must preserve gallery order: "+first);
     JSONArray firstIds=gridIds(first);String lease=first.getString("lease");

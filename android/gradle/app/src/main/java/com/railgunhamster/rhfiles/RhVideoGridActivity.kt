@@ -137,14 +137,13 @@ class RhVideoGridActivity:AppCompatActivity(){
     };root.addView(grid,LinearLayout.LayoutParams(-1,0,1f))
     fun dp(value:Int)=RhVideoMediaChrome.dp(this,value)
     val toolbar=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(8),dp(12),dp(8));setBackgroundColor(getColor(R.color.rhvideo_media_panel))}
-    target=Spinner(this).apply{contentDescription="同屏控制目标";setPopupBackgroundDrawable(android.graphics.drawable.ColorDrawable(getColor(R.color.rhvideo_media_panel)))};toolbar.addView(target,LinearLayout.LayoutParams(-1,dp(48)))
+    target=Spinner(this).apply{contentDescription="同屏控制目标";setPopupBackgroundDrawable(android.graphics.drawable.ColorDrawable(getColor(R.color.rhvideo_media_panel)))}
     target.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,index:Int,id:Long){selected=index-1;paintControls()}}
     val buttons=LinearLayout(this)
     for((label,command)in listOf("播放" to "resume","暂停" to "pause","静音" to "mute","展开" to "expand","网格" to "restore"))buttons.addView(RhVideoMediaChrome.button(this,label).apply{bindControl(this){JSONObject().put("target",if(command=="restore")-1 else if(command=="expand")selected.coerceAtLeast(0)else selected).put("command",if(command=="restore")"expand"else command)}},LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(dp(2),dp(2),dp(2),dp(2))})
-    toolbar.addView(buttons)
     val pages=LinearLayout(this).apply{gravity=android.view.Gravity.CENTER_VERTICAL};previous=RhVideoMediaChrome.button(this,"上一组").apply{bindControl(this){JSONObject().put("command","page").put("value",-1)}};next=RhVideoMediaChrome.button(this,"下一组").apply{bindControl(this){JSONObject().put("command","page").put("value",1)}};counter=RhVideoMediaChrome.text(this,muted=true).apply{setPadding(dp(8),0,dp(8),0)}
     fun pageParams()=LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(dp(2),dp(2),dp(2),dp(2))}
-    pages.addView(previous,pageParams());pages.addView(counter);pages.addView(next,pageParams());pages.addView(RhVideoMediaChrome.button(this,"调节").apply{contentDescription="展开或收起播放调节";setOnClickListener{safe{control(JSONObject().put("command","controls"))}}},pageParams());toolbar.addView(pages)
+    pages.addView(previous,pageParams());pages.addView(counter);pages.addView(next,pageParams());pages.addView(RhVideoMediaChrome.button(this,"调节").apply{contentDescription="展开或收起播放调节";setOnClickListener{safe{control(JSONObject().put("command","controls"))}}},pageParams());toolbar.addView(RhVideoMediaChrome.controlBar(this,target,buttons,pages))
     val adjustmentRows=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
     adjustments=ScrollView(this).apply{addView(adjustmentRows);visibility=if(controlsExpanded)View.VISIBLE else View.GONE}
     toolbar.addView(adjustments,LinearLayout.LayoutParams(-1,adjustmentHeight()))

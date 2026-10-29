@@ -37,6 +37,22 @@ internal object RhVideoMediaChrome {
     progressTintList=ColorStateList.valueOf(context.getColor(R.color.rhvideo_media_accent))
     thumbTintList=progressTintList;progressBackgroundTintList=ColorStateList.valueOf(0x334d6285)
   }
+  fun controlBar(context:Context,selector:View,commands:View,pages:View):LinearLayout = object:LinearLayout(context){
+    private var wide:Boolean?=null
+    init{gravity=Gravity.CENTER_VERTICAL;addView(selector);addView(commands);addView(pages)}
+    override fun onMeasure(widthMeasureSpec:Int,heightMeasureSpec:Int){
+      val useWide=View.MeasureSpec.getMode(widthMeasureSpec)!=View.MeasureSpec.UNSPECIFIED&&
+        View.MeasureSpec.getSize(widthMeasureSpec)>=dp(context,700)*resources.configuration.fontScale.coerceAtLeast(1f)
+      if(wide!=useWide){
+        wide=useWide;orientation=if(useWide)HORIZONTAL else VERTICAL
+        // Keep the same controls, parents, listeners and in-flight gestures;
+        // only change measurement, never rebuild controls when rotating.
+        for((index,view)in listOf(selector,commands,pages).withIndex())view.layoutParams=
+          LinearLayout.LayoutParams(if(useWide)0 else -1,if(index==0)dp(context,48)else -2,if(useWide)listOf(1.1f,2f,1.9f)[index]else 0f)
+      }
+      super.onMeasure(widthMeasureSpec,heightMeasureSpec)
+    }
+  }
   fun selector(context:Context,labels:List<String>):ArrayAdapter<String> = object:ArrayAdapter<String>(context,android.R.layout.simple_spinner_item,labels){
     init{setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)}
     private fun style(view:View,position:Int,dropdown:Boolean):View {
