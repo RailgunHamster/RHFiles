@@ -15,6 +15,15 @@ test('malformed or unsafe preferences do not overwrite valid current controls',(
  const {patch,ignored}=C.restoredPreferences({page_volume:'NaN',favshow_fade:'0.3',media_tag_filter:'{"__proto__":{"polluted":true}}',novel_settings:'{"fs":19,"lh":1.9,"theme":"oops"}',rotate:'false',favshow_image:'60'});
  assert.deepEqual(patch,{autoRotate:false,favoriteStay:60});assert.deepEqual(ignored.sort(),['page_volume','favshow_fade','media_tag_filter','novel_settings'].sort());assert.equal({}.polluted,undefined);
 });
+
+test('restored tag filters are validated semantically before they can overwrite the working rule',()=>{
+ for(const rule of [{include:'broken'},{mode:'invalid'},{groups:[null]},{include:Array.from({length:65},(_,i)=>'tag'+i)}]){
+  const restored=C.restoredPreferences({media_tag_filter:JSON.stringify(rule),page_volume:'0.31',rotate:'false'});
+  assert.deepEqual(restored.patch,{volume:31,autoRotate:false});assert.deepEqual(restored.ignored,['media_tag_filter']);
+ }
+ const valid=C.restoredPreferences({media_tag_filter:JSON.stringify({mode:'or',include:['风景','风景'],groups:[{exclude:['城市']}]})});
+ assert.deepEqual(valid.ignored,[]);assert.deepEqual(valid.patch.rule,{mode:'or',include:['风景'],exclude:[],groups:[{mode:'and',include:[],exclude:['城市']}]});
+});
 test('favorite slideshow retains independent image/video dwell and millisecond fade instead of Ken Burns settings',()=>{
  const c=I.slideshowSettings(config,'favorite');assert.equal(c.stay,12);assert.equal(c.videoStay,45);assert.equal(c.fade,1.3);assert.equal(c.kenBurns,false);assert.equal(c.overlap,true);
  const pictures=I.slideshowSettings(config,'picture');assert.equal(pictures.stay,7);assert.equal(pictures.fade,0);assert.equal(pictures.overlap,false);
@@ -39,4 +48,12 @@ test('a confirmed merge with failed refresh remains an applied result, never a r
  const commands=new Map();let writes=0;const preview={applied:false,favorites:{add:1}},state={generation:1};
  C.install({mobile:false,state,action:(name,_schema,handler)=>commands.set(name,handler),object:()=>({}),config:()=>config,rawPreferences:()=>({}),notice(){},applyPreferences:async()=>{},refresh:async()=>{throw Error('owned-refresh-failure');},native:async name=>{if(name==='configuration.preview')return {ticket:'confirmed-once',preview};assert.equal(name,'configuration.restore');writes++;return {applied:true,ui_preferences:{},clientWarning:'native-refresh-warning'};}});
  await commands.get('configuration.preview')({path:'owned-fixture.json'});const result=await commands.get('configuration.restore')({ticket:'confirmed-once'});assert.equal(result.applied,true);assert.match(result.clientWarning,/native-refresh-warning/);assert.match(result.clientWarning,/记录已合并，但列表刷新失败/);assert.equal(writes,1);await assert.rejects(()=>commands.get('configuration.restore')({ticket:'confirmed-once'}),/预览已改变/);assert.equal(writes,1);
+});
+
+test('a confirmed restore reports rejected rule data through the same visible state and API without losing the working rule',async()=>{
+ const commands=new Map(),state={generation:1};let writes=0,current=structuredClone(config);
+ C.install({mobile:false,state,action:(name,_schema,handler)=>commands.set(name,handler),object:()=>({}),config:()=>current,rawPreferences:()=>({}),notice(){},applyPreferences:async patch=>{current={...current,...patch};},refresh:async()=>{},native:async name=>{if(name==='configuration.preview')return {ticket:'owned-restore',preview:{applied:false,favorites:{add:0}}};assert.equal(name,'configuration.restore');writes++;return {applied:true,ui_preferences:{media_tag_filter:'{"include":"broken"}',page_volume:'0.31'}};}});
+ await commands.get('configuration.preview')({path:'owned.json'});const result=await commands.get('configuration.restore')({ticket:'owned-restore'});
+ assert.equal(writes,1);assert.equal(result.applied,true);assert.deepEqual(result.ignoredPreferences,['media_tag_filter']);assert.match(result.clientWarning,/标签筛选/);assert.match(commands.get('configuration.state')().message,/标签筛选/);assert.deepEqual(current.rule,config.rule);assert.equal(current.volume,31);
+ await assert.rejects(()=>commands.get('configuration.restore')({ticket:'owned-restore'}),/预览已改变/);assert.equal(writes,1);
 });

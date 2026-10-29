@@ -342,7 +342,14 @@ test('actual RHVideo FastAPI/SQLite contracts, not a mocked API',{skip:!fs.exist
     await view.evaluate('document.querySelector(".wb-configuration").scrollIntoView({block:"center"});true');
     const backupShot=await view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'rhvideo-configuration-preview.png'),Buffer.from(backupShot.data,'base64'));
     const restoredBackup=await invoke(view,'configuration.restore',{ticket:stagedBackup.ticket});assert.equal(restoredBackup.applied,true);assert.equal(restoredBackup.favorites.add,1);assert.equal((await invoke(view,'state')).total,1,'Restore refreshes the real favorite catalog immediately');
-    await assert.rejects(()=>invoke(view,'configuration.restore',{ticket:stagedBackup.ticket}),/预览已改变|预览已失效/,'A consumed confirmation cannot restore again');await invoke(view,'panel.close',{id:'wb-settings'});
+    await assert.rejects(()=>invoke(view,'configuration.restore',{ticket:stagedBackup.ticket}),/预览已改变|预览已失效/,'A consumed confirmation cannot restore again');
+    await invoke(view,'rules.apply',{rule:{mode:'and',exclude:['never-a-fixture-label']}});const workingRule=(await invoke(view,'preferences.state')).rule;
+    const damagedBackupFile=path.join(app.directory,'invalid-rule-backup.json');fs.writeFileSync(damagedBackupFile,JSON.stringify({...backup,ui_preferences:{...backup.ui_preferences,media_tag_filter:'{"include":"broken"}',page_volume:'0.31'}}));
+    const damagedPreview=await invoke(view,'configuration.preview',{path:damagedBackupFile}),damagedRestore=await invoke(view,'configuration.restore',{ticket:damagedPreview.ticket});
+    assert.equal(damagedRestore.applied,true);assert.deepEqual(damagedRestore.ignoredPreferences,['media_tag_filter']);assert.match(damagedRestore.clientWarning,/标签筛选/);assert.deepEqual((await invoke(view,'preferences.state')).rule,workingRule);assert.equal((await invoke(view,'preferences.state')).volume,31);
+    assert.equal(await view.evaluate('document.querySelector("[data-config-message]").textContent.includes("标签筛选")'),true,'The actual restore panel explains the ignored field, not only the API result');assert.equal((await invoke(view,'state')).total,1,'Malformed rule data cannot make the actual library unreadable');
+    const damagedShot=await view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'rhvideo-configuration-invalid-rule.png'),Buffer.from(damagedShot.data,'base64'));
+    await assert.rejects(()=>invoke(view,'configuration.restore',{ticket:damagedPreview.ticket}),/预览已改变|预览已失效/);await invoke(view,'rules.clear');await invoke(view,'panel.close',{id:'wb-settings'});
     for(const kind of ['picture','novel']){await invoke(view,'category',{kind});await invoke(view,'favorite.toggle',{id:'real-'+kind,kind});}
     assert.equal((await invoke(view,'category',{kind:'favorite'})).total,3);
     await invoke(view,'preferences.set',{key:'mediaType',value:'novel'});
