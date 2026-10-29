@@ -474,12 +474,21 @@ public class RhVideoInstrumentation extends Instrumentation {
     assertPreviewPixels("#wb-viewer .wb-slide:not(.outgoing) img","rhvideo-favorite-slideshow-qa.png");action("panel.close",new JSONObject().put("id","wb-viewer"));action("viewer.open",new JSONObject().put("mode","slideshow").put("source","favorite"));require(((JSONObject)action("viewer.state",new JSONObject())).getInt("index")==0,"Reopening starts a new favorite slideshow, like the reference");action("panel.close",new JSONObject().put("id","wb-viewer"));
   }
   private void touchPlayerButton(String resource)throws Exception{
+    // A selected PopupMenu row may return before its window has finished
+    // dismissing. A touch during that interval only dismisses that old popup;
+    // it never reaches the underlying player button. Observe window focus,
+    // rather than injecting again or extending the controller's hide timeout.
+    long focusStart=SystemClock.uptimeMillis(),focusEnd=focusStart+5000;boolean[] focused={false};
+    do{runOnMainSync(()->focused[0]=current!=null&&!current.isFinishing()&&current.getWindow().getDecorView().hasWindowFocus());if(focused[0])break;Thread.sleep(50);}while(SystemClock.uptimeMillis()<focusEnd);
+    require(focused[0],"Player window must regain focus after the previous popup before touching "+resource);
+    step("native touch "+resource+" focusWaitMs="+(SystemClock.uptimeMillis()-focusStart));
     JSONObject shown=(JSONObject)action("player.control",new JSONObject().put("command","controls.show"));
     long visibleEnd=System.currentTimeMillis()+5000;while(!shown.optBoolean("controls")&&System.currentTimeMillis()<visibleEnd){Thread.sleep(100);shown=(JSONObject)action("player.state",new JSONObject());}
     require(shown.optBoolean("controls"),"Wait for the actual controller reveal animation before touching "+resource+": "+shown);
-    int[] center={-1,-1};runOnMainSync(()->{int id=current.getResources().getIdentifier(resource,"id",getTargetContext().getPackageName());View button=current.findViewById(id);if(button!=null&&button.isShown()&&button.isEnabled()&&button.getWidth()>0){button.getLocationOnScreen(center);center[0]+=button.getWidth()/2;center[1]+=button.getHeight()/2;}});
+    long readyAt=SystemClock.uptimeMillis();int[] center={-1,-1};runOnMainSync(()->{int id=current.getResources().getIdentifier(resource,"id",getTargetContext().getPackageName());View button=current.findViewById(id);if(current.getWindow().getDecorView().hasWindowFocus()&&button!=null&&button.isShown()&&button.isEnabled()&&button.getWidth()>0){button.getLocationOnScreen(center);center[0]+=button.getWidth()/2;center[1]+=button.getHeight()/2;}});
     require(center[0]>=0&&center[1]>=0,"Native player button must be visible and enabled: "+resource);
     long now=SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,center[0],center[1],0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,center[0],center[1],0);
+    step("native touch "+resource+" center="+center[0]+","+center[1]+" readyToDownMs="+(now-readyAt));
     try{sendPointerSync(down);sendPointerSync(up);}finally{down.recycle();up.recycle();}
   }
   private void clickPlayerText(String... labels)throws Exception{
@@ -616,7 +625,13 @@ public class RhVideoInstrumentation extends Instrumentation {
       if(request.equals(result.optString("request"))){if(result.has("error"))throw new Exception(result.getString("error"));if(result.has("value"))return result.get("value");}Thread.sleep(100);
     }while(System.currentTimeMillis()<end);throw new Exception("Action timed out");
   }
-  private Object action(String name,JSONObject p)throws Exception{Bundle step=new Bundle();step.putString("stream","STEP: rhvideo."+name+"\n");sendStatus(0,step);return expression(library,"RHFilesAPI.invoke("+JSONObject.quote("rhvideo."+name)+","+p+")");}
+  private void observePlayerOpening(){
+    // Instrumented ANRs are terminated before Android writes its usual trace.
+    // Capture a bounded three read-only stacks before the 5 s input deadline,
+    // including asynchronous Activity creation after media.open has returned.
+    Thread observer=new Thread(()->{try{for(int i=0;i<3;i++){Thread.sleep(1500);android.util.Log.i("RHVideoQA","Opening snapshot uptime="+SystemClock.uptimeMillis()+" sample="+i+"\n"+playbackThreads());}}catch(InterruptedException e){Thread.currentThread().interrupt();}},"RHVideoQA-opening");observer.setDaemon(true);observer.start();
+  }
+  private Object action(String name,JSONObject p)throws Exception{Bundle step=new Bundle();step.putString("stream","STEP: rhvideo."+name+"\n");sendStatus(0,step);if("media.open".equals(name)||"image.playVideo".equals(name))observePlayerOpening();return expression(library,"RHFilesAPI.invoke("+JSONObject.quote("rhvideo."+name)+","+p+")");}
   private void step(String name){Bundle value=new Bundle();value.putString("stream","STEP: "+name+"\n");sendStatus(0,value);}
   private Object nativeCall(String name,JSONObject p)throws Exception{step("native."+name);return expression(main,"api.native("+JSONObject.quote(name)+","+p+")");}
   private Object mainAction(String name,JSONObject p)throws Exception{step("files."+name);return expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke("+JSONObject.quote(name)+","+p+")");}
