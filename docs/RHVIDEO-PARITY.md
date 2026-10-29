@@ -22,7 +22,13 @@
 
 同主包／探针的下一轮 `single` 又在冷点击前置夹具处失败（`rhvideo-lifecycle-fixed-single-physical.log`）：它在登录后先跑图片检查，故意等待首个视频读取才放行的图库 HTTP 已超过原有读取超时；这轮**尚未走到修改后的物理控制栏逻辑**。探针将原有“登录后立即点第一个视频”流程移到无关图片检查之前，图片内容探测、菜单、父层、上下文和收藏放映断言全部保留，不加长 HTTP 超时或隐藏间隔。相关宿主策略含此顺序检查，共享 Node 随后 **838/838、零跳过**（`rhvideo-track-memory-final-node.log`）；它不是该轮原生 single 已通过的证明。
 
-加入同屏记忆后的整包构建 **5 分 45 秒成功**（`rhvideo-grid-track-memory-build.log`），全部 JVM **422/422、零失败／错误／跳过**；新主包为 `3d0ab192438a0b9568265a2ef5082526a1c31fad0941b20c8eb70190ecb0b0e4`，探针为 `f725c84fc9d5039bd3d5657f3346813ce4fcd3f50eca8bbd8646e4b332552568`。canonical 到短路径 QA 共核对 306 项 Android 输入，文本按 LF、其他文件按精确字节计算 SHA-256，只有未打包的 `android/web/tests/browser-fixture.mjs` 不同；所有产品／原生与新测试输入相符。参考仍为干净的 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`，14 个模块指纹和接口库存检查通过（`rhvideo-track-memory-reference-audit.json`），不将库存通过当作行为完成。新包的完整 `lifecycle`／`single` 正在单台自有模拟器顺序运行，原始日志为 `rhvideo-grid-track-memory-lifecycle.log`／`rhvideo-track-memory-single-final.log`；此句只表示已启动，不宣称已通过。
+加入同屏记忆后的整包构建 **5 分 45 秒成功**（`rhvideo-grid-track-memory-build.log`），全部 JVM **422/422、零失败／错误／跳过**；新主包为 `3d0ab192438a0b9568265a2ef5082526a1c31fad0941b20c8eb70190ecb0b0e4`，探针为 `f725c84fc9d5039bd3d5657f3346813ce4fcd3f50eca8bbd8646e4b332552568`。canonical 到短路径 QA 共核对 306 项 Android 输入，文本按 LF、其他文件按精确字节计算 SHA-256，只有未打包的 `android/web/tests/browser-fixture.mjs` 不同；所有产品／原生与新测试输入相符。参考仍为干净的 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`，14 个模块指纹和接口库存检查通过（`rhvideo-track-memory-reference-audit.json`），不将库存通过当作行为完成。提交后完整共享 Node 再次 **838/838、零跳过**（`rhvideo-track-memory-node-verified.log`）。
+
+新主包已通过**完整单播放器＋三格同屏 lifecycle**（`rhvideo-grid-track-memory-lifecycle.log`，`rhvideo-android-lifecycle-1793301727365-release`）。两种 viewer 都实际 HOME／stop／返回同一 Activity，再由框架重建；同屏真实暂停定位元数据与位置均约 5 秒，保留选中格的 1.25 倍、循环、37 音量及字幕关闭，另外两格未被串改，新 viewer 恢复默认，旧解码器控制被拒绝。已分别查看两张原生截图，同屏有三格实际像素，底格显示 5 秒帧，非接口／缓存成功假象。此轮没有出现上轮 AAC allocate 失败，**并不能据此证明该间歇初始化故障或播放时钟停滞根因已经修好**。截图中的同屏浅灰控件／系统栏仍有视觉统一欠缺，不把业务通过称为视觉体验完成。
+
+随后同包完整 `single` **通过**（`rhvideo-track-memory-single-final.log`，`rhvideo-android-single-1793301960655-release`），宿主明确收到两轮退出码均为零。包含收紧后的时间／多帧要求、首个视频不等图库、默认／保存／混合图库顺序、真实 Next／设置／关闭触摸、原生速度选中项、单项父层与逐次返回、模式／账户隔离、实际 PNG 内容探测与 HTML 错误拒绝、上下文操作和收藏放映实际像素。已查看本轮 Single 截图：画面约 5.292 秒、中文菜单确有 1.25 倍勾选。没有把 Readiness 返回当成持续播放，也没有延长 HTTP／隐藏／逐帧预算。
+
+同包接着跑完整 `grid` **失败**（`rhvideo-track-memory-full-grid.log`，`rhvideo-android-grid-1793302261433-release`，退出码 1）：本轮通过多路实际时间／帧前进、收藏／暂存控件调用、分组切换和实际 held slider 的 A → B → A／旧解码器输入拒绝；但横屏框架重建后的第一格停在 BUFFERING，5 秒位置、已缓冲 20 秒，却没有渲染帧、输出尺寸为零，另外两格已有暂停帧。当前没有对应终态 error，也没有足够证据归因于网络、音频或合成层中的唯一一项。实际重建输入为 10／11／12；状态、网络请求、native-logcat 与 media.resource_manager 均保留。该次未走到后续近 EOF、重新打开、最终暂存提交与错误源断言，**不能把这几项算通过**。生命周期 green 不覆盖这一更长的旋转／资源竞争场景；下一步需要给每个输入补独立的解码／加载阶段观测，不能拿一份无输入归属的全线程栈直接认定根因。
 
 这轮增量 QA 构建复用未改的 Rust ABI 库，不是完整重编译的正式 APK。没有删除音轨、伪造时钟、增加逐帧预算、自动重试播放，亦未重启模拟器／系统音频或操作实体手机。Windows 正式实例未替换、没有发包；持续播放、同屏生命周期、最终发行和稳定同性能等完整目标仍未完成。
 
