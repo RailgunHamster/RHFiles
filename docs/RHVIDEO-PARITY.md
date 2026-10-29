@@ -16,7 +16,11 @@ Windows 发包现准备官方非 GPL `VideoLAN.LibVLC.Windows 3.0.24`，固定�
 
 随后真实 Velopack 构建与两种包解压校验都通过（`rhvideo-libvlc-prebuilt-velopack-build.log`），仅输出本机 `dist/rhvideo-native-velopack-20261029-prebuilt/`，没有发布。release EXE SHA-256 为 `dfaea9543991b193c7e6defac499f62cd7418ba11c17773cc69e95675a282332`；完整更新包 SHA-256 为 `2ac82dcb4b107fd01f856137a6edf8b02508b109c5f5c175a69cfae48f7053ce`。从真实 portable 解压出的 release 程序通过 **13/13、零跳过**（`rhvideo-prebuilt-portable-release-e2e.log`），包含随包内核／AAC、同屏、定位／暂停／翻组、实际 FastAPI／隔离 SQLite、配置合并和 ZIP 下载。不是只运行工作目录的 EXE，也没有把系统 VLC 的通过结果转记为随包版本。
 
-完整 **97 项** Windows RHVideo 回归现正在独立副本串行运行（`rhvideo-prebuilt-bundled-windows-regression.log`）：使用实际 ZIP 的运行库和新 debug EXE，以保留仅 debug 开放的实际像素观测。不能将此构建称为原字节的 release 程序；上述 13 项才是实际 release 程序结果。H.264／HEVC 原生专项本轮首帧仍约 **3.49／5.43 s**，因此分发与索引修复不等于播放性能已解决。Android 原包／原生回归仍按前节记录，当前没有新 APK 或物理手机安装，没有改变正式实例，完整目标继续保持未完成。
+完整 **97 项** Windows RHVideo 回归在独立副本串行结束为 **95 通过、2 失败、零跳过**，耗时约 22 分钟（`rhvideo-prebuilt-bundled-windows-regression.log`）：使用实际 ZIP 的运行库和新 debug EXE，以保留仅 debug 开放的实际像素观测。不能将此构建称为原字节的 release 程序；上述 13 项才是实际 release 程序结果。失败是换源时单次抓图为黑色，以及收藏放映 Home／End 没有到达页面。后续换源／放映专项 **4/5**（`rhvideo-prebuilt-switch-slideshow-focused-1.log`）：三次真实红横屏→蓝竖屏→红横屏通过，但键盘失败再次出现，不能称为两项已修复。没有焦点模拟的键盘复测仍失败（`rhvideo-prebuilt-slideshow-real-focus-1.log`）；移除新窗口重复焦点调用的候选 EXE `ccbb7173c4c83527b855c2b2181796be74c1a02509c77c61a69bcb0e8776a932` 也失败，候选产品改动已撤回。随后两个诊断读取顺序均曾通过，尚不能归因为读取顺序；继续检查实际原生输入归属，不以偶然一次通过抵消失败。
+
+换源验收现将实际 RGB 与尺寸／帧统计放在**原有同一个 25 秒**就绪预算内，同时保留首／末 BMP 和有界读数；解码器显示计数不等于 DWM 抓图完成。错误颜色持续、旧输入／旧时间线、无新帧仍失败，不通过延长预算、丢音轨或降低分辨率解决。完整回归的 H.264／HEVC 内核统计首帧仍约 **3.69／5.08 s**，因此分发与索引修复不等于播放性能已解决。Android 原包／原生回归仍按前节记录，当前没有新 APK 或物理手机安装，没有改变正式实例，完整目标继续保持未完成。
+
+后续增加仅 Windows debug 且显式 `RHFILES_NATIVE_PLAYER_QA=1` 可用的 `diagnostics.windows`：在自有 UI 线程只读取本应用各窗口的前台／活动／子孙输入焦点布尔值，不返回外部窗口句柄或内容、不安装钩子、不请求激活。EXE SHA-256 为 `83baf677970e4032f1f7ccbf6a96e2eeced1f01bd7545349ec2283ba27208859`。实际媒体库这三项为 true 时，旧 `Window.isFocused()` 仍为 false，因此不能将那个缓存值当成原生输入丢失证明。键盘验收不用焦点模拟、不注入 DOM 事件、不先点击，现等待真正的输入归属；换源／放映 **5/5**（`rhvideo-native-readiness-focused-final.log`）及随后两个独立进程的键盘专项各 **1/1**（`rhvideo-native-input-ownership-repeat-{1,2}.log`）通过。共享 Node 再次 **724/724**，RHVideo Rust **57/57**（`rhvideo-native-window-{node,rust}-regression.log`）。这证明新增观测与有界就绪条件本轮通过，不证明既往间歇故障根因已完全消除，也不把原 **95/97** 改写成完整通过；整轮仍须再运行。
 
 ## 2026-10-29 备份规则入站校验与 SDK 后续验证（完整目标未完成）
 

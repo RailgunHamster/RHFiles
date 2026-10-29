@@ -18,7 +18,10 @@ test('paused manual slideshow navigation displays actual picture pixels instead 
  }finally{view?.close();app.close();await fixture?.close();}
 });
 test('favorite slideshow has independent timing, a real total-progress control and End stays on the final decoded picture',async()=>{
- const app=await launchApp({emulateFocus:true});let fixture,view;
+ // This case tests native keyboard routing. Do not emulate focus in any view
+ // sharing this browser environment: document.hasFocus() alone can then be
+ // true even while neither native window owns keyboard input.
+ const app=await launchApp();let fixture,view;
  const invoke=(action,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+action)+','+JSON.stringify(args)+')');
  try{
   fixture=await rhvideoFixture({videoCount:0,pictureCount:4});for(let i=0;i<4;i++)fixture.favorites.add('picture:picture-'+i);
@@ -34,11 +37,17 @@ test('favorite slideshow has independent timing, a real total-progress control a
   // The main app's focus emulation does not focus this separate native library.
   // Do not send a key before the real controller owns keyboard input, and do
   // not manufacture focus with bringToFront, DOM focus() or a preparatory click.
-  const focusStarted=performance.now();await until(()=>view.evaluate('document.hasFocus()'),'Real native library keyboard focus');console.log(JSON.stringify({nativeLibraryFocusReadyMs:performance.now()-focusStarted}));
+  const focusStarted=performance.now();let actualFocus;
+  await until(async()=>{
+   actualFocus=await view.evaluate('(async()=>({dom:document.hasFocus(),windows:'+ (process.env.RHFILES_NATIVE_PLAYER_QA==='1'?'await window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.windows",args:{}})':'null') +'}))()');
+   const own=actualFocus.windows?.find(row=>row.label==='window-rhvideo');
+   return actualFocus.dom&&(!actualFocus.windows||(own?.foreground&&own.active&&own.inputFocus));
+  },'Real native library keyboard input ownership').catch(error=>{console.error({actualNativeFocus:actualFocus});throw error;});
+  console.log(JSON.stringify({nativeLibraryFocusReadyMs:performance.now()-focusStarted,actualFocus}));
   const key=async(code,keyCode)=>{await view.send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:code,code,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});await view.send('Input.dispatchKeyEvent',{type:'keyUp',key:code,code,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});};
   const observeKeys='window.__slideshowKeyEvents=[];for(const type of ["keydown","keyup"])window.addEventListener(type,e=>setTimeout(()=>__slideshowKeyEvents.push({type,code:e.code,key:e.key,target:e.target?.outerHTML,prevented:e.defaultPrevented}),0),true)';await app.evaluate(observeKeys);await view.evaluate(observeKeys);
-  const focusSnapshot=session=>session.evaluate('(async()=>({focused:document.hasFocus(),nativeFocused:await window.__TAURI__.window.getCurrentWindow().isFocused(),visible:document.visibilityState,focus:document.activeElement?.outerHTML.slice(0,300),keys:__slideshowKeyEvents,dialogs:[...document.querySelectorAll("dialog[open]")].map(n=>n.id)}))()');
-  console.log(JSON.stringify({slideshowInputBefore:{library:await focusSnapshot(view),main:await focusSnapshot(app)}}));
+  const focusSnapshot=session=>session.evaluate('(async()=>({focused:document.hasFocus(),nativeFocused:await window.__TAURI__.window.getCurrentWindow().isFocused(),nativeWindows:await window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.windows",args:{}}).catch(e=>({unavailable:String(e)})),visible:document.visibilityState,focus:document.activeElement?.outerHTML.slice(0,300),keys:__slideshowKeyEvents,dialogs:[...document.querySelectorAll("dialog[open]")].map(n=>n.id)}))()');
+  console.log(JSON.stringify({slideshowInputBefore:{main:await focusSnapshot(app),library:await focusSnapshot(view)}}));
   try{await key('End',35);await until(async()=>{const s=await invoke('viewer.state');return s.index===3&&!s.loading;},'End really selects the final image');}catch(error){console.error('slideshow keyboard diagnostic',await invoke('viewer.state'),await focusSnapshot(view),await focusSnapshot(app));throw error;}await sleep(300);assert.equal((await invoke('viewer.state')).index,3,'End must not immediately wrap to the first picture');
   await key('Home',36);await until(async()=>{const s=await invoke('viewer.state');return s.index===0&&!s.loading;},'Home returns to the first image');
   const delivered=await view.evaluate('__slideshowKeyEvents.map(row=>row.code)');assert(delivered.includes('End')&&delivered.includes('Home'),'Both keys must reach the real library window');assert.equal(await app.evaluate('__slideshowKeyEvents.length'),0,'Library keyboard input must not leak to the main file browser');

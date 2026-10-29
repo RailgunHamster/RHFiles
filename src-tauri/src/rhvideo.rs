@@ -1480,6 +1480,23 @@ pub async fn rhvideo_open(app: AppHandle) -> Result<Value, String> {
 fn focus_library(app:&AppHandle){
     if let Some(window)=app.get_webview_window("window-rhvideo"){let _=window.unminimize();let _=window.show();let _=window.set_focus();let webview:&tauri::Webview=window.as_ref();let _=webview.set_focus();}
 }
+#[cfg(all(windows,debug_assertions))]
+async fn diagnostic_windows(app:&AppHandle)->Result<Value,String>{
+    if std::env::var("RHFILES_NATIVE_PLAYER_QA").as_deref()!=Ok("1"){return Err("窗口诊断仅在隔离调试测试中可用".into());}
+    let owned=app.webview_windows();let(tx,rx)=tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move||{
+        use windows::Win32::{UI::WindowsAndMessaging::{GetForegroundWindow,IsChild},UI::Input::KeyboardAndMouse::{GetFocus,GetActiveWindow},Foundation::HWND};
+        let(foreground,active,focus)=unsafe{(GetForegroundWindow(),GetActiveWindow(),GetFocus())};
+        // Never expose another application's HWND/title or install a hook.
+        // The UI-thread query only reports booleans for our owned windows;
+        // unlike DOM focus emulation it does not activate or focus anything.
+        let rows:Vec<Value>=owned.into_iter().filter_map(|(label,window)|{
+            let hwnd=window.hwnd().ok()?;let hwnd=HWND(hwnd.0);
+            Some(json!({"label":label,"foreground":foreground==hwnd,"active":active==hwnd,"inputFocus":focus==hwnd||unsafe{IsChild(hwnd,focus).as_bool()}}))
+        }).collect();let _=tx.send(json!(rows));
+    }).map_err(|e|e.to_string())?;
+    rx.await.map_err(|_|"窗口诊断未完成".to_owned())
+}
 #[tauri::command]
 pub async fn rhvideo_request(
     app: AppHandle,
@@ -1509,6 +1526,8 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         return Err("参数必须是 JSON 对象".into());
     }
     match action.as_str() {
+        #[cfg(all(windows,debug_assertions))]
+        "diagnostics.windows"=>return diagnostic_windows(&app).await,
         "page.volume" => {
             current()?;
             let value=args["value"].as_u64().filter(|v|*v<=100).ok_or("页面音量范围是 0–100")? as u32;
