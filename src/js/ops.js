@@ -357,8 +357,7 @@ async function copySelected(isRight) {
   if (!sel.length) return;
   const clipboard = { op: "copy", paths: new Set(sel.map(f => f.path)), sequence: 0 };
   G.clipboard = clipboard;
-  if (isRight) renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
-  else renderFiles(getTab(), "file-list", "status-count", "status-selection");
+  renderClipboardSelection(isRight);
   if (!window.__rhfilesSuppressNativeClipboard) {
     try {
       clipboard.sequence = Number(await call('set_windows_file_clipboard', {
@@ -376,8 +375,7 @@ async function cutSelected(isRight) {
   if (!sel.length) return;
   const clipboard = { op: "cut", paths: new Set(sel.map(f => f.path)), sequence: 0 };
   G.clipboard = clipboard;
-  if (isRight) renderFiles(G.rp, "right-file-list", "right-status-count", null, true);
-  else renderFiles(getTab(), "file-list", "status-count", "status-selection");
+  renderClipboardSelection(isRight);
   if (!window.__rhfilesSuppressNativeClipboard) {
     try {
       clipboard.sequence = Number(await call('set_windows_file_clipboard', {
@@ -386,6 +384,17 @@ async function cutSelected(isRight) {
       })) || 0;
     } catch (error) {}
   }
+}
+
+function renderClipboardSelection(isRight) {
+  if (G.layout === 'columns') {
+    // Rebuilding the root list here would close all child columns and discard
+    // the very selection the user just copied/cut.
+    document.getElementById(isRight ? 'right-file-list' : 'file-list')?.querySelectorAll('.column-item').forEach(item => {
+      item.classList.toggle('cut-item', G.clipboard?.op === 'cut' && G.clipboard.paths.has(item.dataset.path));
+    });
+  } else if (isRight) renderFiles(G.rp, 'right-file-list', 'right-status-count', null, true);
+  else renderFiles(getTab(), 'file-list', 'status-count', 'status-selection');
 }
 
 function _findAndRename(isRight, createdPath) {
@@ -1190,11 +1199,7 @@ function copySelectedPaths(isRight) {
   isRight = resolveRightPane(isRight);
   const pane = isRight ? G.rp : getTab();
   if(typeof isRecyclePath==='function'&&isRecyclePath(pane.path))return recycleCopyPaths(pane);
-  const entries = pane?.entries || [];
-  const paths = [...(pane?.sel || new Set())]
-    .sort((left, right) => left - right)
-    .map(index => entries[index]?.path)
-    .filter(Boolean);
+  const paths = selectedEntriesForPane(pane).map(entry => entry.path).filter(Boolean);
   return copyPathsFromMenu(paths);
 }
 

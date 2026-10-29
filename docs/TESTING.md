@@ -27,6 +27,7 @@
 | 地址栏和路径 | `scripts/tests/file-browser.test.mjs` | file URI、本地/UNC、空格/中文/emoji/#/%/+、只解码一次、规范化幂等 |
 | 排序、网格、选择 | 同上 | 五字段 × 两方向，文件夹优先，选中/焦点不漂移；自然数字排序；网格左右和上下移动边界 |
 | Shift 连续多选 | `scripts/tests/keyboard-range.test.mjs`；`scripts/e2e/keyboard-range.test.mjs` | 扩展/反向收缩/越过锚点、无初始选择、边界、Ctrl＋Shift保留离散选择；外部选中/排序/路径变更重置锚点；真实按键覆盖左右窗格的详情/卡片/缩略图 |
+| 多选快捷键 | `scripts/tests/multi-selection-shortcuts.test.mjs`；`scripts/e2e/multi-selection-shortcuts.test.mjs` | 左右窗格 × 详情/卡片/缩略图/Columns；Ctrl/Shift 点击、Ctrl+A、Ctrl+C/X、Ctrl+Shift+C、Delete 数量和两次确认后的真实 Shift+Delete；排序保留选区、框选松手前未提交的动画帧、迟到拼音结果不得覆盖手动多选；Columns 子目录复制/剪切/反选/箭头和后台刷新不丢选区，祖先被移走则关闭失效列 |
 | 标签页 | 同上；`scripts/e2e/file-lifecycle.test.mjs` | 拖动排序无丢失、固定分界不越界、关闭保护；实际文件拖到另一个标签后复制成功 |
 | 目录刷新 | `scripts/tests/navigation-search.test.mjs` | 乱序成功/失败不能覆盖新结果；离开目录作废旧请求；插入/删除后的选择；滚动保持；后台标签不能改变当前目录树 |
 | 键入搜索 | 同上；`src-tauri/src/search.rs` | 子串、拼音/首字母/多音字、全角、中文高亮；循环、无匹配、异步过期；递归搜索范围、结果上限、通配符/正则错误 |
@@ -41,6 +42,14 @@
 | 有界预览 | `scripts/tests/file-browser.test.mjs`；原 `system.rs` 测试 | 超长单行、多行、CRLF 有界输出；原有二进制内容探测用例继续执行 |
 
 所有新 Rust 磁盘用例在 `rhfiles-business-*` 临时目录执行；成功清理，失败保留定位材料。中断恢复测试重建持久化边界，**不等于**已经模拟真实断电、磁盘掉线或硬件写缓存故障。
+
+### 2026-10-29 多选快捷键回归
+
+先在真实窗口复现 Columns 的 Ctrl 多选退化为单选，以及迟到拼音结果覆盖新选区；另用受控动画帧验证框选松手丢失末帧。真实窗口还捕获到后台根目录刷新关闭子 Columns 的调用栈，修复后增加主动刷新及祖先目录移走的用例。
+
+- 新旧业务单测共 747 项通过，零跳过（`multi-selection-pinned-node-verified.log`）。RHVideo 参考使用固定提交 `869d63244300222750751c1175aab4ce855302dd` 的独立副本；直接使用当时正在修改的 RHVideo 工作目录时，746/747 通过，唯一失败是参考文件指纹变化，未改动或忽略该断言。
+- 真实文件管理、键盘范围和多选快捷键共 34 项通过，零跳过（`multi-selection-business-verified.log`）；旧界面回归另有 234 项通过，零跳过（`multi-selection-legacy-gui.log`）。复制路径只替换剪贴板写入边界，实际键盘/选区/删除确认逻辑不替换；永久删除在本次实例生成的临时文件上核对磁盘结果。
+- 使用独立配置的 Windows 调试程序，SHA-256 `875883c728279f3af924f177942334f04e75aaa2c3f10d675a6678d8df2f20d1`；这些结果不是正式发布包或现有安装已更新的证明。日志位于本地 `test-artifacts/`。
 
 ## 运行
 

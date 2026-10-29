@@ -25,11 +25,19 @@ function initBoxSelection(listEl) {
   let anchorX = 0, anchorY = 0;
   let pressX = 0, pressY = 0;
   let selectionRect = null;
+  let baseSelection = [];
+  let selectionOwner, selectionPath, selectionEntries;
   // Only a real marquee swallows the click that follows it; a plain click must
   // still reach the row handler (select) or the empty-area handler (clear).
   let suppressNextClick = false;
 
   const beginSelection = event => {
+    if (typeof resetTypeSearch === 'function') resetTypeSearch();
+    const pane = listEl.id === 'right-file-list' ? G.rp : getTab();
+    selectionOwner = pane;
+    selectionPath = pane?.path;
+    selectionEntries = pane?.entries;
+    baseSelection = [...(pane?.sel || [])];
     isSelecting = true;
     dragActive = false;
     suppressNextClick = false;
@@ -80,6 +88,9 @@ function initBoxSelection(listEl) {
 
   RHFilesUI.listen(listEl,'mousedown', e => {
     if (e.button === 0 || e.button === 2) {
+      // Cancel pending type-search before mouseup/click: its asynchronous
+      // completion must not replace the row while this gesture is in flight.
+      if (typeof resetTypeSearch === 'function') resetTypeSearch();
       G.lastActivePane = listEl.id === 'right-file-list' ? 'right' : 'left';
       if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
       focusFilePane(listEl);
@@ -115,6 +126,26 @@ function initBoxSelection(listEl) {
 
   let _selRaf = 0;
   let _selE = null;
+  const updateMarquee = ev => {
+    if (!ev || !selectionRect) return;
+    const pane = listEl.id === 'right-file-list' ? G.rp : getTab();
+    if (pane !== selectionOwner || pane?.path !== selectionPath) return;
+    if (pane.entries !== selectionEntries) {
+      const paths = new Set(baseSelection.map(index => selectionEntries?.[index]?.path).filter(Boolean));
+      baseSelection = pane.entries.flatMap((entry,index) => paths.has(entry.path) ? [index] : []);
+      selectionEntries = pane.entries;
+    }
+    const rect = listEl.getBoundingClientRect();
+    const x = Math.min(ev.clientX, anchorX) - rect.left + listEl.scrollLeft;
+    const y = Math.min(ev.clientY, anchorY) - rect.top + listEl.scrollTop;
+    const w = Math.abs(ev.clientX - anchorX);
+    const h = Math.abs(ev.clientY - anchorY);
+    selectionRect.style.left = x + 'px';
+    selectionRect.style.top = y + 'px';
+    selectionRect.style.width = w + 'px';
+    selectionRect.style.height = h + 'px';
+    selectFilesInRect(listEl, x, y, w, h, ev.ctrlKey || (IS_MAC && ev.metaKey), baseSelection);
+  };
   RHFilesUI.listen(document,'mousemove', e => {
     if (!isSelecting) return;
     if (!dragActive) {
@@ -127,25 +158,20 @@ function initBoxSelection(listEl) {
     if (!_selRaf) {
       _selRaf = requestAnimationFrame(() => {
         _selRaf = 0;
-        if (!_selE || !selectionRect) return;
-        const ev = _selE;
-        const list = listEl;
-        const rect = list.getBoundingClientRect();
-        const x = Math.min(ev.clientX, anchorX) - rect.left + list.scrollLeft;
-        const y = Math.min(ev.clientY, anchorY) - rect.top + list.scrollTop;
-        const w = Math.abs(ev.clientX - anchorX);
-        const h = Math.abs(ev.clientY - anchorY);
-        selectionRect.style.left = x + 'px';
-        selectionRect.style.top = y + 'px';
-        selectionRect.style.width = w + 'px';
-        selectionRect.style.height = h + 'px';
-        selectFilesInRect(list, x, y, w, h, ev.ctrlKey || (IS_MAC && ev.metaKey));
+        updateMarquee(_selE);
       });
     }
   },undefined,"src.js.selection.initBoxSelection.304836c6cac7");
 
-  RHFilesUI.listen(document,'mouseup', () => {
+  RHFilesUI.listen(document,'mouseup', event => {
     const finishedMarquee = dragActive;
+    // Mouseup can arrive before the queued animation frame. Commit its final
+    // rectangle before removing the overlay, so an immediate shortcut sees
+    // every row under the released rectangle, not last frame's partial set.
+    if (finishedMarquee) updateMarquee(event);
+    if (_selRaf) cancelAnimationFrame(_selRaf);
+    _selRaf = 0;
+    _selE = null;
     if (selectionRect) {
       selectionRect.remove();
       selectionRect = null;
@@ -160,24 +186,20 @@ function initBoxSelection(listEl) {
   },undefined,"src.js.selection.initBoxSelection.32589474d3e3");
 }
 
-function selectFilesInRect(listEl, rx, ry, rw, rh, additive) {
+function selectFilesInRect(listEl, rx, ry, rw, rh, additive, baseSelection = []) {
   const isRight = listEl.id === 'right-file-list';
   const tabOrPane = isRight ? G.rp : getTab();
   const sel = tabOrPane.sel;
+  delete tabOrPane._columnSelection;
   const listRect = listEl.getBoundingClientRect();
   const scrollTop = listEl.scrollTop;
 
   // Deselect in place by toggling classes. Re-rendering the whole list here
   // (every animation frame) would destroy the live selection rect and jank the UI.
-  if (!additive) {
-    listEl.querySelectorAll('.file-row').forEach(row => {
-      if (row.classList.contains('selected')) row.classList.remove('selected');
-    });
-    sel.clear();
-  }
+  sel.clear();
+  if (additive) for (const index of baseSelection) sel.add(index);
 
   const rows = listEl.querySelectorAll('.file-row');
-  let added = false;
   rows.forEach(row => {
     const rowRect = row.getBoundingClientRect();
     const rowTop = rowRect.top - listRect.top + scrollTop;
@@ -189,31 +211,32 @@ function selectFilesInRect(listEl, rx, ry, rw, rh, additive) {
         ry < rowTop + rowH && ry + rh > rowTop) {
       const idx = parseInt(row.dataset.index);
       if (!isNaN(idx)) {
-        if (!sel.has(idx)) { sel.add(idx); added = true; }
-        if (!row.classList.contains('selected')) row.classList.add('selected');
+        sel.add(idx);
       }
     }
   });
 
-  if (added) {
-    tabOrPane.lastIdx = -1;
-    sel.forEach(i => { if (i > tabOrPane.lastIdx) tabOrPane.lastIdx = i; });
-    if (isRight) updateStatus(tabOrPane, "right-status-count", null);
-    else updateStatus(tabOrPane, "status-count", "status-selection");
-  }
+  rows.forEach(row => row.classList.toggle('selected', sel.has(Number(row.dataset.index))));
+  tabOrPane.lastIdx = -1;
+  sel.forEach(i => { if (i > tabOrPane.lastIdx) tabOrPane.lastIdx = i; });
+  if (isRight) updateStatus(tabOrPane, "right-status-count", null);
+  else updateStatus(tabOrPane, "status-count", "status-selection");
 }
 
 function invertSelection(isRight) {
+  if (typeof resetTypeSearch === 'function') resetTypeSearch();
   if (typeof isRight !== 'boolean') isRight = G.dualOn && G.lastActivePane === 'right';
   const tabOrPane = isRight ? G.rp : getTab();
   if (!tabOrPane || !tabOrPane.entries) return;
+  const target = activeColumnSelection(tabOrPane)?.state || tabOrPane;
   const newSel = new Set();
-  for (let i = 0; i < tabOrPane.entries.length; i++) {
-    if (!tabOrPane.sel.has(i)) newSel.add(i);
+  for (let i = 0; i < target.entries.length; i++) {
+    if (!target.sel.has(i)) newSel.add(i);
   }
-  tabOrPane.sel = newSel;
-  if (newSel.size > 0) tabOrPane.lastIdx = [...newSel].pop();
-  else tabOrPane.lastIdx = -1;
+  target.sel = newSel;
+  if (newSel.size > 0) target.lastIdx = [...newSel].pop();
+  else target.lastIdx = -1;
+  if (target !== tabOrPane) { paintColumnSelection(tabOrPane, isRight); updatePreviewForSelection(); return; }
   const listId = isRight ? "right-file-list" : "file-list";
   const countId = isRight ? "right-status-count" : "status-count";
   const selId = isRight ? null : "status-selection";

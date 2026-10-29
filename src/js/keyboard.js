@@ -299,20 +299,27 @@ async function runTypeSearchSelection(query, cycleDelta, isRight) {
     return;
   }
   const token = ++G._typeSearch.requestToken;
+  const path = pane.path;
+  const selection = [...(pane.sel || [])];
+  const focus = pane.lastIdx;
+  const stillCurrent = () => token === G._typeSearch.requestToken
+    && pane === (isRight ? G.rp : getTab()) && pane.path === path && pane.entries === entries
+    && !!(G.dualOn && G.lastActivePane === 'right') === isRight
+    && pane.lastIdx === focus && pane.sel.size === selection.length && selection.every(index => pane.sel.has(index));
   G._typeSearch.isRight = isRight;
   G._typeSearch.visualQuery = query;
   const needsPinyin = /^[a-z0-9]+$/i.test(normalizedQuery) && entries.some(entry => /[\u3400-\u9fff]/.test(entry.name || ''));
   if (needsPinyin && entries.some(entry => !Array.isArray(entry._pinyinAliases))) {
     showTypeSearchHud(query, 0, 0, isRight, true);
     await ensurePinyinAliases(entries);
-    if (token !== G._typeSearch.requestToken) return;
+    if (!stillCurrent()) return;
   }
 
   const matches = [];
   entries.forEach((entry, index) => {
     if (typeSearchMatches(entry, normalizedQuery)) matches.push(index);
   });
-  if (token !== G._typeSearch.requestToken) return;
+  if (!stillCurrent()) return;
 
   let matchPos = 0;
   if (cycleDelta && matches.length) {
@@ -494,6 +501,7 @@ RHFilesUI.listen(document,"keydown", async e => {
   const actionId = findActionForKeyboardEvent(bindings, e);
   if (actionId) {
     e.preventDefault();
+    if (actionId.startsWith('file.')) resetTypeSearch();
 
     if (actionId === "palette") { openCommandPalette(); return; }
     if (actionId === "settings") { openSettings(); return; }
@@ -601,8 +609,10 @@ function applyArrowFileSelection(pane, current, next, extend = false, additive =
 }
 
 function moveFileSelectionByArrow(key, { extend = false, additive = false } = {}) {
+  resetTypeSearch();
   const isRight = G.dualOn && G.lastActivePane === 'right';
-  const pane = isRight ? G.rp : getTab();
+  const owner = isRight ? G.rp : getTab();
+  const pane = activeColumnSelection(owner)?.state || owner;
   const entries = pane.entries || [];
   if (!entries.length) return;
   const listId = isRight ? 'right-file-list' : 'file-list';
@@ -614,6 +624,12 @@ function moveFileSelectionByArrow(key, { extend = false, additive = false } = {}
   const next = gridNavigationIndex(current, key, entries.length, columns);
   if (next < 0) return;
   applyArrowFileSelection(pane, current, next, extend, additive);
+  if (pane !== owner) {
+    paintColumnSelection(owner, isRight);
+    list?.querySelector(`.column-item.selected[data-column-index="${next}"]`)?.scrollIntoView({block:'nearest', inline:'nearest'});
+    updatePreviewForSelection();
+    return;
+  }
   renderFiles(pane, listId, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection', isRight);
   scrollToVisible(next);
   updatePreviewForSelection();

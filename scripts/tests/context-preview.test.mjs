@@ -8,7 +8,7 @@ function fixture(){
   const ctx=context({G:{layout:'details',lastActivePane:'left',dualOn:true,rp:right,previewOn:true,inspectorTab:'preview'},
     getTab:()=>left,document:{getElementById:id=>({id})},focusFilePane:el=>events.push(['focus',el.id]),
     updatePaneFocusUI:()=>{},renderFiles:()=>events.push(['render']),updatePreviewForSelection:()=>events.push(['preview']),fileChoiceRefreshSelection:()=>{},updateStatus:()=>{}});
-  load(ctx,'filelist.js',['selectContextTarget','selectColumnTarget','selectedEntriesForPane','getSelectedPaths']);
+  load(ctx,'filelist.js',['activeColumnSelection','applyMouseFileSelection','selectContextTarget','selectColumnTarget','selectedEntriesForPane','getSelectedPaths']);
   return {ctx,left,right,events};
 }
 for(const isRight of [false,true])test(`right-click changes preview and active pane: ${isRight?'right':'left'}`,()=>{
