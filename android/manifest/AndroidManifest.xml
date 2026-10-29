@@ -62,7 +62,7 @@
         android:usesCleartextTraffic="true">
         <service android:name=".DeviceFileService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <activity android:name=".RhVideoActivity" android:exported="false" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboardHidden" />
-        <activity android:name=".RhVideoGridActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" />
+        <activity android:name=".RhVideoGridActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.RHFiles.MediaViewer" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" />
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"
@@ -95,7 +95,7 @@
         <service android:name=".RhVideoDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".AppUpdateService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".UsageAnalysisService" android:exported="false" android:foregroundServiceType="dataSync" />
-        <activity android:name=".PlaybackActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|density|fontScale" />
+        <activity android:name=".PlaybackActivity" android:exported="false" android:resizeableActivity="true" android:theme="@style/Theme.RHFiles.MediaViewer" android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|density|fontScale" />
         <!-- Public URI-only gate; trusted internal path/queue extras stay private. -->
         <activity android:name=".ExternalPlaybackActivity" android:exported="true" android:resizeableActivity="true" android:label="RHFiles" android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
             <intent-filter>

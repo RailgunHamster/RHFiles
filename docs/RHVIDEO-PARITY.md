@@ -6,6 +6,18 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 最新完整 Windows 失败与 Android 原生控件（验证继续，未发包）
+
+前轮仍在运行的最新 EXE `22b5e6d9f107e3c9a208f03ae42d41f6b3711bb84610b48265a0aad269c1ebbd` 完整串行验收现已终止：**102/103 通过、1 失败、零跳过**，24 分 45 秒（`rhvideo-client-capture-full-windows.log`，`rhvideo-windows-UGmf58`）。唯一失败是同屏自身关闭、首个存活 WebView 被 debugger 暂停且重新发现不可用的真实故障场景：命令只发送一次，健康的媒体库页已返回 running，但原有 5000 ms 内未取回终态。不借旧 EXE 的 103/103 为新 EXE 背书，也不放宽时限或重复关闭。
+
+故障场景新增仅失败时读取原生进程回执的诊断，分别在恢复无关主窗口前后读取、每次最多 1500 ms；这不改变原命令期限或失败断言。相同 EXE 的独立复测及随后三轮均通过（`rhvideo-grid-close-paused-ledger.log`、`rhvideo-grid-close-paused-ledger-{1,2,3}.log`），真实完成约 0.96–1.05 秒、CLI 取回约 1.23–3.30 秒。**这不是间歇超时已修复的证明**；保留完整失败及下一次可区分执行／回执传递的诊断。
+
+Android 原生媒体 Activity 改用专属深色主题，不修改文件浏览器／系统夜间偏好；统一同屏按钮、目标选择、滑块，补充分组、时间／时长、音量／静音和速度读数。拖动只预览读数，松手仍走原先捕获输入身份的命令；轮询不覆盖正在拖动的值。新 helper 不拥有播放器、网络、设置或命令派发。新增八项 Robolectric 原生绘制／触摸／主题范围／可读性测试，实际 NATIVE 控件 PNG 已检查中文、轨道及按钮；它是**控件组件预览，不是解码视频或完整 Activity 验收**。
+
+共享业务 **849/849、零跳过**（`rhvideo-media-chrome-node.log`，实际参考仍干净且为 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`）；Android QA 构建 **6 分 22 秒成功**，JVM **441/441、零失败／错误／跳过**，包括打包及发行静态检查。它复用未改的 Rust ABI 库，不是完整正式构建。主 APK SHA-256 为 `0056517ae8062856501ba4f339208f0b741009e466ca4bcaa8f8b9b98c9ad639`，探针仍为 `29c6e6eb59fd9c8a6682dc84775cf04ac0b0f10ce4e8fecf33a80e60e92a0cbf`。日志及控件预览位于短路径 QA 的 `rhvideo-media-chrome-native-build.log`、`rhvideo-media-chrome-native-preview/`；不能把编译通过当成新 APK 已通过播放。
+
+自有新 AVD 在 RHFiles 尚未安装时遗留两个开机期系统 ANR，已分别保存截图／层级并只对明确的 System UI 与 Process system 对话框各选择一次“等待”；没有关闭系统进程、重启／重置模拟器或修改安全设置。随后两次窗口读取已无错误弹窗，但仍须按原安装／运行 gate 验证，不能把消失的旧对话框当成绘制／音频健康证明。正式 Windows 实例和实体手机均未操作；没有发布新包，完整目标未完成。
+
 ## 2026-10-30 起播水位对照与旋转冷恢复（验证继续，未发包）
 
 首先以公开的 Media3 AudioOutputProvider／AudioTrack API 构建独立 QA 实验，默认构建仍为 0、不改变平台水位；不使用 deprecated provider、私有反射、静音、删音轨、缩小缓冲或重试。实验参数只能搭配 probe 构建，宿主／每格 snapshot／实际水位回执均须一致，不允许实验包冒充默认 gate。新构建 **6 分钟成功，433/433 JVM**（`rhvideo-audio-start-experiment-build.log`）；共享业务含真实参考对照先 **843/843**（`rhvideo-audio-start-node-reference.log`），第一次未指定参考路径的 811 通过／32 跳过另存，不记为完整通过。

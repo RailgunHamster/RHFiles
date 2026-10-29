@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <color name="rhvideo_media_background">#080C13</color>
+    <color name="rhvideo_media_panel">#151B27</color>
+    <color name="rhvideo_media_text">#E5ECF8</color>
+    <color name="rhvideo_media_muted">#B7C4D9</color>
+    <color name="rhvideo_media_disabled">#748196</color>
+    <color name="rhvideo_media_accent">#A5BFFF</color>
+    <color name="rhvideo_media_on_accent">#101A2B</color>
+    <!-- The media canvas is dark independently of the main file browser theme.
+         This changes no app/system night-mode setting or playback preference. -->
+    <style name="Theme.RHFiles.MediaViewer" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="android:windowBackground">@color/rhvideo_media_background</item>
+        <item name="android:colorBackground">@color/rhvideo_media_panel</item>
+        <item name="colorSurface">@color/rhvideo_media_panel</item>
+        <item name="colorOnSurface">@color/rhvideo_media_text</item>
+        <item name="colorPrimary">@color/rhvideo_media_accent</item>
+        <item name="colorOnPrimary">@color/rhvideo_media_on_accent</item>
+        <item name="colorSecondary">@color/rhvideo_media_accent</item>
+        <item name="colorOnSecondary">@color/rhvideo_media_on_accent</item>
+        <item name="colorControlActivated">@color/rhvideo_media_accent</item>
+        <item name="colorControlNormal">@color/rhvideo_media_muted</item>
+        <item name="android:colorAccent">@color/rhvideo_media_accent</item>
+        <item name="android:textColorPrimary">@color/rhvideo_media_text</item>
+        <item name="android:textColorSecondary">@color/rhvideo_media_muted</item>
+        <item name="android:statusBarColor">@color/rhvideo_media_background</item>
+        <item name="android:navigationBarColor">@color/rhvideo_media_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">false</item>
+    </style>
+</resources>

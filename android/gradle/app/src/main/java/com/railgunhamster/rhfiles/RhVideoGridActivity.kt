@@ -79,6 +79,7 @@ class RhVideoGridActivity:AppCompatActivity(){
   private lateinit var adjustments:ScrollView
   private var controlsExpanded=false
   private val sliders=mutableMapOf<String,SeekBar>()
+  private val sliderReadouts=mutableMapOf<String,TextView>()
   private val dragging=mutableSetOf<String>()
   private val handler=android.os.Handler(android.os.Looper.getMainLooper())
   private val update=object:Runnable{override fun run(){if(!stopped){paintControls();handler.postDelayed(this,500)}}}
@@ -118,7 +119,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     selected=savedInstanceState?.getInt("selected",-1)?:-1
     controlsExpanded=savedInstanceState?.getBoolean("controlsExpanded",false)?:false
     onBackPressedDispatcher.addCallback(this){safe{if(expanded>=0)control(JSONObject().put("command","expand").put("target",-1))else closeViewer()}}
-    val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(Color.BLACK)}
+    val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(getColor(R.color.rhvideo_media_background))}
     WindowCompat.setDecorFitsSystemWindows(window,false)
     ViewCompat.setOnApplyWindowInsetsListener(root){view,insets->val safe=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout());view.setPadding(safe.left,safe.top,safe.right,safe.bottom);insets}
     grid=object:FrameLayout(this){
@@ -134,26 +135,28 @@ class RhVideoGridActivity:AppCompatActivity(){
         }
       }
     };root.addView(grid,LinearLayout.LayoutParams(-1,0,1f))
-    val toolbar=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(12,8,12,8);setBackgroundColor(0xfff5f7fb.toInt())}
-    target=Spinner(this);toolbar.addView(target)
+    fun dp(value:Int)=RhVideoMediaChrome.dp(this,value)
+    val toolbar=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(8),dp(12),dp(8));setBackgroundColor(getColor(R.color.rhvideo_media_panel))}
+    target=Spinner(this).apply{contentDescription="同屏控制目标";setPopupBackgroundDrawable(android.graphics.drawable.ColorDrawable(getColor(R.color.rhvideo_media_panel)))};toolbar.addView(target,LinearLayout.LayoutParams(-1,dp(48)))
     target.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:AdapterView<*>?){};override fun onItemSelected(p:AdapterView<*>?,v:View?,index:Int,id:Long){selected=index-1;paintControls()}}
     val buttons=LinearLayout(this)
-    for((label,command)in listOf("播放" to "resume","暂停" to "pause","静音" to "mute","展开" to "expand","网格" to "restore"))buttons.addView(Button(this).apply{text=label;bindControl(this){JSONObject().put("target",if(command=="restore")-1 else if(command=="expand")selected.coerceAtLeast(0)else selected).put("command",if(command=="restore")"expand"else command)}},LinearLayout.LayoutParams(0,-2,1f))
+    for((label,command)in listOf("播放" to "resume","暂停" to "pause","静音" to "mute","展开" to "expand","网格" to "restore"))buttons.addView(RhVideoMediaChrome.button(this,label).apply{bindControl(this){JSONObject().put("target",if(command=="restore")-1 else if(command=="expand")selected.coerceAtLeast(0)else selected).put("command",if(command=="restore")"expand"else command)}},LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(dp(2),dp(2),dp(2),dp(2))})
     toolbar.addView(buttons)
-    val pages=LinearLayout(this);previous=Button(this).apply{text="上一组";bindControl(this){JSONObject().put("command","page").put("value",-1)}};next=Button(this).apply{text="下一组";bindControl(this){JSONObject().put("command","page").put("value",1)}};counter=TextView(this)
-    pages.addView(previous,LinearLayout.LayoutParams(0,-2,1f));pages.addView(counter);pages.addView(next,LinearLayout.LayoutParams(0,-2,1f));pages.addView(Button(this).apply{text="调节";contentDescription="展开或收起播放调节";setOnClickListener{safe{control(JSONObject().put("command","controls"))}}},LinearLayout.LayoutParams(0,-2,1f));toolbar.addView(pages)
+    val pages=LinearLayout(this).apply{gravity=android.view.Gravity.CENTER_VERTICAL};previous=RhVideoMediaChrome.button(this,"上一组").apply{bindControl(this){JSONObject().put("command","page").put("value",-1)}};next=RhVideoMediaChrome.button(this,"下一组").apply{bindControl(this){JSONObject().put("command","page").put("value",1)}};counter=RhVideoMediaChrome.text(this,muted=true).apply{setPadding(dp(8),0,dp(8),0)}
+    fun pageParams()=LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(dp(2),dp(2),dp(2),dp(2))}
+    pages.addView(previous,pageParams());pages.addView(counter);pages.addView(next,pageParams());pages.addView(RhVideoMediaChrome.button(this,"调节").apply{contentDescription="展开或收起播放调节";setOnClickListener{safe{control(JSONObject().put("command","controls"))}}},pageParams());toolbar.addView(pages)
     val adjustmentRows=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
     adjustments=ScrollView(this).apply{addView(adjustmentRows);visibility=if(controlsExpanded)View.VISIBLE else View.GONE}
     toolbar.addView(adjustments,LinearLayout.LayoutParams(-1,adjustmentHeight()))
-    fun slider(label:String,max:Int,initial:Int,command:String){val row=LinearLayout(this);row.addView(TextView(this).apply{text=label});row.addView(SeekBar(this).apply{
-      this.max=max;progress=initial;contentDescription="同屏${label}调节";sliders[command]=this;var gesture:JSONObject?=null
+    fun slider(label:String,max:Int,initial:Int,command:String){val row=LinearLayout(this).apply{gravity=android.view.Gravity.CENTER_VERTICAL};row.addView(RhVideoMediaChrome.text(this,label,12f,true),LinearLayout.LayoutParams(dp(34),-2));val readout=RhVideoMediaChrome.readout(this);sliderReadouts[command]=readout;row.addView(RhVideoMediaChrome.seekBar(this,max,initial).apply{
+      contentDescription="同屏${label}调节";sliders[command]=this;var gesture:JSONObject?=null
       setOnTouchListener{_,event->if(event.actionMasked==MotionEvent.ACTION_CANCEL){gesture=null;dragging.remove(command)};false}
       setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
-        override fun onProgressChanged(s:SeekBar?,v:Int,user:Boolean){}
+        override fun onProgressChanged(s:SeekBar?,v:Int,user:Boolean){if(user)paintReadout(command,v)}
         override fun onStartTrackingTouch(s:SeekBar?){dragging.add(command);gesture=guarded(JSONObject().put("target",selected).put("command",command))}
         override fun onStopTrackingTouch(s:SeekBar?){dragging.remove(command);val request=gesture;gesture=null;if(request!=null)safe{val value=(s?.progress?:0).toDouble();control(request.put("value",when(command){"rate"->value.coerceAtLeast(25.0)/100;"seekGroup"->value/1000;else->value}))};paintControls()}
       })
-    },LinearLayout.LayoutParams(0,-2,1f));adjustmentRows.addView(row)}
+    },LinearLayout.LayoutParams(0,-2,1f));row.addView(readout,LinearLayout.LayoutParams(dp(96),dp(48)));adjustmentRows.addView(row)}
     slider("分组",1000,0,"seekGroup");slider("进度",1000,0,"seekRatio");slider("音量",100,100,"volume");slider("速度",400,100,"rate");root.addView(toolbar);setContentView(root);updatePages();trace("layout-ready")
   }
   private fun paintControls(){
@@ -163,10 +166,23 @@ class RhVideoGridActivity:AppCompatActivity(){
       markButtons[i].apply{isSelected=marked;setColorFilter(if(marked)0xffffb566.toInt()else Color.WHITE);contentDescription="视频 ${i+1} · "+if(marked)"取消暂存标记"else "标记暂存"}
       val error=favorite.optString("favoriteError").takeIf{!favorite.isNull("favoriteError")&&it.isNotBlank()};cellLabels[i].text=item.getString("name")+(error?.let{"\n收藏失败：$it"}?:"");cellLabels[i].maxLines=if(error==null)2 else 4
     }
-    fun set(command:String,value:Int){if(command !in dragging)sliders[command]?.progress=value}
+    fun set(command:String,value:Int){if(command !in dragging){sliders[command]?.progress=value;paintReadout(command)}}
     set("seekGroup",if(data.getInt("groupTotal")>1)data.getInt("groupIndex")*1000/(data.getInt("groupTotal")-1)else 0)
+    sliders["seekGroup"]?.isEnabled=data.getInt("groupTotal")>1
     val index=selected.coerceAtLeast(0);val p=players.getOrNull(index)?:return;val saved=cell(index)
     set("seekRatio",if(p.duration>0)(p.currentPosition*1000/p.duration).toInt().coerceIn(0,1000)else 0);set("volume",saved.getInt("volume"));set("rate",(p.playbackParameters.speed*100).toInt())
+    sliders["seekRatio"]?.isEnabled=p.duration>0
+  }
+  private fun paintReadout(command:String,preview:Int?=null){
+    val output=sliderReadouts[command]?:return;val index=selected.coerceAtLeast(0);val p=players.getOrNull(index)
+    val value=when(command){
+      "seekGroup"->{val count=data.getInt("groupTotal");val group=preview?.let{((it.toLong()*(count-1)+500)/1000).toInt()+1}?:data.getInt("groupIndex")+1;"$group / $count"}
+      "seekRatio"->{val duration=p?.duration?:-1;val position=if(preview!=null&&duration>0)duration*preview/1000 else p?.currentPosition?:-1;RhVideoMediaChrome.time(position)+" / "+RhVideoMediaChrome.time(duration)}
+      "volume"->if(preview!=null)RhVideoMediaChrome.volume(preview)else if(p!=null)RhVideoMediaChrome.volume(cell(index).getInt("volume"),cell(index).getBoolean("muted"))else "—"
+      "rate"->RhVideoMediaChrome.speed(preview?.coerceAtLeast(25)?.div(100.0)?:p?.playbackParameters?.speed?.toDouble()?:Double.NaN)
+      else->"—"
+    }
+    output.text=value;output.contentDescription=value
   }
   private fun layout(){containers.forEachIndexed{i,v->v.visibility=if(expanded<0||i==expanded)View.VISIBLE else View.GONE};grid.requestLayout()}
   private fun adjustmentHeight()=(resources.displayMetrics.heightPixels*.25).toInt().coerceAtMost((200*resources.displayMetrics.density).toInt())
@@ -180,7 +196,7 @@ class RhVideoGridActivity:AppCompatActivity(){
   }
   private fun updatePages(){
     previous.isEnabled=!data.isNull("previousOffset");next.isEnabled=!data.isNull("nextOffset");counter.text="${data.getInt("groupIndex")+1}/${data.getInt("groupTotal")}"
-    target.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("全部视频")+(0 until entries.length()).map{"${it+1} · ${entries.getJSONObject(it).getString("name")}"});target.setSelection(selected+1)
+    target.adapter=RhVideoMediaChrome.selector(this,listOf("全部视频")+(0 until entries.length()).map{"${it+1} · ${entries.getJSONObject(it).getString("name")}"});target.setSelection(selected+1)
   }
   override fun onStart(){super.onStart();active=WeakReference(this);try{client.checkGrid(ticket,lease);startPlayers();handler.removeCallbacks(update);handler.post(update)}catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish()}}
   private fun createEngine(storage:NativeStorage,diagnostics:RhVideoInputDiagnostics):ExoPlayer{

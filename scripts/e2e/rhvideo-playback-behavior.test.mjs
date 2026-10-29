@@ -150,7 +150,19 @@ test('grid close recovers through a real survivor when the first view is paused 
     await listenBrowserLoopback(server);
     await s.app.send('Debugger.enable');await s.app.send('Debugger.pause');let output;
     await until(()=>s.app.events.some(event=>event.method==='Debugger.paused'),'the first real view is actually debugger-paused',3000);
-    try{output=await runCli(s.app,null,'rhvideo.grid.close',{},'grid-close-fault',{endpoint:`http://127.0.0.1:${server.address().port}`,target:gridPage.id,trace:true});}finally{await s.app.send('Debugger.resume');await s.app.send('Debugger.disable');}
+    const diagnostics={};
+    const inspectReceipt=async()=>{
+      try{return await s.view.evaluate('window.__TAURI__.core.invoke("automation_receipt",{query:{key:"grid-close-fault"}})',1500);}
+      catch(error){return {diagnosticError:error.code||error.message};}
+    };
+    try{
+      output=await runCli(s.app,null,'rhvideo.grid.close',{},'grid-close-fault',{endpoint:`http://127.0.0.1:${server.address().port}`,target:gridPage.id,trace:true});
+      // Preserve the original five-second result. On failure, only READ the
+      // process ledger before/after resuming the unrelated view: no replay,
+      // extended action deadline, or inferred success from a vanished window.
+      if(output.code!==0)diagnostics.whilePaused=await inspectReceipt();
+    }finally{await s.app.send('Debugger.resume');await s.app.send('Debugger.disable');}
+    if(output.code!==0){diagnostics.afterResume=await inspectReceipt();fs.writeFileSync(path.join(s.app.artifactDir,'grid-close-recovery-failure.json'),JSON.stringify({output,...diagnostics},null,2));console.log(JSON.stringify({scenario:'grid close failure ledger',...diagnostics}));}
     console.log(JSON.stringify({scenario:'grid close with paused survivor/discovery fault',...output}));assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
     const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line));assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Never resubmit the close action');
     const healthyStart=trace.findIndex(row=>row.rhfilesClientTrace==='recovery.target'&&row.target!==main.id),pausedEnd=trace.findIndex(row=>['recovery.cancelled','recovery.unavailable'].includes(row.rhfilesClientTrace)&&row.target===main.id);
