@@ -65,7 +65,9 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null)
   private val http=OkHttpClient.Builder().proxy(Proxy.NO_PROXY).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(true)
     .connectTimeout(8,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
   private val mediaHttp=http.newBuilder().callTimeout(0,TimeUnit.SECONDS).eventListenerFactory(RhVideoMediaTrace(context.applicationContext)).build()
-  private val zipHttp=mediaHttp.newBuilder().retryOnConnectionFailure(false).build()
+  // A picker can outlive the server's keep-alive timeout. Do not borrow an
+  // idle metadata/thumbnail socket, or silently replay a failed ZIP stream.
+  private val zipHttp=mediaHttp.newBuilder().retryOnConnectionFailure(false).connectionPool(ConnectionPool(0,1,TimeUnit.SECONDS)).build()
   // Non-replayable writes must not reuse an idle socket that the server may
   // already have closed. Use a fresh connection, not a hidden retry after an
   // ambiguous response. Read/media traffic keeps its independent pooled path.

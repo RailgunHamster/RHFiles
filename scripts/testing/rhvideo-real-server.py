@@ -2,6 +2,7 @@
 import os
 import sys
 import asyncio
+import json
 from pathlib import Path
 
 source, directory, port = sys.argv[1:4]
@@ -37,8 +38,13 @@ class ExportTransportQA:
     the client UI during a live download. This is not a throughput benchmark."""
     def __init__(self, app):
         self.app = app
+        self.delay = min(0.25, max(0.0, float(os.environ.get("RHVIDEO_QA_EXPORT_DELAY", "0.05"))))
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            # Test evidence only; never record authorization, cookies or bodies.
+            with (root / "requests.jsonl").open("a", encoding="utf-8") as log:
+                log.write(json.dumps({"method": scope["method"], "path": scope["path"]}) + "\n")
         slow = (scope["type"] == "http" and "/api/v1/favorite-exports/" in scope.get("path", "")
                 and scope["path"].endswith("/download"))
         if slow:
@@ -48,8 +54,15 @@ class ExportTransportQA:
 
         async def transport(message):
             if slow and message["type"] == "http.response.body" and message.get("body"):
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(self.delay)
             await send(message)
+            if slow:
+                # Route/byte timing only, no tokens, names, or payload content.
+                import time
+                with (root / "zip-transport.jsonl").open("a", encoding="utf-8") as log:
+                    log.write(json.dumps({"at": time.time(), "event": message["type"],
+                                          "bytes": len(message.get("body", b"")),
+                                          "more": message.get("more_body", False)}) + "\n")
 
         await self.app(scope, receive, transport)
 

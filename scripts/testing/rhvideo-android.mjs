@@ -5,7 +5,8 @@ import os from 'node:os';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
-import {rhvideoFixture} from './rhvideo-fixture.mjs';
+import {rhvideoFixture as contractFixture} from './rhvideo-fixture.mjs';
+import {realRhVideoService} from './rhvideo-real-service.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
 const gridRestoreMode=process.argv[5]==='grid-restore';
 const gridRotationMode=process.argv[5]==='grid-rotation';
@@ -17,6 +18,8 @@ const favoritesMode=process.argv[5]==='favorites';
 const stripMode=process.argv[5]==='strip';
 const ticketsMode=process.argv[5]==='tickets';
 const rotationMode=process.argv[5]==='rotation';
+const exportsMode=process.argv[5]==='exports';
+const rhvideoFixture=options=>exportsMode?realRhVideoService({directory:path.join(temporary,'actual-rhvideo'),video:options.videoFile}):contractFixture(options);
 const mediaMode=gridMode||playlistMode||previewMode||singleMode||rotationMode||favoritesMode||stripMode;
 assert.match(serial,/^emulator-\d+$/);assert(apk&&probe,'Provide release APK and instrumentation APK');
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME||path.join(process.env.LOCALAPPDATA,'Android/Sdk');
@@ -38,6 +41,7 @@ for(const relative of ['js/rhvideo-mobile.js','css/rhvideo-mobile.css']){
 }
 const run=(args)=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
 assert.equal(run(['shell','getprop','ro.kernel.qemu']).trim(),'1','Physical devices are not allowed');
+if(exportsMode)assert(run(['emu','avd','name']).split(/\r?\n/).map(v=>v.trim()).includes('RHFilesRhVideoQA20261027'),'Only the owned RHVideo QA AVD is allowed');
 const bootDeadline=Date.now()+180000;
 while(true){
   let ready=false;try{ready=run(['shell','getprop','sys.boot_completed']).trim()==='1'&&run(['shell','pm','path','android']).includes('package:');}catch{}
@@ -59,7 +63,7 @@ const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(stripMod
 if(favoritesMode)for(const key of ['video:video-0','video:video-1','picture:picture-0','picture:picture-1','novel:novel-0'])fixture.favorites.add(key);
 const failedFixture=gridMode&&!gridRestoreMode&&!gridRotationMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
-const artifact=path.resolve('test-artifacts/rhvideo-android'+(gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-release');fs.mkdirSync(artifact,{recursive:true});
+const artifact=path.resolve('test-artifacts/rhvideo-android'+(exportsMode?'-exports-'+Date.now():gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-release');fs.mkdirSync(artifact,{recursive:true});
 function installExact(packageId,file){
   const expectedHash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const installedHash=()=>{const installed=run(['shell','pm','path',packageId]).trim().split(/\r?\n/);assert(installed.length===1&&/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(installed[0]),'Expected one installed universal APK for '+packageId);return run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64);};
@@ -88,7 +92,8 @@ try{
   run(['shell','svc','power','stayon','true']);run(['shell','input','keyevent','224']);run(['shell','wm','dismiss-keyguard']);
   run(['reverse','tcp:'+port,'tcp:'+port]);run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
   if(failedPort)run(['reverse','tcp:'+failedPort,'tcp:'+failedPort]);
-  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...(gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[]),'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  async function instrument(modeArgs,log){
+  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='';child.stdout.on('data',data=>{output+=data;process.stdout.write(data);});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
@@ -96,13 +101,32 @@ try{
   const budgetMs=previewMode||(gridMode&&!gridRestoreMode)?600000:360000;let expired=false;
   const timer=setTimeout(()=>{expired=true;child.kill();},budgetMs);
   try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0&&!expired?resolve():reject(Error(expired?'Owned instrumentation exceeded whole-scenario budget '+budgetMs+' ms':'Instrumentation exit '+code)));});}
-  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,'instrumentation.log'),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);}
-  assert.match(output,gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED/);
+  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);}
+  assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED/);return output;
+  }
+  const output=await instrument(exportsMode?['-e','mode','exports']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
+  assert.match(output,exportsMode?/PASS: favorite exports recovery armed/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
+  if(exportsMode){
+    run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
+    let stoppedPid='',stopDeadline=Date.now()+5000;do{try{stoppedPid=run(['shell','pidof','com.railgunhamster.rhfiles']);}catch(error){assert.equal(error.status,1);stoppedPid=String(error.stdout||'');}if(!stoppedPid.trim())break;await new Promise(resolve=>setTimeout(resolve,100));}while(Date.now()<stopDeadline);assert.equal(stoppedPid.trim(),'','The target process must actually be stopped before recovery');
+    const before=fixture.requests.filter(r=>r.path.endsWith('/download')).length;
+    const recovered=await instrument(['-e','mode','exports-recover'],'recovery-instrumentation.log');assert.match(recovered,/PASS: favorite exports interrupted recovery/);
+    assert.equal(fixture.requests.filter(r=>r.path.endsWith('/download')).length,before,'Process restart must not replay an interrupted ZIP download');
+    run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-export-receipt.json',path.join(artifact,'receipt.json')]);
+    run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-export-qa.zip',path.join(artifact,'saved.zip')]);
+    const receipt=JSON.parse(fs.readFileSync(path.join(artifact,'receipt.json'),'utf8')),archive=path.join(fixture.directory,'temp/favorite-exports',receipt.exportId,'favorites.zip'),hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    assert.deepEqual(new Set(receipt.concurrentStates),new Set(['saved','failed']),'Both concurrent saves have terminal outcomes, not just one finished file');
+    assert.equal(hash(archive),receipt.sha256);assert.equal(hash(path.join(artifact,'saved.zip')),receipt.sha256);assert.equal(receipt.concurrentHash,receipt.sha256);execFileSync(sevenZip,['t',path.join(artifact,'saved.zip')],{windowsHide:true,stdio:'pipe'});
+    const manifest=JSON.parse(execFileSync(sevenZip,['e','-so',archive,'导出清单.json'],{windowsHide:true,encoding:'utf8'}));assert.deepEqual(new Set(manifest.files.map(v=>v.type)),new Set(['video','picture','novel']));assert(manifest.files.every(v=>v.status==='included'&&v.bytes>0));
+    assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/favorite-exports').length,2,'Filtered and all-favorite UI buttons submit exactly once');
+    assert.equal(fixture.requests.filter(r=>r.path.startsWith('/api/v1/trash/')).length,0,'Exports never stage or delete a media source');
+    for(const [file,expected] of Object.entries(fixture.sourceHashes))assert.equal(hash(path.join(fixture.directory,file)),expected,'Source remains unchanged byte-for-byte: '+file);
+  }
   assert.doesNotMatch(run(['shell','dumpsys','window','windows']),/Application Not Responding:|Application Error:/,'A system/app dialog invalidates visual acceptance');
-  for(const name of gridRotationMode?['rhvideo-grid-rotation-qa.png']:gridRestoreMode?['rhvideo-grid-restore-qa.png']:gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png','rhvideo-grid-favorite-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:previewMode?['rhvideo-parent-qa.png','rhvideo-preview-result-qa.png','rhvideo-favorite-error-qa.png']:singleMode?['rhvideo-single-qa.png','rhvideo-image-content-qa.png','rhvideo-favorite-slideshow-qa.png']:favoritesMode?['rhvideo-favorite-picture-qa.png','rhvideo-favorite-video-qa.png']:stripMode?['rhvideo-strip-picture-qa.png','rhvideo-strip-rows-qa.png']:ticketsMode?[]:rotationMode?['rhvideo-rotation-on-qa.png','rhvideo-rotation-off-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
-  assert(fixture.requests.some(r=>(stripMode?r.path.startsWith('/storage/pictures/'):r.path.endsWith('/play'))&&r.authorization==='Bearer fixture-bearer-do-not-persist'));
+  for(const name of exportsMode?['rhvideo-export-qa.png','rhvideo-export-recovery-qa.png']:gridRotationMode?['rhvideo-grid-rotation-qa.png']:gridRestoreMode?['rhvideo-grid-restore-qa.png']:gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png','rhvideo-grid-favorite-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:previewMode?['rhvideo-parent-qa.png','rhvideo-preview-result-qa.png','rhvideo-favorite-error-qa.png']:singleMode?['rhvideo-single-qa.png','rhvideo-image-content-qa.png','rhvideo-favorite-slideshow-qa.png']:favoritesMode?['rhvideo-favorite-picture-qa.png','rhvideo-favorite-video-qa.png']:stripMode?['rhvideo-strip-picture-qa.png','rhvideo-strip-rows-qa.png']:ticketsMode?[]:rotationMode?['rhvideo-rotation-on-qa.png','rhvideo-rotation-off-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
+  if(!exportsMode)assert(fixture.requests.some(r=>(stripMode?r.path.startsWith('/storage/pictures/'):r.path.endsWith('/play'))&&r.authorization==='Bearer fixture-bearer-do-not-persist'));
   if(stripMode){assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path.startsWith('/api/v1/favorites/picture/')).length,1,'One actual strip star -> one write');assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path.startsWith('/api/v1/trash/picture/')).length,1,'Closing another strip cannot replay a staged source');}
-  if(!mediaMode&&!ticketsMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
+  if(!mediaMode&&!ticketsMode&&!exportsMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
   if(previewMode){
     for(const id of ['video-0','video-2'])assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/'+id).length,1,'Closing another preview cannot replay '+id);
     assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/video-1').length,0,'Logout discards uncommitted old-account marks');
@@ -126,5 +150,5 @@ try{
   for(const [name,args]of [['native-logcat.log',['logcat','-d','-v','threadtime','-t','6000']],['native-resources.txt',['shell','dumpsys','media.resource_manager']]])try{
     const value=execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:16*1024*1024});fs.writeFileSync(path.join(artifact,name),value);
   }catch(error){console.error('Native diagnostics unavailable: '+name+' — '+error.message);}
-  try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();fs.rmSync(temporary,{recursive:true,force:true});
+  try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();if(exportsMode){fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(artifact,'actual-service.log'));const transport=path.join(fixture.directory,'zip-transport.jsonl');if(fs.existsSync(transport))fs.copyFileSync(transport,path.join(artifact,'zip-transport.jsonl'));}fs.rmSync(temporary,{recursive:true,force:true});
 }

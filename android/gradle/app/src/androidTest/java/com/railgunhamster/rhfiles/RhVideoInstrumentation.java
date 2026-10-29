@@ -271,6 +271,118 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{state=(JSONObject)action("player.state",new JSONObject());if(id.equals(state.optString("id"))&&!state.optBoolean("playWhenReady")&&state.optInt("playbackState")==3&&state.optLong("renderedFrames")>previousFrames&&Math.abs(state.optLong("positionMs")-target)<250)return state;Thread.sleep(150);}while(System.currentTimeMillis()<end);
     throw new Exception("Actual paused seek frame did not settle: "+state);
   }
+  private Object exportUi(String id)throws Exception{
+    JSONArray rows=(JSONArray)expression(library,"RHFilesAPI.invoke('ui.list')");
+    for(int i=0;i<rows.length();i++){JSONObject row=rows.getJSONObject(i);if(id.equals(row.optString("id")))return expression(library,"RHFilesAPI.invoke('ui.invoke',"+new JSONObject().put("controlId",row.getString("controlId"))+")");}
+    throw new Exception("Visible export control missing: "+id);
+  }
+  private JSONObject waitExport(String id)throws Exception{
+    long end=System.currentTimeMillis()+30000;JSONObject job=null;
+    do{job=(JSONObject)action("exports.get",new JSONObject().put("id",id));require(!java.util.Arrays.asList("failed","cancelled","expired").contains(job.getString("status")),"Real export failed: "+job);if("completed".equals(job.getString("status")))return job;Thread.sleep(150);}while(System.currentTimeMillis()<end);throw new Exception("Real export did not finish: "+job);
+  }
+  private JSONObject downloadTask(String id)throws Exception{
+    JSONArray rows=((JSONObject)action("exports.downloads",new JSONObject())).getJSONArray("items");
+    for(int i=0;i<rows.length();i++)if(id.equals(rows.getJSONObject(i).getString("id")))return rows.getJSONObject(i);return null;
+  }
+  private JSONObject waitDownload(String id,String state)throws Exception{
+    long end=System.currentTimeMillis()+30000;JSONObject task=null;
+    do{task=downloadTask(id);if(task!=null){if(state.equals(task.getString("state")))return task;if("saved".equals(state))require(!java.util.Arrays.asList("failed","cancelled").contains(task.getString("state")),"Native download failed: "+task);}Thread.sleep(150);}while(System.currentTimeMillis()<end);throw new Exception("Native download did not reach "+state+": "+task);
+  }
+  private android.view.accessibility.AccessibilityNodeInfo systemNode(android.view.accessibility.AccessibilityNodeInfo node,java.util.function.Predicate<android.view.accessibility.AccessibilityNodeInfo> match){
+    if(node==null)return null;if(node.isVisibleToUser()&&node.isEnabled()&&match.test(node))return node;for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo child=systemNode(node.getChild(i),match);if(child!=null)return child;}return null;
+  }
+  private void touchSystemNode(android.view.accessibility.AccessibilityNodeInfo node)throws Exception{
+    android.graphics.Rect rect=new android.graphics.Rect();node.getBoundsInScreen(rect);require(!rect.isEmpty(),"System control has no visible touch target");long now=SystemClock.uptimeMillis();
+    MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,rect.exactCenterX(),rect.exactCenterY(),0),up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,rect.exactCenterX(),rect.exactCenterY(),0);
+    try{require(getUiAutomation().injectInputEvent(down,true)&&getUiAutomation().injectInputEvent(up,true),"System document/notification touch rejected");}finally{down.recycle();up.recycle();}
+  }
+  private android.view.accessibility.AccessibilityNodeInfo pickerRoot()throws Exception{
+    long end=System.currentTimeMillis()+10000;android.view.accessibility.AccessibilityNodeInfo root;
+    do{root=getUiAutomation().getRootInActiveWindow();if(root!=null&&String.valueOf(root.getPackageName()).endsWith("documentsui"))return root;Thread.sleep(100);}while(System.currentTimeMillis()<end);throw new Exception("Actual system ZIP save picker never opened");
+  }
+  private void systemBack()throws Exception{
+    // InputDispatcher rejects zero/old timestamps as stale. Use the same real
+    // uptime clock as Android input, not the two-argument constructor's defaults.
+    long now=SystemClock.uptimeMillis();KeyEvent down=new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BACK,0,0,KeyCharacterMap.VIRTUAL_KEYBOARD,0,0,InputDevice.SOURCE_KEYBOARD);
+    require(getUiAutomation().injectInputEvent(down,true)&&getUiAutomation().injectInputEvent(new KeyEvent(now,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BACK,0,0,KeyCharacterMap.VIRTUAL_KEYBOARD,0,0,InputDevice.SOURCE_KEYBOARD),true),"System Back was rejected");
+  }
+  private void saveZipPicker(String name)throws Exception{
+    android.view.accessibility.AccessibilityNodeInfo root=pickerRoot(),field=systemNode(root,n->String.valueOf(n.getClassName()).endsWith("EditText")&&String.valueOf(n.getText()).endsWith(".zip"));
+    require(field!=null,"System picker filename field is present");Bundle value=new Bundle();value.putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,name);require(field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,value),"System picker accepts the chosen ZIP filename");
+    root=pickerRoot();android.view.accessibility.AccessibilityNodeInfo save=systemNode(root,n->("Save".equalsIgnoreCase(String.valueOf(n.getText()))||"保存".equals(String.valueOf(n.getText())))&&n.isClickable());
+    if(save==null){StringBuilder text=new StringBuilder();collectNativeText(root,text);throw new Exception("System save button missing or disabled: "+text);}
+    touchSystemNode(save);
+  }
+  private void cancelZipPicker()throws Exception{
+    android.accessibilityservice.AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();info.flags|=android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
+    pickerRoot();boolean keyboard=inputMethodVisible();systemBack();long end=SystemClock.uptimeMillis()+5000;
+    do{
+      android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+      if(root!=null&&"com.railgunhamster.rhfiles".equals(String.valueOf(root.getPackageName())))return;
+      // Only a previously observed IME can consume the first Back. Do not send
+      // another key merely because DocumentsUI's closing animation is slow:
+      // that queued key could close the underlying RHFiles panel as well.
+      if(keyboard&&!inputMethodVisible()&&root!=null&&String.valueOf(root.getPackageName()).endsWith("documentsui")){keyboard=false;systemBack();}
+      Thread.sleep(100);
+    }while(SystemClock.uptimeMillis()<end);
+    throw new Exception("System picker did not cancel after the observed keyboard/picker Back");
+  }
+  private boolean inputMethodVisible(){for(android.view.accessibility.AccessibilityWindowInfo window:getUiAutomation().getWindows())if(window.getType()==android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD){android.graphics.Rect bounds=new android.graphics.Rect();window.getBoundsInScreen(bounds);if(!bounds.isEmpty())return true;}return false;}
+  private String hashZip(InputStream input,File copy)throws Exception{
+    java.security.MessageDigest hash=java.security.MessageDigest.getInstance("SHA-256");try(InputStream in=input;OutputStream out=copy==null?new java.io.ByteArrayOutputStream(0):new FileOutputStream(copy)){byte[] chunk=new byte[65536];int count;while((count=in.read(chunk))>=0){hash.update(chunk,0,count);if(copy!=null)out.write(chunk,0,count);}}
+    StringBuilder result=new StringBuilder();for(byte b:hash.digest())result.append(String.format(java.util.Locale.ROOT,"%02x",b&255));return result.toString();
+  }
+  private File exportReceipt(){return new File(getTargetContext().getExternalFilesDir(null),"rhvideo-export-receipt.json");}
+  private void writeReceipt(JSONObject value)throws Exception{try(FileOutputStream out=new FileOutputStream(exportReceipt())){out.write(value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}}
+  private void checkFavoriteExports(boolean recover)throws Exception{
+    if(recover){
+      JSONObject receipt=new JSONObject(new String(java.nio.file.Files.readAllBytes(exportReceipt().toPath()),java.nio.charset.StandardCharsets.UTF_8));JSONObject interrupted=downloadTask(receipt.getString("interruptedTask"));
+      require(interrupted!=null&&"failed".equals(interrupted.getString("state"))&&!interrupted.getString("error").isEmpty(),"Interrupted process download must be a visible terminal failure, never an active ghost: "+interrupted);
+      require(receipt.getString("interruptedPath").equals(interrupted.getString("path")),"Recovery keeps the exact task target");require(!"saved".equals(interrupted.getString("state")),"An interrupted partial ZIP cannot be reported saved");
+      JSONObject saved=downloadTask(receipt.getString("savedTask"));require(saved!=null&&"saved".equals(saved.getString("state"))&&receipt.getString("savedUri").equals(saved.getString("path")),"Completed document history survives process restart");step("exports.recovery.readSavedDocument");require(receipt.getString("sha256").equals(hashZip(getTargetContext().getContentResolver().openInputStream(android.net.Uri.parse(saved.getString("path"))),null)),"The actual saved document is still readable after process restart");
+      action("category",new JSONObject().put("kind","favorite"));action("exports.open",new JSONObject());action("exports.refresh",new JSONObject());require(Boolean.TRUE.equals(expression(library,"[...document.querySelectorAll('#wb-exports button')].every(n=>!(/重试/.test(n.textContent)))")),"Failed tasks never offer replay buttons");screenshot("rhvideo-export-recovery-qa.png");action("exports.close",new JSONObject());return;
+    }
+    for(String kind:new String[]{"video","picture","novel"}){action("category",new JSONObject().put("kind",kind));action("favorite.toggle",new JSONObject().put("kind",kind).put("id","real-"+kind));}
+    require(((JSONObject)action("category",new JSONObject().put("kind","favorite"))).getInt("total")==3,"All real source kinds are favorites");action("preferences.set",new JSONObject().put("key","mediaType").put("value","novel"));action("exports.open",new JSONObject());
+    require(((JSONObject)action("exports.state",new JSONObject())).getInt("selectionCount")==1,"Export panel freezes the whole novel-only selection");exportUi("wb-export-create");JSONObject filtered=((JSONObject)action("exports.state",new JSONObject())).getJSONObject("lastJob");require(waitExport(filtered.getString("id")).getInt("total")==1,"Actual create button exports the filtered selection");
+    action("exports.scope",new JSONObject().put("value","all"));exportUi("wb-export-create");JSONObject all=((JSONObject)action("exports.state",new JSONObject())).getJSONObject("lastJob");all=waitExport(all.getString("id"));require(all.getInt("total")==3&&all.getJSONObject("progress").getInt("included")==3,"All-favorites UI scope includes video, picture and novel despite the filter");String export=all.getString("id");
+    String chosen="RHFiles-保存测试-"+export.substring(0,8)+".zip";JSONObject picker=(JSONObject)action("exports.download",new JSONObject().put("id",export));require(picker.getBoolean("requested"),"Download opens the real system picker, not a fake saved response");saveZipPicker(chosen);
+    library=waitView("RhVideoActivity");long end=System.currentTimeMillis()+10000;JSONObject transfer=null;boolean uiBusy=true;
+    // Read the actual UI snapshot, not exports.downloads (which would manually
+    // merge native state and conceal a missing callback/progress event bridge).
+    do{JSONObject ui=(JSONObject)action("exports.state",new JSONObject());uiBusy=ui.getBoolean("busy");JSONArray tasks=ui.getJSONArray("downloads");for(int i=0;i<tasks.length();i++)if(export.equals(tasks.getJSONObject(i).getString("exportId"))){transfer=tasks.getJSONObject(i);break;}if(!uiBusy&&transfer!=null&&transfer.getLong("bytes")>0)break;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    boolean liveProgress=!uiBusy&&transfer!=null&&transfer.getLong("bytes")>0&&transfer.getLong("bytes")<transfer.getLong("total");
+    if(!liveProgress){
+      // Diagnostic reads only after the UI-only assertion has already failed:
+      // never merge native state to make a missing event look successful.
+      android.util.Log.e("RHVideoQA","ZIP_UI_PROGRESS_FAILURE native="+action("exports.downloads",new JSONObject()));
+      for(java.util.Map.Entry<Thread,StackTraceElement[]> entry:Thread.getAllStackTraces().entrySet()){
+        String stack=java.util.Arrays.toString(entry.getValue());if(stack.contains("RhVideo")||stack.contains("okhttp"))android.util.Log.e("RHVideoQA","ZIP_THREAD "+entry.getKey().getName()+" "+entry.getKey().getState()+" "+stack);
+      }
+    }
+    require(liveProgress,"The real picker result and live transfer progress must reach the UI before closing: "+transfer+"; busy="+uiBusy);String taskId=transfer.getString("id");
+    android.net.Uri selected=android.net.Uri.parse(transfer.getString("path"));boolean retained=false;for(android.content.UriPermission permission:getTargetContext().getContentResolver().getPersistedUriPermissions())if(permission.getUri().equals(selected)&&permission.isReadPermission()&&permission.isWritePermission())retained=true;require(retained,"The actual system-selected document grant is retained before closing its Activity");
+    action("exports.close",new JSONObject());systemBack();main=waitView("MainActivity");
+    try(ParcelFileDescriptor command=getUiAutomation().executeShellCommand("cmd statusbar expand-notifications")){}
+    end=System.currentTimeMillis()+8000;boolean tapped=false;
+    do{android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();if(root!=null&&"com.android.systemui".equals(String.valueOf(root.getPackageName()))){android.view.accessibility.AccessibilityNodeInfo note=systemNode(root,n->"RHFiles · 喜爱文件下载".equals(String.valueOf(n.getText())));if(note!=null){touchSystemNode(note);tapped=true;break;}}Thread.sleep(100);}while(System.currentTimeMillis()<end);require(tapped,"The real foreground progress notification must be visible and tappable");
+    library=waitView("RhVideoActivity");ready(library,"RHVideoBack");end=System.currentTimeMillis()+15000;boolean opened=false;do{try{opened=((JSONObject)action("exports.state",new JSONObject())).getBoolean("opened");if(opened)break;}catch(Exception ignored){}Thread.sleep(100);}while(System.currentTimeMillis()<end);require(opened,"Notification returns to the dedicated export/download UI");
+    JSONObject saved=waitDownload(taskId,"saved");require(chosen.equals(saved.getString("name"))&&saved.getString("path").startsWith("content:"),"Task uses the actual system-chosen display name and document URI: "+saved);require(saved.getLong("bytes")==all.getLong("archive_bytes"),"The complete archive size is reported");
+    String hash=hashZip(getTargetContext().getContentResolver().openInputStream(android.net.Uri.parse(saved.getString("path"))),new File(getTargetContext().getExternalFilesDir(null),"rhvideo-export-qa.zip"));
+    require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.exports.download.cancel',"+new JSONObject().put("taskId",taskId)+").then(()=>false,()=>true)")),"A saved file rejects late cancellation");
+    int before=((JSONObject)action("exports.downloads",new JSONObject())).getJSONArray("items").length();action("exports.download",new JSONObject().put("id",export));cancelZipPicker();library=waitView("RhVideoActivity");end=System.currentTimeMillis()+10000;do{if(!((JSONObject)action("exports.state",new JSONObject())).getBoolean("busy"))break;Thread.sleep(100);}while(System.currentTimeMillis()<end);require(!((JSONObject)action("exports.state",new JSONObject())).getBoolean("busy"),"Cancelling the real picker clears choosing state");require(((JSONObject)action("exports.downloads",new JSONObject())).getJSONArray("items").length()==before,"Picker cancellation must not create a download");
+    require(((JSONObject)action("exports.state",new JSONObject())).getBoolean("opened"),"Cancelling the native save picker leaves the existing export panel open");
+    File cache=new File(getTargetContext().getCacheDir(),"exports");require(cache.isDirectory()||cache.mkdirs(),"Owned export directory available");File race=new File(cache,"race-"+export+".zip");
+    JSONObject first=(JSONObject)action("exports.download",new JSONObject().put("id",export).put("path",race.getAbsolutePath())),second=(JSONObject)action("exports.download",new JSONObject().put("id",export).put("path",race.getAbsolutePath()));
+    String a=first.getJSONObject("task").getString("id"),b=second.getJSONObject("task").getString("id");end=System.currentTimeMillis()+30000;JSONObject ta=null,tb=null;
+    do{ta=downloadTask(a);tb=downloadTask(b);if(ta!=null&&tb!=null&&java.util.Arrays.asList("saved","failed").contains(ta.getString("state"))&&java.util.Arrays.asList("saved","failed").contains(tb.getString("state")))break;Thread.sleep(150);}while(System.currentTimeMillis()<end);
+    require(ta!=null&&tb!=null&&java.util.Arrays.asList("saved","failed").contains(ta.getString("state"))&&java.util.Arrays.asList("saved","failed").contains(tb.getString("state"))&&!ta.getString("state").equals(tb.getString("state")),"Concurrent native saves must finish with exactly one saved and one failed, never an active ghost: "+ta+" / "+tb);String raceHash=hashZip(new FileInputStream(race),null);require(hash.equals(raceHash),"The concurrent winner is the identical complete ZIP");
+    File sentinel=new File(cache,"existing-"+export+".zip");try(FileOutputStream out=new FileOutputStream(sentinel)){out.write("owned-existing-data".getBytes(java.nio.charset.StandardCharsets.UTF_8));}JSONObject existing=(JSONObject)action("exports.download",new JSONObject().put("id",export).put("path",sentinel.getAbsolutePath()));waitDownload(existing.getJSONObject("task").getString("id"),"failed");require("owned-existing-data".equals(new String(java.nio.file.Files.readAllBytes(sentinel.toPath()),java.nio.charset.StandardCharsets.UTF_8)),"A preexisting file is never truncated");
+    require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"Every export UI operation has a public action");require(((JSONObject)action("exports.state",new JSONObject())).getBoolean("opened"),"The screenshot must show the export panel and actual terminal downloads, not an unrelated underlying page");screenshot("rhvideo-export-qa.png");
+    File interrupted=new File(cache,"interrupted-"+export+".zip");JSONObject armed=(JSONObject)action("exports.download",new JSONObject().put("id",export).put("path",interrupted.getAbsolutePath()));String interruptedId=armed.getJSONObject("task").getString("id");end=System.currentTimeMillis()+10000;JSONObject active=null;do{active=downloadTask(interruptedId);if(active!=null&&active.getLong("bytes")>0)break;Thread.sleep(100);}while(System.currentTimeMillis()<end);require(active!=null&&"downloading".equals(active.getString("state"))&&active.getLong("bytes")>0&&active.getLong("bytes")<active.getLong("total"),"Arm a genuinely in-flight native download before process interruption: "+active);
+    require(interrupted.getCanonicalPath().equals(active.getString("path")),"Admission binds the canonical requested output before interruption");
+    writeReceipt(new JSONObject().put("exportId",export).put("sha256",hash).put("concurrentHash",raceHash).put("concurrentStates",new JSONArray().put(ta.getString("state")).put(tb.getString("state"))).put("savedTask",taskId).put("savedUri",saved.getString("path")).put("chosenName",chosen).put("interruptedTask",interruptedId).put("interruptedPath",active.getString("path")).put("requestedInterruptedPath",interrupted.getAbsolutePath()));
+  }
   private void checkReferenceSingle()throws Exception{
     require("gallery".equals(((JSONObject)action("state",new JSONObject())).getString("view")),"Like RHVideo, the default main section is screenshot browsing");
     require("true".equals(eval(library,"!document.getElementById('gallery-panel').hidden&&document.querySelectorAll('dialog[open]').length===0")),"The primary gallery is a page, not a modal overlay");
@@ -579,10 +691,11 @@ public class RhVideoInstrumentation extends Instrumentation {
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
-      if(!"grid-rotation".equals(args.getString("mode"))&&!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"favorites".equals(args.getString("mode"))&&!"strip".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
+      if(!args.getString("mode","").startsWith("exports")&&!"grid-rotation".equals(args.getString("mode"))&&!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"favorites".equals(args.getString("mode"))&&!"strip".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
-      JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==("single".equals(args.getString("mode"))?3:52),"Video catalog count");
+      JSONObject catalog=(JSONObject)action("connection.connect",login);require(catalog.getInt("total")==("single".equals(args.getString("mode"))?3:args.getString("mode","").startsWith("exports")?1:52),"Video catalog count");
+      if(args.getString("mode","").startsWith("exports")){boolean recover="exports-recover".equals(args.getString("mode"));checkFavoriteExports(recover);result.putString("stream",recover?"PASS: favorite exports interrupted recovery, visible failure and no automatic download replay":"PASS: favorite exports recovery armed, real picker, foreground notification, library closure, native concurrent no-clobber and exact bytes");finish(Activity.RESULT_OK,result);return;}
       require("gallery".equals(catalog.getString("view")),"Fresh Android libraries keep the reference primary screenshot view");
       if(!"single".equals(args.getString("mode")))action("category",new JSONObject().put("kind","video"));
       if("favorites".equals(args.getString("mode"))){checkFavoriteMixedBrowse();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference favorite mixed picture/video snapshot, native collection slider gesture, real picture pixels, favorite removal, return and stale-parent isolation");finish(Activity.RESULT_OK,result);return;}
