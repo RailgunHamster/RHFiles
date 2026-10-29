@@ -10,11 +10,12 @@ import {rhvideoFixture as contractFixture} from './rhvideo-fixture.mjs';
 import {realRhVideoService} from './rhvideo-real-service.mjs';
 import {taskFixture} from './rhvideo-task-fixture.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
-assert([undefined,'smoke','grid','grid-restore','grid-rotation','playlist','preview','single','rules','favorites','strip','tickets','rotation','exports','duplicates','task-priority','task-center','login','lifecycle'].includes(process.argv[5]),'Unknown owned Android acceptance mode');
+assert([undefined,'smoke','grid','grid-restore','grid-rotation','grid-surface-probe','playlist','preview','single','rules','favorites','strip','tickets','rotation','exports','duplicates','task-priority','task-center','login','lifecycle'].includes(process.argv[5]),'Unknown owned Android acceptance mode');
 const lifecycleMode=process.argv[5]==='lifecycle';
 const gridRestoreMode=process.argv[5]==='grid-restore';
 const gridRotationMode=process.argv[5]==='grid-rotation';
-const gridMode=process.argv[5]==='grid'||gridRestoreMode||gridRotationMode;
+const gridSurfaceMode=process.argv[5]==='grid-surface-probe';
+const gridMode=process.argv[5]==='grid'||gridRestoreMode||gridRotationMode||gridSurfaceMode;
 const playlistMode=process.argv[5]==='playlist';
 const previewMode=process.argv[5]==='preview';
 const singleMode=process.argv[5]==='single';
@@ -35,9 +36,16 @@ const audioStartMs=Number(process.env.RHFILES_QA_AUDIO_START_MS||0);
 assert(Number.isInteger(audioStartMs)&&audioStartMs>=0&&audioStartMs<=100&&(audioStartMs===0||gridMode),'Audio waterline experiment requires grid mode and an explicit 1..100 ms value');
 const codecMode=process.env.RHFILES_QA_CODEC_MODE||'default';
 assert(['default','synchronous'].includes(codecMode)&&(codecMode==='default'||gridMode&&audioStartMs===0),'Codec queueing experiment requires grid mode, synchronous codecs and unchanged audio startup');
-function verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode=false,lifecycleMode=false}){
+const surfaceMode=process.env.RHFILES_QA_SURFACE_MODE||'compositor';
+function admitSurfaceProbe(surfaceMode,mode,audioStartMs,codecMode){
+  assert(['compositor','direct'].includes(surfaceMode)&&(surfaceMode==='compositor'||mode==='grid-surface-probe'),'Direct surfaces are diagnostic-only, never complete product acceptance');
+  assert(mode!=='grid-surface-probe'||audioStartMs===0&&codecMode==='default','A surface control cannot mix audio or codec changes');
+}
+admitSurfaceProbe(surfaceMode,process.argv[5],audioStartMs,codecMode);
+function verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode=false,lifecycleMode=false,gridSurfaceMode=false}){
   if(actualMode)return;
   const authorized=r=>r.authorization==='Bearer fixture-bearer-do-not-persist';
+  if(gridSurfaceMode){assert(fixture.requests.some(r=>r.path.endsWith('/play')&&authorized(r)),'Surface controls must actually decode authenticated media');assert.equal(fixture.requests.filter(r=>r.method!=='GET'&&!(r.method==='POST'&&r.path==='/api/v1/auth/login')).length,0,'A surface diagnostic cannot write favorites, trash or progress');return;}
   if(lifecycleMode){assert(fixture.requests.some(r=>r.path.endsWith('/play')&&authorized(r)),'Lifecycle uses real authenticated media');assert.equal(fixture.requests.filter(r=>r.method!=='GET'&&!(r.method==='POST'&&r.path==='/api/v1/auth/login')).length,0,'Lifecycle restoration cannot replay server writes');return;}
   if(taskCenterMode){assert(fixture.requests.some(r=>r.path.startsWith('/api/v1/processing-tasks/')&&authorized(r)),'Task details use authenticated native HTTP');assert.equal(fixture.requests.filter(r=>r.method!=='GET'&&r.path!=='/api/v1/auth/login').length,0,'Task inspection never mutates media');return;}
   if(rulesMode){
@@ -46,6 +54,19 @@ function verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMo
   }else{
     assert(fixture.requests.some(r=>(stripMode?r.path.startsWith('/storage/pictures/'):r.path.endsWith('/play'))&&authorized(r)),'The media scenario must actually request authenticated media');
     if(!mediaMode&&!ticketsMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
+  }
+}
+function verifyGridSurfaceParameters(output,expected){
+  const states=output.split(/\r?\n/).filter(line=>line.startsWith('STEP: grid settled ')).map(line=>JSON.parse(line.slice('STEP: grid settled '.length)));
+  assert(states.length>0,'Surface verification requires actual rendered-state checkpoints');
+  for(const state of states){
+    assert.equal(state.qaSurfaceMode,expected,'A direct surface probe cannot pass the default compositor gate');assert(state.cells.length>0);
+    for(const {presentation}of state.cells){
+      assert.equal(presentation?.surfaceType,'SurfaceView');assert.equal(presentation?.rotationPipeline,false);
+      assert.equal(presentation?.rotationRenderer,expected==='direct'?'surface-view-direct-probe':'surface-compositor');
+      assert.equal(presentation?.nativeLayerAttached,expected!=='direct');
+      if(expected==='direct'){assert.equal(presentation?.autoRotate,false);assert.equal(presentation?.rotation,0);}
+    }
   }
 }
 function verifyGridAudioParameters(output,expected,expectedCodecMode='default'){
@@ -116,10 +137,10 @@ let releaseGallery;const galleryGate=singleMode?new Promise(resolve=>releaseGall
 // existing bounded player wait; no arbitrary sleep makes this case look cold.
 const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(stripMode?{beforeMedia:({image})=>image?{body:singleImage,contentType:'application/octet-stream',splitAt:5}:undefined}:{}),...(favoritesMode?{beforeMedia:({image,path})=>image&&/^\/storage\/pictures\/[01]\.svg$/.test(path)?{body:singleImage,contentType:'application/octet-stream',splitAt:5}:undefined}:{}),...(mediaMode?{galleryVideoCount:6,videoDuration:20,videoFiles:Object.fromEntries([0,1,3].map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:52},(_,i)=>[0,1,3].includes(i)?'360x640':'640x360')}:{ }),...(previewMode?{failTrashIds:['video:video-2'],failFavoriteIds:['video:video-3']}:{ }),...(gridMode?{failFavoriteIds:['video:video-3']}:{ }),...(singleMode?{videoCount:3,galleryVideoCount:1,galleryFrameCount:1,beforeGallery:()=>galleryGate,beforeMedia:({image,path})=>{if(!image)releaseGallery();if(image&&/^\/storage\/pictures\/[0567]\.svg$/.test(path))return {body:singleImage,contentType:'application/octet-stream',splitAt:5};if(image&&path==='/storage/pictures/owned-error.svg')return {body:Buffer.from('<!DOCTYPE html><html>owned upstream error</html>'),contentType:'image/png'};}}:{}),...(rotationMode?{loginUsers:['preview','other']}:{})}),port=new URL(fixture.url).port;
 if(favoritesMode)for(const key of ['video:video-0','video:video-1','picture:picture-0','picture:picture-1','novel:novel-0'])fixture.favorites.add(key);
-const failedFixture=gridMode&&!gridRestoreMode&&!gridRotationMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
+const failedFixture=gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
-const artifact=path.resolve('test-artifacts/rhvideo-android'+(lifecycleMode?'-lifecycle':taskCenterMode?'-task-center':rulesMode?'-rules':actualMode?(loginMode?'-login':duplicatesMode?'-duplicates':priorityMode?'-task-priority':'-exports'):gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
-fs.writeFileSync(path.join(artifact,'qa-parameters.json'),JSON.stringify({audioStartMs,codecMode,productDefault:audioStartMs===0&&codecMode==='default'},null,2));
+const artifact=path.resolve('test-artifacts/rhvideo-android'+(lifecycleMode?'-lifecycle':taskCenterMode?'-task-center':rulesMode?'-rules':actualMode?(loginMode?'-login':duplicatesMode?'-duplicates':priorityMode?'-task-priority':'-exports'):gridSurfaceMode?'-grid-surface':gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
+fs.writeFileSync(path.join(artifact,'qa-parameters.json'),JSON.stringify({audioStartMs,codecMode,surfaceMode,diagnosticOnly:gridSurfaceMode,productDefault:audioStartMs===0&&codecMode==='default'&&surfaceMode==='compositor'},null,2));
 fs.writeFileSync(path.join(artifact,'fixture-media.json'),JSON.stringify([['landscape',video],['portrait',mediaMode?portrait:null]].filter(([,file])=>file&&fs.existsSync(file)).map(([kind,file])=>({kind,bytes:fs.statSync(file).size,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')})),null,2));
 function captureGridAudio(expectedPid){
   // Only after owned-emulator validation and a failed grid assertion. Keep
@@ -134,7 +155,7 @@ function captureGridAudio(expectedPid){
 // This exact generated diagnostic belongs to the already-verified QA emulator.
 // A later failed run must never inherit an earlier run's menu screenshot.
 if(singleMode||playlistMode)for(const name of ['rhvideo-menu-failure-qa.png','rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
-if(gridMode&&!gridRestoreMode&&!gridRotationMode)for(const name of ['rhvideo-grid-landscape-qa.png','rhvideo-grid-portrait-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
+if(gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode)for(const name of ['rhvideo-grid-landscape-qa.png','rhvideo-grid-portrait-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
 function installExact(packageId,file){
   const expectedHash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const installedHash=()=>{const installed=run(['shell','pm','path',packageId]).trim().split(/\r?\n/);assert(installed.length===1&&/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(installed[0]),'Expected one installed universal APK for '+packageId);return run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64);};
@@ -169,7 +190,7 @@ try{
     if(priorityMode)modeArgs=['-e','mode','task-priority'];
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
-  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,'-e','surfaceMode',surfaceMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='',armedTaskFailures=false,gridAudioCapture=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}const failure=output.match(/^STEP: QA: grid-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode)&&!gridAudioCapture&&failure)gridAudioCapture=captureGridAudio(Number(failure[1])).catch(error=>{console.error('Live grid audio diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
@@ -180,9 +201,9 @@ try{
   finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;}
   assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED|keyDispatchingTimedOut|Input dispatching timed out/);return output;
   }
-  const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
-  assert.match(output,lifecycleMode?/PASS: native HTTP lifecycle, single and grid/:taskCenterMode?/PASS: packaged task center/:priorityMode?/PASS: actual task priority/:duplicatesMode?/PASS: actual duplicates/:rulesMode?/PASS: native tag rules/:loginMode?/PASS: native login phase login/:exportsMode?/PASS: favorite exports recovery armed/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: contextual workflow entries and real card selection, reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
-  if(gridMode||lifecycleMode)verifyGridAudioParameters(output,audioStartMs,codecMode);
+  const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:gridSurfaceMode?['-e','mode','grid-surface-probe']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
+  assert.match(output,lifecycleMode?/PASS: native HTTP lifecycle, single and grid/:taskCenterMode?/PASS: packaged task center/:priorityMode?/PASS: actual task priority/:duplicatesMode?/PASS: actual duplicates/:rulesMode?/PASS: native tag rules/:loginMode?/PASS: native login phase login/:exportsMode?/PASS: favorite exports recovery armed/:gridSurfaceMode?/PASS: surface-only grid diagnostic; not complete product acceptance/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: contextual workflow entries and real card selection, reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
+  if(gridMode||lifecycleMode){verifyGridAudioParameters(output,audioStartMs,codecMode);verifyGridSurfaceParameters(output,surfaceMode);}
   async function stopOwnedProcess(){
     run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
     let stoppedPid='',stopDeadline=Date.now()+5000;do{try{stoppedPid=run(['shell','pidof','com.railgunhamster.rhfiles']);}catch(error){assert.equal(error.status,1);stoppedPid=String(error.stdout||'');}if(!stoppedPid.trim())break;await new Promise(resolve=>setTimeout(resolve,100));}while(Date.now()<stopDeadline);assert.equal(stoppedPid.trim(),'','The target process must actually be stopped before recovery');
@@ -230,7 +251,7 @@ try{
   if(lifecycleMode){
     for(const name of ['rhvideo-lifecycle-player-qa.png','rhvideo-lifecycle-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
   }
-  verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode,lifecycleMode});
+  verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode,lifecycleMode,gridSurfaceMode});
   if(taskCenterMode){const recovery=taskController.recoveryState();assert.equal(recovery.failureCount,3,'Three real automatic HTTP failures exhaust the budget');assert(recovery.manualRecovered&&!recovery.armed&&recovery.recoveryLists>0,'An actual detail read and a later automatic list read recover, not just a local status reset');fs.writeFileSync(path.join(artifact,'read-recovery.json'),JSON.stringify(recovery,null,2));}
   if(stripMode){assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path.startsWith('/api/v1/favorites/picture/')).length,1,'One actual strip star -> one write');assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path.startsWith('/api/v1/trash/picture/')).length,1,'Closing another strip cannot replay a staged source');}
   if(previewMode){
@@ -239,7 +260,7 @@ try{
     assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-3').length,1,'A failed favorite is not retried');
     assert(fixture.requests.some(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-0'));
   }
-  if(gridMode&&!gridRestoreMode&&!gridRotationMode){
+  if(gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode){
     assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-0').length,1,'One native favorite button -> one server write');
     assert.equal(fixture.requests.filter(r=>r.method==='DELETE'&&r.path==='/api/v1/favorites/video/video-0').length,1,'Unfavorite uses the same visible control');
     assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path==='/api/v1/favorites/video/video-3').length,1,'A failed grid favorite cannot be retried on close');
@@ -258,6 +279,6 @@ try{
   }catch(error){console.error('Native diagnostics unavailable: '+name+' — '+error.message);}
   if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('Native controller menu item not available:'))try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-menu-failure-qa.png',path.join(artifact,'rhvideo-menu-failure-qa.png')]);}catch{}
   if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('FAIL:'))for(const name of ['rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
-  if(gridMode&&!gridRestoreMode&&!gridRotationMode)for(const name of ['rhvideo-grid-landscape-qa.png','rhvideo-grid-portrait-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
+  if(gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode)for(const name of ['rhvideo-grid-landscape-qa.png','rhvideo-grid-portrait-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
   try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();if(actualMode){fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(artifact,'actual-service.log'));const transport=path.join(fixture.directory,'zip-transport.jsonl');if(fs.existsSync(transport))fs.copyFileSync(transport,path.join(artifact,'zip-transport.jsonl'));}fs.rmSync(temporary,{recursive:true,force:true});
 }

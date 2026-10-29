@@ -16,6 +16,22 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[34])
 class RhVideoRotationTest {
+  @Test fun directSurfaceControlDoesNotClaimPausedBufferRotationOrChangeTheExistingPlayer(){
+    val context=RuntimeEnvironment.getApplication();context.setTheme(com.google.android.material.R.style.Theme_MaterialComponents_DayNight_NoActionBar)
+    val view=RhVideoPlayerView(context,directSurfaceProbe=true);val engine=ExoPlayer.Builder(context).build()
+    try{
+      val surface=view.videoSurfaceView;view.bindRotationEngine(engine)
+      assertFalse(view.bindNativeSurface(engine,surface as SurfaceView));assertSame(surface,view.videoSurfaceView)
+      val state=view.rotationState();assertEquals("surface-view-direct-probe",state.getString("rotationRenderer"));assertFalse(state.getBoolean("nativeLayerAttached"));assertFalse(state.getBoolean("rotationPipeline"));assertEquals(0,state.getInt("rotation"));assertEquals(1f,engine.volume,0f)
+    }finally{view.unbindRotationEngine(engine);engine.release()}
+  }
+  @Test fun anOrdinaryViewStillUsesTheCompositorEvenWhenAnotherViewIsADirectProbe(){
+    val context=RuntimeEnvironment.getApplication();context.setTheme(com.google.android.material.R.style.Theme_MaterialComponents_DayNight_NoActionBar)
+    val probe=RhVideoPlayerView(context,directSurfaceProbe=true);val ordinary=RhVideoPlayerView(context);val engine=ExoPlayer.Builder(context).build()
+    try{
+      ordinary.bindRotationEngine(engine);assertTrue(ordinary.bindNativeSurface(engine,null));assertEquals("surface-compositor",ordinary.rotationState().getString("rotationRenderer"));assertEquals("surface-view-direct-probe",probe.rotationState().getString("rotationRenderer"))
+    }finally{ordinary.unbindRotationEngine(engine);engine.release()}
+  }
   @Test fun nativeControlLabelsMatchTheChineseLibraryWithoutChangingTheSystemLocale(){
     val app=RuntimeEnvironment.getApplication()
     val english=app.createConfigurationContext(android.content.res.Configuration(app.resources.configuration).apply{setLocale(java.util.Locale.US)})

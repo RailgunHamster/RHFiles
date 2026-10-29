@@ -25,7 +25,7 @@ private fun rhVideoControlContext(context:Context):Context {
  * format (not transformed output size) decides whether rotation improves fit.
  */
 @UnstableApi
-internal open class RhVideoPlayerView(context:Context):PlayerView(rhVideoControlContext(context)) {
+internal open class RhVideoPlayerView(context:Context,private val directSurfaceProbe:Boolean=false):PlayerView(rhVideoControlContext(context)) {
   var autoRotate=false;private set
   var videoRotation=0;private set
   private var sourceAspect=0.0
@@ -35,7 +35,9 @@ internal open class RhVideoPlayerView(context:Context):PlayerView(rhVideoControl
   private var pipeline=false
   private var compositor:RhVideoSurface?=null
   @get:androidx.annotation.ChecksSdkIntAtLeast(api=29)
-  private val nativeComposition get()=Build.VERSION.SDK_INT>=29
+  // A QA-only zero-rotation control can use Media3's ordinary SurfaceView.
+  // This is not a product fallback: it does not provide paused-buffer rotation.
+  private val nativeComposition get()=Build.VERSION.SDK_INT>=29&&!directSurfaceProbe
   var onRotationRendererChanged:(()->Unit)?=null
   var onPresentationFailure:((String)->Unit)?=null
   // Must be called before prepare(), as required by ExoPlayer.setVideoEffects.
@@ -86,7 +88,7 @@ internal open class RhVideoPlayerView(context:Context):PlayerView(rhVideoControl
   fun bindNativeSurface(value:ExoPlayer,surface:SurfaceView?):Boolean{if(!nativeComposition||engine!==value)return false;compositor?.attach(surface);return true}
   override fun setResizeMode(mode:Int){super.setResizeMode(mode);if(nativeComposition)compositor?.fill(mode==AspectRatioFrameLayout.RESIZE_MODE_ZOOM)}
   override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){super.onSizeChanged(w,h,oldw,oldh);if(sourceAspect>0&&oldw==0&&oldh==0)chooseRotation()}
-  fun rotationState()=JSONObject().put("autoRotate",autoRotate).put("rotation",videoRotation).put("rotationAvailable",RhVideoRotation.available(sourceAspect,width,height,autoRotate)).put("sourceAspect",sourceAspect).put("viewportWidth",width).put("viewportHeight",height).put("surfaceType",videoSurfaceView?.javaClass?.simpleName?:"").put("rotationPipeline",pipeline).put("rotationRenderer",if(nativeComposition)"surface-compositor"else "media3-effects").put("nativeLayerAttached",if(nativeComposition)compositor?.attached==true else false).put("presentationError",(if(nativeComposition)compositor?.error else null)?:JSONObject.NULL).put("outputWidth",engine?.videoSize?.width?:0).put("outputHeight",engine?.videoSize?.height?:0)
+  fun rotationState()=JSONObject().put("autoRotate",autoRotate).put("rotation",videoRotation).put("rotationAvailable",RhVideoRotation.available(sourceAspect,width,height,autoRotate)).put("sourceAspect",sourceAspect).put("viewportWidth",width).put("viewportHeight",height).put("surfaceType",videoSurfaceView?.javaClass?.simpleName?:"").put("rotationPipeline",pipeline).put("rotationRenderer",if(directSurfaceProbe)"surface-view-direct-probe"else if(nativeComposition)"surface-compositor"else "media3-effects").put("nativeLayerAttached",if(nativeComposition)compositor?.attached==true else false).put("presentationError",(if(nativeComposition)compositor?.error else null)?:JSONObject.NULL).put("outputWidth",engine?.videoSize?.width?:0).put("outputHeight",engine?.videoSize?.height?:0)
   companion object{
     // Media3 uses counterclockwise angles; RHVideo's CSS rotate(90deg) is clockwise.
     fun rotationEffect(angle:Int):ScaleAndRotateTransformation=ScaleAndRotateTransformation.Builder().setRotationDegrees(-angle.toFloat()).build()

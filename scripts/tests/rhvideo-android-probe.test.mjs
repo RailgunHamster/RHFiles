@@ -49,7 +49,9 @@ test('rotation acceptance waits for the requested rendered orientation before qu
 });
 
 test('grid continuity observes real time and frames while WebView timers are suspended, without driving the player',()=>{
-  const continuity=source.slice(source.indexOf('private JSONObject checkGridContinuity('),source.indexOf('private void checkReferenceGrid('));
+  const start=source.indexOf('private JSONObject checkGridContinuity(');assert(start>=0);
+  const nextMethod=source.indexOf('\n  private ',start);assert(nextMethod>start);
+  const continuity=source.slice(start,nextMethod);
   assert.match(continuity,/library\.pauseTimers\(\).*Thread\.sleep\(5000\).*finally\{runOnMainSync\(\(\)->library\.resumeTimers\(\)\)/);
   assert.match(continuity,/position>=4000&&pts>=4000&&frames>=60/);
   assert.match(continuity,/a\.getLong\("inputId"\)==b\.getLong\("inputId"\)/);

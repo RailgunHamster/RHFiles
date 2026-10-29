@@ -245,7 +245,7 @@ class RhVideoGridActivity:AppCompatActivity(){
       val item=entries.getJSONObject(i)
       val diagnostics=RhVideoInputDiagnostics(tracing)
       trace("engine-$i-start");val engine=createEngine(storage,diagnostics);memory.restoreTracks(item.getString("id"),engine);trace("engine-$i-ready")
-      val view=RhVideoPlayerView(this).apply{controllerShowTimeoutMs=2500;controllerAutoShow=false;contentDescription="视频 ${i+1} · ${item.getString("name")}"}
+      val view=RhVideoPlayerView(this,directSurfaceProbe=BuildConfig.RHVIDEO_QA_SURFACE_MODE=="direct").apply{controllerShowTimeoutMs=2500;controllerAutoShow=false;contentDescription="视频 ${i+1} · ${item.getString("name")}"}
       players.add(engine);inputDiagnostics.add(diagnostics);views.add(view);inputIds.add(inputSequence.getAndIncrement());val frames=AtomicLong(0);val frameTime=AtomicLong(-1);frameCounts.add(frames);frameTimes.add(frameTime)
       val container=FrameLayout(this);val message=TextView(this).apply{setTextColor(Color.WHITE);setBackgroundColor(0xcc151b27.toInt());setPadding(16,16,16,16);visibility=View.GONE}
       container.addView(view,FrameLayout.LayoutParams(-1,-1));container.addView(message,FrameLayout.LayoutParams(-1,-2,android.view.Gravity.CENTER));containers.add(container);grid.addView(container)
@@ -263,6 +263,7 @@ class RhVideoGridActivity:AppCompatActivity(){
     return JSONObject().put("engine","Media3").put("nativeSurface",true).put("controlsExpanded",controlsExpanded).put("dragging",JSONArray(dragging.toList())).put("canvasWidth",grid.width).put("canvasHeight",grid.height).put("offset",data.getInt("offset")).put("total",data.getInt("total")).put("count",entries.length()).put("groupIndex",data.getInt("groupIndex")).put("groupTotal",data.getInt("groupTotal")).put("hasPrevious",previous.isEnabled).put("hasNext",next.isEnabled).put("lease",lease).put("generation",data.getLong("generation")).put("expanded",if(expanded<0)JSONObject.NULL else expanded).put("target",selected)
       .put("qaAudioStartMs",BuildConfig.RHVIDEO_QA_AUDIO_START_MS)
       .put("qaCodecMode",BuildConfig.RHVIDEO_QA_CODEC_MODE)
+      .put("qaSurfaceMode",BuildConfig.RHVIDEO_QA_SURFACE_MODE)
       .put("cells",JSONArray(players.mapIndexed{i,p->
         val saved=cell(i);val item=entries.getJSONObject(i);val id=item.getString("id");val surface=containers[i]
         val counters=p.videoDecoderCounters?.also{it.ensureUpdated()};val favorite=client.favoriteState("video",id,data.getLong("generation"))

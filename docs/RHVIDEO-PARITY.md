@@ -18,6 +18,8 @@ Android 新增仅 QA 可选的同步 codec 队列对照，使用 Media3 1.11.1 �
 
 默认原生回归仍 **失败**（`rhvideo-default-codec-active-control-grid.log`、`rhvideo-android-grid-1793314232760-release`）：原 5.620 秒推进 **390／414／448 ms**、新增 **7／8／10 帧**；恢复计时器后的 5.218 秒推进 **997／1015／1045 ms**、新增 **16／14／23 帧**，同输入未更换。因此暂停 WebView 计时器不能单独解释这次停滞，后一次采样也未达正常速度。继续检查解码输出／供给，不将默认恢复或小幅推进当作修复。新 Windows EXE 的完整串行原生验收已启动，日志 `rhvideo-grid-close-blocking-full-windows.log`、材料目录 `rhvideo-windows-1Lb2m0`；未终止前不计完整通过。正式 Windows 实例、实体手机、主机／模拟器／音频服务均未重启或替换；没有发布新包，完整目标仍未完成。
 
+下一轮已准备仅改变视频输出表面的对照：`-PrhfilesRhVideoSurfaceMode=direct` 必须同时启用 RHVideo probe，且禁止 codec／音频水位实验；默认仍是 compositor，普通单视频不切换。宿主只允许 `grid-surface-probe` 使用 direct，原生每格须证实真实 SurfaceView、未挂载自建子层、无旋转／effects 管线；随后执行相同三路／五秒／60 帧严格判定，不 seek、静音、降低源质量、替换失败样本或执行服务器写操作。结果明确标注仅诊断，不能冒充完整产品验收；compositor 也可跑同一诊断模式作为配对基线。相关宿主／源策略 **18/18、零跳过**；两个新增 JVM View 用例、APK 编译和原生 A/B 运行**尚未执行**，须等待冻结快照的 Windows 回归终止后再构建，避免并行重编译污染关闭期限／播放测量。这里没有输出表面根因或修复结论。
+
 ## 2026-10-30 最新完整 Windows 失败与 Android 原生控件（验证继续，未发包）
 
 前轮仍在运行的最新 EXE `22b5e6d9f107e3c9a208f03ae42d41f6b3711bb84610b48265a0aad269c1ebbd` 完整串行验收现已终止：**102/103 通过、1 失败、零跳过**，24 分 45 秒（`rhvideo-client-capture-full-windows.log`，`rhvideo-windows-UGmf58`）。唯一失败是同屏自身关闭、首个存活 WebView 被 debugger 暂停且重新发现不可用的真实故障场景：命令只发送一次，健康的媒体库页已返回 running，但原有 5000 ms 内未取回终态。不借旧 EXE 的 103/103 为新 EXE 背书，也不放宽时限或重复关闭。

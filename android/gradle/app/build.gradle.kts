@@ -61,6 +61,10 @@ val rhVideoCodecMode = providers.gradleProperty("rhfilesRhVideoCodecMode").orNul
 require(rhVideoCodecMode == null || (providers.gradleProperty("rhfilesRhVideoProbe").isPresent && rhVideoCodecMode == "synchronous" && rhVideoAudioStartMs == null)) {
     "Codec experiments require rhfilesRhVideoProbe, synchronous mode and unchanged audio startup"
 }
+val rhVideoSurfaceMode = providers.gradleProperty("rhfilesRhVideoSurfaceMode").orNull
+require(rhVideoSurfaceMode == null || (providers.gradleProperty("rhfilesRhVideoProbe").isPresent && rhVideoSurfaceMode == "direct" && rhVideoAudioStartMs == null && rhVideoCodecMode == null)) {
+    "Surface experiments require rhfilesRhVideoProbe, direct mode and unchanged codec/audio output"
+}
 
 android {
     // Native view tests must inflate the real Media3/app resources, rather
@@ -84,6 +88,7 @@ android {
     defaultConfig {
         buildConfigField("int", "RHVIDEO_QA_AUDIO_START_MS", (rhVideoAudioStartMs ?: 0).toString())
         buildConfigField("String", "RHVIDEO_QA_CODEC_MODE", "\"${rhVideoCodecMode ?: "default"}\"")
+        buildConfigField("String", "RHVIDEO_QA_SURFACE_MODE", "\"${rhVideoSurfaceMode ?: "compositor"}\"")
         if(providers.gradleProperty("rhfilesLanServiceProbe").isPresent) testInstrumentationRunner="com.railgunhamster.rhfiles.LanServiceInstrumentation"
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.railgunhamster.rhfiles"

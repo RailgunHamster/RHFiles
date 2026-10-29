@@ -20,8 +20,12 @@ public class RhVideoInstrumentation extends Instrumentation {
     int expected=Integer.parseInt(args.getString("audioStartMs","0"));
     require(state.getInt("qaAudioStartMs")==expected,"QA audio start setting must match the explicit host request; experimental playback cannot pass the default gate");
     String codecMode=args.getString("codecMode","default");require(codecMode.equals(state.getString("qaCodecMode")),"The actual native codec mode must match the host request");
+    String surfaceMode=args.getString("surfaceMode","compositor");require(surfaceMode.equals(state.getString("qaSurfaceMode")),"Surface output must match the explicit host request");
     for(int i=0;i<state.getJSONArray("cells").length();i++){
-      JSONObject diagnostic=state.getJSONArray("cells").getJSONObject(i).getJSONObject("diagnostics");
+      JSONObject cell=state.getJSONArray("cells").getJSONObject(i),diagnostic=cell.getJSONObject("diagnostics"),presentation=cell.getJSONObject("presentation");
+      require(presentation.getString("surfaceType").equals("SurfaceView")&&!presentation.getBoolean("rotationPipeline"),"The control experiment must retain native SurfaceView decode without an effects pipeline");
+      if(surfaceMode.equals("direct"))require(presentation.getString("rotationRenderer").equals("surface-view-direct-probe")&&!presentation.getBoolean("nativeLayerAttached")&&!presentation.getBoolean("autoRotate")&&presentation.getInt("rotation")==0,"Direct output is only an unrotated diagnostic, not full rotation acceptance");
+      else require(presentation.getString("rotationRenderer").equals("surface-compositor")&&presentation.getBoolean("nativeLayerAttached"),"Default output must retain its actual compositor layer");
       if(codecMode.equals("default"))require(diagnostic.isNull("codecAdapters"),"Default playback cannot contain a codec queueing experiment");
       else{JSONObject adapters=diagnostic.getJSONObject("codecAdapters");for(String type:new String[]{"audio","video"})require(adapters.getString(type).equals("androidx.media3.exoplayer.mediacodec.SynchronousMediaCodecAdapter"),"Verify the actual live codec adapter for "+type+", not only BuildConfig");}
     }
@@ -113,6 +117,12 @@ public class RhVideoInstrumentation extends Instrumentation {
     }
     require(advancing,"All grid inputs must advance real media time and render at least 60 new frames during five seconds without web timers: "+after);
     return after;
+  }
+  private void checkGridSurfaceProbe()throws Exception{
+    require(args.getString("audioStartMs","0").equals("0")&&args.getString("codecMode","default").equals("default"),"The surface control must not mix audio or codec experiments");
+    action("gallery.open",new JSONObject());action("grid.open",new JSONObject());
+    checkGridContinuity(waitGrid(3,false));
+    action("grid.close",new JSONObject());
   }
   private void checkReferenceGrid()throws Exception{
     require(((JSONObject)action("preferences.state",new JSONObject())).getInt("gridCount")==0,"Android must default to reference automatic grouping");
@@ -1086,6 +1096,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       if("favorites".equals(args.getString("mode"))){checkFavoriteMixedBrowse();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference favorite mixed picture/video snapshot, native collection slider gesture, real picture pixels, favorite removal, return and stale-parent isolation");finish(Activity.RESULT_OK,result);return;}
       if("strip".equals(args.getString("mode"))){checkReferenceStrip();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference strip end, touch scrolling, linked rows, actual selection and star, enlarged image pixels, rotation, one-shot staging and stale viewer isolation");finish(Activity.RESULT_OK,result);return;}
       if("rotation".equals(args.getString("mode"))){checkReferenceRotation();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference rotation toggle, actual native SurfaceView, paused time/speed, next source, stale inputs/settings and per-account persistence");finish(Activity.RESULT_OK,result);return;}
+      if("grid-surface-probe".equals(args.getString("mode"))){checkGridSurfaceProbe();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: surface-only grid diagnostic; not complete product acceptance");finish(Activity.RESULT_OK,result);return;}
       if("grid-rotation".equals(args.getString("mode"))){checkGridRotation();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid native pixel rotation, paused input/time/speed/volume and group restoration");finish(Activity.RESULT_OK,result);return;}
       if("grid-restore".equals(args.getString("mode"))){checkReferenceGrid();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference grid restore with actual held-slider ABA and native paused frames");finish(Activity.RESULT_OK,result);return;}
       if("tickets".equals(args.getString("mode"))){checkPreparedTickets();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: prepared ticket lifetime and native player replacement");finish(Activity.RESULT_OK,result);return;}
