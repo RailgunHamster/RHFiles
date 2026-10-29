@@ -259,6 +259,8 @@ impl SeekState{
     }
 }
 struct Api {
+    version:String,
+    prebuilt_index:bool,
     new: unsafe extern "C" fn(i32, *const *const c_char) -> Ptr,
     release: unsafe extern "C" fn(Ptr),
     media_new: unsafe extern "C" fn(Ptr, *const c_char) -> Ptr,
@@ -334,10 +336,20 @@ fn directory() -> Option<PathBuf> {
 pub fn available() -> bool {
     directory().is_some()
 }
+fn bundled_plugin_index(path:&std::path::Path,version:&str)->bool{
+    let manifest=path.join("RHFiles-libVLC.json");
+    if !std::fs::metadata(&manifest).is_ok_and(|m|m.is_file()&&m.len()<=1024*1024){return false;}
+    let Ok(bytes)=std::fs::read(manifest) else{return false;};
+    let Ok(value)=serde_json::from_slice::<Value>(&bytes) else{return false;};
+    value["format"]=="RHFiles.libVLC.bundle"&&value["schemaVersion"]==1&&
+        value["runtimeVersion"].as_str()==version.split_whitespace().next()&&
+        value["pluginIndexMode"]=="prebuilt-no-scan"&&
+        std::fs::metadata(path.join("plugins/plugins.dat")).is_ok_and(|m|m.is_file()&&m.len()>=1024)
+}
 impl Api {
     unsafe fn load() -> Result<Self, String> {
         let path = directory()
-            .ok_or("未找到 VLC 原生播放内核。此体验版请先安装 64 位 VLC；不会改用浏览器播放。")?;
+            .ok_or("原生播放内核文件不完整。请完整解压或修复 RHFiles 安装，保留 vlc 目录；不会改用网页播放。")?;
         // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS.
         let lib: Library = unsafe {
             libloading::os::windows::Library::load_with_flags(
@@ -345,7 +357,7 @@ impl Api {
                 0x100 | 0x1000,
             )
         }
-        .map_err(|_| "无法加载 VLC 原生内核；请确认安装的是 64 位 VLC 3.x")?
+        .map_err(|_| "无法加载原生播放内核；请修复 RHFiles 的 vlc 目录，或使用兼容的 64 位 VLC 3.x")?
         .into();
         unsafe {
             let version = lib
@@ -353,8 +365,10 @@ impl Api {
                 .map_err(|_| "VLC 版本接口不可用")?;
             let version = version();
             if version.is_null() || !CStr::from_ptr(version).to_bytes().starts_with(b"3.") {
-                return Err("此体验版需要 VLC 3.x 原生内核".into());
+                return Err("原生播放内核版本不兼容，需要 64 位 VLC 3.x".into());
             }
+            let version=CStr::from_ptr(version).to_string_lossy().into_owned();
+            let prebuilt_index=bundled_plugin_index(&path,&version);
             macro_rules! function {
                 ($name:literal) => {
                     *lib.get(concat!($name, "\0").as_bytes())
@@ -362,6 +376,7 @@ impl Api {
                 };
             }
             Ok(Self {
+                version,prebuilt_index,
                 new: function!("libvlc_new"),
                 release: function!("libvlc_release"),
                 media_new: function!("libvlc_media_new_location"),
@@ -468,6 +483,12 @@ impl Engine {
             CString::new("--no-volume-save").unwrap(),
             CString::new(if compatibility{"--avcodec-hw=none"}else{"--avcodec-hw=any"}).unwrap(),
         ];
+        // Velopack deliberately normalizes ZIP timestamps. Its verified,
+        // matching-version bundled index must therefore be read without the
+        // filesystem rescan which would reject every entry as stale. System
+        // or modified runtimes without this marker retain VLC's normal scan.
+        // https://github.com/videolan/vlc/blob/3.0.24/src/modules/bank.c
+        if api.prebuilt_index{options.push(CString::new("--plugins-cache").unwrap());options.push(CString::new("--no-plugins-scan").unwrap());}
         // Compare decoder queue/pool startup at the same resolution and sound
         // settings. This is not a shipping software-decoder thread cap.
         #[cfg(debug_assertions)]
@@ -764,6 +785,9 @@ impl Engine {
             "presentationError":if self.compatibility&&self.frame.render_error.load(std::sync::atomic::Ordering::Relaxed){Some("无法显示原生兼容画面，请检查显示会话后重新打开视频")}else{None},
             "state":(self.api.state)(p),"restoringPausedFrame":restoring,"restorePhase":restore_phase,"restoreTargetMs":restore_target,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
             "rate":restore_rate.unwrap_or_else(||(self.api.rate)(p)),"decoderRate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0});
+            value["engineVersion"]=json!(self.api.version);
+            value["pluginIndexMode"]=json!(if self.api.prebuilt_index{"prebuilt-no-scan"}else{"cache-and-scan"});
+            value["decodedAudioBlocks"]=json!(stats.decoded_audio.max(0));
             value["pauseRequested"]=json!(self.pause_requested.load(std::sync::atomic::Ordering::Relaxed));trace("complete");value
         }
     }
@@ -1444,7 +1468,7 @@ pub async fn play(
     let _=INPUT_APP.set(app.clone());
     if !available() {
         return Err(
-            "未检测到原生播放内核。此体验版请先安装 64 位 VLC 3.x；不会打开网页播放。".into(),
+            "原生播放内核文件不完整。请完整解压或修复 RHFiles 安装，保留 vlc 目录；不会改用网页播放。".into(),
         );
     }
     trace_open(started,"kernel-located");
@@ -1788,6 +1812,20 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
 #[cfg(test)]
 mod input_tests{
     use super::*;
+    #[test]
+    fn a_prebuilt_plugin_index_is_opt_in_and_matches_the_loaded_runtime(){
+        let root=tempfile::tempdir().unwrap();let path=root.path();std::fs::create_dir(path.join("plugins")).unwrap();
+        let marker=json!({"format":"RHFiles.libVLC.bundle","schemaVersion":1,"runtimeVersion":"3.0.24","pluginIndexMode":"prebuilt-no-scan"});
+        std::fs::write(path.join("RHFiles-libVLC.json"),marker.to_string()).unwrap();
+        assert!(!bundled_plugin_index(path,"3.0.24 Vetinari"));
+        std::fs::write(path.join("plugins/plugins.dat"),vec![0u8;1024]).unwrap();
+        assert!(bundled_plugin_index(path,"3.0.24 Vetinari"));
+        assert!(!bundled_plugin_index(path,"3.0.25 Vetinari"));
+        let mut wrong=marker.clone();wrong["pluginIndexMode"]=json!("scan");std::fs::write(path.join("RHFiles-libVLC.json"),wrong.to_string()).unwrap();
+        assert!(!bundled_plugin_index(path,"3.0.24 Vetinari"));
+        std::fs::write(path.join("RHFiles-libVLC.json"),"broken").unwrap();assert!(!bundled_plugin_index(path,"3.0.24 Vetinari"));
+        std::fs::remove_file(path.join("RHFiles-libVLC.json")).unwrap();assert!(!bundled_plugin_index(path,"3.0.24 Vetinari"));
+    }
     #[test]
     fn accepted_pause_or_resume_wins_over_the_lagging_decoder_state(){
         for state in [0,1,2,3,4]{

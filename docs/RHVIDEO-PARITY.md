@@ -6,6 +6,18 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-29 实际发行包的原生内核与插件索引（完整目标未完成）
+
+Windows 发包现准备官方非 GPL `VideoLAN.LibVLC.Windows 3.0.24`，固定来源／SHA-256，构建时生成匹配的插件索引，附带 LGPL、来源／源码链接和动态替换说明。GPL cachegen 仅作隔离构建工具，不进入运行目录；不安装或修改系统 VLC。准备脚本拒绝无效旧目录、越界路径和链接，不在失败时覆盖已有目录。清单记录精确文件集合／大小／哈希，stage、实际便携 ZIP 和实际完整更新包均校验；不是仅验证压缩前目录。
+
+第一次实际 Velopack 打包被新门禁正确拒绝（`rhvideo-libvlc-real-velopack-build.log`）：所有插件解压时间变成了 DOS 1980，尽管字节不变，也会让 VLC 将索引视为过期。现按 [VLC 3.0.24 的模块加载实现](https://github.com/videolan/vlc/blob/3.0.24/src/modules/bank.c)，仅在匹配运行版本、显式随包标记和完整索引存在时启用 `--plugins-cache --no-plugins-scan`；其他运行库仍正常扫描。发包门禁只额外接受 Velopack 已知的确定性时间，不允许任意改时间／漏文件／改字节。应用不重写安装文件、不在运行时强制哈希，因此用户仍能替换动态库；自定义插件应重建索引或删除标记。
+
+新打包策略用例 **17/17**（含时间／越界／junction／篡改的反向用例，`rhvideo-libvlc-zip-epoch-policy.log`）；本机实际参考源码下 Node 全部 **724/724、零跳过**（`rhvideo-libvlc-prebuilt-node.log`）；Windows RHVideo Rust **57/57**（`rhvideo-prebuilt-rust-regression.log`）。新 debug EXE SHA-256 为 `5034359d817b9e76171f12898f12bff93ab8936ca40bfdccc6a5110954d8cd7e`。模拟 Velopack 时间戳的独立副本实际解码 H.264 和静音 AAC，证明实际加载 3.0.24、索引模式、视频帧／音频块均存在，verbose 日志确认没有递归扫描或 stale cache（`rhvideo-prebuilt-native-debug.log`）；这不是物理声音测量。
+
+随后真实 Velopack 构建与两种包解压校验都通过（`rhvideo-libvlc-prebuilt-velopack-build.log`），仅输出本机 `dist/rhvideo-native-velopack-20261029-prebuilt/`，没有发布。release EXE SHA-256 为 `dfaea9543991b193c7e6defac499f62cd7418ba11c17773cc69e95675a282332`；完整更新包 SHA-256 为 `2ac82dcb4b107fd01f856137a6edf8b02508b109c5f5c175a69cfae48f7053ce`。从真实 portable 解压出的 release 程序通过 **13/13、零跳过**（`rhvideo-prebuilt-portable-release-e2e.log`），包含随包内核／AAC、同屏、定位／暂停／翻组、实际 FastAPI／隔离 SQLite、配置合并和 ZIP 下载。不是只运行工作目录的 EXE，也没有把系统 VLC 的通过结果转记为随包版本。
+
+完整 **97 项** Windows RHVideo 回归现正在独立副本串行运行（`rhvideo-prebuilt-bundled-windows-regression.log`）：使用实际 ZIP 的运行库和新 debug EXE，以保留仅 debug 开放的实际像素观测。不能将此构建称为原字节的 release 程序；上述 13 项才是实际 release 程序结果。H.264／HEVC 原生专项本轮首帧仍约 **3.49／5.43 s**，因此分发与索引修复不等于播放性能已解决。Android 原包／原生回归仍按前节记录，当前没有新 APK 或物理手机安装，没有改变正式实例，完整目标继续保持未完成。
+
 ## 2026-10-29 备份规则入站校验与 SDK 后续验证（完整目标未完成）
 
 此前的读取兜底未覆盖配置备份：`media_tag_filter` 是合法 JSON 对象但 `include` 是字符串时，导入仍可能覆盖可用规则。新增红测已复现。共享恢复入口现在先执行同一套标签规则语义校验；无效字段不覆盖当前设置，其余有效字段继续合并。界面与 `configuration.restore` 应答同时说明“已忽略无效页面偏好：标签筛选”，应答另含 `ignoredPreferences`。已完成的服务端合并仍是 `applied:true`，确认票据不可重放，不把客户端警告改成可再次提交的失败。

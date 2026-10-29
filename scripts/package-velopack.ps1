@@ -97,10 +97,16 @@ if ($LASTEXITCODE -ne 0) { throw "FFmpeg preparation failed with exit code $LAST
 & (Join-Path $PSScriptRoot "prepare-7zip.ps1")
 if ($LASTEXITCODE -ne 0) { throw "7-Zip preparation failed with exit code $LASTEXITCODE" }
 
+$libVlc = & (Join-Path $PSScriptRoot 'prepare-libvlc.ps1')
+. (Join-Path $PSScriptRoot 'libvlc-bundle.ps1')
+Assert-RHFilesLibVlcBundle $libVlc.Directory
+
 Reset-WorkspaceDirectory $stageDirectory "Velopack staging directory"
 Reset-WorkspaceDirectory $OutputDirectory "Velopack output directory"
 
 Copy-Item -LiteralPath $releaseExe -Destination (Join-Path $stageDirectory "RHFiles.exe")
+Copy-Item -LiteralPath $libVlc.Directory -Destination (Join-Path $stageDirectory 'vlc') -Recurse
+Assert-RHFilesLibVlcBundle (Join-Path $stageDirectory 'vlc')
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $stageDirectory "RHFiles-LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "NOTICE") -Destination (Join-Path $stageDirectory "RHFiles-NOTICE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "src-tauri\thirdparty\everything.exe") -Destination (Join-Path $stageDirectory "Everything.exe")
@@ -180,6 +186,16 @@ if (-not $portableSource) {
 if (-not $portableSource) {
     throw "Velopack did not create a portable archive in: $OutputDirectory"
 }
+# Verify the actual ZIP and update package, not just the pre-compression stage.
+# A changed plugin mtime can invalidate VLC's index after extraction even when
+# all DLL bytes survived. Stop before copying/publishing an incomplete package.
+Assert-RHFilesLibVlcArchive $portableSource 'current' $repoRoot
+$feed = Get-Content -LiteralPath (Join-Path $OutputDirectory 'releases.win.json') -Raw | ConvertFrom-Json
+$fullAssets = @($feed.Assets | Where-Object { $_.Version -eq $Version -and $_.Type -ieq 'Full' -and $_.PackageId -eq 'RHFiles' })
+if ($fullAssets.Count -ne 1 -or [IO.Path]::GetFileName($fullAssets[0].FileName) -cne $fullAssets[0].FileName) {
+    throw 'The release must contain one current full update package'
+}
+Assert-RHFilesLibVlcArchive (Join-Path $OutputDirectory $fullAssets[0].FileName) 'lib/app' $repoRoot
 if ([string]::IsNullOrWhiteSpace($PortableName)) {
     $PortableName = "RHFiles-$Version-portable-x64.zip"
 }

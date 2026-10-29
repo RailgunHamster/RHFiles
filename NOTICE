@@ -35,6 +35,12 @@ https://github.com/RailgunHamster/RHVideo
 License text: src/vendor/rhvideo/LICENSE (also bundled with the Android media UI).
 pinyin-pro 3.29.5 — MIT; see src/vendor/pinyin-pro/LICENSE.
 
+Windows native playback:
+libVLC 3.0.24 — Copyright (C) 1996-2026 VideoLAN and contributors — LGPL-2.1-or-later.
+The non-GPL VideoLAN.LibVLC.Windows runtime is distributed in vlc/ with its
+license, package metadata, source links and RHFiles-NOTICE.txt. The GPL cache
+generator is a build tool only and is not included in that runtime directory.
+
 Android WebView lifecycle compatibility patch:
 wry 0.55.1 — Copyright 2020-2023 Tauri Programme within The Commons Conservancy
 MIT OR Apache-2.0; see vendor/wry-0.55.1/LICENSE-* and RHFILES-PATCH.md.

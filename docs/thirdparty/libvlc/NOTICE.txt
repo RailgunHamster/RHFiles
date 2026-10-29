@@ -1,0 +1,37 @@
+RHFiles Windows native playback: libVLC 3.0.24 (win-x64)
+Copyright (C) 1996-2026 the VideoLAN team and contributors.
+
+This directory contains the unmodified native runtime from VideoLAN's
+VideoLAN.LibVLC.Windows 3.0.24 NuGet package (LGPL-2.1-or-later), not the
+VideoLAN.LibVLC.Windows.GPL package or the complete VLC application.
+The full license is in COPYING.LIB; upstream package metadata is preserved.
+RHFiles original code remains under its own Apache-2.0 license.
+
+Binary provenance:
+https://www.nuget.org/packages/VideoLAN.LibVLC.Windows/3.0.24
+https://code.videolan.org/videolan/libvlc-nuget
+
+Corresponding VLC source, contributors, build instructions and dependency
+recipes (contrib/) for this version:
+https://download.videolan.org/pub/videolan/vlc/3.0.24/vlc-3.0.24.tar.xz
+https://github.com/videolan/vlc/tree/3.0.24
+FFmpeg source used by this VLC version:
+https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
+Other included components retain their respective licenses and copyrights;
+see the upstream source's THANKS and contrib/src recipes for their sources.
+
+RHFiles dynamically loads libvlc.dll/libvlccore.dll and the plugins. You can
+replace them with a compatible modified 64-bit VLC 3.x runtime; there is no
+runtime checksum restriction. Build-time checks protect release assembly,
+not the user's ability to modify or relink the library. See RHFiles source:
+https://github.com/RailgunHamster/RHFiles
+
+plugins/plugins.dat is generated for exactly the distributed non-GPL plugin
+set at build time using the matching official VLC cache generator. That GPL
+build tool is not distributed in this application runtime directory.
+
+RHFiles reads this matching-version index without rescanning plugin files:
+Velopack uses deterministic ZIP timestamps which differ from source DLL
+timestamps. It does not rewrite installed files. If your modified runtime
+changes plugin metadata, regenerate plugins.dat or remove RHFiles-libVLC.json
+to return to VLC's normal cache-and-scan behavior.
