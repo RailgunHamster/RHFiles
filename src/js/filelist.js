@@ -386,6 +386,7 @@ function focusFilePane(listOrId) {
 function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   delete tabOrPane._columnSelection;
   const list = document.getElementById(listId);
+  list._refreshColumnRoot = null;
   list._thumbnailObserver?.disconnect();
   const entries = tabOrPane.entries || [];
   const sel = tabOrPane.sel || new Set();
@@ -650,47 +651,43 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
   browser.className = "column-browser";
   list.appendChild(browser);
 
-  async function renderColumn(colIdx, colPath, suppliedEntries) {
+  async function renderColumn(colIdx, colPath, suppliedEntries, preserveFollowing = false) {
     [...browser.querySelectorAll('.column-col')].forEach((column, index) => {
-      if (index >= colIdx) column.remove();
+      if (index === colIdx || (!preserveFollowing && index > colIdx)) column.remove();
     });
     const col = document.createElement("div");
     col.className = "column-col";
-    browser.appendChild(col);
+    col.dataset.path = colPath;
+    browser.insertBefore(col, browser.children[colIdx] || null);
     try {
       let colEntries = suppliedEntries ? [...suppliedEntries] : await call("list_dir", { path: colPath, filter: "" });
       colEntries = colEntries.filter(entryVisible);
-      colEntries.sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
+      // Root indices and Shift ranges must follow the visible pane sort.
+      if (!suppliedEntries) colEntries = sortEntriesList(colEntries, tabOrPane.sortF || 'name', tabOrPane.sortAsc !== false);
+      const columnState = {path:colPath, entries:colEntries, sel:new Set(), lastIdx:-1};
       const heading = displayPath(colPath).split('/').filter(Boolean).pop() || displayPath(colPath);
       col.innerHTML = `<div class="column-heading" title="${esc(displayPath(colPath))}">${esc(heading)}</div>`;
-      colEntries.forEach(entry => {
+      colEntries.forEach((entry, columnIndex) => {
         const item = document.createElement("div");
         const rootIndex = colIdx === 0 ? entries.findIndex(candidate => candidate.path === entry.path) : -1;
         item.className = "column-item" + (rootIndex >= 0 && sel.has(rootIndex) ? " selected" : "") + (rootIndex >= 0 ? typeSearchRowClass(rootIndex, isRight) : '');
         item.dataset.path = entry.path;
         item.dataset.isDir = entry.is_dir ? 'true' : 'false';
+        item.dataset.columnIndex = columnIndex;
         if (rootIndex >= 0) item.dataset.index = rootIndex;
         item.innerHTML = `<span class="column-item-icon">${fileIcon(entry)}</span>
           <span class="column-item-name" title="${esc(entry.name)}">${rootIndex >= 0 ? fileNameHtmlForView(entry, rootIndex, isRight) : esc(entry.name)}</span>
           ${entry.is_dir ? '<span class="ci-arrow">\u203a</span>' : ''}`;
-        RHFilesUI.listen(item,"click", async () => {
-          G.lastActivePane = isRight ? 'right' : 'left';
-          if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
-          browser.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
-          item.classList.add('selected');
+        RHFilesUI.listen(item,"click", async event => {
           if (rootIndex >= 0) {
-            delete tabOrPane._columnSelection;
-            sel.clear();
-            sel.add(rootIndex);
-            tabOrPane.lastIdx = rootIndex;
-            updateStatus(tabOrPane, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection');
-            updatePreviewForSelection();
+            handleRowClick(event, rootIndex, tabOrPane.sel, tabOrPane, isRight);
           } else {
-            selectColumnTarget(entry, tabOrPane, listId, isRight);
+            selectColumnTarget(entry, tabOrPane, listId, isRight, {state:columnState, index:columnIndex, event, column:col});
           }
-          if (entry.is_dir) {
+          paintColumnSelection(tabOrPane, isRight);
+          if (entry.is_dir && !event.ctrlKey && !event.shiftKey && !(IS_MAC && event.metaKey)) {
             await renderColumn(colIdx + 1, entry.path);
-          } else {
+          } else if (!entry.is_dir) {
             [...browser.querySelectorAll('.column-col')].forEach((column, index) => {
               if (index > colIdx) column.remove();
             });
@@ -710,13 +707,11 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
           event.stopPropagation();
           if (rootIndex >= 0) {
             selectContextTarget(rootIndex, tabOrPane, listId, isRight, false);
-            browser.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
-            item.classList.add('selected');
+            paintColumnSelection(tabOrPane, isRight);
             showContextMenu(event.clientX, event.clientY, isRight);
           } else {
-            browser.querySelectorAll('.column-item').forEach(sibling => sibling.classList.remove('selected'));
-            item.classList.add('selected');
-            selectColumnTarget(entry, tabOrPane, listId, isRight);
+            selectColumnTarget(entry, tabOrPane, listId, isRight, {state:columnState, index:columnIndex, preserve:true, column:col});
+            paintColumnSelection(tabOrPane, isRight);
             showContextMenu(event.clientX, event.clientY, isRight);
           }
         },undefined,"src.js.filelist.renderColumn.cb705f80e3fd");
@@ -726,7 +721,9 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
             prepareFileDragSelection(item, rootIndex, sel, tabOrPane, listId, isRight);
             setRhfilesFileDragData(event.dataTransfer, [...sel].map(index => entries[index]?.path).filter(Boolean), isRight, item);
           } else {
-            setRhfilesFileDragData(event.dataTransfer, [entry.path], isRight, item);
+            selectColumnTarget(entry, tabOrPane, listId, isRight, {state:columnState, index:columnIndex, preserve:true, column:col});
+            paintColumnSelection(tabOrPane, isRight);
+            setRhfilesFileDragData(event.dataTransfer, selectedEntriesForPane(tabOrPane).map(file => file.path), isRight, item);
           }
         },undefined,"src.js.filelist.renderColumn.cd42d3f76edb");
         col.appendChild(item);
@@ -734,10 +731,27 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
     } catch (e) {
       col.innerHTML += `<div class="column-error">${esc(t('status.error', {error: e}))}</div>`;
     }
-    browser.scrollLeft = browser.scrollWidth;
+    if (!preserveFollowing) browser.scrollLeft = browser.scrollWidth;
   }
 
+  list._refreshColumnRoot = owner => {
+    if (owner !== tabOrPane || owner.path !== currentPath || browser.parentElement !== list) return false;
+    const firstChildPath = browser.children[1]?.dataset.path;
+    // If the expanded folder disappeared, the normal rebuild safely closes it.
+    if (firstChildPath && !owner.entries.some(entry => entry.is_dir && entry.path === firstChildPath)) return false;
+    entries = owner.entries;
+    sel = owner.sel;
+    // Supplied root entries render synchronously; existing child columns and
+    // their live selection remain mounted while root metadata is refreshed.
+    void renderColumn(0, currentPath, entries, true);
+    paintColumnSelection(owner, isRight);
+    return true;
+  };
   renderColumn(0, currentPath, entries);
+}
+
+function refreshColumnRoot(pane, listId) {
+  return G.layout === 'columns' && document.getElementById(listId)?._refreshColumnRoot?.(pane) === true;
 }
 
 const _THUMB_IMAGE_EXT = new Set(['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff','tif','heic','avif']);
@@ -874,6 +888,7 @@ function pumpThumbnailQueue() {
 }
 
 function selectContextTarget(index, pane, listId, isRight, repaint = true) {
+  if (typeof resetTypeSearch === 'function') resetTypeSearch();
   delete pane._columnSelection;
   pane._keyboardRange = null;
   G.lastActivePane = isRight ? 'right' : 'left';
@@ -888,9 +903,14 @@ function selectContextTarget(index, pane, listId, isRight, repaint = true) {
   if (typeof fileChoiceRefreshSelection === 'function') fileChoiceRefreshSelection();
 }
 
-function selectColumnTarget(entry, pane, listId, isRight) {
+function selectColumnTarget(entry, pane, listId, isRight, context = {}) {
+  if (typeof resetTypeSearch === 'function') resetTypeSearch();
   pane.sel.clear(); pane.lastIdx = -1; pane._keyboardRange = null;
-  pane._columnSelection = {root:pane.path, entry};
+  const state = context.state || {entries:[entry], sel:new Set(), lastIdx:-1};
+  const index = context.index ?? 0;
+  if (activeColumnSelection(pane)?.state !== state) { state.sel.clear(); state.lastIdx = -1; }
+  if (!context.preserve || !state.sel.has(index)) applyMouseFileSelection(context.preserve ? {} : context.event || {}, index, state);
+  pane._columnSelection = {root:pane.path, entry, state, column:context.column};
   G.lastActivePane = isRight ? 'right' : 'left';
   if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
   focusFilePane(document.getElementById(listId));
@@ -898,34 +918,59 @@ function selectColumnTarget(entry, pane, listId, isRight) {
   updatePreviewForSelection();
 }
 
-function selectedEntriesForPane(pane) {
-  if (G.layout === 'columns' && pane._columnSelection?.root === pane.path) return [pane._columnSelection.entry];
-  return [...(pane.sel || [])].map(index => pane.entries?.[index]).filter(Boolean);
+function activeColumnSelection(pane) {
+  return G.layout === 'columns' && pane?._columnSelection?.root === pane.path ? pane._columnSelection : null;
 }
 
-function handleRowClick(e, index, sel, tabOrPane, isRight) {
-  delete tabOrPane._columnSelection;
+function paintColumnSelection(pane, isRight) {
+  const list = document.getElementById(isRight ? 'right-file-list' : 'file-list');
+  const nested = activeColumnSelection(pane);
+  list?.querySelectorAll('.column-item').forEach(item => {
+    const selected = nested ? nested.column?.contains(item) && nested.state.sel.has(Number(item.dataset.columnIndex))
+      : item.hasAttribute('data-index') && pane.sel.has(Number(item.dataset.index));
+    item.classList.toggle('selected', !!selected);
+  });
+  updateStatus(pane, isRight ? 'right-status-count' : 'status-count', isRight ? null : 'status-selection');
+}
+
+function selectedEntriesForPane(pane) {
+  const column = activeColumnSelection(pane);
+  if (column && !column.state) return [column.entry];
+  const state = column?.state || pane;
+  return [...(state.sel || [])].sort((a,b) => a-b).map(index => state.entries?.[index]).filter(Boolean);
+}
+
+function applyMouseFileSelection(e, index, tabOrPane) {
+  const sel = tabOrPane.sel ||= new Set();
   tabOrPane._keyboardRange = null;
-  G.lastActivePane = isRight ? 'right' : 'left';
-  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
-  const listId = isRight ? "right-file-list" : "file-list";
-  const list = document.getElementById(listId);
-  focusFilePane(list);
-  if (e.ctrlKey || (IS_MAC && e.metaKey)) {
+  if (e.shiftKey && tabOrPane.lastIdx >= 0) {
+    const start = Math.min(tabOrPane.lastIdx, index);
+    const end = Math.max(tabOrPane.lastIdx, index);
+    if (!e.ctrlKey && !(IS_MAC && e.metaKey)) sel.clear();
+    for (let i = start; i <= end; i++) sel.add(i);
+  } else if (e.ctrlKey || (IS_MAC && e.metaKey)) {
     if (sel.has(index)) sel.delete(index);
     else sel.add(index);
     tabOrPane.lastIdx = index;
-  } else if (e.shiftKey && tabOrPane.lastIdx >= 0) {
-    const start = Math.min(tabOrPane.lastIdx, index);
-    const end = Math.max(tabOrPane.lastIdx, index);
-    sel.clear();
-    for (let i = start; i <= end; i++) sel.add(i);
   } else {
     sel.clear();
     sel.add(index);
     tabOrPane.lastIdx = index;
   }
-  list.querySelectorAll(".file-row").forEach(row => {
+}
+
+function handleRowClick(e, index, sel, tabOrPane, isRight) {
+  if (typeof resetTypeSearch === 'function') resetTypeSearch();
+  delete tabOrPane._columnSelection;
+  G.lastActivePane = isRight ? 'right' : 'left';
+  if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+  const listId = isRight ? "right-file-list" : "file-list";
+  const list = document.getElementById(listId);
+  focusFilePane(list);
+  // Read the live pane selection, never a Set captured by an older row render.
+  applyMouseFileSelection(e, index, tabOrPane);
+  sel = tabOrPane.sel;
+  list.querySelectorAll(".file-row, .column-item[data-index]").forEach(row => {
     const idx = parseInt(row.dataset.index);
     if (isNaN(idx)) return;
     row.classList.toggle("selected", sel.has(idx));
@@ -964,13 +1009,15 @@ function getSelectedPaths(isRight) {
 }
 
 function selectAll(isRight) {
+  if (typeof resetTypeSearch === 'function') resetTypeSearch();
   if (typeof isRight !== 'boolean') isRight = G.dualOn && G.lastActivePane === 'right';
   const tabOrPane = isRight ? G.rp : getTab();
-  delete tabOrPane._columnSelection;
-  const entries = tabOrPane.entries || [];
-  const sel = tabOrPane.sel || new Set();
+  const target = activeColumnSelection(tabOrPane)?.state || tabOrPane;
+  const entries = target.entries || [];
+  const sel = target.sel ||= new Set();
   sel.clear();
   entries.forEach((_, i) => sel.add(i));
+  if (target !== tabOrPane) { paintColumnSelection(tabOrPane, isRight); updatePreviewForSelection(); return; }
   if (isRight) renderFiles(tabOrPane, "right-file-list", "right-status-count", null, true);
   else { renderFiles(tabOrPane, "file-list", "status-count", "status-selection"); updatePreviewForSelection(); }
   if (typeof fileChoiceRefreshSelection === "function") fileChoiceRefreshSelection();

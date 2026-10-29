@@ -565,7 +565,9 @@ async function _refreshTabInBackground(tab, isRight = false) {
     if (isActive()) {
       const listEl = document.getElementById(listId);
       const savedScroll = listEl ? listEl.scrollTop : 0;
-      renderFiles(tab, listId, statusId, selectionId, isRight);
+      if (typeof refreshColumnRoot !== 'function' || !refreshColumnRoot(tab, listId)) {
+        renderFiles(tab, listId, statusId, selectionId, isRight);
+      }
       updateStatus(tab, statusId, selectionId);
       if (listEl) listEl.scrollTop = savedScroll;
     }

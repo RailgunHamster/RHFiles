@@ -60,13 +60,21 @@ test('right-pane background refresh preserves selected paths/scroll without repa
   assert.deepEqual([...h.tab.sel],[2]);assert.deepEqual(rendered,['right-file-list']);assert.deepEqual(h.metadata,[]);assert.equal(h.scroll.scrollTop,148);
 });
 
+test('background root changes can refresh Columns without discarding mounted child selection',async()=>{
+  const h=refreshFixture(),child={entry:{path:'C:\\data\\folder\\child'}};let updated=0;
+  h.tab._columnSelection=child;
+  h.ctx.refreshColumnRoot=(pane,id)=>{assert.equal(pane,h.tab);assert.equal(id,'file-list');updated++;return true;};
+  const work=h.ctx._refreshTabInBackground(h.tab);h.requests[0].resolve([row('a'),row('b'),row('c')]);await work;
+  assert.equal(updated,1);assert.equal(h.renders.length,0);assert.equal(h.tab._columnSelection,child);assert.equal(h.scroll.scrollTop,148);
+});
+
 function searchFixture() {
   const left={entries:[row('report-one'),row('other'),row('report-two')],sel:new Set([1]),lastIdx:1};
   const right={entries:[row('重庆.txt'),row('annual-report'),row('报告.txt')],sel:new Set(),lastIdx:-1};
   right.entries[0]._pinyinAliases=['chongqingtxt','cqtxt'];right.entries[2]._pinyinAliases=['baogaotxt','bgtxt'];
   right.entries[1]._pinyinAliases=[];
   const hud=[],renders=[];
-  const ctx=context({G:{rp:right,_typeSearch:{requestToken:0,matches:[],matchPos:-1},settings:{typeSearchTimeoutMs:0}},getTab:()=>left,
+  const ctx=context({G:{dualOn:true,lastActivePane:'left',rp:right,_typeSearch:{requestToken:0,matches:[],matchPos:-1},settings:{typeSearchTimeoutMs:0}},getTab:()=>left,
     clearTypeSearchHighlights:()=>{},showTypeSearchHud:(...args)=>hud.push(args),renderFiles:(_,id)=>renders.push(id),
     scrollToVisible:()=>{},updatePreviewForSelection:()=>{},scheduleTypeSearchReset:()=>{},
   });
@@ -81,7 +89,7 @@ test('typed substring matching cycles forward/backward and wraps in the active p
   assert.deepEqual(plain(h.ctx.G._typeSearch.matches),[0,2]);assert.equal(h.right.sel.size,0);
 });
 for(const query of ['cq','chongqing','ongq','重庆','ＣＱ']) test(`Chinese/full Pinyin/initial/middle/fullwidth query ${query} selects in right pane`,async()=>{
-  const h=searchFixture();await h.ctx.runTypeSearchSelection(query,0,true);
+  const h=searchFixture();h.ctx.G.lastActivePane='right';await h.ctx.runTypeSearchSelection(query,0,true);
   assert.deepEqual([...h.right.sel],[0]);assert.deepEqual([...h.left.sel],[1]);assert.deepEqual(h.renders,['right-file-list']);
 });
 test('no-match query keeps prior selection and reports zero matches',async()=>{
@@ -90,10 +98,22 @@ test('no-match query keeps prior selection and reports zero matches',async()=>{
 });
 test('late Pinyin result cannot select after a newer query',async()=>{
   const h=searchFixture(),pending=deferred();delete h.right.entries[0]._pinyinAliases;
+  h.ctx.G.lastActivePane='right';
   h.ctx.ensurePinyinAliases=()=>pending.promise;
   const first=h.ctx.runTypeSearchSelection('cq',0,true);
   await h.ctx.runTypeSearchSelection('报告',0,true);pending.resolve();await first;
   assert.deepEqual([...h.right.sel],[2]);assert.equal(h.ctx.G._typeSearch.visualQuery,'报告');
+});
+for(const change of ['mouseSelection','pane','entries','path'])test(`late Pinyin result cannot replace a changed ${change}`,async()=>{
+  const h=searchFixture(),pending=deferred();delete h.right.entries[0]._pinyinAliases;
+  h.ctx.G.lastActivePane='right';h.ctx.ensurePinyinAliases=()=>pending.promise;
+  const work=h.ctx.runTypeSearchSelection('cq',0,true);
+  if(change==='mouseSelection'){h.right.sel=new Set([1,2]);h.right.lastIdx=2;}
+  if(change==='pane')h.ctx.G.lastActivePane='left';
+  if(change==='entries')h.right.entries=[...h.right.entries];
+  if(change==='path')h.right.path='other';
+  const before=[...h.right.sel];pending.resolve();await work;
+  assert.deepEqual([...h.right.sel],before);assert.equal(h.renders.length,0);
 });
 for(const [name,query,matched] of [['a_b-report.txt','ab','a_b'],['📁报告.json','报告','报告'],['ＦＯＯ.txt','foo','ＦＯＯ']]) {
   test(`highlight maps normalized query back to original Unicode characters: ${name}`,()=>{
