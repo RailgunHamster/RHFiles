@@ -150,7 +150,7 @@ Write-Host 'Android project sync complete.'
 # RHVideo uses the same packaged library UI, with a phone-specific bridge and
 # layout. Copy only these allowlisted assets, never the desktop file browser.
 $rhvideoAssets=Join-Path $appDir 'src/main/assets/rhvideo'
-foreach($relative in @('rhvideo.html','rhvideo-operations.json','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-exports.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-refresh.js','js/rhvideo-worker.js','js/rhvideo-search.js','js/rhvideo-tags.js','vendor/pinyin-pro/pinyin-pro.js','vendor/pinyin-pro/LICENSE','vendor/pinyin-pro/PROVENANCE.txt','vendor/rhvideo/LICENSE')){
+foreach($relative in @('rhvideo.html','rhvideo-operations.json','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-exports.js','js/rhvideo-rules-model.js','js/rhvideo-rules.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-refresh.js','js/rhvideo-worker.js','js/rhvideo-search.js','js/rhvideo-tags.js','vendor/pinyin-pro/pinyin-pro.js','vendor/pinyin-pro/LICENSE','vendor/pinyin-pro/PROVENANCE.txt','vendor/rhvideo/LICENSE')){
     $destination=Join-Path $rhvideoAssets $relative
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Sync-File -Source (Join-Path $repoRoot ('src/'+$relative)) -Target $destination

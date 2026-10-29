@@ -1,5 +1,6 @@
 (function(root,factory){const value=factory();if(typeof module==='object'&&module.exports)module.exports=value;else root.RHVideoConfiguration=value;})(typeof globalThis==='object'?globalThis:this,()=>{
   'use strict';
+  const tagSettings=typeof module==='object'&&module.exports?require('./rhvideo-rules-model.js').settings:globalThis.RHVideoRulesModel.settings;
   const names=['page_volume','rotate','mix_pictures','grid_tag_prefs','media_tag_filter','strip_layout','strip_speed','kenburns_duration','kenburns_overlap','kenburns_fade_min','kenburns_fade_max','kenburns_fade_ratio','novel_settings','favshow_image','favshow_video','favshow_fade'];
   // Backup values use the reference's units: multiplier (200 px/s) and percent.
   const numbers={strip_speed:['scrollSpeed',0,10,1/200],kenburns_duration:['stay',0.1,30],kenburns_fade_min:['min',0,30],kenburns_fade_max:['max',0,60],kenburns_fade_ratio:['ratio',0,100,100],favshow_image:['favoriteStay',1,60],favshow_video:['videoStay',1,300],favshow_fade:['favoriteFadeMs',100,5000]};
@@ -7,6 +8,7 @@
   function referencePreferences(config,previous={}){
     const result=Object.fromEntries(names.filter(key=>typeof previous[key]==='string'&&previous[key].length<=16384).map(key=>[key,previous[key]]));
     result.page_volume=String(config.volume/100);result.rotate=String(config.autoRotate);result.mix_pictures=String(config.mixPictures);result.media_tag_filter=JSON.stringify(config.rule);result.strip_layout=config.lanes===2?'double':'single';
+    if(config.tagEditor!==undefined)result.grid_tag_prefs=JSON.stringify(tagSettings(config.tagEditor));
     for(const [key,[field,_min,_max,scale=1]]of Object.entries(numbers))result[key]=String(config[field]*scale);
     result.kenburns_overlap=String(config.overlap);result.novel_settings=JSON.stringify({fs:config.readerFont,lh:config.readerLine,theme:config.readerTheme});
     return result;
@@ -21,6 +23,7 @@
         else if(key==='strip_layout'){if(!['single','double'].includes(value))throw Error('条带布局无效');patch.lanes=value==='double'?2:1;}
         else if(numbers[key]){const [field,min,max,scale=1]=numbers[key];patch[field]=number(value,min,max)/scale;}
         else if(key==='media_tag_filter'){const parsed=safe(JSON.parse(value));if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('规则无效');patch.rule=parsed;}
+        else if(key==='grid_tag_prefs'){const parsed=safe(JSON.parse(value));if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('标签偏好无效');patch.tagEditor=tagSettings(parsed);}
         else if(key==='novel_settings'){const v=safe(JSON.parse(value));if(!['day','sepia','night'].includes(v.theme))throw Error('阅读主题无效');const fs=number(String(v.fs),13,40);if(!Number.isInteger(fs))throw Error('字号无效');patch.readerFont=fs;patch.readerLine=number(String(v.lh),1.2,3);patch.readerTheme=v.theme;}
       }catch{ignored.push(key);}
     }

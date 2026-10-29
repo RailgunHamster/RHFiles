@@ -82,6 +82,8 @@
       this.collections = new Map();
       this.indexes = new Map();
       this.orderCache = new Map();
+      this.tagCache = new Map();
+      this.tagRevision = 0;
     }
     set(kind, raw) {
       if (!Array.isArray(raw) || raw.length > 1000000)
@@ -96,6 +98,8 @@
       this.collections.set(kind, rows);
       this.indexes.delete(kind);
       this.orderCache.clear();
+      this.tagCache.clear();
+      this.tagRevision++;
       return { count: rows.length };
     }
     setGallery(videos, pictures = []) {
@@ -114,6 +118,33 @@
         }
       }
       return this.set("gallery", rows);
+    }
+    async tagQuery({kinds,mediaType='',rule={},folders=[],search='',sort='count-desc',recent=[],offset=0,limit=80},cancel=()=>false){
+      const revision=this.tagRevision,obsolete=()=>cancel()||revision!==this.tagRevision;
+      if(!Array.isArray(kinds)||!kinds.length||kinds.length>4||new Set(kinds).size!==kinds.length||kinds.some(v=>!['video','picture','novel','favorite'].includes(v))||!['','video','picture','novel'].includes(mediaType)||!['count-desc','name-asc','name-desc','recent'].includes(sort)||!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||!Array.isArray(folders)||folders.some(v=>typeof v!=='string')||!Array.isArray(recent)||recent.length>30||recent.some(v=>typeof v!=='string')||typeof search!=='string'||search.length>4096)throw Error('标签清单参数无效');
+      const filter=this.tags.normalize(rule),cacheKey=JSON.stringify([kinds,mediaType]),match=this.tags.compile(filter);
+      let cached=this.tagCache.get(cacheKey);
+      if(!cached){
+        const counts=new Map(),catalogs=[];
+        for(const kind of kinds){let total=0;const records=this.collections.get(kind)||[];for(let i=0;i<records.length;i++){
+          const row=records[i];if(kind!=='favorite'||!mediaType||row.kind===mediaType){total++;for(const name of this.tags.labels(row.folder)){let countsByKind=counts.get(name);if(!countsByKind){countsByKind={};counts.set(name,countsByKind);}countsByKind[kind]=(countsByKind[kind]||0)+1;}}
+          if(i%2048===2047){await new Promise(resolve=>setTimeout(resolve,0));if(obsolete())return {stale:true};}
+        }catalogs.push({kind,total});}
+        cached={counts,catalogs,index:null};if(this.tagCache.size>=8)this.tagCache.delete(this.tagCache.keys().next().value);this.tagCache.set(cacheKey,cached);
+      }
+      const available=new Map(cached.counts);for(const value of folders)for(const label of this.tags.labels(value))if(!available.has(label))available.set(label,{});for(const label of this.tags.terms(filter))if(!available.has(label))available.set(label,{});
+      let matching=null;
+      if(search){
+        if(!this.searchCore||!this.dictionary)throw Error('拼音搜索词典未加载');
+        if(!cached.index){const index=new this.searchCore.Index(this.dictionary);let n=0;for(const name of cached.counts.keys()){index.upsert({key:name,fields:[name]});if(++n%2048===0){await new Promise(resolve=>setTimeout(resolve,0));if(obsolete())return {stale:true};}}cached.index=index;}
+        matching=new Set(cached.index.search(search));const extra=new this.searchCore.Index(this.dictionary);for(const name of available.keys())if(!cached.counts.has(name))extra.upsert({key:name,fields:[name]});for(const name of extra.search(search))matching.add(name);
+      }
+      const rows=[];for(const [name,counts]of available)if(!matching||matching.has(name))rows.push({name,counts,count:Object.values(counts).reduce((a,b)=>a+b,0)});
+      const order=new Map(recent.map((name,i)=>[name,i])),compare=(a,b)=>a.name.localeCompare(b.name,'zh-CN');
+      rows.sort(sort==='name-asc'?compare:sort==='name-desc'?(a,b)=>compare(b,a):sort==='recent'?(a,b)=>(order.get(a.name)??Number.MAX_SAFE_INTEGER)-(order.get(b.name)??Number.MAX_SAFE_INTEGER)||b.count-a.count||compare(a,b):(a,b)=>b.count-a.count||compare(a,b));
+      const catalogs=[];for(const source of cached.catalogs){let matchingCount=0;const records=this.collections.get(source.kind)||[];for(let i=0;i<records.length;i++){const row=records[i];if((source.kind!=='favorite'||!mediaType||row.kind===mediaType)&&match(row.folder))matchingCount++;if(i%2048===2047){await new Promise(resolve=>setTimeout(resolve,0));if(obsolete())return {stale:true};}}catalogs.push({...source,matching:matchingCount});}
+      if(obsolete())return {stale:true};
+      return {rows:rows.slice(offset,offset+limit),total:rows.length,available:available.size,catalogs,offset,limit};
     }
     async search(kind, text) {
       if (!text) return null;

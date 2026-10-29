@@ -49,10 +49,10 @@ self.onmessage = (event) => {
   if (action === "invalidate")
     for (const read of resourceReads.values())
       if (read.revision < revision) read.controller.abort();
-  const collection = args.kind || "";
+  const collection = action==='tags'?'@tags':args.kind || "";
   // Only obsolete paints may coalesce. Playback/export/order snapshots and exact
   // lookups must not be silently cancelled by an unrelated page render.
-  const cancellable = action === "query" && args.latest === true && !args.locate;
+  const cancellable = ["query","tags"].includes(action) && args.latest === true && !args.locate;
   if (cancellable) latest.set(collection, id);
   const enqueue = (resource) => {
     work = work.then(async () => {
@@ -80,6 +80,8 @@ self.onmessage = (event) => {
                 ? catalog.set(args.kind, args.items)
                 : action === "gallery"
                   ? catalog.setGallery(args.videos, args.pictures)
+                : action === "tags"
+                  ? await catalog.tagQuery(args,()=>cancellable&&latest.get(collection)!==id)
                 : action === "query"
                   ? await catalog.query(args)
                   : catalog.info();

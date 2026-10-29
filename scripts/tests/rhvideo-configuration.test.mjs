@@ -5,7 +5,11 @@ test('configuration uses the actual reference string keys, without merging indep
  const values=C.referencePreferences(config,{grid_tag_prefs:'{"recent":["音乐"]}',password:'never',token:'never'});
  assert.equal(values.page_volume,'0.35');assert.equal(values.strip_layout,'double');assert.equal(values.kenburns_duration,'7');assert.equal(values.favshow_image,'12');assert.equal(values.favshow_video,'45');assert.equal(values.favshow_fade,'1300');assert.equal(values.grid_tag_prefs,'{"recent":["音乐"]}');assert.equal(values.password,undefined);assert.equal(values.token,undefined);
  assert.equal(values.strip_speed,'2');assert.equal(values.kenburns_fade_ratio,'30');
- const restored=C.restoredPreferences(values);assert.deepEqual(restored.ignored,[]);assert.deepEqual(restored.patch,config);
+ const restored=C.restoredPreferences(values);assert.deepEqual(restored.ignored,[]);assert.deepEqual(restored.patch,{...config,tagEditor:{sort:'count-desc',recent:['音乐'],collapsed:{all:false}}});
+});
+test('current tag sorting/recent/collapse controls round-trip through the reference backup key',()=>{
+ const tagEditor={sort:'recent',recent:['山海','风景'],collapsed:{all:true}},values=C.referencePreferences({...config,tagEditor},{grid_tag_prefs:'{"recent":["旧"]}'});assert.deepEqual(JSON.parse(values.grid_tag_prefs),tagEditor);assert.deepEqual(C.restoredPreferences(values).patch.tagEditor,tagEditor);
+ const bad=C.restoredPreferences({grid_tag_prefs:'null',rotate:'true'});assert.deepEqual(bad.patch,{autoRotate:true});assert.deepEqual(bad.ignored,['grid_tag_prefs']);
 });
 test('malformed or unsafe preferences do not overwrite valid current controls',()=>{
  const {patch,ignored}=C.restoredPreferences({page_volume:'NaN',favshow_fade:'0.3',media_tag_filter:'{"__proto__":{"polluted":true}}',novel_settings:'{"fs":19,"lh":1.9,"theme":"oops"}',rotate:'false',favshow_image:'60'});

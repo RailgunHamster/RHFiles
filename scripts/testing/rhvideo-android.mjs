@@ -14,14 +14,26 @@ const gridMode=process.argv[5]==='grid'||gridRestoreMode||gridRotationMode;
 const playlistMode=process.argv[5]==='playlist';
 const previewMode=process.argv[5]==='preview';
 const singleMode=process.argv[5]==='single';
+const rulesMode=process.argv[5]==='rules';
 const favoritesMode=process.argv[5]==='favorites';
 const stripMode=process.argv[5]==='strip';
 const ticketsMode=process.argv[5]==='tickets';
 const rotationMode=process.argv[5]==='rotation';
 const exportsMode=process.argv[5]==='exports';
 const loginMode=process.argv[5]==='login',actualMode=exportsMode||loginMode;
-const rhvideoFixture=options=>actualMode?realRhVideoService({directory:path.join(temporary,'actual-rhvideo'),video:options.videoFile}):contractFixture(options);
+const rhvideoFixture=options=>actualMode?realRhVideoService({directory:path.join(temporary,'actual-rhvideo'),video:options.videoFile}):contractFixture({...options,...(rulesMode?{videoCount:240,videoFolders:Array.from({length:240},(_,i)=>i===0?'风景,旅行':i===1?'风景,城市':i===2?'城市':'目录'+String(i).padStart(3,'0'))}:{})});
 const mediaMode=gridMode||playlistMode||previewMode||singleMode||rotationMode||favoritesMode||stripMode;
+function verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode}){
+  if(actualMode)return;
+  const authorized=r=>r.authorization==='Bearer fixture-bearer-do-not-persist';
+  if(rulesMode){
+    for(const endpoint of ['/api/v1/videos','/api/v1/pictures/catalog','/api/v1/screenshots/grid'])assert(fixture.requests.some(r=>r.method==='GET'&&r.path===endpoint&&authorized(r)),'Tag editing must read the authenticated actual catalog: '+endpoint);
+    assert.equal(fixture.requests.filter(r=>r.method!=='GET'&&!(r.method==='POST'&&r.path==='/api/v1/auth/login')).length,0,'Local tag editing cannot modify server media');
+  }else{
+    assert(fixture.requests.some(r=>(stripMode?r.path.startsWith('/storage/pictures/'):r.path.endsWith('/play'))&&authorized(r)),'The media scenario must actually request authenticated media');
+    if(!mediaMode&&!ticketsMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
+  }
+}
 assert.match(serial,/^emulator-\d+$/);assert(apk&&probe,'Provide release APK and instrumentation APK');
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME||path.join(process.env.LOCALAPPDATA,'Android/Sdk');
 const adb=path.join(sdk,'platform-tools/adb.exe');
@@ -31,7 +43,7 @@ assert(aapt,'Android aapt is required to validate the native runtime');
 const apkEntries=execFileSync(aapt,['list',path.resolve(apk)],{encoding:'utf8',windowsHide:true}).split(/\r?\n/),abis=new Set(apkEntries.filter(v=>v.startsWith('lib/')).map(v=>v.split('/')[1]));
 assert(abis.size>0,'Release APK has no native libraries');
 for(const abi of abis)assert(apkEntries.includes('lib/'+abi+'/librhfiles_android_lib.so'),'Missing RHFiles runtime for '+abi+'; use the same ABI filters as the completed Rust build');
-for(const relative of ['rhvideo.html','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-tags.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-exports.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
+for(const relative of ['rhvideo.html','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-tags.js','js/rhvideo-rules-model.js','js/rhvideo-rules.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-exports.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(apk),'assets/rhvideo/'+relative],{windowsHide:true,maxBuffer:8*1024*1024});
   const expected=fs.readFileSync(path.resolve('src',relative));
   assert.equal(createHash('sha256').update(packaged).digest('hex'),createHash('sha256').update(expected).digest('hex'),'APK must include the current '+relative);
@@ -42,7 +54,7 @@ for(const relative of ['js/rhvideo-mobile.js','css/rhvideo-mobile.css']){
 }
 const run=(args)=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
 assert.equal(run(['shell','getprop','ro.kernel.qemu']).trim(),'1','Physical devices are not allowed');
-if(actualMode)assert(run(['emu','avd','name']).split(/\r?\n/).map(v=>v.trim()).includes('RHFilesRhVideoQA20261027'),'Only the owned RHVideo QA AVD is allowed');
+if(actualMode||rulesMode)assert(run(['emu','avd','name']).split(/\r?\n/).map(v=>v.trim()).includes('RHFilesRhVideoQA20261027'),'Only the owned RHVideo QA AVD is allowed');
 const bootDeadline=Date.now()+180000;
 while(true){
   let ready=false;try{ready=run(['shell','getprop','sys.boot_completed']).trim()==='1'&&run(['shell','pm','path','android']).includes('package:');}catch{}
@@ -64,7 +76,7 @@ const fixture=await rhvideoFixture({videoFile:video,chapterCount:83,...(stripMod
 if(favoritesMode)for(const key of ['video:video-0','video:video-1','picture:picture-0','picture:picture-1','novel:novel-0'])fixture.favorites.add(key);
 const failedFixture=gridMode&&!gridRestoreMode&&!gridRotationMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
-const artifact=path.resolve('test-artifacts/rhvideo-android'+(actualMode?(loginMode?'-login':'-exports'):gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
+const artifact=path.resolve('test-artifacts/rhvideo-android'+(rulesMode?'-rules':actualMode?(loginMode?'-login':'-exports'):gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
 function installExact(packageId,file){
   const expectedHash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const installedHash=()=>{const installed=run(['shell','pm','path',packageId]).trim().split(/\r?\n/);assert(installed.length===1&&/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(installed[0]),'Expected one installed universal APK for '+packageId);return run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64);};
@@ -94,6 +106,7 @@ try{
   run(['reverse','tcp:'+port,'tcp:'+port]);run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
   if(failedPort)run(['reverse','tcp:'+failedPort,'tcp:'+failedPort]);
   async function instrument(modeArgs,log){
+    if(rulesMode)modeArgs=['-e','mode','rules'];
   const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='';child.stdout.on('data',data=>{output+=data;process.stdout.write(data);});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
@@ -106,7 +119,7 @@ try{
   assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED/);return output;
   }
   const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
-  assert.match(output,loginMode?/PASS: native login phase login/:exportsMode?/PASS: favorite exports recovery armed/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: contextual workflow entries and real card selection, reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
+  assert.match(output,rulesMode?/PASS: native tag rules/:loginMode?/PASS: native login phase login/:exportsMode?/PASS: favorite exports recovery armed/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: contextual workflow entries and real card selection, reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
   async function stopOwnedProcess(){
     run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
     let stoppedPid='',stopDeadline=Date.now()+5000;do{try{stoppedPid=run(['shell','pidof','com.railgunhamster.rhfiles']);}catch(error){assert.equal(error.status,1);stoppedPid=String(error.stdout||'');}if(!stoppedPid.trim())break;await new Promise(resolve=>setTimeout(resolve,100));}while(Date.now()<stopDeadline);assert.equal(stoppedPid.trim(),'','The target process must actually be stopped before recovery');
@@ -133,10 +146,11 @@ try{
     for(const [file,expected] of Object.entries(fixture.sourceHashes))assert.equal(hash(path.join(fixture.directory,file)),expected,'Source remains unchanged byte-for-byte: '+file);
   }
   assert.doesNotMatch(run(['shell','dumpsys','window','windows']),/Application Not Responding:|Application Error:/,'A system/app dialog invalidates visual acceptance');
+  if(rulesMode)run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-rules-qa.png',path.join(artifact,'rhvideo-rules-qa.png')]);
+  if(!rulesMode)
   for(const name of loginMode?['rhvideo-login-connected-qa.png','rhvideo-login-restored-qa.png','rhvideo-login-signedout-qa.png']:exportsMode?['rhvideo-export-qa.png','rhvideo-export-recovery-qa.png']:gridRotationMode?['rhvideo-grid-rotation-qa.png']:gridRestoreMode?['rhvideo-grid-restore-qa.png']:gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png','rhvideo-grid-favorite-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:previewMode?['rhvideo-parent-qa.png','rhvideo-preview-result-qa.png','rhvideo-favorite-error-qa.png']:singleMode?['rhvideo-single-qa.png','rhvideo-image-content-qa.png','rhvideo-favorite-slideshow-qa.png']:favoritesMode?['rhvideo-favorite-picture-qa.png','rhvideo-favorite-video-qa.png']:stripMode?['rhvideo-strip-picture-qa.png','rhvideo-strip-rows-qa.png']:ticketsMode?[]:rotationMode?['rhvideo-rotation-on-qa.png','rhvideo-rotation-off-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
-  if(!actualMode)assert(fixture.requests.some(r=>(stripMode?r.path.startsWith('/storage/pictures/'):r.path.endsWith('/play'))&&r.authorization==='Bearer fixture-bearer-do-not-persist'));
+  verifyContractTraffic(fixture,{actualMode,rulesMode,mediaMode,ticketsMode,stripMode});
   if(stripMode){assert.equal(fixture.requests.filter(r=>r.method==='PUT'&&r.path.startsWith('/api/v1/favorites/picture/')).length,1,'One actual strip star -> one write');assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path.startsWith('/api/v1/trash/picture/')).length,1,'Closing another strip cannot replay a staged source');}
-  if(!mediaMode&&!ticketsMode&&!actualMode){assert(fixture.progress.length>0,'Reader progress reached server');assert(fixture.favorites.has('picture:picture-0'),'Favorite reached server');}
   if(previewMode){
     for(const id of ['video-0','video-2'])assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/'+id).length,1,'Closing another preview cannot replay '+id);
     assert.equal(fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/video-1').length,0,'Logout discards uncommitted old-account marks');

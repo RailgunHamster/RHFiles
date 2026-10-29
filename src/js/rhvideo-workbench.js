@@ -29,7 +29,9 @@
             "rhvideo.workbench." + site,
           );
       const resolutions = new I.ResolveCache();
-      let configuration=null,favoriteExports=null;
+      let configuration=null,favoriteExports=null,rulesEditor=null;
+      const ruleProcessId=crypto.randomUUID();
+      let ruleRefreshTimer=0,ruleRefreshWaiter=null,ruleEditIntent=0,ruleApplyIntent=0;
       let resolutionRevision = "",
         accountGeneration = null,
         resolutionGeneration = 0;
@@ -223,6 +225,9 @@
         });
       }
       async function reset(authenticated) {
+        ruleApplyIntent++;
+        cancelRuleRefresh();
+        rulesEditor?.reset();
         configuration?.reset();
         favoriteExports?.reset();
         ctx.invalidateReads();
@@ -358,6 +363,7 @@
         return volumeChain;
       }
       function applyPreferences() {
+        rulesEditor?.changed();
         const c = config();
         $("wb-sort").value = c.sort;
         document.documentElement.style.setProperty(
@@ -401,6 +407,7 @@
       }
       function invalidateCatalog(kind) {
         catalogRevision++;
+        rulesEditor?.catalogChanged();
         if (kind !== "favorite") resolutions.clear();
         if (worker)
           void send("invalidate", { revision: catalogRevision }).catch(
@@ -708,6 +715,7 @@
               type: "string",
               enum: [
                 "wb-settings",
+                "wb-rules",
                 "wb-server",
                 "wb-info",
                 "wb-preview",
@@ -1131,8 +1139,9 @@
               !Number.isSafeInteger(value))
           )
             throw Error("设置数值无效");
-          if (key === "rule")
-            await send("query", { ...criteria(), rule: value, limit: 1 });
+          if (key === "rule") {
+            const result=await invoke("rules.apply",{rule:value});return {key,value:config().rule,...result};
+          }
           if(viewer?.mode==="strip"&&["vertical","lanes"].includes(key)){layoutStrip({[key]:value});pauseStrip(viewer);void renderStrip().catch(notice);}
           if(key==="autoRotate")await native("rotation.preference",{enabled:value});
           if(!ctx.mobile&&["segment","fullLength","loop","portraitOnly"].includes(key)){
@@ -1400,6 +1409,7 @@
               "input,textarea,select,[contenteditable=true]",
             ) ||
             $("wb-settings")?.open ||
+            $("wb-rules")?.open ||
             $("wb-confirm")?.open
           )
             return;
@@ -1445,117 +1455,87 @@
         },
         "keyboard",
       );
-      action(
-        "rules.apply",
-        object({ rule: { type: "object" } }, ["rule"]),
-        async ({ rule }) => {
-          const result = await send("query", { ...criteria(), rule, limit: 1 });
-          prefs.rule = rule;
-          invalidateGallery();gallery.offset=0;
-          if(galleryVisible())await loadGallery();else warmGallery();
-          state.offset = 0;
-          save();
-          await load();
-          return { total: result.total };
-        },
-      );
+      function ruleIdentity(){return state.connected&&account&&accountGeneration===state.generation?ruleProcessId+':'+epoch+':'+state.generation:null;}
+      const ruleOwnerSchema={expectedOwner:{type:'string',maxLength:128}};
+      function checkRuleOwner(args={},allowPreparing=false){const identity=ruleIdentity();if(args.expectedOwner!==undefined&&args.expectedOwner!==identity)throw Error('媒体账户已改变，标签操作未执行');if(!identity&&!allowPreparing)throw Error('请先连接并等待媒体账户准备完成');}
+      function cancelRuleRefresh(){clearTimeout(ruleRefreshTimer);ruleRefreshTimer=0;ruleEditIntent++;ruleRefreshWaiter?.resolve({stale:true});ruleRefreshWaiter=null;}
+      function publishRule(rule){
+        if(!ruleIdentity())throw Error("媒体账户正在改变，标签操作未执行");
+        const normalized=RHTagFilter.normalize(rule),changed=RHTagFilter.key(normalized)!==RHTagFilter.key(config().rule);
+        ruleApplyIntent++;
+        prefs.rule=normalized;save();rulesEditor?.changed();
+        if(!changed)return Promise.resolve({total:state.total,changed:false});
+        invalidateGallery();gallery.offset=0;state.offset=0;state.loadId++;
+        cancelRuleRefresh();const intent=ruleEditIntent,version=epoch;
+        return new Promise((resolve,reject)=>{ruleRefreshWaiter={resolve,reject};ruleRefreshTimer=setTimeout(async()=>{
+          ruleRefreshTimer=0;ruleRefreshWaiter=null;const current=()=>intent===ruleEditIntent&&version===epoch;
+          try{if(!current()){resolve({stale:true});return;}if(galleryVisible())await loadGallery();else warmGallery();if(!current()){resolve({stale:true});return;}const result=await load();if(!current()){resolve({stale:true});return;}if(result?.error)throw Error(result.error);resolve({total:state.total,changed:true});}
+          catch(error){if(!current())resolve({stale:true});else{rulesEditor?.error(error);reject(error);}}
+        },150);});
+      }
+      async function tagCatalog(args,current=()=>true){
+        if(!current())return {stale:true};
+        const identity=ruleIdentity(),version=await ensure(),revision=catalogRevision;if(!identity||identity!==ruleIdentity())throw Error("媒体账户已改变，标签读取未继续");
+        if(!current())return {stale:true};
+        const kinds=args.source==='gallery'?['video',...(config().mixPictures?['picture']:[])]:[args.source];
+        await Promise.all(kinds.map(kind=>rawCatalog(kind)));
+        if(!current())return {stale:true};
+        const result=await send('tags',{...args,kinds,mediaType:args.source==='favorite'?config().mediaType:'',latest:true});
+        if(version!==epoch||revision!==catalogRevision||identity!==ruleIdentity())throw Error("媒体账户或清单已改变，旧标签读取已丢弃");return result;
+      }
+      action("rules.apply",object({...ruleOwnerSchema,rule:{type:"object"}},["rule"]),async({rule,expectedOwner})=>{
+        const generation=state.generation,intent=++ruleApplyIntent;
+        try{checkRuleOwner({expectedOwner},true);const normalized=RHTagFilter.normalize(rule);await ensure();checkRuleOwner({expectedOwner});if(generation!==state.generation||intent!==ruleApplyIntent)throw Error("媒体账户或筛选意图已改变，旧规则未应用");return await publishRule(normalized);}catch(e){if(generation===state.generation&&(!expectedOwner||expectedOwner===ruleIdentity()))rulesEditor?.error(e);throw e;}
+      });
       action(
         "rules.save",
-        object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
+        object({ ...ruleOwnerSchema,name: { type: "string", minLength: 1, maxLength: 100 } }, [
           "name",
         ]),
-        ({ name }) => {
+        ({ name,expectedOwner }) => {
+          checkRuleOwner({expectedOwner});
           prefs.savedRules = {
             ...(prefs.savedRules || {}),
             [name]: structuredClone(config().rule),
           };
           save();
+          rulesEditor?.changed();
           return { saved: true };
         },
       );
       action(
         "rules.restore",
-        object({ name: { type: "string", maxLength: 100 } }, ["name"]),
-        ({ name }) => {
+        object({ ...ruleOwnerSchema,name: { type: "string", maxLength: 100 } }, ["name"]),
+        ({ name,expectedOwner }) => {
+          checkRuleOwner({expectedOwner});
           const rule = prefs.savedRules?.[name];
           if (!rule) throw Error("没有这个筛选规则");
-          return invoke("rules.apply", { rule });
+          return invoke("rules.apply", { rule,expectedOwner:ruleIdentity() });
         },
       );
-      action("rules.open", object(), () => {
-        ruleMode = config().rule.mode || "and";
-        const root = dialog("wb-settings", "标签规则");
-        root.replaceChildren();
-        const include = input(
-            "text",
-            config().rule.include?.join(",") || "",
-            "wb-rule-include",
-          ),
-          exclude = input(
-            "text",
-            config().rule.exclude?.join(",") || "",
-            "wb-rule-exclude",
-          ),
-          mode = select(
-            [
-              ["and", "同时满足 AND"],
-              ["or", "任意满足 OR"],
-            ],
-            "rules.mode",
-            (value) => ({ value }),
-            config().rule.mode || "and",
-          );
-        const nested = el("textarea");
-        nested.id = "wb-rule-json";
-        nested.rows = 7;
-        nested.value = JSON.stringify(config().rule, null, 2);
-        root.append(
-          field("组合方式", mode),
-          field("包含标签（逗号分隔）", include),
-          field("排除标签（逗号分隔）", exclude),
-          button("应用标签", "rules.form"),
-          field("嵌套分组（JSON）", nested),
-          button("应用嵌套分组", "rules.json"),
-        );
-        const name = input("text", "", "wb-rule-name");
-        root.append(
-          field("规则名称", name),
-          button("保存规则", "rules.save", () => ({ name: name.value })),
-        );
-        for (const name of Object.keys(prefs.savedRules || {})) {
-          const row = serverRow(name, "标签规则");
-          row.append(
-            button("应用", "rules.restore", { name }),
-            button("移除", "rules.delete", { name }),
-          );
-          root.append(row);
-        }
-        return { opened: true };
-      });
+      action("rules.open", object(ruleOwnerSchema), args => {checkRuleOwner(args,true);return rulesEditor.open();});
       action(
         "rules.delete",
-        object({ name: { type: "string", minLength: 1, maxLength: 100 } }, [
+        object({ ...ruleOwnerSchema,name: { type: "string", minLength: 1, maxLength: 100 } }, [
           "name",
         ]),
-        ({ name }) => {
+        ({ name,expectedOwner }) => {
+          checkRuleOwner({expectedOwner});
           delete prefs.savedRules?.[name];
           save();
+          rulesEditor?.changed();
           return { removed: name };
         },
       );
-      let ruleMode = "and";
       action(
         "rules.mode",
-        object({ value: { type: "string", enum: ["and", "or"] } }, ["value"]),
-        ({ value }) => {
-          ruleMode = value;
-          return { mode: value };
-        },
+        object({ ...ruleOwnerSchema,value: { type: "string", enum: ["and", "or"] } }, ["value"]),
+        async ({ value,expectedOwner }) => {checkRuleOwner({expectedOwner});await invoke("rules.apply",{rule:{...config().rule,mode:value},expectedOwner:ruleIdentity()});return {mode:value};},
       );
-      action("rules.form", object(), () =>
-        invoke("rules.apply", {
+      action("rules.form", object(ruleOwnerSchema), args => {checkRuleOwner(args);return invoke("rules.apply", {
+          expectedOwner:ruleIdentity(),
           rule: {
-            mode: $("wb-rule-json") ? ruleMode : config().rule.mode,
+            mode: config().rule.mode,
             include: $("wb-rule-include")
               .value.split(",")
               .map((v) => v.trim())
@@ -1565,11 +1545,8 @@
               .map((v) => v.trim())
               .filter(Boolean),
           },
-        }),
-      );
-      action("rules.json", object(), () =>
-        invoke("rules.apply", { rule: JSON.parse($("wb-rule-json").value) }),
-      );
+        });});
+      action("rules.json", object(ruleOwnerSchema), args => {checkRuleOwner(args);try{return invoke("rules.apply",{rule:JSON.parse($("wb-rule-json").value),expectedOwner:ruleIdentity()});}catch(e){rulesEditor?.error(e);throw e;}});
       let pendingConfirmation = null,
         lastBatch = null,
         activeBatch = null;
@@ -4322,6 +4299,7 @@
         return node;
       }
       function syncContext() {
+        rulesEditor?.changed();
         const visible = state.connected && state.view !== "gallery";
         toolbar.hidden = !visible;
         for (const node of contextualControls)
@@ -4466,6 +4444,9 @@
       }
       favoriteExports=RHVideoExports.install({action,object,native,selection:favoriteExportSelection,dialog,el,button,listen,invoke,notice,state,toolbar,mobile:ctx.mobile,Refresh:RHVideoRefresh,
         listenNative:(name,fn)=>(ctx.mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen)(name,fn)
+      });
+      rulesEditor=RHVideoRules.install({action,object,button,el,input,field,select,listen,invoke,toolbar,dialog,config,identity:ruleIdentity,revision:()=>catalogRevision,ready:ensure,connected:()=>state.connected,source:()=>state.view==='gallery'?'gallery':state.kind,catalog:tagCatalog,publish:publishRule,
+        settings(value){if(!ruleIdentity())throw Error("媒体账户已改变，标签偏好未保存");prefs.tagEditor=RHVideoRulesModel.settings(value);save();}
       });
       configuration=RHVideoConfiguration.install({api,action,native,object,string,state,button,el,listen,notice,mobile:ctx.mobile,config,
         rawPreferences:()=>prefs.referencePreferences||{},
