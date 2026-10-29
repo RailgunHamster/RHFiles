@@ -22,6 +22,8 @@
 
 Android 标签专项完整命令通过（短路径 QA 的 `rhvideo-rules-continuous-final-native-android.log`，`rhvideo-android-rules-1793250938046-release/`），主包／探测包安装字节分别与本节 `85303bcd…`／`c0f1eeff…` 一致。实际触摸滑动跨过第 80 项、定位第 237 个筛选标签、保留旧脚本入口但移除分页按钮、重开清搜索保位置、原生 Back、跨分类全局筛选和 UI 接口契约均执行通过，截图已检查。通过回执仍保留旧的 `bounded paging` 文案，实际测试同时验证的是连续手势与旧 API 兼容，不以那一句摘要代替测试源码／步骤。未操作真机、未替换正式 Windows 实例或发布正式包；当前主包的既有 Single 播放／图片流程还需另做回归，不能由标签专项替代。
 
+随后同一主包／探测包的 Single 完整回归也通过（`rhvideo-rules-continuous-final-native-android-single.log`，`rhvideo-android-single-1793251107058-release/`），两项 Android 场景与 Windows／构建完全串行。包含实际原生单文件菜单、父截图返回、模式／账户记忆隔离、真实封面多选、图像内容探测／拒绝 HTML 和筛选后的收藏放映；截图已查看。本轮未复现旧菜单失败／ANR，但没有修改对应播放实现或证明根因消失，仍保留既有失败及即时菜单绘制核验缺口。`9d5a408` 已推送 GitHub／Gitee 开发分支；本次只是推进连续标签这一功能组，不代表整个 RHVideo 前端／性能验收完成，也没有正式发版。
+
 ## 2026-10-29 点选标签、嵌套分组与实际打包准入（完整目标未完成）
 
 按当前参考 `869d632` 的 `renderMediaRuleTree`、`renderGridTagDrawer`、`gridTagRows` 还原点选包含／排除、主条件／子分组 AND／OR、编辑目标、添加／删除子组、完整表达式、即时应用和清除；空分组保留编辑位置但不参与匹配。旧逗号／JSON 表单移至折叠的高级区，不能再以它替代普通标签操作。所有新增控件与脚本共用语义接口，旧 `rules.*` 动作保留。设置映射到原版 `grid_tag_prefs`，账户切换清理本次界面状态，进程标识／账户代次及递增修订号防止旧分组点击、移除重建的同路径和旧脚本请求污染新结果。
