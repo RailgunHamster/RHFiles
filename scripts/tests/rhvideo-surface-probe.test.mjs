@@ -33,9 +33,11 @@ test('surface comparison retains the original strict sample and has no media wri
   assert.match(body,/checkGridContinuity\(waitGrid\(3,false\)\)/);
   assert.doesNotMatch(body,/setVolume|setPlayback|seek|retry|restart|pause|mute|favorite|mark|setAutoRotation/);
   assert.match(probe,/PASS: surface-only grid diagnostic; not complete product acceptance/);
+  assert.match(runner,/if\(!rulesMode&&!lifecycleMode&&!gridSurfaceMode&&!closeReceiptMode\)/,'A diagnostic cannot pull stale screenshots from a different scenario');
+  assert.match(probe,/!"grid-surface-probe"\.equals\(args\.getString\("mode"\)\)/,'A surface-only comparison must not run unrelated file operations first');
   const verify=actual('verifyContractTraffic'),base={method:'GET',path:'/api/v1/videos/video-0/play',authorization:'Bearer fixture-bearer-do-not-persist'};
   verify({requests:[base]},{gridSurfaceMode:true});
   assert.throws(()=>verify({requests:[]},{gridSurfaceMode:true}));
   assert.throws(()=>verify({requests:[base,{method:'PUT',path:'/api/v1/favorites/video/video-0'}]},{gridSurfaceMode:true}));
-  assert.match(runner,/verifyContractTraffic\(fixture,\{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode,lifecycleMode,gridSurfaceMode\}\)/);
+  assert.match(runner,/verifyContractTraffic\(fixture,\{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode,lifecycleMode,gridSurfaceMode,closeReceiptMode\}\)/);
 });

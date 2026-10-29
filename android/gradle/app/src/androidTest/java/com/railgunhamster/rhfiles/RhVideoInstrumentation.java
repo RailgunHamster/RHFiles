@@ -13,6 +13,7 @@ import java.util.concurrent.*;
 public class RhVideoInstrumentation extends Instrumentation {
   private Bundle args;private volatile Activity current;private WebView main,library;
   private final java.util.Set<Activity> stoppedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
+  private final java.util.Set<Activity> destroyedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
   @Override public void onCreate(Bundle value){super.onCreate(value);args=value;start();}
   private void require(boolean ok,String message)throws Exception{if(!ok)throw new Exception(message);}
   private boolean gridReady(JSONObject state)throws Exception{if(state==null)return false;JSONArray cells=state.optJSONArray("cells");if(cells==null||cells.length()!=4)return false;for(int i=0;i<cells.length();i++)if(!cells.getJSONObject(i).optBoolean("rendered"))return false;return cells.getJSONObject(0).optLong("positionMs")>500;}
@@ -117,6 +118,35 @@ public class RhVideoInstrumentation extends Instrumentation {
     }
     require(advancing,"All grid inputs must advance real media time and render at least 60 new frames during five seconds without web timers: "+after);
     return after;
+  }
+  private JSONObject closeLibraryWithReceipt(boolean ui,String key)throws Exception{
+    Activity producer=current;require(producer!=null&&producer.getClass().getSimpleName().equals("RhVideoActivity"),"Close the actual producing library");
+    String action="rhvideo.back";JSONObject input=new JSONObject();
+    if(ui){JSONObject button=(JSONObject)expression(library,"RHFilesAPI.invoke('ui.list',{limit:2000}).then(rows=>rows.find(row=>row.id==='library-back'&&row.visible))");require(button!=null,"The real visible Back button must have a UI API");action="ui.invoke";input.put("controlId",button.getString("controlId"));}
+    String script="RHFilesAPI.run("+JSONObject.quote(action)+","+input+",{key:"+JSONObject.quote(key)+"})";
+    // A self-closing producer need not survive long enough to acknowledge eval.
+    // Send once; only the surviving main page's real RPC may prove completion.
+    runOnMainSync(()->library.evaluateJavascript(script,null));long started=SystemClock.elapsedRealtime(),end=started+5000;JSONObject receipt=null;
+    do{
+      JSONObject query=new JSONObject().put("jsonrpc","2.0").put("id","close-qa").put("method","runs.lookup").put("params",new JSONObject().put("key",key));
+      JSONObject reply=(JSONObject)expression(main,"RHFilesAPI.rpc("+query+")");
+      if(reply.has("result")){receipt=reply.getJSONObject("result");if(!receipt.getString("state").equals("running"))break;}
+      else require(reply.getJSONObject("error").getJSONObject("data").getString("code").equals("RUN_NOT_FOUND"),"Do not hide a failed receipt lookup: "+reply);
+      Thread.sleep(100);
+    }while(SystemClock.elapsedRealtime()<end);
+    require(receipt!=null&&receipt.getString("state").equals("succeeded")&&SystemClock.elapsedRealtime()-started<=5000,"The completed close must be retrieved within the original five-second budget: "+receipt);
+    require(receipt.getString("action").equals(action)&&destroyedActivities.contains(producer)&&producer.isDestroyed(),"A sent finish or a disappearing WebView cannot manufacture completion");
+    if(ui)require(receipt.getJSONObject("result").getString("controlId").equals(input.getString("controlId")),"UI close returns the original control result");else require(receipt.getBoolean("result"),"Semantic Back preserves its confirmed result");
+    waitView("MainActivity");step("library close confirmed "+receipt);return receipt;
+  }
+  private void checkLibraryCloseReceipts(String server)throws Exception{
+    String key="library-close-"+java.util.UUID.randomUUID();closeLibraryWithReceipt(false,key);
+    nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
+    action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));action("category",new JSONObject().put("kind","video"));
+    Activity reopened=current;
+    JSONObject duplicate=(JSONObject)expression(library,"(()=>{const run=RHFilesAPI.run('rhvideo.back',{}, {key:"+JSONObject.quote(key)+"});return RHFilesAPI.rpc({jsonrpc:'2.0',id:'duplicate',method:'runs.wait',params:{runId:run.id,timeoutMs:1000}})})()");
+    require(duplicate.getJSONObject("result").getString("state").equals("succeeded")&&!reopened.isFinishing()&&!reopened.isDestroyed()&&current==reopened,"An old completed request cannot close a newly opened library");
+    closeLibraryWithReceipt(true,"library-ui-close-"+java.util.UUID.randomUUID());
   }
   private void checkGridSurfaceProbe()throws Exception{
     require(args.getString("audioStartMs","0").equals("0")&&args.getString("codecMode","default").equals("default"),"The surface control must not mix audio or codec experiments");
@@ -1074,7 +1104,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     android.graphics.BitmapFactory.Options options=new android.graphics.BitmapFactory.Options();options.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(),options);require(options.outWidth>0&&options.outHeight>0,"Screenshot unavailable");
   }
   @Override public void onStart(){Bundle result=new Bundle();Application app=(Application)getTargetContext().getApplicationContext();
-    Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){stoppedActivities.remove(a);}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){stoppedActivities.add(a);}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){}};
+    Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){stoppedActivities.remove(a);}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){stoppedActivities.add(a);}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){destroyedActivities.add(a);}};
     app.registerActivityLifecycleCallbacks(observer);
     try{
       String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
@@ -1085,7 +1115,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       if("task-priority".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkActualTaskPriority();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual task priority, physical list/detail controls, real default/replacement queues, failed records, preserved enqueue time and paused receipt");finish(Activity.RESULT_OK,result);return;}
       if("rules".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");JSONObject connected=(JSONObject)action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));require(connected.getInt("total")==240,"Complete tag-fixture catalog loaded");checkTagRules();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native tag rules, actual include/OR/collapse controls, nested NOT, pinyin, bounded paging, stale-group rejection, shared filters and native Back");finish(Activity.RESULT_OK,result);return;}
       if("duplicates".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");JSONObject connected=(JSONObject)action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));require(connected.getInt("total")==2,"Actual duplicate video catalog");checkActualDuplicates();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual duplicates, physical controls, native video, fingerprint WebP, bounded member/review pages, one-shot durable review and recoverable sources");finish(Activity.RESULT_OK,result);return;}
-      if(!args.getString("mode","").startsWith("login")&&!args.getString("mode","").startsWith("exports")&&!"grid-rotation".equals(args.getString("mode"))&&!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"favorites".equals(args.getString("mode"))&&!"strip".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
+      if(!args.getString("mode","").startsWith("login")&&!args.getString("mode","").startsWith("exports")&&!"grid-rotation".equals(args.getString("mode"))&&!"grid".equals(args.getString("mode"))&&!"grid-restore".equals(args.getString("mode"))&&!"grid-surface-probe".equals(args.getString("mode"))&&!"close-receipt".equals(args.getString("mode"))&&!"playlist".equals(args.getString("mode"))&&!"preview".equals(args.getString("mode"))&&!"single".equals(args.getString("mode"))&&!"favorites".equals(args.getString("mode"))&&!"strip".equals(args.getString("mode"))&&!"tickets".equals(args.getString("mode"))&&!"rotation".equals(args.getString("mode")))checkFileTaskAndSort();
       nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
       if(args.getString("mode","").startsWith("login")){String mode=args.getString("mode");checkLoginContinuity(mode);result.putString("stream","PASS: native login phase "+mode);finish(Activity.RESULT_OK,result);return;}
       JSONObject login=new JSONObject().put("server",server).put("username","preview").put("password","fixture-only");
@@ -1093,6 +1123,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       if(args.getString("mode","").startsWith("exports")){boolean recover="exports-recover".equals(args.getString("mode"));checkFavoriteExports(recover);result.putString("stream",recover?"PASS: favorite exports interrupted recovery, visible failure and no automatic download replay":"PASS: favorite exports recovery armed, real picker, foreground notification, library closure, native concurrent no-clobber and exact bytes");finish(Activity.RESULT_OK,result);return;}
       require("gallery".equals(catalog.getString("view")),"Fresh Android libraries keep the reference primary screenshot view");
       if(!"single".equals(args.getString("mode")))action("category",new JSONObject().put("kind","video"));
+      if("close-receipt".equals(args.getString("mode"))){checkLibraryCloseReceipts(server);nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: library self-close semantic/UI process receipts, actual destruction and old-key rejection without repeating close");finish(Activity.RESULT_OK,result);return;}
       if("favorites".equals(args.getString("mode"))){checkFavoriteMixedBrowse();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference favorite mixed picture/video snapshot, native collection slider gesture, real picture pixels, favorite removal, return and stale-parent isolation");finish(Activity.RESULT_OK,result);return;}
       if("strip".equals(args.getString("mode"))){checkReferenceStrip();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference strip end, touch scrolling, linked rows, actual selection and star, enlarged image pixels, rotation, one-shot staging and stale viewer isolation");finish(Activity.RESULT_OK,result);return;}
       if("rotation".equals(args.getString("mode"))){checkReferenceRotation();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: reference rotation toggle, actual native SurfaceView, paused time/speed, next source, stale inputs/settings and per-account persistence");finish(Activity.RESULT_OK,result);return;}

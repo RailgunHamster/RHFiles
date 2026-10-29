@@ -34,6 +34,7 @@ class RhVideoActivity:AppCompatActivity() {
   private var exportBuffer:ExportBuffer?=null
   private var presentation:RhVideoPresentation?=null
   private var mediaEvents:java.io.Closeable?=null
+  private var closeReceipt:RhVideoCloseReceiptStore.Ticket?=null
   private val exportDocument=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->
     val text=exportText;val context=exportConfiguration;exportText=null;exportConfiguration=null
     if(uri==null){if(context!=null)configurationEvent("export",context,JSONObject().put("saved",false));return@registerForActivityResult}
@@ -125,6 +126,12 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
           val response=JSONObject().put("id",request.optInt("id"))
           try{
             val action=request.getString("action");val args=request.optJSONObject("args")?:JSONObject()
+            if(action=="automation.receipt"){
+              check(NativeAutomation.enabled(this)){"请先开启 ADB 自动化"}
+              response.put("result",RhVideoCloseReceipts.read(args)?:JSONObject.NULL)
+              runOnUiThread{if(!isDestroyed)try{reply.postMessage(response.toString())}catch(_:Exception){}}
+              return@execute
+            }
             client.validateContext(args,action=="logout")
             val contextArgs=JSONObject(args.toString())
             val outgoingGridGeneration=if(action in listOf("connect","logout"))runCatching{client.sessionGeneration()}.getOrNull()else null
@@ -186,7 +193,21 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
               "grid.close"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(RhVideoGridActivity.close())}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "player.closeParent"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(PlaybackActivity.retireRhParent(this,args))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
               "player.state","player.control"->{val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{check(client.contextMatches(contextArgs,true)){"媒体账户已改变"};result.complete(if(action=="player.state")PlaybackActivity.rhState()else PlaybackActivity.rhControl(JSONObject(args.toString()).also{if(it.optString("command")=="resume")it.put("command","play")}))}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)}
-              "close"->{runOnUiThread{finish()};true}
+              "close"->{
+                if(!args.has("_automationRun")){runOnUiThread{finish()};true}
+                else when(val admitted=RhVideoCloseReceipts.begin(args.getJSONObject("_automationRun"))){
+                  is RhVideoCloseReceiptStore.Admission.Confirmed->admitted.result
+                  is RhVideoCloseReceiptStore.Admission.Start->{
+                    runOnUiThread{
+                      try{check(!isDestroyed&&closeReceipt==null){"媒体库已在关闭"};closeReceipt=admitted.ticket;finish()}
+                      catch(_:Exception){admitted.ticket.finish(false);if(closeReceipt===admitted.ticket)closeReceipt=null;if(!isDestroyed)try{reply.postMessage(response.put("error","未能关闭媒体库；没有自动重试").toString())}catch(_:Exception){}}
+                    }
+                    // This producer is about to disappear. Only onDestroy can
+                    // confirm completion; a surviving file pane reads it.
+                    return@execute
+                  }
+                }
+              }
               "play"->{val playback=client.playback(args);runOnUiThread{if(!isFinishing&&(playback.ticket==null||client.playbackActive(playback.ticket,playback.lease)))PlaybackActivity.launchRhVideo(this,Intent(this,PlaybackActivity::class.java).putExtra("path",playback.path).putExtra("name",args.optString("title","视频")).putExtra("kind","video").putExtra("positionMs",playback.position).putExtra("queue",PlaybackQueue.json(playback.items)).putExtra("rhvideoPlaylist",playback.ticket).putExtra("rhvideoIndex",playback.globalIndex).putExtra("rhvideoLease",playback.lease))};JSONObject().put("opened",true)}
               "export"->{val text=args.getString("text");require(text.length<=256*1024){"请分批导出所选媒体"};check(exportText==null){"已有导出操作"};exportText=text;runOnUiThread{exportDocument.launch("RHVideo-selection.json")};JSONObject().put("requested",true)}
               else->client.request(action,args)
@@ -205,5 +226,9 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
   override fun onSaveInstanceState(outState:Bundle){synchronized(this){zipPick?.let{outState.putString("rhvideo-zip-pick",it.toString())}};super.onSaveInstanceState(outState)}
   override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra("rhvideoExportPanel",false)&&::web.isInitialized)web.evaluateJavascript("window.RHVideoNative?.dispatch('rhvideo-export-open',{})",null)}
   override fun onStop(){presentation?.pause();super.onStop()}
-  override fun onDestroy(){mediaEvents?.close();mediaEvents=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();web.destroy()};super.onDestroy()}
+  override fun onDestroy(){
+    val receipt=closeReceipt;closeReceipt=null;var cleaned=false;var destroyed=false
+    try{mediaEvents?.close();mediaEvents=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();web.destroy()};cleaned=true}
+    finally{try{super.onDestroy();destroyed=true}finally{receipt?.finish(cleaned&&destroyed&&isFinishing&&!isChangingConfigurations)}}
+  }
 }

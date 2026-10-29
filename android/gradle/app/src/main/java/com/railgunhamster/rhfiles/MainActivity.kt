@@ -205,6 +205,7 @@ class MainActivity : TauriActivity() {
     "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.forget","groups.configure" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{if(command in listOf("groups.create","groups.join","groups.restore"))DeviceFileServer.membershipChanged();locationsChanged()}}
     "automation.status" -> onUi{NativeAutomation.status(this)}
     "automation.enable" -> onUi{NativeAutomation.setEnabled(this,args.getBoolean("enabled"))}
+    "automation.receipt" -> {check(NativeAutomation.enabled(this)){"请先开启 ADB 自动化"};RhVideoCloseReceipts.read(args)?:JSONObject.NULL}
     "automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control","automation.grid.state","automation.grid.control" -> onUi{NativeAutomation.dispatch(this,command,args)}
     "nearby.keepAlive"->{onUi{
       val intent=Intent(this,NearbyService::class.java)

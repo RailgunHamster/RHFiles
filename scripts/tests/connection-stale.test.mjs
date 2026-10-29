@@ -15,10 +15,11 @@ test('failed refresh preserves list and scroll, blocks mutations, and clears sta
 });
 test('automation exposes stale state and rejects file changes with a structured error',()=>{
   class ActionError extends Error{constructor(code,message){super(message);this.code=code;}}
-  const handlers={},state={route:{screen:'folder'},entries:[{path:'/a'}],selected:new Set(['/a']),staleError:'timeout'};
+  const handlers={},state={route:{screen:'folder'},entries:[{path:'/a'}],selected:new Set(['/a']),staleError:'timeout'};let lookup;
   const require=createRequire(import.meta.url),fmt=require(path.join(sourceRoot,'android/web/js/format.js'));
-  const ctx=vm.createContext({fmt,RHFilesAutomationCore:{ActionError},window:{RHFilesAPI:{register:(name,handler)=>handlers[name]=handler,provideState(){}}},state,app:{state,ready:()=>true},workbench:{id:'main'},api:{automationAvailable:()=>false},deviceGroupView:{register(){}}});
+  const ctx=vm.createContext({fmt,RHFilesAutomationCore:{ActionError},window:{RHFilesAPI:{register:(name,handler)=>handlers[name]=handler,provideState(){},provideRunLookup:fn=>{lookup=fn;}}},state,app:{state,ready:()=>true},workbench:{id:'main'},api:{automationAvailable:()=>false},deviceGroupView:{register(){}}});
   vm.runInContext(fs.readFileSync(path.join(sourceRoot,'android/web/js/automation-android.js'),'utf8')+'\nandroidAutomation.install(app);',ctx);
+  assert.equal(typeof lookup,'function');
   assert.equal(handlers['navigation.state']().stale,true);
   for(const name of ['files.paste','files.delete','files.rename'])assert.throws(()=>handlers[name]({path:'/a'}),error=>error.code==='STALE_LISTING');
 });

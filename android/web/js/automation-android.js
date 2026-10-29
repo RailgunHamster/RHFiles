@@ -3,8 +3,11 @@
 const androidAutomation=(()=>{
   const ErrorType=RHFilesAutomationCore.ActionError,apiSchema=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const string={type:'string',minLength:1,maxLength:8192},bool={type:'boolean'},integer={type:'integer',minimum:0},paths={type:'array',items:string,maxItems:1000};
+  const receiptReaders=new WeakSet();
+  function provideReceipts(actions){if(!receiptReaders.has(actions)){actions.provideRunLookup(query=>api.native('automation.receipt',query));receiptReaders.add(actions);}}
   function install(app){
     const actions=window.RHFilesAPI,state=app.state;
+    provideReceipts(actions);
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
     deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
     register('fileServer.state',apiSchema(),()=>api.serverStatus(),'read','Read the explicitly started phone group HTTPS/WebDAV service');
@@ -61,6 +64,7 @@ const androidAutomation=(()=>{
   }
   function host({frames,active,layout,setLayout}){
     const actions=window.RHFilesAPI;
+    provideReceipts(actions);
     actions.forPane=(pane='active')=>{if(pane==='host')return actions;const index=pane==='active'?active():pane==='left'||pane==='first'?0:pane==='right'||pane==='second'?1:-1;if(index<0)throw new ErrorType('INVALID_PARAMS','Unknown pane');const api=frames()[index]?.contentWindow?.RHFilesAPI;if(!api)throw new ErrorType('PANE_UNAVAILABLE','This pane is not open/ready');return api;};
     actions.provideState('panes',()=>({active:active(),...layout(),count:frames().length}));
     actions.register('panes.layout',p=>{setLayout(p.mode);return layout();},{params:apiSchema({mode:{type:'string',enum:['auto','single','columns','rows']}},['mode']),description:'Set the same per-display/orientation layout as the divider menu'});

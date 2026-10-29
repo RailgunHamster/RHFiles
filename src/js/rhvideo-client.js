@@ -3,7 +3,7 @@
   'use strict';
   const api=window.RHFilesAPI,model=RHVideoModel,$=id=>document.getElementById(id);
   const mobile=!!window.RHVideoNative;
-  if(!mobile)api.provideRunLookup(query=>window.__TAURI__.core.invoke('automation_receipt',{query}));
+  api.provideRunLookup(query=>mobile?window.RHVideoNative.request('automation.receipt',query):window.__TAURI__.core.invoke('automation_receipt',{query}));
   const cardCache=new Map();
   function clearCards(){for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();}
   function trimCards(){let detached=0;for(const {node} of cardCache.values())if(!node.isConnected){const image=node.querySelector('img');detached+=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;}for(const [key,entry] of cardCache){if(cardCache.size<=72&&detached<=16*1024*1024)break;if(!entry.node.isConnected){const image=entry.node.querySelector('img');detached-=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;image?.removeAttribute('src');cardCache.delete(key);}}}
@@ -316,10 +316,10 @@
     await save;return {closed:true};
   });
   action('reader.font',object({size:{type:'integer',minimum:13,maximum:40}},['size']),async({size})=>{if(workbench)await invoke('preferences.set',{key:'readerFont',value:size});else document.documentElement.style.setProperty('--reader-size',size+'px');$('reader-font').value=String(size);return {size};});
-  action('back',object(),async()=>{
+  action('back',object(),async(_,run)=>{
     if(workbench?.back())return {closed:true};
     for(const [id,name] of [['connection-dialog','connection.close'],['image-dialog','image.close'],['reader-dialog','reader.close'],['timeline-dialog','timeline.close']])if(modalTop()===id)return invoke(name);
-    if(mobile)return native('close');return {closed:false};
+    if(mobile)return native('close',run?{_automationRun:run}:{});return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
   workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
