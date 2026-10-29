@@ -63,7 +63,7 @@ fn execute_inner(app:&AppHandle,command:Command)->Result<Value,String>{
             let name=random.iter().map(|v|format!("{v:02x}")).collect::<String>();
             let path=std::env::current_dir().map_err(|e|e.to_string())?.join(format!("rhvideo-main-{name}.bmp"));
             let(width,height)=crate::rhvideo_frame::diagnostic_capture(hwnd.0 as usize,&path,false)?;
-            Ok(json!({"path":path,"width":width,"height":height,"scope":"main"}))
+            Ok(json!({"path":path,"width":width,"height":height,"scope":"main","canvas":"client"}))
         }
     }
 }

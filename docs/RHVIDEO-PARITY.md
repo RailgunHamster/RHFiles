@@ -6,6 +6,22 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 最新 Windows 103 项完整回归与客户区取图修正（完整目标仍未完成）
+
+上轮启动的 `rhvideo-task-refresh-all-windows.log` 最终为 **54 通过／1 失败／48 跳过**，共 103 项：调用遗漏 `RHFILES_NATIVE_PLAYER_QA=1`，原生场景被跳过；放映 End 按键也没有送达。当时仅 DOM 焦点为 true，没有启用原生输入归属诊断，不能把这一轮当成完整通过或直接归因播放器逻辑。失败原样保留，不重写旧结论。
+
+新增 `scripts/testing/rhvideo-windows.mjs` 作为完整串行入口，强制真实原生标志及 `native-hardware-auto`，验证独立 `test-artifacts/` EXE 快照与 app-local 3.0.24 清单／插件索引，拒绝正式安装、链接、兼容输出和性能实验混入。最终 TAP 的失败、跳过、取消、待办或缺失汇总都算失败；有 40 分钟／8 MiB 上限，异常只结束本入口创建的进程树。入口后续另补了参考模块字节及 EXE 的前后回核、UTF-8 日志分包处理，相关策略以实际函数测试，不把入口存在当成验收成功。
+
+**有效完整轮次为 103/103、零跳过，22 分 01 秒**（`rhvideo-task-refresh-strict-windows.log`，汇总及 TAP 在 `rhvideo-windows-qXtb0d`）。它使用同一 EXE `a1caf3f1176c153c96983cf6255117c740b41a35d2ec3b2f67167de34602a3e1`、实际 **3.0.24 / prebuilt-no-scan**；17 个测试文件包括真实 H.264／4K HEVC／AAC、换源／同屏、五万项跨进程顺序、临时标记、真实 FastAPI／SQLite／重复项／导出／队列置顶，以及任务中心的三次实际读取失败后手动恢复。放映场景记录媒体库的 foreground／active／inputFocus 均为 true，End／Home 实际送达且不泄漏至主窗口；这轮通过不证明过去的间歇焦点故障根因已修复。该次入口尚未加入后续的模块字节回核字段，不能把新字段倒写进旧 receipt；前后参考 HEAD 均为干净的 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`，事后另外核对 14 个 `sha256-utf8-lf` 指纹全部相符（不能将 CRLF 原始字节直接拿来与 LF 指纹比较）。
+
+性能对照新增 `RHFILES_REFERENCE_NATIVE_PIXELS=1`：在原版实际页面播放相同字节时，使用本进程私有 stdin 的 `main.frame`，按真实视频矩形、contain 留白及设备比例取四角像素；同样保留前置负画面、每次几何／耗时、首次正画面及原版 rVFC 回调，不使用桌面截图或外部 HWND。最初两个轮次失败（`rhvideo-reference-owned-pixels-h264-{first,geometry}.log`）实际已经播放：自有 BMP 把原生标题栏／边框画进客户区大小的缓冲，导致采样错位，而不是原版解码失败。
+
+只在 debug 编译的取图函数现按 [PrintWindow 的客户区选项](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-printwindow)显式组合 `PW_CLIENTONLY` 与原有全内容取图标志，使 GetClientRect、位图与坐标一致；`main.frame` 明确返回 `canvas=client`，探测拒绝旧版错误范围。首次编译发现 SDK 的标志包装类型不实现 BitOr，流水线在编译失败处停止，未启动旧 EXE 冒充新构建；改为组合其整数位后，RHVideo Rust **67/67、零忽略**（`rhvideo-client-capture-rust-final.log`）。共享 Node **834/834、零跳过**（`rhvideo-strict-runner-and-client-pixels-node.log`），含新入口五项及参考像素三项，拒绝不完整汇总、源文件漂移／越界、非客户区几何、错误 DPI／字节格式和缺失标记。
+
+随后新 debug EXE `22b5e6d9f107e3c9a208f03ae42d41f6b3711bb84610b48265a0aad269c1ebbd` 在另一份已验证的独立 3.0.24 快照上，原版客户区四角真实通过（`rhvideo-reference-owned-pixels-h264-client-fixed.log`，`rhfiles-e2e-aZ54zC`）；本端同字节原生像素通过（`rhvideo-native-owned-pixels-h264-client-fixed.log`，`rhfiles-e2e-EBnJ61`）。本端可见取样区间 **3.370–3.658 s**，原版 **5.464–5.786 s**，但原版 rVFC 早在 **2.704 s**：回调、DWM／PrintWindow 读回及实际屏幕呈现不能混称同一首帧，单对样本也不能证明稳定优化。两侧前台／遮挡条件尚须进一步明确和配对复测，**不作“本端更快”的结论**。新 EXE 的换源及放映专项 **5/5、零跳过**（`rhvideo-client-capture-native-regression.log`）；103 项仍归属于前述旧 EXE，不冒用为新诊断构建的全量结果。
+
+本轮产品播放流程、内核、缓存、线程、画质及音轨默认值未改；客户区修正是 debug 私有观测，不进入 release。未替换正式实例、未操作实体手机、未发新包。完整 Android 生命周期、最新正式分发及稳定同质量性能等缺口继续保留，完整目标不因 103 项功能回归通过而标记完成。
+
 ## 2026-10-30 独立 libmpv 对照及运行库测量纠偏（未替换产品内核）
 
 新增 `scripts/testing/{prepare-mpv-probe.ps1,build-mpv-probe.ps1,native-mpv-probe.cpp,rhvideo-mpv-probe.mjs}`，只用于独立 Win32 自有窗口／进程的有界实验，不打包进 RHFiles、不装系统组件。候选来自 [mpv 官网列出的 Windows 第三方构建](https://mpv.io/installation/)之一；固定为 `zhongfly/mpv-winbuild` 的 `2026-10-29-cf764c61d1` / `mpv-dev-lgpl-x86_64-20261029-git-cf764c61d1.7z`，下载资产 SHA-256 `f62fd6192e7310397a8b4288330e8f2f838fe85a8d1e5a0f242940fae940f04d`，加载前另核对 DLL 与 API 头文件字节。构建／解压路径不得穿过 junction 或符号链接，只提取指定两个文件。该构建名称不是许可合规结论；[构建者的许可说明](https://github.com/zhongfly/mpv-winbuild#readme)也要求检查依赖，未作为产品依赖准入。

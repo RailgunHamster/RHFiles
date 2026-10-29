@@ -132,3 +132,17 @@ node --test --test-concurrency=1 scripts/e2e/rhvideo-task-priority.test.mjs scri
 ```
 
 Android release 验收使用同一个受限模拟器入口，将模式改为 `task-priority`。除了真实触摸和公开 API，它还检查服务器恰好接受四次置顶，未发生 retry／resume／pause／cancel 请求；随后独立核对实际默认／替换 worker 的领取顺序、暂停和运行中记录、失败记录及源文件哈希。任务只调整元数据：该 fixture 中停止自动 worker 是保持样本稳定的测试条件，不得把此轮当成编码任务不停顿、低内存或后台生命周期的完整验收。
+
+## RHVideo 完整 Windows 原生验收入口
+
+不要把漏设环境标志后跳过的原生用例计入完整验收。`rhvideo-windows.mjs` 强制启用实际原生用例，串行运行全部 `rhvideo*.test.mjs`，核对随包 3.0.24 的文件清单、哈希和预建插件索引，并要求最终 TAP 全部通过且没有跳过、取消或待办。40 分钟及 8 MiB 日志上限只限制自有测试进程树，不重启测试来抹掉失败。
+
+先将已核验的 EXE 和 `vlc/` 复制到本工作树新建、无链接的 `test-artifacts/` 快照目录，保持源文件和二进制冻结；不能指向正式安装、共享 `target` 或 junction。运行示例：
+
+```powershell
+$env:RHVIDEO_SOURCE = 'D:/git/RHVideo'
+$env:RHFILES_TEST_EXECUTABLE = '本工作树/test-artifacts/本轮独立快照/rhfiles.exe'
+node scripts/testing/rhvideo-windows.mjs
+```
+
+入口拒绝混用兼容输出、缓存／解码线程对照和私有诊断选项；普通硬件输出必须通过实际状态断言。每轮保留 `suite.tap`、`receipt.json` 和各用例自己的截图／请求／临时样本；记录 EXE 和参考模块的 SHA-256，结束时再核对，不能用运行中被替换的输入声明成功。尚未通过完整一轮的代码不能因入口存在或单元测试通过而标记为完整验收。

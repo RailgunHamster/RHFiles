@@ -143,6 +143,12 @@ unsafe fn render_dc(dc:HDC,pixels:&Pixels,width:i32,height:i32,rotation:i32)->Re
 }}
 struct Lease<'a>(&'a Frame);
 #[cfg(debug_assertions)]
+fn diagnostic_print_flags()->windows::Win32::Storage::Xps::PRINT_WINDOW_FLAGS{
+    // The DIB uses GetClientRect dimensions. Top-level comparisons must not
+    // include the title bar/border and then crop the bottom/right to fit.
+    windows::Win32::Storage::Xps::PRINT_WINDOW_FLAGS(windows::Win32::Storage::Xps::PW_CLIENTONLY.0|2)
+}
+#[cfg(debug_assertions)]
 pub fn diagnostic_capture(hwnd:usize,path:&std::path::Path,compatibility:bool)->Result<(u32,u32),String>{unsafe{
     // Read only the caller-owned video child, never the desktop or an arbitrary
     // external HWND. This opt-in QA path is absent from release builds.
@@ -155,7 +161,7 @@ pub fn diagnostic_capture(hwnd:usize,path:&std::path::Path,compatibility:bool)->
         let bitmap=CreateDIBSection(Some(target),&info,DIB_RGB_COLORS,&mut bits,None,0).map_err(|_|"无法创建诊断像素缓冲")?;let old=SelectObject(target,HGDIOBJ(bitmap.0));
         // DWM includes the GPU child for PW_RENDERFULLCONTENT. GDI pixels
         // already live in the DC; WM_PRINT can instead paint its background.
-        let drawn=if compatibility{BitBlt(target,0,0,width,height,Some(source),0,0,SRCCOPY).is_ok()}else{windows::Win32::Storage::Xps::PrintWindow(hwnd,target,windows::Win32::Storage::Xps::PRINT_WINDOW_FLAGS(2)).as_bool()};let _=GdiFlush();
+        let drawn=if compatibility{BitBlt(target,0,0,width,height,Some(source),0,0,SRCCOPY).is_ok()}else{windows::Win32::Storage::Xps::PrintWindow(hwnd,target,diagnostic_print_flags()).as_bool()};let _=GdiFlush();
         let bytes=if drawn&&!bits.is_null(){Some(std::slice::from_raw_parts(bits as *const u8,(width*height*4) as usize).to_vec())}else{None};
         let _=SelectObject(target,old);let _=DeleteObject(HGDIOBJ(bitmap.0));
         let pixels=bytes.ok_or("无法读取实际视频像素")?;let mut bmp=Vec::with_capacity(54+pixels.len());bmp.extend_from_slice(b"BM");bmp.extend_from_slice(&(54+pixels.len() as u32).to_le_bytes());bmp.extend_from_slice(&[0;4]);bmp.extend_from_slice(&54u32.to_le_bytes());bmp.extend_from_slice(&40u32.to_le_bytes());bmp.extend_from_slice(&width.to_le_bytes());bmp.extend_from_slice(&(-height).to_le_bytes());bmp.extend_from_slice(&1u16.to_le_bytes());bmp.extend_from_slice(&32u16.to_le_bytes());bmp.extend_from_slice(&[0;24]);bmp.extend_from_slice(&pixels);
@@ -228,6 +234,11 @@ pub unsafe extern "C" fn display(opaque: *mut c_void, _picture: *mut c_void) {
 
 #[cfg(test)] mod tests{
     use super::*;
+    #[cfg(debug_assertions)]
+    #[test] fn diagnostic_dib_and_print_scope_both_use_the_client_area(){
+        assert_eq!(diagnostic_print_flags().0,3);
+        assert_ne!(diagnostic_print_flags().0 & windows::Win32::Storage::Xps::PW_CLIENTONLY.0,0);
+    }
     #[test] fn native_dib_keeps_decoder_planes_and_strides_32_byte_aligned(){
         for width in [1,2,31,32,33,360,1920]{let p=Pixels::allocate(width,13).unwrap();assert_eq!(p.pointer() as usize%32,0);assert_eq!(p.pitch%32,0);assert!(p.offset+width as usize*4<=p.pitch as usize);unsafe{std::ptr::write_bytes(p.pointer(),0x2a,p.pitch as usize*13);}}
     }
