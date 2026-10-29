@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 export const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 export const mapping=JSON.parse(fs.readFileSync(path.join(root,'scripts/testing/rhvideo-control-map.json'),'utf8'));
+export const sourceHash=source=>createHash('sha256').update(source.toString('utf8').replace(/\r\n/g,'\n')).digest('hex');
 export function referenceControls(html){
   return [...new Set([...html.matchAll(/\bon(?:click|change|input|keydown|dblclick|wheel)="([^"]+)"/g)].flatMap(m=>[...m[1].matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g)].map(v=>v[1])))].filter(v=>!v.startsWith('event.')&&!v.startsWith('document.')).sort();
 }
@@ -28,9 +29,10 @@ for(const [name,prefix]of [['rhvideo-client.js',''],['rhvideo-configuration.js',
   return found;
 }
 export function audit(reference){
+  if(mapping.sourceHash!=='sha256-utf8-lf')throw Error('Unknown reference source hash mode');
   const apis=registrations(),mapped=mapping.groups.flatMap(g=>g.reference),known=new Set([...mapped,...mapping.ignoredHelpers]);
   const controls=referenceControls(fs.readFileSync(path.join(reference,'static/index.html'),'utf8'));
-  return {referenceCommit:mapping.referenceCommit,actualCommit:execFileSync('git',['-C',reference,'rev-parse','HEAD'],{encoding:'utf8',windowsHide:true}).trim(),referenceControls:controls.length,features:mapping.groups.length,missingControls:controls.filter(v=>!known.has(v)),staleMappings:mapped.filter(v=>!controls.includes(v)),missingAPIs:mapping.groups.flatMap(g=>g.api.filter(id=>!apis.has(id)).map(id=>({feature:g.feature,api:'rhvideo.'+id}))),modules:mapping.modules.map(m=>({...m,matched:fs.existsSync(path.join(reference,m.file))&&createHash('sha256').update(fs.readFileSync(path.join(reference,m.file))).digest('hex')===m.sha256}))};
+  return {referenceCommit:mapping.referenceCommit,actualCommit:execFileSync('git',['-C',reference,'rev-parse','HEAD'],{encoding:'utf8',windowsHide:true}).trim(),sourceHash:mapping.sourceHash,referenceControls:controls.length,features:mapping.groups.length,missingControls:controls.filter(v=>!known.has(v)),staleMappings:mapped.filter(v=>!controls.includes(v)),missingAPIs:mapping.groups.flatMap(g=>g.api.filter(id=>!apis.has(id)).map(id=>({feature:g.feature,api:'rhvideo.'+id}))),modules:mapping.modules.map(m=>({...m,matched:fs.existsSync(path.join(reference,m.file))&&sourceHash(fs.readFileSync(path.join(reference,m.file)))===m.sha256}))};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const reference=process.argv[2];if(!reference)throw Error('Usage: node scripts/testing/rhvideo-reference-audit.mjs D:/git/RHVideo');

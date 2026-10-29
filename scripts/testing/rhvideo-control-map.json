@@ -1,5 +1,6 @@
 {
   "referenceCommit": "869d63244300222750751c1175aab4ce855302dd",
+  "sourceHash": "sha256-utf8-lf",
   "description": "Source-to-source control inventory, not a claim that every hardware/network scenario has passed. API names are relative to rhvideo.; each runtime window separately exposes its contract.",
   "ignoredHelpers": ["if", "favEsc", "gridTagJsArg"],
   "groups": [
@@ -34,13 +35,13 @@
   ],
   "modules": [
     {"file":"static/index.html","sha256":"f6f9d8fa74c48e8038f634094297c34d48c53057085fdad3bda456390f402238","scope":"静态与模板生成的 click/change/input/keydown/dblclick/wheel 控件，按调用函数逐项对应"},
-    {"file":"static/settings.js","sha256":"87ae98723b29b30ba9e5cb64c82572f93663637dd373e83f974176b16c5843f6","scope":"重启模式、安排取消、状态和权限，配置备份／合并恢复使用独立预览确认；实际流程另测"},
+    {"file":"static/settings.js","sha256":"7535fb74fb6d7cb8c464ad8164cfd7602af8dddac43292b1a75ea492e70cf65f","scope":"重启模式、安排取消、状态和权限，配置备份／合并恢复使用独立预览确认；实际流程另测"},
     {"file":"static/task-center.js","sha256":"002ec88463b779257d32c4a5a787c35b44fdd5448760d1e9b3d0507118546c11","scope":"队列/视图/搜索/分页/详情/步骤/缩略图；依用户要求排除失败任务重试"},
     {"file":"static/favorite-exports.js","sha256":"119c96c290e52a8d59ad9df276fc0d5e7291e19519f8681806f4f0165ce343ff","scope":"全部／当前筛选喜爱、归档任务、活动任务取消、ZIP 下载；不将控制项映射当成原生选择器与后台生命周期验收"},
     {"file":"static/storage-savings.js","sha256":"a29109ca345dbc83e337ae715795467fa18032600f9876e30874b033c819b3a9","scope":"替换历史、存储节省、筛选和明细，归入存储/替换面板"},
-    {"file":"static/image-preview.js","sha256":"deb276e0057e6664c8b0843011a6ae75f4a24a73f89c725b3e0597a6ffbf9c70","scope":"各面板缩略图全屏预览、关闭及焦点返回"},
+    {"file":"static/image-preview.js","sha256":"30ef7cc29e52e5a34715ec06e9e6575261bb69a0c9457d6d04f4a6613518bfb2","scope":"各面板缩略图全屏预览、关闭及焦点返回"},
     {"file":"static/tag-filter.js","sha256":"9394151bc4c2743d960f055286e90ca078d453a0220af42c920befc71047f685","scope":"嵌套 AND/OR、排除及分组语义，共享衍生业务模型测试"},
     {"file":"static/search-core.js","sha256":"74fc781c94054e5d6a2a3287a0e8dfb07a6e8f3c6861f70b39ca285f98a5f7e0","scope":"中文/多音字/拼音/首字母搜索语义，原始词典与 Worker 测试"},
-    {"file":"static/operation-contract.json","sha256":"0c27b51336e7607d9e8f9857dfe511a2359a6fbbcfb390c348a88073fed7a646","scope":"与真实 FastAPI 路由对照，不能仅凭旧契约宣称功能完成"}
+    {"file":"static/operation-contract.json","sha256":"ff477cedbe24c95225ec519302ff0559863e858fcae7d1e1795ac684b0fb16bd","scope":"与真实 FastAPI 路由对照，不能仅凭旧契约宣称功能完成"}
   ]
 }
