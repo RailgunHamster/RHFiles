@@ -18,6 +18,12 @@
 
 同一新 APK 的 `emulator-host` 完整 **grid 仍失败**（`rhvideo-image-toolbar-direct-grid.log`、`rhvideo-android-grid-1793329100595-release/`）：三格全部位置 0／1 帧，第二格进入 BUFFERING，但都显示 bufferedPosition=20000、音视频轨选中，未改变数量、音频、codec、表面或原三十秒就绪预算。故不能仅按 ADB 转发解释多路首帧停滞，后续继续核对媒体推进／音频启动及实际解码器。完整目标未完成、未发布；正式 Windows PID 45696 和实体手机未动。
 
+随后只在本地候选中调用 Media3 1.11.1 的 [`enablePerStreamMediaProgression(true)`](https://raw.githubusercontent.com/androidx/media/1.11.1/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/ExoPlayer.java)，不改动态调度、缓冲容量、codec／音频启动、分辨率／格数或速率。官方将其标为 experimental 且默认 false；上游短片段的改善报告不能证明它解决本例。候选构建 **4 分 05 秒成功**（短路径 QA 的 `rhvideo-per-stream-candidate-build.log`），保存源码差异／mapping／实际主包 **`a9f730f28ce062daac701affbc93ab9fedbf6ba351efba336b78a68d0665fe08`** 于 `rhvideo-per-stream-candidate-69ed565163874666965de7b436ed08fb`，探针仍为 `d8f95905…`；本次没有另跑完整 JVM，不冒用前一构建的 464 项。
+
+候选在同一自有 AVD、相同直连／素材下 **仍失败**（`rhvideo-per-stream-candidate-native.log`、`rhvideo-android-grid-1793329550269-release/`）：三路这次先进入播放，但原五秒观察实际耗时 **6617 ms**，只推进 **107／128／166 ms**、新增 **2／3／5 帧**，视频 PTS 仅推进 **83／667／667 ms**。恢复 WebView 计时器后的独立 **5351 ms** 对照三路位置及帧增量都为零。59 个服务端响应全部正常交出，无记录丢弃；仍不把服务端 finish 误说成客户端解码完成。该结果不足以采用设置或证明起播差异的因果关系。
+
+已用精确 patch **撤回候选**，核对 `RhVideoGridActivity.kt` 与已提交默认版本无差异；短路径 QA 的两份手写／生成源也恢复。自有 `emulator-5588` 安装前先确认名字／qemu 标识及确实运行该候选包，再一次覆盖恢复主 APK **`71743c73…`**，重新读取实际已安装包 SHA-256 匹配；仅停止自有模拟器的本应用，未重置模拟器或主机服务。候选／失败材料保留，不进入发布包。后续仍需普通本地三路解码对照，而不是以单路通过或采用未证实的内核参数宣告完成。
+
 ## 2026-10-30 独立 host-GPU 环境的首个单路计时结果（继续验收，未发包）
 
 新自有 AVD 在 **安装 RHFiles 之前**发生 System UI 与 `system` 两个无响应弹窗，已保存 `rhvideo-host-gpu-startup/` 的窗口、事件日志、截图及实际节点 XML。核对对应窗口后各选择一次“等待”，未关闭／重启系统进程、未重置模拟器；随后实际观察到 `sys.boot_completed=1`、bootanim `stopped`、窗口无 ANR／Error，包管理器仍查不到 RHFiles，才开始安装。启动系统本身出过问题的事实不因后续测试通过而抹去，也不跳过验收前后的错误窗口检查。
