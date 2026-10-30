@@ -10,7 +10,7 @@ import {admitOwnedFrameTool} from './owned-native-frame.mjs';
 
 export function acceptanceEnvironment(environment,executable,source){
   if(environment.RHFILES_VLC_COMPATIBILITY)throw Error('This entry verifies normal native hardware output, not the compatibility renderer');
-  for(const key of ['RHFILES_VLC_NETWORK_CACHE_MS','RHFILES_VLC_DECODE_THREADS','RHFILES_VLC_DEBUG','RHFILES_QA_READBACK','RHFILES_VLC_NATIVE_TRACE','RHFILES_PLAY_NATIVE_TRACE','RHFILES_RECEIPT_TRACE'])
+  for(const key of ['RHFILES_VLC_NETWORK_CACHE_MS','RHFILES_VLC_DECODE_THREADS','RHFILES_VLC_DEBUG','RHFILES_QA_READBACK','RHFILES_VLC_NATIVE_TRACE','RHFILES_PLAY_NATIVE_TRACE','RHFILES_RECEIPT_TRACE','RHFILES_QA_RECEIPT_WINDOW_PING'])
     if(environment[key])throw Error('Do not mix performance/trace experiments into business acceptance: '+key);
   return {...environment,RHFILES_TEST_EXECUTABLE:executable,RHVIDEO_SOURCE:source,RHFILES_NATIVE_PLAYER_QA:'1',RHFILES_EXPECT_BUNDLED_VLC:'3.0.24',RHFILES_EXPECT_ENGINE_VERSION:'3.0.24',RHFILES_EXPECT_RENDERER:'native-hardware-auto'};
 }

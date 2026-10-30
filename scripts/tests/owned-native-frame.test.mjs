@@ -77,3 +77,13 @@ test('library presentation observation requires its exact scope and actual nativ
   scope='owned-sibling-client';alpha=255;await assert.rejects(reader.read(),/identity mismatch/);assert.equal(fs.readdirSync(f.directory).length,2);
  }finally{reader?.close();f.close();}
 });
+
+test('a bounded owned-library ping preserves timeout/error evidence without changing focus or submitting an action',async()=>{
+ const f=fixture();let driver;try{
+  let value={observedAtMs:123456789,responded:true,elapsedMs:0,win32Error:0};
+  driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:async(_,args)=>{assert.deepEqual(args,['42','own/rhfiles.exe','library-ping']);return JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,...value});}});
+  assert.deepEqual(await driver.pingLibrary(),value);
+  for(const error of [1460,0]){value={observedAtMs:123456789,responded:false,elapsedMs:109,win32Error:error};assert.deepEqual(await driver.pingLibrary(),value);}
+  for(const bad of [{observedAtMs:null},{observedAtMs:0},{responded:1},{elapsedMs:-1},{elapsedMs:4501},{win32Error:-1},{responded:true,win32Error:1460}]){value={observedAtMs:123456789,responded:false,elapsedMs:100,win32Error:0,...bad};await assert.rejects(driver.pingLibrary(),/responsiveness observation/);}
+ }finally{driver?.close();f.close();}
+});

@@ -24,6 +24,7 @@ static DWORD parent_of(DWORD id){
   return 0;
 }
 static uint64_t created(HANDLE process){FILETIME start{},end{},kernel{},user{};require(GetProcessTimes(process,&start,&end,&kernel,&user),"Cannot verify process lifetime");return(uint64_t(start.dwHighDateTime)<<32)|start.dwLowDateTime;}
+static uint64_t unix_millis(){FILETIME value{};GetSystemTimePreciseAsFileTime(&value);return(((uint64_t(value.dwHighDateTime)<<32)|value.dwLowDateTime)-116444736000000000ULL)/10000;}
 static std::wstring full_path(const std::wstring& value){std::vector<wchar_t> result(32768);DWORD length=GetFullPathNameW(value.c_str(),DWORD(result.size()),result.data(),nullptr);require(length>0&&length<result.size(),"Invalid owned executable path");return{result.data(),length};}
 static void verify_process(DWORD id,const std::wstring& expected){
   const DWORD parent=parent_of(GetCurrentProcessId());
@@ -77,7 +78,7 @@ static GUITHREADINFO thread_info(HWND window){GUITHREADINFO info{};info.cbSize=s
 static bool input_focus(HWND window,const GUITHREADINFO& info){return info.hwndFocus==window||IsChild(window,info.hwndFocus);}
 static void window_command(int argc,wchar_t** argv,DWORD pid){
   const std::wstring command(argv[3]);
-  require((command==L"windows"&&argc==4)||(command==L"activate-main"&&argc==4)||(command==L"library-key"&&argc==6),"Unsupported owned window command");
+  require(((command==L"windows"||command==L"library-ping"||command==L"activate-main")&&argc==4)||(command==L"library-key"&&argc==6),"Unsupported owned window command");
   WORD key=0;bool scan_mode=false;
   if(command==L"library-key"){
     const std::wstring name(argv[4]),encoding(argv[5]);
@@ -85,6 +86,13 @@ static void window_command(int argc,wchar_t** argv,DWORD pid){
     require(encoding==L"virtual-key"||encoding==L"scan-code","Invalid key encoding");scan_mode=encoding==L"scan-code";
   }
   OwnedWindows owned{pid};require(EnumWindows(owned_window,reinterpret_cast<LPARAM>(&owned)),"Cannot enumerate owned input windows");require(!owned.ambiguous,"Ambiguous owned input window");
+  if(command==L"library-ping"){
+    require(owned.library,"Owned library is not open");
+    const auto observed=unix_millis(),started=GetTickCount64();DWORD_PTR result{};SetLastError(0);
+    const bool responded=SendMessageTimeoutW(owned.library,WM_NULL,0,0,SMTO_ABORTIFHUNG|SMTO_BLOCK,100,&result)!=0;
+    const DWORD error=responded?0:GetLastError();const auto elapsed=GetTickCount64()-started;
+    std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"observedAtMs\":%llu,\"responded\":%s,\"elapsedMs\":%llu,\"win32Error\":%lu}\n",static_cast<unsigned long>(pid),static_cast<unsigned long long>(observed),responded?"true":"false",static_cast<unsigned long long>(elapsed),static_cast<unsigned long>(error));return;
+  }
   if(command==L"windows"){
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"windows\":[",static_cast<unsigned long>(pid));
     bool first=true;for(const auto& row:std::vector<std::pair<const char*,HWND>>{{"main",owned.main},{"window-rhvideo",owned.library}}){if(!row.second)continue;const auto info=thread_info(row.second);std::printf("%s{\"label\":\"%s\",\"foreground\":%s,\"active\":%s,\"inputFocus\":%s}",first?"":",",row.first,GetForegroundWindow()==row.second?"true":"false",info.hwndActive==row.second?"true":"false",input_focus(row.second,info)?"true":"false");first=false;}
@@ -120,7 +128,7 @@ int wmain(int argc,wchar_t** argv){
     const std::wstring digits(argv[1]);require(!digits.empty()&&digits.size()<=10&&std::all_of(digits.begin(),digits.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}),"Invalid owned PID");
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
     verify_process(pid,argv[2]);
-    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"){window_command(argc,argv,pid);return 0;}
+    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"){window_command(argc,argv,pid);return 0;}
     require(argc==5||(argc==6&&std::wstring(argv[5])==L"library-presentation"),"Use PID, exact executable, owned basename, renderer and an optional fixed presentation scope");
     const bool presentation=argc==6;
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";

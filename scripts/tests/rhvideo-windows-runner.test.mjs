@@ -23,7 +23,7 @@ test('full Windows acceptance always enables actual native cases and the exact a
  assert.equal(env.RHFILES_NATIVE_PLAYER_QA,'1');assert.equal(env.RHFILES_EXPECT_BUNDLED_VLC,'3.0.24');assert.equal(env.RHFILES_EXPECT_ENGINE_VERSION,'3.0.24');assert.equal(env.RHFILES_EXPECT_RENDERER,'native-hardware-auto');assert.equal(env.PATH,'owned');assert.equal(env.RHFILES_TEST_EXECUTABLE,'owned.exe');assert.equal(env.RHVIDEO_SOURCE,'reference');
 });
 test('hardware business acceptance cannot silently include compatibility or timing experiments',()=>{
- for(const key of ['RHFILES_VLC_COMPATIBILITY','RHFILES_VLC_NETWORK_CACHE_MS','RHFILES_VLC_DECODE_THREADS','RHFILES_VLC_DEBUG','RHFILES_QA_READBACK','RHFILES_VLC_NATIVE_TRACE','RHFILES_PLAY_NATIVE_TRACE','RHFILES_RECEIPT_TRACE'])assert.throws(()=>acceptanceEnvironment({[key]:'1'},'owned.exe','reference'),/compatibility|experiment/);
+ for(const key of ['RHFILES_VLC_COMPATIBILITY','RHFILES_VLC_NETWORK_CACHE_MS','RHFILES_VLC_DECODE_THREADS','RHFILES_VLC_DEBUG','RHFILES_QA_READBACK','RHFILES_VLC_NATIVE_TRACE','RHFILES_PLAY_NATIVE_TRACE','RHFILES_RECEIPT_TRACE','RHFILES_QA_RECEIPT_WINDOW_PING'])assert.throws(()=>acceptanceEnvironment({[key]:'1'},'owned.exe','reference'),/compatibility|experiment/);
 });
 test('final TAP requires every case to pass with no skips or incomplete results',()=>{
  assert.deepEqual(acceptanceSummary('TAP version 13\n'+summary()),{tests:103,pass:103,fail:0,cancelled:0,skipped:0,todo:0});

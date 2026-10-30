@@ -218,7 +218,8 @@ test('native receipt recovery needs no surviving WebView reply and rejects an un
 
 test('a later real completion is not discarded after an earlier survivor reports running but loses its wait reply',native,async()=>{
   const s=await setup();let grid,closing;
-  const observation={clock:'host wall and actual process receipt Unix milliseconds',phases:[],reads:[]};
+  const pingWindow=process.env.RHFILES_QA_RECEIPT_WINDOW_PING==='1';
+  const observation={clock:'host wall and actual process receipt Unix milliseconds',pingWindow,phases:[],reads:[]};
   const phase=name=>observation.phases.push({name,at:Date.now()});
   try{
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
@@ -234,7 +235,14 @@ test('a later real completion is not discarded after an earlier survivor reports
     phase('cli-spawn');closing=runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'late-native-completion',{trace:true});
     await until(()=>s.app.evaluate('window.__receiptWaitStarted'),'the early running source really starts its stalled wait',3000);
     phase('running-source-wait-observed');
-    await until(async()=>{const queuedAt=Date.now(),value=await s.view.evaluate('RHFilesAPI.rpc({jsonrpc:"2.0",id:"read-only-observer",method:"runs.lookup",params:{key:"late-native-completion"}})');if(observation.reads.length<32)observation.reads.push({queuedAt,repliedAt:Date.now(),state:value.result?.state,startedAt:value.result?.startedAt,finishedAt:value.result?.finishedAt});return value.result?.state==='succeeded';},'the actual process close receipt is complete',4000);
+    await until(async()=>{
+      const queuedAt=Date.now(),pending=s.view.evaluate('RHFilesAPI.rpc({jsonrpc:"2.0",id:"read-only-observer",method:"runs.lookup",params:{key:"late-native-completion"}})');
+      // Explicit diagnostic only: one bounded WM_NULL to this fixture's own
+      // library while its EXISTING lookup is in flight. No focus or UI action.
+      let responsiveness;
+      if(pingWindow){const pingQueuedAt=Date.now();try{const observed=await s.app.nativeWindows.pingLibrary();responsiveness={queuedAt:pingQueuedAt,completedAt:Date.now(),...observed};}catch(error){responsiveness={queuedAt:pingQueuedAt,completedAt:Date.now(),unavailable:String(error).slice(0,160)};}}
+      const value=await pending;if(observation.reads.length<32)observation.reads.push({queuedAt,repliedAt:Date.now(),state:value.result?.state,startedAt:value.result?.startedAt,finishedAt:value.result?.finishedAt,...(responsiveness?{responsiveness}:{})});return value.result?.state==='succeeded';
+    },'the actual process close receipt is complete',4000);
     phase('native-completion-observed');
     assert.equal(await s.view.evaluate('(()=>{if(!window.__releaseReceiptStatus)return false;window.__releaseReceiptStatus();return true;})()'),true,'Release the already-started status response, not a new query');
     phase('held-status-released');
