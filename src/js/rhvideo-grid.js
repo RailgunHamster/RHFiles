@@ -257,7 +257,8 @@
   RHFilesUI.listen($('group-seek'),'change',()=>call('seekGroup',{ratio:Number($('group-seek').value)/1000}),undefined,'rhvideo.grid.seekGroup');
   RHFilesUI.listen(document,'keydown',event=>{
     if(event.target.closest('input,select,textarea')||event.ctrlKey||event.altKey||event.metaKey)return;
-    const intent={Escape:'close',Space:'toggle',ArrowLeft:'previous',ArrowRight:'next',Home:'first',End:'last'}[event.code];
+    const key=event.key&&event.key!=='Unidentified'?(event.key===' '?'Space':event.key):event.code;
+    const intent={Escape:'close',Space:'toggle',ArrowLeft:'previous',ArrowRight:'next',Home:'first',End:'last'}[key];
     if(!intent||event.repeat||!state.cells.length)return;event.preventDefault();void call('input',{inputId:state.cells[0].inputId,target:0,intent});
   },undefined,'rhvideo.grid.keyboard');
   RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.grid.contextmenu');

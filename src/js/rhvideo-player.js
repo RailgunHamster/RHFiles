@@ -126,7 +126,20 @@
   RHFilesUI.listen($('segment-length'),'change',()=>api.invoke('rhvideo.player.options',{segment:Number($('segment-length').value),fullLength:false}).catch(error),undefined,'rhvideo.player.options.segment');
   RHFilesUI.listen($('portrait-only'),'change',()=>api.invoke('rhvideo.player.options',{portraitOnly:$('portrait-only').checked}).catch(value=>{paint(state);error(value);}),undefined,'rhvideo.player.options.portrait');
   RHFilesUI.listen($('back'),'click',()=>api.invoke('rhvideo.player.back').catch(error),undefined,'rhvideo.player.back');
-  RHFilesUI.listen(document,'keydown',event=>{if(event.code==='Escape'){event.preventDefault();void api.invoke('rhvideo.player.close').catch(error);return;}if(event.target.matches('input,select,textarea')||event.target.isContentEditable)return;let name,args={};if(event.code==='Space'){name='control';args={command:toggleCommand(state)};}else if(event.code==='Delete'&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey)name='mark';else if(event.code==='ArrowLeft')name='previous';else if(event.code==='ArrowRight')name='next';else if((state.queue?.options?.reference||state.queue?.options?.origin==='favorite')&&['Home','End'].includes(event.code)){name=state.queue.options.origin==='favorite'?'seekParent':'seekQueue';args={ratio:event.code==='Home'?0:1};}if(!name)return;event.preventDefault();void api.invoke('rhvideo.player.'+name,args).catch(error);},undefined,'rhvideo.player.keyboard');
+  RHFilesUI.listen(document,'keydown',event=>{
+    // Like the reference playlist handler, named navigation follows the key's
+    // meaning, not its physical location (notably NumLock and OS-generated keys).
+    const key=event.key&&event.key!=='Unidentified'?(event.key===' '?'Space':event.key):event.code;
+    if(key==='Escape'){event.preventDefault();void api.invoke('rhvideo.player.close').catch(error);return;}
+    if(event.target.matches('input,select,textarea')||event.target.isContentEditable)return;
+    let name,args={};
+    if(key==='Space'){name='control';args={command:toggleCommand(state)};}
+    else if(key==='Delete'&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey)name='mark';
+    else if(key==='ArrowLeft')name='previous';
+    else if(key==='ArrowRight')name='next';
+    else if((state.queue?.options?.reference||state.queue?.options?.origin==='favorite')&&['Home','End'].includes(key)){name=state.queue.options.origin==='favorite'?'seekParent':'seekQueue';args={ratio:key==='Home'?0:1};}
+    if(!name)return;event.preventDefault();void api.invoke('rhvideo.player.'+name,args).catch(error);
+  },undefined,'rhvideo.player.keyboard');
   let wheelAt=0;RHFilesUI.listen(document,'wheel',event=>{if((!state.queue?.options?.reference&&!['frame','favorite'].includes(state.queue?.options?.origin))||event.target.closest('input,select,textarea'))return;event.preventDefault();if(performance.now()-wheelAt<180)return;wheelAt=performance.now();void api.invoke('rhvideo.player.'+(event.deltaY>0?'next':'previous')).catch(error);},{passive:false},'rhvideo.player.wheel');
   RHFilesUI.listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.player.contextmenu');
   async function poll(){

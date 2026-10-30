@@ -12,7 +12,7 @@ import {root} from './source.mjs';
 export function admitLocalClockDevice(serial,kernel,avd){
   assert.match(serial,/^emulator-\d+$/);assert.equal(kernel.trim(),'1');
   const names=avd.split(/\r?\n/).map(v=>v.trim());
-  assert(['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu'].some(v=>names.includes(v)),'Only an explicitly owned RHVideo QA AVD is allowed');
+  assert(['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu','RHFilesRhVideoQA20261030Api36'].some(v=>names.includes(v)),'Only an explicitly owned RHVideo QA AVD is allowed');
 }
 export function verifyLocalClock(before,after,elapsedMs){
   assert.equal(before.count,1);assert.equal(after.count,1);

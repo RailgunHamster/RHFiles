@@ -6,6 +6,20 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 播放器／同屏语义键与 API 36 独立对照（继续验收，未发包）
+
+继续执行实际参考 `playlistKeyHandler`／`gridKeyHandler`，发现 Home／End 修复之前只覆盖了媒体库放映，Windows 播放器和同屏的 DOM 快捷键仍按物理 `code` 导航。新增从两个实际生产监听器 AST 提取的十七项测试，包含与上述参考函数的差分；旧实现 **3/17、14 失败**（`rhvideo-native-keyboard-red.log`）。现优先使用可识别的语义 key，将空格正常映射到暂停／继续，只有没有语义信息才回退 code；数字小键盘的数字及重映射的普通键不能误当 Home／End／箭头。保留收藏父层定位、非队列限制、编辑框、Delete 修饰键／重复和同屏输入实例边界。修复后 **17/17**；全套共享检查 **950/950、零失败／跳过**（`rhvideo-native-semantic-shortcuts-node.log`）。
+
+新 Windows 编译 **2 分 14 秒成功**（`rhvideo-native-semantic-keyboard-build.log`）；独立快照 `rhvideo-native-semantics-runtime-c9fd7f1fddfa40b4bc5cf052e951bff9/` 的 EXE **`eb9ac0f8a950043a940bf7aa1bc5e2558ea2aad7bd64b497d4f3eb31a8ba7c87`**，app-local 3.0.24 清单重新验证。新增实际窗口用例向打包页面派发语义 DOM 键事件，随后核对队列／同屏首尾源身份和真实解码帧、数字不误跳及 UI/API 契约；它不是物理键盘输入试验，不能冒充 SendInput。该实际用例等待下面已在途的整轮终止后才串行启动，结果另记，不把编译／单测视为窗口场景已通过。
+
+既有 CB26 程序的最新完整 Windows 轮次使用新冻结目录 `rhvideo-semantic-navigation-full-e108d555765145dfa1d65915d7087de6/`：**1124** 个文件、同一 EXE `cb26dc18…8ed6f7`、app-local 3.0.24、实际参考 `3d6aaeb`；日志为该冻结目录下 `test-artifacts/rhvideo-semantic-navigation-full-windows.log`，回执目录 `rhvideo-windows-iaWeCF/`。它在上述两个 DOM 入口修复之前已经开始，**不包含这次新用例／新程序**。目前仍在途，不能将中途通过数当成完整通过；终止后还须逐项回核冻结文件和参考指纹。
+
+Android 新对照只使用已安装的 API 36 镜像，另建自有 **`emulator-5590 / RHFilesRhVideoQA20261030Api36`**，没有重置／停止已有 AVD 或改变系统驱动／音频服务。镜像 Android **16 / API 36**，指纹 `google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.D1/13818094:user/release-keys`；x86_64，1080×2400／420 DPI，WebView **133.0.6943.137**，原 emulator **36.1.9.0**、WHPX／host-GPU、6 核／6144 MiB。四个准确 AVD 名加入同一准入白名单，物理设备、相似后缀名称继续拒绝；相关 **21/21** 检查通过。
+
+新 AVD 首次启动约十分钟后才完成；**尚未安装 RHFiles 就出现 system／System UI 无响应弹窗**。首次 grid 命令在安装前被现有门禁拒绝（`rhvideo-grid-api36-control.log`），不是 RHFiles 同屏解码失败，也没有跳过门禁。已分别在两个实际系统弹窗选择“等待”，未关闭／重启系统进程，截图 `rhvideo-api36-boot-screen.png`、`rhvideo-api36-ui-dialog.png` 保留。当前弹窗消失后的同一 **88D4 主包／4B37 探针**完整 grid 已排在 Windows 两项运行之后，原 30 秒就绪／5 秒实时门槛、三格音视频和默认参数保持不变；这仍是待运行的独立对照，不是已通过结果或性能基准。
+
+本节未改变媒体质量、内核、音频输出参数或原生进度／重试逻辑；未替换正式 Windows 安装、操作实体手机或发包。Android 同屏／生命周期、同质量性能与完整发行验收仍未完成。
+
 ## 2026-10-30 Home／End 语义导航与原生输入验收（继续验收，未发包）
 
 将上一节 End 失败分成两条证据，而不是把未收到的 CDP 按键直接算成跳转函数有错。A196 的定向条带／放映仍为 **17/18**；失败时 DOM／Win32 焦点正常，但两个页面都未收到 CDP 键事件。随后用只接受 Home／End 的隔离 Windows 调试适配器，实际旧程序 **`bb3a0566ea4b6bcfa92ad6d845478e8cd8643336fee5df5f6baca1230f4a5934`** 收到系统 End 的 down/up，`key="End"`、`code=""`，依然停在索引 0（`rhvideo-slideshow-windows-keys.log`、`rhfiles-e2e-rz4giF/slideshow-end-failure.json`）。这是与“事件没有送达”不同的产品差异：参考 `favshowKeyHandler` 使用语义 key，而本端只识别物理 code。
