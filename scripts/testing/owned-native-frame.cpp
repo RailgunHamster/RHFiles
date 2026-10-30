@@ -76,6 +76,19 @@ static BOOL CALLBACK owned_window(HWND window,LPARAM data){
 }
 static GUITHREADINFO thread_info(HWND window){GUITHREADINFO info{};info.cbSize=sizeof(info);require(GetGUIThreadInfo(GetWindowThreadProcessId(window,nullptr),&info),"Cannot query owned input focus");return info;}
 static bool input_focus(HWND window,const GUITHREADINFO& info){return info.hwndFocus==window||IsChild(window,info.hwndFocus);}
+// Only classify the verified sibling's own focus target. No foreign handles,
+// captions, URLs or child-tree enumeration leave this observer.
+static const char* focus_kind(HWND window,const GUITHREADINFO& info){
+  if(info.hwndFocus==window)return "owned-root";
+  if(!IsChild(window,info.hwndFocus))return "none";
+  DWORD owner=0;GetWindowThreadProcessId(info.hwndFocus,&owner);DWORD expected=0;GetWindowThreadProcessId(window,&expected);
+  if(owner!=expected)return "embedded-process-child";
+  wchar_t name[128]{};GetClassNameW(info.hwndFocus,name,128);
+  if(std::wcscmp(name,L"Chrome_RenderWidgetHostHWND")==0)return "webview-renderer";
+  if(std::wcscmp(name,L"Chrome_WidgetWin_0")==0||std::wcscmp(name,L"Chrome_WidgetWin_1")==0)return "webview-widget";
+  if(std::wcscmp(name,L"RHFilesNativeVideoSurface")==0)return "native-video";
+  return "other-owned-child";
+}
 static void window_command(int argc,wchar_t** argv,DWORD pid){
   const std::wstring command(argv[3]);
   require(((command==L"windows"||command==L"library-ping"||command==L"activate-main")&&argc==4)||(command==L"library-key"&&argc==6),"Unsupported owned window command");
@@ -95,7 +108,7 @@ static void window_command(int argc,wchar_t** argv,DWORD pid){
   }
   if(command==L"windows"){
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"windows\":[",static_cast<unsigned long>(pid));
-    bool first=true;for(const auto& row:std::vector<std::pair<const char*,HWND>>{{"main",owned.main},{"window-rhvideo",owned.library}}){if(!row.second)continue;const auto info=thread_info(row.second);std::printf("%s{\"label\":\"%s\",\"foreground\":%s,\"active\":%s,\"inputFocus\":%s}",first?"":",",row.first,GetForegroundWindow()==row.second?"true":"false",info.hwndActive==row.second?"true":"false",input_focus(row.second,info)?"true":"false");first=false;}
+    bool first=true;for(const auto& row:std::vector<std::pair<const char*,HWND>>{{"main",owned.main},{"window-rhvideo",owned.library}}){if(!row.second)continue;const auto info=thread_info(row.second);const bool focus=input_focus(row.second,info);std::printf("%s{\"label\":\"%s\",\"foreground\":%s,\"active\":%s,\"inputFocus\":%s,\"focusKind\":\"%s\",\"focusEnabled\":%s,\"focusVisible\":%s}",first?"":",",row.first,GetForegroundWindow()==row.second?"true":"false",info.hwndActive==row.second?"true":"false",focus?"true":"false",focus_kind(row.second,info),focus&&IsWindowEnabled(info.hwndFocus)?"true":"false",focus&&IsWindowVisible(info.hwndFocus)?"true":"false");first=false;}
     std::puts("]}");return;
   }
   if(command==L"activate-main"){

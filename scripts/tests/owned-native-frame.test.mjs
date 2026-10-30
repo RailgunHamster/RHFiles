@@ -65,6 +65,17 @@ test('closing aborts its own pending capture, and never starts an unbounded seco
  }finally{f.close();}
 });
 
+test('owned focus diagnostics accept only fixed classifications and boolean visibility/enabled fields',async()=>{
+ const f=fixture();let driver;
+ try{
+  let focus={focusKind:'owned-root',focusVisible:true,focusEnabled:true};
+  driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:async()=>JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,windows:[{label:'window-rhvideo',foreground:true,active:true,inputFocus:true,...focus}]})});
+  assert.equal((await driver.windows())[0].focusKind,'owned-root');
+  focus={focusKind:'embedded-process-child',focusVisible:true,focusEnabled:true};assert.equal((await driver.windows())[0].focusKind,'embedded-process-child');
+  for(const invalid of [{focusKind:'foreign caption',focusVisible:true,focusEnabled:true},{focusKind:'webview-widget',focusVisible:'yes',focusEnabled:true},{focusKind:'native-video',focusVisible:true},{focusVisible:true,focusEnabled:true}]){focus=invalid;await assert.rejects(driver.windows(),/Invalid owned window observations/);}
+ }finally{driver?.close();f.close();}
+});
+
 test('library presentation observation requires its exact scope and actual native opacity, not only decoded pixels',async()=>{
  const f=fixture();let reader;try{
   const options={workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,getState:async()=>({opened:true,inputId:7,rotation:0,renderer:'native-hardware-auto'})};
