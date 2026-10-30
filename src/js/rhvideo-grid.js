@@ -13,6 +13,7 @@
   let state = { cells: [] },
     closed = false;
   api.provideRunLookup(query=>window.__TAURI__.core.invoke('automation_receipt',{query}));
+  api.provideRunTransport(()=>window.__TAURI__.core.invoke('automation_receipt_transport'));
   function paused(value){return value.pauseRequested??(value.state===4);}
   function toggleCommand(value){return value.cells.every(v=>!paused(v)&&![5,6,7].includes(v.state))?'pause':'resume';}
   api.provideState("application", () => ({

@@ -1,5 +1,8 @@
 //! Process-owned completion records for actions which retire their WebView.
-//! No disk, arguments, credentials, listener, or automatic operation replay.
+//! No disk, operation arguments, or automatic operation replay. An explicitly
+//! enabled CLI can read receipts over an authenticated, local-only Windows pipe.
+#[cfg(windows)]
+mod transport;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -323,6 +326,29 @@ pub(crate) async fn automation_receipt(
     app: tauri::AppHandle,
     query: Query,
 ) -> Result<Option<Value>, Value> {
+    read_receipt(query, Some(app), false).await
+}
+
+#[tauri::command]
+pub(crate) async fn automation_receipt_transport() -> Result<Option<Value>, String> {
+    #[cfg(windows)]
+    {
+        // Existing explicit local automation opt-in; no pipe for ordinary UI
+        // sessions and never a TCP/LAN listener.
+        if crate::window::requested_browser_args().is_none() {
+            return Ok(None);
+        }
+        return transport::descriptor().await.map(Some);
+    }
+    #[cfg(not(windows))]
+    Ok(None)
+}
+
+async fn read_receipt(
+    query: Query,
+    app: Option<tauri::AppHandle>,
+    wait_for_start: bool,
+) -> Result<Option<Value>, Value> {
     #[cfg(not(debug_assertions))]
     let _ = app;
     #[cfg(debug_assertions)]
@@ -354,16 +380,22 @@ pub(crate) async fn automation_receipt(
             }
             value
         };
-        if value.as_ref().is_none_or(|v| v["state"] != "running") || Instant::now() >= end {
+        if value
+            .as_ref()
+            .map_or(!wait_for_start, |v| v["state"] != "running")
+            || Instant::now() >= end
+        {
             #[cfg(debug_assertions)]
             if let Some(trace) = &trace {
                 trace.finish(value.as_ref());
                 let trace = *trace;
-                if app
-                    .run_on_main_thread(move || trace.record("ui-turn", json!({})))
-                    .is_err()
-                {
-                    trace.record("ui-turn-unavailable", json!({}));
+                if let Some(app) = &app {
+                    if app
+                        .run_on_main_thread(move || trace.record("ui-turn", json!({})))
+                        .is_err()
+                    {
+                        trace.record("ui-turn-unavailable", json!({}));
+                    }
                 }
             }
             return Ok(value);

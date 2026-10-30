@@ -11,6 +11,7 @@ import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
+import {readProcessReceipt} from '../rhfiles-receipts.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 import {listenBrowserLoopback} from '../testing/browser-loopback.mjs';
 const native={skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'};
@@ -130,7 +131,7 @@ test('grid-owned close returns its completed CLI receipt and releases every nati
   }finally{grid?.close();await s.close();}
 });
 
-test('grid close recovers through a real survivor when the first view is paused and target rediscovery is unavailable',native,async()=>{
+test('grid close reads its native process receipt while the first view is paused and target rediscovery is unavailable',native,async()=>{
   const s=await setup();let grid,server;
   try{
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
@@ -184,10 +185,35 @@ test('grid close recovers through a real survivor when the first view is paused 
     const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line));assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Never resubmit the close action');
     const healthyStart=trace.findIndex(row=>row.rhfilesClientTrace==='recovery.target'&&row.target!==main.id),pausedEnd=trace.findIndex(row=>['recovery.cancelled','recovery.unavailable'].includes(row.rhfilesClientTrace)&&row.target===main.id);
     assert(healthyStart>=0&&pausedEnd>healthyStart,'The healthy survivor must start before the paused source finishes or is cancelled, not wait for its time slice');
-    assert(trace.some(row=>['recovery.read','recovery.wait'].includes(row.rhfilesClientTrace)&&row.target!==main.id&&row.state==='succeeded'),'Completion must come from a real surviving view, not disappearance');assert.equal(requests,1,'Previously enumerated survivors must not need a fresh target list');
+    assert(trace.some(row=>row.rhfilesClientTrace==='recovery.native'&&row.state==='succeeded'),'Completion must come from the authenticated process ledger, not window disappearance or a delayed UI callback');assert.equal(requests,1,'The reserved native transport must not need a fresh target list');
     assert.equal((await command(s.app,'grid.state')).cells.length,0);
     await until(async()=>{const current=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !current.some(page=>page.id===gridPage.id);},'the closed grid WebView is really destroyed',3000);
   }finally{server?.closeAllConnections();if(server)await new Promise(resolve=>server.close(resolve));grid?.close();await s.close();}
+});
+
+test('native receipt recovery needs no surviving WebView reply and rejects an unauthenticated reader',native,async()=>{
+  const s=await setup();let grid;
+  try{
+    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'two actual native frames before independent receipt recovery',25000);
+    const descriptor=await grid.evaluate('RHFilesAPI.rpc({jsonrpc:"2.0",id:"local-capability",method:"runs.transport",params:{}}).then(reply=>reply.result)');
+    assert.equal(descriptor.type,'windows-pipe');
+    const wrongSecret=(descriptor.secret[0]==='a'?'b':'a')+descriptor.secret.slice(1);
+    const denied=await readProcessReceipt({...descriptor,secret:wrongSecret},{runId:'not-readable'},Date.now()+1000);
+    assert.equal(denied.error.code,'UNAUTHORIZED');assert.equal(denied.result,undefined);
+    assert.equal((await command(s.app,'grid.state')).cells.length,2,'A rejected read must not close or change the native players');
+    for(const session of [s.app,s.view])await session.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;api.rpc=request=>["runs.status","runs.lookup","runs.wait"].includes(request.method)?new Promise(()=>{}):rpc.call(api,request);return true;})()');
+    await grid.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;api.rpc=request=>request.method==="runs.wait"?new Promise(()=>{}):rpc.call(api,request);return true;})()');
+    const output=await runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'native-receipt-only',{trace:true});
+    fs.writeFileSync(path.join(s.app.artifactDir,'native-receipt-only.json'),JSON.stringify(output,null,2));
+    assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
+    const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line));
+    assert(trace.some(row=>row.rhfilesClientTrace==='recovery.native'&&row.state==='succeeded'),'The real process ledger, not any UI callback, must confirm completion');
+    assert(!trace.some(row=>['recovery.read','recovery.wait'].includes(row.rhfilesClientTrace)&&row.state==='succeeded'));
+    assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Never replay the accepted close');
+    assert.equal((await command(s.app,'grid.state')).cells.length,0);
+    await until(async()=>!(await(await fetch('http://127.0.0.1:'+s.app.port+'/json/list')).json()).some(page=>new URL(page.url).pathname==='/rhvideo-grid.html'),'the real grid WebView is destroyed, not left hidden',3000);
+  }finally{grid?.close();await s.close();}
 });
 
 test('a later real completion is not discarded after an earlier survivor reports running but loses its wait reply',native,async()=>{
@@ -198,7 +224,9 @@ test('a later real completion is not discarded after an earlier survivor reports
     // Only reply delivery is faulted. The original close and all receipts are
     // real. Main answers its first status normally but drops the subsequent
     // wait; the library holds its one status until the real close is complete.
-    await grid.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;api.rpc=request=>request.method==="runs.wait"?new Promise(()=>{}):rpc.call(api,request);return true;})()');
+    // Explicitly cover older/native-transport-unavailable clients here. Only
+    // capability discovery is disabled; real close and ledger reads remain.
+    await grid.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;api.rpc=request=>request.method==="runs.transport"?Promise.resolve({jsonrpc:"2.0",id:request.id,result:null}):request.method==="runs.wait"?new Promise(()=>{}):rpc.call(api,request);return true;})()');
     await s.app.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;window.__receiptWaitStarted=false;api.rpc=request=>{if(request.method==="runs.wait"){window.__receiptWaitStarted=true;return new Promise(()=>{});}return rpc.call(api,request);};return true;})()');
     await s.view.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;window.__releaseReceiptStatus=null;api.rpc=async request=>{if(request.method==="runs.status")await new Promise(resolve=>window.__releaseReceiptStatus=resolve);return rpc.call(api,request);};return true;})()');
     closing=runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'late-native-completion',{trace:true});

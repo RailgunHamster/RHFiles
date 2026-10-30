@@ -3,6 +3,7 @@
   const api=window.RHFilesAPI,$=id=>document.getElementById(id),object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const native=(action,args={})=>window.__TAURI__.core.invoke('rhvideo_request',{action,args:state.generation?{...args,_sessionGeneration:state.generation}:args});
   api.provideRunLookup(query=>window.__TAURI__.core.invoke('automation_receipt',{query}));
+  api.provideRunTransport(()=>window.__TAURI__.core.invoke('automation_receipt_transport'));
   api.provideState('application',()=>({platform:'windows',window:'window-rhvideo-player',ready}));
   let state={opened:false},ready=false,busy=false,dragging=false,volumeDragging=false,queueDragging=false,favoriteDragging=false,closed=false;
   function error(value){delete $('error').dataset.automation;$('error').textContent=String(value?.message||value);}

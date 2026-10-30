@@ -13,7 +13,7 @@ function player(){
   for(const match of html.matchAll(/id="([^"]+)"/g))node(match[1]);
   node('back').textContent=html.match(/id="back"[^>]*>([^<]*)</)[1];
   const controls=()=>[...nodes.values()].filter(n=>!['controls','title','status','error','position','duration','favorite-row','queue-row','segment-row','queue-counter','favorite-counter','portrait-count','playback-actions'].includes(n.id));
-  const api={provideRunLookup(){},provideState:(name,read)=>providers.set(name,read),register:(name,handler)=>actions.set(name,handler),list:()=>[...actions.keys()].map(id=>({id})),invoke:async(name,args)=>actions.get(name)(args)};
+  const api={provideRunLookup(){},provideRunTransport(){},provideState:(name,read)=>providers.set(name,read),register:(name,handler)=>actions.set(name,handler),list:()=>[...actions.keys()].map(id=>({id})),invoke:async(name,args)=>actions.get(name)(args)};
   const pending=new Promise(resolve=>release=resolve);
   const context=vm.createContext({window:{RHFilesAPI:api,__TAURI__:{core:{invoke:()=>pending},event:{listen:async()=>{}}},addEventListener(){}},document:{getElementById:node,querySelectorAll:controls,createElement:()=>{const n=node('new-'+nodes.size);Object.defineProperty(n,'id',{get(){return this.identifier;},set(id){this.identifier=id;nodes.set(id,this);}});return n;}},RHFilesUI:{listen(){}},RHVideoModel:model,setTimeout:callback=>timers.push(callback),performance:{now:()=>0}});
   vm.runInContext(source,context);

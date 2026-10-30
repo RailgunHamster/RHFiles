@@ -37,7 +37,7 @@
   }
   function result(value){if(value===undefined)return null;if(value&&typeof value==='object'&&typeof value.nodeType==='number')return {uiChanged:true};try{return json(value);}catch{fail('INVALID_RESULT','Action did not return serializable JSON');}}
   const errorOf=e=>({code:typeof e?.code==='string'?e.code:'ACTION_FAILED',message:String(e?.message||e),...(e?.details===undefined?{}:{details:redact(e.details)})});
-  function create({instanceId=uuid(),now=Date.now,maxRuns=128,maxActive=32,lookupRun=null}={}){
+  function create({instanceId=uuid(),now=Date.now,maxRuns=128,maxActive=32,lookupRun=null,readTransport=null}={}){
     const commands=new Map(),runs=new Map(),keys=new Map(),states=new Map();let sequence=0,completionSequence=0,activeRun=null;
     function register(id,handler,description={}){
       if(!/^[a-zA-Z][a-zA-Z0-9_.-]{0,199}$/.test(id)||typeof handler!=='function')fail('INVALID_ACTION','Invalid action registration');
@@ -69,6 +69,7 @@
     function lookup(key){const entry=keys.get(key);if(!entry)fail('RUN_NOT_FOUND','No request with this key in this app instance');if(!runs.has(entry.id))fail('RESULT_EXPIRED','This result expired; do not automatically repeat the operation');return status(entry.id);}
     async function wait(id,timeoutMs=30000){if(!Number.isSafeInteger(timeoutMs)||timeoutMs<0||timeoutMs>30000)fail('INVALID_PARAMS','Wait is limited to 0–30000 ms');const entry=runs.get(id);if(!entry)fail('RUN_NOT_FOUND','Unknown run');let timer;try{if(entry.active&&timeoutMs)await Promise.race([entry.promise,new Promise(resolve=>{timer=setTimeout(resolve,timeoutMs);})]);return status(id);}finally{clearTimeout(timer);}}
     function provideRunLookup(read){if(lookupRun||typeof read!=='function')fail('INVALID_RUN_LOOKUP','Only one process run lookup can be registered');lookupRun=read;}
+    function provideRunTransport(read){if(readTransport||typeof read!=='function')fail('INVALID_RUN_TRANSPORT','Only one local receipt transport provider can be registered');readTransport=read;}
     async function readRun(method,p){
       try{return method==='runs.status'?status(p.runId):method==='runs.lookup'?lookup(p.key):await wait(p.runId,p.timeoutMs??30000);}
       catch(error){
@@ -88,19 +89,20 @@
         const input=json(request);if(input.jsonrpc!=='2.0'||!Object.hasOwn(input,'id')||!['string','number'].includes(typeof input.id))fail('INVALID_REQUEST','JSON-RPC 2.0 with a string or numeric id is required');
         if(Object.keys(input).some(k=>!['jsonrpc','id','method','params'].includes(k)))fail('INVALID_REQUEST','Unknown JSON-RPC envelope field');
         const p=input.params??{};let value;
-        if(input.method==='api.describe'){validate(p,{type:'object',properties:{},additionalProperties:false});value={apiVersion:VERSION,instanceId,transport:'local-only',methods:['api.describe','actions.list','actions.describe','actions.run','runs.status','runs.lookup','runs.wait','state.get']};}
+        if(input.method==='api.describe'){validate(p,{type:'object',properties:{},additionalProperties:false});value={apiVersion:VERSION,instanceId,transport:'local-only',methods:['api.describe','actions.list','actions.describe','actions.run','runs.status','runs.lookup','runs.wait','runs.transport','state.get']};}
         else if(input.method==='actions.list'){validate(p,{type:'object',properties:{},additionalProperties:false});value=list();}
         else if(input.method==='actions.describe'){validate(p,{type:'object',properties:{action:{type:'string'}},required:['action'],additionalProperties:false});value=describe(p.action);}
         else if(input.method==='actions.run'){validate(p,{type:'object',properties:{action:{type:'string'},args:{type:'object'},key:{type:'string'}},required:['action'],additionalProperties:false});value=run(p.action,p.args??{},{key:p.key});}
         else if(input.method==='runs.status'){validate(p,{type:'object',properties:{runId:{type:'string'}},required:['runId'],additionalProperties:false});value=await readRun(input.method,p);}
         else if(input.method==='runs.lookup'){validate(p,{type:'object',properties:{key:{type:'string',minLength:1,maxLength:200}},required:['key'],additionalProperties:false});value=await readRun(input.method,p);}
         else if(input.method==='runs.wait'){validate(p,{type:'object',properties:{runId:{type:'string'},timeoutMs:{type:'integer',minimum:0,maximum:30000}},required:['runId'],additionalProperties:false});value=await readRun(input.method,p);}
+        else if(input.method==='runs.transport'){validate(p,{type:'object',properties:{},additionalProperties:false});value=readTransport?result(await readTransport()):null;}
         else if(input.method==='state.get'){validate(p,{type:'object',properties:{},additionalProperties:false});value=snapshot();}
         else fail('METHOD_NOT_FOUND','Unknown JSON-RPC method');
         return {jsonrpc:'2.0',id,result:value};
       }catch(error){const detail=errorOf(error),codes={INVALID_REQUEST:-32600,METHOD_NOT_FOUND:-32601,INVALID_PARAMS:-32602};return {jsonrpc:'2.0',id,error:{code:codes[detail.code]??-32000,message:detail.message,data:{code:detail.code,...(detail.details===undefined?{}:{details:detail.details})}}};}
     }
-    return {version:VERSION,instanceId,register,list,describe,invoke,run,status,lookup,wait,provideRunLookup,provideState,snapshot,rpc};
+    return {version:VERSION,instanceId,register,list,describe,invoke,run,status,lookup,wait,provideRunLookup,provideRunTransport,provideState,snapshot,rpc};
   }
 
   function surface(document,registry){

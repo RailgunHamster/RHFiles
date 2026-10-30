@@ -179,6 +179,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             automation_receipts::automation_receipt,
+            automation_receipts::automation_receipt_transport,
             rhvideo::rhvideo_open,
             rhvideo::rhvideo_request,
             lan_service::lan_service_state,

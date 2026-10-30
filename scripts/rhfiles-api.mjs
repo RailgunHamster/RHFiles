@@ -5,6 +5,7 @@ import {randomUUID,randomInt} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
+import {receiptTransport,matchingReceipt,readProcessReceipt} from './rhfiles-receipts.mjs';
 
 export class ClientError extends Error{constructor(code,message,details){super(message);this.code=code;this.details=details;}}
 function trace(stage,details={}){if(process.env.RHFILES_CLI_TRACE==='1')process.stderr.write(JSON.stringify({rhfilesClientTrace:stage,atMs:Math.round(performance.now()),wallMs:Date.now(),...details})+'\n');}
@@ -85,7 +86,9 @@ async function selectSession(endpoint,options){
   // clients reserve bounded, read-only receipt transports before dispatch; they
   // never send an action to a survivor, and close every transport on exit.
   if(options.wait)await Promise.all(survivors.map(async target=>{try{receiptSessions.set(target.id,await cdpSession(target,Math.min(options.timeout,1000)));}catch{}}));
-  return {...primary,receiptTargets:survivors,receiptSessions,close(){primary.close();for(const session of receiptSessions.values())session.close();receiptSessions.clear();}};
+  let processReceipts=null;
+  if(options.wait&&!options.android)try{const reply=await primary.evaluate(expressionFor({jsonrpc:'2.0',id:randomUUID(),method:'runs.transport',params:{}},'host'),Math.min(options.timeout,1000));processReceipts=receiptTransport(reply?.result);trace('receipt.capability',{available:!!processReceipts,code:reply?.error?.data?.code??null});}catch(error){trace('receipt.capabilityUnavailable',{code:error.code??'READ_FAILED'});}
+  return {...primary,processReceipts,receiptTargets:survivors,receiptSessions,close(){primary.close();for(const session of receiptSessions.values())session.close();receiptSessions.clear();}};
 }
 export function allocateAdbForward(run,remote,{randomPort=()=>20000+randomInt(30000)}={}){
   if(!/^(localabstract:webview_devtools_remote_\d+|tcp:[1-9]\d{0,4})$/.test(remote))throw new ClientError('ADB_FORWARD_FAILED','Invalid local debugging/fixture endpoint');
@@ -188,6 +191,17 @@ export async function waitWithReceipt(primaryWait,completionRead){
   const result=await Promise.race([primary.then(async result=>result.error?(await completion)??result:result),completion.then(result=>result??primary)]);
   if(result.error)throw result.error;return result.value;
 }
+export async function recoverProcessReceipt(transport,request,runId,deadline,{signal,read=readProcessReceipt}={}){
+  if(request.method!=='actions.run'||!request.params?.key||signal?.aborted||Date.now()>=deadline)return null;
+  const query={...(runId?{runId}:{key:request.params.key}),timeoutMs:Math.min(30000,Math.max(0,deadline-Date.now()-25))};
+  try{
+    const reply=await read(transport,query,deadline,{signal});
+    trace('recovery.native',{state:reply?.result?.state??null,code:reply?.error?.code??null,remainingMs:Math.max(0,deadline-Date.now())});
+    if(reply?.error?.code==='RESULT_EXPIRED')return {jsonrpc:'2.0',id:request.id,error:{code:-32000,message:'Previous result expired; never automatically repeat the action',data:{code:'RESULT_EXPIRED'}}};
+    if(matchingReceipt(reply?.result,request,runId))return {jsonrpc:'2.0',id:request.id,result:reply.result};
+  }catch(error){trace('recovery.nativeUnavailable',{code:error.code??'READ_FAILED',remainingMs:Math.max(0,deadline-Date.now())});}
+  return null;
+}
 export async function main(argv=process.argv.slice(2),{write=value=>process.stdout.write(JSON.stringify(value)+'\n')}={}){
   const {options,position}=parseArguments(argv),command=position[0];
   if(options.help||!command||command==='help'){write({apiVersion:'1.0',requires:'Node.js 22+',usage:'node scripts/rhfiles-api.mjs [--port 9222 | --android SERIAL] [--pane active|left|right|host] list|describe ACTION|run ACTION JSON|status RUN_ID|wait RUN_ID|state|ui|batch',examples:['run navigation.open {"path":"D:\\\\Data"}','run selection.set {"paths":["D:\\\\Data\\\\readme.md"]}','run command.file.delete {}','status RUN_ID'],safety:'Local opt-in only. --wait never cancels an operation. Destructive UI confirmation requires its current token. No arbitrary JS evaluation, auto-install, screen clicking, or automatic write retries.'});return;}
@@ -195,7 +209,14 @@ export async function main(argv=process.argv.slice(2),{write=value=>process.stdo
   const session=await connection(options);
   const execute=async request=>{
     let value,runId,recoveryAttempted=false;const deadline=Date.now()+options.timeout,controller=new AbortController();
-    const recover=()=>{recoveryAttempted=true;return recoverRun(session.endpoint,options,request,runId,deadline,{knownTargets:session.receiptTargets,signal:controller.signal,openSession:(target,timeout,options)=>{const cached=session.receiptSessions?.get(target.id);if(cached){session.receiptSessions.delete(target.id);trace('recovery.reuse',{target:target.id});return cached;}return cdpSession(target,timeout,options);}});};
+    const recover=()=>{recoveryAttempted=true;
+      const legacy=recoverRun(session.endpoint,options,request,runId,deadline,{knownTargets:session.receiptTargets,signal:controller.signal,openSession:(target,timeout,options)=>{const cached=session.receiptSessions?.get(target.id);if(cached){session.receiptSessions.delete(target.id);trace('recovery.reuse',{target:target.id});return cached;}return cdpSession(target,timeout,options);}});
+      if(!session.processReceipts)return legacy;
+      const native=recoverProcessReceipt(session.processReceipts,request,runId,deadline,{signal:controller.signal});
+      // A missing/failed source must not discard a pending confirmed completion
+      // from another transport. Both are reads of the same accepted action.
+      return Promise.any([legacy,native].map(pending=>pending.then(value=>{if(!value)throw new ClientError('NO_COMPLETION','No confirmed receipt');return value;}))).catch(()=>null);
+    };
     trace('request.send',{method:request.method,action:request.params?.action,timeoutMs:options.timeout});
     try{
       value=await session.evaluate(expressionFor(request,options.pane));runId=value?.result?.id;trace('request.reply',{state:value?.result?.state??null,remainingMs:Math.max(0,deadline-Date.now())});
