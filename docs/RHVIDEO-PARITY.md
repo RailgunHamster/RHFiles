@@ -22,6 +22,16 @@ Android 同一主包 `c9512f55064e412fb757d243bdbd8c27d6039261035cddbd64e98b1525
 
 共享检查 **908/908、零失败／跳过**（`rhvideo-strip-audio-shared-node.log`）。同一 Android 包的完整条带业务流程也终止通过（`rhvideo-strip-current-android.log`／`rhvideo-android-strip-1793340438738-release/`），放大图真实四块像素已核对；但人工查看旋转后截图发现图片区空白，而原门禁只检查重排尺寸，未证明当时两行图像都已呈现。现继续补旋转前／横屏／旋回后的真实截图像素门禁，不能以流程通过代替这一视觉验收。Windows 首帧、Android 同屏／生命周期及完整目标均未完成；未发包、未替换正式实例或操作真机。
 
+加严后的 Android 探针逐行选择真正可见的图片内容，与 tile／行／视口求交，分别处理 contain 留白及超长图切片，再按实际屏幕坐标核对红绿蓝黄源像素；旋转前、横屏和旋回后都必须通过。新增四项测试从实际 Java 中提取同一几何表达式，验证留白、切片、两行独立可见项及未解码／缺图不能通过；这四项本身不是设备视觉证明。共享检查 **912/912、零跳过**（`rhvideo-strip-pixels-shared-node.log`）。
+
+首版新探针增量构建 **1 分 33 秒成功**，仅重编测试 APK，不重编主包／JNI；快照 `rhvideo-strip-pixels-probe-9fa6827d6cc3476d824f6f4a8bb5ee8c/` 保留主包 C951、探针 **`bfd2c0d1b6adc5804214260d2bd55aa0e9810847136d12faf4538446b413986f`** 和精确探针源码。实际安装字节逐项一致，`rhvideo-strip-pixels-current-android.log`／`rhvideo-android-strip-1793340991951-release/` **终止失败**：旋转前两行的八个源色采样全部通过，用时 **1625 ms**，实际截图已查看；随后旋转的 JavaScript 求值等待 **15 秒**超时，未完成横屏／旋回后的像素检查。补取的旋转前 PNG／几何 JSON 的设备写入时间与本次 PID 14802 的 native-logcat 记录一致，不采用旧照片代替。
+
+失败现场主线程在 WebView `ExternalBeginFrameSourceAndroid.doFrame` 的 native 调度中，系统窗口／UI 线程也有停顿，尚无唯一根因结论。本轮与新 Windows 原生整套验收并行，存在共享 GPU／宿主负载的干扰可能，不能当作已隔离的稳定性能对照；下一次完整旋转验证须等 Windows 终止后独立运行，不增加原等待预算、不重启 AVD／音频／网络。后续将像素通过记录改成 instrumentation 的结构化步骤，并要求三条本次通过记录，旧探针或残留截图不能通过新版宿主门禁；改动后四项探针几何／准入测试再次通过。
+
+带结构化步骤的新探针另经 **57 秒**增量编译成功（短路径 QA 的 `rhvideo-strip-pixels-guard-probe-build.log`）；快照 `rhvideo-strip-pixels-guard-ee7af518bac74321b0ecad7a51f86550/` 的主包仍为 C951，探针 **`a8749ae92cea55d0418351da80bb809d8f07a3ef7a94484a893d54bcb0cd14fc`**，精确测试源码 SHA-256 **`41b776066eb2891e5f0fcd644ad4f10fca92e7581ac967005ef0b0d43435947f`**。这是为独立后续验证准备的探针，不是已安装／通过的新版主包或新的 JVM 全套结果。
+
+新 Windows 整套已在 `rhvideo-strip-consumer-frozen-6063e480e2834d73b0d7ba85a29d6e44/` 启动：冻结 **1120** 个源码／测试文件、同一 9BF0 程序及 app-local 3.0.24，十九个文件含新增的延迟卡片反例（其 `test-artifacts/rhvideo-strip-consumer-full-windows.log`）。该运行尚未终止；不以截至目前的子项通过宣称整套成功，也不因观察超时启动替代运行。
+
 ## 2026-10-30 Android 可中断取流及任务缩略图布局（继续验收，未发包）
 
 在前节账户边界修复后，又用真实 MockWebServer 复现两个 Android DataSource 问题（`rhvideo-datasource-contract-red.log`／`rhvideo-datasource-contract-red-results/`，**2/2 失败**）：Media3 loader 在等待响应头时被中断，仍等到网络读取超时；精确等于资源长度的 EOF 探测则被当成普通 HTTP 416 错误。这里不是用慢网猜测播放卡顿的唯一根因。
