@@ -17,3 +17,8 @@ test('real fixture authorization precedes reference navigation and results never
   assert.match(source,/fixture-bearer-do-not-persist/);assert.match(source,/authenticated cover actually decoded/);assert.match(source,/fs\.mkdtempSync\(path\.resolve\('test-artifacts\/rhvideo-reference-comparison-'/);
   assert.doesNotMatch(source,/writeFileSync\(\s*["']test-artifacts\/rhvideo-reference-comparison\.json/);
 });
+
+test('comparison validates the packaged search index and matching engine, not only the UI that calls them',()=>{
+  for(const file of ['rhvideo-index.js','rhvideo-search.js','rhvideo-tags.js'])assert(source.includes('"'+file+'"'),'Reject stale packaged '+file+' before timing');
+  assert(source.indexOf('benchmark must use the current')<source.indexOf('const before = Date.now()'));
+});

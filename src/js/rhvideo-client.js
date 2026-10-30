@@ -149,7 +149,7 @@
     if(!state.items.length){trimCards();status('这里暂时没有内容',state.search||state.folder?'换个关键词或文件夹试试。':'内容会沿用服务器的媒体库；可以在 RHVideo 中添加监控目录。',state.kind==='favorite'?'heart':state.kind);return;}
     for(const media of state.items){
       const cacheKey=model.itemKey(media),signature=JSON.stringify(media),cached=cardCache.get(cacheKey);
-      if(cached?.signature===signature){cardCache.delete(cacheKey);cardCache.set(cacheKey,cached);grid.append(cached.node);paintFavorite(cacheKey);continue;}
+      if(cached?.signature===signature){cardCache.delete(cacheKey);cardCache.set(cacheKey,cached);grid.append(cached.node);paintCardFavorite(cached.node.querySelector('.favorite-button'),cacheKey,media.title);continue;}
       cached?.node.querySelector('img')?.removeAttribute('src');
       const card=document.createElement('article');card.className='media-card';card.dataset.id=media.id;card.dataset.kind=media.kind;
       const cover=document.createElement('button');cover.className='cover-button';cover.setAttribute('aria-label',(media.kind==='novel'?'阅读 ':media.kind==='picture'?'查看 ':'播放 ')+media.title);
@@ -175,12 +175,17 @@
       const extra=document.createElement('button');extra.className='text-button';extra.innerHTML=icon(media.kind==='video'?'timeline':media.kind==='picture'?'picture':'book');
       const caption=document.createElement('span');caption.textContent=media.kind==='video'?'时间轴':media.kind==='picture'?'查看图片':media.progress?.percent?'继续阅读 · '+media.progress.percent+'%':'开始阅读';extra.append(caption);
       extra.dataset.apiAction='rhvideo.'+(media.kind==='video'?'timeline.open':'media.open');RHFilesUI.listen(extra,'click',()=>invoke(media.kind==='video'?'timeline.open':'media.open',{id:media.id,kind:media.kind}).catch(notice),undefined,'rhvideo.card.secondary');
-      const heart=document.createElement('button');const key=model.itemKey(media);heart.dataset.key=key;heart.className='favorite-button'+(state.favorites.has(key)?' active':'');heart.innerHTML=icon('heart');
-      heart.setAttribute('aria-label',state.favorites.has(key)?'取消收藏 '+media.title:'收藏 '+media.title);heart.setAttribute('aria-pressed',String(state.favorites.has(key)));heart.disabled=state.favoriteBusy.has(key);
+      const heart=document.createElement('button');const key=model.itemKey(media);heart.dataset.key=key;heart.className='favorite-button';heart.innerHTML=icon('heart');paintCardFavorite(heart,key,media.title);
       heart.dataset.apiAction='rhvideo.favorite.toggle';RHFilesUI.listen(heart,'click',()=>invoke('favorite.toggle',{id:media.id,kind:media.kind}).catch(notice),undefined,'rhvideo.card.favorite');
       actions.append(extra,heart);info.append(actions);card.append(info);grid.append(card);cardCache.delete(cacheKey);cardCache.set(cacheKey,{node:card,signature});
     }
     trimCards();
+  }
+  function paintCardFavorite(heart,key,title=''){
+    if(!heart)return;
+    heart.classList.toggle('active',state.favorites.has(key));heart.disabled=state.favoriteBusy.has(key);
+    heart.setAttribute('aria-pressed',String(state.favorites.has(key)));
+    heart.setAttribute('aria-label',(state.favorites.has(key)?'取消收藏 ':'收藏 ')+title);
   }
   function paintFavorite(key){
     workbench?.refreshViewer();
@@ -190,9 +195,7 @@
     for(const heart of $('media-grid').querySelectorAll('.favorite-button')){
       if(heart.dataset.key!==key)continue;
       const card=heart.closest('.media-card'),media=state.items.find(m=>m.id===card.dataset.id&&m.kind===card.dataset.kind);
-      heart.classList.toggle('active',state.favorites.has(key));heart.disabled=state.favoriteBusy.has(key);
-      heart.setAttribute('aria-pressed',String(state.favorites.has(key)));
-      heart.setAttribute('aria-label',(state.favorites.has(key)?'取消收藏 ':'收藏 ')+(media?.title||''));
+      paintCardFavorite(heart,key,media?.title||'');
     }
   }
   function snapshot(){return {view:state.view,kind:state.kind,connected:state.connected,server:state.server,username:state.username,generation:state.generation,nativePlayback:state.nativePlayback,credentialsPersisted:state.credentialsPersisted,restoring:state.restoring,loginWarning:state.loginWarning,loading:state.loading,error:state.error,offset:state.offset,total:state.total,search:state.search,folder:state.folder,items:state.items.map(({id,title,kind,folder})=>({id,title,kind,folder})),reader:reader.book?{id:reader.book.id,chapter:reader.chapter,loaded:reader.loaded}:null};}

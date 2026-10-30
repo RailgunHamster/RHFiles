@@ -73,6 +73,9 @@ try {
           "rhvideo-workbench.js",
           "rhvideo-client.js",
           "rhvideo-worker.js",
+          "rhvideo-index.js",
+          "rhvideo-search.js",
+          "rhvideo-tags.js",
         ]) {
           const actual = await page.evaluate(
               "fetch(" + JSON.stringify("js/" + file) + ").then(r=>r.text())",
