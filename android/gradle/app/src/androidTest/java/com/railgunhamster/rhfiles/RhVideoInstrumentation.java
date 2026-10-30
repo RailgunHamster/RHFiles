@@ -24,7 +24,8 @@ public class RhVideoInstrumentation extends Instrumentation {
       if(evals==1)dispatchEvalMs=elapsed;else pollEvalMs+=elapsed;
     }
     void finish(String outcome){
-      try{android.util.Log.i("RHVideoQATiming",new JSONObject().put("protocol",2).put("run",run).put("sequence",sequence).put("pid",android.os.Process.myPid()).put("label",label).put("clock","android-elapsed-realtime").put("outcome",outcome).put("elapsedMs",SystemClock.elapsedRealtime()-started).put("evals",evals).put("polls",polls).put("mainQueueMs",mainQueueMs).put("mainQueueMaxMs",mainQueueMaxMs).put("callbackMs",callbackMs).put("callbackMaxMs",callbackMaxMs).put("callbackMissing",callbackMissing).put("dispatchEvalMs",dispatchEvalMs).put("pollEvalMs",pollEvalMs).put("pollSleepMs",pollSleepMs).toString());}catch(JSONException ignored){}
+      boolean readiness=label.startsWith("native.bootstrap.");
+      try{android.util.Log.i("RHVideoQATiming",new JSONObject().put("protocol",readiness?3:2).put("run",run).put("sequence",sequence).put("pid",android.os.Process.myPid()).put("label",label).put("clock","android-elapsed-realtime").put("outcome",outcome).put("elapsedMs",SystemClock.elapsedRealtime()-started).put("evals",evals).put("polls",polls).put("mainQueueMs",mainQueueMs).put("mainQueueMaxMs",mainQueueMaxMs).put("callbackMs",callbackMs).put("callbackMaxMs",callbackMaxMs).put("callbackMissing",callbackMissing).put(readiness?"firstCheckMs":"dispatchEvalMs",dispatchEvalMs).put("pollEvalMs",pollEvalMs).put("pollSleepMs",pollSleepMs).toString());}catch(JSONException ignored){}
     }
   }
   private final java.util.Set<Activity> stoppedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
@@ -921,18 +922,22 @@ public class RhVideoInstrumentation extends Instrumentation {
   private String eval(WebView web,String script)throws Exception{
     CountDownLatch latch=new CountDownLatch(1);String[] result={"null"};ExpressionTiming timing=expressionTiming.get();long queued=timing==null?0:SystemClock.elapsedRealtime();long[] checkpoints={queued,0};
     try{runOnMainSync(()->{if(timing!=null)checkpoints[0]=SystemClock.elapsedRealtime();web.evaluateJavascript(script,r->{result[0]=r;if(timing!=null)checkpoints[1]=SystemClock.elapsedRealtime();latch.countDown();});});
-      if(!latch.await(15,TimeUnit.SECONDS)){android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("JavaScript evaluation timed out");}return result[0];
+      if(!latch.await(15,TimeUnit.SECONDS)){android.util.Log.e("RHVideoQA",playbackThreads());throw new TimeoutException("JavaScript evaluation timed out");}return result[0];
     }finally{if(timing!=null)timing.evaluation(queued,checkpoints[0],checkpoints[1],SystemClock.elapsedRealtime());}
   }
   private String playbackThreads(){StringBuilder text=new StringBuilder("Native playback thread snapshot (no arguments or media addresses)");for(java.util.Map.Entry<Thread,StackTraceElement[]> entry:Thread.getAllStackTraces().entrySet()){String name=entry.getKey().getName();if(!name.equals("main")&&!name.equals("RenderThread")&&!name.startsWith("ExoPlayer:")&&!name.startsWith("Loader:"))continue;text.append("\nTHREAD ").append(name).append(" ").append(entry.getKey().getState());for(StackTraceElement frame:entry.getValue())text.append("\n  ").append(frame);}return text.toString();}
   private Object expression(WebView web,String expression)throws Exception{
     return expression(web,expression,"expression");
   }
+  private ExpressionTiming beginExpressionTiming(String label){
+    String traceRun=args.getString("expressionTimingRun","");
+    if(!traceRun.matches("[a-f0-9]{32}")||!label.matches("(?:expression|(?:native|files|rhvideo)\\.[A-Za-z][A-Za-z0-9_.]*)")||expressionTimingSequence>=512)return null;
+    ExpressionTiming timing=new ExpressionTiming(traceRun,label,++expressionTimingSequence);expressionTiming.set(timing);return timing;
+  }
   private Object expression(WebView web,String expression,String label)throws Exception{
     // Opt-in test APK observation only. No extra evaluateJavascript call,
     // polling, action, result serialization or product BuildConfig flag.
-    String traceRun=args.getString("expressionTimingRun","");ExpressionTiming timing=null;String outcome="error";
-    if(traceRun.matches("[a-f0-9]{32}")&&label.matches("(?:expression|(?:native|files|rhvideo)\\.[A-Za-z][A-Za-z0-9_.]*)")&&expressionTimingSequence<512){timing=new ExpressionTiming(traceRun,label,++expressionTimingSequence);expressionTiming.set(timing);}
+    ExpressionTiming timing=beginExpressionTiming(label);String outcome="error";
     try{
     String request=java.util.UUID.randomUUID().toString(),nonce=JSONObject.quote(request);
     // One dispatch, not two cross-process evaluations. If parsing fails the
@@ -1212,7 +1217,19 @@ public class RhVideoInstrumentation extends Instrumentation {
     String detail="";if(library!=null&&"RhVideoActivity".equals(name))try{detail=String.valueOf(action("player.state",new JSONObject()));screenshot("rhvideo-activity-failure-qa.png");}catch(Exception diagnostic){detail=diagnostic.toString();}
     throw new Exception("Missing activity "+name+"; actual="+(current==null?"none":current.getClass().getSimpleName())+"; player="+detail);
   }
-  private void ready(WebView web,String name)throws Exception{long start=System.currentTimeMillis(),end=start+45000;do{if(eval(web,"typeof "+name+" !== 'undefined'").equals("true")){step("bridge "+name+" ready after "+(System.currentTimeMillis()-start)+" ms (functional readiness, not a startup performance pass)");return;}Thread.sleep(500);}while(System.currentTimeMillis()<end);throw new Exception("Bridge not ready: "+name+"; "+eval(web,"JSON.stringify({url:location.href,title:document.title,ready:document.readyState,body:document.body?.innerText?.slice(0,300),scripts:[...document.scripts].map(s=>s.src)})"));}
+  private void ready(WebView web,String name)throws Exception{
+    ExpressionTiming timing=beginExpressionTiming("native.bootstrap."+("api".equals(name)?"main":"RHVideoBack".equals(name)?"library":"other"));String outcome="error";
+    try{
+      long start=System.currentTimeMillis(),end=start+45000;
+      do{
+        if(timing!=null)timing.polls++;
+        if(eval(web,"typeof "+name+" !== 'undefined'").equals("true")){outcome="value";step("bridge "+name+" ready after "+(System.currentTimeMillis()-start)+" ms (functional readiness, not a startup performance pass)");return;}
+        long sleepStarted=timing==null?0:SystemClock.elapsedRealtime();Thread.sleep(500);if(timing!=null)timing.pollSleepMs+=SystemClock.elapsedRealtime()-sleepStarted;
+      }while(System.currentTimeMillis()<end);
+      outcome="timeout";throw new Exception("Bridge not ready: "+name+"; "+eval(web,"JSON.stringify({url:location.href,title:document.title,ready:document.readyState,body:document.body?.innerText?.slice(0,300),scripts:[...document.scripts].map(s=>s.src)})"));
+    }catch(TimeoutException error){outcome="timeout";throw error;}
+    finally{expressionTiming.remove();if(timing!=null)timing.finish(outcome);}
+  }
   private void readerReady()throws Exception{long end=System.currentTimeMillis()+10000;do{JSONObject state=(JSONObject)action("state",new JSONObject());if(state.optJSONObject("reader")!=null&&state.getJSONObject("reader").optBoolean("loaded"))return;Thread.sleep(100);}while(System.currentTimeMillis()<end);throw new Exception("Reader not ready");}
   private void checkReferenceControls()throws Exception{
     require(((JSONObject)action("page.jump",new JSONObject().put("page",2))).getInt("offset")==36,"Direct page jump");action("page.jump",new JSONObject().put("page",1));

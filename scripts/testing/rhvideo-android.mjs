@@ -11,6 +11,7 @@ import {realRhVideoService} from './rhvideo-real-service.mjs';
 import {taskFixture} from './rhvideo-task-fixture.mjs';
 import {stepTimeline} from './rhvideo-step-timeline.mjs';
 import {expressionTimings} from './rhvideo-expression-timing.mjs';
+import {androidApkRuntimes} from './android-apk-runtime.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
 const traceExpressions=process.env.RHFILES_QA_EXPRESSION_TIMING==='1';
 assert([undefined,'0','1'].includes(process.env.RHFILES_QA_EXPRESSION_TIMING),'Expression timing is explicit and diagnostic-only');
@@ -111,9 +112,7 @@ const adb=path.join(sdk,'platform-tools/adb.exe');
 const sevenZip=path.resolve('src-tauri/thirdparty/7z.exe');
 const aapt=fs.readdirSync(path.join(sdk,'build-tools')).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true})).map(v=>path.join(sdk,'build-tools',v,'aapt.exe')).find(v=>fs.existsSync(v));
 assert(aapt,'Android aapt is required to validate the native runtime');
-const apkEntries=execFileSync(aapt,['list',path.resolve(apk)],{encoding:'utf8',windowsHide:true}).split(/\r?\n/),abis=new Set(apkEntries.filter(v=>v.startsWith('lib/')).map(v=>v.split('/')[1]));
-assert(abis.size>0,'Release APK has no native libraries');
-for(const abi of abis)assert(apkEntries.includes('lib/'+abi+'/librhfiles_android_lib.so'),'Missing RHFiles runtime for '+abi+'; use the same ABI filters as the completed Rust build');
+const apkEntries=execFileSync(aapt,['list',path.resolve(apk)],{encoding:'utf8',windowsHide:true}).split(/\r?\n/);androidApkRuntimes(apkEntries);
 for(const relative of ['rhvideo.html','css/rhvideo.css','css/rhvideo-workbench.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-tags.js','js/rhvideo-rules-model.js','js/rhvideo-rules.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-exports.js','js/rhvideo-duplicates.js','js/rhvideo-task-priority.js','js/rhvideo-task-presentation.js','js/rhvideo-task-center.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-worker.js','js/rhvideo-refresh.js','rhvideo-operations.json']){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(apk),'assets/rhvideo/'+relative],{windowsHide:true,maxBuffer:8*1024*1024});
   const expected=fs.readFileSync(path.resolve('src',relative));

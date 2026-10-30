@@ -16,7 +16,8 @@ const plain=x=>JSON.parse(JSON.stringify(x));
 function view(token){return {token,transitionTicket:1,videoActive:false,videoInput:null,tiles:new Map(),surface:{getBoundingClientRect:()=>({x:0,y:0,width:800,height:450})},observer:{disconnect(){}}};}
 function fixture(){
  const calls=[],opens=[],bounds=[],backend={input:11,opacity:1,playing:true,controls:0};let sequence=100,holdBounds=false;
- const context=vm.createContext({viewer:view(1),viewerToken:1,animation:0,innerWidth:800,config:()=>({super:false}),abortPictureOrders(){},rememberViewer(){},retireStripTile(){},cancelAnimationFrame(){},clearTimeout(){},notice(){}});
+ const context=vm.createContext({viewer:view(1),viewerToken:1,animation:0,innerWidth:800,top:true,config:()=>({super:false}),abortPictureOrders(){},rememberViewer(){},retireStripTile(){},cancelAnimationFrame(){},clearTimeout(){},notice(){},invalidatePendingConfirmation(){},$:()=>({close(){}}),liveRefresh:{enabled:false,configure(){}}});
+ context.viewerIsTop=()=>context.top;
  const apply=(name,args={})=>{
   if(Object.hasOwn(args,'expectedInput')&&args.expectedInput!==backend.input)return {stale:true,opened:false};
   if(name==='presentation.close'){backend.input=null;return {closed:true};}
@@ -31,7 +32,7 @@ function fixture(){
   return Promise.resolve(apply(name,args));
  };
  for(const name of ['presentationRequest','syncPresentation','stopViewer'])if(functions.has(name))vm.runInContext(functions.get(name),context);
- for(const [target,id]of [['openVideo','viewer.video'],['control','viewer.mediaControl']])vm.runInContext('globalThis.'+target+'=('+actions.get(id)+')',context);
+ for(const [target,id]of [['openVideo','viewer.video'],['control','viewer.mediaControl'],['closePanel','panel.close']])vm.runInContext('globalThis.'+target+'=('+actions.get(id)+')',context);
  return {context,backend,calls,opens,bounds,holdBounds(){holdBounds=true;}};
 }
 
@@ -74,4 +75,17 @@ test('closing an old viewer cannot globally stop a newer native input which alre
  const f=fixture();f.context.viewer.videoActive=true;f.context.viewer.videoInput=11;f.backend.input=22;
  f.context.stopViewer();await new Promise(setImmediate);
  assert.equal(f.context.viewer,null);assert.equal(f.backend.input,22);assert.equal(f.calls[0].args.expectedInput,11);
+});
+
+test('a late projection cannot show the current native video over a newer modal',async()=>{
+ const f=fixture();f.context.viewer.videoActive=true;f.context.viewer.videoInput=11;f.context.top=false;
+ await f.context.syncPresentation(1,true,f.context.viewer);
+ assert.equal(f.calls[0].args.visible,false);assert.equal(f.calls[0].args.opacity,0);
+});
+
+test('closing one panel cannot resume video after another panel opens while native bounds acknowledgement is pending',async()=>{
+ const f=fixture();f.context.viewer.videoActive=true;f.context.viewer.videoInput=11;f.context.viewer.running=true;f.holdBounds();
+ const closing=f.context.closePanel({id:'wb-settings'});assert.equal(f.bounds.length,1);
+ f.context.top=false;f.bounds[0].finish();await closing;
+ assert.equal(f.backend.controls,0,'The new modal still owns pause; no late resume may be queued');
 });

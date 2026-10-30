@@ -783,7 +783,7 @@
           if (viewer?.videoActive && viewerIsTop()) {
             const v=viewer;
             await syncPresentation(1,true,v);
-            if (viewer===v&&v.running)
+            if (viewer===v&&v.running&&viewerIsTop())
               await presentationRequest("control", { command: "resume" },v);
           }
           if(id==="wb-viewer"&&!$("image-dialog").open)await invoke("preview.commit");
@@ -3964,7 +3964,7 @@
           v.videoFadeSeconds = v.running && c.overlap ? c.fade : 0;
           await syncPresentation(v.videoFadeSeconds > 0 ? 0 : 1,true,v);
           if (viewer !== v || transitionTicket !== v.transitionTicket) return {stale:true};
-          if (!v.running)
+          if (!v.running||!viewerIsTop())
             await presentationRequest("control", { command: "pause" },v);
         } else {
           const [url] = await native("images", {
@@ -4186,6 +4186,10 @@
       );
       function syncPresentation(opacity = 1, visible = true,v=viewer) {
         if (!v?.videoActive) return Promise.resolve({ opened: false });
+        // Native child surfaces sit above WebView dialogs. Recheck the modal
+        // owner after each async boundary instead of reviving a hidden plane.
+        visible=visible&&viewerIsTop();
+        if(!visible)opacity=0;
         const rect = v.surface.getBoundingClientRect();
         return presentationRequest("bounds", {
           x: rect.x,

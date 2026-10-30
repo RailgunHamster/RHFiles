@@ -150,6 +150,7 @@ int wmain(int argc,wchar_t** argv){
     const std::wstring mode(argv[4]);require(mode==L"native-hardware-auto"||mode==L"gdi-compatibility","Unknown actual renderer");
     verify_process(pid,argv[2]);SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     Windows windows{pid,{},presentation};require(EnumWindows(top_window,reinterpret_cast<LPARAM>(&windows)),"Cannot enumerate owned windows");
+    require(!windows.surfaces.empty(),"No visible owned player surface is present");
     require(windows.surfaces.size()==1,"Exactly one visible owned player surface is required");const HWND window=windows.surfaces.front();owned_surface(window,pid);
     const BYTE alpha=presentation?presentation_alpha(window):255;
     RECT rectangle{};require(GetClientRect(window,&rectangle),"Cannot read owned client geometry");const int width=rectangle.right,height=rectangle.bottom;

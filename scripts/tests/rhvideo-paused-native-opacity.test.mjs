@@ -8,10 +8,10 @@ const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.
 let slide,presentationRequest;
 function find(node){if(!node||typeof node!=='object')return;if(node.type==='FunctionDeclaration'&&node.id?.name==='slide')slide=source.slice(node.start,node.end);if(node.type==='FunctionDeclaration'&&node.id?.name==='presentationRequest')presentationRequest=source.slice(node.start,node.end);for(const value of Object.values(node))if(Array.isArray(value))value.forEach(find);else if(value&&typeof value==='object')find(value);}
 find(parse(source,{ecmaVersion:'latest'}));assert(slide,'Execute the actual production slide function');
-function fixture(running,{replaceDuringRead=false,replaceTransitionDuringRead=false,replaceDuringBounds=false}={}){
+function fixture(running,{replaceDuringRead=false,replaceTransitionDuringRead=false,replaceDuringBounds=false,top=true}={}){
  const calls=[],queue=[{kind:'video',id:'video-0',title:'synthetic only'}],surface={children:[],style:{setProperty(){}},querySelector:()=>null,append(node){this.children.push(node);}},viewer={length:1,queue,surface,source:'favorite',running,videoActive:true,videoInput:7};let context;
  const settings={favoriteFadeMs:800,favoriteStay:7,videoStay:15};
- context=vm.createContext({viewer,I,config:()=>settings,performance:{now:()=>1000},refreshViewer(){},paintSlideshowProgress(){},
+ context=vm.createContext({viewer,I,config:()=>settings,viewerIsTop:()=>top,performance:{now:()=>1000},refreshViewer(){},paintSlideshowProgress(){},
   slideshowPlan:v=>I.slideshowPlan(v.queue,settings,v.source),el:()=>({style:{setProperty(){}},classList:{toggle(){}}}),
   invoke:async(name,args)=>{calls.push({name,args});},native:async(name,args)=>{calls.push({name,args});if(name==='presentation.state'){if(replaceDuringRead)context.viewer={replacement:true};if(replaceTransitionDuringRead)viewer.transitionTicket++;return {renderedFrames:1};}},syncPresentation:async opacity=>{calls.push({name:'bounds',opacity});if(replaceDuringBounds)context.viewer={replacement:true};}});
  vm.runInContext(presentationRequest,context);vm.runInContext(slide,context);return {context,viewer,calls};
@@ -36,4 +36,10 @@ test('a newer slide in the same viewer invalidates a late first-frame read',asyn
 test('an old bounds completion cannot queue a pause for a replacement viewer',async()=>{
  const f=fixture(false,{replaceDuringBounds:true}),result=await f.context.slide(0);
  assert.equal(f.calls.filter(row=>row.name==='presentation.control').length,0);assert.equal(result?.stale,true);assert.equal(f.viewer.surface.children.length,0);
+});
+
+test('a running slideshow whose late first-frame read finishes under another modal pauses the actual native input',async()=>{
+ const f=fixture(true,{top:false});await f.context.slide(0);
+ assert.deepEqual(f.calls.filter(row=>row.name==='presentation.control').map(row=>row.args.command),['pause']);
+ assert.equal(f.viewer.running,true,'Opening a panel must preserve the user playback intent for restoring it later');
 });

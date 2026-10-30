@@ -41,8 +41,25 @@ test('probe timing is opt-in, contains no result serialization and preserves ori
   const source=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');
   const timing=source.slice(source.indexOf('private static final class ExpressionTiming'),source.indexOf('private final java.util.Set<Activity>'));
   assert.doesNotMatch(timing,/expression|script|password|params|value\.toString|Thread\.sleep|evaluateJavascript/);
-  assert.match(source,/expressionTimingSequence<512/);assert.match(source,/traceRun\.matches\("\[a-f0-9\]\{32\}"\)/);
+  assert.match(source,/expressionTimingSequence>=512/);assert.match(source,/traceRun\.matches\("\[a-f0-9\]\{32\}"\)/);
   assert.match(source,/latch\.await\(15,TimeUnit\.SECONDS\)/);assert.match(source,/System\.currentTimeMillis\(\)\+45000/);assert.match(source,/Thread\.sleep\(100\)/);
   assert.match(source,/expressionTiming\.remove\(\);if\(timing!=null\)timing\.finish\(outcome\)/);
   const host=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8');assert.match(host,/RHFILES_QA_EXPRESSION_TIMING/);assert.match(host,/expression-timing-enabled/);assert.match(host,/not native|expressionTimings/);
+});
+
+test('bootstrap reads have their own fixed protocol and cannot masquerade as a business operation dispatch',()=>{
+ const value=sample({protocol:3,label:'native.bootstrap.main',outcome:'timeout',evals:1,polls:1,firstCheckMs:15000,callbackMissing:1});
+ const result=expressionTimings(line(value),run);assert.equal(result.records.length,1);const row=result.records[0];
+ assert.equal(row.readinessChecks,1);assert.equal(row.firstCheckMs,15000);assert.equal(row.callbackMissing,1);assert.equal(row.outcome,'timeout');
+ assert(!Object.hasOwn(row,'dispatchEvals'));assert(!Object.hasOwn(row,'dispatchEvalMs'));assert(!Object.hasOwn(row,'resetEvalMs'));
+ for(const extra of [{protocol:2,dispatchEvalMs:15},{label:'rhvideo.player.state'},{label:'native.bootstrap.private'},{firstCheckMs:null}])assert.equal(expressionTimings(line({...value,...extra}),run).records.length,0);
+});
+
+test('bootstrap timing wraps the original readiness evaluations without adding polling, UI actions or a larger budget',()=>{
+ const source=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');
+ const ready=source.slice(source.indexOf('private void ready('),source.indexOf('\n  private ',source.indexOf('private void ready(')+1));
+ assert.match(ready,/beginExpressionTiming\("native\.bootstrap\."/);assert.match(ready,/end=start\+45000/);assert.match(ready,/Thread\.sleep\(500\)/);
+ assert.equal([...ready.matchAll(/eval\(web,/g)].length,2,'Original predicate and terminal diagnostic only');
+ assert.doesNotMatch(ready,/nativeCall\(|\.invoke\(|performClick|\.reload\(|\.focus\(/);
+ assert.match(ready,/catch\(TimeoutException error\)\{outcome="timeout";throw error;\}/);assert.match(ready,/expressionTiming\.remove\(\);if\(timing!=null\)timing\.finish\(outcome\)/);
 });
