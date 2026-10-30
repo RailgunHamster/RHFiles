@@ -8,6 +8,8 @@ import { launchApp, until } from "./app-session.mjs";
 import { cdpSession } from "../rhfiles-api.mjs";
 import { rhvideoFixture } from "./rhvideo-fixture.mjs";
 import { installSearchTiming } from "./rhvideo-search-timing.mjs";
+import { visibleCoverReadiness } from "./rhvideo-visible-covers.mjs";
+import { sourceRoot } from "./source.mjs";
 function verifyComparisonWorkload(reports) {
   assert.equal(reports.length,2);assert.equal(reports[0].client,'RHVideo');assert.equal(reports[1].client,'RHFiles');
   for (const row of reports) {
@@ -15,6 +17,13 @@ function verifyComparisonWorkload(reports) {
     assert.equal(row.rendered.width,1280);assert.equal(row.rendered.height,800);
     assert.equal(row.rendered.visible,'visible');
     assert(Number.isSafeInteger(row.rendered.decodedImages)&&row.rendered.decodedImages>0, row.client+' must render actual authenticated covers; a blank/error workload is not comparable');
+    assert.equal(row.rendered.logicalCards,36,'Both clients must render the same logical page size');
+    assert.equal(row.counts.length,21);
+    assert.equal(row.coverSamples.length,22,'Cold list plus every query needs visible-cover admission');
+    for(const sample of [row.rendered,...row.coverSamples]){
+      assert(Number.isSafeInteger(sample.visibleCovers)&&sample.visibleCovers>0,'A visible cover container cannot disappear from admission');
+      assert.equal(sample.decodedVisibleCovers,sample.visibleCovers,'Every visible cover must decode, not just one image');
+    }
   }
   assert.deepEqual(reports[0].counts,reports[1].counts,'both clients must match identical search semantics');
 }
@@ -30,12 +39,14 @@ const fixture = await rhvideoFixture({
   referenceStatic: path.join(reference, "static"),
 });
 const reports = [];
+let runError;
 const percentile = (samples, n) =>
   [...samples].sort((a, b) => a - b)[
     Math.min(samples.length - 1, Math.floor(samples.length * n))
   ];
 try {
   for (const client of ["RHVideo", "RHFiles"]) {
+    const firstRequest=fixture.requests.length;
     const app = await launchApp({ emulateFocus: true });
     let page;
     try {
@@ -83,7 +94,7 @@ try {
           const actual = await page.evaluate(
               "fetch(" + JSON.stringify("js/" + file) + ").then(r=>r.text())",
             ),
-            expected = fs.readFileSync("src/js/" + file, "utf8");
+            expected = fs.readFileSync(path.join(sourceRoot,"src/js",file), "utf8");
           assert.equal(
             createHash("sha256").update(actual).digest("hex"),
             createHash("sha256").update(expected).digest("hex"),
@@ -104,6 +115,8 @@ try {
       // otherwise secondary-window timer throttling skews only RHFiles samples.
       await page.send("Emulation.setFocusEmulationEnabled", { enabled: true });
       await page.send("Page.bringToFront");
+      const coverSelector=client==='RHVideo'?'#videos-grid .video-thumbnail':'#media-grid .cover-button';
+      const visibleExpression='('+visibleCoverReadiness.toString()+')('+JSON.stringify(coverSelector)+')';
       await page.evaluate(
         "window.__bench={maxGap:0,last:0,frames:0};window.__benchFrame=t=>{const b=window.__bench;if(b.last)b.maxGap=Math.max(b.maxGap,t-b.last);b.last=t;b.frames++;window.__benchRAF=requestAnimationFrame(window.__benchFrame)};requestAnimationFrame(window.__benchFrame);true",
       );
@@ -133,12 +146,15 @@ try {
         );
         assert.equal(result.total, 50000);
       }
-      await until(()=>page.evaluate("[...document.images].some(node=>node.complete&&node.naturalWidth>0)"),client+' authenticated cover actually decoded');
+      const coldCovers=await page.evaluate(visibleExpression);
+      await page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       const coldMs = Date.now() - before,
         samples = [],
         apiSamples = [],
         counts = [],
-        timingWindows = [];
+        timingWindows = [],
+        coverSamples = [coldCovers],
+        layoutSamples = [];
       if(profileSearch){
         await page.send('Profiler.enable');
         await page.send('Profiler.setSamplingInterval',{interval:1000});
@@ -155,10 +171,11 @@ try {
               ? `document.getElementById('search-input').value=${JSON.stringify(query)};await filterVideos();const total=filteredVideos.length;`
               : `const value=await RHFilesAPI.invoke('rhvideo.search',{query:${JSON.stringify(query)}});const total=value.total;`
           }
-        const apiMs=performance.now()-start;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ms:performance.now()-start,apiMs,total,${traceSearch?'startedMs:start,finishedMs:performance.now()':''}};})()`);
+        const apiMs=performance.now()-start;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const layoutMs=performance.now()-start;const covers=await ${visibleExpression};await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ms:performance.now()-start,apiMs,layoutMs,covers,total,${traceSearch?'startedMs:start,finishedMs:performance.now()':''}};})()`);
         samples.push(result.ms);
         apiSamples.push(result.apiMs);
         counts.push(result.total);
+        coverSamples.push(result.covers);layoutSamples.push(result.layoutMs);
         if(traceSearch)timingWindows.push({sample:timingWindows.length,startedMs:result.startedMs,finishedMs:result.finishedMs,apiMs:result.apiMs,paintMs:result.ms-result.apiMs});
       }
       if(profileSearch){
@@ -168,8 +185,9 @@ try {
       }
       const frame = await page.evaluate("({...window.__bench})");
       const rendered = await page.evaluate(
-        "({width:innerWidth,height:innerHeight,visible:document.visibilityState,decodedImages:[...document.images].filter(n=>n.naturalWidth>0).length})",
+        "({width:innerWidth,height:innerHeight,visible:document.visibilityState,decodedImages:[...document.images].filter(n=>n.naturalWidth>0).length,logicalCards:document.querySelectorAll("+JSON.stringify(client==='RHVideo'?'#videos-grid .video-card':'#media-grid .media-card')+").length})",
       );
+      Object.assign(rendered,coverSamples.at(-1));
       reports.push({
         client,
         count: 50000,
@@ -179,10 +197,14 @@ try {
         hotSearchP95: percentile(samples.slice(1), 0.95),
         hotApiP50: percentile(apiSamples.slice(1), 0.5),
         hotApiP95: percentile(apiSamples.slice(1), 0.95),
+        hotLayoutP50: percentile(layoutSamples.slice(1), 0.5),
+        hotLayoutP95: percentile(layoutSamples.slice(1), 0.95),
         maxFrameGapMs: frame.maxGap,
         rendered,
         artifact:app.artifactDir,
         counts,
+        coverSamples,
+        thumbnailReads:fixture.requests.slice(firstRequest).filter(request=>request.method==='GET'&&request.path.endsWith('/thumbnail')).length,
         ...(traceSearch?{timingWindows,...(client==='RHFiles'?{boundaryTiming:await page.evaluate('__rhvideoSearchTiming.snapshot()')}:{})}:{ }),
       });
     } finally {
@@ -191,7 +213,7 @@ try {
       await app.closed;
     }
   }
-} finally {
+} catch(error) { runError=error; } finally {
   await fixture.close();
 }
 let admissionError;
@@ -206,12 +228,14 @@ const output = {
     .update(fs.readFileSync(path.join(reference, "static/index.html")))
     .digest("hex"),
   fixture: "generated metadata, no production data",
+  workload: "visible-covers-v2 (not comparable to v1 partial-cover timings)",
   scope:
-    "Windows WebView2 metadata/search UI with real authenticated covers. Not mobile, playback, network or memory acceptance.",
-  comparable:!admissionError,
+    "Windows WebView2 metadata/search UI, all viewport-intersecting cover containers decoded then two animation frames. Layouts/visible cover counts may differ. Not physical presentation, mobile, playback, network or memory acceptance.",
+  comparable:!admissionError&&!runError,
   diagnosticSampling:profileSearch,
   diagnosticTiming:traceSearch,
   ...(admissionError?{admissionError:String(admissionError)}:{}),
+  ...(runError?{runError:{name:runError.name,message:runError.message}}:{}),
   artifact:comparisonDirectory,
   reports,
 };
@@ -220,4 +244,5 @@ fs.writeFileSync(
   JSON.stringify(output, null, 2),
 );
 console.log(JSON.stringify(output, null, 2));
+if(runError)throw runError;
 if(admissionError)throw admissionError;

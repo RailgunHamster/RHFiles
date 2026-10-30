@@ -6,8 +6,28 @@
   api.provideRunLookup(query=>mobile?window.RHVideoNative.request('automation.receipt',query):window.__TAURI__.core.invoke('automation_receipt',{query}));
   if(!mobile)api.provideRunTransport(()=>window.__TAURI__.core.invoke('automation_receipt_transport'));
   const cardCache=new Map();
-  function clearCards(){for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();}
-  function trimCards(){let detached=0;for(const {node} of cardCache.values())if(!node.isConnected){const image=node.querySelector('img');detached+=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;}for(const [key,entry] of cardCache){if(cardCache.size<=72&&detached<=16*1024*1024)break;if(!entry.node.isConnected){const image=entry.node.querySelector('img');detached-=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;image?.removeAttribute('src');cardCache.delete(key);}}}
+  let visibilityOrder=0;
+  const cardVisibility=typeof IntersectionObserver==='function'?new IntersectionObserver(rememberVisibleCards):null;
+  function rememberVisibleCards(entries){
+    if(document.visibilityState!=='visible')return;
+    for(const entry of entries){
+      if(!entry.isIntersecting||entry.intersectionRect.width<=0||entry.intersectionRect.height<=0||!entry.target.isConnected)continue;
+      const card=entry.target,cached=cardCache.get(card.dataset.kind+':'+card.dataset.id);
+      if(cached?.node===card)cached.seen=++visibilityOrder;
+    }
+  }
+  function clearCards(){cardVisibility?.disconnect();for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();}
+  function trimCards(){
+    let detached=0;const candidates=[];
+    for(const [key,entry] of cardCache)if(!entry.node.isConnected){const image=entry.node.querySelector('img'),bytes=(image?.naturalWidth||0)*(image?.naturalHeight||0)*4;detached+=bytes;candidates.push({key,entry,bytes});}
+    // Preserve actual viewport history, not construction order (which favors
+    // unseen bottom rows). Keep the existing count and decoded-byte ceilings.
+    candidates.sort((a,b)=>(a.entry.seen||0)-(b.entry.seen||0));
+    for(const {key,entry,bytes} of candidates){
+      if(cardCache.size<=72&&detached<=16*1024*1024)break;
+      detached-=bytes;cardVisibility?.unobserve(entry.node);entry.node.querySelector('img')?.removeAttribute('src');cardCache.delete(key);
+    }
+  }
   let modalOrder=[];
   const modalTop=()=>modalOrder.filter(id=>$(id)?.open).at(-1);
   function openDialog(id){workbench?.invalidatePendingConfirmation();const node=$(id);if(id==='image-dialog'&&node.open&&modalTop()!==id)node.close();if(!node.open){node.showModal();modalOrder=modalOrder.filter(v=>$(v)?.open&&v!==id);modalOrder.push(id);}if(id==='image-dialog')node.querySelector('.image-stage').focus({preventScroll:true});return node;}
@@ -150,6 +170,7 @@
     for(const media of state.items){
       const cacheKey=model.itemKey(media),signature=JSON.stringify(media),cached=cardCache.get(cacheKey);
       if(cached?.signature===signature){cardCache.delete(cacheKey);cardCache.set(cacheKey,cached);grid.append(cached.node);paintCardFavorite(cached.node.querySelector('.favorite-button'),cacheKey,media.title);continue;}
+      if(cached)cardVisibility?.unobserve(cached.node);
       cached?.node.querySelector('img')?.removeAttribute('src');
       const card=document.createElement('article');card.className='media-card';card.dataset.id=media.id;card.dataset.kind=media.kind;
       const cover=document.createElement('button');cover.className='cover-button';cover.setAttribute('aria-label',(media.kind==='novel'?'阅读 ':media.kind==='picture'?'查看 ':'播放 ')+media.title);
@@ -177,7 +198,7 @@
       extra.dataset.apiAction='rhvideo.'+(media.kind==='video'?'timeline.open':'media.open');RHFilesUI.listen(extra,'click',()=>invoke(media.kind==='video'?'timeline.open':'media.open',{id:media.id,kind:media.kind}).catch(notice),undefined,'rhvideo.card.secondary');
       const heart=document.createElement('button');const key=model.itemKey(media);heart.dataset.key=key;heart.className='favorite-button';heart.innerHTML=icon('heart');paintCardFavorite(heart,key,media.title);
       heart.dataset.apiAction='rhvideo.favorite.toggle';RHFilesUI.listen(heart,'click',()=>invoke('favorite.toggle',{id:media.id,kind:media.kind}).catch(notice),undefined,'rhvideo.card.favorite');
-      actions.append(extra,heart);info.append(actions);card.append(info);grid.append(card);cardCache.delete(cacheKey);cardCache.set(cacheKey,{node:card,signature});
+      actions.append(extra,heart);info.append(actions);card.append(info);grid.append(card);cardCache.delete(cacheKey);cardCache.set(cacheKey,{node:card,signature,seen:0});cardVisibility?.observe(card);
     }
     trimCards();
   }
