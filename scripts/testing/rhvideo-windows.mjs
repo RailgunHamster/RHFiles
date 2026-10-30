@@ -39,14 +39,20 @@ export function referenceFingerprint(source,files){
     return [file,createHash('sha256').update(fs.readFileSync(actual)).digest('hex')];
   }));
 }
+export function runtimeAdmissionCommand(workspace,bundle){
+  const quote=value=>"'"+value.replaceAll("'","''")+"'";
+  // An admitted snapshot may contain a release/portable payload. The existing
+  // archive policy still checks every byte and accepts only pinned source
+  // mtimes or the exact packager DOS epoch, never arbitrary timestamp changes.
+  return "$ErrorActionPreference='Stop';. "+quote(path.join(workspace,'scripts/libvlc-bundle.ps1'))+';[void](Assert-RHFilesLibVlcWorkspacePath '+quote(bundle)+' '+quote(workspace)+');Assert-RHFilesLibVlcBundle '+quote(bundle)+" 'velopack'";
+}
 async function main(){
   if(process.platform!=='win32')throw Error('Actual Windows/WebView2 is required');
   if(!process.env.RHFILES_TEST_EXECUTABLE||!process.env.RHVIDEO_SOURCE)throw Error('Set RHFILES_TEST_EXECUTABLE to the isolated app-local 3.0.24 snapshot and RHVIDEO_SOURCE to the actual reference checkout');
   const executable=admittedExecutable(root,process.env.RHFILES_TEST_EXECUTABLE),source=fs.realpathSync(process.env.RHVIDEO_SOURCE);
   if(!fs.statSync(path.join(source,'app/main.py')).isFile())throw Error('Actual RHVideo backend source is required; do not silently skip it');
   const environment=acceptanceEnvironment(process.env,executable,source),bundle=path.join(path.dirname(executable),'vlc');
-  const quote=value=>"'"+value.replaceAll("'","''")+"'";
-  const command="$ErrorActionPreference='Stop';. "+quote(path.join(root,'scripts/libvlc-bundle.ps1'))+';[void](Assert-RHFilesLibVlcWorkspacePath '+quote(bundle)+' '+quote(root)+');Assert-RHFilesLibVlcBundle '+quote(bundle);
+  const command=runtimeAdmissionCommand(root,bundle);
   const verified=spawnSync('pwsh',['-NoProfile','-EncodedCommand',Buffer.from(command,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000});
   if(verified.error||verified.status!==0)throw Error('App-local runtime admission failed: '+(verified.error||verified.stderr||verified.stdout));
   const cases=fs.readdirSync(path.join(root,'scripts/e2e')).filter(name=>/^rhvideo(?:-[a-z-]+)?\.test\.mjs$/.test(name)).sort();

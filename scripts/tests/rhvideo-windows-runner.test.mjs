@@ -3,12 +3,21 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {acceptanceEnvironment,acceptanceSummary,admittedExecutable,referenceFingerprint} from '../testing/rhvideo-windows.mjs';
+import {acceptanceEnvironment,acceptanceSummary,admittedExecutable,referenceFingerprint,runtimeAdmissionCommand} from '../testing/rhvideo-windows.mjs';
 
 const summary=(values={})=>Object.entries({tests:103,pass:103,fail:0,cancelled:0,skipped:0,todo:0,...values}).map(([name,value])=>'# '+name+' '+value).join('\r\n');
 // macOS may expose os.tmpdir() through /var -> /private/var. The strict
 // admission gate intentionally takes a canonical workspace, not a root alias.
 const temporary=prefix=>fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),prefix)));
+test('runtime admission accepts verified packaged epochs without removing workspace or full bundle validation',()=>{
+ const workspace=path.join(os.tmpdir(),"RHFiles O'Brien"),bundle=path.join(workspace,'test-artifacts/runtime/vlc'),quote=value=>"'"+value.replaceAll("'","''")+"'";
+ const command=runtimeAdmissionCommand(workspace,bundle);
+ assert(command.includes(';[void](Assert-RHFilesLibVlcWorkspacePath '+quote(bundle)+' '+quote(workspace)+')'));
+ assert(command.endsWith(';Assert-RHFilesLibVlcBundle '+quote(bundle)+" 'velopack'"));
+ assert(command.includes(quote(path.join(workspace,'scripts/libvlc-bundle.ps1'))));
+ const runner=fs.readFileSync(new URL('../testing/rhvideo-windows.mjs',import.meta.url),'utf8');assert.match(runner,/timeout:30000/,'Keep the original admission budget');
+});
+
 test('full Windows acceptance always enables actual native cases and the exact app-local runtime',()=>{
  const env=acceptanceEnvironment({PATH:'owned',RHFILES_NATIVE_PLAYER_QA:'0',RHFILES_EXPECT_RENDERER:'wrong'},'owned.exe','reference');
  assert.equal(env.RHFILES_NATIVE_PLAYER_QA,'1');assert.equal(env.RHFILES_EXPECT_BUNDLED_VLC,'3.0.24');assert.equal(env.RHFILES_EXPECT_ENGINE_VERSION,'3.0.24');assert.equal(env.RHFILES_EXPECT_RENDERER,'native-hardware-auto');assert.equal(env.PATH,'owned');assert.equal(env.RHFILES_TEST_EXECUTABLE,'owned.exe');assert.equal(env.RHVIDEO_SOURCE,'reference');
