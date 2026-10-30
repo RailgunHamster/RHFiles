@@ -70,7 +70,7 @@ async function main(){
   const installed=run(['shell','pm','path','com.railgunhamster.rhfiles']).trim().split(/\r?\n/);assert.equal(installed.length,1);assert.match(installed[0],/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/);
   assert.equal(run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64),hash(actualApk),'Installed APK differs from the admitted snapshot');
   const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-android-'+mode+'-')),receipt={serial,mode,apkSha256:hash(actualApk),artifact,scope:'Packaged worker, actual UI input and semantic API; not native playback acceptance'};
-  let fixture,app,view,port;console.log('Android search fields: '+artifact);
+  let fixture,app,view,port;console.log('Android library '+mode+': '+artifact);
   try{
     fixture=await rhvideoFixture({videoCount:mode==='search-fields'?3:52});if(mode==='search-fields')configureSearchFixture(fixture);else configureVideoOrderFixture(fixture);
     process.env.ANDROID_SDK_ROOT=sdk;app=await androidSession(serial);
@@ -85,10 +85,16 @@ async function main(){
     await until(()=>view.evaluate("!!window.RHFilesAPI?.snapshot().state.application&&['rhvideo.category','rhvideo.connection.connect','rhvideo.search'].every(id=>RHFilesAPI.list().some(row=>row.id===id))"),'packaged search controls registered');
     const server='http://10.0.2.2:'+new URL(fixture.url).port;
     receipt.result=mode==='search-fields'?await checkPackagedSearchFields(view,server):await checkPackagedVideoOrder(view,server,fixture);
-    await app.screenshot('search-fields');receipt.sessionArtifact=app.artifactDir;receipt.passed=true;
+    await app.screenshot(mode);receipt.sessionArtifact=app.artifactDir;receipt.passed=true;
   }catch(error){
     receipt.failure=String(error);process.exitCode=1;console.error(error);
-    if(app)try{await app.screenshot('search-fields-failure');receipt.sessionArtifact=app.artifactDir;}catch{receipt.failureScreenshotUnavailable=true;}
+    if(!app){
+      // Preserve startup evidence before the existing owned-app teardown. Do
+      // not reopen a view, retry Runtime.enable or turn a handshake into a pass.
+      receipt.startupDiagnostics={};
+      for(const [name,args]of [['startup-window.log',['shell','dumpsys','window','windows']],['startup-logcat.log',['logcat','-d','-v','threadtime','-t','1500']]])try{fs.writeFileSync(path.join(artifact,name),run(args));receipt.startupDiagnostics[name]={captured:true};}catch(diagnosticError){receipt.startupDiagnostics[name]={captured:false,reason:String(diagnosticError.code||'unavailable')};}
+    }
+    if(app)try{await app.screenshot(mode+'-failure');receipt.sessionArtifact=app.artifactDir;}catch{receipt.failureScreenshotUnavailable=true;}
     if(view)try{receipt.failureState=await view.evaluate("RHFilesAPI.invoke('rhvideo.state')");}catch{receipt.failureStateUnavailable=true;}
   }
   finally{

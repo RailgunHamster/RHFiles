@@ -13,5 +13,7 @@ test('packaged video pages and selected replacement keep reference order, filter
   const target=await until(async()=>(await(await fetch('http://127.0.0.1:'+app.port+'/json/list')).json()).find(row=>new URL(row.url).pathname==='/rhvideo.html'),'packaged video-order library');
   view=await cdpSession(target,30000);await until(()=>view.evaluate('!!window.RHFilesAPI?.snapshot().state.application?.ready'),'library controls ready');
   const result=await checkPackagedVideoOrder(view,fixture.url,fixture);
+  const screenshot=await view.send('Page.captureScreenshot',{format:'png'});
+  fs.writeFileSync(path.join(app.artifactDir,'reference-video-order.png'),Buffer.from(screenshot.data,'base64'));
   fs.writeFileSync(path.join(app.artifactDir,'reference-video-order.json'),JSON.stringify(result,null,2));t.diagnostic('Packaged video-order evidence: '+app.artifactDir);
 });

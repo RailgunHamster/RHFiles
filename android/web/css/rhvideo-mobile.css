@@ -29,3 +29,28 @@ html{font-size:15px;-webkit-text-size-adjust:100%}body{min-width:0;overscroll-be
 .mobile-client .image-dialog #image-close{position:absolute;right:8px;top:8px;margin:0;border:0;background:transparent}
 .mobile-client .image-dialog .image-stage{flex:1 1 0;min-height:0;height:auto}
 .mobile-client .image-dialog .image-progress{flex:0 0 auto;min-height:48px}
+/* Narrow catalog chrome stays in bounded, horizontally scrollable rows. Keep
+ * all workflow/selection commands and 44px targets instead of wrapping enough
+ * rows to push the first media card out of the phone viewport. Dialog toolbars
+ * retain their own wrapping; tablets keep the existing spacious layout. */
+@media(max-width:699px){
+  .mobile-client .library-sidebar{padding:12px 16px 8px;gap:10px}
+  .mobile-client #library-nav{overscroll-behavior-x:contain;touch-action:pan-x}
+  .mobile-client #library-nav .nav-item{flex:0 0 auto;min-height:44px;padding:10px 9px}
+  .mobile-client .library-header{display:block;margin:6px 0 10px}
+  .mobile-client .library-header h1{font-size:22px;margin:0 0 6px}
+  .mobile-client .header-actions{flex-wrap:nowrap;justify-content:flex-start;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;touch-action:pan-x;scrollbar-width:thin;padding-bottom:4px}
+  .mobile-client .header-actions>*{flex-shrink:0}
+  .mobile-client .header-actions>.button{min-height:44px;padding:8px 10px;font-size:12px;white-space:nowrap}
+  .mobile-client .rhvideo-master-volume{flex-direction:row;align-items:center;gap:6px;margin:0;font-size:12px}
+  .mobile-client .rhvideo-master-volume input{width:80px;min-height:44px;padding:0;border:0;background:transparent}
+  .mobile-client .library-controls{gap:8px;margin-bottom:10px}
+  .mobile-client .library-main>.wb-toolbar{flex-wrap:nowrap;gap:6px;margin:0 0 10px;overflow-x:auto;overscroll-behavior-x:contain;touch-action:pan-x;scrollbar-width:thin;padding-bottom:4px}
+  .mobile-client .library-main>.wb-toolbar>*{flex:0 0 auto}
+  .mobile-client .library-main>.wb-toolbar .button,.mobile-client .library-main>.wb-toolbar select{min-width:44px;min-height:44px;white-space:nowrap}
+  .mobile-client .library-main>.wb-selection{padding:8px;max-width:100%}
+  .mobile-client #wb-selection-count{white-space:nowrap}
+  /* The unchanged "标签筛选" action already opens this empty summary. Show
+   * the extra summary row only when there is an actual rule to inspect/clear. */
+  .mobile-client .wb-rules-summary:not(:has([data-api-action="rhvideo.rules.clear"])){display:none}
+}

@@ -6,7 +6,31 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
-## 2026-10-30 视频排序及批量替换顺序（源码已修，打包验收待执行）
+## 2026-10-30 冻结 Windows 整轮终态及新排序构建（继续验收，未发包）
+
+搜索字段版的冻结完整验收现已终止：**111/111、零失败／取消／跳过，26 分 49 秒**。回执为 `rhvideo-search-fields-full-u777Fq/RHFiles/test-artifacts/rhvideo-windows-HK1qZv/receipt.json`，包含普通／同屏原生播放、1080p H.264／4K HEVC 真实帧、图像条带、语义输入、图片加载、服务器任务及真实 FastAPI／SQLite。终止后再次逐项核对 **1132** 个冻结工作区文件、**14** 个实际参考模块及 EXE **`ca17e05e…75e017a`**，没有变化（同一冻结目录的 `post-run-fingerprints.json`）。原先的失败记录保留，不能据本轮绿色宣称以前的间歇失败从未发生；这也是调试版功能验收，不是同质量性能或 Android 完整通过。
+
+本轮属于冻结 **`1ae80a8`**，**不包含**下一节 `8a369ae` 的视频排序／已选替换修复。后者重新执行共享全套 **1028/1028、零失败／跳过**（`rhvideo-video-order-full-node.log`），随后独立构建 Windows **2 分 31 秒成功**（`rhvideo-video-order-windows-build.log`），新快照 `rhvideo-video-order-runtime-c8f5f28751b74cc7ab10331909a5f86c/` 的 EXE 为 **`7e710c24e9fbd3cca05cb4f7bcc52ebddba803d143d790de189275364cf3d140`**，app-local libVLC 3.0.24 校验通过。没有拿旧 CA17 程序运行新资源用例。
+
+Android 仅同步已改变的共享 JS，再明确排除未变 Rust task，增量组包 **1 分 51 秒成功**（短路径 QA 的 `rhvideo-video-order-android-build.log`）。新快照 `rhvideo-video-order-apk-FzFkBX/` 主包 **`4eddcab6d45e2855fcd89e3f4e985af45559c1dda7d09f556cf8a365ffc9bb73`**，探针仍为 **`4b372563…bc5ac`**，mapping／完整资源及 JNI 哈希保存。二十份共享资源逐项与当前源码一致，两套 JNI 与上一包相同，不冒计新的 JNI／JVM 全套。自有 **5588** 先通过所有者、启动、无错误弹窗／无在途播放器准入，再单次覆盖安装；客户端明确返回 Success，读取系统真实 `base.apk` 的 SHA-256 也确认为 **4EDD**。未操作实体手机。
+
+两端共用的新排序场景已加严到两页的实际 DOM 卡片顺序，不仅比较 API；结束时恢复真实非空首页供平台截图核对。新 **7E71** 的 Windows 搜索与排序／已选替换窗口场景 **2/2、零跳过**（`rhvideo-video-order-windows-final-window.log`、`rhfiles-e2e-{2V2aPa,XQmBxi}/`），实际窗口截图已查看。最初 **4EDD** APK 的完整排序／已选替换也通过（`rhvideo-android-video-order-FTVFoH/receipt.json`）：五种参考排序、52 个 ID 的两页实际卡片、跨过滤完整选择、两次确认只提交一次、缺失 ID 的关闭和 API 契约；**171** 个响应完成，零 transport error／丢弃、只有一次显式批次写入。不能由这些场景推定新 EXE 整套或 Android 原生播放已通过。
+
+### 窄屏工具区与可见封面
+
+实际 Android 截图确认控制区挤占内容。新增实际 DOM 几何门禁后，同一 **4EDD** 在 **412×867 CSS px** 中第一张卡片 top **675.14**、音量标签与滑块纵排，两条工具区高 **81.62／95.52**，部分按钮只有 **34 px**，明确失败（`rhvideo-mobile-catalog-layout-red.log`）。不是以 CSS 字符串或截图主观判断代替几何。窄屏 CSS 改为横向可滚动工具行并保留所有命令、API 和至少 **44 px** 的触控目标；对话框与平板布局不改。第一版 **FDED** 仍为 top **545.52**，未满足原门禁，失败保留（`rhvideo-mobile-catalog-layout-android-window.log`），没有放宽比例断言。
+
+之后只收起没有筛选时重复的“全部视频”摘要行；“标签筛选”原入口仍在，有条件时仍显示摘要、标签和清除。仅重新组 Android 资源，**1 分 24 秒成功**（短路径 QA 的 `rhvideo-mobile-catalog-summary-android-build.log`）；最终快照 `rhvideo-mobile-catalog-summary-apk-mtezq8/` 的主包 **`2c0c50da45d32e9397a3d012ce900d0d5d5ab534ce778796d3729b4e6f63bdcf`**，探针／两套 JNI 没变，**22** 份共享及移动资源逐项校验，系统真实安装文件哈希一致。
+
+同一 **2C0C** 的完整排序与真实布局／触摸场景通过（`rhvideo-android-video-order-7g4CDI/receipt.json`）：第一张卡片 top **483.52**，两行工具高 **48／61.52**，全部操作目标至少 **44×44**；WebView CDP 触摸两行分别滚动 **262.86／23.24 px**，**零 click**，没有替换按钮 handler 或直接赋 scrollLeft。它是实际 WebView 触摸输入，不冒称实体手机或系统层物理触摸。实际启用城市观察规则时摘要、标签和清除入口仍可见，完整 **13** 个筛选 ID 顺序正确，清除后恢复 **52** 项。该新增检查的首轮曾错用后台 `folder_label` 而非公开状态的 `folder`（`rhvideo-mobile-catalog-summary-android-window.log`）；核对实际 `snapshot()` 投影和 13 项记录后修正测试字段，并加严完整 ID 断言；没有为测试改公开状态或重装同一 APK。最终 **188** 个响应完成、零错误／丢弃，仍仅一次批次写入。搜索同一安装另通过 **9** 组（`rhvideo-android-search-fields-5TLoen/receipt.json`），**19** 个响应、零错误或意外写入。
+
+查看实际截图又发现清除筛选后抓图过早：卡片已创建，但封面还在异步载入。新增可见封面门禁，按可见**卡片容器**取样，缺失／失败／隐藏 IMG 不能退出样本从而蒙混过关；要求真实尺寸、loaded、非零几何及完成透明度过渡，才保存视觉回执。首次补充运行在 **`Runtime.enable`** 就明确超时（`rhvideo-mobile-catalog-covers-final-android-window.log`、`rhvideo-android-video-order-pWlIGh/receipt.json`），还没进入新场景，不能记为封面通过。系统窗口／logcat／crash 现场另保存；当前无错误弹窗，缓冲中的旧 crash 早于该轮，不认定为当前崩溃原因。入口现会在连接初始化失败时、原有自有应用清理前保存诊断，不重开视图、重试握手或延长其预算。
+
+最终共享检查 **1036/1036、零失败／跳过**（`rhvideo-catalog-visibility-final-node.log`），新增八项几何／可见封面门禁测试直接执行同一取样函数，覆盖缺图、失败、隐藏、未完成淡入及屏外项，不用另一份业务实现当证明。等待该检查终止后，同一 **2C0C** 安装再次完整串行执行排序／替换／布局／触摸／筛选及可见封面，明确通过（`rhvideo-mobile-catalog-visible-covers-android-window.log`、`rhvideo-android-video-order-RtH0bA/receipt.json`）：**四**张真实可见封面均为 **800×500**、已解码并结束透明度过渡，`android-b5XobV/video-order.png` 已人工查看；**190** 个响应全部完成、零错误／丢弃、仍只有一个显式批次写入。没有再次安装、静音、改码率或调整视频等待预算；这次通过不证明先前的调试握手超时已被修复，也不替代原生视频或性能验收。
+
+正式 Windows PID 45696 和实体手机均未操作，未发布。上述两端局部业务与布局不替代 Android 同屏／生命周期、同质量性能、完整对照及发行验收，完整目标保持未完成。
+
+## 2026-10-30 视频排序及批量替换顺序（源码修复）
 
 在上一轮冻结的 Windows 整套仍运行时，只在本开发工作区继续核对业务，没有改它的 1132 个冻结输入或 EXE。实际参考 `applyVideoSort` 使用原始文件名的 `localeCompare(..., 'zh')`、原始 `original_filesize`，相同键保留服务器顺序。本端此前使用显示标题／自然数字排序、原始大小为零时回退派生大小，并以媒体 ID 打破相同键，改变了列表及连播快照。最初十四项 **1/14、13 失败**（`rhvideo-video-sort-red.log`）；现在仅修正视频分类的原始名称／大小与稳定相等项，不改变截图顺序、收藏日期规则或已有随机排列。新增第十五项直接比较原版函数的 **150** 个完整队列 ID 及全部分页；旧测试中“2 比 10 靠前”的两条预期同步改为真实参考规则，不是放宽字典序／原始字段断言。
 
@@ -16,7 +40,7 @@
 
 当前排序／替换／自有设备准入定向共 **40/40、零失败／跳过**（`rhvideo-video-order-final-controls.log`），执行实际生产 action AST 与两个实际参考函数，不复制一份产品实现当作证明。新增 `rhvideo-video-order.mjs` 的两端共用打包场景：五种参考排序的实际两页卡片、过滤后保留完整已选名单、两次确认只发一个批次、确认后更换选择不改已冻结批次、缺失 ID 的确认／关闭及 UI 契约；Android 沿用已有严格设备／APK 准入，最终 HTTP 门禁另拒绝重复批次和搜索写入。
 
-**这些新打包场景尚未运行**。当前活跃完整验收属于搜索字段修复的冻结 **`1ae80a8 / ca17e05e…75e017a`**，不包含本节新排序／批次修复，不能拿它的任何通过冒充新程序通过。没有并行启动新 Windows／Android 播放测试或编译干扰该轮；待它终止后再生成并核对新 EXE／APK。未操作正式 Windows 进程或实体手机，未发包，完整目标保持未完成。
+本节写下时新打包场景尚未运行，完整验收仍属于搜索字段修复的冻结 **`1ae80a8 / ca17e05e…75e017a`**。该轮随后 **111/111** 终止，新 EXE／APK 及独立场景结果见上节；不把旧轮任何通过冒充本节新排序／批次程序通过，也未在该旧轮运行时并行启动新播放或编译。
 
 ## 2026-10-30 清单搜索字段、优化构建对照及新版模拟器（继续验收，未发包）
 
