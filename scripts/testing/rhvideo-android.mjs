@@ -9,6 +9,7 @@ import {execFile,execFileSync,spawn} from 'node:child_process';
 import {rhvideoFixture as contractFixture} from './rhvideo-fixture.mjs';
 import {realRhVideoService} from './rhvideo-real-service.mjs';
 import {taskFixture} from './rhvideo-task-fixture.mjs';
+import {stepTimeline} from './rhvideo-step-timeline.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
 const fixtureTransportMode=process.env.RHFILES_QA_FIXTURE_TRANSPORT||'adb-reverse';
 function fixtureServerUrl(transport,port){
@@ -233,7 +234,9 @@ try{
     if(priorityMode)modeArgs=['-e','mode','task-priority'];
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
+  const timeline=stepTimeline();
   const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server',fixtureServerUrl(fixtureTransportMode,Number(port)),'-e','fixtureTransport',fixtureTransportMode,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,'-e','surfaceMode',surfaceMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  child.stdout.on('data',data=>timeline.push(data));
   let output='',armedTaskFailures=false,gridAudioCapture=null,playbackTrace=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}if(tracePlayback&&!playbackTrace&&/^STEP: single clock settled /m.test(output))playbackTrace=capturePlaybackTrace().catch(error=>{console.error('Playback trace unavailable: '+error.message);});const failure=output.match(/^STEP: QA: (?:grid|player)-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode||singleClockMode)&&!gridAudioCapture&&failure)gridAudioCapture=Promise.all([captureGridAudio(Number(failure[1])),capturePlaybackEnvironment(Number(failure[1]))]).catch(error=>{console.error('Live playback diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
@@ -241,7 +244,7 @@ try{
   const budgetMs=previewMode||(gridMode&&!gridRestoreMode)?600000:360000;let expired=false;
   const timer=setTimeout(()=>{expired=true;child.kill();},budgetMs);
   try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0&&!expired?resolve():reject(Error(expired?'Owned instrumentation exceeded whole-scenario budget '+budgetMs+' ms':'Instrumentation exit '+code)));});}
-  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;if(playbackTrace)await playbackTrace;}
+  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);fs.writeFileSync(path.join(artifact,log.replace(/\.log$/,'-steps.json')),JSON.stringify(timeline.snapshot(),null,2));if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;if(playbackTrace)await playbackTrace;}
   assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED|keyDispatchingTimedOut|Input dispatching timed out/);return output;
   }
   const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:closeReceiptMode?['-e','mode','close-receipt']:singleClockMode?['-e','mode','single-clock']:gridSurfaceMode?['-e','mode','grid-surface-probe']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer',fixtureServerUrl(fixtureTransportMode,Number(failedPort))]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
