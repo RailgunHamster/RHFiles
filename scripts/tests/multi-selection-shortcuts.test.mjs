@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {context,load,plain} from '../testing/source.mjs';
+import fc from 'fast-check';
+import {context,load,plain,propertyOptions} from '../testing/source.mjs';
 
 function selectionFixture(){
   const pane={path:'C:\\qa',entries:Array.from({length:6},(_,i)=>({path:'C:\\qa\\'+i})),sel:new Set(),lastIdx:-1};
@@ -25,6 +26,31 @@ test('a row rendered before a selection Set replacement still modifies the live 
   load(ctx,'filelist.js',['handleRowClick']);
   pane.sel=new Set([0]);ctx.handleRowClick({ctrlKey:true},2,oldSet,pane,false);
   assert.deepEqual([...pane.sel],[0,2]);assert.equal(oldSet.size,0);
+});
+
+test('arbitrary mouse multi-selection survives replacement of the live selection Set',()=>{
+  fc.assert(fc.property(fc.array(fc.record({index:fc.integer({min:0,max:5}),ctrlKey:fc.boolean(),
+    shiftKey:fc.boolean(),replaceSet:fc.boolean()}),{minLength:1,maxLength:80}),gestures=>{
+    const {ctx,pane}=selectionFixture(),renderedSelection=pane.sel;
+    ctx.document.getElementById=()=>({querySelectorAll:()=>[]});
+    load(ctx,'filelist.js',['handleRowClick']);
+    let expected=new Set(),anchor=-1;
+    for(const {index,ctrlKey,shiftKey,replaceSet} of gestures){
+      if(replaceSet)pane.sel=new Set(pane.sel);
+      if(shiftKey&&anchor>=0){
+        const range=pane.entries.map((_,i)=>i).filter(i=>i>=Math.min(anchor,index)&&i<=Math.max(anchor,index));
+        expected=new Set(ctrlKey?[...expected,...range]:range);
+      }else{
+        expected=ctrlKey?new Set([...expected].filter(i=>i!==index).concat(expected.has(index)?[]:[index])):new Set([index]);
+        anchor=index;
+      }
+      ctx.handleRowClick({ctrlKey,shiftKey},index,renderedSelection,pane,false);
+      assert.deepEqual([...pane.sel].sort((a,b)=>a-b),[...expected].sort((a,b)=>a-b));
+      assert.equal(pane.lastIdx,anchor);
+      assert.deepEqual(plain(ctx.getSelectedPaths(false)).map(entry=>entry.path),
+        [...expected].sort((a,b)=>a-b).map(i=>pane.entries[i].path));
+    }
+  }),propertyOptions());
 });
 
 test('nested column selection, copy paths and context targeting share the full selection',()=>{
