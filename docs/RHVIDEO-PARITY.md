@@ -24,6 +24,8 @@ Windows 前节被冻结的 B261 程序整轮终态为 **105/106、1 失败、零
 
 最终共享检查 **907/907、零失败／跳过**（`rhvideo-task-image-final-node.log`）。新的完整 Windows 回归仍须使用这次源码／测试／程序重新冻结运行；不能把 7 项通过改写为前一整轮全绿。Windows 同质量首帧、Android 完整同屏／生命周期及其余整体验收仍未完成，没有正式发布或替换用户安装。
 
+`908cea1`／`9a30408` 已推送两个开发远端。随后确已建立 `rhvideo-task-image-frozen-ee0148824b7848b080b69786694f26ca/`：1120 个源码／测试文件、9BF0 程序、app-local 3.0.24 及 SHA-256 清单，十九个测试文件的完整串行验收已启动（其 `test-artifacts/rhvideo-task-image-full-windows.log`）。这是进行中的运行，不是终态或完整通过；后续须读取同一运行的回执，不因观察超时重启测试。
+
 ## 2026-10-30 原生 EOF 元数据和媒体响应的账户边界（继续验收，未发包）
 
 实际 Windows 窗口复现了两个独立问题：上游合法的 HTTP 416 `Content-Range: bytes */长度` 被通用错误处理丢弃；退出账户时已发出的请求仍可能返回旧账户的响应状态／元数据。新增 `rhvideo-range-proxy.test.mjs` 三项真实实例测试，旧冻结程序 `10fe10bc…` 为 **0/3**（`rhvideo-range-proxy-red-all.log`）：长度为 null 而非 `bytes */0`，已注销的挂起范围请求返回 416 而非 401，图片探测中的注销导致连接关闭而非明确的 401。第三项旧结果是 socket 错误，不作为已证明图片正文泄露的证据。
