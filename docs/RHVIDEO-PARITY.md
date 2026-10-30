@@ -20,6 +20,14 @@
 
 补齐两个异步边界后已重编最终候选：正常 Windows release **2 分 29 秒**，EXE **`72241c59a8bf5c23064133f12e4c07ae4a38982261adda62f60a914a7610ca64`**，冻结 `rhvideo-pipe-full-NsiDXq`；正常 Android x86_64 release **28 秒**，APK **`5ad1b7deffd965f1f62769be2cb9dbe1e19e639d8fab9f7b3237a5ee7d5c78b5`**，冻结 `rhvideo-modal-normal-android-I2bLsm`，工作台 B5585／JNI 1F90 与正常 BuildConfig 均验证。仅为 QA 候选，非 ARM 真机发行。最终 Windows 重验和 Android 第三页实测尚在进行，不以中间候选的通过替代最终结果；本节不发布新包或宣称完整目标完成。
 
+最终 **7224** 冻结的上述 **22/22** 串行回归实际通过，零失败／取消／跳过，**190.731 秒**（`rhvideo-reveal-final-real-regression.tap`）。`rhfiles-e2e-qsjxR5/media-reveal.json` 仍仅一次 28 项最终页读取、offset **72**，目标 picture-97 的 **800×500** 封面位于可见区且实际高亮；PNG 已查看。该热场景动作单次 **19.793 ms**，不将中间与最终样本当成 P50/P95 或跨平台性能保证。真实 RHVideo 临时库／导出、账户边界及原生 1080p／4K 也在这轮通过；它仍不是此前完整 Windows 整轮的替代。
+
+Android 安装命令先于业务测试 30 秒超时（`rhvideo-presentation-reveal-android-WlGvMo`），未记为通过或再次安装。随后只读核对实际 `/data/app/.../base.apk` SHA-256 已为上述 **5AD1**，版本仍是独立 QA 的 0.1.38／1038；以显式 `--installed --reveal` 执行第一次业务场景，实际 **通过**（`rhvideo-presentation-reveal-android-RCKFZL/receipt.json`）。同一目标、offset 72、一次 28 项最终页读取、关闭预览和实际可见 **800×500** 封面均通过；83 个夹具 HTTP 全部 200、完整且零传输错误／丢弃，`android-HIIEHx/off-page-target-revealed.png` 已查看。该动作宿主时间 **4822 ms**，仍慢，且不是此前 3 张图片测量的同工作量对照，不能声称 Android 整体提速或响应已达标。
+
+截图中相邻 picture-93 此时仍是占位图，最后一个对应 HTTP 200 已完整结束；尚不清楚是暂未完成解码／绘制还是其他问题。保留此证据，下一轮须读实际可见卡片的完成／解码／透明度状态并观察是否自行完成。本用例只证明目标封面正确，不能把它扩充为全部可见封面质量通过，也不凭单张截图宣布另一个故障已定位。
+
+最终冻结 **1184** 个源码、**4** 个工具、**426** 个运行库文件及 5AD1 APK 的事后哈希全部匹配（`rhvideo-reveal-final-postcheck.json`）。生产修改 **86e47ec** 已推送 GitHub／Gitee；用户原三份脏 schema、正式 PID 45696、RHVideo 正式数据及实体手机均未动。整体目标仍未完成：原生冷首播、持续播放、关闭长等待、全可见封面与其余完整整轮／同质量比较继续保留，不发布新包。
+
 ## 2026-10-31 隐藏视频的继续播放入口（继续验收中）
 
 上轮只保护了迟到首帧、面板关闭及投影；实际 `viewer.toggle`、`visibilitychange` 和显式 `viewer.mediaControl resume` 仍可绕过面板归属。Windows 正常候选 **1558** 的真实原生场景新增两次意图切换后，实际 **0/1，一失败，10.814 秒**：设置仍打开、视频层仍隐藏，但真实控制应答后解码状态变为播放（`rhfiles-e2e-6ePv3r/presentation-modal.json`）。这是已复现的隐藏解码资源消耗，不是启动或持续播放慢的唯一根因。
