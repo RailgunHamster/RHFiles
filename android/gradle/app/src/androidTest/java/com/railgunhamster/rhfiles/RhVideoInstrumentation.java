@@ -16,6 +16,10 @@ public class RhVideoInstrumentation extends Instrumentation {
   private final java.util.Set<Activity> destroyedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
   @Override public void onCreate(Bundle value){super.onCreate(value);args=value;start();}
   private void require(boolean ok,String message)throws Exception{if(!ok)throw new Exception(message);}
+  private boolean ownedFixtureServer(String server){
+    String mode=args.getString("fixtureTransport","adb-reverse");
+    return server!=null&&((mode.equals("adb-reverse")&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"))||(mode.equals("emulator-host")&&server.matches("http://10\\.0\\.2\\.2:[0-9]+/?")));
+  }
   private boolean gridReady(JSONObject state)throws Exception{if(state==null)return false;JSONArray cells=state.optJSONArray("cells");if(cells==null||cells.length()!=4)return false;for(int i=0;i<cells.length();i++)if(!cells.getJSONObject(i).optBoolean("rendered"))return false;return cells.getJSONObject(0).optLong("positionMs")>500;}
   private void checkAudioStartExperiment(JSONObject state)throws Exception{
     int expected=Integer.parseInt(args.getString("audioStartMs","0"));
@@ -232,7 +236,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.grid.state').then(()=>false,()=>true)")),"An account switch must really close the old native viewer, not merely reject its buttons");
   }
   private void checkFailedGrid()throws Exception{
-    String server=args.getString("failureServer");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an owned loopback failure fixture is allowed");
+    String server=args.getString("failureServer");require(ownedFixtureServer(server),"Only the explicit owned-emulator failure fixture transport is allowed");
     action("connection.logout",new JSONObject());action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));action("grid.open",new JSONObject());
     long end=System.currentTimeMillis()+20000;JSONObject grid=null;boolean failed=false;
     do{try{grid=(JSONObject)nativeCall("automation.grid.state",new JSONObject());JSONArray cells=grid.getJSONArray("cells");failed=cells.length()==2;for(int i=0;i<cells.length();i++)failed&=!cells.getJSONObject(i).isNull("error")&&!cells.getJSONObject(i).optBoolean("rendered");if(failed)break;}catch(Exception ignored){}Thread.sleep(200);}while(System.currentTimeMillis()<end);
@@ -587,7 +591,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     action("gallery.shuffle",new JSONObject());String orderSeed=((JSONObject)action("gallery.state",new JSONObject())).getString("seed");require(orderSeed.matches("[a-f0-9]{8}"),"Use a reference-compatible string shuffle seed");
     action("gallery.save",new JSONObject().put("name","Native order"));action("gallery.restore",new JSONObject());action("gallery.resume",new JSONObject().put("name","Native order"));require(orderSeed.equals(((JSONObject)action("gallery.state",new JSONObject())).getString("seed")),"Saved seed survives actual native persistence and restoration");
     action("preferences.set",new JSONObject().put("key","mixPictures").put("value",true));require(((JSONObject)action("gallery.state",new JSONObject())).getJSONArray("orders").length()==0,"Named mixed-picture scope is independent");action("gallery.restore",new JSONObject());
-    action("gallery.inspect",new JSONObject().put("index",0));JSONObject mixed=waitImage(0);require("picture".equals(mixed.getJSONObject("current").getString("kind")),"Restored mixed gallery begins with pictures, not frames");action("image.close",new JSONObject());action("gallery.resume",new JSONObject());require("picture".equals(waitImage(0).getJSONObject("current").getString("kind")),"Continue browsing really reopens the last picture");action("image.close",new JSONObject());
+    action("gallery.inspect",new JSONObject().put("index",0));JSONObject mixed=waitImage(0);require("picture".equals(mixed.getJSONObject("current").getString("kind")),"Restored mixed gallery begins with pictures, not frames");checkImageToolbar();action("image.close",new JSONObject());action("gallery.resume",new JSONObject());require("picture".equals(waitImage(0).getJSONObject("current").getString("kind")),"Continue browsing really reopens the last picture");action("image.close",new JSONObject());
     action("preferences.set",new JSONObject().put("key","mixPictures").put("value",false));require(((JSONObject)action("gallery.state",new JSONObject())).getJSONArray("orders").length()==1,"Original scope retains its saved order");action("gallery.restore",new JSONObject());
     action("category",new JSONObject().put("kind","video"));
     action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject first=waitPlayer("video-0",true);JSONObject parent=first.getJSONObject("options");require(parent.getInt("parentTotal")==1,"Fixture must expose an actual one-item parent");
@@ -767,6 +771,23 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{state=(JSONObject)action("image.state",new JSONObject());if(state.optBoolean("opened")&&state.optInt("index")==index&&eval(library,"document.getElementById('full-image').naturalWidth>0").equals("true"))return state;Thread.sleep(100);}while(System.currentTimeMillis()<end);
     String ui=eval(library,"JSON.stringify((()=>{const image=document.getElementById('full-image');return {src:image.currentSrc||image.src,complete:image.complete,width:image.naturalWidth,height:image.naturalHeight,position:document.getElementById('image-position').textContent,notice:document.getElementById('notice').textContent,dialogs:[...document.querySelectorAll('dialog[open]')].map(n=>n.id)};})())");
     throw new Exception("Parent screenshot did not return: "+state+" UI: "+ui);
+  }
+  private void checkImageToolbar()throws Exception{
+    JSONObject image=(JSONObject)action("image.state",new JSONObject());
+    JSONObject geometry=(JSONObject)expression(library,"(()=>{const bar=document.querySelector('#image-dialog .viewer-bar'),row=bar.querySelector(':scope>div'),title=document.getElementById('image-title').getBoundingClientRect(),close=document.getElementById('image-close'),r=row.getBoundingClientRect(),c=close.getBoundingClientRect(),buttons=[...row.children].filter(n=>n.tagName==='BUTTON'&&n!==close&&n.getClientRects().length);return {width:innerWidth,titleFits:title.left>=0&&title.right<=innerWidth,titleAbove:title.bottom<=r.top,closeVisible:c.left>=0&&c.right<=innerWidth&&c.top>=0&&c.bottom<=r.top&&close.contains(document.elementFromPoint(c.x+c.width/2,c.y+c.height/2)),touchTargets:buttons.length>=5&&buttons.every(n=>{const r=n.getBoundingClientRect();return r.width>=44&&r.height>=44}),separateLabels:buttons.every((n,i)=>!i||n.getBoundingClientRect().left>=buttons[i-1].getBoundingClientRect().right),overflow:row.scrollWidth>row.clientWidth+1,stageHeight:document.querySelector('#image-dialog .image-stage').clientHeight,viewportHeight:innerHeight};})()");
+    require(geometry.getBoolean("titleFits")&&geometry.getBoolean("titleAbove")&&geometry.getBoolean("closeVisible")&&geometry.getBoolean("touchTargets")&&geometry.getBoolean("separateLabels")&&geometry.getInt("stageHeight")>geometry.getInt("viewportHeight")*.6,"Mobile preview title, fixed close and distinct touch targets must not crowd out the image: "+geometry);
+    screenshot("rhvideo-image-toolbar-start-qa.png");
+    if(geometry.getBoolean("overflow")){
+      expression(library,"(()=>{const row=document.querySelector('#image-dialog .viewer-bar>div');window.__toolbarClicks=0;window.__toolbarClickObserver=()=>window.__toolbarClicks++;row.addEventListener('click',window.__toolbarClickObserver,true);return true;})()");
+      try{
+        touchStrip("#image-dialog .viewer-bar>div",true);long end=SystemClock.uptimeMillis()+5000;
+        while(!Boolean.TRUE.equals(expression(library,"document.querySelector('#image-dialog .viewer-bar>div').scrollLeft>1"))&&SystemClock.uptimeMillis()<end)Thread.sleep(50);
+        require(Boolean.TRUE.equals(expression(library,"(()=>{const row=document.querySelector('#image-dialog .viewer-bar>div'),close=document.getElementById('image-close'),c=close.getBoundingClientRect();return row.scrollLeft>1&&window.__toolbarClicks===0&&close.contains(document.elementFromPoint(c.x+c.width/2,c.y+c.height/2));})()")),"A physical toolbar swipe must reveal overflow without executing a command or moving the fixed close");
+        JSONObject after=(JSONObject)action("image.state",new JSONObject());require(after.getString("previewId").equals(image.getString("previewId"))&&after.getInt("index")==image.getInt("index"),"Toolbar scrolling cannot navigate or close the preview");
+        screenshot("rhvideo-image-toolbar-end-qa.png");
+      }finally{expression(library,"(()=>{document.querySelector('#image-dialog .viewer-bar>div').removeEventListener('click',window.__toolbarClickObserver,true);delete window.__toolbarClickObserver;delete window.__toolbarClicks;return true;})()");}
+    }else screenshot("rhvideo-image-toolbar-end-qa.png");
+    step("mobile image toolbar geometry and real overflow gesture verified "+geometry);
   }
   private JSONObject waitPreviewResult()throws Exception{
     long end=System.currentTimeMillis()+15000;JSONObject state=null;
@@ -1132,7 +1153,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){stoppedActivities.remove(a);}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){stoppedActivities.add(a);}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){destroyedActivities.add(a);}};
     app.registerActivityLifecycleCallbacks(observer);
     try{
-      String server=args.getString("server");require(server!=null&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"),"Only an ADB-reversed loopback fixture is allowed");
+      String server=args.getString("server");require(ownedFixtureServer(server),"Only an explicit owned-emulator fixture transport is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
       if("lifecycle".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkPlaybackLifecycle();checkGridLifecycle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native HTTP lifecycle, single and grid, real subtitles, HOME/stop/resume, Activity recreation, actual paused frames, isolated choices and retired-decoder rejection");finish(Activity.RESULT_OK,result);return;}

@@ -3,8 +3,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 import pathModule from 'node:path';
+import {fixtureTransport} from './rhvideo-fixture-transport.mjs';
 export async function rhvideoFixture({videoFile=null,videoFiles={},videoResolutions=[],videoFolders=[],videoDuration=null,galleryVideoCount=4,galleryFrameCount=8,failTrashIds=[],failFavoriteIds=[],pictureCount=8,videoCount=52,chapterCount=3,beforeCatalog=null,beforeGallery=null,beforeLogin=null,beforeTrash=null,beforeMedia=null,taskState=null,referenceStatic=null,authState=null,loginUsers=['preview'],duplicates=null,tasks=null}={}){
   const favorites=new Set(),progress=[],requests=[],validTokens=new Set(['fixture-bearer-do-not-persist']);
+  const transport=fixtureTransport();
   if(authState?.token)validTokens.add(authState.token);
   const favoriteDates=new Map();let favoriteSerial=0;
   const syncFavoriteDates=()=>{for(const key of favoriteDates.keys())if(!favorites.has(key))favoriteDates.delete(key);for(const key of favorites)if(!favoriteDates.has(key)){const serial=++favoriteSerial;favoriteDates.set(key,{serial,date:new Date(Date.UTC(2026,0,1)+serial).toISOString()});}};
@@ -20,7 +22,7 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     return '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><defs><linearGradient id="s" x2="0" y2="1"><stop stop-color="'+sky+'"/><stop offset="1" stop-color="'+light+'"/></linearGradient><linearGradient id="m" x2="0" y2="1"><stop stop-color="'+dark+'"/><stop offset="1" stop-color="'+sky+'"/></linearGradient></defs><rect width="800" height="500" fill="url(#s)"/><circle cx="'+(570-index%3*90)+'" cy="130" r="43" fill="#fff4df" opacity=".8"/><path d="M0 330 145 190 280 300 440 145 650 310 800 215v285H0z" fill="'+dark+'" opacity=".35"/><path d="M0 370 185 280 330 390 520 260 800 380v120H0z" fill="url(#m)" opacity=".75"/><path d="M0 435q220-100 450-25t350-30v120H0z" fill="'+dark+'" opacity=".55"/></svg>';
   };
   const server=http.createServer(async(req,res)=>{
-    const url=new URL(req.url,'http://fixture'),path=url.pathname;requests.push({path,query:url.search,authorization:req.headers.authorization,range:req.headers.range,method:req.method});
+    const url=new URL(req.url,'http://fixture'),path=url.pathname;transport.observe(res,requests.length);requests.push({path,query:url.search,authorization:req.headers.authorization,range:req.headers.range,method:req.method});
     const send=(status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value));};
     if(referenceStatic&&(path==='/'||path.startsWith('/static/'))){
       const relative=path==='/'?'index.html':decodeURIComponent(path.slice(8)),file=pathModule.resolve(referenceStatic,relative);
@@ -116,5 +118,5 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     send(404,{detail:'Fixture route not found'});
   });
   await listenBrowserLoopback(server);
-  return {server,url:'http://127.0.0.1:'+server.address().port,videos,pictures,favorites,progress,requests,watch,trash,batches,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
+  return {server,url:'http://127.0.0.1:'+server.address().port,videos,pictures,favorites,progress,requests,watch,trash,batches,transport,close:()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);})};
 }

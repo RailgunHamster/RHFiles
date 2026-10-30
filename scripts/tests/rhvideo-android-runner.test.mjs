@@ -3,6 +3,28 @@ const source=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.met
 function walk(node){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&node.callee.object?.name==='assert'&&node.arguments[0]?.name==='output'){if(node.callee.property?.name==='match')success=node.arguments[1];if(node.callee.property?.name==='doesNotMatch')failure=node.arguments[1];}if(node.type==='VariableDeclarator'&&node.id?.name==='artifact')artifact=node.init;if(node.type==='FunctionDeclaration'&&node.id?.name==='verifyContractTraffic')traffic=node;if(node.type==='FunctionDeclaration'&&node.id?.name==='captureGridAudio')audioCapture=node;for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}walk(parse(source,{ecmaVersion:'latest',sourceType:'module'}));
 const modes={actualMode:false,lifecycleMode:false,closeReceiptMode:false,singleClockMode:false,taskCenterMode:false,priorityMode:false,duplicatesMode:false,rulesMode:false,loginMode:false,exportsMode:false,gridSurfaceMode:false,gridRotationMode:false,gridRestoreMode:false,gridMode:false,playlistMode:false,previewMode:false,singleMode:true,favoritesMode:false,stripMode:false,ticketsMode:false,rotationMode:false};
 
+test('owned fixture transport uses only explicit reverse-loopback or the emulator host alias, never arbitrary servers',()=>{
+  const declaration=parse(source,{ecmaVersion:'latest',sourceType:'module'}).body.find(node=>node.type==='FunctionDeclaration'&&node.id?.name==='fixtureServerUrl');assert(declaration);
+  const url=vm.runInNewContext('('+source.slice(declaration.start,declaration.end)+')',{assert});
+  assert.equal(url('adb-reverse',53211),'http://127.0.0.1:53211');assert.equal(url('emulator-host',53211),'http://10.0.2.2:53211');
+  for(const mode of ['',undefined,'http://outside.invalid','127.0.0.1','emulator-host.evil'])assert.throws(()=>url(mode,53211));
+  for(const port of [0,-1,65536,'53211',Infinity,1.5])assert.throws(()=>url('emulator-host',port));
+  assert(source.indexOf('fixtureServerUrl(fixtureTransportMode,1)')<source.indexOf('const sdk='),'Reject unknown transport before device access');
+  assert.match(source,/'-e','fixtureTransport',fixtureTransportMode/);
+  assert.match(source,/if\(fixtureTransportMode==='adb-reverse'\)\{run\(\['reverse'/);
+  assert.match(source,/if\(fixtureTransportMode==='adb-reverse'\)try\{run\(\['reverse','--remove'/);
+});
+
+test('native fixture admission requires the selected exact host and records the selected transport in artifacts',()=>{
+  const admission=java.slice(java.indexOf('private boolean ownedFixtureServer('),java.indexOf('private boolean gridReady('));
+  assert.match(admission,/args\.getString\("fixtureTransport","adb-reverse"\)/);
+  assert(admission.includes('mode.equals("adb-reverse")&&server.matches("http://127\\\\.0\\\\.0\\\\.1:[0-9]+/?")'));
+  assert(admission.includes('mode.equals("emulator-host")&&server.matches("http://10\\\\.0\\\\.2\\\\.2:[0-9]+/?")'));
+  assert.equal([...java.matchAll(/require\(ownedFixtureServer\(server\)/g)].length,2,'Main and terminal-error fixtures have the same admission policy');
+  assert.match(source,/'fixture-transport-mode\.json'/);assert.match(source,/hostListen:'127\.0\.0\.1'/);
+  assert.match(source,/fixture\.transport\.snapshot\(\)/);assert.match(source,/failedFixture\.transport\.snapshot\(\)/);
+});
+
 for(const [mode,prefix,namespace]of [['closeReceiptMode','library self-close semantic/UI process receipts','close-receipt'],['gridSurfaceMode','surface-only grid diagnostic','grid-surface'],['singleClockMode','single-player real-clock diagnostic; not full product acceptance','single-clock']])test(`${mode} requires its own native receipt and cannot inherit another mode's artifacts`,()=>{
   const scope={...modes,singleMode:false,[mode]:true,path,Date};
   const pattern=vm.runInNewContext(source.slice(success.start,success.end),scope);

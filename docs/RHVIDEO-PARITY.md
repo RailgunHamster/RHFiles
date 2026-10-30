@@ -6,6 +6,32 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 手机图片预览工具栏与传输阶段验证（继续验收，未发包）
+
+实际失败截图显示图片预览顶部所有文字操作挤在一起，关闭被挤到下一行。只修改手机适配 CSS：标题单独一行、关闭固定于右上角，操作保留在有间隔／边框的单行横向滚动条内，触摸目标至少 44 CSS px；图片区按剩余高度伸展。不删除命令、不改按钮处理器／语义接口、不影响 Windows 界面或解码器。
+
+新探针检查实际标题／关闭的屏内几何、触摸目标和图片区比例；通过真实输入滑动操作栏，要求 `scrollLeft` 前进、没有 click 事件、同一 previewId／index 保留且关闭仍可命中，没有写入 scrollLeft 或用 `performClick()` 代替手势。专项检查及全部共享回归最终 **885/885、零跳过**（`rhvideo-image-toolbar-final-node.log`）；短路径 QA 增量构建 **3 分 52 秒成功，464/464 JVM、70 XML、零失败／错误／跳过**（`rhvideo-image-toolbar-build.log`）。Rust 内嵌主文件页未改，继续复用本轮已重新编译的两套 JNI，不冒充完整新原生发行构建。
+
+快照 `rhvideo-image-toolbar-b8392ad8bda642949ce097974ec25a30` 保存主 APK **`71743c73eebc95d06109ce94252c45640a34a4bf0a669593ac1861a8e99ffc00`**、探针 **`d8f95905b3715dc351bad2b9c9ba8d1a81d8992373b75c642822440bb2542eed`** 及精确 mapping。自有 `emulator-5588` 安装后逐字节核对，并显式使用 `emulator-host`／默认 audio、codec、compositor。实际工具栏子项通过：视口 **412×867 CSS px**，图片区高 **706 px**，真实横滑前后标题、关闭、目标尺寸及点击隔离均通过；`rhvideo-android-single-1793328817091-release/rhvideo-image-toolbar-{start,end}-qa.png` 已查看。起始截图只有工具栏、图片尚未绘制，**不是图片像素就绪证明**；滑动后的截图才显示完整四块测试色图。该轮随后 **完整 Single 终止成功**（`rhvideo-image-toolbar-direct-single.log`），包括真实内容像素／HTML 拒绝、原生速度菜单的实际勾选、单项父层返回／旧子身份、模式／账户隔离、上下文控件和独立收藏放映；不是只把工具栏子项通过当成整轮通过。
+
+此前旧 APK 加入服务端记录后的 Single **完整通过**（`rhvideo-host-gpu-single-transport.log`、`rhvideo-android-single-1793328075722-release/`）：103 个响应均 `writableFinished=true`、无丢弃，图片服务端 finish 最长约 **24.76 ms**。这一轮使用 ADB reverse，未改产品行为；因此不是此前图片失败已修好或已证明 ADB 是唯一原因。新的直连模式与有界时序是定位工具，不是失败后自动换路重发。
+
+同一新 APK 的 `emulator-host` 完整 **grid 仍失败**（`rhvideo-image-toolbar-direct-grid.log`、`rhvideo-android-grid-1793329100595-release/`）：三格全部位置 0／1 帧，第二格进入 BUFFERING，但都显示 bufferedPosition=20000、音视频轨选中，未改变数量、音频、codec、表面或原三十秒就绪预算。故不能仅按 ADB 转发解释多路首帧停滞，后续继续核对媒体推进／音频启动及实际解码器。完整目标未完成、未发布；正式 Windows PID 45696 和实体手机未动。
+
+## 2026-10-30 独立 host-GPU 环境的首个单路计时结果（继续验收，未发包）
+
+新自有 AVD 在 **安装 RHFiles 之前**发生 System UI 与 `system` 两个无响应弹窗，已保存 `rhvideo-host-gpu-startup/` 的窗口、事件日志、截图及实际节点 XML。核对对应窗口后各选择一次“等待”，未关闭／重启系统进程、未重置模拟器；随后实际观察到 `sys.boot_completed=1`、bootanim `stopped`、窗口无 ANR／Error，包管理器仍查不到 RHFiles，才开始安装。启动系统本身出过问题的事实不因后续测试通过而抹去，也不跳过验收前后的错误窗口检查。
+
+`rhvideo-host-gpu-single-clock-native.log` 已终止成功，材料为 `rhvideo-android-single-clock-1793323697610-release/`。实际安装的默认主包仍为 **`9dbe624e…`**、探针 **`2d85c5ce…`**，均逐字节核对；默认音频／codec／compositor 未修改，H.264／AAC 竖屏源 SHA-256 仍为 `98c8699e…`。真实全长进度 **506／506 ms、end=-1**；五秒不中途查询、不定位／重开且暂停 WebView 计时器的区间，实际 **5109 ms 推进 4897 ms、输出 117 个新帧、同一 input**，原门槛通过。日志明确只表示单路时钟诊断通过，不是全产品验收。
+
+这与旧两个自有 AVD 上的失败构成新的环境证据，下一步可执行完整同屏、Single、旋转／生命周期及实际画面回归；不能因此删除旧失败、宣布所有迟滞已修复或仅归因为 GPU。新环境的 userdata 和 GPU 同时不同，普通本地 PlayerView 对照也尚未在这个环境执行。正式 Windows／实体手机未动，未发包；完整还原及性能目标保持未完成。
+
+随后的完整默认 **grid 失败**（`rhvideo-host-gpu-grid-native.log`、`rhvideo-android-grid-1793323913230-release/`）：原三十秒内第一格输出 114 帧、位置 6869 ms；第二／三格都只有 1 帧、位置 0，虽标为 READY／playing、音视频均选中且 bufferedPosition 为 20000 ms。失败时三路 session 分别 1345／1353／1361；实际系统音频快照中后两路尚未 active，仅 2048 PCM 帧待取，第一路有 104 次 underrun。故单路时钟通过并不证明多路正常；这也不等于已经确认唯一根因，未改成只给一格音频、减少数量或放宽等待。
+
+第一轮完整 **Single 也失败**（`rhvideo-host-gpu-single-native.log`、`rhvideo-android-single-1793327816347-release/`）：首次图片打开后，关闭再继续浏览的同一图片仍未解码，实际 IMG `complete=false`／naturalWidth=0。原生 HTTP 诊断在这段有请求头发出却没有响应头完成，也有 adbd flush 超时日志；仅据此不能断言是客户端、服务器或 ADB 的唯一错误。原失败保留，不将下一次通过当作修复。
+
+为区别以上网络阶段，契约夹具增加最多 4096 条、不记录 URL／请求头／正文的服务端响应观察：请求索引、单调开始／finish／close 时间、状态与 `writableFinished`；finish 只表示 Node 已交给传输层，**不表示 Android 已收到／解码**。真实分段响应及客户端主动断开、容量／隐私和独立快照都有测试。宿主保存 `fixture-transport.json`，失败源另存，不改变现有请求／响应或自动重发。另加显式 `RHFILES_QA_FIXTURE_TRANSPORT=emulator-host`，仅将自有模拟器的固定夹具端口经 **10.0.2.2** 访问宿主；默认仍 ADB reverse，两个模式均记录实际地址，只监听宿主 loopback，不准任意地址、不改变网络设置或产品策略。该地址映射依据 [Android 官方模拟器网络说明](https://developer.android.com/studio/run/emulator-networking-address)。相关宿主／探针／夹具策略 **43/43、零跳过**；新探针的构建及直连运行结果仍须另验。
+
 ## 2026-10-30 普通视频进度映射修复与本地路径对照（继续定位，未发包）
 
 先用 Robolectric 直接调用原 `PlaybackActivity.rhQueuePosition`，没有复制一份测试公式：新增六项中 **四项红测**（`rhvideo-open-ended-timeline-red.log`、`rhvideo-open-ended-timeline-red.xml`），例如期望 3929 却得到 0、期望 20672 却只有前序时间 17500。默认全长的 `end=-1` 被夹成零跨度是直接原因。现对已知片段继续使用原计划边界；未知终点仅在报告进度时读取已知解码时长，时长也未知时保留已经观察到的位置；不改队列、不加裁剪终点、不定位／重开。API 的物理位置和队列位置共用同一次位置读取，避免两个 getter 时间不同。

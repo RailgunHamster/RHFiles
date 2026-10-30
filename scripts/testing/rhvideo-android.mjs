@@ -10,6 +10,13 @@ import {rhvideoFixture as contractFixture} from './rhvideo-fixture.mjs';
 import {realRhVideoService} from './rhvideo-real-service.mjs';
 import {taskFixture} from './rhvideo-task-fixture.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
+const fixtureTransportMode=process.env.RHFILES_QA_FIXTURE_TRANSPORT||'adb-reverse';
+function fixtureServerUrl(transport,port){
+  assert(['adb-reverse','emulator-host'].includes(transport),'Unknown owned emulator fixture transport');
+  assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid fixture port');
+  return 'http://'+(transport==='adb-reverse'?'127.0.0.1':'10.0.2.2')+':'+port;
+}
+fixtureServerUrl(fixtureTransportMode,1); // Reject unknown configuration before any device access.
 assert([undefined,'smoke','grid','grid-restore','grid-rotation','grid-surface-probe','single-clock','close-receipt','playlist','preview','single','rules','favorites','strip','tickets','rotation','exports','duplicates','task-priority','task-center','login','lifecycle'].includes(process.argv[5]),'Unknown owned Android acceptance mode');
 const lifecycleMode=process.argv[5]==='lifecycle';
 const closeReceiptMode=process.argv[5]==='close-receipt';
@@ -145,6 +152,7 @@ if(favoritesMode)for(const key of ['video:video-0','video:video-1','picture:pict
 const failedFixture=gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode?await rhvideoFixture({videoFile:video,galleryVideoCount:2,beforeMedia:({image})=>image?null:{status:503,detail:'Owned offline stream'}}):null;
 const failedPort=failedFixture?new URL(failedFixture.url).port:null;
 const artifact=path.resolve('test-artifacts/rhvideo-android'+(lifecycleMode?'-lifecycle':closeReceiptMode?'-close-receipt':singleClockMode?'-single-clock':taskCenterMode?'-task-center':rulesMode?'-rules':actualMode?(loginMode?'-login':duplicatesMode?'-duplicates':priorityMode?'-task-priority':'-exports'):gridSurfaceMode?'-grid-surface':gridRotationMode?'-grid-rotation':gridRestoreMode?'-grid-restore':gridMode?'-grid':playlistMode?'-playlist':previewMode?'-preview':singleMode?'-single':favoritesMode?'-favorites':stripMode?'-strip':ticketsMode?'-tickets':rotationMode?'-rotation':'')+'-'+Date.now()+'-release');fs.mkdirSync(artifact,{recursive:true});
+fs.writeFileSync(path.join(artifact,'fixture-transport-mode.json'),JSON.stringify({mode:fixtureTransportMode,server:fixtureServerUrl(fixtureTransportMode,Number(port)),failureServer:failedPort?fixtureServerUrl(fixtureTransportMode,Number(failedPort)):null,hostListen:'127.0.0.1'},null,2));
 fs.writeFileSync(path.join(artifact,'qa-parameters.json'),JSON.stringify({audioStartMs,codecMode,surfaceMode,diagnosticOnly:gridSurfaceMode||singleClockMode,productDefault:audioStartMs===0&&codecMode==='default'&&surfaceMode==='compositor'},null,2));
 fs.writeFileSync(path.join(artifact,'fixture-media.json'),JSON.stringify([['landscape',video],['portrait',mediaMode?portrait:null]].filter(([,file])=>file&&fs.existsSync(file)).map(([kind,file])=>({kind,bytes:fs.statSync(file).size,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')})),null,2));
 function captureGridAudio(expectedPid){
@@ -185,7 +193,7 @@ function capturePlaybackTrace(){
 }
 // This exact generated diagnostic belongs to the already-verified QA emulator.
 // A later failed run must never inherit an earlier run's menu screenshot.
-if(singleMode||playlistMode)for(const name of ['rhvideo-menu-failure-qa.png','rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
+if(singleMode||playlistMode)for(const name of ['rhvideo-menu-failure-qa.png','rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png','rhvideo-image-toolbar-start-qa.png','rhvideo-image-toolbar-end-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
 if(gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode)for(const name of ['rhvideo-grid-landscape-qa.png','rhvideo-grid-portrait-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
 function installExact(packageId,file){
   const expectedHash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -213,15 +221,15 @@ try{
   // from covering the native-player visual acceptance screenshot.
   run(['shell','settings','put','secure','immersive_mode_confirmations','confirmed']);
   run(['shell','svc','power','stayon','true']);run(['shell','input','keyevent','224']);run(['shell','wm','dismiss-keyguard']);
-  run(['reverse','tcp:'+port,'tcp:'+port]);run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
-  if(failedPort)run(['reverse','tcp:'+failedPort,'tcp:'+failedPort]);
+  if(fixtureTransportMode==='adb-reverse'){run(['reverse','tcp:'+port,'tcp:'+port]);if(failedPort)run(['reverse','tcp:'+failedPort,'tcp:'+failedPort]);}
+  run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
   async function instrument(modeArgs,log){
     if(lifecycleMode)modeArgs=['-e','mode','lifecycle'];
     if(taskCenterMode)modeArgs=['-e','mode','task-center'];
     if(priorityMode)modeArgs=['-e','mode','task-priority'];
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
-  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,'-e','surfaceMode',surfaceMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server',fixtureServerUrl(fixtureTransportMode,Number(port)),'-e','fixtureTransport',fixtureTransportMode,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,'-e','surfaceMode',surfaceMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   let output='',armedTaskFailures=false,gridAudioCapture=null,playbackTrace=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}if(tracePlayback&&!playbackTrace&&/^STEP: single clock settled /m.test(output))playbackTrace=capturePlaybackTrace().catch(error=>{console.error('Playback trace unavailable: '+error.message);});const failure=output.match(/^STEP: QA: (?:grid|player)-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode||singleClockMode)&&!gridAudioCapture&&failure)gridAudioCapture=Promise.all([captureGridAudio(Number(failure[1])),capturePlaybackEnvironment(Number(failure[1]))]).catch(error=>{console.error('Live playback diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
@@ -232,7 +240,7 @@ try{
   finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;if(playbackTrace)await playbackTrace;}
   assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED|keyDispatchingTimedOut|Input dispatching timed out/);return output;
   }
-  const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:closeReceiptMode?['-e','mode','close-receipt']:singleClockMode?['-e','mode','single-clock']:gridSurfaceMode?['-e','mode','grid-surface-probe']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
+  const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:closeReceiptMode?['-e','mode','close-receipt']:singleClockMode?['-e','mode','single-clock']:gridSurfaceMode?['-e','mode','grid-surface-probe']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer',fixtureServerUrl(fixtureTransportMode,Number(failedPort))]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
   assert.match(output,lifecycleMode?/PASS: native HTTP lifecycle, single and grid/:closeReceiptMode?/PASS: library self-close semantic\/UI process receipts, actual destruction and old-key rejection without repeating close/:singleClockMode?/PASS: single-player real-clock diagnostic; not full product acceptance/:taskCenterMode?/PASS: packaged task center/:priorityMode?/PASS: actual task priority/:duplicatesMode?/PASS: actual duplicates/:rulesMode?/PASS: native tag rules/:loginMode?/PASS: native login phase login/:exportsMode?/PASS: favorite exports recovery armed/:gridSurfaceMode?/PASS: surface-only grid diagnostic; not complete product acceptance/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: contextual workflow entries and real card selection, reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
   if(tracePlayback)assert.equal(JSON.parse(fs.readFileSync(path.join(artifact,'native-perfetto-receipt.json'),'utf8')).captured,true,'An explicitly requested trace must actually be captured');
   if(gridMode||lifecycleMode){verifyGridAudioParameters(output,audioStartMs,codecMode);verifyGridSurfaceParameters(output,surfaceMode);}
@@ -280,6 +288,7 @@ try{
   if(rulesMode)run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-rules-qa.png',path.join(artifact,'rhvideo-rules-qa.png')]);
   if(!rulesMode&&!lifecycleMode&&!gridSurfaceMode&&!singleClockMode&&!closeReceiptMode)
   for(const name of taskCenterMode?['rhvideo-task-center-qa.png']:priorityMode?['rhvideo-task-priority-qa.png']:duplicatesMode?['rhvideo-duplicates-qa.png','rhvideo-duplicate-preview-qa.png']:loginMode?['rhvideo-login-connected-qa.png','rhvideo-login-restored-qa.png','rhvideo-login-signedout-qa.png']:exportsMode?['rhvideo-export-qa.png','rhvideo-export-recovery-qa.png']:gridRotationMode?['rhvideo-grid-rotation-qa.png']:gridRestoreMode?['rhvideo-grid-restore-qa.png']:gridMode?['rhvideo-grid-qa.png','rhvideo-grid-error-qa.png','rhvideo-grid-favorite-error-qa.png']:playlistMode?['rhvideo-playlist-qa.png']:previewMode?['rhvideo-parent-qa.png','rhvideo-preview-result-qa.png','rhvideo-favorite-error-qa.png']:singleMode?['rhvideo-single-qa.png','rhvideo-image-content-qa.png','rhvideo-favorite-slideshow-qa.png']:favoritesMode?['rhvideo-favorite-picture-qa.png','rhvideo-favorite-video-qa.png']:stripMode?['rhvideo-strip-picture-qa.png','rhvideo-strip-rows-qa.png']:ticketsMode?[]:rotationMode?['rhvideo-rotation-on-qa.png','rhvideo-rotation-off-qa.png']:['rhvideo-library-qa.png','rhvideo-player-qa.png','rhvideo-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
+  if(singleMode)for(const name of ['rhvideo-image-toolbar-start-qa.png','rhvideo-image-toolbar-end-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
   if(lifecycleMode){
     for(const name of ['rhvideo-lifecycle-player-qa.png','rhvideo-lifecycle-grid-qa.png'])run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);
   }
@@ -304,6 +313,8 @@ try{
   releaseGallery?.();
   // Keep transport evidence on failure too; never persist bearer/passwords.
   fs.writeFileSync(path.join(artifact,'requests.json'),JSON.stringify(fixture.requests.map(({method,path,query,range})=>({method,path,query,range})),null,2));
+  if(fixture.transport)fs.writeFileSync(path.join(artifact,'fixture-transport.json'),JSON.stringify(fixture.transport.snapshot(),null,2));
+  if(failedFixture?.transport)fs.writeFileSync(path.join(artifact,'failed-fixture-transport.json'),JSON.stringify(failedFixture.transport.snapshot(),null,2));
   // Preserve native codec/lifecycle evidence even when an assertion prevents
   // the success-only screenshot pull. This is the owned QA emulator only.
   for(const [name,args]of [['native-logcat.log',['logcat','-d','-v','threadtime','-t','6000']],['native-resources.txt',['shell','dumpsys','media.resource_manager']]])try{
@@ -312,5 +323,5 @@ try{
   if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('Native controller menu item not available:'))try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-menu-failure-qa.png',path.join(artifact,'rhvideo-menu-failure-qa.png')]);}catch{}
   if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('FAIL:'))for(const name of ['rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
   if(gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode)for(const name of ['rhvideo-grid-landscape-qa.png','rhvideo-grid-portrait-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
-  try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();if(actualMode){fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(artifact,'actual-service.log'));const transport=path.join(fixture.directory,'zip-transport.jsonl');if(fs.existsSync(transport))fs.copyFileSync(transport,path.join(artifact,'zip-transport.jsonl'));}fs.rmSync(temporary,{recursive:true,force:true});
+  if(fixtureTransportMode==='adb-reverse')try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();if(actualMode){fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(artifact,'actual-service.log'));const transport=path.join(fixture.directory,'zip-transport.jsonl');if(fs.existsSync(transport))fs.copyFileSync(transport,path.join(artifact,'zip-transport.jsonl'));}fs.rmSync(temporary,{recursive:true,force:true});
 }

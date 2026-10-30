@@ -81,6 +81,19 @@ test('ordinary grid resizing retains codecs but keeps real background and explic
   assert.match(grid,/override fun onStop\(\)\{handler\.removeCallbacks\(update\);releasePlayers\(\);super\.onStop\(\)\}/);
 });
 
+test('mobile image toolbar acceptance checks real geometry and a physical swipe without replacing command handlers',()=>{
+  const start=source.indexOf('private void checkImageToolbar()');assert(start>=0);
+  const body=source.slice(start,source.indexOf('\n  private ',start));
+  for(const checkpoint of ['titleFits','titleAbove','closeVisible','touchTargets','separateLabels','stageHeight','previewId','scrollLeft>1','__toolbarClicks===0'])assert(body.includes(checkpoint),checkpoint);
+  assert.match(body,/touchStrip\("#image-dialog \.viewer-bar>div",true\)/);
+  assert.doesNotMatch(body,/\.scrollLeft\s*=|\.performClick\(|preventDefault\(|\.click\(/);
+  assert.match(source,/checkImageToolbar\(\);action\("image.close"/);
+  const css=fs.readFileSync(new URL('../../android/web/css/rhvideo-mobile.css',import.meta.url),'utf8');
+  assert.match(css,/\.mobile-client \.image-dialog \.viewer-bar>div\{[^}]*flex-wrap:nowrap;justify-content:flex-start;[^}]*overflow-x:auto;[^}]*touch-action:pan-x/);
+  assert.match(css,/\.mobile-client \.image-dialog #image-close\{position:absolute;/);
+  assert.doesNotMatch(css,/\.mobile-client \.image-dialog[^{}]*button[^{}]*\{[^}]*display:none/,'Responsive layout cannot remove a command');
+});
+
 test('single-player clock control preserves ordinary audio/video output and observes an uninterrupted interval',()=>{
   const start=source.indexOf('private void checkSingleClockProbe()');assert(start>=0);
   const body=source.slice(start,source.indexOf('\n  private ',start));
