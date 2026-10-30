@@ -3,10 +3,12 @@ package com.railgunhamster.rhfiles
 import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.common.Timeline
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.exoplayer.DecoderCounters
+import androidx.media3.exoplayer.ExoTimeoutException
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
@@ -29,6 +31,7 @@ class RhVideoInputDiagnosticsTest {
     val diagnostic=RhVideoInputDiagnostics(false){error("Disabled diagnostics must not sample")}
     diagnostic.onTransferInitializing(source,spec,true);diagnostic.onTransferStart(source,spec,true);diagnostic.onBytesTransferred(source,spec,true,42);diagnostic.onTransferEnd(source,spec,true)
     diagnostic.onVideoDecoderInitialized(event(),"c2.android.avc.decoder",100,90);assertNull(diagnostic.snapshot(null,null))
+    diagnostic.onPlayerError(event(),PlaybackException("private message",ExoTimeoutException(ExoTimeoutException.TIMEOUT_OPERATION_DETACH_SURFACE),PlaybackException.ERROR_CODE_TIMEOUT))
   }
   @Test fun tracksRealTransferredBytesAndUnknownStagesWithoutKeepingAddresses(){
     val clock=AtomicLong(1000);val diagnostic=RhVideoInputDiagnostics(true){clock.get()}
@@ -63,5 +66,22 @@ class RhVideoInputDiagnosticsTest {
     diagnostic.onVideoDecoderInitialized(event(),"https://private.invalid/"+"secret-capability".repeat(100),1000,1)
     val result=diagnostic.snapshot(null,null)!!;assertEquals(10000,result.getLong("loadErrors"));assertEquals("IOException",result.getString("lastLoadErrorClass"));assertEquals("unrecognized-codec",result.getJSONObject("videoDecoder").getString("name"));assertTrue(result.toString().length<2048)
     for(secret in listOf("private.invalid","secret-capability","secret-bearer"))assertFalse(result.toString().contains(secret))
+  }
+  @Test fun playbackTimeoutRetainsItsActualOperationButNoExceptionMessageOrMutableReceipt(){
+    val clock=AtomicLong(1000);val diagnostic=RhVideoInputDiagnostics(true){clock.get()};clock.set(1240)
+    val timeout=ExoTimeoutException(ExoTimeoutException.TIMEOUT_OPERATION_DETACH_SURFACE)
+    diagnostic.onPlayerError(event(),PlaybackException("https://private.invalid/media?token=secret-capability Bearer secret-bearer",IOException("private-name",timeout),PlaybackException.ERROR_CODE_TIMEOUT))
+    val receipt=diagnostic.snapshot(null,null)!!.getJSONObject("lastPlaybackError")
+    assertEquals(240,receipt.getLong("atMs"));assertEquals(PlaybackException.ERROR_CODE_TIMEOUT,receipt.getInt("code"));assertEquals(ExoTimeoutException.TIMEOUT_OPERATION_DETACH_SURFACE,receipt.getInt("timeoutOperation"))
+    assertEquals(3,receipt.getJSONArray("causeClasses").length())
+    for(secret in listOf("private.invalid","private-name","secret-capability","secret-bearer"))assertFalse(receipt.toString().contains(secret))
+    receipt.put("timeoutOperation",999);assertEquals(ExoTimeoutException.TIMEOUT_OPERATION_DETACH_SURFACE,diagnostic.snapshot(null,null)!!.getJSONObject("lastPlaybackError").getInt("timeoutOperation"))
+  }
+  @Test fun repeatedAndCyclicErrorsCannotGrowAQueueOrWalkForever(){
+    val diagnostic=RhVideoInputDiagnostics(true){1000};val first=IOException("private-a");val second=IOException("private-b");first.initCause(second);second.initCause(first)
+    val error=PlaybackException("secret-token",first,PlaybackException.ERROR_CODE_UNSPECIFIED)
+    repeat(10000){diagnostic.onPlayerError(event(),error)}
+    val snapshot=diagnostic.snapshot(null,null)!!;val receipt=snapshot.getJSONObject("lastPlaybackError")
+    assertEquals(5,receipt.getJSONArray("causeClasses").length());assertTrue(receipt.isNull("timeoutOperation"));assertTrue(snapshot.toString().length<2048);assertFalse(snapshot.toString().contains("private-"));assertFalse(snapshot.toString().contains("secret-token"))
   }
 }

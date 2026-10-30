@@ -31,6 +31,12 @@ test('record collection is capped at the same 512-action budget and snapshots ar
   const text=Array.from({length:520},(_,i)=>line(sample({sequence:i+1}))).join(''),a=expressionTimings(text,run),b=expressionTimings(text,run);
   assert.equal(a.records.length,512);assert.equal(a.rejected,8);a.records[0].label='changed';assert.equal(b.records[0].label,'rhvideo.player.state');
 });
+
+test('a truncated log or a missing middle sequence is explicitly incomplete, even when every remaining record is valid',()=>{
+  const tail=expressionTimings(line(sample({sequence:58}))+line(sample({sequence:59}))+line(sample({sequence:61})),run);
+  assert.equal(tail.records.length,3);assert.equal(tail.rejected,0);assert.equal(tail.dropped,0);assert.equal(tail.missingSequences,58);
+  assert.equal(expressionTimings(line(sample())+line(sample({sequence:2})),run).missingSequences,0);
+});
 test('probe timing is opt-in, contains no result serialization and preserves original per-eval/action budgets',()=>{
   const source=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');
   const timing=source.slice(source.indexOf('private static final class ExpressionTiming'),source.indexOf('private final java.util.Set<Activity>'));

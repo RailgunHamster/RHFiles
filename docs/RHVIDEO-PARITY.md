@@ -24,6 +24,12 @@ Android 上述 D9FB／407C 实包在自有 API 36 的整条流程仍 **失败**�
 
 未发新包、未替换正式实例、未操作实体手机；Android 四路／生命周期、旧兼容回执交付失败及全目标性能仍开放。
 
+后续独立反例 `rhvideo-pipe-full-50j5bu` 保留旧 **F52A** EXE，并仅让新测试的工作台源码门禁匹配旧冻结副本的 **D7E0** 字节（来源／SHA-256 明列于 `admission.json`，没有修改旧资源或跳过资源门禁）。同一新测试在旧实包确实 **0/1、一失败，14.850 秒**：已有实际原生帧，外部 Win32 观察得到 alpha **0**，断言要求 **255**（`rhvideo-paused-native-old-window-red.log`）。因此上面新实包的 alpha／像素通过有真实旧版本反例，不只依据函数测试或帧计数。
+
+Android 继续补充现有可选输入诊断：保留最近一次实际 `PlaybackException` 的错误码、最多五层原因类型，以及具体 `ExoTimeoutException.timeoutOperation`；不保留 Throwable、消息、堆栈、地址／头或事件队列，不更改播放器操作、超时或重放行为。真实 Media3 类的 JVM／Robolectric 检查 **9/9、零失败／跳过**（`rhvideo-playback-timeout-diagnostics-jvm.log`，Gradle **2 分 44 秒**），包括禁用时不采时钟、具体超时操作、深／环状原因链、有界大小和敏感消息不落盘。这只是诊断可用，不是四路播放已修复。
+
+测试计时读取另显式返回 `missingSequences`，防止末尾日志截断后仍被误读为完整覆盖。新增断口测试 **7/7**，完整 Node **1169/1169、零跳过，39.874 秒**（`rhvideo-timeout-and-timing-coverage-full-node.tap`；与编译并行，不是性能样本）。对原 Android 失败日志重新只读解析为 139 条、序号 58–196、**57** 条缺失，不覆盖原证据；新的正常 APK 仍在构建，需实际捕获超时操作再定位。
+
 ## 2026-10-31 最新发行构建整轮 117/118 与旧回执交付（仍未通过）
 
 账户清理修复的 Windows release 构建成功 **2 分 33 秒**。冻结 `f71027b`／EXE **`f52a858ac4c834fd44ef075ee62acb3431f2903434a3c543067ce966cc5ef31a`** 的完整串行场景已终止：**117/118、一失败、零取消／跳过，21 分 53.697 秒**（`rhvideo-pipe-full-8QwC2B/RHFiles/test-artifacts/rhvideo-windows-WgGO9A/receipt.json`）。回执确认原参考／EXE／外部工具未变，结束后额外逐项重算 **1165** 个源码、**4** 个工具、**426** 个运行文件及 **14** 个参考模块，共 **1609** 个输入全部匹配。源切换实际像素、暂停旋转像素、幻灯片两种真实按键及其他 114 项通过，不能覆盖第 40 项兼容回执失败。正式 PID 45696、手机及 AVD 未重启或重置，未发布新包。

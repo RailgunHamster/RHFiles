@@ -3,7 +3,7 @@
 export function expressionTimings(log,run){
   if(typeof run!=='string'||!/^[a-f0-9]{32}$/.test(run))throw Error('Invalid expression timing run identity');
   const fields=['elapsedMs','evals','polls','mainQueueMs','mainQueueMaxMs','callbackMs','callbackMaxMs','callbackMissing','pollEvalMs','pollSleepMs'];
-  const records=[];let rejected=0,dropped=0,previous=0;
+  const records=[];let rejected=0,dropped=0,previous=0,missingSequences=0;
   for(const line of String(log).split(/\r?\n/)){
     const match=/\bRHVideoQATiming\s*:\s*(\{.*\})\s*$/.exec(line);if(!match)continue;
     let row;try{row=JSON.parse(match[1]);}catch{rejected++;continue;}
@@ -13,8 +13,8 @@ export function expressionTimings(log,run){
       rejected++;continue;
     }
     if(records.length>=512){dropped++;continue;}
-    previous=row.sequence;
+    missingSequences+=row.sequence-previous-1;previous=row.sequence;
     records.push({...Object.fromEntries(['protocol','sequence','pid','label','outcome',...fields,...versionFields].map(key=>[key,row[key]])),dispatchEvalMs:row.protocol===1?row.resetEvalMs+row.launchEvalMs:row.dispatchEvalMs,dispatchEvals:Math.min(row.evals,row.protocol===1?2:1)});
   }
-  return {clock:'android-elapsed-realtime',scope:'opt-in owned probe, not native API execution duration',records,rejected,dropped};
+  return {clock:'android-elapsed-realtime',scope:'opt-in owned probe, not native API execution duration',records,rejected,dropped,missingSequences};
 }
