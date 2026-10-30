@@ -72,6 +72,22 @@ test('ordinary grid resizing retains codecs but keeps real background and explic
   assert.doesNotMatch(resize,/releasePlayers\(|startPlayers\(|createEngine\(/);
   assert.match(grid,/override fun onStop\(\)\{handler\.removeCallbacks\(update\);releasePlayers\(\);super\.onStop\(\)\}/);
 });
+
+test('single-player clock control preserves ordinary audio/video output and observes an uninterrupted interval',()=>{
+  const start=source.indexOf('private void checkSingleClockProbe()');assert(start>=0);
+  const body=source.slice(start,source.indexOf('\n  private ',start));
+  assert.match(body,/action\("media.open",new JSONObject\(\)\.put\("kind","video"\)\.put\("id","video-0"\)\)/);
+  for(const field of ['count','rate','volume','decoderVolume','durationMs','rotationRenderer','nativeLayerAttached','rotationPipeline','tracks','selected','inputId','renderedFrames'])assert(body.includes('"'+field+'"'),field);
+  assert.match(body,/library\.pauseTimers\(\).*Thread\.sleep\(5000\).*finally\{runOnMainSync\(\(\)->library\.resumeTimers\(\)\)/);
+  assert.match(body,/position>=4000&&frames>=60/);
+  const interval=body.slice(body.indexOf('long started='),body.indexOf('boolean advancing='));
+  assert.equal([...interval.matchAll(/nativeCall\(/g)].length,1,'Read once after the sample, never advance it by polling');
+  assert.doesNotMatch(body,/(?:setVolume\w*|setPlayback\w*|seek\w*|retry|restart|setAutoRotation|performClick)\s*\(/);
+  assert.match(body,/QA: player-failure-audio-snapshot pid=/);
+  assert.match(body,/require\(advancing,/);
+  assert.match(source,/!"single-clock"\.equals\(args\.getString\("mode"\)\)/);
+  assert.match(source,/PASS: single-player real-clock diagnostic; not full product acceptance/);
+});
 test('constant Android probe expressions parse as expressions, not standalone statements',()=>{
   const failures=[];let count=0;
   for(const match of source.matchAll(/\bexpression\(\w+,\s*("(?:\\.|[^"\\])*")\s*\)/g)){

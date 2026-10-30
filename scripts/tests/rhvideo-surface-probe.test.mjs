@@ -11,7 +11,7 @@ test('a direct SurfaceView is an explicit isolated diagnostic, never a product/d
   const admit=actual('admitSurfaceProbe');
   for(const surface of ['compositor','direct'])admit(surface,'grid-surface-probe',0,'default');
   admit('compositor','grid',0,'default');admit('compositor','grid',20,'default');admit('compositor','grid',0,'synchronous');
-  for(const args of [['direct','grid',0,'default'],['direct','grid-rotation',0,'default'],['direct','single',0,'default'],['direct','lifecycle',0,'default'],['direct','grid-surface-probe',20,'default'],['compositor','grid-surface-probe',0,'synchronous'],['unknown','grid-surface-probe',0,'default']])assert.throws(()=>admit(...args));
+  for(const args of [['direct','grid',0,'default'],['direct','grid-rotation',0,'default'],['direct','single',0,'default'],['direct','single-clock',0,'default'],['direct','lifecycle',0,'default'],['direct','grid-surface-probe',20,'default'],['compositor','grid-surface-probe',0,'synchronous'],['unknown','grid-surface-probe',0,'default']])assert.throws(()=>admit(...args));
   const gradle=read('android/gradle/app/build.gradle.kts');
   assert.match(gradle,/rhVideoSurfaceMode == null \|\| \(providers\.gradleProperty\("rhfilesRhVideoProbe"\)\.isPresent && rhVideoSurfaceMode == "direct" && rhVideoAudioStartMs == null && rhVideoCodecMode == null\)/);
   assert.match(gradle,/"RHVIDEO_QA_SURFACE_MODE", "\\"\$\{rhVideoSurfaceMode \?: "compositor"\}\\""/);
@@ -33,11 +33,11 @@ test('surface comparison retains the original strict sample and has no media wri
   assert.match(body,/checkGridContinuity\(waitGrid\(3,false\)\)/);
   assert.doesNotMatch(body,/setVolume|setPlayback|seek|retry|restart|pause|mute|favorite|mark|setAutoRotation/);
   assert.match(probe,/PASS: surface-only grid diagnostic; not complete product acceptance/);
-  assert.match(runner,/if\(!rulesMode&&!lifecycleMode&&!gridSurfaceMode&&!closeReceiptMode\)/,'A diagnostic cannot pull stale screenshots from a different scenario');
+  assert.match(runner,/if\(!rulesMode&&!lifecycleMode&&!gridSurfaceMode&&!singleClockMode&&!closeReceiptMode\)/,'A diagnostic cannot pull stale screenshots from a different scenario');
   assert.match(probe,/!"grid-surface-probe"\.equals\(args\.getString\("mode"\)\)/,'A surface-only comparison must not run unrelated file operations first');
   const verify=actual('verifyContractTraffic'),base={method:'GET',path:'/api/v1/videos/video-0/play',authorization:'Bearer fixture-bearer-do-not-persist'};
   verify({requests:[base]},{gridSurfaceMode:true});
   assert.throws(()=>verify({requests:[]},{gridSurfaceMode:true}));
   assert.throws(()=>verify({requests:[base,{method:'PUT',path:'/api/v1/favorites/video/video-0'}]},{gridSurfaceMode:true}));
-  assert.match(runner,/verifyContractTraffic\(fixture,\{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode,lifecycleMode,gridSurfaceMode,closeReceiptMode\}\)/);
+  assert.match(runner,/verifyContractTraffic\(fixture,\{actualMode,rulesMode,mediaMode,ticketsMode,stripMode,taskCenterMode,lifecycleMode,gridSurfaceMode,singleClockMode,closeReceiptMode\}\)/);
 });

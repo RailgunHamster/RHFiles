@@ -16,7 +16,7 @@ test('experimental grid output cannot be mistaken for default playback acceptanc
   assert.match(probe,/state\.getInt\("qaAudioStartMs"\)==expected/);
   assert.match(probe,/getInt\("bufferSizeFrames"\)==receipt\.getInt\("capacityFrames"\)/);
   assert.match(runner,/'-e','audioStartMs',String\(audioStartMs\)/);
-  assert.match(runner,/JSON\.stringify\(\{audioStartMs,codecMode,surfaceMode,diagnosticOnly:gridSurfaceMode,productDefault:audioStartMs===0&&codecMode==='default'&&surfaceMode==='compositor'\}/);
+  assert.match(runner,/JSON\.stringify\(\{audioStartMs,codecMode,surfaceMode,diagnosticOnly:gridSurfaceMode\|\|singleClockMode,productDefault:audioStartMs===0&&codecMode==='default'&&surfaceMode==='compositor'\}/);
 });
 test('the actual host verifier rejects experimental, missing and reduced-buffer receipts',()=>{
   const source=read('scripts/testing/rhvideo-android.mjs'),node=parse(source,{ecmaVersion:'latest',sourceType:'module'}).body.find(node=>node.type==='FunctionDeclaration'&&node.id?.name==='verifyGridAudioParameters');
