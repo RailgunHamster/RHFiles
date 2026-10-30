@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {admitLocalClockDevice} from '../testing/rhvideo-local-clock.mjs';
 const runner=fileURLToPath(new URL('../testing/rhvideo-audio-clock.mjs',import.meta.url));
+
+test('PCM controls share the exact owned-AVD guard including the current host-GPU control',()=>{
+  const source=fs.readFileSync(runner,'utf8');
+  assert.match(source,/admitLocalClockDevice\(serial,kernel,avd\)/);
+  for(const avd of ['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu'])assert.doesNotThrow(()=>admitLocalClockDevice('emulator-5588','1\n',avd+'\nOK\n'));
+  for(const avd of ['UserPhone','RHFilesRhVideoQA20261030HostGpu-unrelated'])assert.throws(()=>admitLocalClockDevice('emulator-5588','1\n',avd));
+  assert.throws(()=>admitLocalClockDevice('emulator-5588','0','RHFilesRhVideoQA20261030HostGpu'));
+  assert.match(source,/\['com\.railgunhamster\.rhfiles','stagefright'\]/);assert.match(source,/hostElapsedMs:performance\.now\(\)-started/);
+});
 test('independent PCM clock refuses physical or ambiguous devices before accessing the SDK',()=>{
   for(const serial of ['', 'Moto', 'USB123', '192.168.0.114:46413', 'emulator-5586;adb']){
     const result=spawnSync(process.execPath,[runner,...(serial?[serial]:[])],{encoding:'utf8',windowsHide:true,timeout:5000});

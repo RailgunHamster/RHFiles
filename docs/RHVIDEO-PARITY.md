@@ -6,6 +6,22 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 整轮终态、图片请求归属与独立音频对照（继续验收，未发包）
+
+前节冻结的 `rhvideo-task-image-frozen-ee0148824b7848b080b69786694f26ca/` 已有终态：**107/108、1 失败、零跳过，25 分 57 秒**，回执 `rhvideo-windows-tQvmC1/receipt.json`。本次又逐项核对 **1120** 个冻结文件、**14** 个参考文件及 EXE `9bf04e51e836fa8f0ce567eedab9c2cc8fb0b2c71173e9cba586b0be93395b1f`，全部与运行前清单一致。任务详情滚动及两项真实分段 PNG 用例均通过；唯一失败转为条带图片错误测试的请求计数 **1 → 2**。不能将前节 7 项通过写成完整验收已绿。
+
+新增只读的图片错误事件／Resource Timing 与服务端 requestIndex 时序，不记录媒体通道 URL、凭据或响应正文。一次独立观察 `rhfiles-e2e-PaPUtL/strip-image-timing.json` 分别捕获卡片与条带错误：约 **2548／2623 ms**，请求开始约 **2529／2612 ms**，缓存布局重建后不再新增请求。更重要的是新增受控反例：仅暂时隐藏后台卡片，保留真实浏览器 lazy 图片／HTTP；条带先失败时请求为 1，随后显示卡片才变为 2，再重建条带仍为 2（`rhfiles-e2e-wUc9wq/delayed-card-vs-strip.json`）。这证明全局按路径计数不能区分后台卡片与条带消费者；原失败没有保存这一归属的时序，不能事后声称已确认其第二个请求的具体来源。
+
+原测试现在先等待既有卡片请求真正失败，再打开独立条带；增加恰为一个卡片请求、一个条带请求的断言，保留后续逐帧／布局重建零新增请求和实际可见失败提示的原断言。**未修改产品的图片加载代码**。完整条带实际窗口回归 **14/14**（`rhvideo-strip-consumer-regression.log`）；追加严格初始计数后的两项实际窗口回归 **2/2**（`rhvideo-strip-consumer-final-targeted.log`），均零跳过。它们不是原整轮失败已被覆盖或新整轮完整通过的证明。
+
+Android 同一主包 `c9512f55064e412fb757d243bdbd8c27d6039261035cddbd64e98b1525503067` 与探针 `8adf5531d127e638ecbd21383abe21206915f8521cd80518b45496634b6145af` 的完整默认同屏仍失败：`rhvideo-datasource-full-grid-native.log`／`rhvideo-android-grid-1793338598304-release/`。原 **30 秒**就绪预算下，一格位置 0／1 帧，另两格约 1947／2096 ms、22／30 帧；三格均有选中的音视频轨、bufferedPosition=20000、无加载错误。对应 AudioFlinger 一轨仍填充、其余轨断供。没有静音、减少格数、改 codec／compositor 或放宽原门槛，不能把它当作播放通过。
+
+将独立 PCM 诊断复用到精确准入的 host-GPU 自有 AVD，补充准入测试及宿主总耗时；不安装 APK，不停止其他播放，不改全局音频／服务。`rhvideo-host-gpu-platform-pcm.log`／`rhvideo-pcm-clock-8Kg739/receipt.json` 的单轨 **5023 ms → 4760 ms**、三轨 **5299 ms → 4941／4896／4851 ms** 音频，均零 underrun。它是 shell UID 2000、持续预供给的无声 PCM／默认增益，不等同于 RHFiles UID／Media3、AAC 解码、同时视频或 20% 增益的验收。
+
+相同 AVD、相同 AAC/H264 源字节 `98c8699e…c24bc` 的独立系统播放器仍迟滞：`rhvideo-system-audio-vaMqKr/receipt.json` 的实际音频消费 **2473 ms**，墙钟范围 **5101–5882 ms**，速率 **0.420–0.485**；30 秒 guest 预算终止 code 124，并确认进程已退出。此前一次 boot 属性读取超时的尝试未创建播放器／回执，原失败日志 `rhvideo-host-gpu-system-aac-paired.log` 保留。PCM 可以前进、AAC 路径迟滞使排查范围更明确，但尚不能认定唯一根因，不能据此改产品时钟或声称音频输出整体故障。
+
+共享检查 **908/908、零失败／跳过**（`rhvideo-strip-audio-shared-node.log`）。同一 Android 包的完整条带业务流程也终止通过（`rhvideo-strip-current-android.log`／`rhvideo-android-strip-1793340438738-release/`），放大图真实四块像素已核对；但人工查看旋转后截图发现图片区空白，而原门禁只检查重排尺寸，未证明当时两行图像都已呈现。现继续补旋转前／横屏／旋回后的真实截图像素门禁，不能以流程通过代替这一视觉验收。Windows 首帧、Android 同屏／生命周期及完整目标均未完成；未发包、未替换正式实例或操作真机。
+
 ## 2026-10-30 Android 可中断取流及任务缩略图布局（继续验收，未发包）
 
 在前节账户边界修复后，又用真实 MockWebServer 复现两个 Android DataSource 问题（`rhvideo-datasource-contract-red.log`／`rhvideo-datasource-contract-red-results/`，**2/2 失败**）：Media3 loader 在等待响应头时被中断，仍等到网络读取超时；精确等于资源长度的 EOF 探测则被当成普通 HTTP 416 错误。这里不是用慢网猜测播放卡顿的唯一根因。

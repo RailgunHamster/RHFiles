@@ -1,11 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from'node:path';import{createHash}from'node:crypto';import{execFileSync}from'node:child_process';
 import{launchApp,until,sleep}from'../testing/app-session.mjs';import{cdpSession}from'../rhfiles-api.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
-async function openStrip({resolutions,profileDirectory,existingFixture,...options}={}){
+async function openStrip({resolutions,profileDirectory,existingFixture,onView,...options}={}){
  const app=await launchApp({emulateFocus:true,profileDirectory});let fixture,view;
  try{
   fixture=existingFixture??await rhvideoFixture({videoCount:0,pictureCount:24,...options});for(let i=0;i<fixture.pictures.length;i++)fixture.pictures[i].original_resolution=resolutions?.[i]||'800x1200';
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");const page=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(row=>new URL(row.url).pathname==='/rhvideo.html');},'packaged strip library');view=await cdpSession(page,30000);await until(()=>view.evaluate('!!window.RHFilesAPI?.list().some(row=>row.id==="rhvideo.viewer.state")'),'strip API');
   for(const file of ['rhvideo-workbench.js','rhvideo-index.js']){const served=await view.evaluate('fetch('+JSON.stringify('js/'+file)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+file,import.meta.url),'utf8'),hash=value=>createHash('sha256').update(value).digest('hex');assert.equal(hash(served),hash(source),'Use the current embedded '+file);}
+  await onView?.(view);
   const invoke=(name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');await invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await invoke('category',{kind:'picture'});return {app,fixture,view,invoke,close:async()=>{view?.close();await app.close();if(!existingFixture)await fixture?.close();}};
  }catch(error){view?.close();await app.close();if(!existingFixture)await fixture?.close();throw error;}
 }
@@ -48,14 +49,23 @@ test('an empty new strip filter leaves the admitted visible snapshot and its con
  }finally{await qa.close();}
 });
 test('an actual HTTP image failure stays visibly failed without a per-frame network loop',async()=>{
- const qa=await openStrip({beforeMedia:({image,path})=>image&&path==='/storage/pictures/0.svg'?{status:503,detail:'Owned strip source unavailable'}:undefined});try{
+ let timing,initialTiming,cardSettledTiming,beforeTiming;
+ const qa=await openStrip({onView:view=>view.evaluate(`window.__stripImageEvents=[];document.addEventListener('error',event=>{const image=event.target;if(image instanceof HTMLImageElement&&window.__stripImageEvents.length<100)window.__stripImageEvents.push({at:performance.now(),container:image.parentElement?.className,media:image.closest('[data-id]')?.dataset.id||image.closest('[data-media-path]')?.dataset.mediaPath||null});},true);true`),beforeMedia:({image,path})=>image&&path==='/storage/pictures/0.svg'?{status:503,detail:'Owned strip source unavailable'}:undefined});try{
+  timing=()=>qa.view.evaluate(`(()=>{const source=document.querySelector('.media-card[data-id=picture-0] img')?.src;return {at:performance.now(),events:window.__stripImageEvents,resources:performance.getEntriesByType('resource').filter(row=>row.name===source).map(row=>({start:row.startTime,duration:row.duration,initiator:row.initiatorType}))};})()`);initialTiming=await timing();
+  // The card and the explicit strip are separate consumers of the same URL.
+  // Settle the existing lazy card before counting strip retries; a queued card
+  // may otherwise arrive after the strip's error and look like a hidden retry.
+  await until(()=>qa.view.evaluate('(()=>{const image=document.querySelector(".media-card[data-id=picture-0] img");return image?.complete&&image.hidden;})()'),'The earlier card thumbnail has completed its real failed request');
+  cardSettledTiming=await timing();
+  assert.equal(qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').length,1,'Exactly one earlier card attempt');
   await qa.invoke('viewer.open',{mode:'strip',source:'picture'});assert.equal((await qa.invoke('viewer.state')).running,false);await qa.invoke('viewer.seek',{ratio:0});await until(async()=>(await qa.invoke('viewer.state')).errors.length>0,'Real failed image reaches the strip error state');
   // A live IMG failure has an overlay; a layout rebuilt from a cached failure
   // has a placeholder instead. Assert the visible label, not one DOM variant.
   const visibleFailure=()=>qa.view.evaluate('(()=>{const n=[...document.querySelectorAll(".wb-strip-tile.error")].find(n=>n.textContent.includes("图片加载失败")&&(()=>{const r=n.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight&&r.right>0&&r.left<innerWidth;})());return n&&{text:n.textContent,markup:n.innerHTML};})()');
-  const before=await until(visibleFailure,'The HTTP failure must really be labelled on screen, not just stored in state'),count=qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').length;
+  const before=await until(visibleFailure,'The HTTP failure must really be labelled on screen, not just stored in state'),count=qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').length;beforeTiming=await timing();
+  assert.equal(count,2,'One failed card attempt and one explicit strip attempt, with no early hidden retry');
   await qa.invoke('viewer.lanes');await qa.invoke('viewer.seek',{ratio:0});const after=await until(visibleFailure,'The cached failure remains labelled after rebuilding its rows');await sleep(1000);console.log(JSON.stringify({stripFailure:{before,after,requestsBefore:count,requestsAfter:qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').map(({method,range})=>({method,range})),state:await qa.invoke('viewer.state')},artifacts:qa.app.artifactDir}));assert.equal(qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').length,count,'No hidden asset retry per animation frame or after a cached layout rebuild');fs.writeFileSync(path.join(qa.app.artifactDir,'strip-failed.png'),Buffer.from((await qa.view.send('Page.captureScreenshot',{format:'png'})).data,'base64'));await qa.invoke('panel.close',{id:'wb-viewer'});
- }finally{await qa.close();}
+ }finally{try{const indices=qa.fixture.requests.flatMap((row,index)=>row.path==='/storage/pictures/0.svg'?[index]:[]);fs.writeFileSync(path.join(qa.app.artifactDir,'strip-image-timing.json'),JSON.stringify({initialTiming,cardSettledTiming,beforeTiming,finalTiming:await timing(),transport:qa.fixture.transport.snapshot().requests.filter(row=>indices.includes(row.requestIndex))},null,2));}finally{await qa.close();}}
 });
 test('a new explicit strip view can load a source after its earlier card thumbnail failed',async()=>{
  let unavailable=true;const qa=await openStrip({beforeMedia:({image,path})=>image&&path==='/storage/pictures/0.svg'&&unavailable?{status:503,detail:'Owned transient thumbnail failure'}:undefined});
@@ -65,6 +75,26 @@ test('a new explicit strip view can load a source after its earlier card thumbna
   await until(()=>qa.view.evaluate('(()=>{const n=[...document.querySelectorAll(".wb-strip-tile")].find(n=>n.dataset.mediaPath==="/storage/pictures/0.svg"),img=n?.querySelector("img");return img?.complete&&img.naturalWidth>0&&!n.classList.contains("error");})()'),'New user action actually loads the recovered source',8000);
   assert(!(await qa.invoke('viewer.state')).errors.some(v=>v.path==='/storage/pictures/0.svg'));
   await qa.invoke('panel.close',{id:'wb-viewer'});
+ }finally{await qa.close();}
+});
+test('a delayed background card request is not a retry of the failed strip source',async t=>{
+ const qa=await openStrip({onView:view=>view.evaluate(`(()=>{const style=document.createElement('style');style.id='owned-held-card';style.textContent='#media-grid{display:none!important}';document.head.append(style);return true;})()`),beforeMedia:({image,path})=>image&&path==='/storage/pictures/0.svg'?{status:503,detail:'Owned source unavailable to both consumers'}:undefined});
+ try{
+  t.diagnostic('Delayed card versus strip evidence: '+qa.app.artifactDir);
+  const requests=()=>qa.fixture.requests.filter(row=>row.path==='/storage/pictures/0.svg').length;
+  assert.equal(requests(),0,'The real lazy library thumbnail has not requested its hidden source');
+  await qa.invoke('viewer.open',{mode:'strip',source:'picture'});await qa.invoke('viewer.seek',{ratio:0});
+  await until(async()=>(await qa.invoke('viewer.state')).errors.some(row=>row.path==='/storage/pictures/0.svg'),'The strip consumer actually fails first');
+  assert.equal(requests(),1);
+  await qa.invoke('viewer.lanes');await qa.invoke('viewer.seek',{ratio:0});
+  assert.equal(requests(),1,'A cached strip layout must not request the image again');
+  await qa.view.evaluate(`document.getElementById('owned-held-card').remove();true`);
+  await until(()=>qa.view.evaluate(`(()=>{const image=document.querySelector('.media-card[data-id=picture-0] img');return image?.complete&&image.hidden;})()`),'The delayed real library thumbnail fails independently');
+  assert.equal(requests(),2,'The second request belongs to the now-visible card, not a strip retry');
+  await qa.invoke('viewer.lanes');await qa.invoke('viewer.seek',{ratio:0});await sleep(1000);
+  assert.equal(requests(),2,'Neither animation frames nor another cached layout retry either failed consumer');
+  assert(await qa.view.evaluate(`[...document.querySelectorAll('.wb-strip-tile.error')].some(node=>node.dataset.mediaPath==='/storage/pictures/0.svg'&&node.textContent.includes('图片加载失败')&&!node.querySelector('img'))`));
+  fs.writeFileSync(path.join(qa.app.artifactDir,'delayed-card-vs-strip.json'),JSON.stringify({requests:requests(),state:await qa.invoke('viewer.state'),transport:qa.fixture.transport.snapshot().requests.filter(row=>qa.fixture.requests[row.requestIndex]?.path==='/storage/pictures/0.svg')},null,2));
  }finally{await qa.close();}
 });
 test('the real strip speed control reflects restored/API preferences and writes through its public UI action',async()=>{
