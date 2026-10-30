@@ -278,8 +278,49 @@ pub(crate) struct Query {
     key: Option<String>,
     timeout_ms: Option<u64>,
 }
+
+// Opt-in debug evidence only. Never log the caller's key, run ID, arguments or
+// result; the local sequence correlates ingress/return without exposing them.
+#[cfg(debug_assertions)]
+struct ReceiptReadTrace {
+    sequence: u64,
+    started: Instant,
+}
+#[cfg(debug_assertions)]
+impl ReceiptReadTrace {
+    fn begin(timeout_ms: u64) -> Option<Self> {
+        if std::env::var_os("RHFILES_RECEIPT_TRACE").as_deref() != Some(std::ffi::OsStr::new("1")) {
+            return None;
+        }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let trace = Self {
+            sequence: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1,
+            started: Instant::now(),
+        };
+        trace.record("start", json!({"timeoutMs":timeout_ms}));
+        Some(trace)
+    }
+    fn record(&self, phase: &str, details: Value) {
+        eprintln!(
+            "RHFiles receipt trace {}",
+            json!({
+                "read":self.sequence,"phase":phase,
+                "wallMs":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
+                "elapsedMs":self.started.elapsed().as_millis(),"details":details
+            })
+        );
+    }
+    fn finish(&self, value: Option<&Value>) {
+        self.record(
+            "return",
+            json!({"state":value.and_then(|v|v["state"].as_str())}),
+        );
+    }
+}
 #[tauri::command]
 pub(crate) async fn automation_receipt(query: Query) -> Result<Option<Value>, Value> {
+    #[cfg(debug_assertions)]
+    let trace = ReceiptReadTrace::begin(query.timeout_ms.unwrap_or(0));
     if query.run_id.is_some() == query.key.is_some()
         || query.timeout_ms.unwrap_or(0) > 30000
         || query
@@ -308,6 +349,10 @@ pub(crate) async fn automation_receipt(query: Query) -> Result<Option<Value>, Va
             value
         };
         if value.as_ref().is_none_or(|v| v["state"] != "running") || Instant::now() >= end {
+            #[cfg(debug_assertions)]
+            if let Some(trace) = &trace {
+                trace.finish(value.as_ref());
+            }
             return Ok(value);
         }
         tokio::time::sleep(

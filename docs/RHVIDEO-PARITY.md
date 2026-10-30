@@ -14,6 +14,10 @@
 
 后续在健康视图附加最多 32 条公开 RPC 开始／原始 Promise 应答时间，不在五秒期间轮询、不改变 Promise、不添加重发。**65F4** 的定向观测通过（`rhvideo-close-receipt-public-boundary-window.log`、`rhfiles-e2e-hBIPpN/grid-close-recovery-observation.json`）：账本关闭用时 **1342 ms**，公开 wait 的实际应答仍约 **3477 ms**，存在完成与交付间隔，唯一根因尚未定位。早一版观测曾尝试改写只读的 Tauri 导出，准入断言明确失败、未执行关闭；现只观测可验证的公开 RPC，不把它称为原生 IPC 内部计时。此次 1/1 不覆盖旧整轮失败，也未将原预算放宽。
 
+继续增加仅 debug 构建且显式 `RHFILES_RECEIPT_TRACE=1` 才记录的原生读取入口／正常返回时间。记录本机读取序号、等待上限、时间及状态，不含请求 key、run ID、参数、结果或凭据；不新增监听器、重试或业务行为。新 EXE **`ca2293083926f63bdcb5ba5e418041ff518c0776a3d25bcc8c688869559aa287`** 编译成功并复制为独立运行快照；同一五秒故障场景 **1/1** 通过（`rhvideo-close-receipt-native-timing-window.log`、`rhfiles-e2e-DQwWm5/`）。这一轮只作分阶段诊断，不冒充完整重跑。
+
+这次账本在 **1793367340628** 完成，原生 wait 在 **1793367340646** 返回 succeeded（只迟 **18 ms**，原生等待 **1168 ms**），公开 RPC 到 **1793367342780** 才兑现，原生返回后又隔 **2134 ms**。这将本次迟延范围缩到原生返回之后，不能再把本次间隔归因于账本仍 running、25 ms 等待循环或被持有的账本互斥锁。实际锁定依赖为 Tauri **2.11.6**／Wry **0.55.1**；其本地源码表明自定义协议应答会派发到主线程，WebView 销毁也调用 controller Close。这是下一步核对主线程／窗口销毁与应答交付的线索，**尚未证明具体阻塞点或修复旧超时**。
+
 ## 2026-10-30 迟到确认的完整界面上下文（两端实包定向通过）
 
 冻结的 **`777425a / 7e710c24…cf3d140`** 整套独立运行期间，在本工作区继续检查，未改它的 **1138** 个输入。`replacement.selected` 已有较新选择／显式关闭 info、confirm 的 intent，却漏了复用 info／打开其他工作台面板：八项实际 action 与 dialog AST 用例先全部失败（`rhvideo-replacement-dialog-intent-red.log`）。只修工作台后，普通登录／图片／阅读器／时间轴的另一个弹窗入口又有八项全部失败（`rhvideo-replacement-client-modal-red.log`），不是同一个接口已存在就算覆盖。关闭设置、规则及四个客户端面板还另有十项失败（`rhvideo-confirm-close-context-red.log`）。
