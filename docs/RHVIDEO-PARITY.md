@@ -6,7 +6,17 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
-## 2026-10-31 普通发行版的外部像素／真实按键验证（整轮待重跑）
+## 2026-10-31 最新发行构建整轮 117/118 与旧回执交付（仍未通过）
+
+账户清理修复的 Windows release 构建成功 **2 分 33 秒**。冻结 `f71027b`／EXE **`f52a858ac4c834fd44ef075ee62acb3431f2903434a3c543067ce966cc5ef31a`** 的完整串行场景已终止：**117/118、一失败、零取消／跳过，21 分 53.697 秒**（`rhvideo-pipe-full-8QwC2B/RHFiles/test-artifacts/rhvideo-windows-WgGO9A/receipt.json`）。回执确认原参考／EXE／外部工具未变，结束后额外逐项重算 **1165** 个源码、**4** 个工具、**426** 个运行文件及 **14** 个参考模块，共 **1609** 个输入全部匹配。源切换实际像素、暂停旋转像素、幻灯片两种真实按键及其他 114 项通过，不能覆盖第 40 项兼容回执失败。正式 PID 45696、手机及 AVD 未重启或重置，未发布新包。
+
+第 40 项显式禁用生产者的新独立回执发现，保留真实关闭／账本，以“主窗口先回 running 后丢失 wait、媒体库暂扣已开始的 status”验证旧链路。新增只读阶段记录后，同一 EXE 先独立通过一次，随后三个新配置／新媒体实例的有界试验 **2/3、一失败**，没有循环到成功为止（`rhvideo-legacy-receipt-delivery-timing.log`、`rhvideo-legacy-receipt-phases-{1,2,3}.log`）。失败 `rhfiles-e2e-u1qTj5/receipt-held-status-timing.json` 的真实关闭 **1104 ms** 已完成，随后界面读应答又迟了 **4217 ms**；测试直到 CLI 原五秒截止后才释放暂扣响应。成功样本也有约 2.2 秒交付间隔。此证据把失败范围收窄到完成后交付，不证明原关闭未执行，也不证明已经找到唯一内部根因；没有重放、延长五秒或减少真实播放器。
+
+微软文档明确 [WebView2 回调必须使用 UI 线程，不能通过阻塞消息泵等待异步结果](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/threading-model)，并说明 [Controller.Close 是同步清理](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/winrt/microsoft_web_webview2_core/corewebview2controller?view=webview2-winrt-1.0.1462.37)。这只是后续核对窗口销毁／应答排队的约束与线索，尚无这次延迟期间的原生堆栈，不能据此直接宣称 WebView2 是唯一原因或修改底层依赖。新独立进程回执场景实际通过，但旧链路与整体性能仍需处理。
+
+干净的 Windows CI 增加在 E2E 前编译外部观察器，避免依赖本机残留 EXE；新增脚本检查顺序与 pwsh。Android 新的可选测试探针计时只记录固定命令名及 Android `elapsedRealtime` 的 UI 排队／WebView 回调／轮询等待等数字，上限 512，带独立运行身份，缺失回调不能记成零耗时成功，不记录参数／结果／凭据；它不等于原生 API 执行时间。原两段执行／nonce 防 ABA、15 秒 eval、45 秒动作及原场景预算不变；没有增加 evaluate 调用、轮询或生产配置开关。相关检查 **21/21**，当前本地源码对照全套 **1158/1158**、零失败／取消／跳过（`rhvideo-expression-timing-full-node.log`）。这些不等于 Android Java 已编译或实包已运行；新的主包／探针需独立验收。
+
+## 2026-10-31 普通发行版的外部像素／真实按键验证（该阶段整轮待重跑）
 
 冻结 `8d218a9`／EXE `7745af1fa0255a28b9601fd7783c7b2fc26e8cdcbd9d26eb5c0d40aefcc45ca4` 的完整 Windows 场景已终止：**114/117、三失败、零取消／跳过，21 分 39 秒**，不是绿色验收（`rhvideo-pipe-full-u6eHgs/RHFiles/test-artifacts/rhvideo-windows-XuNsNl/receipt.json`）。结束后重新逐项核对 1160 个冻结源码、两个工具、426 个运行文件及 14 个参考模块，共 **1602** 个输入全部不变；正式程序 PID 45696 未重启或替换。
 

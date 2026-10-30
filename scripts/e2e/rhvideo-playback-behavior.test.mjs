@@ -218,6 +218,8 @@ test('native receipt recovery needs no surviving WebView reply and rejects an un
 
 test('a later real completion is not discarded after an earlier survivor reports running but loses its wait reply',native,async()=>{
   const s=await setup();let grid,closing;
+  const observation={clock:'host wall and actual process receipt Unix milliseconds',phases:[],reads:[]};
+  const phase=name=>observation.phases.push({name,at:Date.now()});
   try{
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     await until(async()=>{const state=await invoke(grid,'grid.state');return state.cells.length===2&&state.cells.every(cell=>cell.renderedFrames>0);},'two real outputs before late-receipt fault',25000);
@@ -229,18 +231,21 @@ test('a later real completion is not discarded after an earlier survivor reports
     await grid.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;api.rpc=request=>request.method==="runs.transport"?Promise.resolve({jsonrpc:"2.0",id:request.id,result:null}):request.method==="runs.wait"?new Promise(()=>{}):rpc.call(api,request);return true;})()');
     await s.app.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;window.__receiptWaitStarted=false;api.rpc=request=>{if(request.method==="runs.wait"){window.__receiptWaitStarted=true;return new Promise(()=>{});}return rpc.call(api,request);};return true;})()');
     await s.view.evaluate('(()=>{const api=RHFilesAPI,rpc=api.rpc;window.__releaseReceiptStatus=null;api.rpc=async request=>{if(request.method==="runs.status")await new Promise(resolve=>window.__releaseReceiptStatus=resolve);return rpc.call(api,request);};return true;})()');
-    closing=runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'late-native-completion',{trace:true});
+    phase('cli-spawn');closing=runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'late-native-completion',{trace:true});
     await until(()=>s.app.evaluate('window.__receiptWaitStarted'),'the early running source really starts its stalled wait',3000);
-    await until(async()=>{const value=await s.view.evaluate('RHFilesAPI.rpc({jsonrpc:"2.0",id:"read-only-observer",method:"runs.lookup",params:{key:"late-native-completion"}})');return value.result?.state==='succeeded';},'the actual process close receipt is complete',4000);
+    phase('running-source-wait-observed');
+    await until(async()=>{const queuedAt=Date.now(),value=await s.view.evaluate('RHFilesAPI.rpc({jsonrpc:"2.0",id:"read-only-observer",method:"runs.lookup",params:{key:"late-native-completion"}})');if(observation.reads.length<32)observation.reads.push({queuedAt,repliedAt:Date.now(),state:value.result?.state,startedAt:value.result?.startedAt,finishedAt:value.result?.finishedAt});return value.result?.state==='succeeded';},'the actual process close receipt is complete',4000);
+    phase('native-completion-observed');
     assert.equal(await s.view.evaluate('(()=>{if(!window.__releaseReceiptStatus)return false;window.__releaseReceiptStatus();return true;})()'),true,'Release the already-started status response, not a new query');
-    const output=await closing;console.log(JSON.stringify({scenario:'real later completion after running-source wait loss',...output}));assert.equal(output.code,0,JSON.stringify(output));
+    phase('held-status-released');
+    const output=await closing;observation.cli={code:output.code,trace:output.stderr.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line))};phase('cli-settled');console.log(JSON.stringify({scenario:'real later completion after running-source wait loss',...output}));assert.equal(output.code,0,JSON.stringify(output));
     const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
     const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line)),reads=trace.filter(row=>row.rhfilesClientTrace==='recovery.read');
     assert(reads.some(row=>row.state==='running')&&reads.some(row=>row.state==='succeeded'),'An early running receipt must not discard the later confirmed native result');
     assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Do not replay the accepted close');
     assert.equal((await command(s.app,'grid.state')).cells.length,0);
     await until(async()=>!(await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json()).some(page=>new URL(page.url).pathname==='/rhvideo-grid.html'),'the original close really destroys its view',3000);
-  }finally{grid?.close();await s.close();await closing;}
+  }finally{const evidence=path.join(s.app.artifactDir,'receipt-held-status-timing.json');fs.writeFileSync(evidence,JSON.stringify(observation,null,2));console.log('Actual held-status receipt phases: '+evidence);grid?.close();await s.close();await closing;}
 });
 
 test('packaged player and grid DOM navigation accepts semantic keys and reaches real decoded endpoints',native,async t=>{
