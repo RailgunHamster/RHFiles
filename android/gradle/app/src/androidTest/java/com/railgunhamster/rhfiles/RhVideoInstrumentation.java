@@ -20,6 +20,38 @@ public class RhVideoInstrumentation extends Instrumentation {
     String mode=args.getString("fixtureTransport","adb-reverse");
     return server!=null&&((mode.equals("adb-reverse")&&server.matches("http://127\\.0\\.0\\.1:[0-9]+/?"))||(mode.equals("emulator-host")&&server.matches("http://10\\.0\\.2\\.2:[0-9]+/?")));
   }
+  private void checkLocalClockControl()throws Exception{
+    int count=Integer.parseInt(args.getString("count","3"));require(count==1||count==3,"Local control has exactly one or three inputs");
+    JSONObject started=(JSONObject)nativeCall("automation.qa.localClock",new JSONObject().put("operation","start").put("directory",args.getString("directory")).put("count",count));
+    String key=started.getString("runId");JSONObject query=new JSONObject().put("operation","state").put("runId",key),before=started;
+    try{
+      long end=SystemClock.elapsedRealtime()+30000;boolean ready=false;
+      do{
+        before=(JSONObject)nativeCall("automation.qa.localClock",query);JSONArray cells=before.getJSONArray("cells");ready=cells.length()==count;
+        for(int i=0;i<cells.length();i++){JSONObject cell=cells.getJSONObject(i);require(cell.isNull("error"),"Local decoder error: "+cell);ready&=cell.optBoolean("playing")&&cell.optBoolean("rendered")&&cell.optInt("playbackState")==3&&cell.optLong("positionMs")>=250&&cell.optLong("renderedFrames")>1;}
+        if(ready)break;Thread.sleep(150);
+      }while(SystemClock.elapsedRealtime()<end);
+      require(ready,"Ordinary local players did not settle within the original 30-second budget: "+before);
+      for(int i=0;i<count;i++)require(before.getJSONArray("cells").getJSONObject(i).getLong("positionMs")<6000,"Observe local playback early, without a seek or loop wrap");
+      step("local clock settled "+before);long clock=SystemClock.elapsedRealtime();
+      runOnMainSync(()->main.pauseTimers());try{Thread.sleep(5000);}finally{runOnMainSync(()->main.resumeTimers());}
+      JSONObject after=(JSONObject)nativeCall("automation.qa.localClock",query);long elapsed=SystemClock.elapsedRealtime()-clock;JSONArray samples=new JSONArray();boolean continuous=elapsed>=5000&&elapsed<10000;
+      require(after.getString("runId").equals(key)&&after.getInt("uid")==android.os.Process.myUid(),"Observe the same app UID and local run");
+      for(int i=0;i<count;i++){
+        JSONObject a=before.getJSONArray("cells").getJSONObject(i),b=after.getJSONArray("cells").getJSONObject(i);
+        for(JSONObject cell:new JSONObject[]{a,b}){
+          require(cell.getDouble("rate")==1&&Math.abs(cell.getDouble("decoderVolume")-20)<.01&&cell.getLong("durationMs")==20000&&cell.getString("surfaceType").equals("SurfaceView"),"Keep ordinary surfaces, source duration, speed and actual audio gain: "+cell);
+          for(String type:new String[]{"audio","video"}){boolean selected=false;JSONArray groups=cell.getJSONObject("tracks").getJSONArray("groups");for(int j=0;j<groups.length();j++){JSONObject group=groups.getJSONObject(j);if(!type.equals(group.getString("type")))continue;JSONArray tracks=group.getJSONArray("tracks");for(int k=0;k<tracks.length();k++)selected|=tracks.getJSONObject(k).optBoolean("selected");}require(selected,"Keep selected local "+type);}
+        }
+        long position=b.getLong("positionMs")-a.getLong("positionMs"),frames=b.getLong("renderedFrames")-a.getLong("renderedFrames"),pts=b.getLong("frameTimeMs")-a.getLong("frameTimeMs");
+        samples.put(new JSONObject().put("inputId",b.getLong("inputId")).put("positionDeltaMs",position).put("frameDelta",frames).put("frameTimeDeltaMs",pts));
+        continuous&=b.getLong("inputId")==a.getLong("inputId")&&b.getString("path").equals(a.getString("path"))&&b.getBoolean("playing")&&b.isNull("error")&&position>=4000&&frames>=60&&pts>=4000;
+      }
+      step("local clock continuity "+new JSONObject().put("elapsedMs",elapsed).put("samples",samples));require(continuous,"Ordinary local inputs did not sustain the unchanged five-second frame/time gate: "+after);
+      screenshot("rhvideo-local-grid-qa.png");
+    }catch(Exception failure){step("QA: local-clock-failure-snapshot pid="+android.os.Process.myPid());android.util.Log.e("RHVideoQA",playbackThreads());Thread.sleep(4000);throw failure;}
+    finally{nativeCall("automation.qa.localClock",new JSONObject().put("operation","close").put("runId",key));}
+  }
   private boolean gridReady(JSONObject state)throws Exception{if(state==null)return false;JSONArray cells=state.optJSONArray("cells");if(cells==null||cells.length()!=4)return false;for(int i=0;i<cells.length();i++)if(!cells.getJSONObject(i).optBoolean("rendered"))return false;return cells.getJSONObject(0).optLong("positionMs")>500;}
   private void checkAudioStartExperiment(JSONObject state)throws Exception{
     int expected=Integer.parseInt(args.getString("audioStartMs","0"));
@@ -1153,9 +1185,10 @@ public class RhVideoInstrumentation extends Instrumentation {
     Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){stoppedActivities.remove(a);}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){stoppedActivities.add(a);}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){destroyedActivities.add(a);}};
     app.registerActivityLifecycleCallbacks(observer);
     try{
-      String server=args.getString("server");require(ownedFixtureServer(server),"Only an explicit owned-emulator fixture transport is allowed");
+      boolean localClock="local-clock".equals(args.getString("mode"));String server=args.getString("server");require(localClock?server==null:ownedFixtureServer(server),"Only an explicit owned-emulator fixture transport is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
+      if(localClock){checkLocalClockControl();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: ordinary local simultaneous clock diagnostic only; not RHVideo product acceptance");finish(Activity.RESULT_OK,result);return;}
       if("lifecycle".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkPlaybackLifecycle();checkGridLifecycle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native HTTP lifecycle, single and grid, real subtitles, HOME/stop/resume, Activity recreation, actual paused frames, isolated choices and retired-decoder rejection");finish(Activity.RESULT_OK,result);return;}
       if("task-center".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkTaskCenter();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: packaged task center, inline selection, readable workflow metrics, stable reading, unknown progress, queue/history filters and public actions");finish(Activity.RESULT_OK,result);return;}
       if("task-priority".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkActualTaskPriority();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual task priority, physical list/detail controls, real default/replacement queues, failed records, preserved enqueue time and paused receipt");finish(Activity.RESULT_OK,result);return;}

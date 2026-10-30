@@ -20,7 +20,8 @@ test('native fixture admission requires the selected exact host and records the 
   assert.match(admission,/args\.getString\("fixtureTransport","adb-reverse"\)/);
   assert(admission.includes('mode.equals("adb-reverse")&&server.matches("http://127\\\\.0\\\\.0\\\\.1:[0-9]+/?")'));
   assert(admission.includes('mode.equals("emulator-host")&&server.matches("http://10\\\\.0\\\\.2\\\\.2:[0-9]+/?")'));
-  assert.equal([...java.matchAll(/require\(ownedFixtureServer\(server\)/g)].length,2,'Main and terminal-error fixtures have the same admission policy');
+  assert.match(java,/require\(localClock\?server==null:ownedFixtureServer\(server\)/,'The no-network local control accepts no server; ordinary modes retain their exact-host gate');
+  assert.equal([...java.matchAll(/require\(ownedFixtureServer\(server\)/g)].length,1,'The terminal-error fixture retains the exact-host gate');
   assert.match(source,/'fixture-transport-mode\.json'/);assert.match(source,/hostListen:'127\.0\.0\.1'/);
   assert.match(source,/fixture\.transport\.snapshot\(\)/);assert.match(source,/failedFixture\.transport\.snapshot\(\)/);
 });

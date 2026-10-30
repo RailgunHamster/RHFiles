@@ -166,7 +166,7 @@ class MainActivity : TauriActivity() {
           }}
           val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan","rhvideo.open","automation.status","automation.enable","automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control","automation.grid.state","automation.grid.control")
           val work={try{if(command=="groups.scan"||command=="qr.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,QrScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
-          if(command in uiCommands) work() else if(command in setOf("groups.cancel","groups.diagnostics"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
+          if(command in uiCommands||BuildConfig.RHVIDEO_QA_LOCAL_CLOCK&&command=="automation.qa.localClock") work() else if(command in setOf("groups.cancel","groups.diagnostics"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
       }
     }
@@ -205,6 +205,7 @@ class MainActivity : TauriActivity() {
     "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.forget","groups.configure" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{if(command in listOf("groups.create","groups.join","groups.restore"))DeviceFileServer.membershipChanged();locationsChanged()}}
     "automation.status" -> onUi{NativeAutomation.status(this)}
     "automation.enable" -> onUi{NativeAutomation.setEnabled(this,args.getBoolean("enabled"))}
+    "automation.qa.localClock" -> onUi{NativeAutomation.dispatch(this,command,args)}
     "automation.receipt" -> {check(NativeAutomation.enabled(this)){"请先开启 ADB 自动化"};RhVideoCloseReceipts.read(args)?:JSONObject.NULL}
     "automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control","automation.grid.state","automation.grid.control" -> onUi{NativeAutomation.dispatch(this,command,args)}
     "nearby.keepAlive"->{onUi{

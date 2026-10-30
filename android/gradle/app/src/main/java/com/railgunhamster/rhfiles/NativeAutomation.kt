@@ -52,7 +52,7 @@ internal object NativeAutomation {
       override fun onActivityCreated(a:Activity,b:Bundle?){}
       override fun onActivityStarted(a:Activity){}
       override fun onActivityPaused(a:Activity){}
-      override fun onActivityStopped(a:Activity){}
+      override fun onActivityStopped(a:Activity){if(BuildConfig.RHVIDEO_QA_LOCAL_CLOCK)RhVideoLocalClockProbe.stopped(a)}
       override fun onActivitySaveInstanceState(a:Activity,b:Bundle){}
     })
   }
@@ -110,6 +110,7 @@ internal object NativeAutomation {
       "automation.media.control"->(current.get() as? PlaybackActivity)?.automationControl(args)?:error("原生播放器没有打开")
       "automation.grid.state"->RhVideoGridActivity.state()
       "automation.grid.control"->RhVideoGridActivity.control(args)
+      "automation.qa.localClock"->RhVideoLocalClockProbe.request(current.get()?:error("No native Activity"),args)
       else->error("未知原生自动化操作")
     }
   }

@@ -86,6 +86,7 @@ android {
     namespace = "com.railgunhamster.rhfiles"
     sourceSets.getByName("main").assets.srcDir(rootProject.file("../../../reader"))
     defaultConfig {
+        buildConfigField("boolean", "RHVIDEO_QA_LOCAL_CLOCK", providers.gradleProperty("rhfilesRhVideoProbe").isPresent.toString())
         buildConfigField("int", "RHVIDEO_QA_AUDIO_START_MS", (rhVideoAudioStartMs ?: 0).toString())
         buildConfigField("String", "RHVIDEO_QA_CODEC_MODE", "\"${rhVideoCodecMode ?: "default"}\"")
         buildConfigField("String", "RHVIDEO_QA_SURFACE_MODE", "\"${rhVideoSurfaceMode ?: "compositor"}\"")
