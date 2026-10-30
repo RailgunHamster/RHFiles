@@ -44,9 +44,18 @@ test('task center keeps an inline selected workflow, stable live reading, IME se
   assert.equal(await view.evaluate("document.querySelectorAll('.rv-task-center table').length"),0);
   await view.evaluate("(()=>{window.__row=document.querySelector('[data-task-id]');window.__step=document.querySelector('.rv-task-inline-detail [data-step=probe]');window.__search=document.querySelector('.rv-task-filters input');window.__footer=document.querySelector('.rv-task-footer');const node=window.__step.querySelector('dd'),range=document.createRange();range.selectNodeContents(node);getSelection().removeAllRanges();getSelection().addRange(range);window.__text=getSelection().toString();document.querySelector('.rv-task-inline-detail').scrollTop=280;return true})()");
   const detailScroll=await view.evaluate("document.querySelector('.rv-task-inline-detail').scrollTop");assert(detailScroll>0);
+  const geometry=()=>view.evaluate("(()=>{const n=document.querySelector('.rv-task-inline-detail'),r=n.getBoundingClientRect();return {scrollTop:n.scrollTop,scrollHeight:n.scrollHeight,clientHeight:n.clientHeight,selected:getSelection().toString(),children:[...n.children].map(e=>({class:e.className,top:e.getBoundingClientRect().top-r.top,height:e.getBoundingClientRect().height})),images:[...n.querySelectorAll('img')].map(e=>({complete:e.complete,width:e.naturalWidth,height:e.getBoundingClientRect().height})),steps:[...n.querySelectorAll('[data-step]')].map(e=>({step:e.dataset.step,top:e.getBoundingClientRect().top-r.top,height:e.getBoundingClientRect().height}))}})()");
+  const beforeGeometry=await geometry();
   progress=55;await invoke('server.liveRefresh');
   assert.equal(await view.evaluate("window.__row===document.querySelector('[data-task-id]')&&window.__step===document.querySelector('.rv-task-inline-detail [data-step=probe]')&&window.__search===document.querySelector('.rv-task-filters input')&&window.__footer===document.querySelector('.rv-task-footer')&&getSelection().toString()===window.__text"),true);
-  assert.equal(await view.evaluate("document.querySelector('.rv-task-inline-detail').scrollTop"),detailScroll);assert.equal((await state()).detail.progress.percent,55);
+  const afterScroll=await view.evaluate("document.querySelector('.rv-task-inline-detail').scrollTop");
+  if(afterScroll!==detailScroll){
+    try{
+      fs.writeFileSync(path.join(app.artifactDir,'task-reading-failure.json'),JSON.stringify({expectedScroll:detailScroll,before:beforeGeometry,after:await geometry()},null,2));
+      const frame=await view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'task-reading-failure.png'),Buffer.from(frame.data,'base64'));
+    }catch(error){t.diagnostic('Task reading diagnostics unavailable: '+error.message);}
+  }
+  assert.equal(afterScroll,detailScroll);assert.equal((await state()).detail.progress.percent,55);
   detailFailure=true;await assert.rejects(invoke('server.refresh'),/Owned detail reader unavailable/);assert.match((await state()).detailError,/Owned detail/);assert.equal((await state()).detail.progress.state,'offline');
   detailFailure=false;await invoke('server.refresh');assert.equal((await state()).detailError,'');assert.equal(await view.evaluate("document.querySelectorAll('.rv-task-read-error').length"),0);
   await filter('view','queued');assert.equal((await state()).selected,'');await click('[data-task-id="video:queue-20"] [data-api-action="rhvideo.task.select"]');await until(async()=>(await state()).selected==='video:queue-20'&&!(await state()).detailLoading,'physical inline selection');

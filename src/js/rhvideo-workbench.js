@@ -2191,7 +2191,9 @@
           else {
             const previewButton=button("", "image.preview", {path,title}, "wb-thumbnail-preview"),image=el("img"),label=el('span','正在读取缩略图…'),fallback=el('span',undefined,'wb-task-thumb-fallback');
             fallback.innerHTML=icon('video');image.alt=title;previewButton.disabled=true;previewButton.dataset.taskThumbnailIdentity=identity;previewButton.dataset.phase=phase;
-            previewButton.append(image,fallback,label);root.append(previewButton);
+            // Keep a single reserved media frame: an image may acquire its
+            // dimensions before load fires and hides the placeholder.
+            const frame=el('span',undefined,'wb-task-thumb-frame');frame.append(image,fallback);previewButton.append(frame,label);root.append(previewButton);
             const failed=()=>{image.hidden=true;fallback.hidden=false;previewButton.disabled=true;label.textContent='暂未生成缩略图';};
             listen(image,'load',()=>{previewButton.dataset.loaded='true';previewButton.disabled=false;fallback.hidden=true;label.textContent='放大缩略图';},'tasks.thumbnail.loaded');
             listen(image,'error',failed,'tasks.thumbnail.error');

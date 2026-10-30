@@ -1,0 +1,47 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {launchApp,until} from '../testing/app-session.mjs';
+import {cdpSession} from '../rhfiles-api.mjs';
+import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
+import {taskFixture} from '../testing/rhvideo-task-fixture.mjs';
+
+for(const width of [1100,412])test(`a task thumbnail reserves one frame through delayed image dimensions and load completion at ${width}px`,{timeout:60000},async t=>{
+  const png=execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','testsrc2=size=800x500:rate=1','-frames:v','1','-c:v','png','-threads','1','-f','image2pipe','pipe:1'],{windowsHide:true,timeout:10000});
+  let releaseHeaders,releaseTail,arrived=false;
+  const headers=new Promise(resolve=>releaseHeaders=resolve),tail=new Promise(resolve=>releaseTail=resolve);
+  const fixture=await rhvideoFixture({videoCount:0,pictureCount:0,tasks:taskFixture(),beforeMedia:async({path:request})=>{
+    if(!request.endsWith('/thumbnail'))return null;
+    arrived=true;await headers;
+    return {body:png,contentType:'application/octet-stream',splitAt:png.length-12,afterFirstChunk:()=>tail};
+  }});
+  const app=await launchApp({emulateFocus:true});let view;
+  t.after(async()=>{releaseHeaders();releaseTail();view?.close();await app.close();await fixture.close();});
+  t.diagnostic('Delayed thumbnail layout evidence: '+app.artifactDir);
+  await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
+  const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(page=>new URL(page.url).pathname==='/rhvideo.html');},'owned task layout window');
+  view=await cdpSession(target,30000);
+  await view.send('Emulation.setFocusEmulationEnabled',{enabled:true});
+  await view.send('Emulation.setDeviceMetricsOverride',{width,height:867,deviceScaleFactor:1,mobile:width===412});
+  await until(()=>view.evaluate('!!window.RHFilesAPI?.list().some(a=>a.id==="rhvideo.task.centerState")'),'task layout actions');
+  const invoke=(name,args={})=>view.evaluate(`RHFilesAPI.invoke(${JSON.stringify('rhvideo.'+name)},${JSON.stringify(args)})`);
+  await invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+  await invoke('server.open',{page:'tasks'});await until(()=>arrived,'task thumbnail awaiting response headers');
+  await view.evaluate("document.querySelector('.rv-task-inline-detail').scrollTop=280;true");
+  const geometry=()=>view.evaluate("(()=>{const n=document.querySelector('.rv-task-inline-detail'),c=n.querySelector('.rv-task-cover'),r=n.getBoundingClientRect(),i=c.querySelector('img'),f=c.querySelector('.wb-task-thumb-fallback');return{scroll:n.scrollTop,height:c.getBoundingClientRect().height,imageHeight:i.getBoundingClientRect().height,fallbackHeight:f.getBoundingClientRect().height,complete:i.complete,naturalWidth:i.naturalWidth,steps:[...n.querySelectorAll('[data-step]')].map(e=>({step:e.dataset.step,top:e.getBoundingClientRect().top-r.top}))}})()");
+  const before=await geometry();assert(before.scroll>0);
+  releaseHeaders();
+  await until(()=>view.evaluate("(()=>{const i=document.querySelector('.rv-task-cover img');return i.naturalWidth===800&&!i.complete})()"),'real PNG dimensions arrive before the held tail',5000);
+  const partial=await geometry();releaseTail();
+  await until(()=>view.evaluate("(()=>{const i=document.querySelector('.rv-task-cover img');return i.complete&&i.naturalWidth===800})()"),'real task thumbnail finishes');
+  await view.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  const loaded=await geometry();
+  fs.writeFileSync(path.join(app.artifactDir,'task-thumbnail-layout.json'),JSON.stringify({before,partial,loaded},null,2));
+  const frame=await view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'task-thumbnail-loaded.png'),Buffer.from(frame.data,'base64'));
+  assert.equal(partial.height,before.height,'Image dimensions cannot add a second row above the workflow');
+  assert.equal(loaded.height,before.height,'Hiding the placeholder cannot remove a row above the workflow');
+  assert.equal(partial.scroll,before.scroll);assert.equal(loaded.scroll,before.scroll);
+  assert.deepEqual(partial.steps,before.steps);assert.deepEqual(loaded.steps,before.steps);
+});

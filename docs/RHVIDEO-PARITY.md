@@ -6,6 +6,24 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 Android 可中断取流及任务缩略图布局（继续验收，未发包）
+
+在前节账户边界修复后，又用真实 MockWebServer 复现两个 Android DataSource 问题（`rhvideo-datasource-contract-red.log`／`rhvideo-datasource-contract-red-results/`，**2/2 失败**）：Media3 loader 在等待响应头时被中断，仍等到网络读取超时；精确等于资源长度的 EOF 探测则被当成普通 HTTP 416 错误。这里不是用慢网猜测播放卡顿的唯一根因。
+
+参照固定 [Media3 1.11.1 OkHttpDataSource](https://raw.githubusercontent.com/androidx/media/1.11.1/libraries/datasource_okhttp/src/main/java/androidx/media3/datasource/okhttp/OkHttpDataSource.java) 的中断等待及精确 EOF 语义，只将原生视频的响应头等待改成可中断等待：中断会取消原 Call，不重发请求；迟到的未消费响应关闭。图片／元数据仍走原路径，未改变解码器、音轨、缓冲或画质。416 只在经过有界数字／溢出校验的总长恰等于当前读取位置时成为空输入，不返回错误正文；显式请求长度仍读立即 EOF。新增五项用例覆盖这两个问题、显式长度、错误／非法范围及预先中断时零 GET。
+
+短路径 QA 的 `rhvideo-datasource-contract-full-build.log` **6 分 42 秒成功，477/477 JVM、72 XML、零失败／错误／跳过**；重编 Kotlin／R8，不重编未修改的两套 JNI。一次遗漏 ABI 过滤的较早 APK 被既有安装前门禁拒绝（`rhvideo-revoked-account-apk-single.log`，缺少 32 位 RHFiles 库），未安装或绕过校验。之后明确使用 arm64／x86_64，与已编译 JNI 匹配。有效快照 `rhvideo-datasource-runtime-2522910851464a7d8b034df8c0a9c2cd/` 的主包 **`d37ec4877d6f5cd2da8e02a0a810041f0e48e0592503be37d4317c946543b55f`**、探针 **`8adf5531d127e638ecbd21383abe21206915f8521cd80518b45496634b6145af`** 已逐字节核对安装到自有 `emulator-5588`。完整 **Single 通过**（`rhvideo-datasource-single-native.log`、`rhvideo-android-single-1793337290515-release/`），包括真实原生播放／速度菜单、父层与各子身份、账户／模式隔离、图片内容探测／HTML 拒绝和收藏放映；已查看实际中文速度菜单与画面。它不证明 Android 同屏持续速度已达标。
+
+Windows 前节被冻结的 B261 程序整轮终态为 **105/106、1 失败、零跳过，26 分 29 秒**，不是全绿（`rhvideo-range-frozen-fe06684c962847eba10c5db919b8a153/test-artifacts/rhvideo-range-full-windows.log`，回执 `rhvideo-windows-q8wZQs/`）。1118 个冻结文件、程序与全部参考文件的前后 SHA-256 再次核对未变，唯一失败是任务详情刷新前后 scrollTop **393 → 321**。旧实现随后三次独立复测均通过（`rhvideo-task-center-reading-{1,2,3}.log`），**不能据此当作修复**。
+
+新增受控真实 PNG 分段响应，分别延迟响应头与 IEND，实际观测图片已取得 800×500 尺寸、但尚未触发 load 的阶段；没有伪造图片尺寸或改浏览器事件。旧程序稳定复现：缩略图高度 **91 → 203.5 → 131.5 px**，scrollTop **280 → 393 → 321**（`rhvideo-task-image-layout-red.log`、`rhfiles-e2e-TEi0BS/task-thumbnail-layout.json`）。图片取得尺寸后与仍显示的 **72 px** 占位块各占一行，load 隐藏占位块又移除一行；浏览器当时实际上在补偿正文位置，仅有半像素舍入差，因此不是详情节点被重建或选区丢失。原测试现在仅增加失败布局／截图诊断，未放宽断言。
+
+将任务图片／占位图叠在同一个固定比例框内，保留放大命令、加载／失败反馈和原图片比例，不关闭滚动锚定、不拉伸图片。新 Windows EXE **`9bf04e51e836fa8f0ce567eedab9c2cc8fb0b2c71173e9cba586b0be93395b1f`** 编译 **46 秒成功**，相关实际窗口 **7/7、零跳过**（`rhvideo-task-image-focused.log`），包括原任务中心、单位／状态展示及三项范围／账户回归。新 1100px／412px 两个视口均在三个加载阶段保持 **131.5 px／scrollTop 280**，各步骤坐标完全一致（`rhfiles-e2e-{oNj7DG,97pJ5f}/task-thumbnail-layout.json`）。两种视口的控制流是实打包 WebView2 验证，不冒称 Android 原生设备测试。
+
+同样两份共享界面资源已重新打入 Android QA 包（`rhvideo-task-image-apk-build.log` **1 分 16 秒成功**，本次不另冒计 JVM），主包 **`c9512f55064e412fb757d243bdbd8c27d6039261035cddbd64e98b1525503067`**、相同探针及 mapping 保存在 `rhvideo-task-image-apk-5518e6f80bde4f63a906152c9fd5a347/`。同一自有 AVD 的完整 **task-center 通过**（`rhvideo-task-image-android-center.log`、`rhvideo-android-task-center-1793337829039-release/`），包括列表／详情、单位、未知进度、筛选、保留阅读节点和三个实际自动读取失败后的显式恢复；安装包字节及全部资源逐项校验，实际缩略图截图已查看。这是受控任务记录的真实 APK 流程，不是实际编码性能或新包完整 Single 的替代证明。
+
+最终共享检查 **907/907、零失败／跳过**（`rhvideo-task-image-final-node.log`）。新的完整 Windows 回归仍须使用这次源码／测试／程序重新冻结运行；不能把 7 项通过改写为前一整轮全绿。Windows 同质量首帧、Android 完整同屏／生命周期及其余整体验收仍未完成，没有正式发布或替换用户安装。
+
 ## 2026-10-30 原生 EOF 元数据和媒体响应的账户边界（继续验收，未发包）
 
 实际 Windows 窗口复现了两个独立问题：上游合法的 HTTP 416 `Content-Range: bytes */长度` 被通用错误处理丢弃；退出账户时已发出的请求仍可能返回旧账户的响应状态／元数据。新增 `rhvideo-range-proxy.test.mjs` 三项真实实例测试，旧冻结程序 `10fe10bc…` 为 **0/3**（`rhvideo-range-proxy-red-all.log`）：长度为 null 而非 `bytes */0`，已注销的挂起范围请求返回 416 而非 401，图片探测中的注销导致连接关闭而非明确的 401。第三项旧结果是 socket 错误，不作为已证明图片正文泄露的证据。
