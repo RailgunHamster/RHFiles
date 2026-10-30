@@ -10,13 +10,25 @@
 
 继续执行实际参考 `playlistKeyHandler`／`gridKeyHandler`，发现 Home／End 修复之前只覆盖了媒体库放映，Windows 播放器和同屏的 DOM 快捷键仍按物理 `code` 导航。新增从两个实际生产监听器 AST 提取的十七项测试，包含与上述参考函数的差分；旧实现 **3/17、14 失败**（`rhvideo-native-keyboard-red.log`）。现优先使用可识别的语义 key，将空格正常映射到暂停／继续，只有没有语义信息才回退 code；数字小键盘的数字及重映射的普通键不能误当 Home／End／箭头。保留收藏父层定位、非队列限制、编辑框、Delete 修饰键／重复和同屏输入实例边界。修复后 **17/17**；全套共享检查 **950/950、零失败／跳过**（`rhvideo-native-semantic-shortcuts-node.log`）。
 
-新 Windows 编译 **2 分 14 秒成功**（`rhvideo-native-semantic-keyboard-build.log`）；独立快照 `rhvideo-native-semantics-runtime-c9fd7f1fddfa40b4bc5cf052e951bff9/` 的 EXE **`eb9ac0f8a950043a940bf7aa1bc5e2558ea2aad7bd64b497d4f3eb31a8ba7c87`**，app-local 3.0.24 清单重新验证。新增实际窗口用例向打包页面派发语义 DOM 键事件，随后核对队列／同屏首尾源身份和真实解码帧、数字不误跳及 UI/API 契约；它不是物理键盘输入试验，不能冒充 SendInput。该实际用例等待下面已在途的整轮终止后才串行启动，结果另记，不把编译／单测视为窗口场景已通过。
+新 Windows 编译 **2 分 14 秒成功**（`rhvideo-native-semantic-keyboard-build.log`）；独立快照 `rhvideo-native-semantics-runtime-c9fd7f1fddfa40b4bc5cf052e951bff9/` 的 EXE **`eb9ac0f8a950043a940bf7aa1bc5e2558ea2aad7bd64b497d4f3eb31a8ba7c87`**，app-local 3.0.24 清单重新验证。新增实际窗口用例向打包页面派发语义 DOM 键事件，随后核对队列／同屏首尾源身份和真实解码帧、数字不误跳及 UI/API 契约；它不是物理键盘输入试验，不能冒充 SendInput。最初终止失败的 `rhvideo-native-semantic-keyboard-window.log` 实际已通过播放器首尾，但夹具仍用默认四视频图库却断言三组，得到 **2≠3**；失败源码／回执保留于 `rhfiles-e2e-iV2yW5/`。显式提供六视频／每视频一帧并加严总数断言后，本例完整通过：`rhfiles-e2e-ThXJyC/native-dom-navigation.json` 确认播放器 **5→0**、同屏 **2→0**，分别显示实际 `video-5`／`video-0` 和 **4,5→0,1** 的解码帧；未修改分组算法或放宽首尾断言。
 
-既有 CB26 程序的最新完整 Windows 轮次使用新冻结目录 `rhvideo-semantic-navigation-full-e108d555765145dfa1d65915d7087de6/`：**1124** 个文件、同一 EXE `cb26dc18…8ed6f7`、app-local 3.0.24、实际参考 `3d6aaeb`；日志为该冻结目录下 `test-artifacts/rhvideo-semantic-navigation-full-windows.log`，回执目录 `rhvideo-windows-iaWeCF/`。它在上述两个 DOM 入口修复之前已经开始，**不包含这次新用例／新程序**。目前仍在途，不能将中途通过数当成完整通过；终止后还须逐项回核冻结文件和参考指纹。
+既有 CB26 程序的最新完整 Windows 轮次已终止 **107/109、2 失败、零跳过，30 分 25 秒**：冻结目录 `rhvideo-semantic-navigation-full-e108d555765145dfa1d65915d7087de6/` 的日志 `test-artifacts/rhvideo-semantic-navigation-full-windows.log`／回执 `rhvideo-windows-iaWeCF/receipt.json`。两个失败为缩略图就绪、原生 MP4 实时推进；后者原二十五秒预算内一直 **1 个解码帧／0 呈现帧／0 音频块／位置 0**。之前的 End／条带请求归属／缩略图重排用例均通过，但不能抵消这两项失败。终止后逐项回核 **1124** 文件、**14** 参考模块和 EXE `cb26dc18…8ed6f7`，均未变（`post-run-fingerprints.json`）。它在两个 DOM 入口修复之前已开始，**不包含新语义键用例／EB9A 程序**，不将该失败整轮改写为绿色。
+
+原两个超时位置现在只在既有断言失败后补取本进程的真实窗口焦点／可见性、图片完成／几何、匿名 Resource Timing、服务端传输完成和实际 native BMP；不重试／聚焦／继续播放，也不延长原就绪预算。同一 EB9A 的新增键盘加原两项场景定向 **3/3、零跳过，2 分 26 秒**（`rhvideo-native-semantic-keyboard-fixture-fixed.log`），包含原实际四格、预载、定位、返回、图片和 HTTP 权限断言。**图片／播放实现未改；该次通过不能证明间歇超时已修复**，新增失败取证在这次通过中未触发，不能虚构失败现场窗口数据。
 
 Android 新对照只使用已安装的 API 36 镜像，另建自有 **`emulator-5590 / RHFilesRhVideoQA20261030Api36`**，没有重置／停止已有 AVD 或改变系统驱动／音频服务。镜像 Android **16 / API 36**，指纹 `google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.D1/13818094:user/release-keys`；x86_64，1080×2400／420 DPI，WebView **133.0.6943.137**，原 emulator **36.1.9.0**、WHPX／host-GPU、6 核／6144 MiB。四个准确 AVD 名加入同一准入白名单，物理设备、相似后缀名称继续拒绝；相关 **21/21** 检查通过。
 
-新 AVD 首次启动约十分钟后才完成；**尚未安装 RHFiles 就出现 system／System UI 无响应弹窗**。首次 grid 命令在安装前被现有门禁拒绝（`rhvideo-grid-api36-control.log`），不是 RHFiles 同屏解码失败，也没有跳过门禁。已分别在两个实际系统弹窗选择“等待”，未关闭／重启系统进程，截图 `rhvideo-api36-boot-screen.png`、`rhvideo-api36-ui-dialog.png` 保留。当前弹窗消失后的同一 **88D4 主包／4B37 探针**完整 grid 已排在 Windows 两项运行之后，原 30 秒就绪／5 秒实时门槛、三格音视频和默认参数保持不变；这仍是待运行的独立对照，不是已通过结果或性能基准。
+新 AVD 首次启动约十分钟后才完成；**尚未安装 RHFiles 就出现 system／System UI 无响应弹窗**。首次 grid 命令在安装前被现有门禁拒绝（`rhvideo-grid-api36-control.log`），不是 RHFiles 同屏解码失败，也没有跳过门禁。已分别在两个实际系统弹窗选择“等待”，未关闭／重启系统进程，截图 `rhvideo-api36-boot-screen.png`、`rhvideo-api36-ui-dialog.png` 保留。弹窗消失后的同一 **88D4 主包／4B37 探针**均实际安装并逐字节核对；`rhvideo-grid-api36-after-boot.log`／`rhvideo-android-grid-1793353746021-release/` 已终止失败，停在 `rhvideo.category` 的 JavaScript 求值，**没有走到 grid.open 或同屏时钟断言**。随后原版对照也在主 Activity 启动的 ADB 等待超时（`rhvideo-reference-grid-api36.log`、`rhvideo-android-reference-clock-bMNWYw/receipt.json`，零参考 HTTP 请求），尚未加载原版，不把它算成原版解码失败。
+
+### 同一 API 34 的真实参考页面对照
+
+新增 `rhvideo-android-reference-clock.mjs` 只在准确自有 AVD、已安装 APK 字节相符、没有已有 RHFiles／stagefright 播放或错误弹窗时执行；不安装 APK、不改音频／codec／驱动／服务。不改变参考的分组、取流和播放函数，实际运行其 HTML，使用同一 **360×640 / H.264 / AAC / 20 秒**文件 **`98c8699e…c24bc`**、三路非静音 **20%** 音量、正常速度，观察 `requestVideoFrameCallback` 和原始时间，不以轮询请求驱动播放，也不是产品网页后备路径。十九项准入／判定测试拒绝少流、换输入、静音、低速、少帧及超时；全套共享检查 **969/969、零失败／跳过**（`rhvideo-reference-control-node.log`）。
+
+在既有 host-GPU **5588** 上、上述全部 Windows／API 36 运行终止后，该对照实际到达三路就绪，但五秒时钟失败（`rhvideo-reference-grid-host-api34.log`、`rhvideo-android-reference-clock-U2wyv2/receipt.json`）。原始 **5181 ms** 内三路位置仅增加 **953／940／1310 ms**，实际呈现帧 **2／3／5**；三路均非暂停／非静音、20% 音量、1×、无媒体错误、原尺寸，输入身份没有改变。全部 **25** 个服务端响应完成、零错误／丢弃，服务器 finish 仍不代表客户端解码。实际原版三格画面已查看（`android-o6GAlR/reference-grid-clock.png`），源内烧录时间也与低呈现时间一致；现场 AudioFlinger 含本次 PID **16843** 的活动 track **106**。这支持“迟滞不只出现在 RHFiles 的 Media3 集成中”，**不证明唯一平台根因、原生实现无额外开销或 Android 验收已通过**。
+
+下一对照已准备独立新版 emulator，而不是重启已有 AVD：官方 [更新记录](https://developer.android.com/studio/releases/emulator) 列出旧 36.1.9 之后的 Intel GPU／OpenGL 资源修复，不能直接当成本次根因。从 [官方 SDK 元数据](https://dl.google.com/android/repository/repository2-3.xml) 核对稳定 **37.2.13**、Windows 归档 `emulator-windows_x64-16740729.zip`、**455344678** 字节及 SHA-1 **`4d7268aa7787c640ad892844e6c9a5f159e91ad3`** 后，独立目录 `emulator-37.2.13-d437b07ddaf04dbcbb5f8367508f7b2c/` 下载／校验／路径和符号链接检查／解压均成功；实际归档 SHA-256 **`625276a1d3ac6b15d00f8aad5e233e7dc3a7cb71435f97d64e3be298399e171d`**。`-version` 确认 **37.2.13.0 / build 16740729**，`source.properties` 相符；准入记录 `admission.json` 保存。未更新全局 SDK，也尚未用这个副本创建／启动 AVD，不能称新环境已通过播放。
+
+最终共享检查仍为 **969/969、零失败／跳过**（`rhvideo-reference-control-final-node.log`）；上述定向三例与参考对照不替代完整 Windows 失败或 Android 同屏／生命周期、同性能和正式发行验收。
 
 本节未改变媒体质量、内核、音频输出参数或原生进度／重试逻辑；未替换正式 Windows 安装、操作实体手机或发包。Android 同屏／生命周期、同质量性能与完整发行验收仍未完成。
 

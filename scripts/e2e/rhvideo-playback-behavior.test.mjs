@@ -199,7 +199,8 @@ test('a later real completion is not discarded after an earlier survivor reports
 });
 
 test('packaged player and grid DOM navigation accepts semantic keys and reaches real decoded endpoints',native,async t=>{
-  const s=await setup({videoDuration:20});let player,grid;
+  const s=await setup({videoDuration:20,galleryVideoCount:6,galleryFrameCount:1});let player,grid;
+  t.diagnostic('Packaged DOM key evidence, not physical keyboard input: '+s.app.artifactDir);
   // This dispatches actual DOM events into the packaged handlers, not an OS
   // keyboard transport or a replacement handler. Decoder outcomes are real.
   const key=(view,key,code)=>view.evaluate(`(()=>{const event=new KeyboardEvent('keydown',{key:${JSON.stringify(key)},code:${JSON.stringify(code)},bubbles:true,cancelable:true});document.body.dispatchEvent(event);return event.defaultPrevented;})()`);
@@ -216,7 +217,7 @@ test('packaged player and grid DOM navigation accepts semantic keys and reaches 
     const after=await invoke(player,'player.state');assert.equal(after.inputId,before.inputId);assert.equal(after.queue.index,0,'NumLock digits cannot seek the queue');
     await command(s.app,'player.close');player.close();player=null;
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
-    const initial=await invoke(grid,'grid.state');assert.equal(initial.groupTotal,3);
+    const initial=await invoke(grid,'grid.state');assert.equal(initial.total,6);assert.equal(initial.groupTotal,3);
     for(const [semantic,code,index]of [['End','',2],['Home','Numpad7',0]]){
       assert.equal(await key(grid,semantic,code),true);
       const state=await until(async()=>{const value=await invoke(grid,'grid.state');return value.groupIndex===index&&value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>1)?value:null;},'semantic '+semantic+' selects and decodes the grid endpoint',25000);
@@ -224,7 +225,6 @@ test('packaged player and grid DOM navigation accepts semantic keys and reaches 
     }
     const gridBefore=await invoke(grid,'grid.state');assert.equal(await key(grid,'1','End'),false);assert.deepEqual((await invoke(grid,'grid.state')).cells.map(cell=>cell.inputId),gridBefore.cells.map(cell=>cell.inputId));
     assert.deepEqual((await invoke(grid,'ui.contract')).missing,[]);
-    t.diagnostic('Packaged DOM key evidence, not physical keyboard input: '+s.app.artifactDir);
   }finally{fs.writeFileSync(path.join(s.app.artifactDir,'native-dom-navigation.json'),JSON.stringify(observations,null,2));player?.close();grid?.close();await s.close();}
 });
 

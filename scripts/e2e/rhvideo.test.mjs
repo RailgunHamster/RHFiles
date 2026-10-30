@@ -26,6 +26,21 @@ async function target(app,file){
 }
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
 
+async function captureRhVideoFailure(app,view,fixture,name,extra={}){
+  // Run only AFTER the original readiness assertion has failed. Observe owned
+  // windows/HTTP completion, never focus, retry, seek, resume or tune playback.
+  const report={...extra,artifact:app.artifactDir,transport:fixture.transport.snapshot(),requests:fixture.requests.map(({method,path,range})=>({method,path,range}))};
+  try{report.page=await view.evaluate(`(async()=>{const win=window.__TAURI__.window.getCurrentWindow();return {visible:document.visibilityState,focused:document.hasFocus(),viewport:{width:innerWidth,height:innerHeight},window:{visible:await win.isVisible(),minimized:await win.isMinimized(),focused:await win.isFocused()},dialogs:[...document.querySelectorAll('dialog[open]')].map(node=>node.id),images:[...document.querySelectorAll('.cover-button img')].slice(0,12).map(node=>({complete:node.complete,width:node.naturalWidth,height:node.naturalHeight,loaded:node.classList.contains('loaded'),loading:node.loading,rect:node.getBoundingClientRect().toJSON()})),resources:performance.getEntriesByType('resource').filter(row=>row.initiatorType==='img').slice(-24).map(row=>({startTime:row.startTime,duration:row.duration,bytes:row.encodedBodySize,status:row.responseStatus??null}))};})()`,5000);}catch(error){report.pageError=String(error.code||'unavailable');}
+  try{report.windows=await view.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.windows",args:{}})',5000);}catch(error){report.windowError=String(error.code||'unavailable');}
+  try{const image=await view.send('Page.captureScreenshot',{format:'png'},5000);fs.writeFileSync(path.join(app.artifactDir,name+'.png'),Buffer.from(image.data,'base64'));}catch(error){report.screenshotError=String(error.code||'unavailable');}
+  if(extra.lastState?.nativeSurface&&Number.isSafeInteger(extra.lastState.inputId))try{
+    const frame=await view.evaluate('window.__TAURI__.core.invoke("rhvideo_request",'+JSON.stringify({action:'player.diagnosticFrame',args:{expectedInput:extra.lastState.inputId}})+')',5000);
+    assert.equal(path.dirname(frame.path),app.directory);assert.match(path.basename(frame.path),/^rhvideo-native-[a-f0-9]{32}\.bmp$/);fs.copyFileSync(frame.path,path.join(app.artifactDir,name+'-native.bmp'));report.frame={captured:true};
+  }catch(error){report.frame={captured:false,reason:String(error.code||'unavailable')};}
+  fs.writeFileSync(path.join(app.artifactDir,name+'.json'),JSON.stringify(report,null,2));
+  console.error('RHVideo failure evidence: '+path.join(app.artifactDir,name+'.json'));
+}
+
 test('stopping a live batch never replays a submitted write, clobbers another panel or controls a later batch',async()=>{
   let release,entered=false;const fixture=await rhvideoFixture({beforeTrash:async()=>{if(!entered){entered=true;await new Promise(r=>release=r);}}}),app=await launchApp({emulateFocus:true});let view;
   try{
@@ -176,7 +191,7 @@ test('RHVideo packaged UI, real native HTTP bridge, reader, favorites, paging an
     for(const page of ['trash','storage','system'])await invoke(view,'server.open',{page});await invoke(view,'panel.close',{id:'wb-server'});
     assert.deepEqual((await invoke(view,'ui.contract')).missing,[],'every declared UI action must have an enumerable public API');
     await invoke(view,'gallery.open');assert.equal(await view.evaluate("document.querySelectorAll('.wb-frame').length"),32);await invoke(view,'gallery.save',{name:'固定截图顺序'});await invoke(view,'gallery.shuffle');await invoke(view,'gallery.resume',{name:'固定截图顺序'});await invoke(view,'panel.close',{id:'wb-gallery'});
-    await until(()=>view.evaluate("document.querySelectorAll('.cover-button img.loaded').length>=8"),'native-authenticated thumbnails decoded');
+    await until(()=>view.evaluate("document.querySelectorAll('.cover-button img.loaded').length>=8"),'native-authenticated thumbnails decoded').catch(async error=>{await captureRhVideoFailure(app,view,fixture,'thumbnail-failure');throw error;});
     const shot=await view.send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(app.artifactDir,'rhvideo-videos.png'),Buffer.from(shot.data,'base64'));
     assert.equal(await view.evaluate("document.querySelectorAll('iframe,video').length"),0);
     const configPath=path.join(app.profile.dataDirectory,'rhvideo-client.json'),config=fs.readFileSync(configPath,'utf8');
@@ -236,7 +251,7 @@ test('real libVLC decodes a streamed MP4 into a native Win32 surface without HTM
     let lastState,samples=[];
     const playing=await until(async()=>{
       lastState=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.state')");if(samples.length<10)samples.push(lastState);return lastState.nativeSurface&&lastState.durationMs>0&&lastState.positionMs>500?lastState:null;
-    },'real native playback progress',25000).catch(error=>{console.log(JSON.stringify({lastState,samples,requests:fixture.requests.filter(r=>r.path.endsWith('/play')).map(({path,range})=>({path,range}))}));throw error;});
+    },'real native playback progress',25000).catch(async error=>{await captureRhVideoFailure(app,player,fixture,'native-playback-failure',{lastState,samples});throw error;});
     assert.equal(playing.engine,'libVLC');assert.equal(await player.evaluate("document.querySelectorAll('video,iframe').length"),0);
     await player.evaluate("RHFilesAPI.invoke('rhvideo.player.control',{command:'pause'})");
     assert(playing.renderedFrames>0,'actual native frames must have been presented');
