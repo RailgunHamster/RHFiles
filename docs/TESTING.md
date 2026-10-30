@@ -58,7 +58,37 @@
 - 相同前端修复在独立 Windows 调试实例中通过 22 项实际窗口测试，零跳过（开发工作树的 `multi-selection-current-e2e.log`）；五个相关生产脚本与主线逐一比较无差异。覆盖两侧窗格、四种布局、快速框选、迟到拼音响应和两次确认后的真实多文件永久删除。复制路径只截获剪贴板写入边界，不修改用户剪贴板。
 - 本次未更新正在运行的安装，也未发布安装包；测试不代表正式发布包已通过验收。
 
+### 2026-10-30 连续 Ctrl 导致多选快捷键失效
+
+- 在上述修复之后仍复现：Ctrl+点击多选，马上松开并再次按 Ctrl 进行复制路径或删除，
+  被 `initDoubleCtrlSearch` 误认成双击 Ctrl，在第二次按下时把焦点移到 `filter-input`。
+  原程序左右窗格均仍有两个选中文件，但复制路径未分发、Delete 没有确认框；
+  证据为 `selection-modifier-red.log`、`rhfiles-e2e-JJii53/*-copy.json`。
+- 现在只在第二次完整、未用于鼠标或组合键的左 Ctrl 轻按释放时打开搜索；
+  长按、重复事件、鼠标按下、其他键和窗口失焦都会取消识别，右 Ctrl 留给原有菜单操作。
+  新增 11 项手势测试，旧实现 9 项失败、修复后全部通过。
+- 重新编译的隔离测试 EXE SHA-256 为
+  `5d4c4e99729ae119c4141e75a8d1c478aaaea389ec6d8b349e3f77f0529b16c8`，
+  40 项 WebView2 窗口交互测试通过、零失败／跳过（`selection-modifier-visible-e2e.log`）。
+  新序列覆盖左右窗格四种布局；已有套件同时核验快速框选、分栏子目录、迟到拼音、
+  Ctrl+C/X 和两次确认后的真实多文件永久删除。复制路径仅截获剪贴板边界。
+- 首轮扩展用例在右侧窄窗格因卡片未滚入可见区而出现两个鼠标命中超时；
+  补齐测试脚本的 `scrollIntoView` 后重新跑完整的 40 项，没有修改产品断言。
+- 相关业务测试 126 项通过；使用 `RHVIDEO_SOURCE=D:\git\RHVideo` 的常规 `npm test`
+  与串行全套均为 543 项通过、零跳过（`selection-modifier-npm-final.log`、
+  `selection-modifier-node-serial.log`）。编译期间的首轮并行检查曾在既有 RHVideo
+  准备等待测试超时；该项单独和上述最终两轮均通过，本轮未修改该测试或媒体逻辑。
+- 测试没有替换本机正在运行的 0.1.88，也未发布安装包。
+
 ## 运行
+
+多选快捷键的回归不能只在 `Input.dispatchKeyEvent` 上设置 Ctrl 修饰位：也必须发送
+`ControlLeft` 的按下、Ctrl+鼠标点击、抬起、第二次按下和快捷键字符的完整事件序列。
+否则测不到“双击 Ctrl 搜索”在第二次按下时抢走焦点的问题。新增
+`scripts/e2e/selection-modifier-focus.test.mjs` 覆盖左右窗格、四种布局下的这个序列，
+核对完整路径、列表焦点和多文件删除确认；取消确认后检查文件和选区仍然完整。
+`scripts/tests/double-ctrl-search.test.mjs` 另验证纯双击 Ctrl、长按、自动重复、窗口失焦、
+右 Ctrl、其他修饰键和鼠标中断。右 Ctrl 的单击菜单不与左 Ctrl 双击搜索混用。
 
 需要 Windows、Rust、Node.js 22+。仓库含 7-Zip 引擎；WebView2 端到端测试需要已安装 WebView2 Runtime。
 

@@ -1594,22 +1594,37 @@ function hideSearchHelp() {
 }
 
 function initDoubleCtrlSearch() {
-  let lastCtrlTime = 0;
+  let lastCtrlTap = null;
+  let ctrlPress = null;
+  const reset = () => { lastCtrlTap = null; ctrlPress = null; };
   RHFilesUI.listen(document,'keydown', e => {
-    if (e.key === 'Control' && !e.shiftKey && !e.altKey) {
-      const now = Date.now();
-      if (now - lastCtrlTime < 350) {
-        const input = document.getElementById("filter-input");
-        if (input && document.activeElement !== input) {
-          input.focus();
-          input.select();
-        }
-        lastCtrlTime = 0;
-      } else {
-        lastCtrlTime = now;
-      }
+    // A Ctrl used for selection or a shortcut is not a tap. In particular,
+    // Ctrl+click followed by Ctrl+C/Delete must never move focus to search.
+    // Right Ctrl has its own context-menu gesture in keyboard.js.
+    if (e.key !== 'Control' || e.location === 2 || e.repeat || e.shiftKey || e.altKey || e.metaKey || e.isComposing) {
+      reset();
+      return;
     }
+    ctrlPress = performance.now();
   },undefined,"src.js.tabs.initDoubleCtrlSearch.ea5a60ea371d");
+  RHFilesUI.listen(document,'keyup', e => {
+    if (e.key !== 'Control') return;
+    const now = performance.now();
+    const pressedAt = ctrlPress;
+    ctrlPress = null;
+    if (pressedAt === null || e.location === 2 || e.ctrlKey || e.shiftKey || e.altKey || e.metaKey ||
+        e.isComposing || now - pressedAt > 300) { reset(); return; }
+    // Wait for the second release, so a second press can still become a chord.
+    if (lastCtrlTap !== null && now - lastCtrlTap < 350) {
+      reset();
+      const input = document.getElementById('filter-input');
+      if (input && document.activeElement !== input) { input.focus(); input.select(); }
+    } else {
+      lastCtrlTap = now;
+    }
+  },undefined,"src.js.tabs.initDoubleCtrlSearch.release");
+  RHFilesUI.listen(document,'pointerdown',reset,true,"src.js.tabs.initDoubleCtrlSearch.pointer");
+  RHFilesUI.listen(window,'blur',reset,undefined,"src.js.tabs.initDoubleCtrlSearch.blur");
 }
 
 async function initQuickSearch() {
