@@ -23,5 +23,14 @@ test('negative focus testing can only activate the main window of an already-for
   assert.match(focus,/RHFILES_NATIVE_PLAYER_QA/);assert.match(focus,/GetForegroundWindow/);assert.match(focus,/webview_windows\(\)\.values\(\)\.any/);
   assert.match(focus,/get_webview_window\("main"\)/);assert.doesNotMatch(focus,/SendInput|args\[|\.build\(/);
   const test=fs.readFileSync(new URL('../e2e/rhvideo-slideshow.test.mjs',import.meta.url),'utf8');
-  assert(test.indexOf('diagnostics.activateMain')>test.indexOf('both native navigation key down/up pairs'));
+  assert(test.indexOf('app.nativeWindows.activateMain()')>test.indexOf('both native navigation key down/up pairs'));
+});
+
+test('release business tests use guarded external ownership, not a removed production key endpoint',()=>{
+  const tool=fs.readFileSync(new URL('../testing/owned-native-frame.cpp',import.meta.url),'utf8');
+  for(const guard of ['parent_of(id)==parent','created(target.value)>=created(owner.value)','_wcsicmp(actual.c_str(),requested.c_str())==0','GetForegroundWindow()==owned.library&&input_focus(owned.library,info)','GetAsyncKeyState(modifier)>=0'])assert(tool.includes(guard));
+  assert(tool.indexOf('GetForegroundWindow()==owned.library')<tool.indexOf('const UINT sent=SendInput'));
+  assert.match(tool,/name==L"Home"\|\|name==L"End"/);assert.match(tool,/if\(sent==1\)SendInput\(1,events\+1/);
+  const business=fs.readFileSync(new URL('../e2e/rhvideo-slideshow.test.mjs',import.meta.url),'utf8');assert.doesNotMatch(business,/diagnostics\.libraryKey|diagnostics\.windows|diagnostics\.activateMain/);
+  assert.match(business,/Only Home\\\/End/);assert.match(business,/keyboard\.main\.keys\.length,0/);assert.match(business,/both native navigation key down\/up pairs/);
 });

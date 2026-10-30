@@ -28,9 +28,9 @@ test('favorite slideshow has independent timing, a real total-progress control a
  try{
   fixture=await rhvideoFixture({videoCount:0,pictureCount:4});for(let i=0;i<4;i++)fixture.favorites.add('picture:picture-'+i);
   if(inputTransport==='windows'){
-   await assert.rejects(app.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.libraryKey",args:{key:"PageDown"}})'),/仅允许 Home／End/);
-   for(const encoding of ['arbitrary',7,null])await assert.rejects(app.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.libraryKey",args:'+JSON.stringify({key:'End',encoding})+'})'),/编码无效/);
-   await assert.rejects(app.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.libraryKey",args:{key:"End"}})'),/测试媒体库未打开/);
+   await assert.rejects(app.nativeWindows.libraryKey({key:'PageDown'}),/Only Home\/End/);
+   for(const encoding of ['arbitrary',7,null])await assert.rejects(app.nativeWindows.libraryKey({key:'End',encoding}),/Invalid key encoding/);
+   await assert.rejects(app.nativeWindows.libraryKey({key:'End'}),/Owned library is not open/);
   }
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname==='/rhvideo.html');},'packaged library');view=await cdpSession(target,30000);
   await until(()=>view.evaluate('!!window.RHFilesAPI?.list().some(row=>row.id==="rhvideo.configuration.preview")'),'current configuration/workbench API');
@@ -46,19 +46,19 @@ test('favorite slideshow has independent timing, a real total-progress control a
   // not manufacture focus with bringToFront, DOM focus() or a preparatory click.
   const focusStarted=performance.now();let actualFocus;
   await until(async()=>{
-   actualFocus=await view.evaluate('(async()=>({dom:document.hasFocus(),windows:'+ (process.env.RHFILES_NATIVE_PLAYER_QA==='1'?'await window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.windows",args:{}})':'null') +'}))()');
+   actualFocus={dom:await view.evaluate('document.hasFocus()'),windows:process.env.RHFILES_NATIVE_PLAYER_QA==='1'?await app.nativeWindows.windows():null};
    const own=actualFocus.windows?.find(row=>row.label==='window-rhvideo');
    return actualFocus.dom&&(!actualFocus.windows||(own?.foreground&&own.active&&own.inputFocus));
   },'Real native library keyboard input ownership').catch(error=>{console.error({actualNativeFocus:actualFocus});throw error;});
   console.log(JSON.stringify({nativeLibraryFocusReadyMs:performance.now()-focusStarted,actualFocus}));
-  const key=async(code,keyCode,encoding)=>{if(inputTransport==='windows'){const sent=await view.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.libraryKey",args:'+JSON.stringify({key:code,encoding})+'})');assert.deepEqual(sent,{sent:2,key:code,transport:'windows-send-input',encoding});return;}await view.send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:code,code,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});await view.send('Input.dispatchKeyEvent',{type:'keyUp',key:code,code,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});};
+  const key=async(code,keyCode,encoding)=>{if(inputTransport==='windows'){const sent=await app.nativeWindows.libraryKey({key:code,encoding});assert.deepEqual(sent,{sent:2,key:code,transport:'windows-send-input',encoding});return;}await view.send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:code,code,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});await view.send('Input.dispatchKeyEvent',{type:'keyUp',key:code,code,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});};
   // Capture synchronously: a throttled setTimeout must not look like a missing
   // key. Never record outerHTML (which can include opaque media URLs).
   const observeKeys=`window.__slideshowKeyEvents=[];window.__slideshowFocusEvents=[];
     for(const type of ['keydown','keyup'])window.addEventListener(type,event=>{if(__slideshowKeyEvents.length>=64)return;const row={type,code:event.code,key:event.key,target:event.target?.id||event.target?.tagName,at:performance.now(),preventedAtCapture:event.defaultPrevented};__slideshowKeyEvents.push(row);setTimeout(()=>row.preventedAfterDispatch=event.defaultPrevented,0);},true);
     for(const type of ['focus','blur','focusin','focusout'])window.addEventListener(type,event=>{if(__slideshowFocusEvents.length<64)__slideshowFocusEvents.push({type,target:event.target?.id||event.target?.tagName||'window',at:performance.now(),focused:document.hasFocus()});},true);true`;
   await app.evaluate(observeKeys);await view.evaluate(observeKeys);
-  const focusSnapshot=session=>session.evaluate('(async()=>({focused:document.hasFocus(),nativeFocused:await window.__TAURI__.window.getCurrentWindow().isFocused(),nativeWindows:await window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.windows",args:{}}).catch(()=>({unavailable:true})),visible:document.visibilityState,focus:document.activeElement?.id||document.activeElement?.tagName,keys:__slideshowKeyEvents,focusEvents:__slideshowFocusEvents,dialogs:[...document.querySelectorAll("dialog[open]")].map(n=>n.id)}))()');
+  const focusSnapshot=async session=>({...await session.evaluate('(async()=>({focused:document.hasFocus(),nativeFocused:await window.__TAURI__.window.getCurrentWindow().isFocused(),visible:document.visibilityState,focus:document.activeElement?.id||document.activeElement?.tagName,keys:__slideshowKeyEvents,focusEvents:__slideshowFocusEvents,dialogs:[...document.querySelectorAll("dialog[open]")].map(n=>n.id)}))()'),nativeWindows:process.env.RHFILES_NATIVE_PLAYER_QA==='1'?await app.nativeWindows.windows():{unavailable:true}});
   console.log(JSON.stringify({slideshowInputBefore:{main:await focusSnapshot(app),library:await focusSnapshot(view)}}));
   const encodings=[];
   for(const encoding of inputTransport==='windows'?['virtual-key','scan-code']:['cdp']){
@@ -84,11 +84,11 @@ test('favorite slideshow has independent timing, a real total-progress control a
   if(inputTransport==='windows'){
    // Only after the real keyboard workflow, test refusal in our own OTHER
    // window. Never use this focus change to make End/Home pass.
-   await app.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.activateMain",args:{}})');
-   await until(async()=>{const rows=await app.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.windows",args:{}})');return rows.some(row=>row.label==='main'&&row.foreground&&row.inputFocus);},'owned main window for the negative input guard');
-   await assert.rejects(view.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.libraryKey",args:{key:"End"}})'),/媒体库没有真实输入焦点/);
+   await app.nativeWindows.activateMain();
+   await until(async()=>{const rows=await app.nativeWindows.windows();return rows.some(row=>row.label==='main'&&row.foreground&&row.inputFocus);},'owned main window for the negative input guard');
+   await assert.rejects(app.nativeWindows.libraryKey({key:'End'}),/Library does not own real input focus/);
    assert.equal(await app.evaluate('__slideshowKeyEvents.length'),0,'A refused key cannot reach the other window');
-   keyboard.refusal={passed:true,windows:await app.evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"diagnostics.windows",args:{}})')};
+   keyboard.refusal={passed:true,windows:await app.nativeWindows.windows()};
    fs.writeFileSync(path.join(app.artifactDir,'slideshow-keyboard.json'),JSON.stringify(keyboard,null,2));
   }
  }finally{view?.close();app.close();await fixture?.close();}

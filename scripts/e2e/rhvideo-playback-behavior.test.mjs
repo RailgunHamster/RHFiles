@@ -567,7 +567,7 @@ test('a delayed real video-card click cannot take over a newer clicked video or 
 test('single-video smart rotation toggles back, preserves pause/time/rate, and persists without rotating an already-fitting source',native,async()=>{
   const s=await setup({portraitIndices:[0],videoDuration:20,rotationMarkers:true,loginUsers:['preview','other']});let player;
   const capture=async(state,name)=>{
-    const image=await command(s.app,'player.diagnosticFrame',{expectedInput:state.inputId});assert.equal(path.dirname(image.path),s.app.directory,'only this fixture working directory may receive diagnostic files');
+    const image=await s.app.readNativeFrame({expectedInput:state.inputId});assert.equal(path.dirname(image.path),s.app.directory,'only this fixture working directory may receive diagnostic files');
     const data=fs.readFileSync(image.path);assert.equal(data.subarray(0,2).toString(),'BM');const width=data.readInt32LE(18),height=-data.readInt32LE(22);assert.equal(data.length,54+width*height*4);
     const saved=path.join(s.app.artifactDir,name+'.png');execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',image.path,'-frames:v','1',saved],{windowsHide:true,timeout:10000});
     const sw=360,sh=640,quarter=state.rotation===90,dw=quarter?sh:sw,dh=quarter?sw:sh,scale=Math.min(width/dw,height/dh),left=(width-dw*scale)/2,top=(height-dh*scale)/2,colors=[];

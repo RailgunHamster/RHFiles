@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {root} from './source.mjs';
+import {admitOwnedFrameTool} from './owned-native-frame.mjs';
 
 export function acceptanceEnvironment(environment,executable,source){
   if(environment.RHFILES_VLC_COMPATIBILITY)throw Error('This entry verifies normal native hardware output, not the compatibility renderer');
@@ -46,19 +47,24 @@ export function runtimeAdmissionCommand(workspace,bundle){
   // mtimes or the exact packager DOS epoch, never arbitrary timestamp changes.
   return "$ErrorActionPreference='Stop';. "+quote(path.join(workspace,'scripts/libvlc-bundle.ps1'))+';[void](Assert-RHFilesLibVlcWorkspacePath '+quote(bundle)+' '+quote(workspace)+');Assert-RHFilesLibVlcBundle '+quote(bundle)+" 'velopack'";
 }
+export function ownedObserverAdmission(workspace,requested){
+  const executable=admitOwnedFrameTool(workspace,requested||path.join(workspace,'test-artifacts/owned-native-frame/owned-native-frame.exe'));
+  return {executable,...JSON.parse(fs.readFileSync(executable+'.json','utf8'))};
+}
 async function main(){
   if(process.platform!=='win32')throw Error('Actual Windows/WebView2 is required');
   if(!process.env.RHFILES_TEST_EXECUTABLE||!process.env.RHVIDEO_SOURCE)throw Error('Set RHFILES_TEST_EXECUTABLE to the isolated app-local 3.0.24 snapshot and RHVIDEO_SOURCE to the actual reference checkout');
   const executable=admittedExecutable(root,process.env.RHFILES_TEST_EXECUTABLE),source=fs.realpathSync(process.env.RHVIDEO_SOURCE);
   if(!fs.statSync(path.join(source,'app/main.py')).isFile())throw Error('Actual RHVideo backend source is required; do not silently skip it');
-  const environment=acceptanceEnvironment(process.env,executable,source),bundle=path.join(path.dirname(executable),'vlc');
+  const observer=ownedObserverAdmission(root,process.env.RHFILES_OWNED_FRAME_TOOL);
+  const environment={...acceptanceEnvironment(process.env,executable,source),RHFILES_OWNED_FRAME_TOOL:observer.executable},bundle=path.join(path.dirname(executable),'vlc');
   const command=runtimeAdmissionCommand(root,bundle);
   const verified=spawnSync('pwsh',['-NoProfile','-EncodedCommand',Buffer.from(command,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000});
   if(verified.error||verified.status!==0)throw Error('App-local runtime admission failed: '+(verified.error||verified.stderr||verified.stdout));
   const cases=fs.readdirSync(path.join(root,'scripts/e2e')).filter(name=>/^rhvideo(?:-[a-z-]+)?\.test\.mjs$/.test(name)).sort();
   if(!cases.length)throw Error('No RHVideo acceptance files found');
   const inventory=JSON.parse(fs.readFileSync(path.join(root,'scripts/testing/rhvideo-control-map.json'),'utf8')).modules.map(row=>row.file),fingerprint=referenceFingerprint(source,inventory);
-  const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-windows-')),receipt={executable,executableSha256:createHash('sha256').update(fs.readFileSync(executable)).digest('hex'),source,referenceFiles:fingerprint,renderer:environment.RHFILES_EXPECT_RENDERER,runtime:environment.RHFILES_EXPECT_BUNDLED_VLC,cases,artifact};
+  const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-windows-')),receipt={executable,executableSha256:createHash('sha256').update(fs.readFileSync(executable)).digest('hex'),source,referenceFiles:fingerprint,ownedObserver:observer,renderer:environment.RHFILES_EXPECT_RENDERER,runtime:environment.RHFILES_EXPECT_BUNDLED_VLC,cases,artifact};
   console.log('Serial Windows acceptance: '+artifact);
   const child=spawn(process.execPath,['--test','--test-reporter=tap','--test-concurrency=1',...cases.map(name=>path.join(root,'scripts/e2e',name))],{cwd:root,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
   let output='',bytes=0,problem,stopping=false;
@@ -71,9 +77,12 @@ async function main(){
   child.on('error',error=>{problem??=String(error);});
   try{
     const {code,signal}=await new Promise(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));receipt.exitCode=code;receipt.signal=signal;
-    if(problem)throw Error(problem);if(code!==0)throw Error('Windows suite exited '+code);receipt.summary=acceptanceSummary(output);
+    if(problem)throw Error(problem);
     if(JSON.stringify(referenceFingerprint(source,inventory))!==JSON.stringify(fingerprint))throw Error('Reference files changed during acceptance');
     if(createHash('sha256').update(fs.readFileSync(executable)).digest('hex')!==receipt.executableSha256)throw Error('The snapshot executable changed during acceptance');
+    if(JSON.stringify(ownedObserverAdmission(root,observer.executable))!==JSON.stringify(observer))throw Error('The owned observer changed during acceptance');
+    receipt.inputsUnchanged=true;
+    if(code!==0)throw Error('Windows suite exited '+code);receipt.summary=acceptanceSummary(output);
   }catch(error){receipt.failure=String(error);process.exitCode=1;}
   finally{clearTimeout(timer);process.removeListener('SIGINT',interrupted);process.removeListener('SIGTERM',interrupted);fs.writeFileSync(path.join(artifact,'suite.tap'),output);fs.writeFileSync(path.join(artifact,'receipt.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));}
 }

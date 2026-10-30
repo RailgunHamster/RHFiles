@@ -7,6 +7,7 @@ import {spawn,spawnSync} from 'node:child_process';
 import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
 import {nativeQaChannel} from './native-qa-channel.mjs';
+import {ownedFrameReader,ownedWindowDriver} from './owned-native-frame.mjs';
 import {root} from './source.mjs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 
@@ -44,15 +45,17 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
   child.stdout.on('data',data=>{append('stdout',data);nativeChannel?.feed(data);});child.stderr.on('data',data=>append('stderr',data));
   if(nativeChannel)child.stdin.on('error',error=>nativeChannel.close(error));
   let spawnError;child.on('error',e=>spawnError=e);
-  let socket;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
+  let socket,frameReader,windowDriver;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
   const closed=new Promise(resolve=>resolveClosed=resolve);
   const flush=()=>{fs.writeFileSync(path.join(artifactDir,'app.log'),output);fs.writeFileSync(path.join(artifactDir,'page-events.json'),JSON.stringify(events,null,2));};
+  const stopFrameReader=()=>{windowDriver?.close();const errors=frameReader?.close();if(errors?.length)append('stderr',JSON.stringify({ownedFrameCleanupErrors:errors})+'\n');};
   // close is emitted only after stdout/stderr have drained. The synchronous
   // taskkill return alone can leave the last hardware-init messages unread.
-  child.once('close',()=>{nativeChannel?.close();if(closing)flush();resolveClosed();});
+  child.once('close',()=>{nativeChannel?.close();stopFrameReader();if(closing)flush();resolveClosed();});
   const close=()=>{
     if(closing)return closed;closing=true;
     nativeChannel?.close();
+    stopFrameReader();
     socket?.close();for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('Session closed'));}pending.clear();
     // Only the PID this fixture spawned and its private WebView children.
     if(child.pid && child.exitCode===null)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
@@ -140,6 +143,14 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       }
     };
     if(nativeChannel){const capabilities=await nativeChannel.request('ping');if(capabilities?.protocol!==1||capabilities.scope!=='self-windows')throw Error('Owned native readback handshake mismatch');}
-    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,diagnostic:nativeChannel?nativeChannel.request:null};
+    const observerOptions=()=>({workspace:root,tool:process.env.RHFILES_OWNED_FRAME_TOOL||path.join(root,'test-artifacts/owned-native-frame/owned-native-frame.exe'),pid:child.pid,executable,directory});
+    const readNativeFrame=args=>{
+      if(closing)return Promise.reject(Error('Owned application is closing'));
+      if(!frameReader)frameReader=ownedFrameReader({...observerOptions(),getState:()=>evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"player.state",args:{}})')});
+      return frameReader.read(args);
+    };
+    const ownedWindow=()=>{if(closing)throw Error('Owned application is closing');return windowDriver??=ownedWindowDriver(observerOptions());};
+    const nativeWindows={windows:()=>ownedWindow().windows(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain()};
+    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
   } catch(e){close();throw e;}
 }
