@@ -675,7 +675,7 @@
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if(api.syncAvailable())configSync.refresh().catch(error);
-    deviceGroupView.mount($('device-groups-settings'),{mobile:true,deviceName:localStorage.getItem('rhfiles.nearby.alias')||'我的手机',call:(command,args)=>api.native('groups.'+command,args),scan:()=>api.native('groups.scan'),qr:uri=>api.raw('device_group_qr',{uri}),confirm:message=>ui.confirm('设备组',message,'确认'),forgotten:async result=>{for(const id of result?.removedLocations||[])removeFavoritePrefix('remote://'+id+'/');await refreshLocations();}}).catch(error);
+    deviceGroupView.mount($('device-groups-settings'),{mobile:true,deviceName:localStorage.getItem('rhfiles.nearby.alias')||'我的手机',copy:ui.copyText,call:(command,args)=>api.native('groups.'+command,args),scan:()=>api.native('groups.scan'),qr:uri=>api.raw('device_group_qr',{uri}),confirm:message=>ui.confirm('设备组',message,'确认'),forgotten:async result=>{for(const id of result?.removedLocations||[])removeFavoritePrefix('remote://'+id+'/');await refreshLocations();}}).catch(error);
     await refreshAutomationSetting();
     if (status.indexing) pollIndex();
   }
