@@ -107,3 +107,22 @@ test('a playback failure captures bounded power/display/app-frame reads without 
   assert.match(source,/Promise\.all\(\[captureGridAudio\(Number\(failure\[1\]\)\),capturePlaybackEnvironment\(Number\(failure\[1\]\)\)\]\)/);
   assert.throws(()=>capture(0));
 });
+
+for(const outcome of ['captured','record-failed','pull-failed','empty','too-large'])test(`owned playback Perfetto has finite duration/bytes and a truthful ${outcome} receipt`,async()=>{
+  const node=parse(source,{ecmaVersion:'latest',sourceType:'module'}).body.find(node=>node.type==='FunctionDeclaration'&&node.id?.name==='capturePlaybackTrace');assert(node);
+  const calls=[],writes=new Map(),callbacks=[];
+  const capture=vm.runInNewContext('('+source.slice(node.start,node.end)+')',{
+    adb:'owned-adb.exe',serial:'emulator-5586',artifact:'artifact',path,Date,
+    fs:{writeFileSync:(file,text)=>writes.set(path.basename(file),text),statSync:()=>({size:outcome==='empty'?0:outcome==='too-large'?32*1024*1024+1:1024})},
+    execFile:(file,args,options,done)=>{assert.equal(file,'owned-adb.exe');assert.equal(options.maxBuffer,1024*1024);assert.equal(options.windowsHide,true);calls.push({args:Array.from(args),timeout:options.timeout});callbacks.push(done);}
+  });
+  const pending=capture();assert.equal(calls.length,1,'Do not block the media fixture while tracing');
+  assert.deepEqual(calls[0],{args:['-s','emulator-5586','shell','perfetto','-t','12s','-b','16mb','-s','32mb','-a','com.railgunhamster.rhfiles','-o','/data/misc/perfetto-traces/artifact.perfetto-trace','sched/sched_switch','sched/sched_waking','binder/binder_transaction','binder/binder_transaction_received','gfx','view','audio','video','wm','am'],timeout:25000});
+  const failure=Object.assign(new Error('private diagnostic details'),{code:'ETIMEDOUT'});
+  callbacks[0](outcome==='record-failed'?failure:null,'owned stdout','owned stderr');
+  if(outcome!=='record-failed'){assert.equal(calls.length,2);assert.deepEqual(calls[1],{args:['-s','emulator-5586','pull','/data/misc/perfetto-traces/artifact.perfetto-trace',path.join('artifact','playback.perfetto-trace')],timeout:10000});callbacks[1](outcome==='pull-failed'?failure:null);}
+  const receipt=await pending;assert.equal(receipt.captured,outcome==='captured');assert.equal(receipt.durationSeconds,12);assert.equal(receipt.maximumBytes,32*1024*1024);assert.equal(writes.get('native-perfetto.log'),'owned stdoutowned stderr');
+  const saved=JSON.parse(writes.get('native-perfetto-receipt.json'));assert.equal(saved.captured,receipt.captured);assert(!JSON.stringify(saved).includes('private diagnostic details'));
+  assert.match(source,/if\(playbackTrace\)await playbackTrace/,'Drain this run\'s trace before ending the run');
+  assert.match(source,/if\(tracePlayback\)assert\.equal\([^\n]+captured,true/,'A missing or failed requested trace cannot pass');
+});

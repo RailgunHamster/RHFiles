@@ -151,10 +151,10 @@ public class RhVideoInstrumentation extends Instrumentation {
     closeLibraryWithReceipt(true,"library-ui-close-"+java.util.UUID.randomUUID());
   }
   private void checkSingleClockProbe()throws Exception{
-    action("media.open",new JSONObject().put("kind","video").put("id","video-0"));waitView("PlaybackActivity");
-    long end=SystemClock.elapsedRealtime()+20000;JSONObject before=null;
-    do{before=(JSONObject)nativeCall("automation.media.state",new JSONObject());if(before.optBoolean("playing")&&before.optBoolean("rendered")&&before.optLong("positionMs")>=500&&before.optLong("renderedFrames")>0)break;Thread.sleep(100);}while(SystemClock.elapsedRealtime()<end);
-    require(before!=null&&before.optBoolean("playing")&&before.optBoolean("rendered")&&before.optLong("positionMs")>=500,"Single clock needs the actual ordinary player and decoded frames");
+    action("media.open",new JSONObject().put("kind","video").put("id","video-0"));
+    long end=SystemClock.elapsedRealtime()+20000;JSONObject before=null;String lastError="none";
+    do{try{before=(JSONObject)nativeCall("automation.media.state",new JSONObject());if(current!=null&&current.getClass().getSimpleName().equals("PlaybackActivity")&&before.optString("id").equals("video-0")&&before.optBoolean("playing")&&before.optBoolean("rendered")&&before.optLong("positionMs")>=500&&before.optLong("renderedFrames")>0)break;}catch(Exception error){lastError=error.toString();}Thread.sleep(100);}while(SystemClock.elapsedRealtime()<end);
+    require(current!=null&&current.getClass().getSimpleName().equals("PlaybackActivity")&&!current.isFinishing()&&!current.isDestroyed()&&before!=null&&before.optString("id").equals("video-0")&&before.optBoolean("playing")&&before.optBoolean("rendered")&&before.optLong("positionMs")>=500,"Single clock needs the actual ordinary native player and decoded frames; last state error="+lastError);
     require(before.getInt("count")==1&&before.getDouble("rate")==1&&before.getDouble("volume")>0&&before.getDouble("decoderVolume")>0,"The control keeps a single real audio/video input at normal speed without muting");
     require(before.getLong("durationMs")==20000&&before.getLong("positionMs")<6000,"Start early in the same twenty-second source; do not seek/reset a stalled or late sample");
     require(before.getString("rotationRenderer").equals("surface-compositor")&&before.getBoolean("nativeLayerAttached")&&!before.getBoolean("rotationPipeline")&&before.getInt("rotation")==0,"Retain the product's actual unrotated native compositor");

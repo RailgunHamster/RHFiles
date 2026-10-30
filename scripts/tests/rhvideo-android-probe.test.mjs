@@ -22,6 +22,14 @@ test('native acceptance permits only the two explicitly owned QA AVD names',()=>
   assert.match(runner,/assert\.equal\(run\(\['shell','getprop','ro\.kernel\.qemu'\]\)\.trim\(\),'1','Physical devices are not allowed'\)/);
 });
 
+test('Perfetto cannot leak into product acceptance or accept a mistyped environment flag',()=>{
+  const runner=fileURLToPath(new URL('../testing/rhvideo-android.mjs',import.meta.url));
+  for(const [mode,value]of [['grid','1'],['single','1'],['lifecycle','1'],['single-clock','yes']]){
+    const result=spawnSync(process.execPath,[runner,'emulator-5586','missing-product.apk','missing-probe.apk',mode],{env:{...process.env,RHFILES_QA_PERFETTO:value},encoding:'utf8',windowsHide:true,timeout:10000});
+    assert.equal(result.status,1);assert.match(result.stderr,/Perfetto is an explicit single-clock diagnostic/);assert.equal(result.stdout,'');
+  }
+});
+
 test('physical player-button acceptance reveals controls with one native gesture, not a delayed background-WebView acknowledgement',()=>{
   const click=source.slice(source.indexOf('private void touchPlayerButton('),source.indexOf('private void revealPlayerControlsByTouch(')).replace(/^\s*\/\/.*$/gm,'');
   const reveal=source.slice(source.indexOf('private void revealPlayerControlsByTouch('),source.indexOf('private void clickPlayerText(')).replace(/^\s*\/\/.*$/gm,'');
@@ -77,6 +85,8 @@ test('single-player clock control preserves ordinary audio/video output and obse
   const start=source.indexOf('private void checkSingleClockProbe()');assert(start>=0);
   const body=source.slice(start,source.indexOf('\n  private ',start));
   assert.match(body,/action\("media.open",new JSONObject\(\)\.put\("kind","video"\)\.put\("id","video-0"\)\)/);
+  assert.match(body,/current\.getClass\(\)\.getSimpleName\(\)\.equals\("PlaybackActivity"\)/);
+  assert.doesNotMatch(body,/waitView\("PlaybackActivity"\)/,'A pure native player contains no WebView; that helper would always time out');
   for(const field of ['count','rate','volume','decoderVolume','durationMs','rotationRenderer','nativeLayerAttached','rotationPipeline','tracks','selected','inputId','renderedFrames'])assert(body.includes('"'+field+'"'),field);
   assert.match(body,/library\.pauseTimers\(\).*Thread\.sleep\(5000\).*finally\{runOnMainSync\(\(\)->library\.resumeTimers\(\)\)/);
   assert.match(body,/position>=4000&&frames>=60/);

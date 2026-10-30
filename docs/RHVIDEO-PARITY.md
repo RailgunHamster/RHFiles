@@ -6,6 +6,24 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 单视频持续播放及有界系统时序（仍失败，未发包）
+
+单路探针首次构建 **3 分 15 秒成功**，但原生运行在探针自己的 `waitView("PlaybackActivity")` 出错（`rhvideo-single-clock-native.log`、`rhvideo-android-single-clock-1793321016581-release`）：Activity 已经是 PlaybackActivity，该帮助函数却要求其中含有 WebView，纯原生播放器不会满足。这不是有效的播放时钟失败。探针改为在原 **20 秒**上限内核对真实 Activity／精确 ID 和公开原生状态，不再等待不存在的 WebView；不改播放、不延长等待。新增策略防止重新误用该帮助函数，修正探针构建 **50 秒成功**（短路径 QA 的 `rhvideo-single-clock-native-readiness-build.log`）。
+
+两轮都复用已验证默认主 APK `515a5f43…` 及其原 mapping，只换探针；最终探针 SHA-256 为 `c492a4e215c511d06d77877ab4e1b5b289eee78dcf608921af1c3196cf5e61db`，快照 `rhvideo-single-clock-native-ready-10b869f3d67145c0b3f2fb7f5000afb1`。没有将探针重编译称作完整新原生 APK 构建。有效的单路实测 **失败**（`rhvideo-single-clock-native-ready.log`、`rhvideo-android-single-clock-1793321250451-release`）：**5294 ms** 推进 **3172 ms／71 帧**，同一个 input／path，实际 1 倍、非静音、音视频轨选中、默认 compositor／原生层附着、无错误／抑制；没有 EOF 回绕或定位。与前节三路使用相同媒体字节，不能只按三路争用解释；仍不满足原四秒媒体时间门槛。
+
+失败当时 PID **13714** 的 audio／power／display／gfxinfo 均成功捕获，设备 Awake、显示 ON／60 Hz、非 idle。应用整段启动以来共 94 个界面帧，91 个 janky、P95 为 1800 ms；这是**包含启动和 UI 的累计统计，不是原生视频帧时间**，不能直接当作视频 GPU 耗时或唯一根因。线程快照在 `MediaCodec.releaseOutputBuffer`，也不能仅凭一次栈判断其整个区间都卡在同一调用。
+
+因此增加宿主的显式 `RHFILES_QA_PERFETTO=1`，仅准入 `single-clock` 诊断，不进入普通业务验收或产品。只有已校验自有 AVD、真实单路已出帧后才异步启动一次系统自带 Perfetto：**12 秒、16 MiB 环缓冲／32 MiB 文件上限、25 秒命令及 10 秒拉取上限**，采集 sched／binder／gfx／view／audio／video；不重启服务、不记录媒体内容、不阻塞夹具 HTTP、不放宽原有播放断言。相关策略 **41/41、零跳过**（`rhvideo-single-clock-perfetto-host-tests.log`），涵盖错误环境／模式拒绝、采集失败／拉取失败／空文件／超限及成功回执。要求 trace 时，缺失 trace 不能凭普通模式 PASS 蒙混成功。
+
+实际诊断 **仍失败**（`rhvideo-single-clock-perfetto-native.log`、`rhvideo-android-single-clock-1793321493316-release`）：**6034 ms** 推进 **1549 ms／34 帧**。它有采集开销，不能将这组比未采集时更慢的数字直接作为产品回退或根因证明。12 秒轨迹实际取回 **4,336,691 字节**，SHA-256 `b4b8fa9af0c7bba7ea228998ee80f432520c75dbca26266660432a65630cbd21`；捕获回执为 true，没有丢失／overrun／error 统计项。失败断言和两个未通过样本均保留，不能以成功拿到轨迹当作播放通过。
+
+仅在测试材料目录下载 [Perfetto 官方预置工具清单](https://get.perfetto.dev/trace_processor) 中固定的 Windows v59.1 processor，核对 **15,872,000 字节／SHA-256 `3acc5aca1c764541033a82ba3bb0a47524b5c3c0aa194eea8d9a7b0cdb346bdc`** 后离线分析，没有安装或打包进产品。可复用只读查询为 `scripts/testing/rhvideo-playback-trace.sql`，结果 `rhvideo-single-clock-perfetto-analysis.log`。该完整轨迹包含播放及失败结束阶段；PID **14087** 的播放线程 47 次 `releaseOutputBuffer` 总 elapsed 为 **1290.56 ms**，重叠线程状态中睡眠 **821.81 ms**、Runnable **375.82 ms**、实际运行 **92.92 ms**。因此下一步须区分 codec 输出等待、界面绘制及虚拟机调度，不能把所有 elapsed 当作解码 CPU、网络耗时或已确认死锁，更不能盲目修改线程优先级／重启模拟器来取得通过。
+
+加入上述采集及原生就绪修正后，在当前实际 RHVideo 参考源码下，全部共享测试最终 **875/875、零失败／跳过**（`rhvideo-single-clock-perfetto-full-node.log`）；离线 SQL 在实际轨迹执行返回 0。它们不能替代失败的原生持续播放验收。结束后再次核对自有 AVD 名称，仅停止其本应用，没有重置 AVD／音频／主机；正式 Windows PID 45696 仍存活。
+
+另外从有效单路状态发现一项独立接口问题：物理位置已经推进，`queuePositionMs` 却始终为 0；当前计算把普通全长输入的 `segmentEndMs=-1` 当成零长度上界。该时间映射须修复并补测试，但不能通过给全长媒体强制裁剪终点来修。它不是播放变慢的根因结论。此次未改变播放器产品代码、未操作真机／正式安装，没有发包，完整目标保持未完成。
+
 ## 2026-10-30 关闭阶段实测与同屏输出对照（继续定位，未发包）
 
 带阶段诊断的默认 APK 构建 **6 分 08 秒成功，458/458 JVM、零失败／错误／跳过**（短路径 QA 的 `rhvideo-library-close-timing-build.log`）。主 APK SHA-256 `515a5f43bde219a1e8ac76b56fac4174b3595e28e458f0514b2ff35b087b2220`、探针 `02236e48eb83c08ae8424c99356a62756322b7803364be5586361e516dae3d10` 在自有正常音频 AVD `emulator-5586` 安装、核对字节，原生 `close-receipt` 此轮通过：语义 Back 完整取回 **4233 ms**，实际 UI 按钮 Back **1858 ms**，真实销毁及重开后旧 key 不重复关闭的后续步骤也完成（`rhvideo-library-close-timing-native.log`）。前轮超过五秒的失败仍保留；加入计时日志后重跑通过**不是延迟问题已修复的证据**。
@@ -18,7 +36,11 @@ direct 主 APK `52e201344405045a222b07eedcd8e5d82ffad867e1de20c7edb2ac4125b3b96c
 
 新增 `single-clock` 诊断用同一竖屏素材和普通单视频路径区分单路与并发瓶颈，保留实际音频、原生合成层、倍速及五秒输出门槛；它不运行文件写操作、不在观察区间查询／推动播放器，且不能借其他模式的 PASS 或历史截图通过。相关宿主／策略 **35/35、零跳过**，探针编译及实际单路结果仍待执行。首次策略断言误匹配错误消息里的“seek/reset”，已改为检出实际调用形式，未移除“不定位／不重开”的行为约束。
 
-Windows 已重新编译 `bind()` 修正后的 EXE，SHA-256 `10fe10bcbb97e621b05ec1718b0a7b52a797b60a9ec96d2bfea63c720a2f1512`（`rhvideo-bind-awaited-windows-build.log`，**43.75 秒成功**），并与源码／测试一起冻结于 `rhvideo-frozen-6191956-96f55bfb`。原生完整 103 项串行验收仍在运行，使用应用内 VLC 3.0.24、实际默认硬件输出，未以正在修改的工作区脚本验收旧 EXE；结果须另记。该整轮结束前不同时进行 Android 原生时序测试或重型编译。完整目标仍未完成，没有发包或替换正式 Windows 安装。
+Windows 已重新编译 `bind()` 修正后的 EXE，SHA-256 `10fe10bcbb97e621b05ec1718b0a7b52a797b60a9ec96d2bfea63c720a2f1512`（`rhvideo-bind-awaited-windows-build.log`，**43.75 秒成功**），并与源码／测试一起冻结于 `rhvideo-frozen-6191956-96f55bfb`。完整串行原生验收最终 **103/103、零失败／跳过／取消，23 分 48 秒**（冻结树的 `rhvideo-bind-awaited-full-windows.log`、`rhvideo-windows-AERH1h/receipt.json`），使用应用内 VLC 3.0.24、实际默认硬件输出。receipt 确认退出 0、17 个测试文件、EXE 及 14 个原版模块前后字节一致；不是用正在变化的工作区验收旧 EXE。H.264 1080p／HEVC 4K 实际输出尺寸保持，native open 到首帧仍为 **4122／5124 ms**，不能把功能全绿当成性能已达标。整轮结束、测试进程实际退出后才开始 Android 探针编译；正式 Windows PID 45696 未动。
+
+补齐单路诊断后，以实际 RHVideo `3d6aaeb8…` 明确设置 `RHVIDEO_SOURCE` 的全部共享测试 **869/869、零跳过**（`rhvideo-single-clock-current-reference-node.log`）。之前首次未设置该路径，独立工作树旁没有参考仓库，结果为 **837 通过／32 跳过**（`rhvideo-single-clock-full-node.log`），不将其记作完整参考测试通过。
+
+另查阅上游 [Media3 #3210](https://github.com/androidx/media/issues/3210) 的维护者说明及已提交修正：微小音频 underrun 可能影响 ready 判断，默认 PCM 缓冲已转为固定 500 ms。这里 A/B 现场实际为 **24000 帧／48000 Hz，即 500 ms**，不符合仅凭“旧默认 250 ms”解释问题的前提。[AOSP AudioTrack 源码](https://android.googlesource.com/platform/frameworks/av/+/c4f284266f4efeae20fae84f82d4776266b0adc5/media/libaudioclient/AudioTrack.cpp) 中的时间戳修正日志表示输出管线当时空闲，不提供唯一上游原因。这些是排查依据而非本项目修复证明，未据此盲目改成数秒 PCM 缓冲、换内核或降低画质。完整目标仍未完成，没有发包或替换正式 Windows 安装。
 
 ## 2026-10-30 按钮异步结果与 Android 实际关闭超时（验证继续，未发包）
 

@@ -14,6 +14,8 @@ assert([undefined,'smoke','grid','grid-restore','grid-rotation','grid-surface-pr
 const lifecycleMode=process.argv[5]==='lifecycle';
 const closeReceiptMode=process.argv[5]==='close-receipt';
 const singleClockMode=process.argv[5]==='single-clock';
+const tracePlayback=process.env.RHFILES_QA_PERFETTO==='1';
+assert([undefined,'0','1'].includes(process.env.RHFILES_QA_PERFETTO)&&(!tracePlayback||singleClockMode),'Perfetto is an explicit single-clock diagnostic, never product acceptance');
 const gridRestoreMode=process.argv[5]==='grid-restore';
 const gridRotationMode=process.argv[5]==='grid-rotation';
 const gridSurfaceMode=process.argv[5]==='grid-surface-probe';
@@ -164,6 +166,23 @@ function capturePlaybackEnvironment(expectedPid){
     }catch(error){reject(error);}
   })))).then(receipts=>{fs.writeFileSync(path.join(artifact,'native-environment-receipt.json'),JSON.stringify(receipts,null,2));return receipts;});
 }
+function capturePlaybackTrace(){
+  // This runs only after owned-AVD admission, once the ordinary player has
+  // rendered. A finite diagnostic read, not a playback or service restart.
+  const remote='/data/misc/perfetto-traces/'+path.basename(artifact)+'.perfetto-trace',local=path.join(artifact,'playback.perfetto-trace');
+  const receipt={targetPackage:'com.railgunhamster.rhfiles',durationSeconds:12,maximumBytes:32*1024*1024,captured:false,startedAt:Date.now()};
+  return new Promise((resolve,reject)=>{
+    const finish=(error,bytes=0)=>{try{Object.assign(receipt,{bytes,reason:error?String(error.code||'unavailable'):null,finishedAt:Date.now()});fs.writeFileSync(path.join(artifact,'native-perfetto-receipt.json'),JSON.stringify(receipt,null,2));resolve(receipt);}catch(error){reject(error);}};
+    execFile(adb,['-s',serial,'shell','perfetto','-t','12s','-b','16mb','-s','32mb','-a',receipt.targetPackage,'-o',remote,'sched/sched_switch','sched/sched_waking','binder/binder_transaction','binder/binder_transaction_received','gfx','view','audio','video','wm','am'],{encoding:'utf8',windowsHide:true,timeout:25000,maxBuffer:1024*1024},(error,stdout,stderr)=>{
+      try{fs.writeFileSync(path.join(artifact,'native-perfetto.log'),(stdout||'')+(stderr||''));}catch(error){reject(error);return;}
+      if(error){finish(error);return;}
+      execFile(adb,['-s',serial,'pull',remote,local],{encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:1024*1024},error=>{
+        if(error){finish(error);return;}
+        try{const bytes=fs.statSync(local).size;receipt.captured=bytes>0&&bytes<=receipt.maximumBytes;finish(receipt.captured?null:{code:'INVALID_TRACE_SIZE'},bytes);}catch(error){finish(error);}
+      });
+    });
+  });
+}
 // This exact generated diagnostic belongs to the already-verified QA emulator.
 // A later failed run must never inherit an earlier run's menu screenshot.
 if(singleMode||playlistMode)for(const name of ['rhvideo-menu-failure-qa.png','rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])run(['shell','rm','-f','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name]);
@@ -203,18 +222,19 @@ try{
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
   const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server','http://127.0.0.1:'+port,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,'-e','surfaceMode',surfaceMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
-  let output='',armedTaskFailures=false,gridAudioCapture=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}const failure=output.match(/^STEP: QA: (?:grid|player)-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode||singleClockMode)&&!gridAudioCapture&&failure)gridAudioCapture=Promise.all([captureGridAudio(Number(failure[1])),capturePlaybackEnvironment(Number(failure[1]))]).catch(error=>{console.error('Live playback diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
+  let output='',armedTaskFailures=false,gridAudioCapture=null,playbackTrace=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}if(tracePlayback&&!playbackTrace&&/^STEP: single clock settled /m.test(output))playbackTrace=capturePlaybackTrace().catch(error=>{console.error('Playback trace unavailable: '+error.message);});const failure=output.match(/^STEP: QA: (?:grid|player)-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode||singleClockMode)&&!gridAudioCapture&&failure)gridAudioCapture=Promise.all([captureGridAudio(Number(failure[1])),capturePlaybackEnvironment(Number(failure[1]))]).catch(error=>{console.error('Live playback diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
   // commits and an active-viewer account switch. Budget the expanded scenario,
   // not slower individual frame/seek waits (those stay unchanged in the probe).
   const budgetMs=previewMode||(gridMode&&!gridRestoreMode)?600000:360000;let expired=false;
   const timer=setTimeout(()=>{expired=true;child.kill();},budgetMs);
   try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0&&!expired?resolve():reject(Error(expired?'Owned instrumentation exceeded whole-scenario budget '+budgetMs+' ms':'Instrumentation exit '+code)));});}
-  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;}
+  finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;if(playbackTrace)await playbackTrace;}
   assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED|keyDispatchingTimedOut|Input dispatching timed out/);return output;
   }
   const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:closeReceiptMode?['-e','mode','close-receipt']:singleClockMode?['-e','mode','single-clock']:gridSurfaceMode?['-e','mode','grid-surface-probe']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer','http://127.0.0.1:'+failedPort]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
   assert.match(output,lifecycleMode?/PASS: native HTTP lifecycle, single and grid/:closeReceiptMode?/PASS: library self-close semantic\/UI process receipts, actual destruction and old-key rejection without repeating close/:singleClockMode?/PASS: single-player real-clock diagnostic; not full product acceptance/:taskCenterMode?/PASS: packaged task center/:priorityMode?/PASS: actual task priority/:duplicatesMode?/PASS: actual duplicates/:rulesMode?/PASS: native tag rules/:loginMode?/PASS: native login phase login/:exportsMode?/PASS: favorite exports recovery armed/:gridSurfaceMode?/PASS: surface-only grid diagnostic; not complete product acceptance/:gridMode?/PASS: reference grid/:playlistMode?/PASS: reference playlist/:previewMode?/PASS: reference preview/:singleMode?/PASS: contextual workflow entries and real card selection, reference single/:favoritesMode?/PASS: reference favorite mixed/:stripMode?/PASS: reference strip end/:ticketsMode?/PASS: prepared ticket/:rotationMode?/PASS: reference rotation/:/PASS: native HTTP/);
+  if(tracePlayback)assert.equal(JSON.parse(fs.readFileSync(path.join(artifact,'native-perfetto-receipt.json'),'utf8')).captured,true,'An explicitly requested trace must actually be captured');
   if(gridMode||lifecycleMode){verifyGridAudioParameters(output,audioStartMs,codecMode);verifyGridSurfaceParameters(output,surfaceMode);}
   async function stopOwnedProcess(){
     run(['shell','am','force-stop','com.railgunhamster.rhfiles']);
