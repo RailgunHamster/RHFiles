@@ -43,8 +43,9 @@ export function ownedWindowDriver({workspace,tool,pid,executable,directory,execu
 export function executeOwnedFrame(tool,args,options){
   return new Promise((resolve,reject)=>execFile(tool,args,options,(error,stdout)=>error?reject(error):resolve(stdout)));
 }
-export function ownedFrameReader({workspace,tool,pid,executable,directory,getState,execute=executeOwnedFrame}){
+export function ownedFrameReader({workspace,tool,pid,executable,directory,getState,execute=executeOwnedFrame,scope='player'}){
   if(!Number.isSafeInteger(pid)||pid<=0||typeof getState!=='function')throw Error('The frame reader requires its own spawned process');
+  if(!['player','presentation'].includes(scope))throw Error('Unknown owned frame scope');
   const admitted=admitOwnedFrameTool(workspace,tool),controllers=new Set(),files=new Set();let closed=false,sequence=0,busy=false;
   const discard=file=>{if(!files.delete(file))return;try{fs.unlinkSync(file);}catch(error){if(error.code!=='ENOENT')throw error;}};
   return {
@@ -58,10 +59,12 @@ export function ownedFrameReader({workspace,tool,pid,executable,directory,getSta
         if(args.expectedInput!==undefined&&args.expectedInput!==before.inputId)throw Error('Playback input changed before pixel observation');
         if(!['native-hardware-auto','gdi-compatibility'].includes(before.renderer))throw Error('Unknown actual native renderer');
         const name='rhvideo-native-'+randomBytes(16).toString('hex')+'.bmp';file=path.join(directory,name);
-        const text=await execute(admitted,[String(pid),executable,name,before.renderer],{cwd:directory,windowsHide:true,encoding:'utf8',timeout:4500,maxBuffer:65536,signal:controller.signal});
+        const text=await execute(admitted,[String(pid),executable,name,before.renderer,...(scope==='presentation'?['library-presentation']:[])],{cwd:directory,windowsHide:true,encoding:'utf8',timeout:4500,maxBuffer:65536,signal:controller.signal});
+        files.add(file);
         const reply=JSON.parse(text);
-        if(reply.protocol!==1||reply.scope!=='owned-sibling-client'||reply.pid!==pid)throw Error('Owned pixel observation identity mismatch');
-        files.add(file);validateOwnedBitmap(file,reply.width,reply.height);
+        if(reply.protocol!==1||reply.scope!==(scope==='presentation'?'owned-sibling-presentation':'owned-sibling-client')||reply.pid!==pid)throw Error('Owned pixel observation identity mismatch');
+        if(scope==='presentation'&&(!Number.isInteger(reply.alpha)||reply.alpha<0||reply.alpha>255))throw Error('Invalid observed presentation alpha');
+        validateOwnedBitmap(file,reply.width,reply.height);
         const after=await getState();
         if(closed||!after?.opened||after.inputId!==before.inputId||after.renderer!==before.renderer||after.rotation!==before.rotation)throw Error('Playback input changed during pixel observation');
         return {...reply,path:file,inputId:before.inputId,renderer:before.renderer,rotation:before.rotation};

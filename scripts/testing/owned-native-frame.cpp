@@ -39,7 +39,7 @@ static void verify_process(DWORD id,const std::wstring& expected){
   const auto separator=actual.find_last_of(L"\\/");
   require(_wcsicmp(actual.substr(separator==std::wstring::npos?0:separator+1).c_str(),L"rhfiles.exe")==0,"Only an owned RHFiles process may be observed");
 }
-struct Windows {DWORD pid;std::vector<HWND> surfaces;};
+struct Windows {DWORD pid;std::vector<HWND> surfaces;bool presentation=false;};
 static BOOL CALLBACK child_window(HWND window,LPARAM data){
   auto& state=*reinterpret_cast<Windows*>(data);DWORD process=0;GetWindowThreadProcessId(window,&process);
   wchar_t name[128]{};GetClassNameW(window,name,128);
@@ -51,12 +51,19 @@ static BOOL CALLBACK top_window(HWND window,LPARAM data){
   if(process!=state.pid||!IsWindowVisible(window)||IsIconic(window))return TRUE;
   wchar_t caption[2048]{};GetWindowTextW(window,caption,2048);
   const std::wstring title(caption),suffix=L" \u00b7 RHFiles";
-  // The independent player's caption has this suffix; library/grid windows
-  // do not. The class and owning PID are checked again for every descendant.
-  if(title.size()>=suffix.size()&&title.compare(title.size()-suffix.size(),suffix.size(),suffix)==0)EnumChildWindows(window,child_window,data);
+  // Player captions have this suffix. Presentation scope admits only the
+  // exact library caption, never a grid or arbitrary process window.
+  const bool matches=state.presentation?title==L"RHFiles \u00b7 RHVideo":title.size()>=suffix.size()&&title.compare(title.size()-suffix.size(),suffix.size(),suffix)==0;
+  if(matches)EnumChildWindows(window,child_window,data);
   return TRUE;
 }
 static void owned_surface(HWND window,DWORD pid){DWORD process=0;GetWindowThreadProcessId(window,&process);wchar_t name[128]{};GetClassNameW(window,name,128);require(process==pid&&IsWindowVisible(window)&&std::wcscmp(name,L"RHFilesNativeVideoSurface")==0,"Owned video surface changed");}
+static BYTE presentation_alpha(HWND window){
+  require((GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_LAYERED)!=0,"Owned presentation is not a layered surface");
+  COLORREF color{};BYTE alpha{};DWORD flags{};
+  require(GetLayeredWindowAttributes(window,&color,&alpha,&flags)&&(flags&LWA_ALPHA),"Cannot observe owned presentation alpha");
+  return alpha;
+}
 struct OwnedWindows {DWORD pid;HWND main{},library{};bool ambiguous=false;};
 static BOOL CALLBACK owned_window(HWND window,LPARAM data){
   auto& state=*reinterpret_cast<OwnedWindows*>(data);DWORD process=0;GetWindowThreadProcessId(window,&process);
@@ -114,14 +121,16 @@ int wmain(int argc,wchar_t** argv){
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
     verify_process(pid,argv[2]);
     if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"){window_command(argc,argv,pid);return 0;}
-    require(argc==5,"Use PID, exact executable, owned basename and renderer");
+    require(argc==5||(argc==6&&std::wstring(argv[5])==L"library-presentation"),"Use PID, exact executable, owned basename, renderer and an optional fixed presentation scope");
+    const bool presentation=argc==6;
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";
     require(output.size()==prefix.size()+32+suffix.size()&&output.compare(0,prefix.size(),prefix)==0&&output.compare(output.size()-suffix.size(),suffix.size(),suffix)==0,"Invalid owned frame basename");
     require(std::all_of(output.begin()+prefix.size(),output.end()-suffix.size(),[](wchar_t c){return(c>=L'0'&&c<=L'9')||(c>=L'a'&&c<=L'f');}),"Invalid owned frame identity");
     const std::wstring mode(argv[4]);require(mode==L"native-hardware-auto"||mode==L"gdi-compatibility","Unknown actual renderer");
     verify_process(pid,argv[2]);SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    Windows windows{pid,{}};require(EnumWindows(top_window,reinterpret_cast<LPARAM>(&windows)),"Cannot enumerate owned windows");
+    Windows windows{pid,{},presentation};require(EnumWindows(top_window,reinterpret_cast<LPARAM>(&windows)),"Cannot enumerate owned windows");
     require(windows.surfaces.size()==1,"Exactly one visible owned player surface is required");const HWND window=windows.surfaces.front();owned_surface(window,pid);
+    const BYTE alpha=presentation?presentation_alpha(window):255;
     RECT rectangle{};require(GetClientRect(window,&rectangle),"Cannot read owned client geometry");const int width=rectangle.right,height=rectangle.bottom;
     require(width>0&&height>0&&width<=4096&&height<=4096,"Owned frame exceeds geometry limits");
     Canvas canvas;canvas.window=window;canvas.source=GetDCEx(window,nullptr,DCX_CACHE);require(canvas.source!=nullptr,"Cannot open owned client DC");canvas.target=CreateCompatibleDC(canvas.source);require(canvas.target!=nullptr,"Cannot create owned frame DC");
@@ -129,9 +138,10 @@ int wmain(int argc,wchar_t** argv){
     void* bits=nullptr;canvas.bitmap=CreateDIBSection(canvas.target,&info,DIB_RGB_COLORS,&bits,nullptr,0);require(canvas.bitmap&&bits,"Cannot create owned pixels");canvas.old=SelectObject(canvas.target,canvas.bitmap);
     const BOOL drawn=mode==L"gdi-compatibility"?BitBlt(canvas.target,0,0,width,height,canvas.source,0,0,SRCCOPY):PrintWindow(window,canvas.target,PW_CLIENTONLY|2);
     require(drawn,"Owned client readback failed");GdiFlush();owned_surface(window,pid);verify_process(pid,argv[2]);
+    if(presentation)require(presentation_alpha(window)==alpha,"Owned presentation opacity changed during capture");
     BITMAPFILEHEADER header{};header.bfType=0x4d42;header.bfOffBits=54;header.bfSize=54+DWORD(width*height*4);
     {Handle file(CreateFileW(output.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr));require(file.value!=INVALID_HANDLE_VALUE,"Owned output must be new");made_file=true;write_all(file.value,&header,14);write_all(file.value,&info.bmiHeader,40);write_all(file.value,bits,DWORD(width*height*4));}
-    std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-client\",\"pid\":%lu,\"width\":%d,\"height\":%d}\n",static_cast<unsigned long>(pid),width,height);
+    std::printf("{\"protocol\":1,\"scope\":\"%s\",\"pid\":%lu,\"width\":%d,\"height\":%d,\"alpha\":%u}\n",presentation?"owned-sibling-presentation":"owned-sibling-client",static_cast<unsigned long>(pid),width,height,unsigned(alpha));
     return 0;
   }catch(const std::exception& error){if(made_file)DeleteFileW(output.c_str());std::fprintf(stderr,"Owned frame: %s\n",error.what());return 1;}
 }

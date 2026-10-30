@@ -64,3 +64,16 @@ test('closing aborts its own pending capture, and never starts an unbounded seco
  const pending=f.reader.read();await begun;await assert.rejects(f.reader.read(),/one owned/);f.reader.close();await assert.rejects(pending,/aborted/);await assert.rejects(f.reader.read(),/closed/);
  }finally{f.close();}
 });
+
+test('library presentation observation requires its exact scope and actual native opacity, not only decoded pixels',async()=>{
+ const f=fixture();let reader;try{
+  const options={workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,getState:async()=>({opened:true,inputId:7,rotation:0,renderer:'native-hardware-auto'})};
+  assert.throws(()=>ownedFrameReader({...options,scope:'desktop'}),/Unknown owned frame scope/);
+  let scope='owned-sibling-presentation',alpha=0;
+  reader=ownedFrameReader({...options,scope:'presentation',execute:async(_,args,config)=>{assert.equal(args[4],'library-presentation');assert.equal(args.length,5);f.bitmap(path.join(config.cwd,args[2]));return JSON.stringify({protocol:1,scope,pid:42,width:2,height:2,...(alpha===undefined?{}:{alpha})});}});
+  const transparent=await reader.read();assert.equal(transparent.alpha,0,'A decoded transparent window cannot be falsely reported opaque');
+  alpha=255;assert.equal((await reader.read()).alpha,255);
+  for(const bad of [undefined,-1,256,.5,'255']){alpha=bad;await assert.rejects(reader.read(),/presentation alpha/);assert.equal(fs.readdirSync(f.directory).length,2,'Rejected replies cannot leave another generated bitmap');}
+  scope='owned-sibling-client';alpha=255;await assert.rejects(reader.read(),/identity mismatch/);assert.equal(fs.readdirSync(f.directory).length,2);
+ }finally{reader?.close();f.close();}
+});

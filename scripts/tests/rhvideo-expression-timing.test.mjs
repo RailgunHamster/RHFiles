@@ -15,10 +15,17 @@ test('timing records cannot persist arguments, results, errors, paths, or arbitr
   assert.equal(result.records.length,1);assert.equal(result.rejected,1);assert.doesNotMatch(JSON.stringify(result),/secret|private|password|"path"|"result"/);
 });
 test('malformed, nonfinite, duplicate, wrong-scope and oversized records do not become timing evidence',()=>{
-  const invalid=[{protocol:2},{clock:'host'},{sequence:0},{sequence:513},{label:'x'.repeat(170)},{pid:-1},{elapsedMs:-1},{polls:1.5},{mainQueueMs:3600001},{outcome:'succeeded'},...fields.map(key=>({[key]:null}))];
+  const invalid=[{protocol:3},{clock:'host'},{sequence:0},{sequence:513},{label:'x'.repeat(170)},{pid:-1},{elapsedMs:-1},{polls:1.5},{mainQueueMs:3600001},{outcome:'succeeded'},...fields.map(key=>({[key]:null}))];
   for(const value of invalid)assert.equal(expressionTimings(line(sample(value)),run).records.length,0,JSON.stringify(value));
   const duplicate=expressionTimings(line(sample())+line(sample()),run);assert.equal(duplicate.records.length,1);assert.equal(duplicate.rejected,1);
   assert.equal(expressionTimings('I RHVideoQATiming: not JSON\n',run).records.length,0);for(const identity of ['',null,'g'.repeat(32),'a'.repeat(33)])assert.throws(()=>expressionTimings('',identity));
+});
+test('one-dispatch protocol is distinguished from two-dispatch measurements and missing phases stay invalid',()=>{
+  const modern=sample({protocol:2,evals:2,polls:1,dispatchEvalMs:37});delete modern.resetEvalMs;delete modern.launchEvalMs;
+  const receipt=expressionTimings(line(sample({evals:3,resetEvalMs:10,launchEvalMs:20}))+line({...modern,sequence:2}),run);
+  assert.equal(receipt.records[0].protocol,1);assert.equal(receipt.records[0].dispatchEvals,2);assert.equal(receipt.records[0].dispatchEvalMs,30);
+  assert.equal(receipt.records[1].protocol,2);assert.equal(receipt.records[1].dispatchEvals,1);assert.equal(receipt.records[1].dispatchEvalMs,37);assert(!Object.hasOwn(receipt.records[1],'resetEvalMs'));
+  delete modern.dispatchEvalMs;assert.equal(expressionTimings(line(modern),run).records.length,0);
 });
 test('record collection is capped at the same 512-action budget and snapshots are independent',()=>{
   const text=Array.from({length:520},(_,i)=>line(sample({sequence:i+1}))).join(''),a=expressionTimings(text,run),b=expressionTimings(text,run);

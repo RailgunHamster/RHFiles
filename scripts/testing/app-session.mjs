@@ -45,10 +45,10 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
   child.stdout.on('data',data=>{append('stdout',data);nativeChannel?.feed(data);});child.stderr.on('data',data=>append('stderr',data));
   if(nativeChannel)child.stdin.on('error',error=>nativeChannel.close(error));
   let spawnError;child.on('error',e=>spawnError=e);
-  let socket,frameReader,windowDriver;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
+  let socket,frameReader,presentationReader,windowDriver;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
   const closed=new Promise(resolve=>resolveClosed=resolve);
   const flush=()=>{fs.writeFileSync(path.join(artifactDir,'app.log'),output);fs.writeFileSync(path.join(artifactDir,'page-events.json'),JSON.stringify(events,null,2));};
-  const stopFrameReader=()=>{windowDriver?.close();const errors=frameReader?.close();if(errors?.length)append('stderr',JSON.stringify({ownedFrameCleanupErrors:errors})+'\n');};
+  const stopFrameReader=()=>{windowDriver?.close();for(const reader of [frameReader,presentationReader]){const errors=reader?.close();if(errors?.length)append('stderr',JSON.stringify({ownedFrameCleanupErrors:errors})+'\n');}};
   // close is emitted only after stdout/stderr have drained. The synchronous
   // taskkill return alone can leave the last hardware-init messages unread.
   child.once('close',()=>{nativeChannel?.close();stopFrameReader();if(closing)flush();resolveClosed();});
@@ -150,7 +150,12 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       return frameReader.read(args);
     };
     const ownedWindow=()=>{if(closing)throw Error('Owned application is closing');return windowDriver??=ownedWindowDriver(observerOptions());};
+    const readPresentationFrame=args=>{
+      if(closing)return Promise.reject(Error('Owned application is closing'));
+      if(!presentationReader)presentationReader=ownedFrameReader({...observerOptions(),scope:'presentation',getState:()=>evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"presentation.state",args:{}})')});
+      return presentationReader.read(args);
+    };
     const nativeWindows={windows:()=>ownedWindow().windows(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain()};
-    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
+    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readPresentationFrame,nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
   } catch(e){close();throw e;}
 }

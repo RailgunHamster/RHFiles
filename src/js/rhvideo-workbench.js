@@ -3954,9 +3954,13 @@
             }
             await new Promise((resolve) => setTimeout(resolve, 200));
           }
+          if (viewer !== v || transitionTicket !== v.transitionTicket) return {stale:true};
           v.videoFadeStart = performance.now();
-          v.videoFadeSeconds = c.fade;
-          await syncPresentation(c.overlap ? 0 : 1);
+          // A manually selected paused frame has no running fade clock. Keep
+          // it opaque, including on resume; ordinary playback still fades in.
+          v.videoFadeSeconds = v.running && c.overlap ? c.fade : 0;
+          await syncPresentation(v.videoFadeSeconds > 0 ? 0 : 1);
+          if (viewer !== v || transitionTicket !== v.transitionTicket) return {stale:true};
           if (!v.running)
             await native("presentation.control", { command: "pause" });
         } else {

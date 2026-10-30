@@ -126,16 +126,34 @@ const body=source.slice(source.indexOf('private Object expression('),source.inde
 const templates=[...body.matchAll(/eval\(web,((?:"(?:\\.|[^"\\])*"|nonce|expression|\s|\+)+)\);/g)].map(match=>match[1]);
 function render(template,values){return [...template.matchAll(/"(?:\\.|[^"\\])*"|nonce|expression/g)].map(match=>match[0][0]==='"'?JSON.parse(match[0]):values[match[0]]).join('');}
 test('the actual Android probe wrapper never publishes an old result into a newer request',async()=>{
-  assert.equal(templates.length,2,'Separate reset and execution scripts must remain audited');
+  assert.equal(templates.length,1,'Atomic setup must not introduce another native WebView round trip');
   const context=vm.createContext({});context.window=context;
-  const run=(nonce,expression)=>{const values={nonce:JSON.stringify(nonce),expression};vm.runInContext(render(templates[0],values),context);vm.runInContext(render(templates[1],values),context);};
+  const run=(nonce,expression)=>{const values={nonce:JSON.stringify(nonce),expression};vm.runInContext(render(templates[0],values),context);};
   run('old','new Promise(resolve=>globalThis.resolveOld=resolve)');run('current','42');await new Promise(setImmediate);
   assert.equal(context.__rhQa.request,'current');assert.equal(context.__rhQa.value,42);
   context.resolveOld('late');await new Promise(setImmediate);assert.equal(context.__rhQa.request,'current');assert.equal(context.__rhQa.value,42);
 });
 test('a probe syntax error cannot reuse the previous call acknowledgement',async()=>{
   const context=vm.createContext({});context.window=context;const values={nonce:'"syntax-error"',expression:'let broken=;'};
-  context.__rhQa={request:'previous',value:'old success'};vm.runInContext(render(templates[0],values),context);
-  assert.throws(()=>vm.runInContext(render(templates[1],values),context),/Unexpected|Syntax/);
-  assert.equal(context.__rhQa.request,'syntax-error');assert.equal(Object.hasOwn(context.__rhQa,'value'),false);
+  context.__rhQa={request:'previous',value:'old success'};
+  assert.throws(()=>vm.runInContext(render(templates[0],values),context),/Unexpected|Syntax/);
+  // A failed parse cannot reset the page slot. The INDEPENDENT Java identity
+  // still refuses the old result instead of accepting it as this new request.
+  assert.notEqual(context.__rhQa.request,'syntax-error');
+  assert.match(body,/String request=java\.util\.UUID\.randomUUID\(\)\.toString\(\),nonce=JSONObject\.quote\(request\)/);
+  assert.match(body,/if\(request\.equals\(result\.optString\("request"\)\)\)\{if\(result\.has\("error"\)\)[^\n]+if\(result\.has\("value"\)\)/);
+});
+
+test('atomic dispatch retains typed results/runtime errors and requires no CSP eval bypass',async()=>{
+  const context=vm.createContext({});context.window=context;
+  const run=(nonce,expression)=>vm.runInContext(render(templates[0],{nonce:JSON.stringify(nonce),expression}),context);
+  for(const [input,expected]of [['true',true],['42',42],['undefined',null],['[1,2]',[1,2]]]){run('typed',input);await new Promise(setImmediate);assert.deepEqual(JSON.parse(JSON.stringify(context.__rhQa.value)),expected);}
+  run('error',"(()=>{throw Error('fixture-only')})()");await new Promise(setImmediate);assert.equal(context.__rhQa.request,'error');assert.match(context.__rhQa.error,/fixture-only/);assert(!Object.hasOwn(context.__rhQa,'value'));
+  assert.doesNotMatch(render(templates[0],{nonce:'"id"',expression:'true'}),/\beval\s*\(|\bFunction\s*\(/);
+});
+
+test('mixed favorite smoke checks the actual newest-first target before waiting for a real video frame',()=>{
+  const start=source.indexOf('JSONArray mixedItems='),end=source.indexOf('action("preferences.set",new JSONObject().put("key","gridCount")',start),mixed=source.slice(start,end);
+  assert(start>0&&end>start);for(const marker of ['"video:video-0"','"picture:picture-0"','"viewer.state"','"picture"','"direction",-1','System.currentTimeMillis()+20000','"renderedFrames"','"nativeSurface"','"Image transition must release the native video"'])assert(mixed.includes(marker),marker);
+  assert.doesNotMatch(mixed,/\.sort\(|\.reverse\(|\.click\(|"sort",/,'Never reorder the product queue to fit a test assumption');
 });

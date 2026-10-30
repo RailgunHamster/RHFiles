@@ -2,6 +2,32 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import{launchApp,until,sleep}from'../testing/app-session.mjs';import{cdpSession}from'../rhfiles-api.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
 import{execFileSync}from'node:child_process';
 
+test('paused mixed slideshow makes the real native video opaque and displays decoded color markers',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'},async()=>{
+ const app=await launchApp({emulateFocus:true});let fixture,view;
+ const invoke=(action,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+action)+','+JSON.stringify(args)+')');
+ try{
+  const movie=path.join(app.directory,'paused-native-markers.mp4');
+  execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','color=c=black:size=640x360:rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-vf','drawbox=x=0:y=0:w=320:h=180:color=0xff0000:t=fill,drawbox=x=320:y=0:w=320:h=180:color=0x00ff00:t=fill,drawbox=x=0:y=180:w=320:h=180:color=0x0000ff:t=fill,drawbox=x=320:y=180:w=320:h=180:color=0xffff00:t=fill','-t','20','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',movie],{windowsHide:true,timeout:30000});
+  fixture=await rhvideoFixture({videoCount:1,pictureCount:1,videoFile:movie,videoDuration:20});
+  await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname==='/rhvideo.html');},'packaged library');view=await cdpSession(target,30000);
+  await until(()=>view.evaluate('!!window.RHFilesAPI?.list().some(row=>row.id==="rhvideo.viewer.favorite")'),'mixed slideshow API');
+  const served=await view.evaluate('fetch("js/rhvideo-workbench.js").then(r=>r.text())'),expected=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');assert.equal(createHash('sha256').update(served).digest('hex'),createHash('sha256').update(expected).digest('hex'),'Use the exact tested workbench');
+  await invoke('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
+  await invoke('category',{kind:'video'});await invoke('favorite.toggle',{id:'video-0',kind:'video'});await invoke('category',{kind:'picture'});await invoke('favorite.toggle',{id:'picture-0',kind:'picture'});
+  await invoke('category',{kind:'favorite'});await invoke('viewer.open',{mode:'slideshow',source:'favorite'});await invoke('viewer.toggle');
+  assert.equal((await invoke('viewer.state')).current.kind,'picture');await invoke('viewer.step',{direction:1});
+  const state=await invoke('viewer.state');assert.equal(state.current.kind,'video');assert.equal(state.running,false);assert.equal(state.loading,false);
+  const media=await until(async()=>{const s=await invoke('viewer.mediaState');return s.nativeSurface&&s.renderedFrames>0?s:null;},'real paused native frame',20000);
+  assert(['native-hardware-auto','gdi-compatibility'].includes(media.renderer));if(process.env.RHFILES_EXPECT_RENDERER)assert.equal(media.renderer,process.env.RHFILES_EXPECT_RENDERER);
+  const frame=await app.readPresentationFrame({expectedInput:media.inputId});assert.equal(frame.alpha,255,'A rendered but transparent native child is NOT a visible paused frame');
+  fs.copyFileSync(frame.path,path.join(app.artifactDir,'paused-native-video.bmp'));
+  const bitmap=fs.readFileSync(frame.path),colors=Array.from({length:4},(_,i)=>{const x=Math.floor(frame.width*(i%2===0?.25:.75)),y=Math.floor(frame.height*(i<2?.25:.75)),offset=54+(y*frame.width+x)*4;return [bitmap[offset+2],bitmap[offset+1],bitmap[offset]];});
+  fs.writeFileSync(path.join(app.artifactDir,'paused-native-video.json'),JSON.stringify({inputId:media.inputId,alpha:frame.alpha,width:frame.width,height:frame.height,colors},null,2));
+  assert(colors.every(([r,g,b],i)=>i===0?r>160&&g<90&&b<90:i===1?g>160&&r<90&&b<90:i===2?b>160&&r<90&&g<90:r>160&&g>160&&b<90),'The native child must display all four generated video markers, not just report a decoded frame');
+  await invoke('viewer.step',{direction:1});assert.equal((await invoke('viewer.mediaState')).opened,false);await assert.rejects(app.readPresentationFrame(),/No current owned player input/);
+ }finally{view?.close();await app.close();await fixture?.close();}
+});
+
 test('paused manual slideshow navigation displays actual picture pixels instead of freezing a transparent layer',async()=>{
  const app=await launchApp({emulateFocus:true});let fixture,view;
  const invoke=(action,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+action)+','+JSON.stringify(args)+')');
