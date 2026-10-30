@@ -532,12 +532,28 @@
         }
         return result;
       }
-      async function catalog(refresh) {
+      async function catalog(refresh,locate) {
+        const navigation=state.loadId,kind=state.kind;
         const token = await ensure(refresh);
-        await rawCatalog(state.kind, refresh);
+        const current=()=>{
+          if(token!==epoch)throw Error("媒体账户已更改，已丢弃旧读取");
+          if(locate&&(navigation!==state.loadId||kind!==state.kind||state.view!=="catalog"))throw Error("媒体浏览位置已改变，已丢弃旧定位");
+        };
+        current();
+        await rawCatalog(kind, refresh);
         const version = epoch,
           revision = catalogRevision;
-        const result = await query({latest:true}, token, true);
+        let offset,result;
+        if(locate){
+          current();
+          if(locate.kind!==kind)throw Error("媒体定位分类无效");
+          const args={locate:{key:kind+":"+locate.id},offset:0,limit:1};
+          let target=await query(args,token);current();
+          if(!target.located){prefs.rule={};invalidateGallery();warmGallery();save();target=await query(args,token);current();}
+          if(!target.located)throw Error("源媒体已不在服务器清单中");
+          offset=Math.floor(target.located.index/state.limit)*state.limit;
+          result=await query({latest:true,offset},token,true);current();
+        }else result = await query({latest:true}, token, true);
         const cached = result.items.map((item) =>
           resolutions.get(I.key(item), JSON.stringify(item)),
         );
@@ -559,11 +575,12 @@
               resolved.items[i],
             );
         }
+        current();
         let index = 0;
         resolved.items = cached.map((item) => item || resolved.items[index++]);
         if (version !== epoch || revision !== catalogRevision)
           throw Error("媒体账户或清单已更改，已丢弃旧读取");
-        return { ...resolved, total: result.total };
+        return { ...resolved, total: result.total, ...(locate?{offset}:{}) };
       }
       async function remote(name, args = {}) {
         args = { expectedGeneration: state.generation, ...args };
@@ -1096,14 +1113,19 @@
         "media.reveal",
         object({id:string,kind:{type:"string",enum:["video","picture","novel"]}},["id","kind"]),
         async ({id,kind})=>{
+          const intent=epoch,initialNavigation=state.loadId,preview=imageSession;let previewToken=imageToken;
           const version=await ensure();
-          await invoke("category",{kind});
-          let result=await query({allKeys:true,offset:0,limit:1}),index=result.queue.findIndex(v=>v.id===id);
-          if(index<0){prefs.rule={};invalidateGallery();warmGallery();save();result=await query({allKeys:true,offset:0,limit:1});index=result.queue.findIndex(v=>v.id===id);}
-          if(version!==epoch)throw Error("媒体账户已改变");if(index<0)throw Error("源媒体已不在服务器清单中");
-          state.offset=Math.floor(index/state.limit)*state.limit;await load();
-          if(version!==epoch)return {stale:true};
-          if($("image-dialog").open)await invoke("image.close");if($("wb-gallery")?.open)await invoke("panel.close",{id:"wb-gallery"});
+          if(intent!==version||state.loadId!==initialNavigation||imageSession!==preview||imageToken!==previewToken)return {stale:true};
+          // Category reset and folder choices are shared with normal navigation,
+          // but locate in the worker BEFORE resolving/painting the final page.
+          const pending=ctx.loadCategory(kind,{kind,id}),navigation=state.loadId;
+          const current=()=>version===epoch&&navigation===state.loadId&&state.kind===kind&&state.view==="catalog"&&imageToken===previewToken;
+          await pending;
+          if(!current()||imageSession!==preview)return {stale:true};
+          if(state.error)throw Error(state.error);
+          if(!state.items.some(item=>item.id===id&&item.kind===kind))throw Error("源媒体已不在服务器清单中");
+          if($("image-dialog").open){const closing=invoke("image.close");previewToken=imageToken;await closing;if(!current())return {stale:true};}
+          if($("wb-gallery")?.open){await invoke("panel.close",{id:"wb-gallery"});if(!current())return {stale:true};}
           const card=[...$("media-grid").querySelectorAll('.media-card')].find(n=>n.dataset.id===id&&n.dataset.kind===kind);
           if(card){card.scrollIntoView({behavior:"smooth",block:"center"});card.classList.add("wb-revealed");setTimeout(()=>card.classList.remove("wb-revealed"),3000);}
           return {id,kind,offset:state.offset};
