@@ -6,6 +6,40 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 清单搜索字段、优化构建对照及新版模拟器（继续验收，未发包）
+
+实际参考仍是干净的 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`。本轮继续逐项比较业务，而不是把控件清单当作完成证明：参考视频搜索还匹配 `original_resolution`、`original_duration`、`original_filesize`、`status`，收藏匹配 `title` **及** `filename`。旧索引只搜显示标题、标签和归一化分辨率／codec，既漏结果，也把原版不搜索的字段加进结果。新差分从实际参考 `searchCatalog` 调用的 AST 提取字段，并执行实际参考 `search-core.js` 和同一词典；最初十二项 **1/12、11 失败**（`rhvideo-search-fields-red.log`）。
+
+共享 worker 索引现按视频／图片／小说／收藏各自的原始字段构建；不把显示用的 `×→x` 或标题兜底替代搜索数据。小说／收藏的原始标题使用 WeakMap，既不污染导出及原生解析载荷，也不因调用者后来修改输入对象而变化。更新清单仍使索引失效。测试夹具补上实际后端收藏响应已有的 `title`／`filename`，没有用不存在的后端字段来制造对齐。新增原始字段、空／零值、技术字段排除、中文／混合拼音／首字母、更新与原始标题隔离用例；连同两端共用场景及准入检查，定向 **24/24、零失败／跳过**（`rhvideo-search-fields-controls.log`）。
+
+Windows 增量编译 **5 分 33 秒成功**，冻结副本 `rhvideo-search-fields-runtime-773ea3286e7c43b8a1b2eef921463b8c/` 的 EXE SHA-256 **`ca17e05e09fc0d03991aaa70ee722be2c85626572479fa5d88a20fa0c75e017a`**；app-local libVLC 3.0.24 校验通过。实际打包窗口的搜索场景 **1/1、零跳过**（`rhvideo-search-fields-window.log`、`rhfiles-e2e-164px7/search-fields.json`）：先核对真正服务的索引字节，随后经过原生 HTTP／worker／语义 API 核对结果和实际卡片，还派发 input 事件经过真实输入监听器与防抖；它不是物理键盘输入试验。收藏的独立文件名可由中文／拼音找到，实际截图已查看，UI 契约缺失为零。
+
+Android 首次直接 Gradle 构建因 Tauri CLI 选项通道不存在而明确失败（短路径 QA 的 `rhvideo-search-fields-android-build.log`，**40 秒失败**），未使用旧输出冒充新包。核对 arm64／x86_64 两份 JNI 与原 88D4 APK 逐字节相同后，正常同步新共享资源、明确排除未变化的 Rust task，增量组包 **2 分 26 秒成功**（`rhvideo-search-fields-android-asset-build.log`），本次没有另外重编 JNI 或冒计 JVM 全套。冻结 `rhvideo-search-fields-apk-b168228cef7d4145aa744c70a681942d/`：主包 **`5537c72ac3e75b9bb52074370266d137f6f0fb332422f0f83277f04fb5d50cb9`**、探针仍 **`4b372563…bc5ac`**，mapping 保存；APK 内真实索引 SHA-256 **`07c51b28…9a6c1e5`** 与当前源码相符。安装客户端曾在二十秒观察上限终止，但随后读取设备真实包路径及 SHA-256 确认已成功装入 **5537**；没有因观察超时重复安装。
+
+同一安装的第一轮 `rhvideo-android-search-fields-YWiynj/receipt.json` 已明确失败：还在自动恢复旧夹具地址的登录，尚未执行搜索。等待循环保留了早期的 application 未注册异常，最终现场实际上已有 API、`restoring=true`；不能把报错文字当成索引或 JS 语法错误。新入口改为在控件注册后显式连接本次服务器，符合用户随时更换服务器的正常操作；不等无关旧地址恢复，也不延长搜索预算。场景结束仍要求已连接、恢复状态结束、实际服务器身份为本次地址，旧状态不能冒充当前连接。
+
+随后相同 **5537** 包、没有重新安装或变更媒体参数，实际 Android 场景 **通过**（`rhvideo-search-fields-android-explicit-login.log`、`rhvideo-android-search-fields-YTfdcO/receipt.json`）。两端执行同一 helper：**9** 组视频／图片／收藏查询、真实 input 监听器／防抖、卡片 ID、连接身份及 UI 契约缺失为零；非物理键盘／触摸试验。**19** 个夹具响应均完成、零 transport error／丢弃、零意外写入；`android-1HGjiw/search-fields.png` 的实际设备画面已查看。没有操作实体手机。这是共享索引的真实 APK 业务通过，不是原生视频或 Android 整套已通过。
+
+共享业务全套 **993/993、零失败／跳过**（`rhvideo-search-fields-final-node.log`）；之后仅调整上述 Android 测试入口以显式连接而非等待旧服务器，产品索引字节未变。最终 helper 的 Windows 窗口场景再次 **1/1**（`rhvideo-search-fields-final-window.log`、`rhfiles-e2e-0M7UPv/`），核对同一最终连接身份断言；准入与差分定向另行复核，不用一项通过替代完整 Windows 或 Android 验收。
+
+### 五万条真实封面负载与 CPU 采样
+
+另完成优化 Windows 构建，**9 分 11 秒成功**（`rhvideo-current-release-build.log`），冻结 `rhvideo-release-metadata-runtime-49f1ee93f80f444386f0b8a7db3b74c7/`，EXE **`f6ea4c8f9047cf8f4e53f9567dbfa7cdda8e147f0725e7fcc896f9d44ac0de9b`**。两个实际图片／原生视频业务场景 **2/2、零跳过**（`rhvideo-current-release-functional.log`），不是整套 107/109 的替代回执，也不是物理扬声器或正式发行验收。
+
+最初 metadata 基准中参考页面实际 **0 张图片解码**，本端为 28 张；该轮 `rhvideo-current-library-compare.log` **不可比较**。参考 `<img>` 没有夹具要求的认证头；现在仅给生成的本地参考夹具加认证，保留原版渲染／搜索函数和源 URL。准入要求两端均为五万条、1280×800、可见、真实封面解码且每个搜索计数相同；五项准入测试通过，每轮使用独立目录，`comparable:true` 仅表示负载可比较，**不是速度合格**。
+
+修正后的优化构建对照 `rhvideo-reference-comparison-oGd5N9/comparison.json`：参考／本端初次清单 **1894／836 ms**，首次拼音 **2655.6／2953.6 ms**，热搜索中位数 **56／94.7 ms**、P95 **100.6／172 ms**；均真正显示封面并匹配相同计数。调试构建的另一轮为 **768／2467 ms**，说明不能把未优化构建直接当发布性能；也不能据一次时序受宿主负载影响的样本宣布性能已达标或优化有因果效果。
+
+显式 `RHFILES_QA_SEARCH_PROFILE=1` 另采两端真实 CDP CPU profile（`rhvideo-reference-comparison-y7RSCG/`，两个 `*-search.cpuprofile`），结果标为 `diagnosticSampling:true`，不与普通计时混算。该轮主线程采样没有证明唯一性能根因；未据此改变原生解码、线程／音频、媒体质量或削减字段。该优化 EXE 与这些对照均在本节搜索字段修复之前生成，不能当作新索引的打包验收。
+
+### 独立 emulator 37 的实际启动状态
+
+上一节准备的 37.2.13 副本现已真正创建／启动 **`emulator-5592 / RHFilesRhVideoQA20261030Modern`**，没有更新全局 SDK、重置／重启／停止既有 AVD。私有目录 `D:\git\RHFiles-connection-QA-20261025\test-artifacts\avd-modern-37-fd6afdef23de4399baad1e739f6aac3f/`；launcher **45228**／qemu **92736**，**18:09:04** 启动，**18:41:29** 首次观察到 boot completed（不是精确完成时刻）。同一进程始终存活，API 34／host-GPU／6 核／6144 MiB，镜像指纹及 WebView 113 与原 API 34 对照相同。
+
+**尚未安装 RHFiles** 就有 system、System UI、输入法 ANR；随后当前实际画面为 Bluetooth keeps stopping，crash buffer 是 `com.google.android.bluetooth` 的 stack startup assertion，而非 RHFiles。截图 `rhvideo-modern-system-{boot,current}.png`、实际窗口／crash 日志与更新后的 runtime `admission.json` 均保留；UIAutomator 也曾返回 null root。未关闭系统服务、绕过错误窗口门禁、安装应用后冒称新环境播放通过，亦不以这台环境故障证明产品播放器无错。已有自有 5588 在新包安装前重新通过无错误弹窗／无在途应用或 stagefright 的准入，另行执行新索引的打包业务测试。
+
+本轮继续保留完整 Windows **107/109** 的历史失败及 Android 同屏／生命周期、同质量性能与正式发行缺口，不把搜索修复、优化构建局部通过或模拟器准入当成完整还原。正式 Windows PID 45696 和实体手机均未动，目标保持未完成。
+
 ## 2026-10-30 播放器／同屏语义键与 API 36 独立对照（继续验收，未发包）
 
 继续执行实际参考 `playlistKeyHandler`／`gridKeyHandler`，发现 Home／End 修复之前只覆盖了媒体库放映，Windows 播放器和同屏的 DOM 快捷键仍按物理 `code` 导航。新增从两个实际生产监听器 AST 提取的十七项测试，包含与上述参考函数的差分；旧实现 **3/17、14 失败**（`rhvideo-native-keyboard-red.log`）。现优先使用可识别的语义 key，将空格正常映射到暂停／继续，只有没有语义信息才回退 code；数字小键盘的数字及重映射的普通键不能误当 Home／End／箭头。保留收藏父层定位、非队列限制、编辑框、Delete 修饰键／重复和同屏输入实例边界。修复后 **17/17**；全套共享检查 **950/950、零失败／跳过**（`rhvideo-native-semantic-shortcuts-node.log`）。

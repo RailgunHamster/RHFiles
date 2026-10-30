@@ -19,7 +19,8 @@ test('native acceptance permits only the explicitly owned QA AVD names',()=>{
   assert(node);const verify=vm.runInNewContext('('+runner.slice(node.start,node.end)+')',{assert});
   verify('RHFilesRhVideoQA20261027\r\nOK\r\n');verify('RHFilesRhVideoQA20261030Audio\nOK\n');verify('RHFilesRhVideoQA20261030HostGpu\nOK\n');
   verify('RHFilesRhVideoQA20261030Api36\nOK\n');
-  for(const name of ['','Moto','RHFilesQA','RHFilesRhVideoQA20261030Audio-copy','RHFilesRhVideoQA20261030HostGpu-copy','RHFilesRhVideoQA20261030Api36-copy','arbitrary-emulator'])assert.throws(()=>verify(name));
+  verify('RHFilesRhVideoQA20261030Modern\nOK\n');
+  for(const name of ['','Moto','RHFilesQA','RHFilesRhVideoQA20261030Audio-copy','RHFilesRhVideoQA20261030HostGpu-copy','RHFilesRhVideoQA20261030Api36-copy','RHFilesRhVideoQA20261030Modern-copy','arbitrary-emulator'])assert.throws(()=>verify(name));
   assert.match(runner,/assert\.equal\(run\(\['shell','getprop','ro\.kernel\.qemu'\]\)\.trim\(\),'1','Physical devices are not allowed'\)/);
 });
 

@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import {admitLocalClockDevice,verifyLocalClock} from '../testing/rhvideo-local-clock.mjs';
 const state=(positionMs,renderedFrames)=>({count:1,playing:true,rendered:true,rate:1,error:null,volume:100,decoderVolume:100,durationMs:20000,path:'owned-test.mp4',inputId:1,positionMs,renderedFrames,tracks:{groups:['audio','video'].map(type=>({type,tracks:[{selected:true}]}))}});
 test('ordinary local clock diagnostics admit only the exact owned AVDs',()=>{
-  for(const avd of ['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu','RHFilesRhVideoQA20261030Api36'])admitLocalClockDevice('emulator-5590','1\n',avd+'\nOK\n');
-  for(const args of [['phone','1','RHFilesRhVideoQA20261030Audio'],['emulator-5586','0','RHFilesRhVideoQA20261030Audio'],['emulator-5586','1','RHFilesRhVideoQA20261030Audio-copy'],['emulator-5588','1','RHFilesRhVideoQA20261030HostGpu-copy'],['emulator-5590','0','RHFilesRhVideoQA20261030Api36'],['emulator-5590','1','RHFilesRhVideoQA20261030Api36-copy'],['emulator-5586','1','Moto']])assert.throws(()=>admitLocalClockDevice(...args));
+  for(const avd of ['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu','RHFilesRhVideoQA20261030Api36','RHFilesRhVideoQA20261030Modern'])admitLocalClockDevice('emulator-5592','1\n',avd+'\nOK\n');
+  for(const args of [['phone','1','RHFilesRhVideoQA20261030Audio'],['emulator-5586','0','RHFilesRhVideoQA20261030Audio'],['emulator-5586','1','RHFilesRhVideoQA20261030Audio-copy'],['emulator-5588','1','RHFilesRhVideoQA20261030HostGpu-copy'],['emulator-5590','0','RHFilesRhVideoQA20261030Api36'],['emulator-5590','1','RHFilesRhVideoQA20261030Api36-copy'],['emulator-5592','0','RHFilesRhVideoQA20261030Modern'],['emulator-5592','1','RHFilesRhVideoQA20261030Modern-copy'],['emulator-5586','1','Moto']])assert.throws(()=>admitLocalClockDevice(...args));
 });
 test('the local control preserves real source, input, tracks, frames and normal speed',()=>{
   assert.deepEqual(verifyLocalClock(state(700,18),state(5700,138),5200),{elapsedMs:5200,positionDeltaMs:5000,frameDelta:120});

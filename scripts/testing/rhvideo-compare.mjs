@@ -7,6 +7,19 @@ import { createHash } from "node:crypto";
 import { launchApp, until } from "./app-session.mjs";
 import { cdpSession } from "../rhfiles-api.mjs";
 import { rhvideoFixture } from "./rhvideo-fixture.mjs";
+function verifyComparisonWorkload(reports) {
+  assert.equal(reports.length,2);assert.equal(reports[0].client,'RHVideo');assert.equal(reports[1].client,'RHFiles');
+  for (const row of reports) {
+    assert.equal(row.count,50000);
+    assert.equal(row.rendered.width,1280);assert.equal(row.rendered.height,800);
+    assert.equal(row.rendered.visible,'visible');
+    assert(Number.isSafeInteger(row.rendered.decodedImages)&&row.rendered.decodedImages>0, row.client+' must render actual authenticated covers; a blank/error workload is not comparable');
+  }
+  assert.deepEqual(reports[0].counts,reports[1].counts,'both clients must match identical search semantics');
+}
+const comparisonDirectory=fs.mkdtempSync(path.resolve('test-artifacts/rhvideo-reference-comparison-'));
+const profileSearch=process.env.RHFILES_QA_SEARCH_PROFILE==='1';
+assert([undefined,'0','1'].includes(process.env.RHFILES_QA_SEARCH_PROFILE),'Search profiling is explicit and diagnostic-only');
 const reference = process.env.RHVIDEO_SOURCE || path.resolve("../RHVideo");
 assert(fs.existsSync(path.join(reference, "static/index.html")));
 const fixture = await rhvideoFixture({
@@ -24,6 +37,11 @@ try {
     let page;
     try {
       if (client === "RHVideo") {
+        // The real page's <img> cannot attach fetch headers. Authorize only the
+        // generated local fixture transport, as in the reference video probe;
+        // do not alter the reference's render/search functions or source URLs.
+        await app.send('Network.enable');
+        await app.send('Network.setExtraHTTPHeaders',{headers:{Authorization:'Bearer fixture-bearer-do-not-persist'}});
         await app.send("Page.navigate", { url: fixture.url });
         await until(
           () =>
@@ -108,10 +126,16 @@ try {
         );
         assert.equal(result.total, 50000);
       }
+      await until(()=>page.evaluate("[...document.images].some(node=>node.complete&&node.naturalWidth>0)"),client+' authenticated cover actually decoded');
       const coldMs = Date.now() - before,
         samples = [],
         apiSamples = [],
         counts = [];
+      if(profileSearch){
+        await page.send('Profiler.enable');
+        await page.send('Profiler.setSamplingInterval',{interval:1000});
+        await page.send('Profiler.start');
+      }
       for (const query of [
         "shan ye",
         ...Array.from({ length: 20 }, (_, i) => (i % 2 ? "海边" : "qing chen")),
@@ -128,6 +152,11 @@ try {
         apiSamples.push(result.apiMs);
         counts.push(result.total);
       }
+      if(profileSearch){
+        const {profile}=await page.send('Profiler.stop');
+        fs.writeFileSync(path.join(comparisonDirectory,client+'-search.cpuprofile'),JSON.stringify(profile));
+        await page.send('Profiler.disable');
+      }
       const frame = await page.evaluate("({...window.__bench})");
       const rendered = await page.evaluate(
         "({width:innerWidth,height:innerHeight,visible:document.visibilityState,decodedImages:[...document.images].filter(n=>n.naturalWidth>0).length})",
@@ -143,6 +172,7 @@ try {
         hotApiP95: percentile(apiSamples.slice(1), 0.95),
         maxFrameGapMs: frame.maxGap,
         rendered,
+        artifact:app.artifactDir,
         counts,
       });
     } finally {
@@ -153,11 +183,8 @@ try {
 } finally {
   await fixture.close();
 }
-assert.deepEqual(
-  reports[0].counts,
-  reports[1].counts,
-  "both clients must match identical search semantics",
-);
+let admissionError;
+try{verifyComparisonWorkload(reports);}catch(error){admissionError=error;}
 const output = {
   at: new Date().toISOString(),
   executable:
@@ -169,11 +196,16 @@ const output = {
     .digest("hex"),
   fixture: "generated metadata, no production data",
   scope:
-    "Windows WebView2 metadata/search UI only. Not mobile, playback, network or memory comparison.",
+    "Windows WebView2 metadata/search UI with real authenticated covers. Not mobile, playback, network or memory acceptance.",
+  comparable:!admissionError,
+  diagnosticSampling:profileSearch,
+  ...(admissionError?{admissionError:String(admissionError)}:{}),
+  artifact:comparisonDirectory,
   reports,
 };
 fs.writeFileSync(
-  "test-artifacts/rhvideo-reference-comparison.json",
+  path.join(comparisonDirectory,"comparison.json"),
   JSON.stringify(output, null, 2),
 );
 console.log(JSON.stringify(output, null, 2));
+if(admissionError)throw admissionError;

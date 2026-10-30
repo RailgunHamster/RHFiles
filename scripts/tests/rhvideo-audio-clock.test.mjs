@@ -9,8 +9,8 @@ const runner=fileURLToPath(new URL('../testing/rhvideo-audio-clock.mjs',import.m
 test('PCM controls share the exact owned-AVD guard including the current host-GPU control',()=>{
   const source=fs.readFileSync(runner,'utf8');
   assert.match(source,/admitLocalClockDevice\(serial,kernel,avd\)/);
-  for(const avd of ['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu','RHFilesRhVideoQA20261030Api36'])assert.doesNotThrow(()=>admitLocalClockDevice('emulator-5590','1\n',avd+'\nOK\n'));
-  for(const avd of ['UserPhone','RHFilesRhVideoQA20261030HostGpu-unrelated','RHFilesRhVideoQA20261030Api36-unrelated'])assert.throws(()=>admitLocalClockDevice('emulator-5590','1\n',avd));
+  for(const avd of ['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu','RHFilesRhVideoQA20261030Api36','RHFilesRhVideoQA20261030Modern'])assert.doesNotThrow(()=>admitLocalClockDevice('emulator-5592','1\n',avd+'\nOK\n'));
+  for(const avd of ['UserPhone','RHFilesRhVideoQA20261030HostGpu-unrelated','RHFilesRhVideoQA20261030Api36-unrelated','RHFilesRhVideoQA20261030Modern-unrelated'])assert.throws(()=>admitLocalClockDevice('emulator-5592','1\n',avd));
   assert.throws(()=>admitLocalClockDevice('emulator-5588','0','RHFilesRhVideoQA20261030HostGpu'));
   assert.match(source,/\['com\.railgunhamster\.rhfiles','stagefright'\]/);assert.match(source,/hostElapsedMs:performance\.now\(\)-started/);
 });

@@ -80,6 +80,10 @@
       this.searchCore = search;
       this.dictionary = dictionary;
       this.collections = new Map();
+      // Display titles can fall back to filenames/IDs. The reference searches
+      // the original title, not that presentation fallback; keep it out of
+      // exported rows, native resolve payloads and their cache signatures.
+      this.searchTitles = new WeakMap();
       this.indexes = new Map();
       this.orderCache = new Map();
       this.tagCache = new Map();
@@ -89,7 +93,11 @@
     set(kind, raw) {
       if (!Array.isArray(raw) || raw.length > 1000000)
         throw Error("媒体清单无效或超出上限");
-      const rows = raw.map((v) => normalize(v, kind));
+      const rows = raw.map((v) => {
+        const row = normalize(v, kind);
+        if (kind === "favorite" || kind === "novel") this.searchTitles.set(row, v.title);
+        return row;
+      });
       for (const v of rows)
         if (
           !/^[A-Za-z0-9_-]{1,128}$/.test(v.id) ||
@@ -161,12 +169,27 @@
         index = new this.searchCore.Index(this.dictionary);
         const rows = this.collections.get(kind) || [];
         for (let offset = 0; offset < rows.length; offset += 256) {
-          for (const row of rows.slice(offset, offset + 256))
+          for (const row of rows.slice(offset, offset + 256)) {
+            // Match each actual reference searchCatalog projection. Do not
+            // substitute normalized display resolution/duration, or omit a
+            // favorite's filename just because it also has a display title.
+            const fields = kind === "video" || kind === "picture"
+              ? [row.original_filename, row.folder_label]
+              : kind === "favorite"
+                ? [this.searchTitles.get(row), row.filename, row.folder_label]
+                : kind === "novel"
+                  ? [this.searchTitles.get(row), row.folder_label]
+                  : [row.title, row.folder];
+            const literal = kind === "video"
+              ? [row.original_resolution, row.original_duration, row.original_filesize, row.status]
+              : kind === "picture" ? [row.original_resolution]
+                : kind === "gallery" ? [row.resolution, row.codec || ""] : [];
             index.upsert({
               key: key(row),
-              fields: [row.title, row.folder],
-              literal: [row.resolution, row.codec || ""],
+              fields,
+              literal,
             });
+          }
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
         this.indexes.set(kind, index);
