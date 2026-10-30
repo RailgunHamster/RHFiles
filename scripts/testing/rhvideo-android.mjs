@@ -114,7 +114,7 @@ for(const relative of ['js/rhvideo-mobile.js','css/rhvideo-mobile.css']){
 const run=(args)=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
 function verifyOwnedAvdName(output){
   const names=output.split(/\r?\n/).map(value=>value.trim());
-  assert(['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio'].some(name=>names.includes(name)),'Only an explicitly owned RHVideo QA AVD is allowed');
+  assert(['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu'].some(name=>names.includes(name)),'Only an explicitly owned RHVideo QA AVD is allowed');
 }
 assert.equal(run(['shell','getprop','ro.kernel.qemu']).trim(),'1','Physical devices are not allowed');
 verifyOwnedAvdName(run(['emu','avd','name']));

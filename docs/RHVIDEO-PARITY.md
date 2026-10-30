@@ -6,6 +6,24 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 普通视频进度映射修复与本地路径对照（继续定位，未发包）
+
+先用 Robolectric 直接调用原 `PlaybackActivity.rhQueuePosition`，没有复制一份测试公式：新增六项中 **四项红测**（`rhvideo-open-ended-timeline-red.log`、`rhvideo-open-ended-timeline-red.xml`），例如期望 3929 却得到 0、期望 20672 却只有前序时间 17500。默认全长的 `end=-1` 被夹成零跨度是直接原因。现对已知片段继续使用原计划边界；未知终点仅在报告进度时读取已知解码时长，时长也未知时保留已经观察到的位置；不改队列、不加裁剪终点、不定位／重开。API 的物理位置和队列位置共用同一次位置读取，避免两个 getter 时间不同。
+
+六项测试覆盖真实位置、前序累计、已知／未知时长、源时长与目录估计不同、片段边界及真正零长度；假 engine 只允许读 duration，任何 seek／control 均报错。完整增量 QA 构建 **5 分 13 秒成功，464/464 JVM、70 份 XML、零失败／错误／跳过**（短路径 QA 的 `rhvideo-open-ended-timeline-green-build.log`）。这里产品 Kotlin 和探针有变化，Rust 内嵌页面未变，复用本轮先前已重新编译的两套 JNI，不是完整新原生发行构建。
+
+独立快照 `rhvideo-open-ended-timeline-e6440d34365a4fa0ac6c82b507d9de7b` 保存主 APK SHA-256 `9dbe624e56829a413073aab3621e3e15abed237ef0db12b5692e698bee5cf8fe`、探针 `2d85c5ce40964584d306375179060fac649434b746eca4e2b997e07c9473b97f` 和配套 mapping。自有 `emulator-5586` 实际安装核对后，真实接口断言得到 **positionMs=650／queuePositionMs=650／segmentEndMs=-1**（`rhvideo-open-ended-timeline-native.log`、`rhvideo-android-single-clock-1793322676132-release`）；进度修复没有将全长变成截断。该轮持续播放仍 **失败**：**5415 ms** 仅推进 **1184 ms／28 帧**，原五秒门槛没有放宽。这是字段修复的原生证据，不是整个单播放器验收通过或速度问题已修复。
+
+另外新增 `scripts/testing/rhvideo-local-clock.mjs`，只诊断，不安装 APK、不选真机：校验自有 AVD 和已安装 APK 精确字节，将相同 20 秒竖屏 H.264／AAC 夹具推到本应用新建目录，实际调用 `navigation.open`／`files.open`／`native.media.state`；普通 PlayerView 没有 RHVideo 会话或旋转合成层，也没有网络／媒体库取流。观察区间冻结主 WebView、五秒中不读状态，随后一次读取真实时间／帧，未静音／改速／降低画质或重新播放。失败诊断在关闭播放器前捕获，原生成样本保留；只停止自有 AVD 的本应用，不停止系统服务。
+
+修复前的同一默认主 APK `515a5f43…` 在该本地对照 **仍失败**（`rhvideo-local-clock-native-baseline.log`、`rhvideo-local-clock-81zN29/receipt.json`）：**5615.67 ms** 推进 **2537 ms／52 帧**，同一 input、1 倍、音视频轨选中，无错误／抑制，实际音量 100。素材 SHA-256 与前节 RHVideo 单／多路控制完全相同。Main／本地播放器整段累计 89 个界面帧中 84 个 janky；这仍非视频帧时序。两种独立路径都慢，不能只按 RHVideo HTTP、旋转合成层或多路竞争解释，但音量／时钟观测途径等条件并不完全相同，不能当成严格单变量性能排名。
+
+本轮全部共享测试 **879/879、零失败／跳过**（`rhvideo-open-ended-timeline-full-node.log`）；原生探针／宿主／本地对照专项另 **37/37、零跳过**。新增策略检查同一快照位置、未知 end 不被制造为裁剪上界、自有 AVD 精确名称及复制名称拒绝。它们不覆盖上述未通过的持续播放。
+
+为进一步区别测试环境影响，新建 **RHFilesRhVideoQA20261030HostGpu／emulator-5588**，独立数据目录为短路径 QA 的 `test-artifacts/rhvideo-avd-hostgpu-20261030`，不复制旧 userdata、不重启／重置两台现有 AVD，不更新共享 SDK／驱动／Hyper-V 配置。同为 Android 14／x86_64／Pixel 7、1080×2400／420 dpi、启动参数 6 核／6144 MiB、默认音频，显式 `-gpu host`。已确认新进程存活、WHPX operational、实际 OpenGL Renderer 为 **Intel Arc B580**；创建／启动日志为 `rhvideo-host-gpu-{avd-create,emulator-stdout,emulator-stderr}.log`。ADB 已从 offline 进入 device，但 `sys.boot_completed` 仍为空、bootanim 仍 running、provisioned／user_setup 为 0；实际 logcat 在执行系统包 `first-boot` dex2oat，具体 qemu PID **93764**（父进程 **47056**）持续存活并有 CPU 前进。未安装 RHFiles 或运行播放测试，不能将 online、创建成功或 GPU 名称当成环境已健康。新 userdata 和 GPU 同时不同，因此未来结果也不能单独证明 GPU 是唯一原因；两台旧 AVD 的失败继续保留。宿主只增加该精确自有名字的白名单，未放宽到任意 AVD 或手机。
+
+这符合 [Android 官方图形加速说明](https://developer.android.com/studio/run/emulator-acceleration)允许用独立 AVD／命令行选择 host GPU 的方式，但不采用“换环境即可宣称产品已修好”的结论。正式 Windows／实体手机未动，没有发包，完整目标仍未完成。
+
 ## 2026-10-30 单视频持续播放及有界系统时序（仍失败，未发包）
 
 单路探针首次构建 **3 分 15 秒成功**，但原生运行在探针自己的 `waitView("PlaybackActivity")` 出错（`rhvideo-single-clock-native.log`、`rhvideo-android-single-clock-1793321016581-release`）：Activity 已经是 PlaybackActivity，该帮助函数却要求其中含有 WebView，纯原生播放器不会满足。这不是有效的播放时钟失败。探针改为在原 **20 秒**上限内核对真实 Activity／精确 ID 和公开原生状态，不再等待不存在的 WebView；不改播放、不延长等待。新增策略防止重新误用该帮助函数，修正探针构建 **50 秒成功**（短路径 QA 的 `rhvideo-single-clock-native-readiness-build.log`）。

@@ -14,11 +14,11 @@ test('unknown Android acceptance modes fail before SDK access or installing any 
     assert.equal(result.status,1);assert.match(result.stderr,/Unknown owned Android acceptance mode/);assert.equal(result.stdout,'');
   }
 });
-test('native acceptance permits only the two explicitly owned QA AVD names',()=>{
+test('native acceptance permits only the three explicitly owned QA AVD names',()=>{
   const runner=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8'),node=parse(runner,{ecmaVersion:'latest',sourceType:'module'}).body.find(node=>node.type==='FunctionDeclaration'&&node.id?.name==='verifyOwnedAvdName');
   assert(node);const verify=vm.runInNewContext('('+runner.slice(node.start,node.end)+')',{assert});
-  verify('RHFilesRhVideoQA20261027\r\nOK\r\n');verify('RHFilesRhVideoQA20261030Audio\nOK\n');
-  for(const name of ['','Moto','RHFilesQA','RHFilesRhVideoQA20261030Audio-copy','arbitrary-emulator'])assert.throws(()=>verify(name));
+  verify('RHFilesRhVideoQA20261027\r\nOK\r\n');verify('RHFilesRhVideoQA20261030Audio\nOK\n');verify('RHFilesRhVideoQA20261030HostGpu\nOK\n');
+  for(const name of ['','Moto','RHFilesQA','RHFilesRhVideoQA20261030Audio-copy','RHFilesRhVideoQA20261030HostGpu-copy','arbitrary-emulator'])assert.throws(()=>verify(name));
   assert.match(runner,/assert\.equal\(run\(\['shell','getprop','ro\.kernel\.qemu'\]\)\.trim\(\),'1','Physical devices are not allowed'\)/);
 });
 

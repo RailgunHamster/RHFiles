@@ -160,7 +160,10 @@ public class RhVideoInstrumentation extends Instrumentation {
     require(before.getString("rotationRenderer").equals("surface-compositor")&&before.getBoolean("nativeLayerAttached")&&!before.getBoolean("rotationPipeline")&&before.getInt("rotation")==0,"Retain the product's actual unrotated native compositor");
     boolean audio=false,video=false;JSONArray groups=before.getJSONObject("tracks").getJSONArray("groups");
     for(int i=0;i<groups.length();i++){JSONObject group=groups.getJSONObject(i);JSONArray tracks=group.getJSONArray("tracks");for(int j=0;j<tracks.length();j++)if(tracks.getJSONObject(j).getBoolean("selected")){audio|=group.getString("type").equals("audio");video|=group.getString("type").equals("video");}}
-    require(audio&&video,"A video-only or silent-track-removal experiment cannot pass this control");step("single clock settled "+before);
+    require(audio&&video,"A video-only or silent-track-removal experiment cannot pass this control");
+    require(before.getLong("segmentStartMs")==0&&before.getLong("segmentEndMs")==-1&&before.getLong("queuePositionMs")==before.getLong("positionMs"),"The ordinary single input must report its real progress without an artificial clipping end");
+    step("single timeline verified "+new JSONObject().put("positionMs",before.getLong("positionMs")).put("queuePositionMs",before.getLong("queuePositionMs")).put("segmentEndMs",before.getLong("segmentEndMs")));
+    step("single clock settled "+before);
     long started=SystemClock.elapsedRealtime();runOnMainSync(()->library.pauseTimers());try{Thread.sleep(5000);}finally{runOnMainSync(()->library.resumeTimers());}
     JSONObject after=(JSONObject)nativeCall("automation.media.state",new JSONObject());long elapsed=SystemClock.elapsedRealtime()-started;
     long position=after.getLong("positionMs")-before.getLong("positionMs"),frames=after.getLong("renderedFrames")-before.getLong("renderedFrames");

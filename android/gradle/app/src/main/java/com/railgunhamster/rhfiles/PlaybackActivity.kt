@@ -189,11 +189,12 @@ class PlaybackActivity:AppCompatActivity() {
   internal fun automationState():JSONObject {
     val engine=player?:error("播放器尚未就绪")
     engine.videoDecoderCounters?.ensureUpdated()
-    return JSONObject().put("opened",!rhClosing).put("path",path).put("index",engine.currentMediaItemIndex+(rhWindow?.offset?:0)).put("count",rhWindow?.total?:queue.size).put("playing",engine.isPlaying).put("playWhenReady",engine.playWhenReady).put("playbackState",engine.playbackState).put("suppressionReason",engine.playbackSuppressionReason).put("error",engine.playerError?.let{JSONObject().put("code",it.errorCodeName).put("message",it.cause?.message?:it.message?:"") }?:JSONObject.NULL).put("positionMs",engine.currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
+    val currentPosition=engine.currentPosition
+    return JSONObject().put("opened",!rhClosing).put("path",path).put("index",engine.currentMediaItemIndex+(rhWindow?.offset?:0)).put("count",rhWindow?.total?:queue.size).put("playing",engine.isPlaying).put("playWhenReady",engine.playWhenReady).put("playbackState",engine.playbackState).put("suppressionReason",engine.playbackSuppressionReason).put("error",engine.playerError?.let{JSONObject().put("code",it.errorCodeName).put("message",it.cause?.message?:it.message?:"") }?:JSONObject.NULL).put("positionMs",currentPosition).put("durationMs",if(engine.duration==C.TIME_UNSET)JSONObject.NULL else engine.duration).put("rate",engine.playbackParameters.speed).put("repeat",engine.repeatMode==Player.REPEAT_MODE_ONE).put("controls",playerView.isControllerFullyVisible)
       .put("volume",RhVideoVolume.local(engine)*100).put("decoderVolume",engine.volume*100).put("tracks",PlayerTracks.state(engine.currentTracks,engine.trackSelectionParameters))
       .put("rendered",rhRendered).put("renderedFrames",engine.videoDecoderCounters?.renderedOutputBufferCount?:0).put("inputId",rhInputId)
       .also{state->(playerView as? RhVideoPlayerView)?.rotationState()?.let{rotation->rotation.keys().forEach{state.put(it,rotation.get(it))}}}
-      .also{state->rhWindow?.let{w->val local=engine.currentMediaItemIndex.coerceIn(0,w.items.lastIndex);state.put("id",w.ids[local]).put("lease",w.lease).put("options",JSONObject(w.options.toString())).put("segmentStartMs",w.starts[local]).put("segmentEndMs",w.ends[local]).put("queueDurationMs",w.totalMs).put("queuePositionMs",rhQueuePosition(w,local,engine.currentPosition));state.put("queue",JSONObject().put("id",w.ids[local]).put("index",w.offset+local).put("total",w.total).put("options",JSONObject(w.options.toString())).put("generation",w.generation));val favorite=RhVideoClient.get(this).favoriteState("video",w.ids[local],w.generation);favorite.keys().forEach{state.put(it,favorite.get(it))};state.put("marked",RhVideoClient.get(this).previewMarked("video",w.ids[local],w.generation))}}
+      .also{state->rhWindow?.let{w->val local=engine.currentMediaItemIndex.coerceIn(0,w.items.lastIndex);state.put("id",w.ids[local]).put("lease",w.lease).put("options",JSONObject(w.options.toString())).put("segmentStartMs",w.starts[local]).put("segmentEndMs",w.ends[local]).put("queueDurationMs",w.totalMs).put("queuePositionMs",rhQueuePosition(w,local,currentPosition));state.put("queue",JSONObject().put("id",w.ids[local]).put("index",w.offset+local).put("total",w.total).put("options",JSONObject(w.options.toString())).put("generation",w.generation));val favorite=RhVideoClient.get(this).favoriteState("video",w.ids[local],w.generation);favorite.keys().forEach{state.put(it,favorite.get(it))};state.put("marked",RhVideoClient.get(this).previewMarked("video",w.ids[local],w.generation))}}
   }
   internal fun automationControl(args:JSONObject):JSONObject {
     val engine=player?:error("播放器尚未就绪")
@@ -345,7 +346,15 @@ class PlaybackActivity:AppCompatActivity() {
     if(engine.currentPosition>=threshold)rhUi.post{ended()}
     else rhEndMessage=engine.createMessage{_,_->ended()}.setLooper(engine.applicationLooper).setPosition(local,threshold).send()
   }
-  private fun rhQueuePosition(w:RhVideoClient.Window,local:Int,positionMs:Long)=w.beforeMs[local]+(positionMs-w.starts[local]).coerceIn(0,(w.ends[local]-w.starts[local]).coerceAtLeast(0))
+  private fun rhQueuePosition(w:RhVideoClient.Window,local:Int,positionMs:Long):Long {
+    val start=w.starts[local]
+    // -1 leaves a full-length input open to its actual EOF, not zero length.
+    // Read a known decoder duration for reporting only; never edit the plan
+    // or add a MediaItem clipping end to make a progress value look correct.
+    val end=w.ends[local].takeIf{it>=0}?:player?.duration?.takeIf{it>=0}
+    val elapsed=(positionMs-start).coerceAtLeast(0)
+    return w.beforeMs[local]+(end?.let{elapsed.coerceAtMost((it-start).coerceAtLeast(0))}?:elapsed)
+  }
   private fun updateRhProgress(){val engine=player?:return;val w=rhWindow?:return;val local=engine.currentMediaItemIndex.coerceIn(0,w.items.lastIndex);if(w.options.optString("origin")=="favorite"){val count=w.options.getInt("parentTotal");val selected=w.options.getInt("parentIndex");rhQueueLabel?.text="${selected+1} / $count";if(rhQueueSeek?.isPressed!=true)rhQueueSeek?.progress=if(count>1)(selected*10000.0/(count-1)).toInt()else 0;return};rhQueueLabel?.text="${w.offset+local+1} / ${w.total} · ${if(w.options.optBoolean("fullLength",true))"全长"else "${w.options.optDouble("segment",3.0)} 秒片段"}";if(rhQueueSeek?.isPressed!=true)rhQueueSeek?.progress=(rhQueuePosition(w,local,engine.currentPosition)*10000/w.totalMs.coerceAtLeast(1)).toInt()}
   private fun showError(error:PlaybackException){
     failure.removeAllViews();failure.visibility=View.VISIBLE;header.visibility=View.VISIBLE
