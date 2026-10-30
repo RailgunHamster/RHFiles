@@ -41,6 +41,16 @@ test('a non-waiting CLI does not open unused receipt transports',async()=>{
   await withTransportFixture(false,async({sockets,writes})=>{assert.equal(sockets.length,1);assert.equal(writes[0].result.state,'running');assert(sockets[0].closed);});
 });
 
+test('opt-in CLI traces carry wall and monotonic timestamps without request arguments',async()=>{
+  const previous=process.env.RHFILES_CLI_TRACE,write=process.stderr.write,rows=[],started=Date.now();
+  process.env.RHFILES_CLI_TRACE='1';process.stderr.write=chunk=>{rows.push(JSON.parse(String(chunk)));return true;};
+  try{
+    await withTransportFixture(false,async()=>{});
+    assert.deepEqual(rows.map(row=>row.rhfilesClientTrace),['request.send','request.reply']);
+    for(const row of rows){assert(Number.isSafeInteger(row.wallMs)&&row.wallMs>=started&&row.wallMs<=Date.now());assert(Number.isSafeInteger(row.atMs)&&row.atMs>=0);assert(!Object.hasOwn(row,'args'));assert(!Object.hasOwn(row,'key'));}
+  }finally{process.stderr.write=write;if(previous===undefined)delete process.env.RHFILES_CLI_TRACE;else process.env.RHFILES_CLI_TRACE=previous;}
+});
+
 test('a silent producer cannot consume the deadline before a completed process receipt is read',async()=>{
   let reads=0;const completed={result:{state:'succeeded',result:{closed:true}}};
   const result=await waitWithReceipt(()=>new Promise(()=>{}),async()=>{reads++;return completed;});assert.equal(result,completed);assert.equal(reads,1);

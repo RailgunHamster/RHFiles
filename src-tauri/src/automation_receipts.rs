@@ -282,6 +282,7 @@ pub(crate) struct Query {
 // Opt-in debug evidence only. Never log the caller's key, run ID, arguments or
 // result; the local sequence correlates ingress/return without exposing them.
 #[cfg(debug_assertions)]
+#[derive(Clone, Copy)]
 struct ReceiptReadTrace {
     sequence: u64,
     started: Instant,
@@ -318,7 +319,12 @@ impl ReceiptReadTrace {
     }
 }
 #[tauri::command]
-pub(crate) async fn automation_receipt(query: Query) -> Result<Option<Value>, Value> {
+pub(crate) async fn automation_receipt(
+    app: tauri::AppHandle,
+    query: Query,
+) -> Result<Option<Value>, Value> {
+    #[cfg(not(debug_assertions))]
+    let _ = app;
     #[cfg(debug_assertions)]
     let trace = ReceiptReadTrace::begin(query.timeout_ms.unwrap_or(0));
     if query.run_id.is_some() == query.key.is_some()
@@ -352,6 +358,13 @@ pub(crate) async fn automation_receipt(query: Query) -> Result<Option<Value>, Va
             #[cfg(debug_assertions)]
             if let Some(trace) = &trace {
                 trace.finish(value.as_ref());
+                let trace = *trace;
+                if app
+                    .run_on_main_thread(move || trace.record("ui-turn", json!({})))
+                    .is_err()
+                {
+                    trace.record("ui-turn-unavailable", json!({}));
+                }
             }
             return Ok(value);
         }

@@ -7,7 +7,7 @@ import {createInterface} from 'node:readline';
 import {pathToFileURL} from 'node:url';
 
 export class ClientError extends Error{constructor(code,message,details){super(message);this.code=code;this.details=details;}}
-function trace(stage,details={}){if(process.env.RHFILES_CLI_TRACE==='1')process.stderr.write(JSON.stringify({rhfilesClientTrace:stage,atMs:Math.round(performance.now()),...details})+'\n');}
+function trace(stage,details={}){if(process.env.RHFILES_CLI_TRACE==='1')process.stderr.write(JSON.stringify({rhfilesClientTrace:stage,atMs:Math.round(performance.now()),wallMs:Date.now(),...details})+'\n');}
 export function parseArguments(argv){
   const options={pane:'active',port:9222,timeout:30000},position=[];
   const valueOptions=new Set(['port','endpoint','target','window','pane','android','adb','scope','key','timeout','launch']);
