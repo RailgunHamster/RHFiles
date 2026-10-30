@@ -1704,8 +1704,9 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         "presentation.close" => {
             #[cfg(windows)]
             {
-                crate::rhvideo_player::stop_presentation();
+                return crate::rhvideo_player::presentation_close(&args);
             }
+            #[cfg(not(windows))]
             return Ok(json!({"closed":true}));
         }
         "presentation.bounds" => {

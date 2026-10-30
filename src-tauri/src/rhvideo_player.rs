@@ -1061,21 +1061,26 @@ pub async fn preload(app: AppHandle, url: String, title: String,rotation:crate::
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
+fn presentation_matches(args:&Value,input:Option<u64>)->Result<bool,String>{
+    let Some(expected)=args.get("expectedInput") else{return Ok(true);};
+    let expected=expected.as_u64().filter(|id|*id>0&&*id<=9_007_199_254_740_991).or_else(||{
+        expected.as_f64().filter(|id|id.is_finite()&&id.fract()==0.0&&(1.0..=9_007_199_254_740_991.0).contains(id)).map(|id|id as u64)
+    }).ok_or("放映输入标识无效")?;
+    Ok(input==Some(expected))
+}
+pub fn presentation_close(args:&Value)->Result<Value,String>{
+    let player={
+        let mut slot=PRESENTATION.lock().map_err(|_|"放映状态不可用")?;
+        if !presentation_matches(args,slot.as_ref().map(|p|p.input_id))?{return Ok(json!({"opened":false,"stale":true}));}
+        // A retired input must not cancel a newer open still being prepared.
+        PRESENTATION_EPOCH.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        slot.take()
+    };
+    if let Some(player)=player{release_surface(player);}
+    Ok(json!({"closed":true}))
+}
 pub fn stop_presentation() {
-    PRESENTATION_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let player = PRESENTATION.lock().ok().and_then(|mut value| value.take());
-    if let Some(player) = player {
-        let child = player.child;
-        drop(player);
-        unsafe {
-            let _ = PostMessageW(
-                Some(HWND(child as Ptr)),
-                WM_CLOSE,
-                Default::default(),
-                Default::default(),
-            );
-        }
-    }
+    let _=presentation_close(&json!({}));
 }
 pub async fn presentation_open(
     app: AppHandle,
@@ -1154,6 +1159,7 @@ pub async fn presentation_open(
 }
 pub fn presentation_command(action: &str, args: &Value) -> Result<Value, String> {
     let mut slot = PRESENTATION.lock().map_err(|_| "放映状态不可用")?;
+    if !presentation_matches(args,slot.as_ref().map(|p|p.input_id))?{return Ok(json!({"opened":false,"stale":true}));}
     let Some(player) = slot.as_mut() else {
         return Ok(json!({"opened":false}));
     };
@@ -1163,12 +1169,12 @@ pub fn presentation_command(action: &str, args: &Value) -> Result<Value, String>
     Ok(player.state())
 }
 pub async fn presentation_bounds(app: AppHandle, args: Value) -> Result<Value, String> {
-    let child = PRESENTATION
-        .lock()
-        .map_err(|_| "放映状态不可用")?
-        .as_ref()
-        .map(|p| p.child)
-        .ok_or("原生放映没有打开")?;
+    let (child,input)={
+        let slot=PRESENTATION.lock().map_err(|_|"放映状态不可用")?;
+        if !presentation_matches(&args,slot.as_ref().map(|p|p.input_id))?{return Ok(json!({"opened":false,"stale":true}));}
+        let player=slot.as_ref().ok_or("原生放映没有打开")?;
+        (player.child,player.input_id)
+    };
     let view = app
         .get_webview_window("window-rhvideo")
         .ok_or("媒体库窗口已关闭")?;
@@ -1188,6 +1194,10 @@ pub async fn presentation_bounds(app: AppHandle, args: Value) -> Result<Value, S
             let scale = view.scale_factor().map_err(|e| e.to_string())?;
             let size = view.inner_size().map_err(|e| e.to_string())?;
             let [x, y, width, height] = bounds.map(|n| (n as f64 * scale).round() as i32);
+            // The HWND may have been retired/reused while this job waited on
+            // the main queue. Hold ownership across the actual window calls.
+            let slot=PRESENTATION.lock().map_err(|_|"放映状态不可用")?;
+            if !slot.as_ref().is_some_and(|p|p.input_id==input&&p.child==child){return Ok(json!({"opened":false,"stale":true}));}
             let hwnd = HWND(child as Ptr);
             unsafe {
                 if visible {
@@ -1219,7 +1229,8 @@ pub async fn presentation_bounds(app: AppHandle, args: Value) -> Result<Value, S
                     let _ = ShowWindow(hwnd, SW_HIDE);
                 }
             }
-            Ok::<_, String>(json!({"visible":visible}))
+            drop(slot);
+            Ok::<_, String>(json!({"visible":visible,"inputId":input}))
         })();
         let _ = tx.send(result);
     })
@@ -1857,6 +1868,17 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
 #[cfg(test)]
 mod input_tests{
     use super::*;
+    #[test]
+    fn presentation_commands_accept_only_the_captured_current_input(){
+        for input in [None,Some(1),Some(2)]{assert!(presentation_matches(&json!({}),input).unwrap());}
+        assert!(presentation_matches(&json!({"expectedInput":7}),Some(7)).unwrap());
+        assert!(presentation_matches(&json!({"expectedInput":7.0}),Some(7)).unwrap());
+        assert!(!presentation_matches(&json!({"expectedInput":7}),Some(8)).unwrap());
+        assert!(!presentation_matches(&json!({"expectedInput":7}),None).unwrap());
+        for value in [Value::Null,json!(0),json!(-1),json!(1.5),json!("7"),json!(true),json!({}),json!([]),json!(9_007_199_254_740_992u64)]{
+            assert!(presentation_matches(&json!({"expectedInput":value}),Some(7)).is_err());
+        }
+    }
     #[test]
     fn a_prebuilt_plugin_index_is_opt_in_and_matches_the_loaded_runtime(){
         let root=tempfile::tempdir().unwrap();let path=root.path();std::fs::create_dir(path.join("plugins")).unwrap();

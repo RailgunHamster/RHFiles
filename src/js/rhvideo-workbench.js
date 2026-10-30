@@ -159,7 +159,7 @@
         invalidatePendingConfirmation();
         if (id === "wb-info") detailJob = null;
         if (id !== "wb-viewer" && viewer?.videoActive) {
-          void native("presentation.control", { command: "pause" }).catch(
+          void presentationRequest("control", { command: "pause" }).catch(
             notice,
           );
           void syncPresentation(0, false).catch(notice);
@@ -781,9 +781,10 @@
           $(id)?.close();
           liveRefresh.configure(liveRefresh.enabled);
           if (viewer?.videoActive && viewerIsTop()) {
-            await syncPresentation();
-            if (viewer.running)
-              await native("presentation.control", { command: "resume" });
+            const v=viewer;
+            await syncPresentation(1,true,v);
+            if (viewer===v&&v.running)
+              await presentationRequest("control", { command: "resume" },v);
           }
           if(id==="wb-viewer"&&!$("image-dialog").open)await invoke("preview.commit");
           return { closed: true };
@@ -3504,7 +3505,7 @@
           viewer.observer?.disconnect();
           clearTimeout(viewer.resizeTimer);
           if (viewer.videoActive)
-            void native("presentation.close").catch(notice);
+            void presentationRequest("close").catch(notice);
         }
         viewer = null;
       }
@@ -3942,10 +3943,12 @@
         layer.style.setProperty("--fade", c.fade + "s");
         layer.classList.toggle("ken-burns", c.kenBurns);
         if (media.kind === "video") {
-          await invoke("viewer.video", { id: media.id, title: media.title });
+          const opened=await invoke("viewer.video", { id: media.id, title: media.title });
+          if(opened?.stale||viewer!==v||transitionTicket!==v.transitionTicket)return {stale:true};
           const deadline = performance.now() + 15000;
           while (viewer === v && transitionTicket === v.transitionTicket) {
-            const status = await native("presentation.state");
+            const status = await presentationRequest("state",{},v);
+            if(status.stale)return {stale:true};
             if (status.error) throw Error(status.error);
             if (status.renderedFrames > 0) break;
             if (performance.now() >= deadline) {
@@ -3959,10 +3962,10 @@
           // A manually selected paused frame has no running fade clock. Keep
           // it opaque, including on resume; ordinary playback still fades in.
           v.videoFadeSeconds = v.running && c.overlap ? c.fade : 0;
-          await syncPresentation(v.videoFadeSeconds > 0 ? 0 : 1);
+          await syncPresentation(v.videoFadeSeconds > 0 ? 0 : 1,true,v);
           if (viewer !== v || transitionTicket !== v.transitionTicket) return {stale:true};
           if (!v.running)
-            await native("presentation.control", { command: "pause" });
+            await presentationRequest("control", { command: "pause" },v);
         } else {
           const [url] = await native("images", {
             paths: [media.path || "/storage/" + media.webp_path],
@@ -3975,8 +3978,9 @@
           if (viewer !== v || transitionTicket !== v.transitionTicket) return;
           layer.append(image);
           if (v.videoActive) {
-            await native("presentation.close");
-            v.videoActive = false;
+            const input=v.videoInput;
+            await presentationRequest("close",{},v);
+            if(v.videoInput===input){v.videoActive=false;v.videoInput=null;}
           }
         }
         if (viewer !== v || transitionTicket !== v.transitionTicket) return;
@@ -4030,7 +4034,7 @@
                 v.boundsAt = now;
                 v.boundsBusy = true;
                 v.faded = alpha >= 1;
-                syncPresentation(alpha)
+                syncPresentation(alpha,true,v)
                   .catch(notice)
                   .finally(() => (v.boundsBusy = false));
               }
@@ -4064,7 +4068,7 @@
         viewer.surface.classList.toggle("paused", !viewer.running);
         refreshViewer();
         if (viewer.videoActive)
-          void native("presentation.control", {
+          void presentationRequest("control", {
             command: viewer.running ? "resume" : "pause",
           }).catch(notice);
         return { running: viewer.running };
@@ -4150,28 +4154,40 @@
         if(viewer){void renderStrip().catch(notice);return viewerSnapshot();}
         return { lanes: prefs.lanes };
       });
+      function presentationRequest(action,args={},v=viewer){
+        const explicit=Object.hasOwn(args,"expectedInput"),input=explicit?args.expectedInput:v?.videoInput;
+        if(!explicit&&(!Number.isSafeInteger(input)||input<1)){
+          if(action==="state")return native("presentation.state",args);
+          return Promise.resolve({opened:false,stale:true});
+        }
+        return native("presentation."+action,{...args,expectedInput:input});
+      }
       action(
         "viewer.video",
         object({ id: string, title: string }, ["id", "title"]),
         async (args) => {
           if (!viewer) throw Error("放映没有打开");
           const v = viewer;
-          await native("presentation.open", { ...args, super: config().super });
-          if (viewer !== v) {
-            await native("presentation.close");
+          const transition=v.transitionTicket,attempt=(v.videoAttempt||0)+1;v.videoAttempt=attempt;
+          const opened=await native("presentation.open", { ...args, super: config().super });
+          if(!Number.isSafeInteger(opened?.inputId)||opened.inputId<1)throw Error("原生放映没有返回有效输入标识");
+          if (viewer !== v||v.videoAttempt!==attempt||v.transitionTicket!==transition) {
+            await presentationRequest("close",{expectedInput:opened.inputId},v);
             return { stale: true };
           }
+          v.videoInput=opened.inputId;
           v.videoActive = true;
           v.faded = false;
-          return syncPresentation(0);
+          const projected=await syncPresentation(0,true,v);
+          if(viewer!==v||v.videoAttempt!==attempt||v.transitionTicket!==transition)return {stale:true};
+          return {...projected,inputId:opened.inputId};
         },
         "external",
       );
-      function syncPresentation(opacity = 1, visible = true) {
-        const v = viewer;
+      function syncPresentation(opacity = 1, visible = true,v=viewer) {
         if (!v?.videoActive) return Promise.resolve({ opened: false });
         const rect = v.surface.getBoundingClientRect();
-        return native("presentation.bounds", {
+        return presentationRequest("bounds", {
           x: rect.x,
           y: rect.y,
           width: rect.width,
@@ -4179,7 +4195,7 @@
           viewportWidth: innerWidth,
           opacity,
           visible,
-        });
+        },v);
       }
       function viewerIsTop() {
         return ctx.modalTop() === "wb-viewer";
@@ -4187,7 +4203,7 @@
       action(
         "viewer.mediaState",
         object(),
-        () => native("presentation.state"),
+        () => presentationRequest("state"),
         "read",
       );
       action(
@@ -4199,10 +4215,11 @@
               enum: ["pause", "resume", "seek", "volume", "rate"],
             },
             value: { type: "number" },
+            expectedInput:{type:"integer",minimum:1,maximum:9007199254740991},
           },
           ["command"],
         ),
-        (args) => native("presentation.control", args),
+        (args) => presentationRequest("control", args),
       );
       listen(
         document,
@@ -4210,7 +4227,7 @@
         () => {
           liveRefresh.configure(liveRefresh.enabled);
           if (viewer?.videoActive)
-            void native("presentation.control", {
+            void presentationRequest("control", {
               command: document.hidden || !viewer.running ? "pause" : "resume",
             }).catch(notice);
         },

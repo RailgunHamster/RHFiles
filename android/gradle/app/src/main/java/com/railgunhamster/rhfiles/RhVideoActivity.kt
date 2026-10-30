@@ -185,7 +185,7 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
                 JSONArray(text);check(exportText==null){"已有导出操作"};exportText=text;runOnUiThread{exportDocument.launch("RHVideo-selection.json")};JSONObject().put("requested",true)
               }
               "presentation.open","presentation.close","presentation.state","presentation.control","presentation.bounds"->{
-                val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{val p=presentation?:error("放映窗口已关闭");result.complete(when(action){"presentation.open"->p.open(args);"presentation.close"->p.close();"presentation.state"->p.state();"presentation.control"->p.control(args);else->p.bounds(args)})}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)
+                val result=java.util.concurrent.CompletableFuture<JSONObject>();runOnUiThread{try{val p=presentation?:error("放映窗口已关闭");result.complete(when(action){"presentation.open"->p.open(args);"presentation.close"->p.close(args);"presentation.state"->p.state(args);"presentation.control"->p.control(args);else->p.bounds(args)})}catch(e:Exception){result.completeExceptionally(e)}};result.get(10,java.util.concurrent.TimeUnit.SECONDS)
               }
               "grid.open"->{
                 var ticket=args.optString("playlist");val count=args.optInt("count",4);val low=args.optBoolean("super")
