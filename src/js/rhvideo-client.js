@@ -324,7 +324,7 @@
     try{const pending=readSaveChain.catch(()=>{}).then(()=>epoch===readEpoch&&state.connected?native('progress',{id,chapter:index,ratio:Math.min(1,Math.max(0,ratio))}):null);readSaveChain=pending;const value=await pending;if(epoch!==readEpoch)return {saved:false,stale:true};if(token===reader.token)$('reader-save').textContent='进度已同步到 RHVideo';return {saved:value!==null};}
     catch(error){if(token===reader.token)$('reader-save').textContent='进度保存失败';notice('阅读进度未保存：'+String(error));throw error;}
   }
-  function clearMediaViews(){++reader.token;++timelineLoadId;++folderLoadId;++state.loadId;state.loading=false;for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();$('media-grid').inert=false;$('media-grid').setAttribute('aria-busy','false');clearTimeout(reader.saveTimer);reader.book=null;reader.loaded=false;for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();$('full-image').removeAttribute('src');$('chapter-text').textContent='';$('timeline-frames').replaceChildren();images=[];}
+  function clearMediaViews(){++reader.token;++timelineLoadId;++folderLoadId;++state.loadId;state.loading=false;clearCards();$('media-grid').inert=false;$('media-grid').setAttribute('aria-busy','false');clearTimeout(reader.saveTimer);reader.book=null;reader.loaded=false;for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();$('full-image').removeAttribute('src');$('chapter-text').textContent='';$('timeline-frames').replaceChildren();images=[];}
   async function chapter(index,ratio=0){
     if(!reader.book)throw Error('请先打开一本书');
     if(!reader.book.chapters.some(c=>c.index===index))throw Error('没有这个章节');
