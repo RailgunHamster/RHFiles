@@ -1275,7 +1275,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       require(Boolean.TRUE.equals(expression(library,"RHVideoNative.request('export.chunk',{ticket:'oversized-qa',index:0,reset:true,text:'x'.repeat(65537)}).then(()=>false,()=>true)")),"Oversized bridge chunks must fail");
       require(Boolean.TRUE.equals(expression(library,"(async()=>{await RHVideoNative.request('export.chunk',{ticket:'sequence-qa',index:0,reset:true,text:'['});return RHVideoNative.request('export.chunk',{ticket:'sequence-qa',index:0,text:'[]'}).then(()=>false,()=>true)})()")),"Export chunks cannot be replayed or appended out of order");
       JSONObject screenshotLibrary=(JSONObject)action("gallery.open",new JSONObject());
-      JSONObject screenshotScope=new JSONObject(eval(library,"JSON.stringify({modal:document.querySelectorAll('#wb-gallery[open] .wb-frame').length,primary:document.querySelectorAll('#gallery-content .wb-frame').length,primaryHidden:document.getElementById('gallery-panel').hidden})"));
+      JSONObject screenshotScope=(JSONObject)expression(library,"({modal:document.querySelectorAll('#wb-gallery[open] .wb-frame').length,primary:document.querySelectorAll('#gallery-content .wb-frame').length,primaryHidden:document.getElementById('gallery-panel').hidden})");
       step("gallery scope snapshot "+screenshotScope+" result="+screenshotLibrary);
       require(screenshotLibrary.getInt("total")==32&&screenshotScope.getInt("modal")==32&&screenshotScope.getBoolean("primaryHidden"),"Screenshot library must render all 32 fixture frames in the current modal, independently of cached hidden primary cards: "+screenshotScope+"; "+screenshotLibrary);
       action("panel.close",new JSONObject().put("id","wb-gallery"));
