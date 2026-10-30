@@ -13,9 +13,10 @@ import {androidSession} from './android-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
 import {configureVideoOrderFixture,checkPackagedVideoOrder} from './rhvideo-video-order.mjs';
+import {replacementIntentControl,checkPackagedReplacementIntent} from './rhvideo-replacement-intent.mjs';
 
 export function libraryBusinessMode(value='search-fields'){
-  assert(['search-fields','video-order'].includes(value),'Unknown owned-library business scenario');return value;
+  assert(['search-fields','video-order','replacement-intent'].includes(value),'Unknown owned-library business scenario');return value;
 }
 export function verifyLibraryBusinessTraffic(requests,mode){
   libraryBusinessMode(mode);
@@ -69,10 +70,11 @@ async function main(){
   assert(relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith('..'+path.sep)&&path.extname(actualApk)==='.apk','Use an APK snapshot inside this worktree');
   const installed=run(['shell','pm','path','com.railgunhamster.rhfiles']).trim().split(/\r?\n/);assert.equal(installed.length,1);assert.match(installed[0],/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/);
   assert.equal(run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64),hash(actualApk),'Installed APK differs from the admitted snapshot');
-  const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-android-'+mode+'-')),receipt={serial,mode,apkSha256:hash(actualApk),artifact,scope:'Packaged worker, actual UI input and semantic API; not native playback acceptance'};
+  const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-android-'+mode+'-')),receipt={serial,mode,apkSha256:hash(actualApk),artifact,scope:mode==='replacement-intent'?'Packaged native HTTP metadata, actual dialogs and semantic API; not physical input or native playback acceptance':'Packaged worker, actual UI input and semantic API; not native playback acceptance'};
+  const intentControl=mode==='replacement-intent'?replacementIntentControl():null;
   let fixture,app,view,port;console.log('Android library '+mode+': '+artifact);
   try{
-    fixture=await rhvideoFixture({videoCount:mode==='search-fields'?3:52});if(mode==='search-fields')configureSearchFixture(fixture);else configureVideoOrderFixture(fixture);
+    fixture=await rhvideoFixture({videoCount:mode==='video-order'?52:3,...(intentControl?{beforeCatalog:intentControl.beforeCatalog}:{})});if(mode==='search-fields')configureSearchFixture(fixture);else if(mode==='video-order')configureVideoOrderFixture(fixture);
     process.env.ANDROID_SDK_ROOT=sdk;app=await androidSession(serial);
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
     const pid=run(['shell','pidof','com.railgunhamster.rhfiles']).trim();assert.match(pid,/^\d+$/);receipt.pid=Number(pid);
@@ -82,9 +84,10 @@ async function main(){
     // Like an actual user changing servers, explicitly connect once controls
     // exist. Do not wait for an unrelated remembered/offline test server's
     // automatic restore, or remove the old/new connection identity assertions.
-    await until(()=>view.evaluate("!!window.RHFilesAPI?.snapshot().state.application&&['rhvideo.category','rhvideo.connection.connect','rhvideo.search'].every(id=>RHFilesAPI.list().some(row=>row.id===id))"),'packaged search controls registered');
+    const required=['rhvideo.category','rhvideo.connection.connect','rhvideo.search',...(mode==='replacement-intent'?['rhvideo.replacement.selected','rhvideo.confirm.begin','rhvideo.selection.stage']:[])];
+    await until(()=>view.evaluate("!!window.RHFilesAPI?.snapshot().state.application&&"+JSON.stringify(required)+".every(id=>RHFilesAPI.list().some(row=>row.id===id))"),'packaged library controls registered');
     const server='http://10.0.2.2:'+new URL(fixture.url).port;
-    receipt.result=mode==='search-fields'?await checkPackagedSearchFields(view,server):await checkPackagedVideoOrder(view,server,fixture);
+    receipt.result=mode==='search-fields'?await checkPackagedSearchFields(view,server):mode==='video-order'?await checkPackagedVideoOrder(view,server,fixture):await checkPackagedReplacementIntent(view,server,fixture,intentControl);
     await app.screenshot(mode);receipt.sessionArtifact=app.artifactDir;receipt.passed=true;
   }catch(error){
     receipt.failure=String(error);process.exitCode=1;console.error(error);
@@ -98,6 +101,7 @@ async function main(){
     if(view)try{receipt.failureState=await view.evaluate("RHFilesAPI.invoke('rhvideo.state')");}catch{receipt.failureStateUnavailable=true;}
   }
   finally{
+    intentControl?.release();
     if(fixture){receipt.transport=fixture.transport.snapshot();receipt.writes=fixture.requests.filter(row=>row.method!=='GET'&&!(row.method==='POST'&&row.path==='/api/v1/auth/login')).map(({method,path})=>({method,path}));receipt.unexpectedWrites=[];try{verifyLibraryBusinessTraffic(fixture.requests,mode);}catch(error){receipt.trafficFailure=String(error);receipt.unexpectedWrites=receipt.writes;receipt.passed=false;process.exitCode=1;}await fixture.close();}
     view?.close();try{app?.close();}catch(error){receipt.closeError=String(error.code||'unavailable');}
     if(port)try{run(['forward','--remove','tcp:'+port]);}catch{}

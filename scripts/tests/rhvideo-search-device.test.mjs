@@ -23,12 +23,12 @@ test('Windows and Android execute the same packaged scenario; Android never inst
   assert.doesNotMatch(source,/run\(\[['"](?:install|uninstall)['"]|\['shell','(?:reboot|wm)'|setVolume|setPlaybackSpeed|adb.*kill-server/);
 });
 test('owned-library scenarios are explicit and unknown modes never reach device admission',()=>{
-  assert.equal(libraryBusinessMode(),'search-fields');assert.equal(libraryBusinessMode('video-order'),'video-order');
+  assert.equal(libraryBusinessMode(),'search-fields');for(const mode of ['video-order','replacement-intent'])assert.equal(libraryBusinessMode(mode),mode);
   for(const value of ['playback',null,{},'video-order-copy'])assert.throws(()=>libraryBusinessMode(value));
 });
 test('final traffic admission rejects extra replacement batches and any search mutation',()=>{
   const reads=[{method:'GET',path:'/api/v1/videos'},{method:'POST',path:'/api/v1/auth/login'}],batch={method:'POST',path:'/api/v1/replace-batches'};
-  assert.doesNotThrow(()=>verifyLibraryBusinessTraffic(reads,'search-fields'));assert.doesNotThrow(()=>verifyLibraryBusinessTraffic([...reads,batch],'video-order'));
-  assert.throws(()=>verifyLibraryBusinessTraffic(reads,'video-order'));assert.throws(()=>verifyLibraryBusinessTraffic([...reads,batch,batch],'video-order'));assert.throws(()=>verifyLibraryBusinessTraffic([...reads,batch],'search-fields'));
-  for(const mode of ['search-fields','video-order'])for(const bad of [{method:'DELETE',path:'/api/v1/replace-batches'},{method:'POST',path:'/api/v1/trash/video/v1'}])assert.throws(()=>verifyLibraryBusinessTraffic([...reads,bad],mode));
+  assert.doesNotThrow(()=>verifyLibraryBusinessTraffic(reads,'search-fields'));assert.throws(()=>verifyLibraryBusinessTraffic([...reads,batch],'search-fields'));
+  for(const mode of ['video-order','replacement-intent']){assert.doesNotThrow(()=>verifyLibraryBusinessTraffic([...reads,batch],mode));assert.throws(()=>verifyLibraryBusinessTraffic(reads,mode));assert.throws(()=>verifyLibraryBusinessTraffic([...reads,batch,batch],mode));}
+  for(const mode of ['search-fields','video-order','replacement-intent'])for(const bad of [{method:'DELETE',path:'/api/v1/replace-batches'},{method:'POST',path:'/api/v1/trash/video/v1'}])assert.throws(()=>verifyLibraryBusinessTraffic([...reads,bad],mode));
 });

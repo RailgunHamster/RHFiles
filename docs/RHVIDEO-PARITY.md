@@ -6,6 +6,34 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 最新冻结整轮 111/112（未通过，回执恢复待修）
+
+**`777425a / 7e710c24e9fbd3cca05cb4f7bcc52ebddba803d143d790de189275364cf3d140`** 的完整串行 Windows 场景现已终止：**111/112、一失败、零取消／跳过，测试时间 26 分 12 秒**（`rhvideo-video-order-full-kfQAd4/RHFiles/test-artifacts/rhvideo-windows-1XB7X6/receipt.json`）。唯一失败是第 **34** 项：首个存活视图 debugger-paused、目标重新发现不可用、生产者 wait 回复丢失时，同屏关闭的命令行回执恢复未在原五秒预算内完成。其他所有项通过也不能将该整轮记为绿色。
+
+`rhfiles-e2e-jRcIQZ/grid-close-recovery-failure.json` 的进程账本在暂停期间及恢复后均确认同一关闭已成功，`finishedAt-startedAt = 990 ms`；CLI 读到另一路 running 后，两个读取最终都超时。说明关闭与调用者及时取得完成结果是不同的要求，不能把窗口消失当成功，也不能把 CLI 错误直接判作播放器没有关闭。当前证据不足以判定唯一恢复根因；未重发关闭、延长原预算或用后续单项通过覆盖失败。终止后逐项复核 **1138** 个冻结输入、**14** 个参考模块及 EXE，全部未变（冻结目录的 `post-run-fingerprints.json`）。本节仍不包含下面的新确认上下文修复。
+
+后续在健康视图附加最多 32 条公开 RPC 开始／原始 Promise 应答时间，不在五秒期间轮询、不改变 Promise、不添加重发。**65F4** 的定向观测通过（`rhvideo-close-receipt-public-boundary-window.log`、`rhfiles-e2e-hBIPpN/grid-close-recovery-observation.json`）：账本关闭用时 **1342 ms**，公开 wait 的实际应答仍约 **3477 ms**，存在完成与交付间隔，唯一根因尚未定位。早一版观测曾尝试改写只读的 Tauri 导出，准入断言明确失败、未执行关闭；现只观测可验证的公开 RPC，不把它称为原生 IPC 内部计时。此次 1/1 不覆盖旧整轮失败，也未将原预算放宽。
+
+## 2026-10-30 迟到确认的完整界面上下文（两端实包定向通过）
+
+冻结的 **`777425a / 7e710c24…cf3d140`** 整套独立运行期间，在本工作区继续检查，未改它的 **1138** 个输入。`replacement.selected` 已有较新选择／显式关闭 info、confirm 的 intent，却漏了复用 info／打开其他工作台面板：八项实际 action 与 dialog AST 用例先全部失败（`rhvideo-replacement-dialog-intent-red.log`）。只修工作台后，普通登录／图片／阅读器／时间轴的另一个弹窗入口又有八项全部失败（`rhvideo-replacement-client-modal-red.log`），不是同一个接口已存在就算覆盖。关闭设置、规则及四个客户端面板还另有十项失败（`rhvideo-confirm-close-context-red.log`）。
+
+继续沿提交链确认：通用 `confirm.begin` 在状态／操作契约读取阶段、`selection.stage` 在已选元数据读取阶段仍可迟到创建 UI；新增八项中 **2/8、六失败**（`rhvideo-confirm-all-stages-red.log`）。现将未提交确认准备统一为单调的 `confirmationIntent`：显式新确认请求、普通／工作台面板打开、复用和关闭都会使旧准备失效；状态、契约或元数据每个 await 后均核对，账户 epoch／generation 检查仍独立保留。过期状态读取不再接着等操作契约。**不删除已创建的确认票据、不撤销已发送批次、不自动重试服务器动作**；正常创建／两次推进／一次性提交继续保留。
+
+相关控制检查 **94/94、零失败／跳过**（`rhvideo-confirm-context-complete-controls.log`）；其中生产声明的受控用例不是第二份业务实现。两端共用真实 HTTP 场景 `rhvideo-replacement-intent.mjs`：服务器阻塞实际视频清单，随后复用 info、创建另一确认、打开／关闭普通连接面板、关闭设置和批量暂存父面板，响应完成后核对旧结果 stale、新 UI 不变且零写入；最后正常两次确认只提交一个批次，之后开关设置不得取消或重发。测试 gate 自身还有真实 HTTP、幂等释放及旧 gate 不释放新操作的回归。这些是实际界面／语义 API 与原生 HTTP 业务验证，不声称物理鼠标／触摸或原生播放验收。
+
+旧程序对照已另行实际运行并失败：`rhvideo-old-confirmation-baseline-MmIIbL/RHFiles/test-artifacts/rhvideo-replacement-intent-old-window-red.log`。这个独立副本保留同一 **7E71** EXE 和原 **777425a** 的 **111** 个前端文件（逐项对照冻结指纹），只加入新回归脚本；没有改旧前端或绕过脚本内的资源 SHA-256 门禁。实际延迟响应完成后，第一种“复用 info”已得到一个旧选择的确认 ticket、`confirmationOpen:true`，而非 stale；`rhfiles-e2e-e1H8ak/replacement-intent-failure.png` 已查看，确认确实覆盖新面板。这是实窗口反例，不只是 VM 预期。
+
+最新产品源码的共享全套 **1077/1077、零失败／跳过**（`rhvideo-confirm-context-full-node.log`，最终 `npm test` 再核对为 `rhvideo-confirm-context-final-node.log`）。旧整轮终止及上述对照结束后才开始 Windows／Android 新构建。Windows debug EXE **`65f49c5e2eb4b8bbc2b6d271268888b159c36652eb20fa1b3e68b67313b445d4`** 编译成功并冻结后，实际迟到确认、搜索字段、视频排序／完整选择三个场景 **3/3** 通过（`rhvideo-confirm-context-windows-window.log`），不是完整 Windows 整轮重新通过。
+
+Android 只同步两份共享 JS，显式排除未变 Rust 构建，Gradle 主包／探针成功；新主 APK **`d7493e81dc274e33f8c1c2200c5cc6a82a9db4d1d2f5df1866afd68b4c30609d`** 已单次覆盖安装到自有 **5588**，真实 `base.apk` 哈希核对一致。22 份打包资源与当前源码一致；与上次实际通过的 **2C0C** APK 比较，排除签名后 **1234** 个成员只有 client／workbench 两份 JS 改变，主界面、DEX、资源及两套 JNI 未变，不冒计新的 JNI／JVM 验证。
+
+第一次新包业务验证在媒体库控件注册前超时，服务器 **0** 请求（`rhvideo-android-replacement-intent-f5ybPb/receipt.json`）；后续诊断另遇主界面桥接就绪超时，均保留，不能宣称根因已修复。于是绕过业务就绪断言，仅观测早期真实页面：主界面与媒体库先后完成加载，媒体库由 0／7 个基础 action 到 **288** 个、进入 `mobile-client`；没有 JS 异常，另有不影响功能的 favicon 403。实际截图已查看。日志／资源／异常在 `rhvideo-bootstrap-observe-usSYeZ/` 和 `rhvideo-library-bootstrap-yuAKih/`。未延长原业务就绪预算、重装 APK、重置模拟器或清除登录。
+
+完成上述阶段观测、确认进程终止后，同一 **D749** 实包运行六个延迟确认场景全部通过，正常两次推进恰好提交一个批次、零其他写入；**40** 个 HTTP 响应完成，零 transport error／丢弃（`rhvideo-android-replacement-intent-1ACvyQ/receipt.json`，`rhvideo-confirm-context-android-observed-business.log`）。随后搜索字段／拼音九项及真实输入回归也通过，**19** 响应、零错误／写入（`rhvideo-android-search-fields-WAQAWP/receipt.json`）。保存并查看 `android-c5KssT/replacement-intent.png` 和 `android-tUbAI7/search-fields.png`；它们不能替代 Android 原生播放、生命周期或触摸验收。
+
+回执恢复的 **111/112** 失败、上述间歇启动超时、Android 同屏／生命周期及同质量性能仍未验收；定向通过不抹去这些失败，也未发布正式包、操作真机或替换正式 Windows 实例。
+
 ## 2026-10-30 冻结 Windows 整轮终态及新排序构建（继续验收，未发包）
 
 搜索字段版的冻结完整验收现已终止：**111/111、零失败／取消／跳过，26 分 49 秒**。回执为 `rhvideo-search-fields-full-u777Fq/RHFiles/test-artifacts/rhvideo-windows-HK1qZv/receipt.json`，包含普通／同屏原生播放、1080p H.264／4K HEVC 真实帧、图像条带、语义输入、图片加载、服务器任务及真实 FastAPI／SQLite。终止后再次逐项核对 **1132** 个冻结工作区文件、**14** 个实际参考模块及 EXE **`ca17e05e…75e017a`**，没有变化（同一冻结目录的 `post-run-fingerprints.json`）。原先的失败记录保留，不能据本轮绿色宣称以前的间歇失败从未发生；这也是调试版功能验收，不是同质量性能或 Android 完整通过。

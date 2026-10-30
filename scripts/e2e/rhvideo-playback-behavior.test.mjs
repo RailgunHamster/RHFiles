@@ -148,6 +148,19 @@ test('grid close recovers through a real survivor when the first view is paused 
     // lifecycle freezing can be undone by that activation, hiding the fault.
     server=http.createServer((req,res)=>{if(req.url!=='/json/list'){res.writeHead(404).end();return;}requests++;if(requests>1){res.writeHead(503).end();return;}res.setHeader('Content-Type','application/json');res.end(JSON.stringify(ordered));});
     await listenBrowserLoopback(server);
+    // Observe the healthy survivor without polling it during the five-second
+    // action budget. Keep the exact original promises: this records delivery,
+    // not an extra receipt request, a replacement response, or an action retry.
+    await s.view.evaluate(`(()=>{
+      const observations=window.__receiptObservations=[];
+      const record=value=>{if(observations.length<32)observations.push({at:Date.now(),...value});};
+      const observe=(promise,phase)=>{Promise.resolve(promise).then(value=>record({phase:phase+'.reply',state:value?.result?.state??value?.state??null,code:value?.error?.data?.code??null}),error=>record({phase:phase+'.error',code:error?.code??null}));return promise;};
+      const api=RHFilesAPI,rpc=api.rpc;
+      api.rpc=function(request){const value=rpc.call(this,request);if(request.method.startsWith('runs.')){record({phase:request.method+'.start'});observe(value,request.method);}return value;};
+      // Tauri's invoke export is read-only. Do not pretend replacing it can
+      // observe native delivery; these timestamps describe the public RPC only.
+      return true;
+    })()`);
     await s.app.send('Debugger.enable');await s.app.send('Debugger.pause');let output;
     await until(()=>s.app.events.some(event=>event.method==='Debugger.paused'),'the first real view is actually debugger-paused',3000);
     const diagnostics={};
@@ -161,7 +174,11 @@ test('grid close recovers through a real survivor when the first view is paused 
       // process ledger before/after resuming the unrelated view: no replay,
       // extended action deadline, or inferred success from a vanished window.
       if(output.code!==0)diagnostics.whilePaused=await inspectReceipt();
-    }finally{await s.app.send('Debugger.resume');await s.app.send('Debugger.disable');}
+    }finally{
+      try{diagnostics.healthy=await s.view.evaluate('({observations:window.__receiptObservations,visibility:document.visibilityState})',1500);}catch(error){diagnostics.healthy={unavailable:error.code||error.message};}
+      await s.app.send('Debugger.resume');await s.app.send('Debugger.disable');
+    }
+    fs.writeFileSync(path.join(s.app.artifactDir,'grid-close-recovery-observation.json'),JSON.stringify({output,...diagnostics},null,2));
     if(output.code!==0){diagnostics.afterResume=await inspectReceipt();fs.writeFileSync(path.join(s.app.artifactDir,'grid-close-recovery-failure.json'),JSON.stringify({output,...diagnostics},null,2));console.log(JSON.stringify({scenario:'grid close failure ledger',...diagnostics}));}
     console.log(JSON.stringify({scenario:'grid close with paused survivor/discovery fault',...output}));assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
     const trace=output.stderr.trim().split('\n').map(line=>JSON.parse(line));assert.equal(trace.filter(row=>row.rhfilesClientTrace==='request.send').length,1,'Never resubmit the close action');
