@@ -592,6 +592,27 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
     return Playlist(window.items,window.items[window.index].path,(seconds*1000).toLong(),ticket,index,window.lease)
   }
   class Media(val stream:InputStream,val length:Long,val type:String,private val response:Response):java.io.Closeable {override fun close(){response.close()}}
+  private fun executeNativeMedia(call:okhttp3.Call):Response {
+    // Media3 cancels loaders by interrupting their thread. A synchronous
+    // socket execute can ignore that interrupt until its read timeout. Keep
+    // images/metadata on their existing path; only native media uses this
+    // interruptible header wait, as in Media3's OkHttpDataSource.
+    if(Thread.currentThread().isInterrupted){call.cancel();throw java.io.InterruptedIOException("视频读取已取消")}
+    val result=java.util.concurrent.CompletableFuture<Response>()
+    call.enqueue(object:okhttp3.Callback {
+      override fun onFailure(call:okhttp3.Call,error:IOException){result.completeExceptionally(error)}
+      override fun onResponse(call:okhttp3.Call,response:Response){if(!result.complete(response))response.close()}
+    })
+    try{return result.get()}
+    catch(error:InterruptedException){
+      call.cancel()
+      // Cover both races: an already-delivered response which get() did not
+      // consume, and a response arriving after cancellation. Neither may leak.
+      result.whenComplete{response,_->response?.close()};result.cancel(false)
+      Thread.currentThread().interrupt()
+      throw java.io.InterruptedIOException("视频读取已取消").also{it.initCause(error)}
+    }catch(error:java.util.concurrent.ExecutionException){throw (error.cause as? IOException?:IOException("视频读取失败",error.cause?:error))}
+  }
   fun catalogResource(key:String):InputStream {
     require(key.matches(Regex("[a-f0-9-]{36}")))
     val entry=synchronized(lock){assets[key]}?:error("清单连接已失效")
@@ -626,9 +647,15 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
     require(value.image==image&&live(value.session)){"媒体连接已失效"}
     val request=Request.Builder().url(value.session.base.resolve(value.path)!!).header("Authorization","Bearer ${token(value.session)}")
     if(position>0)request.header("Range","bytes=$position-")
-    val response=mediaHttp.newCall(request.build()).execute()
+    val call=mediaHttp.newCall(request.build())
+    val response=if(image)call.execute()else executeNativeMedia(call)
     try{
       expire(value.session,response.code)
+      if(!image&&response.code==416&&live(value.session)){
+        val field=response.header("Content-Range")
+        val size=field?.takeIf{it.length<=40}?.trim()?.let{Regex("(?i)^bytes \\*/([0-9]{1,20})$").matchEntire(it)?.groupValues?.get(1)?.toLongOrNull()}
+        if(size!=null&&size==position)return Media(java.io.ByteArrayInputStream(ByteArray(0)),0,"application/octet-stream",response)
+      }
       check(response.isSuccessful&&live(value.session)){"媒体读取失败（HTTP ${response.code}）"}
       if(position>0)require(response.code==206&&response.header("Content-Range")?.startsWith("bytes $position-")==true){"服务器未正确支持视频跳转"}
       val body=response.body?:error("媒体为空");val claimed=body.contentType()?.toString()?:"application/octet-stream"

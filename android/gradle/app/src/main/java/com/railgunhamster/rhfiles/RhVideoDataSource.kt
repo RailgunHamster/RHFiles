@@ -19,8 +19,10 @@ internal class RhVideoDataSource(private val client:RhVideoClient):BaseDataSourc
     try{
       require(spec.uri.scheme=="rhvideo"&&spec.uri.host?.matches(Regex("[a-f0-9-]{36}"))==true&&spec.uri.path.isNullOrEmpty()&&spec.uri.query==null){"无效的 RHVideo 媒体连接"}
       uri=spec.uri;val input=client.media(spec.uri.host!!,spec.position,false);media=input
-      remaining=if(spec.length!=C.LENGTH_UNSET.toLong())spec.length else input.length
-      opened=true;transferStarted(spec);return remaining
+      // An exact EOF probe can have an explicit requested length, but no bytes
+      // remain. Match Media3's HTTP source: report the request, read immediate EOF.
+      remaining=if(input.length==0L)0 else if(spec.length!=C.LENGTH_UNSET.toLong())spec.length else input.length
+      opened=true;transferStarted(spec);return if(spec.length!=C.LENGTH_UNSET.toLong())spec.length else remaining
     }catch(e:Exception){close();throw IOException(e.message,e)}
   }
   override fun getUri():Uri?=uri
