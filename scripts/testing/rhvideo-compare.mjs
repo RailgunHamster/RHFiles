@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { launchApp, until } from "./app-session.mjs";
 import { cdpSession } from "../rhfiles-api.mjs";
 import { rhvideoFixture } from "./rhvideo-fixture.mjs";
+import { installSearchTiming } from "./rhvideo-search-timing.mjs";
 function verifyComparisonWorkload(reports) {
   assert.equal(reports.length,2);assert.equal(reports[0].client,'RHVideo');assert.equal(reports[1].client,'RHFiles');
   for (const row of reports) {
@@ -20,6 +21,8 @@ function verifyComparisonWorkload(reports) {
 const comparisonDirectory=fs.mkdtempSync(path.resolve('test-artifacts/rhvideo-reference-comparison-'));
 const profileSearch=process.env.RHFILES_QA_SEARCH_PROFILE==='1';
 assert([undefined,'0','1'].includes(process.env.RHFILES_QA_SEARCH_PROFILE),'Search profiling is explicit and diagnostic-only');
+const traceSearch=process.env.RHFILES_QA_SEARCH_TIMING==='1';
+assert([undefined,'0','1'].includes(process.env.RHFILES_QA_SEARCH_TIMING),'Search boundary timing is explicit and diagnostic-only');
 const reference = process.env.RHVIDEO_SOURCE || path.resolve("../RHVideo");
 assert(fs.existsSync(path.join(reference, "static/index.html")));
 const fixture = await rhvideoFixture({
@@ -87,6 +90,7 @@ try {
             "benchmark must use the current " + file,
           );
         }
+        if(traceSearch)await page.evaluate('('+installSearchTiming.toString()+')()');
       }
       await page.send("Emulation.setFocusEmulationEnabled", { enabled: true });
       await page.send("Emulation.setDeviceMetricsOverride", {
@@ -133,7 +137,8 @@ try {
       const coldMs = Date.now() - before,
         samples = [],
         apiSamples = [],
-        counts = [];
+        counts = [],
+        timingWindows = [];
       if(profileSearch){
         await page.send('Profiler.enable');
         await page.send('Profiler.setSamplingInterval',{interval:1000});
@@ -150,10 +155,11 @@ try {
               ? `document.getElementById('search-input').value=${JSON.stringify(query)};await filterVideos();const total=filteredVideos.length;`
               : `const value=await RHFilesAPI.invoke('rhvideo.search',{query:${JSON.stringify(query)}});const total=value.total;`
           }
-        const apiMs=performance.now()-start;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ms:performance.now()-start,apiMs,total};})()`);
+        const apiMs=performance.now()-start;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {ms:performance.now()-start,apiMs,total,${traceSearch?'startedMs:start,finishedMs:performance.now()':''}};})()`);
         samples.push(result.ms);
         apiSamples.push(result.apiMs);
         counts.push(result.total);
+        if(traceSearch)timingWindows.push({sample:timingWindows.length,startedMs:result.startedMs,finishedMs:result.finishedMs,apiMs:result.apiMs,paintMs:result.ms-result.apiMs});
       }
       if(profileSearch){
         const {profile}=await page.send('Profiler.stop');
@@ -177,10 +183,12 @@ try {
         rendered,
         artifact:app.artifactDir,
         counts,
+        ...(traceSearch?{timingWindows,...(client==='RHFiles'?{boundaryTiming:await page.evaluate('__rhvideoSearchTiming.snapshot()')}:{})}:{ }),
       });
     } finally {
       if (page && page !== app) page.close();
       app.close();
+      await app.closed;
     }
   }
 } finally {
@@ -202,6 +210,7 @@ const output = {
     "Windows WebView2 metadata/search UI with real authenticated covers. Not mobile, playback, network or memory acceptance.",
   comparable:!admissionError,
   diagnosticSampling:profileSearch,
+  diagnosticTiming:traceSearch,
   ...(admissionError?{admissionError:String(admissionError)}:{}),
   artifact:comparisonDirectory,
   reports,

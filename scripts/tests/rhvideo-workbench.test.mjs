@@ -40,8 +40,9 @@ test("queued events from a terminated account worker cannot reject or resolve th
   const source = fs.readFileSync(new URL("../../src/js/rhvideo-workbench.js", import.meta.url), "utf8");
   const start = source.slice(source.indexOf("function startWorker()"), source.indexOf("function send(action"));
   const context = vm.createContext({ Worker: class { terminate() {} }, clearTimeout, Error });
-  vm.runInContext(`let worker; const requests=new Map(); ${start}
+  vm.runInContext(`let worker; const requests=new Map(),pageResults=new Map([['old',{}]]); ${start}
     startWorker(); const oldError=worker.onerror, oldMessage=worker.onmessage; startWorker();
+    if(pageResults.size)throw Error('Replaced worker retained stale list pages');
     let resolved=0,rejected=0; requests.set(7,{timer:0,resolve:()=>resolved++,reject:()=>rejected++});
     oldError();oldMessage({data:{id:7,result:'stale'}});
     if(rejected||resolved||requests.size!==1)throw Error('Old worker touched new requests');

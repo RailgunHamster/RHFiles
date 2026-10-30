@@ -29,6 +29,10 @@
             "rhvideo.workbench." + site,
           );
       const resolutions = new I.ResolveCache();
+      // Only bounded list pages, never complete playback/export orders. The
+      // worker still owns filtering and sorting; repeat paints need not pay a
+      // thread round trip for the same immutable catalog revision.
+      const pageResults = new Map();
       let configuration=null,favoriteExports=null,rulesEditor=null,duplicates=null,taskPriority=null,taskPresentation=null,taskCenter=null;
       const ruleProcessId=crypto.randomUUID();
       let ruleRefreshTimer=0,ruleRefreshWaiter=null,ruleEditIntent=0,ruleApplyIntent=0;
@@ -187,6 +191,7 @@
         return node.querySelector(".wb-content");
       }
       function startWorker() {
+        pageResults.clear();
         if (worker) {
           worker.onmessage = null;
           worker.onerror = null;
@@ -420,6 +425,7 @@
       }
       function invalidateCatalog(kind) {
         catalogRevision++;
+        pageResults.clear();
         rulesEditor?.catalogChanged();
         if (kind !== "favorite") resolutions.clear();
         if (worker)
@@ -499,14 +505,31 @@
           ...extra,
         };
       }
-      async function query(extra = {}, verifiedToken) {
+      async function query(extra = {}, verifiedToken, cachePage = false) {
         const token = verifiedToken ?? (await ensure()),
           args = criteria(extra),
           revision = catalogRevision;
         await rawCatalog(args.kind);
+        const current = () => {
+          if (token !== epoch || revision !== catalogRevision)
+            throw Error("媒体账户或清单已更改，已丢弃旧读取");
+        };
+        current();
+        const cacheKey = cachePage && args.latest === true && !args.allKeys && !args.locate &&
+          ["video", "picture", "novel", "favorite"].includes(args.kind)
+          ? JSON.stringify([token, revision, args]) : null;
+        if (cacheKey && pageResults.has(cacheKey)) {
+          const result = pageResults.get(cacheKey);
+          pageResults.delete(cacheKey); pageResults.set(cacheKey, result);
+          return { ...result, items: result.items.slice() };
+        }
         const result = await send("query", args);
-        if (token !== epoch || revision !== catalogRevision)
-          throw Error("媒体账户或清单已更改，已丢弃旧读取");
+        current();
+        if (cacheKey && cacheKey.length <= 32768 && !result.stale && Array.isArray(result.items) && result.items.length <= 100 && !result.queue && JSON.stringify(result).length <= 262144) {
+          if (pageResults.size >= 8) pageResults.delete(pageResults.keys().next().value);
+          pageResults.set(cacheKey, { ...result, items: result.items.slice() });
+          return { ...result, items: result.items.slice() };
+        }
         return result;
       }
       async function catalog(refresh) {
@@ -514,7 +537,7 @@
         await rawCatalog(state.kind, refresh);
         const version = epoch,
           revision = catalogRevision;
-        const result = await query({latest:true}, token);
+        const result = await query({latest:true}, token, true);
         const cached = result.items.map((item) =>
           resolutions.get(I.key(item), JSON.stringify(item)),
         );

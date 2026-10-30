@@ -22,3 +22,10 @@ test('comparison validates the packaged search index and matching engine, not on
   for(const file of ['rhvideo-index.js','rhvideo-search.js','rhvideo-tags.js'])assert(source.includes('"'+file+'"'),'Reject stale packaged '+file+' before timing');
   assert(source.indexOf('benchmark must use the current')<source.indexOf('const before = Date.now()'));
 });
+
+test('search boundary timing is explicit, diagnostic-only and the prior app actually exits before the next client starts',()=>{
+  assert.match(source,/const traceSearch=process\.env\.RHFILES_QA_SEARCH_TIMING==='1'/);
+  assert.match(source,/if\(traceSearch\)await page\.evaluate/);
+  assert.match(source,/diagnosticTiming:traceSearch/);
+  assert.match(source,/app\.close\(\);\s*await app\.closed/);
+});
