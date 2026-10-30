@@ -4,13 +4,17 @@ import path from 'node:path';
 import os from 'node:os';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import {createHash,randomBytes} from 'node:crypto';
 import {execFile,execFileSync,spawn} from 'node:child_process';
 import {rhvideoFixture as contractFixture} from './rhvideo-fixture.mjs';
 import {realRhVideoService} from './rhvideo-real-service.mjs';
 import {taskFixture} from './rhvideo-task-fixture.mjs';
 import {stepTimeline} from './rhvideo-step-timeline.mjs';
+import {expressionTimings} from './rhvideo-expression-timing.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
+const traceExpressions=process.env.RHFILES_QA_EXPRESSION_TIMING==='1';
+assert([undefined,'0','1'].includes(process.env.RHFILES_QA_EXPRESSION_TIMING),'Expression timing is explicit and diagnostic-only');
+const expressionTimingRun=traceExpressions?randomBytes(16).toString('hex'):null;
 const fixtureTransportMode=process.env.RHFILES_QA_FIXTURE_TRANSPORT||'adb-reverse';
 function fixtureServerUrl(transport,port){
   assert(['adb-reverse','emulator-host'].includes(transport),'Unknown owned emulator fixture transport');
@@ -235,7 +239,7 @@ try{
     if(duplicatesMode)modeArgs=['-e','mode','duplicates'];
     if(rulesMode)modeArgs=['-e','mode','rules'];
   const timeline=stepTimeline();
-  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server',fixtureServerUrl(fixtureTransportMode,Number(port)),'-e','fixtureTransport',fixtureTransportMode,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,'-e','surfaceMode',surfaceMode,...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
+  const child=spawn(adb,['-s',serial,'shell','am','instrument','-w','-e','server',fixtureServerUrl(fixtureTransportMode,Number(port)),'-e','fixtureTransport',fixtureTransportMode,'-e','audioStartMs',String(audioStartMs),'-e','codecMode',codecMode,'-e','surfaceMode',surfaceMode,...(expressionTimingRun?['-e','expressionTimingRun',expressionTimingRun]:[]),...modeArgs,'com.railgunhamster.rhfiles.test/com.railgunhamster.rhfiles.RhVideoInstrumentation'],{windowsHide:true});
   child.stdout.on('data',data=>timeline.push(data));
   let output='',armedTaskFailures=false,gridAudioCapture=null,playbackTrace=null;child.stdout.on('data',data=>{output+=data;process.stdout.write(data);if(taskCenterMode&&!armedTaskFailures&&output.includes('QA: task-recovery-arm')){armedTaskFailures=true;taskController.armFailures();}if(tracePlayback&&!playbackTrace&&/^STEP: single clock settled /m.test(output))playbackTrace=capturePlaybackTrace().catch(error=>{console.error('Playback trace unavailable: '+error.message);});const failure=output.match(/^STEP: QA: (?:grid|player)-failure-audio-snapshot pid=(\d+)\r?$/m);if((gridMode||lifecycleMode||singleClockMode)&&!gridAudioCapture&&failure)gridAudioCapture=Promise.all([captureGridAudio(Number(failure[1])),capturePlaybackEnvironment(Number(failure[1]))]).catch(error=>{console.error('Live playback diagnostic unavailable: '+error.message);});});child.stderr.on('data',data=>{output+=data;process.stderr.write(data);});
   // Grid now also checks real held gestures, favorite writes/failures, preview
@@ -245,7 +249,8 @@ try{
   const timer=setTimeout(()=>{expired=true;child.kill();},budgetMs);
   try{await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0&&!expired?resolve():reject(Error(expired?'Owned instrumentation exceeded whole-scenario budget '+budgetMs+' ms':'Instrumentation exit '+code)));});}
   finally{clearTimeout(timer);fs.writeFileSync(path.join(artifact,log),output);fs.writeFileSync(path.join(artifact,log.replace(/\.log$/,'-steps.json')),JSON.stringify(timeline.snapshot(),null,2));if(expired)run(['shell','am','force-stop','com.railgunhamster.rhfiles']);if(gridAudioCapture)await gridAudioCapture;if(playbackTrace)await playbackTrace;}
-  assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED|keyDispatchingTimedOut|Input dispatching timed out/);return output;
+  assert.doesNotMatch(output,/FAIL:|INSTRUMENTATION_FAILED|keyDispatchingTimedOut|Input dispatching timed out/);
+  if(expressionTimingRun)assert(output.includes('STEP: QA: expression-timing-enabled'),'The installed probe must actually implement the requested timing diagnostic');return output;
   }
   const output=await instrument(loginMode?['-e','mode','login']:exportsMode?['-e','mode','exports']:closeReceiptMode?['-e','mode','close-receipt']:singleClockMode?['-e','mode','single-clock']:gridSurfaceMode?['-e','mode','grid-surface-probe']:gridRotationMode?['-e','mode','grid-rotation']:gridRestoreMode?['-e','mode','grid-restore']:gridMode?['-e','mode','grid','-e','failureServer',fixtureServerUrl(fixtureTransportMode,Number(failedPort))]:playlistMode?['-e','mode','playlist']:previewMode?['-e','mode','preview']:singleMode?['-e','mode','single']:favoritesMode?['-e','mode','favorites']:stripMode?['-e','mode','strip']:ticketsMode?['-e','mode','tickets']:rotationMode?['-e','mode','rotation']:[],'instrumentation.log');
   if(stripMode)for(const name of ['rhvideo-strip-before-rotation-qa.png','rhvideo-strip-landscape-qa.png','rhvideo-strip-rows-qa.png'])assert(output.includes('STEP: QA: actual strip row pixels '+name+' after '),'The actual installed probe must verify each rotation image; old probes or leftover screenshots cannot pass: '+name);
@@ -327,10 +332,19 @@ try{
   // the success-only screenshot pull. This is the owned QA emulator only.
   for(const [name,args]of [['native-logcat.log',['logcat','-d','-v','threadtime','-t','6000']],['native-resources.txt',['shell','dumpsys','media.resource_manager']]])try{
     const value=execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:16*1024*1024});fs.writeFileSync(path.join(artifact,name),value);
+    if(expressionTimingRun&&name==='native-logcat.log')fs.writeFileSync(path.join(artifact,'expression-timing.json'),JSON.stringify(expressionTimings(value,expressionTimingRun),null,2));
   }catch(error){console.error('Native diagnostics unavailable: '+name+' — '+error.message);}
   if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('Native controller menu item not available:'))try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-menu-failure-qa.png',path.join(artifact,'rhvideo-menu-failure-qa.png')]);}catch{}
   if((singleMode||playlistMode)&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('FAIL:'))for(const name of ['rhvideo-native-touch-failure-qa.png','rhvideo-failure-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
   if(stripMode&&fs.existsSync(path.join(artifact,'instrumentation.log'))&&fs.readFileSync(path.join(artifact,'instrumentation.log'),'utf8').includes('Both strip rows must restore actual image pixels'))try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-strip-pixels-failure-qa.png',path.join(artifact,'rhvideo-strip-pixels-failure-qa.png')]);}catch{}
   if(gridMode&&!gridRestoreMode&&!gridRotationMode&&!gridSurfaceMode)for(const name of ['rhvideo-grid-landscape-qa.png','rhvideo-grid-portrait-qa.png'])try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/'+name,path.join(artifact,name)]);}catch{}
   if(fixtureTransportMode==='adb-reverse')try{run(['reverse','--remove','tcp:'+port]);if(failedPort)run(['reverse','--remove','tcp:'+failedPort]);}catch{}await fixture.close();await failedFixture?.close();if(actualMode){fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(artifact,'actual-service.log'));const transport=path.join(fixture.directory,'zip-transport.jsonl');if(fs.existsSync(transport))fs.copyFileSync(transport,path.join(artifact,'zip-transport.jsonl'));}fs.rmSync(temporary,{recursive:true,force:true});
+}
+// Runs only after a normally completed scenario, never replacing an earlier
+// business failure from the try/finally above with a diagnostic error.
+if(expressionTimingRun){
+  const timing=JSON.parse(fs.readFileSync(path.join(artifact,'expression-timing.json'),'utf8'));
+  assert(timing.records.length>0,'Requested Android expression timings were not actually observed');
+  assert.equal(timing.rejected,0,'Invalid current-run timing records cannot count as diagnostic success');
+  console.log(JSON.stringify({expressionTimingObserved:true,records:timing.records.length,clock:timing.clock,scope:timing.scope}));
 }

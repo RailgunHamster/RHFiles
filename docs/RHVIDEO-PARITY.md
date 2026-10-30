@@ -16,6 +16,12 @@
 
 干净的 Windows CI 增加在 E2E 前编译外部观察器，避免依赖本机残留 EXE；新增脚本检查顺序与 pwsh。Android 新的可选测试探针计时只记录固定命令名及 Android `elapsedRealtime` 的 UI 排队／WebView 回调／轮询等待等数字，上限 512，带独立运行身份，缺失回调不能记成零耗时成功，不记录参数／结果／凭据；它不等于原生 API 执行时间。原两段执行／nonce 防 ABA、15 秒 eval、45 秒动作及原场景预算不变；没有增加 evaluate 调用、轮询或生产配置开关。相关检查 **21/21**，当前本地源码对照全套 **1158/1158**、零失败／取消／跳过（`rhvideo-expression-timing-full-node.log`）。这些不等于 Android Java 已编译或实包已运行；新的主包／探针需独立验收。
 
+随后正常 x86_64 release 主包构建成功 **1 分 40 秒**，冻结 `rhvideo-account-reset-android-4fc3246e8c834e62b5bf8cf5924b83d8/x64.apk`，SHA-256 **`094ed0050d957537751030e35f293d7fe286eb9eea96a6b6281ffe785242e39f`**。打包 client **`f12eb2f1be5137ac3b8d2e9e156273e7208dcd0ee316ba47569165ad0889da49`** 与实际源码一致；JNI 仍为原 **1f90b647…e244a**，逐字节验证，不冒计 Rust 重编。构建时实际 BuildConfig 是 LOCAL_CLOCK=false、AUDIO_START_MS=0、CODEC_MODE=default、SURFACE_MODE=compositor；系统包 0.1.38／1038、原证书 **42f3ddee…1975** 验证通过。只冻结 QA 副本，不发布另一份同号不同内容文件。
+
+计时 Java 的手维护源码／生成编译输入 SHA-256 均为 **`c513202511331b70e28f54be66cd5aff4d7fb14697cac4a5d602c9e4240ef862`**，独立探针构建成功 **3 分 39 秒**，同目录 `probe.apk` 为 **`d10ab7645d4f7edd5b4ba7f6c7e43ef0a04f385301d28d2d3ca2bf98034d939a`**。探针构建所需 QA BuildConfig 不可替代上面先冻结的正常主包；仍需实际安装／运行，不能由 Java 编译成功推断桥接或播放器已通过。
+
+本机最初两次构建均在 Gradle 开始编译前失败（原 `rhvideo-account-reset-android-build{,-ipv4}.log`）。堆栈明确来自 JDK 21 的 NIO Selector 内部 Unix-domain socket `connect`／Invalid argument，不是 IPv4 网络或应用编译错误；本地 JDK `src.zip` 证实 `jdk.net.unixdomain.tmpdir` 的选择规则。独立 Selector 探测在原临时目录失败，指定短路径 QA 内 `test-artifacts/java-uds` 后成功，随后两次真实构建也成功（`...-build-uds.log`、`rhvideo-expression-timing-probe-build.log`）。参数只加在本次 Java 子进程，不重启／停止系统服务、不改系统网络或全局临时目录；这定位到默认临时目录的 Unix socket 路径，不进一步猜测其系统内部原因。
+
 ## 2026-10-31 普通发行版的外部像素／真实按键验证（该阶段整轮待重跑）
 
 冻结 `8d218a9`／EXE `7745af1fa0255a28b9601fd7783c7b2fc26e8cdcbd9d26eb5c0d40aefcc45ca4` 的完整 Windows 场景已终止：**114/117、三失败、零取消／跳过，21 分 39 秒**，不是绿色验收（`rhvideo-pipe-full-u6eHgs/RHFiles/test-artifacts/rhvideo-windows-XuNsNl/receipt.json`）。结束后重新逐项核对 1160 个冻结源码、两个工具、426 个运行文件及 14 个参考模块，共 **1602** 个输入全部不变；正式程序 PID 45696 未重启或替换。

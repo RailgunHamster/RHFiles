@@ -12,6 +12,21 @@ import java.util.concurrent.*;
 /** Emulator acceptance against the minified production bridge, not mocks in UI. */
 public class RhVideoInstrumentation extends Instrumentation {
   private Bundle args;private volatile Activity current;private WebView main,library;
+  private final ThreadLocal<ExpressionTiming> expressionTiming=new ThreadLocal<>();
+  private int expressionTimingSequence;
+  private static final class ExpressionTiming {
+    final String run,label;final int sequence;final long started=SystemClock.elapsedRealtime();
+    long evals,polls,mainQueueMs,mainQueueMaxMs,callbackMs,callbackMaxMs,callbackMissing,resetEvalMs,launchEvalMs,pollEvalMs,pollSleepMs;
+    ExpressionTiming(String run,String label,int sequence){this.run=run;this.label=label;this.sequence=sequence;}
+    void evaluation(long queued,long entered,long callback,long finished){
+      evals++;long main=Math.max(0,entered-queued),web=callback==0?0:Math.max(0,callback-entered),elapsed=Math.max(0,finished-queued);
+      if(callback==0)callbackMissing++;mainQueueMs+=main;mainQueueMaxMs=Math.max(mainQueueMaxMs,main);callbackMs+=web;callbackMaxMs=Math.max(callbackMaxMs,web);
+      if(evals==1)resetEvalMs=elapsed;else if(evals==2)launchEvalMs=elapsed;else pollEvalMs+=elapsed;
+    }
+    void finish(String outcome){
+      try{android.util.Log.i("RHVideoQATiming",new JSONObject().put("protocol",1).put("run",run).put("sequence",sequence).put("pid",android.os.Process.myPid()).put("label",label).put("clock","android-elapsed-realtime").put("outcome",outcome).put("elapsedMs",SystemClock.elapsedRealtime()-started).put("evals",evals).put("polls",polls).put("mainQueueMs",mainQueueMs).put("mainQueueMaxMs",mainQueueMaxMs).put("callbackMs",callbackMs).put("callbackMaxMs",callbackMaxMs).put("callbackMissing",callbackMissing).put("resetEvalMs",resetEvalMs).put("launchEvalMs",launchEvalMs).put("pollEvalMs",pollEvalMs).put("pollSleepMs",pollSleepMs).toString());}catch(JSONException ignored){}
+    }
+  }
   private final java.util.Set<Activity> stoppedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
   private final java.util.Set<Activity> destroyedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
   @Override public void onCreate(Bundle value){super.onCreate(value);args=value;start();}
@@ -904,11 +919,21 @@ public class RhVideoInstrumentation extends Instrumentation {
   }
   private WebView find(View v){if(v instanceof WebView)return (WebView)v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){WebView w=find(((ViewGroup)v).getChildAt(i));if(w!=null)return w;}return null;}
   private String eval(WebView web,String script)throws Exception{
-    CountDownLatch latch=new CountDownLatch(1);String[] result={"null"};runOnMainSync(()->web.evaluateJavascript(script,r->{result[0]=r;latch.countDown();}));
-    if(!latch.await(15,TimeUnit.SECONDS)){android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("JavaScript evaluation timed out");}return result[0];
+    CountDownLatch latch=new CountDownLatch(1);String[] result={"null"};ExpressionTiming timing=expressionTiming.get();long queued=timing==null?0:SystemClock.elapsedRealtime();long[] checkpoints={queued,0};
+    try{runOnMainSync(()->{if(timing!=null)checkpoints[0]=SystemClock.elapsedRealtime();web.evaluateJavascript(script,r->{result[0]=r;if(timing!=null)checkpoints[1]=SystemClock.elapsedRealtime();latch.countDown();});});
+      if(!latch.await(15,TimeUnit.SECONDS)){android.util.Log.e("RHVideoQA",playbackThreads());throw new Exception("JavaScript evaluation timed out");}return result[0];
+    }finally{if(timing!=null)timing.evaluation(queued,checkpoints[0],checkpoints[1],SystemClock.elapsedRealtime());}
   }
   private String playbackThreads(){StringBuilder text=new StringBuilder("Native playback thread snapshot (no arguments or media addresses)");for(java.util.Map.Entry<Thread,StackTraceElement[]> entry:Thread.getAllStackTraces().entrySet()){String name=entry.getKey().getName();if(!name.equals("main")&&!name.equals("RenderThread")&&!name.startsWith("ExoPlayer:")&&!name.startsWith("Loader:"))continue;text.append("\nTHREAD ").append(name).append(" ").append(entry.getKey().getState());for(StackTraceElement frame:entry.getValue())text.append("\n  ").append(frame);}return text.toString();}
   private Object expression(WebView web,String expression)throws Exception{
+    return expression(web,expression,"expression");
+  }
+  private Object expression(WebView web,String expression,String label)throws Exception{
+    // Opt-in test APK observation only. No extra evaluateJavascript call,
+    // polling, action, result serialization or product BuildConfig flag.
+    String traceRun=args.getString("expressionTimingRun","");ExpressionTiming timing=null;String outcome="error";
+    if(traceRun.matches("[a-f0-9]{32}")&&label.matches("(?:expression|(?:native|files|rhvideo)\\.[A-Za-z][A-Za-z0-9_.]*)")&&expressionTimingSequence<512){timing=new ExpressionTiming(traceRun,label,++expressionTimingSequence);expressionTiming.set(timing);}
+    try{
     String request=java.util.UUID.randomUUID().toString(),nonce=JSONObject.quote(request);
     // Reset separately: a syntax error in the next script must never leave a
     // previous successful result looking like this call's acknowledgement.
@@ -916,8 +941,10 @@ public class RhVideoInstrumentation extends Instrumentation {
     eval(web,"void(async()=>{const publish=result=>{if(window.__rhQa?.request==="+nonce+")window.__rhQa={request:"+nonce+",...result};};try{const value=await ("+expression+");publish({value:value===undefined?null:value});}catch(e){publish({error:String(e)});}})();");
     long end=System.currentTimeMillis()+45000;
     do{Object text=new JSONTokener(eval(web,"JSON.stringify(window.__rhQa||{})")).nextValue();JSONObject result=new JSONObject(String.valueOf(text));
-      if(request.equals(result.optString("request"))){if(result.has("error"))throw new Exception(result.getString("error"));if(result.has("value"))return result.get("value");}Thread.sleep(100);
-    }while(System.currentTimeMillis()<end);throw new Exception("Action timed out");
+      if(timing!=null)timing.polls++;
+      if(request.equals(result.optString("request"))){if(result.has("error"))throw new Exception(result.getString("error"));if(result.has("value")){outcome="value";return result.get("value");}}long sleepStarted=timing==null?0:SystemClock.elapsedRealtime();Thread.sleep(100);if(timing!=null)timing.pollSleepMs+=SystemClock.elapsedRealtime()-sleepStarted;
+    }while(System.currentTimeMillis()<end);outcome="timeout";throw new Exception("Action timed out");
+    }finally{expressionTiming.remove();if(timing!=null)timing.finish(outcome);}
   }
   private void observePlayerOpening(){
     // Instrumented ANRs are terminated before Android writes its usual trace.
@@ -925,10 +952,10 @@ public class RhVideoInstrumentation extends Instrumentation {
     // including asynchronous Activity creation after media.open has returned.
     Thread observer=new Thread(()->{try{for(int i=0;i<3;i++){Thread.sleep(1500);android.util.Log.i("RHVideoQA","Opening snapshot uptime="+SystemClock.uptimeMillis()+" sample="+i+"\n"+playbackThreads());}}catch(InterruptedException e){Thread.currentThread().interrupt();}},"RHVideoQA-opening");observer.setDaemon(true);observer.start();
   }
-  private Object action(String name,JSONObject p)throws Exception{Bundle step=new Bundle();step.putString("stream","STEP: rhvideo."+name+"\n");sendStatus(0,step);if("media.open".equals(name)||"image.playVideo".equals(name))observePlayerOpening();return expression(library,"RHFilesAPI.invoke("+JSONObject.quote("rhvideo."+name)+","+p+")");}
+  private Object action(String name,JSONObject p)throws Exception{Bundle step=new Bundle();step.putString("stream","STEP: rhvideo."+name+"\n");sendStatus(0,step);if("media.open".equals(name)||"image.playVideo".equals(name))observePlayerOpening();return expression(library,"RHFilesAPI.invoke("+JSONObject.quote("rhvideo."+name)+","+p+")","rhvideo."+name);}
   private void step(String name){Bundle value=new Bundle();value.putString("stream","STEP: "+name+"\n");sendStatus(0,value);}
-  private Object nativeCall(String name,JSONObject p)throws Exception{step("native."+name);return expression(main,"api.native("+JSONObject.quote(name)+","+p+")");}
-  private Object mainAction(String name,JSONObject p)throws Exception{step("files."+name);return expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke("+JSONObject.quote(name)+","+p+")");}
+  private Object nativeCall(String name,JSONObject p)throws Exception{step("native."+name);return expression(main,"api.native("+JSONObject.quote(name)+","+p+")","native."+name);}
+  private Object mainAction(String name,JSONObject p)throws Exception{step("files."+name);return expression(main,"(RHFilesAPI.forPane?RHFilesAPI.forPane('active'):RHFilesAPI).invoke("+JSONObject.quote(name)+","+p+")","files."+name);}
   private void assertPreviewPixels()throws Exception{
     assertPreviewPixels("#wb-image-preview img","rhvideo-image-content-qa.png");
   }
@@ -1217,6 +1244,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){stoppedActivities.remove(a);}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){stoppedActivities.add(a);}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){destroyedActivities.add(a);}};
     app.registerActivityLifecycleCallbacks(observer);
     try{
+      if(args.getString("expressionTimingRun","").matches("[a-f0-9]{32}"))step("QA: expression-timing-enabled");
       boolean localClock="local-clock".equals(args.getString("mode"));String server=args.getString("server");require(localClock?server==null:ownedFixtureServer(server),"Only an explicit owned-emulator fixture transport is allowed");
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
