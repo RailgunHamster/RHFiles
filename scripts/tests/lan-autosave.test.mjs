@@ -11,6 +11,7 @@ class Element{
   get textContent(){return (this.text||'')+this.children.map(node=>node.textContent).join('');}
   set textContent(value){this.replaceChildren();this.text=String(value);}
   append(...nodes){for(const node of nodes){node.parent=this;this.children.push(node);}}
+  prepend(...nodes){for(const node of nodes)node.parent=this;this.children.unshift(...nodes);}
   replaceChildren(...nodes){for(const child of this.children)child.parent=null;this.children=[];this.text='';this.append(...nodes);}
   setAttribute(name,value){this.attributes[name]=value;}
   addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);}
@@ -25,6 +26,47 @@ function sandbox(extra={}){
   const ctx=context({document:{createElement:tag=>new Element(tag)},...extra});load(ctx,'settings-autosave.js');
   return {host,ctx,autosave:vm.runInContext('settingsAutoSave',ctx)};
 }
+
+const transfers=[
+  {command:'request',trigger:['生成本机入组请求','Request to join'],field:['入组请求文本','Join request text'],copy:['复制入组请求','Copy join request']},
+  {command:'approve',trigger:['批准上方入组请求','Approve pasted request'],field:['批准信息文本','Approval text'],copy:['复制批准信息','Copy approval']},
+  {command:'export',trigger:['显示组公开信息','Show public group data'],field:['组公开信息文本','Public group data text'],copy:['复制组公开信息','Copy public group data']},
+  {command:'invite',trigger:['邀请新设备（扫码加入）','Invite device (scan to join)'],field:['邀请信息文本','Invitation text'],copy:['复制邀请信息','Copy invitation']},
+];
+async function transferFixture({mobile=false,zh=true,respond,qr,copy}={}){
+  const {host,ctx}=sandbox({btoa:value=>Buffer.from(value).toString('base64')}),calls=[];
+  load(ctx,'device-groups-ui.js');
+  const state={deviceId:'self',defaultDeviceName:'QA',groups:[{id:'rh',name:'RH',permissions:{},members:[{id:'self',self:true,canInvite:true}]}]};
+  await vm.runInContext('deviceGroupView',ctx).mount(host,{mobile,zh,copy,qr,call:async(command,args)=>{calls.push({command,args:plain(args)});return command==='state'?plain(state):respond(command,args);}});
+  const incoming=labeled(host,zh?'粘贴入组请求或批准信息':'Paste a request or approval');incoming.value='rhfiles-group-request:v1:fixture';
+  labeled(host,zh?'已核对信息来自我信任的设备':'I verified this data came from a trusted device').checked=true;
+  return {host,calls,click:label=>{const target=all(host).find(node=>node.tagName==='button'&&node.textContent===label);assert.ok(target,label);return target.fire('click');}};
+}
+for(const mobile of [false,true])for(const zh of [true,false])for(const transfer of transfers.filter(value=>!mobile||value.command!=='invite'))test(`${mobile?'Android':'Windows'} ${transfer.command} shows QR and complete copyable text together (${zh?'zh':'en'})`,async()=>{
+  const uri='rhfiles-group-'+(transfer.command==='request'?'request':'approval')+':v1:'+('公开proof_'.repeat(9000)),language=zh?0:1;let copied;
+  const {host,click,calls}=await transferFixture({mobile,zh,copy:value=>{copied=value;},respond:command=>{assert.equal(command,transfer.command);return {uri,qrSvg:'<svg/>'};}});
+  await click(transfer.trigger[language]);
+  const field=labeled(host,transfer.field[language]),image=all(host).find(node=>node.tagName==='img'),panel=all(host).find(node=>node.className==='dg-output-layout');
+  assert.ok(field?.isConnected&&image?.isConnected,'Both representations belong to the current screen');assert.ok(panel.contains(field)&&panel.contains(image));assert.equal(field.value,uri);assert.equal(field.readOnly,true);assert.ok(!field.disabled&&!field.hidden&&!image.hidden);assert.equal(field.rows,5);
+  await click(transfer.copy[language]);assert.equal(copied,uri,'Copy includes the entire payload, not only the visible lines');assert.equal(calls.filter(value=>value.command===transfer.command).length,1,'Copy never regenerates or resubmits group data');
+});
+test('group text can be copied before QR generation completes; an old QR cannot replace the new output',async()=>{
+  const pending=deferred();let copied;
+  const {host,click}=await transferFixture({copy:value=>{copied=value;},qr:()=>pending.promise,respond:command=>command==='request'?{uri:'pending-request'}:{uri:'current-public-data',qrSvg:'<svg>current</svg>'}});
+  const request=click('生成本机入组请求');await new Promise(resolve=>setImmediate(resolve));
+  await click('复制入组请求');assert.equal(copied,'pending-request');assert.ok(!all(host).some(node=>node.tagName==='img'));
+  await click('显示组公开信息');pending.resolve('<svg>old</svg>');await request;
+  assert.equal(all(host).filter(node=>node.tagName==='img').length,1);assert.equal(labeled(host,'组公开信息文本').value,'current-public-data');assert.ok(!labeled(host,'入组请求文本'));
+});
+test('a QR capacity failure still provides untruncated selectable text and a working copy button',async()=>{
+  const uri='long-proof'.repeat(20000);let copied;
+  const {host,click}=await transferFixture({mobile:true,copy:value=>{copied=value;},qr:async()=>null,respond:()=>({uri})});
+  await click('生成本机入组请求');assert.equal(labeled(host,'入组请求文本').value,uri);assert.match(host.textContent,/无法生成二维码/);await click('复制入组请求');assert.equal(copied,uri);
+});
+test('clipboard failure leaves both group representations available and reports no false success',async()=>{
+  const {host,click}=await transferFixture({copy:async()=>{throw Error('clipboard denied');},respond:()=>({uri:'complete-proof',qrSvg:'<svg/>'})});
+  await click('生成本机入组请求');await click('复制入组请求');assert.match(host.textContent,/clipboard denied/);assert.doesNotMatch(host.textContent,/已复制完整文本/);assert.equal(labeled(host,'入组请求文本').value,'complete-proof');assert.ok(all(host).some(node=>node.tagName==='img'));
+});
 test('rapid checkbox changes are saved in order, including both grants',async()=>{
   const {host,autosave}=sandbox(),write=new Element('input'),remove=new Element('input'),first=deferred(),second=deferred(),seen=[],states=[];
   autosave.bind({root:host,fields:{write,delete:remove},id:'test',status:state=>states.push(state),save:value=>{seen.push(plain(value));return seen.length===1?first.promise:second.promise;}});

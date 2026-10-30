@@ -10,6 +10,11 @@
 .dg-member>div { min-width:0; }.dg-member span,.dg-member code { display:block; font-size:12px; opacity:.75; }.dg-member button { flex-shrink:0; }
 .dg-identity { overflow-wrap:anywhere; font:11px/1.5 ui-monospace,monospace; opacity:.65; }
 .dg-qr { display:block; background:white; width:min(100%,320px); height:auto; padding:12px; margin:12px auto; }
+.dg-output-layout { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:20px; align-items:start; margin-top:16px; padding:16px; border:1px solid color-mix(in srgb,currentColor 16%,transparent); border-radius:14px; }
+.dg-output-text { min-width:0; }.dg-output-text .dg-field { flex-direction:column; align-items:stretch; gap:6px; }
+.dg-output-text .dg-field textarea { box-sizing:border-box; flex:none; width:100%; max-width:100%; min-height:110px; font:12px/1.6 ui-monospace,monospace; -webkit-user-select:text; user-select:text; }
+.dg-output-layout .dg-qr { box-sizing:border-box; width:320px; max-width:100%; margin:0; border-radius:10px; }
+@media(max-width:700px) { .dg-output-layout { grid-template-columns:minmax(0,1fr); }.dg-output-layout .dg-qr { justify-self:center; } }
 .dg-status { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--accent,#2875c5); }
 .dg-forget { margin-top:12px; color:var(--danger,#ba3030); }
 .dg-diagnostics { margin:16px 0; border:1px solid color-mix(in srgb,currentColor 14%,transparent); border-radius:14px; padding:12px; }
