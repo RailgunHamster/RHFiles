@@ -10,6 +10,16 @@ const I=createRequire(import.meta.url)('../../src/js/rhvideo-index.js');
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html'),functions=new Map();
 if(fs.existsSync(reference))for(const script of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(script[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration')functions.set(node.id.name,script[1].slice(node.start,node.end));
 const picture=(id,resolution)=>({id,kind:'picture',original_resolution:resolution,resolution});
+test('strip stars do not cover every picture and keep keyboard access to each favorite action',()=>{
+ const css=fs.readFileSync(new URL('../../src/css/rhvideo-workbench.css',import.meta.url),'utf8');
+ assert.match(css,/\.wb-strip-favorite\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none/);
+ assert.match(css,/\.wb-strip-tile\.selected \.wb-strip-favorite,\s*\.wb-strip-tile:focus-within \.wb-strip-favorite\s*\{[^}]*opacity:\s*\.92;[^}]*pointer-events:\s*auto/);
+});
+test('differential: the reference displays only the selected strip picture star',{skip:!fs.existsSync(reference)},()=>{
+ const referenceText=fs.readFileSync(reference,'utf8');
+ assert.match(referenceText,/\.pic-strip-item \.fav-star[^}]*opacity:\s*0;[^}]*pointer-events:\s*none/);
+ assert.match(referenceText,/\.pic-strip-item\.pic-strip-active \.fav-star[^}]*pointer-events:\s*auto/);
+});
 test('differential: horizontal long pictures keep every reference segment and its exact crop geometry',{skip:!functions.has('psBuildCells')},()=>{
  const items=[picture('wide','1600x900'),picture('long','100x1000'),picture('small','100x200')],context=vm.createContext({});vm.runInContext(functions.get('psParseSize')+'\n'+functions.get('psBuildCells'),context);
  const expected=context.psBuildCells(items,300),actual=I.stripLayout(items,{vertical:false,lanes:1,extent:300,gap:0}).lanes[0];

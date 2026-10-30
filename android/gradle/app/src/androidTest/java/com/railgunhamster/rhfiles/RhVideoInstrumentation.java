@@ -321,17 +321,18 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{box=(JSONObject)expression(library,"(()=>{const s=document.querySelector('.wb-viewer-surface').getBoundingClientRect();return {wide:innerWidth>innerHeight,rows:[...document.querySelectorAll('.wb-strip-row')].map(row=>{const r=row.getBoundingClientRect();return {w:r.width,h:r.height};}),w:s.width,h:s.height};})()");JSONArray rows=box.getJSONArray("rows");if(box.getBoolean("wide")==wide&&rows.length()==2&&Math.abs(rows.getJSONObject(0).getDouble("h")-box.getDouble("h")/2)<2&&Math.abs(rows.getJSONObject(1).getDouble("w")-box.getDouble("w"))<2)return;Thread.sleep(100);}while(System.currentTimeMillis()<end);throw new Exception("Actual strip viewport did not reflow after rotation: "+box);
   }
   private void assertStripPixels(String filename)throws Exception{
+    String script;try(java.io.BufferedReader reader=new java.io.BufferedReader(new java.io.InputStreamReader(getContext().getAssets().open("rhvideo-strip-pixels.js"),java.nio.charset.StandardCharsets.UTF_8))){script=reader.lines().collect(java.util.stream.Collectors.joining("\n"));}
     long started=SystemClock.elapsedRealtime(),end=started+8000;JSONObject geometry=null;String diagnostic="";
     do{
       // Intersect the actual rendered image (including contain letterboxing or
       // a sliced tall image) with both its tile and row. An IMG size / decode
       // flag alone does not prove that either row has reached native pixels.
-      geometry=(JSONObject)expression(library,"(()=>{const box=n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};};return {viewport:innerWidth,rows:[...document.querySelectorAll('.wb-strip-row')].map(row=>{const clip=box(row),items=[...row.querySelectorAll('.wb-strip-tile>img')].map(image=>{const b=box(image),tile=box(image.parentElement),ratio=image.naturalWidth/image.naturalHeight;if(getComputedStyle(image).objectFit==='contain'&&ratio>0){const w=Math.min(b.w,b.h*ratio),h=w/ratio;b.x+=(b.w-w)/2;b.y+=(b.h-h)/2;b.w=w;b.h=h;}const x=Math.max(0,b.x,tile.x,clip.x),y=Math.max(0,b.y,tile.y,clip.y),w=Math.min(innerWidth,b.x+b.w,tile.x+tile.w,clip.x+clip.w)-x,h=Math.min(innerHeight,b.y+b.h,tile.y+tile.h,clip.y+clip.h)-y;return {area:Math.max(0,w)*Math.max(0,h),loaded:image.complete&&image.naturalWidth>0,path:image.parentElement.dataset.mediaPath,points:[0,1,2,3].map(i=>{const px=x+w*(i%2===0?.25:.75),py=y+h*(i<2?.25:.75);return {x:px,y:py,quadrant:(px<b.x+b.w/2?0:1)+(py<b.y+b.h/2?0:2)};})};}).sort((a,b)=>b.area-a.area);return items[0]||null;})};})()");
+      geometry=(JSONObject)expression(library,script);
       int[] web={0,0,0};runOnMainSync(()->{library.getLocationOnScreen(web);web[2]=library.getWidth();});double scale=web[2]/geometry.getDouble("viewport");JSONArray rows=geometry.getJSONArray("rows");
       android.graphics.Bitmap pixels=getUiAutomation().takeScreenshot();boolean valid=pixels!=null&&rows.length()==2;StringBuilder colors=new StringBuilder();
       for(int row=0;valid&&row<rows.length();row++){
         JSONObject image=rows.optJSONObject(row);valid=image!=null&&image.optBoolean("loaded")&&image.optDouble("area")>400;
-        if(!valid)break;JSONArray points=image.getJSONArray("points");
+        if(!valid)break;JSONArray points=image.getJSONArray("points");valid=points.length()==4;if(!valid)break;
         for(int i=0;i<points.length();i++){
           JSONObject point=points.getJSONObject(i);int x=web[0]+(int)(point.getDouble("x")*scale),y=web[1]+(int)(point.getDouble("y")*scale),corner=point.getInt("quadrant");
           if(x<0||y<0||x>=pixels.getWidth()||y>=pixels.getHeight()){valid=false;break;}

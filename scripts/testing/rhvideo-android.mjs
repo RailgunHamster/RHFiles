@@ -118,6 +118,10 @@ for(const relative of ['js/rhvideo-mobile.js','css/rhvideo-mobile.css']){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(apk),'assets/rhvideo/'+relative],{windowsHide:true,maxBuffer:8*1024*1024});
   assert.equal(createHash('sha256').update(packaged).digest('hex'),createHash('sha256').update(fs.readFileSync(path.resolve('android/web',relative))).digest('hex'),'APK must include current mobile '+relative);
 }
+if(stripMode){
+  const packaged=execFileSync(sevenZip,['e','-so',path.resolve(probe),'assets/rhvideo-strip-pixels.js'],{windowsHide:true,maxBuffer:64*1024}),expected=fs.readFileSync(path.resolve('android/gradle/app/src/androidTest/assets/rhvideo-strip-pixels.js'));
+  assert.equal(createHash('sha256').update(packaged).digest('hex'),createHash('sha256').update(expected).digest('hex'),'The exact installed strip probe must include current read-only pixel geometry');
+}
 const run=(args)=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
 function verifyOwnedAvdName(output){
   const names=output.split(/\r?\n/).map(value=>value.trim());

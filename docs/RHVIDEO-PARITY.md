@@ -6,6 +6,24 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 条带星标对齐与旋转后的真实像素（继续验收，未发包）
+
+上一节的 `rhvideo-strip-consumer-frozen-6063e480e2834d73b0d7ba85a29d6e44/` 已终止：**108/109、1 失败、零跳过，25 分 27 秒**，回执 `rhvideo-windows-EIyIbQ/receipt.json`；冻结 **1120** 文件、**14** 参考文件及 9BF0 程序再次逐项核对，均未变。本轮图片失败／延迟卡片两项通过，唯一失败为收藏放映的实际 End 键：最初 DOM／Win32 均拥有输入焦点，发键后两个 RHFiles 窗口均无焦点、没有收到键，最终仍在索引 0。未证明是放映跳转函数失败，也未查明失焦来源；保留整轮失败，不以一次后续通过算作修复。测试新增同步按键／focus、blur 等记录及 JSON 回执，去掉可能携带媒体通道的 outerHTML；不强制抢回焦点、不换成模拟焦点、不放宽原断言。
+
+在另一现有自有 `emulator-5586 / RHFilesRhVideoQA20261030Audio`（启动参数 `swiftshader_indirect`、无在途播放器）运行相同 C951 主包／A874 探针的图片对照，`rhvideo-strip-pixels-software-control.log`／`rhvideo-android-strip-1793341815055-release/` **实际失败**。失败截图清楚显示两行完整图片，绿色采样却为 `0c541a`，正落在收藏按钮上，不是没有绘制图片。没有因其为软件渲染就当作目标环境通过。
+
+同一截图还确认了一个产品偏差：参考 `.pic-strip-item .fav-star` 默认透明且不拦截点击，选中才显示；本端每张图都常驻星标，在窄横屏中挡住大量画面。共享 CSS 现按选中显示，另外保留 `:focus-within` 的键盘访问；未删收藏按钮、源身份保护或 API。实际条带测试新增未选择时星标不遮挡／不拦截的断言，原物理点击选择 → 点击星标 → 核对一次正确服务器写入的测试仍保留，并校验真正打包的 CSS 指纹。
+
+探针几何改为同一份只读测试 APK asset：对实际图片内容／tile／行／视口求交，再减去控件及两像素边缘，保持每行四个真实源色采样；不隐藏控件、不改截图、不放宽 RGB 颜色。额外覆盖遮挡、整图被遮挡的负例及超大裁片只能看到一个源象限的情况。宿主在访问设备前核对测试 APK 内这份几何的 SHA-256，并仍要求三条本次 instrumentation 像素通过步骤，旧探针／旧截图不能通过。共享检查 **917/917、零跳过**（`rhvideo-strip-star-occlusion-node.log`）。
+
+Windows 只因共享界面变更重编，**1 分 03 秒成功**；快照 `rhvideo-strip-star-runtime-e3301cb0da904b4a9b96305515aa4540/` 的 EXE **`a1961cf5b27d610fb28e3c5a84eba03f3156e7cb39e9cefd3fca4c6b7488d057`**，app-local 3.0.24 保留。条带／放映实际窗口 **17/18、1 失败、零跳过**（`rhvideo-strip-star-slideshow-window.log`）：全部十四项条带通过，包括新的 CSS 指纹／星标遮挡断言及原实际收藏写入。仍失败的是 End，新的同步回执 `rhfiles-e2e-vC2iyO/slideshow-end-failure.json` 在失败时也保持 DOM／Win32 输入焦点，没有失焦或按键事件。因此不能将此重复失败简单归因于外部失焦；也不能把上述旧程序整轮或新条带通过写成全部窗口验收已绿。
+
+Android 增量组包 **2 分 11 秒成功**（短路径 QA 的 `rhvideo-strip-occlusion-apk-build.log`），仅共享 CSS／测试探针和资源变化，没有重编未改动的两套 JNI，也没有冒记新的 JVM 全套。快照 `rhvideo-strip-occlusion-runtime-075cf0cfc812438682d21cb9f4eb316e/` 保存主包 **`ed3d9442911bd501b553208d91faaedbebb004cc9b5954d33578d13399137972`**、探针 **`4b372563254a31bcae405e79be81f4a9054df2e12cd015ce0c2ed438f30bc5ac`**、精确测试源码／几何和 mapping；几何 SHA-256 **`d8fd7d0473b7587e4651b89103c6008006b5369b0276e84ac2e9472e6c9be9ce`**。
+
+等 Windows 原生测试／构建结束后，使用同一 `emulator-5588 / RHFilesRhVideoQA20261030HostGpu`、默认参数、逐字节核对安装，完整 **strip 通过**（`rhvideo-strip-pixels-host-isolated.log`／`rhvideo-android-strip-1793343016770-release/`）。旋转前／横屏／旋回竖屏两行真实源色全部通过，等待约 **1042／710／543 ms**；这是功能就绪观察，不是启动性能基准。还验证真实触摸、收藏、放大、两行联动、保存／恢复实际 ID 顺序与位置、一次性标记提交及旧 viewer 隔离；横竖屏截图已查看。原 host-GPU 的间歇 JavaScript／native 帧调度超时仍保留，不能仅因本次独立运行通过认定星标 CSS 就修好了该停顿或证明唯一环境根因。
+
+普通产品未改变音频／codec／compositor、分辨率、格数或等待门槛；未重启任何 AVD／服务、替换正式 Windows 实例、操作实体手机或发包。完整性能、Android 同屏／生命周期及整体验收仍未完成。
+
 ## 2026-10-30 整轮终态、图片请求归属与独立音频对照（继续验收，未发包）
 
 前节冻结的 `rhvideo-task-image-frozen-ee0148824b7848b080b69786694f26ca/` 已有终态：**107/108、1 失败、零跳过，25 分 57 秒**，回执 `rhvideo-windows-tQvmC1/receipt.json`。本次又逐项核对 **1120** 个冻结文件、**14** 个参考文件及 EXE `9bf04e51e836fa8f0ce567eedab9c2cc8fb0b2c71173e9cba586b0be93395b1f`，全部与运行前清单一致。任务详情滚动及两项真实分段 PNG 用例均通过；唯一失败转为条带图片错误测试的请求计数 **1 → 2**。不能将前节 7 项通过写成完整验收已绿。
