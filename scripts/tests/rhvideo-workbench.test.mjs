@@ -104,8 +104,8 @@ const videos = [
   },
 ];
 for (const [sort, expected] of [
-  ["nameAsc", ["a", "c", "b"]],
-  ["nameDesc", ["b", "c", "a"]],
+  ["nameAsc", ["a", "b", "c"]],
+  ["nameDesc", ["c", "b", "a"]],
   ["dateAsc", ["a", "c", "b"]],
   ["dateDesc", ["b", "c", "a"]],
   ["sizeAsc", ["b", "a", "c"]],

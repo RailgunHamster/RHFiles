@@ -12,6 +12,17 @@ import {admitLocalClockDevice} from './rhvideo-local-clock.mjs';
 import {androidSession} from './android-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
+import {configureVideoOrderFixture,checkPackagedVideoOrder} from './rhvideo-video-order.mjs';
+
+export function libraryBusinessMode(value='search-fields'){
+  assert(['search-fields','video-order'].includes(value),'Unknown owned-library business scenario');return value;
+}
+export function verifyLibraryBusinessTraffic(requests,mode){
+  libraryBusinessMode(mode);
+  const writes=requests.filter(row=>row.method!=='GET'&&!(row.method==='POST'&&row.path==='/api/v1/auth/login'));
+  if(mode==='search-fields')assert.equal(writes.length,0,'Search cannot mutate media');
+  else{assert.equal(writes.length,1,'The explicit replacement confirmation must submit exactly one batch, never replay it');assert.equal(writes[0].method,'POST');assert.equal(writes[0].path,'/api/v1/replace-batches');}
+}
 
 export function configureSearchFixture(fixture){
   assert.deepEqual(fixture.videos.map(row=>row.id),['video-0','video-1','video-2']);
@@ -50,7 +61,7 @@ export function admitSearchDevice(serial,run){
   for(const name of ['com.railgunhamster.rhfiles','stagefright'])try{assert.equal(run(['shell','pidof',name]).trim(),'','Existing playback/session must not be replaced');}catch(error){if(error.status!==1)throw error;}
 }
 async function main(){
-  const [serial,apk]=process.argv.slice(2);assert(apk,'Provide the exact already-installed APK snapshot');assert.match(serial||'',/^emulator-\d+$/);
+  const [serial,apk,requestedMode]=process.argv.slice(2),mode=libraryBusinessMode(requestedMode);assert(apk,'Provide the exact already-installed APK snapshot');assert.match(serial||'',/^emulator-\d+$/);
   const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME||path.join(process.env.LOCALAPPDATA,'Android/Sdk'),adb=path.join(sdk,'platform-tools/adb.exe');
   const run=args=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:20000,maxBuffer:4*1024*1024});
   admitSearchDevice(serial,run);
@@ -58,10 +69,10 @@ async function main(){
   assert(relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith('..'+path.sep)&&path.extname(actualApk)==='.apk','Use an APK snapshot inside this worktree');
   const installed=run(['shell','pm','path','com.railgunhamster.rhfiles']).trim().split(/\r?\n/);assert.equal(installed.length,1);assert.match(installed[0],/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/);
   assert.equal(run(['shell','sha256sum',installed[0].slice(8)]).slice(0,64),hash(actualApk),'Installed APK differs from the admitted snapshot');
-  const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-android-search-fields-')),receipt={serial,apkSha256:hash(actualApk),artifact,scope:'Packaged worker, actual UI input and semantic API; not native playback acceptance'};
+  const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-android-'+mode+'-')),receipt={serial,mode,apkSha256:hash(actualApk),artifact,scope:'Packaged worker, actual UI input and semantic API; not native playback acceptance'};
   let fixture,app,view,port;console.log('Android search fields: '+artifact);
   try{
-    fixture=await rhvideoFixture({videoCount:3});configureSearchFixture(fixture);
+    fixture=await rhvideoFixture({videoCount:mode==='search-fields'?3:52});if(mode==='search-fields')configureSearchFixture(fixture);else configureVideoOrderFixture(fixture);
     process.env.ANDROID_SDK_ROOT=sdk;app=await androidSession(serial);
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
     const pid=run(['shell','pidof','com.railgunhamster.rhfiles']).trim();assert.match(pid,/^\d+$/);receipt.pid=Number(pid);
@@ -72,7 +83,8 @@ async function main(){
     // exist. Do not wait for an unrelated remembered/offline test server's
     // automatic restore, or remove the old/new connection identity assertions.
     await until(()=>view.evaluate("!!window.RHFilesAPI?.snapshot().state.application&&['rhvideo.category','rhvideo.connection.connect','rhvideo.search'].every(id=>RHFilesAPI.list().some(row=>row.id===id))"),'packaged search controls registered');
-    receipt.result=await checkPackagedSearchFields(view,'http://10.0.2.2:'+new URL(fixture.url).port);
+    const server='http://10.0.2.2:'+new URL(fixture.url).port;
+    receipt.result=mode==='search-fields'?await checkPackagedSearchFields(view,server):await checkPackagedVideoOrder(view,server,fixture);
     await app.screenshot('search-fields');receipt.sessionArtifact=app.artifactDir;receipt.passed=true;
   }catch(error){
     receipt.failure=String(error);process.exitCode=1;console.error(error);
@@ -80,7 +92,7 @@ async function main(){
     if(view)try{receipt.failureState=await view.evaluate("RHFilesAPI.invoke('rhvideo.state')");}catch{receipt.failureStateUnavailable=true;}
   }
   finally{
-    if(fixture){receipt.transport=fixture.transport.snapshot();receipt.unexpectedWrites=fixture.requests.filter(row=>row.method!=='GET'&&!(row.method==='POST'&&row.path==='/api/v1/auth/login')).map(({method,path})=>({method,path}));if(receipt.unexpectedWrites.length){receipt.passed=false;process.exitCode=1;}await fixture.close();}
+    if(fixture){receipt.transport=fixture.transport.snapshot();receipt.writes=fixture.requests.filter(row=>row.method!=='GET'&&!(row.method==='POST'&&row.path==='/api/v1/auth/login')).map(({method,path})=>({method,path}));receipt.unexpectedWrites=[];try{verifyLibraryBusinessTraffic(fixture.requests,mode);}catch(error){receipt.trafficFailure=String(error);receipt.unexpectedWrites=receipt.writes;receipt.passed=false;process.exitCode=1;}await fixture.close();}
     view?.close();try{app?.close();}catch(error){receipt.closeError=String(error.code||'unavailable');}
     if(port)try{run(['forward','--remove','tcp:'+port]);}catch{}
     try{run(['shell','am','force-stop','com.railgunhamster.rhfiles']);}catch(error){receipt.teardownError=String(error.code||'unavailable');}

@@ -19,6 +19,8 @@
     numeric: true,
     sensitivity: "base",
   });
+  // applyVideoSort uses localeCompare(..., 'zh') without natural-digit rules.
+  const videoNameCollator = new Intl.Collator("zh");
   const hash = (text, seed = 1) => {
     let value = seed | 0;
     for (const c of text) value = Math.imul(value ^ c.codePointAt(0), 16777619);
@@ -284,8 +286,12 @@
               ? ranks[ai] - ranks[bi]
               : direction *
                 (field === "title"
-                  ? collator.compare(a.title, b.title)
-                  : a[field] - b[field])) || (typeof seed === "string" ? ai - bi
+                  ? kind === "video"
+                    ? videoNameCollator.compare(a.original_filename || "", b.original_filename || "")
+                    : collator.compare(a.title, b.title)
+                  : field === "size" && kind === "video"
+                    ? Number(a.original_filesize || 0) - Number(b.original_filesize || 0)
+                    : a[field] - b[field])) || (typeof seed === "string" || !seed && kind === "video" ? ai - bi
                     // Favorites arrive newest-added first. Preserve that rank
                     // when JS milliseconds lose the server's date precision.
                     : !seed && kind === "favorite" && field === "date"

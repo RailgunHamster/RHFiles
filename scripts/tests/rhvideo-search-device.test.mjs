@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {admitSearchDevice} from '../testing/rhvideo-search-fields.mjs';
+import {admitSearchDevice,libraryBusinessMode,verifyLibraryBusinessTraffic} from '../testing/rhvideo-search-fields.mjs';
 const fixture=(overrides={})=>args=>{
   const command=args.join(' ');if(command in overrides)return overrides[command];
   return ({'shell getprop ro.kernel.qemu':'1','emu avd name':'RHFilesRhVideoQA20261030HostGpu\nOK','shell getprop sys.boot_completed':'1','shell dumpsys window windows':'owned home'})[command]||'';
@@ -21,4 +21,14 @@ test('Windows and Android execute the same packaged scenario; Android never inst
   for(const value of [source,windows])assert.match(value,/checkPackagedSearchFields\(view,/);
   assert.match(source,/Installed APK differs/);assert.match(source,/Use the actual current packaged worker index/);assert.match(source,/unexpectedWrites/);
   assert.doesNotMatch(source,/run\(\[['"](?:install|uninstall)['"]|\['shell','(?:reboot|wm)'|setVolume|setPlaybackSpeed|adb.*kill-server/);
+});
+test('owned-library scenarios are explicit and unknown modes never reach device admission',()=>{
+  assert.equal(libraryBusinessMode(),'search-fields');assert.equal(libraryBusinessMode('video-order'),'video-order');
+  for(const value of ['playback',null,{},'video-order-copy'])assert.throws(()=>libraryBusinessMode(value));
+});
+test('final traffic admission rejects extra replacement batches and any search mutation',()=>{
+  const reads=[{method:'GET',path:'/api/v1/videos'},{method:'POST',path:'/api/v1/auth/login'}],batch={method:'POST',path:'/api/v1/replace-batches'};
+  assert.doesNotThrow(()=>verifyLibraryBusinessTraffic(reads,'search-fields'));assert.doesNotThrow(()=>verifyLibraryBusinessTraffic([...reads,batch],'video-order'));
+  assert.throws(()=>verifyLibraryBusinessTraffic(reads,'video-order'));assert.throws(()=>verifyLibraryBusinessTraffic([...reads,batch,batch],'video-order'));assert.throws(()=>verifyLibraryBusinessTraffic([...reads,batch],'search-fields'));
+  for(const mode of ['search-fields','video-order'])for(const bad of [{method:'DELETE',path:'/api/v1/replace-batches'},{method:'POST',path:'/api/v1/trash/video/v1'}])assert.throws(()=>verifyLibraryBusinessTraffic([...reads,bad],mode));
 });

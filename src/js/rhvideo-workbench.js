@@ -51,6 +51,7 @@
         imageSession = null,
         imageToken = 0,
         singlePlayIntent = 0,
+        replacementSelectionIntent = 0,
         thumbnailTicket = 0,
         detailJob = null,
         liveRefresh = null;
@@ -739,6 +740,7 @@
           ["id"],
         ),
         async ({ id }) => {
+          if (id === "wb-info" || id === "wb-confirm") replacementSelectionIntent++;
           if(id==="wb-duplicates")duplicates?.closed();
           if(id==="wb-server"){server.session++;server.load++;taskCenter?.closed();}
           if (id === "wb-viewer") stopViewer();
@@ -2353,13 +2355,30 @@
       action(
         "replacement.selected",
         object(replacementParams, ["resolution", "crf"]),
-        (args) =>
-          invoke("replacement.submit", {
-            ...args,
-            ids: [...selected]
-              .filter((k) => k.startsWith("video:"))
-              .map((k) => k.slice(6)),
-          }),
+        async (args) => {
+          // Like showBatchReplaceModal, freeze selected IDs at the click, then
+          // order known videos by the full list, not click order/current page
+          // or search/tag filters. Keep missing IDs for backend validation.
+          const version = epoch, intent = ++replacementSelectionIntent,
+            keys = [...selected].filter(key => key.startsWith("video:")),
+            c = config();
+          if (!keys.length) throw Error("请先选择视频");
+          if (keys.length > 1000) throw Error("批量替换最多选择 1000 个视频，请减少所选项目");
+          await ensure();
+          if (version !== epoch) throw Error("媒体账户已改变，替换确认未创建");
+          if (intent !== replacementSelectionIntent) return { stale: true };
+          const snapshot = await query({
+            kind:"video", search:"", folder:"", rule:{},
+            sort:c.sort, seed:c.seed, mediaType:"video", portraitOnly:false,
+            selected:keys, allKeys:true, offset:0, limit:1,
+          }, version);
+          if (version !== epoch) throw Error("媒体账户已改变，替换确认未创建");
+          if (intent !== replacementSelectionIntent) return { stale: true };
+          const order = new Map(snapshot.queue.map((item, index) => [item.id, index])),
+            ids = keys.map(key => key.slice(6));
+          ids.sort((a,b) => (order.get(a) ?? order.size) - (order.get(b) ?? order.size));
+          return invoke("replacement.submit", {...args, ids});
+        },
       );
       action(
         "selection.export",
