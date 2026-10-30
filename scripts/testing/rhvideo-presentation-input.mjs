@@ -7,14 +7,19 @@ export const holdPresentationReplyScript=`(()=>{
   const install=value.install;
   value.install=function(ctx){
    const original=ctx.native;window.__qaPresentationNative=original;
+   window.__qaPresentationControls=[];
    ctx.native=(action,args)=>{
+    const controls=window.__qaPresentationControls;
+    const observation=action==='presentation.control'&&controls.length<64?{command:args.command,expectedInput:args.expectedInput,status:'pending'}:null;
+    if(observation)controls.push(observation);
     const hold=action==='presentation.open'&&window.__qaHoldPresentationReply===true;
     if(hold)window.__qaHoldPresentationReply=false;
     return original(action,args).then(result=>{
+     if(observation){observation.status='fulfilled';observation.inputId=result.inputId;}
      if(!hold)return result;
      window.__qaHeldPresentationInput=result.inputId;
      return new Promise(resolve=>{window.__qaReleasePresentationReply=()=>resolve(result);});
-    });
+    },error=>{if(observation)observation.status='rejected';throw error;});
    };
    return install.call(this,ctx);
   };

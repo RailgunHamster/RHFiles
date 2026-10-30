@@ -4,19 +4,20 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {parse} from 'acorn';
 const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');
-const functions=new Map(),actions=new Map();
+const functions=new Map(),actions=new Map();let visibilityChange;
 function visit(node){
  if(!node||typeof node!=='object')return;
  if(node.type==='FunctionDeclaration'&&node.id)functions.set(node.id.name,source.slice(node.start,node.end));
  if(node.type==='CallExpression'&&node.callee.type==='Identifier'&&node.callee.name==='action'&&typeof node.arguments[0]?.value==='string'&&node.arguments[2]){const fn=node.arguments[2];actions.set(node.arguments[0].value,source.slice(fn.start,fn.end));}
+ if(node.type==='CallExpression'&&node.callee.type==='Identifier'&&node.callee.name==='listen'&&node.arguments[1]?.value==='visibilitychange'){const fn=node.arguments[2];visibilityChange=source.slice(fn.start,fn.end);}
  for(const item of Object.values(node))if(Array.isArray(item))item.forEach(visit);else if(item&&typeof item==='object')visit(item);
 }
 visit(parse(source,{ecmaVersion:'latest'}));
 const plain=x=>JSON.parse(JSON.stringify(x));
-function view(token){return {token,transitionTicket:1,videoActive:false,videoInput:null,tiles:new Map(),surface:{getBoundingClientRect:()=>({x:0,y:0,width:800,height:450})},observer:{disconnect(){}}};}
+function view(token){return {token,transitionTicket:1,videoActive:false,videoInput:null,tiles:new Map(),surface:{classList:{toggle(){}},getBoundingClientRect:()=>({x:0,y:0,width:800,height:450})},observer:{disconnect(){}}};}
 function fixture(){
  const calls=[],opens=[],bounds=[],backend={input:11,opacity:1,playing:true,controls:0};let sequence=100,holdBounds=false;
- const context=vm.createContext({viewer:view(1),viewerToken:1,animation:0,innerWidth:800,top:true,config:()=>({super:false}),abortPictureOrders(){},rememberViewer(){},retireStripTile(){},cancelAnimationFrame(){},clearTimeout(){},notice(){},invalidatePendingConfirmation(){},$:()=>({close(){}}),liveRefresh:{enabled:false,configure(){}}});
+ const context=vm.createContext({viewer:view(1),viewerToken:1,animation:0,innerWidth:800,top:true,document:{hidden:false},config:()=>({super:false}),abortPictureOrders(){},rememberViewer(){},retireStripTile(){},cancelAnimationFrame(){},clearTimeout(){},notice(){},refreshViewer(){},invalidatePendingConfirmation(){},$:()=>({close(){}}),liveRefresh:{enabled:false,configure(){}}});
  context.viewerIsTop=()=>context.top;
  const apply=(name,args={})=>{
   if(Object.hasOwn(args,'expectedInput')&&args.expectedInput!==backend.input)return {stale:true,opened:false};
@@ -32,7 +33,8 @@ function fixture(){
   return Promise.resolve(apply(name,args));
  };
  for(const name of ['presentationRequest','syncPresentation','stopViewer'])if(functions.has(name))vm.runInContext(functions.get(name),context);
- for(const [target,id]of [['openVideo','viewer.video'],['control','viewer.mediaControl'],['closePanel','panel.close']])vm.runInContext('globalThis.'+target+'=('+actions.get(id)+')',context);
+ for(const [target,id]of [['openVideo','viewer.video'],['control','viewer.mediaControl'],['closePanel','panel.close'],['toggle','viewer.toggle']])vm.runInContext('globalThis.'+target+'=('+actions.get(id)+')',context);
+ assert(visibilityChange);vm.runInContext('globalThis.visibilityChange=('+visibilityChange+')',context);
  return {context,backend,calls,opens,bounds,holdBounds(){holdBounds=true;}};
 }
 
@@ -88,4 +90,34 @@ test('closing one panel cannot resume video after another panel opens while nati
  const closing=f.context.closePanel({id:'wb-settings'});assert.equal(f.bounds.length,1);
  f.context.top=false;f.bounds[0].finish();await closing;
  assert.equal(f.backend.controls,0,'The new modal still owns pause; no late resume may be queued');
+});
+
+test('explicit resume cannot bypass a newer modal even through the public native control API',async()=>{
+ const f=fixture();f.context.viewer.videoActive=true;f.context.viewer.videoInput=11;f.context.top=false;f.backend.playing=false;
+ await f.context.control({command:'resume'});
+ assert.equal(f.backend.playing,false);assert.equal(f.calls.at(-1).args.command,'pause');assert.equal(f.calls.at(-1).args.expectedInput,11);
+});
+
+test('a background document cannot resume the decoder even when its viewer remains the top modal',async()=>{
+ const f=fixture();f.context.viewer.videoActive=true;f.context.viewer.videoInput=11;f.context.document.hidden=true;f.backend.playing=false;
+ await f.context.control({command:'resume'});assert.equal(f.backend.playing,false);assert.equal(f.calls.at(-1).args.command,'pause');
+});
+
+test('the active visible viewer still resumes normally and preserves stale-input rejection',async()=>{
+ const f=fixture();f.context.viewer.videoActive=true;f.context.viewer.videoInput=11;f.backend.playing=false;
+ await f.context.control({command:'resume'});assert.equal(f.backend.playing,true);assert.equal(f.calls.at(-1).args.command,'resume');
+ f.context.top=false;const stale=await f.context.control({command:'resume',expectedInput:9});assert.equal(stale.stale,true);assert.equal(f.backend.playing,true);assert.equal(f.calls.at(-1).args.expectedInput,9);
+});
+
+test('actual toggle handler preserves running intent without spending decoder resources underneath a panel',async()=>{
+ const f=fixture();Object.assign(f.context.viewer,{videoActive:true,videoInput:11,running:false});f.context.top=false;f.backend.playing=false;
+ assert.equal(f.context.toggle().running,true);await new Promise(setImmediate);assert.equal(f.backend.playing,false);assert.equal(f.context.viewer.running,true);
+ f.context.top=true;f.context.toggle();assert.equal(f.context.viewer.running,false);f.context.toggle();await new Promise(setImmediate);assert.equal(f.backend.playing,true);
+});
+
+test('actual visibility handler does not resume under a modal, but normal foreground restoration still works',async()=>{
+ const f=fixture();Object.assign(f.context.viewer,{videoActive:true,videoInput:11,running:true});f.context.top=false;f.backend.playing=false;
+ f.context.visibilityChange();await new Promise(setImmediate);assert.equal(f.backend.playing,false);assert.equal(f.context.viewer.running,true);
+ f.context.top=true;f.context.visibilityChange();await new Promise(setImmediate);assert.equal(f.backend.playing,true);
+ f.context.document.hidden=true;f.context.visibilityChange();await new Promise(setImmediate);assert.equal(f.backend.playing,false);
 });

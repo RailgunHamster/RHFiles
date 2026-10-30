@@ -28,6 +28,20 @@ export async function exercisePresentationModal({page,until,server,receipt,check
   assert.equal(await page.evaluate('document.getElementById("wb-settings")?.open'),true,'Late video cannot close the settings panel');
   trial.hidden=await checkHidden((running?'running':'paused')+'-settings',state);
   assert.equal(state.playing===true||state.state===3,false,'Native playback must remain paused underneath settings');
+  // Script/keyboard playback intent must obey the same active panel as a
+  // visible click. Observe acknowledgement of each REAL control, not a sleep
+  // followed by a possibly earlier paused state.
+  trial.toggles=[];
+  for(let toggle=0;toggle<2;toggle++){
+   const start=await page.evaluate('__qaPresentationControls.length');
+   const changed=await api('viewer.toggle');
+   const controls=await until(()=>page.evaluate(`(()=>{const rows=__qaPresentationControls.slice(${start});return rows.length&&rows.every(r=>r.status!=='pending')?rows:null;})()`),'actual native toggle delivery under settings',15000);
+   assert.equal(controls.length,1);assert.equal(controls[0].status,'fulfilled');assert.equal(controls[0].inputId,held);
+   const paused=await native();trial.toggles.push({running:changed.running,controls,state:paused});
+   assert.equal(paused.playing===true||paused.state===3,false,'Changing playback intent cannot resume the hidden decoder under settings');
+   assert.equal(await page.evaluate('document.getElementById("wb-settings")?.open'),true);
+  }
+  assert.equal((await api('viewer.state')).running,running,'Two intent changes restore the original user choice');
   await api('panel.close',{id:'wb-settings'});
   const restored=await until(async()=>{const s=await native();return s.opened&&s.inputId===held&&(s.playing===true||s.state===3)===running?s:null;},'closing settings restores the original playback intent',15000);
   trial.visible=await checkVisible((running?'running':'paused')+'-restored',restored);

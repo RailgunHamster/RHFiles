@@ -6,6 +6,18 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 隐藏视频的继续播放入口（继续验收中）
+
+上轮只保护了迟到首帧、面板关闭及投影；实际 `viewer.toggle`、`visibilitychange` 和显式 `viewer.mediaControl resume` 仍可绕过面板归属。Windows 正常候选 **1558** 的真实原生场景新增两次意图切换后，实际 **0/1，一失败，10.814 秒**：设置仍打开、视频层仍隐藏，但真实控制应答后解码状态变为播放（`rhfiles-e2e-6ePv3r/presentation-modal.json`）。这是已复现的隐藏解码资源消耗，不是启动或持续播放慢的唯一根因。
+
+现于统一 `presentationRequest` 入口约束 resume：文档隐藏或其他面板在最上层时，向同一已捕获输入发送 pause；不改写查看器的独立 running 意图，关闭面板后才按原意图恢复。显式旧输入仍由原生身份检查拒绝。测试直接执行生产的控制／toggle／visibilitychange 函数，不另造业务实现；两个新增反例先失败，修复后连同真实可见恢复、旧输入保护通过。带本地 RHVideo `3d6aaeb` 源码对照的完整 Node 为 **1196/1196，零失败／取消／跳过，38.469 秒**（`rhvideo-hidden-resume-full-reference-node.tap`）；未提供参考路径的先前一轮明确跳过 46 项，不能用它声称源码对照全通过。
+
+Windows 正常 release 构建 **2 分 42 秒**，EXE **`47fb44614f407af233568d5070f99b57edb104fe60610461d24a4ff84952dfb3`**；冻结 `rhvideo-pipe-full-eomiCT` 的输入／面板／完整放映文件为 **7/7，零跳过，67.387 秒**。`rhfiles-e2e-LvICC9/presentation-modal.json` 两种原播放意图下均明确零可见自有视频平面；每次切换都等待真实原生应答，不能用旧暂停快照蒙混。关闭面板后保持原 inputId、alpha 255 和正确四色；保存并查看 `running-restored.png`。真实 Home/End 本次通过，不据此宣布此前间歇输入丢失已修复，也不是 Windows 全功能整轮通过。
+
+Android 正常 x86_64 QA release 构建 **1 分 51 秒**，冻结 `rhvideo-modal-normal-android-NpAPQu/x64.apk`，SHA-256 **`6262867382a45d1502b2155f2676051c5bbfac0c5c75e1605c48b94e484ef9a2`**。所有声明 ABI 的 Rust 运行库检查通过，正常 BuildConfig，工作台 **4E548**、JNI **1F90** 均逐字节核对；这不是 ARM 真机发行包。实际安装到自有 API 36 AVD 后，同一场景 **通过**（`rhvideo-presentation-modal-android-neOdq4/receipt.json`），两种意图、四次隐藏期间切换、关闭后的同一输入和真实四色均通过；`android-8jGvgB/running-restored.png` 已查看。未操作实体手机或正式 Windows 实例。
+
+另新增只读延迟诊断，把宿主往返与页面内执行时钟、前台与后台库页面分开，不改生产超时／音量／编解码／画质。第一份 F9D2 包的运行在首页就绪 **55037 ms** 后，库就绪原 20 秒诊断预算超时，**没有业务样本／HTTP 请求**（`rhvideo-android-ui-latency-RMiB1u/receipt.json`）；保留失败，不能由空样本推断性能已改善。新入口补有固定元数据失败快照及独立 180 秒总上限，不重载、重装或重放操作。两端整轮、原生冷首播、Android 连续播放和同质量参考性能仍未完成；本节不发布新版本。
+
 ## 2026-10-31 迟到视频应答盖住设置面板（继续验收中）
 
 实际冻结 9331 旧候选，在真实原生打开已完成／已有帧、但应答尚未送回前端时打开设置，再放回应答。旧逻辑随后把原生子窗口重新设为可见，盖住 WebView 设置面板。`rhvideo-pipe-full-8XXSyG/RHFiles/test-artifacts/rhfiles-e2e-Pq8Uga` 实际 **0/1、一失败，19.589 秒**；外部观察器读到 alpha **255**，保存的四色 BMP 已转换并查看。更早 UdyK7v 因测试误填不支持的 fade=0 而被参数校验拒绝，失败保留，不计为此反例；实际用例改为合法的 100 ms，未关闭产品动画或修改默认偏好。

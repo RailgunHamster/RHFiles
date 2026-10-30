@@ -4160,6 +4160,11 @@
           if(action==="state")return native("presentation.state",args);
           return Promise.resolve({opened:false,stale:true});
         }
+        // Resume intent can also arrive through scripts or visibilitychange,
+        // while a newer panel owns the UI. A hidden decoder must stay paused;
+        // closing that panel restores the viewer's separate running intent.
+        if(action==="control"&&args.command==="resume"&&
+          (document.hidden||!viewerIsTop()))args={...args,command:"pause"};
         return native("presentation."+action,{...args,expectedInput:input});
       }
       action(
