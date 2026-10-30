@@ -71,7 +71,9 @@ async function main(){
   await calibrate(page,'background-library-with-native-player');
   await app.screenshot('native-player');
   await sample(page,'background-library-with-native-player','player-close',invoke('player.close'));
-  await calibrate(page,'foreground-library-restored');
+  // The close acknowledgement can precede Activity visibility restoration.
+  // Keep the actual per-row visibility; do not label this whole phase foreground.
+  await calibrate(page,'after-player-close');
   receipt.completed=true;
  }catch(error){receipt.failure=String(error);process.exitCode=1;console.error(error);
   // Fixed, read-only initialization metadata; never copy page text, credentials
