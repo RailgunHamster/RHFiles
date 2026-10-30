@@ -80,6 +80,23 @@
   准备等待测试超时；该项单独和上述最终两轮均通过，本轮未修改该测试或媒体逻辑。
 - 测试没有替换本机正在运行的 0.1.88，也未发布安装包。
 
+### 2026-10-30 优化构建复核（未替换现有安装）
+
+- 本机正在运行的是 `D:\exe\RHFiles\current\RHFiles.exe`，文件版本 0.1.88，
+  修改时间 2026-10-28 17:51:43；晚于此构建的两轮多选修复尚未部署到这个进程。
+  不能把源码已有修复或隔离实例通过测试当作当前安装已经修复。
+- 使用当日优化构建的独立副本（SHA-256
+  `f6ea4c8f9047cf8f4e53f9567dbfa7cdda8e147f0725e7fcc896f9d44ac0de9b`），
+  通过私有 APPDATA/LOCALAPPDATA 隔离配置，并核对返回的数据目录；不操作原有窗口或用户文件。
+- `selection-modifier-focus`、`multi-selection-shortcuts`、`keyboard-range` 三套
+  WebView2 窗口测试共 40 项通过，零失败、零跳过（`selection-shortcuts-release-20261030.log`）。
+  包括 Ctrl 完整按下/抬起序列、多文件 Ctrl+Shift+C、Ctrl+C/X、Delete、两次确认后的
+  真实 Shift+Delete、快速框选、分栏子目录、迟到拼音、排序和左右窗格隔离。
+  复制路径仅替换系统剪贴板写入边界；永久删除只针对本轮生成的临时文件。
+- 四套相关单测共 55 项通过，零失败、零跳过（`selection-shortcuts-unit-20261030.log`）。
+  五个相关生产脚本与主线提交 `4c0aa5e` 内容相同，修复已存在于两个远端主线。
+- 本轮仅复核并记录证据，没有另外发布安装包、替换 0.1.88 或宣称整个 0.1.89 已完成验收。
+
 ## 运行
 
 多选快捷键的回归不能只在 `Input.dispatchKeyEvent` 上设置 Ctrl 修饰位：也必须发送
