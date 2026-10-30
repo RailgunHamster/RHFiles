@@ -1538,6 +1538,54 @@ async fn diagnostic_windows(app:&AppHandle)->Result<Value,String>{
     }).map_err(|e|e.to_string())?;
     rx.await.map_err(|_|"窗口诊断未完成".to_owned())
 }
+#[cfg(all(windows,debug_assertions))]
+async fn diagnostic_activate_main(app:&AppHandle)->Result<Value,String>{
+    if std::env::var("RHFILES_NATIVE_PLAYER_QA").as_deref()!=Ok("1"){return Err("测试窗口切换未启用".into());}
+    let handle=app.clone();let(tx,rx)=tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move||{
+        use windows::Win32::{Foundation::HWND,UI::WindowsAndMessaging::GetForegroundWindow};
+        let result=(||->Result<Value,String>{
+            let foreground=unsafe{GetForegroundWindow()};
+            if !handle.webview_windows().values().any(|window|window.hwnd().is_ok_and(|value|HWND(value.0)==foreground)){return Err("测试应用已失去前台，未切换窗口".into());}
+            let main=handle.get_webview_window("main").ok_or("测试主窗口不存在")?;
+            main.set_focus().map_err(|e|e.to_string())?;
+            let web:&tauri::Webview=main.as_ref();web.set_focus().map_err(|e|e.to_string())?;
+            Ok(json!({"focused":"main"}))
+        })();let _=tx.send(result);
+    }).map_err(|e|e.to_string())?;
+    rx.await.map_err(|_|"测试窗口切换未完成".to_owned())?
+}
+#[cfg(all(windows,debug_assertions))]
+async fn diagnostic_library_key(app:&AppHandle,args:&Value)->Result<Value,String>{
+    if std::env::var("RHFILES_NATIVE_PLAYER_QA").as_deref()!=Ok("1"){return Err("原生按键仅在隔离调试测试中可用".into());}
+    let key=match args["key"].as_str(){Some("Home")=>0x24,Some("End")=>0x23,_=>return Err("测试仅允许 Home／End".into())};
+    let encoding=match args.get("encoding"){None=>"virtual-key",Some(Value::String(value))if value=="virtual-key"=>"virtual-key",Some(Value::String(value))if value=="scan-code"=>"scan-code",_=>return Err("测试按键编码无效".into())};
+    let window=app.get_webview_window("window-rhvideo").ok_or("测试媒体库未打开")?;
+    let(tx,rx)=tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move||{
+        use windows::Win32::{Foundation::HWND,UI::{WindowsAndMessaging::{GetForegroundWindow,IsChild},Input::KeyboardAndMouse::{GetFocus,GetAsyncKeyState,SendInput,MapVirtualKeyW,MAPVK_VK_TO_VSC_EX,INPUT,INPUT_0,KEYBDINPUT,INPUT_KEYBOARD,KEYEVENTF_EXTENDEDKEY,KEYEVENTF_SCANCODE,KEYEVENTF_KEYUP,VIRTUAL_KEY,VK_CONTROL,VK_SHIFT,VK_MENU,VK_LWIN,VK_RWIN}}};
+        let outcome=(||->Result<Value,String>{
+            let hwnd=HWND(window.hwnd().map_err(|e|e.to_string())?.0);
+            // Never activate/refocus a window or inject into another app. This
+            // bypasses only CDP's synthetic input transport, not the real Win32
+            // focus, WebView2 keyboard routing, or our actual DOM handlers.
+            let focused=unsafe{GetFocus()};
+            if unsafe{GetForegroundWindow()}!=hwnd||!(focused==hwnd||unsafe{IsChild(hwnd,focused).as_bool()}){return Err("测试按键未发送：媒体库没有真实输入焦点".into());}
+            if [VK_CONTROL,VK_SHIFT,VK_MENU,VK_LWIN,VK_RWIN].iter().any(|key|unsafe{GetAsyncKeyState(key.0 as i32)}<0){return Err("测试按键未发送：存在按下的修饰键".into());}
+            let(mut scan,mut flags)=(0,KEYEVENTF_EXTENDEDKEY);
+            if encoding=="scan-code"{scan=(unsafe{MapVirtualKeyW(key as u32,MAPVK_VK_TO_VSC_EX)}&0xff)as u16;if scan==0{return Err("测试导航键没有扫描码".into());}flags|=KEYEVENTF_SCANCODE;}
+            let events=[INPUT{r#type:INPUT_KEYBOARD,Anonymous:INPUT_0{ki:KEYBDINPUT{wVk:VIRTUAL_KEY(key),wScan:scan,dwFlags:flags,..Default::default()}}},INPUT{r#type:INPUT_KEYBOARD,Anonymous:INPUT_0{ki:KEYBDINPUT{wVk:VIRTUAL_KEY(key),wScan:scan,dwFlags:flags|KEYEVENTF_KEYUP,..Default::default()}}}];
+            let sent=unsafe{SendInput(&events,std::mem::size_of::<INPUT>() as i32)};
+            if sent!=2{
+                // Release only a partially submitted DOWN; never press again.
+                if sent==1{unsafe{SendInput(&events[1..],std::mem::size_of::<INPUT>() as i32)};}
+                return Err("Windows 未完整接收测试按键；未自动重复发送".into());
+            }
+            Ok(json!({"sent":sent,"key":if key==0x24{"Home"}else{"End"},"transport":"windows-send-input","encoding":encoding}))
+        })();let _=tx.send(outcome);
+    }).map_err(|e|e.to_string())?;
+    rx.await.map_err(|_|"原生测试按键未完成".to_owned())?
+}
 #[tauri::command]
 pub async fn rhvideo_request(
     app: AppHandle,
@@ -1574,6 +1622,10 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
     match action.as_str() {
         #[cfg(all(windows,debug_assertions))]
         "diagnostics.windows"=>return diagnostic_windows(&app).await,
+        #[cfg(all(windows,debug_assertions))]
+        "diagnostics.libraryKey"=>return diagnostic_library_key(&app,&args).await,
+        #[cfg(all(windows,debug_assertions))]
+        "diagnostics.activateMain"=>return diagnostic_activate_main(&app).await,
         "page.volume" => {
             current()?;
             let value=args["value"].as_u64().filter(|v|*v<=100).ok_or("页面音量范围是 0–100")? as u32;

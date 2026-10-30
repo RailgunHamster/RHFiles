@@ -6,6 +6,22 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-30 Home／End 语义导航与原生输入验收（继续验收，未发包）
+
+将上一节 End 失败分成两条证据，而不是把未收到的 CDP 按键直接算成跳转函数有错。A196 的定向条带／放映仍为 **17/18**；失败时 DOM／Win32 焦点正常，但两个页面都未收到 CDP 键事件。随后用只接受 Home／End 的隔离 Windows 调试适配器，实际旧程序 **`bb3a0566ea4b6bcfa92ad6d845478e8cd8643336fee5df5f6baca1230f4a5934`** 收到系统 End 的 down/up，`key="End"`、`code=""`，依然停在索引 0（`rhvideo-slideshow-windows-keys.log`、`rhfiles-e2e-rz4giF/slideshow-end-failure.json`）。这是与“事件没有送达”不同的产品差异：参考 `favshowKeyHandler` 使用语义 key，而本端只识别物理 code。
+
+新增从实际生产源码 AST 提取键盘监听器的十三项测试，覆盖普通／空／Unidentified／数字小键盘 code、NumLock 数字不误作导航、编辑和确认框、修饰键、旧 code-only 输入及原有按物理位置配置的快捷键；其中直接执行当前参考的 `favshowKeyHandler` 作差分。修改前 **5/13、8 失败**（`rhvideo-semantic-navigation-red.log`），修改后与输入准入用例合计 **15/15**（`rhvideo-semantic-navigation-unit-green.log`）。Home／End 现优先使用可识别的语义 key，无语义信息才沿用 code，其他自定义物理快捷键不变；它们仍调用同一 `viewer.seek` 结构化动作，不直接修改位置或伪造成功。
+
+物理输入验收改用 Windows 输入链路；CDP 控制保留为显式 `RHFILES_QA_SLIDESHOW_KEYS=cdp` 对照，不在失败后自动换路重发。新适配器仅 Windows **debug**／显式 QA 环境存在，固定本进程媒体库窗口和 Home／End 两键，验证真实前台／输入焦点、拒绝按下的修饰键、拒绝任意键／编码／扫描码；不替发送动作抢焦点。分别发送虚拟键和映射出的扩展扫描码；一次提交不完整时最多补一条 KEYUP，不重按。负例的固定主窗口切换只在本进程已拥有前台时可用，并只在全部正向业务验收后执行；未增加正式 Tauri `allow-set-focus` 权限或任意窗口输入接口。
+
+最终隔离 Windows 快照 `rhvideo-navigation-scan-runtime-8739a7ded43f4936adba873654c8ac53/` 的 EXE **`cb26dc181d553cda69f4daa252cbbf2c012fdbbe9abd66eeb40e4403408ed6f7`**，app-local 3.0.24 不变。实际定向 **1/1、零跳过**（`rhvideo-navigation-native-scan-verified.log`、`rhfiles-e2e-37FICZ/slideshow-keyboard.json`）：虚拟键的四个事件 code 确为空，扫描码的四个事件 code 分别为 Home／End，两种方式均真正跳到末图／首图并完成解码；End 后保持末图，主文件浏览器收到零键。非法键／编码、媒体库不存在、切到本进程主窗口后的发键请求均被拒绝，主窗口仍收到零键。原范围控件、UI 接口契约等断言保留，不调用导航 API 代替发键，也不在发键前点击／抢焦点制造成功。
+
+过程中的 `rhvideo-semantic-navigation-native-green.log`（导航已正确，但旧测试仍按 code 验证）、`rhvideo-semantic-navigation-native-verified.log`（额外切窗口被正式权限拒绝）和 `rhvideo-semantic-navigation-native-guard-verified.log`（新建的另一窗口未取得焦点）均保留失败。它们不是完整通过，也没有放宽正式权限、删掉焦点负例或把仍失败的旧整轮覆写为绿色。
+
+最终共享检查 **933/933、零失败／跳过**（`rhvideo-semantic-navigation-final-node.log`），全部 RHVideo Rust **69/69、零忽略**（`rhvideo-semantic-navigation-rust-all.log`）；输入／焦点测试适配器的三项静态准入包含在其中，但静态检查不替代上述真实发键验收。共享 Home／End 变更也已重组 Android APK（短路径 QA 的 `rhvideo-semantic-navigation-apk-build.log` **1 分 31 秒成功**，未重编 JNI），快照 `rhvideo-semantic-navigation-apk-fb79498306194b698abe00730928a60b/` 的主包 **`88d46c8ca91bf3f9c80b11c55dd0349a74887f2092ad5e28cbb0d0b4aee18699`**、探针仍为 **`4b372563…bc5ac`**。新 APK 的实际运行结果另记，不把前一 ED3 包的条带结果套到它。
+
+同一最终程序的 Windows 条带／放映整组现已终止 **18/18、零失败／跳过，2 分 18 秒**（`rhvideo-semantic-navigation-window-suite.log`），包括真实系统按键的两种编码及完整焦点负例，不是仅重跑一例后覆盖旧结果；原 **108/109** 的完整整轮失败仍保留。Android 同屏实时推进、生命周期、Windows 同质量启动性能及其余完整目标没有因此完成，未发正式包或替换用户安装。
+
 ## 2026-10-30 条带星标对齐与旋转后的真实像素（继续验收，未发包）
 
 上一节的 `rhvideo-strip-consumer-frozen-6063e480e2834d73b0d7ba85a29d6e44/` 已终止：**108/109、1 失败、零跳过，25 分 27 秒**，回执 `rhvideo-windows-EIyIbQ/receipt.json`；冻结 **1120** 文件、**14** 参考文件及 9BF0 程序再次逐项核对，均未变。本轮图片失败／延迟卡片两项通过，唯一失败为收藏放映的实际 End 键：最初 DOM／Win32 均拥有输入焦点，发键后两个 RHFiles 窗口均无焦点、没有收到键，最终仍在索引 0。未证明是放映跳转函数失败，也未查明失焦来源；保留整轮失败，不以一次后续通过算作修复。测试新增同步按键／focus、blur 等记录及 JSON 回执，去掉可能携带媒体通道的 outerHTML；不强制抢回焦点、不换成模拟焦点、不放宽原断言。

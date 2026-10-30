@@ -1431,7 +1431,10 @@
                 ? "image"
                 : null;
           if (!scope) return;
-          if(scope==='viewer'&&['Home','End'].includes(event.code)&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey){event.preventDefault();event.stopImmediatePropagation();void invoke('viewer.seek',{ratio:event.code==='Home'?0:1}).catch(notice);return;}
+          // These are semantic navigation keys, as in the reference viewer.
+          // Keypad / virtual keyboards need not expose a physical Home/End code.
+          const navigationKey=event.key&&event.key!=='Unidentified'?event.key:event.code;
+          if(scope==='viewer'&&['Home','End'].includes(navigationKey)&&!event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey){event.preventDefault();event.stopImmediatePropagation();void invoke('viewer.seek',{ratio:navigationKey==='Home'?0:1}).catch(notice);return;}
           const combo =
             (event.ctrlKey ? "Ctrl+" : "") +
             (event.altKey ? "Alt+" : "") +
