@@ -37,6 +37,9 @@ jobs:
         run: cargo test --workspace --locked
       - name: Build isolated test application
         run: cargo build -p rhfiles-tauri --locked
+      - name: Build owned-window pixel and keyboard test observer
+        shell: pwsh
+        run: ./scripts/testing/build-owned-native-frame.ps1
       - name: Stage bundled archive engine for the test application
         shell: pwsh
         run: Copy-Item -LiteralPath src-tauri/thirdparty/7z.exe, src-tauri/thirdparty/7z.dll -Destination target/debug

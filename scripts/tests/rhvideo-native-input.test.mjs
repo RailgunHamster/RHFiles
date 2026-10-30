@@ -34,3 +34,10 @@ test('release business tests use guarded external ownership, not a removed produ
   const business=fs.readFileSync(new URL('../e2e/rhvideo-slideshow.test.mjs',import.meta.url),'utf8');assert.doesNotMatch(business,/diagnostics\.libraryKey|diagnostics\.windows|diagnostics\.activateMain/);
   assert.match(business,/Only Home\\\/End/);assert.match(business,/keyboard\.main\.keys\.length,0/);assert.match(business,/both native navigation key down\/up pairs/);
 });
+
+test('the clean Windows CI worker builds the external observer before running real E2E cases',()=>{
+  const workflow=fs.readFileSync(new URL('../../.github/workflows/test.yml',import.meta.url),'utf8');
+  const build=workflow.indexOf('run: ./scripts/testing/build-owned-native-frame.ps1'),e2e=workflow.indexOf('run: npm run test:e2e');
+  assert(build>0&&e2e>build,'A local cached tool must not be required for CI');
+  assert.match(workflow.slice(workflow.lastIndexOf('- name:',build),build),/shell: pwsh/);
+});
