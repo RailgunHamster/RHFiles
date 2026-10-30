@@ -1274,7 +1274,11 @@ public class RhVideoInstrumentation extends Instrumentation {
       require(((JSONObject)action("state",new JSONObject())).getInt("total")==52,"Restore must update the library without manual refresh");
       require(Boolean.TRUE.equals(expression(library,"RHVideoNative.request('export.chunk',{ticket:'oversized-qa',index:0,reset:true,text:'x'.repeat(65537)}).then(()=>false,()=>true)")),"Oversized bridge chunks must fail");
       require(Boolean.TRUE.equals(expression(library,"(async()=>{await RHVideoNative.request('export.chunk',{ticket:'sequence-qa',index:0,reset:true,text:'['});return RHVideoNative.request('export.chunk',{ticket:'sequence-qa',index:0,text:'[]'}).then(()=>false,()=>true)})()")),"Export chunks cannot be replayed or appended out of order");
-      action("gallery.open",new JSONObject());require(Integer.parseInt(eval(library,"document.querySelectorAll('.wb-frame').length"))==32,"Screenshot library");action("panel.close",new JSONObject().put("id","wb-gallery"));
+      JSONObject screenshotLibrary=(JSONObject)action("gallery.open",new JSONObject());
+      JSONObject screenshotScope=new JSONObject(eval(library,"JSON.stringify({modal:document.querySelectorAll('#wb-gallery[open] .wb-frame').length,primary:document.querySelectorAll('#gallery-content .wb-frame').length,primaryHidden:document.getElementById('gallery-panel').hidden})"));
+      step("gallery scope snapshot "+screenshotScope+" result="+screenshotLibrary);
+      require(screenshotLibrary.getInt("total")==32&&screenshotScope.getInt("modal")==32&&screenshotScope.getBoolean("primaryHidden"),"Screenshot library must render all 32 fixture frames in the current modal, independently of cached hidden primary cards: "+screenshotScope+"; "+screenshotLibrary);
+      action("panel.close",new JSONObject().put("id","wb-gallery"));
       action("category",new JSONObject().put("kind","picture"));action("favorite.toggle",new JSONObject().put("kind","picture").put("id","picture-0"));
       action("viewer.open",new JSONObject().put("mode","strip").put("source","picture"));action("viewer.seek",new JSONObject().put("ratio",.5));action("panel.close",new JSONObject().put("id","wb-viewer"));
       action("media.open",new JSONObject().put("kind","picture").put("id","picture-0"));action("image.step",new JSONObject().put("direction",1));action("back",new JSONObject());
