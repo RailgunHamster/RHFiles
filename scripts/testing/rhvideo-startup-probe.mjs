@@ -40,7 +40,7 @@ try{
   const {width,height}=source;
   receipt.sourceSha256=createHash('sha256').update(fs.readFileSync(sourceFile)).digest('hex');
   app=await launchApp({emulateFocus,traceOutput:true,nativeDiagnostics:readback==='stdio'});receipt.readback=readback;receipt.mainFocusEmulation=emulateFocus;
-  fixture=await rhvideoFixture({videoFile:sourceFile,videoCount:1,pictureCount:0,galleryVideoCount:1,galleryFrameCount:1,videoDuration:12,videoResolutions:[`${width}x${height}`],beforeMedia:({path:request,range})=>{if(started!==undefined&&request.endsWith('/play'))receipt.mediaRequests.push({atMs:performance.now()-started,range:range||null});}});
+  fixture=await rhvideoFixture({videoFile:sourceFile,videoCount:1,pictureCount:0,galleryVideoCount:1,galleryFrameCount:1,videoDuration:12,videoResolutions:[`${width}x${height}`],beforeMedia:({path:request,range,requestIndex})=>{if(started!==undefined&&request.endsWith('/play'))receipt.mediaRequests.push({atMs:performance.now()-started,range:range||null,requestIndex});}});
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
   const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(p=>new URL(p.url).pathname.endsWith('/rhvideo.html'));},'library target');
   library=await cdpSession(target,30000);
@@ -154,6 +154,9 @@ try{
   receipt.nativeClosedBeforeProcessExit=true;
 }catch(error){failure=error;receipt.error=String(error?.stack||error);}
 finally{
+  // Capture before teardown can close still-open sockets. Node finish only
+  // means handed to transport, not received/decoded by the native player.
+  if(fixture)receipt.fixtureTransport=fixture.transport.snapshot();
   networkObserver?.close();
   player?.close();library?.close();if(app){app.close();let timer;try{await Promise.race([app.closed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned process output did not drain')),5000);})]);}catch(error){failure??=error;receipt.cleanupError=String(error);}finally{clearTimeout(timer);}}await fixture?.close();
   if(app){

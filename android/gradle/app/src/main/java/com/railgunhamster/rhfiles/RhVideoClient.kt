@@ -614,8 +614,8 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
         var count=0L
         private fun checkSession(){if(!live(entry.session))throw IOException("RHVideo 登录已结束")}
         private fun counted(n:Int):Int{if(n>0)count+=n;if(count>32*1024*1024)throw IOException("清单超过 32 MiB");return n}
-        override fun read():Int{checkSession();val n=`in`.read();if(n>=0)counted(1);return n}
-        override fun read(b:ByteArray,off:Int,len:Int):Int{checkSession();return counted(`in`.read(b,off,len))}
+        override fun read():Int{checkSession();val n=`in`.read();checkSession();if(n>=0)counted(1);return n}
+        override fun read(b:ByteArray,off:Int,len:Int):Int{checkSession();val n=`in`.read(b,off,len);checkSession();return counted(n)}
         override fun close(){response.close()}
       }
     }catch(error:Exception){response.close();throw error}
@@ -634,11 +634,16 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
       val body=response.body?:error("媒体为空");val claimed=body.contentType()?.toString()?:"application/octet-stream"
       if(image)require(body.contentLength()<=32*1024*1024){"图片超过 32 MiB"}
       val type=if(image)RhVideoImageMime.sniff(body.source(),claimed)else claimed
+      // Sniffing can wait on the network after the response-header check.
+      // Never publish an old account's MIME/length when that wait outlives it.
+      check(live(value.session)){"RHVideo 登录已结束"}
       val stream=object:FilterInputStream(body.byteStream()){
         var read=0L
         private fun checkSession(){if(!live(value.session))throw IOException("RHVideo 登录已结束")}
-        override fun read():Int{checkSession();val n=super.read();if(n>=0)read++;if(image&&read>32*1024*1024)throw IOException("图片过大");return n}
-        override fun read(b:ByteArray,off:Int,len:Int):Int{checkSession();val n=`in`.read(b,off,len);if(n>0)read+=n;if(image&&read>32*1024*1024)throw IOException("图片过大");return n}
+        // Check on both sides of a blocking read: a request already waiting
+        // for bytes must not return those bytes to a later/logged-out account.
+        override fun read():Int{checkSession();val n=super.read();checkSession();if(n>=0)read++;if(image&&read>32*1024*1024)throw IOException("图片过大");return n}
+        override fun read(b:ByteArray,off:Int,len:Int):Int{checkSession();val n=`in`.read(b,off,len);checkSession();if(n>0)read+=n;if(image&&read>32*1024*1024)throw IOException("图片过大");return n}
         override fun close(){response.close()}
       }
       return Media(stream,body.contentLength(),type,response)

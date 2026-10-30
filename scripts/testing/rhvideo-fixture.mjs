@@ -22,8 +22,8 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     return '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><defs><linearGradient id="s" x2="0" y2="1"><stop stop-color="'+sky+'"/><stop offset="1" stop-color="'+light+'"/></linearGradient><linearGradient id="m" x2="0" y2="1"><stop stop-color="'+dark+'"/><stop offset="1" stop-color="'+sky+'"/></linearGradient></defs><rect width="800" height="500" fill="url(#s)"/><circle cx="'+(570-index%3*90)+'" cy="130" r="43" fill="#fff4df" opacity=".8"/><path d="M0 330 145 190 280 300 440 145 650 310 800 215v285H0z" fill="'+dark+'" opacity=".35"/><path d="M0 370 185 280 330 390 520 260 800 380v120H0z" fill="url(#m)" opacity=".75"/><path d="M0 435q220-100 450-25t350-30v120H0z" fill="'+dark+'" opacity=".55"/></svg>';
   };
   const server=http.createServer(async(req,res)=>{
-    const url=new URL(req.url,'http://fixture'),path=url.pathname;transport.observe(res,requests.length);requests.push({path,query:url.search,authorization:req.headers.authorization,range:req.headers.range,method:req.method});
-    const send=(status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value));};
+    const url=new URL(req.url,'http://fixture'),path=url.pathname,requestIndex=requests.length;transport.observe(res,requestIndex);requests.push({path,query:url.search,authorization:req.headers.authorization,range:req.headers.range,method:req.method});
+    const send=(status,value,headers={})=>{res.writeHead(status,{'content-type':'application/json',...headers});res.end(JSON.stringify(value));};
     if(referenceStatic&&(path==='/'||path.startsWith('/static/'))){
       const relative=path==='/'?'index.html':decodeURIComponent(path.slice(8)),file=pathModule.resolve(referenceStatic,relative);
       const safe=pathModule.relative(pathModule.resolve(referenceStatic),file);
@@ -95,19 +95,19 @@ export async function rhvideoFixture({videoFile=null,videoFiles={},videoResoluti
     if(chapter){const index=Number(chapter[1]);return send(200,{index,title:'第'+(index+1)+'章 山间来信',text:('清晨的光越过山脊，落在还未醒来的小路上。\n\n我们把行程放慢，让风景自己走近。远处的云在缓缓移动，像是一封尚未写完的信。\n\n').repeat(30),has_prev:index>0,has_next:index<chapterCount-1,total_chapters:chapterCount});}
     if(path.startsWith('/api/v1/screenshots/video/'))return send(200,{screenshots:Array.from({length:8},(_,i)=>({url:'/storage/pictures/'+i+'.svg',time_seconds:i*2}))});
     if(path.endsWith('/thumbnail')||path.startsWith('/storage/pictures/')){
-      const override=await beforeMedia?.({path,range:req.headers.range,image:true});
-      if(override?.status)return send(override.status,{detail:override.detail||'Fixture image failure'});
+      const override=await beforeMedia?.({path,range:req.headers.range,image:true,requestIndex});
+      if(override?.status)return send(override.status,{detail:override.detail||'Fixture image failure'},override.headers);
       if(override?.body){
         res.writeHead(200,{'content-type':override.contentType||'application/octet-stream','content-length':override.body.length});
-        if(override.splitAt){res.write(override.body.subarray(0,override.splitAt));await new Promise(resolve=>setTimeout(resolve,20));res.end(override.body.subarray(override.splitAt));}
+        if(override.splitAt){res.write(override.body.subarray(0,override.splitAt));if(override.afterFirstChunk)await override.afterFirstChunk();else await new Promise(resolve=>setTimeout(resolve,20));res.end(override.body.subarray(override.splitAt));}
         else res.end(override.body);
         return;
       }
       res.writeHead(200,{'content-type':'image/svg+xml'});return res.end(svg(Number(path.match(/\d+/g)?.at(-1))||0));
     }
     if(path.endsWith('/play')&&videoFile){
-      const override=await beforeMedia?.({path,range:req.headers.range,image:false});
-      if(override?.status)return send(override.status,{detail:override.detail||'Fixture video failure'});
+      const override=await beforeMedia?.({path,range:req.headers.range,image:false,requestIndex});
+      if(override?.status)return send(override.status,{detail:override.detail||'Fixture video failure'},override.headers);
       const source=videoFiles[path.split('/').at(-2)]||videoFile;
       const size=fs.statSync(source).size,range=req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
       const start=range?Number(range[1]):0,end=range&&range[2]?Math.min(Number(range[2]),size-1):size-1;

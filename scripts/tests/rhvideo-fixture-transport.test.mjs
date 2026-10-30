@@ -32,6 +32,18 @@ test('fixture transport caps retained records, does not observe discarded respon
   for(const index of [-1,Infinity,1.5])assert.throws(()=>transport.observe(new EventEmitter(),index));
 });
 
+test('fixture exposes stable media indexes and explicit range errors without copying private headers into timing receipts',async()=>{
+  let seen;
+  const fixture=await rhvideoFixture({beforeMedia:context=>{seen=context;return {status:416,headers:{'content-range':'bytes */12345','x-fixture-private':'fixture-secret'},detail:'fixture error'};}});
+  try{
+    const response=await fetch(fixture.url+'/storage/pictures/0.svg',{headers:{Authorization:'Bearer fixture-bearer-do-not-persist',Range:'bytes=12345-'}});
+    assert.equal(response.status,416);assert.equal(response.headers.get('content-range'),'bytes */12345');await response.text();
+    assert.equal(seen.requestIndex,0);assert.equal(seen.range,'bytes=12345-');
+    const timing=fixture.transport.snapshot();assert.equal(timing.requests[0].requestIndex,seen.requestIndex);assert.equal(timing.requests[0].statusCode,416);
+    assert.doesNotMatch(JSON.stringify(timing),/fixture-secret|content-range|Bearer|12345/);
+  }finally{await fixture.close();}
+});
+
 test('real fixture transport reports a complete split image and an actual client-aborted response separately',{timeout:10000},async()=>{
   let release,arrived;const held=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>arrived=resolve);
   const fixture=await rhvideoFixture({beforeMedia:async({path})=>{

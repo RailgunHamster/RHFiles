@@ -13,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import okio.buffer
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[28])
@@ -352,6 +353,58 @@ class RhVideoClientTest {
     try{client.request("catalog",JSONObject());fail()}catch(_:Exception){}
   }
   private fun thumbnailKey():String=(client.request("images",JSONObject().put("paths",JSONArray().put("/api/v1/videos/one/thumbnail"))) as JSONArray).getString(0).substringAfterLast('/')
+  // Deterministically revoke AFTER the real HTTP response headers were accepted,
+  // inside the next body read. This is a network-boundary unit test, not an
+  // Activity/rendering acceptance test; no sleeps or production injection hooks.
+  private fun revokeInsideBodyRead(field:String):()->Boolean {
+    var revoked=false
+    val original=org.robolectric.util.ReflectionHelpers.getField<okhttp3.OkHttpClient>(client,field)
+    val observed=original.newBuilder().addNetworkInterceptor { chain->
+      val response=chain.proceed(chain.request());val body=response.body!!
+      val source=object:okio.ForwardingSource(body.source()) {
+        override fun read(sink:okio.Buffer,byteCount:Long):Long {
+          val size=super.read(sink,byteCount)
+          if(size>0&&!revoked){revoked=true;client.logout()}
+          return size
+        }
+      }.buffer()
+      response.newBuilder().body(object:okhttp3.ResponseBody(){
+        override fun contentType()=body.contentType()
+        override fun contentLength()=body.contentLength()
+        override fun source()=source
+      }).build()
+    }.build()
+    org.robolectric.util.ReflectionHelpers.setField(client,field,observed)
+    return {revoked}
+  }
+  @Test fun logoutDuringImageSniffRejectsTheOldImageMetadata(){
+    login();val key=thumbnailKey();val revoked=revokeInsideBodyRead("mediaHttp")
+    server.enqueue(MockResponse().setHeader("Content-Type","application/octet-stream").setBody(okio.Buffer().write("\u0089PNG\r\n\u001a\nold-image".toByteArray(Charsets.ISO_8859_1))))
+    try{client.media(key,image=true).use{};fail("Old image MIME/length escaped after logout during sniff")}catch(e:IllegalStateException){assertEquals("RHVideo 登录已结束",e.message)}
+    assertTrue(revoked());assertFalse(client.state().getBoolean("connected"));assertEquals(2,server.requestCount)
+  }
+  private fun mediaReadRevokedInsideNetworkRead(bulk:Boolean){
+    login();val key=client.playback(JSONObject().put("id","one")).path.removePrefix("rhvideo://");val revoked=revokeInsideBodyRead("mediaHttp")
+    server.enqueue(MockResponse().setHeader("Content-Type","video/mp4").setBody("private-old-video"))
+    client.media(key,image=false).use{media->
+      assertFalse(revoked())
+      try{if(bulk)media.stream.read(ByteArray(32),0,32)else media.stream.read();fail("The pending read exposed bytes after logout")}catch(e:java.io.IOException){assertEquals("RHVideo 登录已结束",e.message)}
+    }
+    assertTrue(revoked());assertEquals(2,server.requestCount)
+  }
+  @Test fun logoutDuringSingleByteMediaReadRejectsTheReturnedByte(){mediaReadRevokedInsideNetworkRead(false)}
+  @Test fun logoutDuringBulkMediaReadRejectsTheReturnedBytes(){mediaReadRevokedInsideNetworkRead(true)}
+  private fun catalogReadRevokedInsideNetworkRead(bulk:Boolean){
+    login();val key=(client.request("catalog.resource",JSONObject().put("kind","video")) as JSONObject).getString("url").substringAfterLast('/');val revoked=revokeInsideBodyRead("http")
+    json("""[{"id":"private-old-catalog"}]""")
+    client.catalogResource(key).use{stream->
+      assertFalse(revoked())
+      try{if(bulk)stream.read(ByteArray(64),0,64)else stream.read();fail("The pending read exposed old catalog data")}catch(e:java.io.IOException){assertEquals("RHVideo 登录已结束",e.message)}
+    }
+    assertTrue(revoked());assertEquals(2,server.requestCount)
+  }
+  @Test fun logoutDuringSingleByteCatalogReadRejectsTheReturnedByte(){catalogReadRevokedInsideNetworkRead(false)}
+  @Test fun logoutDuringBulkCatalogReadRejectsTheReturnedBytes(){catalogReadRevokedInsideNetworkRead(true)}
   @Test fun imageContentOverridesAnIncorrectServerMimeWithoutLosingThePrefix(){
     login();val key=thumbnailKey();val bytes="RIFF\u0010\u0000\u0000\u0000WEBPVP8 body-图片".toByteArray()
     server.enqueue(MockResponse().setHeader("Content-Type","application/octet-stream").setChunkedBody(okio.Buffer().write(bytes),3))

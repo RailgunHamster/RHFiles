@@ -1001,6 +1001,33 @@ fn svg_prefix(bytes:&[u8])->bool{
     let bytes=bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes).trim_ascii_start();
     bytes.starts_with(b"<svg")||bytes.starts_with(b"<?xml")
 }
+fn unsatisfied_byte_length(value:&axum::http::HeaderValue)->Option<u64>{
+    if value.as_bytes().len()>40{return None;}
+    let value=value.to_str().ok()?.trim_matches(|c|c==' '||c=='\t');
+    let(unit,range)=value.split_once(' ')?;
+    let length=range.strip_prefix("*/")?;
+    if !unit.eq_ignore_ascii_case("bytes")||length.is_empty()||length.len()>20||!length.bytes().all(|c|c.is_ascii_digit()){return None;}
+    length.parse().ok()
+}
+fn media_error_response(status:StatusCode,headers:&HeaderMap)->Response{
+    let mut output=Response::builder().status(status)
+        .header("cache-control","private, no-store")
+        .header("x-content-type-options","nosniff")
+        .header("content-length","0");
+    // A valid EOF probe is not an opaque failure: native demuxers need the
+    // representation length from RFC 9110 14.4. Forward only validated byte
+    // metadata, never an upstream error page, cookie or authentication header.
+    if status==StatusCode::RANGE_NOT_SATISFIABLE{
+        if let Some(length)=headers.get("content-range").and_then(unsatisfied_byte_length){
+            output=output.header("content-range",format!("bytes */{length}"));
+        }
+        if let Some(value)=headers.get("accept-ranges").and_then(|v|v.to_str().ok()){
+            if value.eq_ignore_ascii_case("bytes"){output=output.header("accept-ranges","bytes");}
+            else if value.eq_ignore_ascii_case("none"){output=output.header("accept-ranges","none");}
+        }
+    }
+    output.body(Body::empty()).unwrap()
+}
 async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMap) -> Response {
     let failure = |status| {
         Response::builder()
@@ -1130,13 +1157,14 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
     let Ok(mut response) = request.send().await else {
         return failure(StatusCode::BAD_GATEWAY);
     };
+    if !current().is_ok_and(|active|active.generation==session.generation){
+        return failure(StatusCode::UNAUTHORIZED);
+    }
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             expire_login(&session);
         }
-        return failure(
-            StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-        );
+        return media_error_response(response.status(),response.headers());
     }
     let claimed_type = response
         .headers()
@@ -1165,6 +1193,9 @@ async fn stream_asset(Path((cap, id)): Path<(String, String)>, headers: HeaderMa
         else if claimed_type.split(';').next().is_some_and(|t|t.trim().eq_ignore_ascii_case("image/svg+xml"))&&svg_prefix(&prefix){"image/svg+xml".to_owned()}
         else{return failure(StatusCode::UNSUPPORTED_MEDIA_TYPE)}
     }else{claimed_type};
+    if !current().is_ok_and(|active|active.generation==session.generation){
+        return failure(StatusCode::UNAUTHORIZED);
+    }
     let mut output = Response::builder()
         .status(response.status())
         .header("x-content-type-options", "nosniff")
@@ -2688,6 +2719,28 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn unsatisfied_byte_lengths_are_bounded_numeric_metadata_not_arbitrary_headers(){
+        for(value,length)in [("bytes */0",0),("bytes */12345",12345),("BYTES */00012",12),(" bytes */12\t",12),("bytes */18446744073709551615",u64::MAX)]{
+            assert_eq!(unsatisfied_byte_length(&value.parse().unwrap()),Some(length),"{value}");
+        }
+        for value in ["bytes */","bytes */-1","bytes */+1","bytes */1.5","bytes */18446744073709551616","bytes */000000000000000000001","bytes 0-1/12","items */12","bytes */12 private","bytes */secret"]{
+            assert_eq!(unsatisfied_byte_length(&value.parse().unwrap()),None,"{value}");
+        }
+    }
+    #[tokio::test]async fn media_error_replies_preserve_only_safe_416_metadata_and_never_error_payload_headers(){
+        let mut headers=HeaderMap::new();
+        for(key,value)in [("content-range","bytes */12345"),("accept-ranges","bytes"),("set-cookie","private-cookie=secret"),("www-authenticate","Bearer private-token"),("content-length","987654"),("x-private-error","secret")]{headers.insert(axum::http::HeaderName::from_bytes(key.as_bytes()).unwrap(),value.parse().unwrap());}
+        for status in [StatusCode::RANGE_NOT_SATISFIABLE,StatusCode::UNAUTHORIZED,StatusCode::NOT_FOUND,StatusCode::SERVICE_UNAVAILABLE]{
+            let reply=media_error_response(status,&headers);assert_eq!(reply.status(),status);
+            assert_eq!(reply.headers()["cache-control"],"private, no-store");assert_eq!(reply.headers()["content-length"],"0");
+            assert_eq!(reply.headers().get("content-range").map(|v|v.to_str().unwrap()),if status==StatusCode::RANGE_NOT_SATISFIABLE{Some("bytes */12345")}else{None});
+            for name in ["set-cookie","www-authenticate","x-private-error"]{assert!(!reply.headers().contains_key(name));}
+            assert!(axum::body::to_bytes(reply.into_body(),16).await.unwrap().is_empty());
+        }
+        headers.insert("content-range","bytes */secret".parse().unwrap());headers.insert("accept-ranges","private-token".parse().unwrap());
+        let reply=media_error_response(StatusCode::RANGE_NOT_SATISFIABLE,&headers);
+        assert!(!reply.headers().contains_key("content-range"));assert!(!reply.headers().contains_key("accept-ranges"));
+    }
     #[test]fn favorite_parent_collection_seek_uses_reference_rounding_not_video_time(){
         let options=json!({"origin":"favorite","parentTotal":5});assert_eq!(favorite_parent_index(&options,0.).unwrap(),0);assert_eq!(favorite_parent_index(&options,0.125).unwrap(),1);assert_eq!(favorite_parent_index(&options,0.5).unwrap(),2);assert_eq!(favorite_parent_index(&options,1.).unwrap(),4);
         for ratio in [f64::NAN,f64::INFINITY,-0.01,1.01]{assert!(favorite_parent_index(&options,ratio).is_err());}assert!(favorite_parent_index(&json!({"origin":"frame","parentTotal":5}),0.).is_err());
