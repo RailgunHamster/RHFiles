@@ -6,6 +6,18 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 同页图库图片复用（继续验收中）
+
+旧正常 A435 实际窗口的同页跳转检查 **0/1，失败**（`rhvideo-gallery-reuse-old-real.tap`、`rhfiles-e2e-sSkFgy/gallery-reuse.json`）：URL 未变且已经完成 800px 解码，却换掉了图片节点。前后服务请求均为 36，故这只证明节点重建，不能声称已证明额外下载、解码或安卓超时根因。提交 `aa8aabd`／`d893e8c` 仅在当前页、同账号、同清单修订、相同 URL 下复用已加载节点；刷新、账号切换、地址变化、错误或未加载图片不复用，重复条目也不共用一个节点。局部 Map 最多一页，WeakMap 不强持有旧页，没有全库图片缓存。
+
+本地实际 RHVideo `3d6aaeb` 源码对照的完整检查 **1282/1282，零失败／取消／跳过，28.070 秒**（`rhvideo-gallery-reuse-observer-final-node.tap`）。正常 Windows release **2 分 43 秒**，EXE SHA-256 **`d607d9b4b811acc617fa620809dd533833efc3724ae59712890859238e23b11f`**，冻结 `rhvideo-pipe-full-pPca6r`。同一普通 EXE 实际图库、继续浏览、普通图片、叠放及暂存图片回归 **14/14，零失败／取消／跳过，135.380 秒**（`rhvideo-gallery-reuse-final-windows.tap`）；新增同页节点确实相同、complete=true、宽 800，显式刷新和登录后节点不同；继续浏览实际就绪 PNG 已查看。这不是完整 Windows 平台、原生视频或性能验收。
+
+此前同一正常 C24D APK 的阶段诊断已终止，仍 **失败**（`rhvideo-gallery-resume-phase-diagnostic-android.log`、`rhvideo-image-decode-android-AstqIU/receipt.json`）。这次经过 held／设置不抢焦点／Close 返回 stale／损坏图，最后卡在 index 5 未放行响应的原 25 秒观察，不能将局部成功算整轮通过。随后增加只读 DOM 源变更时间观测，最多 16 项、不保存 URL；区分宿主时间与 WebView 时间，明确不是精确解码起点。不改原业务时限、解码或请求，不自动重放。
+
+正常 Android release **26 秒**，APK **`dd0ee9fad26f414a41641c00967918c507bdd7d01813c983a798856b008bf54d`**（`rhvideo-modal-normal-android-pe3GKF`），工作台 **54D8**／JNI **1F90**、四项正常 BuildConfig 与安装字节已核对。仅附着一次普通启动后的 PID 24057，**startupAccepted:false**；最终仍在未放行响应的原 25 秒观察 **失败**（`rhvideo-gallery-reuse-observed-android.log`、`rhvideo-image-decode-android-5P3xg4/receipt.json`）。失败后只读状态显示 timeout 动作已终止为普通图片错误、loading=false、src 已移除；该 URI 的唯一服务请求在约 25.121 秒关闭，未完整写完。DOM 记录最后一次 source 从设置到移除约 15.189 秒，不能把较早的缩略图请求当作全图解码起点，也不能称原 20 秒 DOM watchdog 已验收。宿主／Web 观察区间约 213.528／212.884 秒，没有明显的倍速时钟差，但跨边界采样不精确，仍未定位实际延迟环节。另补入原动作同一 Web 时钟的 startedAt／settledAt，未改业务预算或重放动作；该补充尚未再次设备运行。
+
+实际加载 PNG 是可关闭的“正在加载”；名为 ready 的 Android PNG 仍显示设置面板，不能拿文件名当作图片已可见的证明。两张已查看。1211 个冻结源码、4 个工具、426 个运行库及 D607／DD0 候选在这一轮后再次核对一致。完整目标、手写 UI 错误回执、持续 A/V、原生关闭和同质量性能仍未完成；没有正式发包或触碰真实数据。
+
 ## 2026-10-31 继续浏览的首次图片窗口（继续验收中）
 
 实际本地 RHVideo `3d6aaeb` 的 `resumeBrowse()` 调用渲染后立即显示 viewer，不等待图片下载。新增直接执行参考函数的测试已核对这一点；本端 `resumeGallery` 却在真实解码后才 openDialog。四项本端生产函数红测先 **0/4**（`rhvideo-gallery-resume-red.tap`），覆盖首次加载、较新设置、错误及关闭后的迟到完成。

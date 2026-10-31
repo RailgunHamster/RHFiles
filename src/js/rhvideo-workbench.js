@@ -3017,7 +3017,7 @@
             ),
           );
           const search=input("search",preview.query,"wb-excerpt-search");search.className="wb-preview-search";search.placeholder="搜索本页章节标题和摘录（支持拼音）";search.dataset.apiAction="rhvideo.novel.previewSearch";
-          listen(search,"input",()=>invoke("novel.previewSearch",{query:search.value}).catch(notice),"novel.previewSearch");
+          listen(search,"input",()=>{const pending=invoke("novel.previewSearch",{query:search.value});void pending.catch(notice);return pending;},"novel.previewSearch");
           root.append(search,el("p","","wb-preview-status"));
           const list = el("div", undefined, "wb-excerpts");
           root.append(list);
@@ -3191,8 +3191,7 @@
       listen(
         chapterSearch,
         "input",
-        () =>
-          invoke("reader.search", { query: chapterSearch.value }).catch(notice),
+        () => {const pending=invoke("reader.search",{query:chapterSearch.value});void pending.catch(notice);return pending;},
         "reader.search",
       );
       $("reader-dialog")
@@ -3403,7 +3402,7 @@
         page.min="1";page.max=String(last);page.required=true;page.setAttribute("aria-label","截图页码");page.dataset.apiAction="rhvideo.gallery.jump";
         const submit=el("button","跳转","button secondary");submit.type="submit";submit.dataset.apiAction="rhvideo.gallery.jump";
         page.disabled=!gallery.total;submit.disabled=page.disabled;
-        jump.append(field("跳到页",page),submit);listen(jump,"submit",event=>{event.preventDefault();invoke("gallery.jump",{page:Number(page.value)}).catch(notice);},"gallery.jump");navigation.append(jump);root.append(grid,navigation);
+        jump.append(field("跳到页",page),submit);listen(jump,"submit",event=>{event.preventDefault();const pending=invoke("gallery.jump",{page:Number(page.value)});void pending.catch(notice);return pending;},"gallery.jump");navigation.append(jump);root.append(grid,navigation);
         rememberGalleryBrowser();
         save();
         return { total: gallery.total, offset: gallery.offset };
