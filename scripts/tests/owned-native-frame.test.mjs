@@ -108,3 +108,22 @@ test('owned single-player close is fixed, bounded and never admits a handle, sel
   for(const bad of [{submitted:false},{target:'main'},{transport:'taskkill'},{observedAtMs:0},{destroyed:'yes'},{checkedAtMs:12344}]){value={target:'single-player',transport:'win32-wm-close',submitted:true,observedAtMs:12345,destroyed:true,checkedAtMs:12347,...bad};await assert.rejects(driver.closePlayerWhenCreated(),/acknowledgement/);}
  }finally{driver?.close();f.close();}
 });
+
+test('test-only main client sizing rejects arbitrary targets and unsafe or non-integer dimensions',async()=>{
+ const f=fixture();let driver;try{
+  driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:f.execute});
+  assert.equal(typeof driver.sizeMainClient,'function');
+  for(const args of [undefined,null,[],{width:1200,height:678,path:'outside'},{width:1200,height:678,hwnd:1},{width:1200,height:678,label:'library'},{width:699,height:678},{width:1921,height:678},{width:1200,height:449},{width:1200,height:1081},{width:1200.5,height:678},{width:NaN,height:678},{width:'1200',height:678}])await assert.rejects(driver.sizeMainClient(args));
+  assert.equal(f.calls.length,0,'Rejected sizes cannot launch the native driver');
+ }finally{driver?.close();f.close();}
+});
+test('test-only main client sizing acknowledges only the exact observed size without changing focus',async()=>{
+ const f=fixture();let driver;try{
+  const value={target:'main-client',transport:'win32-client-size',width:1200,height:678,applied:true,observedAtMs:12345};
+  f.setExecute(async(_,args,options)=>{assert.deepEqual(args,['42','own/rhfiles.exe','main-client-size','1200','678']);assert.equal(options.timeout,4500);return JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,...value});});
+  driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:f.execute});
+  assert.deepEqual(await driver.sizeMainClient({width:1200,height:678}),value);
+  for(const bad of [{applied:false},{target:'library'},{transport:'set-focus'},{width:1199},{height:677},{observedAtMs:0}]){f.setExecute(async()=>JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,...value,...bad}));await assert.rejects(driver.sizeMainClient({width:1200,height:678}),/sizing acknowledgement/);}
+  driver.close();await assert.rejects(driver.sizeMainClient({width:1200,height:678}),/closed/);
+ }finally{driver?.close();f.close();}
+});

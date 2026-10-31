@@ -1,4 +1,4 @@
-// Test-only observation, guarded Home/End input and native single-player close.
+// Test-only observation, guarded input/close and bounded owned main-client size.
 // No hooks, foreign/desktop capture, or production diagnostic API.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -94,6 +94,10 @@ static const char* focus_kind(HWND window,const GUITHREADINFO& info){
   if(std::wcscmp(name,L"RHFilesNativeVideoSurface")==0)return "native-video";
   return "other-owned-child";
 }
+static int dimension(const wchar_t* raw,int minimum,int maximum){
+  const std::wstring value(raw);require(!value.empty()&&value.size()<=4&&std::all_of(value.begin(),value.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}),"Invalid owned client dimension");
+  const int result=std::stoi(value);require(result>=minimum&&result<=maximum,"Owned client dimension outside bounds");return result;
+}
 static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_created){
   const std::wstring command(argv[3]);
   if(command==L"player-close"){
@@ -116,7 +120,7 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
     const bool destroyed=!IsWindow(target);const auto end=unix_millis();
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"single-player\",\"transport\":\"win32-wm-close\",\"submitted\":true,\"observedAtMs\":%llu,\"destroyed\":%s,\"checkedAtMs\":%llu}\n",static_cast<unsigned long>(pid),static_cast<unsigned long long>(at),destroyed?"true":"false",static_cast<unsigned long long>(end));return;
   }
-  require(((command==L"windows"||command==L"library-ping"||command==L"activate-main")&&argc==4)||(command==L"library-key"&&argc==6),"Unsupported owned window command");
+  require(((command==L"windows"||command==L"library-ping"||command==L"activate-main")&&argc==4)||((command==L"library-key"||command==L"main-client-size")&&argc==6),"Unsupported owned window command");
   WORD key=0;bool scan_mode=false;
   if(command==L"library-key"){
     const std::wstring name(argv[4]),encoding(argv[5]);
@@ -124,6 +128,20 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
     require(encoding==L"virtual-key"||encoding==L"scan-code","Invalid key encoding");scan_mode=encoding==L"scan-code";
   }
   OwnedWindows owned{pid};require(EnumWindows(owned_window,reinterpret_cast<LPARAM>(&owned)),"Cannot enumerate owned input windows");require(!owned.ambiguous,"Ambiguous owned input window");
+  if(command==L"main-client-size"){
+    const int width=dimension(argv[4],700,1920),height=dimension(argv[5],450,1080);require(owned.main,"Owned main window is not open");owned_main(owned.main,pid);require(!IsZoomed(owned.main),"Owned main window must not be maximized");
+    require(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)!=FALSE,"Cannot establish physical client dimensions");
+    RECT client{},outer{};require(GetClientRect(owned.main,&client)&&GetWindowRect(owned.main,&outer),"Cannot inspect owned main size");
+    const int border_width=outer.right-outer.left-client.right,border_height=outer.bottom-outer.top-client.bottom;require(border_width>=0&&border_width<=128&&border_height>=0&&border_height<=256,"Unexpected owned window borders");
+    Handle current(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid));require(current.value&&created(current.value)==process_created,"Owned main process lifetime changed");
+    // Resize only this exact sibling main window. No activation, moving,
+    // arbitrary HWND, style changes, message loop or repeat submission.
+    require(SetWindowPos(owned.main,nullptr,0,0,width+border_width,height+border_height,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_ASYNCWINDOWPOS),"Cannot size owned main client");
+    const auto started=GetTickCount64();bool applied=false;
+    do{owned_main(owned.main,pid);require(GetClientRect(owned.main,&client),"Cannot verify owned client size");applied=client.right==width&&client.bottom==height;if(applied)break;Sleep(5);}while(GetTickCount64()-started<1000);
+    require(applied,"Owned client did not reach its requested size");verify_process(pid,argv[2]);
+    std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"main-client\",\"transport\":\"win32-client-size\",\"width\":%d,\"height\":%d,\"applied\":true,\"observedAtMs\":%llu}\n",static_cast<unsigned long>(pid),width,height,static_cast<unsigned long long>(unix_millis()));return;
+  }
   if(command==L"library-ping"){
     require(owned.library,"Owned library is not open");
     const auto observed=unix_millis(),started=GetTickCount64();DWORD_PTR result{};SetLastError(0);
@@ -166,7 +184,7 @@ int wmain(int argc,wchar_t** argv){
     const std::wstring digits(argv[1]);require(!digits.empty()&&digits.size()<=10&&std::all_of(digits.begin(),digits.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}),"Invalid owned PID");
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
     const auto process_created=verify_process(pid,argv[2]);
-    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"||std::wstring(argv[3])==L"player-close"){window_command(argc,argv,pid,process_created);return 0;}
+    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"||std::wstring(argv[3])==L"player-close"||std::wstring(argv[3])==L"main-client-size"){window_command(argc,argv,pid,process_created);return 0;}
     require(argc==5||(argc==6&&(std::wstring(argv[5])==L"library-presentation"||std::wstring(argv[5])==L"main-client")),"Use PID, exact executable, owned basename, renderer and a fixed canvas scope");
     const bool presentation=argc==6&&std::wstring(argv[5])==L"library-presentation",main_client=argc==6&&std::wstring(argv[5])==L"main-client";
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";
