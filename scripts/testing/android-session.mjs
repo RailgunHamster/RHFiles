@@ -11,6 +11,20 @@ export async function until(check,label,timeout=20000){
   while(Date.now()<end){try{const result=await check();if(result)return result;}catch(error){last=error;}await pause(100);}
   throw Error(`Timed out: ${label}${last?' — '+last.message:''}`);
 }
+export function launchAndroidTestApp(adb,display={}){
+  const packageId='com.railgunhamster.rhfiles';
+  if(display.attachOnly){
+    if(display.attachOnly!==true||display.size||display.density||display.notifications)throw Error('Attach-only cannot change the display, grants or app lifecycle');
+    const pid=adb('shell','pidof',packageId).trim();if(!/^[1-9]\d*$/.test(pid))throw Error('Attach-only requires one already-running owned app process');
+    const activities=adb('shell','dumpsys','activity','activities');if(!activities.split(/\r?\n/).some(line=>/topResumedActivity|mResumedActivity/.test(line)&&line.includes('com.railgunhamster.rhfiles/.MainActivity')))throw Error('Attach-only requires the existing RHFiles MainActivity to be foreground');
+    return {mode:'attach-existing-foreground',pid:Number(pid),startupAccepted:false};
+  }
+  adb('shell','am','force-stop',packageId);
+  if(display.size)adb('shell','wm','size',display.size);
+  if(display.density)adb('shell','wm','density',String(display.density));
+  if(display.notifications)adb('shell','pm','grant',packageId,'android.permission.POST_NOTIFICATIONS');
+  adb('shell','am','start','-W','-n',packageId+'/.MainActivity');return {mode:'launch-wait'};
+}
 export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR || 'emulator-5582',display={}) {
   if(!/^emulator-\d+$/.test(serial))throw Error('Android test harness accepts only an explicit emulator serial, never a phone.');
   const sdk=process.env.ANDROID_SDK_ROOT || process.env.ANDROID_HOME;
@@ -26,11 +40,7 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
   // A standard Android Activity can have multiple live WebViews. Starting a
   // second MainActivity then connecting to the old background CDP page gives
   // false gesture failures. Restart only this emulator's app, preserving data.
-  adb('shell','am','force-stop',packageId);
-  if(display.size)adb('shell','wm','size',display.size);
-  if(display.density)adb('shell','wm','density',String(display.density));
-  if(display.notifications)adb('shell','pm','grant',packageId,'android.permission.POST_NOTIFICATIONS');
-  adb('shell','am','start','-W','-n',packageId+'/.MainActivity');
+  const launch=launchAndroidTestApp(adb,display);
   if(adb('shell','dumpsys','window').includes('Application Not Responding'))throw Error('The emulator has an Android ANR dialog; recover the emulator before UI assertions.');
   const pid=await until(()=>adb('shell','pidof',packageId),'app process');
   const port=adb('forward','tcp:0','localabstract:webview_devtools_remote_'+pid);
@@ -111,6 +121,6 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
       adb('shell','screencap','-p','/data/local/tmp/rhfiles-qa-screen.png');
       adb('pull','/data/local/tmp/rhfiles-qa-screen.png',path.join(artifactDir,name+'.png'));
     };
-    return {adb,evaluate,send,click,swipe,screenshot,events,artifactDir,serial,close};
+    return {adb,evaluate,send,click,swipe,screenshot,events,artifactDir,serial,close,launch};
   }catch(error){close();throw error;}
 }

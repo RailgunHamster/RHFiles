@@ -20,6 +20,16 @@
 
 后续补入明确的取消 Promise：关闭、下一次切换和连接／退出清理会立即返回旧操作 stale，清理仅属于自己那次加载的计时器和源；同一 URL 的新加载不受旧 finally 影响。失败／超时撤销当前源，不能在已报告失败后继续挂着下载或迟到显示；没有重试失败请求。新增永不完成的浏览器解码及同 URL 代次交错测试，并让原账号清理用例执行实际 cancelImageDecode、验证确实调用一次及清空引用。第一次完整检查 **1225/1226、一失败** 是原缓存隔离夹具没有载入这个新增函数；补齐真实上下文后最终 **1226/1226，零失败／取消／跳过，32.211 秒**（`rhvideo-image-cancel-final-full-node.tap`）。新正常候选正在构建，之后重验同一业务场景；另新增一项真实图像超时撤销源的检查，其独立 25 秒观察包含原 20 秒解码 watchdog，不改变原关闭用例的 15 秒门槛或产品 watchdog。
 
+取消修复后的正常 Windows release **2 分 27 秒**、EXE **`ab492e8b8ce9fec01892a4c3013c6bd36483f1c7555cbbc47a94317606cba8b6`**，冻结 `rhvideo-pipe-full-v2u0bE`；正常 Android x86_64 release **33 秒**、APK **`6b96a5314f2f825ef32d259d31ac1e3705143b0a4fffb7ba27c6d996ae9a5252`**，冻结 `rhvideo-modal-normal-android-r0O9cv`，工作台 **3BBD**／JNI **1F90**，正常 BuildConfig 四项均核对。只有前端资源变更，未把诊断 APK 当主 APK、未改变解码／音量／画质；这些仍为 QA 候选，不是 ARM 真机包或正式发版。
+
+新 **AB49** 的同一真实图片场景 **1/1，零失败／取消／跳过，27.685 秒**（`rhvideo-image-cancel-real-windows.tap`、`rhfiles-e2e-djYfyl/image-decode.json`）。这次加载中关闭实际及时完成，首次加载仍 opened=true／loading=true、current=null，完成后没有抢走设置焦点；真实超时返回错误并清空 src，损坏图仍只请求一次。随后同一 EXE 的截图／目标页／面板／综合用例 **22/22，零失败／取消／跳过，199.226 秒**（`rhvideo-image-cancel-windows-related.tap`），含真实本地 RHVideo FastAPI／临时 SQLite、源文件与导出字节、五万项、原生 MP4／四路和实际 1080p／4K 输入。首帧仍约 **4021／6795 ms**，不能说已经达到同质量原版性能，也不代替此前完整 Windows 整轮及 End 丢事件问题的核验。
+
+Android 第一次默认启动方式在 `am start -W` **30 秒**超时，**失败**（`rhvideo-image-decode-android-s4jaZa/receipt.json`），当时夹具 **0** 次请求，图片场景根本没有开始；清理后已确认没有残留应用进程。没有重启 AVD、静音或重复安装。之后显式一次普通 start，请求返回 0，核对 PID **21443** 的 MainActivity 已在前台、安装字节确为 **6B96**，再用新增 `--attach` 模式只附着该现有前台实例，不安装、停止或再次启动。默认 session 的单次 `-W` 行为和时间上限不变；附着拒绝无进程／多个 PID／后台界面／改显示和权限，并在回执明确 **startupAccepted:false**，绝不覆盖冷启动失败。
+
+该已启动普通 APK 的图片组件场景实际 **通过**（`rhvideo-image-decode-android-V6I3s8/receipt.json`）：与 Windows 同样的 loading／current／错误、旧解码拒绝、关闭、设置焦点和超时清空源检查均成立；98 次生成夹具请求，损坏图只有一次。`android-Lk32qV` 的真实设备 ready／initial／timeout PNG 已查看，确实是媒体库图片界面，而非后台 DOM。运行时一条只读查询也曾暂未返回，最终在清理后正常结束；不能仅凭该次观察等待推断 ADB 或应用故障的根因。附着运行通过不是启动速度、持续播放或整套 Android 功能通过。
+
+查看真实 PNG 还确认了待修界面问题：首次请求 picture-35 时标题／计数仍为上一张 **095／96**，超时 picture-34 时仍残留 **035／36**；公开 current=null 正确，但界面没有准确描述待加载／失败目标。下一步须把请求目标、已解码目标和错误目标分别表达并通过公开状态读取，不能以本次通过掩盖这一点。手机横向工具条也仍显拥挤。新增附着策略检查后的当前完整本地源码对照 **1229/1229，零失败／取消／跳过，27.194 秒**（`rhvideo-image-final-source-node.tap`）；冻结的 **1192** 个源码、**4** 个工具、**426** 个运行库及 6B96 APK 事后哈希全部匹配（`rhvideo-pipe-full-v2u0bE/image-decode-postcheck.json`）。产品提交 **747f3fb／01c629d** 已推送 GitHub／Gitee；完整目标保持未完成，未发正式新包，用户原三份脏 schema、正式 PID 45696、真实数据和实体手机均未动。
+
 ## 2026-10-31 全可见缩略图与播放器关闭的分阶段证据（继续验收中）
 
 继续只读对照 WINSERVER `D:\git\RHVideo` 的 `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`，不要求私有仓库密钥，也不读取或修改真实数据库／媒体。以下均为隔离配置、生成的媒体与临时服务；没有操作实体手机或正式 Windows 实例。
