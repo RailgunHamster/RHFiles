@@ -296,20 +296,26 @@
     for(const chapter of book.chapters)select.append(new Option(chapter.title,String(chapter.index)));
     openDialog('reader-dialog');paintFavorite('novel:'+book.id);await chapter(reader.chapter,book.progress?.scroll_ratio||0);return {opened:true};
   }
+  let pendingImageDecode=null;
+  function cancelImageDecode(){const pending=pendingImageDecode;pendingImageDecode=null;pending?.cancel();}
   async function prepareImage(media,current){
     if(!current())return {stale:true};
+    cancelImageDecode();
     const image=$('full-image');let timer;
+    let cancel;const cancelled=new Promise(resolve=>{cancel=()=>{if(image.getAttribute('src')===media.cover)image.removeAttribute('src');resolve({stale:true});};}),pending={cancel};pendingImageDecode=pending;
     try{
       if(typeof media?.cover!=='string'||!media.cover)throw Error('图片地址不可用');
       if(image.getAttribute('src')!==media.cover)image.src=media.cover;
-      await Promise.race([image.decode(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('图片加载超时，请检查服务器连接')),20000);})]);
+      const result=await Promise.race([image.decode(),cancelled,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('图片加载超时，请检查服务器连接')),20000);})]);
+      if(result?.stale)return {stale:true};
       if(!current())return {stale:true};
       if(image.getAttribute('src')!==media.cover||!image.complete||!image.naturalWidth||!image.naturalHeight)throw Error('图片内容不可用');
       return {decoded:true};
     }catch(error){
       if(!current())return {stale:true};
+      if(pendingImageDecode===pending&&image.getAttribute('src')===media.cover)image.removeAttribute('src');
       throw Error(error?.message==='图片加载超时，请检查服务器连接'?error.message:'图片加载失败，服务器未返回可解码的图片');
-    }finally{clearTimeout(timer);}
+    }finally{clearTimeout(timer);if(pendingImageDecode===pending)pendingImageDecode=null;}
   }
   function showImage(media=images[imageIndex],index=imageIndex,total=images.length){
     $('image-title').textContent=media.title;if($('full-image').src!==media.cover)$('full-image').src=media.cover;$('full-image').alt=media.title;
@@ -341,7 +347,7 @@
     try{const pending=readSaveChain.catch(()=>{}).then(()=>epoch===readEpoch&&state.connected?native('progress',{id,chapter:index,ratio:Math.min(1,Math.max(0,ratio))}):null);readSaveChain=pending;const value=await pending;if(epoch!==readEpoch)return {saved:false,stale:true};if(token===reader.token)$('reader-save').textContent='进度已同步到 RHVideo';return {saved:value!==null};}
     catch(error){if(token===reader.token)$('reader-save').textContent='进度保存失败';notice('阅读进度未保存：'+String(error));throw error;}
   }
-  function clearMediaViews(){++reader.token;++timelineLoadId;++folderLoadId;++state.loadId;state.loading=false;clearCards();$('media-grid').inert=false;$('media-grid').setAttribute('aria-busy','false');clearTimeout(reader.saveTimer);reader.book=null;reader.loaded=false;for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();$('full-image').removeAttribute('src');$('chapter-text').textContent='';$('timeline-frames').replaceChildren();images=[];}
+  function clearMediaViews(){cancelImageDecode();++reader.token;++timelineLoadId;++folderLoadId;++state.loadId;state.loading=false;clearCards();$('media-grid').inert=false;$('media-grid').setAttribute('aria-busy','false');clearTimeout(reader.saveTimer);reader.book=null;reader.loaded=false;for(const id of ['image-dialog','reader-dialog','timeline-dialog'])$(id).close();$('full-image').removeAttribute('src');$('chapter-text').textContent='';$('timeline-frames').replaceChildren();images=[];}
   async function chapter(index,ratio=0){
     if(!reader.book)throw Error('请先打开一本书');
     if(!reader.book.chapters.some(c=>c.index===index))throw Error('没有这个章节');
@@ -371,7 +377,7 @@
     if(mobile)return native('close',run?{_automationRun:run}:{});return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
-  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,loadCategory,paint,paintFavorite,showImage,prepareImage,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
+  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,loadCategory,paint,paintFavorite,showImage,prepareImage,cancelImageDecode,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
   const listenNative=mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen;
   listenNative('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
   listenNative('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);

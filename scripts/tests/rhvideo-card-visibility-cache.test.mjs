@@ -47,11 +47,12 @@ test('an account/card reset disconnects observation and releases all image sourc
 });
 
 test('the actual connection/logout reset also disconnects observation, not only an explicit list refresh',()=>{
-  const f=fixture();f.add('old-account');f.add('old-detached');
+  const f=fixture();f.add('old-account');f.add('old-detached');let cancelled=0;
   const grid={replaceChildren(){f.calls.grid++;},setAttribute(){}};
   Object.assign(f.context,{reader:{token:2,book:{id:'old'},loaded:true,saveTimer:0},state:{loadId:5,loading:true},timelineLoadId:3,folderLoadId:4,images:[{id:'old'}],clearTimeout,
     $:id=>id==='media-grid'?grid:{close(){},removeAttribute(){},replaceChildren(){}}});
-  f.load('clearCards');f.load('clearMediaViews')();
+  f.context.pendingImageDecode={cancel:()=>{cancelled++;}};f.load('cancelImageDecode');f.load('clearCards');f.load('clearMediaViews')();
+  assert.equal(cancelled,1,'Logout must settle the pending decode instead of abandoning its Promise');assert.equal(f.context.pendingImageDecode,null);
   assert.equal(f.calls.disconnect,1,'beginConnection/invalidateReads must release the observer references to old account nodes');
   assert.equal(f.cache.size,0);assert.deepEqual(f.calls.removed,['old-account','old-detached']);assert.equal(f.calls.grid,1);
   assert.equal(f.context.reader.token,3);assert.equal(f.context.state.loadId,6);assert.equal(f.context.state.loading,false);assert.equal(f.context.reader.book,null);assert.equal(f.context.images.length,0);

@@ -2790,6 +2790,7 @@
         const ticket = ++imageToken,
           session = imageSession,
           index = targetIndex??RHVideoModel.playback.step(session.pendingIndex??session.index,direction,session.total);
+        ctx.cancelImageDecode();
         session.pendingIndex=index;
         session.loading=true;
         session.error="";
@@ -4562,7 +4563,7 @@
         refreshImage,
         cancelPendingPlayback(){singlePlayIntent++;},
         rotationChanged(enabled){prefs.autoRotate=!!enabled;const control=document.querySelector('[data-preference="autoRotate"]');if(control)control.checked=!!enabled;},
-        closeImage(){const id=imageSession?.previewId;singlePlayIntent++;imageSession=null;imageToken++;return id;},
+        closeImage(){const id=imageSession?.previewId;singlePlayIntent++;imageSession=null;imageToken++;ctx.cancelImageDecode();return id;},
         canPlayImage(){return !imageSession?.loading&&imageSession?.current?.kind==="frame";},
         refreshViewer,
         previewTarget(kind,id){const item=$("wb-viewer")?.open&&!viewer?.loadingMedia?viewer?.current:$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},

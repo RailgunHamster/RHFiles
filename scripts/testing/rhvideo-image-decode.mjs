@@ -2,17 +2,17 @@ import assert from 'node:assert/strict';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 export async function imageDecodeFixture(){
- const gates=new Map([99,96,94,35].map(n=>[n,deferred()]));let initial=false;
+ const gates=new Map([99,96,94,35,34].map(n=>[n,deferred()]));let initial=false,timeout=false;
  const fixture=await rhvideoFixture({videoCount:0,galleryVideoCount:0,pictureCount:100,
-  beforeCatalog:(kind,rows)=>{if(kind==='picture')rows.forEach((row,i)=>{row.original_filename=String(i).padStart(3,'0')+'.webp';if(initial&&i===35)row.webp_path='pictures/initial35.svg';});},
-  beforeMedia:async({path,image})=>{if(!image)return;const match=path.match(/^\/storage\/pictures\/(\d+)\.svg$/);const n=path==='/storage/pictures/initial35.svg'?35:match?Number(match[1]):-1;if(gates.has(n)&&(n!==35||initial))await gates.get(n).promise;if(n===98)return {body:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><broken'),contentType:'image/svg+xml'};}
+  beforeCatalog:(kind,rows)=>{if(kind==='picture')rows.forEach((row,i)=>{row.original_filename=String(i).padStart(3,'0')+'.webp';if(initial&&i===35)row.webp_path='pictures/initial35.svg';if(timeout&&i===34)row.webp_path='pictures/initial34.svg';});},
+  beforeMedia:async({path,image})=>{if(!image)return;const match=path.match(/^\/storage\/pictures\/(\d+)\.svg$/);const n=path==='/storage/pictures/initial35.svg'?35:path==='/storage/pictures/initial34.svg'?34:match?Number(match[1]):-1;if(gates.has(n)&&(n!==35||initial)&&(n!==34||timeout))await gates.get(n).promise;if(n===98)return {body:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><broken'),contentType:'image/svg+xml'};}
  });
- return {...fixture,armInitial:()=>{initial=true;},release:n=>{assert(gates.has(n));gates.get(n).resolve();},releaseAll:()=>gates.forEach(g=>g.resolve())};
+ return {...fixture,armInitial:()=>{initial=true;},armTimeout:()=>{timeout=true;},release:n=>{assert(gates.has(n));gates.get(n).resolve();},releaseAll:()=>gates.forEach(g=>g.resolve())};
 }
 export async function exerciseImageDecode({page,until,server,fixture,receipt,screenshot=async()=>{}}){
  const api=(name,args={})=>page.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
  const begin=(label,ratio)=>page.evaluate(`(()=>{window.__qaImageDecodes??={};const row=__qaImageDecodes[${JSON.stringify(label)}]={done:false};RHFilesAPI.invoke('rhvideo.image.seek',{ratio:${ratio}}).then(value=>{row.value=value;row.done=true;},error=>{row.error=String(error);row.done=true;});return true;})()`);
- const finish=label=>until(()=>page.evaluate('window.__qaImageDecodes?.['+JSON.stringify(label)+']?.done?__qaImageDecodes['+JSON.stringify(label)+']:null'),'actual image action '+label);
+ const finish=(label,budget)=>until(()=>page.evaluate('window.__qaImageDecodes?.['+JSON.stringify(label)+']?.done?__qaImageDecodes['+JSON.stringify(label)+']:null'),'actual image action '+label,budget);
  const requested=n=>fixture.requests.some(r=>r.path==='/storage/pictures/'+n+'.svg');
  await api('connection.connect',{server,username:'preview',password:'fixture-only'});await api('category',{kind:'picture'});await api('sort',{value:'nameAsc'});await api('media.open',{kind:'picture',id:'picture-0'});
  assert.equal((await api('image.state')).current.id,'picture-0');
@@ -31,5 +31,7 @@ export async function exerciseImageDecode({page,until,server,fixture,receipt,scr
  const initial=receipt.initial=await until(async()=>{const s=await api('image.state');return s.opened&&s.loading?s:null;},'first loading exposes Close/Back before decoding');assert.equal(initial.opened,true);assert.equal(initial.loading,true);await screenshot('image-initial-loading');
  await api('settings.open');assert.equal(await page.evaluate('document.activeElement.closest("dialog")?.id'),'wb-settings');fixture.release(35);assert.equal((await finish('initial')).error,undefined);assert.equal(await page.evaluate('document.activeElement.closest("dialog")?.id'),'wb-settings','Decoding must not re-raise the image over a newer panel');
  await api('panel.close',{id:'wb-settings'});await api('image.close');
+ fixture.armTimeout();await api('refresh');await page.evaluate("(()=>{const row=__qaImageDecodes.timeout={done:false};RHFilesAPI.invoke('rhvideo.media.open',{kind:'picture',id:'picture-34'}).then(value=>{row.value=value;row.done=true;},error=>{row.error=String(error);row.done=true;});return true;})()");await until(()=>fixture.requests.some(r=>r.path==='/storage/pictures/initial34.svg'),'genuine image timeout request');
+ const timedOut=await finish('timeout',25000);assert.match(timedOut.error,/图片/);receipt.timeout=await api('image.state');assert.equal(receipt.timeout.current,null);assert.equal(receipt.timeout.loading,false);assert.match(receipt.timeout.error,/图片/);assert.equal(await page.evaluate('document.getElementById("full-image").getAttribute("src")'),null,'Failure must revoke the still-pending source');fixture.release(34);assert.equal(fixture.requests.filter(r=>r.path==='/storage/pictures/initial34.svg').length,1);await screenshot('image-decode-timeout');await api('image.close');
  assert.deepEqual((await api('ui.contract')).missing,[]);receipt.passed=true;
 }
