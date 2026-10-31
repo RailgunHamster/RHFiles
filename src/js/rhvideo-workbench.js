@@ -1034,12 +1034,13 @@
             listen(
               checkbox,
               "change",
-              () =>
-                invoke("selection.toggle", {
+              () => {
+                const pending=invoke("selection.toggle", {
                   id: card.dataset.id,
                   kind: card.dataset.kind,
                   enabled: checkbox.checked,
-                }).catch(notice),
+                });void pending.catch(notice);return pending;
+              },
               "selection",
             );
             card.prepend(checkbox);
@@ -1348,12 +1349,13 @@
               listen(
                 control,
                 "change",
-                () =>
-                  invoke("preferences.set", {
+                () => {
+                  const pending=invoke("preferences.set", {
                     key,
                     value:
                       type === "bool" ? control.checked : Number(control.value),
-                  }).catch(notice),
+                  });void pending.catch(notice);return pending;
+                },
                 "settings." + key,
               );
             }
@@ -1449,12 +1451,13 @@
             listen(
               value,
               "change",
-              () =>
-                invoke("shortcuts.set", {
+              () => {
+                const pending=invoke("shortcuts.set", {
                   scope,
                   command,
                   combo: value.value,
-                }).catch(notice),
+                });void pending.catch(notice);return pending;
+              },
               "shortcut." + scope + "." + command,
             );
             root.append(
@@ -2192,7 +2195,7 @@
         if(!root.querySelector('.rv-task-center')){
           root.replaceChildren();const nav=el('nav',undefined,'wb-tabs');
           for(const [page,title]of [['watch','监控目录'],['tasks','处理队列'],['replacement','原片替换'],['trash','暂存区'],['storage','存储'],['system','服务']])nav.append(button(title,'server.open',{page},'button '+(page===server.page?'primary':'secondary')));
-          const body=el('div',undefined,'wb-server-body rv-task-center'),batches=el('details',undefined,'rv-task-batches'),summary=el('summary','替换批次');summary.dataset.apiAction='rhvideo.task.batchesVisibility';listen(summary,'click',event=>{event.preventDefault();invoke('task.batchesVisibility',{visible:!batches.open}).catch(notice);},'tasks.batches.visibility');batches.append(summary,el('div',undefined,'rv-task-batch-list'));batches.hidden=true;
+          const body=el('div',undefined,'wb-server-body rv-task-center'),batches=el('details',undefined,'rv-task-batches'),summary=el('summary','替换批次');summary.dataset.apiAction='rhvideo.task.batchesVisibility';listen(summary,'click',event=>{event.preventDefault();const pending=invoke('task.batchesVisibility',{visible:!batches.open});void pending.catch(notice);return pending;},'tasks.batches.visibility');batches.append(summary,el('div',undefined,'rv-task-batch-list'));batches.hidden=true;
           root.append(nav,button('刷新','server.refresh'),body,batches,el('p','','wb-live-status'));
         }
         [...root.querySelector('.wb-tabs').children].forEach((button,index)=>{const active=['watch','tasks','replacement','trash','storage','system'][index]===server.page;button.classList.toggle('primary',active);button.classList.toggle('secondary',!active);});
@@ -3724,7 +3727,7 @@
           viewer.observer.observe(surface);
           if (mode === "strip") {
             const speed=input("range",c.scrollSpeed,"wb-strip-speed"),label=el("span");speed.min=0;speed.max=2000;speed.step="any";speed.setAttribute("aria-label","连续浏览速度倍率");speed.dataset.apiAction="rhvideo.preferences.set";viewer.speed=speed;viewer.speedLabel=label;paintStripSpeed(viewer);
-            listen(speed,"input",()=>{if(viewer?.token!==token)return;label.textContent="×"+(Number(speed.value)/200).toFixed(1);void invoke("preferences.set",{key:"scrollSpeed",value:Number(speed.value)}).catch(notice);},"viewer.speed");controls.append(speed,label);
+            listen(speed,"input",()=>{if(viewer?.token!==token)return {stale:true};label.textContent="×"+(Number(speed.value)/200).toFixed(1);const pending=invoke("preferences.set",{key:"scrollSpeed",value:Number(speed.value)});void pending.catch(notice);return pending;},"viewer.speed");controls.append(speed,label);
             viewer.lanes=c.lanes;viewer.rowLookup=new Map(viewer.queue.map((item,index)=>[item.key||I.key(item),{item,index}]));
             const map = el("input");
             map.type = "range";
@@ -3735,10 +3738,11 @@
             listen(
               map,
               "input",
-              () =>
-                invoke("viewer.seek", {
+              () => {
+                const pending=invoke("viewer.seek", {
                   ratio: Number(map.value) / 1000,
-                }).catch(notice),
+                });void pending.catch(notice);return pending;
+              },
               "viewer.minimap",
             );
             controls.append(map);
@@ -3751,12 +3755,12 @@
               "pointerdown",
               (event) => {
                 const bounds = minimap.getBoundingClientRect();
-                void invoke("viewer.seek", {
+                const pending=invoke("viewer.seek", {
                   ratio: Math.min(
                     1,
                     Math.max(0, (event.clientX - bounds.left) / bounds.width),
                   ),
-                }).catch(notice);
+                });void pending.catch(notice);return pending;
               },
               "viewer.visualMap",
             );
@@ -3769,7 +3773,7 @@
           } else {
             const progress=input("range",0,"wb-slideshow-progress");progress.min=0;progress.max=1000;progress.setAttribute("aria-label","放映总进度");progress.dataset.apiAction="rhvideo.viewer.seek";
             const label=el("span");label.id="wb-slideshow-position";
-            listen(progress,"change",()=>viewer?.token===token?invoke("viewer.seek",{ratio:Number(progress.value)/1000}).catch(notice):{stale:true},"viewer.progress");
+            listen(progress,"change",()=>{if(viewer?.token!==token)return {stale:true};const pending=invoke("viewer.seek",{ratio:Number(progress.value)/1000});void pending.catch(notice);return pending;},"viewer.progress");
             controls.append(progress,label);viewer.progress=progress;viewer.progressLabel=label;
             const remembered =
               source!=="favorite"&&resume?.signature === signature
@@ -3916,8 +3920,8 @@
             node.dataset.key = tile.key;
             node.dataset.mediaPath=path;
             node.dataset.apiAction="rhvideo.viewer.select";node.title=(tile.item.title||tile.item.id)+" · 双击放大";
-            listen(node,"click",event=>{if(!event.target.closest("button"))void invoke("viewer.select",{key,expectedViewer:v.token}).catch(notice);},"viewer.select");
-            listen(node,"dblclick",event=>{if(event.target.closest("button"))return;event.preventDefault();event.stopPropagation();void invoke("viewer.inspect",{key,expectedViewer:v.token}).catch(notice);},"viewer.inspect");
+            listen(node,"click",event=>{if(event.target.closest("button"))return;const pending=invoke("viewer.select",{key,expectedViewer:v.token});void pending.catch(notice);return pending;},"viewer.select");
+            listen(node,"dblclick",event=>{if(event.target.closest("button"))return;event.preventDefault();event.stopPropagation();const pending=invoke("viewer.inspect",{key,expectedViewer:v.token});void pending.catch(notice);return pending;},"viewer.inspect");
             if(failure){node.classList.add("error");node.append(el("span","图片加载失败","wb-strip-error"));node.title=failure;}
             else{img.src=url;img.alt=tile.item.title;img.decoding="async";img.draggable=false;listen(img,"error",()=>{if(viewer===v&&!img.__stripRetired)failStripSource(v,path,"图片解码或读取失败");},"viewer.imageError");node.append(img);}
             const favorite=button("收藏","viewer.favorite",{key,expectedViewer:v.token},"wb-strip-favorite");favorite.setAttribute("aria-label","收藏 "+(tile.item.title||tile.item.id));node.append(favorite);
@@ -4474,7 +4478,7 @@
         );
       const master=input("range",config().volume,"wb-page-volume");master.min="0";master.max="100";master.step="1";master.setAttribute("aria-label","统一音量");master.dataset.apiAction="rhvideo.volume.set";
       const masterField=field("音量",master);masterField.classList.add("rhvideo-master-volume");document.querySelector(".header-actions").prepend(masterField);
-      listen(master,"input",()=>invoke("volume.set",{value:Number(master.value)}).catch(notice),"page.volume");
+      listen(master,"input",()=>{const pending=invoke("volume.set",{value:Number(master.value)});void pending.catch(notice);return pending;},"page.volume");
       let registrationBusy = false;
       const register = button("注册", "account.register", () => ({
         server: $("server").value,
