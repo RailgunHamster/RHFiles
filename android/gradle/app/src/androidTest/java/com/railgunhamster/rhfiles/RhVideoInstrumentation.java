@@ -769,6 +769,9 @@ public class RhVideoInstrumentation extends Instrumentation {
     step("native touch "+resource+" center="+center[0]+","+center[1]+" readyToDownMs="+(now-readyAt)+" "+geometry[0]);
     try{sendPointerSync(down);sendPointerSync(up);}finally{down.recycle();up.recycle();}
   }
+  private static boolean fullyVisibleControllerBounds(int left,int top,int right,int bottom,int clipLeft,int clipTop,int clipRight,int clipBottom,int windowLeft,int windowTop,int windowRight,int windowBottom,int screenWidth,int screenHeight){
+    return left>=0&&top>=0&&right>left&&bottom>top&&right<=screenWidth&&bottom<=screenHeight&&clipLeft<=left&&clipTop<=top&&clipRight>=right&&clipBottom>=bottom&&windowLeft<=left&&windowTop<=top&&windowRight>=right&&windowBottom>=bottom;
+  }
   private void revealPlayerControlsByTouch()throws Exception{
     // A background WebView's controls.show acknowledgement can arrive after
     // auto-hide. Exercise the actual user gesture once, without changing the
@@ -778,6 +781,15 @@ public class RhVideoInstrumentation extends Instrumentation {
       if(owner==null||owner!=current||owner.isFinishing())return;View decor=owner.getWindow().getDecorView();
       View bar=owner.findViewById(owner.getResources().getIdentifier("exo_bottom_bar","id",getTargetContext().getPackageName()));
       visible[0]=bar!=null&&bar.isShown();for(View node=bar;node!=null;node=node.getParent() instanceof View?(View)node.getParent():null)visible[0]&=node.getAlpha()>=.95f;
+      if(visible[0]){
+        // isShown stays true while Media3 translates its controller below the
+        // screen. Require the entire actual bar to be clipped into the focused
+        // window before deciding that the user's reveal gesture is unnecessary.
+        int[] position={0,0},rootScreen={0,0};bar.getLocationOnScreen(position);decor.getRootView().getLocationOnScreen(rootScreen);
+        android.graphics.Rect clip=new android.graphics.Rect(),window=new android.graphics.Rect();boolean clipped=bar.getGlobalVisibleRect(clip);decor.getWindowVisibleDisplayFrame(window);clip.offset(rootScreen[0],rootScreen[1]);window.offset(rootScreen[0],rootScreen[1]);
+        android.graphics.Point screen=new android.graphics.Point();if(decor.getDisplay()!=null)decor.getDisplay().getRealSize(screen);
+        visible[0]=clipped&&decor.hasWindowFocus()&&fullyVisibleControllerBounds(position[0],position[1],position[0]+bar.getWidth(),position[1]+bar.getHeight(),clip.left,clip.top,clip.right,clip.bottom,window.left,window.top,window.right,window.bottom,screen.x,screen.y);
+      }
       if(visible[0])return;
       View content=owner.findViewById(owner.getResources().getIdentifier("exo_content_frame","id",getTargetContext().getPackageName()));
       android.graphics.Rect bounds=new android.graphics.Rect();if(content==null||!content.isShown()||!content.getGlobalVisibleRect(bounds)||!decor.hasWindowFocus())return;
