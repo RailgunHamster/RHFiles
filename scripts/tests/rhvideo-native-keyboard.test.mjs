@@ -11,8 +11,10 @@ function keyboard(file,id){
   visit(parse(source,{ecmaVersion:'latest'}));assert(handler,'Use the actual '+id+' listener');return handler;
 }
 const handlers={player:keyboard('rhvideo-player.js','rhvideo.player.keyboard'),grid:keyboard('rhvideo-grid.js','rhvideo.grid.keyboard')};
+const playerSource=fs.readFileSync(new URL('../../src/js/rhvideo-player.js',import.meta.url),'utf8');
+const observeSource=playerSource.slice(playerSource.indexOf('function observeAction('),playerSource.indexOf('let audibleVolume='));
 function fixture(kind,{origin='frame',reference=true,editing=false,cells=true}={}){
-  const calls=[],context=vm.createContext({state:{queue:{options:{reference,origin}},cells:cells?[{inputId:19}]:[]},api:{invoke:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args??{}))});return Promise.resolve();}},call:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args))});return Promise.resolve();},toggleCommand:()=> 'pause',error(){}}),run=vm.runInContext('('+handlers[kind]+')',context);
+  const calls=[],context=vm.createContext({state:{queue:{options:{reference,origin}},cells:cells?[{inputId:19}]:[]},api:{invoke:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args??{}))});return Promise.resolve();}},call:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args))});return Promise.resolve();},toggleCommand:()=> 'pause',error(){}});vm.runInContext(observeSource,context);const run=vm.runInContext('('+handlers[kind]+')',context);
   return {calls,dispatch(values={}){const event={key:'End',code:'End',ctrlKey:false,altKey:false,shiftKey:false,metaKey:false,repeat:false,target:{matches:()=>editing,closest:()=>editing,isContentEditable:editing},preventDefault(){this.defaultPrevented=true;},...values};run(event);return event;}};
 }
 for(const kind of ['player','grid'])for(const [key,code]of [['Home',''],['End',''],['Home','Numpad7'],['End','Numpad1']])test(`${kind} uses semantic ${key} with code ${JSON.stringify(code)}`,()=>{

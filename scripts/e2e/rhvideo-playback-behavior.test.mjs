@@ -978,6 +978,36 @@ test('a reused player window adopts the new native session and never sends favor
   }finally{player?.close();await s.close();await other?.close();}
 });
 
+test('native player UI preserves failures and ABA guards for committed controls',{...native,timeout:180000},async()=>{
+ const s=await setup({videoDuration:30,failFavoriteIds:Array.from({length:6},(_,i)=>'video:video-'+i)}),receipt={passed:false,cases:[]};let player;
+ try{
+  await invoke(s.view,'preferences.set',{key:'fullLength',value:true});await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+  const raw=(action,args={})=>player.evaluate('RHFilesAPI.invoke('+JSON.stringify(action)+','+JSON.stringify(args)+')');
+  const observe=(action,args={})=>player.evaluate('RHFilesAPI.invoke('+JSON.stringify(action)+','+JSON.stringify(args)+').then(value=>({succeeded:true,value}),error=>({succeeded:false,code:error.code??"ACTION_FAILED",message:String(error.message||error)}))');
+  const live=()=>until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'actual native source for committed UI controls',25000);
+  const control=async id=>{const value=(await raw('ui.list')).find(row=>row.id===id);assert(value?.enabled&&value.visible,'Actual enabled control '+id);return value;};
+  await live();
+  for(const id of ['seek','volume']){
+   const first=await invoke(player,'player.state'),field=await control(id);await raw('ui.invoke',{controlId:field.controlId,event:'pointerdown',data:{button:0}});
+   await invoke(player,'player.next');await invoke(player,'player.previous');const replacement=await live();
+   assert.equal(replacement.queue.id,first.queue.id,'Return to A, not just a different file');assert.notEqual(replacement.inputId,first.inputId,'Same-file ABA has a new decoder identity');
+   const value=id==='seek'?'750':'43',args={command:id==='seek'?'seek':'volume',value:id==='seek'?Math.round(.75*first.durationMs):43,expectedInput:first.inputId};
+   const semantic=await observe('rhvideo.player.control',args),result=await observe('ui.set',{controlId:field.controlId,value});receipt.cases.push({id,originalInput:first.inputId,replacementInput:replacement.inputId,semantic,result});
+   assert.equal(semantic.succeeded,false);assert.match(semantic.message,/播放输入已改变/);assert.equal(result.succeeded,false,'An old '+id+' gesture cannot report successful UI completion');assert.equal(result.code,semantic.code);assert.equal(result.message,semantic.message);
+   const after=await invoke(player,'player.state');assert.equal(after.inputId,replacement.inputId);assert.equal(after.queue.id,replacement.queue.id);assert.equal(after.volume,replacement.volume,'A stale gesture cannot change replacement volume');assert.match(await player.evaluate('document.getElementById("error").textContent'),/播放输入已改变/);
+  }
+  const beforePlan=await invoke(player,'player.state'),queue=await control('queue-seek');await raw('ui.invoke',{controlId:queue.controlId,event:'pointerdown',data:{button:0}});
+  await invoke(s.view,'playlist.sequential');const freshPlan=await live();assert.notEqual(freshPlan.queue.planRevision,beforePlan.queue.planRevision);
+  const semantic=await observe('rhvideo.player.seekQueue',{ratio:.75,expectedPlanRevision:beforePlan.queue.planRevision}),result=await observe('ui.set',{controlId:queue.controlId,value:'750'});receipt.cases.push({id:'queue-seek',originalPlan:beforePlan.queue.planRevision,replacementPlan:freshPlan.queue.planRevision,semantic,result});
+  assert.equal(semantic.succeeded,false);assert.match(semantic.message,/播放队列已改变/);assert.equal(result.succeeded,false);assert.equal(result.code,semantic.code);assert.equal(result.message,semantic.message);assert.equal((await invoke(player,'player.state')).inputId,freshPlan.inputId);
+  const favorite=await control('player-favorite'),rejected=await observe('rhvideo.player.favorite'),requests=s.fixture.requests.filter(row=>row.path.startsWith('/api/v1/favorites/video/')).length;
+  const favoriteUI=await observe('ui.invoke',{controlId:favorite.controlId});receipt.cases.push({id:'player-favorite',semantic:rejected,result:favoriteUI});assert.equal(rejected.succeeded,false);assert.equal(favoriteUI.succeeded,false);assert.equal(favoriteUI.code,rejected.code);assert.equal(favoriteUI.message,rejected.message);assert.equal(s.fixture.requests.filter(row=>row.path.startsWith('/api/v1/favorites/video/')).length,requests+1,'One explicit rejected UI action must not be replayed');assert.equal(s.fixture.favorites.size,0);
+  const volume=await control('volume');assert.equal((await raw('ui.set',{controlId:volume.controlId,value:'37'})).updated,true);assert.equal((await invoke(player,'player.state')).volume,37,'A fresh explicit control remains usable after failure');
+  assert.deepEqual((await invoke(player,'ui.contract')).missing,[]);receipt.passed=true;
+ }catch(error){receipt.failure=String(error?.stack||error);throw error;}
+ finally{player?.close();await s.close();receipt.requests=s.fixture.requests.map(({path,method})=>({path,method}));receipt.transport=s.fixture.transport.snapshot();fs.writeFileSync(path.join(s.app.artifactDir,'player-controls.json'),JSON.stringify(receipt,null,2));console.log('Actual native UI command completion: '+s.app.artifactDir);}
+});
+
 test('clicking the screenshot itself plays its source from the start; the explicit frame action seeks to that screenshot',native,async()=>{
   const s=await setup();let player;
   try{
