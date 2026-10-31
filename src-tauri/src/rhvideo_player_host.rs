@@ -1,6 +1,14 @@
 //! Logical host requests never accept a caller's HWND or arbitrary window label.
 use serde_json::Value;
 pub(crate) const MAX_JS_ID:u64=9_007_199_254_740_991;
+// Lifetime of the actual canvas, not of its decoder. Rebuilding a decoder on
+// an existing HWND must not certify that its old pixels have disappeared.
+#[derive(Clone,Copy,Default)]
+pub(crate) struct SurfaceHistory{used:bool,fresh_input:bool}
+impl SurfaceHistory{
+    pub(crate) fn begin_input(&mut self){self.fresh_input=!self.used;self.used=true;}
+    pub(crate) fn fresh_input(&self)->bool{self.fresh_input}
+}
 #[derive(Clone,Debug,PartialEq)]
 pub(crate) enum Target { Popup, Current, Library{window:u64,panel:String,owner:u64,bounds:[f64;4]} }
 #[derive(Clone,Debug,PartialEq)]
@@ -39,6 +47,8 @@ impl Target {
 }
 #[cfg(test)]mod tests{
     use super::*;use serde_json::json;
+    #[test]fn only_the_first_input_of_an_unused_surface_is_certified_fresh(){let mut history=SurfaceHistory::default();assert!(!history.fresh_input());history.begin_input();assert!(history.fresh_input());history.begin_input();assert!(!history.fresh_input());history.begin_input();assert!(!history.fresh_input());}
+    #[test]fn replacing_a_renderer_preserves_surface_use_even_after_an_open_failure(){let mut original=SurfaceHistory::default();original.begin_input();let mut rebuilt=original;rebuilt.begin_input();assert!(!rebuilt.fresh_input());let mut failed=SurfaceHistory::default();failed.begin_input();failed.begin_input();assert!(!failed.fresh_input());}
     #[test]fn popup_compatibility_is_explicit_and_current_is_never_a_caller_window_selector(){assert_eq!(Target::parse(None).unwrap(),Target::Popup);assert_eq!(Target::parse(Some(&json!({"kind":"popup"}))).unwrap(),Target::Popup);for value in [json!({"kind":"current"}),json!({"kind":"popup","hwnd":1}),json!({"kind":"other"}),Value::Null]{assert!(Target::parse(Some(&value)).is_err());}}
     #[test]fn library_host_requires_an_exact_safe_window_and_panel_identity(){let valid=json!({"kind":"library","window":2,"panel":"generated-a","owner":1,"bounds":{"x":12,"y":20,"width":640,"height":360}});assert!(matches!(Target::parse(Some(&valid)).unwrap(),Target::Library{window:2,..}));for window in [0,1,3,MAX_JS_ID+1]{let mut value=valid.clone();value["window"]=json!(window);assert!(Target::parse(Some(&value)).is_err());}for panel in ["","a/b","../window","a\0b"]{let mut value=valid.clone();value["panel"]=json!(panel);assert!(Target::parse(Some(&value)).is_err());}let mut extra=valid;extra["label"]=json!("main");assert!(Target::parse(Some(&extra)).is_err());}
     #[test]fn closing_a_pending_panel_cannot_revive_it_or_revoke_its_successor(){let mut leases=Reservations::new();let a=leases.prepare(2,"a".into(),1).unwrap();assert!(leases.retire(a.owner));let b=leases.prepare(2,"a".into(),1).unwrap();assert_ne!(a.owner,b.owner);assert!(!leases.retire(a.owner));assert!(!leases.matches(2,"a",a.owner,1));assert!(leases.matches(2,"a",b.owner,1));}

@@ -603,6 +603,7 @@ struct Engine {
     player: usize,
     child: usize,
     surface:Surface,
+    surface_history:crate::rhvideo::player_host::SurfaceHistory,
     input_id:u64,
     seek:Mutex<SeekState>,
     requested_volume: i32,
@@ -730,6 +731,7 @@ impl Engine {
             player: player as usize,
             child,
             surface,
+            surface_history:Default::default(),
             input_id:0,
             seek:Mutex::new(SeekState::default()),
             requested_volume: 100,
@@ -755,6 +757,7 @@ impl Engine {
     }
     fn replace_rotation_renderer(&mut self,angle:i32)->Result<(),String>{
         let mut next=Self::new_with_rotation(self.surface,angle)?;
+        next.surface_history=self.surface_history;
         next.requested_volume=self.requested_volume;next.muted=self.muted;next.last_volume=self.last_volume;next.repeat_input=self.repeat_input;
         next.rotation_policy=self.rotation_policy;next.rotation_viewport=self.rotation_viewport;next.rotation_resolved=self.rotation_resolved;
         let rate=unsafe{(self.api.rate)(self.player as Ptr)};
@@ -798,6 +801,9 @@ impl Engine {
         Ok(())
     }
     fn open(&mut self, url: &str, title: String, seconds: f64) -> Result<(), String> {
+        // Mark the attempt before any fallible preparation. An unsuccessful
+        // attempt is never evidence that an existing surface has no pixels.
+        self.surface_history.begin_input();
         self.input_id=INPUT_SEQUENCE.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
         *self.seek.lock().map_err(|_|"跳转状态不可用")?=SeekState::default();
         self.open_started=std::time::Instant::now();
@@ -983,6 +989,7 @@ impl Engine {
             "presentationError":if self.compatibility&&self.frame.render_error.load(std::sync::atomic::Ordering::Relaxed){Some("无法显示原生兼容画面，请检查显示会话后重新打开视频")}else{None},
             "state":(self.api.state)(p),"restoringPausedFrame":restoring,"restorePhase":restore_phase,"restoreTargetMs":restore_target,"inputId":self.input_id,"pendingSeekMs":pending_seek,"seekError":seek_error,"positionMs":position,"decoderPositionMs":raw,"durationMs":duration,"firstFrameMs":self.first_frame_ms.load(std::sync::atomic::Ordering::Relaxed),
             "rate":restore_rate.unwrap_or_else(||(self.api.rate)(p)),"decoderRate":(self.api.rate)(p),"volume":self.requested_volume,"muted":self.muted,"lastVolume":self.last_volume,"masterVolume":PAGE_VOLUME.load(std::sync::atomic::Ordering::Relaxed),"decoderVolume":(self.api.volume)(p),"nativeSurface":self.child!=0});
+            value["freshSurfaceInput"]=json!(self.surface_history.fresh_input());
             value["engineVersion"]=json!(self.api.version);
             value["pluginIndexMode"]=json!(if self.api.prebuilt_index{"prebuilt-no-scan"}else{"cache-and-scan"});
             value["decodedAudioBlocks"]=json!(stats.decoded_audio.max(0));

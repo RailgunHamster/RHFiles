@@ -42,7 +42,7 @@
   }
   async function bounds(owner,state,visible){
    if(!live(owner)||!owner.lease||!state?.inputId)return;
-   const region=rect(owner),opacity=state.restoringPausedFrame||!state.renderedFrames?0:1,key=JSON.stringify([state.inputId,region,visible,opacity]);if(owner.layoutKey===key)return;
+   const region=rect(owner),opacity=state.restoringPausedFrame||(!state.renderedFrames&&state.freshSurfaceInput!==true)?0:1,key=JSON.stringify([state.inputId,region,visible,opacity]);if(owner.layoutKey===key)return;
    await rawNative('player.bounds',{...guard(owner),expectedInput:state.inputId,...region,visible,opacity});if(live(owner)&&owner.latest?.inputId===state.inputId)owner.layoutKey=key;
   }
   async function synchronize(owner){
@@ -52,8 +52,9 @@
     return;
    }
    if(owner.covered){owner.covered=false;if(owner.userRunning)owner.latest=await rawNative('player.control',{...guard(owner),expectedInput:owner.latest.inputId,command:'resume'});if(!live(owner)||!top(owner))return;owner.controller.resume();}
-   // Keep an alpha-zero surface present while the decoder prepares its first
-   // frame. Hiding an occluded native surface can stop presentation entirely.
+   // A natively certified unused canvas has no stale input to hide; do not
+   // delay its first picture until coarse VLC statistics update. Reused
+   // surfaces and paused restoration still keep the alpha-zero protection.
    await bounds(owner,owner.latest,true);
   }
   function sync(){const owner=current;if(!owner)return Promise.resolve({opened:false});const previous=owner.serial.catch(()=>{});const result=previous.then(()=>synchronize(owner));owner.serial=result;return result;}

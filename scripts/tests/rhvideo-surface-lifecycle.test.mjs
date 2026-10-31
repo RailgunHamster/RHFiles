@@ -1,5 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';
 const source=fs.readFileSync(new URL('../../src-tauri/src/rhvideo_player.rs',import.meta.url),'utf8');
+test('fresh-surface state follows canvas history across decoder replacement, not an input-id reset',()=>{
+ assert.match(source,/surface_history:crate::rhvideo::player_host::SurfaceHistory/);
+ assert.match(source,/surface_history:Default::default\(\)/);
+ const rotation=source.slice(source.indexOf('fn replace_rotation_renderer('),source.indexOf('fn configure_rotation('));assert.match(rotation,/next\.surface_history=self\.surface_history/);
+ const open=source.slice(source.indexOf('fn open(&mut self,'),source.indexOf('fn state(&self)')),recorded=open.indexOf('self.surface_history.begin_input()'),identity=open.indexOf('self.input_id=INPUT_SEQUENCE');assert(recorded>=0&&identity>recorded);
+ assert.match(source,/value\["freshSurfaceInput"\]=json!\(self\.surface_history\.fresh_input\(\)\)/);
+});
 test('native asynchronous surface cleanup carries its creation generation, never a bare WM_CLOSE',()=>{
  const calls=[...source.matchAll(/PostMessageW\(([^;]+)\);/g)].map(match=>match[1]);assert.equal(calls.length,1);assert(calls[0].includes('WPARAM(self.generation)'));assert(calls[0].includes('LPARAM(std::process::id() as isize)'));assert(!calls[0].includes('WM_CLOSE'));assert.match(source,/RegisterWindowMessageW\(w!\("RHFiles.NativeVideoSurface.Close.v1"\)\)/);
  const start=source.indexOf('if CLOSE_SURFACE.get().is_some_and('),end=source.indexOf('// Child canvases',start);assert(start>0&&end>start);const receiver=source.slice(start,end);assert.match(receiver,/admits\(GetWindowLongPtrW\(hwnd,GWLP_USERDATA\) as usize,wparam\.0,std::process::id\(\) as usize,lparam\.0 as usize\)/);assert(receiver.indexOf('admits(')<receiver.indexOf('DestroyWindow('));

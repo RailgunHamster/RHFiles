@@ -76,6 +76,17 @@ test('first-frame preparation keeps the native surface present but alpha zero',a
  const p=fixture();await p.host.request('play',{id:'generated'});p.state.renderedFrames=0;await p.host.request('player.state');let last=p.calls.filter(c=>c.action==='player.bounds').at(-1).args;assert.equal(last.visible,true);assert.equal(last.opacity,0);
  p.state.renderedFrames=1;await p.host.request('player.state');last=p.calls.filter(c=>c.action==='player.bounds').at(-1).args;assert.equal(last.visible,true);assert.equal(last.opacity,1);
 });
+test('a natively certified first surface input does not wait for coarse displayed statistics',async()=>{
+ const p=fixture();await p.host.request('play',{id:'generated'});p.state.freshSurfaceInput=true;p.state.renderedFrames=0;await p.host.request('player.state');const last=p.calls.filter(c=>c.action==='player.bounds').at(-1).args;assert.equal(last.visible,true);assert.equal(last.opacity,1);
+});
+test('paused restoration always hides a fresh surface until the target frame is restored',async()=>{
+ const p=fixture();await p.host.request('play',{id:'generated'});p.state.freshSurfaceInput=true;p.state.restoringPausedFrame=true;p.state.renderedFrames=20;await p.host.request('player.state');assert.equal(p.calls.filter(c=>c.action==='player.bounds').at(-1).args.opacity,0);
+ p.state.restoringPausedFrame=false;await p.host.request('player.state');assert.equal(p.calls.filter(c=>c.action==='player.bounds').at(-1).args.opacity,1);
+});
+test('source replacement cannot inherit the previous input fresh-surface visibility exemption',async()=>{
+ const p=fixture();await p.host.request('play',{id:'old'});p.state.freshSurfaceInput=true;p.state.renderedFrames=0;await p.host.request('player.state');assert.equal(p.calls.filter(c=>c.action==='player.bounds').at(-1).args.opacity,1);
+ await p.host.request('play',{id:'new'});p.state.freshSurfaceInput=false;p.state.renderedFrames=0;await p.host.request('player.state');const last=p.calls.filter(c=>c.action==='player.bounds').at(-1).args;assert.equal(last.expectedInput,p.state.inputId);assert.equal(last.opacity,0);
+});
 test('modal-covered resume is denied without sending a native write',async()=>{
  const p=fixture();await p.host.request('play',{id:'generated'});p.cover();await p.host.sync();const count=p.count('player.control');await assert.rejects(p.host.request('player.control',{command:'resume'}),/覆盖/);assert.equal(p.count('player.control'),count);
 });
