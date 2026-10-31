@@ -53,7 +53,7 @@ fn trace_open(started:std::time::Instant,stage:&str){
         eprintln!("RHFILES_PLAY_STAGE {stage} {}",started.elapsed().as_millis());
     }
 }
-static WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static WINDOW_EPOCH:crate::rhvideo_window_lifecycle::WindowLifecycle=crate::rhvideo_window_lifecycle::WindowLifecycle::new();
 static GRID_WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
 static INPUT_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
@@ -887,8 +887,13 @@ pub fn stop_single() {
     }
 }
 pub fn retire_window(lease:u64)->bool{
-    if WINDOW_EPOCH.load(std::sync::atomic::Ordering::SeqCst)!=lease{return false;}
+    if !WINDOW_EPOCH.is_current(lease){return false;}
     stop_single();true
+}
+fn require_player_window(lease:u64,parent:usize)->Result<(),String>{
+    WINDOW_EPOCH.ensure_open(lease)?;
+    if unsafe{IsWindow(Some(HWND(parent as Ptr)))}.as_bool(){return Ok(());}
+    WINDOW_EPOCH.close(lease);Err(crate::rhvideo_window_lifecycle::CLOSED.into())
 }
 fn release_surface(engine: Engine) {
     let child = engine.child;
@@ -1528,8 +1533,8 @@ pub async fn play(
         );
     }
     trace_open(started,"kernel-located");
-    let window = if let Some(window) = app.get_webview_window(LABEL) {
-        window
+    let (window,lease) = if let Some(window) = app.get_webview_window(LABEL) {
+        (window,WINDOW_EPOCH.current())
     } else {
         let window = crate::rhvideo::client_window(
             app.clone(),
@@ -1542,15 +1547,18 @@ pub async fn play(
         .await?;
         let view = window.clone();
         let owner=app.clone();
-        let lease=WINDOW_EPOCH.fetch_add(1,std::sync::atomic::Ordering::SeqCst)+1;
+        let lease=WINDOW_EPOCH.begin();
         window.on_window_event(move |event| match event {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => resize(&view),
             WindowEvent::Destroyed => {
+                // Do not queue cancellation behind PLAY_LOCK: the decoder
+                // constructor can still be running there after the HWND dies.
+                WINDOW_EPOCH.close(lease);
                 tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(owner.clone(),lease));
             }
             _ => {}
         });
-        window
+        (window,lease)
     };
     trace_open(started,"window-ready");
     // Keep activation and its geometry read in one GUI transaction. Each
@@ -1573,11 +1581,13 @@ pub async fn play(
             trace_open(started,"window-focused");
             let viewport=window_viewport(&view)?;
             trace_open(started,"viewport-ready");
-            Ok::<_,String>(viewport)
+            let parent=view.hwnd().map_err(|e|e.to_string())?.0 as usize;
+            Ok::<_,String>((viewport,parent))
         })();let _=tx.send(result);
     }).map_err(|e|e.to_string())?;
     trace_open(started,"activation-dispatched");
-    let rotation_viewport=rx.await.map_err(|_|"播放器窗口已关闭".to_owned())??;
+    let (rotation_viewport,parent)=rx.await.map_err(|_|"播放器窗口已关闭".to_owned())??;
+    require_player_window(lease,parent)?;
     let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
     trace_open(started,"warm-slot-ready");
     let mut guard = SurfaceGuard(vec![]);
@@ -1592,6 +1602,7 @@ pub async fn play(
                 .unwrap_or(json!({"volume":100,"rate":1,"rotation":0}));
             let reconfigured = warmed.configure_rotation(rotation,rotation_viewport)?;
             if reconfigured {
+                if let Err(error)=require_player_window(lease,parent){guard.0.clear();drop(warmed);return Err(error);}
                 warmed.open(&url, title.clone(), seconds)?;
             }
             control_engine(
@@ -1608,6 +1619,7 @@ pub async fn play(
                     &json!({"command":"seek","value":(seconds*1000.0) as i64}),
                 )?;
             }
+            if let Err(error)=require_player_window(lease,parent){guard.0.clear();drop(warmed);return Err(error);}
             control_engine(&mut warmed, &json!({"command":"resume"}))?;
             let child = warmed.child;
             let mut state = warmed.state();
@@ -1619,6 +1631,7 @@ pub async fn play(
             }
             let view = window.clone();
             app.run_on_main_thread(move || {
+                if require_player_window(lease,parent).is_err(){return;}
                 layout(&view, child);
                 unsafe {
                     let _ = SetLayeredWindowAttributes(
@@ -1633,6 +1646,7 @@ pub async fn play(
             *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
                 Some(json!({"state":"consumed"}));
             trace_open(started,"preload-consumed");
+            require_player_window(lease,parent)?;
             return Ok(state);
         } else {
             tauri::async_runtime::spawn_blocking(move || release_surface(warmed));
@@ -1643,6 +1657,7 @@ pub async fn play(
     app.run_on_main_thread(move || {
         trace_open(started,"surface-main-entered");
         let result: Result<usize, String> = (|| {
+            require_player_window(lease,parent)?;
             let existing = PLAYER
                 .lock()
                 .map_err(|_| "播放器状态不可用")?
@@ -1684,13 +1699,14 @@ pub async fn play(
     trace_open(started,"surface-dispatched");
     let child = rx.await.map_err(|_| "播放器窗口已关闭".to_owned())??;
     trace_open(started,"surface-ready");
-    tauri::async_runtime::spawn_blocking(move || {
+    let result=tauri::async_runtime::spawn_blocking(move || {
         trace_open(started,"engine-worker-entered");
         let mut slot = PLAYER.lock().map_err(|_| "播放器状态不可用")?;
+        require_player_window(lease,parent)?;
         if slot.is_none() {
             let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
             match Engine::new_with_rotation(child,angle) {
-                Ok(engine) => *slot = Some(engine),
+                Ok(engine) => {require_player_window(lease,parent)?;*slot = Some(engine);},
                 Err(error) => {
                     unsafe {
                         let _ = PostMessageW(
@@ -1707,12 +1723,15 @@ pub async fn play(
         trace_open(started,"engine-ready");
         let engine = slot.as_mut().unwrap();
         engine.configure_rotation(rotation,rotation_viewport)?;
+        require_player_window(lease,parent)?;
         engine.open(&url, title, seconds)?;
         trace_open(started,"input-started");
         let value=engine.state();trace_open(started,"state-ready");Ok(value)
     })
     .await
-    .map_err(|_| "原生播放任务意外结束".to_owned())?
+    .map_err(|_| "原生播放任务意外结束".to_owned())?;
+    require_player_window(lease,parent)?;
+    result
 }
 pub fn repeat_from(milliseconds:i64)->Result<Value,String>{
     let mut slot=PLAYER.lock().map_err(|_|"播放器状态不可用")?;

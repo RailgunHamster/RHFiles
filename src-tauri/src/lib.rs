@@ -28,6 +28,8 @@ mod rhvideo_clock;
 #[cfg(windows)]
 mod rhvideo_player;
 #[cfg(windows)]
+mod rhvideo_window_lifecycle;
+#[cfg(windows)]
 mod rhvideo_frame;
 #[cfg(all(windows,debug_assertions))]
 mod rhvideo_diagnostics;

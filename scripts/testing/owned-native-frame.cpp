@@ -1,4 +1,4 @@
-// Test-only observation and guarded Home/End input for a sibling RHFiles.
+// Test-only observation, guarded Home/End input and native single-player close.
 // No hooks, foreign/desktop capture, or production diagnostic API.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -26,7 +26,7 @@ static DWORD parent_of(DWORD id){
 static uint64_t created(HANDLE process){FILETIME start{},end{},kernel{},user{};require(GetProcessTimes(process,&start,&end,&kernel,&user),"Cannot verify process lifetime");return(uint64_t(start.dwHighDateTime)<<32)|start.dwLowDateTime;}
 static uint64_t unix_millis(){FILETIME value{};GetSystemTimePreciseAsFileTime(&value);return(((uint64_t(value.dwHighDateTime)<<32)|value.dwLowDateTime)-116444736000000000ULL)/10000;}
 static std::wstring full_path(const std::wstring& value){std::vector<wchar_t> result(32768);DWORD length=GetFullPathNameW(value.c_str(),DWORD(result.size()),result.data(),nullptr);require(length>0&&length<result.size(),"Invalid owned executable path");return{result.data(),length};}
-static void verify_process(DWORD id,const std::wstring& expected){
+static uint64_t verify_process(DWORD id,const std::wstring& expected){
   const DWORD parent=parent_of(GetCurrentProcessId());
   require(parent>0&&id!=GetCurrentProcessId()&&parent_of(id)==parent,"Capture target is not a sibling owned by the fixture");
   Handle owner(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,parent));
@@ -39,6 +39,7 @@ static void verify_process(DWORD id,const std::wstring& expected){
   require(_wcsicmp(actual.c_str(),requested.c_str())==0,"Owned executable identity mismatch");
   const auto separator=actual.find_last_of(L"\\/");
   require(_wcsicmp(actual.substr(separator==std::wstring::npos?0:separator+1).c_str(),L"rhfiles.exe")==0,"Only an owned RHFiles process may be observed");
+  return created(target.value);
 }
 struct Windows {DWORD pid;std::vector<HWND> surfaces;bool presentation=false;};
 static BOOL CALLBACK child_window(HWND window,LPARAM data){
@@ -93,8 +94,28 @@ static const char* focus_kind(HWND window,const GUITHREADINFO& info){
   if(std::wcscmp(name,L"RHFilesNativeVideoSurface")==0)return "native-video";
   return "other-owned-child";
 }
-static void window_command(int argc,wchar_t** argv,DWORD pid){
+static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_created){
   const std::wstring command(argv[3]);
+  if(command==L"player-close"){
+    require(argc==4,"Player close accepts no path, key, handle or window selector");
+    const auto started=GetTickCount64();HWND target{};
+    do{
+      Windows found{pid,{}};require(EnumWindows(top_window,reinterpret_cast<LPARAM>(&found)),"Cannot enumerate owned player");
+      require(found.surfaces.size()<=1,"Ambiguous owned player surfaces");
+      if(!found.surfaces.empty()){owned_surface(found.surfaces.front(),pid);target=GetAncestor(found.surfaces.front(),GA_ROOT);break;}
+      Sleep(10);
+    }while(GetTickCount64()-started<3000);
+    require(target,"No visible owned player surface is present");DWORD process=0;GetWindowThreadProcessId(target,&process);
+    require(process==pid&&IsWindow(target)&&IsWindowVisible(target),"Owned player root changed");
+    // The full path/parent admission already ran. Recheck its SAME process
+    // lifetime, not a second expensive system-wide process enumeration which
+    // can turn a preparation-close test into a post-start close.
+    Handle current(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid));require(current.value&&created(current.value)==process_created,"Owned player process lifetime changed");
+    const auto at=unix_millis();require(PostMessageW(target,WM_CLOSE,0,0),"Cannot submit owned player close");
+    const auto wait=GetTickCount64();while(IsWindow(target)&&GetTickCount64()-wait<1000)Sleep(1);
+    const bool destroyed=!IsWindow(target);const auto end=unix_millis();
+    std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"single-player\",\"transport\":\"win32-wm-close\",\"submitted\":true,\"observedAtMs\":%llu,\"destroyed\":%s,\"checkedAtMs\":%llu}\n",static_cast<unsigned long>(pid),static_cast<unsigned long long>(at),destroyed?"true":"false",static_cast<unsigned long long>(end));return;
+  }
   require(((command==L"windows"||command==L"library-ping"||command==L"activate-main")&&argc==4)||(command==L"library-key"&&argc==6),"Unsupported owned window command");
   WORD key=0;bool scan_mode=false;
   if(command==L"library-key"){
@@ -144,8 +165,8 @@ int wmain(int argc,wchar_t** argv){
     require(argc>=4&&argc<=6,"Use an owned PID, exact executable and a bounded observation command");
     const std::wstring digits(argv[1]);require(!digits.empty()&&digits.size()<=10&&std::all_of(digits.begin(),digits.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}),"Invalid owned PID");
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
-    verify_process(pid,argv[2]);
-    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"){window_command(argc,argv,pid);return 0;}
+    const auto process_created=verify_process(pid,argv[2]);
+    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"||std::wstring(argv[3])==L"player-close"){window_command(argc,argv,pid,process_created);return 0;}
     require(argc==5||(argc==6&&(std::wstring(argv[5])==L"library-presentation"||std::wstring(argv[5])==L"main-client")),"Use PID, exact executable, owned basename, renderer and a fixed canvas scope");
     const bool presentation=argc==6&&std::wstring(argv[5])==L"library-presentation",main_client=argc==6&&std::wstring(argv[5])==L"main-client";
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";

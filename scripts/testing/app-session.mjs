@@ -155,7 +155,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       if(!presentationReader)presentationReader=ownedFrameReader({...observerOptions(),scope:'presentation',getState:()=>evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"presentation.state",args:{}})')});
       return presentationReader.read(args);
     };
-    const nativeWindows={windows:()=>ownedWindow().windows(),pingLibrary:()=>ownedWindow().pingLibrary(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain()};
+    const nativeWindows={windows:()=>ownedWindow().windows(),pingLibrary:()=>ownedWindow().pingLibrary(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain(),closePlayerWhenCreated:()=>{if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned player close requires the explicit QA opt-in');return ownedWindow().closePlayerWhenCreated();}};
     const readStartupCanvas=scope=>{if(closing||process.env.RHFILES_NATIVE_PLAYER_QA!=='1')return Promise.reject(Error('Owned startup canvas requires the explicit QA opt-in and a live fixture'));if(scope==='main')return(mainCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();return(singleCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();};
     return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readPresentationFrame,readMainFrame:()=>readStartupCanvas('main'),readSingleInputFrame:()=>readStartupCanvas('single-input-player'),nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
   } catch(e){close();throw e;}

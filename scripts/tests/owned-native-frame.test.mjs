@@ -98,3 +98,13 @@ test('a bounded owned-library ping preserves timeout/error evidence without chan
   for(const bad of [{observedAtMs:null},{observedAtMs:0},{responded:1},{elapsedMs:-1},{elapsedMs:4501},{win32Error:-1},{responded:true,win32Error:1460}]){value={observedAtMs:123456789,responded:false,elapsedMs:100,win32Error:0,...bad};await assert.rejects(driver.pingLibrary(),/responsiveness observation/);}
  }finally{driver?.close();f.close();}
 });
+
+test('owned single-player close is fixed, bounded and never admits a handle, selector or false acknowledgement',async()=>{
+ const f=fixture();let driver;try{
+  let value={target:'single-player',transport:'win32-wm-close',submitted:true,observedAtMs:12345,destroyed:true,checkedAtMs:12347};
+  driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:async(_,args,options)=>{assert.deepEqual(args,['42','own/rhfiles.exe','player-close']);assert.equal(options.timeout,4500);return JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,...value});}});
+  for(const args of [{hwnd:1},{label:'main'},{path:'outside'}])await assert.rejects(driver.closePlayerWhenCreated(args),/no arguments/);
+  assert.equal((await driver.closePlayerWhenCreated()).submitted,true);
+  for(const bad of [{submitted:false},{target:'main'},{transport:'taskkill'},{observedAtMs:0},{destroyed:'yes'},{checkedAtMs:12344}]){value={target:'single-player',transport:'win32-wm-close',submitted:true,observedAtMs:12345,destroyed:true,checkedAtMs:12347,...bad};await assert.rejects(driver.closePlayerWhenCreated(),/acknowledgement/);}
+ }finally{driver?.close();f.close();}
+});
