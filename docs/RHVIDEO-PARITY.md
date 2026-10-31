@@ -12,6 +12,12 @@
 
 卡片打开／标题／辅助按钮、收藏、时间轴帧、分类、图片点击／键盘／滑动／滚轮、对话框取消和安卓返回现在返回原操作 Promise，错误提示单独观察，不再把底层拒绝改成成功；不改变 180 ms 滚轮节流、解码器、播放顺序、搜索合并或后台保存。直接执行实际注册处理器的新检查先 **2 通过／28 失败、零取消／跳过**，修改后连同已有工作台／播放器控件检查 **108/108、零跳过**。整套本地 RHVideo 源码对照 **1418/1418、零失败／取消／跳过，32.992 秒**（`rhvideo-client-controls-final-node.tap`）；前一轮的两项失败为旧 binding 单元夹具未载入新 helper，补入实际 helper 后重新完成整套，没有删除断言。新增同一个 Windows／Android 生成夹具流程，检查真实 HTTP 收藏失败、三种图片卡片入口的真实解码失败及后续有效操作。此处尚未宣称新正常包双端流程通过，不是完整功能或性能验收。
 
+正常 Windows release **3 分 29 秒**，EXE **`56f3ca00c62da2ff2a30e5b4edc7a46ddce898f44d99dd6c4a1fa89aad3d5c44`**；冻结 `rhvideo-pipe-full-I7ydCP`，未改 libVLC 3.0.24 及画质／音量／缓存设置。卡片新场景、已有手写控件、实际图片加载／超时回归 **3/3、零失败／取消／跳过，37.596 秒**（`rhvideo-client-controls-new-windows.tap`）；新场景回执 `rhfiles-e2e-otzIdS/client-controls.json` 中四项实际 UI 拒绝与各自语义错误一致，之后实际有效图片正常打开。这不是新包全部 Windows 整轮或视频性能验收；此前 28CD 的 132 项结果不自动转移到 56F3。
+
+安卓第一次 Gradle 在编译前失败，栈为 JDK 的 AF_UNIX wakeup pipe `connect: Invalid argument`。独立的同 JDK `Selector.open()` 在默认临时目录失败、任务专用短目录成功（`rhvideo-gradle-pipe-{default,short}.log`）；只给构建 JVM 指定 `jdk.net.unixdomain.tmpdir`，未改系统 TEMP、驱动、网络或 APK。该对照说明目录相关，不独自证明唯一系统根因。原失败日志保留。随后正常 release **1 分 48 秒成功**，四项正常 BuildConfig、当前 **ECCE** client、既有 **FC52** workbench、未变 **1F90** JNI 均核对；只同步生成构建目录中的 client 资源，没有修改另一 checkout 的产品源码或重编未变 JNI。QA **x86_64** APK **`fba30a64b9317d9bf39997ad2bdff8e285bb7f808b78cffadb0478ea5685b71a`**（`rhvideo-modal-normal-android-4rIyNS`），不是 ARM 正式包。
+
+该 APK 仅覆盖自建 emulator-5590，并核对实际安装字节；同一个卡片流程 **通过**（`rhvideo-client-controls-new-android.log`、`rhvideo-image-decode-android-6PIjg4/receipt.json`），四项失败及后续有效图片均实际执行，未替换 native 接口或 DOM 处理器。宿主控制总耗时 **43.630 秒**，**startupAccepted:false**，不作启动／冷缓存性能数据；四个辅助自建 AVD 临时暂停后由 finally 恢复。事后 **1226／4／426** 冻结输入、EXE／APK、14 个参考文件、三份用户脏 schema 和五台 AVD running／无遗留 RHFiles 测试进程核对通过（`rhvideo-pipe-full-I7ydCP/client-controls-postcheck.json`）。源码已推送 GitHub／Gitee 独立工作分支，无实体手机操作、无真实媒体／数据库、未正式发包；完整双端功能与性能目标仍未完成。
+
 ### 同进程关闭／重开基线
 
 当前 debug **CCEB**、生成 H.264 **4206d583…** 的两次显式打开／关闭中，实际四标记分别在约 **2784／2484 ms** 读到；两次关闭均实际销毁窗口、清空队列并结束媒体响应，旧输入读取被拒绝（`rhvideo-reopen-observed-baseline.log`、`rhfiles-e2e-gyqeDd/reopen-baseline.json`）。两次各构造一个引擎、共载入两次模块库／索引，证明确有重复初始化，但没有证明保活能解决首次慢启动，因此尚未加入保活。
