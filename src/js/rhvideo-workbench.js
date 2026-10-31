@@ -159,7 +159,8 @@
         // not created its confirmation; never cancel an accepted batch.
         confirmationIntent++;
       }
-      function dialog(id, title) {
+      function dialog(id, title, raise = true) {
+        if(raise){
         invalidatePendingConfirmation();
         if (id === "wb-info") detailJob = null;
         if (id !== "wb-viewer" && viewer?.videoActive) {
@@ -167,6 +168,7 @@
             notice,
           );
           void syncPresentation(0, false).catch(notice);
+        }
         }
         let node = $(id);
         if (!node) {
@@ -186,7 +188,7 @@
             id + ".cancel",
           );
         }
-        if (!node.open) {
+        if (raise && !node.open) {
           ctx.openDialog(id);
         }
         liveRefresh?.configure(liveRefresh.enabled);
@@ -3252,11 +3254,21 @@
         if(!value){value=await send("query",args);if(!current())return {stale:true};}
         if(!value.total)throw Error("当前图库没有可恢复的图片");
         const index=match?.index??(Number.isSafeInteger(saved.index)&&saved.index>=0&&saved.index<value.total?saved.index:0);
-        gallery.offset=Math.floor(index/gallery.limit)*gallery.limit;expectedView++;
-        const shown=await loadGallery();if(shown.stale||!current())return {stale:true};
-        const session=imageSession={args,index,total:value.total,current:null,pendingTarget:{...gallery.items[index-gallery.offset],index,total:value.total},previewId:crypto.randomUUID()};
+        let target=match?.item;
+        if(!target){const at=await send("query",{...args,offset:index});if(!current())return {stale:true};target=at.items[0];}
+        if(!target)throw Error("恢复目标已不在图库中，请刷新清单");
+        gallery.offset=Math.floor(index/gallery.limit)*gallery.limit;
+        // The located row is already authoritative. Start its viewer without
+        // waiting for a whole page of thumbnail capabilities. Prepare a popup
+        // parent first, and never raise it from a late background repaint.
+        if(view!=="gallery")dialog("wb-gallery","截图库");
+        const session=imageSession={args,index,total:value.total,current:null,pendingTarget:{...target,index,total:value.total},previewId:crypto.randomUUID()};
         ctx.openDialog("image-dialog");
-        const displayed=await stepImage(0);if(displayed.stale||!current()||imageSession!==session)return {stale:true};
+        const decoded=stepImage(0).then(value=>({value}),error=>({error}));
+        expectedView++;
+        const shown=await loadGallery(false,true,false),displayed=await decoded;
+        if(shown.stale||displayed.value?.stale||!current()||imageSession!==session)return {stale:true};
+        if(displayed.error)throw displayed.error;
         return {opened:true,index,total:value.total};
       }
       function paintGalleryStatus(){
@@ -3326,9 +3338,9 @@
         galleryImageOwners.set(image,{key,version,revision,url});
         return image;
       }
-      async function loadGallery(refresh = false, display = true) {
+      async function loadGallery(refresh = false, display = true, raise = true) {
         const version=await ensure(),ticket=display?++gallery.load:gallery.load,c=config(),inline=state.view==="gallery";
-        const loadingRoot=display?(inline?$("gallery-content"):dialog("wb-gallery","截图库")):null;
+        const loadingRoot=display?(inline?$("gallery-content"):dialog("wb-gallery","截图库",raise)):null;
         // Local to this repaint, at most one page. A WeakMap does not retain
         // old pages; account/catalog revisions prevent stale-byte reuse.
         const reusableImages=collectGalleryImages(loadingRoot,version,gallery.revision);
