@@ -6,6 +6,27 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-11-01 当前 Android 资源与三条完整流程（整体目标未完成）
+
+直接读取同一 WINSERVER 的干净 `D:\git\RHVideo`、`3d6aaeb`。现装普通 C609 包比后续共享页面旧，不能用于当前源码验收；Android 测试入口本身也漏校验页面新增的四项播放依赖，以及搜索 Worker 的拼音词典／搜索模块。新增两个从真实 HTML／Worker 依赖图检查实际 APK 准入数组的反例均失败后，补齐原有逐字节校验；不是另建一个脱离真实入口的清单。最终完整本地源码对照 Node **1590/1590、零失败／取消／跳过**（`rhvideo-android-task-touch-diagnostic-full-node.log`），包括后述只读触摸记录检查。
+
+普通 Gradle release／JVM 构建 **5 分 13 秒**成功（`rhvideo-current-assets-android-build.log`），**485/485 JVM、73 份 XML、零失败／错误／跳过**。仅将已核对的共享资源和 `RhVideoActivity` 四项包内路径白名单机械同步到已有生成目录；其他 Kotlin／Java／Gradle／清单先核对一致。新普通包冻结于 `rhvideo-modal-normal-android-60ibfE`，SHA-256 **`68f8a2766b821f85a3b214998616660a77d844ee27b836e5458a2cdf04f7e906`**，仅声明 x86_64，版本 0.1.38／1038，签名证书保持 `42f3ddee…`，四项实验参数为 false／0／default／compositor。复用原未改的 **1F90 Rust JNI**，不冒称完整 Rust／ARM 重编。只覆盖自建 API 36／5590，未操作手机／真实媒体或正式 Windows 安装。
+
+首次同一普通主包／原 6A69 测试包的完整任务中心 **失败**（`rhvideo-current-android-task-center-e2FIZC`、`rhvideo-android-task-center-1793477484677-release`）：连续三次自动列表 HTTP 503 后，真实触摸详情刷新未恢复读取；37 个请求中没有随后新的详情读取。已查看失败图，刷新文字有选择手柄。截图 guest mtime 与本次 PID 4221 的异常日志均为 guest **10-31 16:48:00**，不能用被暂停过的模拟器墙钟直接与宿主 epoch 比较；没有调整系统时钟。此现场支持“点击没有产生预期读取”，尚不能判定是长按、交付、事件绑定或产品刷新逻辑的唯一原因。
+
+之后仅为测试 APK 增加有界、被动的 DOM pointer／click／selection 记录和原生 DOWN／UP 等待时间；原同步注入方式、40 ms 停留、15 秒恢复检查及全部业务断言均未变，没有 `click()`、`performClick()`、阻止默认事件或更换生产处理器。测试包构建 **4 分 11 秒**，冻结 `rhvideo-task-touch-probe-cIDnc6`、SHA-256 **`63755ee79211efbabbaea584085efb564923656610233e9c2e6c535b09fbc5d2`**。生成目录此时的主包／BuildConfig 可能带测试参数，明确禁止使用它替代已冻结普通 68F8 主包。
+
+只执行一次带记录的完整任务中心流程 **通过**（`rhvideo-current-android-task-center-MQIpYj`／`rhvideo-android-task-center-1793478314221-release`）：包含实际节点／滚动位置保留、未知百分比、队列／历史筛选、分页、三次失败停止、物理刷新恢复及旧错误清除、关闭后读取停止和可枚举接口契约。该次 DOWN 返回 **142 ms**、UP 前 **185 ms**、UP 返回 **53 ms**，设备长按阈值 **400 ms**，实际可信 pointerdown／pointerup／click 均指向正确刷新操作，最终选中文字长度为零；**本轮没有重现原点击丢失，也没有修改产品刷新逻辑，不能把通过说成间歇故障已修复**。原失败不覆盖／不删除，不继续重复求绿。
+
+相同普通 68F8 主包／6375 测试包还分别完成：
+
+- 标签规则（`rhvideo-current-android-rules-xlYozT`／`rhvideo-android-rules-1793478571988-release`）：实际 include／OR／折叠控件、嵌套 NOT、拼音、分页、过期分组拒绝、共享筛选及系统返回。
+- 图片连续浏览（`rhvideo-current-android-strip-1uzr6A`／`rhvideo-android-strip-1793478689807-release`）：实际末端／触摸滚动、双行联动、选中与收藏、放大后的图片像素、横竖屏、一次性暂存及旧查看器隔离。已查看双行及横屏原生截图，并非仅检查图片节点或文件存在。
+
+三个完整场景均单独串行运行，无其他 UI／性能／构建并行；每次原有源码／工具／14 份参考输入核对未变，四台空闲辅助 AVD 由 finally 恢复，5590 仅停止本次自建测试进程。任务中心和规则图也已实际查看。它们只验收这些当前包的真实流程，不代替 Android 持续 1× 同屏／全部模式、ARM／真机、Windows 冷首帧／稳定时钟或正式发包。已有普通同屏、同 UID 本地 Media3、原始参考页面、独立系统 AAC 和 PCM 对照仍保留，不重复无变化的失败或改音频／codec／缓存求通过。整个目标继续未完成。
+
+阶段结束后独立重核普通 APK 的 **31 份**共享／移动资源（含复制清单内的许可资源）与当前源码逐字节一致，安装的普通 68F8／测试 6375 包也分别匹配冻结字节。14 份参考及干净 HEAD、三个协议副本、原 C609／6A69、首次触摸失败、三份用户原有且未暂存的 schema 均保留；五台自建 AVD running／RHFiles 停止（`rhvideo-current-android-postcheck.json`）。未把生成目录的测试主包装入设备，未发布 APK 或修改生产数据。
+
 ## 2026-11-01 全屏画布和切换确认顺序（Windows 144 项通过，整体目标未完成）
 
 对照仍直接使用 WINSERVER 的干净 `D:\git\RHVideo`、`3d6aaeb`，只使用生成媒体、临时账号和数据库。实际旧普通包 225E 的新增反例 **0/1**：OS 已全屏，但 1920×1080 视口中弹窗仅 1240×900、原生区域 1238×796（`rhvideo-library-host-native-UnPEtB`／`rhfiles-e2e-7MdhWw/library-host.json`）。现在按实际全屏状态移除常规弹窗宽高上限、边框、圆角和外边距；通过实际舞台矩形及 DPI 调整同一个原生画布，未替换播放器或扩大 SDK 权限。

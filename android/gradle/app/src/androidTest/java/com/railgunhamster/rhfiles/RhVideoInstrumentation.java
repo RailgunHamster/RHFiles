@@ -332,9 +332,11 @@ public class RhVideoInstrumentation extends Instrumentation {
   }
   private void touchStrip(String selector,boolean drag)throws Exception{
     float[] from=webStripPoint(selector,drag?.8:.5,.5),to=drag?webStripPoint(selector,.2,.5):from;long down=SystemClock.uptimeMillis();require(getUiAutomation().injectInputEvent(MotionEvent.obtain(down,down,MotionEvent.ACTION_DOWN,from[0],from[1],0),true),"Strip touch DOWN rejected");
+    long downFinished=SystemClock.uptimeMillis();
     if(drag)for(int i=1;i<=6;i++){Thread.sleep(25);require(getUiAutomation().injectInputEvent(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_MOVE,from[0]+(to[0]-from[0])*i/6,from[1],0),true),"Strip touch MOVE rejected");}
     else Thread.sleep(40);
-    require(getUiAutomation().injectInputEvent(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,to[0],to[1],0),true),"Strip touch UP rejected");
+    long beforeUp=SystemClock.uptimeMillis();require(getUiAutomation().injectInputEvent(MotionEvent.obtain(down,beforeUp,MotionEvent.ACTION_UP,to[0],to[1],0),true),"Strip touch UP rejected");
+    if(!drag&&selector.contains("rhvideo.task.refreshSelection"))step("QA: task-touch-clock "+new JSONObject().put("clock","android-uptime").put("downWaitMs",downFinished-down).put("beforeUpMs",beforeUp-down).put("upWaitMs",SystemClock.uptimeMillis()-beforeUp).put("longPressTimeoutMs",ViewConfiguration.getLongPressTimeout()).put("x",from[0]).put("y",from[1]));
   }
   private void waitStripViewport(boolean wide)throws Exception{
     long end=System.currentTimeMillis()+10000;JSONObject box=null;
@@ -1207,8 +1209,10 @@ public class RhVideoInstrumentation extends Instrumentation {
     long end=System.currentTimeMillis()+45000;JSONObject refresh=null;
     do{refresh=(JSONObject)action("server.refreshState",new JSONObject());if(refresh.optInt("failures")==3&&!refresh.optBoolean("running")&&!refresh.optBoolean("scheduled"))break;Thread.sleep(250);}while(System.currentTimeMillis()<end);
     require(refresh!=null&&refresh.optInt("failures")==3&&!refresh.optBoolean("scheduled"),"Actual automatic failures must reach the bounded stop: "+refresh);
+    expression(library,"(()=>{window.__taskTouchEvents=[];const types=['pointerdown','pointerup','pointercancel','click','contextmenu','selectstart','selectionchange'];const capture=e=>{const action=e.target?.closest?.('[data-api-action]')?.dataset.apiAction||null;if(window.__taskTouchEvents.length<24)window.__taskTouchEvents.push({type:e.type,time:e.timeStamp,trusted:e.isTrusted,action,selectionLength:String(getSelection()||'').length});};for(const type of types)document.addEventListener(type,capture,{capture:true,passive:true});window.__removeTaskTouchTrace=()=>{for(const type of types)document.removeEventListener(type,capture,{capture:true});};return true;})()");
     touchDuplicate(".rv-task-inline-detail [data-api-action='rhvideo.task.refreshSelection']");end=System.currentTimeMillis()+15000;
     do{refresh=(JSONObject)action("server.refreshState",new JSONObject());if(refresh.optInt("failures")==0&&refresh.optString("error").isEmpty()&&refresh.optBoolean("enabled")&&refresh.optBoolean("scheduled"))break;Thread.sleep(100);}while(System.currentTimeMillis()<end);
+    step("QA: task-touch-events "+expression(library,"(()=>{window.__removeTaskTouchTrace();return {events:window.__taskTouchEvents,selectionLength:String(getSelection()||'').length};})()"));
     require(refresh!=null&&refresh.optInt("failures")==0&&refresh.optBoolean("scheduled"),"The physical detail refresh resumes automatic reads: "+refresh);
     end=System.currentTimeMillis()+10000;do{value=(JSONObject)action("task.centerState",new JSONObject());if(value.optString("error").isEmpty())break;Thread.sleep(100);}while(System.currentTimeMillis()<end);require(value.optString("error").isEmpty(),"An actual subsequent list read clears the prior read error");
     require(((JSONObject)action("ui.contract",new JSONObject())).getJSONArray("missing").length()==0,"Every task center UI action has a public API");

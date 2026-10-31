@@ -7,6 +7,33 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const source=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');
 
+function admittedSharedAssets(){
+  const runner=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8');
+  const loop=parse(runner,{ecmaVersion:'latest',sourceType:'module'}).body.find(node=>node.type==='ForOfStatement'&&node.right.type==='ArrayExpression'&&node.right.elements.some(value=>value?.value==='rhvideo.html'));
+  assert(loop,'Find the actual packaged shared-asset admission, not a separate test-only list');return new Set(loop.right.elements.map(node=>node.value));
+}
+test('Android APK admission covers every actual library document script and stylesheet',()=>{
+  const html=fs.readFileSync(new URL('../../src/rhvideo.html',import.meta.url),'utf8'),admitted=admittedSharedAssets();
+  const dependencies=[...html.matchAll(/<(?:script|link)\b[^>]+(?:src|href)="([^"]+)"/g)].map(match=>match[1]);assert(dependencies.length>10);
+  assert.deepEqual(dependencies.filter(file=>!admitted.has(file)),[],'A new UI dependency must not silently escape the current-APK check');
+});
+test('Android APK admission covers actual search worker imports as well as the worker entry',()=>{
+  const worker=fs.readFileSync(new URL('../../src/js/rhvideo-worker.js',import.meta.url),'utf8'),admitted=admittedSharedAssets();
+  const call=parse(worker,{ecmaVersion:'latest'}).body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='importScripts')?.expression;assert(call);
+  assert(admitted.has('js/rhvideo-worker.js'));const dependencies=call.arguments.map(node=>new URL(node.value,'https://fixture.invalid/js/rhvideo-worker.js').pathname.slice(1));
+  assert.deepEqual(dependencies.filter(file=>!admitted.has(file)),[],'Search must not be tested with stale worker dependencies');
+});
+
+test('task refresh touch diagnostics measure the original injected gesture without replacing it or relaxing recovery',()=>{
+  const touch=source.slice(source.indexOf('private void touchStrip('),source.indexOf('private void waitStripViewport('));
+  for(const field of ['downWaitMs','beforeUpMs','upWaitMs','longPressTimeoutMs'])assert(touch.includes(field));
+  assert.equal([...touch.matchAll(/MotionEvent\.ACTION_DOWN/g)].length,1);assert.equal([...touch.matchAll(/MotionEvent\.ACTION_UP/g)].length,1);assert(touch.includes('Thread.sleep(40)'));
+  const task=source.slice(source.indexOf('private void checkTaskCenter()'),source.indexOf('\n  private ',source.indexOf('private void checkTaskCenter()')+1));
+  for(const event of ['pointerdown','pointerup','pointercancel','click','contextmenu','selectstart','selectionchange'])assert(task.includes("'"+event+"'"));
+  assert(task.includes('capture:true,passive:true'));assert(task.includes('window.__taskTouchEvents.length<24'));assert(task.includes('document.removeEventListener'));
+  assert(task.includes('end=System.currentTimeMillis()+15000'));assert.doesNotMatch(task,/preventDefault\(|\.click\(|performClick\(/);
+});
+
 test('unknown Android acceptance modes fail before SDK access or installing any APK',()=>{
   const runner=fileURLToPath(new URL('../testing/rhvideo-android.mjs',import.meta.url));
   for(const mode of ['grid-rotaton','exports-recover','__proto__','grid;adb']){
