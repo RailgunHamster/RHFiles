@@ -15,7 +15,7 @@ function fixture(){
   const bookButton={classList:flags(),attrs:{},setAttribute(name,value){this.attrs[name]=value;}},nodes={'library-status':{replaceChildren(){}},'media-grid':grid,'image-dialog':{open:true},'reader-favorite':bookButton};
   const state={kind:'video',items,favorites:new Set(['video:1']),favoriteBusy:new Set(['video:2'])};
   const context=vm.createContext({state,reader:{book:{id:'book'}},workbench:{refreshViewer(){calls.viewer++;},refreshImage(){calls.image++;}},cardCache:cache,model:{itemKey:key},$:id=>nodes[id],trimCards(){},document:{createElement(){throw Error('A warm render cannot recreate decoded cards');}}});
-  for(const node of declarations.filter(n=>['paint','paintFavorite','paintCardFavorite'].includes(n.id.name)))vm.runInContext(source.slice(node.start,node.end),context);
+  for(const node of declarations.filter(n=>['paint','paintFavorite','paintCardFavorite','rememberViewportCards'].includes(n.id.name)))vm.runInContext(source.slice(node.start,node.end),context);
   return {context,calls,cards,grid,state,bookButton};
 }
 test('warm catalog rendering updates each cached heart locally without refreshing unrelated viewers per card',()=>{

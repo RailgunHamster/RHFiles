@@ -7,14 +7,15 @@ const source=fs.readFileSync(new URL('../../src/js/rhvideo-client.js',import.met
 const declarations=parse(source,{ecmaVersion:'latest'}).body[0].expression.callee.body.body.filter(n=>n.type==='FunctionDeclaration');
 function fixture(){
   const cache=new Map(),calls={unobserve:[],disconnect:0,removed:[],grid:0},observer={unobserve:node=>calls.unobserve.push(node),disconnect:()=>calls.disconnect++};
-  const context=vm.createContext({cardCache:cache,cardVisibility:observer,visibilityOrder:0,document:{visibilityState:'visible'},$:()=>({replaceChildren(){calls.grid++;}})});
+  const grid={dataset:{},querySelectorAll:()=>[...cache.values()].map(v=>v.node).filter(n=>n.isConnected),replaceChildren(){calls.grid++;for(const v of cache.values())v.node.isConnected=false;}};
+  const context=vm.createContext({cardCache:cache,cardVisibility:observer,visibilityOrder:0,document:{visibilityState:'visible'},window:{innerWidth:1280,innerHeight:800},$:()=>grid});
   function load(name){const node=declarations.find(n=>n.id.name===name);assert(node,'Production cache function '+name);vm.runInContext(source.slice(node.start,node.end),context);return context[name];}
-  const add=(id,{attached=false,seen=0,width=1536,height=1536}={})=>{
+  const add=(id,{attached=false,seen=0,width=1536,height=1536,bounds={left:0,top:0,right:120,bottom:80,width:120,height:80}}={})=>{
     const image={naturalWidth:width,naturalHeight:height,removeAttribute(name){assert.equal(name,'src');calls.removed.push(id);this.naturalWidth=this.naturalHeight=0;}};
-    const node={isConnected:attached,dataset:{kind:'video',id},querySelector:()=>image};
+    const node={isConnected:attached,dataset:{kind:'video',id},querySelector:selector=>selector==='.cover-button'?{getBoundingClientRect:()=>bounds}:image};
     cache.set('video:'+id,{node,signature:id,seen});return node;
   };
-  return {cache,calls,context,add,load};
+  return {cache,calls,context,grid,add,load};
 }
 
 test('the same 16 MiB budget keeps a previously seen cover rather than a newer unseen offscreen cover',()=>{
@@ -56,4 +57,24 @@ test('the actual connection/logout reset also disconnects observation, not only 
   assert.equal(f.calls.disconnect,1,'beginConnection/invalidateReads must release the observer references to old account nodes');
   assert.equal(f.cache.size,0);assert.deepEqual(f.calls.removed,['old-account','old-detached']);assert.equal(f.calls.grid,1);
   assert.equal(f.context.reader.token,3);assert.equal(f.context.state.loadId,6);assert.equal(f.context.state.loading,false);assert.equal(f.context.reader.book,null);assert.equal(f.context.images.length,0);
+});
+
+test('a persistently intersecting cover is refreshed before detach even when IntersectionObserver has no new entry',()=>{
+  const f=fixture();f.context.visibilityOrder=10;const visible=Array.from({length:8},(_,i)=>f.add('visible-'+i,{attached:true,seen:1,width:800,height:500}));
+  for(let i=0;i<8;i++)f.add('older-'+i,{seen:5,width:800,height:500});
+  f.load('rememberViewportCards')();for(const node of visible)node.isConnected=false;f.load('trimCards')();
+  for(let i=0;i<8;i++)assert.equal(f.cache.get('video:visible-'+i)?.node,visible[i],'Retain all actual visible 12.8 MB under the existing 16 MiB limit');
+  const bytes=[...f.cache.values()].reduce((n,v)=>n+v.node.querySelector('img').naturalWidth*v.node.querySelector('img').naturalHeight*4,0);assert(bytes<=16*1024*1024);assert(f.cache.size<=72);
+});
+
+test('viewport history excludes hidden, outside, zero-size and obsolete same-key cards',()=>{
+  const f=fixture(),good=f.add('good',{attached:true}),zero=f.add('zero',{attached:true,bounds:{left:0,top:0,right:0,bottom:0,width:0,height:0}}),outside=f.add('outside',{attached:true,bounds:{left:0,top:900,right:120,bottom:980,width:120,height:80}}),old={...good};
+  f.grid.querySelectorAll=()=>[old,zero,outside];const remember=f.load('rememberViewportCards');remember();assert.equal(f.cache.get('video:good').seen,0);assert.equal(f.cache.get('video:zero').seen,0);assert.equal(f.cache.get('video:outside').seen,0);
+  f.grid.querySelectorAll=()=>[good];f.context.document.visibilityState='hidden';remember();assert.equal(f.cache.get('video:good').seen,0);f.context.document.visibilityState='visible';remember();assert(f.cache.get('video:good').seen>0);
+});
+
+test('actual paint records viewport membership before replacing its grid children',()=>{
+  const f=fixture();f.context.visibilityOrder=5;f.add('current',{attached:true,seen:0});
+  Object.assign(f.context,{state:{kind:'video',items:[],search:'',folder:''},status(){}});f.load('trimCards');f.load('rememberViewportCards');f.load('paint')();
+  assert(f.cache.get('video:current').seen>5,'Detached nodes cannot be measured after replaceChildren');assert.equal(f.cache.get('video:current').node.isConnected,false);
 });

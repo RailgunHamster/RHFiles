@@ -16,6 +16,20 @@
       if(cached?.node===card)cached.seen=++visibilityOrder;
     }
   }
+  function rememberViewportCards(){
+    if(document.visibilityState!=='visible')return;
+    // IntersectionObserver reports boundary changes, not "still visible".
+    // A reused card can remain intersecting across paints and otherwise keep
+    // an older timestamp than cards seen on a previous list. Snapshot the
+    // current bounded page BEFORE detaching it, without growing the budget.
+    const width=window.innerWidth,height=window.innerHeight,seen=++visibilityOrder;
+    for(const card of $('media-grid').querySelectorAll('.media-card')){
+      const cached=cardCache.get(card.dataset.kind+':'+card.dataset.id);
+      if(cached?.node!==card||!card.isConnected)continue;
+      const r=card.querySelector('.cover-button')?.getBoundingClientRect();
+      if(r&&r.width>0&&r.height>0&&r.left<width&&r.top<height&&r.right>0&&r.bottom>0)cached.seen=seen;
+    }
+  }
   function clearCards(){cardVisibility?.disconnect();for(const {node} of cardCache.values())node.querySelector('img')?.removeAttribute('src');cardCache.clear();$('media-grid').replaceChildren();}
   function trimCards(){
     let detached=0;const candidates=[];
@@ -166,6 +180,7 @@
     $('previous-page').disabled=!state.connected||state.loading||!page.previous;$('next-page').disabled=!state.connected||state.loading||!page.next;
   }
   function paint(){
+    rememberViewportCards();
     $('library-status').replaceChildren();const grid=$('media-grid');grid.replaceChildren();grid.dataset.kind=state.kind;grid.className='media-grid '+({picture:'pictures',novel:'novels'}[state.kind]||'');
     if(!state.items.length){trimCards();status('这里暂时没有内容',state.search||state.folder?'换个关键词或文件夹试试。':'内容会沿用服务器的媒体库；可以在 RHVideo 中添加监控目录。',state.kind==='favorite'?'heart':state.kind);return;}
     for(const media of state.items){
