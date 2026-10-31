@@ -21,7 +21,15 @@
 
 记录在 `rhvideo-release-startup-h264-isolated.log`、`rhvideo-release-startup-hevc-isolated.log` 及 `rhfiles-e2e-ntiexK`／`YOMnFx`／`IFqzNs`／`jH8YTG` 的 `release-startup.json`。参考 HEVC 失败未采到原生 media.error，不能直接认定不支持编码，更不能当成 RHFiles 比参考快的证据。脚本现补充失败后的只读错误码／readyState／networkState，并记录 canPlayType；该补充不能反填历史记录。1080p 有约 2.1 秒的 EOF 416 后空档，但 HEVC 同类 416 后约 24 ms 即读取媒体，旧 producer trace 也显示解码器／D3D 初始化占时；**尚未证实是 HTTP 协议问题，不修改正确的 416 为伪造的 206**。Windows 启播性能仍未达标。
 
-同时补出 11 类显式 UI 事件吞掉失败或不返回动作 Promise：文件勾选、设置数值、快捷键、任务批次展开、浏览速度／两种进度条／可视缩略地图、图片选择／放大、主音量。保留 UI 错误通知但返回原 Promise，不重试，不把连续 wheel／动画调度机械改为串行。实际注册处理器的新红测为前 8 类 16 项失败、其余 3 类 6 项失败；修复后 **31/31**，零跳过。完整本地检查 **1329/1329**、零失败／取消／跳过、32.849 秒（`rhvideo-explicit-controls-full-node.tap`）。正常双端包的实际字段验收待下文补记；不能据此称全部手写控件或完整目标已完成。
+同时补出 11 类显式 UI 事件吞掉失败或不返回动作 Promise：文件勾选、设置数值、快捷键、任务批次展开、浏览速度／两种进度条／可视缩略地图、图片选择／放大、主音量。保留 UI 错误通知但返回原 Promise，不重试，不把连续 wheel／动画调度机械改为串行。实际注册处理器的新红测为前 8 类 16 项失败、其余 3 类 6 项失败；修复后 **31/31**，零跳过。完整本地检查 **1329/1329**、零失败／取消／跳过、32.849 秒（`rhvideo-explicit-controls-full-node.tap`）。不能据此称全部手写控件或完整目标已完成。
+
+正常 Windows release 构建 **2 分 33 秒**，EXE SHA-256 **`899298f37358d10663e7733f9573a9e117fd8d87ebf6524f548392140c26f179`**。冻结 `rhvideo-pipe-full-Zuw5oD` 的 **1217** 个源码、**4** 个工具、**426** 个运行库，实际窗口检查 **1/1**、零跳过、6.819 秒（`rhvideo-explicit-controls-normal-windows.tap`、`rhfiles-e2e-6HRRUt/handwritten-controls.json`）：两处过长搜索、非法字号及非法快捷键的 UI 调用均保留语义动作的拒绝，随后合法修改成功。此单项不是 11 类控件的整窗重跑或完整 Windows 回归。
+
+正常压缩 Android release 重新打包 **1 分 41 秒**，复用未改动且哈希核对过的 JNI **1F90**，只同步本轮工作台资源；未宣称重新编译 Rust。APK SHA-256 **`bc2f342e54eb2ca02fda03e66f8cbac2729374bbfc8e90e322bb1d77fc6c3da5`**，工作台 **FC5264**、正常构建的四个 QA 开关、唯一 x86_64 ABI 及实际安装字节均已核对。自建 API36 模拟器的同一场景通过（`rhvideo-explicit-controls-normal-android.log`、`rhvideo-image-decode-android-H0UUQB/receipt.json`），10 次测试服务请求；四个辅助 AVD 临时暂停后已逐一恢复，整项控制 42.923 秒。普通单次启动后 4.985 秒满足前台前提，仍记录 `startupAccepted:false`，不将它作为冷启动性能验收。
+
+结束后重新逐项核对全部冻结输入及 EXE／APK，三份用户脏 schema 保持原哈希（`rhvideo-pipe-full-Zuw5oD/explicit-controls-postcheck.json`）。源码已推送独立工作分支，不更换正式运行实例、未操作真机、未正式发包。原生性能／完整流程及双端整轮验收仍未完成。
+
+补入正常包的实际字号／快捷键场景后，最终本地源码对照再次 **1329/1329**、零失败／取消／跳过、**32.237 秒**（`rhvideo-explicit-controls-final-node.tap`）。已打开查看正常 H.264 两端的 `first-pixels.bmp`：均为生成的四标记画面；参考首像素图仍带缓冲圈，这项观察不代表持续播放或无卡顿验收。
 
 ## 2026-10-31 继续浏览不再等待整页缩略图（继续验收中）
 
