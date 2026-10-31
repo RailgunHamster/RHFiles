@@ -1347,6 +1347,12 @@ pub(crate) async fn client_window(
             )
             .build()
             .inspect(crate::rhvideo_player::install_window_trace)
+            .inspect(|window|{
+                #[cfg(any(debug_assertions,feature="rhvideo-host-trace"))]
+                crate::rhvideo_trace::install_wry_queue_trace(window);
+                #[cfg(not(any(debug_assertions,feature="rhvideo-host-trace")))]
+                let _=window;
+            })
             .map_err(|e| e.to_string());
             let _ = tx.send(result);
         })
@@ -1600,6 +1606,8 @@ pub async fn rhvideo_request(
 ) -> Result<Value, String> {
     #[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
     let command_trace=(action=="play"&&crate::rhvideo_trace::host_enabled()).then(Instant::now);
+    #[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
+    if let Some(started)=command_trace{crate::rhvideo_trace::arm_wry_queue(started);}
     if let Some(run)=args.as_object_mut().and_then(|v|v.remove("_automationRun")) {
         let id=run["id"].as_str().unwrap_or_default().to_owned();
         if let Some(previous)=crate::automation_receipts::begin(run,&action)? {return previous;}

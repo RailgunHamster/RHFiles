@@ -15,6 +15,70 @@ const WINDOW:Duration=Duration::from_secs(12);
 struct HostStage { at_ms:f64,elapsed_ms:f64,family:String,stage:String }
 static HOST_ORIGIN:OnceLock<Instant>=OnceLock::new();
 static HOST_STAGES:LazyLock<Mutex<Vec<HostStage>>>=LazyLock::new(||Mutex::new(Vec::new()));
+const WRY_QUEUE_LIMIT:u32=32;
+const WRY_QUEUE_WINDOW:Duration=Duration::from_secs(12);
+const WRY_QUEUE_SUBCLASS:usize=0x52485152;
+#[derive(Default)]
+struct WryQueueWindow { origin:Option<Instant>,messages:u32 }
+impl WryQueueWindow {
+    fn arm(&mut self,origin:Instant){if self.origin.is_none(){self.origin=Some(origin);}}
+    fn enter(&mut self,now:Instant)->Option<(u32,Instant)>{
+        let elapsed=now.checked_duration_since(self.origin?)?;
+        if elapsed>WRY_QUEUE_WINDOW||self.messages>=WRY_QUEUE_LIMIT{return None;}
+        self.messages+=1;Some((self.messages,now))
+    }
+}
+static WRY_QUEUE:LazyLock<Mutex<WryQueueWindow>>=LazyLock::new(||Mutex::new(WryQueueWindow::default()));
+static WRY_QUEUE_INSTALLED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+fn queue_permitted(owned:bool,host:bool,flag:bool)->bool{owned&&host&&flag}
+fn wry_queue_enabled()->bool{
+    queue_permitted(owned(),host_enabled(),std::env::var("RHFILES_QA_WRY_DISPATCH_TRACE").as_deref()==Ok("1"))
+}
+pub(crate) fn arm_wry_queue(origin:Instant){
+    if wry_queue_enabled(){if let Ok(mut state)=WRY_QUEUE.lock(){state.arm(origin);}}
+}
+pub(crate) fn wry_queue_snapshot()->Value{
+    let (armed,messages)=WRY_QUEUE.lock().map(|state|(state.origin.is_some(),state.messages)).unwrap_or_default();
+    json!({"enabled":wry_queue_enabled(),"installed":WRY_QUEUE_INSTALLED.load(std::sync::atomic::Ordering::Relaxed),"armed":armed,"messages":messages,"messageLimit":WRY_QUEUE_LIMIT,"windowMs":WRY_QUEUE_WINDOW.as_millis(),"scope":"first-play-owned-library-controller"})
+}
+fn wry_message_started()->Option<(u32,Instant)>{
+    if !wry_queue_enabled(){return None;}
+    let span=WRY_QUEUE.lock().ok()?.enter(Instant::now())?;
+    // Never hold our queue state across SDK handlers or HOST_STAGES.
+    stage(&format!("wry-exec-{}",span.0),span.1,"entered");Some(span)
+}
+fn wry_message_returned(span:(u32,Instant)){
+    stage(&format!("wry-exec-{}",span.0),span.1,"returned");
+}
+unsafe extern "system" fn wry_queue_proc(hwnd:windows::Win32::Foundation::HWND,message:u32,wparam:windows::Win32::Foundation::WPARAM,lparam:windows::Win32::Foundation::LPARAM,id:usize,_data:usize)->windows::Win32::Foundation::LRESULT{
+    use windows::{core::w,Win32::{UI::{Shell::{DefSubclassProc,RemoveWindowSubclass},WindowsAndMessaging::{RegisterWindowMessageW,WM_NCDESTROY}}}};
+    static EXEC:OnceLock<u32>=OnceLock::new();
+    // Wry 0.55.1 posts protocol responders to its controller container with
+    // this registered message. Do not inspect/dereference its closure pointer,
+    // synthesize the message, replace the responder, or change its dispatch.
+    let exec=*EXEC.get_or_init(||unsafe{RegisterWindowMessageW(w!("Wry::ExecMsg"))});
+    let span=if exec!=0&&message==exec{wry_message_started()}else{None};
+    if message==WM_NCDESTROY{
+        WRY_QUEUE_INSTALLED.store(false,std::sync::atomic::Ordering::Relaxed);
+        unsafe{let _=RemoveWindowSubclass(hwnd,Some(wry_queue_proc),id);}
+    }
+    let result=unsafe{DefSubclassProc(hwnd,message,wparam,lparam)};
+    if let Some(span)=span{wry_message_returned(span);}
+    result
+}
+pub(crate) fn install_wry_queue_trace(window:&tauri::WebviewWindow){
+    if window.label()!="window-rhvideo"||!wry_queue_enabled(){return;}
+    // with_webview runs on the owning UI thread. The only observed HWND comes
+    // from this private library's own controller, never a caller-supplied HWND.
+    let _=window.with_webview(move|platform|unsafe{
+        use windows::Win32::{Foundation::HWND,UI::{Shell::SetWindowSubclass,WindowsAndMessaging::GetWindowThreadProcessId}};
+        let mut parent=windows61::Win32::Foundation::HWND::default();
+        if platform.controller().ParentWindow(&mut parent).is_err()||parent.0.is_null(){return;}
+        let hwnd=HWND(parent.0);let mut process=0;
+        if GetWindowThreadProcessId(hwnd,Some(&mut process))==0||process!=std::process::id(){return;}
+        if SetWindowSubclass(hwnd,Some(wry_queue_proc),WRY_QUEUE_SUBCLASS,0).as_bool(){WRY_QUEUE_INSTALLED.store(true,std::sync::atomic::Ordering::Relaxed);}
+    });
+}
 fn owned()->bool{
     std::env::var("RHFILES_NATIVE_PLAYER_QA").as_deref()==Ok("1")&&
     std::env::var_os("RHFILES_TEST_PROFILE_ROOT").is_some()&&
@@ -26,10 +90,14 @@ pub(crate) fn stage(family:&str,origin:Instant,stage:&str){
     let now=Instant::now();let epoch=*HOST_ORIGIN.get_or_init(||origin);
     if let Ok(mut stages)=HOST_STAGES.lock(){if stages.len()<128{stages.push(HostStage{at_ms:now.saturating_duration_since(epoch).as_secs_f64()*1000.,elapsed_ms:now.saturating_duration_since(origin).as_secs_f64()*1000.,family:family.into(),stage:stage.into()});}}
 }
+fn clock_anchor(origin:Option<Instant>,now:Instant,wall:std::time::SystemTime)->Option<Value>{
+    Some(json!({"atMs":now.checked_duration_since(origin?)?.as_secs_f64()*1000.,"unixMs":wall.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs_f64()*1000.}))
+}
 pub(crate) fn host_snapshot()->Result<Value,String>{
     if !owned(){return Err("Owned startup trace is not enabled".into());}
-    let stages=HOST_STAGES.lock().map_err(|_|"Owned startup trace unavailable")?;
-    Ok(json!({"hostStages":*stages,"hostStageLimit":128,"hostScope":"bounded-process-lifetime"}))
+    let stages=HOST_STAGES.lock().map_err(|_|"Owned startup trace unavailable")?.clone();
+    let now=Instant::now();let wall=std::time::SystemTime::now();
+    Ok(json!({"hostStages":stages,"hostStageLimit":128,"hostScope":"bounded-process-lifetime","hostClockAnchor":clock_anchor(HOST_ORIGIN.get().copied(),now,wall),"wryQueue":wry_queue_snapshot()}))
 }
 #[derive(Clone,serde::Serialize)]
 struct Event { at_ms:f64,module:String,template:String }
@@ -120,6 +188,27 @@ impl Drop for Binding {
 }
 #[cfg(test)]mod tests{
     use super::*;
+    #[test]fn host_clock_anchor_is_explicit_and_rejects_missing_or_inconsistent_origins(){
+        let now=Instant::now();let wall=std::time::UNIX_EPOCH+Duration::from_secs(1_700_000_000);
+        assert!(clock_anchor(None,now,wall).is_none());assert!(clock_anchor(Some(now+Duration::from_millis(1)),now,wall).is_none());assert!(clock_anchor(Some(now),now,std::time::UNIX_EPOCH-Duration::from_secs(1)).is_none());
+        let value=clock_anchor(Some(now-Duration::from_millis(100)),now,wall).unwrap();assert_eq!(value["atMs"],100.);assert_eq!(value["unixMs"],1_700_000_000_000f64);
+    }
+    #[test]fn wry_queue_requires_all_three_private_opt_ins(){
+        for owned in [false,true]{for host in [false,true]{for flag in [false,true]{assert_eq!(queue_permitted(owned,host,flag),owned&&host&&flag);}}}
+    }
+    #[test]fn wry_queue_cannot_observe_before_the_first_armed_play(){
+        let mut state=WryQueueWindow::default();let now=Instant::now();assert!(state.enter(now).is_none());assert_eq!(state.messages,0);
+        state.arm(now);assert!(state.enter(now-Duration::from_millis(1)).is_none());assert_eq!(state.messages,0);
+    }
+    #[test]fn wry_queue_has_a_fixed_first_play_window_not_a_renewable_timer(){
+        let mut state=WryQueueWindow::default();let now=Instant::now();state.arm(now);state.arm(now+WRY_QUEUE_WINDOW);
+        assert_eq!(state.enter(now+WRY_QUEUE_WINDOW).unwrap().0,1);assert!(state.enter(now+WRY_QUEUE_WINDOW+Duration::from_nanos(1)).is_none());assert_eq!(state.origin,Some(now));
+    }
+    #[test]fn wry_queue_assigns_bounded_unique_pairs_without_storing_message_arguments(){
+        let mut state=WryQueueWindow::default();let now=Instant::now();state.arm(now);
+        for expected in 1..=WRY_QUEUE_LIMIT{let(id,at)=state.enter(now).unwrap();assert_eq!(id,expected);assert_eq!(at,now);}
+        assert!(state.enter(now).is_none());assert_eq!(state.messages,WRY_QUEUE_LIMIT);
+    }
     #[test]fn startup_trace_is_bounded_and_clears_on_new_input(){
         let mut state=State::new();let origin=state.origin;
         for _ in 0..LIMIT+3{state.push(origin,"direct3d11".into(),"Direct3D11 Open Succeeded".into());}

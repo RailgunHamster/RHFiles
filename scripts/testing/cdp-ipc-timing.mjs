@@ -9,10 +9,11 @@ export function ipcTimingCollector(){
   if(message.method==='Network.requestWillBeSent'){
    let request,action;try{request=new URL(p.request?.url);action=JSON.parse(p.request?.postData||'{}').action;}catch{return;}
    if(request.hostname!=='ipc.localhost'||request.pathname!=='/rhvideo_request'||action!=='play'||tracked.size>=4||tracked.has(p.requestId)||typeof p.requestId!=='string'||p.requestId.length>128||!Number.isFinite(p.timestamp))return;
-   const entry={number:tracked.size+1,start:p.timestamp};tracked.set(p.requestId,entry);add({request:entry.number,phase:'sent',atMs:0});return;
+   const unixMs=p.wallTime*1000,entry={number:tracked.size+1,start:p.timestamp,...(Number.isFinite(p.wallTime)&&Number.isFinite(unixMs)&&unixMs>0?{unixMs}:{})};tracked.set(p.requestId,entry);add({request:entry.number,phase:'sent',atMs:0,...(entry.unixMs===undefined?{}:{unixMs:entry.unixMs})});return;
   }
   const entry=tracked.get(p.requestId);if(!entry||!Number.isFinite(p.timestamp))return;
-  const row={request:entry.number,atMs:(p.timestamp-entry.start)*1000};
+  const atMs=(p.timestamp-entry.start)*1000;if(!Number.isFinite(atMs)||atMs<0)return;
+  const row={request:entry.number,atMs,...(entry.unixMs===undefined?{}:{unixMs:entry.unixMs+atMs})};
   if(message.method==='Network.responseReceived'){
    const timing=p.response?.timing,selected={};
    for(const key of ['proxyStart','proxyEnd','dnsStart','dnsEnd','connectStart','connectEnd','sendStart','sendEnd','receiveHeadersStart','receiveHeadersEnd'])if(Number.isFinite(timing?.[key]))selected[key]=timing[key];

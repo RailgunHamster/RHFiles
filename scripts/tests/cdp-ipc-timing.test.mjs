@@ -19,3 +19,10 @@ test('network observers cannot attach to another port, remote host, credential U
  const target=url=>({webSocketDebuggerUrl:url});assert.equal(ownedIpcTarget(target('ws://127.0.0.1:32222/devtools/page/one'),32222).port,'32222');
  for(const url of ['ws://127.0.0.1:32223/devtools/page/one','ws://example.com:32222/devtools/page/one','wss://127.0.0.1:32222/devtools/page/one','ws://u:p@127.0.0.1:32222/devtools/page/one','ws://127.0.0.1:32222/devtools/browser/one','ws://127.0.0.1:32222/devtools/page/one?token=secret'])assert.throws(()=>ownedIpcTarget(target(url),32222),/owned local debugger/);
 });
+test('cross-process IPC alignment records an explicit wall anchor without treating monotonic clocks as equal',()=>{
+ const c=ipcTimingCollector(),start=request('one');start.params.wallTime=1700000000;c.accept(start);c.accept({method:'Network.responseReceived',params:{requestId:'one',timestamp:100.3,response:{status:200}}});const rows=c.snapshot();assert.equal(rows[0].unixMs,1700000000000);assert(Math.abs(rows[1].unixMs-1700000000300)<.001);assert.equal(rows[0].atMs,0);
+});
+test('missing or invalid wall anchors do not silently fabricate absolute timing',()=>{
+ for(const wallTime of [undefined,NaN,Infinity,1e308,-1,0]){const c=ipcTimingCollector(),start=request('one');start.params.wallTime=wallTime;c.accept(start);c.accept({method:'Network.loadingFinished',params:{requestId:'one',timestamp:101,encodedDataLength:1}});assert(c.snapshot().every(row=>!Object.hasOwn(row,'unixMs')));}
+});
+test('invalid relative clocks cannot silently enter the cross-process evidence',()=>{const c=ipcTimingCollector();c.accept(request('one'));for(const timestamp of [99,Infinity,-1e308,1e308])c.accept({method:'Network.loadingFinished',params:{requestId:'one',timestamp,encodedDataLength:1}});assert.equal(c.snapshot().length,1);});

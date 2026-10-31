@@ -46,7 +46,7 @@ fn execute(app:&AppHandle,command:Command)->Result<Value,String>{
 }
 fn execute_inner(app:&AppHandle,command:Command)->Result<Value,String>{
     match command{
-        Command::Ping=>Ok(json!({"protocol":1,"scope":"self-windows","maxRequests":MAX_REQUESTS})),
+        Command::Ping=>Ok(json!({"protocol":1,"scope":"self-windows","maxRequests":MAX_REQUESTS,"wryQueue":crate::rhvideo_trace::wry_queue_snapshot()})),
         Command::PlayerState=>crate::rhvideo_player::command("player.state",&json!({})),
         Command::PlayerFrame(input)=>crate::rhvideo_player::diagnostic_frame(&input.map(|id|json!({"expectedInput":id})).unwrap_or_else(||json!({}))),
         Command::PlayerTrace(input)=>crate::rhvideo_player::diagnostic_trace(&input.map(|id|json!({"expectedInput":id})).unwrap_or_else(||json!({}))),
