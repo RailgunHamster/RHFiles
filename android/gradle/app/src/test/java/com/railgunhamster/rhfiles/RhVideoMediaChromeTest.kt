@@ -66,6 +66,13 @@ class RhVideoMediaChromeTest {
     assertEquals("1×",RhVideoMediaChrome.speed(1.0));assertEquals("1.25×",RhVideoMediaChrome.speed(1.25));assertEquals("0.25×",RhVideoMediaChrome.speed(.25));assertEquals("—",RhVideoMediaChrome.speed(Double.NaN))
     assertEquals("37%",RhVideoMediaChrome.volume(37));assertEquals("静音 · 37%",RhVideoMediaChrome.volume(37,true));assertEquals("0%",RhVideoMediaChrome.volume(0));assertEquals("—",RhVideoMediaChrome.volume(-1))
   }
+  @Test fun failureDetailsPreserveTheEntireSelectableMultilineReasonAndScrollWhenLong(){
+    val c=context();val error="RHVideo 请求失败（HTTP 503）\n"+"服务器返回的完整原因，包含中文与 🎬。\n".repeat(80)
+    val scroll=RhVideoMediaChrome.errorDetails(c,error);val text=scroll.getChildAt(0) as TextView
+    scroll.measure(View.MeasureSpec.makeMeasureSpec(RhVideoMediaChrome.dp(c,280),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(RhVideoMediaChrome.dp(c,300),View.MeasureSpec.EXACTLY));scroll.layout(0,0,scroll.measuredWidth,scroll.measuredHeight)
+    assertEquals(error,text.text.toString());assertTrue(text.isTextSelectable);assertNull(text.ellipsize);assertTrue(text.maxLines>100);assertTrue(text.height>scroll.height);assertTrue(text.lineCount>80)
+    assertEquals(c.getColor(R.color.rhvideo_media_text),text.currentTextColor)
+  }
   @Test fun normalTextAndReadoutColorsMeetReadableContrastOnThePanel(){
     val c=context();fun luminance(color:Int):Double{fun channel(value:Int):Double{val s=value/255.0;return if(s<=.04045)s/12.92 else ((s+.055)/1.055).pow(2.4)};return .2126*channel(Color.red(color))+.7152*channel(Color.green(color))+.0722*channel(Color.blue(color))}
     val background=luminance(c.getColor(R.color.rhvideo_media_panel));for(id in listOf(R.color.rhvideo_media_text,R.color.rhvideo_media_muted,R.color.rhvideo_media_accent))assertTrue((luminance(c.getColor(id))+.05)/(background+.05)>=4.5)

@@ -2742,6 +2742,7 @@
                   "controls.show",
                   "controls.hide",
                   "options",
+                  "favorite.error",
                 ],
               },
               value: { type: "number" },

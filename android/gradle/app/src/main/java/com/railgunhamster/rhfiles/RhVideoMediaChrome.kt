@@ -32,6 +32,13 @@ internal object RhVideoMediaChrome {
     gravity=Gravity.END or Gravity.CENTER_VERTICAL;typeface=Typeface.MONOSPACE
     maxLines=1;ellipsize=TextUtils.TruncateAt.MIDDLE
   }
+  fun errorDetails(context:Context,error:String)=ScrollView(context).apply {
+    isFillViewport=true
+    addView(text(context,error,size=15f).apply{
+      gravity=Gravity.TOP or Gravity.START;setTextIsSelectable(true)
+      setPadding(dp(context,24),dp(context,12),dp(context,24),dp(context,20))
+    },android.view.ViewGroup.LayoutParams(-1,-2))
+  }
   fun seekBar(context:Context,maxValue:Int,initial:Int)=SeekBar(context).apply {
     max=maxValue;progress=initial;minimumHeight=dp(context,48)
     progressTintList=ColorStateList.valueOf(context.getColor(R.color.rhvideo_media_accent))

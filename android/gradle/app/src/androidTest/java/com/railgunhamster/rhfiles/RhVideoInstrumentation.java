@@ -945,6 +945,12 @@ public class RhVideoInstrumentation extends Instrumentation {
     touchPlayerButton("rhvideo_player_favorite");waitFavorite(false,true);action("player.control",new JSONObject().put("command","options"));waitNativeText("收藏失败");
     screenshot("rhvideo-favorite-error-qa.png");nativeCall("automation.back",new JSONObject());
     require(((JSONObject)action("player.state",new JSONObject())).getLong("inputId")==input,"The public Back action dismisses the native menu without closing or replacing its video");
+    action("player.control",new JSONObject().put("command","options").put("expectedInputId",input));clickPlayerText("收藏失败 · 查看详情");
+    waitNativeText("RHVideo 请求失败（HTTP 503）");screenshot("rhvideo-favorite-error-details-qa.png");clickPlayerText("关闭");
+    require(((JSONObject)action("player.state",new JSONObject())).getLong("inputId")==input,"Closing full failure details cannot replace the video or repeat the favorite");
+    require(Boolean.TRUE.equals(expression(library,"RHFilesAPI.invoke('rhvideo.player.control',{command:'favorite.error',expectedInputId:"+(input-1)+"}).then(()=>false,()=>true)")),"An old menu input must not open details for a replacement video");
+    action("player.control",new JSONObject().put("command","favorite.error").put("expectedInputId",input));waitNativeText("RHVideo 请求失败（HTTP 503）");nativeCall("automation.back",new JSONObject());
+    require(((JSONObject)action("player.state",new JSONObject())).getLong("inputId")==input,"The public full-error command and Back leave the original native input intact");
     action("player.close",new JSONObject());library=waitView("RhVideoActivity");
     action("media.open",new JSONObject().put("kind","video").put("id","video-1"));waitPlayer("video-1",true);action("player.mark",new JSONObject());action("connection.logout",new JSONObject());library=waitView("RhVideoActivity");
   }

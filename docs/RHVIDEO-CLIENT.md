@@ -31,6 +31,8 @@ Android 从侧栏 RHVideo 打开，使用适配手机和平板的同一套媒体
 
 Android 开发版图片／截图工具栏使用紧凑图形按钮，保留原有操作、顺序和完整可访问名称；收藏状态变化不移除图标。适应／百分比仍有文字反馈，较多的截图工具仍可横向滑动。脚本继续调用同一组 `rhvideo.image.*`／`rhvideo.selection.markCurrent`，不需要通过另一个“更多”菜单；Windows 文字工具栏保持不变。当前 412 CSS px 的收藏图片常用按钮和实际缩放点击已验证，完整父预览另有当前普通 APK 的实际验证，但这不表示所有屏幕、整条 single 或播放性能已经通过。
 
+Android 单视频收藏失败后，可在播放菜单中点“收藏失败 · 查看详情”读取完整原因，支持滚动和选择文字；关闭详情不重发收藏，也不退出当前视频。对应接口是 `rhvideo.player.control` 的 `favorite.error` 命令，可带最新 `player.state.inputId` 作为 `expectedInputId`，旧输入会被拒绝。详情的“关闭”可通过主窗口的 `native.ui.list`／`native.ui.invoke` 控件接口调用，`native.back` 也只关闭当前顶层详情；没有失败请求的重试／取消按钮。
+
 实现和验收状态逐项记录在 [RHVideo 功能对齐清单](RHVIDEO-PARITY.md)。没有完成的性能比较、真实手机或服务重启验收不会用模拟结果冒充。
 
 ## 标签点选与组合筛选（开发版，尚未发布）

@@ -6,6 +6,18 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-11-01 Android 原生收藏错误全文（整体目标未完成）
+
+上轮实际 `rhvideo-favorite-error-qa.png` 中，原生菜单的禁用长标题将 HTTP 503 等原因截断。现仅保留短的“收藏失败 · 查看详情”，通过同一带输入／账户校验的 `player.control {command:"favorite.error",expectedInputId:…}` 打开可换行、可滚动和选中文字的原生详情。只有“关闭”，不新增失败写入的重试／取消，不清除或重放错误记录；重建输入及销毁播放页会释放详情。关闭与系统 Back 继续可通过原有原生控件／返回接口调用。这是原生单视频错误可读性修复，不宣称所有窗口的视觉对齐已经完成。
+
+两个新增 Node 反例先失败，修复后完整本地源码对照 **1608/1608、零失败／取消／跳过**；UI 绑定只读检查 **82 文件通过**。新增原生控件测试验证完整中文／Unicode 多行原因、文本可选择、没有省略、超出可视高度时可滚动和既有媒体颜色。普通 Gradle release／JVM 构建 **343 秒**，**486/486、73 XML、零失败／错误／跳过**；独立测试包构建 **228 秒**。仍复用未改的 1F90 Rust JNI，不是完整 Rust／ARM 重编；仅机械同步四份已审核的生成 Kotlin／Java 输入，原有 JNI、配置、其他原生源码及资源检查未放宽。
+
+新普通 APK 为 **`771934d9a929e248dc50b5f6fdfae847ea8d23376eb212220f2f48f96b89c15e`**（`rhvideo-modal-normal-android-E1n7Tp`）；四项实验参数仍 false／0／default／compositor。独立测试 APK 为 **`702ddbd29431f957d314eb8e4f0f5b8bdad5b83b3aa4e8ca9a43ce0ea99690ab`**（`rhvideo-image-toolbar-instrumentation-lgtXqq`），实际 DEX 包含新的详情检查点、此前的工具栏及 locate 拦截点。测试构建生成的实验主包没有被安装。
+
+只运行一条新普通包的完整 preview：`rhvideo-current-android-preview-9vLQXg`／`rhvideo-android-preview-1793486836966-release`，**322.181 秒通过**。除原有父图、收藏／标记／前后／关闭、一次性暂存、失败终态、独立准备和账户边界外，还实际点菜单进入错误全文、点“关闭”、拒绝旧输入打开详情、通过公开语义接口再次打开并用公开 Back 关闭，原视频输入始终保留。已查看 `rhvideo-favorite-error-details-qa.png`，完整 HTTP 503 原因可见；没有把文字节点存在当作唯一视觉证据。HTTP 夹具记录确认该失败收藏 **恰好一次 PUT**，没有 retry／resume／cancel 写入。使用的仍是生成媒体及隔离 HTTP 契约夹具，不连接真实媒体库或生产数据库。
+
+`rhvideo-favorite-error-postcheck.json` 复核实际主包／测试包及安装字节、31 份当前资源、普通参数和实际编译的原生命令；14 份参考源码与干净 `3d6aaeb`、三份用户原脏且未暂存的 schema、三个协议副本均未变。旧 FFAD 主包、工具栏红例、single 360 秒整轮超时、旧测试拦截失败以及 Windows 源码时钟失败均保留，不因这次通过改记成功。五台自建 AVD running／RHFiles 停止，没有操作手机或正式 Windows，也未发布正式包。当前共享页面尚需重新构建／实跑 Windows；稳定时钟、Android 持续同屏及完整性能目标仍未完成。
+
 ## 2026-11-01 Android 图片工具栏与当前父预览（整体目标未完成）
 
 仍直接对照 WINSERVER 的干净 `D:\git\RHVideo`／`3d6aaeb`，只用生成媒体、临时账号与数据库，没有添加 GitHub 私有仓库密钥，也没有读取真实媒体库。先用当前资源构建普通 x86_64 APK **8241**（`rhvideo-modal-normal-android-564wyX`），JVM **485/485**；混合收藏整条流程 `rhvideo-current-android-favorites-NihaBN` 和独立一次性播放票据 `rhvideo-current-android-tickets-wpAAKY` 均实际通过，不能把它们转记为后续 APK 的结果。

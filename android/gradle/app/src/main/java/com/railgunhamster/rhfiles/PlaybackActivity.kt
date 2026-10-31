@@ -38,6 +38,7 @@ import androidx.media3.ui.PlayerView
 /** Native local/content/remote playback with a real Media3 queue and range reads. */
 @UnstableApi
 class PlaybackActivity:AppCompatActivity() {
+  private var rhFavoriteErrorDialog:androidx.appcompat.app.AlertDialog?=null
   companion object {
     private val nextRhInput=java.util.concurrent.atomic.AtomicLong()
     private var active=java.lang.ref.WeakReference<PlaybackActivity>(null)
@@ -225,6 +226,7 @@ class PlaybackActivity:AppCompatActivity() {
       "fit"->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
       "fill"->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
       "controls.show"->playerView.showController();"controls.hide"->playerView.hideController()
+      "favorite.error"->showRhFavoriteError()
       "options"->{
         playerView.showController()
         val input=rhInputId
@@ -256,6 +258,7 @@ class PlaybackActivity:AppCompatActivity() {
     startPlayer(true,rate,repeat)
   }
   private fun startPlayer(keepInput:Boolean=false,restoredRate:Float?=null,restoredRepeat:Int?=null){
+    rhFavoriteErrorDialog?.dismiss();rhFavoriteErrorDialog=null
     val mediaFactory=DefaultMediaSourceFactory(DefaultDataSource.Factory(this,DataSource.Factory{MediaRoutingDataSource(this,storage.remote)}))
     if(path.startsWith("rhvideo://"))mediaFactory.setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(0))
     val engine=ExoPlayer.Builder(this,DefaultRenderersFactory(this).setEnableDecoderFallback(true))
@@ -372,6 +375,17 @@ class PlaybackActivity:AppCompatActivity() {
       .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).apply{clipData=ClipData.newRawUri("媒体文件",uri)}
     startActivity(Intent.createChooser(intent,"选择播放器").putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS,arrayOf(android.content.ComponentName(this,ExternalPlaybackActivity::class.java))))
   }catch(e:Exception){Toast.makeText(this,"打开播放器失败：${e.message}",Toast.LENGTH_LONG).show()}}
+  private fun showRhFavoriteError(){
+    val w=rhWindow?:error("当前不是媒体库视频")
+    val error=RhVideoClient.get(this).favoriteState("video",currentRhId(),w.generation).optString("favoriteError")
+    check(error.isNotEmpty()&&error!="null"){"当前没有收藏失败信息"}
+    rhFavoriteErrorDialog?.dismiss()
+    val dialog=androidx.appcompat.app.AlertDialog.Builder(this).setTitle("收藏失败")
+      .setView(RhVideoMediaChrome.errorDetails(this,error)).setPositiveButton("关闭",null).create()
+    rhFavoriteErrorDialog=dialog
+    dialog.setOnDismissListener{if(rhFavoriteErrorDialog===dialog)rhFavoriteErrorDialog=null}
+    dialog.show()
+  }
   private fun options(anchor:View){
     val menu=PopupMenu(this,anchor)
     listOf("适应画面","填满画面（可能裁切）","播放速度","循环播放","用其他播放器打开").forEachIndexed{i,label->menu.menu.add(0,i,i,label)}
@@ -379,7 +393,7 @@ class PlaybackActivity:AppCompatActivity() {
     menu.menu.findItem(3).setCheckable(true).setChecked(player?.repeatMode==Player.REPEAT_MODE_ONE)
     val rotateInput=rhInputId
     (playerView as? RhVideoPlayerView)?.let{view->menu.menu.add(0,8,2,"智能旋转").setCheckable(true).setChecked(view.autoRotate)}
-    rhWindow?.let{w->val error=RhVideoClient.get(this).favoriteState("video",currentRhId(),w.generation).optString("favoriteError");if(error.isNotEmpty()&&error!="null")menu.menu.add("收藏失败：$error").isEnabled=false}
+    rhWindow?.let{w->val error=RhVideoClient.get(this).favoriteState("video",currentRhId(),w.generation).optString("favoriteError");if(error.isNotEmpty()&&error!="null")menu.menu.add(0,9,4,"收藏失败 · 查看详情")}
     rhWindow?.takeIf{it.options.optBoolean("reference")}?.let{w->
       menu.menu.findItem(3).setTitle("循环当前${if(w.options.optBoolean("fullLength",true))"视频"else "片段"}").setCheckable(true).setChecked(w.options.optBoolean("loop"))
       menu.menu.add(0,5,5,"全长播放").setCheckable(true).setChecked(w.options.optBoolean("fullLength",true))
@@ -396,9 +410,10 @@ class PlaybackActivity:AppCompatActivity() {
       6->{val input=EditText(this).apply{inputType=android.text.InputType.TYPE_CLASS_NUMBER;setText((rhWindow?.options?.optDouble("segment",3.0)?:3.0).toInt().toString());hint="1–300 秒"};androidx.appcompat.app.AlertDialog.Builder(this).setTitle("片段长度（秒）").setView(input).setNegativeButton("取消",null).setPositiveButton("确定"){_,_->rhUiAction(JSONObject().put("command","playlist.options").put("options",JSONObject().put("segment",input.text.toString().toDoubleOrNull()?:0)))}.show()}
       7->rhUiAction(JSONObject().put("command","playlist.options").put("options",JSONObject().put("portraitOnly",rhWindow?.options?.optBoolean("portraitOnly")!=true)))
       8->rhUiAction(JSONObject().put("command","autoRotate").put("expectedInputId",rotateInput))
+      9->rhUiAction(JSONObject().put("command","favorite.error").put("expectedInputId",rotateInput))
     };true};menu.show()
   }
   override fun onSaveInstanceState(outState:Bundle){player?.let(selectionMemory::remember);outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
   override fun onStop(){rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null;rememberRhPlaylist();player?.let{selectionMemory.remember(it);index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);it.release()};player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
-  override fun onDestroy(){rhEvents?.close();rhEvents=null;if(active.get()===this)active.clear();super.onDestroy()}
+  override fun onDestroy(){rhFavoriteErrorDialog?.dismiss();rhFavoriteErrorDialog=null;rhEvents?.close();rhEvents=null;if(active.get()===this)active.clear();super.onDestroy()}
 }
