@@ -21,7 +21,7 @@
     window: "window-rhvideo-grid",
     ready: true,
   }));
-  api.provideState("grid", () => state);
+  api.provideState("grid", () => ({...state,cells:state.cells.map(value=>({...value,playback:RHVideoPlaybackPhase.describe(value)}))}));
   const register = (name, params, fn) =>
     api.register("rhvideo.grid." + name, fn, {
       params,
@@ -67,7 +67,7 @@
             Math.floor(v.positionMs / 1000) +
             "s · " +
             v.renderedFrames +
-            " 帧 · " + (v.state===7||(v.state===6&&!v.durationMs&&!v.renderedFrames)?"加载失败":v.seekError?"定位失败："+v.seekError:v.restoringPausedFrame?"正在恢复暂停画面":paused(v)?v.state===4?"已暂停":"正在暂停":v.state===4?"正在继续":v.state===1||v.state===2?"缓冲中":"播放中"),
+            " 帧 · " + (v.seekError&&![5,6,7].includes(v.state)?"定位失败："+v.seekError:RHVideoPlaybackPhase.describe(v).shortLabel),
         )
         .join("　");
     return value;

@@ -17,15 +17,10 @@
   function paint(value){
     const generation=value.generation??state.generation;if(generation&&state.generation&&generation<state.generation)return;
     sourceControls(value.opened&&value.queue?.id);
-    state={...value,generation};ready=true;if(!state.opened){$('status').textContent='播放已停止';return;}
+    state={...value,generation};ready=true;const presentation=RHVideoPlaybackPhase.describe(state);$('status').textContent=presentation.label;$('status').dataset.phase=presentation.phase;if(!state.opened)return;
     $('title').textContent=state.title;$('position').textContent=RHVideoModel.clock(state.positionMs/1000);$('duration').textContent=RHVideoModel.clock(state.durationMs/1000);
     if(!dragging)$('seek').value=state.durationMs>0?Math.round(state.positionMs/state.durationMs*1000):0;
     $('toggle').textContent=state.state===6?'重新播放':paused(state)?'继续':'暂停';
-    $('status').textContent=state.state===7?'播放失败，请检查服务器或媒体编码':state.state===6?'播放结束':paused(state)?state.state===4?'已暂停':'正在暂停…':state.state===4?'正在继续…':state.state===1||state.state===2?'正在缓冲…':'播放中';
-    if(state.pendingSeekMs!=null)$('status').textContent='正在定位…';
-    if(state.state===5)$('status').textContent='播放已停止';
-    if(state.restoringPausedFrame)$('status').textContent='正在恢复暂停画面…';
-    if(state.presentationError)$('status').textContent='画面显示失败';
     if(state.volume>0)audibleVolume=state.volume;
     if(!volumeDragging)$('volume').value=String(state.volume);$('rate').value=String(state.rate);
     $('previous').disabled=!state.queue?.hasPrevious;$('next').disabled=!state.queue?.hasNext;
@@ -52,7 +47,7 @@
     }
     if(state.presentationError){$('error').dataset.automation='true';$('error').textContent=state.presentationError;}else if(state.seekError){$('error').dataset.automation='true';$('error').textContent='跳转失败：'+state.seekError;}else if(state.automationError){$('error').dataset.automation='true';$('error').textContent='自动播放失败：'+state.automationError.message;}else if($('error').dataset.automation){delete $('error').dataset.automation;$('error').textContent='';}
   }
-  api.provideState('player',()=>state);
+  api.provideState('player',()=>({...state,playback:RHVideoPlaybackPhase.describe(state)}));
   async function currentTarget(){if(state.opened&&state.queue?.id)return state;const value=await native('player.state');paint(value);if(!value.opened||!value.queue?.id)throw Error('视频正在准备，请稍候');return value;}
   const register=(name,params,handler)=>api.register('rhvideo.player.'+name,handler,{params,risk:['state','preloadState'].includes(name)?'read':'ui',description:'Native RHVideo player '+name});
   register('state',object(),async()=>{const value=await native('player.state');paint(value);return value;});

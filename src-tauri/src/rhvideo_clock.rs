@@ -7,6 +7,7 @@ pub struct Clock {
     last_frame: u64,
     waiting: bool,
     raw: i64,
+    anchored_raw: Option<i64>,
     ignored_raw: Option<i64>,
     pub rate: f64,
 }
@@ -17,6 +18,7 @@ impl Clock {
             last_frame: 0,
             waiting: true,
             raw: 0,
+            anchored_raw: None,
             ignored_raw: None,
             rate: 1.,
         }
@@ -41,14 +43,24 @@ impl Clock {
         if self.ignored_raw.is_some_and(|old| old != raw) {
             self.ignored_raw = None;
         }
-        if state==3&&self.ignored_raw != Some(raw) && raw != self.raw && raw as f64 > self.position + 1000. {
-            self.position = raw.max(0) as f64;
-        }
+        // Reading a timestamp before the first display (or after a long gap)
+        // must not consume it. Only its admitted presentation commits an anchor.
+        let new_anchor = self.ignored_raw != Some(raw) && self.anchored_raw != Some(raw);
         self.raw = raw;
         if state == 3 && frame > self.last_frame {
             let delta = frame - self.last_frame;
             if !self.waiting && delta <= 1500 {
                 self.position += delta as f64 * self.rate;
+            }
+            // libVLC's current movie time is a coarse anchor, not a frame PTS.
+            // Adopt a newer forward anchor only alongside real presentations.
+            // A one-second deadband left subsecond startup offsets permanent;
+            // accepting read-ahead without a frame could instead fake progress.
+            if new_anchor && (self.waiting || delta <= 1500) {
+                if raw as f64 > self.position {
+                    self.position = raw.max(0) as f64;
+                }
+                self.anchored_raw = Some(raw);
             }
             self.waiting = false;
         } else if state != 3 {
@@ -67,6 +79,44 @@ impl Clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn first_presented_frame_uses_a_subsecond_native_anchor() {
+        // Observed ordinary H264/AAC input: pixels at 458 ms, native movie
+        // time 403 ms, but the old 1000 ms threshold left the UI at zero.
+        let mut c = Clock::new();
+        assert_eq!(c.observe(0, 20000, 3, 0), 0);
+        assert_eq!(c.observe(403, 20000, 3, 2300), 403);
+        assert_eq!(c.observe(653, 20000, 3, 2550), 653);
+    }
+    #[test]
+    fn a_native_anchor_seen_before_display_is_not_consumed_by_the_read() {
+        let mut c = Clock::new();
+        assert_eq!(c.observe(403, 20000, 3, 0), 0);
+        assert_eq!(c.observe(403, 20000, 3, 2300), 403);
+    }
+    #[test]
+    fn an_unobserved_long_gap_waits_for_continuity_without_losing_the_anchor() {
+        let mut c = Clock::new();
+        c.observe(0, 20000, 3, 100);
+        assert_eq!(c.observe(1403, 20000, 3, 10100), 0);
+        assert_eq!(c.observe(1403, 20000, 3, 10200), 1403);
+    }
+    #[test]
+    fn changed_native_anchor_catches_up_without_waiting_for_a_second_of_drift() {
+        let mut c = Clock::new();
+        c.observe(0, 20000, 3, 100);
+        assert_eq!(c.observe(403, 20000, 3, 200), 403);
+        assert_eq!(c.observe(653, 20000, 3, 400), 653);
+        assert_eq!(c.observe(653, 20000, 3, 500), 753);
+        assert_eq!(c.observe(903, 20000, 3, 600), 903);
+    }
+    #[test]
+    fn a_new_native_time_without_new_presentations_cannot_publish_progress() {
+        let mut c = Clock::new();
+        c.observe(0, 20000, 3, 100);
+        assert_eq!(c.observe(1403, 20000, 3, 100), 0);
+        assert_eq!(c.observe(1653, 20000, 3, 100), 0);
+    }
     #[test]
     fn presented_frames_advance_a_coarse_input_clock() {
         let mut c = Clock::new();

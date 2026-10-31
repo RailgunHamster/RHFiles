@@ -6,6 +6,7 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url),{create}=require('../../src/js/automation-core.js');
 const source=fs.readFileSync(new URL('../../src/js/rhvideo-player.js',import.meta.url),'utf8');
 const model=require('../../src/js/rhvideo-model.js');
+const playbackPhase=require('../../src/js/rhvideo-playback-phase.js');
 
 // Run the entire shipped player and its registered callbacks. The native edge
 // is controlled only in this unit fixture; real-window acceptance is separate.
@@ -14,11 +15,11 @@ async function player({origin='video',opened=true}={}){
  const node=id=>{if(!nodes.has(id))nodes.set(id,{id,disabled:false,hidden:false,value:'500',checked:false,dataset:{},textContent:'',setAttribute(){},getAttribute(){return null;},append(){},matches(){return false;},closest(){return null;}});return nodes.get(id);};
  const html=fs.readFileSync(new URL('../../src/rhvideo-player.html',import.meta.url),'utf8');
  for(const match of html.matchAll(/id="([^"]+)"/g))node(match[1]);
- const state={opened,generation:1,inputId:10,title:'Generated video',positionMs:1000,durationMs:20000,state:3,volume:80,rate:1,queue:{id:'video-0',revision:20,planRevision:30,hasNext:true,hasPrevious:true,total:3,index:0,totalMs:60000,segmentLengthMs:20000,options:{origin,reference:origin!=='favorite',fullLength:false,parentIndex:0,parentTotal:3}}};
+ const state={opened,generation:1,inputId:10,title:'Generated video',positionMs:1000,durationMs:20000,state:3,renderedFrames:30,volume:80,rate:1,queue:{id:'video-0',revision:20,planRevision:30,hasNext:true,hasPrevious:true,total:3,index:0,totalMs:60000,segmentLengthMs:20000,options:{origin,reference:origin!=='favorite',fullLength:false,parentIndex:0,parentTotal:3}}};
  let command=()=>Promise.resolve(structuredClone(state));
  const api=create({instanceId:'generated-player-controls'});
  const document={getElementById:node,querySelectorAll:()=>[...nodes.values()].filter(n=>n.id!=='controls'),createElement:()=>{const n=node('generated-'+nodes.size);Object.defineProperty(n,'id',{get(){return this.identifier;},set(id){this.identifier=id;nodes.set(id,this);}});return n;}};
- const context=vm.createContext({window:{RHFilesAPI:api,__TAURI__:{core:{invoke:(_name,{action,args})=>{calls.push({action,args});return action==='player.state'?Promise.resolve(structuredClone(state)):command(action,args);}},event:{listen:async()=>{}}},addEventListener(){}},document,RHFilesUI:{listen(n,event,handler,_options,site){handlers.set(site,{node:n,event,handler});}},RHVideoModel:model,setTimeout:callback=>timers.push(callback),performance:{now:()=>1000}});
+ const context=vm.createContext({window:{RHFilesAPI:api,__TAURI__:{core:{invoke:(_name,{action,args})=>{calls.push({action,args});return action==='player.state'?Promise.resolve(structuredClone(state)):command(action,args);}},event:{listen:async()=>{}}},addEventListener(){}},document,RHFilesUI:{listen(n,event,handler,_options,site){handlers.set(site,{node:n,event,handler});}},RHVideoModel:model,RHVideoPlaybackPhase:playbackPhase,setTimeout:callback=>timers.push(callback),performance:{now:()=>1000}});
  vm.runInContext(source,context,{filename:'rhvideo-player.js'});
  await api.invoke('rhvideo.player.state');
  const event=values=>({button:0,code:'ArrowRight',key:'ArrowRight',repeat:false,isTrusted:false,deltaY:1,target:{matches:()=>false,closest:()=>null,isContentEditable:false},preventDefault(){},...values});
@@ -74,4 +75,16 @@ test('wheel admission remains throttled rather than queueing continuous events',
  const p=await player();let release;const gate=new Promise(resolve=>release=resolve);p.setCommand(()=>gate);
  const first=p.fire('rhvideo.player.wheel'),second=p.fire('rhvideo.player.wheel');assert.equal(second,undefined);assert.equal(p.calls.filter(c=>c.action==='player.next').length,1);
  release(structuredClone(p.state));await first;
+});
+test('the actual player does not call a PLAYING input with zero presented frames visible playback',async()=>{
+ const p=await player();Object.assign(p.state,{state:3,renderedFrames:0,decodedFrames:1,decodedAudioBlocks:0,firstFrameMs:0,positionMs:0});await p.api.invoke('rhvideo.player.state');assert.equal(p.node('status').textContent,'正在准备首帧…');assert.equal(p.api.snapshot().state.player.playback.phase,'preparing');
+});
+test('decoded audio or video without a presentation cannot complete first-frame preparation',async()=>{
+ const p=await player();Object.assign(p.state,{state:3,renderedFrames:0,decodedFrames:100,decodedAudioBlocks:100});await p.api.invoke('rhvideo.player.state');assert.equal(p.node('status').textContent,'正在准备首帧…');
+});
+test('a real presented frame completes the label and the same read-only semantic phase',async()=>{
+ const p=await player();Object.assign(p.state,{state:3,renderedFrames:1});await p.api.invoke('rhvideo.player.state');assert.equal(p.node('status').textContent,'播放中');assert.equal(p.api.snapshot().state.player.playback.phase,'playing');
+});
+test('terminal failure wins over a stale pending seek instead of masquerading as loading',async()=>{
+ const p=await player();Object.assign(p.state,{state:7,renderedFrames:0,pendingSeekMs:900});await p.api.invoke('rhvideo.player.state');assert.match(p.node('status').textContent,/播放失败/);
 });
