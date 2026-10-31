@@ -6,6 +6,26 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 继续浏览不再等待整页缩略图（继续验收中）
+
+原实现仍先等待 `loadGallery()` 完整解析整页缩略图地址，再创建目标查看器。直接执行实际生产函数，新增元数据页挂起、期间关闭／打开设置和弹窗父层顺序检查；原版 `resumeBrowse()` 不等待图片加载已另有实际源码测试。背景对话框还会失效较新确认、暂停后来视频或重新打开已关闭父层。最终红测 **6 通过／6 失败**（`rhvideo-gallery-page-focus-final-red.tap`），不是实际窗口性能反例，也不代表此前安卓全部延迟都由这一处造成。
+
+提交 `cea1efc` 从 Worker 的实际 `located.item` 取得目标；没有精确定位时只读取回退索引的一项，不依赖尚未画出的页面数组。先准备弹窗父层、打开目标并开始真实解码，再并行重绘底层页；同时观察并保留图片失败，页读取失败后也不留下未处理的迟到解码拒绝。背景 `dialog(..., false)` 不抢焦点、不取消较新确认、不暂停后来视频。稳定 URL／视频／索引回退、顺序、保存位置及普通对话框行为不变。提交 `e128f8a` 增加主页面／弹窗图库两条相同实际流程，弹窗额外核对返回后父层和焦点；相关完整源码检查 **1303/1303，零失败／取消／跳过，35.915 秒**（`rhvideo-gallery-page-focus-shared-final-node.tap`）。
+
+正常 Windows release **2 分 54 秒**，EXE SHA-256 **`1ea8770566f163e6fa2cc818467a2205bec06e139a1d07a4cf8233d3a9e43587`**，冻结 `rhvideo-pipe-full-pETRwb`。实际图库、两条继续浏览、普通图片、叠放和暂存回归 **15/15，零失败／取消／跳过，201.553 秒**（`rhvideo-gallery-page-focus-final-windows.tap`）。主图库／弹窗回执 `rhfiles-e2e-HAkFfo`／`rhfiles-e2e-9bzqrN` 都有真实加载／错误／关闭／设置不抢焦点；弹窗最终 open=true、focus=wb-gallery，返回 PNG 已查看。夹具故意损坏／挂起的 4、5 号缩略图不是实际媒体损坏。此组不含原生视频或全部 Windows 整轮。
+
+正常 Android release **33 秒**，APK **`8e39693ab91962c90f62df5ec0369ff08e0de88ad60c5cb04802f8c550aa48ca`**（`rhvideo-modal-normal-android-WjLHlP`），工作台 **DBD9**／JNI **1F90**、四项正常 BuildConfig 和实际安装字节已核对。专用 emulator-5590 只安装一次；下面所述宿主隔离条件下，原主图库 Continue 全流程 **通过**（`rhvideo-gallery-page-focus-isolated-android.log`、`rhvideo-image-decode-android-IIyhro/receipt.json`）。仅附着 PID 25737，**startupAccepted:false**，生成夹具 307 次请求、零 transport error；实际行按钮、解码后目标、设置不抢焦点、旧加载关闭返回 stale、损坏图、原 25 秒观察内的超时均通过。超时操作为“图片加载超时”，同一 Web 时钟从源设置到撤销约 **20052.5 ms**，动作约 **21475.7 ms**；这次确有原 20 秒 DOM watchdog 证据，不是之前的普通 Native 图片错误。结束后才只读采集最多四项动作时间与原有源观察；不是物理输入、首个可见像素或冷启动计时。`android-iYCD1i` 的 ready／timeout PNG 已查看，分别确有实际图片及错误提示，不再用文件名代替视觉核对。
+
+双端结束后 **1215** 个冻结源码、**4** 个工具、**426** 个运行库及 1EA／8E3 包哈希再次核对一致；三份用户脏 schema 哈希仍为原值。补入场景结束后的只读时间采集后，最终本地 RHVideo 源码对照 **1303/1303，零失败／取消／跳过，43.410 秒**（`rhvideo-gallery-page-focus-observed-final-node.tap`）。此处只有 Android 主图库，不是安卓弹窗入口、真机、持续 A/V、全部功能或同质量性能验收；工具条仍显拥挤，完整目标未完成，未正式发包。
+
+### 初始化慢的宿主对照，不能冒充应用修复
+
+同一正常 **5292** APK 的新观测先后停在主页 frontend ready、RHVideo 库目标可见性的原观察，均 0 次媒体服务请求（`rhvideo-static-bootstrap-observed-android.log`、`rhvideo-static-bootstrap-main-ready-android.log`）。未重启的 PID 24998 后来完成主页；直接只读读取其 PerformanceEntry，loadEventEnd **64856.8 ms**、DOMContentLoaded **64176.5 ms**，多份本地 JS/CSS 的完成记录约 **25–27 秒**（`rhvideo-main-bootstrap-readonly-corrected.log`）。早先内联观测器自身有表达式语法错误，保留日志，不算产品失败。不能从这些数据归咎媒体服务器、文件损坏或已证明某个脚本执行慢。
+
+只读核对宿主为 24 逻辑核、128 GiB 内存，约 23 GiB 空闲、无该次采样换页，WHPX 可用；这项任务的 5 个模拟器各配 6 vCPU，4 个辅助机没有 RHFiles 进程、也没有其他本地 RHVideo 测试进程在跑。为做资源隔离对照，使用控制台 **pause/resume** 临时暂停这 4 个自建空闲机，未重启、清数据、改解码／音量／画质或业务预算。**同一个 5292 包** 的两个实际搜索字段检查随后通过，10 次请求（`rhvideo-isolated-host-control-admitted-android.log`、`rhvideo-image-decode-android-mlhlX3/receipt.json`），整项控制 128.976 秒。首次控制在处理 CRCRLF 名称前提时拒绝，尚未暂停任何虚拟机；修正名称 trim 后才执行。宿主 CPU 两次点采样为隔离前 74%／隔离中 50%，不是完整性能剖面或因果定论。
+
+**8E3** 的继续浏览验收也采用这一明确条件，整项控制 122.914 秒。两次都由 finally 逐一恢复辅助机，结束再次实查四台均 running；没有用重置模拟器、静音、软解、降低画质或放宽业务超时换取通过。一次隔离通过不能认定所有间歇初始化延迟根因已修复，也不能用与此前不同宿主负载的结果宣称本次修改更快。原生关闭证据、持续 A/V、同质量首帧、完整双端整轮及最终发布仍待完成。
+
 ## 2026-10-31 手写界面事件的失败回执（继续验收中）
 
 按钮／下拉工厂已有保护，但图库跳页提交、章节速览搜索、阅读器章节搜索仍分别返回 undefined 或 `.catch(notice)` 的已消化 Promise。新增直接执行实际注册处理器的六项红测均失败，原三项工厂检查通过（`rhvideo-handwritten-controls-red.tap`：3 通过／6 失败）。正常 D607 实际窗口另 **0/1，失败，6.259 秒**（`rhvideo-handwritten-controls-old-real.tap`、`rhfiles-e2e-dGyOnW/handwritten-controls.json`）：速览输入 257 字符，底层拒绝，`ui.set` 却报告成功。这不是模拟 HTTP 故障或重新实现业务逻辑。
