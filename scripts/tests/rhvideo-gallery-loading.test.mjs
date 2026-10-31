@@ -7,7 +7,7 @@ import {parse} from 'acorn';
 import {createRequire} from 'node:module';
 const Index=createRequire(import.meta.url)('../../src/js/rhvideo-index.js');
 const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');
-const names=new Set(['loadGallery','prepareGallery','invalidateGallery','galleryScope','galleryReady','warmGallery','paintGalleryStatus','rememberGalleryBrowser']),functions=[];
+const names=new Set(['loadGallery','collectGalleryImages','galleryImage','prepareGallery','invalidateGallery','galleryScope','galleryReady','warmGallery','paintGalleryStatus','rememberGalleryBrowser']),functions=[];
 function walk(n){if(!n||typeof n!=='object')return;if(n.type==='FunctionDeclaration'&&names.has(n.id?.name))functions.push(source.slice(n.start,n.end));for(const v of Object.values(n))if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}
 walk(parse(source,{ecmaVersion:'latest'}));
 const rows=id=>[{video_id:id,filename:id,folder:'test',duration:10,resolution:'640x360',screenshots:[{url:'/storage/'+id+'.webp',time_seconds:2}]}];
@@ -15,7 +15,7 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve
 async function reached(check){for(let i=0;i<50;i++){if(check())return;await new Promise(setImmediate);}throw Error('Expected operation did not start');}
 function harness(overrides={}){
   const reads=[],sets=[],pending=[],notices=[],dialogs=[];
-  const scope=vm.createContext({epoch:1,state:{connected:true,search:''},gallery:{loaded:false,load:0,revision:0,pending:null,scope:'',error:'',count:0,items:[],total:0,offset:0,limit:36,seed:0},preferences:{perVideo:8,mixPictures:false,rule:{}},
+  const scope=vm.createContext({epoch:1,galleryImageOwners:new WeakMap(),state:{connected:true,search:''},gallery:{loaded:false,load:0,revision:0,pending:null,scope:'',error:'',count:0,items:[],total:0,offset:0,limit:36,seed:0},preferences:{perVideo:8,mixPictures:false,rule:{}},
     config:()=>scope.preferences,ensure:async()=>scope.epoch,I:{canonical:JSON.stringify},queueMicrotask,$:()=>null,prefs:{},save(){},crypto:{getRandomValues:values=>{values[0]=0x1234abcd;return values;}},
     remote:async(name,args)=>{const p=deferred();reads.push({name,args});pending.push(p);return p.promise;},
     send:async(action,args)=>{if(action==='gallery'){const c=new Index.Catalog(),result=c.setGallery(args.videos,args.pictures);sets.push({kind:'gallery',items:c.collections.get('gallery')});return result;}return {items:[],queue:[],total:0};},

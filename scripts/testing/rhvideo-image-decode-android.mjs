@@ -24,7 +24,7 @@ try{
  else if(scene==='--gallery-resume')await exerciseGalleryResume({page,until,server:'http://10.0.2.2:'+new URL(fixture.url).port,fixture,receipt,screenshot:name=>app.screenshot(name)});
  else{await exerciseImageDecode({page,until,server:'http://10.0.2.2:'+new URL(fixture.url).port,fixture,receipt,screenshot:name=>app.screenshot(name)});receipt.passed=false;await exercisePreviewOwner({page,until,fixture,receipt,screenshot:name=>app.screenshot(name)});receipt.passed=true;}
 }catch(error){receipt.passed=false;receipt.failure=String(error);process.exitCode=1;console.error(error);
- if(page&&scene==='--gallery-resume')try{receipt.failureState=await page.evaluate('Promise.all([RHFilesAPI.invoke("rhvideo.image.state"),RHFilesAPI.invoke("rhvideo.gallery.state")]).then(([image,gallery])=>({image,gallery,actions:window.__qaResume||null}))');}catch{receipt.failureState={available:false};}
+ if(page&&scene==='--gallery-resume')try{receipt.failureState=await page.evaluate('Promise.all([RHFilesAPI.invoke("rhvideo.image.state"),RHFilesAPI.invoke("rhvideo.gallery.state")]).then(([image,gallery])=>({image,gallery,actions:window.__qaResume||null,source:window.__qaResumeSource?.read?.()||null}))');}catch{receipt.failureState={available:false};}
  if(page)try{receipt.bootstrap=await imageBootstrapDiagnostic(page);}catch{receipt.bootstrap={available:false};}
  if(port)try{receipt.libraryTargets=imageLibraryTargets(await(await fetch('http://127.0.0.1:'+port+'/json/list',{signal:AbortSignal.timeout(2000)})).json(),receipt.target);}catch{}
  if(app)try{await app.screenshot('image-failure');}catch{}

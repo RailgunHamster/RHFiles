@@ -33,6 +33,7 @@
       // worker still owns filtering and sorting; repeat paints need not pay a
       // thread round trip for the same immutable catalog revision.
       const pageResults = new Map();
+      const galleryImageOwners = new WeakMap();
       let configuration=null,favoriteExports=null,rulesEditor=null,duplicates=null,taskPriority=null,taskPresentation=null,taskCenter=null;
       const ruleProcessId=crypto.randomUUID();
       let ruleRefreshTimer=0,ruleRefreshWaiter=null,ruleEditIntent=0,ruleApplyIntent=0;
@@ -3312,9 +3313,26 @@
         finally{if(gallery.pending===task)gallery.pending=null;}})();
         return task.promise;
       }
+      function collectGalleryImages(root,version,revision){
+        const images=new Map();
+        for(const node of root?.querySelectorAll?.("img")||[]){const owner=galleryImageOwners.get(node);if(owner?.version===version&&owner.revision===revision&&node.complete&&node.naturalWidth>0&&node.naturalHeight>0)images.set(owner.key,node);}
+        return images;
+      }
+      function galleryImage(images,item,url,version,revision){
+        const key=JSON.stringify([I.key(item),I.galleryKey(item)]),previous=images.get(key),owner=previous&&galleryImageOwners.get(previous);
+        images.delete(key);
+        const image=owner?.version===version&&owner.revision===revision?previous:el("img");
+        if(image!==previous)image.src=url;
+        image.loading="lazy";image.alt=item.title;
+        galleryImageOwners.set(image,{key,version,revision});
+        return image;
+      }
       async function loadGallery(refresh = false, display = true) {
         const version=await ensure(),ticket=display?++gallery.load:gallery.load,c=config(),inline=state.view==="gallery";
         const loadingRoot=display?(inline?$("gallery-content"):dialog("wb-gallery","截图库")):null;
+        // Local to this repaint, at most one page. A WeakMap does not retain
+        // old pages; account/catalog revisions prevent stale-byte reuse.
+        const reusableImages=collectGalleryImages(loadingRoot,version,gallery.revision);
         if(loadingRoot){const message=el("p","正在读取截图库…");message.setAttribute("role","status");loadingRoot.replaceChildren(message);loadingRoot.setAttribute("aria-busy","true");}
         let viewRevision;
         const ownsView=()=>display&&inline===(state.view==="gallery")&&ticket===gallery.load&&version===epoch&&galleryScope(c)===galleryScope()&&(viewRevision===undefined||viewRevision===gallery.revision);
@@ -3370,10 +3388,7 @@
               { index: i },
               "wb-frame",
             );
-          const image = el("img");
-          image.src = urls[i];
-          image.loading = "lazy";
-          image.alt = f.title;
+          const image = galleryImage(reusableImages,f,urls[i],version,revision);
           const title=(f.folder?"["+f.folder+"] ":"")+f.title;
           const info=f.kind==="frame"?RHVideoModel.clock(f.seconds)+" / "+RHVideoModel.clock(f.duration):f.resolution+(f.size?" · "+(f.size/1048576).toFixed(1)+" MB":"");
           card.title=title+" · "+info;card.setAttribute("aria-label",title+"，"+info);
