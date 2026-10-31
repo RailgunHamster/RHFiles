@@ -2856,8 +2856,9 @@
         const frame=imageSession?.current?.kind==="frame";for(const id of ["wb-frame-play","wb-frame-play-low"])if($(id))$(id).hidden=!frame;
         for(const id of ["wb-frame-play","wb-frame-play-low","wb-image-mark","wb-image-reveal"])if($(id))$(id).disabled=loading||!imageSession?.current;
         const item=imageSession?.current,kind=frame?"video":item?.kind,id=frame?item?.videoId:item?.id,key=kind+":"+id,favorite=$("wb-image-favorite");
-        const video=item?.kind==="video";$("full-image").hidden=video;
-        for(const control of $("image-dialog").querySelectorAll('[data-api-action="rhvideo.image.order"]'))control.hidden=!!imageSession?.favorite;
+        const video=item?.kind==="video";$("full-image").hidden=video||!item;
+        $("wb-image-reveal").disabled=loading||!(frame?item?.videoId:item?.id);
+        for(const control of $("image-dialog").querySelectorAll('[data-api-action="rhvideo.image.order"]'))control.hidden=!!imageSession?.favorite||!imageSession?.args;
         if(favorite){favorite.hidden=!["video","picture","novel"].includes(kind)||!id;favorite.textContent=state.favorites.has(key)?"取消收藏":"收藏";favorite.setAttribute("aria-pressed",String(state.favorites.has(key)));favorite.disabled=loading||state.favoriteBusy.has(key);}
         if($("wb-image-mark"))$("wb-image-mark").hidden=!["video","picture","novel"].includes(kind)||!id;
         if (imageSession?.current&&!loading&&!video)
@@ -2933,16 +2934,35 @@
         },
         "read",
       );
+      async function previewSingleImage({path,title}){
+        const version=epoch,ticket=++imageToken;
+        // Retire pending admissions. A later admission only retires this
+        // visible session once it actually installs a replacement session.
+        singlePlayIntent++;
+        ctx.cancelImageDecode();
+        const session=imageSession={previewId:crypto.randomUUID(),index:0,total:1,current:null,loading:true,error:"",pendingIndex:0,pendingTarget:{title,index:0,total:1}};
+        const active=()=>version===epoch&&ticket===imageToken&&imageSession===session;
+        refreshImage();
+        ctx.openDialog("image-dialog");
+        try{
+          const [url]=await native("images",{paths:[path]});
+          if(!active())return {stale:true};
+          const item={title,cover:url};session.pendingTarget={...item,index:0,total:1};refreshImage();
+          const decoded=await ctx.prepareImage(item,active);
+          if(decoded?.stale||!active())return {stale:true};
+          session.current=item;ctx.resetImageZoom();
+          return {opened:true};
+        }catch(error){
+          if(!active())return {stale:true};
+          session.failedTarget=session.pendingTarget;session.error=String(error?.message||error);throw error;
+        }finally{
+          if(active()){session.loading=false;delete session.pendingIndex;delete session.pendingTarget;refreshImage();}
+        }
+      }
       action(
         "trash.preview",
         object({ path: string, title: string }, ["path", "title"]),
-        async ({ path, title }) => {
-          const [url] = await native("images", { paths: [path] });
-          imageSession = { current: { title, cover: url }, index: 0, total: 1,previewId:crypto.randomUUID() };
-          refreshImage();
-          ctx.openDialog("image-dialog");
-          return { opened: true };
-        },
+        previewSingleImage,
       );
       // Paged novel previews never read every chapter's text into browser memory.
       let preview = {

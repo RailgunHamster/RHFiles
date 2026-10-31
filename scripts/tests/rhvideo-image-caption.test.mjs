@@ -14,6 +14,11 @@ test('first loading paints the requested caption and counter instead of the prev
 test('an initial failure keeps its own target caption, not a former successful file',()=>{
  const f=fixture({loading:false,index:34,total:100,current:null,error:'图片加载超时',failedTarget:target('034',34)});f.context.refreshImage();assert.equal(f.node('image-title').textContent,'034.webp');assert.equal(f.node('image-position').textContent,'35 / 100');assert.match(f.node('image-load-status').textContent,/034.webp/);assert.equal(f.node('wb-image-reveal').disabled,true,'There is no decoded file to reveal');
 });
+
+test('a new preview cannot display an unrelated previous source while it has no decoded target',()=>{
+ const f=fixture({loading:true,index:0,total:1,current:null,pendingIndex:0,pendingTarget:{title:'Generated trash',index:0,total:1}});f.node('full-image').src='previous-source';f.context.refreshImage();assert.equal(f.node('full-image').hidden,true);assert.equal(f.node('full-image').src,'previous-source');assert.equal(f.node('wb-image-reveal').disabled,true);
+ f.context.imageSession={loading:false,index:0,total:1,current:{title:'Generated trash',cover:'generated-capability'}};f.context.refreshImage();assert.equal(f.node('full-image').hidden,false);assert.equal(f.node('wb-image-reveal').disabled,true,'A decoded trash image is not a live catalog identity');
+});
 test('when a previous good picture remains, its caption and file actions cannot pretend it is the failed target',()=>{
  const f=fixture({loading:false,index:99,total:100,current:target('099',99),error:'图片解码失败',failedTarget:target('098',98)});f.context.refreshImage();assert.equal(f.node('image-title').textContent,'099.webp');assert.equal(f.node('image-position').textContent,'100 / 100');assert.match(f.node('image-load-status').textContent,/098.webp/);const state=f.state();assert.equal(state.current.id,'099');assert.equal(state.failed.id,'098');assert.equal(state.failed.index,98);assert.equal(state.caption.source,'current');
 });
