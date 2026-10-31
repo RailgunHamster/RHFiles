@@ -6,6 +6,20 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 手机截图库工具栏的实际布局与触摸（继续验收中）
+
+普通 Android **FBA3** 在自建 API 36／5590 的真实 **412×867** WebView 中复现：32 张生成截图的主截图库有十个操作，仍按桌面规则折成三行，工具栏 **148 px**、首卡 top **495.524 px**（`rhvideo-gallery-mobile-screenshot-baseline.log`、`rhvideo-gallery-mobile-JtP7Jq/receipt.json`）。源代码检查此前只覆盖 `.library-main > .wb-toolbar`，没有覆盖截图库自身的 `.wb-gallery-tools`。首次就绪超时及空截图夹具的失败仍保留，不将它们当作这条实际布局反例；原截图库默认不混入独立图片，基线已改为真正的生成视频截图，而非改变产品取池来使测试出现内容。
+
+仅在手机窄屏 CSS 为独立截图工具栏应用单行横向滚动、44×44 最小触摸目标及独立滚动边界，不改十项操作的顺序、参数或接口，不删除／隐藏功能，也不改变宽屏排版。相同修复作用于主截图库和弹窗截图库。保留的顺序为标签筛选、分段连播、多视频同屏、重新读取、随机排列、还原顺序、浏览顺序、恢复上次浏览、自动放映、显示设置。
+
+新普通压缩 release 构建 **5 分 8 秒**（`rhvideo-gallery-mobile-build.log`）；APK **`c6095e07e615f75af80fc0e2af2e426e5d6b4ae1ccd56a17babae8039ac0dc53`**，封存 `rhvideo-modal-normal-android-AXgvRG`。工作台 **FC52**、客户端 **ECCE**、JNI **1F90** 均未变，移动 CSS 为 **AEB4**。实际 BuildConfig 四项仍为 false／0／default／compositor；复用未修改的 Rust JNI，不把这次 Gradle 发行构建说成完整重编所有原生后端。只覆盖安装自建模拟器，没有操作手机或正式实例。
+
+已入库的原 APK 测试入口新增 `--gallery-layout` 场景，逐字节校验打包 CSS／JS 与当前源码，再验证实际安装字节。相同 C609 APK 的完整新场景 **通过**（`rhvideo-gallery-mobile-packaged.log`、`rhvideo-image-decode-android-Nc9XYJ/receipt.json`）：主／弹窗工具栏都为 **48 px**，原十项操作与至少 44 px 的触摸目标完整；主图库首卡 top **395.524 px**，页面未被横向撑宽。用真实 WebView touch 事件分别滑动 **2／3** 次，滚到 **571.048／602.667 px**，滑动期间 **零误点击**；物理事件点击末端设置按钮，关闭后分别回到主图库／仍打开的原弹窗，所有接口契约保持完整。不是赋值 `scrollLeft` 或替换事件处理器。四张 PNG 已保存，主图库和弹窗返回图已实际查看；这不是实体手机输入、横屏／平板验收或原生播放性能结果。
+
+新增回归的首轮 **7/8**（唯一失败是缺少专门的移动图库 CSS），修复后 **8/8**；带本地 RHVideo 实际源码的完整 Node **1465/1465、零失败／取消／跳过，44.080 秒**（`rhvideo-gallery-mobile-full-node.log`）。事后核对新包及实际安装字节、旧 FBA3／B8E0 未变、14 个干净参考文件、三份用户原有脏 schema、五台 AVD running／RHFiles 均停止和原 6A69 测试包（`rhvideo-modal-normal-android-AXgvRG/gallery-postcheck.json`）。没有在 UI 场景中并行构建或其他 UI／媒体测试。
+
+此前主界面就绪超时仍未定位；独立只读采样在一次 **6.3 秒** 观察点已见 api／ui 与完成文档，不等于启动性能通过（`rhvideo-gallery-bootstrap-nullsafe.log`）。Windows 间歇应答长尾、原生首帧稳定性、Android 持续同屏时钟与完整双端业务／性能验收继续保持未完成，不以这次真实 UI 修复缩小原目标，未正式发包。
+
 ## 2026-10-31 应答长尾与可复核的隔离计时（仍未完成性能验收）
 
 继续只读取 WINSERVER `D:\git\RHVideo` 的源码；媒体全部生成，未读取真实库／数据库。普通 B8E0 包的固定 A/V、仅音频、仅音频、A/V 四次独立进程对照均保留（`rhvideo-av-audio-current.log`、`rhvideo-av-audio-comparison.json`）。两次 A/V 前端为 **2275.8／2401.6 ms**，仅音频为 **397.5／507.0 ms**；音轨是逐字节相同的 AAC 重封装，但两次仅音频在随后约 505 ms 内的原始时间都停在 250 ms，**未通过原定时钟前进断言**。解码计数增加不能替代时钟通过或物理扬声器输出，不把此对照改记为成功，也不证明唯一根因。

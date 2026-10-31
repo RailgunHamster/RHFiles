@@ -48,6 +48,11 @@ html{font-size:15px;-webkit-text-size-adjust:100%}body{min-width:0;overscroll-be
   .mobile-client .library-main>.wb-toolbar{flex-wrap:nowrap;gap:6px;margin:0 0 10px;overflow-x:auto;overscroll-behavior-x:contain;touch-action:pan-x;scrollbar-width:thin;padding-bottom:4px}
   .mobile-client .library-main>.wb-toolbar>*{flex:0 0 auto}
   .mobile-client .library-main>.wb-toolbar .button,.mobile-client .library-main>.wb-toolbar select{min-width:44px;min-height:44px;white-space:nowrap}
+  /* The screenshot browser has its own toolbar inside gallery-content. It is
+   * not a main-catalog wb-toolbar; preserve every action in one touch row. */
+  .mobile-client .wb-gallery-tools{flex-wrap:nowrap;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;touch-action:pan-x;scrollbar-width:thin;padding-bottom:4px}
+  .mobile-client .wb-gallery-tools>*{flex:0 0 auto}
+  .mobile-client .wb-gallery-tools .button{min-width:44px;min-height:44px;white-space:nowrap}
   .mobile-client .library-main>.wb-selection{padding:8px;max-width:100%}
   .mobile-client #wb-selection-count{white-space:nowrap}
   /* The unchanged "标签筛选" action already opens this empty summary. Show
