@@ -6,6 +6,24 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 叠放预览的标记、页外收藏与 UI 失败回执（继续验收中）
+
+继续只读对照 WINSERVER 本地 RHVideo `3d6aaeb8943f2bfb79eca08205b560812e02f6ae`，只使用生成图片、隔离配置和临时服务，不要求私有仓库密钥，不读取真实数据库／媒体或操作实体手机。
+
+源码探测后在正常 **B6FD** EXE 的实际界面复现：底下放映 picture-0、上面单图 picture-7，点击上层单图的公开 UI 控件却把 **picture-0** 加入暂存标记。实际回归 **0/1，失败**（`rhvideo-preview-owner-old-real.tap`、`rhfiles-e2e-wlIiin/preview-owner.json`）；六项源码用例先 **2/6、四失败**，并非只有 API 名称的反例。标记在测试结束前清除，实际暂存请求为零，未移动文件。
+
+提交 `e73d4e5` 改为以实际最上层预览为标记所有者，拒绝加载中／被设置遮盖的当前项目动作和被遮盖的旧放映工具条，保留当前放映及截图到源视频的标记。正常 **0963** 新包上的这项实际回归通过；同轮扩展的页外图片收藏失败，整轮为 **1/2**（`rhvideo-preview-owner-and-favorite-old-real.tap`），不能把单项通过当作整组通过。
+
+进一步发现 `previewTarget` 仍优先取底下放映窗口，导致上层翻到第 80 张、卡片页中不存在的 picture-77 无法收藏。另有按钮／下拉的 `.catch(notice)` 将真实动作拒绝转为成功回执；对应源码用例分别先 **2/5、三失败**和 **1/3、两失败**。提交 `78e819a` 用可见预览解析收藏目标，并让共用按钮／下拉控件显示原错误、同时把原 Promise 的失败交给自动化；不是重发请求或新增失败重试按钮，也不表示其余所有手写事件监听器已经完成审计。
+
+上述提交均已推送 GitHub／Gitee。本地实际 RHVideo 源码对照最终 **1256/1256，零失败／取消／跳过，35.858 秒**（`rhvideo-preview-target-controls-final-source-node.tap`）。正常 Windows release **2 分 43 秒**，EXE SHA-256 **`d73cf15d09aedd77f27e39e4fd24198c9189cdee9abe387174c9aed93d427d27`**，冻结 `rhvideo-pipe-full-UsrOaT`；实际相关回归 **30/30，零失败／取消／跳过，276.404 秒**（`rhvideo-preview-target-controls-real-windows.tap`）。上层单图标记、隐藏预览拒绝、实际页外图片收藏／取消，以及服务器 HTTP 503 拒绝时 UI 接口失败均通过；成功收藏只有显式两次写入，失败请求只有一次、没有重试，暂存请求为零。还含真实 RHVideo FastAPI／临时 SQLite、章节／导出实际字节、五万项、实际原生四路及 1080p H.264／4K HEVC；后两者首帧约 **4288／5314 ms**，不是同质量原版性能已达标的证明。
+
+先前正常 Android **871F** 的媒体库初始化超时仍保留；后续正常 **F1AD** APK 的附着图片场景通过，98 次生成夹具请求，真实首次加载／超时 PNG 已查看，标题与计数已正确。它没有复现先前初始化失败，不能据此认定初始化问题已修复。当前正常 x86_64 APK **`14eb108872594368887ec33f4cfc6a9567a0a6b90882867bec96a7c3e22304c6`**（`rhvideo-modal-normal-android-0Hi6mS`）构建 **39 秒**，工作台 **E6D8**、JNI **1F90**，正常 BuildConfig、实际安装字节均核对；保留原默认解码／音量／画质。其附着运行增加了与 Windows 相同的叠放预览、页外收藏和明确服务器拒绝检查，实际结果另记；附着回执始终 `startupAccepted:false`，不代表冷启动或实体手机验收。
+
+上述正常 **14EB** APK 的扩展附着场景实际 **通过**（`rhvideo-preview-target-controls-real-android.log`、`rhvideo-image-decode-android-gE62Np/receipt.json`），实际安装 PID 22605／`startupAccepted:false`：生成夹具 **105** 次请求，包含原图片解码／错误／取消／超时／标题检查；底下 picture-0 放映保持打开、上层 picture-99 不在卡片页内，真实上层按钮只标记 picture-99。页外收藏／取消仅有显式两次成功写入，HTTP 503 拒绝正确使 UI 接口失败且只有一次请求，清理后零标记、零暂存请求。真实设备 `android-knm6j8/preview-owner.png` 已查看。未改变模拟器、解码／音量／画质或启动预算，不把这条附着组件通过说成冷启动、持续播放、完整 Android 或 ARM 手机验收。
+
+冻结 **1201** 个源码、**4** 个工具、**426** 个运行库与上述 D73C／14EB 候选在双端测试后再次哈希核对一致（`rhvideo-pipe-full-UsrOaT/image-decode-postcheck.json`）。原有三份用户脏 schema 的哈希保持不变。暂存图片预览的真实解码／关闭／账号边界、播放器关闭证据、持续 A/V 与首帧性能、完整平台整轮及先前间歇 End 交付仍未完成；本轮 End 用例通过不能消除未定位的旧失败。没有发布正式新包或替换正式实例。
+
 ## 2026-10-31 图片请求、显示与失败目标的标题／进度（继续验收中）
 
 接着上一轮真实截图的标题残留继续核对原版：实际 RHVideo `renderMediaItem` 在图片 load 之前就写本次目标标题与计数。新增直接执行参考函数及本端生产函数的用例先 **1/6、五失败**（`rhvideo-image-caption-red.tap`），其中唯一通过的是原版行为对照，不把它算成本端通过。再用原正常 **AB49** EXE／冻结的旧前端实测：先看 picture-95、关闭，再打开被真实 HTTP 挂起的 picture-35，界面 opened=true／loading=true、current=null，却仍为 **095.webp／96**（`rhvideo-image-caption-old-real.log`、旧冻结 `rhfiles-e2e-O6TzJE/caption-negative.json`）。这是实际界面反例，不是仅检查接口名称。
