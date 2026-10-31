@@ -7,7 +7,7 @@ import {spawn,spawnSync} from 'node:child_process';
 import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
 import {nativeQaChannel} from './native-qa-channel.mjs';
-import {ownedFrameReader,ownedWindowDriver} from './owned-native-frame.mjs';
+import {ownedFrameReader,ownedWindowDriver,ownedCanvasReader} from './owned-native-frame.mjs';
 import {root} from './source.mjs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 
@@ -45,10 +45,10 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
   child.stdout.on('data',data=>{append('stdout',data);nativeChannel?.feed(data);});child.stderr.on('data',data=>append('stderr',data));
   if(nativeChannel)child.stdin.on('error',error=>nativeChannel.close(error));
   let spawnError;child.on('error',e=>spawnError=e);
-  let socket,frameReader,presentationReader,windowDriver;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
+  let socket,frameReader,presentationReader,mainCanvasReader,singleCanvasReader,windowDriver;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
   const closed=new Promise(resolve=>resolveClosed=resolve);
   const flush=()=>{fs.writeFileSync(path.join(artifactDir,'app.log'),output);fs.writeFileSync(path.join(artifactDir,'page-events.json'),JSON.stringify(events,null,2));};
-  const stopFrameReader=()=>{windowDriver?.close();for(const reader of [frameReader,presentationReader]){const errors=reader?.close();if(errors?.length)append('stderr',JSON.stringify({ownedFrameCleanupErrors:errors})+'\n');}};
+  const stopFrameReader=()=>{windowDriver?.close();for(const reader of [frameReader,presentationReader,mainCanvasReader,singleCanvasReader]){const errors=reader?.close();if(errors?.length)append('stderr',JSON.stringify({ownedFrameCleanupErrors:errors})+'\n');}};
   // close is emitted only after stdout/stderr have drained. The synchronous
   // taskkill return alone can leave the last hardware-init messages unread.
   child.once('close',()=>{nativeChannel?.close();stopFrameReader();if(closing)flush();resolveClosed();});
@@ -156,6 +156,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       return presentationReader.read(args);
     };
     const nativeWindows={windows:()=>ownedWindow().windows(),pingLibrary:()=>ownedWindow().pingLibrary(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain()};
-    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readPresentationFrame,nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
+    const readStartupCanvas=scope=>{if(closing||process.env.RHFILES_NATIVE_PLAYER_QA!=='1')return Promise.reject(Error('Owned startup canvas requires the explicit QA opt-in and a live fixture'));if(scope==='main')return(mainCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();return(singleCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();};
+    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readPresentationFrame,readMainFrame:()=>readStartupCanvas('main'),readSingleInputFrame:()=>readStartupCanvas('single-input-player'),nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
   } catch(e){close();throw e;}
 }

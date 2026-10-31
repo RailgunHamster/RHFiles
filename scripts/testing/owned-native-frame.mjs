@@ -23,6 +23,27 @@ export function validateOwnedBitmap(file,width,height){
   const header=Buffer.alloc(54),handle=fs.openSync(file,'r');try{if(fs.readSync(handle,header,0,54,0)!==54)throw Error('Incomplete owned bitmap header');}finally{fs.closeSync(handle);}
   if(header.toString('ascii',0,2)!=='BM'||header.readUInt32LE(2)!==54+width*height*4||header.readUInt32LE(10)!==54||header.readUInt32LE(14)!==40||header.readInt32LE(18)!==width||header.readInt32LE(22)!==-height||header.readUInt16LE(26)!==1||header.readUInt16LE(28)!==32||header.readUInt32LE(30)!==0)throw Error('Owned bitmap layout mismatch');
 }
+// Only for a fixed, single-source startup comparison in a fresh private app.
+// Unlike the per-input reader below this does not claim a media lease identity;
+// no UI-thread state polling is inserted into the first-pixel observation.
+export function ownedCanvasReader({workspace,tool,pid,executable,directory,scope,execute=executeOwnedFrame}){
+  if(!Number.isSafeInteger(pid)||pid<=0)throw Error('The canvas reader requires its own spawned process');
+  if(!['main','single-input-player'].includes(scope))throw Error('Unknown fixed owned canvas scope');
+  const admitted=admitOwnedFrameTool(workspace,tool),files=new Set();let closed=false,busy=false,count=0,active;
+  const discard=file=>{if(files.delete(file)&&fs.existsSync(file))fs.unlinkSync(file);};
+  return {
+    async read(...args){
+      if(args.length)throw Error('Canvas sampling accepts no arguments');if(closed)throw Error('Owned canvas reader is closed');if(busy)throw Error('Only one owned canvas sample may be pending');if(count++>=512)throw Error('Owned canvas observation budget exhausted');busy=true;
+      const controller=active=new AbortController(),name='rhvideo-native-'+randomBytes(16).toString('hex')+'.bmp',file=path.join(directory,name);
+      try{if(fs.existsSync(file))throw Error('Owned output already exists');files.add(file);
+        const reply=JSON.parse(await execute(admitted,[String(pid),executable,name,'native-hardware-auto',...(scope==='main'?['main-client']:[])],{cwd:directory,windowsHide:true,encoding:'utf8',timeout:4500,maxBuffer:65536,signal:controller.signal}));
+        if(closed||reply.protocol!==1||reply.pid!==pid||reply.canvas!=='client'||reply.scope!==(scope==='main'?'owned-sibling-main':'owned-sibling-client'))throw Error('Owned canvas identity mismatch');
+        validateOwnedBitmap(file,reply.width,reply.height);return {...reply,path:file};
+      }catch(error){discard(file);throw error;}finally{active=null;busy=false;}
+    },
+    close(){if(closed)return [];closed=true;active?.abort();const errors=[];for(const file of [...files])try{discard(file);}catch(error){errors.push({file:path.basename(file),code:error.code||'CLEANUP_FAILED'});}return errors;},
+  };
+}
 export function ownedWindowDriver({workspace,tool,pid,executable,directory,execute=executeOwnedFrame}){
   if(!Number.isSafeInteger(pid)||pid<=0)throw Error('The window observer requires its own spawned process');
   const admitted=admitOwnedFrameTool(workspace,tool);let closed=false,busy=false,count=0,active;
