@@ -185,8 +185,8 @@ int wmain(int argc,wchar_t** argv){
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
     const auto process_created=verify_process(pid,argv[2]);
     if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"library-key"||std::wstring(argv[3])==L"player-close"||std::wstring(argv[3])==L"main-client-size"){window_command(argc,argv,pid,process_created);return 0;}
-    require(argc==5||(argc==6&&(std::wstring(argv[5])==L"library-presentation"||std::wstring(argv[5])==L"main-client")),"Use PID, exact executable, owned basename, renderer and a fixed canvas scope");
-    const bool presentation=argc==6&&std::wstring(argv[5])==L"library-presentation",main_client=argc==6&&std::wstring(argv[5])==L"main-client";
+    require(argc==5||(argc==6&&(std::wstring(argv[5])==L"library-presentation"||std::wstring(argv[5])==L"library-player"||std::wstring(argv[5])==L"main-client")),"Use PID, exact executable, owned basename, renderer and a fixed canvas scope");
+    const bool presentation=argc==6&&std::wstring(argv[5])==L"library-presentation",library_player=argc==6&&std::wstring(argv[5])==L"library-player",main_client=argc==6&&std::wstring(argv[5])==L"main-client";
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";
     require(output.size()==prefix.size()+32+suffix.size()&&output.compare(0,prefix.size(),prefix)==0&&output.compare(output.size()-suffix.size(),suffix.size(),suffix)==0,"Invalid owned frame basename");
     require(std::all_of(output.begin()+prefix.size(),output.end()-suffix.size(),[](wchar_t c){return(c>=L'0'&&c<=L'9')||(c>=L'a'&&c<=L'f');}),"Invalid owned frame identity");
@@ -195,8 +195,8 @@ int wmain(int argc,wchar_t** argv){
     verify_process(pid,argv[2]);SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HWND window{};
     if(main_client){OwnedWindows owned{pid};require(EnumWindows(owned_window,reinterpret_cast<LPARAM>(&owned)),"Cannot enumerate owned main window");require(owned.main&&!owned.ambiguous,"Exactly one visible owned main client is required");window=owned.main;owned_main(window,pid);}
-    else{Windows windows{pid,{},presentation};require(EnumWindows(top_window,reinterpret_cast<LPARAM>(&windows)),"Cannot enumerate owned windows");require(!windows.surfaces.empty(),"No visible owned player surface is present");require(windows.surfaces.size()==1,"Exactly one visible owned player surface is required");window=windows.surfaces.front();owned_surface(window,pid);}
-    const BYTE alpha=presentation?presentation_alpha(window):255;
+    else{Windows windows{pid,{},presentation||library_player};require(EnumWindows(top_window,reinterpret_cast<LPARAM>(&windows)),"Cannot enumerate owned windows");require(!windows.surfaces.empty(),"No visible owned player surface is present");require(windows.surfaces.size()==1,"Exactly one visible owned player surface is required");window=windows.surfaces.front();owned_surface(window,pid);}
+    const BYTE alpha=presentation||library_player?presentation_alpha(window):255;
     RECT rectangle{};require(GetClientRect(window,&rectangle),"Cannot read owned client geometry");const int width=rectangle.right,height=rectangle.bottom;
     require(width>0&&height>0&&width<=4096&&height<=4096,"Owned frame exceeds geometry limits");
     Canvas canvas;canvas.window=window;canvas.source=GetDCEx(window,nullptr,DCX_CACHE);require(canvas.source!=nullptr,"Cannot open owned client DC");canvas.target=CreateCompatibleDC(canvas.source);require(canvas.target!=nullptr,"Cannot create owned frame DC");
@@ -204,10 +204,10 @@ int wmain(int argc,wchar_t** argv){
     void* bits=nullptr;canvas.bitmap=CreateDIBSection(canvas.target,&info,DIB_RGB_COLORS,&bits,nullptr,0);require(canvas.bitmap&&bits,"Cannot create owned pixels");canvas.old=SelectObject(canvas.target,canvas.bitmap);
     const BOOL drawn=mode==L"gdi-compatibility"?BitBlt(canvas.target,0,0,width,height,canvas.source,0,0,SRCCOPY):PrintWindow(window,canvas.target,PW_CLIENTONLY|2);
     require(drawn,"Owned client readback failed");GdiFlush();if(main_client)owned_main(window,pid);else owned_surface(window,pid);verify_process(pid,argv[2]);
-    if(presentation)require(presentation_alpha(window)==alpha,"Owned presentation opacity changed during capture");
+    if(presentation||library_player)require(presentation_alpha(window)==alpha,"Owned presentation opacity changed during capture");
     BITMAPFILEHEADER header{};header.bfType=0x4d42;header.bfOffBits=54;header.bfSize=54+DWORD(width*height*4);
     {Handle file(CreateFileW(output.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr));require(file.value!=INVALID_HANDLE_VALUE,"Owned output must be new");made_file=true;write_all(file.value,&header,14);write_all(file.value,&info.bmiHeader,40);write_all(file.value,bits,DWORD(width*height*4));}
-    std::printf("{\"protocol\":1,\"scope\":\"%s\",\"canvas\":\"client\",\"pid\":%lu,\"width\":%d,\"height\":%d,\"alpha\":%u}\n",main_client?"owned-sibling-main":presentation?"owned-sibling-presentation":"owned-sibling-client",static_cast<unsigned long>(pid),width,height,unsigned(alpha));
+    std::printf("{\"protocol\":1,\"scope\":\"%s\",\"canvas\":\"client\",\"pid\":%lu,\"width\":%d,\"height\":%d,\"alpha\":%u}\n",main_client?"owned-sibling-main":library_player?"owned-sibling-library-player":presentation?"owned-sibling-presentation":"owned-sibling-client",static_cast<unsigned long>(pid),width,height,unsigned(alpha));
     return 0;
   }catch(const std::exception& error){if(made_file)DeleteFileW(output.c_str());std::fprintf(stderr,"Owned frame: %s\n",error.what());return 1;}
 }

@@ -28,7 +28,7 @@ export function validateOwnedBitmap(file,width,height){
 // no UI-thread state polling is inserted into the first-pixel observation.
 export function ownedCanvasReader({workspace,tool,pid,executable,directory,scope,execute=executeOwnedFrame}){
   if(!Number.isSafeInteger(pid)||pid<=0)throw Error('The canvas reader requires its own spawned process');
-  if(!['main','single-input-player'].includes(scope))throw Error('Unknown fixed owned canvas scope');
+  if(!['main','single-input-player','library-player'].includes(scope))throw Error('Unknown fixed owned canvas scope');
   const admitted=admitOwnedFrameTool(workspace,tool),files=new Set();let closed=false,busy=false,count=0,active;
   const discard=file=>{if(files.delete(file)&&fs.existsSync(file))fs.unlinkSync(file);};
   return {
@@ -36,8 +36,8 @@ export function ownedCanvasReader({workspace,tool,pid,executable,directory,scope
       if(args.length)throw Error('Canvas sampling accepts no arguments');if(closed)throw Error('Owned canvas reader is closed');if(busy)throw Error('Only one owned canvas sample may be pending');if(count++>=512)throw Error('Owned canvas observation budget exhausted');busy=true;
       const controller=active=new AbortController(),name='rhvideo-native-'+randomBytes(16).toString('hex')+'.bmp',file=path.join(directory,name);
       try{if(fs.existsSync(file))throw Error('Owned output already exists');files.add(file);
-        const reply=JSON.parse(await execute(admitted,[String(pid),executable,name,'native-hardware-auto',...(scope==='main'?['main-client']:[])],{cwd:directory,windowsHide:true,encoding:'utf8',timeout:4500,maxBuffer:65536,signal:controller.signal}));
-        if(closed||reply.protocol!==1||reply.pid!==pid||reply.canvas!=='client'||reply.scope!==(scope==='main'?'owned-sibling-main':'owned-sibling-client'))throw Error('Owned canvas identity mismatch');
+        const reply=JSON.parse(await execute(admitted,[String(pid),executable,name,'native-hardware-auto',...(scope==='main'?['main-client']:scope==='library-player'?['library-player']:[])],{cwd:directory,windowsHide:true,encoding:'utf8',timeout:4500,maxBuffer:65536,signal:controller.signal}));
+        if(closed||reply.protocol!==1||reply.pid!==pid||reply.canvas!=='client'||reply.scope!==(scope==='main'?'owned-sibling-main':scope==='library-player'?'owned-sibling-library-player':'owned-sibling-client'))throw Error('Owned canvas identity mismatch');
         validateOwnedBitmap(file,reply.width,reply.height);return {...reply,path:file};
       }catch(error){discard(file);throw error;}finally{active=null;busy=false;}
     },
@@ -88,14 +88,16 @@ export function ownedFrameReader({workspace,tool,pid,executable,directory,getSta
         if(args.expectedInput!==undefined&&args.expectedInput!==before.inputId)throw Error('Playback input changed before pixel observation');
         if(!['native-hardware-auto','gdi-compatibility'].includes(before.renderer))throw Error('Unknown actual native renderer');
         const name='rhvideo-native-'+randomBytes(16).toString('hex')+'.bmp';file=path.join(directory,name);
-        const text=await execute(admitted,[String(pid),executable,name,before.renderer,...(scope==='presentation'?['library-presentation']:[])],{cwd:directory,windowsHide:true,encoding:'utf8',timeout:4500,maxBuffer:65536,signal:controller.signal});
+        const libraryPlayer=scope==='player'&&before.host?.kind==='library';
+        if(libraryPlayer&&(!Number.isSafeInteger(before.host.lease)||before.host.lease<=0))throw Error('Missing owned library player host lease');
+        const text=await execute(admitted,[String(pid),executable,name,before.renderer,...(scope==='presentation'?['library-presentation']:libraryPlayer?['library-player']:[])],{cwd:directory,windowsHide:true,encoding:'utf8',timeout:4500,maxBuffer:65536,signal:controller.signal});
         files.add(file);
         const reply=JSON.parse(text);
-        if(reply.protocol!==1||reply.scope!==(scope==='presentation'?'owned-sibling-presentation':'owned-sibling-client')||reply.pid!==pid)throw Error('Owned pixel observation identity mismatch');
-        if(scope==='presentation'&&(!Number.isInteger(reply.alpha)||reply.alpha<0||reply.alpha>255))throw Error('Invalid observed presentation alpha');
+        if(reply.protocol!==1||reply.scope!==(scope==='presentation'?'owned-sibling-presentation':libraryPlayer?'owned-sibling-library-player':'owned-sibling-client')||reply.pid!==pid)throw Error('Owned pixel observation identity mismatch');
+        if((scope==='presentation'||libraryPlayer)&&(!Number.isInteger(reply.alpha)||reply.alpha<0||reply.alpha>255))throw Error('Invalid observed presentation alpha');
         validateOwnedBitmap(file,reply.width,reply.height);
         const after=await getState();
-        if(closed||!after?.opened||after.inputId!==before.inputId||after.renderer!==before.renderer||after.rotation!==before.rotation)throw Error('Playback input changed during pixel observation');
+        if(closed||!after?.opened||after.inputId!==before.inputId||after.renderer!==before.renderer||after.rotation!==before.rotation||libraryPlayer&&(after.host?.kind!=='library'||after.host.lease!==before.host.lease))throw Error('Playback input changed during pixel observation');
         return {...reply,path:file,inputId:before.inputId,renderer:before.renderer,rotation:before.rotation};
       }catch(error){if(file&&files.has(file))discard(file);throw error;}
       finally{controllers.delete(controller);busy=false;}

@@ -59,6 +59,71 @@ fn trace_open(started:std::time::Instant,stage:&str){
     }
 }
 static WINDOW_EPOCH:crate::rhvideo_window_lifecycle::WindowLifecycle=crate::rhvideo_window_lifecycle::WindowLifecycle::new();
+const LIBRARY_LABEL:&str="window-rhvideo";
+static LIBRARY_EPOCH:crate::rhvideo_window_lifecycle::WindowLifecycle=crate::rhvideo_window_lifecycle::WindowLifecycle::new();
+#[derive(Clone)]
+struct SingleHost{target:crate::rhvideo::player_host::Target,lease:u64,parent:usize,viewport:(u32,u32),generation:u64,fullscreen_before:bool}
+static HOST_RESERVATIONS:Mutex<crate::rhvideo::player_host::Reservations>=Mutex::new(crate::rhvideo::player_host::Reservations::new());
+impl SingleHost{
+    fn library(&self)->bool{matches!(self.target,crate::rhvideo::player_host::Target::Library{..})}
+    fn label(&self)->&'static str{if self.library(){LIBRARY_LABEL}else{LABEL}}
+    fn ensure_open(&self)->Result<(),String>{
+        WINDOW_EPOCH.ensure_open(self.lease)?;
+        if let crate::rhvideo::player_host::Target::Library{window,panel,owner,..}=&self.target{LIBRARY_EPOCH.ensure_open(*window)?;if !HOST_RESERVATIONS.lock().map_err(|_|"播放预约状态不可用")?.matches(*window,panel,*owner,self.generation){return Err("播放面板已关闭或替换，旧准备未执行".into());}}
+        require_player_window(self.lease,self.parent)
+    }
+    fn value(&self)->Value{match &self.target{crate::rhvideo::player_host::Target::Library{window,panel,owner,..}=>json!({"kind":"library","lease":self.lease,"window":window,"panel":panel,"owner":owner}),_=>json!({"kind":"popup","lease":self.lease})}}
+}
+static SINGLE_HOST:Mutex<Option<SingleHost>>=Mutex::new(None);
+fn single_host()->Option<SingleHost>{SINGLE_HOST.lock().ok()?.clone()}
+pub fn host_value()->Value{single_host().map(|host|host.value()).unwrap_or(Value::Null)}
+pub fn player_window_label()->&'static str{single_host().map(|host|host.label()).unwrap_or(LABEL)}
+pub fn check_host(args:&Value)->Result<(),String>{
+    let Some(expected)=args.get("_hostLease")else{return Ok(());};let expected=expected.as_u64().filter(|id|*id>0).ok_or("播放宿主身份无效")?;
+    let host=single_host().filter(|host|host.lease==expected).ok_or("播放面板已改变，旧操作未执行")?;host.ensure_open()
+}
+pub fn library_host_context()->Result<Value,String>{
+    let window=LIBRARY_EPOCH.current();LIBRARY_EPOCH.ensure_open(window)?;
+    if window>crate::rhvideo::player_host::MAX_JS_ID{return Err("媒体库窗口身份已耗尽".into());}
+    Ok(json!({"window":window}))
+}
+pub fn prepare_library_scope(args:&Value,generation:u64)->Result<Value,String>{
+    let(window,panel)=crate::rhvideo::player_host::identity(args)?;LIBRARY_EPOCH.ensure_open(window)?;
+    let value=HOST_RESERVATIONS.lock().map_err(|_|"播放预约状态不可用")?.prepare(window,panel,generation)?;Ok(json!({"window":value.window,"panel":value.panel,"owner":value.owner}))
+}
+pub fn library_scope()->Option<Value>{single_host().filter(SingleHost::library).map(|host|host.value())}
+pub fn cancel_popup_preparation(generation:u64,cancel:impl FnOnce())->Result<(),String>{
+    // Keep this tiny reservation lock across only the atomic cancellation,
+    // never PLAY_LOCK, the GUI queue or a decoder call. A later library prepare
+    // must observe cancellation before it captures its preparation epoch.
+    let reservations=HOST_RESERVATIONS.lock().map_err(|_|"播放预约状态不可用")?;
+    if !reservations.has_current(generation){cancel();}Ok(())
+}
+pub fn retire_library_scope(args:&Value,generation:u64)->Result<(bool,Option<u64>,u64),String>{
+    let(window,panel)=crate::rhvideo::player_host::identity(args)?;let owner=args["owner"].as_u64().filter(|id|*id>0).ok_or("播放预约身份无效")?;
+    {let mut reservations=HOST_RESERVATIONS.lock().map_err(|_|"播放预约状态不可用")?;if !reservations.matches(window,&panel,owner,generation){return Ok((false,None,owner));}reservations.retire(owner);}
+    let host=single_host().filter(|host|host.generation==generation&&matches!(&host.target,crate::rhvideo::player_host::Target::Library{owner:current,..}if *current==owner));
+    if let Some(host)=host{WINDOW_EPOCH.close(host.lease);Ok((true,Some(host.lease),owner))}else{Ok((true,None,owner))}
+}
+pub fn owns_retired_scope(owner:u64,lease:u64,generation:u64)->bool{single_host().is_some_and(|host|host.lease==lease&&WINDOW_EPOCH.is_current(lease)&&host.generation==generation&&matches!(host.target,crate::rhvideo::player_host::Target::Library{owner:current,..}if current==owner))}
+pub fn install_library_host_lifetime(window:&tauri::WebviewWindow){
+    if window.label()!=LIBRARY_LABEL{return;}
+    let token=LIBRARY_EPOCH.begin();let app=window.app_handle().clone();
+    window.on_window_event(move|event|{if matches!(event,WindowEvent::Destroyed)&&LIBRARY_EPOCH.close(token){
+        if let Some(host)=single_host().filter(|host|matches!(&host.target,crate::rhvideo::player_host::Target::Library{window,..}if *window==token)){
+            if WINDOW_EPOCH.close(host.lease){let owner=app.clone();tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(owner,host.lease));}
+        }
+    }});
+}
+pub fn finish_host_view(app:&AppHandle,reason:&str)->Result<bool,String>{
+    if let Some(host)=single_host().filter(SingleHost::library){
+        let crate::rhvideo::player_host::Target::Library{window:physical,..}=host.target else{unreachable!()};
+        if LIBRARY_EPOCH.ensure_open(physical).is_err(){return Ok(true);}
+        if let Some(window)=app.get_webview_window(LIBRARY_LABEL){if LIBRARY_EPOCH.ensure_open(physical).is_err(){return Ok(true);}if window.is_fullscreen().map_err(|e|e.to_string())?!=host.fullscreen_before{window.set_fullscreen(host.fullscreen_before).map_err(|e|e.to_string())?;}}
+        app.emit_to(LIBRARY_LABEL,"rhvideo-player-closed",json!({"host":host.value(),"reason":reason})).map_err(|e|e.to_string())?;return Ok(true);
+    }
+    if let Some(window)=app.get_webview_window(LABEL){window.close().map_err(|e|format!("播放器已停止，但窗口关闭失败：{e}"))?;}Ok(false)
+}
 static GRID_WINDOW_EPOCH:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PLAYER: Mutex<Option<Engine>> = Mutex::new(None);
 static INPUT_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
@@ -105,21 +170,23 @@ fn surface_intent(message:u32,wparam:usize,lparam:isize,modified:bool)->Option<&
     if lparam&(1<<30)!=0{return None;} // one intent per physical key press
     match wparam{0x1b=>Some("close"),0x20=>Some("toggle"),0x25=>Some("previous"),0x27=>Some("next"),0x24=>Some("first"),0x23=>Some("last"),0x2e=>Some("mark"),_=>None}
 }
-fn surface_binding(child:usize)->Option<(&'static str,u64,Option<usize>)>{
-    let single=PLAYER.try_lock().ok().and_then(|p|p.as_ref().filter(|p|p.child==child).map(|p|p.input_id));
-    single.map(|input|("window-rhvideo-player",input,None)).or_else(||GRID.try_lock().ok().and_then(|g|g.players.iter().enumerate().find(|(_,p)|p.child==child).map(|(index,p)|("window-rhvideo-grid",p.input_id,Some(index)))))
+fn surface_binding(child:usize)->Option<(&'static str,u64,Option<usize>,Option<u64>)>{
+    let host=single_host().filter(|host|host.ensure_open().is_ok());
+    let single=PLAYER.try_lock().ok().and_then(|p|p.as_ref().filter(|p|p.child==child&&p.surface.current()).map(|p|p.input_id));
+    single.and_then(|input|host.map(|host|(host.label(),input,None,Some(host.lease)))).or_else(||GRID.try_lock().ok().and_then(|g|g.players.iter().enumerate().find(|(_,p)|p.child==child&&p.surface.current()).map(|(index,p)|("window-rhvideo-grid",p.input_id,Some(index),None))))
 }
 fn emit_surface_input(child:usize,intent:&str)->bool{
     let Some(app)=INPUT_APP.get() else{return false;};
-    let Some((label,input,target))=surface_binding(child) else{return false;};
+    let Some((label,input,target,host_lease))=surface_binding(child) else{return false;};
     if matches!(intent,"next"|"previous"){
         let Ok(mut at)=INPUT_AT.try_lock() else{return true;};
         let now=std::time::Instant::now();if at.get(&child).is_some_and(|last|now.duration_since(*last)<std::time::Duration::from_millis(180)){return true;}
         at.insert(child,now);
     }
-    let _=app.emit_to(label,"rhvideo-native-input",json!({"inputId":input,"intent":intent,"target":target}));true
+    let _=app.emit_to(label,"rhvideo-native-input",json!({"inputId":input,"intent":intent,"target":target,"hostLease":host_lease}));true
 }
 pub fn check_input(args:&Value)->Result<(),String>{
+    check_host(args)?;
     let Some(expected)=args.get("expectedInput") else{return Ok(());};
     let expected=expected.as_u64().ok_or("播放输入标识无效")?;
     if !PLAYER.lock().map_err(|_|"播放器不可用")?.as_ref().is_some_and(|p|p.input_id==expected){return Err("播放输入已改变，旧操作未执行".into());}Ok(())
@@ -177,6 +244,7 @@ static SURFACE_SEQUENCE:surface_lifecycle::Sequence=surface_lifecycle::Sequence:
 #[derive(Clone,Copy)]
 struct Surface { child:usize, generation:usize }
 impl Surface {
+    fn current(self)->bool{unsafe{let hwnd=HWND(self.child as Ptr);let mut process=0;GetWindowThreadProcessId(hwnd,Some(&mut process))!=0&&process==std::process::id()&&GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize==self.generation}}
     fn close(self){
         // Validation occurs when the owning GUI thread receives this message,
         // not in an IsWindow/GetProp -> PostMessage race on the decoder worker.
@@ -265,7 +333,7 @@ unsafe extern "system" fn surface_proc(
         // destroys them normally; asynchronous cleanup must carry its lease.
         if message==WM_CLOSE{return LRESULT(0);}
         if message==WM_NCDESTROY{SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
-        if message==WM_LBUTTONDOWN&&surface_binding(hwnd.0 as usize).is_some(){let _=SetFocus(Some(hwnd));}
+        if message==WM_LBUTTONDOWN&&surface_binding(hwnd.0 as usize).is_some_and(|binding|binding.0!=LIBRARY_LABEL){let _=SetFocus(Some(hwnd));}
         let modified=matches!(message,WM_KEYDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL)&&[VK_CONTROL,VK_SHIFT,VK_MENU].iter().any(|key|GetKeyState(key.0 as i32)<0);
         if let Some(intent)=surface_intent(message,wparam.0,lparam.0,modified){if emit_surface_input(hwnd.0 as usize,intent){return LRESULT(0);}}
         if message==WM_CONTEXTMENU{return LRESULT(0);}
@@ -281,20 +349,20 @@ unsafe extern "system" fn surface_proc(
             let _ = EndPaint(hwnd, &paint);
             if let Ok(player) = PLAYER.try_lock() {
                 if let Some(player) = player.as_ref() {
-                    if player.child == hwnd.0 as usize {
+                    if player.child == hwnd.0 as usize&&player.surface.generation==GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize {
                         player.frame.render();
                     }
                 }
             }
             if let Ok(grid) = GRID.try_lock() {
                 for player in &grid.players {
-                    if player.child == hwnd.0 as usize {
+                    if player.child == hwnd.0 as usize&&player.surface.generation==GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize {
                         player.frame.render();
                     }
                 }
             }
             if let Ok(Some(player)) = PRESENTATION.try_lock().as_deref() {
-                if player.child == hwnd.0 as usize {
+                if player.child == hwnd.0 as usize&&player.surface.generation==GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize {
                     player.frame.render();
                 }
             }
@@ -960,17 +1028,21 @@ impl Drop for Engine {
         }
     }
 }
-pub fn stop() {
+pub fn stop()->Result<(),String> {
     crate::rhvideo::flush_playback();
     stop_grid();
     stop_presentation();
     stop_single();
+    if single_host().is_some(){if let Some(app)=INPUT_APP.get(){finish_host_view(app,"stopped")?;}}Ok(())
 }
 pub fn stop_single() {
+    let host=single_host();if let Some(host)=&host{WINDOW_EPOCH.close(host.lease);}
+    if let Some(SingleHost{target:crate::rhvideo::player_host::Target::Library{owner,..},..})=&host{if let Ok(mut reservations)=HOST_RESERVATIONS.lock(){reservations.retire(*owner);}}
     clear_preload();
     let engine = PLAYER.lock().ok().and_then(|mut player| player.take());
     if let Some(engine) = engine {
         release_surface(engine);
+        if let Some(host)=host.filter(SingleHost::library){if let Some(app)=INPUT_APP.get(){let _=app.emit_to(LIBRARY_LABEL,"rhvideo-player-closed",json!({"host":host.value(),"reason":"stopped"}));}}
     }
 }
 pub async fn close_single()->Result<(),String>{
@@ -1081,13 +1153,16 @@ async fn preload(app: AppHandle, url: String, title: String,rotation:crate::rhvi
     };
     require_preload(ticket,&preparation)?;
     publish_preload(ticket,json!({"state":"loading","title":title}));
-    let view = app.get_webview_window(LABEL).ok_or("播放器没有打开")?;
-    let rotation_viewport=window_viewport(&view)?;
+    let host=single_host().ok_or("播放器宿主没有打开")?;host.ensure_open()?;
+    let view = app.get_webview_window(host.label()).ok_or("播放器没有打开")?;
+    let rotation_viewport=host.viewport;
     let surface_preparation=preparation.clone();
+    let surface_host=host.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         let result = (|| {
             require_preload(ticket,&surface_preparation)?;
+            surface_host.ensure_open()?;
             surface_class()?;
             let parent = view.hwnd().map_err(|e| e.to_string())?;
             let surface=create_surface(HWND(parent.0),320,180,WS_EX_LAYERED)?;
@@ -1106,11 +1181,14 @@ async fn preload(app: AppHandle, url: String, title: String,rotation:crate::rhvi
     .map_err(|e| e.to_string())?;
     let child = rx.await.map_err(|_| "播放器已关闭")??;
     let worker_preparation=preparation.clone();
+    let worker_host=host.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut surface=SurfaceGuard(vec![child]);
         require_preload(ticket,&worker_preparation)?;
+        worker_host.ensure_open()?;
         let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
         let mut engine = Engine::new_with_rotation(child,angle)?;
+        worker_host.ensure_open()?;
         require_preload(ticket,&worker_preparation)?;
         engine.configure_rotation(rotation,rotation_viewport)?;
         control_engine(&mut engine, &json!({"command":"volume","value":0}))?;
@@ -1127,7 +1205,7 @@ async fn preload(app: AppHandle, url: String, title: String,rotation:crate::rhvi
     };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        if !preload_current(ticket,&preparation) {
+        if !preload_current(ticket,&preparation)||host.ensure_open().is_err() {
             release_preload(engine).await?;
             return Ok(json!({"state":"cancelled"}));
         }
@@ -1182,7 +1260,7 @@ pub async fn presentation_open(
     title: String,
     seconds: f64,
 ) -> Result<Value, String> {
-    stop();
+    stop()?;
     let ticket = PRESENTATION_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     let view = app
         .get_webview_window("window-rhvideo")
@@ -1510,6 +1588,38 @@ fn window_viewport(window:&tauri::WebviewWindow)->Result<(u32,u32),String>{
     let size=window.inner_size().map_err(|e|e.to_string())?;let scale=window.scale_factor().map_err(|e|e.to_string())?;
     Ok((size.width.max(1),size.height.saturating_sub((CONTROLS_HEIGHT*scale).round() as u32).max(1)))
 }
+fn library_surface_geometry(window:&tauri::WebviewWindow,host:&SingleHost,surface:Surface,opacity:f64,visible:bool)->Result<(u32,u32),String>{
+    use crate::rhvideo::player_host::Target;
+    host.ensure_open()?;if !surface.current(){return Err("原生画布已改变，旧布局未执行".into());}
+    let Target::Library{bounds,..}=&host.target else{return Err("此播放器没有库内区域".into());};
+    let scale=window.scale_factor().map_err(|e|e.to_string())?;let size=window.inner_size().map_err(|e|e.to_string())?;
+    let [x,y,width,height]=bounds.map(|value|(value*scale).round() as i32);
+    if visible&&(x>=size.width as i32||y>=size.height as i32){return Err("播放器区域已超出窗口".into());}
+    let width=width.min((size.width as i32-x).max(1)).max(1);let height=height.min((size.height as i32-y).max(1)).max(1);
+    unsafe{let hwnd=HWND(surface.child as Ptr);let style=GetWindowLongPtrW(hwnd,GWL_EXSTYLE);SetWindowLongPtrW(hwnd,GWL_EXSTYLE,style|WS_EX_LAYERED.0 as isize);
+        SetLayeredWindowAttributes(hwnd,windows::Win32::Foundation::COLORREF(0),(opacity.clamp(0.,1.)*255.).round() as u8,LWA_ALPHA).map_err(|e|e.to_string())?;
+        if visible{MoveWindow(hwnd,x,y,width,height,true).map_err(|e|e.to_string())?;SetWindowPos(hwnd,Some(HWND_TOP),0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW).map_err(|e|e.to_string())?;}else{let _=ShowWindow(hwnd,SW_HIDE);}
+    }Ok((width as u32,height as u32))
+}
+fn layout_single(window:&tauri::WebviewWindow,host:&SingleHost,surface:Surface)->Result<(),String>{
+    if host.library(){library_surface_geometry(window,host,surface,0.,true)?;}else{if !surface.current(){return Err("原生画布已改变".into());}layout(window,surface.child);}Ok(())
+}
+pub async fn single_bounds(app:AppHandle,args:Value)->Result<Value,String>{
+    check_host(&args)?;let expected=args["expectedInput"].as_u64().filter(|value|*value>0).ok_or("播放区域需要输入身份")?;
+    let lease=args["_hostLease"].as_u64().ok_or("播放区域需要宿主身份")?;
+    let mut host=single_host().filter(|host|host.library()&&host.lease==lease).ok_or("库内播放面板已改变")?;
+    let bounds=crate::rhvideo::player_host::bounds(&args)?;
+    if let crate::rhvideo::player_host::Target::Library{bounds:current,..}=&mut host.target{*current=bounds;}
+    let opacity=match args.get("opacity"){None=>1.,Some(value)=>value.as_f64().filter(|value|value.is_finite()&&(0.0..=1.).contains(value)).ok_or("播放区域透明度无效")?};
+    let visible=args["visible"].as_bool().ok_or("缺少播放区域可见状态")?;
+    let view=app.get_webview_window(LIBRARY_LABEL).ok_or("媒体库窗口已关闭")?;let(tx,rx)=tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move||{let result=(||{
+        host.ensure_open()?;let mut slot=PLAYER.lock().map_err(|_|"播放器不可用")?;let player=slot.as_mut().filter(|player|player.input_id==expected).ok_or("播放输入已改变，旧布局未执行")?;
+        let viewport=library_surface_geometry(&view,&host,player.surface,opacity,visible)?;player.rotation_viewport=viewport;drop(slot);
+        let mut current=SINGLE_HOST.lock().map_err(|_|"播放宿主状态不可用")?;if !current.as_ref().is_some_and(|value|value.lease==lease){return Err("播放面板已改变".to_owned());}host.viewport=viewport;*current=Some(host);
+        Ok(json!({"visible":visible,"inputId":expected,"hostLease":lease,"width":viewport.0,"height":viewport.1}))
+    })();let _=tx.send(result);}).map_err(|e|e.to_string())?;rx.await.map_err(|_|"播放区域任务已结束".to_owned())?
+}
 fn layout(window: &tauri::WebviewWindow, child: usize) {
     let started=std::time::Instant::now();let trace=|stage:&str|{if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_LAYOUT_STAGE {stage} {}",started.elapsed().as_millis());}};
     trace("entered");
@@ -1560,75 +1670,76 @@ pub async fn play(
     seconds: f64,
     rotation:crate::rhvideo_rotation::Policy,
     preparation:crate::rhvideo::play_intent::Preparation,
+    mut target:crate::rhvideo::player_host::Target,
+    generation:u64,
 ) -> Result<Value, String> {
+    use crate::rhvideo::player_host::Target;
     preparation.ensure_current()?;
-    let started=std::time::Instant::now();
-    trace_open(started,"entry");
+    let started=std::time::Instant::now();trace_open(started,"entry");
     let _=INPUT_APP.set(app.clone());
-    if !available() {
-        return Err(
-            "原生播放内核文件不完整。请完整解压或修复 RHFiles 安装，保留 vlc 目录；不会改用网页播放。".into(),
-        );
-    }
+    if !available(){return Err("原生播放内核文件不完整。请完整解压或修复 RHFiles 安装，保留 vlc 目录；不会改用网页播放。".into());}
     trace_open(started,"kernel-located");
-    let (window,lease) = if let Some(window) = app.get_webview_window(LABEL) {
-        (window,WINDOW_EPOCH.current())
-    } else {
-        let window = crate::rhvideo::client_window(
-            app.clone(),
-            LABEL,
-            "rhvideo-player.html",
-            "RHFiles · 播放器",
-            (1100., 720.),
-            (640., 420.),
-        )
-        .await?;
-        let view = window.clone();
-        let owner=app.clone();
-        let lease=WINDOW_EPOCH.begin();
-        window.on_window_event(move |event| match event {
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => resize(&view),
-            WindowEvent::Destroyed => {
-                // Do not queue cancellation behind PLAY_LOCK: the decoder
-                // constructor can still be running there after the HWND dies.
-                WINDOW_EPOCH.close(lease);
-                tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(owner.clone(),lease));
-            }
-            _ => {}
-        });
-        (window,lease)
+    let previous=single_host();
+    if target==Target::Current{let host=previous.as_ref().ok_or("播放器尚未打开")?;host.ensure_open()?;target=host.target.clone();}
+    if let Target::Library{window,panel,owner,..}=&target{LIBRARY_EPOCH.ensure_open(*window)?;if !HOST_RESERVATIONS.lock().map_err(|_|"播放预约状态不可用")?.matches(*window,panel,*owner,generation){return Err("播放面板已关闭或替换，旧准备未执行".into());}}
+    let same_parent=previous.as_ref().is_some_and(|host|match (&host.target,&target){
+        (Target::Popup,Target::Popup)=>WINDOW_EPOCH.ensure_open(host.lease).is_ok(),
+        (Target::Library{window:a,..},Target::Library{window:b,..})=>a==b&&WINDOW_EPOCH.ensure_open(host.lease).is_ok(),
+        _=>false
+    });
+    if previous.is_some()&&!same_parent{
+        close_single().await?;
+        if previous.as_ref().is_some_and(|host|host.library()!=matches!(target,Target::Library{..})){
+            let _=finish_host_view(&app,"host-changed")?;
+        }
+    }
+    let library=matches!(target,Target::Library{..});
+    let window=if library{app.get_webview_window(LIBRARY_LABEL).ok_or("媒体库窗口已关闭")?}else if let Some(window)=app.get_webview_window(LABEL){window}else{
+        crate::rhvideo::client_window(app.clone(),LABEL,"rhvideo-player.html","RHFiles · 播放器",(1100.,720.),(640.,420.)).await?
     };
+    let reuse=previous.as_ref().filter(|host|WINDOW_EPOCH.ensure_open(host.lease).is_ok()&&match (&host.target,&target){(Target::Popup,Target::Popup)=>true,(Target::Library{window:a,panel:p,owner:o,..},Target::Library{window:b,panel:q,owner:r,..})=>a==b&&p==q&&o==r,_=>false});
+    let fullscreen_before=reuse.map(|host|host.fullscreen_before);
+    let lease=if let Some(host)=reuse{host.lease}else{clear_preload();WINDOW_EPOCH.begin()};
+    if lease>crate::rhvideo::player_host::MAX_JS_ID{return Err("播放宿主身份已耗尽".into());}
+    if !library&&reuse.is_none(){
+        let view=window.clone();let owner=app.clone();
+        window.on_window_event(move|event|match event{
+            WindowEvent::Resized(_)|WindowEvent::ScaleFactorChanged{..}=>{if WINDOW_EPOCH.ensure_open(lease).is_ok(){resize(&view);}},
+            WindowEvent::Destroyed=>{WINDOW_EPOCH.close(lease);tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(owner.clone(),lease));},
+            _=>{}
+        });
+    }
     trace_open(started,"window-ready");
-    // Keep activation and its geometry read in one GUI transaction. Each
-    // separate getter otherwise waits behind newly queued WebView startup and
-    // focus work, before the native input has even been allowed to open.
-    // Wry already focuses the newly built WebView and handles WM_SETFOCUS on
-    // its parent. Repeating controller.MoveFocus while it is still starting can
-    // synchronously stall this GUI thread for two seconds. Keep native window
-    // activation; do not request the same COM focus transition a second time.
-    let view=window.clone();let display_title=format!("{title} · RHFiles");
-    let activation=preparation.clone();
+    let view=window.clone();let display_title=format!("{title} · RHFiles");let activation=preparation.clone();let requested=target.clone();
     let(tx,rx)=tokio::sync::oneshot::channel();
     app.run_on_main_thread(move||{
         trace_open(started,"activation-main-entered");
         let result=(||{
-            activation.ensure_current()?;
-            view.set_title(&display_title).map_err(|e|e.to_string())?;
-            view.show().map_err(|e|e.to_string())?;
-            trace_open(started,"window-shown");
-            view.set_focus().map_err(|e|e.to_string())?;
-            trace_open(started,"native-focus-ready");
-            trace_open(started,"window-focused");
-            let viewport=window_viewport(&view)?;
+            activation.ensure_current()?;WINDOW_EPOCH.ensure_open(lease)?;
+            let viewport=if let Target::Library{window:token,bounds,..}=&requested{
+                LIBRARY_EPOCH.ensure_open(*token)?;
+                let scale=view.scale_factor().map_err(|e|e.to_string())?;
+                (((bounds[2]*scale).round() as u32).max(1),((bounds[3]*scale).round() as u32).max(1))
+            }else{
+                // Only the explicit standalone compatibility host activates a
+                // window. Library playback keeps its originating WebView focused.
+                view.set_title(&display_title).map_err(|e|e.to_string())?;
+                view.show().map_err(|e|e.to_string())?;trace_open(started,"window-shown");
+                view.set_focus().map_err(|e|e.to_string())?;trace_open(started,"native-focus-ready");trace_open(started,"window-focused");
+                window_viewport(&view)?
+            };
             trace_open(started,"viewport-ready");
             let parent=view.hwnd().map_err(|e|e.to_string())?.0 as usize;
-            Ok::<_,String>((viewport,parent))
+            let fullscreen_before=match fullscreen_before{Some(value)=>value,None=>view.is_fullscreen().map_err(|e|e.to_string())?};
+            let host=SingleHost{target:requested,lease,parent,viewport,generation,fullscreen_before};host.ensure_open()?;
+            *SINGLE_HOST.lock().map_err(|_|"播放宿主状态不可用")?=Some(host.clone());
+            Ok::<_,String>(host)
         })();let _=tx.send(result);
     }).map_err(|e|e.to_string())?;
     trace_open(started,"activation-dispatched");
-    let (rotation_viewport,parent)=rx.await.map_err(|_|"播放器窗口已关闭".to_owned())??;
-    preparation.ensure_current()?;
-    require_player_window(lease,parent)?;
+    let host=rx.await.map_err(|_|"播放器窗口已关闭".to_owned())??;
+    let rotation_viewport=host.viewport;let parent=host.parent;
+    preparation.ensure_current()?;host.ensure_open()?;
     let (warm_ticket,warmed) = WARM.lock().map_err(|_| "预加载不可用")?.retire(json!({"state":"idle"}));
     trace_open(started,"warm-slot-ready");
     let mut guard = SurfaceGuard(vec![]);
@@ -1663,28 +1774,30 @@ pub async fn play(
             if let Err(error)=require_player_window(lease,parent){guard.0.clear();drop(warmed);return Err(error);}
             preparation.ensure_current()?;
             control_engine(&mut warmed, &json!({"command":"resume"}))?;
-            let child = warmed.child;
+            let surface=warmed.surface;let child = surface.child;
             let mut state = warmed.state();
             state["preloaded"] = json!(!reconfigured);
+            state["host"]=host.value();
             let previous = PLAYER.lock().map_err(|_| "播放器不可用")?.replace(warmed);
             guard.0.clear();
             if let Some(previous) = previous {
                 tauri::async_runtime::spawn_blocking(move || release_surface(previous));
             }
             let view = window.clone();
+            let layout_host=host.clone();let(tx,rx)=tokio::sync::oneshot::channel();
             app.run_on_main_thread(move || {
-                if require_player_window(lease,parent).is_err(){return;}
-                layout(&view, child);
-                unsafe {
+                let result=(||{layout_host.ensure_open()?;layout_single(&view,&layout_host,surface)?;
+                if !layout_host.library(){unsafe {
                     let _ = SetLayeredWindowAttributes(
                         HWND(child as Ptr),
                         windows::Win32::Foundation::COLORREF(0),
                         255,
                         LWA_ALPHA,
                     );
-                }
+                }}Ok::<_,String>(())})();let _=tx.send(result);
             })
             .map_err(|e| e.to_string())?;
+            rx.await.map_err(|_|"预加载播放区域已关闭".to_owned())??;
             publish_preload(warm_ticket,json!({"state":"consumed"}));
             trace_open(started,"preload-consumed");
             require_player_window(lease,parent)?;
@@ -1695,6 +1808,7 @@ pub async fn play(
     }
     let view = window.clone();
     let surface_preparation=preparation.clone();
+    let layout_host=host.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         trace_open(started,"surface-main-entered");
@@ -1714,13 +1828,11 @@ pub async fn play(
                 let scale = view.scale_factor().map_err(|e| e.to_string())?;
                 let parent = view.hwnd().map_err(|e| e.to_string())?;
                 surface_class()?;
-                let surface=create_surface(HWND(parent.0),size.width as i32,(size.height as i32-(CONTROLS_HEIGHT*scale).round() as i32).max(1),WINDOW_EX_STYLE::default())?;
+                let surface=if layout_host.library(){create_surface(HWND(parent.0),layout_host.viewport.0 as i32,layout_host.viewport.1 as i32,WS_EX_LAYERED)?}else{create_surface(HWND(parent.0),size.width as i32,(size.height as i32-(CONTROLS_HEIGHT*scale).round() as i32).max(1),WINDOW_EX_STYLE::default())?};
                 created=true;Ok(surface)
             }
         })();
-        if let Ok(child) = result {
-            layout(&view, child.child);
-        }
+        let result=result.and_then(|surface|{if let Err(error)=layout_single(&view,&layout_host,surface){if created{surface.close();}return Err(error);}Ok(surface)});
         if let Err(Ok(surface))=tx.send(result){if created{surface.close();}}
     })
     .map_err(|e| e.to_string())?;
@@ -1757,7 +1869,7 @@ pub async fn play(
     .map_err(|_| "原生播放任务意外结束".to_owned())?;
     preparation.ensure_current()?;
     require_player_window(lease,parent)?;
-    result
+    result.map(|mut value|{value["host"]=host.value();value})
 }
 pub fn repeat_from(milliseconds:i64)->Result<Value,String>{
     let mut slot=PLAYER.lock().map_err(|_|"播放器状态不可用")?;
@@ -1781,6 +1893,7 @@ pub fn repeat_from(milliseconds:i64)->Result<Value,String>{
     Ok(player.state())
 }
 pub fn command(action: &str, args: &Value) -> Result<Value, String> {
+    check_host(args)?;
     let mut player = PLAYER.lock().map_err(|_| "播放器状态不可用")?;
     let Some(player) = player.as_mut() else {
         return if action == "player.state" {
@@ -1794,7 +1907,7 @@ pub fn command(action: &str, args: &Value) -> Result<Value, String> {
         control_engine(player, args)?;
     }
     if action=="player.state"{player.resolve_rotation()?;}
-    Ok(player.state())
+    let mut value=player.state();value["host"]=host_value();Ok(value)
 }
 pub fn diagnostic_frame(args:&Value)->Result<Value,String>{
     // Test-only, opt-in readback from the actual native output. No filename,

@@ -11,12 +11,13 @@ import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
+import {nativePlayerView,playerAction,playerEvaluate,playerElementId} from '../testing/native-player-view.mjs';
 import {readProcessReceipt} from '../rhfiles-receipts.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 import {listenBrowserLoopback} from '../testing/browser-loopback.mjs';
 const native={skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'};
 const {grid:Grid}=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
-const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
+const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify(playerAction(view,name))+','+JSON.stringify(args)+')');
 const command=(app,action,args={})=>app.evaluate('call("rhvideo_request",'+JSON.stringify({action,args})+')');
 async function withSuspendedControls(view,work){
   // VirtualTimePolicy.advance fast-forwards delayed work; it does not restore
@@ -47,9 +48,9 @@ async function target(app,file){
   return view;
 }
 async function setup(options={}){
-  const app=await launchApp({emulateFocus:true});let fixture,view;
+  const app=await launchApp({emulateFocus:options.emulateFocus??true});let fixture,view;
   try{
-    const {portraitIndices=[],picturesOnly=false,rotationMarkers=false,primaryGallery=false,videoMetadataDuration,...fixtureOptions}=options,duration=options.videoDuration??14,file=path.join(app.directory,'behavior.mp4');
+    const {portraitIndices=[],picturesOnly=false,rotationMarkers=false,primaryGallery=false,videoMetadataDuration,emulateFocus,...fixtureOptions}=options,duration=options.videoDuration??14,file=path.join(app.directory,'behavior.mp4');
     const make=(file,size)=>execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size='+size+':rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000',...(rotationMarkers?['-vf','drawbox=x=20:y=20:w=60:h=60:color=0xff0000:t=fill,drawbox=x=iw-80:y=20:w=60:h=60:color=0x00ff00:t=fill,drawbox=x=20:y=ih-80:w=60:h=60:color=0x0000ff:t=fill,drawbox=x=iw-80:y=ih-80:w=60:h=60:color=0xffff00:t=fill']:[]),'-t',String(duration),'-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',file],{windowsHide:true,timeout:30000});
     if(!picturesOnly)make(file,'640x360');
     const portrait=path.join(app.directory,'portrait.mp4');
@@ -67,19 +68,19 @@ const runCli=(app,window,action,args,key,options={})=>new Promise((resolve,rejec
   child.stdout.on('data',part=>stdout+=part);child.stderr.on('data',part=>stderr+=part);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
 });
 test('native startup keeps real WebView keyboard focus without a second controller focus transition',native,async()=>{
-  const s=await setup({videoDuration:30});let player;
+  const s=await setup({videoDuration:30,emulateFocus:false});let player;
   const key=async(code,key,windowsVirtualKeyCode)=>{await player.send('Input.dispatchKeyEvent',{type:'rawKeyDown',code,key,windowsVirtualKeyCode,nativeVirtualKeyCode:windowsVirtualKeyCode});await player.send('Input.dispatchKeyEvent',{type:'keyUp',code,key,windowsVirtualKeyCode,nativeVirtualKeyCode:windowsVirtualKeyCode});};
   try{
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     // No Page.bringToFront, focus emulation, DOM focus(), or preparatory click:
     // those would conceal a real keyboard-focus regression at startup.
     await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0;},'initial actual native frame',25000);
-    const focus=await player.evaluate('({focused:document.hasFocus(),visible:document.visibilityState,active:document.activeElement?.tagName})');assert.equal(focus.focused,true,JSON.stringify(focus));assert.equal(focus.visible,'visible');assert(!['BUTTON','INPUT','SELECT','TEXTAREA'].includes(focus.active),'A new viewer starts on its keyboard surface, not a previously focused command');
+    const focus=await playerEvaluate(player,'({focused:document.hasFocus(),visible:document.visibilityState,active:document.activeElement?.tagName})');assert.equal(focus.focused,true,JSON.stringify(focus));assert.equal(focus.visible,'visible');assert(!['BUTTON','INPUT','SELECT','TEXTAREA'].includes(focus.active),'A new viewer starts on its keyboard surface, not a previously focused command');
     await key('Space',' ',32);await until(async()=>{const value=await invoke(player,'player.state');return value.state===4;},'Space pauses the actual native input');
     await key('Space',' ',32);await until(async()=>{const value=await invoke(player,'player.state');return value.state===3&&!value.pauseRequested;},'Space resumes the actual native input');
-    await key('Tab','Tab',9);assert.equal(await player.evaluate('document.activeElement.id'),'back','Tab can enter the real control strip without a mouse click');
+    await key('Tab','Tab',9);assert.equal(await playerEvaluate(player,'document.activeElement.id'),playerElementId(player,'back'),'Tab can enter the real control strip without a mouse click');
     await invoke(s.view,'media.open',{kind:'video',id:'video-1'});await until(async()=>{const value=await invoke(player,'player.state');return value.queue?.id==='video-1'&&value.renderedFrames>0;},'reused viewer really displays the next source',25000);
-    assert.equal(await player.evaluate('document.hasFocus()'),true);assert.equal(await player.evaluate('document.activeElement.id'),'back','Reusing the viewer keeps the existing focused control');
+    assert.equal(await playerEvaluate(player,'document.hasFocus()'),true);assert.equal(await playerEvaluate(player,'document.activeElement.id'),playerElementId(player,'back'),'Reusing the viewer keeps the existing focused control');
     await invoke(s.view,'player.close');
   }finally{player?.close();await s.close();}
 });
@@ -100,19 +101,19 @@ test('grid startup keeps real WebView keyboard focus and keyboard-only control/c
 test('player-owned close and back complete their public CLI runs instead of losing the result with the window',native,async()=>{
   const s=await setup();let player;
   try{
-    const cli=(action,args,key)=>runCli(s.app,'window-rhvideo-player',action,args,key);
+    const cli=(action,args,key)=>runCli(s.app,player.playerHost.label,action.startsWith('rhvideo.player.')?playerAction(player,action.slice(8)):action,args,key);
     for(const name of ['close','back','ui-back']){
-      await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+      await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
       await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0;},'real native frame before self-close',25000);
-      const control=name==='ui-back'?await player.evaluate("RHFilesAPI.invoke('ui.list').then(rows=>rows.find(row=>row.id==='back'))"):null;
+      const control=name==='ui-back'?await playerEvaluate(player,"RHFilesAPI.invoke('ui.list').then(rows=>rows.find(row=>row.id===playerElement('back').id))"):null;
       const output=await cli(control?'ui.invoke':'rhvideo.player.'+name,control?{controlId:control.controlId}: {},'self-'+name);
       if(process.env.RHFILES_CLI_TRACE==='1')console.log(JSON.stringify({scenario:'player self-'+name,...output}));
       assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout.trim());assert.equal(reply.result.state,'succeeded',JSON.stringify(reply));if(control)assert.deepEqual(reply.result.result,{controlId:control.controlId,event:'click'});else assert.equal(reply.result.result.closed,true);
       assert.equal((await command(s.app,'player.state')).opened,false);
-      await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !pages.some(page=>new URL(page.url).pathname.endsWith('/rhvideo-player.html'));},'Close retires the player window, not a hidden polling WebView',3000);
+      if(player.playerHost.kind==='library'){assert.equal(await player.evaluate('document.getElementById("rhvideo-player-dialog")===null'),true);assert.equal(await player.evaluate('RHFilesAPI.list().some(row=>row.id==="rhvideo.inlinePlayer.control")'),false,'Close must unmount the logical host and its controller');}else await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !pages.some(page=>new URL(page.url).pathname.endsWith('/rhvideo-player.html'));},'Close retires the popup, not a hidden polling WebView',3000);
       player.close();player=null;
       if(name==='close'){
-        await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');const replacement=await invoke(player,'player.state');
+        await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await nativePlayerView(s.app);const replacement=await invoke(player,'player.state');
         const replay=await cli('rhvideo.player.close',{},'self-close');if(process.env.RHFILES_CLI_TRACE==='1')console.log(JSON.stringify({scenario:'player old-key receipt, no replay',...replay}));assert.equal(replay.code,0,JSON.stringify(replay));assert.equal(JSON.parse(replay.stdout).result.state,'succeeded');const after=await invoke(player,'player.state');assert.equal(after.opened,true,'The old request key must not close a later player');assert.equal(after.inputId,replacement.inputId);
         await command(s.app,'player.close');player.close();player=null;
       }
@@ -264,7 +265,7 @@ test('packaged player and grid DOM navigation accepts semantic keys and reaches 
   const key=(view,key,code)=>view.evaluate(`(()=>{const event=new KeyboardEvent('keydown',{key:${JSON.stringify(key)},code:${JSON.stringify(code)},bubbles:true,cancelable:true});document.body.dispatchEvent(event);return event.defaultPrevented;})()`);
   const observations=[];
   try{
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');await invoke(player,'player.options',{fullLength:true,loop:true});
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);await invoke(player,'player.options',{fullLength:true,loop:true});
     await until(async()=>(await invoke(player,'player.state')).renderedFrames>1,'initial real player frames',25000);
     for(const [semantic,code,index]of [['End','',5],['Home','Numpad7',0]]){
       assert.equal(await key(player,semantic,code),true);
@@ -292,7 +293,7 @@ test('sequential playback keeps the visible full-list order, wraps manually, see
     await invoke(s.view,'sort',{value:'nameDesc'});
     const order=(await invoke(s.view,'state')).items.map(i=>i.id);
     assert.equal(await s.view.evaluate("document.querySelectorAll('select[data-api-action=\"rhvideo.play.mode\"]').length"),0,'playback capabilities are explicit actions, not a mode dropdown');
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     const initial=await invoke(player,'player.state');assert.equal(initial.queue.id,order[0]);assert.equal(initial.queue.total,6);assert.equal(initial.queue.options.mode,'sequential');assert.equal(initial.queue.options.fullLength,true);
     const last=await invoke(player,'player.previous');assert.equal(last.queue.id,order.at(-1));
     await invoke(player,'player.control',{command:'rate',value:1.5});
@@ -302,17 +303,17 @@ test('sequential playback keeps the visible full-list order, wraps manually, see
     await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0&&value.decoderPositionMs>=6500;},'actual native cross-entry seek',25000);
     await invoke(player,'player.control',{command:'pause'});
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);
     const segment=await invoke(player,'player.state');assert.equal(segment.queue.options.mode,'segments');assert.equal(segment.queue.total,4,'segment pool is the screenshot gallery, not the six-item video list');assert.equal(segment.queue.options.fullLength,false);assert.equal(segment.queue.options.segment,3);
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');assert.equal((await invoke(player,'player.state')).queue.id,order[1],'segment playback cannot overwrite sequential playback history');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);assert.equal((await invoke(player,'player.state')).queue.id,order[1],'segment playback cannot overwrite sequential playback history');
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'playlist.sequential',{super:true});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential',{super:true});player=await nativePlayerView(s.app);
     const low=await invoke(player,'player.state');assert.equal(low.queue.index,0);assert.equal(low.queue.options.mode,'sequential-super');assert.equal(low.queue.options.super,true);
     await until(()=>s.fixture.requests.some(r=>r.path.endsWith('/play')&&r.query==='?super=true'),'actual super stream requested');
     assert.deepEqual((await invoke(player,'ui.contract')).missing,[]);
     await player.send('Emulation.setDeviceMetricsOverride',{width:640,height:420,deviceScaleFactor:1,mobile:false});
-    const outside=await player.evaluate("[...document.querySelectorAll('#controls button,#controls input,#controls select')].filter(n=>n.getClientRects().length).filter(n=>{const r=n.getBoundingClientRect();return r.bottom>innerHeight+1||r.left<0||r.right>innerWidth+1}).map(n=>n.id)");
+    const outside=await playerEvaluate(player,"[...playerElement('controls').querySelectorAll('button,input,select')].filter(n=>n.getClientRects().length).filter(n=>{const r=n.getBoundingClientRect();return r.bottom>innerHeight+1||r.left<0||r.right>innerWidth+1}).map(n=>n.id)");
     assert.deepEqual(outside,[],'all player controls remain reachable at minimum size');
   }finally{player?.close();await s.close();}
 });
@@ -321,7 +322,7 @@ test('live portrait playback filters its original pool; restarting sequential mo
   const s=await setup({portraitIndices:[0,2,3],videoDuration:20});let player;
   try{
     const original=(await invoke(s.view,'state')).items.map(i=>i.id);
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     const initial=await invoke(player,'player.state');assert.equal(initial.queue.sourceTotal,6);assert.equal(initial.queue.portraitTotal,3);assert.equal(initial.queue.options.segment,300);
     await invoke(player,'player.control',{command:'rate',value:1.5});
     const filtered=await invoke(player,'player.options',{portraitOnly:true});assert.equal(filtered.total,3);assert.equal(filtered.options.fullLength,true);assert.equal(filtered.options.portraitOnly,true);
@@ -331,15 +332,15 @@ test('live portrait playback filters its original pool; restarting sequential mo
     assert.equal((await invoke(player,'player.next')).queue.id,original[1]);assert.equal((await invoke(player,'player.state')).rate,1.5);
     await invoke(player,'player.options',{portraitOnly:true});
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     const resumed=(await invoke(player,'player.state')).queue;assert.equal(resumed.total,6);assert.equal(resumed.sourceTotal,6);assert.equal(resumed.options.portraitOnly,false);assert.equal(resumed.options.fullLength,true,'a fresh sequential start always restores full-length playback');
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);
     const segments=(await invoke(player,'player.state')).queue;assert.equal(segments.options.portraitOnly,false);assert.equal(segments.total,4,'a sequential setting cannot filter the independent gallery mode');
     assert.deepEqual((await invoke(player,'ui.contract')).missing,[]);
     await invoke(player,'player.options',{portraitOnly:true});await invoke(player,'player.options',{fullLength:false,segment:2});
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);
     const restoredSegments=(await invoke(player,'player.state')).queue;assert.equal(restoredSegments.options.portraitOnly,true);assert.equal(restoredSegments.options.fullLength,false);assert.equal(restoredSegments.segmentLengthMs,2000,'portrait filtering must not overwrite a saved explicit segment choice');
   }finally{player?.close();await s.close();}
 });
@@ -347,23 +348,23 @@ test('live portrait playback filters its original pool; restarting sequential mo
 test('a real pointer toggle with fewer than two portrait videos fails visibly without changing the paused input or queue',native,async()=>{
   const s=await setup({portraitIndices:[0]});let player;
   try{
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     await until(async()=>(await invoke(player,'player.state')).renderedFrames>0,'initial decoded frame',25000);
     const before=await invoke(player,'player.control',{command:'pause'});
     // The main WebView's focus emulation does not cover this separate controls
     // WebView. Keep this CDP pointer acceptance independent of other windows
     // taking OS focus, and wait for its native strip resize/layout to settle.
     await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});
-    await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    const point=await player.evaluate("(()=>{const r=document.getElementById('portrait-only').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
-    assert.equal(await player.evaluate(`document.elementFromPoint(${point.x},${point.y})===document.getElementById('portrait-only')`),true,'pointer coordinates must hit the actual checkbox');
+    await playerEvaluate(player,'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const point=await playerEvaluate(player,"(()=>{const r=playerElement('portrait-only').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+    assert.equal(await playerEvaluate(player,`document.elementFromPoint(${point.x},${point.y})===playerElement('portrait-only')`),true,'pointer coordinates must hit the actual checkbox');
     await player.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
     await player.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});
     await player.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
-    await until(()=>player.evaluate("document.getElementById('error').textContent.includes('不足 2 个')&&!document.getElementById('portrait-only').checked"),'visible error and reverted checkbox');
+    await until(()=>playerEvaluate(player,"playerElement('error').textContent.includes('不足 2 个')&&!playerElement('portrait-only').checked"),'visible error and reverted checkbox');
     const after=await invoke(player,'player.state');assert.equal(after.queue.id,before.queue.id);assert.equal(after.queue.revision,before.queue.revision);assert.equal(after.queue.total,6);assert.equal(after.state,4);
     assert.equal((await command(s.app,'playlist.state',{mode:'sequential'})).portraitOnly,false,'a rejected UI toggle must not persist as enabled');
-  }catch(error){console.log(JSON.stringify({scenario:'portrait pointer rejection',ui:await player?.evaluate("({focus:document.hasFocus(),error:document.getElementById('error').textContent,checked:document.getElementById('portrait-only').checked,disabled:document.getElementById('portrait-only').disabled,rect:document.getElementById('portrait-only').getBoundingClientRect().toJSON(),viewport:[innerWidth,innerHeight]})").catch(e=>({error:String(e)})),native:await command(s.app,'player.state').catch(e=>({error:String(e)}))}));throw error;}
+  }catch(error){console.log(JSON.stringify({scenario:'portrait pointer rejection',ui:await playerEvaluate(player,"({focus:document.hasFocus(),error:playerElement('error').textContent,checked:playerElement('portrait-only').checked,disabled:playerElement('portrait-only').disabled,rect:playerElement('portrait-only').getBoundingClientRect().toJSON(),viewport:[innerWidth,innerHeight]})").catch(e=>({error:String(e)})),native:await command(s.app,'player.state').catch(e=>({error:String(e)}))}));throw error;}
   finally{player?.close();await s.close();}
 });
 
@@ -386,7 +387,7 @@ test('gallery segment playback starts at the browsed item, deduplicates videos a
     await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:8});
     const image=await invoke(s.view,'image.state');
     await invoke(s.view,'selection.toggle',{kind:'video',id:'video-5',enabled:true});
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);
     const queue=(await invoke(player,'player.state')).queue;
     assert.equal(queue.id,image.current.videoId);assert.equal(queue.total,4);assert.equal(queue.segmentLengthMs,3000);
     await assert.rejects(invoke(s.view,'playlist.sequential'),/多选/);
@@ -398,7 +399,7 @@ test('the final non-looped segment closes playback and returns to the library in
   try{
     if(existingGallery)await invoke(s.view,'gallery.open');
     const before=await s.view.evaluate("[...document.querySelectorAll('.wb-dialog[open]')].map(n=>n.id)");
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);
     await invoke(player,'player.seekQueue',{ratio:1});
     const current=await until(async()=>{const v=await invoke(player,'player.state');return v.queue.index===1&&v.renderedFrames>0?v:null;},'actual final segment displays',25000);
     await invoke(player,'player.control',{command:'seek',value:current.queue.segmentStartMs+current.queue.segmentLengthMs-50});
@@ -413,12 +414,12 @@ test('video from a screenshot returns to that exact image; arrows pop to the par
     await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:0});
     await invoke(s.view,'image.step',{direction:-1});const wrapped=await invoke(s.view,'image.state');assert.equal(wrapped.index,wrapped.total-1);
     await invoke(s.view,'image.step',{direction:1});assert.equal((await invoke(s.view,'image.state')).index,0);
-    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'image.playFrame');player=await nativePlayerView(s.app);
     assert.equal((await invoke(player,'player.state')).queue.options.origin,'frame');
     await command(s.app,'player.next');player.close();player=null;
     await until(async()=>(await invoke(s.view,'image.state')).index===1,'next returns to parent screenshot rather than a different video queue');
     const parent=await invoke(s.view,'image.state');
-    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'image.playFrame');player=await nativePlayerView(s.app);
     await invoke(player,'player.mark');assert.equal(s.fixture.trash.length,0);
     await command(s.app,'player.back');player.close();player=null;
     assert.equal((await invoke(s.view,'image.state')).index,parent.index);assert.equal(s.fixture.trash.length,0,'returning within the preview stack must not commit pending marks');
@@ -431,14 +432,14 @@ test('video from a screenshot returns to that exact image; arrows pop to the par
 test('player favorites update the library, and a failed preview write is terminal rather than replayed on the next close',native,async()=>{
   const s=await setup({failTrashIds:['video:video-0']});let player;
   try{
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     await invoke(player,'player.favorite');assert(s.fixture.favorites.has('video:video-0'));
     await invoke(s.view,'favorite.toggle',{kind:'video',id:'video-0'});assert.equal(s.fixture.favorites.has('video:video-0'),false);
     await invoke(player,'player.mark');assert.equal((await invoke(s.view,'workbench.diagnostics')).selected,0,'preview marks are not list multiselection');
     await invoke(s.view,'player.close');player.close();player=null;
     const result=await until(async()=>{const r=await invoke(s.view,'preview.state');return r?.completed===1&&!r.running?r:null;},'failed write is shown as a terminal result');
     assert.equal(result.items[0].success,false);assert.match(result.items[0].error,/403|read-only/);
-    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await nativePlayerView(s.app);
     await invoke(s.view,'player.close');player.close();player=null;await sleep(300);
     assert.equal(s.fixture.requests.filter(r=>r.method==='POST'&&r.path==='/api/v1/trash/video/video-0').length,1,'no automatic replay or ABA rearming');
   }finally{player?.close();await s.close();}
@@ -449,7 +450,7 @@ test('native playback from the primary screenshot page returns to its exact imag
   try{
     await until(async()=>(await invoke(s.view,'gallery.state')).total===48,'primary screenshot page ready');
     await invoke(s.view,'gallery.page',{direction:1});await invoke(s.view,'gallery.inspect',{index:0});const image=await invoke(s.view,'image.state');assert.equal(image.index,36);assert.equal(image.current.seconds,8);
-    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'image.playFrame');player=await nativePlayerView(s.app);
     const playing=await until(async()=>{const state=await invoke(player,'player.state');return state.renderedFrames>0&&state.positionMs>=7900?state:null;},'primary screenshot time really displays native frames',25000);
     assert.equal(playing.queue.id,image.current.videoId);assert.equal(playing.queue.options.parentTotal,48);
     await command(s.app,'player.back');player.close();player=null;await until(async()=>{const v=await invoke(s.view,'image.state');return v.opened&&!v.loading&&v.index===36;},'native Back restores that exact primary image');await invoke(s.view,'image.close');
@@ -462,7 +463,7 @@ test('native segment and multi-video queues use server screenshot order rather t
   const s=await setup({primaryGallery:true,beforeGallery:()=>({data:metadata})});let player,grid;
   try{
     await until(async()=>(await invoke(s.view,'gallery.state')).total===3,'non-alphabetical source gallery');await invoke(s.view,'sort',{value:'nameAsc'});await invoke(s.view,'gallery.inspect',{index:1});await invoke(s.view,'image.close');
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);
     for(const id of ['video-0','video-1','video-2']){const actual=await until(async()=>{const v=await invoke(player,'player.state');return v.queue?.id===id&&v.renderedFrames>0?v:null;},'actual source-ordered segment '+id,25000);assert.equal(actual.queue.total,3);if(id!=='video-2')await invoke(player,'player.next');}
     await invoke(s.view,'player.close');player.close();player=null;await invoke(s.view,'preferences.set',{key:'gridCount',value:3});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     const actual=await until(async()=>{const v=await invoke(grid,'grid.state');return v.cells?.length===3&&v.cells.every(c=>c.renderedFrames>0)?v:null;},'all source-ordered grid inputs really render',25000);assert.deepEqual(actual.cells.map(c=>c.id),['video-2','video-0','video-1']);
@@ -476,7 +477,7 @@ test('a cold normal video card never waits for the background gallery or manufac
     s=await setup({beforeGallery:()=>held});
     await until(()=>s.fixture.requests.some(r=>r.path==='/api/v1/screenshots/grid'),'reference-style background gallery request starts');
     assert.equal((await invoke(s.view,'gallery.state')).loading,true);
-    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await nativePlayerView(s.app);
     const state=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'cold direct video really renders',25000);
     assert.equal(state.queue.id,'video-1');assert.equal(state.queue.total,1);assert.equal(state.queue.options.origin,undefined);
     assert.equal(s.fixture.requests.filter(r=>r.path==='/api/v1/screenshots/grid').length,1,'the click neither duplicates nor waits for the background read');
@@ -490,7 +491,7 @@ test('a normal video card reuses its cached first matching screenshot without re
   const s=await setup();let player;
   try{
     await invoke(s.view,'gallery.open');await invoke(s.view,'panel.close',{id:'wb-gallery'});
-    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await nativePlayerView(s.app);
     const queue=(await invoke(player,'player.state')).queue;assert.equal(queue.id,'video-1');assert.equal(queue.options.origin,'frame');
     assert.equal(await s.view.evaluate("!!document.querySelector('#wb-gallery[open]')"),false,'metadata preparation cannot pop a gallery in front of the clicked video');
     await command(s.app,'player.back');player.close();player=null;
@@ -504,13 +505,13 @@ test('ordinary video clicks start at zero by default, without removing explicit 
   const s=await setup();let player;
   try{
     assert.equal((await invoke(s.view,'preferences.state')).resume,false,'automatic resume is opt-in; RHVideo ordinary playback starts from zero');
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     await until(async()=>(await invoke(player,'player.state')).renderedFrames>0,'first native picture',25000);
     await invoke(player,'player.control',{command:'seek',value:6500});
     await until(async()=>(await invoke(player,'player.state')).decoderPositionMs>=6400,'native history seek',25000);
     await invoke(player,'player.control',{command:'pause'});await invoke(s.view,'player.close');player.close();player=null;
     const history=await command(s.app,'playback.history');assert(history['video-0'].seconds>=6,'the separate history/continue action keeps its saved position');
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     const restarted=await until(async()=>{const state=await invoke(player,'player.state');return state.renderedFrames>0?state:null;},'new native input from ordinary click',25000);
     assert(restarted.positionMs<3000,'an ordinary click must not silently restore the old 6.5-second point');
   }finally{player?.close();await s.close();}
@@ -519,18 +520,18 @@ test('ordinary video clicks start at zero by default, without removing explicit 
 test('single-video loop and speed survive a different source without leaking into playlist modes or another login',native,async()=>{
   const s=await setup({videoDuration:20});let player;
   try{
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     await invoke(player,'player.options',{loop:true});const changed=await invoke(player,'player.control',{command:'rate',value:1.5});assert.equal(changed.rate,1.5);assert.equal(changed.queue.options.rate,1.5,'the control acknowledgement must describe the updated queue too');
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-1'});player=await nativePlayerView(s.app);
     let state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,true,'closing the media viewer must not reset its own repeat toggle');assert.equal(state.rate,1.5,'a different source inherits the media-viewer speed');
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,false);assert.equal(state.rate,1,'gallery playlist controls are independent');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,false);assert.equal(state.rate,1,'gallery playlist controls are independent');
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,true);assert.equal(state.rate,1.5);
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,true);assert.equal(state.rate,1.5);
     await invoke(s.view,'player.close');player.close();player=null;
     await invoke(s.view,'connection.logout');await invoke(s.view,'connection.connect',{server:s.fixture.url,username:'preview',password:'fixture-only'});
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,false);assert.equal(state.rate,1,'new login has its own transient media controls');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);state=await invoke(player,'player.state');assert.equal(state.queue.options.loop,false);assert.equal(state.rate,1,'new login has its own transient media controls');
   }finally{player?.close();await s.close();}
 });
 
@@ -538,10 +539,10 @@ test('video arrows still pop the parent preview when that parent collection cont
   const s=await setup({videoCount:1,galleryVideoCount:1,galleryFrameCount:1});let player;
   try{
     await invoke(s.view,'gallery.open');await invoke(s.view,'panel.close',{id:'wb-gallery'});
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     const state=await invoke(player,'player.state');assert.equal(state.queue.options.parentTotal,1);assert.equal(state.queue.hasPrevious,true);assert.equal(state.queue.hasNext,true);
-    await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    const point=await player.evaluate("(()=>{const button=document.getElementById('next'),r=button.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disabled:button.disabled}})()");assert.equal(point.disabled,false);assert.equal(await player.evaluate(`document.elementFromPoint(${point.x},${point.y})===document.getElementById('next')`),true);
+    await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});await playerEvaluate(player,'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const point=await playerEvaluate(player,"(()=>{const button=playerElement('next'),r=button.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disabled:button.disabled}})()");assert.equal(point.disabled,false);assert.equal(await playerEvaluate(player,`document.elementFromPoint(${point.x},${point.y})===playerElement('next')`),true);
     await player.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x:point.x,y:point.y});await player.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x:point.x,y:point.y});player.close();player=null;
     const image=await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading?value:null;},'single-item parent returns through the actual arrow');assert.equal(image.index,0);assert.equal(image.total,1);assert.equal(image.current.videoId,'video-0');
   }finally{player?.close();await s.close();}
@@ -550,9 +551,9 @@ test('video arrows still pop the parent preview when that parent collection cont
 test('replaying the same screenshot uses a new child identity and consumes each return only once',native,async()=>{
   const s=await setup();let player;
   try{
-    await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:3});await invoke(s.view,'image.playVideo');player=await target(s.app,'rhvideo-player.html');const first=await invoke(player,'player.state');
+    await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:3});await invoke(s.view,'image.playVideo');player=await nativePlayerView(s.app);const first=await invoke(player,'player.state');
     await command(s.app,'player.back');player.close();player=null;await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading;},'first child returns before replay');
-    await invoke(s.view,'image.playVideo');player=await target(s.app,'rhvideo-player.html');const second=await invoke(player,'player.state');assert.equal(second.queue.options.parentPreview,first.queue.options.parentPreview);assert.notEqual(second.queue.options.parentPlayback,first.queue.options.parentPlayback);
+    await invoke(s.view,'image.playVideo');player=await nativePlayerView(s.app);const second=await invoke(player,'player.state');assert.equal(second.queue.options.parentPreview,first.queue.options.parentPreview);assert.notEqual(second.queue.options.parentPlayback,first.queue.options.parentPlayback);
     const event={generation:first.generation,parentKey:first.queue.options.parentKey,parentPreview:first.queue.options.parentPreview,parentPlayback:first.queue.options.parentPlayback,close:true};assert.equal((await invoke(s.view,'image.returnFromVideo',event)).stale,true);
     const actual=await invoke(player,'player.state');assert.equal(actual.opened,true);assert.equal(actual.inputId,second.inputId,'an old whole-close cannot stop a newer child of the same image');
     await command(s.app,'player.back');player.close();player=null;await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading&&value.index===3;},'current child return accepted');
@@ -568,7 +569,7 @@ test('a delayed real video-card click cannot take over a newer clicked video or 
     await s.view.evaluate("window.__playPost=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...rest){if(!window.__heldPlay&&message.action==='query'&&message.args.kind==='gallery'&&message.args.locate?.videoId){window.__heldPlay={worker:this,message,rest};return;}return window.__playPost.call(this,message,...rest);};true");
     const click=async id=>{await s.view.evaluate("document.querySelector('.media-card[data-id="+JSON.stringify(id)+"] .cover-button').scrollIntoView({block:'center'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");const point=await s.view.evaluate("(()=>{const n=document.querySelector('.media-card[data-id="+JSON.stringify(id)+"] .cover-button'),r=n.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return {x,y,hit:document.elementFromPoint(x,y)?.closest('.media-card')?.dataset.id};})()");assert.equal(point.hit,id,'the real pointer must hit the requested visible card');const {x,y}=point;await s.view.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,x,y});await s.view.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,x,y});};
     await click('video-0');await until(()=>s.view.evaluate('!!window.__heldPlay'),'first real card is awaiting gallery metadata');
-    await click('video-1');player=await target(s.app,'rhvideo-player.html');
+    await click('video-1');player=await nativePlayerView(s.app);
     const shown=await until(async()=>{const v=await invoke(player,'player.state');return v.queue?.id==='video-1'&&v.renderedFrames>0?v:null;},'newer clicked video displays actual native frames',25000);
     await s.view.evaluate("Worker.prototype.postMessage=window.__playPost;const held=window.__heldPlay,receive=held.worker.onmessage;held.worker.onmessage=function(event){receive.call(this,event);if(event.data.id===held.message.id)window.__oldPlayDelivered=true;};window.__playPost.call(held.worker,held.message,...held.rest);true");
     await until(()=>s.view.evaluate('window.__oldPlayDelivered===true'),'old gallery response delivered');
@@ -592,7 +593,7 @@ test('single-video smart rotation toggles back, preserves pause/time/rate, and p
     console.log(JSON.stringify({nativeRotationScreenshot:saved,width,height,colors}));
   };
   try{
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0&&v.videoHeight>v.videoWidth;},'actual portrait source before rotation',25000);
     await invoke(player,'player.control',{command:'rate',value:1.5});await invoke(player,'player.control',{command:'pause'});await invoke(player,'player.control',{command:'seek',value:5000});
     await until(async()=>{const v=await invoke(player,'player.state');return v.state===4&&Math.abs(v.positionMs-5000)<250;},'initial paused position');
@@ -608,35 +609,35 @@ test('single-video smart rotation toggles back, preserves pause/time/rate, and p
     await capture(off,'rhvideo-rotation-off');
     await invoke(player,'player.rotate');await until(async()=>{const v=await invoke(player,'player.state');return v.rotation===90&&v.renderedFrames>0&&!v.restoringPausedFrame;},'enabled rotation reapplied',25000);
     await invoke(s.view,'player.close');player.close();player=null;
-    await invoke(s.view,'media.open',{kind:'video',id:'video-2'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-2'});player=await nativePlayerView(s.app);
     const landscape=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'next source actually renders',25000);
     assert.equal(landscape.autoRotate,true);assert.equal(landscape.rotation,0,'a wide source must not inherit the portrait angle');
     const oldSnapshot=await command(s.app,'preferences');await command(s.app,'preferences',{value:{...oldSnapshot,autoRotate:false}});assert.equal((await invoke(s.view,'rotation.state')).enabled,true,'a stale library save cannot overwrite the newer player choice');
     await invoke(s.view,'player.close');player.close();player=null;
     await invoke(s.view,'connection.logout');await invoke(s.view,'connection.connect',{server:s.fixture.url,username:'preview',password:'fixture-only'});
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     const reopened=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'rotation preference survives reopening same account',25000);assert.equal(reopened.autoRotate,true);assert.equal(reopened.rotation,90);
     await assert.rejects(invoke(player,'player.control',{command:'autoRotate',enabled:false,expectedInput:rotated.inputId}),/播放输入已改变/);assert.equal((await invoke(s.view,'rotation.state')).enabled,true);
     await invoke(s.view,'player.close');player.close();player=null;await invoke(s.view,'connection.logout');await invoke(s.view,'connection.connect',{server:s.fixture.url,username:'other',password:'fixture-only'});
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');const other=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'other account default actual frame',25000);assert.equal(other.autoRotate,false);assert.equal(other.rotation,0);
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);const other=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0?v:null;},'other account default actual frame',25000);assert.equal(other.autoRotate,false);assert.equal(other.rotation,0);
   }finally{player?.close();await s.close();}
 });
 
 test('a real seek drag stays bound to the input where it started when the queue advances',native,async()=>{
   const s=await setup({videoDuration:20});let player;
   try{
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     const first=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0&&v.durationMs>0?v:null;},'first native seek target',25000);
-    await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    await player.evaluate("window.__seekEvents=[];for(const name of ['pointerdown','input','change','pointerup'])document.getElementById('seek').addEventListener(name,event=>window.__seekEvents.push({name,value:event.target.value,trusted:event.isTrusted}),true);true");
-    const point=await player.evaluate("(()=>{const r=document.getElementById('seek').getBoundingClientRect();return {x:r.x+r.width*.75,y:r.y+r.height/2};})()");
+    await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});await playerEvaluate(player,'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await playerEvaluate(player,"window.__seekEvents=[];for(const name of ['pointerdown','input','change','pointerup'])playerElement('seek').addEventListener(name,event=>window.__seekEvents.push({name,value:event.target.value,trusted:event.isTrusted}),true);true");
+    const point=await playerEvaluate(player,"(()=>{const r=playerElement('seek').getBoundingClientRect();return {x:r.x+r.width*.75,y:r.y+r.height/2};})()");
     await player.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...point});
     await invoke(player,'player.next');
     const next=await until(async()=>{const v=await invoke(player,'player.state');return v.inputId!==first.inputId&&v.renderedFrames>0?v:null;},'queue advanced during the held drag',25000);
     await invoke(player,'player.control',{command:'pause'});
     await player.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...point});
-    console.log(JSON.stringify({seekDrag:await player.evaluate("({events:window.__seekEvents,error:document.getElementById('error').textContent})"),released:await invoke(player,'player.state')}));
-    await until(()=>player.evaluate("document.getElementById('error').textContent.includes('旧操作未执行')"),'old drag is rejected visibly rather than seeking the new video');
+    console.log(JSON.stringify({seekDrag:await playerEvaluate(player,"({events:window.__seekEvents,error:playerElement('error').textContent})"),released:await invoke(player,'player.state')}));
+    await until(()=>playerEvaluate(player,"playerElement('error').textContent.includes('旧操作未执行')"),'old drag is rejected visibly rather than seeking the new video');
     const current=await invoke(player,'player.state');assert.equal(current.inputId,next.inputId);assert(current.positionMs<8000,'releasing an old 75% drag must not seek the new input');
   }finally{player?.close();await s.close();}
 });
@@ -644,11 +645,11 @@ test('a real seek drag stays bound to the input where it started when the queue 
 test('a real total-progress drag survives Next but cannot seek a replacement time plan',native,async()=>{
   const s=await setup({videoDuration:20});let player;
   try{
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     const first=await until(async()=>{const v=await invoke(player,'player.state');return v.renderedFrames>0&&v.durationMs>0?v:null;},'initial total-progress target',25000);
     await player.send('Emulation.setFocusEmulationEnabled',{enabled:true});
-    await player.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    const point=await player.evaluate("(()=>{const r=document.getElementById('queue-seek').getBoundingClientRect();return {x:r.x+r.width*.75,y:r.y+r.height/2};})()");
+    await playerEvaluate(player,'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const point=await playerEvaluate(player,"(()=>{const r=playerElement('queue-seek').getBoundingClientRect();return {x:r.x+r.width*.75,y:r.y+r.height/2};})()");
     const down=(at=point)=>player.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...at});
     const up=(at=point)=>player.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...at});
     await down();await invoke(player,'player.next');
@@ -658,12 +659,12 @@ test('a real total-progress drag survives Next but cannot seek a replacement tim
     await invoke(player,'player.control',{command:'pause'});
     // Make a genuinely different value, otherwise a second click at the same
     // position produces no native HTML range change/commit at all.
-    const secondPoint=await player.evaluate("(()=>{const r=document.getElementById('queue-seek').getBoundingClientRect();return {x:r.x+r.width*.25,y:r.y+r.height/2};})()");
-    await player.evaluate("window.__queueDragEvents=[];for(const name of ['pointerdown','input','change','pointerup'])document.getElementById('queue-seek').addEventListener(name,event=>window.__queueDragEvents.push({name,value:event.target.value,trusted:event.isTrusted}),true);true");
+    const secondPoint=await playerEvaluate(player,"(()=>{const r=playerElement('queue-seek').getBoundingClientRect();return {x:r.x+r.width*.25,y:r.y+r.height/2};})()");
+    await playerEvaluate(player,"window.__queueDragEvents=[];for(const name of ['pointerdown','input','change','pointerup'])playerElement('queue-seek').addEventListener(name,event=>window.__queueDragEvents.push({name,value:event.target.value,trusted:event.isTrusted}),true);true");
     await down(secondPoint);await invoke(player,'player.options',{fullLength:false,segment:2});
     const changed=await invoke(player,'player.state');assert.notEqual(changed.queue.planRevision,seeked.queue.planRevision);
-    await up(secondPoint);await until(()=>player.evaluate("document.getElementById('error').textContent.includes('播放队列已改变')"),'replaced plan is rejected visibly');
-    console.log(JSON.stringify({queueDrag:await player.evaluate('window.__queueDragEvents'),beforePlan:seeked.queue.planRevision,afterPlan:changed.queue.planRevision,inputBeforeRejection:changed.inputId}));
+    await up(secondPoint);await until(()=>playerEvaluate(player,"playerElement('error').textContent.includes('播放队列已改变')"),'replaced plan is rejected visibly');
+    console.log(JSON.stringify({queueDrag:await playerEvaluate(player,'window.__queueDragEvents'),beforePlan:seeked.queue.planRevision,afterPlan:changed.queue.planRevision,inputBeforeRejection:changed.inputId}));
     assert.equal((await invoke(player,'player.state')).inputId,changed.inputId,'old drag does not replace the current native source');
     await assert.rejects(invoke(player,'player.seekQueue',{ratio:.5,expectedPlanRevision:seeked.queue.planRevision}),/播放队列已改变/);
   }finally{player?.close();await s.close();}
@@ -675,7 +676,7 @@ test('independent prepared tickets survive interleaved chunks and discarding one
   try{
     await prepare('draft-a',true,['video-0']);await prepare('draft-b',true,['video-2']);
     assert.equal((await prepare('draft-a',false,['video-1'])).count,2,'another ticket cannot invalidate an earlier draft or its later chunks');
-    await command(s.app,'play',{playlist:'draft-b',id:'video-2',title:'B'});player=await target(s.app,'rhvideo-player.html');
+    await command(s.app,'play',{playlist:'draft-b',id:'video-2',title:'B'});player=await nativePlayerView(s.app);
     const first=await invoke(player,'player.state');assert.equal(first.queue.id,'video-2');assert.equal(first.queue.total,1);
     await prepare('discarded-draft',true,['video-0']);assert.equal((await command(s.app,'playlist.discard',{ticket:'discarded-draft'})).removed,true);assert.equal((await command(s.app,'playlist.discard',{ticket:'discarded-draft'})).removed,false);
     assert.equal((await invoke(player,'player.state')).inputId,first.inputId,'draft cleanup is not a player-close action');
@@ -702,7 +703,7 @@ test('a delayed screenshot switch cannot play, favorite or mark the old target; 
     await invoke(s.view,'image.step',{direction:1});const latest=await invoke(s.view,'image.state');assert.equal(latest.index,9);assert.equal(latest.loading,false);assert.equal(latest.current.videoId,'video-1');
     await s.view.evaluate('Worker.prototype.postMessage=window.__imagePost;window.__imagePost.call(window.__heldImage.worker,window.__heldImage.message,...window.__heldImage.rest);true');
     assert.equal((await s.view.evaluate('window.__imageFirst')).stale,true);assert.equal((await invoke(s.view,'image.state')).index,9);
-    await invoke(s.view,'image.playVideo');player=await target(s.app,'rhvideo-player.html');assert.equal((await invoke(player,'player.state')).queue.id,'video-1');
+    await invoke(s.view,'image.playVideo');player=await nativePlayerView(s.app);assert.equal((await invoke(player,'player.state')).queue.id,'video-1');
     await until(async()=>(await invoke(player,'player.state')).renderedFrames>0,'actual new screenshot source frame',25000);
   }finally{player?.close();await s.close();}
 });
@@ -785,7 +786,7 @@ test('full-length playback with missing catalog duration is not cut off at the s
   const s=await setup({videoMetadataDuration:0});let player;
   try{
     await invoke(s.view,'preferences.set',{key:'fullLength',value:true});
-    await invoke(s.view,'playlist.start');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.start');player=await nativePlayerView(s.app);
     const initial=await invoke(player,'player.state');assert.equal(initial.queue.segmentDuration,0);assert.equal(initial.queue.segmentLengthMs,86400000,'reference full-length uses a one-day unknown-duration guard, not the three-second segment setting');
     await until(async()=>(await invoke(player,'player.state')).renderedFrames>0,'unknown-duration source actually displays frames',25000);
     await invoke(player,'player.control',{command:'pause'});
@@ -799,7 +800,7 @@ test('full-length playback with missing catalog duration is not cut off at the s
 test('native-input public APIs bind single and grid intents to exact decoder instances and expose group seeking',native,async()=>{
   const s=await setup({galleryVideoCount:6});let player,grid;
   try{
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     const first=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'single native frame before input',25000);assert(Number.isSafeInteger(first.inputId));
     const input=async(intent,inputId)=>(invoke(player,'player.input',{inputId:inputId??(await invoke(player,'player.state')).inputId,intent}));
     await input('toggle');await until(async()=>(await invoke(player,'player.state')).state===4,'native pause intent');
@@ -938,7 +939,7 @@ test('changing a segment while the new stream has no metadata defers one bounded
   let blocked=false,release;const gate=new Promise(resolve=>release=resolve);
   const s=await setup({portraitIndices:[0,2,3],videoDuration:20,beforeMedia:async({image})=>{if(!image&&blocked)await gate;return null;}});let player;
   try{
-    await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
     const first=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'initial metadata/frame',25000);
     blocked=true;await invoke(player,'player.options',{portraitOnly:true});
     await until(async()=>{const value=await invoke(player,'player.state');return value.inputId!==first.inputId&&value.durationMs===0;},'new decoder awaiting the gated stream');
@@ -954,7 +955,7 @@ test('closing a parent preview stops its video; an old return cannot navigate a 
   const s=await setup();let player;
   try{
     await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:0});
-    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'image.playFrame');player=await nativePlayerView(s.app);
     const old=await invoke(player,'player.state');
     await invoke(s.view,'image.close');player.close();player=null;
     assert.equal((await command(s.app,'player.state')).opened,false,'closing the parent ends the complete preview stack');
@@ -968,7 +969,7 @@ test('closing a parent preview stops its video; an old return cannot navigate a 
 test('a reused player window adopts the new native session and never sends favorite writes to its former server',native,async()=>{
   const s=await setup();let player,other;
   try{
-    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await target(s.app,'rhvideo-player.html');
+    await invoke(s.view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(s.app);
     const old=await invoke(player,'player.state');
     other=await rhvideoFixture({videoFile:path.join(s.app.directory,'behavior.mp4'),videoDuration:14,videoCount:6});
     await invoke(s.view,'connection.connect',{server:other.url,username:'preview',password:'fixture-only'});
@@ -981,11 +982,12 @@ test('a reused player window adopts the new native session and never sends favor
 test('native player UI preserves failures and ABA guards for committed controls',{...native,timeout:180000},async()=>{
  const s=await setup({videoDuration:30,failFavoriteIds:Array.from({length:6},(_,i)=>'video:video-'+i)}),receipt={passed:false,cases:[]};let player;
  try{
-  await invoke(s.view,'preferences.set',{key:'fullLength',value:true});await invoke(s.view,'playlist.sequential');player=await target(s.app,'rhvideo-player.html');
-  const raw=(action,args={})=>player.evaluate('RHFilesAPI.invoke('+JSON.stringify(action)+','+JSON.stringify(args)+')');
-  const observe=(action,args={})=>player.evaluate('RHFilesAPI.invoke('+JSON.stringify(action)+','+JSON.stringify(args)+').then(value=>({succeeded:true,value}),error=>({succeeded:false,code:error.code??"ACTION_FAILED",message:String(error.message||error)}))');
+  await invoke(s.view,'preferences.set',{key:'fullLength',value:true});await invoke(s.view,'playlist.sequential');player=await nativePlayerView(s.app);
+  const scopedAction=action=>action.startsWith('rhvideo.player.')?playerAction(player,action.slice(8)):action;
+  const raw=(action,args={})=>playerEvaluate(player,'RHFilesAPI.invoke('+JSON.stringify(scopedAction(action))+','+JSON.stringify(args)+')');
+  const observe=(action,args={})=>playerEvaluate(player,'RHFilesAPI.invoke('+JSON.stringify(scopedAction(action))+','+JSON.stringify(args)+').then(value=>({succeeded:true,value}),error=>({succeeded:false,code:error.code??"ACTION_FAILED",message:String(error.message||error)}))');
   const live=()=>until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'actual native source for committed UI controls',25000);
-  const control=async id=>{const value=(await raw('ui.list')).find(row=>row.id===id);assert(value?.enabled&&value.visible,'Actual enabled control '+id);return value;};
+  const control=async id=>{const value=(await raw('ui.list')).find(row=>row.id===playerElementId(player,id));assert(value?.enabled&&value.visible,'Actual enabled control '+id);return value;};
   await live();
   for(const id of ['seek','volume']){
    const first=await invoke(player,'player.state'),field=await control(id);await raw('ui.invoke',{controlId:field.controlId,event:'pointerdown',data:{button:0}});
@@ -994,7 +996,7 @@ test('native player UI preserves failures and ABA guards for committed controls'
    const value=id==='seek'?'750':'43',args={command:id==='seek'?'seek':'volume',value:id==='seek'?Math.round(.75*first.durationMs):43,expectedInput:first.inputId};
    const semantic=await observe('rhvideo.player.control',args),result=await observe('ui.set',{controlId:field.controlId,value});receipt.cases.push({id,originalInput:first.inputId,replacementInput:replacement.inputId,semantic,result});
    assert.equal(semantic.succeeded,false);assert.match(semantic.message,/播放输入已改变/);assert.equal(result.succeeded,false,'An old '+id+' gesture cannot report successful UI completion');assert.equal(result.code,semantic.code);assert.equal(result.message,semantic.message);
-   const after=await invoke(player,'player.state');assert.equal(after.inputId,replacement.inputId);assert.equal(after.queue.id,replacement.queue.id);assert.equal(after.volume,replacement.volume,'A stale gesture cannot change replacement volume');assert.match(await player.evaluate('document.getElementById("error").textContent'),/播放输入已改变/);
+   const after=await invoke(player,'player.state');assert.equal(after.inputId,replacement.inputId);assert.equal(after.queue.id,replacement.queue.id);assert.equal(after.volume,replacement.volume,'A stale gesture cannot change replacement volume');assert.match(await playerEvaluate(player,"playerElement(\"error\").textContent"),/播放输入已改变/);
   }
   const beforePlan=await invoke(player,'player.state'),queue=await control('queue-seek');await raw('ui.invoke',{controlId:queue.controlId,event:'pointerdown',data:{button:0}});
   await invoke(s.view,'playlist.sequential');const freshPlan=await live();assert.notEqual(freshPlan.queue.planRevision,beforePlan.queue.planRevision);
@@ -1018,11 +1020,11 @@ test('clicking the screenshot itself plays its source from the start; the explic
     await s.view.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const point=await s.view.evaluate("(()=>{const r=document.getElementById('full-image').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
     await s.view.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await s.view.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
-    player=await target(s.app,'rhvideo-player.html');const start=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'actual source frame from screenshot click',25000);assert.equal(start.queue.id,image.current.videoId);assert(start.positionMs<3000,'the reference screenshot click plays the source, not the selected frame timestamp');
+    player=await nativePlayerView(s.app);const start=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0?value:null;},'actual source frame from screenshot click',25000);assert.equal(start.queue.id,image.current.videoId);assert(start.positionMs<3000,'the reference screenshot click plays the source, not the selected frame timestamp');
     await command(s.app,'player.back');player.close();player=null;
     // Native close emits the parent-return event asynchronously. Do not issue
     // a second play while that image is still resolving its new capability.
     await until(async()=>{const value=await invoke(s.view,'image.state');return value.opened&&!value.loading&&value.current?.id===image.current.id;},'parent screenshot ready before a new play');
-    await invoke(s.view,'image.playFrame');player=await target(s.app,'rhvideo-player.html');const frame=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0&&value.positionMs>=5900?value:null;},'actual explicit screenshot-time frame',25000);assert.equal(frame.queue.id,image.current.videoId);
+    await invoke(s.view,'image.playFrame');player=await nativePlayerView(s.app);const frame=await until(async()=>{const value=await invoke(player,'player.state');return value.renderedFrames>0&&value.positionMs>=5900?value:null;},'actual explicit screenshot-time frame',25000);assert.equal(frame.queue.id,image.current.videoId);
   }finally{player?.close();await s.close();}
 });

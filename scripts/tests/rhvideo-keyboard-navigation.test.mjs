@@ -8,8 +8,8 @@ const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.
 let listener;
 function visit(node){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&node.callee?.name==='listen'&&node.arguments[0]?.name==='document'&&node.arguments[1]?.value==='keydown'&&node.arguments[3]?.value==='keyboard')listener=source.slice(node.arguments[2].start,node.arguments[2].end);for(const value of Object.values(node))if(Array.isArray(value))value.forEach(visit);else if(value&&typeof value==='object')visit(value);}
 visit(parse(source,{ecmaVersion:'latest'}));assert(listener,'Execute the actual workbench keyboard handler');
-function fixture({scope='viewer',editing=false,blocked=false,shortcuts={}}={}){
-  const calls=[],context=vm.createContext({$:id=>({open:id===({'viewer':'wb-viewer','reader':'reader-dialog','image':'image-dialog'})[scope]||blocked&&id==='wb-confirm'}),invoke:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args))});return Promise.resolve();},notice(){},shortcutDefaults:{viewer:{toggle:'Space',previous:'ArrowLeft',next:'ArrowRight'},reader:{previous:'ArrowLeft',next:'ArrowRight'},image:{previous:'ArrowLeft',next:'ArrowRight'}},prefs:{shortcuts}});
+function fixture({scope='viewer',editing=false,blocked=false,nativeTop=false,shortcuts={}}={}){
+  const calls=[],context=vm.createContext({nativeHost:{isTop:()=>nativeTop},$:id=>({open:id===({'viewer':'wb-viewer','reader':'reader-dialog','image':'image-dialog'})[scope]||blocked&&id==='wb-confirm'}),invoke:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args))});return Promise.resolve();},notice(){},shortcutDefaults:{viewer:{toggle:'Space',previous:'ArrowLeft',next:'ArrowRight'},reader:{previous:'ArrowLeft',next:'ArrowRight'},image:{previous:'ArrowLeft',next:'ArrowRight'}},prefs:{shortcuts}});
   const handler=vm.runInContext('('+listener+')',context);
   return {calls,dispatch(values){const event={key:'End',code:'End',ctrlKey:false,altKey:false,shiftKey:false,metaKey:false,defaultPrevented:false,target:{closest:()=>editing},preventDefault(){this.defaultPrevented=true;},stopImmediatePropagation(){this.stopped=true;},...values};handler(event);return event;}};
 }
@@ -29,6 +29,7 @@ test('navigation keeps modifier, editor, confirmation and non-viewer boundaries'
 test('ordinary configured physical shortcuts are unchanged',()=>{
   const qa=fixture({shortcuts:{viewer:{next:'KeyQ'}}});qa.dispatch({key:'й',code:'KeyQ'});assert.deepEqual(qa.calls,[{name:'viewer.step',args:{direction:1}}]);
 });
+test('a top native player leaves keyboard ownership to its own scoped controller',()=>{const qa=fixture({nativeTop:true});const event=qa.dispatch({key:'End',code:'End'});assert.deepEqual(qa.calls,[]);assert.equal(event.defaultPrevented,false);});
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html');
 test('differential: original favorite slideshow accepts semantic Home/End, including keypad navigation',{skip:!fs.existsSync(reference)},()=>{
   let original;for(const script of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(script[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration'&&node.id?.name==='favshowKeyHandler')original=script[1].slice(node.start,node.end);assert(original);

@@ -28,7 +28,7 @@ test('an account change while close waits cannot stop the replacement account',(
 });
 for(const [name,start,end] of [['open','"play" => {','"player.repeatCurrent"'],['navigate','"player.next" | "player.previous" | "player.seekQueue" | "player.seekParent" => {','"player.options" => {'],['options','"player.options" => {','"player.diagnosticFrame"']])test(name+' rejects a retired queued preparation before changing playback',()=>{
   const body=branch(request,start,end),locked=body.indexOf('PLAY_LOCK.lock().await');assert(locked>=0);
-  assert.match(body.slice(locked,locked+105),/preparation\.ensure_current\(\)\?/);
+  const fence=body.indexOf('preparation.ensure_current()?',locked);assert(fence>locked);assert.match(body.slice(locked,fence),/^PLAY_LOCK\.lock\(\)\.await;\s*(?:#\[cfg\(windows\)\]crate::rhvideo_player::check_host\(&args\)\?;)?\s*$/);
 });
 test('decoder construction and input opening use the captured fence, not a refreshed ticket',()=>{
   const body=player.slice(player.indexOf('pub async fn play('),player.indexOf('pub fn repeat_from('));

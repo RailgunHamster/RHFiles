@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {launchApp,until} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
+import {nativePlayerView,playerEvaluate} from '../testing/native-player-view.mjs';
 import {realRhVideoService} from '../testing/rhvideo-real-service.mjs';
 
 test('actual RHVideo duplicate scan/review, native playback and recoverable source bytes',{timeout:180000},async t=>{
@@ -37,8 +38,8 @@ test('actual RHVideo duplicate scan/review, native playback and recoverable sour
   await click('[data-duplicate-kind="video"]');
   await until(async()=>(await state()).groups.length===1&&(await state()).groups[0].media_type==='video','real video group filter');
   await click('[data-member-key="video:real-video"] [data-api-action="rhvideo.duplicates.play"]');
-  const player=await cdpSession(await target('rhvideo-player.html'),30000);
-  try{await until(async()=>{const playback=await player.evaluate("RHFilesAPI.invoke('rhvideo.player.state')");return playback.renderedFrames>0&&playback.positionMs>250;},'duplicate item really plays with native decoder',25000);}finally{await invoke('player.close');player.close();}
+  const player=await nativePlayerView(app);
+  try{await until(async()=>{const playback=await playerEvaluate(player,"playerInvoke('state')");return playback.renderedFrames>0&&playback.positionMs>250;},'duplicate item really plays with native decoder',25000);}finally{await invoke('player.close');player.close();}
   await click('[data-duplicate-kind="picture"]');await until(async()=>(await state()).groups[0]?.media_type==='picture','real picture group filter');
   while((await state()).groups[0].members.items.length<28){const before=(await state()).groups[0].members.items.length;await click('[data-api-action="rhvideo.duplicates.more"]');await until(async()=>(await state()).groups[0].members.items.length>before,'next real member page');}
   current=await state();assert.equal(current.groups[0].members.items.length,28);

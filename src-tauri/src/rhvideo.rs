@@ -21,6 +21,8 @@ use std::{
 };
 use tauri::{AppHandle, Manager, Emitter};
 use url::Url;
+#[path="rhvideo_player_host.rs"]
+pub(crate) mod player_host;
 #[path = "rhvideo_contract.rs"]
 mod contract;
 #[path = "rhvideo_config.rs"]
@@ -1346,6 +1348,7 @@ pub(crate) async fn client_window(
                     .with_environment(platform.environment()),
             )
             .build()
+            .inspect(crate::rhvideo_player::install_library_host_lifetime)
             .inspect(crate::rhvideo_player::install_window_trace)
             .inspect(|window|{
                 #[cfg(any(debug_assertions,feature="rhvideo-host-trace"))]
@@ -1487,6 +1490,7 @@ async fn native_play(
     seconds: f64,
     low_bandwidth: bool,
     preparation: &play_intent::Preparation,
+    host:player_host::Target,
 ) -> Result<Value, String> {
     preparation.ensure_current()?;
     let path = format!(
@@ -1497,14 +1501,14 @@ async fn native_play(
     #[cfg(windows)]
     {
         let rotation=rotation_policy(session,id)?;
-        let result=crate::rhvideo_player::play(app, url, title, seconds,rotation,preparation.clone()).await?;
+        let result=crate::rhvideo_player::play(app, url, title, seconds,rotation,preparation.clone(),host,session.generation).await?;
         preparation.ensure_current()?;
         if !current().is_ok_and(|s|s.generation==session.generation){crate::rhvideo_player::close_single().await?;return Err("播放期间媒体账户已更改；旧播放已停止".into());}
         Ok(result)
     }
     #[cfg(not(windows))]
     {
-        let _ = (app, url, title, seconds);
+        let _ = (app, url, title, seconds,host);
         Err("此体验版的原生 RHVideo 播放暂仅支持 Windows".into())
     }
 }
@@ -1532,6 +1536,22 @@ pub async fn rhvideo_open(app: AppHandle) -> Result<Value, String> {
 }
 fn focus_library(app:&AppHandle){
     if let Some(window)=app.get_webview_window("window-rhvideo"){let _=window.unminimize();let _=window.show();let _=window.set_focus();let webview:&tauri::Webview=window.as_ref();let _=webview.set_focus();}
+}
+fn finish_player_view(app:&AppHandle,reason:&str)->Result<(),String>{
+    #[cfg(windows)]if crate::rhvideo_player::finish_host_view(app,reason)?{return Ok(());}
+    #[cfg(not(windows))]if let Some(window)=app.get_webview_window("window-rhvideo-player"){window.close().map_err(|e|e.to_string())?;}
+    focus_library(app);Ok(())
+}
+#[cfg(windows)]
+async fn close_library_scope(app:AppHandle,args:Value,reason:&str)->Result<Value,String>{
+    let session=current()?;let(retired,lease,owner)=crate::rhvideo_player::retire_library_scope(&args,session.generation)?;
+    if !retired{return Ok(json!({"closed":false,"stale":true}));}
+    let _play=PLAY_LOCK.lock().await;
+    if !lease.is_some_and(|lease|crate::rhvideo_player::owns_retired_scope(owner,lease,session.generation)){return Ok(json!({"closed":true,"pending":true}));}
+    let context=PLAYBACK.lock().ok().and_then(|q|q.as_ref().filter(|q|q.generation==session.generation).map(|q|q.options.clone()));
+    flush_playback();*PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;crate::rhvideo_player::close_single().await?;finish_player_view(&app,reason)?;
+    if let Some(options)=context{emit_parent_preview(&app,session.generation,&options,0,reason=="close");if reason=="close"||options["deferPreviewCommit"]!=true{let _=start_preview_commit(app,session);}}
+    Ok(json!({"closed":true}))
 }
 #[cfg(all(windows,debug_assertions))]
 async fn diagnostic_windows(app:&AppHandle)->Result<Value,String>{
@@ -1633,7 +1653,12 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
     if !args.is_object() {
         return Err("参数必须是 JSON 对象".into());
     }
+    #[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
     match action.as_str() {
+        "player.hostContext"=>{current()?;#[cfg(windows)]{return crate::rhvideo_player::library_host_context();}#[cfg(not(windows))]{return Err("此平台未使用桌面原生宿主".into());}}
+        "player.hostPrepare"=>{let session=current()?;#[cfg(windows)]{return crate::rhvideo_player::prepare_library_scope(&args,session.generation);}#[cfg(not(windows))]{let _=session;return Err("此平台未使用桌面原生宿主".into());}}
+        "player.closeHost"=>{let reason=args["reason"].as_str().filter(|value|["close","back"].contains(value)).ok_or("关闭面板操作无效")?;#[cfg(windows)]{return close_library_scope(app,args.clone(),reason).await;}#[cfg(not(windows))]{return Err("此平台未使用桌面原生宿主".into());}}
+        "player.bounds"=>{current()?;let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;#[cfg(windows)]{return crate::rhvideo_player::single_bounds(app,args).await;}#[cfg(not(windows))]{return Err("此平台未使用桌面原生宿主".into());}}
         #[cfg(all(windows,debug_assertions))]
         "diagnostics.windows"=>return diagnostic_windows(&app).await,
         #[cfg(all(windows,debug_assertions))]
@@ -1648,21 +1673,24 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         }
         "player.close" | "player.back" => {
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
+            #[cfg(windows)]if let Some(scope)=crate::rhvideo_player::library_scope(){return close_library_scope(app,scope,if action=="player.back"{"back"}else{"close"}).await;}
             // Do not wait behind a decoder constructor before cancelling its
             // input. The per-account fence also covers work queued before a
             // native window exists. Stale explicit inputs cannot revoke it.
             let closing_session=current().ok();
             let closing_generation=closing_session.as_ref().map(|s|s.generation).unwrap_or_else(||GENERATION.load(Ordering::SeqCst));
-            if let Some(session)=closing_session{session.play_preparation.cancel();}
-            let _play=PLAY_LOCK.lock().await;
+            if let Some(session)=closing_session{
+                #[cfg(windows)]crate::rhvideo_player::cancel_popup_preparation(session.generation,||{session.play_preparation.cancel();})?;
+                #[cfg(not(windows))]session.play_preparation.cancel();
+            }
+            let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             if GENERATION.load(Ordering::SeqCst)!=closing_generation{return Err("媒体账户已改变，旧关闭操作未执行".into());}
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             let context=PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|(q.generation,q.options.clone())));
             flush_playback();
             *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
             #[cfg(windows)]crate::rhvideo_player::close_single().await?;
-            if let Some(window)=app.get_webview_window("window-rhvideo-player") { window.close().map_err(|e|format!("播放器已停止，但窗口关闭失败：{e}"))?; }
-            focus_library(&app);
+            finish_player_view(&app,&action)?;
             if let Some((generation,options))=context {
                 emit_parent_preview(&app,generation,&options,0,action=="player.close");
                 if action=="player.close"||options["deferPreviewCommit"]!=true {if let Ok(session)=current(){let _=start_preview_commit(app,session);}}
@@ -1670,14 +1698,13 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             return Ok(json!({"closed":true}));
         }
         "player.closeParent"=>{
-            let _play=PLAY_LOCK.lock().await;
+            let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             text(&args,"parentPreview",128)?;
             let matches=PLAYBACK.lock().map_err(|_|"播放队列不可用")?.as_ref().is_some_and(|q|owns_parent_preview(&q.options,&args));
             if !matches{return Ok(json!({"closed":false,"stale":true}));}
             flush_playback();*PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
             #[cfg(windows)]crate::rhvideo_player::close_single().await?;
-            if let Some(window)=app.get_webview_window("window-rhvideo-player"){window.close().map_err(|e|format!("播放器已停止，但窗口关闭失败：{e}"))?;}
-            focus_library(&app);return Ok(json!({"closed":true}));
+            finish_player_view(&app,"parent-close")?;return Ok(json!({"closed":true}));
         }
         "player.preloadState" => {
             current()?;
@@ -1692,7 +1719,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         }
         "player.preload" => {
             let session=current()?;let preparation=session.play_preparation.capture();
-            let _play=PLAY_LOCK.lock().await;preparation.ensure_current()?;
+            let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;preparation.ensure_current()?;
             return schedule_preload(app,session,&preparation);
         }
         "presentation.open" => {
@@ -1917,10 +1944,12 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             return Ok(json!({"closed":true}));
         }
         "player.fullscreen" => {
-            let _play=PLAY_LOCK.lock().await;
+            let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
+            #[cfg(windows)]let label=crate::rhvideo_player::player_window_label();
+            #[cfg(not(windows))]let label="window-rhvideo-player";
             let window = app
-                .get_webview_window("window-rhvideo-player")
+                .get_webview_window(label)
                 .ok_or("播放器尚未打开")?;
             let fullscreen = !window.is_fullscreen().map_err(|e| e.to_string())?;
             window
@@ -1953,7 +1982,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
             PREPARED.lock().map_err(|_| "播放队列状态不可用")?.clear();
             #[cfg(windows)]
-            crate::rhvideo_player::stop();
+            crate::rhvideo_player::stop()?;
             return Ok(state());
         }
         "register" => {
@@ -1991,7 +2020,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 };
                 PREPARED.lock().map_err(|_| "播放队列状态不可用")?.clear();
                 PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.take();
-                #[cfg(windows)]crate::rhvideo_player::stop();
+                #[cfg(windows)]crate::rhvideo_player::stop()?;
                 generation
             };
             let client = client()?;
@@ -2152,7 +2181,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             Ok(if args.get("value").is_some(){json!({"saved":true})}else{value})
         }
         "rotation.preference"=>{
-            let _play=PLAY_LOCK.lock().await;
+            let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             let enabled=args.get("enabled").map(|v|v.as_bool().ok_or("旋转开关无效")).transpose()?;
             #[cfg(windows)] if let Some(enabled)=enabled{
                 if PLAYBACK.lock().map_err(|_|"播放状态不可用")?.as_ref().is_some_and(|q|q.generation==session.generation){crate::rhvideo_player::command("player.control",&json!({"command":"autoRotate","enabled":enabled}))?;}
@@ -2386,7 +2415,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_REQUEST_STAGE play {stage} {}",started.elapsed().as_millis());}
             };
             trace("entry");
-            let _play = PLAY_LOCK.lock().await;
+            let _play = PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             preparation.ensure_current()?;
             trace("play-lock");
             let id = identifier(text(&args, "id", 128)?)?;
@@ -2460,6 +2489,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 seconds,
                 args.get("super").and_then(Value::as_bool) == Some(true),
                 &preparation,
+                player_host::Target::parse(args.get("host"))?,
             )
             .await?;
             trace("native-ready");
@@ -2472,7 +2502,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             if playback.options["reference"]!=true{*session.single_controls.lock().map_err(|_|"单视频设置不可用")?=SingleControls{looping:playback.options["loop"]==true,rate:playback.options["rate"].as_f64().unwrap_or(1.)};}
             *PLAYBACK.lock().map_err(|_| "播放队列状态不可用")? = Some(playback);
             trace("queue-ready");
-            let _=app.emit_to("window-rhvideo-player","rhvideo-player-session",json!({"generation":session.generation}));
+            #[cfg(windows)]let _=app.emit_to(crate::rhvideo_player::player_window_label(),"rhvideo-player-session",json!({"generation":session.generation}));
             trace("event-sent");
             if let Ok(mut error)=PLAY_MONITOR_ERROR.lock(){*error=None;}
             save_queue_state(&session)?;
@@ -2498,7 +2528,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             Ok(result)
         }
         "player.repeatCurrent" | "player.finishSegment" | "player.finishQueue" => {
-            let _play=PLAY_LOCK.lock().await;
+            let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             let expected_id=identifier(text(&args,"expectedId",128)?)?;
             let expected_revision=number(&args,"expectedRevision",0,u64::MAX)?;
             let (start,segment,enabled,close_at_end)={
@@ -2519,8 +2549,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                     flush_playback();
                     *PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
                     crate::rhvideo_player::close_single().await?;
-                    if let Some(w)=app.get_webview_window("window-rhvideo-player"){let _=w.close();}
-                    focus_library(&app);
+                    finish_player_view(&app,"finished")?;
                     let _=start_preview_commit(app,session.clone());
                     return Ok(json!({"closed":true,"finished":true}));
                 } else if action=="player.finishSegment" {
@@ -2533,7 +2562,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             #[cfg(not(windows))] {let _=(start,segment,enabled,close_at_end);return Err("此平台暂未接入原生播放器".into());}
         }
         "player.next" | "player.previous" | "player.seekQueue" | "player.seekParent" => {
-            let _play = PLAY_LOCK.lock().await;
+            let _play = PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             preparation.ensure_current()?;
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             if let Some(value)=args.get("expectedPlanRevision"){
@@ -2588,9 +2617,8 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 }else{None};
                 flush_playback();*PLAYBACK.lock().map_err(|_|"播放队列不可用")?=None;
                 #[cfg(windows)]crate::rhvideo_player::close_single().await?;
-                if let Some(w)=app.get_webview_window("window-rhvideo-player"){let _=w.close();}
+                finish_player_view(&app,"parent-return")?;
                 emit_parent_target(&app,session.generation,&options,if action=="player.seekParent"{0}else if action=="player.next"{1}else{-1},false,target);
-                focus_library(&app);
                 return Ok(json!({"closed":true,"returned":true}));
             }
             if action=="player.seekParent"{return Err("当前视频没有收藏浏览队列".into());}
@@ -2631,7 +2659,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                     })
                 })
                 .unwrap_or((false, 0.,1.));
-            let mut result = native_play(app.clone(), &session, &id, title, start, low, &preparation).await?;
+            let mut result = native_play(app.clone(), &session, &id, title, start, low, &preparation,player_host::Target::Current).await?;
             #[cfg(windows)]{crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
             #[cfg(not(windows))]let _=rate;
             if let Some(queue) = PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.as_mut()
@@ -2650,7 +2678,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             Ok(result)
         }
         "player.options" => {
-            let _play=PLAY_LOCK.lock().await;
+            let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
             preparation.ensure_current()?;
             let (replacement,reposition,repeating)={
             let mut slot = PLAYBACK.lock().map_err(|_| "播放队列不可用")?;
@@ -2713,7 +2741,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             if let Some(replacement)=replacement{
                 let (id,title)=replacement.items[replacement.index].clone();let start=replacement.bounds().0;
                 flush_playback();
-                native_play(app.clone(),&session,&id,title,start,replacement.options["super"]==true,&preparation).await?;
+                native_play(app.clone(),&session,&id,title,start,replacement.options["super"]==true,&preparation,player_host::Target::Current).await?;
                 #[cfg(windows)]{crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":replacement.options["rate"].as_f64().unwrap_or(1.)}))?;}
                 *PLAYBACK.lock().map_err(|_|"播放队列不可用")?=Some(replacement);
                 save_queue_state(&session)?;schedule_preload(app.clone(),session.clone(),&preparation)?;wake_playback_monitor(&app);
@@ -2732,7 +2760,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             Ok(queue_info())
         }
         "player.diagnosticFrame"=>{
-            #[cfg(windows)]{let _play=PLAY_LOCK.lock().await;crate::rhvideo_player::diagnostic_frame(&args)}
+            #[cfg(windows)]{let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;crate::rhvideo_player::diagnostic_frame(&args)}
             #[cfg(not(windows))]{Err("此平台未接入该诊断".into())}
         }
         "player.state" | "player.control" => {
@@ -2740,7 +2768,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             {
                 // Publish engine state and queue identity from the same
                 // transaction as play/options/close, not two different inputs.
-                let _play=PLAY_LOCK.lock().await;
+                let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
                 if action=="player.control"{preparation.ensure_current()?;}
                 let mut value = crate::rhvideo_player::command(&action, &args)?;
                 if action=="player.control"&&args["command"]=="autoRotate"{

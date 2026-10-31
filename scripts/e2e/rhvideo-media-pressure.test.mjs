@@ -6,6 +6,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
+import {nativePlayerView,playerAction,playerEvaluate} from '../testing/native-player-view.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 
 async function viewFor(app,file){
@@ -18,7 +19,7 @@ async function viewFor(app,file){
   await until(()=>view.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==='+JSON.stringify(action)+')'),'real UI APIs');
   return view;
 }
-const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
+const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify(playerAction(view,name))+','+JSON.stringify(args)+')');
 async function library(app,fixture){
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
   const view=await viewFor(app,'rhvideo.html');
@@ -87,13 +88,13 @@ test('clicking one video opens that exact file, not the selected/portrait-filter
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoDuration:12});view=await library(app,fixture);
     await invoke(view,'selection.toggle',{kind:'video',id:'video-0',enabled:true});
-    await invoke(view,'media.open',{kind:'video',id:'video-1'});player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'media.open',{kind:'video',id:'video-1'});player=await nativePlayerView(app);
     const state=await invoke(player,'player.state');
     assert.equal(state.queue.id,'video-1','the clicked ID must not silently become a different selected file');
     assert.equal(state.queue.total,1,'ordinary playback is distinct from explicitly starting a playlist');
     await invoke(view,'player.close');player.close();player=null;
     await invoke(view,'selection.clear');await invoke(view,'preferences.set',{key:'portraitOnly',value:true});
-    await invoke(view,'media.open',{kind:'video',id:'video-2'});player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'media.open',{kind:'video',id:'video-2'});player=await nativePlayerView(app);
     assert.equal((await invoke(player,'player.state')).queue.id,'video-2','playlist-only filters must not prevent direct playback');
   }finally{player?.close();view?.close();app.close();await fixture?.close();}
 });
@@ -103,7 +104,7 @@ test('playlist preloading starts only after the current native video has display
   const gate=new Promise(resolve=>release=resolve);
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory),videoDuration:12,beforeMedia:async({path})=>{if(path==='/api/v1/videos/video-0/play')await gate;}});
-    view=await library(app,fixture);await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
+    view=await library(app,fixture);await invoke(view,'playlist.sequential');player=await nativePlayerView(app);
     await until(()=>fixture.requests.some(r=>r.path==='/api/v1/videos/video-0/play'),'current video requested');
     await sleep(800);
     assert.equal(fixture.requests.some(r=>r.path==='/api/v1/videos/video-1/play'),false,'prefetch must not compete with a current video still waiting for its first byte');
@@ -118,14 +119,14 @@ test('repeat loops the current video instead of silently advancing through the q
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory,6),videoDuration:6,videoCount:3});view=await library(app,fixture);
     await invoke(view,'volume.set',{value:50});
-    await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'playlist.sequential');player=await nativePlayerView(app);
     const playing=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs>5000?s:null;},'real playback before repeat',25000);
     await invoke(player,'player.loop');
     await player.send('Page.setWebLifecycleState',{state:'frozen'});
     await app.evaluate("call('rhvideo_request',{action:'player.control',args:{command:'seek',value:"+(playing.durationMs-150)+"}})");
     await sleep(1800);
     const repeated=await app.evaluate("call('rhvideo_request',{action:'player.state',args:{}})");
-    console.log(JSON.stringify({repeat:{before:{id:playing.queue.id,revision:playing.queue.revision},after:repeated,error:await player.evaluate("document.getElementById('error').textContent")}}));
+    console.log(JSON.stringify({repeat:{before:{id:playing.queue.id,revision:playing.queue.revision},after:repeated,error:await playerEvaluate(player,"playerElement('error').textContent")}}));
     assert.equal(repeated.queue.id,playing.queue.id,'RHVideo repeat means the current item, not queue wraparound');
     assert(repeated.positionMs<4000,'the current item must have restarted rather than staying ended');
     await until(async()=>{const s=await app.evaluate("call('rhvideo_request',{action:'player.state',args:{}})");return s.queue.id===playing.queue.id&&s.state===3&&s.renderedFrames>0&&s.positionMs>100&&s.positionMs<4000;},'actual resumed current-item frames',10000);
@@ -139,7 +140,7 @@ test('repeating a gallery segment keeps its planned start instead of drawing a n
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory,12),videoDuration:12,videoCount:2});view=await library(app,fixture);
     await invoke(view,'preferences.set',{key:'fullLength',value:false});await invoke(view,'preferences.set',{key:'segment',value:3});
-    await invoke(view,'playlist.start');player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'playlist.start');player=await nativePlayerView(app);
     const current=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs===12000?s:null;},'real random segment frames',25000);
     assert.equal(current.queue.total,2);assert.equal(current.queue.hasNext,true);
     const start=current.queue.segmentStartMs,end=start+3000;assert(start>0&&end<=12000);
@@ -157,7 +158,7 @@ test('closing the single-video player leaves independent multi-video playback ru
     await invoke(view,'preferences.set',{key:'gridCount',value:4});
     await invoke(view,'grid.open');
     await until(async()=>{const s=await invoke(view,'grid.state');return s.cells?.length===4&&s.cells.every(c=>c.renderedFrames>0);},'four actual independent video surfaces',25000);
-    await invoke(view,'media.open',{kind:'video',id:'video-0'});player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'media.open',{kind:'video',id:'video-0'});player=await nativePlayerView(app);
     const single=await invoke(player,'player.state');
     await invoke(view,'grid.open');
     const afterOpen=await invoke(player,'player.state');assert.equal(afterOpen.opened,true);assert.equal(afterOpen.inputId,single.inputId,'opening an independent grid cannot stop or replace the single-video decoder');
@@ -193,7 +194,7 @@ test('native playlist advances even while the controls WebView is frozen',native
   const app=await launchApp({emulateFocus:true});let fixture,view,player;
   try{
     fixture=await rhvideoFixture({videoFile:makeVideo(app.directory,6),videoDuration:6,videoCount:3});view=await library(app,fixture);
-    await invoke(view,'playlist.sequential');player=await viewFor(app,'rhvideo-player.html');
+    await invoke(view,'playlist.sequential');player=await nativePlayerView(app);
     const playing=await until(async()=>{const s=await invoke(player,'player.state');return s.renderedFrames>0&&s.durationMs>5000?s:null;},'native current frames',25000);
     await player.send('Page.setWebLifecycleState',{state:'frozen'});
     await app.evaluate("call('rhvideo_request',{action:'player.control',args:{command:'seek',value:"+(playing.durationMs-150)+"}})");

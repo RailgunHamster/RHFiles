@@ -47,6 +47,14 @@ test('frame layout validation rejects truncated, wrong orientation, geometry or 
 test('full release acceptance requires a compiled observer and records both tool and source digests',()=>{
  const f=fixture();try{const proof=ownedObserverAdmission(f.root);assert.equal(proof.executable,f.tool);assert.equal(proof.exeSHA256,f.proof.exeSHA256);assert.equal(proof.sourceSHA256,f.proof.sourceSHA256);fs.unlinkSync(f.tool);assert.throws(()=>ownedObserverAdmission(f.root));}finally{f.close();}
 });
+test('library PLAYER pixels require their own host, scope and stable lease rather than PRESENTATION state',async()=>{
+ const f=fixture();try{
+  f.setState({host:{kind:'library',lease:2}});f.setExecute(async(_,args,options)=>{assert.equal(args[4],'library-player');f.bitmap(path.join(options.cwd,args[2]));return JSON.stringify({protocol:1,scope:'owned-sibling-library-player',pid:42,width:2,height:2,alpha:255});});
+  assert.equal((await f.reader.read()).scope,'owned-sibling-library-player');
+  f.setExecute(async(_,args,options)=>{f.bitmap(path.join(options.cwd,args[2]));f.setState({host:{kind:'library',lease:4}});return JSON.stringify({protocol:1,scope:'owned-sibling-library-player',pid:42,width:2,height:2,alpha:255});});await assert.rejects(f.reader.read(),/input changed/);
+  f.setState({host:{kind:'library'}});await assert.rejects(f.reader.read(),/host lease/);
+ }finally{f.close();}
+});
 
 test('external window transport is bounded and cannot submit arbitrary keys or accept another process acknowledgement',async()=>{
  const f=fixture();let driver;try{

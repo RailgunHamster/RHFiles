@@ -3,7 +3,7 @@ import fs from 'node:fs';import path from 'node:path';import assert from 'node:a
 import {launchApp,until,sleep} from './app-session.mjs';import {rhvideoFixture} from './rhvideo-fixture.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {generateClockMedia,decodeFrameIdentity,clockFormat,clockObservations} from './native-media-clock.mjs';import {markerPixels} from './native-startup-pixels.mjs';
 const directory=fs.mkdtempSync(path.resolve('test-artifacts/rhvideo-pixel-clock-')),media=path.join(directory,'generated.mp4');let app,fixture,library,failure;
 const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-const receipt={passed:false,kind:'ordinary release source-pixel clock diagnostic',samples:[],intervals:[],physicalScreenTiming:false,source:clockFormat};
+const receipt={passed:false,kind:'ordinary library PLAYER source-pixel clock diagnostic',samples:[],intervals:[],physicalScreenTiming:false,source:clockFormat};
 try{
  for(const key of ['RHFILES_VLC_DEBUG','RHFILES_PLAY_NATIVE_TRACE','RHFILES_VLC_NATIVE_TRACE','RHFILES_VLC_COMPATIBILITY','RHFILES_VLC_NETWORK_CACHE_MS','RHFILES_VLC_DECODE_THREADS','RHFILES_QA_READBACK'])assert(!process.env[key]);
  assert.equal(process.env.RHFILES_NATIVE_PLAYER_QA,'1');assert(process.env.RHFILES_TEST_EXECUTABLE?.includes('test-artifacts'));receipt.executableSha256=sha(process.env.RHFILES_TEST_EXECUTABLE);receipt.helperSha256=sha(new URL('./native-media-clock.mjs',import.meta.url));receipt.probeSha256=sha(new URL(import.meta.url));receipt.policy={fixedSamplesAfterReplyMs:[2000,4000,6000],sourceRate:[.8,1.2],uiClockErrorMs:250,uiClockErrorAddsPostCaptureRead:true,requiresPresentedPixelsAndAudibleAfterState:true,beforeReadinessMayDifferAtFirstPicture:true};
@@ -15,14 +15,14 @@ try{
  for(const [index,frame]of [0,257,479].entries()){
   const bitmap=Buffer.alloc(54+length);bitmap.write('BM');bitmap.writeUInt32LE(bitmap.length,2);bitmap.writeUInt32LE(54,10);bitmap.writeUInt32LE(40,14);bitmap.writeInt32LE(960,18);bitmap.writeInt32LE(-540,22);bitmap.writeUInt16LE(1,26);bitmap.writeUInt16LE(32,28);raw.copy(bitmap,54,index*length,(index+1)*length);const decoded=decodeFrameIdentity(bitmap);assert.equal(decoded.frame,frame);receipt.calibration.push(decoded);
  }
- app=await launchApp({emulateFocus:true});receipt.artifactDir=app.artifactDir;fixture=await rhvideoFixture({videoFile:media,videoCount:1,pictureCount:0,videoDuration:20,videoResolutions:['1920x1080']});
+ app=await launchApp();receipt.artifactDir=app.artifactDir;fixture=await rhvideoFixture({videoFile:media,videoCount:1,pictureCount:0,videoDuration:20,videoResolutions:['1920x1080']});
  await app.evaluate('RHFilesAPI.invoke("rhvideo.open")');const target=await until(async()=>{const pages=await(await fetch('http://127.0.0.1:'+app.port+'/json/list')).json();return pages.find(row=>new URL(row.url).pathname==='/rhvideo.html');},'pixel-clock library');library=await cdpSession(target,30000);await until(()=>library.evaluate('!!globalThis.RHFilesAPI?.list().some(row=>row.id==="rhvideo.media.open")'),'pixel-clock actions');
  const action=(name,args={})=>library.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
  await action('connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});await action('category',{kind:'video'});await action('rotation.set',{enabled:false});
  const began=performance.now();await action('media.open',{kind:'video',id:'video-0'});const replied=performance.now();receipt.openReplyMs=replied-began;
  for(const offset of [2000,4000,6000]){
   await sleep(Math.max(0,replied+offset-performance.now()));const row={scheduledAfterReplyMs:offset,readStartedMs:performance.now()-began};receipt.samples.push(row);
-  try{row.before=await action('player.state');row.captureStartedMs=performance.now()-began;const picture=await app.readSingleInputFrame();row.captureEndedMs=performance.now()-began;const bytes=fs.readFileSync(picture.path);row.pixels=markerPixels(bytes,1920,1080);row.identity=decodeFrameIdentity(bytes);fs.copyFileSync(picture.path,path.join(directory,'frame-'+offset+'.bmp'));row.after=await action('player.state');row.readEndedMs=performance.now()-began;}catch(error){row.error=String(error?.message||error);row.readEndedMs=performance.now()-began;}
+  try{row.before=await action('player.state');assert.equal(row.before.host.kind,'library');row.captureStartedMs=performance.now()-began;const picture=await app.readLibraryPlayerFrame();row.captureEndedMs=performance.now()-began;assert.equal(picture.alpha,255);const bytes=fs.readFileSync(picture.path);row.pixels=markerPixels(bytes,1920,1080);row.identity=decodeFrameIdentity(bytes);fs.copyFileSync(picture.path,path.join(directory,'frame-'+offset+'.bmp'));row.after=await action('player.state');assert.equal(row.after.host.lease,row.before.host.lease);row.readEndedMs=performance.now()-began;}catch(error){row.error=String(error?.message||error);row.readEndedMs=performance.now()-began;}
  }
  Object.assign(receipt,clockObservations(receipt.samples));
  // A capture can straddle the first picture: the before state is recorded,

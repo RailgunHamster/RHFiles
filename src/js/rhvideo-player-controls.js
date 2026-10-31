@@ -14,13 +14,17 @@
   function recordCleanupError(value){if(cleanupErrors.length<16)cleanupErrors.push(String(value?.message||value).slice(0,512));}
   function releaseBindings(){for(const remove of disposers.splice(0).reverse()){try{const pending=remove();pending?.catch?.(recordCleanupError);}catch(error){recordCleanupError(error);}}}
   const api={register:(id,handler,spec)=>remember(registry.register(actionId(id),(args,run)=>{if(closed)throw Error('播放器控件已关闭，旧操作未执行');if((!active||options.isTop?.()===false)&&!['rhvideo.player.state','rhvideo.player.preloadState','rhvideo.player.close','rhvideo.player.back','rhvideo.ui.contract'].includes(id))throw Error('播放器控件当前未激活，操作未执行');return handler(args,run);},spec)),invoke:(id,args)=>registry.invoke(actionId(id),args),list:()=>registry.list(),provideState:(name,read)=>remember(registry.provideState(name==='player'?(options.stateName||(actionPrefix==='rhvideo.player.'?'player':actionPrefix.slice(0,-1))):name,read))};
-  let state={opened:false},ready=false,busy=false,dragging=false,volumeDragging=false,queueDragging=false,favoriteDragging=false,closed=false,active=options.active!==false,pollTimer=null;
+  let state={opened:false},ready=false,busy=false,dragging=false,volumeDragging=false,queueDragging=false,favoriteDragging=false,closed=false,active=options.active!==false,pollTimer=null,activityEpoch=0;
   const rawNative=options.nativeRequest||((action,args)=>window.__TAURI__.core.invoke('rhvideo_request',{action,args}));
+  let standaloneHost=null;
   const native=(action,args={})=>{
     if(closed)return Promise.reject(Error('播放器控件已关闭，旧操作未执行'));
     if((!active||options.isTop?.()===false)&&!['player.state','player.preloadState','player.close','player.back'].includes(action))return Promise.reject(Error('播放器控件当前未激活，操作未执行'));
+    if(standalone&&standaloneHost)args={...args,_hostLease:standaloneHost};
+    if(standalone&&!standaloneHost&&!['player.state','player.preloadState'].includes(action))return Promise.reject(Error('播放器宿主尚未就绪'));
     let pending;try{pending=rawNative(action,state.generation?{...args,_sessionGeneration:state.generation}:args);}catch(error){return Promise.reject(error);}
     return Promise.resolve(pending).then(async value=>{
+      if(standalone&&value?.opened){if(value.host?.kind!=='popup'||!Number.isSafeInteger(value.host.lease)||standaloneHost&&standaloneHost!==value.host.lease)throw Error('独立播放器宿主已改变，旧窗口未接管播放');standaloneHost=value.host.lease;}
       if(!closed&&(action==='player.close'||action==='player.back')&&value?.closed)await options.onClosed?.(value);
       return value;
     });
@@ -48,7 +52,7 @@
   let audibleVolume=100;
   function paused(value){return value.pauseRequested??(value.state===4);}
   function toggleCommand(value){return value.state===6||paused(value)?'resume':'pause';}
-  function sourceControls(enabled){for(const node of root.querySelectorAll('button,input,select'))if(node!==$('back'))node.disabled=!enabled;}
+  function sourceControls(enabled){for(const node of root.querySelectorAll('button,input,select'))if(node!==$('back')&&node.dataset.playerLifetime!=='true')node.disabled=!enabled;}
   function paint(value){
     if(closed)return;
     const generation=value.generation??state.generation;if(generation&&state.generation&&generation<state.generation)return;
@@ -82,6 +86,7 @@
       $('segment-length').disabled=q.options.fullLength!==false;
     }
     if(state.presentationError){$('error').dataset.automation='true';$('error').textContent=state.presentationError;}else if(state.seekError){$('error').dataset.automation='true';$('error').textContent='跳转失败：'+state.seekError;}else if(state.automationError){$('error').dataset.automation='true';$('error').textContent='自动播放失败：'+state.automationError.message;}else if($('error').dataset.automation){delete $('error').dataset.automation;$('error').textContent='';}
+    if(!active||options.isTop?.()===false)sourceControls(false);
   }
   api.provideState('player',()=>({...state,playback:phase.describe(state)}));
   async function currentTarget(){if(state.opened&&state.queue?.id)return state;const value=await native('player.state');paint(value);if(!value.opened||!value.queue?.id)throw Error('视频正在准备，请稍候');return value;}
@@ -182,12 +187,12 @@
   listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.player.contextmenu');
   async function poll(){
     if(busy||closed||!active||options.isTop?.()===false)return;busy=true;
-    const generation=state.generation;
+    const generation=state.generation,epoch=activityEpoch;
     try{
-      paint(await native('player.state'));
+      const value=await native('player.state');if(!closed&&active&&epoch===activityEpoch)paint(value);
       // Display only. Native progression continues when this WebView's timers
       // are throttled, hidden, suspended, or not yet initialized.
-    }catch(e){if(generation===state.generation)error(e);}finally{busy=false;if(!closed&&active)pollTimer=setTimeout(()=>{pollTimer=null;void poll();},500);}
+    }catch(e){if(!closed&&active&&epoch===activityEpoch&&generation===state.generation)error(e);}finally{busy=false;if(!closed&&active)pollTimer=setTimeout(()=>{pollTimer=null;void poll();},500);}
   }
   // The existing poll owns the sole timer chain. A session event invalidates
   // cached identity, but must not start another recurring loop on every switch.
@@ -195,7 +200,7 @@
   // A loaded WebView is not yet an initialized player. Until the first native
   // state arrives, do not offer controls with an unknown source or parent.
   sourceControls(false);
-  function suspend(){active=false;if(pollTimer!==null){clearTimeout(pollTimer);pollTimer=null;}for(const cancel of gestureCancels)cancel();sourceControls(false);return {active:false};}
+  function suspend({preserveGestures=false}={}){active=false;activityEpoch++;if(pollTimer!==null){clearTimeout(pollTimer);pollTimer=null;}if(!preserveGestures)for(const cancel of gestureCancels)cancel();sourceControls(false);return {active:false};}
   function resume(){if(closed)throw Error('播放器控件已关闭');if(active&&(busy||pollTimer!==null))return {active:true};active=true;void poll();return {active:true};}
   function dispose(){if(closed)return {disposed:true};suspend();closed=true;ready=false;gestureCancels.length=0;releaseBindings();return {disposed:true};}
   window.addEventListener('pagehide',dispose);remember(()=>window.removeEventListener?.('pagehide',dispose));if(active)void poll();

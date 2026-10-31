@@ -5,7 +5,7 @@
     install(ctx) {
       const {
         api,
-        native,
+        native: rawNative,
         action,
         invoke,
         object,
@@ -19,6 +19,8 @@
         openMedia,
         icon,
       } = ctx;
+      let nativeHost=null;
+      const native=(name,args={})=>nativeHost?nativeHost.request(name,args):rawNative(name,args);
       const I = RHVideoIndex,
         listen = (node, type, fn, site) =>
           RHFilesUI.listen(
@@ -243,6 +245,7 @@
         });
       }
       async function reset(authenticated) {
+        nativeHost?.reset();
         ruleApplyIntent++;
         cancelRuleRefresh();
         rulesEditor?.reset();
@@ -1479,6 +1482,7 @@
         (event) => {
           if (
             event.defaultPrevented ||
+            nativeHost?.isTop() ||
             event.target.closest?.(
               "input,textarea,select,[contenteditable=true]",
             ) ||
@@ -4609,7 +4613,10 @@
           const value={...prefs,...patch,referencePreferences:original};await native("preferences",{value});if(version!==epoch)throw Error("媒体账户已改变");prefs=value;if(Object.hasOwn(patch,"autoRotate"))await native("rotation.preference",{enabled:patch.autoRotate});applyPreferences();await syncVolume();},
         async refresh(){invalidateCatalog();await load();}
       });
+      if(!ctx.mobile)nativeHost=RHVideoPlayerHost.install({api,rawNative,modalTop:ctx.modalTop,openDialog:ctx.openDialog,notice,intent:()=>epoch+':'+singlePlayIntent,canInline:()=>state.nativePlayback});
       return {
+        syncNativeHost:()=>nativeHost?.sync(),
+        closeNativeHost:()=>nativeHost?.close(),
         invalidatePendingConfirmation,
         syncContext,
         selectCard,
@@ -4644,6 +4651,7 @@
         },
         back() {
           const id = ctx.modalTop();
+          if(id==='rhvideo-player-dialog'&&nativeHost?.opened()){void nativeHost.close().catch(notice);return true;}
           if (id?.startsWith("wb-") && $(id)?.open) {
             void invoke("panel.close", { id }).catch(notice);
             return true;

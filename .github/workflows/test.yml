@@ -59,6 +59,8 @@ jobs:
           # not a hardware-renderer performance claim. Local acceptance also
           # exercises the ordinary native-hardware-auto output path.
           RHFILES_VLC_COMPATIBILITY: '1'
+          RHFILES_EXPECT_RENDERER: 'gdi-compatibility'
+          RHFILES_EXPECT_ENGINE_VERSION: '3.0.23'
         run: npm run test:e2e
       - name: Markdown PDF built-in and external converter workflows
         run: npm run test:pdf

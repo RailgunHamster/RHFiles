@@ -17,7 +17,7 @@ async function player({origin='video',opened=true,component=null,registry=null}=
  const html=fs.readFileSync(new URL('../../src/rhvideo-player.html',import.meta.url),'utf8');
  for(const match of html.matchAll(/id="([^"]+)"/g))node(match[1]);
  for(const match of html.matchAll(/<(button|input|select)\b([^>]*)>/g)){const id=/\bid="([^"]+)"/.exec(match[2]);if(id)node(id[1]).tagName=match[1].toUpperCase();}
- const state={opened,generation:1,inputId:10,title:'Generated video',positionMs:1000,durationMs:20000,state:3,renderedFrames:30,volume:80,rate:1,queue:{id:'video-0',revision:20,planRevision:30,hasNext:true,hasPrevious:true,total:3,index:0,totalMs:60000,segmentLengthMs:20000,options:{origin,reference:origin!=='favorite',fullLength:false,parentIndex:0,parentTotal:3}}};
+ const state={opened,host:{kind:'popup',lease:2},generation:1,inputId:10,title:'Generated video',positionMs:1000,durationMs:20000,state:3,renderedFrames:30,volume:80,rate:1,queue:{id:'video-0',revision:20,planRevision:30,hasNext:true,hasPrevious:true,total:3,index:0,totalMs:60000,segmentLengthMs:20000,options:{origin,reference:origin!=='favorite',fullLength:false,parentIndex:0,parentTotal:3}}};
  let command=()=>Promise.resolve(structuredClone(state)),readState=()=>Promise.resolve(structuredClone(state));
  const api=registry||create({instanceId:'generated-player-controls'});
  const document={getElementById:actualNode,querySelectorAll:()=>[...nodes.values()].filter(n=>n.tagName),createElement:tag=>{const key='generated-'+nodes.size,n=actualNode(key);n.identifier=key;n.tagName=tag.toUpperCase();Object.defineProperty(n,'id',{get(){return this.identifier;},set(id){if(nodes.get(this.identifier)===this)nodes.delete(this.identifier);this.identifier=id;nodes.set(id,this);}});return n;}};
@@ -144,4 +144,18 @@ test('late accepted close completion cannot run an old UI callback against a rem
 });
 for(const dependency of ['model','playbackPhase'])test('missing '+dependency+' fails before creating a partial player scope',async()=>{
  const registry=create();await assert.rejects(player({registry,component:{actionPrefix:'rhvideo.inline.',[dependency]:{}}}),/播放器依赖尚未载入/);assert.equal(registry.list().length,0);assert.deepEqual(registry.snapshot().state,{});
+});
+test('standalone controls bind their original host lease and refuse an inline host replacement',async()=>{
+ const p=await player();await p.api.invoke('rhvideo.player.mute');assert.equal(p.calls.at(-1).args._hostLease,2);
+ p.setStateReader(()=>Promise.resolve({...p.state,host:{kind:'library',lease:4}}));await assert.rejects(p.api.invoke('rhvideo.player.state'),/独立播放器宿主已改变/);p.setCommand((_name,args)=>{assert.equal(args._hostLease,2);return Promise.resolve({closed:true});});await p.api.invoke('rhvideo.player.close');
+});
+test('a temporary source-transition hold keeps the original queue drag rather than rebinding a synthetic commit',async()=>{
+ const p=await player({component:{actionPrefix:'rhvideo.inline.'}}),failure=Error('播放队列已改变，拖动未执行');p.fire('rhvideo.inline.queue-seek.begin');p.node('queue-seek').value='750';p.controller.suspend({preserveGestures:true});p.state.queue.planRevision=31;await p.api.invoke('rhvideo.inline.state');p.controller.resume();await settle();
+ p.setCommand((name,args)=>{assert.equal(name,'player.seekQueue');return args.expectedPlanRevision===30?Promise.reject(failure):Promise.resolve(structuredClone(p.state));});await assert.rejects(Promise.resolve(p.fire('rhvideo.inline.queue-seek.commit',{isTrusted:false})),error=>error===failure);assert.equal(p.calls.at(-1).args.expectedPlanRevision,30);
+});
+test('a state read completed while suspended cannot re-enable any source control',async()=>{
+ const p=await player({component:{actionPrefix:'rhvideo.inline.'}});p.controller.suspend();await p.api.invoke('rhvideo.inline.state');for(const id of ['next','previous','volume','seek','rate'])assert.equal(p.node(id).disabled,true,id+' remains inactive');
+});
+test('a pre-hold poll cannot paint its old input after a new state has been accepted',async()=>{
+ const p=await player({component:{actionPrefix:'rhvideo.inline.'}});p.controller.suspend();let release;const gate=new Promise(resolve=>release=resolve),old=structuredClone(p.state);p.setStateReader(()=>gate);p.controller.resume();await settle();p.controller.suspend({preserveGestures:true});p.state.inputId=12;p.setStateReader(()=>Promise.resolve(structuredClone(p.state)));await p.api.invoke('rhvideo.inline.state');p.controller.resume();release(old);await settle();assert.equal(p.controller.snapshot().state.inputId,12);
 });

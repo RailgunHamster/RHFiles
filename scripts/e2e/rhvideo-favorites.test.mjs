@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import{launchApp,until}from'../testing/app-session.mjs';import{cdpSession}from'../rhfiles-api.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
 import{execFileSync}from'node:child_process';import path from'node:path';import fs from'node:fs';import{createHash}from'node:crypto';
+import {nativePlayerView,playerEvaluate} from '../testing/native-player-view.mjs';
 async function assertCurrentAssets(view,files=['rhvideo-workbench.js','rhvideo-client.js','rhvideo-index.js']){
  for(const file of files){const served=await view.evaluate('fetch('+JSON.stringify('js/'+file)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+file,import.meta.url),'utf8'),hash=value=>createHash('sha256').update(value).digest('hex');assert.equal(hash(served),hash(source),'Run the currently embedded '+file);}
 }
@@ -10,7 +11,7 @@ async function assertPicturePixels(app,view){
  },'Actual favorite picture markers on screen, not only a decoded object',8000);
 }
 async function dragFavoriteProgress(view,ratio){
- const points=await view.evaluate('(()=>{const n=document.getElementById("favorite-seek"),r=n.getBoundingClientRect(),thumb=8,w=r.width-2*thumb,y=r.y+r.height/2;return {from:{x:r.x+thumb+w*Number(n.value)/Number(n.max),y},to:{x:r.x+thumb+w*'+JSON.stringify(ratio)+',y}};})()');
+ const points=await playerEvaluate(view,'(()=>{const n=playerElement("favorite-seek"),r=n.getBoundingClientRect(),thumb=8,w=r.width-2*thumb,y=r.y+r.height/2;return {from:{x:r.x+thumb+w*Number(n.value)/Number(n.max),y},to:{x:r.x+thumb+w*'+JSON.stringify(ratio)+',y}};})()');
  await view.send('Input.dispatchMouseEvent',{type:'mouseMoved',...points.from});await view.send('Input.dispatchMouseEvent',{type:'mousePressed',...points.from,button:'left',buttons:1,clickCount:1});await view.send('Input.dispatchMouseEvent',{type:'mouseMoved',...points.to,button:'left',buttons:1});await view.send('Input.dispatchMouseEvent',{type:'mouseReleased',...points.to,button:'left',clickCount:1});
 }
 
@@ -52,7 +53,7 @@ test('native ordinary favorite browsing crosses picture/video boundaries, seeks 
   };
   await invoke('media.open',{id:rows[pictureIndex].id,kind:'picture'});assert.equal((await invoke('image.state')).total,4);await waitAt(pictureIndex);await assert.rejects(invoke('image.order',{random:false}),/收藏/);assert.equal((await invoke('image.state')).index,pictureIndex,'Unsupported ordering cannot reset a running favorite snapshot');
   await invoke('image.seek',{ratio:movieIndex/3});await waitAt(movieIndex);let native=await invoke('player.state');const oldParent={parentPreview:native.queue.options.parentPreview,parentPlayback:native.queue.options.parentPlayback};assert.equal(native.queue.options.origin,'favorite');assert.equal(native.queue.options.parentIndex,movieIndex);assert.equal(native.queue.options.parentTotal,4);if(process.env.RHFILES_EXPECT_RENDERER)assert.equal(native.renderer,process.env.RHFILES_EXPECT_RENDERER);
-  player=await target('rhvideo-player.html');assert.equal(await player.evaluate('document.getElementById("back").textContent'),'返回收藏');assert.equal(await player.evaluate('document.getElementById("favorite-row").hidden'),false);assert.equal(await player.evaluate('document.getElementById("favorite-counter").textContent'),`${movieIndex+1} / 4`);
+  player=await nativePlayerView(app);assert.equal(await playerEvaluate(player,'playerElement("back").textContent'),'返回收藏');assert.equal(await playerEvaluate(player,'playerElement("favorite-row").hidden'),false);assert.equal(await playerEvaluate(player,'playerElement("favorite-counter").textContent'),`${movieIndex+1} / 4`);
   await assert.rejects(view.evaluate('window.__TAURI__.core.invoke("rhvideo_request",'+JSON.stringify({action:'playlist.prepare',args:{ticket:'invalid-favorite-parent',reset:true,items:[{id:rows[movieIndex].id,title:rows[movieIndex].title}],options:{...native.queue.options,parentIndex:-1}}})+')'),/收藏/);assert.equal((await invoke('player.state')).inputId,native.inputId,'Invalid parent preparation must not replace the active decoder');
   await invoke('player.favorite',{expectedId:native.queue.id,expectedRevision:native.queue.revision});await until(()=>!fixture.favorites.has('video:'+rows[movieIndex].id),'remove the current favorite through the native operation');assert.equal((await invoke('image.state')).total,4,'Removing a favorite does not replace an active mixed snapshot');
   await dragFavoriteProgress(player,pictureIndex/3);await waitAt(pictureIndex);player.close();player=null;

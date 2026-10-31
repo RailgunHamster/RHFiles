@@ -44,7 +44,7 @@
   }
   let modalOrder=[];
   const modalTop=()=>modalOrder.filter(id=>$(id)?.open).at(-1);
-  function openDialog(id){workbench?.invalidatePendingConfirmation();const node=$(id);if(id==='image-dialog'&&node.open&&modalTop()!==id)node.close();if(!node.open){node.showModal();modalOrder=modalOrder.filter(v=>$(v)?.open&&v!==id);modalOrder.push(id);}if(id==='image-dialog')node.querySelector('.image-stage').focus({preventScroll:true});return node;}
+  function openDialog(id){workbench?.invalidatePendingConfirmation();const node=$(id);if(id==='image-dialog'&&node.open&&modalTop()!==id)node.close();if(!node.open){node.showModal();modalOrder=modalOrder.filter(v=>$(v)?.open&&v!==id);modalOrder.push(id);}if(id==='image-dialog')node.querySelector('.image-stage').focus({preventScroll:true});void workbench?.syncNativeHost?.()?.catch(notice);return node;}
   const native=(action,args={})=>{
     if(state.generation>0&&!['state','connect','register','restore','close','presentation.close','grid.close'].includes(action))args={...args,_sessionGeneration:state.generation};
     return (mobile?window.RHVideoNative.request(action,args):window.__TAURI__.core.invoke('rhvideo_request',{action,args})).catch(error=>{workbench?.invalidateSession();throw error;});
@@ -91,7 +91,7 @@
   let searchTimer=0,folderLoadId=0,timelineLoadId=0,images=[],imageIndex=0,imageZoom=1;
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const string={type:'string',maxLength:4096},integer={type:'integer',minimum:0,maximum:100000};
-  function action(name,params,handler,risk='ui'){api.register('rhvideo.'+name,handler,{params,risk,description:'RHVideo '+name});}
+  function action(name,params,handler,risk='ui'){api.register('rhvideo.'+name,async(args,run)=>{const value=await handler(args,run);await workbench?.syncNativeHost?.();return value;},{params,risk,description:'RHVideo '+name});}
   function invoke(name,args={}){return api.invoke('rhvideo.'+name,args);}
   function notice(message,success=false){$('notice').textContent=String(message?.message||message);$('notice').hidden=false;$('notice').classList.toggle('success',success);}
   // DOM dispatch ignores promises; show the error without consuming the

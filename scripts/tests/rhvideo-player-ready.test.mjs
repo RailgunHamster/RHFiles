@@ -23,7 +23,7 @@ function player(){
 
 test('native player does not advertise ready before its first authoritative state',async()=>{
   const p=player();assert.equal(p.providers.get('application')().ready,false);
-  await p.release({opened:true,generation:1,title:'Favorite',positionMs:0,durationMs:10000,state:3,volume:100,rate:1,queue:{id:'one',hasNext:true,hasPrevious:false,options:{origin:'favorite',parentIndex:1,parentTotal:4}}});
+  await p.release({opened:true,host:{kind:'popup',lease:2},generation:1,title:'Favorite',positionMs:0,durationMs:10000,state:3,volume:100,rate:1,queue:{id:'one',hasNext:true,hasPrevious:false,options:{origin:'favorite',parentIndex:1,parentTotal:4}}});
   assert.equal(p.providers.get('application')().ready,true);assert.equal(p.node('back').textContent,'返回收藏');assert.equal(p.node('favorite-row').hidden,false);assert.equal(p.node('favorite-counter').textContent,'2 / 4');
 });
 
