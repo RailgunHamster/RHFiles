@@ -6,6 +6,20 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 手写界面事件的失败回执（继续验收中）
+
+按钮／下拉工厂已有保护，但图库跳页提交、章节速览搜索、阅读器章节搜索仍分别返回 undefined 或 `.catch(notice)` 的已消化 Promise。新增直接执行实际注册处理器的六项红测均失败，原三项工厂检查通过（`rhvideo-handwritten-controls-red.tap`：3 通过／6 失败）。正常 D607 实际窗口另 **0/1，失败，6.259 秒**（`rhvideo-handwritten-controls-old-real.tap`、`rhfiles-e2e-dGyOnW/handwritten-controls.json`）：速览输入 257 字符，底层拒绝，`ui.set` 却报告成功。这不是模拟 HTTP 故障或重新实现业务逻辑。
+
+提交 `ec31722` 保留通知原行为，但返回原动作 Promise，脚本等待真实完成、保留同一个失败，不自动重试。Windows／Android 共用新的实际场景，直接比较语义动作和真实字段 `ui.set` 对过长输入的错误码及消息，再验证有效查询仍可完成。只用生成小说和临时测试服务。本地 RHVideo 源码对照完整检查 **1288/1288，零失败／取消／跳过，29.246 秒**（`rhvideo-handwritten-controls-shared-final-node.tap`）；后续只读 startedAt／settledAt 诊断补充后相关检查 **16/16、零跳过**（`rhvideo-handwritten-controls-and-observer-final-local-reference.tap`）。此前未指定参考目录的一次定向检查为 15 通过／1 跳过，保留记录，不冒充全部通过。
+
+正常 Windows release **3 分 39 秒**，EXE SHA-256 **`989bb1fb92fb5b4fd131405c64b196dc7d8d6597b31c153d539a0c600ba0de74`**，冻结 `rhvideo-pipe-full-idgvT0` 的 1213 个源码、4 个工具及 426 个运行库。实际新场景与图库／继续浏览回归 **10/10，零失败／取消／跳过，70.806 秒**（`rhvideo-handwritten-controls-final-windows.tap`）：两个实际搜索字段与语义动作均返回相同 `INVALID_PARAMS`／`$.query has an invalid length`，有效查询和既有精确位置恢复仍通过。它不是完整 Windows、所有手写事件或性能验收。
+
+正常 Android release **24 秒**，APK **`52929ec5e6816f88ea276419d47254544819c21ffd7d6a3be4700393512dc6e3`**（`rhvideo-modal-normal-android-OTvp9Z`），工作台 **773E**／JNI **1F90**、四项正常构建开关与安装字节已核对。第一次附着 **失败、0 次服务请求**（`rhvideo-handwritten-controls-final-android.log`、`rhvideo-image-decode-android-tF6cP3/receipt.json`）：系统收到启动请求约 14 秒后才创建 PID 24613，调用前提检查更早读不到进程，清理又停止了刚创建的进程。`exit-info` 和 ActivityManager 记录是测试的 force-stop，不是本次应用崩溃。随后单次普通启动加原 20 秒只读前台前提观察，16.071 秒确认 PID 24709；没有重装、重启 AVD 或改预算，**startupAccepted:false**。
+
+前提成立后的同包业务检查仍 **失败、0 次服务请求**（`rhvideo-handwritten-controls-after-startup-android.log`、`rhvideo-image-decode-android-BiqMcL/receipt.json`）：原 20 秒 API 注册观察到期，页面 visible／ready=loading，只有 7 项通用 UI API，workbench 尚未定义，HTML 解析到任务优先级脚本。实际静态 client／workbench 哈希仍正确、唯一库页面 attached。它未进入两个搜索场景，不能用 Windows 的通过替代安卓验收。
+
+测试清理已加所有权保护：没有成功取得附着会话就不 force-stop；实际清理代码红测 3 通过／1 失败，修复后 **4/4**。后续失败观察补充同源打包静态资源的 PerformanceEntry 耗时，最多 32 项，过滤媒体、外部地址、查询串／片段和任意条目属性；不增加原场景调用、重载、请求或时限。源码最终 **1294/1294，零失败／取消／跳过，28.054 秒**（`rhvideo-handwritten-controls-final-diagnostics-node.tap`）；新静态耗时采集尚未设备验证。没有动正式实例、实体手机或真实媒体，没有发布新正式版本。安卓初始化／继续浏览超时、原生视频性能和完整目标仍未完成。
+
 ## 2026-10-31 同页图库图片复用（继续验收中）
 
 旧正常 A435 实际窗口的同页跳转检查 **0/1，失败**（`rhvideo-gallery-reuse-old-real.tap`、`rhfiles-e2e-sSkFgy/gallery-reuse.json`）：URL 未变且已经完成 800px 解码，却换掉了图片节点。前后服务请求均为 36，故这只证明节点重建，不能声称已证明额外下载、解码或安卓超时根因。提交 `aa8aabd`／`d893e8c` 仅在当前页、同账号、同清单修订、相同 URL 下复用已加载节点；刷新、账号切换、地址变化、错误或未加载图片不复用，重复条目也不共用一个节点。局部 Map 最多一页，WeakMap 不强持有旧页，没有全库图片缓存。
