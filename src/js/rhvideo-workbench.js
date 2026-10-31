@@ -116,10 +116,13 @@
         listen(
           b,
           "click",
-          () =>
-            invoke(name, typeof args === "function" ? args() : args).catch(
-              notice,
-            ),
+          () => {
+            const pending=invoke(name,typeof args==="function"?args():args);
+            // DOM dispatch ignores the return value; automation awaits it.
+            // Observe errors for the UI without replacing their rejection.
+            void pending.catch(notice);
+            return pending;
+          },
           name,
         );
         return b;
@@ -132,7 +135,7 @@
         listen(
           node,
           "change",
-          () => invoke(name, args(node.value)).catch(notice),
+          () => {const pending=invoke(name,args(node.value));void pending.catch(notice);return pending;},
           name,
         );
         return node;
@@ -4583,7 +4586,7 @@
         closeImage(){const id=imageSession?.previewId;singlePlayIntent++;imageSession=null;imageToken++;ctx.cancelImageDecode();return id;},
         canPlayImage(){return !imageSession?.loading&&imageSession?.current?.kind==="frame";},
         refreshViewer,
-        previewTarget(kind,id){const item=$("wb-viewer")?.open&&!viewer?.loadingMedia?viewer?.current:$("image-dialog").open?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},
+        previewTarget(kind,id){const top=ctx.modalTop();if(!$(top)?.open)return null;const item=top==="wb-viewer"&&!viewer?.loadingMedia?viewer?.current:top==="image-dialog"&&!imageSession?.loading?imageSession?.current:null;if(!item)return null;return (item.kind==="frame"?kind==="video"&&item.videoId===id:item.kind===kind&&item.id===id)?{kind,id}:null;},
         async receivePreviewResult(result){showPreviewResult(result);if(!result.running&&result.items.some(i=>i.success)){invalidateCatalog();await load();}},
         invalidate(kind) {
           invalidateCatalog(kind);

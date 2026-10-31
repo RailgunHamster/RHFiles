@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';import {execFileSync} from 'node:child_process';
 import {root} from './source.mjs';import {admitLocalClockDevice} from './rhvideo-local-clock.mjs';import {androidSession,until} from './android-session.mjs';import {androidApkRuntimes} from './android-apk-runtime.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {imageDecodeFixture,exerciseImageDecode} from './rhvideo-image-decode.mjs';
 import {imageBootstrapDiagnostic,imageLibraryTargets} from './rhvideo-image-bootstrap.mjs';
+import {exercisePreviewOwner} from './rhvideo-preview-owner.mjs';
 const [serial,apk,flag]=process.argv.slice(2);assert(/^emulator-\d+$/.test(serial||''));assert(apk);assert([undefined,'--installed','--attach'].includes(flag));assert(process.argv.length<=5);
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME||path.join(process.env.LOCALAPPDATA,'Android/Sdk'),adb=path.join(sdk,'platform-tools/adb.exe');
 const run=args=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:16*1024*1024}),actual=path.resolve(apk),sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -14,11 +15,12 @@ for(const [entry,file]of [['assets/rhvideo/js/rhvideo-client.js','src/js/rhvideo
 const artifact=fs.mkdtempSync(path.join(root,'test-artifacts/rhvideo-image-decode-android-')),receipt={passed:false,artifact,serial,apkSha256:sha(fs.readFileSync(actual))};let app,page,fixture,port;
 try{
  if(!flag)run(['install','--no-incremental','-r',actual]);const installed=run(['shell','pm','path','com.railgunhamster.rhfiles']).trim();assert.match(installed,/^package:\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/);assert.equal(run(['shell','sha256sum',installed.slice(8)]).slice(0,64),receipt.apkSha256,'Verify actual installed bytes');
- process.env.ANDROID_SDK_ROOT=sdk;fixture=await imageDecodeFixture();app=await androidSession(serial,{attachOnly:flag==='--attach'});receipt.launch=app.launch;receipt.sessionArtifact=app.artifactDir;await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
+ process.env.ANDROID_SDK_ROOT=sdk;fixture=await imageDecodeFixture({failFavoriteIds:['picture:picture-0']});app=await androidSession(serial,{attachOnly:flag==='--attach'});receipt.launch=app.launch;receipt.sessionArtifact=app.artifactDir;await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
  const pid=run(['shell','pidof','com.railgunhamster.rhfiles']).trim();assert.match(pid,/^\d+$/);port=run(['forward','tcp:0','localabstract:webview_devtools_remote_'+pid]).trim();assert.match(port,/^\d+$/);
  const target=await until(async()=>{const pages=await(await fetch('http://127.0.0.1:'+port+'/json/list',{signal:AbortSignal.timeout(2000)})).json();return pages.find(p=>p.url==='https://appassets.androidplatform.net/rhvideo/rhvideo.html');},'exact owned media library');receipt.target=target.id;page=await cdpSession(target,30000);await page.send('Page.enable');await until(()=>page.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==="rhvideo.image.seek")'),'packaged image UI/API');
  await exerciseImageDecode({page,until,server:'http://10.0.2.2:'+new URL(fixture.url).port,fixture,receipt,screenshot:name=>app.screenshot(name)});
-}catch(error){receipt.failure=String(error);process.exitCode=1;console.error(error);
+ receipt.passed=false;await exercisePreviewOwner({page,until,fixture,receipt,screenshot:name=>app.screenshot(name)});receipt.passed=true;
+}catch(error){receipt.passed=false;receipt.failure=String(error);process.exitCode=1;console.error(error);
  if(page)try{receipt.bootstrap=await imageBootstrapDiagnostic(page);}catch{receipt.bootstrap={available:false};}
  if(port)try{receipt.libraryTargets=imageLibraryTargets(await(await fetch('http://127.0.0.1:'+port+'/json/list',{signal:AbortSignal.timeout(2000)})).json(),receipt.target);}catch{}
  if(app)try{await app.screenshot('image-failure');}catch{}

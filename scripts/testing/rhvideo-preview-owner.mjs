@@ -1,0 +1,19 @@
+import assert from 'node:assert/strict';
+// Run only against the caller's generated fixture/private app session. This
+// deliberately removes marks before closing any preview, without staging files.
+export async function exercisePreviewOwner({page,until,fixture,receipt,screenshot=async()=>{}}){
+ const api=(name,args={})=>page.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')'),result=receipt.ownership={passed:false};
+ const control=async id=>{const value=await page.evaluate('RHFilesAPI.invoke("ui.list").then(rows=>rows.find(row=>row.id==='+JSON.stringify(id)+'))');assert(value,'Actual visible control '+id);return value;};
+ const click=async id=>page.evaluate('RHFilesAPI.invoke("ui.invoke",'+JSON.stringify({controlId:(await control(id)).controlId})+')');
+ assert.equal((await api('preview.pending')).items.length,0);
+ try{
+  await api('viewer.open',{mode:'slideshow',source:'picture'});let viewer=await until(async()=>{const s=await api('viewer.state');return s.current&&!s.loading?s:null;},'decoded underlying owner');if(viewer.running)await api('viewer.toggle');result.viewer=await api('viewer.state');
+  const list=await api('state');await api('media.open',{kind:'picture',id:list.items[0].id});await api('image.seek',{ratio:1});result.image=await api('image.state');const id=result.image.current.id;assert.notEqual(id,result.viewer.current.id);assert.equal(await page.evaluate('!!document.querySelector('+JSON.stringify('.media-card[data-id="'+id+'"]')+')'),false);
+  result.dialogs=await page.evaluate('({image:document.getElementById("image-dialog").open,viewer:document.getElementById("wb-viewer").open,focused:document.activeElement.closest("dialog")?.id})');assert.equal(result.dialogs.image,true);assert.equal(result.dialogs.viewer,true);assert.equal(result.dialogs.focused,'image-dialog');
+  await click('wb-image-mark');result.marked=await api('preview.pending');assert.equal(result.marked.items.length,1);assert.equal(result.marked.items[0].id,id);await api('preview.mark',{kind:'picture',id,title:'Generated',enabled:false});await screenshot('preview-owner');
+  await api('settings.open');await assert.rejects(api('selection.markCurrent'),/预览|窗口|可见/);assert.equal((await api('preview.pending')).items.length,0);await api('panel.close',{id:'wb-settings'});
+  await click('wb-image-favorite');assert.equal(fixture.favorites.has('picture:'+id),true);await api('image.favorite');assert.equal(fixture.favorites.size,0);result.favoriteWrites=fixture.requests.filter(r=>r.path==='/api/v1/favorites/picture/'+id&&['PUT','DELETE'].includes(r.method)).length;assert.equal(result.favoriteWrites,2);
+  await api('image.seek',{ratio:0});assert.equal((await api('image.state')).current.id,'picture-0');await assert.rejects(click('wb-image-favorite'),error=>{result.uiFailure=String(error);return /503|收藏|favorite/i.test(result.uiFailure);});result.failedRequests=fixture.requests.filter(r=>r.path==='/api/v1/favorites/picture/picture-0'&&r.method==='PUT').length;assert.equal(result.failedRequests,1);assert.equal(fixture.favorites.size,0);
+  await api('image.close');const current=await api('viewer.state');await api('selection.markCurrent',{expectedViewer:current.token});assert.equal((await api('preview.pending')).items[0].id,current.current.id);await api('preview.mark',{kind:'picture',id:current.current.id,title:'Generated',enabled:false});assert.equal(fixture.trash.length,0);result.passed=true;
+ }finally{for(const row of (await api('preview.pending')).items)await api('preview.mark',{kind:row.kind,id:row.id,title:row.title,enabled:false});result.remaining=(await api('preview.pending')).items.length;result.stagingRequests=fixture.requests.filter(r=>r.path.startsWith('/api/v1/trash/')&&r.method==='POST').length;assert.equal(result.remaining,0);assert.equal(result.stagingRequests,0);}
+}

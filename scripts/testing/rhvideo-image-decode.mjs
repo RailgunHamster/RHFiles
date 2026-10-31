@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import {rhvideoFixture} from './rhvideo-fixture.mjs';
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
-export async function imageDecodeFixture(){
+export async function imageDecodeFixture({failFavoriteIds=[]}={}){
  const gates=new Map([99,96,94,35,34].map(n=>[n,deferred()]));let initial=false,timeout=false;
- const fixture=await rhvideoFixture({videoCount:0,galleryVideoCount:0,pictureCount:100,
+ const fixture=await rhvideoFixture({videoCount:0,galleryVideoCount:0,pictureCount:100,failFavoriteIds,
   beforeCatalog:(kind,rows)=>{if(kind==='picture')rows.forEach((row,i)=>{row.original_filename=String(i).padStart(3,'0')+'.webp';if(initial&&i===35)row.webp_path='pictures/initial35.svg';if(timeout&&i===34)row.webp_path='pictures/initial34.svg';});},
   beforeMedia:async({path,image})=>{if(!image)return;const match=path.match(/^\/storage\/pictures\/(\d+)\.svg$/);const n=path==='/storage/pictures/initial35.svg'?35:path==='/storage/pictures/initial34.svg'?34:match?Number(match[1]):-1;if(gates.has(n)&&(n!==35||initial)&&(n!==34||timeout))await gates.get(n).promise;if(n===98)return {body:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><broken'),contentType:'image/svg+xml'};}
  });
