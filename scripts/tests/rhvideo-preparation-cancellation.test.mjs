@@ -9,7 +9,8 @@ test('close and back fence prior preparations before waiting on the playback loc
   const body=branch(request,'"player.close" | "player.back" => {','"player.closeParent"=>{');
   const ordered=['check_input(&args)?','session.play_preparation.cancel()','PLAY_LOCK.lock().await'];
   let previous=-1;for(const token of ordered){const at=body.indexOf(token);assert(at>previous,token);previous=at;}
-  assert.match(body,/spawn_blocking\(crate::rhvideo_player::stop_single\)[\s\S]*?\.await/);
+  assert.match(body,/rhvideo_player::close_single\(\)\.await\?/);
+  assert.match(player,/spawn_blocking\(stop_single\)\.await[\s\S]*?finish_preload_shutdown\(\)\.await/);
 });
 test('new playback captures an account-owned fence before any playback lock wait',()=>{
   const session=branch(request,'struct Session {','#[derive(Clone,Copy)]');
@@ -23,7 +24,7 @@ test('an account change while close waits cannot stop the replacement account',(
   const guarded=body.indexOf('GENERATION.load(Ordering::SeqCst)!=closing_generation');
   assert(guarded>body.indexOf('PLAY_LOCK.lock().await'));
   assert(guarded<body.indexOf('flush_playback()'));
-  assert(guarded<body.indexOf('spawn_blocking(crate::rhvideo_player::stop_single)'));
+  assert(guarded<body.indexOf('rhvideo_player::close_single().await'));
 });
 for(const [name,start,end] of [['open','"play" => {','"player.repeatCurrent"'],['navigate','"player.next" | "player.previous" | "player.seekQueue" | "player.seekParent" => {','"player.options" => {'],['options','"player.options" => {','"player.diagnosticFrame"']])test(name+' rejects a retired queued preparation before changing playback',()=>{
   const body=branch(request,start,end),locked=body.indexOf('PLAY_LOCK.lock().await');assert(locked>=0);

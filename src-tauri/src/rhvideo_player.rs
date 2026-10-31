@@ -2,6 +2,7 @@
 //! DLLs are loaded only from the installed/bundled VLC directory with a safe
 //! dependency search path; never from a media folder or the working directory.
 use libloading::Library;
+use futures_util::FutureExt;
 use serde_json::{json, Value};
 use std::{
     ffi::{c_char, c_void, CStr, CString},
@@ -18,6 +19,8 @@ use windows::{
         UI::{WindowsAndMessaging::*, Input::KeyboardAndMouse::{SetFocus,GetKeyState,VK_CONTROL,VK_SHIFT,VK_MENU}},
     },
 };
+#[path="rhvideo_preload_slot.rs"]
+mod warm_state;
 
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
@@ -132,19 +135,25 @@ fn effective_volume(local: i32) -> i32 {
 pub fn page_volume(value: u32) -> Result<Value, String> {
     if value > 100 { return Err("页面音量范围是 0–100".into()); }
     PAGE_VOLUME.store(value,std::sync::atomic::Ordering::Release);
-    for slot in [&PLAYER,&WARM,&PRESENTATION] {
+    for slot in [&PLAYER,&PRESENTATION] {
         if let Some(player)=slot.lock().map_err(|_|"播放器状态不可用")?.as_ref() {
             unsafe { (player.api.set_volume)(player.player as Ptr,player.output_gain()); }
         }
+    }
+    if let Some(player)=WARM.lock().map_err(|_|"预加载状态不可用")?.resource(){
+        unsafe{(player.api.set_volume)(player.player as Ptr,player.output_gain());}
     }
     for player in &GRID.lock().map_err(|_|"网格状态不可用")?.players {
         unsafe { (player.api.set_volume)(player.player as Ptr,player.output_gain()); }
     }
     Ok(json!({"volume":value}))
 }
-static WARM: Mutex<Option<Engine>> = Mutex::new(None);
-static WARM_STATUS: Mutex<Option<Value>> = Mutex::new(None);
-static WARM_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static WARM: Mutex<warm_state::Slot<Engine,Value>> = Mutex::new(warm_state::Slot::new());
+static WARM_JOBS: Mutex<Vec<(warm_state::Ticket,tauri::async_runtime::JoinHandle<()>)>> = Mutex::new(Vec::new());
+static WARM_ACTIVE:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+struct ActivePreload;
+impl ActivePreload{fn new()->Self{WARM_ACTIVE.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Self}}
+impl Drop for ActivePreload{fn drop(&mut self){WARM_ACTIVE.fetch_sub(1,std::sync::atomic::Ordering::SeqCst);}}
 static WARM_BUILD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static PRESENTATION: Mutex<Option<Engine>> = Mutex::new(None);
 static PRESENTATION_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -886,6 +895,18 @@ pub fn stop_single() {
         release_surface(engine);
     }
 }
+pub async fn close_single()->Result<(),String>{
+    tauri::async_runtime::spawn_blocking(stop_single).await.map_err(|_|"停止视频播放未能确认完成")?;
+    finish_preload_shutdown().await
+}
+// Call under PLAY_LOCK after invalidating WARM. No preload worker needs that
+// lock, and every registered worker awaits its own blocking decoder release.
+pub async fn finish_preload_shutdown()->Result<(),String>{
+    let jobs=std::mem::take(&mut *WARM_JOBS.lock().map_err(|_|"预加载任务状态不可用")?);
+    let mut failure=None;
+    for (_,job) in jobs{if job.await.is_err(){failure=Some("预加载释放未能确认完成".to_owned());}}
+    failure.map_or(Ok(()),Err)
+}
 pub fn retire_window(lease:u64)->bool{
     if !WINDOW_EPOCH.is_current(lease){return false;}
     stop_single();true
@@ -908,31 +929,68 @@ fn release_surface(engine: Engine) {
     }
 }
 pub fn clear_preload() {
-    WARM_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    if let Some(engine) = WARM.lock().ok().and_then(|mut p| p.take()) {
+    let retired=WARM.lock().ok().and_then(|mut slot|slot.retire(json!({"state":"idle"})).1.map(|(engine,_)|engine));
+    if let Some(engine) = retired {
         release_surface(engine);
-    }
-    if let Ok(mut status) = WARM_STATUS.lock() {
-        *status = Some(json!({"state":"idle"}));
     }
 }
 pub fn preload_state() -> Value {
-    WARM_STATUS
-        .lock()
-        .ok()
-        .and_then(|s| s.clone())
-        .unwrap_or(json!({"state":"idle"}))
+    if let Ok(mut jobs)=WARM_JOBS.lock(){reap_preload_jobs(&mut jobs);}
+    let mut value=match WARM.lock(){
+        Ok(slot)=>slot.status().cloned().unwrap_or(json!({"state":"idle"})),
+        Err(_)=>json!({"state":"failed","reason":"预加载状态不可用"}),
+    };
+    value["activeTasks"]=json!(WARM_ACTIVE.load(std::sync::atomic::Ordering::SeqCst));value
 }
-pub async fn preload(app: AppHandle, url: String, title: String,rotation:crate::rhvideo_rotation::Policy) -> Result<Value, String> {
-    clear_preload();
-    let ticket = WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
+fn publish_preload(ticket:warm_state::Ticket,value:Value)->bool{
+    WARM.lock().is_ok_and(|mut slot|slot.publish(ticket,value))
+}
+fn preload_current(ticket:warm_state::Ticket,preparation:&crate::rhvideo::play_intent::Preparation)->bool{
+    WARM.lock().is_ok_and(|slot|slot.current(ticket)&&preparation.ensure_current().is_ok())
+}
+fn require_preload(ticket:warm_state::Ticket,preparation:&crate::rhvideo::play_intent::Preparation)->Result<(),String>{
+    if preload_current(ticket,preparation){Ok(())}else{Err("预加载操作已失效，未继续打开旧视频".into())}
+}
+async fn release_preload(engine:Engine)->Result<(),String>{
+    tauri::async_runtime::spawn_blocking(move||release_surface(engine)).await.map_err(|_|"预加载释放未能确认完成".into())
+}
+fn reap_preload_jobs(jobs:&mut Vec<(warm_state::Ticket,tauri::async_runtime::JoinHandle<()>)>){
+    jobs.retain_mut(|(ticket,job)|{
+        if !job.inner().is_finished(){return true;}
+        match (&mut *job).now_or_never(){
+            Some(Ok(()))=>false,
+            Some(Err(_))=>{publish_preload(*ticket,json!({"state":"failed","reason":"预加载任务意外结束；未自动重试"}));false},
+            None=>true,
+        }
+    });
+}
+pub fn queue_preload(app:AppHandle,url:String,title:String,rotation:crate::rhvideo_rotation::Policy,preparation:crate::rhvideo::play_intent::Preparation)->Result<Value,String>{
+    // The dispatcher holds PLAY_LOCK through registration, so close can drain
+    // all earlier workers, including futures which have never been polled.
+    let mut jobs=WARM_JOBS.lock().map_err(|_|"预加载任务状态不可用")?;
+    reap_preload_jobs(&mut jobs);
+    if jobs.len()>=64{return Ok(json!({"scheduled":false,"state":"skipped","reason":"旧预加载仍在结束，不启动无界任务"}));}
+    let ticket={let mut slot=WARM.lock().map_err(|_|"预加载状态不可用")?;
+        preparation.ensure_current()?;slot.reserve(json!({"state":"waiting-current-frame","title":title}))};
+    let observed=preparation.clone();
+    let activity=ActivePreload::new();
+    let handle=tauri::async_runtime::spawn(async move{
+        let _activity=activity;
+        if let Err(error)=preload(app,url,title,rotation,ticket,preparation).await{
+            if observed.ensure_current().is_ok(){publish_preload(ticket,json!({"state":"failed","reason":error}));}
+        }
+    });
+    jobs.push((ticket,handle));Ok(json!({"scheduled":true}))
+}
+async fn preload(app: AppHandle, url: String, title: String,rotation:crate::rhvideo_rotation::Policy,ticket:warm_state::Ticket,preparation:crate::rhvideo::play_intent::Preparation) -> Result<Value, String> {
+    let retired={let mut slot=WARM.lock().map_err(|_|"预加载状态不可用")?;
+        preparation.ensure_current()?;let Some(retired)=slot.admit(ticket)else{return Ok(json!({"state":"cancelled"}));};retired};
+    if let Some(engine)=retired{release_preload(engine).await?;}
     // Like RHVideo's onplaying handler, do not compete for upstream bandwidth,
     // decoder initialization or GPU resources before the active first frame.
-    *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
-        Some(json!({"state":"waiting-current-frame","title":title}));
     let first_frame_deadline=std::time::Instant::now()+std::time::Duration::from_secs(15);
     loop {
-        if ticket!=WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst) {
+        if !preload_current(ticket,&preparation) {
             return Ok(json!({"state":"cancelled"}));
         }
         let ready=PLAYER.try_lock().ok().and_then(|p|p.as_ref().map(Engine::state))
@@ -940,25 +998,25 @@ pub async fn preload(app: AppHandle, url: String, title: String,rotation:crate::
         if ready {break;}
         if std::time::Instant::now()>=first_frame_deadline {
             let value=json!({"state":"skipped","reason":"当前视频尚未显示首帧，不占用其网络和解码资源"});
-            if ticket==WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst) {
-                *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")?=Some(value.clone());
-            }
+            publish_preload(ticket,value.clone());
             return Ok(value);
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     let Ok(_build) = WARM_BUILD.try_lock() else {
         let value = json!({"state":"skipped","reason":"上一项预加载正在释放，不启动并行预加载"});
-        *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? = Some(value.clone());
+        publish_preload(ticket,value.clone());
         return Ok(value);
     };
-    *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
-        Some(json!({"state":"loading","title":title}));
+    require_preload(ticket,&preparation)?;
+    publish_preload(ticket,json!({"state":"loading","title":title}));
     let view = app.get_webview_window(LABEL).ok_or("播放器没有打开")?;
     let rotation_viewport=window_viewport(&view)?;
+    let surface_preparation=preparation.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         let result = (|| {
+            require_preload(ticket,&surface_preparation)?;
             surface_class()?;
             let parent = view.hwnd().map_err(|e| e.to_string())?;
             let child = unsafe {
@@ -992,75 +1050,51 @@ pub async fn preload(app: AppHandle, url: String, title: String,rotation:crate::
     })
     .map_err(|e| e.to_string())?;
     let child = rx.await.map_err(|_| "播放器已关闭")??;
+    let worker_preparation=preparation.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut surface=SurfaceGuard(vec![child]);
+        require_preload(ticket,&worker_preparation)?;
         let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
-        let mut engine = match Engine::new_with_rotation(child,angle) {
-            Ok(e) => e,
-            Err(e) => {
-                unsafe {
-                    let _ = PostMessageW(
-                        Some(HWND(child as Ptr)),
-                        WM_CLOSE,
-                        Default::default(),
-                        Default::default(),
-                    );
-                }
-                return Err(e);
-            }
-        };
+        let mut engine = Engine::new_with_rotation(child,angle)?;
+        require_preload(ticket,&worker_preparation)?;
         engine.configure_rotation(rotation,rotation_viewport)?;
-        if let Err(error) = control_engine(&mut engine, &json!({"command":"volume","value":0})) {
-            release_surface(engine);
-            return Err(error);
-        }
-        if let Err(e) = engine.open(&url, title, 0.0) {
-            release_surface(engine);
-            return Err(e);
-        }
+        control_engine(&mut engine, &json!({"command":"volume","value":0}))?;
+        require_preload(ticket,&worker_preparation)?;
+        engine.open(&url, title, 0.0)?;
+        surface.0.clear();
         Ok(engine)
     })
     .await
     .map_err(|_| "预加载任务意外结束")?;
     let mut engine = match result {
         Ok(e) => e,
-        Err(e) => {
-            if ticket == WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst) {
-                *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
-                    Some(json!({"state":"failed","reason":e}));
-            }
-            return Err(e);
-        }
+        Err(e) => return Err(e),
     };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        if ticket != WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst) {
-            tauri::async_runtime::spawn_blocking(move || release_surface(engine));
+        if !preload_current(ticket,&preparation) {
+            release_preload(engine).await?;
             return Ok(json!({"state":"cancelled"}));
         }
-        if let Err(error)=engine.resolve_rotation(){release_surface(engine);return Err(error);}
+        if let Err(error)=engine.resolve_rotation(){release_preload(engine).await?;return Err(error);}
         let status = engine.state();
         // Transparent native windows can be GPU-occluded. Readiness is actual
         // decoder output; ordinary playback still requires displayed frames.
         if status["decodedFrames"].as_u64().unwrap_or(0) > 0 {
             if let Err(error) = control_engine(&mut engine, &json!({"command":"pause"})) {
-                release_surface(engine);
+                release_preload(engine).await?;
                 return Err(error);
             }
-            let mut slot = WARM.lock().map_err(|_| "预加载不可用")?;
-            if ticket != WARM_EPOCH.load(std::sync::atomic::Ordering::SeqCst) {
-                drop(slot);
-                release_surface(engine);
-                return Ok(json!({"state":"cancelled"}));
-            }
-            *slot = Some(engine);
             let value = json!({"state":"ready","decodedFrames":status["decodedFrames"],"renderedFrames":status["renderedFrames"]});
-            *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? = Some(value.clone());
+            let stored={let mut slot=WARM.lock().map_err(|_|"预加载不可用")?;
+                if preparation.ensure_current().is_ok(){slot.store(ticket,engine,value.clone())}else{Err(engine)}};
+            if let Err(engine)=stored{release_preload(engine).await?;return Ok(json!({"state":"cancelled"}));}
             return Ok(value);
         }
         if std::time::Instant::now() >= deadline || status["state"] == 7 {
-            tauri::async_runtime::spawn_blocking(move || release_surface(engine));
+            release_preload(engine).await?;
             let value = json!({"state":"failed","reason":"原生下一项首帧预加载失败或超时；不会自动重试","decoderState":status["state"],"decodedFrames":status["decodedFrames"],"renderedFrames":status["renderedFrames"]});
-            *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? = Some(value.clone());
+            publish_preload(ticket,value.clone());
             return Ok(value);
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1593,12 +1627,11 @@ pub async fn play(
     let (rotation_viewport,parent)=rx.await.map_err(|_|"播放器窗口已关闭".to_owned())??;
     preparation.ensure_current()?;
     require_player_window(lease,parent)?;
-    let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
+    let (warm_ticket,warmed) = WARM.lock().map_err(|_| "预加载不可用")?.retire(json!({"state":"idle"}));
     trace_open(started,"warm-slot-ready");
     let mut guard = SurfaceGuard(vec![]);
-    WARM_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    if let Some(mut warmed) = warmed {
-        if warmed.url == url {
+    if let Some((mut warmed,was_current)) = warmed {
+        if was_current && warmed.url == url {
             guard.0.push(warmed.child);
             let settings = PLAYER
                 .lock()
@@ -1650,8 +1683,7 @@ pub async fn play(
                 }
             })
             .map_err(|e| e.to_string())?;
-            *WARM_STATUS.lock().map_err(|_| "预加载状态不可用")? =
-                Some(json!({"state":"consumed"}));
+            publish_preload(warm_ticket,json!({"state":"consumed"}));
             trace_open(started,"preload-consumed");
             require_player_window(lease,parent)?;
             return Ok(state);
@@ -1899,6 +1931,14 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod input_tests{
+    #[test]
+    fn queued_preload_is_counted_even_before_its_future_is_polled(){
+        let before=super::WARM_ACTIVE.load(std::sync::atomic::Ordering::SeqCst);
+        let activity=super::ActivePreload::new();
+        let future=async move{let _activity=activity;std::future::pending::<()>().await;};
+        assert_eq!(super::WARM_ACTIVE.load(std::sync::atomic::Ordering::SeqCst),before+1);
+        drop(future);assert_eq!(super::WARM_ACTIVE.load(std::sync::atomic::Ordering::SeqCst),before);
+    }
     use super::*;
     #[test]
     fn presentation_commands_accept_only_the_captured_current_input(){
