@@ -7,6 +7,9 @@ const receipt={passed:false,kind:'ordinary library PLAYER source-pixel clock dia
 try{
  for(const key of ['RHFILES_VLC_DEBUG','RHFILES_PLAY_NATIVE_TRACE','RHFILES_VLC_NATIVE_TRACE','RHFILES_VLC_COMPATIBILITY','RHFILES_VLC_NETWORK_CACHE_MS','RHFILES_VLC_DECODE_THREADS','RHFILES_QA_READBACK'])assert(!process.env[key]);
  assert.equal(process.env.RHFILES_NATIVE_PLAYER_QA,'1');assert(process.env.RHFILES_TEST_EXECUTABLE?.includes('test-artifacts'));receipt.executableSha256=sha(process.env.RHFILES_TEST_EXECUTABLE);receipt.helperSha256=sha(new URL('./native-media-clock.mjs',import.meta.url));receipt.probeSha256=sha(new URL(import.meta.url));receipt.policy={fixedSamplesAfterReplyMs:[2000,4000,6000],sourceRate:[.8,1.2],uiClockErrorMs:250,uiClockErrorAddsPostCaptureRead:true,requiresPresentedPixelsAndAudibleAfterState:true,beforeReadinessMayDifferAtFirstPicture:true};
+ assert(process.env.FFMPEG&&path.isAbsolute(process.env.FFMPEG),'Select the frozen media generator explicitly before the run, not a PATH fallback');
+ const generator=fs.realpathSync(process.env.FFMPEG);assert.equal(generator.toLowerCase(),fs.realpathSync(path.resolve('src-tauri/thirdparty/ffmpeg.exe')).toLowerCase(),'Use the admitted snapshot media tool');
+ receipt.generator={executable:generator,sha256:sha(generator),version:execFileSync(generator,['-version'],{encoding:'utf8',windowsHide:true,timeout:10000}).split(/\r?\n/,1)[0],observedBeforeGeneration:true};
  generateClockMedia(media);receipt.sourceSha256=sha(media);
  // Exercise the actual H264 encode/decode and frame expressions first. Mock
  // bitmaps alone cannot prove that ffmpeg wrote the advertised source clocks.
@@ -31,5 +34,5 @@ try{
  assert(receipt.cadenceWithinBudget,'Actual source pixels must advance near 1x, not just the UI');assert(receipt.synchronizationWithinBudget,'UI clock must stay near the actual source-frame time, not permanently lag it');
  receipt.passed=true;
 }catch(error){failure=error;receipt.error=String(error?.stack||error);}
-finally{library?.close();if(app)await app.close();if(fixture){receipt.transport=fixture.transport.snapshot();await fixture.close();}fs.writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(receipt,null,2));console.log('Source pixel clock receipt: '+directory);}
+finally{library?.close();if(app)await app.close();if(fixture){receipt.transport=fixture.transport.snapshot();await fixture.close();}if(receipt.generator){receipt.generator.unchanged=sha(receipt.generator.executable)===receipt.generator.sha256;if(!receipt.generator.unchanged){receipt.passed=false;failure??=Error('Media generator changed during the observation');receipt.error=String(failure);}}fs.writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(receipt,null,2));console.log('Source pixel clock receipt: '+directory);}
 if(failure)throw failure;

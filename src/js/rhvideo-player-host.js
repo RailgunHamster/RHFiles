@@ -64,7 +64,8 @@
   }
   function prepare(owner){
    if(owner.reservation)return Promise.resolve(owner.reservation);if(owner.preparing)return owner.preparing;
-   owner.preparing=(async()=>{const context=await rawNative('player.hostContext');if(!live(owner)||owner.closing)return null;
+   owner.preparing=(async()=>{const [context,fullscreen]=await Promise.all([rawNative('player.hostContext'),window.__TAURI__.window.getCurrentWindow().isFullscreen()]);if(!live(owner)||owner.closing)return null;
+    owner.dialog.classList.toggle('is-fullscreen',fullscreen);owner.layoutKey='';
     const reservation=await rawNative('player.hostPrepare',{window:context.window,panel:owner.panel});owner.reservation=reservation;
     if(!live(owner)||owner.closing){await rawNative('player.closeHost',{...reservation,reason:'close'});return null;}return reservation;
    })().finally(()=>{owner.preparing=null;});return owner.preparing;
@@ -100,6 +101,11 @@
    if(action==='player.closeParent')return ordered(owner,()=>rawNative(action,owner.lease?{...args,...guard(owner)}:args),{closed:false,stale:true});
    if(!owner.lease){if(action==='player.state')return {opened:false};throw Error('原生播放正在准备');}
    if((owner.covered||!top(owner))&&action==='player.control'&&args.command==='resume')throw Error('播放面板被覆盖，尚未恢复播放');
+   if(action==='player.fullscreen')return ordered(owner,async()=>{
+    const value=await rawNative(action,{...args,...guard(owner)});
+    if(live(owner)&&typeof value?.fullscreen==='boolean'){owner.dialog.classList.toggle('is-fullscreen',value.fullscreen);owner.layoutKey='';await sync();}
+    return value;
+   });
    const value=await rawNative(action,{...args,...guard(owner)});
    if(value?.opened&&value.host?.lease!==owner.lease)throw Error('原生播放面板已改变，旧回复未接管界面');
    if(live(owner)&&value?.opened){owner.latest=value;if(!owner.covered)owner.userRunning=!(value.pauseRequested??value.state===4)&&value.state!==6;await sync();}

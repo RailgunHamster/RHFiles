@@ -10,10 +10,10 @@ const tick=async()=>{for(let i=0;i<24;i++)await Promise.resolve();};
 
 // Host/lifetime unit fixture only. Real native pixels, focus, DPI and decoder
 // performance are deliberately NOT simulated or certified by this fixture.
-function fixture({inline=true,fetchGate=null}={}){
+function fixture({inline=true,fetchGate=null,fullscreen=false}={}){
  const calls=[],nodes=[],controllers=[],events=new Map(),handlers=new Map(),notices=[];let selected=null,version=0,uuid=0,owner=0,lease=0,override=null,currentState=null;
  class Node{
-  constructor(tag){this.tagName=tag;this.id='';this.dataset={};this.open=false;this.children=[];this.classList={add(){}};nodes.push(this);}
+  constructor(tag){this.tagName=tag;this.id='';this.dataset={};this.open=false;this.children=[];const classes=new Set();this.classList={add:name=>classes.add(name),contains:name=>classes.has(name),toggle(name,on){if(on===undefined)on=!classes.has(name);if(on)classes.add(name);else classes.delete(name);return on;}};nodes.push(this);}
   append(...values){this.children.push(...values);}setAttribute(){}querySelectorAll(){return [];}querySelector(){return this.title||(this.title=new Node('div'));}
   addEventListener(name,fn){handlers.set(this.id+':'+name,fn);}getBoundingClientRect(){return {x:16,y:24,width:640,height:360};}
   focus(){this.focused=true;}close(){this.open=false;}remove(){this.removed=true;}
@@ -25,9 +25,10 @@ function fixture({inline=true,fetchGate=null}={}){
   if(action==='play'){currentState={opened:true,inputId:++lease,state:3,renderedFrames:1,pauseRequested:false,host:{...args.host,lease:lease*2}};return structuredClone(currentState);}
   if(action==='player.state')return structuredClone(currentState);
   if(action==='player.control'){currentState.pauseRequested=args.command==='pause';return structuredClone(currentState);}
+  if(action==='player.fullscreen'){fullscreen=!fullscreen;return {fullscreen};}
   return {closed:true};
  };
- const context=vm.createContext({window:{__TAURI__:{event:{listen:async(name,fn)=>{events.set(name,fn);return()=>events.delete(name);}}},addEventListener:(name,fn)=>handlers.set('window:'+name,fn)},document,
+ const context=vm.createContext({window:{__TAURI__:{window:{getCurrentWindow:()=>({isFullscreen:async()=>fullscreen})},event:{listen:async(name,fn)=>{events.set(name,fn);return()=>events.delete(name);}}},addEventListener:(name,fn)=>handlers.set('window:'+name,fn)},document,
   crypto:{randomUUID:()=>String(++uuid)+'-panel'},fetch:async()=>{if(fetchGate)await fetchGate.promise;return {ok:true,text:async()=>'<footer id="controls"></footer>'};},DOMParser:class{parseFromString(){return {getElementById:()=>new Node('footer')};}},ResizeObserver:class{constructor(fn){this.fn=fn;}observe(){}disconnect(){this.disconnected=true;}},
   RHFilesUI:{listen:(node,name,fn)=>handlers.set(node.id+':'+name,fn)},RHVideoPlayerControls:{install(options){const c={options,suspended:0,resumed:0,disposed:0,suspend(){this.suspended++;},resume(){this.resumed++;},dispose(){this.disposed++;}};controllers.push(c);return c;}}
  });
@@ -103,4 +104,32 @@ test('a replacement and old-parent cleanup cannot overtake an earlier native sou
 });
 test('duplicate closes await one accepted operation rather than submitting another native close',async()=>{
  const p=fixture();await p.host.request('play',{id:'generated'});const gate=deferred();p.override=action=>action==='player.closeHost'?gate.promise:undefined;const a=p.host.close(),b=p.host.close();await tick();assert.equal(p.count('player.closeHost'),1);gate.resolve({closed:true});await Promise.all([a,b]);assert.equal(p.host.opened(),false);
+});
+
+test('fullscreen acknowledgement changes the live library layout in both directions',async()=>{
+ const p=fixture();await p.host.request('play',{id:'generated'});const dialog=p.nodes.find(n=>n.tagName==='dialog');assert.equal(dialog.classList.contains('is-fullscreen'),false);
+ assert.equal((await p.host.request('player.fullscreen')).fullscreen,true);assert.equal(dialog.classList.contains('is-fullscreen'),true);
+ assert.equal((await p.host.request('player.fullscreen')).fullscreen,false);assert.equal(dialog.classList.contains('is-fullscreen'),false);
+});
+
+test('a player opened in an already-fullscreen library adopts that layout before native admission',async()=>{
+ const p=fixture({fullscreen:true});let admitted=false;p.override=action=>{if(action==='play'){admitted=true;assert.equal(p.nodes.find(n=>n.tagName==='dialog').classList.contains('is-fullscreen'),true);}return undefined;};
+ await p.host.request('play',{id:'generated'});assert(admitted);
+});
+
+test('a delayed fullscreen acknowledgement cannot resize a replacement panel',async()=>{
+ const p=fixture();await p.host.request('play',{id:'old'});const gate=deferred();p.override=action=>action==='player.fullscreen'?gate.promise:undefined;
+ const pending=p.host.request('player.fullscreen');await tick();await p.host.close();p.advance();await p.host.request('play',{id:'new'});const current=p.nodes.findLast(n=>n.tagName==='dialog');
+ gate.resolve({fullscreen:true});await pending;assert.equal(current.classList.contains('is-fullscreen'),false);assert(p.host.opened());
+});
+
+test('a rejected fullscreen change does not silently change the current layout',async()=>{
+ const p=fixture();await p.host.request('play',{id:'generated'});const failure=Error('generated fullscreen denial');p.override=action=>action==='player.fullscreen'?Promise.reject(failure):undefined;
+ await assert.rejects(p.host.request('player.fullscreen'),error=>error===failure);assert.equal(p.nodes.find(n=>n.tagName==='dialog').classList.contains('is-fullscreen'),false);assert.equal(p.count('player.fullscreen'),1);
+});
+
+test('consecutive fullscreen toggles keep native and layout acknowledgements ordered',async()=>{
+ const p=fixture();await p.host.request('play',{id:'generated'});const gate=deferred();let received=0;p.override=action=>{if(action==='player.fullscreen')return ++received===1?gate.promise:{fullscreen:false};};
+ const first=p.host.request('player.fullscreen');await tick();const second=p.host.request('player.fullscreen');await tick();assert.equal(p.count('player.fullscreen'),1,'The second toggle must not overtake the first acknowledgement');
+ gate.resolve({fullscreen:true});await Promise.all([first,second]);assert.equal(p.count('player.fullscreen'),2);assert.equal(p.nodes.find(n=>n.tagName==='dialog').classList.contains('is-fullscreen'),false);
 });
