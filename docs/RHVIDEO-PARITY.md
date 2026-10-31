@@ -16,6 +16,12 @@
 
 补齐空状态、异常嵌套字段及实际 stepImage 的 pending／failed 身份检查后，本地实际 RHVideo 源码对照 Node **1236/1236，零失败／取消／跳过，43.990 秒**（`rhvideo-image-caption-full-node.tap`）；最初相关 34 项定向检查也全部通过。真实双端场景已增加界面标题、计数、alt、状态文本与公开读回逐项对应的断言；两端正常候选正在构建，实际运行结果另记，不以源码测试替代整包验收。
 
+标题修复提交 `60c6e35` 已推送 GitHub／Gitee。新正常 Windows release 用时 **2 分 22 秒**，EXE SHA-256 **`b6fd9efb29f3019a9de7a66c748b44dd215accad60e75d7a6618bc3e480da13f`**，冻结 `rhvideo-pipe-full-xuoYyD`；相关实际界面／原生回归 **23/23，零失败／取消／跳过，225.899 秒**（`rhvideo-image-caption-real-windows.tap`）。图片用例 **31.852 秒**，逐项核对 DOM 标题、计数、alt、状态与公开 requested／failed／caption；已查看首次加载及超时 PNG，分别准确显示 **035／36** 与 **034／35**，不再残留上一张。其余用例含真实本地 RHVideo FastAPI／临时 SQLite、导出字节、五万项与实际原生四路／1080p／4K 输入。首帧仍约 **3785／5045 ms**，这些功能通过不表示同质量性能对照已经达标。
+
+新正常 Android x86_64 APK SHA-256 **`871f0287019735096c6a57eb8bf3169bafd6b40ed95f4724250aba3115214010`**（`rhvideo-modal-normal-android-noVVNZ`），正常 BuildConfig 与实际安装字节已核对。显式一次普通启动后确认 PID 21870 的 MainActivity 前台，再附着执行；结果 **失败**：媒体库 `rhvideo.image.seek` API 在原 20 秒预算内未就绪（`rhvideo-image-caption-real-android.log`、`rhvideo-image-decode-android-jqA6p9/receipt.json`），夹具 **0 次请求**，图片场景尚未开始。它不是图片功能通过或冷启动通过；没有重试安装／重启 AVD／放宽预算，清理后只停止测试应用。原失败未保存完整初始化状态，现补入仅在失败后读取模块类型、实际静态脚本哈希、已选／可见 CDP 页面及截图的诊断，不重载或重新提交动作；这项采集尚未在新设备运行中验证，不能倒推本次根因。
+
+加入三项只读诊断测试后，完整本地源码对照 **1239/1239，零失败／取消／跳过，31.192 秒**（`rhvideo-image-caption-final-source-node.tap`）。冻结的 **1194** 个源码、**4** 个工具、**426** 个运行库、上述 EXE／APK 事后哈希均匹配（`rhvideo-pipe-full-xuoYyD/image-decode-postcheck.json`）。源码函数探测另提示叠放预览的标记对象及暂存图片预览的解码／代次边界仍可能有缺口，尚未算作实际 UI 复现或修复。
+
 完整目标仍包括首播与持续播放性能、原生关闭证据、全功能整轮及未解的真实按键交付；这次标题修复不是完成全部 RHVideo 前端的证明，也未发布正式包。仅使用生成媒体／临时数据库，不动真实数据或实体手机。
 
 ## 2026-10-31 图片预览的真实解码与错误状态（继续验收中）
