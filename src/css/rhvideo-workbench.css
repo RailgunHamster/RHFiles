@@ -1,3 +1,4 @@
+.image-tool-glyph { display: none; }
 .wb-gallery-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .wb-rules-summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 18px; }
 .wb-rules-summary[hidden] { display:none; }

@@ -70,6 +70,9 @@
     arrow:'<path d="M4 12h16m-6-6 6 6-6 6"/>',
     left:'<path d="m14 5-7 7 7 7"/>',right:'<path d="m10 5 7 7-7 7"/>',
     plus:'<path d="M12 5v14M5 12h14"/>',minus:'<path d="M5 12h14"/>',
+    trash:'<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+    shuffle:'<path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 4-4M14 10c1-2 2-4 4-4h3m-4-4 4 4-4 4"/>',
+    'play-super':'<path d="m10 5 11 7-11 7zM3 7l5 5-5 5"/>',
     play:'<path d="m9 5 11 7-11 7z"/>',timeline:'<path d="M3 5h18v14H3zM8 5v14M16 5v14M3 10h5m8 0h5M3 14h5m8 0h5"/>'
   };
   const icon=name=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+(icons[name]||icons.library)+'</svg>';

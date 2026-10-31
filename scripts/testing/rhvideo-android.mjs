@@ -332,6 +332,7 @@ try{
   console.log((playerCloseMode?'PASS: native-player close diagnostic only, not full product acceptance, artifacts ':singleClockMode?'PASS: single-player clock diagnostic only, not full product acceptance, artifacts ':gridSurfaceMode?'PASS: output-surface diagnostic only, not full product acceptance, artifacts ':'PASS: release APK end-to-end, artifacts ')+artifact);
 }finally{
   releaseGallery?.();
+  if(favoritesMode)try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-favorite-toolbar-qa.png',path.join(artifact,'rhvideo-favorite-toolbar-qa.png')]);}catch{}
   if(playerCloseMode&&!fs.existsSync(path.join(artifact,'player-close-native.json')))try{run(['pull','/sdcard/Android/data/com.railgunhamster.rhfiles/files/rhvideo-player-close-latency.json',path.join(artifact,'player-close-native.json')]);}catch(error){console.error('Close diagnostic receipt unavailable: '+error.message);}
   // Keep transport evidence on failure too; never persist bearer/passwords.
   fs.writeFileSync(path.join(artifact,'requests.json'),JSON.stringify(fixture.requests.map(({method,path,query,range})=>({method,path,query,range})),null,2));

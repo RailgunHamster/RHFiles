@@ -3,9 +3,9 @@ const wb=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta
 function declarations(source){const found=new Map();function walk(n){if(!n||typeof n!=='object')return;if(n.type==='FunctionDeclaration')found.set(n.id.name,source.slice(n.start,n.end));if(n.type==='CallExpression'&&n.callee.name==='action'&&n.arguments[0]?.value==='image.state')found.set('state',source.slice(n.arguments[2].start,n.arguments[2].end));for(const v of Object.values(n))if(Array.isArray(v))v.forEach(walk);else walk(v);}walk(parse(source,{ecmaVersion:'latest'}));return found;}
 const methods=declarations(wb),ui=declarations(client),target=(id,index)=>({id,kind:'picture',title:id+'.webp',index,total:100});
 function fixture(session){
- const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'095.webp',hidden:false,disabled:false,value:'950',setAttribute(){},querySelectorAll:()=>[],classList:{toggle(){}}});return nodes.get(id);};
+ const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'095.webp',hidden:false,disabled:false,value:'950',setAttribute(){},querySelector:()=>null,querySelectorAll:()=>[],classList:{toggle(){}}});return nodes.get(id);};
  const context=vm.createContext({imageSession:session,$:node,state:{favorites:new Set(),favoriteBusy:new Set()},ctx:{showImageCaption:(media,index,total)=>{node('image-title').textContent=media?.title||'图片预览';node('image-position').textContent=total?(index+1)+' / '+total:'';}},showImage(){}});
- for(const name of ['imageTarget','imagePresentation','refreshImage'])if(methods.has(name))vm.runInContext(methods.get(name),context);
+ for(const name of ['imageTarget','imagePresentation','imageToolLabel','refreshImage'])if(methods.has(name))vm.runInContext(methods.get(name),context);
  return {context,node,state:()=>vm.runInContext('('+methods.get('state')+')()',context)};
 }
 test('first loading paints the requested caption and counter instead of the previous picture',()=>{

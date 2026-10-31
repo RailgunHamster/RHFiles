@@ -29,6 +29,17 @@ html{font-size:15px;-webkit-text-size-adjust:100%}body{min-width:0;overscroll-be
 .mobile-client .image-dialog #image-close{position:absolute;right:8px;top:8px;margin:0;border:0;background:transparent}
 .mobile-client .image-dialog .image-stage{flex:1 1 0;min-height:0;height:auto}
 .mobile-client .image-dialog .image-progress{flex:0 0 auto;min-height:48px}
+/* Compact original commands, not a second menu or replacement action model.
+ * Full labels remain available to accessibility/automation; fit/zoom feedback
+ * stays visible. Larger screenshot tool sets retain the same touch scroll. */
+.mobile-client .image-dialog .viewer-bar>div{gap:4px}
+.mobile-client .image-dialog .viewer-bar>div>.image-tool-button{display:flex;align-items:center;justify-content:center;width:44px;flex:0 0 44px;padding:6px}
+.mobile-client .image-dialog .image-tool-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.mobile-client .image-dialog .image-tool-glyph{display:grid;place-items:center;width:22px;height:22px;pointer-events:none}
+.mobile-client .image-dialog .image-tool-glyph svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.mobile-client .image-dialog #wb-image-favorite[aria-pressed="true"]{color:#f1a7c7;background:#9d547e26}
+.mobile-client .image-dialog #wb-image-favorite[aria-pressed="true"] .image-tool-glyph svg{fill:currentColor}
+.mobile-client .image-dialog #image-fit{min-width:56px;padding:6px 4px;font-size:12px}
 /* Narrow catalog chrome stays in bounded, horizontally scrollable rows. Keep
  * all workflow/selection commands and 44px targets instead of wrapping enough
  * rows to push the first media card out of the phone viewport. Dialog toolbars

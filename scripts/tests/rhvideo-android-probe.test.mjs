@@ -110,6 +110,20 @@ test('ordinary grid resizing retains codecs but keeps real background and explic
   assert.match(grid,/override fun onStop\(\)\{handler\.removeCallbacks\(update\);releasePlayers\(\);super\.onStop\(\)\}/);
 });
 
+test('common favorite picture tools require seven fully reachable targets and actual zoom/fit taps',()=>{
+  const start=source.indexOf('private void checkFavoriteImageToolbar()');assert(start>=0);const body=source.slice(start,source.indexOf('\n  private ',start));
+  for(const id of ['wb-image-favorite','wb-image-mark','wb-image-reveal','image-zoom-out','image-fit','image-zoom-in','image-close'])assert(body.includes("'"+id+"'"));
+  for(const check of ['controls.length()==7','c.getBoolean("inside")','c.getBoolean("hit")','>=44','scale(1.25)','scale(0.75)','scale(1)'])assert(body.includes(check),check);
+  assert.match(body,/touchStrip\("#"\+touch\[0\],false\)/);assert.doesNotMatch(body,/\.click\(|performClick\(|\.scrollLeft\s*=/);
+  assert.match(source,/waitFavoritePicture\(pictureId,picture\);checkFavoriteImageToolbar\(\)/);
+});
+test('Android late-play gate holds the actual uncached gallery locate, not an obsolete full-gallery query',()=>{
+  const start=source.indexOf('private void checkLatestPlayIntent()');assert(start>=0);const body=source.slice(start,source.indexOf('\n  private ',start));
+  assert(body.includes("message.args.locate?.videoId==='video-0'"));assert(!body.includes('message.args.allKeys'));assert(body.includes('window.__intentPost.call(window.__heldIntent.worker,window.__heldIntent.message,...window.__heldIntent.rest)'));
+  for(const assertion of ['Old preparation must report stale without launching its source','Neither native playback nor its parent may be taken over by an old request'])assert(body.includes(assertion));
+  const workbench=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');const ordinary=workbench.slice(workbench.indexOf('async function play(media,'),workbench.indexOf('action("media.playLow"'));
+  assert(ordinary.includes('send("query",{...args,locate:{videoId:media.id}})'));assert(!ordinary.includes('allKeys:true'));assert(ordinary.includes('if(intent!==singlePlayIntent)return {stale:true}'));
+});
 test('mobile image toolbar acceptance checks real geometry and a physical swipe without replacing command handlers',()=>{
   const start=source.indexOf('private void checkImageToolbar()');assert(start>=0);
   const body=source.slice(start,source.indexOf('\n  private ',start));

@@ -130,6 +130,19 @@
         );
         return b;
       }
+      function imageToolLabel(node, text) {
+        const label=node.querySelector(".image-tool-label");
+        if(label)label.textContent=text;else node.textContent=text;
+        node.setAttribute("aria-label",text);node.title=text;
+      }
+      function imageTool(text, name, args, glyph, id) {
+        const node=button(text,name,args,"text-button");if(id)node.id=id;
+        // Keep the existing desktop text toolbar and every original handler.
+        if(!ctx.mobile)return node;
+        node.className+=" image-tool-button";
+        const visual=el("span",undefined,"image-tool-glyph");visual.innerHTML=icon(glyph);visual.setAttribute("aria-hidden","true");
+        node.replaceChildren(visual,el("span",text,"image-tool-label"));imageToolLabel(node,text);return node;
+      }
       function select(options, name, args, value) {
         const node = el("select");
         node.dataset.apiAction = "rhvideo." + name;
@@ -2869,7 +2882,7 @@
         const video=item?.kind==="video";$("full-image").hidden=video||!item;
         $("wb-image-reveal").disabled=loading||!(frame?item?.videoId:item?.id);
         for(const control of $("image-dialog").querySelectorAll('[data-api-action="rhvideo.image.order"]'))control.hidden=!!imageSession?.favorite||!imageSession?.args;
-        if(favorite){favorite.hidden=!["video","picture","novel"].includes(kind)||!id;favorite.textContent=state.favorites.has(key)?"取消收藏":"收藏";favorite.setAttribute("aria-pressed",String(state.favorites.has(key)));favorite.disabled=loading||state.favoriteBusy.has(key);}
+        if(favorite){favorite.hidden=!["video","picture","novel"].includes(kind)||!id;imageToolLabel(favorite,state.favorites.has(key)?"取消收藏":"收藏");favorite.setAttribute("aria-pressed",String(state.favorites.has(key)));favorite.disabled=loading||state.favoriteBusy.has(key);}
         if($("wb-image-mark"))$("wb-image-mark").hidden=!["video","picture","novel"].includes(kind)||!id;
         if (imageSession?.current&&!loading&&!video)
           showImage(
@@ -2894,14 +2907,14 @@
       $("image-dialog")
         .querySelector(".viewer-bar>div")
         .prepend(
-          button("随机", "image.order", { random: true }, "text-button"),
-          button("还原顺序", "image.order", { random: false }, "text-button"),
+          imageTool("随机", "image.order", { random: true }, "shuffle", "wb-image-random"),
+          imageTool("还原顺序", "image.order", { random: false }, "refresh", "wb-image-order-restore"),
         );
-      const imageMark=button("标记/取消待删除", "selection.markCurrent", {}, "text-button");imageMark.id="wb-image-mark";
-      const framePlay=button("播放此刻","image.playFrame",{},"text-button");framePlay.id="wb-frame-play";framePlay.hidden=true;
-      const frameLow=button("超压播放此刻","image.playFrame",{super:true},"text-button");frameLow.id="wb-frame-play-low";frameLow.hidden=true;
-      const imageFavorite=button("收藏","image.favorite",{},"text-button");imageFavorite.id="wb-image-favorite";imageFavorite.hidden=true;
-      const imageReveal=button("在清单中定位","image.reveal",{},"text-button");imageReveal.id="wb-image-reveal";
+      const imageMark=imageTool("标记/取消待删除", "selection.markCurrent", {}, "trash", "wb-image-mark");
+      const framePlay=imageTool("播放此刻","image.playFrame",{},"play","wb-frame-play");framePlay.hidden=true;
+      const frameLow=imageTool("超压播放此刻","image.playFrame",{super:true},"play-super","wb-frame-play-low");frameLow.hidden=true;
+      const imageFavorite=imageTool("收藏","image.favorite",{},"heart","wb-image-favorite");imageFavorite.hidden=true;
+      const imageReveal=imageTool("在清单中定位","image.reveal",{},"search","wb-image-reveal");
       $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,frameLow,imageFavorite,imageMark,imageReveal);
       action("image.favorite",object(),async()=>{if(imageSession?.loading)throw Error("图片正在切换，请稍候再收藏");const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有可收藏的媒体");return invoke("favorite.toggle",{kind:item.kind==="frame"?"video":item.kind,id:item.kind==="frame"?item.videoId:item.id});},"write");
       action("image.state",object(),()=>({opened:$("image-dialog").open,loading:imageSession?.loading===true,error:imageSession?.error||"",requestedIndex:imageSession?.pendingIndex??null,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null,...imagePresentation()}),"read");

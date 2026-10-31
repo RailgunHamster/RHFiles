@@ -313,7 +313,7 @@ public class RhVideoInstrumentation extends Instrumentation {
     JSONArray rows=new JSONArray();for(int i=0;i<listed.getJSONArray("items").length();i++){JSONObject row=listed.getJSONArray("items").getJSONObject(i);if(!"novel".equals(row.getString("kind")))rows.put(row);}require(rows.length()==4,"A novel is not part of mixed media browsing");
     int picture=-1,movie=-1;for(int i=0;i<rows.length();i++)if("picture".equals(rows.getJSONObject(i).getString("kind"))){if(picture<0)picture=i;}else if(movie<0)movie=i;
     require(picture>=0&&movie>=0,"The mixed collection has both kinds");String pictureId=rows.getJSONObject(picture).getString("id"),movieId=rows.getJSONObject(movie).getString("id");
-    action("media.open",new JSONObject().put("kind","picture").put("id",pictureId));waitFavoritePicture(pictureId,picture);assertPreviewPixels("#image-dialog #full-image","rhvideo-favorite-picture-qa.png");
+    action("media.open",new JSONObject().put("kind","picture").put("id",pictureId));waitFavoritePicture(pictureId,picture);checkFavoriteImageToolbar();assertPreviewPixels("#image-dialog #full-image","rhvideo-favorite-picture-qa.png");
     action("image.seek",new JSONObject().put("ratio",movie/3.0));JSONObject first=waitPlayer(movieId,true);require("favorite".equals(first.getJSONObject("options").getString("origin"))&&first.getJSONObject("options").getInt("parentTotal")==4&&first.getJSONObject("options").getInt("parentIndex")==movie,"Native video belongs to the same mixed favorite snapshot, not the screenshot gallery");
     JSONObject oldOptions=first.getJSONObject("options");action("player.favorite",new JSONObject().put("expectedInputId",first.getLong("inputId")));long end=System.currentTimeMillis()+10000;JSONObject favorite;
     do{favorite=(JSONObject)action("player.state",new JSONObject());if(!favorite.optBoolean("favoriteBusy")&&!favorite.optBoolean("favorite"))break;Thread.sleep(100);}while(System.currentTimeMillis()<end);require(!favorite.optBoolean("favoriteBusy")&&!favorite.optBoolean("favorite"),"Native favorite removal must finish");
@@ -467,7 +467,7 @@ public class RhVideoInstrumentation extends Instrumentation {
   private void checkLatestPlayIntent()throws Exception{
     action("category",new JSONObject().put("kind","video"));action("sort",new JSONObject().put("value","dateDesc"));
     action("gallery.open",new JSONObject());action("panel.close",new JSONObject().put("id","wb-gallery"));
-    expression(library,"(()=>{window.__intentPost=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...rest){if(!window.__heldIntent&&message.action==='query'&&message.args.kind==='gallery'&&message.args.allKeys){window.__heldIntent={worker:this,message,rest};return;}return window.__intentPost.call(this,message,...rest);};window.__oldIntent=RHFilesAPI.invoke('rhvideo.media.open',{kind:'video',id:'video-0'});return true;})()");
+    expression(library,"(()=>{window.__intentPost=Worker.prototype.postMessage;Worker.prototype.postMessage=function(message,...rest){if(!window.__heldIntent&&message.action==='query'&&message.args.kind==='gallery'&&message.args.locate?.videoId==='video-0'){window.__heldIntent={worker:this,message,rest};return;}return window.__intentPost.call(this,message,...rest);};window.__oldIntent=RHFilesAPI.invoke('rhvideo.media.open',{kind:'video',id:'video-0'});return true;})()");
     long end=System.currentTimeMillis()+10000;while(!"true".equals(eval(library,"!!window.__heldIntent"))&&System.currentTimeMillis()<end)Thread.sleep(100);if(!"true".equals(eval(library,"!!window.__heldIntent")))throw new Exception("Older library request did not reach metadata: "+expression(library,"Promise.race([window.__oldIntent.then(value=>({value}),error=>({error:String(error)})),new Promise(resolve=>setTimeout(()=>resolve({pending:true}),300))])")+"; "+action("state",new JSONObject()));
     action("media.open",new JSONObject().put("kind","video").put("id","video-1"));long input=waitPlayer("video-1",true).getLong("inputId");
     expression(library,"(()=>{Worker.prototype.postMessage=window.__intentPost;window.__intentPost.call(window.__heldIntent.worker,window.__heldIntent.message,...window.__heldIntent.rest);return true;})()");
@@ -869,6 +869,18 @@ public class RhVideoInstrumentation extends Instrumentation {
     do{state=(JSONObject)action("image.state",new JSONObject());if(state.optBoolean("opened")&&state.optInt("index")==index&&eval(library,"document.getElementById('full-image').naturalWidth>0").equals("true"))return state;Thread.sleep(100);}while(System.currentTimeMillis()<end);
     String ui=eval(library,"JSON.stringify((()=>{const image=document.getElementById('full-image');return {src:image.currentSrc||image.src,complete:image.complete,width:image.naturalWidth,height:image.naturalHeight,position:document.getElementById('image-position').textContent,notice:document.getElementById('notice').textContent,dialogs:[...document.querySelectorAll('dialog[open]')].map(n=>n.id)};})())");
     throw new Exception("Parent screenshot did not return: "+state+" UI: "+ui);
+  }
+  private void checkFavoriteImageToolbar()throws Exception{
+    JSONObject box=(JSONObject)expression(library,"(()=>{const ids=['wb-image-favorite','wb-image-mark','wb-image-reveal','image-zoom-out','image-fit','image-zoom-in','image-close'];return {width:innerWidth,controls:ids.map(id=>{const n=document.getElementById(id),r=n.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return {id,x:r.x,y:r.y,width:r.width,height:r.height,inside:r.x>=0&&r.right<=innerWidth&&r.y>=0&&r.bottom<=innerHeight,hit:n.contains(hit)};})};})()");
+    screenshot("rhvideo-favorite-toolbar-qa.png");
+    JSONArray controls=box.getJSONArray("controls");require(controls.length()==7,"The unchanged common image commands must all remain present");
+    for(int i=0;i<controls.length();i++){JSONObject c=controls.getJSONObject(i);require(c.getBoolean("inside")&&c.getBoolean("hit")&&c.getDouble("width")>=44&&c.getDouble("height")>=44,"Preview common controls must be fully reachable without a hidden horizontal menu: "+box);}
+    step("favorite toolbar fully visible "+box);
+    for(String[] touch:new String[][]{{"image-zoom-in","scale(1.25)"},{"image-fit","scale(1)"},{"image-zoom-out","scale(0.75)"},{"image-fit","scale(1)"}}){
+      touchStrip("#"+touch[0],false);long end=SystemClock.uptimeMillis()+5000;boolean changed=false;
+      do{changed=Boolean.TRUE.equals(expression(library,"document.getElementById('full-image').style.transform==="+JSONObject.quote(touch[1])));if(changed)break;Thread.sleep(50);}while(SystemClock.uptimeMillis()<end);
+      require(changed,"Physical image zoom/fit tap must use the existing public action: "+touch[0]);
+    }
   }
   private void checkImageToolbar()throws Exception{
     JSONObject image=(JSONObject)action("image.state",new JSONObject());
