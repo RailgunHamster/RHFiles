@@ -43,7 +43,7 @@
       if(!/^[a-zA-Z][a-zA-Z0-9_.-]{0,199}$/.test(id)||typeof handler!=='function')fail('INVALID_ACTION','Invalid action registration');
       if(commands.has(id))fail('DUPLICATE_ACTION','Action already registered: '+id);
       const spec={id,description:description.description||id,risk:description.risk||'ui',params:description.params||{type:'object',properties:{},additionalProperties:false},...description};
-      commands.set(id,{handler,spec});return()=>commands.delete(id);
+      const owner={handler,spec};commands.set(id,owner);return()=>{if(commands.get(id)===owner)commands.delete(id);};
     }
     function describe(id){const command=commands.get(id);if(!command)fail('ACTION_NOT_FOUND','Unknown action: '+id);return json(command.spec);}
     function list(){return [...commands.keys()].sort().map(describe);}
@@ -81,8 +81,8 @@
         if(receipt.state==='succeeded'&&!Object.hasOwn(receipt,'result')||receipt.state==='failed'&&(!receipt.error||typeof receipt.error.code!=='string'||typeof receipt.error.message!=='string')||receipt.state!=='running'&&(!Number.isSafeInteger(receipt.finishedAt)||receipt.finishedAt<0))fail('INVALID_RESULT','A process receipt has no confirmed completion');return receipt;
       }
     }
-    function provideState(name,read){if(states.has(name))fail('DUPLICATE_ACTION','Duplicate state provider');states.set(name,read);}
-    function snapshot(){const out={};for(const [name,read]of states)try{out[name]=redact(result(read()));}catch(e){out[name]={error:errorOf(e)};}return {apiVersion:VERSION,instanceId,state:out};}
+    function provideState(name,read){if(states.has(name))fail('DUPLICATE_ACTION','Duplicate state provider');const owner={read};states.set(name,owner);return()=>{if(states.get(name)===owner)states.delete(name);};}
+    function snapshot(){const out={};for(const [name,{read}]of states)try{out[name]=redact(result(read()));}catch(e){out[name]={error:errorOf(e)};}return {apiVersion:VERSION,instanceId,state:out};}
     async function rpc(request){
       const id=['string','number'].includes(typeof request?.id)&&Number.isFinite(typeof request.id==='number'?request.id:0)?request.id:null;
       try{

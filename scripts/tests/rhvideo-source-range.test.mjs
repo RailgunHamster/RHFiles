@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-const source=fs.readFileSync(new URL('../../src/js/rhvideo-player.js',import.meta.url),'utf8');
-const begin=source.indexOf('function bindSourceRange('),end=source.indexOf("RHFilesUI.listen($('toggle')",begin);
+const source=fs.readFileSync(new URL('../../src/js/rhvideo-player-controls.js',import.meta.url),'utf8');
+const begin=source.indexOf('function bindSourceRange('),end=source.indexOf("listen($('toggle')",begin);
 function create(command=(value,target)=>({command:'seek',value:value/1000*target.durationMs}),scope='input'){
   const listeners=new Map(),calls=[],errors=[],locks=[],node={value:'750'},context=vm.createContext({state:{inputId:10,durationMs:20000,queue:{planRevision:30}},$:()=>node,RHFilesUI:{listen(_node,event,callback){listeners.set(event,callback);}},api:{invoke(name,args){calls.push({action:name,...args});return Promise.resolve({});}},control:args=>{calls.push(args);return Promise.resolve({});},error:value=>errors.push(value)});
   vm.runInContext(source.slice(source.indexOf('function observeAction('),source.indexOf('let audibleVolume=')),context);
-  vm.runInContext(source.slice(begin,end),context);context.bindSourceRange('seek',command,value=>locks.push(value),undefined,scope);
+  context.gestureCancels=[];context.listen=context.RHFilesUI.listen;vm.runInContext(source.slice(begin,end),context);context.bindSourceRange('seek',command,value=>locks.push(value),undefined,scope);
   return {context,node,calls,errors,locks,fire:(name,args={})=>listeners.get(name)(args)};
 }
 test('a source seek keeps the original input and duration across a queue change',()=>{

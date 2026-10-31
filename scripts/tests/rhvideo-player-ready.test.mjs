@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
-const source=fs.readFileSync(new URL('../../src/js/rhvideo-player.js',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../../src/js/rhvideo-player-controls.js',import.meta.url),'utf8');
 const model=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
 const playbackPhase=createRequire(import.meta.url)('../../src/js/rhvideo-playback-phase.js');
 
@@ -17,7 +17,7 @@ function player(){
   const api={provideRunLookup(){},provideRunTransport(){},provideState:(name,read)=>providers.set(name,read),register:(name,handler)=>actions.set(name,handler),list:()=>[...actions.keys()].map(id=>({id})),invoke:async(name,args)=>actions.get(name)(args)};
   const pending=new Promise(resolve=>release=resolve);
   const context=vm.createContext({window:{RHFilesAPI:api,__TAURI__:{core:{invoke:()=>pending},event:{listen:async()=>{}}},addEventListener(){}},document:{getElementById:node,querySelectorAll:controls,createElement:()=>{const n=node('new-'+nodes.size);Object.defineProperty(n,'id',{get(){return this.identifier;},set(id){this.identifier=id;nodes.set(id,this);}});return n;}},RHFilesUI:{listen(){}},RHVideoModel:model,RHVideoPlaybackPhase:playbackPhase,setTimeout:callback=>timers.push(callback),performance:{now:()=>0}});
-  vm.runInContext(source,context);
+  vm.runInContext(source,context);vm.runInContext(fs.readFileSync(new URL('../../src/js/rhvideo-player.js',import.meta.url),'utf8'),context);
   return {node,controls,providers,actions,release:async(value)=>{release(value);for(let n=0;n<8;n++)await Promise.resolve();}};
 }
 

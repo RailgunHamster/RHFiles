@@ -17,7 +17,7 @@ async function target(app,file){
   },file+' packaged app window');
   const session=await cdpSession(found,30000);
   await until(()=>session.evaluate("!!globalThis.RHFilesAPI?.list().some(a=>['rhvideo.state','rhvideo.player.state','rhvideo.grid.state'].includes(a.id))"),'view actions registered');
-  const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js','rhvideo-index.js','rhvideo-configuration.js','rhvideo-exports.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
+  const codes={'rhvideo.html':['rhvideo-workbench.js','rhvideo-client.js','rhvideo-index.js','rhvideo-configuration.js','rhvideo-exports.js'],'rhvideo-player.html':['rhvideo-player-controls.js','rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
   for(const code of codes){const served=await session.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=text=>createHash('sha256').update(text).digest('hex');assert.equal(hash(served),hash(source),'The tested executable must embed the current '+code);}
   // These are video-list workflows. The independent primary-gallery cases
   // verify the reference default; do not rely on a hidden list being clickable.

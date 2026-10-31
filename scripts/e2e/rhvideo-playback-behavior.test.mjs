@@ -41,7 +41,7 @@ async function target(app,file){
   const view=await cdpSession(found,30000);
   const action=file==='rhvideo-player.html'?'rhvideo.player.state':file==='rhvideo-grid.html'?'rhvideo.grid.state':'rhvideo.playlist.sequential';
   await until(()=>view.evaluate('!!globalThis.RHFilesAPI?.list().some(a=>a.id==='+JSON.stringify(action)+')'),'behavior APIs ready');
-  const codes={'rhvideo.html':['rhvideo-model.js','rhvideo-workbench.js'],'rhvideo-player.html':['rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
+  const codes={'rhvideo.html':['rhvideo-model.js','rhvideo-workbench.js'],'rhvideo-player.html':['rhvideo-player-controls.js','rhvideo-player.js'],'rhvideo-grid.html':['rhvideo-grid.js']}[file]||[];
   for(const code of codes){const served=await view.evaluate('fetch('+JSON.stringify('js/'+code)+').then(r=>r.text())'),source=fs.readFileSync(new URL('../../src/js/'+code,import.meta.url),'utf8'),hash=value=>createHash('sha256').update(value).digest('hex');assert.equal(hash(served),hash(source),'behavior tests must run the current '+code);}
   if(file==='rhvideo-player.html'&&process.env.RHFILES_EXPECT_RENDERER){const actual=await invoke(view,'player.state');assert.equal(actual.renderer,process.env.RHFILES_EXPECT_RENDERER,'verify the actual renderer, not only the requested environment');}
   return view;

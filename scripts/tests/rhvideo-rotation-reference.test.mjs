@@ -50,7 +50,7 @@ test('account-isolation fixture only accepts explicitly configured users and sti
 });
 
 test('single-player rotation is a persistent fit-aware switch, not an angle cycle',async()=>{
-  const source=fs.readFileSync(new URL('../../src/js/rhvideo-player.js',import.meta.url),'utf8'),start=source.indexOf("register('rotate',"),end=source.indexOf("register('loop',",start);let handler;const calls=[];
+  const source=fs.readFileSync(new URL('../../src/js/rhvideo-player-controls.js',import.meta.url),'utf8'),start=source.indexOf("register('rotate',"),end=source.indexOf("register('loop',",start);let handler;const calls=[];
   const context=vm.createContext({register:(_name,_schema,callback)=>handler=callback,object:()=>({}),currentTarget:async()=>({autoRotate:false,rotation:0,inputId:8}),control:async value=>calls.push(value)});
   vm.runInContext(source.slice(start,end),context);await handler({});
   assert.equal(calls[0].command,'autoRotate');assert.equal(calls[0].enabled,true);assert.equal(calls[0].expectedInput,8,'the toggle must retain the input whose switch was read, not rebind after an await');

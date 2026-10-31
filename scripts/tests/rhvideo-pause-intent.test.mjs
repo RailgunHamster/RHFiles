@@ -9,7 +9,7 @@ function controller(file){
   walk(parse(source,{ecmaVersion:'latest'}));assert.equal(functions.length,2,'Exercise the shipped pause/toggle controller');const scope=vm.createContext({});vm.runInContext(functions.join('\n'),scope);return scope;
 }
 test('single-player toggle follows the accepted intent while decoder pause/resume is still pending',()=>{
-  const c=controller('rhvideo-player.js');
+  const c=controller('rhvideo-player-controls.js');
   assert.equal(c.toggleCommand({state:3,pauseRequested:true}),'resume');
   assert.equal(c.toggleCommand({state:4,pauseRequested:false}),'pause');
   assert.equal(c.toggleCommand({state:6,pauseRequested:false}),'resume','a finished input is replayed');
