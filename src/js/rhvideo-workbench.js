@@ -3321,10 +3321,10 @@
       function galleryImage(images,item,url,version,revision){
         const key=JSON.stringify([I.key(item),I.galleryKey(item)]),previous=images.get(key),owner=previous&&galleryImageOwners.get(previous);
         images.delete(key);
-        const image=owner?.version===version&&owner.revision===revision?previous:el("img");
+        const image=owner?.version===version&&owner.revision===revision&&owner.url===url?previous:el("img");
         if(image!==previous)image.src=url;
         image.loading="lazy";image.alt=item.title;
-        galleryImageOwners.set(image,{key,version,revision});
+        galleryImageOwners.set(image,{key,version,revision,url});
         return image;
       }
       async function loadGallery(refresh = false, display = true) {
