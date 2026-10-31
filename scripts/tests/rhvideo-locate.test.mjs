@@ -65,6 +65,6 @@ test('gallery inspect uses the exact ordered target and discards a delayed looku
 test('gallery inspect cannot reopen a decoded old picture after another media intent or account change',async()=>{
   for(const change of [s=>s.singlePlayIntent++,s=>s.epoch++,s=>s.gallery.revision++]){
     const h=harness();let release;h.scope.stepImage=()=>new Promise(resolve=>release=resolve);
-    const old=h.scope.inspect({index:0});while(!release)await new Promise(setImmediate);change(h.scope);release({index:3});assert.equal((await old).stale,true);assert.equal(h.calls.filter(c=>c==='opened').length,0);
+    const old=h.scope.inspect({index:0});while(!release)await new Promise(setImmediate);assert.equal(h.calls.filter(c=>c==='opened').length,1,'Initial loading is visible and closable');change(h.scope);release({index:3});assert.equal((await old).stale,true);assert.equal(h.calls.filter(c=>c==='opened').length,1,'A retired decode cannot reopen its dialog');
   }
 });

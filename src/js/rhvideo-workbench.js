@@ -2750,9 +2750,9 @@
           total: result.total,
           current: null,
         };
+        ctx.openDialog("image-dialog");
         const displayed=await stepImage(0);
         if(displayed.stale||version!==epoch||intent!==singlePlayIntent||imageSession!==session)return {stale:true};
-        ctx.openDialog("image-dialog");
         return { opened: true, total: result.total };
       }
       async function favoriteBrowse(media=null,low=false,start=0){
@@ -2792,6 +2792,7 @@
           index = targetIndex??RHVideoModel.playback.step(session.pendingIndex??session.index,direction,session.total);
         session.pendingIndex=index;
         session.loading=true;
+        session.error="";
         refreshImage();
         try{
           const value = session.favorite?{items:[session.items[index]]}:await send("query", {
@@ -2812,18 +2813,24 @@
           : await native("resolve", { items: value.items });
         if (ticket !== imageToken || session !== imageSession)
           return { stale: true };
+        const decoded=await ctx.prepareImage(result.items[0],()=>ticket===imageToken&&session===imageSession);
+        if(decoded?.stale||ticket!==imageToken||session!==imageSession)return {stale:true};
         session.index = index;
         session.current = result.items[0];
         if(session.args.kind==="gallery"){prefs.galleryResume={mediaKey:I.key(session.current),orderKey:I.galleryKey(session.current),videoId:session.current.videoId??null,index,offset:Math.floor(index/gallery.limit)*gallery.limit};save();}
         ctx.resetImageZoom();
         refreshImage();
         return { index, total: session.total };
+        }catch(error){
+          if(ticket!==imageToken||session!==imageSession)return {stale:true};
+          session.error=String(error?.message||error);throw error;
         }finally{
           if(ticket===imageToken&&session===imageSession){session.loading=false;delete session.pendingIndex;refreshImage();}
         }
       }
       function refreshImage() {
         const loading=imageSession?.loading===true;
+        const status=$("image-load-status");status.hidden=!loading&&!imageSession?.error;status.textContent=loading?"正在加载图片…":imageSession?.error||"";status.classList.toggle("is-error",!loading&&!!imageSession?.error);
         $("image-dialog").setAttribute("aria-busy",String(loading));
         $("full-image").setAttribute("aria-disabled",String(loading));
         const frame=imageSession?.current?.kind==="frame";for(const id of ["wb-frame-play","wb-frame-play-low"])if($(id))$(id).hidden=!frame;
@@ -2865,7 +2872,7 @@
       const imageReveal=button("在清单中定位","image.reveal",{},"text-button");imageReveal.id="wb-image-reveal";
       $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,frameLow,imageFavorite,imageMark,imageReveal);
       action("image.favorite",object(),async()=>{if(imageSession?.loading)throw Error("图片正在切换，请稍候再收藏");const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有可收藏的媒体");return invoke("favorite.toggle",{kind:item.kind==="frame"?"video":item.kind,id:item.kind==="frame"?item.videoId:item.id});},"write");
-      action("image.state",object(),()=>({opened:$("image-dialog").open,loading:imageSession?.loading===true,requestedIndex:imageSession?.pendingIndex??null,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null}),"read");
+      action("image.state",object(),()=>({opened:$("image-dialog").open,loading:imageSession?.loading===true,error:imageSession?.error||"",requestedIndex:imageSession?.pendingIndex??null,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null}),"read");
       action("image.seek",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),async({ratio})=>{if(!$("image-dialog").open||!imageSession)throw Error("图片查看器未打开");return stepImage(0,RHVideoModel.playback.imageSeek(imageSession.total,ratio));});
       async function playImageVideo(low,atFrame){
         const session=imageSession,item=session?.current,version=epoch;
@@ -3364,8 +3371,9 @@
         if(result.stale||!current())return {stale:true};
         if(!result.located)throw Error("截图筛选结果已改变，请刷新");
         const at=result.located.index,session=imageSession={args,index:at,total:result.total,current:null,previewId:crypto.randomUUID()};
+        ctx.openDialog("image-dialog");
         const displayed=await stepImage(0);if(displayed.stale||!current()||imageSession!==session)return {stale:true};
-        ctx.openDialog("image-dialog");return {opened:true,total:result.total,index:at};
+        return {opened:true,total:result.total,index:at};
       });
       action("gallery.orders", object(), () => {
         const root = dialog("wb-settings", "截图浏览顺序"),

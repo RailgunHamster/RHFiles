@@ -66,7 +66,7 @@ test('a delayed picture lookup cannot pop over a newer video',async()=>{
 test('a resolved old picture cannot reopen its dialog after the user starts another video',async()=>{
   let release,opened=0;const {context}=create({query:async args=>reply(args,[{id:'picture',kind:'picture'}]),stepImage:()=>new Promise(resolve=>release=resolve),ctx:{openDialog(){opened++;}}});
   const old=context.image({id:'picture',kind:'picture'});await ready(()=>release);await context.play(rows[1]);release({index:0});
-  assert.equal((await old).stale,true);assert.equal(opened,0);assert.equal(context.imageSession.current.videoId,'b');
+  assert.equal((await old).stale,true);assert.equal(opened,1,'Only the initial loading dialog opens; no late reopening');assert.equal(context.imageSession.current.videoId,'b');
 });
 test('a failed native open cannot restore an old parent into a newly logged-in account',async()=>{
   let reject;const parent={previewId:'old-account',current:frames[0]},failure=Error('old account is no longer live');

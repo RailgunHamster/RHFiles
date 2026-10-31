@@ -296,6 +296,21 @@
     for(const chapter of book.chapters)select.append(new Option(chapter.title,String(chapter.index)));
     openDialog('reader-dialog');paintFavorite('novel:'+book.id);await chapter(reader.chapter,book.progress?.scroll_ratio||0);return {opened:true};
   }
+  async function prepareImage(media,current){
+    if(!current())return {stale:true};
+    const image=$('full-image');let timer;
+    try{
+      if(typeof media?.cover!=='string'||!media.cover)throw Error('图片地址不可用');
+      if(image.getAttribute('src')!==media.cover)image.src=media.cover;
+      await Promise.race([image.decode(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('图片加载超时，请检查服务器连接')),20000);})]);
+      if(!current())return {stale:true};
+      if(image.getAttribute('src')!==media.cover||!image.complete||!image.naturalWidth||!image.naturalHeight)throw Error('图片内容不可用');
+      return {decoded:true};
+    }catch(error){
+      if(!current())return {stale:true};
+      throw Error(error?.message==='图片加载超时，请检查服务器连接'?error.message:'图片加载失败，服务器未返回可解码的图片');
+    }finally{clearTimeout(timer);}
+  }
   function showImage(media=images[imageIndex],index=imageIndex,total=images.length){
     $('image-title').textContent=media.title;if($('full-image').src!==media.cover)$('full-image').src=media.cover;$('full-image').alt=media.title;
     $('image-position').textContent=(index+1)+' / '+total+(media.kind==='frame'?' · '+model.clock(media.seconds)+' / '+model.clock(media.duration):'');$('image-previous').disabled=total<=1;$('image-next').disabled=total<=1;
@@ -356,7 +371,7 @@
     if(mobile)return native('close',run?{_automationRun:run}:{});return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
-  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,loadCategory,paint,paintFavorite,showImage,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
+  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,loadCategory,paint,paintFavorite,showImage,prepareImage,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
   const listenNative=mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen;
   listenNative('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
   listenNative('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);
@@ -377,7 +392,7 @@
   bind('image-fit','click','image.zoom',()=>({delta:0}));bind('image-zoom-in','click','image.zoom',()=>({delta:.25}));bind('image-zoom-out','click','image.zoom',()=>({delta:-.25}));
   bind('image-collection-seek','change','image.seek',()=>({ratio:Number($('image-collection-seek').value)/1000}));
   $('full-image').dataset.apiAction='rhvideo.image.playVideo';RHFilesUI.listen($('full-image'),'click',()=>{if(workbench?.canPlayImage())void invoke('image.playVideo').catch(notice);},undefined,'rhvideo.image.playVideo');
-  RHFilesUI.listen($('full-image'),'error',()=>{$('image-position').textContent='图片加载失败，请检查服务器连接后重试。';},undefined,'rhvideo.image.error');
+  RHFilesUI.listen($('full-image'),'error',()=>{if(!workbench)$('image-position').textContent='图片加载失败，请检查服务器连接。';},undefined,'rhvideo.image.error');
   bind('timeline-close','click','timeline.close');bind('reader-close','click','reader.close');bind('chapter-select','change','reader.chapter',()=>({index:Number($('chapter-select').value)}));
   bind('chapter-previous','click','reader.step',()=>({direction:-1}));bind('chapter-next','click','reader.step',()=>({direction:1}));
   bind('reader-font','change','reader.font',()=>({size:Number($('reader-font').value)}));

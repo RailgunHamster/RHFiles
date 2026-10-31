@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {rhvideoFixture} from './rhvideo-fixture.mjs';
+const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
+export async function imageDecodeFixture(){
+ const gates=new Map([99,96,94,35].map(n=>[n,deferred()]));let initial=false;
+ const fixture=await rhvideoFixture({videoCount:0,galleryVideoCount:0,pictureCount:100,
+  beforeCatalog:(kind,rows)=>{if(kind==='picture')rows.forEach((row,i)=>{row.original_filename=String(i).padStart(3,'0')+'.webp';if(initial&&i===35)row.webp_path='pictures/initial35.svg';});},
+  beforeMedia:async({path,image})=>{if(!image)return;const match=path.match(/^\/storage\/pictures\/(\d+)\.svg$/);const n=path==='/storage/pictures/initial35.svg'?35:match?Number(match[1]):-1;if(gates.has(n)&&(n!==35||initial))await gates.get(n).promise;if(n===98)return {body:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><broken'),contentType:'image/svg+xml'};}
+ });
+ return {...fixture,armInitial:()=>{initial=true;},release:n=>{assert(gates.has(n));gates.get(n).resolve();},releaseAll:()=>gates.forEach(g=>g.resolve())};
+}
+export async function exerciseImageDecode({page,until,server,fixture,receipt,screenshot=async()=>{}}){
+ const api=(name,args={})=>page.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');
+ const begin=(label,ratio)=>page.evaluate(`(()=>{window.__qaImageDecodes??={};const row=__qaImageDecodes[${JSON.stringify(label)}]={done:false};RHFilesAPI.invoke('rhvideo.image.seek',{ratio:${ratio}}).then(value=>{row.value=value;row.done=true;},error=>{row.error=String(error);row.done=true;});return true;})()`);
+ const finish=label=>until(()=>page.evaluate('window.__qaImageDecodes?.['+JSON.stringify(label)+']?.done?__qaImageDecodes['+JSON.stringify(label)+']:null'),'actual image action '+label);
+ const requested=n=>fixture.requests.some(r=>r.path==='/storage/pictures/'+n+'.svg');
+ await api('connection.connect',{server,username:'preview',password:'fixture-only'});await api('category',{kind:'picture'});await api('sort',{value:'nameAsc'});await api('media.open',{kind:'picture',id:'picture-0'});
+ assert.equal((await api('image.state')).current.id,'picture-0');
+ await begin('held',1);await until(()=>requested(99),'actual offscreen image HTTP request');
+ const held=receipt.held=await api('image.state');assert.equal(held.loading,true,'Metadata is not a decoded picture');assert.equal(held.current.id,'picture-0');assert.equal(held.index,0);assert.equal(held.requestedIndex,99);assert.equal(await page.evaluate('__qaImageDecodes.held.done'),false);
+ assert.equal(await page.evaluate('!document.getElementById("image-load-status").hidden'),true);await screenshot('image-decode-held');
+ fixture.release(99);const completed=await finish('held');assert.equal(completed.error,undefined);const ready=receipt.ready=await api('image.state');assert.equal(ready.loading,false);assert.equal(ready.error,'');assert.equal(ready.index,99);
+ assert.equal(await page.evaluate('(()=>{const i=document.getElementById("full-image");return i.complete&&i.naturalWidth===800&&i.naturalHeight===500;})()'),true);await screenshot('image-decode-ready');
+ await begin('invalid',98/99);const failed=await finish('invalid');assert.match(failed.error,/图片/);const error=receipt.error=await api('image.state');assert.equal(error.loading,false);assert.equal(error.index,99);assert.equal(error.current.id,'picture-99');assert.match(error.error,/图片/);
+ assert.equal(await page.evaluate('!document.getElementById("image-load-status").hidden&&document.getElementById("image-load-status").classList.contains("is-error")'),true);await screenshot('image-decode-error');
+ assert.equal(fixture.requests.filter(r=>r.path==='/storage/pictures/98.svg').length,1,'Do not automatically retry an undecodable image');
+ await begin('retired',96/99);await until(()=>requested(96),'held former image');await begin('newer',95/99);assert.equal((await finish('newer')).error,undefined);fixture.release(96);assert.equal((await finish('retired')).value.stale,true);
+ const newer=receipt.newer=await api('image.state');assert.equal(newer.current.id,'picture-95');assert.equal(newer.error,'');assert.equal(newer.loading,false);
+ await begin('closed',94/99);await until(()=>requested(94),'held image before close');await api('image.close');fixture.release(94);assert.equal((await finish('closed')).value.stale,true);assert.equal((await api('image.state')).opened,false);
+ fixture.armInitial();await api('refresh');await page.evaluate("(()=>{const row=__qaImageDecodes.initial={done:false};RHFilesAPI.invoke('rhvideo.media.open',{kind:'picture',id:'picture-35'}).then(value=>{row.value=value;row.done=true;},error=>{row.error=String(error);row.done=true;});return true;})()");await until(()=>fixture.requests.some(r=>r.path==='/storage/pictures/initial35.svg'),'initial uncached picture held');
+ const initial=receipt.initial=await until(async()=>{const s=await api('image.state');return s.opened&&s.loading?s:null;},'first loading exposes Close/Back before decoding');assert.equal(initial.opened,true);assert.equal(initial.loading,true);await screenshot('image-initial-loading');
+ await api('settings.open');assert.equal(await page.evaluate('document.activeElement.closest("dialog")?.id'),'wb-settings');fixture.release(35);assert.equal((await finish('initial')).error,undefined);assert.equal(await page.evaluate('document.activeElement.closest("dialog")?.id'),'wb-settings','Decoding must not re-raise the image over a newer panel');
+ await api('panel.close',{id:'wb-settings'});await api('image.close');
+ assert.deepEqual((await api('ui.contract')).missing,[]);receipt.passed=true;
+}
