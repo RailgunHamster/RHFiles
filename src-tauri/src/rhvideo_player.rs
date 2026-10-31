@@ -21,6 +21,8 @@ use windows::{
 };
 #[path="rhvideo_preload_slot.rs"]
 mod warm_state;
+#[path="rhvideo_surface_lifecycle.rs"]
+mod surface_lifecycle;
 
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
@@ -167,22 +169,83 @@ struct Grid {
     expanded: Option<usize>,
     ids:Vec<String>,rects:Vec<Option<[f64;4]>>,lease:u64,
 }
-struct SurfaceGuard(Vec<usize>);
+static CLOSE_SURFACE:std::sync::OnceLock<Result<u32,String>>=std::sync::OnceLock::new();
+fn close_surface_message()->Result<u32,String>{
+    CLOSE_SURFACE.get_or_init(||{let message=unsafe{RegisterWindowMessageW(w!("RHFiles.NativeVideoSurface.Close.v1"))};if message==0{Err("无法注册原生画布清理消息".into())}else{Ok(message)}}).clone()
+}
+static SURFACE_SEQUENCE:surface_lifecycle::Sequence=surface_lifecycle::Sequence::new();
+#[derive(Clone,Copy)]
+struct Surface { child:usize, generation:usize }
+impl Surface {
+    fn close(self){
+        // Validation occurs when the owning GUI thread receives this message,
+        // not in an IsWindow/GetProp -> PostMessage race on the decoder worker.
+        if let Ok(message)=close_surface_message(){unsafe{let _=PostMessageW(Some(HWND(self.child as Ptr)),message,WPARAM(self.generation),LPARAM(std::process::id() as isize));}}
+    }
+}
+fn create_surface(parent:HWND,width:i32,height:i32,extended:WINDOW_EX_STYLE)->Result<Surface,String>{
+    surface_class()?;
+    close_surface_message()?;
+    let generation=SURFACE_SEQUENCE.next()?;
+    let child=unsafe{CreateWindowExW(extended,w!("RHFilesNativeVideoSurface"),w!(""),WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|WS_CLIPCHILDREN,0,0,width,height,Some(parent),None,None,Some(generation as *const c_void))}.map_err(|e|e.to_string())?;
+    Ok(Surface{child:child.0 as usize,generation})
+}
+struct SurfaceGuard(Vec<Surface>);
 impl Drop for SurfaceGuard {
     fn drop(&mut self) {
-        for child in self.0.drain(..) {
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(child as Ptr)),
-                    WM_CLOSE,
-                    Default::default(),
-                    Default::default(),
-                );
-            }
-        }
+        for surface in self.0.drain(..) {surface.close();}
     }
 }
 static SURFACE_CLASS: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+#[cfg(test)]
+mod surface_cleanup_tests {
+    use super::*;
+    struct Owned(Surface);
+    impl Drop for Owned { fn drop(&mut self){unsafe{let _=DestroyWindow(HWND(self.0.child as Ptr));}} }
+    fn owned_message_surface()->Owned {
+        Owned(create_surface(HWND_MESSAGE,16,16,WINDOW_EX_STYLE::default()).unwrap())
+    }
+    #[test]
+    fn untagged_delayed_close_cannot_destroy_a_native_surface() {
+        let window=owned_message_surface();
+        // A bare HWND cannot prove that an asynchronous cleanup still owns it.
+        let hwnd=HWND(window.0.child as Ptr);
+        unsafe{SendMessageW(hwnd,WM_CLOSE,Some(WPARAM(0)),Some(LPARAM(0)));}
+        assert!(unsafe{IsWindow(Some(hwnd))}.as_bool(),"An untagged cleanup must not destroy a possibly reused native HWND");
+    }
+    fn dispatch_close(hwnd:HWND){
+        let mut message=MSG::default();let registered=close_surface_message().unwrap();
+        assert!(unsafe{PeekMessageW(&mut message,Some(hwnd),registered,registered,PM_REMOVE)}.as_bool());
+        unsafe{DispatchMessageW(&message);}
+    }
+    #[test]
+    fn receiver_rejects_a_stale_generation_and_accepts_its_own_queued_cleanup(){
+        let old=owned_message_surface();let retired=old.0;drop(old);
+        let new=owned_message_surface();let hwnd=HWND(new.0.child as Ptr);
+        // Exercise the ABA case deterministically even if Windows chooses a
+        // different HWND value today: the old generation targets the new HWND.
+        Surface{child:new.0.child,generation:retired.generation}.close();dispatch_close(hwnd);
+        assert!(unsafe{IsWindow(Some(hwnd))}.as_bool());
+        new.0.close();dispatch_close(hwnd);assert!(!unsafe{IsWindow(Some(hwnd))}.as_bool());
+    }
+    #[test]
+    fn parent_destruction_does_not_need_an_untagged_child_close_message(){
+        let parent=owned_message_surface();let child=create_surface(HWND(parent.0.child as Ptr),16,16,WINDOW_EX_STYLE::default()).unwrap();
+        drop(parent);assert!(!unsafe{IsWindow(Some(HWND(child.child as Ptr)))}.as_bool());
+    }
+    #[test]
+    fn a_failed_handoff_guard_posts_only_generation_checked_cleanup(){
+        let window=owned_message_surface();let hwnd=HWND(window.0.child as Ptr);
+        drop(SurfaceGuard(vec![window.0]));assert!(unsafe{IsWindow(Some(hwnd))}.as_bool());
+        dispatch_close(hwnd);assert!(!unsafe{IsWindow(Some(hwnd))}.as_bool());
+    }
+    #[test]
+    fn another_process_identity_cannot_retire_a_same_generation_surface(){
+        let window=owned_message_surface();let hwnd=HWND(window.0.child as Ptr);let message=close_surface_message().unwrap();assert!(message>=0xc000,"Registered messages do not collide with private WM_APP protocols");
+        unsafe{SendMessageW(hwnd,message,Some(WPARAM(window.0.generation)),Some(LPARAM((std::process::id()^0x80000000) as isize)));}
+        assert!(unsafe{IsWindow(Some(hwnd))}.as_bool());window.0.close();dispatch_close(hwnd);assert!(!unsafe{IsWindow(Some(hwnd))}.as_bool());
+    }
+}
 unsafe extern "system" fn surface_proc(
     hwnd: HWND,
     message: u32,
@@ -190,7 +253,18 @@ unsafe extern "system" fn surface_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     unsafe {
-        if message==WM_NCDESTROY{if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
+        if message==WM_NCCREATE {
+            let create=&*(lparam.0 as *const CREATESTRUCTW);
+            SetWindowLongPtrW(hwnd,GWLP_USERDATA,create.lpCreateParams as isize);
+        }
+        if CLOSE_SURFACE.get().is_some_and(|registered|registered.as_ref().is_ok_and(|value|*value==message)){
+            if surface_lifecycle::admits(GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize,wparam.0,std::process::id() as usize,lparam.0 as usize){let _=DestroyWindow(hwnd);}
+            return LRESULT(0);
+        }
+        // Child canvases have no user close button. Parent destruction still
+        // destroys them normally; asynchronous cleanup must carry its lease.
+        if message==WM_CLOSE{return LRESULT(0);}
+        if message==WM_NCDESTROY{SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
         if message==WM_LBUTTONDOWN&&surface_binding(hwnd.0 as usize).is_some(){let _=SetFocus(Some(hwnd));}
         let modified=matches!(message,WM_KEYDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL)&&[VK_CONTROL,VK_SHIFT,VK_MENU].iter().any(|key|GetKeyState(key.0 as i32)<0);
         if let Some(intent)=surface_intent(message,wparam.0,lparam.0,modified){if emit_surface_input(hwnd.0 as usize,intent){return LRESULT(0);}}
@@ -460,6 +534,7 @@ struct Engine {
     instance: usize,
     player: usize,
     child: usize,
+    surface:Surface,
     input_id:u64,
     seek:Mutex<SeekState>,
     requested_volume: i32,
@@ -497,10 +572,11 @@ impl Engine {
         if let Some(plan)=self.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.take(){unsafe{(self.api.set_rate)(self.player as Ptr,plan.rate);let _=SetLayeredWindowAttributes(HWND(self.child as Ptr),windows::Win32::Foundation::COLORREF(0),255,LWA_ALPHA);}}
         self.hold_audio.store(false,std::sync::atomic::Ordering::Relaxed);Ok(())
     }
-    fn new(child: usize) -> Result<Self, String> {
-        Self::new_with_rotation(child,0)
+    fn new(surface: Surface) -> Result<Self, String> {
+        Self::new_with_rotation(surface,0)
     }
-    fn new_with_rotation(child:usize,rotation:i32)->Result<Self,String>{
+    fn new_with_rotation(surface:Surface,rotation:i32)->Result<Self,String>{
+        let child=surface.child;
         let started=std::time::Instant::now();
         let api = unsafe { Api::load()? };
         trace_startup(started,"library-loaded");
@@ -585,6 +661,7 @@ impl Engine {
             instance: instance as usize,
             player: player as usize,
             child,
+            surface,
             input_id:0,
             seek:Mutex::new(SeekState::default()),
             requested_volume: 100,
@@ -609,7 +686,7 @@ impl Engine {
         self.rotation_viewport
     }
     fn replace_rotation_renderer(&mut self,angle:i32)->Result<(),String>{
-        let mut next=Self::new_with_rotation(self.child,angle)?;
+        let mut next=Self::new_with_rotation(self.surface,angle)?;
         next.requested_volume=self.requested_volume;next.muted=self.muted;next.last_volume=self.last_volume;next.repeat_input=self.repeat_input;
         next.rotation_policy=self.rotation_policy;next.rotation_viewport=self.rotation_viewport;next.rotation_resolved=self.rotation_resolved;
         let rate=unsafe{(self.api.rate)(self.player as Ptr)};
@@ -918,16 +995,9 @@ fn require_player_window(lease:u64,parent:usize)->Result<(),String>{
     WINDOW_EPOCH.close(lease);Err(crate::rhvideo_window_lifecycle::CLOSED.into())
 }
 fn release_surface(engine: Engine) {
-    let child = engine.child;
+    let surface = engine.surface;
     drop(engine);
-    unsafe {
-        let _ = PostMessageW(
-            Some(HWND(child as Ptr)),
-            WM_CLOSE,
-            Default::default(),
-            Default::default(),
-        );
-    }
+    surface.close();
 }
 pub fn clear_preload() {
     let retired=WARM.lock().ok().and_then(|mut slot|slot.retire(json!({"state":"idle"})).1.map(|(engine,_)|engine));
@@ -1020,34 +1090,18 @@ async fn preload(app: AppHandle, url: String, title: String,rotation:crate::rhvi
             require_preload(ticket,&surface_preparation)?;
             surface_class()?;
             let parent = view.hwnd().map_err(|e| e.to_string())?;
-            let child = unsafe {
-                CreateWindowExW(
-                    WS_EX_LAYERED,
-                    w!("RHFilesNativeVideoSurface"),
-                    w!(""),
-                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-                    0,
-                    0,
-                    320,
-                    180,
-                    Some(HWND(parent.0)),
-                    None,
-                    None,
-                    None,
-                )
-            }
-            .map_err(|e| e.to_string())?;
+            let surface=create_surface(HWND(parent.0),320,180,WS_EX_LAYERED)?;
             unsafe {
                 let _ = SetLayeredWindowAttributes(
-                    child,
+                    HWND(surface.child as Ptr),
                     windows::Win32::Foundation::COLORREF(0),
                     0,
                     LWA_ALPHA,
                 );
             }
-            Ok::<usize, String>(child.0 as usize)
+            Ok::<Surface, String>(surface)
         })();
-        let _ = tx.send(result);
+        if let Err(Ok(surface))=tx.send(result){surface.close();}
     })
     .map_err(|e| e.to_string())?;
     let child = rx.await.map_err(|_| "播放器已关闭")??;
@@ -1138,34 +1192,18 @@ pub async fn presentation_open(
         let result = (|| {
             surface_class()?;
             let parent = view.hwnd().map_err(|e| e.to_string())?;
-            let child = unsafe {
-                CreateWindowExW(
-                    WS_EX_LAYERED,
-                    w!("RHFilesNativeVideoSurface"),
-                    w!(""),
-                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-                    0,
-                    0,
-                    16,
-                    16,
-                    Some(HWND(parent.0)),
-                    None,
-                    None,
-                    None,
-                )
-            }
-            .map_err(|e| e.to_string())?;
+            let surface=create_surface(HWND(parent.0),16,16,WS_EX_LAYERED)?;
             unsafe {
                 let _ = SetLayeredWindowAttributes(
-                    child,
+                    HWND(surface.child as Ptr),
                     windows::Win32::Foundation::COLORREF(0),
                     0,
                     LWA_ALPHA,
                 );
             }
-            Ok::<usize, String>(child.0 as usize)
+            Ok::<Surface, String>(surface)
         })();
-        let _ = tx.send(result);
+        if let Err(Ok(surface))=tx.send(result){surface.close();}
     })
     .map_err(|e| e.to_string())?;
     let child = rx.await.map_err(|_| "媒体库窗口已关闭")??;
@@ -1182,16 +1220,7 @@ pub async fn presentation_open(
             *slot = Some(engine);
             Ok(result)
         })();
-        if result.is_err() {
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(child as Ptr)),
-                    WM_CLOSE,
-                    Default::default(),
-                    Default::default(),
-                );
-            }
-        }
+        if result.is_err() {child.close();}
         result
     })
     .await
@@ -1286,18 +1315,7 @@ pub fn stop_grid() {
             std::mem::take(&mut g.players)
         })
         .unwrap_or_default();
-    for engine in players {
-        let child = engine.child;
-        drop(engine);
-        unsafe {
-            let _ = PostMessageW(
-                Some(HWND(child as Ptr)),
-                WM_CLOSE,
-                Default::default(),
-                Default::default(),
-            );
-        }
-    }
+    for engine in players {release_surface(engine);}
 }
 pub fn retire_grid_window(lease:u64)->bool{
     let players={let Ok(mut grid)=GRID.lock() else{return false;};if grid.lease!=lease{return false;}grid.lease=0;grid.expanded=None;grid.ids.clear();grid.rects.clear();std::mem::take(&mut grid.players)};
@@ -1393,30 +1411,13 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option
         let result = (|| {
             surface_class()?;
             let parent = view.hwnd().map_err(|e| e.to_string())?;
-            let mut children = Vec::new();
+            let mut children = SurfaceGuard(Vec::new());
             for _ in 0..count {
-                let child = unsafe {
-                    CreateWindowExW(
-                        WINDOW_EX_STYLE::default(),
-                        w!("RHFilesNativeVideoSurface"),
-                        w!(""),
-                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-                        0,
-                        0,
-                        10,
-                        10,
-                        Some(HWND(parent.0)),
-                        None,
-                        None,
-                        None,
-                    )
-                }
-                .map_err(|e| e.to_string())?;
-                children.push(child.0 as usize);
+                children.0.push(create_surface(HWND(parent.0),10,10,WINDOW_EX_STYLE::default())?);
             }
-            Ok::<_, String>(children)
+            Ok::<_, String>(std::mem::take(&mut children.0))
         })();
-        let _ = tx.send(result);
+        if let Err(Ok(surfaces))=tx.send(result){drop(SurfaceGuard(surfaces));}
     })
     .map_err(|e| e.to_string())?;
     let children = rx.await.map_err(|_| "网格窗口已关闭")??;
@@ -1633,7 +1634,7 @@ pub async fn play(
     let mut guard = SurfaceGuard(vec![]);
     if let Some((mut warmed,was_current)) = warmed {
         if was_current && warmed.url == url {
-            guard.0.push(warmed.child);
+            guard.0.push(warmed.surface);
             let settings = PLAYER
                 .lock()
                 .ok()
@@ -1697,14 +1698,15 @@ pub async fn play(
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         trace_open(started,"surface-main-entered");
-        let result: Result<usize, String> = (|| {
+        let mut created=false;
+        let result: Result<Surface, String> = (|| {
             surface_preparation.ensure_current()?;
             require_player_window(lease,parent)?;
             let existing = PLAYER
                 .lock()
                 .map_err(|_| "播放器状态不可用")?
                 .as_ref()
-                .map(|p| p.child);
+                .map(|p| p.surface);
             if let Some(child) = existing {
                 Ok(child)
             } else {
@@ -1712,30 +1714,14 @@ pub async fn play(
                 let scale = view.scale_factor().map_err(|e| e.to_string())?;
                 let parent = view.hwnd().map_err(|e| e.to_string())?;
                 surface_class()?;
-                let child = unsafe {
-                    CreateWindowExW(
-                        WINDOW_EX_STYLE::default(),
-                        w!("RHFilesNativeVideoSurface"),
-                        w!(""),
-                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-                        0,
-                        0,
-                        size.width as i32,
-                        (size.height as i32 - (CONTROLS_HEIGHT * scale).round() as i32).max(1),
-                        Some(HWND(parent.0)),
-                        None,
-                        None,
-                        None,
-                    )
-                }
-                .map_err(|e| e.to_string())?;
-                Ok(child.0 as usize)
+                let surface=create_surface(HWND(parent.0),size.width as i32,(size.height as i32-(CONTROLS_HEIGHT*scale).round() as i32).max(1),WINDOW_EX_STYLE::default())?;
+                created=true;Ok(surface)
             }
         })();
         if let Ok(child) = result {
-            layout(&view, child);
+            layout(&view, child.child);
         }
-        let _ = tx.send(result);
+        if let Err(Ok(surface))=tx.send(result){if created{surface.close();}}
     })
     .map_err(|e| e.to_string())?;
     trace_open(started,"surface-dispatched");
@@ -1744,24 +1730,18 @@ pub async fn play(
     let worker_preparation=preparation.clone();
     let result=tauri::async_runtime::spawn_blocking(move || {
         trace_open(started,"engine-worker-entered");
+        let mut surface=SurfaceGuard(vec![child]);
         let mut slot = PLAYER.lock().map_err(|_| "播放器状态不可用")?;
+        // An existing decoder already owns this surface. A failed new request
+        // must not retire a still-current player's canvas.
+        if slot.as_ref().is_some_and(|engine|engine.surface.child==child.child&&engine.surface.generation==child.generation){surface.0.clear();}
         worker_preparation.ensure_current()?;
         require_player_window(lease,parent)?;
         if slot.is_none() {
             let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
             match Engine::new_with_rotation(child,angle) {
-                Ok(engine) => {worker_preparation.ensure_current()?;require_player_window(lease,parent)?;*slot = Some(engine);},
-                Err(error) => {
-                    unsafe {
-                        let _ = PostMessageW(
-                            Some(HWND(child as Ptr)),
-                            WM_CLOSE,
-                            Default::default(),
-                            Default::default(),
-                        );
-                    }
-                    return Err(error);
-                }
+                Ok(engine) => {worker_preparation.ensure_current()?;require_player_window(lease,parent)?;*slot = Some(engine);surface.0.clear();},
+                Err(error) => return Err(error),
             }
         }
         trace_open(started,"engine-ready");
