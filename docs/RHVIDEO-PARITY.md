@@ -6,6 +6,20 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 继续浏览的首次图片窗口（继续验收中）
+
+实际本地 RHVideo `3d6aaeb` 的 `resumeBrowse()` 调用渲染后立即显示 viewer，不等待图片下载。新增直接执行参考函数的测试已核对这一点；本端 `resumeGallery` 却在真实解码后才 openDialog。四项本端生产函数红测先 **0/4**（`rhvideo-gallery-resume-red.tap`），覆盖首次加载、较新设置、错误及关闭后的迟到完成。
+
+首个实际夹具重用原地址，未观察到新的挂起下载而失败（`rhvideo-gallery-resume-old-real.tap`），不能算产品反例，原因未确定。随后通过真实的“保存位置 → 浏览别页 → 服务端重生成截图 → 刷新 → 继续浏览”流程产生未缓存新地址，按原有源视频回退语义保留位置。正常旧 **01FD** 实际 **0/1，失败**（`rhvideo-gallery-resume-old-rescan-real.tap`、`rhfiles-e2e-1Zzk1O/gallery-resume.json`）：请求确已挂起，index=2、loading=true、current=null，却 opened=false，无法关闭这次加载。没有关闭缓存、替换界面响应或使用真实媒体。
+
+提交 `bec62a5` 已推送 GitHub／Gitee：从实际定位后的目录页提供初始标题，在等待解码前打开可关闭的窗口，完成时不再 openDialog 覆盖较新设置；稳定 URL、视频／索引回退、命名顺序和保存位置语义不变。完整检查先 **1274/1275**，旧持久化单测夹具没有提供真实页面数组；现由实际 Catalog 查询填入，并新增 pending／current 目标 ID 一致断言，没有把生产代码改成静默忽略缺失页面。修正后 **1275/1275，零失败／取消／跳过，47.069 秒**；后续只读诊断补充后的同规模检查 **31.709 秒**（`rhvideo-gallery-resume-diagnostic-final-node.tap`）。
+
+正常 Windows release **2 分 47 秒**，EXE SHA-256 **`a43524375795c481547b4f4bcada47853da68a9cc66641f6f1b1e1d3a4c67d9b`**，冻结 `rhvideo-pipe-full-p8WkDs`。新增实际场景 **1/1，零失败／取消／跳过，33.576 秒**（`rhvideo-gallery-resume-real-windows.tap`、`rhfiles-e2e-GgydGb/gallery-resume.json`）；实际行按钮在挂起时 opened=true／current=null，完成不抢走设置，关闭在旧响应放行前返回 stale，错误保留可关闭窗口。就绪图确有实际图片，加载／就绪／错误 PNG 已查看。未放行响应最终为普通图片加载失败，**不是独立的 20 秒 DOM watchdog 通过**。同一 EXE 相关图库／普通图片／叠放预览／暂存图片回归 **12/12、零跳过，113.707 秒**（`rhvideo-gallery-resume-windows-related.tap`），包含既有精确 URL 插帧恢复；与新增场景合计 13 项，不是完整 Windows 或原生视频性能验收。
+
+正常 Android x86_64 release **33 秒**，APK SHA-256 **`c24d1d8d88fe1053b1d5c6418c04fe090b1d9358b51d7419cbc8304249bce30b`**（`rhvideo-modal-normal-android-lYn9p0`），工作台 **AD0B**／JNI **1F90**，正常 BuildConfig 与实际安装字节核对。单次普通启动后附着 PID 23444、`startupAccepted:false` 的新 `--gallery-resume` 场景 **失败**（`rhvideo-gallery-resume-real-android.log`、`rhvideo-image-decode-android-5ZWuQE/receipt.json`）：一个调用的 30 秒观察超时，没有自动重放。清理前页面 ready=complete／visible、288 个 API 已注册，唯一选中的库页面可见且 attached，实际 workbench／client 哈希正确；`android-xEgac5/image-failure.png` 已查看，仍在图库页。118 次测试服务请求全部 200／完整写完，服务端最长约 **3.234 ms**；没有重生成 URI 请求，也尚未记录 held。不能归咎于旧脚本或已证明网络慢，更不能算安卓恢复场景通过。
+
+原失败没保存具体调用阶段，现补入不含参数／密码的阶段和最后动作记录、失败后只读 image／gallery／公开动作状态采集；不改调用时限、不重载或重发动作。补充后源码检查通过，但这项新阶段采集尚未在后续设备运行验证，当前安卓超时根因未定位。冻结 **1208** 个源码、**4** 个工具、**426** 个运行库、A435／C24D 候选已有哈希核对；三份用户脏 schema 原哈希未变。完整目标、手写 UI 错误回执、关闭证据、持续 A/V、同质量首帧和最终发布仍未完成；未发布新正式包、未操作实体手机或正式实例。
+
 ## 2026-10-31 暂存图片预览的解码与会话归属（继续验收中）
 
 对照本地 RHVideo `openTrashPreview`／`closeTrashPreview`，保留从暂存条目打开、关闭图片的流程，不读取真实暂存文件。正常旧 **D73C** 实际界面先 **0/1，失败**（`rhvideo-trash-preview-old-real.tap`、`rhfiles-e2e-kczH0Q/trash-preview.json`）：生成图片的 HTTP 响应仍被挂起，`opened=true`、`loading=false`，却已有 current、没有 requested 或错误。初始八项生产函数红测修正未被旧代码使用的模拟 decode Promise 的测试侧未处理拒绝后，仍 **0/8、八失败**（`rhvideo-trash-preview-clean-red.tap`），不是把测试警告当作产品反例。
