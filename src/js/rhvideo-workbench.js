@@ -2749,6 +2749,7 @@
           index: result.located.index,
           total: result.total,
           current: null,
+          pendingTarget:{...media,index:result.located.index,total:result.total},
         };
         ctx.openDialog("image-dialog");
         const displayed=await stepImage(0);
@@ -2761,7 +2762,7 @@
         const items=result.queue.filter(row=>["video","picture"].includes(row.kind)),index=media?items.findIndex(row=>I.key(row)===I.key(media)):Math.min(start,items.length-1);
         if(index<0)throw Error("此项目已不在当前收藏筛选中，请刷新");
         await retireFavoriteChild(imageSession);if(version!==epoch||intent!==singlePlayIntent)return {stale:true};
-        imageToken++;imageSession={favorite:true,args,items,index,total:items.length,current:null,previewId:crypto.randomUUID(),low};
+        imageToken++;imageSession={favorite:true,args,items,index,total:items.length,current:null,pendingTarget:{...items[index],index,total:items.length},previewId:crypto.randomUUID(),low};
         ctx.openDialog("image-dialog");const shown=await stepImage(0);
         return shown.stale?shown:{opened:true,total:items.length};
       }
@@ -2791,6 +2792,8 @@
           session = imageSession,
           index = targetIndex??RHVideoModel.playback.step(session.pendingIndex??session.index,direction,session.total);
         ctx.cancelImageDecode();
+        const previousTarget=session.pendingTarget?.index===index?session.pendingTarget:session.favorite?session.items[index]:null;
+        session.pendingTarget={...previousTarget,index,total:session.total};delete session.failedTarget;
         session.pendingIndex=index;
         session.loading=true;
         session.error="";
@@ -2805,6 +2808,7 @@
         if (value.stale || ticket !== imageToken || session !== imageSession) return { stale: true };
         if (!value.items.length)
           throw Error("当前筛选结果中没有这张图片，请刷新清单");
+        session.pendingTarget={...value.items[0],index,total:session.total};refreshImage();
         if(session.favorite&&value.items[0].kind==="video")return await playFavoriteVideo(session,value.items[0],index,ticket);
         // A picture reached from a native favorite video retires that child.
         if(session.favorite&&session.current?.kind==="video")await retireFavoriteChild(session);
@@ -2814,6 +2818,7 @@
           : await native("resolve", { items: value.items });
         if (ticket !== imageToken || session !== imageSession)
           return { stale: true };
+        session.pendingTarget={...result.items[0],index,total:session.total};refreshImage();
         const decoded=await ctx.prepareImage(result.items[0],()=>ticket===imageToken&&session===imageSession);
         if(decoded?.stale||ticket!==imageToken||session!==imageSession)return {stale:true};
         session.index = index;
@@ -2824,18 +2829,29 @@
         return { index, total: session.total };
         }catch(error){
           if(ticket!==imageToken||session!==imageSession)return {stale:true};
-          session.error=String(error?.message||error);throw error;
+          session.failedTarget=session.pendingTarget;session.error=String(error?.message||error);throw error;
         }finally{
-          if(ticket===imageToken&&session===imageSession){session.loading=false;delete session.pendingIndex;refreshImage();}
+          if(ticket===imageToken&&session===imageSession){session.loading=false;delete session.pendingIndex;delete session.pendingTarget;refreshImage();}
         }
       }
+      function imageTarget(item,index,total){
+        return {id:typeof item?.id==='string'?item.id:null,kind:typeof item?.kind==='string'?item.kind:null,title:typeof item?.title==='string'?item.title:'',videoId:typeof item?.videoId==='string'?item.videoId:null,seconds:Number.isFinite(item?.seconds)?item.seconds:null,duration:Number.isFinite(item?.duration)?item.duration:null,index,total};
+      }
+      function imagePresentation(){
+        const s=imageSession,requested=s?.loading?imageTarget(s.pendingTarget,s.pendingIndex??s.index,s.total):null,failed=s?.error&&s.failedTarget?imageTarget(s.failedTarget,s.failedTarget.index,s.total):null;
+        const displayed=s?.current?imageTarget(s.current,s.index,s.total):null,target=displayed||requested||failed;
+        const caption={...(target||imageTarget(null,null,0)),title:target?.title||(target?'第 '+(target.index+1)+' 张':'图片预览'),source:displayed?'current':requested?'requested':failed?'failed':'empty'};
+        const describe=value=>value?[(value.index+1)+' / '+value.total,value.title].filter(Boolean).join(' · '):'';
+        const status=s?.loading?'正在加载 '+describe(requested):s?.error?(describe(failed)?describe(failed)+'：':'')+s.error:'';
+        return {caption,requested,failed,status};
+      }
       function refreshImage() {
-        const loading=imageSession?.loading===true;
-        const status=$("image-load-status");status.hidden=!loading&&!imageSession?.error;status.textContent=loading?"正在加载图片…":imageSession?.error||"";status.classList.toggle("is-error",!loading&&!!imageSession?.error);
+        const loading=imageSession?.loading===true,presentation=imagePresentation();
+        const status=$("image-load-status");status.hidden=!loading&&!imageSession?.error;status.textContent=presentation.status;status.classList.toggle("is-error",!loading&&!!imageSession?.error);
         $("image-dialog").setAttribute("aria-busy",String(loading));
         $("full-image").setAttribute("aria-disabled",String(loading));
         const frame=imageSession?.current?.kind==="frame";for(const id of ["wb-frame-play","wb-frame-play-low"])if($(id))$(id).hidden=!frame;
-        for(const id of ["wb-frame-play","wb-frame-play-low","wb-image-mark","wb-image-reveal"])if($(id))$(id).disabled=loading;
+        for(const id of ["wb-frame-play","wb-frame-play-low","wb-image-mark","wb-image-reveal"])if($(id))$(id).disabled=loading||!imageSession?.current;
         const item=imageSession?.current,kind=frame?"video":item?.kind,id=frame?item?.videoId:item?.id,key=kind+":"+id,favorite=$("wb-image-favorite");
         const video=item?.kind==="video";$("full-image").hidden=video;
         for(const control of $("image-dialog").querySelectorAll('[data-api-action="rhvideo.image.order"]'))control.hidden=!!imageSession?.favorite;
@@ -2847,6 +2863,7 @@
             imageSession.index,
             imageSession.total,
           );
+        ctx.showImageCaption(presentation.caption,presentation.caption.index,presentation.caption.total);
       }
       action(
         "image.order",
@@ -2873,7 +2890,7 @@
       const imageReveal=button("在清单中定位","image.reveal",{},"text-button");imageReveal.id="wb-image-reveal";
       $("image-dialog").querySelector(".viewer-bar>div").prepend(framePlay,frameLow,imageFavorite,imageMark,imageReveal);
       action("image.favorite",object(),async()=>{if(imageSession?.loading)throw Error("图片正在切换，请稍候再收藏");const item=imageSession?.current;if(!$("image-dialog").open||!item?.id)throw Error("当前预览没有可收藏的媒体");return invoke("favorite.toggle",{kind:item.kind==="frame"?"video":item.kind,id:item.kind==="frame"?item.videoId:item.id});},"write");
-      action("image.state",object(),()=>({opened:$("image-dialog").open,loading:imageSession?.loading===true,error:imageSession?.error||"",requestedIndex:imageSession?.pendingIndex??null,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null}),"read");
+      action("image.state",object(),()=>({opened:$("image-dialog").open,loading:imageSession?.loading===true,error:imageSession?.error||"",requestedIndex:imageSession?.pendingIndex??null,previewId:imageSession?.previewId??null,index:imageSession?.index??0,total:imageSession?.total??0,current:imageSession?.current?{id:imageSession.current.id??null,kind:imageSession.current.kind??null,videoId:imageSession.current.videoId??null,seconds:imageSession.current.seconds??null}:null,...imagePresentation()}),"read");
       action("image.seek",object({ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),async({ratio})=>{if(!$("image-dialog").open||!imageSession)throw Error("图片查看器未打开");return stepImage(0,RHVideoModel.playback.imageSeek(imageSession.total,ratio));});
       async function playImageVideo(low,atFrame){
         const session=imageSession,item=session?.current,version=epoch;
@@ -3371,7 +3388,7 @@
         const current=()=>version===epoch&&intent===singlePlayIntent&&view===gallery.load&&revision===gallery.revision;
         if(result.stale||!current())return {stale:true};
         if(!result.located)throw Error("截图筛选结果已改变，请刷新");
-        const at=result.located.index,session=imageSession={args,index:at,total:result.total,current:null,previewId:crypto.randomUUID()};
+        const at=result.located.index,session=imageSession={args,index:at,total:result.total,current:null,pendingTarget:{...media,index:at,total:result.total},previewId:crypto.randomUUID()};
         ctx.openDialog("image-dialog");
         const displayed=await stepImage(0);if(displayed.stale||!current()||imageSession!==session)return {stale:true};
         return {opened:true,total:result.total,index:at};

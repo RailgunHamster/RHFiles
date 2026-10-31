@@ -317,10 +317,13 @@
       throw Error(error?.message==='图片加载超时，请检查服务器连接'?error.message:'图片加载失败，服务器未返回可解码的图片');
     }finally{clearTimeout(timer);if(pendingImageDecode===pending)pendingImageDecode=null;}
   }
+  function showImageCaption(media,index,total){
+    $('image-title').textContent=media?.title||'图片预览';$('full-image').alt=media?.title||'';
+    $('image-position').textContent=total>0?(index+1)+' / '+total+(media?.kind==='frame'?' · '+model.clock(media.seconds)+' / '+model.clock(media.duration):''):'';$('image-previous').disabled=total<=1;$('image-next').disabled=total<=1;
+    const collection=$('image-collection-seek');if(collection){if(document.activeElement!==collection)collection.value=String(total>1?Math.round(index/(total-1)*1000):0);collection.disabled=total<=1;}
+  }
   function showImage(media=images[imageIndex],index=imageIndex,total=images.length){
-    $('image-title').textContent=media.title;if($('full-image').src!==media.cover)$('full-image').src=media.cover;$('full-image').alt=media.title;
-    $('image-position').textContent=(index+1)+' / '+total+(media.kind==='frame'?' · '+model.clock(media.seconds)+' / '+model.clock(media.duration):'');$('image-previous').disabled=total<=1;$('image-next').disabled=total<=1;
-    const collection=$('image-collection-seek');if(collection){collection.value=String(total>1?Math.round(index/(total-1)*1000):0);collection.disabled=total<=1;}
+    showImageCaption(media,index,total);if($('full-image').src!==media.cover)$('full-image').src=media.cover;
     $('full-image').style.cursor=media.kind==='frame'?'pointer':'';
     $('full-image').style.transform='scale('+imageZoom+')';$('image-fit').textContent=imageZoom===1?'适应画面':Math.round(imageZoom*100)+'%';
   }
@@ -377,7 +380,7 @@
     if(mobile)return native('close',run?{_automationRun:run}:{});return {closed:false};
   });
   if(mobile){document.body.classList.add('mobile-client');$('chapter-select').size=1;$('library-back').hidden=false;bind('library-back','click','back');window.RHVideoBack=()=>invoke('back').catch(notice);}
-  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,loadCategory,paint,paintFavorite,showImage,prepareImage,cancelImageDecode,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
+  workbench=window.RHVideoWorkbench.install({api,native,action,invoke,object,string,state,reader,$,mobile,notice,load,loadCategory,paint,paintFavorite,showImage,showImageCaption,prepareImage,cancelImageDecode,openDialog,modalTop,beginConnection,connectionReady,connectionVersion:()=>connectionEpoch,connectionCurrent:token=>token===connectionEpoch,resetImageZoom:()=>{imageZoom=1;},invalidateReads:()=>{readEpoch++;clearMediaViews();},openMedia,updateConnection,syncSection,saveRead,chapter,icon,bind});
   const listenNative=mobile?window.RHVideoNative.listen:window.__TAURI__.event.listen;
   listenNative('rhvideo-favorite',({payload})=>{if(payload.generation!==state.generation)return;const key=payload.kind+':'+payload.id;if(state.favoriteBusy.has(key))return;if(payload.enabled)state.favorites.add(key);else state.favorites.delete(key);paintFavorite(key);workbench.invalidate('favorite');if(state.kind==='favorite')void load().catch(notice);}).catch(notice);
   listenNative('rhvideo-preview-result',({payload})=>{if(payload.generation===state.generation)void workbench.receivePreviewResult(payload.result).catch(notice);}).catch(notice);
