@@ -12,6 +12,16 @@
 
 旧测试的 `revealPlayerControlsByTouch()` 只根据 `isShown` 和 alpha 判断“已经显示”，但 Media3 的收起动画期间这两项仍可能成立、内容却已被裁到屏幕外。测试驱动现补入真实屏幕位置、全栏裁剪范围、窗口可见边界和物理屏幕尺寸；仅在整个栏可见时跳过用户的显示手势。仍最多一次真实显示手势、一次稳定目标点击，不改 **3500 ms** 自动隐藏、不反复点击、不用 `performClick()`、不放宽五秒目标预算。新增边界检查先 **0/11、全失败**；改后连同已有 probe 检查 **27/27**。其中纯坐标断言执行实际 Java 比较表达式，不模拟 Android View 或声称是 JVM／实际像素验收。第一次 green 的一项测试把注释里的 `performClick()` 也计入，随后只排除注释、保留禁止实际调用的断言。完整本地 RHVideo 源码对照 **1429/1429、零失败／取消／跳过，34.952 秒**（`rhvideo-controller-visibility-full-node.tap`）。测试驱动重建及相同正常 APK 的完整复验另记，未据此宣布通过。
 
+### 相同正常 APK 的完整 single 复验
+
+仅测试 APK 重建 **4 分 22 秒成功**（`rhvideo-controller-visibility-test-apk-build.log`），新测试包 **`6a69315f51f237c562771d07ca706014367db7985902e74d6f2610a487eaf1df`**；canonical 与生成构建目录的 Java 均为 **989DE6E8…**。普通 **FBA3** APK 不重建、不修改，实际安装字节两次都核对一致，保持四项正常标志及原音量／线程／解码／画质／控制栏动画。生成目录因测试构建而带 probe 标志的主包不参与验收，不能再当正常主包冻结；本次使用既有独立 `rhvideo-modal-normal-android-4rIyNS/x64.apk`。
+
+同一宿主隔离条件、同一原场景及单步预算的完整 `single` **通过**（`rhvideo-current-normal-android-single-visible-bounds.log`、`rhvideo-android-single-1793435419193-release`）：实际卡片／上下文入口、单视频控制、内容探测后的真实图片解码／拒绝 HTML、原生菜单、单项父层／不同子项身份返回、独立模式与账号状态、过滤收藏放映快照均执行。原失败处的设置按钮现在由一次显示手势后在 **(876,2321)** 稳定命中，实际记录还包含无需额外显示手势的已可见情况；没有增加点击重试。图片工具栏记录 **412×867**，标题、独立关闭按钮、触摸目标、真实横向滑动及显示空间都通过。实际 `rhvideo-single-qa.png` 和 `rhvideo-image-toolbar-end-qa.png` 已查看，确有中文倍速菜单／1.25 倍勾选和生成四标记图片，不以截图文件存在代替检查。
+
+回执有 **155** 条动作时间记录、零丢弃，首末交付跨度 **220.425 秒**，不是用户端启动／持续 A/V 性能数据。**78** 个生成服务响应、零观察丢弃／错误类，全部响应体关闭；其中第 **32** 个视频响应在 finish 前关闭，不能称为“全部完整传输／没有中断”。运行前后 `media.resource_manager` 均在原五秒只读预算内返回，不由此宣称不存在所有 codec 泄漏或历史资源故障。四个辅助 AVD 由 finally 恢复，测试结束仅停止自建 5590 的测试进程。
+
+事后核对 **1226／4／426** 冻结源码／工具／运行库、56F3 EXE、FBA3 主包、旧 4B1E／新 6A69 测试包、14 个干净参考文件、三份用户脏 schema，以及五台 AVD running／无遗留 RHFiles 进程（`single-visible-bounds-postcheck.json`）。canonical 相对产品快照只改了文档及 androidTest Java，新增文件也是测试；不是本轮更换播放器来通过测试。本次是完整 single 场景，不是全部 Android 模式、同屏、真机／ARM、Windows 新整轮或同质量性能对照；未正式发包，完整目标仍未完成。
+
 ### 当前 native 源码的单调时钟诊断
 
 调试 **CCEB** 的四个 native 源文件与当前源码逐字节核对相同，只用生成 H.264 **4206d583…**；新启用既有有界 producer callback，而非将 stderr 块到达时间当成内部耗时。`rhvideo-current-monotonic-producer.log`／`rhfiles-e2e-g1LKp2/startup-measurement.json` 实际 **71 条、零丢弃**：native 请求约 **332 ms** 完成、命令约 **333 ms** 返回，前端却约 **2282 ms** 才得到应答。引擎构造约 **46 ms**、缓冲完成约 **78 ms**、D3D11 Open 约 **610 ms**、首张图片约 **1334 ms**（后几项相对输入起点）；各时钟原点不同，不可直接混算。GUI 有限排队探测约 0–8 ms，状态阶段记录均不超过一个毫秒精度。该次模块索引重读不是两秒交付尾延迟的充分解释。
