@@ -4,11 +4,45 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {acceptanceEnvironment,acceptanceSummary,admittedExecutable,referenceFingerprint,runtimeAdmissionCommand} from '../testing/rhvideo-windows.mjs';
+import * as windowsRunner from '../testing/rhvideo-windows.mjs';
+import {parse} from 'acorn';
 
 const summary=(values={})=>Object.entries({tests:103,pass:103,fail:0,cancelled:0,skipped:0,todo:0,...values}).map(([name,value])=>'# '+name+' '+value).join('\r\n');
 // macOS may expose os.tmpdir() through /var -> /private/var. The strict
 // admission gate intentionally takes a canonical workspace, not a root alias.
 const temporary=prefix=>fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),prefix)));
+
+test('business media fixtures use the current snapshot generator bytes, never a PATH fallback',()=>{
+ assert.equal(typeof windowsRunner.mediaGeneratorAdmission,'function');
+ const directory=temporary('rhvideo-generator-');try{
+  const tools=path.join(directory,'src-tauri/thirdparty');fs.mkdirSync(tools,{recursive:true});const tool=path.join(tools,'ffmpeg.exe');fs.writeFileSync(tool,'owned non-executable fixture');
+  const first=windowsRunner.mediaGeneratorAdmission(directory);assert.equal(first.executable,fs.realpathSync(tool));assert.match(first.sha256,/^[a-f0-9]{64}$/);assert.deepEqual(windowsRunner.mediaGeneratorAdmission(directory,tool),first);
+  fs.writeFileSync(tool,'different owned fixture');assert.notEqual(windowsRunner.mediaGeneratorAdmission(directory).sha256,first.sha256);
+ }finally{fs.rmSync(directory,{recursive:true});}
+});
+test('business generator admission rejects relative, external, missing, directory and linked tools without executing them',()=>{
+ assert.equal(typeof windowsRunner.mediaGeneratorAdmission,'function');
+ const directory=temporary('rhvideo-generator-negative-');try{
+  const tools=path.join(directory,'src-tauri/thirdparty');fs.mkdirSync(tools,{recursive:true});const tool=path.join(tools,'ffmpeg.exe'),outside=path.join(directory,'outside.exe');fs.writeFileSync(outside,'not executable');
+  assert.throws(()=>windowsRunner.mediaGeneratorAdmission(directory));fs.mkdirSync(tool);assert.throws(()=>windowsRunner.mediaGeneratorAdmission(directory));fs.rmdirSync(tool);fs.writeFileSync(tool,'not executable');
+  for(const candidate of ['ffmpeg','src-tauri/thirdparty/ffmpeg.exe',outside])assert.throws(()=>windowsRunner.mediaGeneratorAdmission(directory,candidate));
+  fs.unlinkSync(tool);fs.rmdirSync(tools);const externalTools=path.join(directory,'outside-tools');fs.mkdirSync(externalTools);fs.writeFileSync(path.join(externalTools,'ffmpeg.exe'),'not executable');fs.symlinkSync(externalTools,tools,process.platform==='win32'?'junction':'dir');assert.throws(()=>windowsRunner.mediaGeneratorAdmission(directory));
+ }finally{fs.rmSync(directory,{recursive:true});}
+});
+test('the full runner actually injects and verifies its admitted generator around the child suite',()=>{
+ const source=fs.readFileSync(new URL('../testing/rhvideo-windows.mjs',import.meta.url),'utf8');
+ assert.match(source,/mediaGenerator=mediaGeneratorAdmission\(root,process\.env\.FFMPEG\)/);assert.match(source,/FFMPEG:mediaGenerator\.executable/);assert.match(source,/referenceFiles:fingerprint,mediaGenerator,/);assert.match(source,/mediaGeneratorAdmission\(root,environment\.FFMPEG\)/);
+ const admission=source.indexOf('mediaGenerator=mediaGeneratorAdmission(root,process.env.FFMPEG)'),child=source.indexOf("const child=spawn(process.execPath");assert(admission>=0&&child>admission);
+});
+test('actual RHVideo E2E ffmpeg calls honor the runner selection rather than silently using PATH',()=>{
+ const directory=new URL('../e2e/',import.meta.url),files=fs.readdirSync(directory).filter(name=>/^rhvideo(?:-[a-z-]+)?\.test\.mjs$/.test(name)),violations=[];let producers=0;
+ for(const file of files){const source=fs.readFileSync(new URL(file,directory),'utf8');
+  function isTool(node){if(!node||typeof node!=='object')return false;if(node.type==='Literal'&&typeof node.value==='string'&&/(^|[\\/])ffmpeg(?:\.exe)?$/i.test(node.value))return true;return Object.values(node).some(v=>Array.isArray(v)?v.some(isTool):isTool(v));}
+  function visit(node){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&['execFileSync','execFile','spawnSync','spawn'].includes(node.callee?.name)&&isTool(node.arguments[0])){producers++;const arg=node.arguments[0];if(arg.type!=='LogicalExpression'||arg.operator!=='||'||source.slice(arg.left.start,arg.left.end)!=='process.env.FFMPEG')violations.push(file+':'+(source.slice(0,arg.start).split('\n').length));}for(const value of Object.values(node))if(Array.isArray(value))value.forEach(visit);else visit(value);}
+  visit(parse(source,{ecmaVersion:'latest',sourceType:'module'}));
+ }
+ assert(producers>=20,'Do not silently stop finding actual media fixture calls');assert.deepEqual(violations,[],'Fixture producers must use the admitted FFMPEG supplied by the real runner');
+});
 test('runtime admission accepts verified packaged epochs without removing workspace or full bundle validation',()=>{
  const workspace=path.join(os.tmpdir(),"RHFiles O'Brien"),bundle=path.join(workspace,'test-artifacts/runtime/vlc'),quote=value=>"'"+value.replaceAll("'","''")+"'";
  const command=runtimeAdmissionCommand(workspace,bundle);

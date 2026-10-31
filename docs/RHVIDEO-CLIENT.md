@@ -182,6 +182,8 @@ Android 连播开发实现不再重算前端提交的 `segmentStart`／`segmentL
 
 Windows E2E 使用隔离配置，不操作已安装的 RHFiles。设置 RHFILES_NATIVE_PLAYER_QA=1 可启用真实 libVLC 播放验收，需要已安装 64 位 VLC 和 FFmpeg。测试生成专用 MP4，检查真实进度、暂停、跳转、前后切换，不以模拟播放代替。
 
+完整 `scripts/testing/rhvideo-windows.mjs` 入口进一步要求隔离快照内的包内 libVLC、观察器及 `src-tauri/thirdparty/ffmpeg.exe`。媒体生成器默认取这份实际文件，向所有子用例注入绝对 `FFMPEG` 路径，并记录／复核 SHA-256；若显式指定，必须仍指向该快照文件，不能用 PATH、外部路径或链接代替。这是测试输入可复核约束，不改变客户端运行时的画质、播放器或用户自定义转换器。原来的逐项测试命令不等同于这条严格全量入口。
+
 同级有 RHVideo 源码时，还会通过它的 uv 环境启动真实 FastAPI，使用独立临时 SQLite、生成的媒体及测试账号核对 API 契约。测试工作目录不含生产 .env，不连接或写入正式媒体库。
 
 体验回归另外覆盖慢请求并发、错误 MIME 与真实 WebP 解码、点击目标、多播放器关闭隔离、实际独立音量和控制界面虚拟时钟暂停后的连播／循环。`player.state.firstFrameMs` 为原生 open 到首次观测显示帧的毫秒数（未显示时为 0），用于与窗口／接口总耗时区分，不是网络吞吐或跨设备性能保证。
