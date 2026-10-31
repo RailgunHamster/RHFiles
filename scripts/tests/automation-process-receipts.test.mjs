@@ -29,10 +29,11 @@ test('an invalid descriptor or already-aborted read cannot open any connection',
 });
 async function wire(response,work){
   const sockets=new Set(),requests=[];
-  const server=net.createServer(socket=>{sockets.add(socket);socket.on('error',()=>{});socket.on('close',()=>sockets.delete(socket));let input='';socket.on('data',bytes=>{input+=bytes;if(!input.includes('\n'))return;const value=JSON.parse(input);requests.push(value);response(socket,value);});});
+  let received;const requestReceived=new Promise(resolve=>received=resolve);
+  const server=net.createServer(socket=>{sockets.add(socket);socket.on('error',()=>{});socket.on('close',()=>sockets.delete(socket));let input='';socket.on('data',bytes=>{input+=bytes;if(!input.includes('\n'))return;const value=JSON.parse(input);requests.push(value);received(value);response(socket,value);});});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const connect=()=>net.createConnection({host:'127.0.0.1',port:server.address().port}),read=(query={runId:done.id},options={})=>readProcessReceipt(transport,query,Date.now()+1000,{connect,platform:'win32',...options});
-  try{await work({read,requests,sockets});}finally{for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}
+  try{await work({read,requests,sockets,requestReceived});}finally{for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}
 }
 test('one authenticated read can receive a fragmented real-stream response without submitting an action',async()=>{
   await wire((socket,value)=>{assert.equal(value.secret,transport.secret);assert.deepEqual(value.query,{runId:done.id});socket.write('{"res');setImmediate(()=>socket.end('ult":'+JSON.stringify(done)+'}\n'));},async({read,requests})=>{assert.deepEqual((await read()).result,done);assert.equal(requests.length,1);assert.deepEqual(Object.keys(requests[0]).sort(),['query','secret']);});
@@ -45,7 +46,7 @@ test('an oversized response is bounded and incomplete EOF is not success',async(
   await wire(socket=>socket.end('{"result":'),async({read})=>assert.rejects(read(),{code:'RECEIPT_UNAVAILABLE'}));
 });
 test('abort and deadline close only the read; they neither cancel nor repeat the accepted operation',async()=>{
-  await wire(()=>{},async({read,requests})=>{const controller=new AbortController(),pending=read({runId:done.id},{signal:controller.signal});await new Promise(resolve=>setTimeout(resolve,30));controller.abort();await assert.rejects(pending,{code:'READ_ABORTED'});assert.equal(requests.length,1);});
+  await wire(()=>{},async({read,requests,requestReceived})=>{const controller=new AbortController(),observed=read({runId:done.id},{signal:controller.signal}).then(value=>({value}),error=>({error}));const first=await Promise.race([requestReceived.then(()=>({accepted:true})),observed]);assert.equal(first.accepted,true,'The read must reach the server before testing an accepted-query abort: '+String(first.error?.code||''));controller.abort();assert.equal((await observed).error?.code,'READ_ABORTED');assert.equal(requests.length,1);});
   let opened=0;await assert.rejects(readProcessReceipt(transport,{runId:done.id},Date.now()-1,{platform:'win32',connect:()=>opened++}),{code:'REQUEST_TIMEOUT'});assert.equal(opened,0);
 });
 test('only the matching action and confirmed native result can win recovery',async()=>{

@@ -26,7 +26,7 @@ export async function readProcessReceipt(transport,query,deadline,{signal,connec
     socket.on('close',()=>{if(!settled)finish(fail('RECEIPT_UNAVAILABLE','Local receipt response was not confirmed'));});
     // Newline frames the request. Do not half-close: some pipe/socket hosts
     // retire their write side on EOF before a pending receipt can be returned.
-    socket.once('connect',()=>socket.write(bytes));
+    socket.once('connect',()=>{if(!settled)socket.write(bytes);});
     socket.on('data',chunk=>{
       if(settled)return;
       if(buffer.length+chunk.length>1024*1024){finish(fail('INVALID_RECEIPT','Local receipt response exceeds its limit'));return;}
