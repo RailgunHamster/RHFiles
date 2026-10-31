@@ -6,7 +6,7 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
-## 2026-10-31 准备中关闭窗口的生命周期（整轮回归进行中）
+## 2026-10-31 准备中关闭窗口、Windows 整轮结果与双端修复回归
 
 先区分真实窗口销毁和“发送了关闭命令”。第一次通用 Tauri 关闭命令被 ACL 拒绝，不能当产品复现；随后两个正常包观察都在首个流请求之后才提交关闭，另一次关闭后 1 秒内窗口仍存活，也不能证明准备中关闭。相关失败观察保留在 `rhvideo-close-preparation-old-*.log`，没有放宽时限或将其改记通过。
 
@@ -18,7 +18,15 @@
 
 正常 Windows release **2 分 16 秒**，EXE SHA-256 **`78e088941b811582478c2661148e62563e8c6beaf012a2e90082d1145640017f`**，冻结 `rhvideo-pipe-full-dErY0x` 的 **1219** 个源码、**4** 个工具、**426** 个运行库。实测编译后拒绝外部目标与关闭／重开 **2/2**、零跳过、19.837 秒（`rhvideo-window-lifecycle-normal-focused.tap`）：`rhfiles-e2e-sdD2KV/window-close.json` 的准备返回“播放器窗口已关闭”，**0 次**媒体请求；再次显式打开 video-1，真实四标记像素、10 个显示帧、166 个音频块、非零有效音量均成立，之后第二个实际窗口也已销毁。重开是新的用户操作，不是重放失败请求。它不是持续音频／物理扬声器或首帧性能已经达标的证明。
 
-整套串行 Windows RHVideo 正在同一封存正常包上执行（`rhvideo-window-lifecycle-full-windows.tap`、冻结目录 `rhvideo-windows-NFnkfr`）；独立 40 分钟总预算、五个空闲自建 AVD 临时 pause/resume。结束前不修改该包、不重建或并行跑另一条 UI 验收。已经抓到可见封面缓存用例失败：8 张实际可见封面合计 12.8 MB、返回搜索后其中一张重读。`b831cea` 补入移除列表前的可见区域快照，因为持续相交不会产生新的 IntersectionObserver 边界事件；保持 72 项／16 MiB 原预算。新实际函数单元红测 **5 通过／3 失败**，修复后的相关检查 **10/10**。该前端修复尚未进入本次在跑包，需结束后重新构建双端验证，不能据单元通过宣布实际缓存问题已解决。
+整套串行 Windows RHVideo 已在同一封存正常包上结束（`rhvideo-window-lifecycle-full-windows.tap`、冻结目录 `rhvideo-windows-NFnkfr`）：**131 项、129 通过、2 失败、零取消／跳过，1197.665 秒**。独立 40 分钟总预算内没有修改该包、重建或并行跑另一条 UI 验收；五个空闲自建 AVD 在 finally 全部恢复。事后 **1219／4／426** 冻结输入及 78E EXE 哈希不变，原 RHVideo 源码与观察工具指纹核对一致（`rhvideo-pipe-full-dErY0x/full-regression-postcheck.json`）。这套结果不是全绿。
+
+第一项失败是实际封面缓存回归：8 张可见封面共 12.8 MB，返回搜索后其中一张重读。`b831cea` 补入移除列表前的可见区域快照，因为持续相交不会产生新的 IntersectionObserver 边界事件；保持 **72 项／16 MiB** 原预算，没有扩大内存换通过。实际函数单元红测 **5 通过／3 失败**，修复后的相关检查 **10/10**。第二项在按键操作前就失败：关闭图片的精确 JSON 断言还缺少先前已添加的 error／caption／requested／failed／status 字段。`961a1d2` 更新完整预期结构，保留所有后续进度条、Home／End、改键、滚轮、滑动及页外收藏断言；它不是发现或修复了键盘逻辑问题，也不消除先前未定位的间歇物理 End 交付问题。
+
+两个修复之后重新构建正常 Windows release，**2 分 44 秒**；EXE SHA-256 **`a0b444b41bd26b7edce8ed31f0762c2e755ce9ea772d658145fd0de0bb0b2bde`**。`6cec030` 的 `rhvideo-pipe-full-V6hVWz` 冻结 **1220** 个源码、**4** 个工具、**426** 个运行库。有明确名称过滤的相关实际回归 **5/5、零跳过，58.104 秒**（`rhvideo-post-full-fixes-normal-windows.tap`）：收藏后的缓存卡片更新、实际可见封面保留、真实图片解码、上述完整图片导航及实际标题栏关闭／重开均通过。1280×800 下 8 张可见图片的 DOM 与已解码 image 均保持同一对象，缩略图请求 **8→8**（`rhfiles-e2e-mAfPkQ/visible-card-cache.json`）；准备中关闭的新回执在 `rhfiles-e2e-KbTINB/window-close.json`。这是五项定向回归，**不是重跑全部 131 项**。
+
+正常 Android release 同步新的共用客户端后重新打包，**2 分 24 秒**；APK SHA-256 **`c11e09d3f1d9b21e373239854dd4feddcaa164690ff29b5f6207442a0c451107`**（`rhvideo-modal-normal-android-dGsrwc`）。复用未改动且核对过的 JNI **1F90**，没有宣称重编译 Rust；共用客户端 **A6BAA7**、工作台 **FC5264**、四个正常构建开关、唯一 x86_64 ABI 与实际安装字节均核对。`6cec030` 抽出同一套实际 DOM／解码／HTTP 检查供双端使用，Android 不伪造 Windows 视口。在自建 API36 模拟器实际 **412×867** 下通过：4 张可见图片共 6.4 MB、同一 DOM／image、无替换，缩略图请求 **4→4**，夹具总请求 **104**、零传输错误（`rhvideo-post-full-fixes-normal-android.log`、`rhvideo-image-decode-android-ZcAoZ1/receipt.json`）。普通单次启动后 5.404 秒满足前台前提，只附着既有 PID，**startupAccepted:false**；不是冷启动、持续 A/V、ARM 手机或完整 Android 验收。辅助 AVD 均恢复，测试应用由 finally 停止。
+
+最后在共用双端测试助手修改后重新执行本地 RHVideo 源码对照检查：**1333/1333、零失败／取消／跳过，31.787 秒**（`rhvideo-post-full-final-node.tap`）。双端事后核对 **1220／4／426** 冻结输入及 A0B／C11 包哈希不变，三份用户脏 schema 仍为原哈希（`rhvideo-pipe-full-V6hVWz/post-full-fixes-postcheck.json`）。仅操作生成媒体、临时服务／数据库、隔离配置与自建模拟器，不触碰真实数据、正式实例或实体手机；当前只有 QA 候选，未正式发包。
 
 另查到微软旧版运行时的[Windows Server 焦点卡顿报告](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5590)，作者确认 151.0.4129.59 已修复；本次私有测试进程实际为 **Edg/156.0.4314.50**，不能直接把相似症状认作同一根因。没有停触摸／输入服务、关闭无障碍、降级运行时或改系统设置。原生启播偏慢、部分关闭消息处理延迟和完整目标仍未完成，未正式发布新包。
 
