@@ -1523,7 +1523,9 @@ pub async fn play(
     title: String,
     seconds: f64,
     rotation:crate::rhvideo_rotation::Policy,
+    preparation:crate::rhvideo::play_intent::Preparation,
 ) -> Result<Value, String> {
+    preparation.ensure_current()?;
     let started=std::time::Instant::now();
     trace_open(started,"entry");
     let _=INPUT_APP.set(app.clone());
@@ -1569,10 +1571,12 @@ pub async fn play(
     // synchronously stall this GUI thread for two seconds. Keep native window
     // activation; do not request the same COM focus transition a second time.
     let view=window.clone();let display_title=format!("{title} · RHFiles");
+    let activation=preparation.clone();
     let(tx,rx)=tokio::sync::oneshot::channel();
     app.run_on_main_thread(move||{
         trace_open(started,"activation-main-entered");
         let result=(||{
+            activation.ensure_current()?;
             view.set_title(&display_title).map_err(|e|e.to_string())?;
             view.show().map_err(|e|e.to_string())?;
             trace_open(started,"window-shown");
@@ -1587,6 +1591,7 @@ pub async fn play(
     }).map_err(|e|e.to_string())?;
     trace_open(started,"activation-dispatched");
     let (rotation_viewport,parent)=rx.await.map_err(|_|"播放器窗口已关闭".to_owned())??;
+    preparation.ensure_current()?;
     require_player_window(lease,parent)?;
     let warmed = WARM.lock().map_err(|_| "预加载不可用")?.take();
     trace_open(started,"warm-slot-ready");
@@ -1603,6 +1608,7 @@ pub async fn play(
             let reconfigured = warmed.configure_rotation(rotation,rotation_viewport)?;
             if reconfigured {
                 if let Err(error)=require_player_window(lease,parent){guard.0.clear();drop(warmed);return Err(error);}
+                preparation.ensure_current()?;
                 warmed.open(&url, title.clone(), seconds)?;
             }
             control_engine(
@@ -1620,6 +1626,7 @@ pub async fn play(
                 )?;
             }
             if let Err(error)=require_player_window(lease,parent){guard.0.clear();drop(warmed);return Err(error);}
+            preparation.ensure_current()?;
             control_engine(&mut warmed, &json!({"command":"resume"}))?;
             let child = warmed.child;
             let mut state = warmed.state();
@@ -1653,10 +1660,12 @@ pub async fn play(
         }
     }
     let view = window.clone();
+    let surface_preparation=preparation.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         trace_open(started,"surface-main-entered");
         let result: Result<usize, String> = (|| {
+            surface_preparation.ensure_current()?;
             require_player_window(lease,parent)?;
             let existing = PLAYER
                 .lock()
@@ -1699,14 +1708,16 @@ pub async fn play(
     trace_open(started,"surface-dispatched");
     let child = rx.await.map_err(|_| "播放器窗口已关闭".to_owned())??;
     trace_open(started,"surface-ready");
+    let worker_preparation=preparation.clone();
     let result=tauri::async_runtime::spawn_blocking(move || {
         trace_open(started,"engine-worker-entered");
         let mut slot = PLAYER.lock().map_err(|_| "播放器状态不可用")?;
+        worker_preparation.ensure_current()?;
         require_player_window(lease,parent)?;
         if slot.is_none() {
             let angle=crate::rhvideo_rotation::angle(rotation.source,rotation_viewport,rotation.enabled);
             match Engine::new_with_rotation(child,angle) {
-                Ok(engine) => {require_player_window(lease,parent)?;*slot = Some(engine);},
+                Ok(engine) => {worker_preparation.ensure_current()?;require_player_window(lease,parent)?;*slot = Some(engine);},
                 Err(error) => {
                     unsafe {
                         let _ = PostMessageW(
@@ -1724,12 +1735,14 @@ pub async fn play(
         let engine = slot.as_mut().unwrap();
         engine.configure_rotation(rotation,rotation_viewport)?;
         require_player_window(lease,parent)?;
+        worker_preparation.ensure_current()?;
         engine.open(&url, title, seconds)?;
         trace_open(started,"input-started");
         let value=engine.state();trace_open(started,"state-ready");Ok(value)
     })
     .await
     .map_err(|_| "原生播放任务意外结束".to_owned())?;
+    preparation.ensure_current()?;
     require_player_window(lease,parent)?;
     result
 }

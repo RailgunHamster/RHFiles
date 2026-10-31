@@ -31,6 +31,8 @@ mod exports;
 mod downloads;
 #[path = "rhvideo_credentials.rs"]
 mod credentials;
+#[path = "rhvideo_play_intent.rs"]
+pub(crate) mod play_intent;
 
 const JSON_LIMIT: usize = 32 * 1024 * 1024;
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -79,7 +81,7 @@ fn expire_login(session:&Session){
 }
 async fn session_from(base:Url,username:String,token:String,generation:u64,refresh_at:u64,client:reqwest::Client)->Result<Arc<Session>,String>{
     let mut bytes=[0u8;32];getrandom::fill(&mut bytes).map_err(|_|"无法生成安全的本机媒体通道")?;
-    Ok(Arc::new(Session{base,username,token:Mutex::new(token),refresh_at:AtomicU64::new(refresh_at),refresh_lock:tokio::sync::Mutex::new(()),capability:bytes.iter().map(|b|format!("{b:02x}")).collect(),port:broker().await?,generation,client,assets:Mutex::new(HashMap::new()),next_asset:AtomicU64::new(1),asset_revision:AtomicU64::new(0),videos:tokio::sync::Mutex::new(None),favorites:Mutex::new(HashSet::new()),preview:Mutex::new(PreviewState::default()),single_controls:Mutex::new(SingleControls::default())}))
+    Ok(Arc::new(Session{base,username,token:Mutex::new(token),refresh_at:AtomicU64::new(refresh_at),refresh_lock:tokio::sync::Mutex::new(()),capability:bytes.iter().map(|b|format!("{b:02x}")).collect(),port:broker().await?,generation,client,assets:Mutex::new(HashMap::new()),next_asset:AtomicU64::new(1),asset_revision:AtomicU64::new(0),videos:tokio::sync::Mutex::new(None),favorites:Mutex::new(HashSet::new()),preview:Mutex::new(PreviewState::default()),single_controls:Mutex::new(SingleControls::default()),play_preparation:play_intent::Epoch::default()}))
 }
 async fn restore_login(fresh:bool)->Result<Value,String>{
     let observed=GENERATION.load(Ordering::SeqCst);let joined=LOGIN_STATE.lock().is_ok_and(|v|v.restoring);
@@ -414,6 +416,7 @@ struct Session {
     favorites: Mutex<HashSet<String>>,
     preview: Mutex<PreviewState>,
     single_controls: Mutex<SingleControls>,
+    play_preparation: play_intent::Epoch,
 }
 #[derive(Clone,Copy)]
 struct SingleControls { looping:bool, rate:f64 }
@@ -1477,7 +1480,9 @@ async fn native_play(
     title: String,
     seconds: f64,
     low_bandwidth: bool,
+    preparation: &play_intent::Preparation,
 ) -> Result<Value, String> {
+    preparation.ensure_current()?;
     let path = format!(
         "api/v1/videos/{id}/play{}",
         if low_bandwidth { "?super=true" } else { "" }
@@ -1486,7 +1491,8 @@ async fn native_play(
     #[cfg(windows)]
     {
         let rotation=rotation_policy(session,id)?;
-        let result=crate::rhvideo_player::play(app, url, title, seconds,rotation).await?;
+        let result=crate::rhvideo_player::play(app, url, title, seconds,rotation,preparation.clone()).await?;
+        preparation.ensure_current()?;
         if !current().is_ok_and(|s|s.generation==session.generation){crate::rhvideo_player::stop_single();return Err("播放期间媒体账户已更改；旧播放已停止".into());}
         Ok(result)
     }
@@ -1633,12 +1639,20 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             #[cfg(not(windows))] { let _=value;return Err("此平台尚未接入原生音量".into()); }
         }
         "player.close" | "player.back" => {
+            #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
+            // Do not wait behind a decoder constructor before cancelling its
+            // input. The per-account fence also covers work queued before a
+            // native window exists. Stale explicit inputs cannot revoke it.
+            let closing_session=current().ok();
+            let closing_generation=closing_session.as_ref().map(|s|s.generation).unwrap_or_else(||GENERATION.load(Ordering::SeqCst));
+            if let Some(session)=closing_session{session.play_preparation.cancel();}
             let _play=PLAY_LOCK.lock().await;
+            if GENERATION.load(Ordering::SeqCst)!=closing_generation{return Err("媒体账户已改变，旧关闭操作未执行".into());}
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             let context=PLAYBACK.lock().ok().and_then(|q|q.as_ref().map(|q|(q.generation,q.options.clone())));
             flush_playback();
             *PLAYBACK.lock().map_err(|_|"播放队列状态不可用")?=None;
-            #[cfg(windows)] { crate::rhvideo_player::stop_single(); }
+            #[cfg(windows)] { tauri::async_runtime::spawn_blocking(crate::rhvideo_player::stop_single).await.map_err(|_|"停止视频播放未能确认完成")?; }
             if let Some(window)=app.get_webview_window("window-rhvideo-player") { window.close().map_err(|e|format!("播放器已停止，但窗口关闭失败：{e}"))?; }
             focus_library(&app);
             if let Some((generation,options))=context {
@@ -2018,6 +2032,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
     if expected.is_some_and(|g| g != session.generation) {
         return Err("媒体账户已改变，操作未执行，请刷新后重新操作".into());
     }
+    let preparation=session.play_preparation.capture();
     match action.as_str() {
         "catalog.resource" => {
             let kind = kind(&args)?;
@@ -2362,6 +2377,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             };
             trace("entry");
             let _play = PLAY_LOCK.lock().await;
+            preparation.ensure_current()?;
             trace("play-lock");
             let id = identifier(text(&args, "id", 128)?)?;
             let title = text(&args, "title", 1024)?.to_owned();
@@ -2433,6 +2449,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 title,
                 seconds,
                 args.get("super").and_then(Value::as_bool) == Some(true),
+                &preparation,
             )
             .await?;
             trace("native-ready");
@@ -2507,6 +2524,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         }
         "player.next" | "player.previous" | "player.seekQueue" | "player.seekParent" => {
             let _play = PLAY_LOCK.lock().await;
+            preparation.ensure_current()?;
             #[cfg(windows)]crate::rhvideo_player::check_input(&args)?;
             if let Some(value)=args.get("expectedPlanRevision"){
                 let revision=value.as_u64().filter(|n|*n>0).ok_or("播放队列版本无效")?;
@@ -2603,7 +2621,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                     })
                 })
                 .unwrap_or((false, 0.,1.));
-            let mut result = native_play(app.clone(), &session, &id, title, start, low).await?;
+            let mut result = native_play(app.clone(), &session, &id, title, start, low, &preparation).await?;
             #[cfg(windows)]{crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":rate}))?;}
             #[cfg(not(windows))]let _=rate;
             if let Some(queue) = PLAYBACK.lock().map_err(|_| "播放队列状态不可用")?.as_mut()
@@ -2623,6 +2641,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         }
         "player.options" => {
             let _play=PLAY_LOCK.lock().await;
+            preparation.ensure_current()?;
             let (replacement,reposition,repeating)={
             let mut slot = PLAYBACK.lock().map_err(|_| "播放队列不可用")?;
             let q = slot
@@ -2684,7 +2703,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             if let Some(replacement)=replacement{
                 let (id,title)=replacement.items[replacement.index].clone();let start=replacement.bounds().0;
                 flush_playback();
-                native_play(app.clone(),&session,&id,title,start,replacement.options["super"]==true).await?;
+                native_play(app.clone(),&session,&id,title,start,replacement.options["super"]==true,&preparation).await?;
                 #[cfg(windows)]{crate::rhvideo_player::command("player.control",&json!({"command":"rate","value":replacement.options["rate"].as_f64().unwrap_or(1.)}))?;}
                 *PLAYBACK.lock().map_err(|_|"播放队列不可用")?=Some(replacement);
                 save_queue_state(&session)?;schedule_preload(app.clone(),session.clone())?;wake_playback_monitor(&app);
@@ -2886,6 +2905,7 @@ mod tests {
             favorites: Mutex::new(HashSet::new()),
             preview: Mutex::new(PreviewState::default()),
             single_controls: Mutex::new(SingleControls::default()),
+            play_preparation: play_intent::Epoch::default(),
         };
         let first = session.video_catalog(false).await.unwrap();
         let warm = session.video_catalog(false).await.unwrap();
