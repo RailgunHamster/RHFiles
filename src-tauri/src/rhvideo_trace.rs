@@ -1,4 +1,4 @@
-//! Bounded, opt-in producer timestamps. Debug Windows builds only. Never
+//! Bounded, opt-in producer timestamps for debug/explicit host-trace builds. Never
 //! format VLC's va_list: URLs, credentials and decoded log arguments stay out.
 use libloading::Library;
 use serde_json::{json,Value};
@@ -57,7 +57,9 @@ impl State {
 struct Trace { context:Context,state:Mutex<State> }
 pub(crate) struct Binding { instance:usize,unset:Unset,trace:Box<Trace> }
 pub(crate) fn enabled()->bool{
-    std::env::var("RHFILES_VLC_NATIVE_TRACE").as_deref()==Ok("1")&&owned()
+    // The release host-only feature must not install VLC logging or alter its
+    // verbosity; it records only our own bounded monotonic stage timestamps.
+    cfg!(debug_assertions)&&std::env::var("RHFILES_VLC_NATIVE_TRACE").as_deref()==Ok("1")&&owned()
 }
 // Bound both pointer walking and allocations, even for an unexpectedly long
 // diagnostic template. libVLC owns these nul-terminated strings for this call.

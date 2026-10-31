@@ -6,6 +6,9 @@ license = "Apache-2.0"
 
 [features]
 android-shell = []
+# Explicit test build only: bounded own-process producer timestamps and readback.
+# Not a default feature and does not enable debug playback/cache options.
+rhvideo-host-trace = []
 
 [lib]
 name = "rhfiles_tauri_lib"

@@ -1598,7 +1598,7 @@ pub async fn rhvideo_request(
     action: String,
     mut args: Value,
 ) -> Result<Value, String> {
-    #[cfg(all(windows,debug_assertions))]
+    #[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
     let command_trace=(action=="play"&&crate::rhvideo_trace::host_enabled()).then(Instant::now);
     if let Some(run)=args.as_object_mut().and_then(|v|v.remove("_automationRun")) {
         let id=run["id"].as_str().unwrap_or_default().to_owned();
@@ -1607,7 +1607,7 @@ pub async fn rhvideo_request(
         let result=rhvideo_dispatch(app,action,args).await;completion.finish(&result);return result;
     }
     let result=rhvideo_dispatch(app,action,args).await;
-    #[cfg(all(windows,debug_assertions))]
+    #[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
     if let Some(started)=command_trace{crate::rhvideo_trace::stage("command-return",started,"dispatch-returned");}
     result
 }
@@ -2373,7 +2373,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         }
         "play" => {
             let started=Instant::now();let trace=|stage:&str|{
-                #[cfg(all(windows,debug_assertions))]
+                #[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
                 crate::rhvideo_trace::stage("request",started,stage);
                 if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){eprintln!("RHFILES_REQUEST_STAGE play {stage} {}",started.elapsed().as_millis());}
             };

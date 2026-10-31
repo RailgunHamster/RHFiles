@@ -6,6 +6,24 @@
 
 对齐边界：重写只允许 RHFiles 风格的视觉适配和平台必要的布局适配，不允许借机删减功能或重新设计浏览／播放流程。普通点击、截图浏览、分段连播、列表顺序播放、超压及同屏必须保留各自原有的取池、顺序、进度、返回位置和偏好语义；不能以一个媒体清单／统一模式下拉替代。接口存在、按钮存在或局部测试通过都不是完成证明。性能退化和实际画面错误同样是未完成项。
 
+## 2026-10-31 应答长尾与可复核的隔离计时（仍未完成性能验收）
+
+继续只读取 WINSERVER `D:\git\RHVideo` 的源码；媒体全部生成，未读取真实库／数据库。普通 B8E0 包的固定 A/V、仅音频、仅音频、A/V 四次独立进程对照均保留（`rhvideo-av-audio-current.log`、`rhvideo-av-audio-comparison.json`）。两次 A/V 前端为 **2275.8／2401.6 ms**，仅音频为 **397.5／507.0 ms**；音轨是逐字节相同的 AAC 重封装，但两次仅音频在随后约 505 ms 内的原始时间都停在 250 ms，**未通过原定时钟前进断言**。解码计数增加不能替代时钟通过或物理扬声器输出，不把此对照改记为成功，也不证明唯一根因。
+
+新增自有私有 WebView2 的有界 CDP 跟踪工具 `scripts/testing/browser-startup-trace.mjs`，不启动系统 ETW。固定只查询能力的四步为 browser、browser、page、browser，实际数量为 **0／345／345／345**（`rhvideo-browser-category-order-current.log`）；据此纠正“仅浏览器入口才支持”的初步判断。只在首次列表为空时再读一次，仍空、缺必要项或响应畸形即失败；不循环等绿，不重发播放。此前 page／browser 入口失败都发生在 `Tracing.start` 和播放之前，原日志保留。
+
+跟踪只接受该自建配置的本机浏览器端口，4 MiB 缓冲、15 秒、8 MiB 读取上限，不采样 JS／系统事件；落盘前删除参数、URL、请求体、脚本内容和任意线程标签，仅保留事件计时、已知静态角色及两个固定标记。首次完整普通包记录 **17373** 条、零丢弃／dataLoss，前端 **2316.7 ms**，该页面最长完整任务约 **1.681 ms**，不是两秒的前端长任务（`rhfiles-e2e-SSwXMs/browser-startup.json`）。它不是 CPU 调度跟踪，不能据此断言线程未被系统延迟或已确定框架根因。
+
+新增非默认编译功能 `cargo build -p rhfiles-tauri --release --features rhvideo-host-trace --locked`，用于普通优化配置下的宿主单调阶段计时。仅显式测试构建包含；运行仍要求 QA 开关、私有配置和随机 nonce，使用父进程管道、只读白名单与原 4096 字节／512 请求／128 阶段上限。release 特性不启用调试缓存／线程参数、VLC 日志回调／verbosity、窗口 subclass 或自定义 IPC；frame 读回仍被拒绝。默认发行包没有开启该功能。
+
+当前源码 debug C025 的完整／仅宿主诊断分别为前端 **916.8／481.3 ms**、命令返回 **901.6／462.4 ms**（`rhvideo-browser-current-producer.log`／`rhvideo-browser-current-producer-host.log`）。随后优化诊断包 **45D5**（完整 SHA `45d5b4e6e341471aa2d7a4de5997c517a9915358e9c066d23e70e9acd920f8d9`；冻结 `rhvideo-pipe-full-0vmDKn`，1233 源码／4 工具／426 运行库）的宿主命令 **783.6 ms**、前端 **791.7 ms**（`rhfiles-e2e-Ou1TZR`）。同一构建关闭内部记录／管道后 **398.4 ms**（`rhfiles-e2e-DyO3Vq`）。再返回原 B8E0 普通包也为 **465.0 ms**（`rhfiles-e2e-vBMZlf`）。这些是有限诊断样本，后两次未重现长尾，**不能把快样本归因于新构建、计时器或某项修复**；请求完成、解码首帧统计和实际画面仍分别记录，不混成首帧达标。
+
+新增工具／编译隔离的 14 项定向检查通过。最终带本地真实参考源码的完整 Node **1457/1457、零失败／取消／跳过，31.419 秒**（`rhvideo-host-feature-final-node.log`），默认配置 Rust RHVideo **87/87、零失败／忽略**（`rhvideo-host-feature-final-default-rust.log`）；显式 host 特性的优化构建 **3 分 10 秒**（`rhvideo-host-feature-release-build.log`）。最初没设置本地参考目录的一轮为 1399 通过／48 跳过，保留原记录，不把它记为完整通过。增加参考目录后先得 1447 项全过，补入脱敏及有界能力查询测试后的最终数量为 1457。这些仍不是诊断包或双端完整业务／性能验收。
+
+实际执行新入库跟踪工具的无登录／无媒体 smoke：空文件夹主窗真实能力查询 **0／345**、1009 条脱敏事件、两个固定标记、零丢弃／dataLoss（`rhvideo-browser-tracked-collector-smoke.log`、`rhfiles-e2e-Ql4j7F/browser-collector-smoke.json`）。事后验证 B8E0／45D5 两份冻结输入及运行库、14 份参考源码与干净 `3d6aaeb`、原三份用户脏 schema、五台自建 AVD 已恢复 running／应用停止，以及 Android FBA3／6A69 安装字节（`rhvideo-pipe-full-0vmDKn/host-postcheck.json`）。新增源工具未反向写入此前冻结包。
+
+所有媒体诊断均串行运行，未与构建或其他 UI／性能测试并行；只临时暂停已确认 idle 的五台自建 AVD，finally 恢复。未操作真机、正式程序、网络／驱动／安全设置或真实资料。普通 B8E0 的完整 138 项回归仍归属于上一节的冻结包，不冒用为本次诊断包的完整回归。Windows 间歇应答等待、首帧稳定性及 Android 实际同屏持续时钟仍未验收；本节不构成完成或正式发包。
+
 ## 2026-10-31 排队预加载的身份与关闭确认（继续验收中）
 
 旧预加载在异步 worker 开始时才清理上一项并分配标记，不能区分“刚提交的新任务”和“关闭后才获得调度的旧任务”；状态、ready 引擎及编号还分属三个锁。现于持有 `PLAY_LOCK` 的排队边界预留单调标记、保留原 Session 准备标记，由同一个 Slot 处理准入、状态和 ready 引擎归属。旧 worker 不分配新编号、不清理后继任务，不得覆盖新状态或提交迟到引擎；正常消费也不能取走已被更新请求撤销的 ready 项。decoder 资源先移出锁，再实际释放；主音量仍作用于真实持有的 ready 解码器。首帧后才预加载、至多一个构造、原十五秒／五秒预算、音量／缓存／线程／画质均不变。

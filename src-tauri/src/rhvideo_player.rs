@@ -28,7 +28,7 @@ const CONTROLS_HEIGHT:f64=196.;
 // Hidden/silent restoration must prepare at a normal, supported clock rate.
 const PAUSE_PREPARE_RATE:f32=1.;
 fn trace_startup(started:std::time::Instant,stage:&str){
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions,feature="rhvideo-host-trace"))]
     crate::rhvideo_trace::stage("engine",started,stage);
     if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
         eprintln!("RHFILES_VLC_STAGE {stage} {}",started.elapsed().as_millis());
@@ -50,7 +50,7 @@ fn network_cache_ms()->u32{
     1000
 }
 fn trace_open(started:std::time::Instant,stage:&str){
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions,feature="rhvideo-host-trace"))]
     crate::rhvideo_trace::stage("play",started,stage);
     if cfg!(debug_assertions)&&std::env::var_os("RHFILES_VLC_DEBUG").is_some(){
         eprintln!("RHFILES_PLAY_STAGE {stage} {}",started.elapsed().as_millis());
@@ -366,13 +366,14 @@ fn directory() -> Option<PathBuf> {
 pub fn available() -> bool {
     directory().is_some()
 }
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions,feature="rhvideo-host-trace"))]
 pub(crate) fn diagnostic_trace(args:&Value)->Result<Value,String>{
     let slot=PLAYER.lock().map_err(|_|"播放器不可用")?;
     let player=slot.as_ref().ok_or("播放器未打开")?;
     if args.get("expectedInput").is_some_and(|id|id.as_u64()!=Some(player.input_id)){return Err("播放输入已改变，旧读取未执行".into());}
     let mut result=crate::rhvideo_trace::host_snapshot()?;
     result["inputId"]=json!(player.input_id);
+    #[cfg(debug_assertions)]
     if let Some(trace)=&player.startup_trace{result["vlc"]=trace.snapshot()?;}
     Ok(result)
 }

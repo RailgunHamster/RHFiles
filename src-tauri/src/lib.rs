@@ -31,9 +31,9 @@ mod rhvideo_player;
 mod rhvideo_window_lifecycle;
 #[cfg(windows)]
 mod rhvideo_frame;
-#[cfg(all(windows,debug_assertions))]
+#[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
 mod rhvideo_diagnostics;
-#[cfg(all(windows,debug_assertions))]
+#[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
 mod rhvideo_trace;
 mod search;
 #[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]
@@ -103,7 +103,7 @@ pub fn run() {
             }
         }))
         .setup(|app| {
-            #[cfg(all(windows,debug_assertions))]
+            #[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
             rhvideo_diagnostics::install(app.handle().clone());
             std::thread::spawn(lan_service::restore_if_enabled);
             std::thread::spawn(documents::cleanup_stale_workspaces);

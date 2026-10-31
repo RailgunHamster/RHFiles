@@ -1,4 +1,4 @@
-//! Opt-in, debug-only readback for the process-spawning QA parent. No socket,
+//! Opt-in readback for debug or explicit host-trace builds and their QA parent. No socket,
 //! remote commands, external HWNDs, activation or playback mutations.
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -57,6 +57,10 @@ fn execute_inner(app:&AppHandle,command:Command)->Result<Value,String>{
             Ok(unsafe{json!({"visible":IsWindowVisible(hwnd).as_bool(),"minimized":IsIconic(hwnd).as_bool()})})
         }
         Command::MainFrame=>{
+            #[cfg(not(debug_assertions))]
+            {Err("Frame readback is disabled in host-only builds".into())}
+            #[cfg(debug_assertions)]
+            {
             let main=app.get_webview_window("main").ok_or("QA main window is unavailable")?;
             let hwnd=main.hwnd().map_err(|e|e.to_string())?;
             let mut random=[0u8;16];getrandom::fill(&mut random).map_err(|_|"Cannot create owned QA filename")?;
@@ -64,6 +68,7 @@ fn execute_inner(app:&AppHandle,command:Command)->Result<Value,String>{
             let path=std::env::current_dir().map_err(|e|e.to_string())?.join(format!("rhvideo-main-{name}.bmp"));
             let(width,height)=crate::rhvideo_frame::diagnostic_capture(hwnd.0 as usize,&path,false)?;
             Ok(json!({"path":path,"width":width,"height":height,"scope":"main","canvas":"client"}))
+            }
         }
     }
 }
