@@ -30,6 +30,10 @@ public class RhVideoInstrumentation extends Instrumentation {
   }
   private final java.util.Set<Activity> stoppedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
   private final java.util.Set<Activity> destroyedActivities=java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Activity,Boolean>()));
+  private volatile Activity closeLatencyTarget;
+  private volatile long closeLatencyStoppedAt,closeLatencyDestroyedAt;
+  private volatile String closeLatencyRun;
+  private volatile long closeLatencyStartedAt;
   @Override public void onCreate(Bundle value){super.onCreate(value);args=value;start();}
   private void require(boolean ok,String message)throws Exception{if(!ok)throw new Exception(message);}
   private boolean ownedFixtureServer(String server){
@@ -926,6 +930,38 @@ public class RhVideoInstrumentation extends Instrumentation {
     }finally{if(timing!=null)timing.evaluation(queued,checkpoints[0],checkpoints[1],SystemClock.elapsedRealtime());}
   }
   private String playbackThreads(){StringBuilder text=new StringBuilder("Native playback thread snapshot (no arguments or media addresses)");for(java.util.Map.Entry<Thread,StackTraceElement[]> entry:Thread.getAllStackTraces().entrySet()){String name=entry.getKey().getName();if(!name.equals("main")&&!name.equals("RenderThread")&&!name.startsWith("ExoPlayer:")&&!name.startsWith("Loader:"))continue;text.append("\nTHREAD ").append(name).append(" ").append(entry.getKey().getState());for(StackTraceElement frame:entry.getValue())text.append("\n  ").append(frame);}return text.toString();}
+  private void closeLatencyEvent(String event){
+    String run=closeLatencyRun;if(run==null)return;
+    // Lifecycle callbacks only log fixed fields. No file I/O on the UI thread,
+    // and no dependence on the final receipt surviving a whole-run timeout.
+    try{android.util.Log.i("RHVideoCloseEvent",new JSONObject().put("protocol",1).put("run",run).put("pid",android.os.Process.myPid()).put("clock","android-elapsed-realtime").put("event",event).put("startedAt",closeLatencyStartedAt).put("at",SystemClock.elapsedRealtime()).toString());}catch(JSONException ignored){}
+  }
+  private void saveCloseLatency(JSONObject receipt)throws IOException{
+    try(FileOutputStream out=new FileOutputStream(new File(getTargetContext().getExternalFilesDir(null),"rhvideo-player-close-latency.json"))){out.write(receipt.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+  }
+  private void checkPlayerCloseLatency(String server)throws Exception{
+    String run=args.getString("closeLatencyRun","");require(run.matches("[a-f0-9]{32}"),"An explicit close-latency run identity is required");
+    nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");
+    action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));action("category",new JSONObject().put("kind","video"));
+    action("media.open",new JSONObject().put("kind","video").put("id","video-0"));JSONObject before=waitPlayer("video-0",true);
+    require(current!=null&&current.getClass().getSimpleName().equals("PlaybackActivity"),"Measure the actual native player, not a WebView replacement");
+    Activity producer=current;closeLatencyTarget=producer;closeLatencyStoppedAt=0;closeLatencyDestroyedAt=0;
+    long started=SystemClock.elapsedRealtime();closeLatencyStartedAt=started;closeLatencyRun=run;closeLatencyEvent("started");java.util.concurrent.CountDownLatch ended=new java.util.concurrent.CountDownLatch(1);
+    Thread observation=new Thread(()->{try{for(int i=0;i<6;i++){if(ended.await(1000,TimeUnit.MILLISECONDS))break;android.util.Log.i("RHVideoCloseQA","run="+run+" sample="+i+" elapsedMs="+(SystemClock.elapsedRealtime()-started)+"\n"+playbackThreads());}}catch(InterruptedException e){Thread.currentThread().interrupt();}},"RHVideoQA-close");observation.setDaemon(true);observation.start();
+    JSONObject receipt=new JSONObject().put("protocol",1).put("run",run).put("pid",android.os.Process.myPid()).put("clock","android-elapsed-realtime").put("startedAt",started).put("inputId",before.getLong("inputId")).put("renderedFrames",before.getLong("renderedFrames")).put("completed",false);
+    try{
+      saveCloseLatency(receipt);
+      action("player.close",new JSONObject());receipt.put("ackAt",SystemClock.elapsedRealtime());closeLatencyEvent("ack");saveCloseLatency(receipt);
+      long end=SystemClock.elapsedRealtime()+15000;while((!destroyedActivities.contains(producer)||current==producer)&&SystemClock.elapsedRealtime()<end)Thread.sleep(50);
+      receipt.put("stoppedAt",closeLatencyStoppedAt).put("destroyedAt",closeLatencyDestroyedAt).put("destroyed",destroyedActivities.contains(producer)&&producer.isDestroyed()).put("libraryResumed",current!=null&&current.getClass().getSimpleName().equals("RhVideoActivity"));
+      require(receipt.getBoolean("destroyed")&&receipt.getBoolean("libraryResumed"),"Close acknowledgement alone cannot prove native destruction and the library's return");
+      receipt.put("completed",true);step("player-close-latency "+receipt);
+    }finally{
+      ended.countDown();observation.join(1500);receipt.put("observationStopped",!observation.isAlive());
+      receipt.put("stoppedAt",closeLatencyStoppedAt).put("destroyedAt",closeLatencyDestroyedAt);closeLatencyTarget=null;
+      closeLatencyEvent("finished");closeLatencyRun=null;saveCloseLatency(receipt);
+    }
+  }
   private Object expression(WebView web,String expression)throws Exception{
     return expression(web,expression,"expression");
   }
@@ -1258,7 +1294,15 @@ public class RhVideoInstrumentation extends Instrumentation {
     android.graphics.BitmapFactory.Options options=new android.graphics.BitmapFactory.Options();options.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeFile(file.getAbsolutePath(),options);require(options.outWidth>0&&options.outHeight>0,"Screenshot unavailable");
   }
   @Override public void onStart(){Bundle result=new Bundle();Application app=(Application)getTargetContext().getApplicationContext();
-    Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){public void onActivityResumed(Activity a){current=a;}public void onActivityCreated(Activity a,Bundle b){}public void onActivityStarted(Activity a){stoppedActivities.remove(a);}public void onActivityPaused(Activity a){}public void onActivityStopped(Activity a){stoppedActivities.add(a);}public void onActivitySaveInstanceState(Activity a,Bundle b){}public void onActivityDestroyed(Activity a){destroyedActivities.add(a);}};
+    Application.ActivityLifecycleCallbacks observer=new Application.ActivityLifecycleCallbacks(){
+      public void onActivityResumed(Activity a){current=a;}
+      public void onActivityCreated(Activity a,Bundle b){}
+      public void onActivityStarted(Activity a){stoppedActivities.remove(a);}
+      public void onActivityPaused(Activity a){}
+      public void onActivityStopped(Activity a){if(a==closeLatencyTarget){closeLatencyStoppedAt=SystemClock.elapsedRealtime();closeLatencyEvent("stopped");}stoppedActivities.add(a);}
+      public void onActivitySaveInstanceState(Activity a,Bundle b){}
+      public void onActivityDestroyed(Activity a){if(a==closeLatencyTarget){closeLatencyDestroyedAt=SystemClock.elapsedRealtime();closeLatencyEvent("destroyed");}destroyedActivities.add(a);}
+    };
     app.registerActivityLifecycleCallbacks(observer);
     try{
       if(args.getString("expressionTimingRun","").matches("[a-f0-9]{32}"))step("QA: expression-timing-enabled");
@@ -1266,6 +1310,7 @@ public class RhVideoInstrumentation extends Instrumentation {
       startActivitySync(new Intent().setClassName(getTargetContext(),"com.railgunhamster.rhfiles.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
       main=waitView("MainActivity");ready(main,"api");nativeCall("automation.enable",new JSONObject().put("enabled",true));
       if(localClock){checkLocalClockControl();nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: ordinary local simultaneous clock diagnostic only; not RHVideo product acceptance");finish(Activity.RESULT_OK,result);return;}
+      if("player-close-latency".equals(args.getString("mode"))){checkPlayerCloseLatency(server);nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native HTTP player-close latency diagnostic only, actual destruction; not full product acceptance");finish(Activity.RESULT_OK,result);return;}
       if("lifecycle".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkPlaybackLifecycle();checkGridLifecycle();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: native HTTP lifecycle, single and grid, real subtitles, HOME/stop/resume, Activity recreation, actual paused frames, isolated choices and retired-decoder rejection");finish(Activity.RESULT_OK,result);return;}
       if("task-center".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkTaskCenter();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: packaged task center, inline selection, readable workflow metrics, stable reading, unknown progress, queue/history filters and public actions");finish(Activity.RESULT_OK,result);return;}
       if("task-priority".equals(args.getString("mode"))){nativeCall("rhvideo.open",new JSONObject());library=waitView("RhVideoActivity");ready(library,"RHVideoBack");action("connection.connect",new JSONObject().put("server",server).put("username","preview").put("password","fixture-only"));checkActualTaskPriority();action("connection.logout",new JSONObject());nativeCall("automation.enable",new JSONObject().put("enabled",false));result.putString("stream","PASS: actual task priority, physical list/detail controls, real default/replacement queues, failed records, preserved enqueue time and paused receipt");finish(Activity.RESULT_OK,result);return;}

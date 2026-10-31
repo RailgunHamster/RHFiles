@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {observeVisibleCoverSettlement} from './rhvideo-visible-cover-settle.mjs';
 // Observe only the real catalog boundary. Arguments/results are not replaced,
 // operations are never replayed and all HTTP/worker/native media remain real.
 export const observeMediaRevealScript=`(()=>{
@@ -30,5 +31,6 @@ export async function exerciseMediaReveal({page,until,server,receipt}){
  assert.equal(after.offset,before.offset);assert.equal(after.kind,'picture');assert.equal(after.view,'catalog');assert.equal(after.error,'');assert(after.items.some(v=>v.id===target.id));
  assert.equal((await api('image.state')).opened,false,'Successful location closes its preview');
  receipt.visible=await until(()=>page.evaluate(`(()=>{const n=[...document.querySelectorAll('.media-card')].find(n=>n.dataset.id===${JSON.stringify(target.id)}&&n.dataset.kind==='picture'),r=n?.getBoundingClientRect(),img=n?.querySelector('img');return r&&r.bottom>0&&r.top<innerHeight&&img?.complete&&img.naturalWidth>0?{top:r.top,bottom:r.bottom,width:img.naturalWidth,height:img.naturalHeight}:null;})()`),'the actual target is scrolled into view with a decoded cover');
+ await observeVisibleCoverSettlement({page,until,receipt});
  receipt.passed=true;
 }

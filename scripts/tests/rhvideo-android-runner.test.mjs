@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import vm from 'node:vm';import {parse} from 'acorn';
 const source=fs.readFileSync(new URL('../testing/rhvideo-android.mjs',import.meta.url),'utf8'),java=fs.readFileSync(new URL('../../android/gradle/app/src/androidTest/java/com/railgunhamster/rhfiles/RhVideoInstrumentation.java',import.meta.url),'utf8');let success,artifact,traffic,failure,audioCapture;
 function walk(node){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&node.callee.object?.name==='assert'&&node.arguments[0]?.name==='output'){if(node.callee.property?.name==='match')success=node.arguments[1];if(node.callee.property?.name==='doesNotMatch')failure=node.arguments[1];}if(node.type==='VariableDeclarator'&&node.id?.name==='artifact')artifact=node.init;if(node.type==='FunctionDeclaration'&&node.id?.name==='verifyContractTraffic')traffic=node;if(node.type==='FunctionDeclaration'&&node.id?.name==='captureGridAudio')audioCapture=node;for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}walk(parse(source,{ecmaVersion:'latest',sourceType:'module'}));
-const modes={actualMode:false,lifecycleMode:false,closeReceiptMode:false,singleClockMode:false,taskCenterMode:false,priorityMode:false,duplicatesMode:false,rulesMode:false,loginMode:false,exportsMode:false,gridSurfaceMode:false,gridRotationMode:false,gridRestoreMode:false,gridMode:false,playlistMode:false,previewMode:false,singleMode:true,favoritesMode:false,stripMode:false,ticketsMode:false,rotationMode:false};
+const modes={actualMode:false,playerCloseMode:false,lifecycleMode:false,closeReceiptMode:false,singleClockMode:false,taskCenterMode:false,priorityMode:false,duplicatesMode:false,rulesMode:false,loginMode:false,exportsMode:false,gridSurfaceMode:false,gridRotationMode:false,gridRestoreMode:false,gridMode:false,playlistMode:false,previewMode:false,singleMode:true,favoritesMode:false,stripMode:false,ticketsMode:false,rotationMode:false};
 
 test('owned fixture transport uses only explicit reverse-loopback or the emulator host alias, never arbitrary servers',()=>{
   const declaration=parse(source,{ecmaVersion:'latest',sourceType:'module'}).body.find(node=>node.type==='FunctionDeclaration'&&node.id?.name==='fixtureServerUrl');assert(declaration);
@@ -101,6 +101,14 @@ test('lifecycle acceptance requires its own real-media receipt and cannot hide s
   assert.throws(()=>verify({requests:[request,{method:'POST',path:'/api/v1/trash/video/video-2'}]},{lifecycleMode:true}),/cannot replay/);
   verify({requests:[request,{method:'POST',path:'/api/v1/auth/login'}]},{lifecycleMode:true});
   assert.throws(()=>verify({requests:[request,{method:'DELETE',path:'/api/v1/auth/login'}]},{lifecycleMode:true}),/cannot replay/);
+});
+
+test('native-player close diagnostic has a separate namespace and cannot skip actual media or hide writes',()=>{
+ const scope={...modes,playerCloseMode:true,singleMode:false,path,Date};assert.match(vm.runInNewContext(source.slice(artifact.start,artifact.end),scope),/rhvideo-android-player-close-latency-/);
+ const verify=vm.runInNewContext('('+source.slice(traffic.start,traffic.end)+')',{assert}),request={method:'GET',path:'/api/v1/videos/video-0/play',authorization:'Bearer fixture-bearer-do-not-persist'};
+ verify({requests:[request,{method:'POST',path:'/api/v1/auth/login'}]},{playerCloseMode:true});
+ for(const requests of [[],[{...request,authorization:''}],[request,{method:'POST',path:'/api/v1/trash/video/video-0'}],[request,{method:'PUT',path:'/api/v1/favorites/video/video-0'}]])assert.throws(()=>verify({requests},{playerCloseMode:true}));
+ assert.match(source,/playerCloseMode\)\{\s*assert\.match\(output,\/PASS: native HTTP player-close latency diagnostic only/);
 });
 
 for(const failed of [false,true])test(`live grid audio snapshot is a bounded asynchronous read with a truthful ${failed?'failed':'captured'} receipt`,async()=>{
