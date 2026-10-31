@@ -729,7 +729,11 @@ test('the screenshot collection scrubber, Home/End, wheel and swipe navigate ima
   const key=async(name,code,eventCode=name)=>{await s.view.send('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:eventCode,windowsVirtualKeyCode:code});await s.view.send('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:eventCode,windowsVirtualKeyCode:code});};
   try{
     await s.view.send('Emulation.setFocusEmulationEnabled',{enabled:true});
-    assert.deepEqual(await invoke(s.view,'image.state'),{opened:false,loading:false,requestedIndex:null,previewId:null,index:0,total:0,current:null},'closed preview state is valid JSON');
+    assert.deepEqual(await invoke(s.view,'image.state'),{
+      opened:false,loading:false,error:'',requestedIndex:null,previewId:null,index:0,total:0,current:null,
+      caption:{id:null,kind:null,title:'图片预览',videoId:null,seconds:null,duration:null,index:null,total:0,source:'empty'},
+      requested:null,failed:null,status:'',
+    },'closed preview state is complete serializable presentation data');
     await invoke(s.view,'gallery.open');await invoke(s.view,'gallery.inspect',{index:0});
     const count=(await invoke(s.view,'image.state')).total;assert.equal(count,32);
     await until(()=>s.view.evaluate("document.getElementById('full-image').complete&&document.getElementById('full-image').naturalWidth>0"),'first screenshot actually decoded');
