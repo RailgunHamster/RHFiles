@@ -21,7 +21,8 @@ const rpc=(actions,method,params)=>actions.rpc({jsonrpc:'2.0',id:'test',method,p
 function binding(invoke,notice){
   let callback;const script=parse(client,{ecmaVersion:'latest',sourceType:'script'}).body[0].expression.callee.body.body;
   const node=script.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='bind');assert(node);
-  const bind=vm.runInNewContext('('+client.slice(node.start,node.end)+')',{RHFilesUI:{listen:(_node,_event,handler)=>{callback=handler;}},$:()=>({dataset:{}}),invoke,notice});
+  const observer=script.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='observeAction');assert(observer);
+  const bind=vm.runInNewContext(client.slice(observer.start,observer.end)+';('+client.slice(node.start,node.end)+')',{RHFilesUI:{listen:(_node,_event,handler)=>{callback=handler;}},$:()=>({dataset:{}}),invoke,notice});
   bind('library-back','click','back');return ()=>callback({});
 }
 test('the actual button binding returns its unsettled action, not an early UI completion',async()=>{
