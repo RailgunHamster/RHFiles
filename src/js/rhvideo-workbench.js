@@ -982,11 +982,11 @@
       action("selection.result", object(), () => lastBatch, "read");
       action("selection.markCurrent", object({expectedViewer:{type:"integer",minimum:1}}), async ({expectedViewer}={}) => {
         if(expectedViewer!==undefined&&viewer?.token!==expectedViewer)throw Error("浏览窗口已改变，旧标记未执行");
-        if($("wb-viewer")?.open&&viewer?.loadingMedia)throw Error("放映正在切换，请稍候再标记");
-        if(!$("wb-viewer")?.open&&imageSession?.loading)throw Error("图片正在切换，请稍候再标记");
-        const item = $("wb-viewer")?.open
-          ? viewer?.current
-          : imageSession?.current;
+        const top=ctx.modalTop(),fromViewer=top==="wb-viewer";
+        if(!["wb-viewer","image-dialog"].includes(top)||!$(top)?.open||expectedViewer!==undefined&&!fromViewer)throw Error("预览不是当前可见窗口，标记未执行");
+        if(fromViewer&&viewer?.loadingMedia)throw Error("放映正在切换，请稍候再标记");
+        if(!fromViewer&&imageSession?.loading)throw Error("图片正在切换，请稍候再标记");
+        const item = fromViewer?viewer?.current:imageSession?.current;
         if (!item) throw Error("当前没有可标记的预览项目");
         const kind = item.kind === "frame" ? "video" : item.kind,
           id = item.kind === "frame" ? item.videoId : item.id;
