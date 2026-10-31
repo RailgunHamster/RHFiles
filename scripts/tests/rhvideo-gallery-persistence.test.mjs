@@ -14,9 +14,9 @@ async function ready(check){for(let i=0;i<50;i++){if(check())return;await new Pr
 function fixture(preferences={}){
   const c=new I.Catalog({tags}),opened=[],writes=[],loads=[];
   c.setGallery([{video_id:'z',filename:'Z',screenshots:[{url:'/old.webp',time_seconds:1},{url:'/stable.webp',time_seconds:9}]},{video_id:'a',filename:'A',screenshots:[{url:'/a.webp',time_seconds:3}]}]);
-  const scope=vm.createContext({prefs:preferences,preferences:{rule:{},mixPictures:false,perVideo:8},gallery:{seed:0,offset:0,limit:36,load:0,revision:0},epoch:1,singlePlayIntent:0,imageSession:null,saveTimer:0,saveChain:Promise.resolve(),state:{connected:true,search:'',view:'gallery'},I,RHTagFilter:tags,crypto:{randomUUID:()=> 'preview'},structuredClone,setTimeout,clearTimeout,
+  const scope=vm.createContext({prefs:preferences,preferences:{rule:{},mixPictures:false,perVideo:8},gallery:{seed:0,offset:0,limit:36,load:0,revision:0,items:[]},epoch:1,singlePlayIntent:0,imageSession:null,saveTimer:0,saveChain:Promise.resolve(),state:{connected:true,search:'',view:'gallery'},I,RHTagFilter:tags,crypto:{randomUUID:()=> 'preview'},structuredClone,setTimeout,clearTimeout,
     config:()=>scope.preferences,ensure:async()=>scope.epoch,$:()=>null,ctx:{openDialog:name=>opened.push(name)},notice:()=>{},send:async(action,args)=>{assert.equal(action,'query');assert.notEqual(args.allKeys,true);return c.query(args);},
-    loadGallery:async(refresh,display)=>{loads.push({refresh,display});if(display!==false)scope.gallery.load++;return {total:3,offset:scope.gallery.offset};},stepImage:async()=>{const v=await c.query({...scope.imageSession.args,offset:scope.imageSession.index,limit:1});scope.imageSession.current=v.items[0];return {index:scope.imageSession.index};},
+    loadGallery:async(refresh,display)=>{loads.push({refresh,display});if(display===false)return {loaded:true};scope.gallery.load++;const page=await c.query({kind:'gallery',sort:'source',seed:scope.gallery.seed,search:scope.state.search,rule:scope.preferences.rule,offset:scope.gallery.offset,limit:scope.gallery.limit});scope.gallery.items=page.items;return {total:page.total,offset:scope.gallery.offset};},stepImage:async()=>{const v=await c.query({...scope.imageSession.args,offset:scope.imageSession.index,limit:1});scope.imageSession.current=v.items[0];return {index:scope.imageSession.index};},
     native:async(name,args)=>{assert.equal(name,'preferences');writes.push(args.value);return {saved:true};}});
   vm.runInContext([...functions.values()].join('\n'),scope);const handlers={};for(const [name,handler]of actions)if(['gallery.save','gallery.resume','gallery.deleteOrder'].includes(name))handlers[name]=vm.runInContext('('+handler+')',scope);
   return {scope,c,opened,writes,loads,run:(name,args={})=>handlers[name](args)};
@@ -39,7 +39,7 @@ test('old numeric seeds and named orders migrate without being deleted or assign
 test('resume browsing opens the exact stable URL after screenshot insertion, with video/index fallbacks',async()=>{
   for(const [position,expected]of [[{orderKey:'video:z|url:/stable.webp',videoId:'z',index:1},2],[{orderKey:'video:z|url:/gone.webp',videoId:'z',index:1},0],[{index:3},3],[{index:99},0]]){
     const h=fixture({galleryResume:position});h.c.setGallery([{video_id:'z',screenshots:[{url:'/inserted.webp',time_seconds:0},{url:'/old.webp',time_seconds:1},{url:'/stable.webp',time_seconds:9}]},{video_id:'a',screenshots:[{url:'/a.webp',time_seconds:3}]}]);
-    const result=await h.run('gallery.resume');assert.equal(result.index,expected);assert.equal(h.scope.imageSession.index,expected);assert.deepEqual(h.opened,['image-dialog']);
+    const result=await h.run('gallery.resume');assert.equal(result.index,expected);assert.equal(h.scope.imageSession.index,expected);assert.equal(h.scope.imageSession.pendingTarget.id,h.scope.imageSession.current.id,'The initial target must come from the actual located catalog page');assert.deepEqual(h.opened,['image-dialog']);
   }
 });
 test('closing/changing account during a resume lookup cannot reopen a stale picture',async()=>{

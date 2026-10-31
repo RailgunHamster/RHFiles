@@ -3254,9 +3254,10 @@
         const index=match?.index??(Number.isSafeInteger(saved.index)&&saved.index>=0&&saved.index<value.total?saved.index:0);
         gallery.offset=Math.floor(index/gallery.limit)*gallery.limit;expectedView++;
         const shown=await loadGallery();if(shown.stale||!current())return {stale:true};
-        const session=imageSession={args,index,total:value.total,current:null,previewId:crypto.randomUUID()};
+        const session=imageSession={args,index,total:value.total,current:null,pendingTarget:{...gallery.items[index-gallery.offset],index,total:value.total},previewId:crypto.randomUUID()};
+        ctx.openDialog("image-dialog");
         const displayed=await stepImage(0);if(displayed.stale||!current()||imageSession!==session)return {stale:true};
-        ctx.openDialog("image-dialog");return {opened:true,index,total:value.total};
+        return {opened:true,index,total:value.total};
       }
       function paintGalleryStatus(){
         const node=$("wb-gallery-status");if(!node)return;
