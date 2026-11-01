@@ -16,7 +16,7 @@ test('single-player toggle follows the accepted intent while decoder pause/resum
   assert.equal(c.toggleCommand({state:4}),'resume');assert.equal(c.toggleCommand({state:3}),'pause');
 });
 test('group toggle does not confuse lagging paused state or a mixed group with accepted playing intent',()=>{
-  const c=controller('rhvideo-grid.js');
+  const c=controller('rhvideo-grid-controls.js');
   assert.equal(c.toggleCommand({cells:[{state:3,pauseRequested:true},{state:3,pauseRequested:false}]}),'resume');
   assert.equal(c.toggleCommand({cells:[{state:4,pauseRequested:false},{state:3,pauseRequested:false}]}),'pause');
   assert.equal(c.toggleCommand({cells:[{state:6,pauseRequested:false}]}),'resume');

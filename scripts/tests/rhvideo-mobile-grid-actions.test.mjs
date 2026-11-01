@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const source=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');
 function registrations(mobile){
-  const start=source.indexOf('action("grid.state"'),end=source.indexOf('action("player.close"',start);
+  const start=source.indexOf('const gridInputGuard='),end=source.indexOf('action("player.close"',start);
   assert(start>=0&&end>start,'Execute the actual shipped grid registration block');
   const actions=new Map(),calls=[];
   vm.runInNewContext(source.slice(start,end),{
@@ -23,7 +23,12 @@ test('native mobile grid exposes the same favorite/preview-mark operations as de
       assert.equal(action.effect,'write');
       const args={target:2,inputTarget:2,expectedInput:42,expectedLease:'current-grid'};
       await action.run(args);assert.equal(calls.at(-1).name,'grid.'+name);assert.equal(calls.at(-1).args,args);
-      for(const field of ['target','inputTarget','expectedInput',...(mobile?['expectedLease','expectedOffset','expectedInputs']:[])])assert(Object.hasOwn(action.params.properties,field),'Public input guard '+field);
+      for(const field of ['target','inputTarget','expectedInput','expectedInputs',...(mobile?['expectedLease','expectedOffset']:[])])assert(Object.hasOwn(action.params.properties,field),'Public input guard '+field);
     }
   }
+});
+
+for(const name of ['page','close'])test('desktop grid.'+name+' forwards its optional complete-input guard',async()=>{
+  const {actions,calls}=registrations(false),action=actions.get('grid.'+name),args={expectedInputs:[41,42],...(name==='page'?{direction:1}:{})};
+  assert(Object.hasOwn(action.params.properties,'expectedInputs'));await action.run(args);assert.equal(calls.at(-1).name,'grid.'+name);assert.equal(calls.at(-1).args,args);
 });

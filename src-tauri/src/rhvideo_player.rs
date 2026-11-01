@@ -192,10 +192,8 @@ pub fn check_input(args:&Value)->Result<(),String>{
     if !PLAYER.lock().map_err(|_|"播放器不可用")?.as_ref().is_some_and(|p|p.input_id==expected){return Err("播放输入已改变，旧操作未执行".into());}Ok(())
 }
 pub fn check_grid_input(args:&Value)->Result<(),String>{
-    let Some(expected)=args.get("expectedInput") else{return Ok(());};
-    let expected=expected.as_u64().ok_or("同屏输入标识无效")?;
-    let target=args["inputTarget"].as_u64().ok_or("同屏输入目标无效")? as usize;
-    if GRID.lock().map_err(|_|"网格不可用")?.players.get(target).map(|p|p.input_id)!=Some(expected){return Err("同屏输入已改变，旧操作未执行".into());}Ok(())
+    let grid=GRID.lock().map_err(|_|"网格不可用")?;
+    crate::rhvideo::grid_input::check(args,&grid.players.iter().map(|p|p.input_id).collect::<Vec<_>>())
 }
 static PAGE_VOLUME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
 fn effective_volume(local: i32) -> i32 {

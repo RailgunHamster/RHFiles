@@ -2657,18 +2657,18 @@
         },
         "external",
       );
+      const gridInputGuard={expectedInput:{type:"integer",minimum:1},inputTarget:{type:"integer",minimum:0,maximum:8},expectedInputs:{type:"array",minItems:1,maxItems:9,items:{type:"integer",minimum:1}},...(ctx.mobile?{expectedOffset:{type:"integer",minimum:0},expectedLease:{type:"string",minLength:1,maxLength:128}}:{})};
       action(
         "grid.page",
-        object({ direction: { type: "integer", enum: [-1, 1] } }, [
+        object({ ...(!ctx.mobile?gridInputGuard:{}),direction: { type: "integer", enum: [-1, 1] } }, [
           "direction",
         ]),
         (args) => native("grid.page", args),
         "external",
       );
       action("grid.state", object(), () => native("grid.state"), "read");
-      const gridInputGuard={expectedInput:{type:"integer",minimum:1},inputTarget:{type:"integer",minimum:0,maximum:8},...(ctx.mobile?{expectedInputs:{type:"array",minItems:1,maxItems:9,items:{type:"integer",minimum:1}},expectedOffset:{type:"integer",minimum:0},expectedLease:{type:"string",minLength:1,maxLength:128}}:{})};
       action("grid.seekGroup",object({...gridInputGuard,ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),args=>native("grid.seekGroup",args));
-      action("grid.close", object(), () => native("grid.close"));
+      action("grid.close", object(!ctx.mobile?gridInputGuard:{}), args => native("grid.close",args));
       for(const name of ['favorite','mark'])action('grid.'+name,object({...gridInputGuard,target:{type:'integer',minimum:0,maximum:8},...(name==='mark'?{enabled:{type:'boolean'}}:{})},['target']),args=>native('grid.'+name,args),'write');
       action("player.close", object(), () => {singlePlayIntent++;return native("player.close");});
       const parentGuard={expectedId:{type:"string",maxLength:128},expectedRevision:{type:"integer",minimum:1},expectedInput:{type:"integer",minimum:1}};

@@ -7,10 +7,10 @@ import {parse} from 'acorn';
 
 function keyboard(file,id){
   const source=fs.readFileSync(new URL('../../src/js/'+file,import.meta.url),'utf8');let handler;
-  const visit=node=>{if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&(node.callee?.object?.name==='RHFilesUI'&&node.callee.property?.name==='listen'||file==='rhvideo-player-controls.js'&&node.callee?.name==='listen')&&node.arguments[0]?.name==='document'&&node.arguments[1]?.value==='keydown'&&node.arguments[4]?.value===id)handler=source.slice(node.arguments[2].start,node.arguments[2].end);for(const value of Object.values(node))if(Array.isArray(value))value.forEach(visit);else if(value&&typeof value==='object')visit(value);};
+    const visit=node=>{if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&(node.callee?.object?.name==='RHFilesUI'&&node.callee.property?.name==='listen'||file.endsWith('-controls.js')&&node.callee?.name==='listen')&&node.arguments[0]?.name==='document'&&node.arguments[1]?.value==='keydown'&&node.arguments[4]?.value===id)handler=source.slice(node.arguments[2].start,node.arguments[2].end);for(const value of Object.values(node))if(Array.isArray(value))value.forEach(visit);else if(value&&typeof value==='object')visit(value);};
   visit(parse(source,{ecmaVersion:'latest'}));assert(handler,'Use the actual '+id+' listener');return handler;
 }
-const handlers={player:keyboard('rhvideo-player-controls.js','rhvideo.player.keyboard'),grid:keyboard('rhvideo-grid.js','rhvideo.grid.keyboard')};
+const handlers={player:keyboard('rhvideo-player-controls.js','rhvideo.player.keyboard'),grid:keyboard('rhvideo-grid-controls.js','rhvideo.grid.keyboard')};
 const playerSource=fs.readFileSync(new URL('../../src/js/rhvideo-player-controls.js',import.meta.url),'utf8');
 const observeSource=playerSource.slice(playerSource.indexOf('function observeAction('),playerSource.indexOf('let audibleVolume='));
 function fixture(kind,{origin='frame',reference=true,editing=false,cells=true}={}){

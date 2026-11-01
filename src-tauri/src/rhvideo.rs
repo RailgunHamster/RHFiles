@@ -23,6 +23,8 @@ use tauri::{AppHandle, Manager, Emitter};
 use url::Url;
 #[path="rhvideo_player_host.rs"]
 pub(crate) mod player_host;
+#[path="rhvideo_grid_input.rs"]
+pub(crate) mod grid_input;
 #[path = "rhvideo_contract.rs"]
 mod contract;
 #[path = "rhvideo_config.rs"]
