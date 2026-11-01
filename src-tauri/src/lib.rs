@@ -4,6 +4,7 @@ mod clipboard;
 #[cfg_attr(target_os = "macos", path = "macos/cloud.rs")]
 mod cloud;
 mod db;
+mod config_sync;
 #[cfg_attr(target_os = "macos", path = "macos/integration.rs")]
 mod file_dialog_integration;
 mod file_ops;
@@ -259,7 +260,10 @@ pub fn run() {
 
             db::db_save_tags, db::db_load_tags, db::db_load_all_tags,
             db::db_save_layout, db::db_load_layout,
-            db::db_save_pinned, db::db_load_pinned,
+            db::db_save_pinned, db::db_load_pinned, db::db_rename_pinned,
+            config_sync::config_sync_status, config_sync::config_sync_save,
+            config_sync::config_sync_disable,
+            config_sync::config_sync_preview, config_sync::config_sync_commit,
             db::db_save_network_favorite, db::db_load_network_favorites, db::db_delete_network_favorite,
             db::db_add_recent, db::db_load_recent, db::db_remove_recent, db::db_clear_recent,
             db::db_export_all, db::db_import_all, db::db_clear_all,

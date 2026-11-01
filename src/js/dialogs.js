@@ -146,6 +146,7 @@ const SETTINGS_SECTIONS = Object.freeze([
   ['lan', 'settings.categoryLan'],
   ['shortcuts', 'settings.categoryShortcuts'],
   ['data', 'settings.categoryData'],
+  ['sync', 'settings.categorySync'],
 ]);
 
 function settingsSectionIcon(id) {
@@ -160,6 +161,7 @@ function settingsSectionIcon(id) {
     lan: '<rect x="4" y="1.5" width="8" height="5" rx="1"/><path d="M8 6.5v3M2 9.5h12M2 9.5v2M8 9.5v2M14 9.5v2"/><circle cx="2" cy="13" r="1.2"/><circle cx="8" cy="13" r="1.2"/><circle cx="14" cy="13" r="1.2"/>',
     shortcuts: '<rect x="1.7" y="3.1" width="12.6" height="9.8" rx="1.5"/><path d="M4 6h1M7.5 6h1M11 6h1M4 9h1M7 9h5"/>',
     data: '<ellipse cx="8" cy="3.7" rx="5" ry="2"/><path d="M3 3.7v4.2c0 1.1 2.2 2 5 2s5-.9 5-2V3.7M3 7.8V12c0 1.1 2.2 2 5 2s5-.9 5-2V7.8"/>',
+    sync: '<path d="M4 10a3 3 0 0 1 0-6 4 4 0 0 1 7.7 0 3 3 0 0 1 .3 6M5 12l2 2 2-2M7 8v6M11 14V8l-2 2"/>',
   };
   return '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">' + (paths[id] || paths.general) + '</svg>';
 }
@@ -470,7 +472,9 @@ function openSettings() {
     settingsPage('updates', 'settings.categoryUpdates', 'settings.categoryUpdatesDesc', updates) +
     settingsPage('lan', 'settings.categoryLan', 'settings.categoryLanDesc', '<div id="lan-service-settings"></div>') +
     settingsPage('shortcuts', 'settings.categoryShortcuts', 'settings.categoryShortcutsDesc', shortcuts) +
-    settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data);
+    settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data) +
+    settingsPage('sync', 'settings.categorySync', 'settings.categorySyncDesc', '<div id="desktop-config-sync"></div>');
+  desktopConfigSync.mount(document.getElementById('desktop-config-sync'));
   dlg.style.display = "flex";
   lanService.mount(document.getElementById('lan-service-settings'));
   if (IS_MAC && typeof configureMacSettings === 'function') configureMacSettings();
@@ -589,8 +593,9 @@ function renderReleaseHistory(response) {
   container.innerHTML = `<div class="settings-history-source">${esc(sourceLabel)}</div>${refreshing}${warning}` +
     _releaseHistoryEntries.map((entry, index) => {
       const current = String(entry.version) === currentVersion;
+      const published = formatReleasePublishedAt(entry.publishedAt);
       return `<details class="settings-release-item" data-release-index="${index}"${index === 0 ? ' open' : ''}>
-        <summary><span class="settings-release-version">v${esc(String(entry.version || ''))}</span>${current ? `<span class="settings-release-current">${esc(t('settings.currentVersion'))}</span>` : ''}</summary>
+        <summary><span class="settings-release-version">v${esc(String(entry.version || ''))}</span>${current ? `<span class="settings-release-current">${esc(t('settings.currentVersion'))}</span>` : ''}<span class="settings-release-date">${esc(published ? t('settings.releasePublishedAt',{date:published}) : t('settings.releaseDateUnknown'))}</span></summary>
         <div class="settings-release-notes"></div>
       </details>`;
     }).join('');
@@ -1356,10 +1361,11 @@ function importAllData() {
     const file = input.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const data = JSON.parse(reader.result);
         if (!data._version) { alert(t('alert.invalidBackup')); return; }
+        if (!IS_MAC) await call('config_sync_disable',{});
         for (const k in data) {
           if (k.startsWith("_")) continue;
           localStorage.setItem(k, data[k]);
@@ -1390,8 +1396,9 @@ function importAllData() {
   input.click();
 }
 
-function clearAllData() {
+async function clearAllData() {
   if (!confirm(t('confirm.clearAllData'))) return;
+  try { await call('db_clear_all',{}); } catch(error) { showNotice(String(error));return; }
   const keysToRemove = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
@@ -1399,7 +1406,6 @@ function clearAllData() {
   }
   for (const k of keysToRemove) localStorage.removeItem(k);
   _shortcutBindings = null;
-  call("db_clear_all", {}).catch(() => {});
   showNotice(t('notice.dataCleared'));
   setTimeout(() => location.reload(), 1500);
 }

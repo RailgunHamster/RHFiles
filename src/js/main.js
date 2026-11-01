@@ -195,7 +195,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   Promise.allSettled([
     withTimeout(loadDrives(), 3000, "Drive discovery timed out"),
     withTimeout(loadTagList(), 3000, "Tag loading timed out"),
-    withTimeout(loadPinnedFolders(), 3000, "Pinned folder loading timed out"),
+    withTimeout(loadPinnedFolders(), 3000, "Pinned folder loading timed out").then(()=>desktopConfigSync.init()),
     deviceBrowser.refresh().catch(error=>showNotice(String(error))),
   ]);
   document.querySelectorAll(".sidebar-item[data-nav]").forEach(el => {

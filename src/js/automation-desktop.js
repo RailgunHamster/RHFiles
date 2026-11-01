@@ -57,6 +57,12 @@
   register('panes.orientation',object({orientation:{type:'string',enum:['vertical','horizontal']}},['orientation']),p=>{setDualPaneOrientation(p.orientation);return {orientation:p.orientation};});
   register('settings.open',object({section:{type:'string'}}),p=>{openSettings();if(p.section)switchSettingsSection(p.section);return {opened:true};});
   register('settings.close',object(),()=>{closeSettings();return {closed:true};});
+  register('favorites.list',object(),()=>getPinnedFolders().map(item=>({...item})),'read');
+  register('favorites.rename',object({path:string,name:{type:'string',minLength:1,maxLength:1024}},['path','name']),p=>renameFavoriteFolder(p.path,p.name),'write');
+  register('configSync.status',object(),()=>desktopConfigSync.refresh(),'read');
+  register('configSync.save',object({enabled:boolean,url:{type:'string',maxLength:8192},username:{type:'string',maxLength:8192},password:{type:'string',maxLength:8192},clearPassword:boolean,insecure:boolean},['enabled','url','username','insecure']),p=>desktopConfigSync.save(p),'write');
+  register('configSync.run',object(),()=>desktopConfigSync.run(true),'external');
+  register('configSync.resolve',object({choice:{type:'string',enum:['local','remote']}},['choice']),p=>desktopConfigSync.resolve(p.choice),'write');
   register('updates.check',object(),()=>checkForUpdates(true),'external');
   register('tasks.list',object(),()=>[..._operationTasks.values()].map(t=>({id:t.id,title:t.title??'',status:t.status,percentage:t.percentage??null,error:t.error??''})),'read');
   const recycleIds={type:'array',items:{type:'string',pattern:'^[0-9a-f]{16}$'},maxItems:50000};

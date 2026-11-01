@@ -6,6 +6,11 @@ fn generate_release_history() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let notes_dir = manifest_dir.join("..").join("docs").join("release-notes");
     println!("cargo:rerun-if-changed={}", notes_dir.display());
+    let dates_path = notes_dir.join("published-at.json");
+    println!("cargo:rerun-if-changed={}", dates_path.display());
+    let dates: std::collections::BTreeMap<String,String> = serde_json::from_str(
+        &fs::read_to_string(&dates_path).expect("read release publication metadata")
+    ).expect("parse release publication metadata");
 
     let mut releases = Vec::new();
     for entry in fs::read_dir(&notes_dir).expect("read release notes directory") {
@@ -54,6 +59,7 @@ fn generate_release_history() {
         "releases": releases.into_iter().map(|(version, notes)| json!({
             "version": version.to_string(),
             "notesMarkdown": notes,
+            "publishedAt": dates.get(&version.to_string()),
         })).collect::<Vec<_>>(),
     });
     let output = PathBuf::from(env::var("OUT_DIR").expect("build output directory"))

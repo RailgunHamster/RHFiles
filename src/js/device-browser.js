@@ -83,7 +83,7 @@ async function routeDeviceCommand(cmd,args){
   const paths=collect(args);if(!paths.length)return null;
   paths.forEach(path=>RHFilesDevicePaths.parse(path));
   // Metadata/clipboard/window state do not dereference a filesystem path.
-  if(cmd.startsWith('db_')||['copy_file_path','save_window_state','open_new_window'].includes(cmd))return null;
+  if(cmd.startsWith('db_')||cmd.startsWith('config_sync_')||['copy_file_path','save_window_state','open_new_window'].includes(cmd))return null;
   const fs=deviceBrowser.fs;let value;
   switch(cmd){
     case 'list_dir':value=await fs('list',args.path);break;

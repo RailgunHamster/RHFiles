@@ -26,6 +26,10 @@ Windows Latest 中的 Android 清单/附件只是兼容旧手机版，不能混�
 
 ## Release checklist / 发布检查
 
+Keep publication metadata in `docs/release-notes/published-at.json`. Known historical timestamps come from the original stable GitHub release's `published_at`, not filesystem modification times. A new release may declare an ISO calendar date when the precise publication instant is not yet known; clients display date-only precision rather than inventing midnight. Leave genuinely missing historical dates absent. Packaging uses the same metadata in both the history feed and update notes.
+
+在 `docs/release-notes/published-at.json` 维护发布记录。历史时间取正式发布的 `published_at`，不使用文件修改时间。新版本只有确定的发布日时可以使用 `YYYY-MM-DD`，界面仅显示日期，不编造时分；缺失的历史记录保持未知。发布清单、离线历史与更新弹窗共用这份信息。
+
 1. Bump only the affected platform's stable `major.minor.patch` version. Update
    its Cargo package/lock entry and Tauri configuration together; add its own
    release notes. Before 1.0, patches remain sequential; meaningful incompatible

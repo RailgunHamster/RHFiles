@@ -378,6 +378,7 @@ function updateSidebarSelection() {
 let _pinnedFolders = [];
 
 function favoritePathKey(path) {
+  if (typeof isDevicePath==='function'&&isDevicePath(path)) return RHFilesDevicePaths.parse(path).uri;
   if (IS_MAC) return String(path || '').replace(/\/+$/, '') || (path === '/' ? '/' : '');
   return String(path || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
@@ -396,7 +397,7 @@ function favoriteDisplayName(path, name) {
 async function savePinnedFolders() {
   const data = _pinnedFolders.map(p => [p.path, p.name]);
   localStorage.setItem('rhfiles-pinned', JSON.stringify(_pinnedFolders));
-  try { await call("db_save_pinned", { paths: data }); } catch (e) {}
+  try { await call("db_save_pinned", { paths: data }); if(typeof desktopConfigSync!=='undefined')desktopConfigSync.changed(); } catch (e) {}
 }
 
 async function loadPinnedFolders() {
@@ -439,6 +440,34 @@ async function unpinFolder(path) {
 async function toggleFavoriteFolder(path, name) {
   if (isFavoriteFolder(path)) return unpinFolder(path);
   return pinFolder(path, name);
+}
+
+async function renameFavoriteFolder(path, name) {
+  const label = String(name || '').trim();
+  if (!label || [...label].length > 1024 || /[\u0000-\u001f\u007f]/.test(label)) throw Error(t('favorites.invalidName'));
+  const favorite = _pinnedFolders.find(item => favoritePathKey(item.path) === favoritePathKey(path));
+  if (!favorite) throw Error(t('favorites.missing'));
+  await call('db_rename_pinned',{path:favorite.path,name:label});
+  favorite.name = label;
+  localStorage.setItem('rhfiles-pinned', JSON.stringify(_pinnedFolders));
+  renderPinnedFolders();
+  if (typeof desktopConfigSync !== 'undefined') desktopConfigSync.changed();
+  return {path:favorite.path,name:label};
+}
+
+function showFavoriteRenameDialog(path) {
+  const favorite = _pinnedFolders.find(item => favoritePathKey(item.path) === favoritePathKey(path));
+  if (!favorite) return;
+  document.getElementById('favorite-name-dialog')?.remove();
+  const overlay = document.createElement('div');overlay.className='overlay';overlay.id='favorite-name-dialog';overlay.style.display='flex';
+  overlay.innerHTML='<form class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="favorite-name-title" style="width:min(430px,calc(100vw - 32px))">' +
+    '<div class="dialog-title" id="favorite-name-title">'+esc(t('favorites.rename'))+'</div><div class="dialog-scroll" style="padding:16px 20px"><label for="favorite-name-input">'+esc(t('favorites.displayName'))+'</label>'+
+    '<input id="favorite-name-input" type="text" required maxlength="1024" value="'+esc(favorite.name)+'" style="width:100%;box-sizing:border-box;margin-top:8px"><p class="settings-card-description">'+esc(t('favorites.renameHelp'))+'</p>'+
+    '<p id="favorite-name-error" role="alert" class="media-convert-error" hidden></p></div><div class="dialog-actions"><button type="button" class="dialog-btn" id="favorite-name-cancel">'+esc(t('btn.cancel'))+'</button><button type="submit" class="dialog-btn primary">'+esc(t('btn.save'))+'</button></div></form>';
+  RHFilesUI.listen(overlay.querySelector('form'),'submit',async event=>{event.preventDefault();try{await renameFavoriteFolder(path,overlay.querySelector('input').value);overlay.remove();}catch(error){const target=overlay.querySelector('#favorite-name-error');target.textContent=String(error);target.hidden=false;}},undefined,'desktop.favorite.rename.submit');
+  RHFilesUI.listen(overlay.querySelector('#favorite-name-cancel'),'click',()=>overlay.remove(),undefined,'desktop.favorite.rename.cancel');
+  RHFilesUI.listen(overlay,'keydown',event=>{if(event.key==='Escape'){event.preventDefault();overlay.remove();}},undefined,'desktop.favorite.rename.escape');
+  document.body.appendChild(overlay);overlay.querySelector('input').focus();overlay.querySelector('input').select();
 }
 
 function currentFolderForFavorite(isRight) {
@@ -517,6 +546,7 @@ function showSidebarContextMenu(e, path, name) {
     { label: t('ctx.newTab'), icon: 'tab', action: () => addTab(path) },
     { label: t('ctx.openFolderInExplorer'), icon: 'explorer', action: () => runContextCommand('open_in_windows_explorer', {path, isDirectory: true}, t('ctx.openFolderInExplorer')) },
     { label: "-", action: null },
+    { label: t('favorites.rename'), icon: 'rename', action: () => showFavoriteRenameDialog(path) },
     { label: t('favorites.remove'), icon: 'star', action: () => unpinFolder(path) },
     { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },
   ];

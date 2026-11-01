@@ -2,6 +2,15 @@ use super::*;
 use crate::test_support::TestDir;
 
 #[test]
+fn favorite_rename_changes_only_the_label_and_preserves_order_and_path() {
+    let temp=TestDir::new("favorite-label");let conn=open_db(&temp.0.join("db.sqlite")).unwrap();
+    let before=vec![(r"C:\local".into(),"Local".into()),(r"\\qa.invalid\Public".into(),"Server".into())];
+    save_pinned(&conn,&before).unwrap();rename_pinned(&conn,&before[1].0,"  工作文件 / Work  ").unwrap();
+    let mut expected=before.clone();expected[1].1="工作文件 / Work".into();assert_eq!(load_pinned(&conn).unwrap(),expected);
+    assert!(rename_pinned(&conn,&before[0].0,"\n").is_err());assert!(rename_pinned(&conn,"missing","Name").is_err());assert_eq!(load_pinned(&conn).unwrap(),expected);
+}
+
+#[test]
 fn favorites_save_failure_is_atomic_and_preserves_order() {
     let temp = TestDir::new("favorites");
     let conn = open_db(&temp.0.join("db.sqlite")).unwrap();

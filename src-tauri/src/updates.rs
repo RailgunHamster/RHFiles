@@ -41,6 +41,8 @@ pub struct UpdateStatus {
 pub struct ReleaseHistoryEntry {
     version: String,
     notes_markdown: String,
+    #[serde(default)]
+    published_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -480,7 +482,7 @@ fn parse_release_history(json: &str) -> Result<Vec<ReleaseHistoryEntry>, String>
         return Err("Release history contains too many entries".to_string());
     }
     let mut releases = Vec::with_capacity(document.releases.len());
-    for entry in document.releases {
+    for mut entry in document.releases {
         Version::parse(&entry.version)
             .map_err(|error| format!("Invalid release version {}: {error}", entry.version))?;
         if entry.notes_markdown.trim().is_empty() {
@@ -489,9 +491,19 @@ fn parse_release_history(json: &str) -> Result<Vec<ReleaseHistoryEntry>, String>
         if entry.notes_markdown.len() > 256 * 1024 {
             return Err(format!("Release {} notes exceed 256 KiB", entry.version));
         }
+        entry.published_at = entry.published_at.filter(|date| valid_publication_date(date));
         releases.push(entry);
     }
     Ok(releases)
+}
+
+fn valid_publication_date(value: &str) -> bool {
+    if value.len() == 10 {
+        chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+            .is_ok_and(|date| date.format("%Y-%m-%d").to_string() == value)
+    } else {
+        value.len() <= 40 && chrono::DateTime::parse_from_rfc3339(value).is_ok()
+    }
 }
 
 fn bundled_release_history() -> Vec<ReleaseHistoryEntry> {
@@ -513,7 +525,11 @@ fn merge_release_history(
     remote: Vec<ReleaseHistoryEntry>,
 ) -> Vec<ReleaseHistoryEntry> {
     let mut by_version = HashMap::new();
-    for entry in bundled.into_iter().chain(remote) {
+    for mut entry in bundled.into_iter().chain(remote) {
+        if entry.published_at.is_none() {
+            entry.published_at = by_version.get(&entry.version)
+                .and_then(|old: &ReleaseHistoryEntry| old.published_at.clone());
+        }
         by_version.insert(entry.version.clone(), entry);
     }
     let mut releases = by_version.into_values().collect::<Vec<_>>();
@@ -1269,20 +1285,32 @@ mod tests {
         let bundled = vec![ReleaseHistoryEntry {
             version: "0.1.0".into(),
             notes_markdown: "old".into(),
+            published_at: Some("2026-09-06T18:13:59Z".into()),
         }];
         let remote = vec![
             ReleaseHistoryEntry {
                 version: "0.2.0".into(),
                 notes_markdown: "new release".into(),
+                published_at: Some("2026-11-01".into()),
             },
             ReleaseHistoryEntry {
                 version: "0.1.0".into(),
                 notes_markdown: "remote replacement".into(),
+                published_at: None,
             },
         ];
         let merged = merge_release_history(bundled, remote);
         assert_eq!(merged[0].version, "0.2.0");
         assert_eq!(merged[1].notes_markdown, "remote replacement");
+        assert_eq!(merged[1].published_at.as_deref(), Some("2026-09-06T18:13:59Z"));
+    }
+
+    #[test]
+    fn publication_dates_accept_real_dates_and_offsets_without_inventing_missing_times() {
+        for date in ["2026-11-01", "2026-11-01T18:25:25+08:00", "2026-11-01T10:25:25Z"] { assert!(valid_publication_date(date)); }
+        for date in ["", "2026-02-30", "2026-1-1", "today", "<script>now</script>"] { assert!(!valid_publication_date(date)); }
+        let parsed = parse_release_history(r#"{"schemaVersion":1,"releases":[{"version":"0.1.0","notesMarkdown":"notes","publishedAt":"bad"}]}"#).unwrap();
+        assert!(parsed[0].published_at.is_none());
     }
 
     #[test]

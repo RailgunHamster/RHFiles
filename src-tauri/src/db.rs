@@ -185,6 +185,21 @@ fn load_pinned(conn: &rusqlite::Connection) -> Result<Vec<(String, String)>, Str
     Ok(result)
 }
 
+#[tauri::command(async)]
+pub fn db_rename_pinned(path: String, name: String) -> Result<(), String> {
+    rename_pinned(&get_db()?, &path, &name)
+}
+
+fn rename_pinned(conn: &rusqlite::Connection, path: &str, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 1024 || name.chars().any(char::is_control) {
+        return Err("收藏名称不能为空、超过 1024 字或包含控制字符".into());
+    }
+    let changed = conn.execute("UPDATE pinned SET name = ?1 WHERE path = ?2",rusqlite::params![name,path]).map_err(|e|e.to_string())?;
+    if changed != 1 { return Err("收藏已被移除，请刷新后重试".into()); }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn db_save_network_favorite(
     protocol: String,
@@ -451,6 +466,7 @@ pub fn db_import_all(
 
 #[tauri::command]
 pub fn db_clear_all() -> Result<(), String> {
+    crate::config_sync::reset()?;
     let conn = get_db()?;
     conn.execute("DELETE FROM tags", [])
         .map_err(|e| e.to_string())?;

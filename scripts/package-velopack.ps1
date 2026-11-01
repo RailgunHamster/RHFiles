@@ -36,6 +36,7 @@ function Reset-WorkspaceDirectory([string]$Path, [string]$Description) {
 
 function Write-ReleaseHistory([string]$Destination) {
     $notesDirectory = Join-Path $repoRoot "docs\release-notes"
+    $dates = Get-Content -LiteralPath (Join-Path $notesDirectory 'published-at.json') -Raw | ConvertFrom-Json -AsHashtable
     $releases = Get-ChildItem -LiteralPath $notesDirectory -Filter "*.md" -File | ForEach-Object {
         $versionText = $_.BaseName
         if ($versionText -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { return }
@@ -51,7 +52,7 @@ function Write-ReleaseHistory([string]$Destination) {
     $document = [ordered]@{
         schemaVersion = 1
         releases = @($releases | ForEach-Object {
-            [ordered]@{ version = $_.version; notesMarkdown = $_.notesMarkdown }
+            [ordered]@{ version = $_.version; notesMarkdown = $_.notesMarkdown; publishedAt = $dates[$_.version] }
         })
     }
     $json = $document | ConvertTo-Json -Depth 5 -Compress
@@ -169,6 +170,13 @@ $packArguments = @(
     "--icon", (Join-Path $repoRoot "src-tauri\icons\rhfiles-icon-v4.ico")
 )
 if (Test-Path -LiteralPath $notesPath -PathType Leaf) {
+    $dates = Get-Content -LiteralPath (Join-Path $repoRoot 'docs\release-notes\published-at.json') -Raw | ConvertFrom-Json -AsHashtable
+    if($dates[$Version]) {
+        $stampedNotes = Join-Path $OutputDirectory "release-notes-$Version.md"
+        $notes = "Published / 发布日期：$($dates[$Version])`n`n" + (Get-Content -LiteralPath $notesPath -Raw)
+        [IO.File]::WriteAllText($stampedNotes, $notes, [Text.UTF8Encoding]::new($false))
+        $notesPath = $stampedNotes
+    }
     $packArguments += @("--releaseNotes", $notesPath)
 }
 

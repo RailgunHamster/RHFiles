@@ -752,6 +752,20 @@ async function listPathEntries(path, filter) {
   return call('list_dir', { path: normalized, filter: filter || '' });
 }
 
+function formatReleasePublishedAt(value) {
+  if (typeof value !== 'string' || value.length > 40) return null;
+  const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (!dayOnly && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
+  const calendar = new Date(value.slice(0,10) + 'T00:00:00Z');
+  if (!Number.isFinite(calendar.getTime()) || calendar.toISOString().slice(0,10) !== value.slice(0,10)) return null;
+  const date = new Date(dayOnly ? value + 'T00:00:00Z' : value);
+  if (!Number.isFinite(date.getTime()) || (dayOnly && date.toISOString().slice(0,10) !== value)) return null;
+  const language = typeof _lang !== 'undefined' ? _lang : G.settings.language;
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en', {
+    dateStyle:'medium',...(dayOnly ? {timeZone:'UTC'} : {timeStyle:'short'})
+  }).format(date);
+}
+
 function formatFileDate(timestamp, fallback) {
   const value = Number(timestamp);
   let date = Number.isFinite(value) && value > 0
