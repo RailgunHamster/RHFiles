@@ -12,6 +12,7 @@ import {taskFixture} from './rhvideo-task-fixture.mjs';
 import {stepTimeline} from './rhvideo-step-timeline.mjs';
 import {expressionTimings} from './rhvideo-expression-timing.mjs';
 import {androidApkRuntimes} from './android-apk-runtime.mjs';
+import {androidSystemReady} from './android-system-ready.mjs';
 import {playerCloseLatencyReceipt,playerCloseLatencyEvents} from './rhvideo-player-close-latency.mjs';
 const serial=process.argv[2]||'emulator-5584',apk=process.argv[3],probe=process.argv[4];
 const traceExpressions=process.env.RHFILES_QA_EXPRESSION_TIMING==='1';
@@ -128,7 +129,7 @@ if(stripMode){
   const packaged=execFileSync(sevenZip,['e','-so',path.resolve(probe),'assets/rhvideo-strip-pixels.js'],{windowsHide:true,maxBuffer:64*1024}),expected=fs.readFileSync(path.resolve('android/gradle/app/src/androidTest/assets/rhvideo-strip-pixels.js'));
   assert.equal(createHash('sha256').update(packaged).digest('hex'),createHash('sha256').update(expected).digest('hex'),'The exact installed strip probe must include current read-only pixel geometry');
 }
-const run=(args)=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});
+const run=(args,timeout=120000)=>execFileSync(adb,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout});
 function verifyOwnedAvdName(output){
   const names=output.split(/\r?\n/).map(value=>value.trim());
   assert(['RHFilesRhVideoQA20261027','RHFilesRhVideoQA20261030Audio','RHFilesRhVideoQA20261030HostGpu','RHFilesRhVideoQA20261030Api36','RHFilesRhVideoQA20261030Modern'].some(name=>names.includes(name)),'Only an explicitly owned RHVideo QA AVD is allowed');
@@ -137,7 +138,7 @@ assert.equal(run(['shell','getprop','ro.kernel.qemu']).trim(),'1','Physical devi
 verifyOwnedAvdName(run(['emu','avd','name']));
 const bootDeadline=Date.now()+180000;
 while(true){
-  let ready=false;try{ready=run(['shell','getprop','sys.boot_completed']).trim()==='1'&&run(['shell','pm','path','android']).includes('package:');}catch{}
+  let ready=false;try{ready=androidSystemReady({boot:run(['shell','getprop','sys.boot_completed'],5000),framework:run(['shell','pm','path','android'],5000),settings:run(['shell','settings','get','global','device_provisioned'],5000),window:run(['shell','service','check','window'],5000),user:run(['shell','cmd','activity','get-current-user'],5000)});}catch{}
   if(ready)break;
   assert(Date.now()<bootDeadline,'Owned emulator did not finish boot/package-manager initialization');
   await new Promise(resolve=>setTimeout(resolve,1000));
