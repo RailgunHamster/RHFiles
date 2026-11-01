@@ -823,6 +823,7 @@ mod native {
         destination: String,
         operation_id: String,
         app: tauri::AppHandle,
+        force_copy:bool,
     ) -> Result<WindowsFilePasteResult, String> {
         if destination.is_empty() || destination == "home://" || destination.contains('\0') {
             return Err("Choose a filesystem folder before pasting".to_string());
@@ -831,7 +832,7 @@ mod native {
             return Err("The Windows clipboard does not contain files".to_string());
         }
 
-        let moved = preferred_drop_effect() & DROPEFFECT_MOVE.0 != 0;
+        let moved = !force_copy && preferred_drop_effect() & DROPEFFECT_MOVE.0 != 0;
         let _apartment = OleApartment::initialize()?;
         let data_object = unsafe { OleGetClipboard() }
             .map_err(|error| format!("Unable to read files from the Windows clipboard: {error}"))?;
@@ -1111,6 +1112,7 @@ pub fn clear_windows_file_clipboard(expected_sequence: u32) -> Result<bool, Stri
 pub async fn paste_windows_file_clipboard(
     destination: String,
     operation_id: Option<String>,
+    force_copy:Option<bool>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, crate::types::CancelFlag>,
 ) -> Result<WindowsFilePasteResult, String> {
@@ -1119,7 +1121,7 @@ pub async fn paste_windows_file_clipboard(
         let info = rhfiles_core::macos::request(serde_json::json!({"action":"clipboard.read"}))?;
         let paths = info["paths"].as_array().ok_or("No files on the clipboard")?;
         if paths.is_empty() || paths.len()>10000 { return Err("Clipboard file count is out of range".into()); }
-        let moved=info["cut"].as_bool().unwrap_or(false);
+        let moved=!force_copy.unwrap_or(false)&&info["cut"].as_bool().unwrap_or(false);
         // Use the same staged, non-overwriting transfer engine as internal paste.
         for path in paths {
             let source=path.as_str().ok_or("Invalid clipboard file URL")?.to_owned();
@@ -1140,7 +1142,7 @@ pub async fn paste_windows_file_clipboard(
         let result = match tauri::async_runtime::spawn_blocking(move || {
             let worker = std::thread::Builder::new()
                 .name("rhfiles-ole-clipboard".to_string())
-                .spawn(move || native::paste_file_clipboard(destination, worker_id, worker_app))
+                .spawn(move || native::paste_file_clipboard(destination, worker_id, worker_app,force_copy.unwrap_or(false)))
                 .map_err(|error| {
                     format!("Unable to start the Windows clipboard worker: {error}")
                 })?;
@@ -1158,7 +1160,7 @@ pub async fn paste_windows_file_clipboard(
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (destination, operation_id, app, cancel);
+        let _ = (destination, operation_id, force_copy, app, cancel);
         Err("The native file clipboard is only available on Windows".to_string())
     }
 }

@@ -60,11 +60,11 @@ async function executeBatchRename() {
     return [f.path, newName];
   });
   try {
-    await call("batch_rename", { renames });
+    const result=await call("batch_rename", { renames,revisions:Object.fromEntries(batchRenameSource.files.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_revision])) });
     const completed = renames
-      .filter(([oldPath, newName]) => oldPath.split(/[\\/]/).pop() !== newName)
+      .filter(([oldPath, newName]) => pathLeaf(oldPath) !== newName)
       .map(([oldPath, newName]) => [oldPath, joinFolderPath(parentFolderPath(oldPath), newName)]);
-    if (completed.length) trackBatchRename(completed);
+    if (completed.length) trackBatchRename(completed,result?.entries);
     closeBatchRename();
     await refresh();
   } catch (e) { alert(t('alert.renameFailed', { error:e })); }
@@ -884,6 +884,7 @@ function parseDustSize(value) {
 }
 
 function dustDisplayName(path) {
+  if(typeof isDevicePath==='function'&&isDevicePath(path))return pathLeaf(path);
   const normalized = String(path || '').replace(/[\\/]+$/, '');
   return normalized.split(/[\\/]/).filter(Boolean).pop() || displayPath(path);
 }
@@ -994,7 +995,7 @@ function renderDiskUsage(data) {
     const bytes = parseDustSize(node.size);
     const percent = Math.max(1, Math.min(100, bytes / total * 100));
     const path = String(node.name || '');
-    const isDirectory = node.is_dir === true || Array.isArray(node.children);
+    const isDirectory = typeof node.is_dir==='boolean'?node.is_dir:Array.isArray(node.children);
     return `<button class="disk-usage-row${isDirectory ? ' is-directory' : ''}" data-index="${index}" data-path="${esc(path)}" title="${esc(displayPath(path))}" aria-selected="false">
       <span class="disk-usage-indent" style="width:${Math.min(level, 8) * 16}px"></span>
       <span class="disk-usage-icon">${isDirectory ? '&#128193;' : '&#128196;'}</span>

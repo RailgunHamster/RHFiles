@@ -31,8 +31,9 @@ pub fn lan_service_webdav_compatibility()->serde_json::Value{
     #[cfg(not(windows))]
     let client=serde_json::json!({"state":"not_windows"});
     let gateway=slot().lock().ok().and_then(|v|v.as_ref().and_then(|s|s.status().webdav_compatibility));
+    let failures=slot().lock().ok().and_then(|v|v.as_ref().map(|s|s.webdav_diagnostics())).unwrap_or_default();
     serde_json::json!({"windowsExplorerDirect":gateway.is_some(),"gateway":gateway,"authentication":"device-group-bound-compatibility",
-        "webClient":client,"reasonCodes":if gateway.is_some(){vec![]}else{vec!["enable_trusted_webdav_gateway"]},
+        "webClient":client,"recentFailures":failures,"reasonCodes":if gateway.is_some(){vec![]}else{vec!["enable_trusted_webdav_gateway"]},
         "supportsDeviceGroupRevocation":true,"standalonePairing":false,"changedSystemSettings":false,
         "reference":"https://learn.microsoft.com/en-us/iis/publish/using-webdav/using-the-webdav-redirector"})
 }

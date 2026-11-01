@@ -11,6 +11,10 @@ use std::{
 };
 use tauri::Emitter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[path = "device_jobs.rs"]
+mod jobs;
+#[path = "device_work.rs"]
+mod work;
 
 const CHUNK: usize = 1024 * 1024;
 fn field<'a>(v: &'a Value, k: &str) -> Result<&'a str, String> {
@@ -100,7 +104,10 @@ impl Location {
             (Self::Remote(a), Self::Remote(b)) => {
                 a.group == b.group
                     && a.peer == b.peer
-                    && (b.path == a.path || b.path.starts_with(&(a.path.clone() + "/")))
+                    && (b.path == a.path
+                        || b.path
+                            .to_lowercase()
+                            .starts_with(&(a.path.to_lowercase() + "/")))
             }
             (Self::Local(a), Self::Local(b)) => {
                 let norm = |p: &Path| {
@@ -594,8 +601,11 @@ async fn transfer(
     moving: bool,
     overwrite: bool,
     expected_target: Option<&str>,
+    expected_source: Option<&str>,
     progress: &mut Progress<'_>,
 ) -> Result<Value, String> {
+    progress.src = source.text();
+    progress.dest = target.text();
     if source.contains(&target) || target.contains(&source) {
         return Err("[invalid_path] Source and destination are the same or nested".into());
     }
@@ -609,6 +619,42 @@ async fn transfer(
     if let Location::Remote(path) = &target {
         if path.path.trim_matches('/').split('/').count() < 2 {
             return Err("[invalid_path] 请先进入设备内的某个共享文件夹".into());
+        }
+    }
+    expected(&snapshot(&source).await?, expected_source)?;
+    // Renaming/moving within one share is a checked server-side operation,
+    // not download + upload + delete (including case-only renames).
+    if moving {
+        if let (Location::Remote(from), Location::Remote(to)) = (&source, &target) {
+            if from.group == to.group
+                && from.peer == to.peer
+                && from.path.split('/').nth(1) == to.path.split('/').nth(1)
+            {
+                let stamp = snapshot(&source).await?;
+                let old = optional(&target).await?;
+                let same = old
+                    .as_ref()
+                    .is_some_and(|v| same_identity(&v.revision, &stamp.revision));
+                if old.is_none()
+                    || same
+                    || overwrite && !stamp.directory && old.as_ref().is_some_and(|v| !v.directory)
+                {
+                    if expected_target
+                        .is_some_and(|r| old.as_ref().map(|v| v.revision.as_str()) != Some(r))
+                    {
+                        return Err("[conflict] 确认期间目标已变化，未覆盖".into());
+                    }
+                    let replacing = old.as_ref().filter(|_| !same).map(|v| v.revision.as_str());
+                    rename_checked(&source, &target, &stamp, replacing, progress).await?;
+                    progress.total = stamp.size;
+                    progress.bytes = stamp.size;
+                    progress.items = 1;
+                    progress.done = 1;
+                    return Ok(
+                        json!({"source":source.text(),"target":target.text(),"sourceRemoved":true,"serverSide":true,"undoSupported":false}),
+                    );
+                }
+            }
         }
     }
     if moving {
@@ -760,6 +806,516 @@ async fn merge_plan(
     Ok(json!({"entries":entries,"sourceDirectories":dirs}))
 }
 
+fn remote_child(path: &Location) -> Result<&DevicePath, String> {
+    match path {
+        Location::Remote(p) if p.path.trim_matches('/').split('/').count() >= 2 => Ok(p),
+        _ => Err("[forbidden] 不能修改设备或共享根目录".into()),
+    }
+}
+fn hold(path: &Location, progress: &mut Progress<'_>) -> Result<(), String> {
+    if let Location::Remote(p) = path {
+        progress
+            .leases
+            .push(crate::device_groups::connector()?.file_lease(&p.group, &p.peer)?);
+    }
+    progress.check()
+}
+fn expected(stamp: &Snapshot, revision: Option<&str>) -> Result<(), String> {
+    if revision.is_some_and(|r| r != stamp.revision) {
+        Err("[conflict] 选中的文件已变化，未执行操作；请刷新后重新选择".into())
+    } else {
+        Ok(())
+    }
+}
+async fn rename_target(
+    path: &Location,
+    name: &str,
+) -> Result<(Location, Snapshot, Option<Snapshot>), String> {
+    remote_child(path)?;
+    let target = path.parent()?.child(name)?;
+    let source = snapshot(path).await?;
+    let old = optional(&target).await?;
+    Ok((target, source, old))
+}
+async fn rename_checked(
+    source: &Location,
+    target: &Location,
+    stamp: &Snapshot,
+    target_revision: Option<&str>,
+    progress: &mut Progress<'_>,
+) -> Result<(), String> {
+    let from = remote_child(source)?;
+    let to = remote_child(target)?;
+    hold(source, progress)?;
+    if source.text() != target.text() && (source.contains(target) || target.contains(source)) {
+        return Err("[invalid_path] 不能把目录移动到自身或其子目录".into());
+    }
+    if from.group != to.group
+        || from.peer != to.peer
+        || from.path.split('/').nth(1) != to.path.split('/').nth(1)
+    {
+        return Err("[invalid_path] 重命名必须在同一共享中".into());
+    }
+    require_checked(from, true, target_revision.is_some()).await?;
+    progress.check()?;
+    if source.text() == target.text() {
+        return verify_source(source, stamp).await;
+    }
+    checked(from, Some(to), &stamp.revision, target_revision).await
+}
+// Snapshot the complete operation before the first mutation. Bounded traversal
+// rejects overly large requests instead of silently deleting a partial tree.
+async fn scan(
+    path: Location,
+    progress: &mut Progress<'_>,
+) -> Result<Vec<(Location, Snapshot)>, String> {
+    let mut queue = std::collections::VecDeque::from([(path, 0usize)]);
+    let mut plan = Vec::new();
+    while let Some((path, depth)) = queue.pop_front() {
+        progress.check()?;
+        if depth > 256 || plan.len() + queue.len() >= 100000 {
+            return Err("[too_large] 超过十万项或 256 层；请缩小操作范围".into());
+        }
+        let stamp = snapshot(&path).await?;
+        if stamp.directory {
+            for child in children(&path).await? {
+                queue.push_back((child, depth + 1));
+            }
+        } else {
+            progress.total = progress
+                .total
+                .checked_add(stamp.size)
+                .ok_or("[too_large] 大小溢出")?;
+        }
+        progress.emit("calculating", &path, false);
+        plan.push((path, stamp));
+    }
+    progress.items = plan.len() as u64;
+    Ok(plan)
+}
+async fn mutations(
+    action: &str,
+    args: &Value,
+    progress: &mut Progress<'_>,
+) -> Result<Value, String> {
+    match action {
+        #[cfg(windows)]
+        "windows_disconnect" => {
+            if args["confirmed"] != true {
+                return Err("[confirmation_required] 请确认断开本机的 Windows 程序连接".into());
+            }
+            crate::windows_device_access::disconnect(&DevicePath::parse(field(args, "path")?)?)
+                .await
+        }
+        #[cfg(windows)]
+        "windows_path" => {
+            let source = DevicePath::parse(field(args, "path")?)?;
+            progress
+                .leases
+                .push(crate::device_groups::connector()?.file_lease(&source.group, &source.peer)?);
+            progress.check()?;
+            let path = crate::windows_device_access::resolve(&source).await?;
+            progress.check()?;
+            Ok(json!({"path":path,"live":true}))
+        }
+        "inspect_rename" => {
+            let path = Location::parse(field(args, "path")?)?;
+            hold(&path, progress)?;
+            let (target, source, old) = rename_target(&path, field(args, "newName")?).await?;
+            Ok(json!({"path":target.text(),"exists":old.is_some(),
+                "sameEntry":old.as_ref().is_some_and(|v|same_identity(&v.revision,&source.revision)),
+                "canMerge":source.directory&&old.as_ref().is_some_and(|v|v.directory),
+                "isDirectory":old.as_ref().is_some_and(|v|v.directory),
+                "sourceRevision":source.revision,"targetRevision":old.map(|v|v.revision)}))
+        }
+        "rename" => {
+            let path = Location::parse(field(args, "path")?)?;
+            hold(&path, progress)?;
+            let (target, source, old) = rename_target(&path, field(args, "newName")?).await?;
+            expected(&source, args["expectedSourceRevision"].as_str())?;
+            if old
+                .as_ref()
+                .is_some_and(|v| !same_identity(&v.revision, &source.revision))
+            {
+                return Err("[conflict] 目标已存在，未覆盖；请合并、保留两者或明确替换文件".into());
+            }
+            rename_checked(&path, &target, &source, None, progress).await?;
+            Ok(json!({"path":target.text(),"revision":snapshot(&target).await?.revision}))
+        }
+        "new_folder" | "create" | "ensure_folder" => {
+            let parent = Location::parse(field(args, "parent")?)?;
+            hold(&parent, progress)?;
+            let name = if action == "new_folder" {
+                "New Folder"
+            } else {
+                field(args, "name")?
+            };
+            let folder = action != "create" || args["template"] == "folder";
+            for index in 0..10000 {
+                let candidate = if index == 0 {
+                    name.into()
+                } else {
+                    format!("{name} ({index})")
+                };
+                let target = parent.child(&candidate)?;
+                let remote = remote_child(&target)?;
+                progress.check()?;
+                let result = if folder {
+                    request(
+                        remote,
+                        FileRequest::Mkdir {
+                            path: remote.path.clone(),
+                        },
+                    )
+                    .await
+                    .map(|_| ())
+                } else {
+                    // The normal built-in templates run in a private empty
+                    // directory, never on a remote URI or an existing file.
+                    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+                    rhfiles_core::enumerator::create_new_file(
+                        temp.path(),
+                        args["template"].as_str().unwrap_or("txt"),
+                        &candidate,
+                    )?;
+                    let source = Location::Local(temp.path().join(&candidate));
+                    let stamp = snapshot(&source).await?;
+                    copy_file(&source, &target, &stamp, None, progress).await
+                };
+                match result {
+                    Ok(()) => return Ok(json!(target.text())),
+                    Err(e) if e.starts_with("[conflict]") && action == "new_folder" => continue,
+                    Err(e)
+                        if e.starts_with("[conflict]")
+                            && action == "ensure_folder"
+                            && optional(&target).await?.is_some_and(|s| s.directory) =>
+                    {
+                        return Ok(json!(target.text()));
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Err("[conflict] 无法分配新文件夹名称".into())
+        }
+        "delete" => {
+            progress.operation = "delete".into();
+            let paths = args["paths"]
+                .as_array()
+                .ok_or("[invalid_request] 缺少 paths")?;
+            if paths.is_empty() || paths.len() > 10000 {
+                return Err("[invalid_request] 删除数量无效".into());
+            }
+            let mut plans = Vec::new();
+            for raw in paths {
+                let path = Location::parse(raw.as_str().ok_or("Invalid path")?)?;
+                let remote = remote_child(&path)?;
+                hold(&path, progress)?;
+                require_checked(remote, false, true).await?;
+                let plan = scan(path.clone(), progress).await?;
+                expected(&plan[0].1, args["revisions"][path.text()].as_str())?;
+                plans.push((path, plan));
+            }
+            progress.items = plans.iter().map(|(_, p)| p.len() as u64).sum();
+            let mut deleted = Vec::new();
+            let mut errors = Vec::new();
+            for (root, plan) in plans {
+                let result = async {
+                    for (path, stamp) in plan.iter().rev() {
+                        progress.check()?;
+                        let fresh;
+                        let stamp = if stamp.directory {
+                            fresh = snapshot(path).await?;
+                            if !same_identity(&fresh.revision, &stamp.revision) {
+                                return Err("[conflict] 文件夹已被替换，未删除".into());
+                            }
+                            &fresh
+                        } else {
+                            stamp
+                        };
+                        remove_source(path, stamp, progress).await?;
+                        progress.done += 1;
+                        if !stamp.directory {
+                            progress.bytes += stamp.size;
+                        }
+                        progress.emit("running", path, false);
+                    }
+                    Ok::<(), String>(())
+                }
+                .await;
+                match result {
+                    Ok(()) => deleted.push(root.text()),
+                    Err(e) => errors.push(format!("{}: {e}", root.text())),
+                }
+                if progress.cancel.is_cancelled(Some(&progress.id))? {
+                    break;
+                }
+            }
+            let cancelled = progress.cancel.is_cancelled(Some(&progress.id))?;
+            if let Some(path) = paths.first().and_then(Value::as_str) {
+                progress.emit(
+                    if cancelled {
+                        "cancelled"
+                    } else if errors.is_empty() {
+                        "complete"
+                    } else {
+                        "failed"
+                    },
+                    &Location::parse(path)?,
+                    true,
+                );
+            }
+            Ok(
+                json!({"deleted":deleted,"errors":errors,"cancelled":cancelled,"undoSupported":false}),
+            )
+        }
+        "size" => {
+            let path = Location::parse(field(args, "path")?)?;
+            hold(&path, progress)?;
+            scan(path, progress).await?;
+            Ok(json!(progress.total))
+        }
+        "hash" => {
+            use sha2::Digest;
+            let path = Location::parse(field(args, "path")?)?;
+            hold(&path, progress)?;
+            let stamp = snapshot(&path).await?;
+            if stamp.directory {
+                return Err("[invalid_path] 只能校验普通文件".into());
+            }
+            let algorithm = field(args, "algo")?;
+            if !["md5", "sha256"].contains(&algorithm) {
+                return Err("[invalid_request] 请选择 MD5 或 SHA256".into());
+            }
+            let mut md5 = md5::Md5::new();
+            let mut sha = sha2::Sha256::new();
+            let mut reader = Reader::open(&path, &stamp).await?;
+            progress.total = stamp.size;
+            loop {
+                let data = reader.next(progress).await?;
+                if data.is_empty() {
+                    break;
+                }
+                progress.bytes += data.len() as u64;
+                if progress.bytes > stamp.size {
+                    return Err("[conflict] 校验过程中文件已变化".into());
+                }
+                if algorithm == "md5" {
+                    md5.update(&data);
+                } else {
+                    sha.update(&data);
+                }
+                progress.emit("running", &path, false);
+            }
+            if progress.bytes != stamp.size {
+                return Err("[response_interrupted] 校验数据不完整".into());
+            }
+            verify_source(&path, &stamp).await?;
+            Ok(json!(if algorithm == "md5" {
+                format!("{:x}", md5.finalize())
+            } else {
+                format!("{:x}", sha.finalize())
+            }))
+        }
+        "batch_rename" | "batch_move_exact" => {
+            batch_rename(args, progress, action == "batch_move_exact").await
+        }
+        "usage" => {
+            let root = Location::parse(field(args, "path")?)?;
+            hold(&root, progress)?;
+            let plan = scan(root.clone(), progress).await?;
+            let mut nodes = std::collections::HashMap::<String, Value>::new();
+            let depth = args["depth"].as_u64().unwrap_or(3).clamp(1, 20) as usize;
+            for (path, stamp) in plan.iter().rev() {
+                let mut children = nodes
+                    .remove(&path.text())
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let size = if stamp.directory {
+                    children
+                        .iter()
+                        .map(|v| v["bytes"].as_u64().unwrap_or(0))
+                        .sum()
+                } else {
+                    stamp.size
+                };
+                children.sort_by_key(|v| std::cmp::Reverse(v["bytes"].as_u64().unwrap_or(0)));
+                let mut node = json!({"name":path.text(),"size":crate::types::format_size(size),"bytes":size,"is_dir":stamp.directory,"children":children});
+                let relative_depth = path
+                    .text()
+                    .matches('/')
+                    .count()
+                    .saturating_sub(root.text().matches('/').count());
+                if relative_depth >= depth {
+                    node["children"] = json!([]);
+                }
+                if path.text() == root.text() {
+                    return Ok(node);
+                }
+                nodes
+                    .entry(path.parent()?.text())
+                    .or_insert(json!([]))
+                    .as_array_mut()
+                    .unwrap()
+                    .push(node);
+            }
+            Err("[not_found] 目录不存在".into())
+        }
+        "stage" | "release_stage" | "validate_stage" | "plan_output" | "inspect_stage"
+        | "publish_stage" => jobs::execute(action, args, progress).await,
+        _ => work::execute(action, args, progress).await,
+    }
+}
+
+async fn batch_rename(
+    args: &Value,
+    progress: &mut Progress<'_>,
+    exact: bool,
+) -> Result<Value, String> {
+    let pairs = args[if exact { "moves" } else { "renames" }]
+        .as_array()
+        .ok_or("[invalid_request] 缺少 renames/moves")?;
+    if pairs.is_empty() || pairs.len() > 10000 {
+        return Err("[invalid_request] 批量重命名数量无效".into());
+    }
+    let mut plan = Vec::new();
+    let mut sources = std::collections::HashSet::new();
+    let mut targets = std::collections::HashSet::new();
+    for pair in pairs {
+        let pair = pair
+            .as_array()
+            .filter(|p| p.len() == 2)
+            .ok_or("[invalid_request] 重命名参数无效")?;
+        let source = Location::parse(pair[0].as_str().ok_or("Invalid source")?)?;
+        let from = remote_child(&source)?;
+        hold(&source, progress)?;
+        require_checked(from, true, false).await?;
+        let (target, stamp) = if exact {
+            (
+                Location::parse(pair[1].as_str().ok_or("Invalid target")?)?,
+                snapshot(&source).await?,
+            )
+        } else {
+            let (t, s, _) = rename_target(&source, pair[1].as_str().ok_or("Invalid name")?).await?;
+            (t, s)
+        };
+        let to = remote_child(&target)?;
+        if from.group != to.group
+            || from.peer != to.peer
+            || from.path.split('/').nth(1) != to.path.split('/').nth(1)
+        {
+            return Err("[invalid_path] 批量改名仅限同一共享".into());
+        }
+        // Reject duplicate Windows-compatible names even when a Linux server
+        // could distinguish them; never accidentally merge two selected items.
+        if !sources.insert(source.text().to_lowercase())
+            || !targets.insert(target.text().to_lowercase())
+        {
+            return Err("[conflict] 批量名称重复，未重命名".into());
+        }
+        expected(&stamp, args["revisions"][source.text()].as_str())?;
+        let temporary = source
+            .parent()?
+            .child(&format!("RHFiles-rename-{}.partial", random()?))?;
+        plan.push((source, target, temporary, stamp));
+    }
+    for (source, target, _, _) in &plan {
+        if plan.iter().any(|(other, _, _, _)| {
+            source.text() != other.text() && (source.contains(other) || other.contains(source))
+        }) {
+            return Err("[invalid_path] 不能同时重命名文件夹和其内部项目".into());
+        }
+        if source.text() != target.text()
+            && optional(target).await?.is_some()
+            && !sources.contains(&target.text().to_lowercase())
+        {
+            return Err("[conflict] 批量目标已被其他文件占用，未重命名".into());
+        }
+    }
+    // A durable local recovery record describes every private temporary name.
+    // It is never auto-replayed: an old request cannot rename a newer occupant.
+    let dir = crate::profile::data_dir()?.join("device-operation-recovery");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let journal = dir.join(format!("rename-{}.json", random()?));
+    let record = json!({"operation":"batch_rename","entries":plan.iter().map(|(a,b,c,s)|json!({"source":a.text(),"target":b.text(),"temporary":c.text(),"revision":s.revision})).collect::<Vec<_>>()});
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&journal)
+        .map_err(|e| e.to_string())?;
+    file.write_all(&serde_json::to_vec(&record).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    file.sync_all().map_err(|e| e.to_string())?;
+    drop(file);
+    let mut current = plan
+        .iter()
+        .map(|(s, _, _, stamp)| (s.clone(), stamp.clone()))
+        .collect::<Vec<_>>();
+    let result = async {
+        for (index, (source, _, temporary, stamp)) in plan.iter().enumerate() {
+            rename_checked(source, temporary, stamp, None, progress).await?;
+            current[index] = (temporary.clone(), stamp.clone());
+            current[index] = (temporary.clone(), snapshot(temporary).await?);
+        }
+        for (index, (_, target, temporary, _)) in plan.iter().enumerate() {
+            rename_checked(temporary, target, &current[index].1, None, progress).await?;
+            current[index].0 = target.clone();
+            current[index] = (target.clone(), snapshot(target).await?);
+            progress.done += 1;
+            progress.emit("running", target, false);
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+    if let Err(error) = result {
+        // Vacate committed target names first, then restore originals. On
+        // revoked access or an external collision retain the recovery record.
+        let mut rollback = Vec::new();
+        for (index, (_, _, temporary, _)) in plan.iter().enumerate().rev() {
+            if current[index].0.text() == temporary.text()
+                || current[index].0.text() == plan[index].0.text()
+            {
+                continue;
+            }
+            match rename_checked(
+                &current[index].0,
+                temporary,
+                &current[index].1,
+                None,
+                progress,
+            )
+            .await
+            {
+                Ok(()) => current[index] = (temporary.clone(), snapshot(temporary).await?),
+                Err(e) => rollback.push(e),
+            }
+        }
+        for (index, (source, _, _, _)) in plan.iter().enumerate().rev() {
+            if current[index].0.text() == source.text() {
+                continue;
+            }
+            if let Err(e) =
+                rename_checked(&current[index].0, source, &current[index].1, None, progress).await
+            {
+                rollback.push(e);
+            }
+        }
+        if rollback.is_empty() {
+            let _ = std::fs::remove_file(&journal);
+            return Err(error);
+        }
+        return Err(format!(
+            "{error}; [recovery_required] 原数据未覆盖，恢复记录：{}；{}",
+            journal.display(),
+            rollback.join("; ")
+        ));
+    }
+    std::fs::remove_file(journal).map_err(|e| format!("重命名已完成，但恢复记录清理失败：{e}"))?;
+    Ok(
+        json!({"renamed":plan.len(),"entries":plan.iter().zip(current).map(|((source,target,_,_),(_,stamp))|json!({"source":source.text(),"target":target.text(),"revision":stamp.revision})).collect::<Vec<_>>()}),
+    )
+}
+
 #[tauri::command]
 pub async fn device_transfer(
     action: String,
@@ -812,6 +1368,7 @@ pub async fn device_transfer(
                 moving,
                 args["overwrite"].as_bool().unwrap_or(false),
                 args["expectedTargetRevision"].as_str(),
+                args["expectedSourceRevision"].as_str(),
                 &mut progress,
             )
             .await;
@@ -876,7 +1433,7 @@ pub async fn device_transfer(
             }
             Ok(json!({"removed":removed,"errors":errors}))
         }
-        _ => Err("[unsupported] 不支持的远端传输操作".into()),
+        _ => mutations(&action, &args, &mut progress).await,
     }
 }
 

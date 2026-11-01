@@ -13,6 +13,33 @@ struct Fixture {
     user: String,
     password: String,
 }
+#[tokio::test]
+async fn webdav_existing_file_edits_require_a_strong_version_and_preserve_newer_data(){
+    let f=Fixture::new(true,false).await;std::fs::write(f.share.join("edit.txt"),b"old").unwrap();
+    let url="/dav/Files/edit.txt";
+    let response=f.request("GET",url).send().await.unwrap();let etag=response.headers()["etag"].to_str().unwrap().to_string();
+    assert_eq!(f.request("PUT",url).body("unsafe").send().await.unwrap().status(),428);
+    assert_eq!(std::fs::read(f.share.join("edit.txt")).unwrap(),b"old");
+    assert_eq!(f.request("PUT",url).header("If-Match",format!("W/{etag}")).body("weak").send().await.unwrap().status(),412);
+    let response=f.request("PUT",url).header("If-Match",&etag).body("safe edit").send().await.unwrap();assert!(response.status().is_success(),"{}",response.status());
+    assert_eq!(std::fs::read(f.share.join("edit.txt")).unwrap(),b"safe edit");
+    assert_eq!(f.request("PUT",url).header("If-Match",&etag).body("stale").send().await.unwrap().status(),412);
+    assert_eq!(std::fs::read(f.share.join("edit.txt")).unwrap(),b"safe edit");
+}
+#[tokio::test]
+async fn windows_webdav_lock_saves_are_bound_to_the_original_revision_and_owner(){
+    let f=Fixture::new(true,true).await;std::fs::write(f.share.join("locked.txt"),b"old").unwrap();let url="/dav/Files/locked.txt";
+    let lock=||f.request("LOCK",url).header("Depth","0").header("Content-Type","application/xml").body("<D:lockinfo xmlns:D=\"DAV:\"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>");
+    let response=lock().send().await.unwrap();assert!(response.status().is_success());let token=response.headers()["lock-token"].to_str().unwrap().to_string();
+    let response=f.request("PUT",url).header("If",format!("({token})")).body("locked edit").send().await.unwrap();assert!(response.status().is_success(),"{}",response.status());assert_eq!(std::fs::read(f.share.join("locked.txt")).unwrap(),b"locked edit");
+    let response=f.request("PUT",url).header("If",format!("({token})")).body("second locked edit").send().await.unwrap();assert!(response.status().is_success(),"{}",response.status());assert_eq!(std::fs::read(f.share.join("locked.txt")).unwrap(),b"second locked edit");
+    assert!(f.request("UNLOCK",url).header("Lock-Token",&token).send().await.unwrap().status().is_success());
+    let response=lock().send().await.unwrap();let token=response.headers()["lock-token"].to_str().unwrap().to_string();
+    std::fs::rename(f.share.join("locked.txt"),f.share.join("original.txt")).unwrap();std::fs::write(f.share.join("locked.txt"),b"external occupant").unwrap();
+    assert_eq!(f.request("PUT",url).header("If",format!("({token})")).body("must not replace").send().await.unwrap().status(),412);
+    assert_eq!(std::fs::read(f.share.join("locked.txt")).unwrap(),b"external occupant");
+    assert_eq!(f.request("PUT",url).header("If",format!("(Not {token})")).body("negated token").send().await.unwrap().status(),412);
+}
 #[test]
 fn explicit_public_bind_is_rejected_before_creating_any_state() {
     let temp = tempfile::tempdir().unwrap();
@@ -698,7 +725,7 @@ async fn tus_partial_resume_and_publish_without_overwrite() {
             .await
             .unwrap()
             .status(),
-        409
+        428
     );
     assert_eq!(
         std::fs::read(f.share.join("resume.bin")).unwrap(),

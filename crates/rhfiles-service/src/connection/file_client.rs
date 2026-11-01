@@ -116,6 +116,7 @@ fn valid_percent_encoding(value: &str) -> bool {
 #[derive(Clone)]
 pub enum FileRequest {
     Capabilities,
+    WindowsAccessCredential,
     List {
         path: String,
         offset: usize,
@@ -166,7 +167,7 @@ pub enum FileRequest {
 impl FileRequest {
     fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Capabilities => Ok(()),
+            Self::Capabilities | Self::WindowsAccessCredential => Ok(()),
             Self::CheckedMutation { path,destination,revision,target_revision } => {
                 validate_path(path)?;
                 if let Some(to)=destination {validate_path(to)?;}
@@ -244,6 +245,7 @@ impl FileRequest {
     fn label(&self) -> &'static str {
         match self {
             Self::Capabilities => "capabilities",
+            Self::WindowsAccessCredential=>"windows.compatibility.grant",
             Self::List { .. } => "list",
             Self::Stat { .. } => "stat",
             Self::Content { .. } => "content",
@@ -273,6 +275,7 @@ impl FileRequest {
     fn build(&self, route: &Route) -> Result<RequestBuilder, String> {
         let (method, endpoint) = match self {
             Self::Capabilities => (Method::GET, "capabilities".into()),
+            Self::WindowsAccessCredential=>(Method::POST,"webdav/client-grant".into()),
             Self::List { .. } => (Method::GET, "list".into()),
             Self::Stat { .. } => (Method::GET, "stat".into()),
             Self::Content { .. } => (Method::GET, "content".into()),
@@ -386,7 +389,7 @@ impl FileRequest {
                     .header("Content-Type", "application/offset+octet-stream")
                     .body(bytes.clone());
             }
-            Self::Capabilities => {}
+            Self::Capabilities | Self::WindowsAccessCredential => {}
             Self::CheckedMutation {path,destination,revision,target_revision} => {
                 request=request.json(&json!({"path":path,"destination":destination,"revision":revision,"targetRevision":target_revision}));
             }
@@ -671,6 +674,17 @@ impl Connector {
                     429 => "busy",
                     _ => "remote_error",
                 };
+                if matches!(operation,FileRequest::WindowsAccessCredential){
+                    // Preserve only known public reason codes, never arbitrary
+                    // server text which could echo a credential into the UI.
+                    if let Ok(body)=(FileResponse{response,lease:lease.clone()}).json(8192).await {
+                        match body["error"]["code"].as_str(){
+                            Some("compatibility_permission_required")=>return Err("[compatibility_permission_required] 请先由服务器在 WebDAV 兼容设置中为此成员生成一次凭据，授权 Windows 程序接入；无需手工复制密码".into()),
+                            Some("compatibility_disabled")=>return Err("[compatibility_unavailable] 对方已关闭 Windows HTTPS 兼容入口".into()),
+                            _=>{}
+                        }
+                    }
+                }
                 return Err(format!(
                     "[{code}] 设备返回 HTTP {}，未自动重放操作",
                     status.as_u16()

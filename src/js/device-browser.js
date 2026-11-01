@@ -37,6 +37,7 @@ const deviceBrowser=(()=>{
     const heading=document.getElementById('device-group-heading');if(heading)heading.textContent=text('RHFiles 设备','RHFiles devices');
     const setup=document.getElementById('device-group-settings');if(setup)setup.textContent=text('管理设备组','Manage device groups');
     const refresh=document.getElementById('device-group-refresh');if(refresh)refresh.title=text('刷新设备列表（不发起网络探测）','Refresh devices (no network probing)');
+    const copies=document.getElementById('device-working-copies');if(copies)copies.textContent=text('远端工作副本','Remote working copies');
   }
   async function refresh(){
     const ticket=++readTicket,state=await call('device_groups',{command:'state',args:{}});if(ticket!==readTicket)return {stale:true};
@@ -73,25 +74,99 @@ const deviceBrowser=(()=>{
     for(const [action,native]of [['entries','list'],['stat','stat'],['capabilities','capabilities'],['preview','preview'],['thumbnail','thumbnail']])api.register('devices.'+action,p=>fs(native,P.parse(p.path).uri),{params:object({path:string},['path']),risk:'read'});
     api.register('devices.search',p=>fs('search',P.parse(p.path).uri,{query:p.query}),{params:object({path:string,query:{type:'string',minLength:1,maxLength:512}},['path','query']),risk:'read',description:'Explicit recursive search; 15 seconds, 500 folders and 500 results maximum; no background continuation'});
     api.register('devices.resource',async p=>({url:await source(p.path)}),{params:object({path:string},['path']),risk:'read',description:'Revocable loopback-only media capability; never a remote password or bearer token'});
+    api.register('devices.workingCopies',()=>call('device_transfer',{action:'working_copies',args:{}}),{params:object(),risk:'read',description:'List retained local working copies without probing any remote server'});
+    api.register('devices.workingCopies.show',showWorkingCopies,{params:object(),risk:'ui'});
+    api.register('devices.checkout',p=>call('device_transfer',{action:'checkout',args:p}),{params:object({path:string,operationId:string},['path']),risk:'write',description:'Create a persistent working copy without launching a local application; use workingCopies.save to commit against the original revision'});
+    api.register('devices.windowsPath',p=>call('device_transfer',{action:'windows_path',args:p}),{params:object({path:string},['path']),risk:'write',description:'Establish an owner-authorized, group-bound trusted HTTPS Windows filesystem connection. Credentials remain native and are never synchronized or returned.'});
+    api.register('devices.windowsDisconnect',p=>call('device_transfer',{action:'windows_disconnect',args:p}),{params:object({path:string,confirmed:{const:true}},['path','confirmed']),risk:'destructive',description:'Disconnect only this profile’s Windows WebDAV connection after verifying its username. Never forces closure of open files or disconnects another account.'});
+    api.register('devices.openFile',p=>call('device_transfer',{action:'open',args:p}),{params:object({path:string,command:{type:'string',enum:['open_file','open_with_program','show_open_with_dialog','quicklook']},program:string},['path']),risk:'write',description:'Download a managed working copy and open it locally. Changed copies are retained until an explicit revision-checked save.'});
+    for(const [id,action,properties]of [['save','working_save',{id:string,newName:string}],['reveal','working_reveal',{id:string}],['remove','working_remove',{id:string}]])api.register('devices.workingCopies.'+id,p=>call('device_transfer',{action,args:p}),{params:object(properties,['id']),risk:id==='reveal'?'ui':'destructive'});
     api.register('devices.transfer',p=>call('device_transfer',{action:p.operation,args:p}),{params:object({operation:{type:'string',enum:['copy','move']},src:string,dest:string,targetName:{type:'string',maxLength:240},overwrite:{type:'boolean'},expectedTargetRevision:{type:'string',maxLength:256},operationId:{type:'string',maxLength:128}},['operation','src','dest']),risk:'destructive',description:'Stream files/folders between local and group locations with native progress, scoped cancellation, no write retries and identity-checked move cleanup. Remote replacements/moves require an updated server; remote undo is not offered.'});
+    for(const [id,action,properties,required,risk] of [
+      ['rename','rename',{path:string,newName:string,expectedSourceRevision:string},['path','newName'],'write'],
+      ['inspectRename','inspect_rename',{path:string,newName:string},['path','newName'],'read'],
+      ['newFolder','new_folder',{parent:string},['parent'],'write'],
+      ['create','create',{parent:string,name:string,template:{type:'string',maxLength:64}},['parent','name'],'write'],
+      ['delete','delete',{paths:{type:'array',items:string,minItems:1,maxItems:10000},operationId:string,revisions:{type:'object',additionalProperties:string}},['paths'],'destructive'],
+      ['size','size',{path:string,operationId:string},['path'],'read'],
+      ['hash','hash',{path:string,algo:{type:'string',enum:['md5','sha256']},operationId:string},['path','algo'],'read'],
+      ['batchRename','batch_rename',{renames:{type:'array',minItems:1,maxItems:10000,items:{type:'array',items:string,minItems:2,maxItems:2}},revisions:{type:'object',additionalProperties:string},operationId:string},['renames'],'write'],
+    ])api.register('devices.'+id,p=>call('device_transfer',{action,args:p}),{params:object(properties,required),risk,description:'Identity-bound remote filesystem operation; never forwards a device URI to the local shell.'});
+  }
+  async function showWorkingCopies(){
+    document.getElementById('device-working-dialog')?.remove();
+    const overlay=document.createElement('div');overlay.id='device-working-dialog';overlay.className='overlay';
+    const box=document.createElement('div');box.className='dialog-box dialog-wide';box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');
+    const heading=document.createElement('div');heading.className='dialog-title';heading.textContent=text('远端工作副本','Remote working copies');
+    const detail=document.createElement('p');detail.className='settings-card-description';detail.textContent=text('本机程序的修改保留在这里。保存回服务器前会检查原文件版本，不会覆盖其他设备的新修改。','Local edits are retained here. Saving checks the original server revision and never overwrites another device’s changes.');
+    const list=document.createElement('div');list.className='dialog-scroll';
+    const actions=document.createElement('div');actions.className='dialog-actions';
+    const close=document.createElement('button');close.className='dialog-btn';close.textContent=text('关闭','Close');RHFilesUI.listen(close,'click',()=>overlay.remove(),undefined,'devices.workingCopies.close');actions.append(close);
+    box.append(heading,detail,list,actions);overlay.append(box);document.body.append(overlay);
+    const paint=async()=>{
+      const result=await window.RHFilesAPI.invoke('devices.workingCopies');list.replaceChildren();
+      if(!result.items.length){list.textContent=text('暂无工作副本','No working copies');return;}
+      for(const row of result.items){
+        const card=document.createElement('section');card.className='settings-card';card.dataset.workingCopyId=row.id;
+        const title=document.createElement('strong');title.textContent=row.name+' · '+(row.status==='modified'?text('有本地修改','Local changes'):row.status==='missing'?text('本地文件已移走','Local file missing'):text('未修改','Unchanged'));
+        const path=document.createElement('p');path.className='settings-card-description';path.textContent=display(row.source);path.style.overflowWrap='anywhere';
+        const controls=document.createElement('div');controls.className='dialog-actions';const error=document.createElement('p');error.className='settings-card-description';error.setAttribute('role','status');
+        const nameInput=document.createElement('input');nameInput.type='text';nameInput.className='rename-input';nameInput.hidden=true;nameInput.value=row.name;nameInput.setAttribute('aria-label',text('另存为文件名（不会覆盖同名文件）','Save as filename (existing files are never overwritten)'));
+        for(const [id,label]of [['save',text('保存回服务器','Save to server')],['saveAs',text('另存为','Save as')],['reveal',text('本地位置','Local location')],['remove',text('清理副本','Remove copy')]]){
+          const button=document.createElement('button');button.className='dialog-btn'+(id==='save'?' primary':'');button.textContent=label;button.dataset.apiAction='devices.workingCopies.'+(id==='saveAs'?'save':id);button.disabled=id==='remove'&&row.status==='modified'||id==='save'&&row.status!=='modified';
+          RHFilesUI.listen(button,'click',async()=>{try{let newName;if(id==='saveAs'){if(nameInput.hidden){nameInput.hidden=false;nameInput.focus();nameInput.select();return;}newName=nameInput.value.trim();if(!newName)return;}button.disabled=true;await window.RHFilesAPI.invoke('devices.workingCopies.'+(id==='saveAs'?'save':id),{id:row.id,...(newName?{newName}:{})});if(id!=='reveal')await paint();else button.disabled=false;}catch(e){error.textContent=String(e);button.disabled=false;}},undefined,'devices.workingCopies.'+id+'.'+row.id);controls.append(button);
+        }
+        card.append(title,path,nameInput,controls,error);list.append(card);
+      }
+    };try{await paint();}catch(e){list.textContent=String(e);}return {opened:true};
   }
   return {register,refresh,paint,display,name,address,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs};
 })();
 deviceBrowser.register(window.RHFilesAPI);
 async function routeDeviceCommand(cmd,args){
   if(cmd==='device_fs'||cmd==='device_transfer')return null;
+  // These values are text/state, not filesystem input. In particular, a
+  // multi-path text clipboard is not one malformed device URI.
+  if(cmd.startsWith('db_')||cmd.startsWith('config_sync_')||['copy_file_path','save_window_state','open_new_window'].includes(cmd))return null;
   const collect=value=>typeof value==='string'?(isDevicePath(value)?[value]:[]):Array.isArray(value)?value.flatMap(collect):value&&typeof value==='object'?Object.values(value).flatMap(collect):[];
   const paths=collect(args);if(!paths.length)return null;
   paths.forEach(path=>RHFilesDevicePaths.parse(path));
   // Metadata/clipboard/window state do not dereference a filesystem path.
-  if(cmd.startsWith('db_')||cmd.startsWith('config_sync_')||['copy_file_path','save_window_state','open_new_window'].includes(cmd))return null;
   const fs=deviceBrowser.fs;let value;
   switch(cmd){
     case 'list_dir':value=await fs('list',args.path);break;
     case 'get_file_info':value=await fs('stat',args.path);break;
     case 'parent_path':value=RHFilesDevicePaths.parent(args.path);break;
     case 'path_exists':try{await fs('stat',args.path);value=true;}catch(error){if(!String(error).includes('[not_found]'))throw error;value=false;}break;
-    case 'copy_with_progress':case 'move_with_progress':
+    case 'inspect_rename_target':value=await call('device_transfer',{action:'inspect_rename',args});break;
+    case 'rename_file':value=await call('device_transfer',{action:'rename',args});break;
+    case 'batch_rename':value=await call('device_transfer',{action:'batch_rename',args});break;
+    case 'move_paths_exact':value=await call('device_transfer',{action:'batch_move_exact',args});break;
+    case 'new_folder':value=await call('device_transfer',{action:'new_folder',args});break;
+    case 'create_new_file':value=await call('device_transfer',{action:'create',args});break;
+    case 'ensure_merge_folder':value=await call('device_transfer',{action:'ensure_folder',args:{parent:RHFilesDevicePaths.parent(args.path),name:RHFilesDevicePaths.parse(args.path).parts.at(-1)}});break;
+    case 'delete_file':case 'delete_files':case 'delete_files_permanently':{
+      const selected=cmd==='delete_file'?[args.path]:args.paths,remote=selected.filter(isDevicePath),local=selected.filter(p=>!isDevicePath(p));
+      value=await call('device_transfer',{action:'delete',args:{...args,paths:remote}});
+      if(local.length&&!value.cancelled){const other=await call(cmd==='delete_file'?'delete_files':cmd,{...args,paths:local});value={deleted:[...(value.deleted||[]),...(other.deleted||[])],errors:[...(value.errors||[]),...(other.errors||[])],cancelled:!!other.cancelled};}
+      break;
+    }
+    case 'folder_size':value=await call('device_transfer',{action:'size',args});break;
+    case 'compute_hash':value=await call('device_transfer',{action:'hash',args});break;
+    case 'analyze_disk_usage':value=await call('device_transfer',{action:'usage',args});break;
+    case 'show_properties':showCustomProperties(await fs('stat',args.path));value=null;break;
+    case 'open_file':case 'open_with_program':case 'show_open_with_dialog':case 'quicklook':case 'set_wallpaper':case 'install_font':case 'install_certificate':case 'run_as_admin':{
+      const id=showProgress(String(_lang).startsWith('zh')?'正在打开远端文件':'Opening remote file',{cancellable:true,currentPath:args.path});
+      try{
+        let live,bridgeError;
+        if(!IS_MAC)try{live=await call('device_transfer',{action:'windows_path',args:{path:args.path}});}catch(error){bridgeError=error;if(!/\[compatibility_unavailable\]|\[compatibility_permission_required\]|\[windows_component_missing\]/.test(String(error)))throw error;}
+        if(!live&&bridgeError&&(cmd==='open_with_program'&&['cmd','powershell','git_bash','wt','terminal','iterm','vlc_folder'].includes(args.program)||(await fs('stat',args.path)).is_dir))throw bridgeError;
+        if(live)value=await call(cmd,{...args,path:live.path});else value=await call('device_transfer',{action:'open',args:{...args,command:cmd,operationId:id}});
+        completeOperationTask(id);
+      }catch(error){failOperationTask(id,error);throw error;}break;
+    }
+    case 'rtf_to_html':case 'docx_to_text':case 'read_shortcut':case 'rotate_image':value=await call('device_transfer',{action:'document',args:{...args,command:cmd}});break;
+    case 'copy_path':case 'move_path_cmd':case 'copy_with_progress':case 'move_with_progress':
       value=await call('device_transfer',{action:cmd.startsWith('move')?'move':'copy',args});break;
     case 'copy_path_exact':case 'move_path_exact':
       value=await call('device_transfer',{action:cmd.startsWith('move')?'move_exact':'copy_exact',args});break;
@@ -104,9 +179,13 @@ async function routeDeviceCommand(cmd,args){
     case 'get_dir_tree':value=(await fs('list',args.path)).filter(v=>v.is_dir).map(v=>({...v,has_children:true}));break;
     case 'git_status':case 'svn_status':value={};break;
     case 'set_windows_file_clipboard':{
-      await writeTextClipboard((args.paths||[]).join('\r\n'));value=Number((await call('get_windows_file_clipboard_info',{}))?.sequence)||0;break;
+      if(typeof IS_MAC!=='undefined'&&!IS_MAC){
+        try{const mapped=[];for(const path of args.paths||[])mapped.push(isDevicePath(path)?(await call('device_transfer',{action:'windows_path',args:{path}})).path:path);value=await call(cmd,{...args,paths:mapped});break;}
+        catch(error){if(typeof showNotice==='function')showNotice((String(_lang).startsWith('zh')?'已复制 RHFiles 文件引用；Windows 程序接入未成功：':'Copied RHFiles file references; Windows access failed: ')+String(error));}
+      }
+      const text=(args.paths||[]).join('\r\n');if(!await writeTextClipboard(text))await call('copy_file_path',{path:text});value=Number((await call('get_windows_file_clipboard_info',{}))?.sequence)||0;break;
     }
-    default:throw Error(String(_lang).startsWith('zh')?'[unsupported] 此操作尚不能用于 RHFiles 远端路径；不会传入 Windows 本地接口':'[unsupported] This action is unavailable for RHFiles remote paths; no local filesystem API was called');
+    default:{const extended=typeof routeDeviceExtendedCommand==='function'?await routeDeviceExtendedCommand(cmd,args):null;if(extended)return extended;throw Error(String(_lang).startsWith('zh')?'[remote_context_required] 此操作需要本机系统环境，不能把远端地址当成本机路径执行。请使用文件操作，或配置该设备的 WebDAV 兼容接入。':'[remote_context_required] This action requires an OS filesystem context. Use file operations or configure this device’s WebDAV compatibility connection.');}
   }
   return {value};
 }

@@ -87,6 +87,13 @@ fn inspect_extraction(exe: &str, path: &Path, dest: &Path, entry: Option<&str>, 
     Ok(inspection::ExtractionInspection {password_entry, conflicts})
 }
 
+pub(crate) fn selected_manifest(path: &Path, entry: Option<&str>, password: Option<&str>) -> Result<Vec<ArchiveEntry>,String> {
+    let path=resolve_archive_volume(path)?;
+    let exe=find_7z().ok_or(ARCHIVE_7Z_REQUIRED)?;
+    let entries=list_archive_with_7z_password(&exe,&path,password)?;
+    Ok(inspection::selected_entries(&entries,entry)?.into_iter().cloned().collect())
+}
+
 #[tauri::command(async)]
 pub fn inspect_archive_extraction(path: String, dest: String, entry_path: Option<String>, password: Option<String>) -> Result<inspection::ExtractionInspection, String> {
     let path = resolve_archive_volume(Path::new(&path))?;

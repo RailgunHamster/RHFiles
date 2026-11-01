@@ -115,15 +115,24 @@ function trackMove(src, dest) {
   });
 }
 
-function trackRename(oldPath, newPath) {
+function trackRename(oldPath, newPath, remoteRevision) {
+  const remote = typeof isDevicePath==='function'&&(isDevicePath(oldPath)||isDevicePath(newPath));
+  if(remote&&!remoteRevision)return;
+  let revision=remoteRevision;
   pushUndo({
     label: t('undo.renameTo', {path: pathLeaf(newPath)}),
-    undo: async () => { await call("rename_file", { path: newPath, newName: pathLeaf(oldPath) }); },
-    redo: async () => { await call("rename_file", { path: oldPath, newName: pathLeaf(newPath) }); }
+    undo: async () => { const result=await call("rename_file", { path: newPath, newName: pathLeaf(oldPath),...(remote?{expectedSourceRevision:revision}:{}) });if(remote)revision=result.revision; },
+    redo: async () => { const result=await call("rename_file", { path: oldPath, newName: pathLeaf(newPath),...(remote?{expectedSourceRevision:revision}:{}) });if(remote)revision=result.revision; }
   });
 }
 
-function trackBatchRename(pathPairs) {
+function trackBatchRename(pathPairs, remoteEntries) {
+  if(typeof isDevicePath==='function'&&pathPairs.some(pair=>pair.some(isDevicePath))){
+    if(!remoteEntries?.length)return;
+    let entries=remoteEntries;
+    const execute=async reverse=>{const moves=pathPairs.map(([a,b])=>reverse?[b,a]:[a,b]),revisions=Object.fromEntries(entries.map(e=>[e.target,e.revision]));const result=await call('move_paths_exact',{moves,revisions});entries=result.entries;};
+    pushUndo({label:t('undo.renameItems',{count:pathPairs.length}),undo:()=>execute(true),redo:()=>execute(false)});return;
+  }
   const pairs = pathPairs.map(([oldPath, newPath]) => [oldPath, newPath]);
   pushUndo({
     label: t('undo.renameItems', {count:pairs.length}),

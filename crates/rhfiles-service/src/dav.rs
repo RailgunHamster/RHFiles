@@ -60,6 +60,7 @@ struct File {
     staged: Option<Staged>,
     entry: Entry,
     access: Access,
+    storage:Arc<Storage>,
 }
 impl DavFile for File {
     fn metadata(&mut self) -> FsFuture<'_, Box<dyn DavMetaData>> {
@@ -128,8 +129,12 @@ impl DavFile for File {
                 .map_err(fs_error)?;
             self.file.sync_all().map_err(|e| fs_error(e.into()))?;
             if let Some(staged) = &mut self.staged {
-                staged.commit().map_err(fs_error)?;
-                self.entry = staged.node.stat().map_err(fs_error)?;
+                if let Some(revision)=&self.access.edit_revision{self.storage.commit_edit(staged,revision).map_err(fs_error)?;}else{staged.commit().map_err(fs_error)?;}
+                // The handle identifies the bytes just committed even if an
+                // external process immediately replaces the pathname.
+                self.entry.revision=crate::connection::file_revision(&self.file).map_err(|_|FsError::GeneralFailure)?;
+                self.entry.size=self.file.metadata().map_err(|_|FsError::GeneralFailure)?.len();
+                *self.access.committed_entry.lock().unwrap()=Some((self.entry.path.clone(),self.entry.revision.clone()));
             }
             Ok(())
         })
@@ -178,7 +183,7 @@ impl GuardedFileSystem<Access> for DavFs {
                 if options.append {
                     return Err(FsError::NotImplemented);
                 }
-                let staged = node.stage().map_err(fs_error)?;
+                let staged = if let Some(revision)=&a.edit_revision{node.stage_edit(revision).map_err(fs_error)?}else{node.stage().map_err(fs_error)?};
                 let file = staged.file.try_clone().map_err(|e| fs_error(e.into()))?;
                 let entry = Entry {
                     name: path.rsplit('/').next().unwrap_or("").into(),
@@ -186,6 +191,7 @@ impl GuardedFileSystem<Access> for DavFs {
                     is_dir: false,
                     size: 0,
                     modified_ms: now_ms(),
+                    created_ms:now_ms(),readonly:false,is_hidden:false,is_system:false,
                     revision: random().map_err(fs_error)?,
                 };
                 Ok(Box::new(File {
@@ -193,6 +199,7 @@ impl GuardedFileSystem<Access> for DavFs {
                     staged: Some(staged),
                     entry,
                     access: a.clone(),
+                    storage:self.storage.clone(),
                 }) as _)
             } else {
                 let entry = node.stat().map_err(fs_error)?;
@@ -202,6 +209,7 @@ impl GuardedFileSystem<Access> for DavFs {
                     staged: None,
                     entry,
                     access: a.clone(),
+                    storage:self.storage.clone(),
                 }) as _)
             }
         })

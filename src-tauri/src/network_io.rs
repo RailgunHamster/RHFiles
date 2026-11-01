@@ -21,13 +21,16 @@ use windows::Win32::{
 };
 
 const WORKER_FLAG: &str = "--rhfiles-network-worker";
+const PRIVATE_WORKER_FLAG:&str="--rhfiles-network-worker-stdin";
 const TIMEOUT: Duration = Duration::from_secs(6);
 const COOLDOWN: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: usize = 64 * 1024 * 1024;
 const MAX_WORKERS: usize = 4;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub enum Request {
+    WebdavConnect{unc:String,username:String,password:String},
+    WebdavDisconnect{unc:String,username:String},
     ListDir(String),
     FileInfo(String),
     Tree(String),
@@ -217,6 +220,10 @@ impl Drop for Worker {
 }
 
 fn spawn_worker(command: &mut Command) -> Result<Worker, String> {
+    spawn_worker_input(command,None)
+}
+fn spawn_worker_input(command:&mut Command,input:Option<&[u8]>)->Result<Worker,String>{
+    if input.is_some_and(|v|v.len()>4096){return Err("Private worker request is too large".into());}
     let job = unsafe { CreateJobObjectW(None, None) }.map_err(|e| e.to_string())?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -235,7 +242,7 @@ fn spawn_worker(command: &mut Command) -> Result<Worker, String> {
     }
     let child = match command
         .creation_flags(0x08000000)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some(){Stdio::piped()}else{Stdio::null()})
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -248,9 +255,10 @@ fn spawn_worker(command: &mut Command) -> Result<Worker, String> {
             return Err(error.to_string());
         }
     };
-    let worker = Worker(child, job);
+    let mut worker = Worker(child, job);
     unsafe { AssignProcessToJobObject(job, HANDLE(worker.0.as_raw_handle())) }
         .map_err(|e| e.to_string())?;
+    if let Some(bytes)=input {let mut pipe=worker.0.stdin.take().ok_or("Missing private worker input")?;pipe.write_all(bytes).map_err(|_|"Private worker input failed")?;}
     Ok(worker)
 }
 
@@ -354,6 +362,7 @@ pub fn execute<T: DeserializeOwned>(
     timeout: Duration,
     progress: Option<&mut dyn FnMut(u64, u64)>,
 ) -> Result<T, String> {
+    if matches!(request,Request::WebdavConnect{..}|Request::WebdavDisconnect{..}){return Err("Credentials require the stdin-only worker channel".into());}
     let gate = GATE.get_or_init(Default::default);
     gate.lock()
         .map_err(|e| e.to_string())?
@@ -375,6 +384,17 @@ pub fn execute<T: DeserializeOwned>(
     result
 }
 
+pub fn execute_private(host:&str,request:Request)->Result<Value,String>{
+    if !matches!(request,Request::WebdavConnect{..}|Request::WebdavDisconnect{..}){return Err("Invalid private worker request".into());}
+    let gate=GATE.get_or_init(Default::default);gate.lock().map_err(|e|e.to_string())?.enter(host,Instant::now())?;let _lease=Lease;
+    let mut command=Command::new(std::env::current_exe().map_err(|e|e.to_string())?);command.arg(PRIVATE_WORKER_FLAG);
+    let bytes=serde_json::to_vec(&request).map_err(|_|"Cannot encode private worker request")?;
+    let child=spawn_worker_input(&mut command,Some(&bytes))?;
+    let result=run_child(child,Duration::from_secs(15),None);
+    if result.as_ref().is_err_and(|e|e.starts_with("[timed_out]")){gate.lock().map_err(|e|e.to_string())?.failed.insert(host.to_string(),Instant::now()+COOLDOWN);}
+    result
+}
+
 fn send(reply: Reply) -> Result<(), String> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -386,6 +406,8 @@ fn send(reply: Reply) -> Result<(), String> {
 
 fn dispatch(request: Request) -> Result<Value, String> {
     match request {
+        Request::WebdavConnect{unc,username,password}=>return crate::windows_device_access::connect_worker(&unc,&username,&password),
+        Request::WebdavDisconnect{unc,username}=>return crate::windows_device_access::disconnect_worker(&unc,&username),
         Request::ListDir(path) => serde_json::to_value(crate::file_ops::list_dir_direct(path)?),
         Request::FileInfo(path) => {
             serde_json::to_value(crate::file_ops::get_file_info_direct(path)?)
@@ -486,6 +508,10 @@ pub fn run_if_requested() -> bool {
         })();
         let _ = send(Reply::Done(result));
         return true;
+    }
+    if flag.as_deref()==Some(PRIVATE_WORKER_FLAG){
+        let result=(||{let mut bytes=Vec::new();std::io::stdin().take(4097).read_to_end(&mut bytes).map_err(|_|"Private worker input failed")?;if bytes.len()>4096{return Err("Private worker input too large".into());}let request:Request=serde_json::from_slice(&bytes).map_err(|_|"Invalid private worker request")?;match request{Request::WebdavConnect{..}|Request::WebdavDisconnect{..}=>dispatch(request),_=>Err("Invalid private worker operation".into())}})();
+        let _=send(Reply::Done(result));return true;
     }
     if flag.as_deref() != Some(WORKER_FLAG) {
         return false;

@@ -1009,10 +1009,7 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
     return crate::macos::open_with(Path::new(&path), &program);
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
-    let p = PathBuf::from(&path);
-    let dir = terminal_working_directory(&p)
-        .to_string_lossy()
-        .into_owned();
+    let dir = bounded_program_directory(&path)?.to_string_lossy().into_owned();
 
     match program.as_str() {
         "vscode" => {
@@ -1186,6 +1183,14 @@ fn terminal_working_directory(path: &Path) -> PathBuf {
             .unwrap_or(path)
             .to_path_buf()
     }
+}
+fn bounded_program_directory(path:&str)->Result<PathBuf,String>{
+    let p=PathBuf::from(path);
+    #[cfg(windows)]
+    if let Some(result)=crate::network_io::remote::<serde_json::Value>(path,crate::network_io::Request::FileInfo(path.into())){
+        let detail=result?;return Ok(if detail["is_dir"]==true{p.clone()}else{p.parent().unwrap_or(&p).to_path_buf()});
+    }
+    Ok(terminal_working_directory(&p))
 }
 
 fn git_bash_directory_argument(directory: &str) -> String {
@@ -1434,7 +1439,7 @@ pub fn open_terminal(path: String, terminal: String) -> Result<(), String> {
     match terminal.as_str() {
         "powershell" | "cmd" => open_with_program(path, terminal),
         _ => {
-            let directory = terminal_working_directory(&PathBuf::from(path));
+            let directory = bounded_program_directory(&path)?;
             enumerator::open_terminal(&directory, &terminal)
         }
     }

@@ -36,14 +36,39 @@ test('device reads route to native group filesystem and local-only actions never
   const f=fixture();assert.equal((await f.route('parent_path',{path})).value,P.parent(path));
   assert.equal((await f.route('list_dir',{path:P.parent(path)})).value[0].name,'A.txt');
   assert.equal(f.calls.at(-1).cmd,'device_fs');assert.equal(f.calls.at(-1).args.action,'list');
-  for(const command of ['open_powershell','execute_tool','open_in_windows_explorer','compress_to_zip'])await assert.rejects(f.route(command,{path}),/unsupported/);
+  for(const command of ['open_powershell','execute_tool','open_in_windows_explorer','compress_to_zip'])await assert.rejects(f.route(command,{path}),/remote_context_required/);
   await assert.rejects(f.route('get_file_info',{path:P.prefix+group+'/'+peer+'/Files/%2e%2e/x'}),/invalid_path/);
   assert.equal(f.calls.filter(v=>['open_powershell','execute_tool','open_in_windows_explorer','compress_to_zip','get_file_info'].includes(v.cmd)).length,0);
   assert.equal(await f.route('copy_file_path',{path}),null,'Text clipboard does not dereference a file');
+  assert.equal(await f.route('copy_file_path',{path:path+'\r\n'+path}),null,'Several remote paths remain ordinary clipboard text');
+});
+
+test('all regular filesystem write/inspection commands route to typed remote operations, including nested batch paths',async()=>{
+  const f=fixture();
+  for(const [cmd,action,args]of [
+    ['inspect_rename_target','inspect_rename',{path,newName:'中文.txt'}],['rename_file','rename',{path,newName:'中文.txt',expectedSourceRevision:'selected-revision'}],
+    ['new_folder','new_folder',{parent:P.parent(path)}],['create_new_file','create',{parent:P.parent(path),name:'新建.json',template:'json'}],
+    ['batch_rename','batch_rename',{renames:[[path,'renamed.txt']]}],['folder_size','size',{path:P.parent(path)}],['compute_hash','hash',{path,algo:'md5'}],['analyze_disk_usage','usage',{path:P.parent(path),depth:2}],
+  ]){const result=await f.route(cmd,args);assert.equal(result.value.action,action);assert.equal(f.calls.at(-1).cmd,'device_transfer');assert.deepEqual(f.calls.at(-1).args.args,args);}
+  for(const name of ['rename','inspectRename','newFolder','create','delete','size','hash','batchRename','checkout','workingCopies','workingCopies.save','workingCopies.remove','workingCopies.show'])assert(f.actions.has('devices.'+name),name+' has a semantic API');
 });
 test('remote clipboard retains in-app references but never creates native Windows shell file items',async()=>{
   const f=fixture(),result=await f.route('set_windows_file_clipboard',{paths:[path],cut:true});
   assert.equal(result.value,19);assert(f.calls.some(v=>v.clipboard===path));assert(!f.calls.some(v=>v.cmd==='set_windows_file_clipboard'));
+});
+
+test('owner-authorized Windows shell/clipboard integration uses a live native path and never a device URI',async()=>{
+  const f=fixture(),unc='\\\\computer.example.ts.net@SSL@39129\\DavWWWRoot\\dav\\Files\\A.txt';f.ctx.IS_MAC=false;
+  f.ctx.call=async(cmd,args)=>{f.calls.push({cmd,args});if(cmd==='device_transfer'){assert.equal(args.action,'windows_path');return {path:unc,live:true};}assert(!JSON.stringify(args).includes(P.prefix));return cmd==='set_windows_file_clipboard'?31:{called:cmd};};
+  vm.runInContext(fs.readFileSync(new URL('../../src/js/device-operations.js',import.meta.url),'utf8'),f.ctx);
+  for(const command of ['open_terminal','open_in_windows_explorer','get_permissions','create_shortcut']){const result=await f.route(command,{path});assert.equal(result.value.called,command);assert.equal(f.calls.at(-1).args.path,unc);}
+  const copied=await f.route('set_windows_file_clipboard',{paths:[path],cut:true});assert.equal(copied.value,31);assert.deepEqual(Array.from(f.calls.at(-1).args.paths),[unc]);assert.equal(f.calls.at(-1).args.cut,true);
+});
+
+test('missing Windows WebClient still permits in-app copy and records a real clipboard generation',async()=>{
+  const f=fixture();f.ctx.IS_MAC=false;
+  f.ctx.call=async(cmd,args)=>{f.calls.push({cmd,args});if(cmd==='device_transfer')throw Error('[windows_component_missing] component absent');if(cmd==='get_windows_file_clipboard_info')return {sequence:57};throw Error('Unexpected operation '+cmd);};
+  const result=await f.route('set_windows_file_clipboard',{paths:[path],cut:true});assert.equal(result.value,57);assert(f.calls.some(v=>v.clipboard===path));
 });
 test('media URLs are opaque loopback capabilities, bounded in memory and invalidated with device metadata',async()=>{
   const f=fixture();await f.run('devices.resource',{path});await f.run('devices.resource',{path});assert.equal(f.calls.filter(v=>v.cmd==='device_fs').length,1);

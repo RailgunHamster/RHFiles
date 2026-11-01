@@ -26,6 +26,10 @@ pub struct Entry {
     pub is_dir: bool,
     pub size: u64,
     pub modified_ms: u64,
+    pub created_ms: u64,
+    pub readonly: bool,
+    pub is_hidden: bool,
+    pub is_system: bool,
     pub revision: String,
 }
 

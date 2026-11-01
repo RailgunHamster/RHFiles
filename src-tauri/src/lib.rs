@@ -22,6 +22,8 @@ mod browser_loopback;
 mod lan_startup;
 #[cfg(windows)]
 pub mod network_io;
+#[cfg(windows)]
+pub mod windows_device_access;
 mod profile;
 mod recycle;
 mod rhvideo;

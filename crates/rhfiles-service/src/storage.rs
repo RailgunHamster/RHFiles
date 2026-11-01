@@ -248,6 +248,7 @@ impl Storage {
                 is_dir: true,
                 size: 0,
                 modified_ms: 0,
+                created_ms:0,readonly:false,is_hidden:false,is_system:false,
                 revision: "root".into(),
             });
         }
@@ -328,8 +329,11 @@ impl Storage {
     /// replaced since selection is restored, never removed as the old object.
     pub fn checked_mutation(&self, from: &str, to: Option<&str>, revision: &str, target_revision: Option<&str>) -> Result<()> {
         let source = self.node(from)?;
-        source.require_child()?;
         let destination = to.map(|path| self.node(path)).transpose()?;
+        self.checked_nodes(source,destination,revision,target_revision,true)
+    }
+    fn checked_nodes(&self,source:Node,destination:Option<Node>,revision:&str,target_revision:Option<&str>,lock_source:bool)->Result<()>{
+        source.require_child()?;
         if let Some(target) = &destination {
             target.require_child()?;
             if !Arc::ptr_eq(&source.root, &target.root) || source.relative == target.relative
@@ -342,7 +346,7 @@ impl Storage {
         let lock_file=|node:&Node|->Result<Option<cap_std::fs::File>>{if node.stat()?.is_dir{return Ok(None);}let mut options=OpenOptions::new();options.read(true);
             #[cfg(windows)]{use cap_std::fs::OpenOptionsExt;options.share_mode(1|4);}
             Ok(Some(node.root.dir.open_with(&node.relative,&options)?))};
-        let _source_lock=lock_file(&source)?;
+        let _source_lock=if lock_source{lock_file(&source)?}else{None};
         let stage = source.root.staging()?;
         let id = random()?;
         let captured = format!("capture-{id}");
@@ -365,6 +369,7 @@ impl Storage {
             if let Some(target) = &destination {
                 match target.stat() {
                     Ok(entry) => {
+                        if entry.readonly{return Err(Error::new("forbidden","目标文件是只读的，未覆盖"));}
                         if entry.is_dir || target_revision != Some(entry.revision.as_str()) {
                             return Err(Error::new("conflict", "目标已变化或是文件夹，未覆盖"));
                         }
@@ -394,6 +399,16 @@ impl Storage {
         }
         stage.remove_file(&record)?;
         Ok(())
+    }
+    pub(crate) fn commit_edit(&self,staged:&mut Staged,expected:&str)->Result<()>{
+        if staged.committed{return Ok(());}
+        staged.file.sync_all()?;
+        let revision=crate::connection::file_revision(&staged.file).map_err(|_|Error::new("io_error","无法核对编辑副本身份"))?;
+        // This source is our exclusively writable, private staged file, never
+        // a URI accepted from a client. Its open handles deny other writers.
+        let source=Node{root:staged.node.root.clone(),relative:PathBuf::from(format!("{PRIVATE_PREFIX}staging")).join(&staged.name),virtual_path:String::new()};
+        self.checked_nodes(source,Some(staged.node.clone()),&revision,Some(expected),false)?;
+        staged.committed=true;Ok(())
     }
     fn restore_checked(&self, root: &Arc<Root>, state: &serde_json::Value) -> Result<()> {
         let stage = root.staging()?;
@@ -502,12 +517,20 @@ impl Node {
             .ok()
             .and_then(|v| v.into_std().duration_since(UNIX_EPOCH).ok())
             .unwrap_or_default();
+        #[cfg(windows)]
+        let attributes=meta.file_attributes();
+        #[cfg(not(windows))]
+        let attributes=0u32;
         Ok(Entry {
             name: self.virtual_path.rsplit('/').next().unwrap_or("").into(),
             path: self.virtual_path.clone(),
             is_dir: meta.is_dir(),
             size: meta.len(),
             modified_ms: modified.as_millis() as u64,
+            created_ms:meta.created().ok().and_then(|v|v.into_std().duration_since(UNIX_EPOCH).ok()).map(|v|v.as_millis() as u64).unwrap_or(0),
+            readonly:meta.permissions().readonly(),
+            is_hidden:attributes&2!=0||self.virtual_path.rsplit('/').next().unwrap_or("").starts_with('.'),
+            is_system:attributes&4!=0,
             revision: metadata_revision(&meta),
         })
     }
@@ -523,13 +546,28 @@ impl Node {
         if self.root.dir.symlink_metadata(&self.relative).is_ok() {
             return Err(Error::new("conflict", "目标已存在，未覆盖"));
         }
+        self.stage_private(false)
+    }
+    pub(crate) fn stage_edit(&self,revision:&str)->Result<Staged>{
+        self.require_child()?;
+        let entry=self.stat()?;
+        if entry.readonly{return Err(Error::new("forbidden","原文件为只读，未修改"));}
+        if entry.is_dir||entry.revision!=revision{return Err(Error::new("conflict","编辑的原文件已变化，未覆盖"));}
+        self.stage_private(true)
+    }
+    fn stage_private(&self,exclusive:bool)->Result<Staged>{
         let name = random()?;
+        let mut options=OpenOptions::new();options.create_new(true).read(true).write(true);
+        #[cfg(windows)]
+        if exclusive {use cap_std::fs::OpenOptionsExt;options.share_mode(1|4);}
+        #[cfg(not(windows))]
+        let _=exclusive;
         let file = self
             .root
             .staging()?
             .open_with(
                 &name,
-                OpenOptions::new().create_new(true).read(true).write(true),
+                &options,
             )?
             .into_std();
         Ok(Staged {
@@ -553,6 +591,21 @@ mod checked_tests{
     fn make()->(tempfile::TempDir,PathBuf,PathBuf,Vec<ShareConfig>,Storage){
         let temp=tempfile::tempdir().unwrap();let base=temp.path().canonicalize().unwrap();let files=base.join("files");let data=base.join("data");std::fs::create_dir(&files).unwrap();std::fs::create_dir(&data).unwrap();
         let shares=vec![ShareConfig{name:"Files".into(),path:files.clone()}];let storage=Storage::protected(&shares,&data,&[]).unwrap();(temp,files,data,shares,storage)
+    }
+    #[test]
+    fn conditional_edit_is_staged_and_cannot_overwrite_a_newer_occupant(){
+        use std::io::Write;
+        let(_temp,files,_,_,storage)=make();std::fs::write(files.join("edit"),b"original").unwrap();
+        let original=storage.stat("/Files/edit").unwrap().revision;
+        {let mut abandoned=storage.node("/Files/edit").unwrap().stage_edit(&original).unwrap();abandoned.file.write_all(b"partial").unwrap();}
+        assert_eq!(std::fs::read(files.join("edit")).unwrap(),b"original");
+        let mut first=storage.node("/Files/edit").unwrap().stage_edit(&original).unwrap();first.file.write_all(b"first edit").unwrap();
+        let mut second=storage.node("/Files/edit").unwrap().stage_edit(&original).unwrap();second.file.write_all(b"stale edit").unwrap();
+        storage.commit_edit(&mut first,&original).unwrap();assert_eq!(std::fs::read(files.join("edit")).unwrap(),b"first edit");
+        assert!(storage.commit_edit(&mut second,&original).is_err());assert_eq!(std::fs::read(files.join("edit")).unwrap(),b"first edit");
+        let current=storage.stat("/Files/edit").unwrap().revision;let mut pending=storage.node("/Files/edit").unwrap().stage_edit(&current).unwrap();pending.file.write_all(b"not authorized").unwrap();
+        std::fs::rename(files.join("edit"),files.join("prior")).unwrap();std::fs::write(files.join("edit"),b"new occupant").unwrap();
+        assert!(storage.commit_edit(&mut pending,&current).is_err());assert_eq!(std::fs::read(files.join("edit")).unwrap(),b"new occupant");assert_eq!(std::fs::read(files.join("prior")).unwrap(),b"first edit");
     }
     fn pending(files:&Path,storage:&Storage,with_backup:bool)->serde_json::Value{
         std::fs::write(files.join("source"),b"new data").unwrap();std::fs::write(files.join("target"),b"old data").unwrap();

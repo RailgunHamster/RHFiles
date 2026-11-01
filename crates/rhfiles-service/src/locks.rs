@@ -11,6 +11,7 @@ use unicode_normalization::UnicodeNormalization;
 pub struct Locks {
     inner: Box<MemLs>,
     original: Arc<Mutex<HashMap<String, (Box<DavPath>, Option<SystemTime>)>>>,
+    versions:Arc<Mutex<HashMap<String,String>>>,
 }
 fn canonical(p: &DavPath) -> DavPath {
     let text = String::from_utf8_lossy(p.as_bytes())
@@ -43,6 +44,7 @@ impl Locks {
         Box::new(Self {
             inner: MemLs::new(),
             original: Arc::new(Mutex::new(HashMap::new())),
+            versions:Arc::new(Mutex::new(HashMap::new())),
         })
     }
     fn reply(&self, mut lock: DavLock) -> DavLock {
@@ -50,6 +52,18 @@ impl Locks {
             lock.path = path.clone();
         }
         lock
+    }
+    pub(crate) fn remember_version(&self,token:&str,revision:&str){
+        let originals=self.original.lock().unwrap();if originals.contains_key(token){self.versions.lock().unwrap().entry(token.into()).or_insert_with(||revision.into());}
+    }
+    pub(crate) fn advance_version(&self,token:&str,previous:&str,next:&str){let mut versions=self.versions.lock().unwrap();if let Some(value)=versions.get_mut(token){if value==previous{*value=next.into();}}}
+    pub(crate) async fn edit_version(&self,path:&DavPath,principal:&str,condition:&str)->Option<(String,String)>{
+        if condition.len()>4096{return None;}
+        let condition=condition.split_whitespace().collect::<String>();
+        for lock in self.discover(path).await {
+            if !lock.shared&&lock.principal.as_deref()==Some(principal)&&canonical(&lock.path).as_bytes()==canonical(path).as_bytes()&&condition==format!("(<{}>)",lock.token){return self.versions.lock().unwrap().get(&lock.token).cloned().map(|revision|(lock.token,revision));}
+        }
+        None
     }
 }
 impl DavLockSystem for Locks {
@@ -70,6 +84,7 @@ impl DavLockSystem for Locks {
             {
                 let mut originals = self.original.lock().unwrap();
                 originals.retain(|_, (_, expiry)| expiry.is_none_or(|t| t > SystemTime::now()));
+                self.versions.lock().unwrap().retain(|token,_|originals.contains_key(token));
                 if originals.len() >= 4096 {
                     return Err(DavLock {
                         token: String::new(),
@@ -113,6 +128,7 @@ impl DavLockSystem for Locks {
         Box::pin(async move {
             self.inner.unlock(&p, &token).await?;
             self.original.lock().unwrap().remove(&token);
+            self.versions.lock().unwrap().remove(&token);
             Ok(())
         })
     }

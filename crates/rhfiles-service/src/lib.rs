@@ -387,11 +387,12 @@ impl Service {
         let mut slot=self.webdav.lock().unwrap();
         if slot.is_some(){return Err(Error::new("conflict","请先关闭已有兼容入口再更改配置"));}
         let gateway=webdav_compat::Gateway::start(&self.runtime,&self.state,domain,port,certificate,key)?;
-        let status=gateway.status();*slot=Some(gateway);self.state.auth.compatibility_enabled(true);Ok(status)
+        let status=gateway.status();*slot=Some(gateway);self.state.auth.compatibility_enabled(true);*self.state.compatibility.lock().unwrap()=Some(status.clone());Ok(status)
     }
-    pub fn disable_webdav_compatibility(&self){self.state.auth.compatibility_enabled(false);self.webdav.lock().unwrap().take();}
+    pub fn disable_webdav_compatibility(&self){self.state.auth.compatibility_enabled(false);self.webdav.lock().unwrap().take();self.state.compatibility.lock().unwrap().take();}
     pub fn webdav_credentials(&self,group:&str,peer:&str)->Result<serde_json::Value>{self.state.auth.compatibility_grant(self.state.groups.clone(),group,peer)}
     pub fn revoke_webdav_credentials(&self,group:&str,peer:&str)->Result<()>{self.state.auth.compatibility_revoke(group,peer)}
+    pub fn webdav_diagnostics(&self)->Vec<serde_json::Value>{self.state.failures.lock().unwrap().iter().cloned().collect()}
     pub fn advertise_group_host(&self) -> Result<()> {
         self.state.groups.advertise(
             self.state

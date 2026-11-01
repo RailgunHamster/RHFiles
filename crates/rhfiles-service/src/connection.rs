@@ -433,6 +433,7 @@ impl Connector {
             false
         }
     }
+    pub fn record_external(&self,report:Report){self.record(report);}
     fn record(&self, report: Report) {
         let mut h = self.reports.lock().unwrap();
         if h.len() >= 20 {

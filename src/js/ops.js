@@ -108,7 +108,7 @@ async function deleteSelected(isRight) {
     : t('confirm.deleteItems', {count: sel.length});
   // Network locations have no Recycle Bin, so the listing hint must not
   // promise a recoverable delete there.
-  const onNetwork = sel.some(file => /^\\\\|^ftp:\/\//i.test(String(file.path || '')));
+  const onNetwork = sel.some(file => /^\\\\|^ftp:\/\//i.test(String(file.path || '')) || (typeof isDevicePath==='function'&&isDevicePath(file.path)));
   const detail = onNetwork ? t('confirm.networkDeleteHint') : t('confirm.recycleBinHint');
   let confirmed = true;
   if (G.settings.confirmRecycleDelete !== false) {
@@ -136,9 +136,10 @@ async function deleteSelected(isRight) {
     aggregateProgress: true,
   });
   try {
-    const outcome = await call('delete_files', {paths: deletedPaths, operationId: taskId});
+    const outcome = await call('delete_files', {paths: deletedPaths, operationId: taskId,
+      ...(sel.some(f=>f.remote_revision)?{revisions:Object.fromEntries(sel.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_revision]))}:{})});
     const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
-    const recyclable = actuallyDeleted.filter(path => !isFtpPath(path) && !String(path).startsWith('\\\\'));
+    const recyclable = actuallyDeleted.filter(path => !isFtpPath(path) && !String(path).startsWith('\\\\') && !(typeof isDevicePath==='function'&&isDevicePath(path)));
     if (recyclable.length) trackDelete(recyclable);
     await refresh();
     if (outcome?.cancelled) {
@@ -202,6 +203,7 @@ async function deleteSelectedPermanently(isRight) {
     const outcome = await call('delete_files_permanently', {
       paths: deletedPaths,
       operationId: taskId,
+      ...(sel.some(f=>f.remote_revision)?{revisions:Object.fromEntries(sel.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_revision]))}:{}),
     });
     await refresh();
     const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : [];
@@ -257,7 +259,8 @@ async function renameEntry(file, newName, isRight) {
         // The backend stages the incoming item and rolls back failed commits.
         // Never pre-delete the existing destination just to make rename succeed.
         await call('move_with_progress', {src:oldPath, dest:parent, targetName:newName,
-          overwrite:true, replaceDirectory:action === 'replace-directory', operationId:taskId});
+          overwrite:true, replaceDirectory:action === 'replace-directory', operationId:taskId,
+          expectedSourceRevision:target.sourceRevision,expectedTargetRevision:target.targetRevision});
         completeOperationTask(taskId);
         return true;
       } catch (error) {
@@ -269,9 +272,9 @@ async function renameEntry(file, newName, isRight) {
       }
     }
   }
-  await call('rename_file', {path:oldPath, newName:finalName});
+  const renamed = await call('rename_file', {path:oldPath, newName:finalName,expectedSourceRevision:target.sourceRevision});
   const newPath = joinFolderPath(parent, finalName);
-  trackRename(oldPath, newPath);
+  trackRename(oldPath, newPath, renamed?.revision);
   await refresh();
   selectNavigatedPath(newPath, isRight);
   return true;
@@ -1003,6 +1006,7 @@ async function extractArchiveTo(file, destination, password, options) {
           password: currentPassword,
           operationId: taskId,
           overwrite,
+          extractionPlanId:inspection.planId,
         });
       } else {
         await call('extract_7z', {
@@ -1011,6 +1015,7 @@ async function extractArchiveTo(file, destination, password, options) {
           password: currentPassword,
           operationId: taskId,
           overwrite,
+          extractionPlanId:inspection.planId,
         });
       }
       completeOperationTask(taskId);
@@ -2099,14 +2104,14 @@ async function broadcastFileDropChanges(paths) {
   });
 }
 
-async function performDroppedFileOperation(paths, destination, destinationEntries, operation, reportOutcome) {
+async function performDroppedFileOperation(paths, destination, destinationEntries, operation, reportOutcome, taskOptions={}) {
   if(typeof isRecyclePath==='function'&&[destination,...paths].some(isRecyclePath))throw Error(recycleText('restoreFirst'));
   const existingNames = new Set((destinationEntries || []).map(entry => fileNameKey(entry.name)));
   const changedFolders = [destination];
   const conflictState = {action:null};
   let changed = false;
   let userCancelled = false;
-  const taskId = createOperationTaskId();
+  const taskId = taskOptions.taskId || createOperationTaskId();
   const errors = [];
   let taskStarted = false;
   const chooseConflict = (src, dest, options) => chooseTransferConflict(src, dest, conflictState, options);
@@ -2206,7 +2211,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
   if (taskStarted) {
     if (errors.length) {
       failOperationTask(taskId, errors);
-      alert(t(operation === 'copy' ? 'alert.copyFailed' : 'alert.moveFailed', {
+      if(!taskOptions.silent)alert(t(operation === 'copy' ? 'alert.copyFailed' : 'alert.moveFailed', {
         error: errors.join('\n'),
       }));
     } else if (userCancelled) {

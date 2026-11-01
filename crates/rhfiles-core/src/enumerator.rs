@@ -960,6 +960,7 @@ pub fn create_new_file(parent: &Path, template: &str, name: &str) -> Result<(), 
     } else {
         name.to_string()
     };
+    if matches!(file_name.as_str(),"."|"..")||file_name.contains(['/', '\\', ':','\0']){return Err("Invalid new-file name".into());}
 
     if template == "folder" {
         let mut p = parent.join(&file_name);
@@ -979,8 +980,19 @@ pub fn create_new_file(parent: &Path, template: &str, name: &str) -> Result<(), 
             "xml" => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root>\n</root>\n",
             _ => "",
         };
-        std::fs::write(&p, content).map_err(|e| e.to_string())
+        use std::io::Write;
+        let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&p).map_err(|e|format!("Could not create a new file without replacing an existing item: {e}"))?;
+        file.write_all(content.as_bytes()).map_err(|e|e.to_string())
     }
+}
+
+#[cfg(test)]mod new_file_safety_tests{
+    use super::*;
+    struct Owned(std::path::PathBuf);
+    impl Owned{fn new()->Self{let path=std::env::temp_dir().join(format!("rhfiles-new-file-safety-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir(&path).unwrap();Self(path)}}
+    impl Drop for Owned{fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}}
+    #[test]fn create_new_files_never_overwrite_an_existing_file_or_directory(){let data=Owned::new();std::fs::write(data.0.join("existing.json"),b"preserve").unwrap();assert!(create_new_file(&data.0,"json","existing.json").is_err());assert_eq!(std::fs::read(data.0.join("existing.json")).unwrap(),b"preserve");std::fs::create_dir(data.0.join("directory")).unwrap();assert!(create_new_file(&data.0,"txt","directory").is_err());assert!(data.0.join("directory").is_dir());}
+    #[test]fn create_new_files_reject_path_names_and_keep_templates(){let data=Owned::new();for name in ["../outside","..\\outside","C:\\outside",".","..","x\0y"]{assert!(create_new_file(&data.0,"json",name).is_err());}create_new_file(&data.0,"json","new.json").unwrap();assert_eq!(std::fs::read_to_string(data.0.join("new.json")).unwrap(),"{\n}\n");}
 }
 
 pub fn get_file_association(extension: &str) -> Result<String, String> {
