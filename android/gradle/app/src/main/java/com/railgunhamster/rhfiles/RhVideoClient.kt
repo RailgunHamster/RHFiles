@@ -56,6 +56,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
   private data class Asset(val session:Session,val path:String,val image:Boolean)
   private val lock=Any()
   private val prefs=context.getSharedPreferences("rhvideo-client-v1",Context.MODE_PRIVATE)
+  private val syncContext=context
   private val contract by lazy{RhVideoContract(operationManifest?:JSONObject(context.assets.open("rhvideo/rhvideo-operations.json").bufferedReader().use{it.readText()}))}
   private val refreshLock=Any()
   private val restoreLock=Any()
@@ -266,7 +267,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
   private fun expire(s:Session,code:Int){
     if(code==401)synchronized(lock){if(generation==s.generation&&(session?.generation==s.generation||session==null&&restoring)){++generation;session=null;assets.clear();videoCache=null;prepared.clear();gridSession=null;playbackSession=null;resetMediaState();restoreAttempted=true;restoring=false;loginWarning=try{credentialStore.clear();"保存的登录已失效，请重新登录"}catch(_:Exception){"登录已失效，但无法移除本机记录；请检查应用存储权限"}}}
   }
-  fun state():JSONObject=synchronized(lock){JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:prefs.getString("server","")).put("username",session?.username?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",credentialStore.exists()).put("restoring",restoring).put("loginWarning",loginWarning).put("generation",generation).put("assetRevision",assetRevision)}
+  fun state():JSONObject=synchronized(lock){val shared=if(session==null)runCatching{ConfigSync.rhvideoPrefill(syncContext)}.getOrNull()else null;JSONObject().put("connected",session!=null).put("server",session?.base?.toString()?:shared?.optString("server")?:prefs.getString("server","")).put("username",session?.username?:shared?.optString("username")?:prefs.getString("username","")).put("nativePlayback",true).put("credentialsPersisted",credentialStore.exists()).put("restoring",restoring).put("loginWarning",loginWarning).put("generation",generation).put("assetRevision",assetRevision)}
   fun restore(fresh:Boolean=false):JSONObject{
     val(observed,joined)=synchronized(lock){generation to restoring}
     return synchronized(restoreLock) restoreAttempt@{
@@ -364,7 +365,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
     var expires=1800L
     val token=writeHttp.newCall(request).execute().use{r->check(r.isSuccessful){if(r.code==401)"用户名或密码不正确"else "登录失败（HTTP ${r.code}）"};val value=readJson(r) as JSONObject;expires=value.optLong("expires_in",1800);value.getString("access_token")}
     require(token.isNotBlank()&&token.length<=32768&&!token.any{it.code<32}){"服务器返回了无效的登录令牌"}
-    synchronized(lock){check(ticket==generation){"登录已取消"};session=Session(base,user,token,ticket,deadline(expires));persistLogin(session!!);prefs.edit().putString("server",base.toString()).putString("username",user).apply()}
+    synchronized(lock){check(ticket==generation){"登录已取消"};session=Session(base,user,token,ticket,deadline(expires));persistLogin(session!!);synchronized(ConfigSync.rhvideoLock){check(prefs.edit().putString("server",base.toString()).putString("username",user).commit()){"媒体连接信息保存失败"}}}
     return state()
   }
   fun contextMatches(args:JSONObject,allowDisconnected:Boolean=false):Boolean=synchronized(lock){

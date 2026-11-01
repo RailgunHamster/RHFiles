@@ -2,6 +2,13 @@ import test from 'node:test';import assert from 'node:assert/strict';import {cre
 const require=createRequire(import.meta.url),model=require('../../src/js/shared-config.js');
 const id='11111111-1111-4111-8111-111111111111',profile={id,config:{type:'smb',name:'Test only',host:'sync.invalid',share:'Public',username:'test'}};
 const doc=(names=[],label)=>({schemaVersion:1,profiles:[profile],favorites:names.map(name=>({name,path:`remote://${id}/${name}`,isDir:true,...(label?{label}: {})}))});
+test('RHVideo address and username merge together, upgrade only when present and require conflict choices',()=>{
+  const old=model.empty(),one={...model.empty(),schemaVersion:2,rhvideo:{server:'https://one.invalid/',username:'one'}},two={...model.empty(),schemaVersion:2,rhvideo:{server:'https://two.invalid/',username:'two'}};
+  assert.deepEqual(model.merge(old,old,one).document,one);assert.deepEqual(model.merge(old,one,old).document,one);
+  const conflict=model.merge(old,one,two);assert.equal(conflict.conflicts[0].kind,'rhvideo');assert.deepEqual(model.merge(old,one,two,'remote').document,two);
+  assert.deepEqual(model.merge(one,old,one).document,old);assert.deepEqual(model.merge(one,one,two).document,two);
+  const favorite=doc(['A']);assert.equal(model.merge(old,favorite,one).document.favorites.length,1);assert.deepEqual(model.merge(old,favorite,one).document.rhvideo,one.rhvideo);
+});
 test('Android-compatible ordering preserves a one-sided reorder and labels',()=>{
   const base=doc(['Z','A','M']),local=doc(['M','Z','A']),remote=doc(['Z','A','M']);remote.favorites[1].label='中文别名';
   const result=model.merge(base,local,remote);assert.deepEqual(result.conflicts,[]);assert.deepEqual(result.document.favorites.map(f=>f.name),['M','Z','A']);assert.equal(result.document.favorites[2].label,'中文别名');

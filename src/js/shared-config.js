@@ -36,6 +36,10 @@
         if(selected!=null)document[key].push(selected);
       }
     }
+    const [bv,lv,rv]=[base,local,remote].map(doc=>doc.rhvideo??null);let media;
+    if(same(lv,rv))media=lv;else if(same(lv,bv))media=rv;else if(same(rv,bv))media=lv;
+    else{conflicts.push({kind:'rhvideo',id:'rhvideo',local:lv,remote:rv});media=choice==='remote'?rv:lv;}
+    if(media!=null){document.schemaVersion=2;document.rhvideo=media;}
     const ids=new Set(document.profiles.map(p=>p.id)),kept=[];
     for(const f of document.favorites){
       const id=new URL(f.path).host;

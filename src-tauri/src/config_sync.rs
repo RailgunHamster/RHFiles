@@ -15,6 +15,37 @@ use std::{
 use tauri::Emitter;
 use url::Url;
 const LIMIT: usize = 1024 * 1024;
+static RHVIDEO_METADATA: Mutex<()> = Mutex::new(());
+pub(crate) fn rhvideo_metadata_guard()->Result<std::sync::MutexGuard<'static,()>,String>{RHVIDEO_METADATA.lock().map_err(error)}
+fn validate_rhvideo(value:&Value)->Result<(),String>{
+    let fields=value.as_object().ok_or("RHVideo 连接信息无效")?;
+    if fields.len()!=2 || !fields.keys().all(|k|["server","username"].contains(&k.as_str())) {return Err("RHVideo 同步只允许服务器地址和用户名，不允许密码、令牌或其他字段".into());}
+    let server=value["server"].as_str().filter(|v|v.len()<=4096).ok_or("RHVideo 地址无效")?;
+    let url=Url::parse(server).map_err(|_|"RHVideo 地址无效")?;
+    if server.chars().any(char::is_control)||!matches!(url.scheme(),"http"|"https")||url.host_str().is_none()||!url.username().is_empty()||url.password().is_some()||url.query().is_some()||url.fragment().is_some(){return Err("RHVideo 地址不能包含密码、账号、查询参数或片段".into());}
+    if !value["username"].as_str().is_some_and(|v|v.len()<=256&&!v.chars().any(char::is_control)){return Err("RHVideo 用户名无效".into());}Ok(())
+}
+fn raw_rhvideo_at(path:&Path)->Result<Option<Value>,String>{
+    let file=match std::fs::File::open(path){Ok(file)=>file,Err(e)if e.kind()==std::io::ErrorKind::NotFound=>return Ok(None),_=>return Err("RHVideo 本机连接记录无法读取；未上传".into())};
+    let mut bytes=Vec::new();file.take(16385).read_to_end(&mut bytes).map_err(error)?;if bytes.len()>16384{return Err("RHVideo 本机连接记录过大；未上传".into());}
+    let value:Value=serde_json::from_slice(&bytes).map_err(|_|"RHVideo 本机连接记录无效；未上传")?;
+    if value["server"].as_str()==Some(""){return Ok(None);}
+    let public=json!({"server":value["server"],"username":value["username"]});validate_rhvideo(&public)?;Ok(Some(public))
+}
+fn raw_rhvideo()->Result<Option<Value>,String>{
+    #[cfg(test)] return Ok(None); // Unit tests never read the user's media configuration.
+    #[cfg(not(test))] raw_rhvideo_at(&crate::profile::data_dir()?.join("rhvideo-client.json"))
+}
+fn selected_rhvideo(conn:&Connection,raw:Option<Value>)->Result<Option<Value>,String>{
+    if state(conn,"rhvideoObserved")?.as_ref()==Some(raw.as_ref().unwrap_or(&Value::Null)) {
+        return Ok(state(conn,"document")?.and_then(|v|v.get("rhvideo").cloned()));
+    }
+    Ok(raw)
+}
+pub(crate) fn rhvideo_prefill()->Option<Value>{
+    #[cfg(test)] return None;
+    #[cfg(not(test))] {let conn=db().ok()?;selected_rhvideo(&conn,raw_rhvideo().ok()?).ok()?}
+}
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Config {
@@ -95,7 +126,7 @@ fn vault_scope(path: &Path) -> Result<Vec<u8>, String> {
     .into_bytes())
 }
 #[cfg(windows)]
-fn crypt(bytes: &[u8], scope: &[u8], encrypt: bool) -> Result<Vec<u8>, String> {
+pub(crate) fn crypt(bytes: &[u8], scope: &[u8], encrypt: bool) -> Result<Vec<u8>, String> {
     use windows::{
         Win32::{
             Foundation::{HLOCAL, LocalFree},
@@ -267,11 +298,12 @@ fn portable_url(value: &str, ids: &HashSet<String>) -> Result<Url, String> {
 }
 fn validate(doc: &Value) -> Result<(), String> {
     if doc.to_string().len() > LIMIT
-        || doc.as_object().map(|v| v.len()) != Some(3)
-        || doc["schemaVersion"] != 1
+        || !doc.as_object().is_some_and(|v|v.keys().all(|k|["schemaVersion","profiles","favorites","rhvideo"].contains(&k.as_str()))&&v.len()==if doc.get("rhvideo").is_some(){4}else{3})
+        || doc["schemaVersion"] != if doc.get("rhvideo").is_some(){2}else{1}
     {
         return Err("不是支持的 RHFiles 同步配置，未更改本机设置".into());
     }
+    if let Some(value)=doc.get("rhvideo"){validate_rhvideo(value)?;}
     let profiles = doc["profiles"]
         .as_array()
         .filter(|v| v.len() <= 200)
@@ -540,11 +572,13 @@ fn snapshot(conn: &Connection) -> Result<Value, String> {
         }
     }
     favorites.extend(next);
-    let doc = json!({"schemaVersion":1,"profiles":profiles,"favorites":favorites});
+    let mut doc = json!({"schemaVersion":1,"profiles":profiles,"favorites":favorites});
+    if let Some(media)=selected_rhvideo(conn,raw_rhvideo()?)?{doc["schemaVersion"]=json!(2);doc["rhvideo"]=media;}
     validate(&doc)?;
     Ok(doc)
 }
 fn apply(conn: &Connection, doc: &Value) -> Result<(), String> {
+    store(conn,"rhvideoObserved",&raw_rhvideo()?.unwrap_or(Value::Null))?;
     let profiles = doc["profiles"].as_array().ok_or("网络位置无效")?;
     let mut shared = doc["favorites"]
         .as_array()
@@ -763,7 +797,7 @@ pub fn config_sync_status() -> Result<Value, String> {
     let local = snapshot(&conn)?;
     let r = runtime().lock().map_err(error)?;
     Ok(
-        json!({"config":public_config(&config),"state":if r.phase.is_empty(){"idle"}else{&r.phase},"message":r.message,"lastSuccess":state(&conn,"lastSuccess")?,"profiles":local["profiles"],"busy":r.busy}),
+        json!({"config":public_config(&config),"state":if r.phase.is_empty(){"idle"}else{&r.phase},"message":r.message,"lastSuccess":state(&conn,"lastSuccess")?,"profiles":local["profiles"],"rhvideo":local.get("rhvideo"),"busy":r.busy}),
     )
 }
 
@@ -887,6 +921,7 @@ pub async fn config_sync_commit(
                     return Err(http_error(reply.status));
                 }
             }
+            let _metadata=rhvideo_metadata_guard()?;
             let tx = conn
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(error)?;
@@ -898,7 +933,7 @@ pub async fn config_sync_commit(
             {
                 let mut r = runtime().lock().map_err(error)?;
                 r.phase = "success".into();
-                r.message = "已同步网络位置和网络收藏；密码、设备组和本机配置未上传".into();
+                r.message = "已同步网络位置、网络收藏和 RHVideo 连接信息；密码、令牌、设备组和本机配置未上传".into();
             }
             let _ = app.emit("config-sync-changed", ());
             Ok(json!({"state":"success"}))
@@ -911,6 +946,23 @@ pub async fn config_sync_commit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_sync_v2_is_allowlisted_and_never_imports_credentials_or_session_fields(){
+        let media=json!({"server":"https://media-qa.invalid/library/","username":"viewer"});let mut doc=empty();doc["schemaVersion"]=json!(2);doc["rhvideo"]=media.clone();validate(&doc).unwrap();
+        for key in ["password","token","refreshToken","generation","fingerprint","headers"]{let mut invalid=doc.clone();invalid["rhvideo"][key]=json!("never-export");assert!(validate(&invalid).is_err(),"{key}");}
+        for address in ["https://user:secret@media.invalid/","https://media.invalid/?token=secret","https://media.invalid/#secret","file:///C:/private","https://media.invalid/\n"]{let mut invalid=doc.clone();invalid["rhvideo"]["server"]=json!(address);assert!(validate(&invalid).is_err(),"{address}");}
+        doc["schemaVersion"]=json!(1);assert!(validate(&doc).is_err());validate(&empty()).unwrap();
+        let root=tempfile::tempdir().unwrap();let path=root.path().join("rhvideo-client.json");std::fs::write(&path,json!({"server":media["server"],"username":"viewer","password":"do-not-export","token":"local-only-token"}).to_string()).unwrap();assert_eq!(raw_rhvideo_at(&path).unwrap(),Some(media));
+        std::fs::write(&path,vec![b' ';16385]).unwrap();assert!(raw_rhvideo_at(&path).is_err());
+    }
+    #[test]
+    fn synced_media_prefill_preserves_local_edits_and_does_not_bounce_to_the_old_address(){
+        let c=connection();let old=json!({"server":"https://old.invalid/","username":"local-user"});let remote=json!({"server":"https://new.invalid/","username":"new-user"});
+        let mut doc=empty();doc["schemaVersion"]=json!(2);doc["rhvideo"]=remote.clone();store(&c,"document",&doc).unwrap();store(&c,"rhvideoObserved",&old).unwrap();
+        assert_eq!(selected_rhvideo(&c,Some(old)).unwrap(),Some(remote.clone()));assert_eq!(selected_rhvideo(&c,Some(remote.clone())).unwrap(),Some(remote.clone()));
+        let edited=json!({"server":"https://manually-edited.invalid/","username":"mine"});assert_eq!(selected_rhvideo(&c,Some(edited.clone())).unwrap(),Some(edited));
+        store(&c,"rhvideoObserved",&Value::Null).unwrap();assert_eq!(selected_rhvideo(&c,None).unwrap(),Some(remote));assert_eq!(snapshot(&c).unwrap(),doc);
+    }
     #[test]
     fn weak_wildcard_and_malformed_etags_can_never_become_if_match_wildcards() {
         for tag in ["*", "bare", "W/\"tag\"", "\"a\", \"b\"", "\"a\n\"", ""] {

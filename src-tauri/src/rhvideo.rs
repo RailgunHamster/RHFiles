@@ -555,6 +555,7 @@ fn config_path() -> Result<std::path::PathBuf, String> {
     Ok(crate::profile::data_dir()?.join("rhvideo-client.json"))
 }
 fn read_config() -> Config {
+    if let Some(value)=crate::config_sync::rhvideo_prefill(){if let Ok(config)=serde_json::from_value(value){return config;}}
     config_path()
         .ok()
         .and_then(|p| std::fs::read(p).ok())
@@ -2091,12 +2092,17 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 if generation != GENERATION.load(Ordering::SeqCst) {
                     return Err("连接已取消，未切换媒体账户".into());
                 }
+                let _metadata=crate::config_sync::rhvideo_metadata_guard()?;
                 let config=Config{server:session.base.to_string(),username};let path=config_path()?;
                 if let Some(parent)=path.parent(){std::fs::create_dir_all(parent).map_err(|_|"无法保存媒体库地址")?;}
-                std::fs::write(&path,serde_json::to_vec(&config).map_err(|_|"配置无效")?).map_err(|_|"无法保存媒体库地址")?;
+                use std::io::Write;
+                let mut file=tempfile::NamedTempFile::new_in(path.parent().ok_or("媒体配置路径无效")?).map_err(|_|"无法保存媒体库地址")?;
+                file.write_all(&serde_json::to_vec(&config).map_err(|_|"配置无效")?).and_then(|_|file.as_file().sync_all()).map_err(|_|"无法保存媒体库地址")?;
+                file.persist(&path).map_err(|_|"无法保存媒体库地址")?;
                 store_login(&session);
                 *slot = Some(session);
             }
+            let _=app.emit("rhvideo-config-changed",());
             return Ok(state());
         }
         _ => {}

@@ -22,7 +22,7 @@ const configSync=(()=>{
     for(const control of form.elements)control.disabled=busy;
     $('sync-now').disabled=busy;$('sync-local').hidden=$('sync-remote').hidden=status.state!=='conflict';
     const list=$('sync-conflicts');list.replaceChildren();
-    for(const item of status.conflicts||[]){const value=item.local||item.remote;list.append(ui.el('li','',item.kind==='favoriteOrder'?'快捷访问排列顺序（两端顺序不同）':item.kind==='profiles'?'网络位置：'+(value?.config?.name||item.id):'收藏：'+(value?.label||value?.name||item.id)));}
+    for(const item of status.conflicts||[]){const value=item.local||item.remote;list.append(ui.el('li','',item.kind==='rhvideo'?'RHVideo 地址及用户名：'+(value?.server||''):item.kind==='favoriteOrder'?'快捷访问排列顺序（两端顺序不同）':item.kind==='profiles'?'网络位置：'+(value?.config?.name||item.id):'收藏：'+(value?.label||value?.name||item.id)));}
   }
   async function refresh(){if(!api.syncAvailable())return;status=await api.native('sync.status');if(form&&!dirty){for(const e of form.elements)if(e.name&&e.name!=='password'&&e.name!=='clearPassword'){if(e.type==='checkbox')e.checked=!!status.config[e.name];else e.value=status.config[e.name]||'';}form.elements.password.placeholder=status.config.hasPassword?'已保存；留空保留原密码':'密码（仅保存在本机）';}paint();return status;}
   function schedule(delay=1800){if(!workbench.primary()||applying)return;clearTimeout(timer);timer=setTimeout(()=>{if(!document.hidden)refresh().then(()=>run(false)).catch(app.error);},delay);}
@@ -48,7 +48,7 @@ const configSync=(()=>{
   function init(context){
     app=context;const tab=document.querySelector('[data-settings-section=sync]');tab.hidden=!api.syncAvailable();if(!api.syncAvailable())return;
     const alert=ui.el('button','icon-btn update-indicator sync-attention');alert.id='config-sync-alert';alert.hidden=true;alert.innerHTML=ui.icon('cloud');RHFilesUI.assign(alert,"click",()=>app.go({screen:'tool',tool:'settings',section:'sync'}).catch(app.error),"android.web.js.config-sync.init.1487afb6d96d");document.querySelector('.topbar').insertBefore(alert,$('btn-overflow'));
-    const panel=$('config-sync');panel.replaceChildren(ui.el('h2','','WebDAV 配置同步'),ui.el('p','muted','同步网络位置、网络路径收藏和收藏名称；不上传任何登录密码。本地路径收藏、主题、分屏、系统授权、缓存和任务留在各设备。'));
+    const panel=$('config-sync');panel.replaceChildren(ui.el('h2','','WebDAV 配置同步'),ui.el('p','muted','同步网络位置、网络路径收藏、收藏名称和 RHVideo 地址/用户名；不上传密码或令牌。本地路径收藏、主题、分屏、系统授权、缓存和任务留在各设备。'));
     form=ui.el('form','update-form');
     for(const [name,label,type] of [['enabled','自动同步','checkbox'],['url','WebDAV 文件夹地址（已存在的目录）','url'],['username','WebDAV 用户名','text'],['password','WebDAV 密码（仅本机使用）','password'],['clearPassword','清除已保存的 WebDAV 密码','checkbox'],['insecure','允许明文 HTTP（仅限可信局域网）','checkbox']]){
       const row=ui.el('label','',label),input=document.createElement('input');input.name=name;input.type=type;input.autocomplete='off';if(name==='url')input.placeholder='https://nas.example/dav/RHFiles/';row.append(input);form.append(row);
@@ -59,7 +59,7 @@ const configSync=(()=>{
     const info=ui.el('p','kv');info.id='sync-state';info.setAttribute('role','status');const actions=ui.el('div','button-row');
     const make=(id,label,handler)=>{const b=ui.el('button','',label);b.id=id;b.type='button';RHFilesUI.assign(b,"click",()=>Promise.resolve().then(handler).catch(app.error),"android.web.js.config-sync.make.cdbfd49f3fbf");return b;};
     actions.append(make('sync-now','立即同步',()=>run(true)),make('sync-local','冲突项使用本机更改',()=>resolve('local')),make('sync-remote','冲突项使用云端更改',()=>resolve('remote')));const conflicts=ui.el('ul','muted');conflicts.id='sync-conflicts';panel.append(info,conflicts,actions,
-      ui.el('p','muted','同步文件固定为 rhfiles-settings-v1.json，含服务器地址、账号名及网络收藏路径，请使用私有目录。新设备请在“网络位置 → 编辑连接”补填密码。写入前检查云端版本，冲突时由你选择；不会改动实际文件。'),
+      ui.el('p','muted','同步文件固定为 rhfiles-settings-v1.json，含服务器地址、账号名及网络收藏路径，请使用私有目录。新设备请在“网络位置 → 编辑连接”补填密码。写入前检查云端版本，冲突时由你选择；不会改动实际文件。包含 RHVideo 时使用格式 v2，各端需升级；旧客户端会停止同步并保留配置，不会覆盖新字段。'),
       ui.el('p','muted','完整加密备份仍在“配置备份”：包含所有可备份配置及密码。导入备份后自动同步保持关闭，检查后再开启，避免把旧配置直接推送到其他设备。'));
     async function resolve(choice){if(await ui.confirm('处理同步冲突？','只处理列出的冲突项，其他项目仍合并。此操作仅改变连接和收藏配置，不删除实际文件。',choice==='local'?'使用本机更改':'使用云端更改',{danger:false,icon:'refresh'}))await run(true,choice);}
     refresh().then(()=>schedule(200)).catch(app.error);
