@@ -38,10 +38,30 @@ async function transferFixture({mobile=false,zh=true,respond,qr,copy}={}){
   load(ctx,'device-groups-ui.js');
   const state={deviceId:'self',defaultDeviceName:'QA',groups:[{id:'rh',name:'RH',permissions:{},members:[{id:'self',self:true,canInvite:true}]}]};
   await vm.runInContext('deviceGroupView',ctx).mount(host,{mobile,zh,copy,qr,call:async(command,args)=>{calls.push({command,args:plain(args)});return command==='state'?plain(state):respond(command,args);}});
-  const incoming=labeled(host,zh?'粘贴入组请求或批准信息':'Paste a request or approval');incoming.value='rhfiles-group-request:v1:fixture';
+  const incoming=labeled(host,zh?'粘贴邀请、入组请求或批准信息':'Paste an invitation, request or approval');incoming.value='rhfiles-group-request:v1:fixture';
   labeled(host,zh?'已核对信息来自我信任的设备':'I verified this data came from a trusted device').checked=true;
   return {host,calls,click:label=>{const target=all(host).find(node=>node.tagName==='button'&&node.textContent===label);assert.ok(target,label);return target.fire('click');}};
 }
+for(const mobile of [false,true])for(const zh of [true,false])for(const kind of ['invite','approval'])test(`${mobile?'Android':'Windows'} join dispatches ${kind} text unchanged (${zh?'zh':'en'})`,async()=>{
+  const {host,calls,click}=await transferFixture({mobile,zh,respond:()=> 'joined-fixture'});
+  const uri=`rhfiles-group-${kind}:v1:generated-test-only`;
+  labeled(host,zh?'粘贴邀请、入组请求或批准信息':'Paste an invitation, request or approval').value=' \n'+uri+'\n ';
+  await click(zh?'使用邀请或批准信息加入':'Join with invitation or approval');
+  assert.deepEqual(calls.filter(c=>c.command==='join'),[{command:'join',args:{uri,confirmed:true}}]);
+  assert.match(host.textContent,zh?/已加入/:/Joined/);
+});
+for(const zh of [true,false])test(`a request cannot be joined as an invitation; the UI explains approval (${zh?'zh':'en'})`,async()=>{
+  const {host,calls,click}=await transferFixture({zh,respond:()=>{throw Error('Must not send a request to join');}});
+  await click(zh?'使用邀请或批准信息加入':'Join with invitation or approval');
+  assert.equal(calls.filter(c=>c.command==='join').length,0);
+  assert.match(host.textContent,zh?/这是入组请求，请交给已有成员批准/:/This is a join request/);
+});
+test('invitation join still requires explicit local trust confirmation',async()=>{
+  const {host,calls,click}=await transferFixture({respond:()=>{throw Error('Must not call join');}});
+  labeled(host,'粘贴邀请、入组请求或批准信息').value='rhfiles-group-invite:v1:generated-test-only';
+  labeled(host,'已核对信息来自我信任的设备').checked=false;
+  await click('使用邀请或批准信息加入');assert.equal(calls.filter(c=>c.command==='join').length,0);assert.match(host.textContent,/请先核对来源并勾选确认/);
+});
 for(const mobile of [false,true])for(const zh of [true,false])for(const transfer of transfers.filter(value=>!mobile||value.command!=='invite'))test(`${mobile?'Android':'Windows'} ${transfer.command} shows QR and complete copyable text together (${zh?'zh':'en'})`,async()=>{
   const uri='rhfiles-group-'+(transfer.command==='request'?'request':'approval')+':v1:'+('公开proof_'.repeat(9000)),language=zh?0:1;let copied;
   const {host,click,calls}=await transferFixture({mobile,zh,copy:value=>{copied=value;},respond:command=>{assert.equal(command,transfer.command);return {uri,qrSvg:'<svg/>'};}});
@@ -167,7 +187,7 @@ test('scanning group approval preserves the local phone name, including an edite
   }});
   const scan=all(host).find(n=>n.tagName==='button'&&n.textContent==='扫码');
   await scan.fire('click');assert.equal(labeled(host,'设备名称').value,'Moto 工作手机');
-  assert.equal(labeled(host,'粘贴入组请求或批准信息').value,'');
+  assert.equal(labeled(host,'粘贴邀请、入组请求或批准信息').value,'');
   labeled(host,'设备名称').value='我的自定义手机';await scan.fire('click');
   await all(host).find(n=>n.tagName==='button'&&n.textContent==='生成本机入组请求').fire('click');
   assert.equal(calls.find(c=>c.command==='request').args.deviceName,'我的自定义手机');

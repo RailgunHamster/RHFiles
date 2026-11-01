@@ -50,6 +50,29 @@ pub async fn device_groups(
     args: Value,
     app: tauri::AppHandle,
 ) -> Result<Value, String> {
+    if command == "join"
+        && field(&args, "uri")?
+            .trim()
+            .starts_with(rhfiles_service::connection::INVITATION_PREFIX)
+    {
+        let groups = crate::lan_service::groups()?;
+        let id = rhfiles_service::connection::join_invitation(
+            &groups,
+            field(&args, "uri")?,
+            &default_device_name(),
+            args.get("confirmed") == Some(&Value::Bool(true)),
+            permissions(&args)?,
+        )
+        .await?;
+        connector()?.invalidate();
+        // Membership is already committed and the invitation consumed. A local
+        // service advertisement failure must not report that joining failed.
+        if let Err(error) = crate::lan_service::advertise_groups() {
+            eprintln!("Group joined; local service advertisement unavailable: {error}");
+        }
+        let _ = app.emit("device-groups-changed", ());
+        return Ok(json!(id));
+    }
     if command == "connect" {
         let connector = connector()?;
         let report = connector
@@ -147,6 +170,15 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
             "join" => {
                 if args.get("confirmed") != Some(&Value::Bool(true)) {
                     return Err(err("请在本机确认信任入组证明的来源"));
+                }
+                if field(args, "uri")
+                    .map_err(err)?
+                    .trim()
+                    .starts_with("rhfiles-group-request:v1:")
+                {
+                    return Err(err(
+                        "这是入组请求，请交给已有成员批准，再将批准信息带回本机加入",
+                    ));
                 }
                 let packet: Packet = decode(
                     field(args, "uri").map_err(err)?,
