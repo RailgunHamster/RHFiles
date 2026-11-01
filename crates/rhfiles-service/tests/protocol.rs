@@ -645,7 +645,7 @@ async fn readonly_and_revocation_are_enforced_in_both_protocols() {
             .await
             .unwrap()
             .status(),
-        403
+        401
     );
     assert!(!f.share.join("new").exists());
 }

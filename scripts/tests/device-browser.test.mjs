@@ -7,6 +7,7 @@ function fixture(){
     calls.push({cmd,args});if(cmd==='device_groups')return state;
     if(cmd==='get_windows_file_clipboard_info')return {sequence:19};
     if(cmd==='device_fs')return args.action==='resource'?{url:'http://127.0.0.1:1234/device/'+'c'.repeat(43)}:[{name:'A.txt',path}];
+    if(cmd==='device_transfer')return {native:true,action:args.action};
     throw Error('Unexpected native operation '+cmd);
   }});
   vm.runInContext(fs.readFileSync(new URL('../../src/js/device-browser.js',import.meta.url),'utf8'),ctx);
@@ -18,6 +19,18 @@ test('device UI APIs list locally accepted peers without probing or exposing ses
   await f.run('devices.open',{group,peer,path:'/Files/中文%',newTab:true,pane:'right'});
   assert.deepEqual(f.calls.filter(v=>v.id).map(v=>v.id),['tabs.new','navigation.open']);assert.equal(f.calls.at(-1).args.path,P.make(group,peer,'/Files/中文%'));
   f.setState({groups:[{id:group,name:'RH',members:[{id:peer,server:{},blocked:true}]}]});await f.run('devices.refresh');assert.equal((await f.run('devices.list')).devices.length,0);
+});
+
+test('copy/cut/paste and merge cleanup route both transfer directions to the native device engine, never to local shell APIs',async()=>{
+  const f=fixture();
+  for(const [command,action]of [['copy_with_progress','copy'],['move_with_progress','move'],['copy_path_exact','copy_exact'],['move_path_exact','move_exact'],['plan_folder_merge','plan_merge']]){
+    for(const args of [{src:'C:\\fixtures\\本机',dest:path,operationId:'fixture-1'},{src:path,dest:'C:\\fixtures\\下载',operationId:'fixture-2'},{src:path,dest:P.make(group,peer,'/Files/other'),operationId:'fixture-3'}]){
+      const result=await f.route(command,args);assert.equal(result.value.action,action);assert.equal(f.calls.at(-1).cmd,'device_transfer');assert.deepEqual(f.calls.at(-1).args.args,args);
+    }
+  }
+  assert.equal((await f.route('remove_empty_merge_folders',{paths:[path,'C:\\fixtures\\empty']})).value.action,'remove_empty');
+  assert.equal(await f.route('device_transfer',{action:'copy',args:{src:path,dest:'C:\\fixtures'}}),null,'native forwarding cannot recursively intercept itself');
+  const result=await f.run('devices.transfer',{operation:'copy',src:'C:\\fixture',dest:path});assert.equal(result.action,'copy');
 });
 test('device reads route to native group filesystem and local-only actions never receive identity URIs',async()=>{
   const f=fixture();assert.equal((await f.route('parent_path',{path})).value,P.parent(path));

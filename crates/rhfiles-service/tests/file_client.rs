@@ -38,6 +38,28 @@ fn identity_uris_preserve_case_unicode_and_literal_percent_without_normalizing_t
 }
 
 #[tokio::test]
+async fn checked_mutations_replace_only_the_confirmed_file_and_never_delete_a_recreated_source(){
+    let f=fixture();
+    let stat=|name:&str|FileRequest::Stat{path:format!("/Files/{name}")};
+    std::fs::write(f.files.join("source"),b"new").unwrap();std::fs::write(f.files.join("target"),b"old").unwrap();
+    let source=f.connector.file_request(&f.group,&f.peer,stat("source")).await.unwrap().json(65536).await.unwrap();
+    let target=f.connector.file_request(&f.group,&f.peer,stat("target")).await.unwrap().json(65536).await.unwrap();
+    let op=|source_rev:&str,target_rev:&str|FileRequest::CheckedMutation{path:"/Files/source".into(),destination:Some("/Files/target".into()),revision:source_rev.into(),target_revision:Some(target_rev.into())};
+    std::fs::rename(f.files.join("target"),f.files.join("original-target")).unwrap();std::fs::write(f.files.join("target"),b"xyz").unwrap();
+    let error=f.connector.file_request(&f.group,&f.peer,op(source["revision"].as_str().unwrap(),target["revision"].as_str().unwrap())).await.err().unwrap();assert!(error.starts_with("[conflict]"),"{error}");
+    assert_eq!(std::fs::read(f.files.join("target")).unwrap(),b"xyz");assert_eq!(std::fs::read(f.files.join("source")).unwrap(),b"new");
+    let current=f.connector.file_request(&f.group,&f.peer,stat("target")).await.unwrap().json(65536).await.unwrap();
+    f.connector.file_request(&f.group,&f.peer,op(source["revision"].as_str().unwrap(),current["revision"].as_str().unwrap())).await.unwrap();
+    assert_eq!(std::fs::read(f.files.join("target")).unwrap(),b"new");assert!(!f.files.join("source").exists());
+    std::fs::write(f.files.join("source"),b"aba").unwrap();
+    let error=f.connector.file_request(&f.group,&f.peer,FileRequest::CheckedMutation{path:"/Files/source".into(),destination:None,revision:source["revision"].as_str().unwrap().into(),target_revision:None}).await.err().unwrap();assert!(error.starts_with("[conflict]"));assert_eq!(std::fs::read(f.files.join("source")).unwrap(),b"aba");
+    std::fs::create_dir(f.files.join("folder")).unwrap();std::fs::write(f.files.join("folder/keep"),b"keep").unwrap();
+    let folder=f.connector.file_request(&f.group,&f.peer,stat("folder")).await.unwrap().json(65536).await.unwrap();
+    assert!(f.connector.file_request(&f.group,&f.peer,FileRequest::CheckedMutation{path:"/Files/folder".into(),destination:None,revision:folder["revision"].as_str().unwrap().into(),target_revision:None}).await.is_err());
+    assert_eq!(std::fs::read(f.files.join("folder/keep")).unwrap(),b"keep");
+}
+
+#[tokio::test]
 async fn dropping_a_connection_deadline_does_not_leave_a_live_cancel_handle() {
     let f = fixture();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-tauri"
-version = "0.1.93"
+version = "0.1.94"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -63,6 +63,7 @@ windows = { version = "0.62", features = [
     "Win32_Security",
     "Win32_Security_Cryptography",
     "Win32_System_JobObjects",
+    "Win32_System_Services",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",

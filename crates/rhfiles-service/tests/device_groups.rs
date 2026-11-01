@@ -42,10 +42,10 @@ async fn real_tls_sessions_offline_introductions_local_removal_restart_and_manua
     let url=format!("https://127.0.0.1:{}",server.status().port);
     let get=||http.get(format!("{url}/api/v1/content?path=/Files/%E4%B8%AD%E6%96%87.txt")).basic_auth(user,Some(password));
     assert_eq!(get().send().await.unwrap().bytes().await.unwrap(),&b"group-transfer"[..]);
-    a.remove(&id,&c.device_id()).unwrap();assert_eq!(get().send().await.unwrap().status(),403);
+    a.remove(&id,&c.device_id()).unwrap();assert_eq!(get().send().await.unwrap().status(),401);
     assert_eq!(session(&http,&server,&c,&id).await.status(),403);
     a.merge(&id,&c.packet(&id).unwrap()).unwrap();assert!(a.restore(&id,&c.device_id(),false).is_err());
-    assert_eq!(http.request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(),format!("{url}/dav/Files/")).header("Depth","1").basic_auth(user,Some(password)).send().await.unwrap().status(),403);
+    assert_eq!(http.request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(),format!("{url}/dav/Files/")).header("Depth","1").basic_auth(user,Some(password)).send().await.unwrap().status(),401);
     server.stop();drop(server);drop(a);
     let server=Service::start(data.path(),shares,"127.0.0.1:0".parse().unwrap()).unwrap();let http=client(&server);
     assert_eq!(session(&http,&server,&c,&id).await.status(),403);

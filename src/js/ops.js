@@ -456,6 +456,7 @@ async function mergeFoldersIfNeeded(src, target, operation, taskId, chooseConfli
         await call(operation + '_with_progress', {
           src: entry.src, dest: parent, overwrite, replaceDirectory:action === 'replace-directory',
           targetName: targetName === pathLeaf(entry.src) ? null : targetName, operationId: taskId,
+          ...(chooseConflict.revision?.(dest)?{expectedTargetRevision:chooseConflict.revision(dest)}:{}),
         });
         changed = true;
         if (!overwrite) completed.push([entry.src, dest]);
@@ -572,6 +573,7 @@ async function paste(isRight) {
   let taskStarted = false;
   let userCancelled = false;
   const chooseConflict = (src, dest, options) => chooseTransferConflict(src, dest, conflictState, options);
+  chooseConflict.revision = path => conflictState.targetRevisions?.get(windowsPathKey(path)) ?? null;
   try {
     for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
       if (taskStarted && isOperationCancellationRequested(taskId)) {
@@ -638,6 +640,7 @@ async function paste(isRight) {
           replaceDirectory: action === 'replace-directory',
           targetName: targetName === srcName ? null : targetName,
           operationId: taskId,
+          ...(chooseConflict.revision(targetPath)?{expectedTargetRevision:chooseConflict.revision(targetPath)}:{}),
         };
         if (clipboard.op === "cut") {
           await call("move_with_progress", args);
@@ -2107,6 +2110,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
   const errors = [];
   let taskStarted = false;
   const chooseConflict = (src, dest, options) => chooseTransferConflict(src, dest, conflictState, options);
+  chooseConflict.revision = path => conflictState.targetRevisions?.get(windowsPathKey(path)) ?? null;
 
   try {
     for (let sourceIndex = 0; sourceIndex < paths.length; sourceIndex++) {
@@ -2176,6 +2180,7 @@ async function performDroppedFileOperation(paths, destination, destinationEntrie
           replaceDirectory: conflictAction === 'replace-directory',
           targetName: targetName === sourceName ? null : targetName,
           operationId: taskId,
+          ...(chooseConflict.revision(targetPath)?{expectedTargetRevision:chooseConflict.revision(targetPath)}:{}),
         };
         if (operation === 'copy') {
           await call('copy_with_progress', args);

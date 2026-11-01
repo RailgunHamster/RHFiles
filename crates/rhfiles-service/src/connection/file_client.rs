@@ -146,6 +146,7 @@ pub enum FileRequest {
     Delete {
         path: String,
     },
+    CheckedMutation { path:String, destination:Option<String>, revision:String, target_revision:Option<String> },
     UploadCreate {
         path: String,
         length: u64,
@@ -166,6 +167,12 @@ impl FileRequest {
     fn validate(&self) -> Result<(), String> {
         match self {
             Self::Capabilities => Ok(()),
+            Self::CheckedMutation { path,destination,revision,target_revision } => {
+                validate_path(path)?;
+                if let Some(to)=destination {validate_path(to)?;}
+                if revision.is_empty()||revision.len()>256||target_revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256) {return Err("[invalid_request] 文件版本无效".into());}
+                Ok(())
+            }
             Self::UploadStatus { id }
             | Self::UploadCancel { id }
             | Self::UploadAppend { id, .. } => {
@@ -245,6 +252,7 @@ impl FileRequest {
             Self::Rename { .. } => "rename",
             Self::Copy { .. } => "copy",
             Self::Delete { .. } => "delete",
+            Self::CheckedMutation {destination,..} => if destination.is_some(){"rename.checked"}else{"delete.checked"},
             Self::UploadCreate { .. } => "upload.create",
             Self::UploadStatus { .. } => "upload.status",
             Self::UploadAppend { .. } => "upload.append",
@@ -273,6 +281,7 @@ impl FileRequest {
             Self::Rename { .. } => (Method::POST, "rename".into()),
             Self::Copy { .. } => (Method::POST, "copy".into()),
             Self::Delete { .. } => (Method::POST, "delete".into()),
+            Self::CheckedMutation {destination,..} => (Method::POST,if destination.is_some(){"rename-checked"}else{"delete-checked"}.into()),
             Self::UploadCreate { .. } => (Method::POST, "uploads".into()),
             Self::UploadStatus { id }
             | Self::UploadAppend { id, .. }
@@ -378,9 +387,17 @@ impl FileRequest {
                     .body(bytes.clone());
             }
             Self::Capabilities => {}
+            Self::CheckedMutation {path,destination,revision,target_revision} => {
+                request=request.json(&json!({"path":path,"destination":destination,"revision":revision,"targetRevision":target_revision}));
+            }
         }
         Ok(request)
     }
+}
+
+/// Strong local identity uses handle metadata, not a path/size-only snapshot.
+pub fn file_revision(file:&std::fs::File)->Result<String,String>{
+    cap_std::fs::Metadata::from_file(file).map(|m|crate::storage::metadata_revision(&m)).map_err(|e|e.to_string())
 }
 fn validate_path(path: &str) -> Result<(), String> {
     crate::storage::components(path)

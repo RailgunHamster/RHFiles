@@ -50,6 +50,8 @@ pub struct Status {
     pub shares: Vec<ShareConfig>,
     pub active_uploads: usize,
     pub discovery_error: Option<String>,
+    pub recovery_warnings: Vec<String>,
+    pub webdav_compatibility: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug)]

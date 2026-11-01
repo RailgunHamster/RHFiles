@@ -33,8 +33,17 @@ impl CancelFlag {
     }
 
     pub fn reset(&self, operation_id: Option<&str>) -> Result<(), String> {
+        self.activate(operation_id,false)
+    }
+    pub fn begin_named(&self, id:&str)->Result<ActiveOperation<'_>,String>{
+        if id.is_empty()||id.len()>128||!id.bytes().all(|b|b.is_ascii_alphanumeric()||b"-_.".contains(&b)){return Err("[invalid_request] Invalid operation ID".into());}
+        self.activate(Some(id),true)?;
+        Ok(ActiveOperation{cancel:self,id:id.into()})
+    }
+    fn activate(&self, operation_id:Option<&str>,exclusive:bool)->Result<(),String>{
         let key = Self::key(operation_id);
         let mut state = self.0.lock().map_err(|error| error.to_string())?;
+        if exclusive&&state.active.contains(&key){return Err("[busy] Operation ID is already active".into());}
         if state.updating { return Err("[update_busy] An update is being installed".into()); }
         if state.update_lock.is_none() {
             let lease = crate::profile::coordination_file("operations.lock")?;
@@ -100,6 +109,15 @@ impl CancelFlag {
 #[cfg(test)]
 mod cancel_flag_tests {
     use super::*;
+    #[test]
+    fn duplicate_named_operation_cannot_clear_or_cancel_the_original_guard() {
+        let flag=CancelFlag(Mutex::new(CancelState::default()));
+        let guard=flag.begin_named("owned-remote-1").unwrap();
+        assert!(flag.begin_named("owned-remote-1").is_err());
+        flag.cancel(Some("owned-remote-1")).unwrap();assert!(flag.is_cancelled(Some("owned-remote-1")).unwrap());
+        drop(guard);assert!(!flag.is_cancelled(Some("owned-remote-1")).unwrap());
+        assert!(flag.begin_named("owned-remote-1").is_ok());assert!(flag.begin_named("../not-safe").is_err());
+    }
 
     #[test]
     fn cancellation_is_scoped_to_active_operations() {

@@ -14,7 +14,7 @@ use std::{
 };
 mod file_client;
 mod join;
-pub use file_client::{DevicePath, FileLease, FileRequest, FileResponse};
+pub use file_client::{DevicePath, FileLease, FileRequest, FileResponse, file_revision};
 pub use join::{INVITATION_PREFIX, join_invitation};
 
 pub const TOTAL: Duration = Duration::from_secs(15);

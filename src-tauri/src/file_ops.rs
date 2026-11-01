@@ -348,6 +348,54 @@ fn rename_without_replacing(source: &Path, target: &Path) -> Result<(), String> 
     }
 }
 
+/// Publish a fully downloaded sibling with the existing crash-recovery journal.
+/// A replacement never unlinks the old target before the full data is durable.
+pub(crate) fn commit_remote_download(app:&tauri::AppHandle, source:&str, staging:&Path, target:&Path, expected:Option<&str>, operation_id:&str)->Result<(),String>{
+    let revision=|path:&Path|->Result<String,String>{rhfiles_service::connection::file_revision(&std::fs::File::open(path).map_err(|e|e.to_string())?)};
+    if target.parent()!=staging.parent(){return Err("[invalid_path] Download staging must be a destination sibling".into());}
+    if let Some(expected)=expected {if std::fs::symlink_metadata(target).map_err(|e|e.to_string())?.is_dir()||revision(target)?!=expected{return Err("[conflict] 目标已变化，未覆盖".into());}}
+    let backup=expected.map(|_|hidden_sibling(target.parent().unwrap(),"backup",operation_id));
+    let mut journal=TransferJournal{schema_version:1,operation_id:operation_id.into(),operation:"copy".into(),source:source.into(),target:target.to_string_lossy().into_owned(),staging:staging.to_string_lossy().into_owned(),backup:backup.as_ref().map(|v|v.to_string_lossy().into_owned()),phase:"stagingReady".into()};
+    let log=journal_path(app,"transfer",&journal.operation_id)?;persist_new_json(&log,&journal)?;
+    if let Some(backup)=&backup {
+        journal.phase="backingUpTarget".into();persist_json(&log,&journal)?;
+        rename_without_replacing(target,backup)?;
+        if revision(backup).ok().as_deref()!=expected {
+            let restore=rename_without_replacing(backup,target);
+            if restore.is_ok(){let _=std::fs::remove_file(&log);}
+            return Err(format!("[conflict] 目标身份已变化，未覆盖；恢复结果：{restore:?}"));
+        }
+    }
+    if let Err(error)=rename_without_replacing(staging,target){
+        if let Some(backup)=&backup {rename_without_replacing(backup,target).map_err(|restore|format!("{error}; 原文件保留于 {}: {restore}",backup.display()))?;}
+        let _=std::fs::remove_file(&log);return Err(error);
+    }
+    journal.phase="targetCommitted".into();persist_json(&log,&journal)?;
+    if let Some(backup)=&backup {std::fs::remove_file(backup).map_err(|e|format!("目标已完成，旧文件保留于 {}: {e}",backup.display()))?;}
+    std::fs::remove_file(log).map_err(|e|e.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn remove_local_transferred_file(app:&tauri::AppHandle,path:&Path, expected:&str, operation_id:&str,directory:bool)->Result<(),String>{
+    let open=|p:&Path|->Result<std::fs::File,String>{let mut options=std::fs::OpenOptions::new();options.read(true);
+        #[cfg(windows)]{use std::os::windows::fs::OpenOptionsExt;options.custom_flags(0x02000000|0x00200000).share_mode(1|4);}
+        options.open(p).map_err(|e|e.to_string())};
+    let current=open(path)?;
+    if rhfiles_service::connection::file_revision(&current)?!=expected{return Err("[conflict] 源文件已变化；已保留目标副本，未删除源文件".into());}
+    let captured=hidden_sibling(path.parent().ok_or("Invalid source parent")?,"move-source",operation_id);
+    let journal=TransferJournal{schema_version:1,operation_id:operation_id.into(),operation:"remoteMoveSource".into(),source:path.to_string_lossy().into_owned(),target:path.to_string_lossy().into_owned(),staging:String::new(),backup:Some(captured.to_string_lossy().into_owned()),phase:"sourceCaptured".into()};
+    let log=journal_path(app,"remote-source",&journal.operation_id)?;persist_new_json(&log,&journal)?;
+    rename_without_replacing(path,&captured)?;
+    let check=open(&captured).and_then(|f|rhfiles_service::connection::file_revision(&f));
+    if check.as_deref()!=Ok(expected){
+        let restored=rename_without_replacing(&captured,path);
+        return Err(format!("[conflict] 源文件身份已变化；未删除，恢复结果：{restored:?}"));
+    }
+    let removed=if directory{std::fs::remove_dir(&captured)}else{std::fs::remove_file(&captured)};
+    if let Err(error)=removed{let restore=rename_without_replacing(&captured,path);return Err(format!("目标副本已完成，源文件未删除：{error}；恢复结果：{restore:?}"));}
+    let _=std::fs::remove_file(log);Ok(())
+}
+
 fn paths_resolve_to_same_entry(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
@@ -469,6 +517,11 @@ fn persist_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     file.write_all(&payload)
         .and_then(|_| file.sync_all())
         .map_err(|error| format!("Cannot persist {}: {error}", path.display()))
+}
+fn persist_new_json<T:Serialize>(path:&Path,value:&T)->Result<(),String>{
+    let payload=serde_json::to_vec(value).map_err(|e|e.to_string())?;
+    let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e|e.to_string())?;
+    file.write_all(&payload).and_then(|_|file.sync_all()).map_err(|e|e.to_string())
 }
 
 fn persist_transfer_journal(
@@ -1821,6 +1874,18 @@ pub fn get_known_folders(app: tauri::AppHandle) -> KnownFolders {
     }
 }
 
+fn recover_remote_source_journal(log:&Path,journal:&TransferJournal)->OperationRecoveryReport{
+    let source=PathBuf::from(&journal.source);let capture=journal.backup.as_deref().map(PathBuf::from);
+    let result=(||->Result<(),String>{
+        let captured=capture.as_ref().ok_or("Missing captured source")?;
+        let expected=hidden_sibling(source.parent().ok_or("Invalid source parent")?,"move-source",&journal.operation_id);
+        if journal.operation!="remoteMoveSource"||!source.is_absolute()||captured!=&expected{return Err("Invalid captured-source recovery record".into());}
+        if captured.exists(){rename_without_replacing(captured,&source).map_err(|e|format!("Source name occupied; original retained at {}: {e}",captured.display()))?;}
+        std::fs::remove_file(log).map_err(|e|e.to_string())?;Ok(())
+    })();
+    OperationRecoveryReport{operation_id:journal.operation_id.clone(),operation:"move".into(),source:journal.source.clone(),destination:String::new(),outcome:if result.is_ok(){"moveKeptBoth"}else{"recoveryFailed"}.into(),detail:result.err().unwrap_or_else(||"Interrupted source cleanup was not replayed; any captured original was restored into a vacant name.".into()),completed_items:None,total_items:None}
+}
+
 fn recover_transfer_journal(
     journal_path: &Path,
     journal: &TransferJournal,
@@ -1940,7 +2005,9 @@ pub fn recover_interrupted_operations(
                 continue;
             }
         };
-        if name.starts_with("transfer-") {
+        if name.starts_with("remote-source-") {
+            match serde_json::from_slice::<TransferJournal>(&payload){Ok(journal)=>reports.push(recover_remote_source_journal(&path,&journal)),Err(error)=>reports.push(OperationRecoveryReport{operation_id:name,operation:"move".into(),source:String::new(),destination:String::new(),outcome:"recoveryFailed".into(),detail:format!("Unreadable captured-source journal: {error}"),completed_items:None,total_items:None})}
+        }else if name.starts_with("transfer-") {
             match serde_json::from_slice::<TransferJournal>(&payload) {
                 Ok(journal) => reports.push(recover_transfer_journal(&path, &journal)),
                 Err(error) => reports.push(OperationRecoveryReport {
@@ -2153,6 +2220,19 @@ pub fn create_shortcut(target: String, name: String, dest: String) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn interrupted_remote_move_cleanup_only_restores_into_vacant_names() {
+        for occupied in [false,true] {
+            let root=tempfile::tempdir().unwrap();let source=root.path().join("source");
+            let captured=hidden_sibling(root.path(),"move-source","remote-owned-test");
+            std::fs::write(&captured,b"original").unwrap();if occupied{std::fs::write(&source,b"new arrival").unwrap();}
+            let log=root.path().join("remote-source-owned.json");std::fs::write(&log,b"owned record").unwrap();
+            let record=TransferJournal{schema_version:1,operation_id:"remote-owned-test".into(),operation:"remoteMoveSource".into(),source:source.to_string_lossy().into_owned(),target:String::new(),staging:String::new(),backup:Some(captured.to_string_lossy().into_owned()),phase:"sourceCaptured".into()};
+            let report=recover_remote_source_journal(&log,&record);
+            if occupied{assert_eq!(report.outcome,"recoveryFailed");assert_eq!(std::fs::read(&source).unwrap(),b"new arrival");assert_eq!(std::fs::read(&captured).unwrap(),b"original");assert!(log.exists());}
+            else{assert_eq!(report.outcome,"moveKeptBoth");assert_eq!(std::fs::read(&source).unwrap(),b"original");assert!(!captured.exists());assert!(!log.exists());}
+        }
+    }
 
     #[test]
     fn new_folder_returns_exact_unique_path_and_preserves_old_directory() {

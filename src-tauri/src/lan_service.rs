@@ -8,6 +8,38 @@ use std::{
 
 static SERVICE: OnceLock<Mutex<Option<Service>>> = OnceLock::new();
 static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+#[tauri::command]
+pub fn lan_service_webdav_compatibility()->serde_json::Value{
+    #[cfg(windows)]
+    let client=unsafe{
+        use windows::Win32::System::Services::*;
+        let manager=OpenSCManagerW(None,None,SC_MANAGER_CONNECT);
+        match manager {
+            Err(error)=>serde_json::json!({"state":"unknown","error":error.to_string()}),
+            Ok(manager)=>{
+                let service=OpenServiceW(manager,windows::core::w!("WebClient"),SERVICE_QUERY_STATUS);
+                let result=match service{
+                    Err(error)=>serde_json::json!({"state":if error.code().0 as u32&0xffff==1060{"not_installed"}else{"unknown"},"error":error.to_string()}),
+                    Ok(service)=>{let mut status=SERVICE_STATUS::default();let result=QueryServiceStatus(service,&mut status);let _=CloseServiceHandle(service);
+                        match result{Ok(())=>serde_json::json!({"state":if status.dwCurrentState==SERVICE_RUNNING{"running"}else if status.dwCurrentState==SERVICE_STOPPED{"stopped"}else{"pending"}}),Err(error)=>serde_json::json!({"state":"unknown","error":error.to_string()})}
+                    }
+                };let _=CloseServiceHandle(manager);result
+            }
+        }
+    };
+    #[cfg(not(windows))]
+    let client=serde_json::json!({"state":"not_windows"});
+    let gateway=slot().lock().ok().and_then(|v|v.as_ref().and_then(|s|s.status().webdav_compatibility));
+    serde_json::json!({"windowsExplorerDirect":gateway.is_some(),"gateway":gateway,"authentication":"device-group-bound-compatibility",
+        "webClient":client,"reasonCodes":if gateway.is_some(){vec![]}else{vec!["enable_trusted_webdav_gateway"]},
+        "supportsDeviceGroupRevocation":true,"standalonePairing":false,"changedSystemSettings":false,
+        "reference":"https://learn.microsoft.com/en-us/iis/publish/using-webdav/using-the-webdav-redirector"})
+}
+#[tauri::command]
+pub async fn lan_service_webdav(action:String,args:serde_json::Value)->Result<serde_json::Value,String>{
+    tauri::async_runtime::spawn_blocking(move||{let guard=slot().lock().map_err(|_|"服务状态不可用")?;let service=guard.as_ref().ok_or("请先启动文件服务")?;crate::webdav_compat::action(service,&action,&args)}).await.map_err(|e|e.to_string())?
+}
 fn slot() -> &'static Mutex<Option<Service>> {
     SERVICE.get_or_init(|| Mutex::new(None))
 }
@@ -111,9 +143,10 @@ fn start(mut config: Config) -> Result<rhfiles_service::Status, String> {
     )
     .map_err(|e| e.to_string())?;
     save_config(&directory, &config)?;
+    *STARTUP_ERROR.lock().map_err(|_|"服务状态不可用")?=None;
+    if let Err(error)=crate::webdav_compat::restore(&running){*STARTUP_ERROR.lock().map_err(|_|"服务状态不可用")?=Some(format!("WebDAV 兼容入口恢复失败；设备组服务不受影响：{error}"));}
     let status = running.status();
     *service = Some(running);
-    *STARTUP_ERROR.lock().map_err(|_| "服务状态不可用")? = None;
     Ok(status)
 }
 
@@ -146,7 +179,7 @@ pub async fn lan_service_state() -> Result<serde_json::Value, String> {
         let config=read_config(&directory()?)?;
         let startup_error=STARTUP_ERROR.lock().map_err(|_|"服务状态不可用")?.clone();
         let status=slot().lock().map_err(|_|"服务状态不可用")?.as_ref().map(Service::status);
-        Ok(serde_json::json!({"config":config,
+        Ok(serde_json::json!({"config":config,"webdavConfig":crate::webdav_compat::settings()?,
             "startup":{"supported":crate::lan_startup::supported(),"loginEnabled":crate::lan_startup::entry()?.is_some()},
             "startupError":startup_error,"status":status}))
     }).await.map_err(|e|e.to_string())?

@@ -14,6 +14,7 @@ mod model;
 mod network_scope;
 mod storage;
 mod uploads;
+mod webdav_compat;
 
 pub use model::{Error, Permissions, Result, ShareConfig, Status};
 use std::{
@@ -33,6 +34,8 @@ pub struct Service {
     fingerprint: String,
     certificate: String,
     shares: Vec<ShareConfig>,
+    runtime: tokio::runtime::Handle,
+    webdav: Arc<std::sync::Mutex<Option<webdav_compat::Gateway>>>,
 }
 
 struct Network {
@@ -305,6 +308,9 @@ impl Service {
                 .collect::<std::io::Result<Vec<_>>>()?
         };
         let dynamic = bind.ip().is_unspecified();
+        let runtime_handle=runtime.handle().clone();
+        let webdav=Arc::new(std::sync::Mutex::new(None::<webdav_compat::Gateway>));
+        let active_webdav=webdav.clone();
         let active_network = network.clone();
         let network_fingerprint = fingerprint.clone();
         std::thread::Builder::new()
@@ -325,6 +331,9 @@ impl Service {
                     }
                     while flag.load(Ordering::Acquire) {
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        if let Some(gateway)=active_webdav.lock().unwrap().as_mut() {
+                            if let Err(e)=gateway.refresh(&tokio::runtime::Handle::current(),&server_state){gateway.error=Some(e.to_string());}
+                        }
                         if dynamic && flag.load(Ordering::Acquire) {
                             if let Err(error) = refresh_interfaces(
                                 &active_network,
@@ -350,6 +359,8 @@ impl Service {
             fingerprint,
             certificate,
             shares,
+            runtime: runtime_handle,
+            webdav,
         })
     }
     pub fn status(&self) -> Status {
@@ -364,11 +375,23 @@ impl Service {
 
             active_uploads: self.state.uploads.count(),
             discovery_error: network.error.clone(),
+            recovery_warnings: self.state.storage.recovery_warnings.lock().unwrap().clone(),
+            webdav_compatibility:self.webdav.lock().unwrap().as_ref().map(|v|v.status()),
         }
     }
     pub fn groups(&self) -> Arc<groups::Groups> {
         self.state.groups.clone()
     }
+    pub fn enable_webdav_compatibility(&self,domain:&str,port:u16,certificate:&Path,key:&Path)->Result<serde_json::Value>{
+        if port==self.port{return Err(Error::new("invalid_request","兼容端口不能占用设备组原有端口"));}
+        let mut slot=self.webdav.lock().unwrap();
+        if slot.is_some(){return Err(Error::new("conflict","请先关闭已有兼容入口再更改配置"));}
+        let gateway=webdav_compat::Gateway::start(&self.runtime,&self.state,domain,port,certificate,key)?;
+        let status=gateway.status();*slot=Some(gateway);self.state.auth.compatibility_enabled(true);Ok(status)
+    }
+    pub fn disable_webdav_compatibility(&self){self.state.auth.compatibility_enabled(false);self.webdav.lock().unwrap().take();}
+    pub fn webdav_credentials(&self,group:&str,peer:&str)->Result<serde_json::Value>{self.state.auth.compatibility_grant(self.state.groups.clone(),group,peer)}
+    pub fn revoke_webdav_credentials(&self,group:&str,peer:&str)->Result<()>{self.state.auth.compatibility_revoke(group,peer)}
     pub fn advertise_group_host(&self) -> Result<()> {
         self.state.groups.advertise(
             self.state
@@ -403,6 +426,7 @@ impl Service {
         Ok(serde_json::json!({"uri":uri,"qrSvg":qr,"expiresMs":expires}))
     }
     pub fn stop(&self) {
+        self.disable_webdav_compatibility();
         self.state.invitations.clear();
         self.running.store(false, Ordering::Release);
         let network = self.network.lock().unwrap();

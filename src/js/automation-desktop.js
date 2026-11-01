@@ -30,6 +30,10 @@
   const paths={type:'array',items:string,maxItems:10000};
   const grants=object({write:boolean,delete:boolean});
   register('server.state',object(),()=>call('lan_service_state',{}),'read');
+  register('server.webdavCompatibility',object(),()=>call('lan_service_webdav_compatibility',{}),'read','Read-only Windows WebClient status and TLS/group-authentication requirements; never imports certificates or changes service/security settings');
+  register('server.webdavConfigure',object({enabled:boolean,confirmed:boolean,port:{type:'integer',minimum:1,maximum:65535}},['enabled']),p=>call('lan_service_webdav',{action:p.enabled?'enable':'disable',args:p}),'external','Enable trusted Tailscale HTTPS WebDAV on a separate private-interface port; confirmation acknowledges public certificate transparency. Existing pinned device service is unchanged.');
+  register('server.webdavCredentials',object({group:string,peer:string},['group','peer']),p=>call('lan_service_webdav',{action:'credentials',args:p}),'destructive','Generate/rotate a WebDAV-only credential bound to a currently accepted group member. Password is returned once, never synchronized.');
+  register('server.webdavRevoke',object({group:string,peer:string},['group','peer']),p=>call('lan_service_webdav',{action:'revoke',args:p}),'destructive');
   register('server.start',object({config:object({port:{type:'integer',minimum:0,maximum:65535},shares:{type:'array',minItems:1,maxItems:32,items:object({name:string,path:string},['name','path'])}},['port','shares'])},['config']),p=>call('lan_service_start',p),'external');
   register('server.stop',object(),()=>call('lan_service_stop',{}),'external');
   register('server.startup',object({autoStart:boolean,login:boolean},['autoStart','login']),p=>call('lan_service_startup',p),'external');

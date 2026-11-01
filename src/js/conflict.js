@@ -41,6 +41,11 @@ function showConflictDialog(sourceName, destName, sourcePath, destPath, onResolv
 
 async function chooseTransferConflict(src, dest, state, options = {}) {
   const info = await call('get_file_info', {path: dest});
+  if(typeof isDevicePath==='function'&&(isDevicePath(src)||isDevicePath(dest))){
+    const revision=info.remote_revision||(await call('device_transfer',{action:'inspect',args:{path:dest}})).revision;
+    if(typeof revision!=='string'||!revision)throw Error('[invalid_response] Missing conflict target revision');
+    (state.targetRevisions||(state.targetRevisions=new Map())).set(windowsPathKey(dest),revision);
+  }
   // Approval to overwrite files never implies approval to delete a directory.
   const replaceDirectory = !!info.is_dir;
   if (state.action && !replaceDirectory) return state.action;

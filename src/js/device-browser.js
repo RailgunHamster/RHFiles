@@ -73,12 +73,13 @@ const deviceBrowser=(()=>{
     for(const [action,native]of [['entries','list'],['stat','stat'],['capabilities','capabilities'],['preview','preview'],['thumbnail','thumbnail']])api.register('devices.'+action,p=>fs(native,P.parse(p.path).uri),{params:object({path:string},['path']),risk:'read'});
     api.register('devices.search',p=>fs('search',P.parse(p.path).uri,{query:p.query}),{params:object({path:string,query:{type:'string',minLength:1,maxLength:512}},['path','query']),risk:'read',description:'Explicit recursive search; 15 seconds, 500 folders and 500 results maximum; no background continuation'});
     api.register('devices.resource',async p=>({url:await source(p.path)}),{params:object({path:string},['path']),risk:'read',description:'Revocable loopback-only media capability; never a remote password or bearer token'});
+    api.register('devices.transfer',p=>call('device_transfer',{action:p.operation,args:p}),{params:object({operation:{type:'string',enum:['copy','move']},src:string,dest:string,targetName:{type:'string',maxLength:240},overwrite:{type:'boolean'},expectedTargetRevision:{type:'string',maxLength:256},operationId:{type:'string',maxLength:128}},['operation','src','dest']),risk:'destructive',description:'Stream files/folders between local and group locations with native progress, scoped cancellation, no write retries and identity-checked move cleanup. Remote replacements/moves require an updated server; remote undo is not offered.'});
   }
   return {register,refresh,paint,display,name,address,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs};
 })();
 deviceBrowser.register(window.RHFilesAPI);
 async function routeDeviceCommand(cmd,args){
-  if(cmd==='device_fs')return null;
+  if(cmd==='device_fs'||cmd==='device_transfer')return null;
   const collect=value=>typeof value==='string'?(isDevicePath(value)?[value]:[]):Array.isArray(value)?value.flatMap(collect):value&&typeof value==='object'?Object.values(value).flatMap(collect):[];
   const paths=collect(args);if(!paths.length)return null;
   paths.forEach(path=>RHFilesDevicePaths.parse(path));
@@ -90,6 +91,12 @@ async function routeDeviceCommand(cmd,args){
     case 'get_file_info':value=await fs('stat',args.path);break;
     case 'parent_path':value=RHFilesDevicePaths.parent(args.path);break;
     case 'path_exists':try{await fs('stat',args.path);value=true;}catch(error){if(!String(error).includes('[not_found]'))throw error;value=false;}break;
+    case 'copy_with_progress':case 'move_with_progress':
+      value=await call('device_transfer',{action:cmd.startsWith('move')?'move':'copy',args});break;
+    case 'copy_path_exact':case 'move_path_exact':
+      value=await call('device_transfer',{action:cmd.startsWith('move')?'move_exact':'copy_exact',args});break;
+    case 'plan_folder_merge':value=await call('device_transfer',{action:'plan_merge',args});break;
+    case 'remove_empty_merge_folders':value=await call('device_transfer',{action:'remove_empty',args});break;
     case 'read_file_preview':value=await fs('preview',args.path);break;
     case 'search_recursive':value=await fs('search',args.path,{query:args.query});break;
     case 'get_thumbnail':value=await fs('thumbnail',args.path);break;

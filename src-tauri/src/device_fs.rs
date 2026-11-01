@@ -86,7 +86,7 @@ async fn stat(path: &DevicePath) -> Result<Value, String> {
     .await?;
     info(path, &raw)
 }
-async fn listing(path: &DevicePath) -> Result<Vec<Value>, String> {
+pub(crate) async fn listing(path: &DevicePath) -> Result<Vec<Value>, String> {
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut revision = None;

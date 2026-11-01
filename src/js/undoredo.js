@@ -64,6 +64,7 @@ async function redo() {
 }
 
 function trackCopy(src, dest) {
+  if(typeof isDevicePath==='function'&&(isDevicePath(src)||isDevicePath(dest)))return;
   pushUndo({
     label: t('undo.copy', {path: src}),
     undo: async () => { await call("delete_file", { path: dest }); },
@@ -72,6 +73,7 @@ function trackCopy(src, dest) {
 }
 
 function trackMergedTransfer(operation, pairs, removedDirectories) {
+  if(typeof isDevicePath==='function'&&(pairs.some(pair=>pair.some(isDevicePath))||removedDirectories.some(isDevicePath)))return;
   const entries = pairs.map(pair => [...pair]);
   const removed = [...removedDirectories];
   let undoIndex = entries.length - 1, redoIndex = 0;
@@ -105,6 +107,7 @@ function trackMergedTransfer(operation, pairs, removedDirectories) {
 }
 
 function trackMove(src, dest) {
+  if(typeof isDevicePath==='function'&&(isDevicePath(src)||isDevicePath(dest)))return;
   pushUndo({
     label: t('undo.move', {path: src}),
     undo: async () => { await call("move_path_exact", { src: dest, dest: src }); },

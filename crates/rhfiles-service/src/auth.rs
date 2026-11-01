@@ -17,6 +17,8 @@ pub struct Access {
     pub permissions: Permissions,
     pub live: Arc<AtomicBool>,
     pub method: String,
+    pub compatibility_binding: Option<String>,
+    pub credential_live: Option<Arc<AtomicBool>>,
     pub group: Option<(
         Arc<crate::groups::Groups>,
         String,
@@ -90,13 +92,40 @@ mod tests {
         assert!(old.check(false, false).is_err());
         assert!(fresh.check(false, false).is_err());
     }
+    #[test]
+    fn webdav_grants_survive_restart_but_not_remove_restore_or_forget() {
+        let data=tempfile::tempdir().unwrap();
+        let groups=Arc::new(crate::groups::Groups::open(data.path()).unwrap());
+        let group=groups.create("DAV QA","Host",Permissions{write:true,delete:true}).unwrap();let peer=groups.device_id();
+        let auth=Auth::new(data.path()).unwrap();
+        assert!(auth.compatibility_grant(groups.clone(),&group,&peer).is_err());
+        auth.compatibility_enabled(true);
+        let credentials=auth.compatibility_grant(groups.clone(),&group,&peer).unwrap();
+        let header=format!("Basic {}",base64::engine::general_purpose::STANDARD.encode(format!("{}:{}",credentials["username"].as_str().unwrap(),credentials["password"].as_str().unwrap())));
+        let file=std::fs::read_to_string(data.path().join("webdav-grants.json")).unwrap();assert!(!file.contains(credentials["password"].as_str().unwrap()));
+        let access=auth.authenticate_grouped(Some(&header),"GET",Some(&groups)).unwrap();assert!(access.check(true,true).is_ok());
+        let restarted=Auth::new(data.path()).unwrap();let reopened=Arc::new(crate::groups::Groups::open(data.path()).unwrap());
+        restarted.compatibility_enabled(true);assert!(restarted.authenticate_grouped(Some(&header),"GET",Some(&reopened)).is_ok());drop(reopened);
+        groups.remove(&group,&peer).unwrap();assert!(access.check(false,false).is_err());assert!(auth.authenticate_grouped(Some(&header),"GET",Some(&groups)).is_err());
+        groups.restore(&group,&peer,true).unwrap();assert!(auth.authenticate_grouped(Some(&header),"GET",Some(&groups)).is_err());
+        assert!(access.check(false,false).is_err());
+        let fresh=auth.compatibility_grant(groups.clone(),&group,&peer).unwrap();assert_ne!(fresh["username"],credentials["username"]);
+        let fresh_header=format!("Bearer {}:{}",fresh["username"].as_str().unwrap(),fresh["password"].as_str().unwrap());
+        assert!(auth.authenticate_grouped(Some(&fresh_header),"GET",Some(&groups)).is_ok());
+        auth.compatibility_revoke(&group,&peer).unwrap();assert!(auth.authenticate_grouped(Some(&fresh_header),"GET",Some(&groups)).is_err());
+        groups.forget(&group,true).unwrap();let final_groups=Arc::new(crate::groups::Groups::open(data.path()).unwrap());assert!(restarted.authenticate_grouped(Some(&header),"GET",Some(&final_groups)).is_err());
+    }
 }
 impl Access {
     pub fn check(&self, write: bool, delete: bool) -> Result<()> {
         if !self.live.load(Ordering::Acquire) {
             return Err(Error::new("unauthorized", "设备授权已撤销"));
         }
+        if self.credential_live.as_ref().is_some_and(|v|!v.load(Ordering::Acquire)){return Err(Error::new("unauthorized","WebDAV 兼容凭据已撤销"));}
         if let Some((groups, group, peer, _expires, session)) = &self.group {
+            if let Some(binding) = &self.compatibility_binding {
+                if groups.compatibility_binding(group, peer)? != *binding { return Err(Error::new("unauthorized", "WebDAV 设备组授权已撤销")); }
+            }
             // Expiry gates NEW HTTP requests, not an already authorized large
             // stream. Local removal/grant changes still apply on every chunk.
             let current = groups.session_access(group, peer, true, Some(session))?.0;
@@ -116,7 +145,14 @@ impl Access {
 pub struct Auth {
     sessions: Mutex<HashMap<String, (String, Access)>>,
     group_live: Arc<AtomicBool>,
+    compatibility_enabled: Arc<AtomicBool>,
+    compatibility: Mutex<std::collections::BTreeMap<String, CompatibilityGrant>>,
+    compatibility_path: std::path::PathBuf,
 }
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+struct CompatibilityGrant { group: String, peer: String, binding: String, secret_hash: String, #[serde(skip,default="grant_live")] live:Arc<AtomicBool> }
+fn grant_live()->Arc<AtomicBool>{Arc::new(AtomicBool::new(true))}
 fn hash(secret: &str) -> String {
     format!("{:x}", Sha256::digest(secret.as_bytes()))
 }
@@ -131,10 +167,48 @@ impl Auth {
         Ok(Self {
             sessions: Mutex::new(HashMap::new()),
             group_live: Arc::new(AtomicBool::new(true)),
+            compatibility_enabled: Arc::new(AtomicBool::new(false)),
+            compatibility: Mutex::new(match std::fs::read(data.join("webdav-grants.json")) {
+                Ok(bytes) if bytes.len() <= 262144 => {
+                    let grants: std::collections::BTreeMap<String,CompatibilityGrant> = serde_json::from_slice(&bytes).map_err(|_|Error::new("invalid_group","WebDAV 兼容授权文件损坏"))?;
+                    if grants.len()>256 || grants.iter().any(|(id,g)|id.len()!=43 || [&g.group,&g.peer,&g.binding,&g.secret_hash].iter().any(|v|v.len()!=64||!v.bytes().all(|b|b.is_ascii_hexdigit()))) { return Err(Error::new("invalid_group","WebDAV 兼容授权文件无效")); }
+                    grants
+                },
+                Ok(_)=>return Err(Error::new("too_large","WebDAV 兼容授权文件过大")),
+                Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Default::default(),
+                Err(e)=>return Err(e.into()),
+            }),
+            compatibility_path: data.join("webdav-grants.json"),
         })
     }
     pub fn stop(&self) {
+        self.compatibility_enabled(false);
         self.group_live.store(false, Ordering::Release);
+    }
+    pub fn compatibility_enabled(&self, enabled: bool) { self.compatibility_enabled.store(enabled,Ordering::Release); }
+    fn save_compatibility(&self, grants: &std::collections::BTreeMap<String,CompatibilityGrant>)->Result<()> {
+        use std::io::Write;
+        let temporary=self.compatibility_path.with_file_name(format!(".rhfiles-service-webdav-{}.tmp",random()?));
+        let mut options=std::fs::OpenOptions::new();options.write(true).create_new(true);
+        #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+        let result=(|| { let mut file=options.open(&temporary)?;file.write_all(&serde_json::to_vec(grants).map_err(|_|std::io::Error::other("Invalid grants"))?)?;file.sync_all()?;drop(file);std::fs::rename(&temporary,&self.compatibility_path) })();
+        if result.is_err(){let _=std::fs::remove_file(temporary);}result.map_err(Error::from)
+    }
+    /// Local administration only. This is a credential for an already accepted
+    /// group member, not another pairing database. Only its digest is retained.
+    pub fn compatibility_grant(&self, groups: Arc<crate::groups::Groups>,group:&str,peer:&str)->Result<serde_json::Value>{
+        if !self.compatibility_enabled.load(Ordering::Acquire){return Err(Error::new("forbidden","请先启用可信 HTTPS WebDAV 入口"));}
+        let binding=groups.compatibility_binding(group,peer)?;
+        let mut grants=self.compatibility.lock().unwrap();let mut next=grants.clone();
+        next.retain(|_,g|!(g.group==group&&g.peer==peer));
+        if next.len()>=256{return Err(Error::new("busy","WebDAV 授权过多"));}
+        let username=random()?;let password=random()?;
+        next.insert(username.clone(),CompatibilityGrant{group:group.into(),peer:peer.into(),binding,secret_hash:hash(&password),live:grant_live()});
+        self.save_compatibility(&next)?;for (id,grant)in grants.iter(){if !next.contains_key(id){grant.live.store(false,Ordering::Release);}}*grants=next;
+        Ok(serde_json::json!({"username":username,"password":password,"groupId":group,"peerId":peer,"groupBound":true}))
+    }
+    pub fn compatibility_revoke(&self,group:&str,peer:&str)->Result<()> {
+        let mut grants=self.compatibility.lock().unwrap();let mut next=grants.clone();next.retain(|_,g|g.group!=group||g.peer!=peer);self.save_compatibility(&next)?;for (id,grant)in grants.iter(){if !next.contains_key(id){grant.live.store(false,Ordering::Release);}}*grants=next;Ok(())
     }
     pub fn group_session(
         &self,
@@ -160,6 +234,8 @@ impl Auth {
             permissions,
             live: self.group_live.clone(),
             method: String::new(),
+            compatibility_binding: None,
+            credential_live: None,
             group: Some((
                 groups,
                 group.into(),
@@ -171,7 +247,11 @@ impl Auth {
         sessions.insert(id.clone(), (hash(&password), access));
         Ok(serde_json::json!({"username":id,"password":password,"expiresIn":1800}))
     }
+    #[cfg(test)]
     pub fn authenticate(&self, header: Option<&str>, method: &str) -> Result<Access> {
+        self.authenticate_grouped(header,method,None)
+    }
+    pub fn authenticate_grouped(&self, header: Option<&str>, method: &str, groups:Option<&Arc<crate::groups::Groups>>) -> Result<Access> {
         let header = header.ok_or_else(|| Error::new("unauthorized", "需要设备凭据"))?;
         if header.len() > 1024 {
             return Err(Error::new("unauthorized", "凭据无效"));
@@ -206,6 +286,14 @@ impl Auth {
             }
             access.permissions = groups.session_access(group, peer, false, Some(session))?.0;
             return Ok(access);
+        }
+        if let Some(groups)=groups.filter(|_|self.compatibility_enabled.load(Ordering::Acquire)) {
+            if let Some(grant)=self.compatibility.lock().unwrap().get(&id).cloned() {
+                if !bool::from(hash(&secret).as_bytes().ct_eq(grant.secret_hash.as_bytes())) {return Err(Error::new("unauthorized","凭据错误"));}
+                if groups.compatibility_binding(&grant.group,&grant.peer)?!=grant.binding {return Err(Error::new("unauthorized","WebDAV 设备组授权已撤销，请重新生成兼容凭据"));}
+                let (permissions,session)=groups.session_access(&grant.group,&grant.peer,true,None)?;
+                return Ok(Access{id:format!("webdav-{id}"),permissions,live:self.compatibility_enabled.clone(),method:method.into(),compatibility_binding:Some(grant.binding),credential_live:Some(grant.live),group:Some((groups.clone(),grant.group,grant.peer,std::time::Instant::now()+std::time::Duration::from_secs(86400),session))});
+            }
         }
         Err(Error::new("unauthorized", "需要设备组授权；独立配对已移除"))
     }

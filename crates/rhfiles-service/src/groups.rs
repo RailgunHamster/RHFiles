@@ -186,6 +186,12 @@ struct Group {
     // group must never reactivate credentials/streams from its old incarnation.
     #[serde(skip)]
     session: std::sync::Arc<()>,
+    // Local-only authorization generations: never put these in signed packets
+    // or configuration sync. Removing/rejoining cannot revive an old DAV grant.
+    #[serde(default)]
+    auth_epoch: String,
+    #[serde(default)]
+    peer_epochs: BTreeMap<String, String>,
 }
 impl Group {
     fn members(&self) -> Result<BTreeMap<String, Claims>> {
@@ -409,7 +415,7 @@ impl Groups {
             &SystemRandom::new(),
         )
         .map_err(|_| bad("设备组私钥损坏"))?;
-        let doc = match std::fs::read(data.join("groups.json")) {
+        let mut doc = match std::fs::read(data.join("groups.json")) {
             Ok(bytes) if bytes.len() <= 4 * 1024 * 1024 => {
                 serde_json::from_slice::<Document>(&bytes)
                     .map_err(|_| bad("设备组记录损坏；拒绝忽略本机移除记录"))?
@@ -427,6 +433,11 @@ impl Groups {
             }
             g.members()?;
         }
+        let mut migrated = false;
+        for g in doc.groups.values_mut() {
+            if g.auth_epoch.is_empty() { g.auth_epoch = random()?; migrated = true; }
+        }
+        if migrated { save(&data.join("groups.json"), &serde_json::to_vec(&doc).map_err(|_| bad("无法保存设备组授权代次"))?)?; }
         Ok(Self {
             data: data.into(),
             key:Some(key),
@@ -509,6 +520,8 @@ impl Groups {
                     enabled: true,
                     left: false,
                     session: Default::default(),
+                    auth_epoch: random()?,
+                    peer_epochs: BTreeMap::new(),
                 },
             );
             Ok(id)
@@ -597,6 +610,8 @@ impl Groups {
                 enabled: true,
                 left: false,
                 session: Default::default(),
+                auth_epoch: random()?,
+                peer_epochs: BTreeMap::new(),
             };
             // A fresh, locally confirmed join restores only our membership in
             // this absent group. Other devices' refusals and existing groups'
@@ -628,6 +643,14 @@ impl Groups {
     }
     pub fn access(&self, id: &str, peer: &str, files: bool) -> Result<Permissions> {
         self.session_access(id, peer, files, None).map(|v| v.0)
+    }
+    pub(crate) fn compatibility_binding(&self, id: &str, peer: &str) -> Result<String> {
+        if self.backend.is_some() { return Err(Error::new("unsupported", "此平台暂不支持持久 WebDAV 兼容凭据")); }
+        let doc = self.doc.lock().map_err(|_| bad("设备组状态不可用"))?;
+        let g = doc.groups.get(id).ok_or_else(|| bad("设备组不存在"))?;
+        g.member(peer)?; g.member(&self.device_id())?;
+        if !g.enabled || g.auth_epoch.is_empty() { return Err(Error::new("forbidden", "本机未向此设备组开放文件服务")); }
+        Ok(format!("{:x}", Sha256::digest(format!("{}:{}:{}",g.auth_epoch,peer,g.peer_epochs.get(peer).map(String::as_str).unwrap_or("")).as_bytes())))
     }
     pub(crate) fn session_access(
         &self,
@@ -688,6 +711,8 @@ impl Groups {
             doc.refusals.insert(peer.into(), refusal.clone());
             for g in doc.groups.values_mut() {
                 g.blocked.insert(peer.into(), refusal.clone());
+                g.peer_epochs.insert(peer.into(), random()?);
+                g.session = Default::default();
             }
             Ok(())
         })
@@ -707,6 +732,8 @@ impl Groups {
             doc.refusals.remove(peer);
             for g in doc.groups.values_mut() {
                 g.blocked.remove(peer);
+                g.peer_epochs.insert(peer.into(), random()?);
+                g.session = Default::default();
             }
             Ok(())
         })

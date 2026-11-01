@@ -4,6 +4,7 @@ use crate::model::*;
 #[cfg(windows)]
 use cap_fs_ext::OsMetadataExt;
 use cap_std::fs::{Dir, OpenOptions};
+use cap_fs_ext::MetadataExt as IdentityMetadataExt;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -66,6 +67,7 @@ pub struct Root {
 pub struct Storage {
     pub roots: HashMap<String, Arc<Root>>,
     pub mutation: Mutex<()>,
+    pub recovery_warnings: Mutex<Vec<String>>,
 }
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -186,10 +188,13 @@ impl Storage {
             let dir = Dir::open_ambient_dir(path, cap_std::ambient_authority())?;
             roots.insert(share.name.clone(), Arc::new(Root { dir, excluded }));
         }
-        Ok(Self {
+        let storage=Self {
             roots,
             mutation: Mutex::new(()),
-        })
+            recovery_warnings: Mutex::new(Vec::new()),
+        };
+        storage.recover_checked()?;
+        Ok(storage)
     }
     pub fn node(&self, path: &str) -> Result<Node> {
         let parts = components(path)?;
@@ -319,6 +324,132 @@ impl Storage {
         rename_noreplace(&from.root.dir, &from.relative, &to.root.dir, &to.relative)?;
         Ok(())
     }
+    /// Capture by no-replace rename before checking identity. A path which was
+    /// replaced since selection is restored, never removed as the old object.
+    pub fn checked_mutation(&self, from: &str, to: Option<&str>, revision: &str, target_revision: Option<&str>) -> Result<()> {
+        let source = self.node(from)?;
+        source.require_child()?;
+        let destination = to.map(|path| self.node(path)).transpose()?;
+        if let Some(target) = &destination {
+            target.require_child()?;
+            if !Arc::ptr_eq(&source.root, &target.root) || source.relative == target.relative
+                || target.relative.starts_with(&source.relative) || source.relative.starts_with(&target.relative) {
+                return Err(Error::new("invalid_path", "条件移动必须在同一共享内，且不能互相包含"));
+            }
+        }
+        let _guard = self.mutation.lock().unwrap();
+        if source.stat()?.revision != revision { return Err(Error::new("conflict", "源文件已变化，未修改")); }
+        let lock_file=|node:&Node|->Result<Option<cap_std::fs::File>>{if node.stat()?.is_dir{return Ok(None);}let mut options=OpenOptions::new();options.read(true);
+            #[cfg(windows)]{use cap_std::fs::OpenOptionsExt;options.share_mode(1|4);}
+            Ok(Some(node.root.dir.open_with(&node.relative,&options)?))};
+        let _source_lock=lock_file(&source)?;
+        let stage = source.root.staging()?;
+        let id = random()?;
+        let captured = format!("capture-{id}");
+        let backup = format!("backup-{id}");
+        let record = format!("mutation-{id}.json");
+        let target = destination.as_ref().map(|n| n.relative.to_string_lossy().into_owned());
+        let state = serde_json::json!({"source":source.relative.to_string_lossy(),"target":target,
+            "captured":captured,"backup":backup,"sourceRevision":revision,"targetRevision":target_revision});
+        let mut log = stage.open_with(&record, OpenOptions::new().write(true).create_new(true))?;
+        use std::io::Write;
+        log.write_all(&serde_json::to_vec(&state).map_err(|_| Error::new("internal", "无法记录移动状态"))?)?;
+        log.sync_all()?;
+        drop(log);
+        let result = (|| -> Result<()> {
+            let mut _target_lock=None;
+            rename_noreplace(&source.root.dir, &source.relative, &stage, Path::new(&captured))?;
+            if metadata_revision(&stage.metadata(&captured)?) != revision {
+                return Err(Error::new("conflict", "源文件身份已变化，未删除或覆盖"));
+            }
+            if let Some(target) = &destination {
+                match target.stat() {
+                    Ok(entry) => {
+                        if entry.is_dir || target_revision != Some(entry.revision.as_str()) {
+                            return Err(Error::new("conflict", "目标已变化或是文件夹，未覆盖"));
+                        }
+                        _target_lock=lock_file(target)?;
+                        rename_noreplace(&target.root.dir, &target.relative, &stage, Path::new(&backup))?;
+                        if metadata_revision(&stage.metadata(&backup)?) != entry.revision {
+                            return Err(Error::new("conflict", "目标文件身份已变化，未覆盖"));
+                        }
+                    }
+                    Err(e) if e.code == "not_found" && target_revision.is_none() => {}
+                    Err(e) if e.code == "not_found" => return Err(Error::new("conflict", "原目标已移走，未覆盖")),
+                    Err(e) => return Err(e),
+                }
+                rename_noreplace(&stage, Path::new(&captured), &target.root.dir, &target.relative)?;
+                if stage.symlink_metadata(&backup).is_ok() { stage.remove_file(&backup)?; }
+            } else {
+                // Never recursively delete a directory: a newly created child
+                // must survive an already accepted move/removal.
+                if stage.metadata(&captured)?.is_dir() { stage.remove_dir(&captured)?; }
+                else { stage.remove_file(&captured)?; }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let rollback = self.restore_checked(&source.root, &state);
+            return Err(match rollback { Ok(()) => {let _=stage.remove_file(&record);error}, Err(_) => {let message=format!("条件操作未完成：{record}。原数据保留在共享私有暂存区，未覆盖现有文件。");let mut warnings=self.recovery_warnings.lock().unwrap();if warnings.len()<256{warnings.push(message.clone());}Error::new("recovery_required", message)} });
+        }
+        stage.remove_file(&record)?;
+        Ok(())
+    }
+    fn restore_checked(&self, root: &Arc<Root>, state: &serde_json::Value) -> Result<()> {
+        let stage = root.staging()?;
+        let get = |key| state[key].as_str().ok_or_else(|| Error::new("invalid_config", "移动恢复记录无效"));
+        let source = Path::new(get("source")?);
+        let captured = get("captured")?;
+        let backup = get("backup")?;
+        for name in [captured, backup] { valid_name(name)?; }
+        if source.is_absolute() || source.components().any(|p| !matches!(p, std::path::Component::Normal(_))) {
+            return Err(Error::new("invalid_config", "恢复路径越界"));
+        }
+        if stage.symlink_metadata(captured).is_ok() {
+            rename_noreplace(&stage, Path::new(captured), &root.dir, source)?;
+        }
+        if stage.symlink_metadata(backup).is_ok() {
+            let target = Path::new(get("target")?);
+            if target.is_absolute() || target.components().any(|p| !matches!(p,std::path::Component::Normal(_))) {
+                return Err(Error::new("invalid_config", "恢复目标越界"));
+            }
+            rename_noreplace(&stage, Path::new(backup), &root.dir, target)?;
+        }
+        Ok(())
+    }
+    fn recover_checked(&self)->Result<()> {
+        for root in self.roots.values(){
+            let private=format!("{PRIVATE_PREFIX}staging");
+            if root.dir.symlink_metadata(&private).is_err(){continue;}
+            let stage=root.staging()?;
+            let mut count=0;
+            for item in stage.entries()? {
+                let item=item?;let name=item.file_name();let Some(name)=name.to_str() else{continue};
+                if !name.starts_with("mutation-")||!name.ends_with(".json"){continue;}
+                count+=1;if count>256{self.recovery_warnings.lock().unwrap().push("待恢复操作超过 256 项，剩余记录已保留，未继续自动处理".into());break;}
+                let file=stage.open(name)?;
+                use std::io::Read;let mut bytes=Vec::new();file.take(16385).read_to_end(&mut bytes)?;
+                let state:serde_json::Value=match serde_json::from_slice(&bytes){Ok(value)if bytes.len()<=16384=>value,_=>{let mut warnings=self.recovery_warnings.lock().unwrap();if warnings.len()<256{warnings.push(format!("恢复记录 {name} 无效或过大，已保留，未执行文件操作。"));}continue;}};
+                if let (Some(target),Some(captured),Some(backup),Some(expected),Some(previous))=(state["target"].as_str(),state["captured"].as_str(),state["backup"].as_str(),state["sourceRevision"].as_str(),state["targetRevision"].as_str()) {
+                    valid_name(captured)?;valid_name(backup)?;
+                    let target_path=Path::new(target);
+                    if target_path.is_absolute()||target_path.components().any(|v|!matches!(v,std::path::Component::Normal(_))){return Err(Error::new("invalid_config","恢复目标越界"));}
+                    if stage.symlink_metadata(captured).is_err()&&root.dir.metadata(target_path).ok().is_some_and(|m|metadata_revision(&m)==expected)
+                        &&stage.metadata(backup).ok().is_some_and(|m|!m.is_dir()&&metadata_revision(&m)==previous){
+                        stage.remove_file(backup)?;stage.remove_file(name)?;continue;
+                    }
+                }
+                // Recovery only restores captured originals into vacant names.
+                // It never replays a move/delete or overwrites a new file.
+                if self.restore_checked(root,&state).is_err(){
+                    let mut warnings=self.recovery_warnings.lock().unwrap();if warnings.len()<256{warnings.push(format!("未完成操作 {name}：原数据保留在私有暂存区；路径已被占用，未覆盖、删除或重放。"));}
+                    continue;
+                }
+                stage.remove_file(name)?;
+            }
+        }
+        Ok(())
+    }
     pub fn copy_file(&self, from: &str, to: &str, check: impl Fn() -> Result<()>) -> Result<()> {
         let source = self.node(from)?;
         let destination = self.node(to)?;
@@ -377,12 +508,7 @@ impl Node {
             is_dir: meta.is_dir(),
             size: meta.len(),
             modified_ms: modified.as_millis() as u64,
-            revision: format!(
-                "{:x}-{:x}-{}",
-                meta.len(),
-                modified.as_nanos(),
-                meta.is_dir() as u8
-            ),
+            revision: metadata_revision(&meta),
         })
     }
     pub fn open_read(&self) -> Result<std::fs::File> {
@@ -413,6 +539,56 @@ impl Node {
             committed: false,
             retain: false,
         })
+    }
+}
+
+pub(crate) fn metadata_revision(meta: &cap_std::fs::Metadata) -> String {
+    let stamp = |time: Option<cap_std::time::SystemTime>| time.and_then(|v|v.into_std().duration_since(UNIX_EPOCH).ok()).unwrap_or_default().as_nanos();
+    format!("v2-{:x}-{:x}-{:x}-{:x}-{:x}-{}",meta.dev(),meta.ino(),meta.len(),stamp(meta.modified().ok()),stamp(meta.created().ok()),meta.is_dir() as u8)
+}
+
+#[cfg(test)]
+mod checked_tests{
+    use super::*;
+    fn make()->(tempfile::TempDir,PathBuf,PathBuf,Vec<ShareConfig>,Storage){
+        let temp=tempfile::tempdir().unwrap();let base=temp.path().canonicalize().unwrap();let files=base.join("files");let data=base.join("data");std::fs::create_dir(&files).unwrap();std::fs::create_dir(&data).unwrap();
+        let shares=vec![ShareConfig{name:"Files".into(),path:files.clone()}];let storage=Storage::protected(&shares,&data,&[]).unwrap();(temp,files,data,shares,storage)
+    }
+    fn pending(files:&Path,storage:&Storage,with_backup:bool)->serde_json::Value{
+        std::fs::write(files.join("source"),b"new data").unwrap();std::fs::write(files.join("target"),b"old data").unwrap();
+        let source=storage.stat("/Files/source").unwrap();let target=storage.stat("/Files/target").unwrap();
+        let root=&storage.roots["Files"];let stage=root.staging().unwrap();
+        let record=serde_json::json!({"source":"source","target":"target","captured":"capture-fixture","backup":"backup-fixture","sourceRevision":source.revision,"targetRevision":if with_backup{Some(target.revision)}else{None}});
+        std::fs::write(files.join(format!("{PRIVATE_PREFIX}staging/mutation-fixture.json")),record.to_string()).unwrap();
+        rename_noreplace(&root.dir,Path::new("source"),&stage,Path::new("capture-fixture")).unwrap();
+        if with_backup{rename_noreplace(&root.dir,Path::new("target"),&stage,Path::new("backup-fixture")).unwrap();}
+        record
+    }
+    #[test]
+    fn interrupted_capture_restores_source_and_never_replays_a_rename(){
+        let(_temp,files,data,shares,storage)=make();pending(&files,&storage,false);drop(storage);
+        let recovered=Storage::protected(&shares,&data,&[]).unwrap();assert!(recovered.recovery_warnings.lock().unwrap().is_empty());assert_eq!(std::fs::read(files.join("source")).unwrap(),b"new data");assert_eq!(std::fs::read(files.join("target")).unwrap(),b"old data");assert!(!files.join(format!("{PRIVATE_PREFIX}staging/mutation-fixture.json")).exists());
+    }
+    #[test]
+    fn committed_replace_is_proved_by_identity_before_old_backup_cleanup(){
+        let(_temp,files,data,shares,storage)=make();let record=pending(&files,&storage,true);let root=&storage.roots["Files"];let stage=root.staging().unwrap();rename_noreplace(&stage,Path::new("capture-fixture"),&root.dir,Path::new("target")).unwrap();
+        // NTFS creation-time tunneling can change the published stamp. In that
+        // case recovery must keep the old backup rather than weaken its proof.
+        let proved=storage.stat("/Files/target").unwrap().revision==record["sourceRevision"].as_str().unwrap();drop(storage);
+        let recovered=Storage::protected(&shares,&data,&[]).unwrap();assert_eq!(std::fs::read(files.join("target")).unwrap(),b"new data");assert!(!files.join("source").exists());
+        let backup=files.join(format!("{PRIVATE_PREFIX}staging/backup-fixture"));
+        if proved {assert!(recovered.recovery_warnings.lock().unwrap().is_empty());assert!(!backup.exists());}
+        else {assert_eq!(recovered.recovery_warnings.lock().unwrap().len(),1);assert_eq!(std::fs::read(backup).unwrap(),b"old data");}
+    }
+    #[test]
+    fn a_racing_creator_is_not_overwritten_and_recovery_warning_does_not_disable_unrelated_reads(){
+        let(_temp,files,data,shares,storage)=make();pending(&files,&storage,false);std::fs::write(files.join("source"),b"external").unwrap();drop(storage);
+        let recovered=Storage::protected(&shares,&data,&[]).unwrap();assert_eq!(recovered.recovery_warnings.lock().unwrap().len(),1);assert!(recovered.stat("/Files/target").is_ok());assert_eq!(std::fs::read(files.join("source")).unwrap(),b"external");assert_eq!(std::fs::read(files.join(format!("{PRIVATE_PREFIX}staging/capture-fixture"))).unwrap(),b"new data");
+    }
+    #[test]
+    fn a_torn_preparation_journal_never_runs_or_disables_the_service(){
+        let(_temp,files,data,shares,storage)=make();let _=storage.roots["Files"].staging().unwrap();std::fs::write(files.join(format!("{PRIVATE_PREFIX}staging/mutation-torn.json")),b"{\"source\":").unwrap();drop(storage);
+        let recovered=Storage::protected(&shares,&data,&[]).unwrap();assert_eq!(recovered.recovery_warnings.lock().unwrap().len(),1);assert!(recovered.list("/Files").is_ok());
     }
 }
 fn within(path: &Path, parent: &Path) -> bool {

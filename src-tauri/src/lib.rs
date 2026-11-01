@@ -16,6 +16,8 @@ mod nearby;
 mod lan_service;
 mod device_groups;
 mod device_fs;
+mod device_transfer;
+mod webdav_compat;
 mod browser_loopback;
 mod lan_startup;
 #[cfg(windows)]
@@ -186,6 +188,8 @@ pub fn run() {
             rhvideo::rhvideo_open,
             rhvideo::rhvideo_request,
             lan_service::lan_service_state,
+            lan_service::lan_service_webdav_compatibility,
+            lan_service::lan_service_webdav,
             lan_service::lan_service_start,
             lan_service::lan_service_stop,
             lan_service::lan_service_startup,
@@ -193,6 +197,7 @@ pub fn run() {
             device_groups::device_groups,
             nearby::nearby_start,nearby::nearby_stop,nearby::nearby_status,nearby::nearby_probe,nearby::nearby_send,nearby::nearby_accept,nearby::nearby_cancel,
             device_fs::device_fs,
+            device_transfer::device_transfer,
             #[cfg(target_os = "macos")]
             macos::connect_macos_share,
             #[cfg(target_os = "macos")]

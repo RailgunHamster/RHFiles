@@ -315,6 +315,9 @@ struct Mutation {
     destination: Option<String>,
 }
 #[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct CheckedMutation { path:String, destination:Option<String>, revision:String, target_revision:Option<String> }
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GroupChallenge {
     group_id: String,
@@ -405,7 +408,8 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
     }
     let a = s
         .auth
-        .authenticate(header(&r, "Authorization"), method.as_str())?;
+        .authenticate_grouped(header(&r, "Authorization"), method.as_str(), Some(&s.groups))?;
+    if a.compatibility_binding.is_some() && path!="/dav" && !path.starts_with("/dav/") { return Err(Error::new("forbidden","兼容凭据仅能用于 WebDAV")); }
     if path == "/api/v1/groups/state" && method == Method::GET {
         let (_, group, _, _, _) = a
             .group
@@ -522,7 +526,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         return Ok(response.map(Body::new));
     }
     match (method.as_str(),path.as_str()) {
-        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","mkdir","rename","delete","tus","webdav","image-thumbnails"],"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
+        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations"],"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
             let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|c.0.elapsed()<Duration::from_secs(2)).cloned();
@@ -554,11 +558,20 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             }).await.map_err(|_|Error::new("internal","缩略图生成失败"))??;
             a.check(false,false)?;Ok(([("Content-Type","image/png")],bytes).into_response())
         },
+        ("POST","/api/v1/rename-checked"|"/api/v1/delete-checked")=>{
+            let m:CheckedMutation=json(r).await?;
+            let deleting=path.ends_with("/delete-checked");
+            if m.revision.is_empty() || m.revision.len()>256 || m.target_revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256) || deleting&&m.destination.is_some() || !deleting&&m.destination.is_none() {return Err(bad("条件操作参数无效"));}
+            a.check(!deleting,deleting||m.target_revision.is_some())?;s.unlocked(&m.path,&a).await?;
+            if let Some(to)=&m.destination{s.unlocked(to,&a).await?;}
+            let storage=s.storage.clone();tokio::task::spawn_blocking(move||{a.check(!deleting,deleting||m.target_revision.is_some())?;storage.checked_mutation(&m.path,m.destination.as_deref(),&m.revision,m.target_revision.as_deref())}).await.map_err(|_|Error::new("internal","条件操作失败"))??;
+            s.invalidate();Ok(StatusCode::NO_CONTENT.into_response())
+        },
         ("POST","/api/v1/mkdir"|"/api/v1/rename"|"/api/v1/copy"|"/api/v1/delete")=>{
             let m:Mutation=json(r).await?;let deleting=path.ends_with("/delete");a.check(!deleting,deleting)?;s.unlocked(&m.path,&a).await?;
             if let Some(to)=&m.destination{s.unlocked(to,&a).await?;}
             let storage=s.storage.clone();tokio::task::spawn_blocking(move||->Result<()>{a.check(!deleting,deleting)?;match path.as_str(){"/api/v1/mkdir"=>storage.mkdir(&m.path),"/api/v1/rename"=>storage.rename(&m.path,m.destination.as_deref().ok_or_else(||bad("缺少目标路径"))?),"/api/v1/copy"=>storage.copy_file(&m.path,m.destination.as_deref().ok_or_else(||bad("缺少目标路径"))?,||a.check(true,false)),_=>{let entry=storage.stat(&m.path)?;storage.remove(&m.path,entry.is_dir)}}}).await.map_err(|_|Error::new("internal","文件操作失败"))??;
-            Ok(StatusCode::NO_CONTENT.into_response())
+            s.invalidate();Ok(StatusCode::NO_CONTENT.into_response())
         },
         ("OPTIONS","/api/v1/uploads")=>Ok((StatusCode::NO_CONTENT,[("Tus-Version","1.0.0"),("Tus-Extension","creation,termination"),("Tus-Max-Size","1099511627776")]).into_response()),
         ("POST","/api/v1/uploads")=>{
@@ -567,7 +580,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             let metadata=header(&r,"Upload-Metadata").ok_or_else(||bad("缺少 path 上传元数据"))?;
             let encoded=metadata.split(',').find_map(|v|v.trim().strip_prefix("path ")).ok_or_else(||bad("缺少 path 上传元数据"))?;
             let target=String::from_utf8(base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_|bad("无效 path 编码"))?).map_err(|_|bad("path 必须是 UTF-8"))?;
-            s.unlocked(&target,&a).await?;let u=s.uploads.create(&s.storage,&a,target,length)?;
+            s.unlocked(&target,&a).await?;let u=s.uploads.create(&s.storage,&a,target,length)?;s.invalidate();
             Ok((StatusCode::CREATED,[("Location",format!("/api/v1/uploads/{}",u.id)),("Upload-Offset","0".into())]).into_response())
         },
         ("HEAD"|"PATCH"|"DELETE",_)if path.starts_with("/api/v1/uploads/")=>{
