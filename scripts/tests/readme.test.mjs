@@ -11,7 +11,7 @@ test('single bilingual README leads with Chinese then English and introduces all
 });
 test('both language sections expose distinct mobile/desktop downloads and preview limits',()=>{
   for(const section of readme.split(/^## (?:中文|English)\s*$/m).slice(1)){
-    assert.match(section,/releases\/latest/);assert.match(section,/releases\?q=android-v/);assert.match(section,/gitee\.com/);assert.match(section,/actions\/workflows\/macos\.yml/);assert.match(section,/Apple Silicon/);assert.match(section,/docs\/RELEASING\.md/);assert.match(section,/docs\/ANDROID\.md/);
+    assert.match(section,/releases\/latest/);assert.match(section,/releases\?q=android-v/);assert.match(section,/cnb\.cool\/railgunhamster\/RHFiles\/-\/releases/);assert.match(section,/actions\/workflows\/macos\.yml/);assert.match(section,/Apple Silicon/);assert.match(section,/docs\/RELEASING\.md/);assert.match(section,/docs\/ANDROID\.md/);
   }
 });
 test('README local documentation and license links resolve',()=>{

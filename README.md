@@ -41,8 +41,8 @@ RHFiles 是无广告、无遥测的文件管理器，提供 **Windows 桌面版�
 
 | 平台 | 下载入口 | 说明 |
 | --- | --- | --- |
-| Windows 10 / 11 | [Gitee 下载](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | 正式标签 `v…`，支持 portable 原地更新 |
-| Android 7.0+ | [Gitee APK](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | 正式标签 `android-v…`；普通手机选择 ARM64 APK |
+| Windows 10 / 11 | [CNB 下载](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | 正式标签 `v…`，支持 portable 原地更新 |
+| Android 7.0+ | [CNB APK](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | 正式标签 `android-v…`；普通手机选择 ARM64 APK |
 | macOS 12+ / Apple Silicon | [macOS 预览构建](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | 从成功的运行记录下载 `.app.zip` / `.dmg`，不提供 Intel 版本 |
 
 GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本。两个平台使用独立的更新清单与日志；已发布安装包不覆盖，修复使用新版本。详见[版本与发布规则](docs/RELEASING.md)。
@@ -59,7 +59,7 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 - 文件名索引与搜索、应用管理及 APK 备份、文件夹空间分析与详细报告；复制、移动等文件任务由后台服务执行，可查看进度、失败与中断记录。
 - 向电脑提供受密码保护的 HTTP / FTP 文件服务；与 Windows 加密[附近互传](docs/NEARBY.md)，接收端逐批确认，不经过云中转。
 - 本地加密配置备份，以及可选的 WebDAV 配置同步。同步收藏、网络连接等可共享配置，默认不上传登录密码，新设备需要补填。
-- APK 自动更新支持 Gitee、GitHub 和家庭服务器；新安装默认 Gitee，已保存的来源保持不变。下载后验证包名、版本、签名及校验和，再由 Android 系统确认安装。
+- APK 自动更新使用 CNB 或 GitHub。新版默认 CNB，旧 Gitee / 家庭更新源会迁移并清除地址，已明确选择的 GitHub 和关闭自动检查的设置保留。下载后验证包名、版本、签名及校验和，再由 Android 系统确认安装；客户端不需要发布令牌。
 
 统一任务中心、外部图片打开、按类型记住打开方式和侧栏访问历史正在开发，不能把界面方案当作已发布功能。当前能力、权限、测试范围和限制见 [Android 说明](docs/ANDROID.md)。
 
@@ -74,7 +74,7 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 - 随包 FFmpeg 转换常见视频、音频与图片，可配置编码、质量、分辨率、码率等参数，并查看进度、速度和错误。
 - 地址栏支持本地、UNC / SMB 路径及 `file:///` 地址；文件地址会打开所在目录并选中文件。
 - 可选的 Windows 资源管理器与原生打开/保存框伴随列表；也能从右键菜单打开 Explorer 或定位文件。
-- 主题包、每个虚拟桌面的独立数据，以及 Gitee / GitHub / 家庭服务器 Velopack portable 自更新；Windows 0.1.73 起默认使用 Gitee。
+- 主题包、每个虚拟桌面的独立数据，以及 CNB / GitHub Velopack portable 自更新；新版默认 CNB，家庭更新地址已移除，不影响普通网络共享。
 
 **安装：** portable 包必须完整解压，再运行 `RHFiles.exe`；保留同目录下的 `Everything.exe`、`Everything64.dll`、`dust.exe`、`ffmpeg.exe`、`7z.exe`、`7z.dll` 等文件。Windows 当前构建未进行代码签名，可能显示“未知发布者”。
 
@@ -140,8 +140,8 @@ RHFiles is an ad-free, telemetry-free file manager with a **Windows desktop appl
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| Windows 10 / 11 | [Gitee downloads](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | Stable tags `v…`; portable in-place updates |
-| Android 7.0+ | [Gitee APKs](https://gitee.com/railgunhamster/RHFiles/releases) · [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | Tags `android-v…`; use ARM64 for ordinary phones |
+| Windows 10 / 11 | [CNB downloads](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | Stable tags `v…`; portable in-place updates |
+| Android 7.0+ | [CNB APKs](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | Tags `android-v…`; use ARM64 for ordinary phones |
 | macOS 12+ / Apple Silicon | [macOS preview artifacts](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | Download `.app.zip` / `.dmg` from a successful run; no Intel builds |
 
 GitHub **Latest** is reserved for Windows; it does not indicate whether Android has an update. Each platform uses its own update feed and release notes. Published package bytes are immutable; corrections receive a new version. See [version and release policy](docs/RELEASING.md).
@@ -158,7 +158,7 @@ GitHub **Latest** is reserved for Windows; it does not indicate whether Android 
 - A local filename index/search, application management/APK backup, and detailed folder space reports. File operations run in background services with progress, failure and interruption records.
 - Password-protected HTTP / FTP access from a computer, plus encrypted [Nearby Transfer](docs/NEARBY.md) with Windows, per-batch receiver approval and no cloud relay.
 - Encrypted local configuration backups and optional WebDAV configuration sync. Shared favorites/connections sync without login passwords by default; new devices request the missing credentials.
-- APK updates from Gitee, GitHub or a home server. Gitee is the default for new installations; saved choices remain unchanged. Package identity, version, signing certificate and checksum are verified before Android requests installation confirmation.
+- APK updates from CNB (default) or GitHub. Retired Gitee/home-server update addresses migrate to CNB and are discarded; explicit GitHub choices and disabled automatic checks remain unchanged. Package identity, version, signing certificate and checksum are verified before Android requests installation confirmation. Clients need no publishing token.
 
 The unified task center, external image opening, remembered per-type openers and sidebar visit history are in development, not features already shipped by the interface proposal. See [Android features, permissions and limits](docs/ANDROID.md).
 
@@ -176,7 +176,7 @@ Connect to an existing RHVideo server from the sidebar. Browse videos, pictures,
 - Bundled 7-Zip for browsing/extracting ZIP (including split volumes), 7z, RAR and more, with progress/cancellation; ZIP creation remains built-in.
 - Bundled FFmpeg for configurable video/audio/image conversion with progress, speed, cancellation and detailed errors.
 - Local/UNC/SMB paths and `file:///` URLs; file addresses reveal and select the file in its containing folder.
-- Optional File Explorer / native Open/Save dialog integration, reloadable theme packs, per-virtual-desktop profiles, and Gitee/GitHub/home-server Velopack portable updates. Windows defaults to Gitee from 0.1.73 onward.
+- Optional File Explorer / native Open/Save dialog integration, reloadable theme packs, per-virtual-desktop profiles, and CNB/GitHub Velopack portable updates. New clients default to CNB. Retiring the home-server update source does not affect ordinary network shares.
 
 **Installation:** extract the entire portable ZIP and run `RHFiles.exe`. Keep `Everything.exe`, `Everything64.dll`, `dust.exe`, `ffmpeg.exe`, `7z.exe`, `7z.dll` and the other bundled files beside it. Current Windows builds are not code-signed and may show an “Unknown publisher” warning.
 

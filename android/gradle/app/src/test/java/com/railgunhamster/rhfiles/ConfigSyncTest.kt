@@ -114,7 +114,7 @@ class ConfigSyncTest {
   }
   @Test fun backupIncludesWebdavCredentialsButRestoringKeepsAutoSyncDisabled(){
     val c=device("backup");val r=remotes(c,6);val sync=ConfigSync(c,r);sync.save(JSONObject().put("enabled",true).put("url","https://example.test/dav/").put("username","user").put("password","only-in-encrypted-backup").put("insecure",false))
-    val updates=JSONObject().put("connectionId","");val backup=SettingsBackup(c,r);val snapshot=backup.snapshot(web(),updates);assertEquals("only-in-encrypted-backup",snapshot.getJSONObject("sync").getString("password"))
+    val updates=JSONObject().put("source","cnb").put("cnb",DEFAULT_CNB).put("github",DEFAULT_GITHUB).put("autoCheck",false).put("proxyEnabled",false).put("proxy","");val backup=SettingsBackup(c,r);val snapshot=backup.snapshot(web(),updates);assertEquals("only-in-encrypted-backup",snapshot.getJSONObject("sync").getString("password"))
     val sealed=SettingsBackup.seal(snapshot,"qa-backup-pass".toCharArray());assertFalse(String(sealed).contains("only-in-encrypted-backup"));backup.apply(snapshot,web());assertFalse(ConfigSync.rawConfig(c,r).getBoolean("enabled"));assertEquals("only-in-encrypted-backup",ConfigSync.rawConfig(c,r).getString("password"))
   }
   @Test fun sharedSchemaRejectsSecretsUnsafePathsUnknownSettingsAndExcessiveDepth(){

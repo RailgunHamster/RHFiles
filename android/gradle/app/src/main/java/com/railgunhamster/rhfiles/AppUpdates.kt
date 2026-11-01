@@ -96,11 +96,11 @@ internal object AndroidUpdateFeed {
         if(previous==null || candidate.code>previous.code)best=candidate
       }
       if(releases.length()<100) {
-        require(found) { "GitHub 正式发行中没有 Android 更新清单；请检查仓库或改用家庭服务器" }
+        require(found) { "GitHub 正式发行中没有 Android 更新清单；请检查仓库或切换 CNB 更新源" }
         return best
       }
     }
-    error("GitHub 发行超过 500 条，未能完整核对 Android 最新版本；请改用家庭服务器")
+    error("GitHub 发行超过 500 条，未能完整核对 Android 最新版本；请切换 CNB 更新源")
   }
   fun copy(input: InputStream, output: File, expected: AndroidRelease, canceled: ()->Boolean, progress: (Long)->Unit) {
     val digest=MessageDigest.getInstance("SHA-256");var bytes=0L
@@ -122,13 +122,13 @@ internal object AndroidUpdateFeed {
 }
 
 /** One process-wide worker. Downloads survive Activity recreation, never block WebView/UI. */
-class AppUpdates private constructor(private val context: Context) {
+class AppUpdates @JvmOverloads internal constructor(private val context: Context,
+  private val metadataRequest:((JSONObject,String)->String)?=null) {
   companion object {
     @Volatile private var instance: AppUpdates?=null
     fun get(context: Context): AppUpdates = instance ?: synchronized(this) { instance ?: AppUpdates(context.applicationContext).also{instance=it} }
   }
   private val prefs=context.getSharedPreferences("updates-v1",Context.MODE_PRIVATE)
-  private val remote=RemoteStorage(context)
   private val worker=Executors.newSingleThreadExecutor()
   private val directory=File(context.filesDir,"updates").apply{mkdirs()}
   private val apk=File(directory,"update.apk")
@@ -159,38 +159,32 @@ class AppUpdates private constructor(private val context: Context) {
     val info=context.packageManager.getPackageInfo(context.packageName,0)
     return if(Build.VERSION.SDK_INT>=28)info.longVersionCode else info.versionCode.toLong()
   }
-  @Synchronized fun config(): JSONObject = JSONObject()
-    .put("source",prefs.getString("source","gitee"))
-    .put("gitee",prefs.getString("gitee",DEFAULT_GITEE))
-    .put("github",prefs.getString("github","https://github.com/RailgunHamster/RHFiles"))
-    .put("family",prefs.getString("family","\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases"))
-    .put("connectionId",prefs.getString("connectionId",""))
-    .put("autoCheck",prefs.getBoolean("autoCheck",true))
-    .put("proxyEnabled",prefs.getBoolean("proxyEnabled",false)).put("proxy",prefs.getString("proxy",""))
+  @Synchronized fun config(): JSONObject {
+    val value=AndroidUpdateSettings.normalize(JSONObject()
+      .put("source",prefs.getString("source","cnb")).put("cnb",prefs.getString("cnb",DEFAULT_CNB))
+      .put("github",prefs.getString("github",DEFAULT_GITHUB)).put("autoCheck",prefs.getBoolean("autoCheck",true))
+      .put("proxyEnabled",prefs.getBoolean("proxyEnabled",false)).put("proxy",prefs.getString("proxy","")),true)
+    if((prefs.all["sourceChoiceVersion"] as? Number)?.toInt()!=2||prefs.contains("family")||prefs.contains("connectionId")||prefs.contains("gitee")){
+      val editor=prefs.edit().putString("source",value.getString("source")).putString("cnb",value.getString("cnb"))
+        .putInt("sourceChoiceVersion",2).remove("gitee").remove("family").remove("connectionId")
+      require(editor.commit()){"更新源迁移保存失败"}
+    }
+    return value
+  }
   @Synchronized fun save(value: JSONObject): JSONObject {
     require(state !in listOf("checking","downloading","verifying")) { "请等待当前更新任务结束或取消后再修改配置" }
-    require(value.getString("source") in listOf("gitee","github","family")) { "更新源无效" }
-    // Old clients and old backups do not have this optional provider field.
-    value.put("gitee",value.optString("gitee",DEFAULT_GITEE))
-    AndroidUpdateFeed.giteeRepository(value.getString("gitee"))
-    AndroidUpdateFeed.githubRepository(value.getString("github"))
-    val inline=value.getString("source")=="family"&&(value.optString("smbUsername").isNotBlank()||value.optString("smbPassword").isNotEmpty())
-    familyInput(value.getString("family"),if(inline)"" else value.optString("connectionId"),UPDATE_FEED,false)
-    proxy(value)
-    if(inline){val unc=RemoteStorage.parseUnc(value.getString("family"));SmbHosts.credentials(value.optString("smbUsername"),value.optString("smbDomain"))
-      value.put("connectionId",remote.save(JSONObject().put("type","smb").put("name","更新 · "+unc.host).put("host",unc.host).put("share",unc.share).put("port",445)
-        .put("username",value.optString("smbUsername")).put("password",value.optString("smbPassword")).put("domain",value.optString("smbDomain"))))}
+    val clean=AndroidUpdateSettings.normalize(value)
+    proxy(clean)
     val editor=prefs.edit()
-    for(key in listOf("source","gitee","github","family","connectionId","proxy"))editor.putString(key,value.optString(key).trim())
-    editor.putBoolean("autoCheck",value.optBoolean("autoCheck",true)).putBoolean("proxyEnabled",value.optBoolean("proxyEnabled")).putBoolean("pendingInstall",false)
+    for(key in listOf("source","cnb","github","proxy"))editor.putString(key,clean.getString(key))
+    editor.putBoolean("autoCheck",clean.getBoolean("autoCheck")).putBoolean("proxyEnabled",clean.getBoolean("proxyEnabled")).putBoolean("pendingInstall",false)
+      .putInt("sourceChoiceVersion",2).remove("gitee").remove("family").remove("connectionId")
     require(editor.commit()) { "更新配置保存失败" }
     available=null;installArtifact=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
     return status()
   }
   @Synchronized fun validateBackup(value:JSONObject){
-    require(value.getString("source") in listOf("gitee","github","family")){"更新源无效"};AndroidUpdateFeed.giteeRepository(value.optString("gitee",DEFAULT_GITEE));AndroidUpdateFeed.githubRepository(value.getString("github"));familyInput(value.getString("family"),"",UPDATE_FEED,false);proxy(value)
-    require(value.get("autoCheck") is Boolean&&value.get("proxyEnabled") is Boolean){"更新开关无效"}
-    require(value.keys().asSequence().all{it in listOf("source","gitee","github","family","connectionId","proxy","autoCheck","proxyEnabled")}){"未知更新配置字段"}
+    proxy(AndroidUpdateSettings.normalize(value,true))
   }
   @Synchronized fun restoreSettings(apply:()->Unit){
     require(state !in listOf("checking","downloading","verifying")){"请先结束或取消更新任务"};apply();available=null;installArtifact=null;state="idle";message="";lastCheck=0;receipt.delete();apk.delete()
@@ -222,7 +216,7 @@ class AppUpdates private constructor(private val context: Context) {
   private fun http(config: JSONObject, metadata: Boolean)=OkHttpClient.Builder()
     .connectTimeout(10,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS)
     .callTimeout(if(metadata)45 else 1800,TimeUnit.SECONDS).proxy(proxy(config)).build()
-  private fun request(config: JSONObject, url: String, metadata: Boolean): Response {
+  internal fun request(config: JSONObject, url: String, metadata: Boolean): Response {
     check(!canceled) { "更新任务已取消" }
     val target=url.toHttpUrl();require(target.username.isEmpty() && target.password.isEmpty()) { "更新地址不能包含用户名或密码" }
     val client=http(config,metadata).newBuilder().addNetworkInterceptor { chain ->
@@ -237,13 +231,14 @@ class AppUpdates private constructor(private val context: Context) {
   // Ownership belongs to the surrounding response/stream.use. SMB sessions
   // cannot be closed twice; a successful read must not become a close error.
   private fun readJson(input: InputStream): String = input.readBytesBounded(2*1024*1024).toString(Charsets.UTF_8)
+  private fun metadata(config:JSONObject,url:String)=metadataRequest?.invoke(config,url)?:request(config,url,true).use{readJson(it.body!!.byteStream())}
   private fun loadFeed(config: JSONObject): AndroidRelease? {
-    if(config.getString("source")=="gitee") {
-      val repository=AndroidUpdateFeed.giteeRepository(config.getString("gitee"))
+    if(config.getString("source")=="cnb") {
+      val repository=CnbAndroidUpdates.repository(config.getString("cnb"))
       val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(120)
-      return GiteeAndroidUpdates.select(repository,Build.SUPPORTED_ABIS.toList(),Build.VERSION.SDK_INT,installedCode()) { url ->
-        check(System.nanoTime()<deadline) { "检查 Gitee 更新超时，不能确认是否为最新版本；请稍后重试" }
-        request(config,url,true).use{readJson(it.body!!.byteStream())}
+      return CnbAndroidUpdates.select(repository,Build.SUPPORTED_ABIS.toList(),Build.VERSION.SDK_INT,installedCode()) { url ->
+        check(System.nanoTime()<deadline) { "检查 CNB 更新超时，不能确认是否为最新版本；请稍后重试" }
+        metadata(config,url)
       }
     }
     if(config.getString("source")=="github") {
@@ -252,28 +247,10 @@ class AppUpdates private constructor(private val context: Context) {
       val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(120)
       return AndroidUpdateFeed.github(repository,Build.SUPPORTED_ABIS.toList(),Build.VERSION.SDK_INT,installedCode()) { url ->
         check(System.nanoTime()<deadline) { "检查 GitHub 更新超时，不能确认是否为最新版本；请稍后重试" }
-        request(config,url,true).use{readJson(it.body!!.byteStream())}
+        metadata(config,url)
       }
     }
-    val root=config.getString("family");val connection=config.optString("connectionId")
-    val text=familyInput(root,connection,UPDATE_FEED,true,config)!!.use{readJson(it)}
-    return AndroidUpdateFeed.select(text,Build.SUPPORTED_ABIS.toList(),Build.VERSION.SDK_INT,installedCode()) {name -> name}
-  }
-  private fun familyInput(root: String, connection: String, name: String, open: Boolean, config: JSONObject?=null): InputStream? {
-    AndroidUpdateFeed.fileName(name)
-    if(root.startsWith("http://") || root.startsWith("https://")) {
-      val base=root.trimEnd('/').toHttpUrl();require(base.username.isEmpty() && base.password.isEmpty() && base.query==null && base.fragment==null) { "家庭服务器请填写目录，不要包含密码或查询参数" }
-      return if(open)request(config!!,base.newBuilder().addPathSegment(name).build().toString(),name==UPDATE_FEED).body!!.byteStream() else null
-    }
-    val unc=RemoteStorage.parseUnc(root)
-    val path=unc.parts.plus(name).joinToString("/"){android.net.Uri.encode(it)}
-    if(connection.isNotBlank()) {
-      val serverRoot=remote.requireSmbConnection(connection,unc.host,unc.share)
-      val relative=if(serverRoot)android.net.Uri.encode(unc.share)+"/"+path else path
-      return if(open)remote.input("remote://$connection/$relative") else null
-    }
-    val store=RemoteStorage(context) {JSONObject().put("type","smb").put("host",unc.host).put("share",unc.share)}
-    return if(open)store.input("remote://update/$path") else null
+    error("更新源无效；家庭服务器更新已移除，请使用 CNB 或 GitHub")
   }
   @Synchronized fun download(): JSONObject {
     require(state=="available" || state in listOf("failed","canceled") && available!=null) { "请先检查并选择新版本" }
@@ -293,8 +270,8 @@ class AppUpdates private constructor(private val context: Context) {
       try {
         synchronized(this){state="downloading"}
         require(directory.usableSpace>release.size+16*1024*1024) { "手机可用空间不足，无法下载 APK" }
-        val input=if(config.getString("source") in listOf("github","gitee")) request(config,release.location,false).body!!.byteStream()
-          else familyInput(config.getString("family"),config.optString("connectionId"),release.fileName,true,config)!!
+        require(config.getString("source") in listOf("github","cnb")){"更新源无效"}
+        val input=request(config,release.location,false).body!!.byteStream()
         var notified=0L
         input.use {AndroidUpdateFeed.copy(it,partial,release,{canceled}) {n -> synchronized(this){bytes=n}
           if(System.currentTimeMillis()-notified>750){notified=System.currentTimeMillis();service?.progress("下载更新 ${n*100/release.size}% · $n / ${release.size} 字节")}

@@ -94,7 +94,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
   if(!nativeV2&&!nativeV3)window.RHFilesNative={postMessage(message){const r=JSON.parse(message);Promise.resolve().then(()=>r.command.startsWith('fileServer.')?r.command==='fileServer.requested'?false:fileServer(r.command):r.command==='capabilities'?{version:1}:r.command==='permission'?!m.denied&&!m.partial:r.command==='theme'?true:Promise.reject(Error('Unstubbed native command '+r.command))).then(result=>this.onmessage({data:JSON.stringify({id:r.id,result})}),error=>this.onmessage({data:JSON.stringify({id:r.id,error:error.message})}));}};
   if(nativeV2 || nativeV3){
     m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
-    m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'gitee',gitee:'https://gitee.com/railgunhamster/RHFiles',github:'https://github.com/RailgunHamster/RHFiles',family:'\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases',connectionId:'',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
+    m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'cnb',cnb:'https://cnb.cool/railgunhamster/RHFiles',github:'https://github.com/RailgunHamster/RHFiles',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
     m.fs['content://test/tree/root/document/root']=[{name:'云端.txt',path:'content://test/tree/root/document/file',isDir:false,kind:'document',size:12}];
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
@@ -106,7 +106,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
         case 'image.wallpaper':if(m.wallpaperFail)throw Error('当前系统没有可用的壁纸设置界面');return true;
         case 'update.status':return m.updates;
         case 'update.save':m.updates={...m.updates,config:a,state:'idle',release:null};return m.updates;
-        case 'update.check':if(!a.manual&&!m.updates.config.autoCheck)return m.updates;m.updateRequests++;m.updates.state=m.updateFail?'failed':'available';m.updates.message=m.updateFail?'SMB 登录失败，请检查用户名和密码':'';m.updates.release=m.updateFail?null:{version:'0.1.4',versionCode:1004,notes:'第一行\n第二行 <img onerror=alert(1)>\n\n此前版本改进 / Previous improvements (0.1.3):\n旧版不应在外层展示',size:2000};return m.updates;
+        case 'update.check':if(!a.manual&&!m.updates.config.autoCheck)return m.updates;m.updateRequests++;m.updates.state=m.updateFail?'failed':'available';m.updates.message=m.updateFail?'CNB 更新失败：HTTP 403，请检查公开仓库和网络':'';m.updates.release=m.updateFail?null:{version:'0.1.4',versionCode:1004,notes:'第一行\n第二行 <img onerror=alert(1)>\n\n此前版本改进 / Previous improvements (0.1.3):\n旧版不应在外层展示',size:2000};return m.updates;
         case 'update.download':m.updates.state='downloading';m.updates.started=Date.now();m.updates.bytes=800;return m.updates;
         case 'update.cancel':m.updates.state='canceled';return m.updates;
         case 'update.install':if(m.installFail){m.updates.state='failed';m.updates.message='安装更新失败：APK 0.1.20 (1020)，清单 0.1.21 (1021)';throw Error(m.updates.message)}return m.installPermission?'permission':'installer';
@@ -398,10 +398,11 @@ try{
     const {context,page:p,errors}=await pageFor({nativeV3:true,nativeUpdates:true});
     await tile(p,'settings').click();await p.click('[data-settings-section="updates"]');await p.locator('#update-check').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===0),'Disabled auto-check makes no network request at startup or opening Settings');
-    check(await p.locator('[name=source]').inputValue()==='gitee'&&await p.locator('#update-gitee-field').isVisible()&&!await p.locator('#update-github-field').isVisible()&&!await p.locator('#update-family-fields').isVisible(),'Gitee is the default provider and only its repository field is visible');
-    await p.selectOption('[name=source]','github');check(await p.locator('#update-github-field').isVisible()&&!await p.locator('#update-gitee-field').isVisible(),'GitHub remains independently selectable');
-    await p.selectOption('[name=source]','gitee');await p.click('#update-save');await p.waitForFunction(()=>__model.updates.config.source==='gitee');
-    check(await p.evaluate(()=>__model.updates.config.gitee==='https://gitee.com/railgunhamster/RHFiles'),'Gitee repository is included when saving update settings');
+    check(await p.locator('[name=source]').inputValue()==='cnb'&&await p.locator('#update-cnb-field').isVisible()&&!await p.locator('#update-github-field').isVisible(),'CNB is the default provider and only its repository field is visible');
+    check(await p.locator('#update-family-fields').count()===0&&await p.locator('[name=source] option').count()===2,'Home-server update selector and address fields are removed');
+    await p.selectOption('[name=source]','github');check(await p.locator('#update-github-field').isVisible()&&!await p.locator('#update-cnb-field').isVisible(),'GitHub remains independently selectable');
+    await p.selectOption('[name=source]','cnb');await p.click('#update-save');await p.waitForFunction(()=>__model.updates.config.source==='cnb');
+    check(await p.evaluate(()=>__model.updates.config.cnb==='https://cnb.cool/railgunhamster/RHFiles'),'CNB repository is included when saving update settings');
     await p.click('#update-check');await p.locator('#update-download:not([hidden])').waitFor();
     check(await p.evaluate(()=>__model.updateRequests===1),'Manual check works even with automatic checking disabled');
     check(await p.evaluate(()=>{const a=document.getElementById('update-actions'),n=document.getElementById('update-pending-notes');return !!(a.compareDocumentPosition(n)&Node.DOCUMENT_POSITION_FOLLOWING)&&a.getBoundingClientRect().bottom<=n.getBoundingClientRect().top;}),'Update actions stay visually and structurally above pending notes when an update exists');
@@ -415,12 +416,9 @@ try{
     check(await p.locator('#update-state').innerText().then(t=>t.includes('/s')),'APK download shows speed');
     await p.click('#update-cancel');await p.locator('#update-download:not([hidden])').waitFor();
     check(await p.locator('#update-state').innerText().then(t=>t.includes('已取消')),'Cancel download is visible and retryable');
-    await p.selectOption('[name=source]','family');
-    check(await p.locator('#update-family-fields').isVisible() && !await p.locator('#update-github-field').isVisible(),'Family source exposes SMB directory and login selector');
-    await p.click('#update-save');await p.waitForFunction(()=>__model.updates.config.source==='family');
-    check(await p.evaluate(()=>__model.updates.config.family.startsWith('\\\\SERVER-HOME')),'Family source preserves both leading UNC slashes');
+    check(await p.locator('[name=family],[name=connectionId],[name=smbPassword]').count()===0,'Removed update fields cannot revive an SMB update connection');
     await p.evaluate(()=>__model.updateFail=true);await p.click('#update-check');
-    await p.waitForFunction(()=>document.getElementById('update-state').textContent.includes('SMB 登录失败'));
+    await p.waitForFunction(()=>document.getElementById('update-state').textContent.includes('HTTP 403'));
     check(await p.locator('#update-state.danger').isVisible(),'Update failure cause is readable beside update controls');
     await p.evaluate(()=>{__model.updateFail=false;__model.installPermission=true;});await p.click('#update-check');await p.click('#update-download');
     await p.evaluate(()=>{__model.updates.state='ready';__model.updates.bytes=2000;});

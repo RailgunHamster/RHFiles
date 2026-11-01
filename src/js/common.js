@@ -4,8 +4,7 @@ const invoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.inv
 const IS_MAC = /Mac/i.test(globalThis.navigator?.platform || '');
 const FS_ROOT = IS_MAC ? '/' : 'C:\\';
 const DEFAULT_GITHUB_UPDATE_SOURCE = 'https://github.com/RailgunHamster/RHFiles';
-const DEFAULT_GITEE_UPDATE_SOURCE = 'https://gitee.com/railgunhamster/RHFiles';
-const DEFAULT_SERVER_UPDATE_SOURCE = '\\\\SERVER-HOME\\Public\\Software\\RHFiles-Releases';
+const DEFAULT_CNB_UPDATE_SOURCE = 'https://cnb.cool/railgunhamster/RHFiles';
 
 // --- i18n ---
 const _builtinEn = { 'cmd.new':'New','cmd.cut':'Cut','cmd.copy':'Copy','cmd.paste':'Paste','cmd.rename':'Rename','cmd.delete':'Delete','cmd.sort':'Sort','cmd.hidden':'Hidden','cmd.refresh':'Refresh','cmd.goBack':'Go Back','cmd.goForward':'Go Forward','cmd.goUp':'Go Up','cmd.openInto':'Open','cmd.newFolder':'New Folder','cmd.newFile':'New File','cmd.batchRename':'Batch Rename','cmd.properties':'Properties','cmd.manageTags':'Manage Tags','cmd.toggleTheme':'Toggle Theme','cmd.togglePreview':'Toggle Preview','cmd.toggleDualPane':'Toggle Dual Pane','cmd.toggleHidden':'Toggle Dot-prefixed Hidden Files','cmd.toggleHiddenTitle':'Dot-prefixed hidden files (Windows hidden/system attributes are separate, in Settings)','cmd.toggleHiddenAttr':'Toggle Hidden-attribute Files','cmd.toggleSystem':'Toggle System Files','cmd.toggleGrouping':'Toggle Grouping','cmd.togglePip':'Toggle PiP','cmd.layoutDetails':'Details Layout','cmd.layoutIcons':'Icons Layout','cmd.layoutThumbnails':'Thumbnails Layout','cmd.layoutCards':'Cards Layout','cmd.layoutColumns':'Columns Layout','cmd.invertSelection':'Invert Selection','cmd.undo':'Undo','cmd.redo':'Redo','cmd.fullscreen':'Fullscreen','cmd.exportData':'Export Data','cmd.importData':'Import Data','cmd.newWindow':'New Window','cmd.quickLook':'Quick Look','cmd.switchPane':'Switch Pane','ctx.open':'Open','ctx.openWith':'Open with...','ctx.cut':'Cut','ctx.copy':'Copy','ctx.paste':'Paste','ctx.rename':'Rename','ctx.delete':'Delete','ctx.newFolder':'New Folder','ctx.selectAll':'Select All','ctx.properties':'Properties','ctx.showHidden':'Show hidden items','ctx.hideHidden':'Hide hidden items','ctx.batchRename':'Batch Rename','ctx.addTag':'Add Tag','ctx.extract':'Extract','ctx.extractEach':'Extract each archive into its own folder','ctx.extractAll':'Extract All','col.name':'Name','col.modified':'Date modified','col.created':'Date created','col.type':'Type','col.size':'Size','sidebar.tree':'Directory Tree','sidebar.quickAccess':'Quick access','sidebar.thisPC':'This PC','sidebar.tags':'Tags','sidebar.recent':'Recent','preview.title':'Preview','preview.selectFile':'Select a file to preview','preview.noPreview':'No preview available','preview.binary':'Binary file','batchRename.title':'Batch Rename','batchRename.find':'Find','batchRename.replace':'Replace','properties.title':'Properties','settings.title':'Settings','settings.language':'Language','settings.theme':'Theme','settings.shortcuts':'Keyboard Shortcuts','tag.manage':'Manage Tags','archive.title':'Archive','btn.cancel':'Cancel','btn.rename':'Rename','btn.ok':'OK','btn.add':'Add','btn.save':'Save','nav.home':'Home','nav.newTab':'New Tab','group.items':'{count} items','notice.pipOn':'PiP mode on','notice.pipOff':'PiP mode off','notice.searchHistoryCleared':'Search history cleared','status.items':'{count} items','status.item':'{count} item','status.folders':'{count} folders','status.folder':'{count} folder','status.files':'{count} files','status.file':'{count} file','status.error':'Error: {error}','status.searching':'Searching...','status.searchError':'Search error: {error}','home.desktop':'Desktop','home.downloads':'Downloads','home.documents':'Documents','home.pictures':'Pictures','home.music':'Music','home.videos':'Videos','home.noRecent':'No recent items','search.placeholder':'Search...','search.quickSearch':'Quick Search','search.modeNormal':'Normal','search.modeRegex':'Regex','search.modeWildcard':'Wildcard','search.modeTooltip':'{mode} mode','search.results':'{count} results','search.builtin':'Built-in','search.everythingNotRunning':'Everything not running','search.downloadEverything':'Download Everything','search.changeEngine':'Change in Settings','search.recent':'Recent','search.clear':'Clear','alert.cannotNavArchive':'Cannot navigate into archive','alert.pipFailed':'PiP failed: {error}','confirm.updateAvailable':'Update {version} available','cloud.synced':'Synced','cloud.onlineOnly':'Online only','cloud.syncing':'Syncing','cloud.locallyAvailable':'Locally available','ctx.moreOptions':'Show more options' };
@@ -1141,12 +1140,11 @@ function loadSettings() {
     autoUpdateEnabled: true,
     proxyEnabled: false,
     proxyUrl: '',
-    updateSourceMode: 'gitee',
-    updateSourceChoiceVersion: 1,
-    giteeUpdateSource: DEFAULT_GITEE_UPDATE_SOURCE,
+    updateSourceMode: 'cnb',
+    updateSourceChoiceVersion: 2,
+    cnbUpdateSource: DEFAULT_CNB_UPDATE_SOURCE,
     githubUpdateSource: DEFAULT_GITHUB_UPDATE_SOURCE,
-    serverUpdateSource: DEFAULT_SERVER_UPDATE_SOURCE,
-    updateSource: DEFAULT_GITEE_UPDATE_SOURCE,
+    updateSource: DEFAULT_CNB_UPDATE_SOURCE,
     fileDialogIntegrationEnabled: false,
     fileDialogIntegrationExplorer: false,
     fileDialogIntegrationFileDialog: false,
@@ -1183,31 +1181,34 @@ function loadSettings() {
     settings.fileDialogIntegrationEnabled = settings.fileDialogIntegrationExplorer || settings.fileDialogIntegrationFileDialog;
     const legacySource = String(stored.updateSource || '').trim();
     if (!stored.updateSourceMode && legacySource) {
-      if (/^https?:\/\/gitee\.com\//i.test(legacySource)) {
-        settings.updateSourceMode = 'gitee';
-        settings.giteeUpdateSource = legacySource;
+      if (/^https:\/\/cnb\.cool\//i.test(legacySource)) {
+        settings.updateSourceMode = 'cnb';
+        settings.cnbUpdateSource = legacySource;
       } else if (/^https?:\/\/github\.com\//i.test(legacySource)) {
         settings.updateSourceMode = 'github';
         settings.githubUpdateSource = legacySource;
       } else {
-        settings.updateSourceMode = 'server';
-        settings.serverUpdateSource = legacySource;
+        settings.updateSourceMode = 'cnb';
       }
     }
-    if (!['gitee','github','server'].includes(settings.updateSourceMode)) settings.updateSourceMode = 'gitee';
-    // Migrate only the old bundled default. Custom repositories/LAN choices
-    // survive; a subsequent explicit GitHub choice is never migrated again.
+    if (!['cnb','github'].includes(settings.updateSourceMode)) settings.updateSourceMode = 'cnb';
+    // Retire Gitee/home-server sources without enabling disabled checks.
+    // A subsequent explicit GitHub choice remains unchanged.
     if (!stored.updateSourceChoiceVersion && settings.updateSourceMode === 'github'
       && String(settings.githubUpdateSource || '').replace(/\/+$/, '').toLowerCase() === DEFAULT_GITHUB_UPDATE_SOURCE.toLowerCase()) {
-      settings.updateSourceMode = 'gitee';
+      settings.updateSourceMode = 'cnb';
     }
-    settings.updateSourceChoiceVersion = 1;
-    settings.giteeUpdateSource = String(settings.giteeUpdateSource || '').trim() || DEFAULT_GITEE_UPDATE_SOURCE;
+    settings.updateSourceChoiceVersion = 2;
+    settings.cnbUpdateSource = String(settings.cnbUpdateSource || '').trim() || DEFAULT_CNB_UPDATE_SOURCE;
     settings.githubUpdateSource = String(settings.githubUpdateSource || '').trim() || DEFAULT_GITHUB_UPDATE_SOURCE;
-    settings.serverUpdateSource = String(settings.serverUpdateSource || '').trim() || DEFAULT_SERVER_UPDATE_SOURCE;
-    settings.updateSource = settings.updateSourceMode === 'server'
-      ? settings.serverUpdateSource
-      : settings.updateSourceMode === 'github' ? settings.githubUpdateSource : settings.giteeUpdateSource;
+    delete settings.giteeUpdateSource;
+    delete settings.serverUpdateSource;
+    settings.updateSource = settings.updateSourceMode === 'github' ? settings.githubUpdateSource : settings.cnbUpdateSource;
+    // Persist retirement immediately, including after importing an old backup.
+    // A storage write failure must not discard otherwise valid user settings.
+    if (stored.updateSourceChoiceVersion !== 2 || 'serverUpdateSource' in stored || 'giteeUpdateSource' in stored) {
+      try { localStorage.setItem('rhfiles-settings', JSON.stringify(settings)); } catch (_) {}
+    }
     return settings;
   } catch (e) { return defaults; }
 }

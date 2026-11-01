@@ -415,16 +415,13 @@ function openSettings() {
     '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-update-source">' + t('settings.updateSource') + '</label>' +
     '<select id="settings-update-source" onchange="setUpdateSourceMode(this.value)">' +
-      '<option value="gitee"' + (G.settings.updateSourceMode==='gitee'?' selected':'') + '>' + t('settings.updateSourceGitee') + '</option>' +
+      '<option value="cnb"' + (G.settings.updateSourceMode==='cnb'?' selected':'') + '>' + t('settings.updateSourceCnb') + '</option>' +
       '<option value="github"' + (G.settings.updateSourceMode==='github'?' selected':'') + '>' + t('settings.updateSourceGithub') + '</option>' +
-      '<option value="server"' + (G.settings.updateSourceMode==='server'?' selected':'') + '>' + t('settings.updateSourceServer') + '</option>' +
     '</select></div>' +
-    '<div class="settings-row update-location-row"><label for="settings-update-gitee">' + t('settings.giteeUpdateSource') + '</label>' +
-    '<input id="settings-update-gitee" type="text" spellcheck="false" value="' + esc(getGiteeUpdateSource()) + '" onchange="setUpdateSourceLocation(\'gitee\',this.value,this)"></div>' +
+    '<div class="settings-row update-location-row"><label for="settings-update-cnb">' + t('settings.cnbUpdateSource') + '</label>' +
+    '<input id="settings-update-cnb" type="text" spellcheck="false" value="' + esc(getCnbUpdateSource()) + '" onchange="setUpdateSourceLocation(\'cnb\',this.value,this)"></div>' +
     '<div class="settings-row update-location-row"><label for="settings-update-github">' + t('settings.githubUpdateSource') + '</label>' +
     '<input id="settings-update-github" type="text" spellcheck="false" value="' + esc(getGithubUpdateSource()) + '" onchange="setUpdateSourceLocation(\'github\',this.value,this)"></div>' +
-    '<div class="settings-row update-location-row"><label for="settings-update-server">' + t('settings.serverUpdateSource') + '</label>' +
-    '<input id="settings-update-server" type="text" spellcheck="false" value="' + esc(getServerUpdateSource()) + '" onchange="setUpdateSourceLocation(\'server\',this.value,this)"></div>' +
     '<div class="settings-source-help">' + t('settings.updateSourceHelp') + '</div>' +
     '<div class="settings-row"><label for="settings-proxy-enabled">' + t('settings.proxyEnabled') + '</label>' +
     '<input id="settings-proxy-enabled" type="checkbox" onchange="setProxyEnabled(this.checked)"' + (G.settings.proxyEnabled===true?' checked':'') + '></div>' +
@@ -495,8 +492,8 @@ function setAutoUpdateEnabled(enabled) {
 }
 
 function setUpdateSourceMode(mode) {
-  G.settings.updateSourceMode = ['gitee','github','server'].includes(mode) ? mode : 'gitee';
-  G.settings.updateSourceChoiceVersion = 1;
+  G.settings.updateSourceMode = ['cnb','github'].includes(mode) ? mode : 'cnb';
+  G.settings.updateSourceChoiceVersion = 2;
   G.settings.updateSource = getUpdateSource();
   saveSettings();
   G._updateStatus = null;
@@ -505,10 +502,10 @@ function setUpdateSourceMode(mode) {
 }
 
 function setUpdateSourceLocation(kind, value, input) {
-  if (!['gitee','github','server'].includes(kind)) return;
-  const fallback = {server:DEFAULT_SERVER_UPDATE_SOURCE,github:DEFAULT_GITHUB_UPDATE_SOURCE,gitee:DEFAULT_GITEE_UPDATE_SOURCE}[kind];
+  if (!['cnb','github'].includes(kind)) return;
+  const fallback = {github:DEFAULT_GITHUB_UPDATE_SOURCE,cnb:DEFAULT_CNB_UPDATE_SOURCE}[kind];
   const normalized = String(value || '').trim() || fallback;
-  G.settings[{server:'serverUpdateSource',github:'githubUpdateSource',gitee:'giteeUpdateSource'}[kind]] = normalized;
+  G.settings[{github:'githubUpdateSource',cnb:'cnbUpdateSource'}[kind]] = normalized;
   if (input) input.value = normalized;
   G.settings.updateSource = getUpdateSource();
   saveSettings();

@@ -53,7 +53,15 @@ class SettingsBackupTest {
   @Test fun invalidPayloadDoesNotMutateExistingSettings(){
     val remotes=remote(1);val id=remotes.save(profile());val store=SettingsBackup(context,remotes);val payload=store.snapshot(JSONObject(),updates());payload.getJSONObject("web").put("untrusted-key","value")
     try{store.apply(payload);fail()}catch(_:Exception){};assertEquals(id,remotes.connections().getJSONObject(0).getString("id"));assertNull(store.pending())
-    payload.put("web",JSONObject());payload.getJSONObject("updates").put("connectionId","missing");try{store.apply(payload);fail()}catch(_:Exception){};assertEquals(id,remotes.connections().getJSONObject(0).getString("id"))
+    payload.put("web",JSONObject());payload.getJSONObject("updates").put("unknownUpdateField","invalid");try{store.apply(payload);fail()}catch(_:Exception){};assertEquals(id,remotes.connections().getJSONObject(0).getString("id"))
+  }
+  @Test fun retiredUpdateAddressesAreDiscardedButOrdinarySmbConnectionsRemain(){
+    val remotes=remote(1);val id=remotes.save(profile());val store=SettingsBackup(context,remotes)
+    val payload=store.snapshot(JSONObject(),updates().put("source","family").put("connectionId","missing-retired-update-reference"))
+    store.apply(payload)
+    val prefs=context.getSharedPreferences("updates-v1",Context.MODE_PRIVATE)
+    assertEquals("cnb",prefs.getString("source",null));assertFalse(prefs.contains("family"));assertFalse(prefs.contains("connectionId"));assertFalse(prefs.getBoolean("autoCheck",true))
+    assertEquals(id,remotes.connections().getJSONObject(0).getString("id"))
   }
   @Test fun readerStoreRejectsNonReaderKeysAndKeepsOtherBooks(){
     ReaderSettings.replace(context,JSONObject().put("rhfiles.reader.book.abc","{}"));ReaderSettings.update(context,"rhfiles.reader.options","{\"font\":18}")

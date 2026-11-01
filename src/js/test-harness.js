@@ -1171,12 +1171,11 @@
       assert($("#settings-proxy-enabled"), "Proxy enable setting is missing");
       assert($("#settings-proxy-url"), "Proxy address setting is missing");
       assert($("#settings-update-source"), "Update-source setting is missing");
-      assert($("#settings-update-gitee"), "Configurable Gitee update location is missing");
-      assertEqual($("#settings-update-gitee").value, getGiteeUpdateSource(), "Gitee source input is out of sync");
+      assert($("#settings-update-cnb"), "Configurable CNB update location is missing");
+      assertEqual($("#settings-update-cnb").value, getCnbUpdateSource(), "CNB source input is out of sync");
       assert($("#settings-update-github"), "Configurable GitHub update location is missing");
-      assert($("#settings-update-server"), "Configurable home-server update location is missing");
+      assert(!$("#settings-update-server"), "Retired home-server update location remains visible");
       assertEqual($("#settings-update-github").value, getGithubUpdateSource(), "GitHub source input is out of sync");
-      assertEqual($("#settings-update-server").value, getServerUpdateSource(), "Home-server source input is out of sync");
       assert($("#settings-check-update"), "Manual update button is missing");
       assert($("#settings-update-failure"), "Persistent update-failure detail is missing");
       switchSettingsSection('files', false);
@@ -1491,26 +1490,23 @@
       applyTheme(previousTheme, false);
     });
 
-    await test("[updates] Gitee, GitHub and home-server locations are independently configurable", async () => {
+    await test("[updates] CNB and GitHub are independently configurable; family update addresses are retired", async () => {
       const savedSettings = { ...G.settings };
       const savedStorage = localStorage.getItem('rhfiles-settings');
       try {
-        G.settings.giteeUpdateSource = 'https://gitee.com/example/custom-files';
-        G.settings.updateSourceMode = 'gitee';
-        assertEqual(getUpdateSource(), 'https://gitee.com/example/custom-files', "Custom Gitee source was not selected");
+        G.settings.cnbUpdateSource = 'https://cnb.cool/example/custom-files';
+        G.settings.updateSourceMode = 'cnb';
+        assertEqual(getUpdateSource(), 'https://cnb.cool/example/custom-files', "Custom CNB source was not selected");
         G.settings.githubUpdateSource = 'https://github.com/example/custom-files';
-        G.settings.serverUpdateSource = '\\\\HOME-NAS\\Apps\\RHFiles-Releases';
         G.settings.updateSourceMode = 'github';
         assertEqual(getUpdateSource(), 'https://github.com/example/custom-files', "Custom GitHub source was not selected");
-        G.settings.updateSourceMode = 'server';
-        assertEqual(getUpdateSource(), '\\\\HOME-NAS\\Apps\\RHFiles-Releases', "Custom home-server source was not selected");
 
         localStorage.setItem('rhfiles-settings', JSON.stringify({
           updateSource: '\\\\OLD-SERVER\\Public\\RHFiles-Releases',
         }));
         const migrated = loadSettings();
-        assertEqual(migrated.updateSourceMode, 'server', "Legacy server setting did not migrate to server mode");
-        assertEqual(migrated.serverUpdateSource, '\\\\OLD-SERVER\\Public\\RHFiles-Releases', "Legacy server path was not preserved");
+        assertEqual(migrated.updateSourceMode, 'cnb', "Retired server setting did not migrate to CNB");
+        assert(!('serverUpdateSource' in migrated), "Retired family address was preserved");
       } finally {
         G.settings = savedSettings;
         if (savedStorage === null) localStorage.removeItem('rhfiles-settings');

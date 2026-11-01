@@ -364,21 +364,15 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 function getUpdateSource() {
-  return G.settings.updateSourceMode === 'server'
-    ? getServerUpdateSource()
-    : G.settings.updateSourceMode === 'github' ? getGithubUpdateSource() : getGiteeUpdateSource();
+  return G.settings.updateSourceMode === 'github' ? getGithubUpdateSource() : getCnbUpdateSource();
 }
 
-function getGiteeUpdateSource() {
-  return String(G.settings.giteeUpdateSource || '').trim() || DEFAULT_GITEE_UPDATE_SOURCE;
+function getCnbUpdateSource() {
+  return String(G.settings.cnbUpdateSource || '').trim() || DEFAULT_CNB_UPDATE_SOURCE;
 }
 
 function getGithubUpdateSource() {
   return String(G.settings.githubUpdateSource || '').trim() || DEFAULT_GITHUB_UPDATE_SOURCE;
-}
-
-function getServerUpdateSource() {
-  return String(G.settings.serverUpdateSource || '').trim() || DEFAULT_SERVER_UPDATE_SOURCE;
 }
 
 const UPDATE_CHECK_STARTUP_DELAY_MS = 5000;

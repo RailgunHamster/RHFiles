@@ -12,11 +12,10 @@ use tauri::Emitter;
 use url::Url;
 use velopack::{
     Error as VelopackError, UpdateCheck, UpdateManager, VelopackAsset, VelopackAssetFeed,
-    bundle::Manifest,
-    sources::{AutoSource, UpdateSource},
+    bundle::Manifest, sources::UpdateSource,
 };
 
-const DEFAULT_UPDATE_SOURCE: &str = "https://gitee.com/railgunhamster/RHFiles";
+const DEFAULT_UPDATE_SOURCE: &str = "https://cnb.cool/railgunhamster/RHFiles";
 const FEED_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -81,6 +80,7 @@ pub struct UpdateFailureInfo {
 enum WebSourceKind {
     Github { download_base: Url },
     Gitee { repository_base: Url },
+    Cnb { repository_base: Url },
     Static { base_url: Url },
 }
 
@@ -93,41 +93,6 @@ struct ConfiguredWebSource {
     kind: WebSourceKind,
     feed_agent: ureq::Agent,
     download_agent: ureq::Agent,
-}
-
-#[derive(Clone)]
-struct NetworkUpdateSource {
-    root: PathBuf,
-}
-
-impl UpdateSource for NetworkUpdateSource {
-    fn get_release_feed(
-        &self,
-        channel: &str,
-        _app: &Manifest,
-        _staged_user_id: &str,
-    ) -> Result<VelopackAssetFeed, VelopackError> {
-        validate_asset_name(&format!("releases.{channel}.json"))?;
-        let path = self.root.join(format!("releases.{channel}.json"));
-        let json =
-            crate::network_io::read_text(&path, 8 * 1024 * 1024).map_err(VelopackError::Other)?;
-        serde_json::from_str(&json).map_err(VelopackError::from)
-    }
-
-    fn download_release_entry(
-        &self,
-        asset: &VelopackAsset,
-        local_file: &Path,
-        progress_sender: Option<mpsc::Sender<i16>>,
-    ) -> Result<(), VelopackError> {
-        validate_asset_name(&asset.FileName)?;
-        crate::network_io::copy_update(
-            &self.root.join(&asset.FileName),
-            local_file,
-            progress_sender,
-        )
-        .map_err(VelopackError::Other)
-    }
 }
 
 fn validate_asset_name(name: &str) -> Result<(), VelopackError> {
@@ -205,6 +170,43 @@ impl ConfiguredWebSource {
                     parts[0]
                 ))?,
             }
+        } else if source_url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("cnb.cool"))
+        {
+            if source_url.scheme() != "https"
+                || source_url.port().is_some()
+                || !source_url.username().is_empty()
+                || source_url.password().is_some()
+                || source_url.query().is_some()
+                || source_url.fragment().is_some()
+                || source.contains('%')
+                || source.split('/').any(|part| matches!(part, "." | ".."))
+            {
+                return Err(VelopackError::Other("CNB update source must be a public HTTPS repository URL without credentials or query parameters".into()));
+            }
+            let mut parts: Vec<_> = source_url
+                .path()
+                .trim_end_matches('/')
+                .split('/')
+                .skip(1)
+                .collect();
+            if !(2..=10).contains(&parts.len())
+                || parts.iter().any(|p| !repository_component(p) || *p == "-")
+            {
+                return Err(VelopackError::Other("CNB update source must be a repository URL, for example https://cnb.cool/group/repository (nested groups are supported)".into()));
+            }
+            let last = parts.last_mut().unwrap();
+            *last = last.strip_suffix(".git").unwrap_or(last);
+            if !repository_component(last) || *last == "-" {
+                return Err(VelopackError::Other("Invalid CNB repository name".into()));
+            }
+            WebSourceKind::Cnb {
+                repository_base: Url::parse(&format!(
+                    "https://cnb.cool/{}/-/releases/",
+                    parts.join("/")
+                ))?,
+            }
         } else {
             let base = format!("{}/", source.trim_end_matches('/'));
             WebSourceKind::Static {
@@ -241,6 +243,9 @@ impl ConfiguredWebSource {
             WebSourceKind::Static { base_url } => base_url.join("release-history.json")?,
             WebSourceKind::Gitee { repository_base } => {
                 repository_base.join("latest/release-history.json")?
+            }
+            WebSourceKind::Cnb { repository_base } => {
+                repository_base.join("latest/download/release-history.json")?
             }
         };
         self.get_text(url.as_str(), "application/json")
@@ -317,6 +322,19 @@ fn gitee_asset_url(repository_base: &Url, asset: &VelopackAsset) -> Result<Url, 
     Ok(url)
 }
 
+fn cnb_asset_url(repository_base: &Url, asset: &VelopackAsset) -> Result<Url, VelopackError> {
+    validate_asset_name(&asset.FileName)?;
+    let version = Version::parse(&asset.Version)?;
+    let mut url = repository_base.clone();
+    url.path_segments_mut()
+        .map_err(|_| VelopackError::Other("Invalid CNB download URL".into()))?
+        .pop_if_empty()
+        .push("download")
+        .push(&format!("v{version}"))
+        .push(&asset.FileName);
+    Ok(url)
+}
+
 impl UpdateSource for ConfiguredWebSource {
     fn get_release_feed(
         &self,
@@ -337,6 +355,12 @@ impl UpdateSource for ConfiguredWebSource {
                     .as_str(),
                 "application/json",
             )?,
+            WebSourceKind::Cnb { repository_base } => self.get_text(
+                repository_base
+                    .join(&format!("latest/download/{feed_name}"))?
+                    .as_str(),
+                "application/json",
+            )?,
             WebSourceKind::Static { base_url } => {
                 let mut url = base_url.join(&feed_name)?;
                 let local_version = app.version.to_string();
@@ -350,6 +374,9 @@ impl UpdateSource for ConfiguredWebSource {
         let feed: VelopackAssetFeed = serde_json::from_str(&json)?;
         if matches!(self.kind, WebSourceKind::Gitee { .. }) && feed.Assets.is_empty() {
             return Err(VelopackError::Other("Gitee release has no Windows update assets; cannot confirm whether this is the latest version".into()));
+        }
+        if matches!(self.kind, WebSourceKind::Cnb { .. }) && feed.Assets.is_empty() {
+            return Err(VelopackError::Other("CNB release has no Windows update assets; cannot confirm whether this is the latest version".into()));
         }
         Ok(feed)
     }
@@ -368,6 +395,9 @@ impl UpdateSource for ConfiguredWebSource {
             WebSourceKind::Static { base_url } => base_url.join(&asset.FileName)?.to_string(),
             WebSourceKind::Gitee { repository_base } => {
                 gitee_asset_url(repository_base, asset)?.to_string()
+            }
+            WebSourceKind::Cnb { repository_base } => {
+                cnb_asset_url(repository_base, asset)?.to_string()
             }
         };
         self.download_to_file(&url, local_file, progress_sender)
@@ -472,18 +502,9 @@ fn read_remote_release_history(
     source: &str,
     proxy: Option<&str>,
 ) -> Result<Vec<ReleaseHistoryEntry>, String> {
-    let text = if Url::parse(source)
-        .ok()
-        .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
-    {
-        ConfiguredWebSource::new(source, proxy)
-            .and_then(|configured| configured.get_release_history_text())
-            .map_err(|error| error.to_string())?
-    } else {
-        let path = PathBuf::from(source).join("release-history.json");
-        crate::network_io::read_text(&path, MAX_RELEASE_HISTORY_BYTES)
-            .map_err(|error| format!("Unable to read {}: {error}", path.display()))?
-    };
+    let text = ConfiguredWebSource::new(source, proxy)
+        .and_then(|configured| configured.get_release_history_text())
+        .map_err(|error| error.to_string())?;
     parse_release_history(&text)
 }
 
@@ -658,23 +679,9 @@ fn parse_last_update_failure(
 }
 
 fn manager_for(source: &str, proxy: Option<&str>) -> Result<UpdateManager, VelopackError> {
-    let source_url = Url::parse(source).ok();
-    if source_url
-        .as_ref()
-        .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
-    {
-        return UpdateManager::new(ConfiguredWebSource::new(source, proxy)?, None, None);
-    }
-    if crate::network_io::network_key(source).is_some() {
-        return UpdateManager::new(
-            NetworkUpdateSource {
-                root: PathBuf::from(source),
-            },
-            None,
-            None,
-        );
-    }
-    UpdateManager::new(AutoSource::new(source), None, None)
+    // No UNC/local fallback: retired home-server paths must fail before any
+    // filesystem access, including calls from an old script or old backup.
+    UpdateManager::new(ConfiguredWebSource::new(source, proxy)?, None, None)
 }
 
 fn unmanaged_status() -> UpdateStatus {
@@ -897,7 +904,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_source_uses_gitee() {
+    fn empty_source_uses_cnb() {
         assert_eq!(effective_source(None), DEFAULT_UPDATE_SOURCE);
         assert_eq!(effective_source(Some("   ".into())), DEFAULT_UPDATE_SOURCE);
     }
@@ -905,7 +912,7 @@ mod tests {
     #[test]
     fn gitee_repository_is_not_treated_as_a_static_directory_or_api_endpoint() {
         for url in [
-            DEFAULT_UPDATE_SOURCE,
+            "https://gitee.com/railgunhamster/RHFiles",
             "https://gitee.com/railgunhamster/RHFiles.git/",
         ] {
             let source = ConfiguredWebSource::new(url, None).unwrap();
@@ -973,87 +980,166 @@ mod tests {
     }
 
     #[test]
-    fn gitee_feed_history_and_payload_use_separate_expected_routes() {
+    fn gitee_and_cnb_feed_history_and_payload_use_separate_expected_routes() {
         use std::net::TcpListener;
-        let asset = VelopackAsset {
-            PackageId: "RHFiles".into(),
-            Version: "0.1.73".into(),
-            Type: "Full".into(),
-            FileName: "RHFiles-0.1.73-full.nupkg".into(),
-            Size: 3,
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&VelopackAssetFeed {
-            Assets: vec![asset.clone()],
-        })
-        .unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            for (route, body) in [
-                ("/latest/releases.win.json", json),
-                (
-                    "/latest/release-history.json",
-                    "{\"schemaVersion\":1,\"releases\":[]}".into(),
-                ),
-                ("/v0.1.73/RHFiles-0.1.73-full.nupkg", "abc".into()),
-            ] {
-                let deadline = std::time::Instant::now() + Duration::from_secs(10);
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(error)
-                            if error.kind() == std::io::ErrorKind::WouldBlock
-                                && std::time::Instant::now() < deadline =>
-                        {
-                            std::thread::sleep(Duration::from_millis(10))
+        for cnb in [false, true] {
+            let asset = VelopackAsset {
+                PackageId: "RHFiles".into(),
+                Version: "0.1.73".into(),
+                Type: "Full".into(),
+                FileName: "RHFiles-0.1.73-full.nupkg".into(),
+                Size: 3,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&VelopackAssetFeed {
+                Assets: vec![asset.clone()],
+            })
+            .unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                for (route, body) in [
+                    (
+                        if cnb {
+                            "/latest/download/releases.win.json"
+                        } else {
+                            "/latest/releases.win.json"
+                        },
+                        json,
+                    ),
+                    (
+                        if cnb {
+                            "/latest/download/release-history.json"
+                        } else {
+                            "/latest/release-history.json"
+                        },
+                        "{\"schemaVersion\":1,\"releases\":[]}".into(),
+                    ),
+                    (
+                        if cnb {
+                            "/download/v0.1.73/RHFiles-0.1.73-full.nupkg"
+                        } else {
+                            "/v0.1.73/RHFiles-0.1.73-full.nupkg"
+                        },
+                        "abc".into(),
+                    ),
+                ] {
+                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(error)
+                                if error.kind() == std::io::ErrorKind::WouldBlock
+                                    && std::time::Instant::now() < deadline =>
+                            {
+                                std::thread::sleep(Duration::from_millis(10))
+                            }
+                            Err(error) => panic!("No bounded update request: {error}"),
                         }
-                        Err(error) => panic!("No bounded update request: {error}"),
+                    };
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    // Winsock may retain the listener's nonblocking mode on an
+                    // accepted socket. The bounded accept loop must not turn the
+                    // subsequent blocking HTTP header reader into a flaky poll.
+                    stream.set_nonblocking(false).unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        assert_eq!(stream.read(&mut byte).unwrap(), 1);
+                        request.push(byte[0]);
+                        assert!(request.len() < 8192);
                     }
-                };
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-                // Winsock may retain the listener's nonblocking mode on an
-                // accepted socket. The bounded accept loop must not turn the
-                // subsequent blocking HTTP header reader into a flaky poll.
-                stream.set_nonblocking(false).unwrap();
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") {
-                    let mut byte = [0];
-                    assert_eq!(stream.read(&mut byte).unwrap(), 1);
-                    request.push(byte[0]);
-                    assert!(request.len() < 8192);
+                    assert!(
+                        String::from_utf8_lossy(&request)
+                            .starts_with(&format!("GET {route} HTTP/1.1"))
+                    );
+                    stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).unwrap();
                 }
-                assert!(
-                    String::from_utf8_lossy(&request).starts_with(&format!("GET {route} HTTP/1.1"))
-                );
-                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).unwrap();
-            }
-        });
-        let mut source = ConfiguredWebSource::new(&format!("http://{address}"), None).unwrap();
-        // A loopback fixture only. Production Gitee sources require HTTPS.
-        source.kind = WebSourceKind::Gitee {
-            repository_base: Url::parse(&format!("http://{address}/")).unwrap(),
-        };
-        let feed = source
-            .get_release_feed("win", &Manifest::default(), "")
-            .unwrap();
-        assert_eq!(feed.Assets[0].Version, "0.1.73");
-        assert!(
+            });
+            let mut source = ConfiguredWebSource::new(&format!("http://{address}"), None).unwrap();
+            // A loopback fixture only. Production Gitee sources require HTTPS.
+            source.kind = if cnb {
+                WebSourceKind::Cnb {
+                    repository_base: Url::parse(&format!("http://{address}/")).unwrap(),
+                }
+            } else {
+                WebSourceKind::Gitee {
+                    repository_base: Url::parse(&format!("http://{address}/")).unwrap(),
+                }
+            };
+            let feed = source
+                .get_release_feed("win", &Manifest::default(), "")
+                .unwrap();
+            assert_eq!(feed.Assets[0].Version, "0.1.73");
+            assert!(
+                source
+                    .get_release_history_text()
+                    .unwrap()
+                    .contains("schemaVersion")
+            );
+            let directory = crate::test_support::TestDir::new("gitee-download");
+            let target = directory.0.join("update.nupkg");
             source
-                .get_release_history_text()
-                .unwrap()
-                .contains("schemaVersion")
-        );
-        let directory = crate::test_support::TestDir::new("gitee-download");
-        let target = directory.0.join("update.nupkg");
-        source
-            .download_release_entry(&asset, &target, None)
-            .unwrap();
-        assert_eq!(std::fs::read(target).unwrap(), b"abc");
-        server.join().unwrap();
+                .download_release_entry(&asset, &target, None)
+                .unwrap();
+            assert_eq!(std::fs::read(target).unwrap(), b"abc");
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn cnb_accepts_nested_public_repositories_and_pins_payloads() {
+        for value in [
+            "https://cnb.cool/example/sub/RHFiles",
+            "https://cnb.cool/example/sub/RHFiles.git/",
+        ] {
+            let source = ConfiguredWebSource::new(value, None).unwrap();
+            let WebSourceKind::Cnb { repository_base } = source.kind else {
+                panic!("Wrong CNB provider")
+            };
+            assert_eq!(
+                repository_base.as_str(),
+                "https://cnb.cool/example/sub/RHFiles/-/releases/"
+            );
+            let asset = VelopackAsset {
+                Version: "0.1.91".into(),
+                FileName: "RHFiles-0.1.91-full.nupkg".into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                cnb_asset_url(&repository_base, &asset).unwrap().as_str(),
+                "https://cnb.cool/example/sub/RHFiles/-/releases/download/v0.1.91/RHFiles-0.1.91-full.nupkg"
+            );
+        }
+        for value in [
+            "http://cnb.cool/a/b",
+            "https://u:p@cnb.cool/a/b",
+            "https://cnb.cool/a/b?token=x",
+            "https://cnb.cool/a/b#x",
+            "https://cnb.cool:444/a/b",
+            "https://cnb.cool/a/b/-/releases",
+            "https://cnb.cool/a/../b",
+            "https://cnb.cool/a/%2e/b",
+            "https://cnb.cool/a/.git",
+            "https://cnb.cool/a/-.git",
+        ] {
+            assert!(ConfiguredWebSource::new(value, None).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn retired_family_paths_are_never_read_as_update_sources() {
+        for source in [
+            r"\\SERVER-HOME\Public\Software\RHFiles-Releases",
+            r"C:\packages",
+            "file:///C:/packages",
+        ] {
+            assert!(ConfiguredWebSource::new(source, None).is_err());
+            assert!(read_remote_release_history(source, None).is_err());
+        }
     }
 
     #[test]
