@@ -32,3 +32,37 @@ test('native Windows update settings offer CNB/GitHub only and persist source ch
     await app.screenshot('cnb-update-settings');
   } finally {await app.close();}
 });
+
+test('three-part proxy UI has real defaults, saves via the same automation interface and restores existing addresses',async()=>{
+  const app=await launchApp({desktopId:'proxy-settings',emulateFocus:true});
+  try {
+    await app.evaluate("G.settings.proxyUrl='';G.settings.proxyEnabled=false;RHFilesAPI.invoke('settings.open',{section:'updates'})");
+    const fields=()=>app.evaluate("['protocol','host','port'].map(field=>{const el=document.getElementById('settings-proxy-'+field);return {field,value:el.value,disabled:el.disabled}})");
+    assert.deepEqual(await fields(),[{field:'protocol',value:'http',disabled:true},{field:'host',value:'127.0.0.1',disabled:true},{field:'port',value:'7890',disabled:true}]);
+    const set=async(id,value)=>{
+      const control=await app.evaluate("RHFilesAPI.invoke('ui.list',{includeHidden:true}).then(rows=>rows.find(row=>row.id==="+JSON.stringify(id)+"))");
+      assert(control?.enabled,'registered control must be enabled: '+id);
+      if(typeof value==='string')await app.evaluate("RHFilesAPI.invoke('ui.set',"+JSON.stringify({controlId:control.controlId,value,commit:false})+")");
+      await app.evaluate("RHFilesAPI.invoke('ui.set',"+JSON.stringify({controlId:control.controlId,...(typeof value==='boolean'?{checked:value}:{value})})+")");
+    };
+    await set('settings-proxy-enabled',true);assert.equal(await app.evaluate('getUpdateProxy()'),'http://127.0.0.1:7890');assert((await fields()).every(field=>!field.disabled));
+    if(process.env.RHFILES_PROXY_LIVE==='1'){
+      // Explicit acceptance only: no Internet dependency in the deterministic CI suite.
+      const status=await app.evaluate("call('check_updates',{source:'https://github.com/RailgunHamster/RHFiles',proxy:getUpdateProxy()})");
+      assert.equal(status.managed,true);console.log('PASS: native GitHub update check uses the enabled default proxy without entering any address');
+    }
+    for(const [field,value]of [['protocol','https'],['host','proxy.example'],['port','8443']])await set('settings-proxy-'+field,value);
+    assert.equal(await app.evaluate("JSON.parse(localStorage.getItem('rhfiles-settings')).proxyUrl"),'https://proxy.example:8443');
+    await set('settings-proxy-port','65536');assert.equal(await app.evaluate("document.getElementById('settings-proxy-port').validity.valid"),false);
+    assert.equal(await app.evaluate("JSON.parse(localStorage.getItem('rhfiles-settings')).proxyUrl"),'https://proxy.example:8443');
+    await set('settings-proxy-port','');assert.equal(await app.evaluate("document.getElementById('settings-proxy-port').value"),'7890');
+    await set('settings-proxy-port','8443');
+    await set('settings-proxy-enabled',false);assert.equal(await app.evaluate('getUpdateProxy()'),null);
+    await app.evaluate("RHFilesAPI.invoke('settings.close').then(()=>RHFilesAPI.invoke('settings.open',{section:'updates'}))");
+    assert.deepEqual((await fields()).map(field=>field.value),['https','proxy.example','8443']);
+    assert((await fields()).every(field=>field.disabled));
+    await app.screenshot('proxy-three-part-settings');
+    assert.equal(await app.evaluate("document.querySelector('#settings-proxy-url')"),null);
+    assert.deepEqual(await app.evaluate("RHFilesAPI.invoke('ui.contract').then(result=>result.missing)"),[]);
+  } finally {await app.close();}
+});

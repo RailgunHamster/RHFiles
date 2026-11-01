@@ -389,7 +389,39 @@ function canCheckForUpdates(manual) {
 
 function getUpdateProxy() {
   if (G.settings.proxyEnabled !== true) return null;
-  return String(G.settings.proxyUrl || '').trim();
+  return String(G.settings.proxyUrl || '').trim() || 'http://127.0.0.1:7890';
+}
+
+function proxyAddressParts(value) {
+  const address = String(value || '').trim() || 'http://127.0.0.1:7890';
+  try {
+    const parsed = new URL(address.includes('://') ? address : 'http://' + address);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password
+        || parsed.pathname !== '/' || parsed.search || parsed.hash) throw Error('Invalid proxy address');
+    return {protocol:parsed.protocol.slice(0,-1),host:parsed.hostname.replace(/^\[|\]$/g,''),port:parsed.port || (parsed.protocol === 'https:' ? '443' : '80')};
+  } catch (_) {
+    // Keep an invalid imported address visible for correction, never silently
+    // replace a user's custom proxy with the local default.
+    return {protocol:'http',host:address,port:'7890'};
+  }
+}
+
+function proxyAddressFromParts(parts) {
+  const protocol = String(parts.protocol || 'http').trim();
+  const host = String(parts.host || '').trim() || '127.0.0.1';
+  const port = String(parts.port ?? '').trim() || '7890';
+  if (!['http','https'].includes(protocol)) throw Error('settings.proxyInvalidProtocol');
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw Error('settings.proxyInvalidPort');
+  if (/[\s\/@?#\\]/.test(host)) throw Error('settings.proxyInvalidHost');
+  const authority = host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host;
+  try {
+    const parsed = new URL(protocol + '://' + authority + ':' + Number(port));
+    if (!parsed.hostname || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) throw Error('Invalid host');
+    // Keep the port explicit even when it is the protocol's standard port.
+    return protocol + '://' + parsed.hostname + ':' + Number(port);
+  } catch (_) {
+    throw Error('settings.proxyInvalidHost');
+  }
 }
 
 function classifyUpdateFailureText(error) {

@@ -1169,7 +1169,7 @@
       assert($("#settings-global-search"), "Global-search enable setting is missing");
       assert($("#settings-auto-update"), "Automatic-update setting is missing");
       assert($("#settings-proxy-enabled"), "Proxy enable setting is missing");
-      assert($("#settings-proxy-url"), "Proxy address setting is missing");
+      for (const field of ['protocol','host','port']) assert($("#settings-proxy-" + field), "Proxy " + field + " setting is missing");
       assert($("#settings-update-source"), "Update-source setting is missing");
       assert($("#settings-update-cnb"), "Configurable CNB update location is missing");
       assertEqual($("#settings-update-cnb").value, getCnbUpdateSource(), "CNB source input is out of sync");
@@ -1527,6 +1527,8 @@
         assertEqual(getUpdateProxy(), null, "A disabled proxy was still sent to the updater");
         G.settings.proxyEnabled = true;
         assertEqual(getUpdateProxy(), '127.0.0.1:7890', "The configured proxy address was not selected");
+        G.settings.proxyUrl = '';
+        assertEqual(getUpdateProxy(), 'http://127.0.0.1:7890', "An enabled empty proxy did not use its default");
       } finally {
         G.settings = savedSettings;
       }

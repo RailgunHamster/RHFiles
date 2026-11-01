@@ -410,6 +410,8 @@ function openSettings() {
     '<p class="settings-card-description">' + t('settings.integrationShortcutHelp') + '</p>' +
     '<div id="settings-integration-status" class="settings-integration-status" role="status"></div></div>';
 
+  const proxyParts = proxyAddressParts(G.settings.proxyUrl);
+  const proxyDisabled = G.settings.proxyEnabled === true ? '' : ' disabled';
   const updates = '<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-auto-update">' + t('settings.autoUpdate') + '</label>' +
     '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
@@ -425,8 +427,13 @@ function openSettings() {
     '<div class="settings-source-help">' + t('settings.updateSourceHelp') + '</div>' +
     '<div class="settings-row"><label for="settings-proxy-enabled">' + t('settings.proxyEnabled') + '</label>' +
     '<input id="settings-proxy-enabled" type="checkbox" onchange="setProxyEnabled(this.checked)"' + (G.settings.proxyEnabled===true?' checked':'') + '></div>' +
-    '<div class="settings-row update-location-row"><label for="settings-proxy-url">' + t('settings.proxyAddress') + '</label>' +
-    '<input id="settings-proxy-url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:7890" value="' + esc(String(G.settings.proxyUrl || '')) + '" onchange="setProxyUrl(this.value,this)"' + (G.settings.proxyEnabled===true?'':' disabled') + '></div>' +
+    '<div class="settings-row settings-proxy-row"><span id="settings-proxy-label">' + t('settings.proxyAddress') + '</span>' +
+    '<div class="settings-proxy-fields" role="group" aria-labelledby="settings-proxy-label">' +
+      '<label for="settings-proxy-protocol">' + t('settings.proxyProtocol') + '<select id="settings-proxy-protocol" onchange="setProxyPart(\'protocol\',this.value,this)"' + proxyDisabled + '>' +
+        '<option value="http"' + (proxyParts.protocol==='http'?' selected':'') + '>HTTP</option><option value="https"' + (proxyParts.protocol==='https'?' selected':'') + '>HTTPS</option></select></label>' +
+      '<label for="settings-proxy-host">' + t('settings.proxyHost') + '<input id="settings-proxy-host" type="text" spellcheck="false" autocapitalize="off" placeholder="127.0.0.1" value="' + esc(proxyParts.host) + '" oninput="this.setCustomValidity(\'\')" onchange="setProxyPart(\'host\',this.value,this)"' + proxyDisabled + '></label>' +
+      '<label for="settings-proxy-port">' + t('settings.proxyPort') + '<input id="settings-proxy-port" type="text" inputmode="numeric" spellcheck="false" placeholder="7890" value="' + esc(proxyParts.port) + '" oninput="this.setCustomValidity(\'\')" onchange="setProxyPart(\'port\',this.value,this)"' + proxyDisabled + '></label>' +
+    '</div></div>' +
     '<div class="settings-source-help">' + t('settings.proxyHelp') + '</div>' +
     '<div class="settings-row update-settings-row"><div class="settings-update-copy">' +
       '<span id="settings-update-status" class="settings-help">' + t('update.statusUnknown') + '</span>' +
@@ -518,17 +525,30 @@ function setUpdateSourceLocation(kind, value, input) {
 
 function setProxyEnabled(enabled) {
   G.settings.proxyEnabled = !!enabled;
-  const input = document.getElementById('settings-proxy-url');
-  if (input) input.disabled = !G.settings.proxyEnabled;
+  if (G.settings.proxyEnabled && !String(G.settings.proxyUrl || '').trim()) G.settings.proxyUrl = getUpdateProxy();
+  for (const field of ['protocol','host','port']) {
+    const input = document.getElementById('settings-proxy-' + field);
+    if (input) input.disabled = !G.settings.proxyEnabled;
+  }
   saveSettings();
   refreshUpdateSettingsStatus();
   loadReleaseHistory(false);
 }
 
-function setProxyUrl(value, input) {
-  const normalized = String(value || '').trim();
-  G.settings.proxyUrl = normalized;
-  if (input) input.value = normalized;
+function setProxyPart(field, value, input) {
+  if (!['protocol','host','port'].includes(field)) return;
+  const parts = {...proxyAddressParts(G.settings.proxyUrl),[field]:String(value ?? '').trim()};
+  try {
+    G.settings.proxyUrl = proxyAddressFromParts(parts);
+    if (input) {
+      input.setCustomValidity('');
+      input.value = proxyAddressParts(G.settings.proxyUrl)[field];
+    }
+  } catch (error) {
+    if (input) { input.setCustomValidity(t(error.message)); input.reportValidity(); }
+    else throw error;
+    return;
+  }
   saveSettings();
   if (G.settings.proxyEnabled === true) {
     refreshUpdateSettingsStatus();

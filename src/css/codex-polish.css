@@ -1343,6 +1343,18 @@ body.preview-fullscreen-active::before {
   width: auto;
 }
 
+.settings-proxy-row > span { flex: 0 0 118px; color: var(--text-2); font-size: 12px; }
+.settings-proxy-fields { display: grid; grid-template-columns: 100px minmax(110px,1fr) 84px; gap: 10px; flex: 1; min-width: 0; }
+.settings-card .settings-proxy-fields label { display: flex; flex-direction: column; gap: 6px; color: var(--text-4); font-size: 11px; }
+.settings-card .settings-row .settings-proxy-fields select,
+.settings-card .settings-row .settings-proxy-fields input[type="text"] { width: 100%; min-width: 0; box-sizing: border-box; }
+.settings-proxy-fields input:invalid { border-color: var(--danger,#d14b4b); }
+@media (max-width: 640px) {
+  .settings-card .settings-proxy-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .settings-proxy-row > span { flex-basis: auto; }
+  .settings-proxy-fields { grid-template-columns: 84px minmax(90px,1fr) 70px; gap: 8px; }
+}
+
 .settings-nested {
   margin: 3px -2px 8px;
   padding: 8px 12px 12px;
