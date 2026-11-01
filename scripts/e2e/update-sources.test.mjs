@@ -61,12 +61,17 @@ test('three-part proxy UI has real defaults, saves via the same automation inter
     await app.evaluate("RHFilesAPI.invoke('settings.close').then(()=>RHFilesAPI.invoke('settings.open',{section:'updates'}))");
     assert.deepEqual((await fields()).map(field=>field.value),['https','proxy.example','8443']);
     assert((await fields()).every(field=>field.disabled));
+    await set('settings-proxy-enabled',true);
+    for(const [field,value]of [['protocol','http'],['host',''],['port','']])await set('settings-proxy-'+field,value);
+    assert.equal(await app.evaluate('getUpdateProxy()'),'http://127.0.0.1:7890');
     await app.screenshot('proxy-three-part-settings');
     await app.send('Emulation.setDeviceMetricsOverride',{width:480,height:850,deviceScaleFactor:1,mobile:false});
+    await app.evaluate("document.querySelector('.settings-proxy-row').scrollIntoView({block:'center'})");
     await app.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
-    const bounds=await app.evaluate("['protocol','host','port'].map(field=>{const r=document.getElementById('settings-proxy-'+field).getBoundingClientRect();return {left:r.left,right:r.right,top:r.top}})");
+    const bounds=await app.evaluate("['protocol','host','port'].map(field=>{const r=document.getElementById('settings-proxy-'+field).getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}})");
     assert(bounds.every(r=>r.left>=0&&r.right<=480),'three proxy fields fit within a narrow settings window');
     assert(Math.max(...bounds.map(r=>r.top))-Math.min(...bounds.map(r=>r.top))<2,'protocol, host and port stay in the same row');
+    assert(bounds.every(r=>r.top>=0&&r.bottom<=850),'proxy fields are actually visible after scrolling');
     await app.screenshot('proxy-three-part-narrow');
     assert.equal(await app.evaluate("document.querySelector('#settings-proxy-url')"),null);
     const controls=await app.evaluate("RHFilesAPI.invoke('ui.list',{includeHidden:true}).then(rows=>rows.filter(row=>['settings-proxy-enabled','settings-proxy-protocol','settings-proxy-host','settings-proxy-port'].includes(row.id)))");

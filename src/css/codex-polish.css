@@ -1354,6 +1354,9 @@ body.preview-fullscreen-active::before {
   .settings-proxy-row > span { flex-basis: auto; }
   .settings-proxy-fields { grid-template-columns: 84px minmax(90px,1fr) 70px; gap: 8px; }
 }
+@media (max-width: 520px) {
+  .settings-card .update-location-row label { flex-basis: auto; }
+}
 
 .settings-nested {
   margin: 3px -2px 8px;
