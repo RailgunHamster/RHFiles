@@ -1,11 +1,11 @@
 # Smoke-test the minified release APK through Android accessibility / real taps.
 # No WebView debugging or exported player Activity is required. Emulator only.
-param([string]$Serial='emulator-5582',[string]$Apk="$PSScriptRoot\..\android\dist\rhfiles-android-arm64-v8a-release.apk")
+param([string]$Serial='emulator-5582',[string]$Apk="$PSScriptRoot\..\android\dist\rhfiles-android-arm64-v8a-release.apk",[switch]$SkipInstall)
 $ErrorActionPreference='Stop'
 if ($Serial -notmatch '^emulator-\d+$') { throw 'Physical devices are not permitted' }
 $sdk=if($env:ANDROID_SDK_ROOT){$env:ANDROID_SDK_ROOT}else{$env:ANDROID_HOME}
 $adb=Join-Path $sdk 'platform-tools\adb.exe'
-function Adb { $value=& $adb -s $Serial @args; if($LASTEXITCODE -ne 0){throw 'ADB command failed'}; return $value }
+function Adb { $arguments=@($args);if($arguments.Count -and $arguments[0] -eq 'shell'){$arguments=@('shell','-n','-T')+@($arguments|Select-Object -Skip 1)};$value=& $adb -s $Serial @arguments; if($LASTEXITCODE -ne 0){throw 'ADB command failed'}; return $value }
 if ((Adb shell getprop ro.kernel.qemu) -ne '1') { throw 'Not an emulator' }
 $evidence=Join-Path $PSScriptRoot ('..\test-artifacts\android-release-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $evidence | Out-Null
@@ -24,7 +24,12 @@ function TapText([string]$Text,[switch]$Up) {
     }
     throw "Missing accessibility label: $Text"
 }
-Adb install -r $Apk | Out-Host
+if(!$SkipInstall){Adb install -r $Apk | Out-Host}
+$installed=(Adb shell pm path com.railgunhamster.rhfiles) -join "`n"
+if($installed -notmatch '^package:(/data/app/[^\r\n]+/base\.apk)$'){throw 'Installed APK path is not a single ordinary base package'}
+$installedFile=Join-Path $evidence 'installed-release.apk'
+Adb pull $Matches[1] $installedFile | Out-Null
+if((Get-FileHash -LiteralPath $installedFile).Hash -ne (Get-FileHash -LiteralPath $Apk).Hash){throw 'Actually installed APK differs from the selected release bytes'}
 Adb shell am force-stop com.railgunhamster.rhfiles | Out-Null
 Adb shell am start -W -n com.railgunhamster.rhfiles/.MainActivity | Out-Null
 Start-Sleep -Seconds 3
