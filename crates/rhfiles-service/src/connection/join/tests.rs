@@ -225,6 +225,31 @@ fn invitation_input_rejects_bad_type_encoding_identity_token_and_public_addresse
         assert!(parse(&invalid).is_err());
     }
 }
+#[tokio::test]
+async fn a_tls_connect_timeout_before_sending_can_use_the_next_private_address() {
+    let (dir, _, id, service) = fixture();
+    let guest = node(dir.path(), "guest");
+    let stalled = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = stalled.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let (_stream, _) = stalled.accept().await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    let uri = service.group_invitation(&id, false).unwrap()["uri"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let uri = edited(&uri, |v| {
+        v["endpoints"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, json!(format!("https://{address}")));
+    });
+    let result = join_invitation(&guest, &uri, "QA", true, Permissions::default()).await;
+    task.abort();
+    let _ = task.await;
+    assert_eq!(result.unwrap(), id);
+}
 #[test]
 fn approval_must_match_the_invited_group_device_and_current_request() {
     let (dir, inviter, id, service) = fixture();

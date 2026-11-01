@@ -125,14 +125,17 @@ pub async fn join_invitation(
                 if format!("{error:?}").contains("identity_mismatch") {
                     return Err("邀请地址的设备证书身份不符，未发送入组请求".into());
                 }
+                // reqwest's connect flag includes a TCP/TLS-connect timeout;
+                // no HTTP body was sent in that stage. Do not strand a LAN
+                // invitation behind a currently unreachable Tailscale address.
+                if error.is_connect() {
+                    continue;
+                }
                 if error.is_timeout() {
                     return Err(
                         "入组请求超时，结果未确认，未自动重发；请检查成员列表，需要时重新生成邀请"
                             .into(),
                     );
-                }
-                if error.is_connect() {
-                    continue;
                 }
                 return Err(
                     "入组响应中断，结果未确认，未自动重发；请检查成员列表，需要时重新生成邀请"
