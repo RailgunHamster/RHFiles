@@ -87,6 +87,12 @@ async fn stat(path: &DevicePath) -> Result<Value, String> {
     info(path, &raw)
 }
 pub(crate) async fn listing(path: &DevicePath) -> Result<Vec<Value>, String> {
+    listing_with_policy(path,false).await
+}
+pub(crate) async fn listing_fresh(path: &DevicePath) -> Result<Vec<Value>, String> {
+    listing_with_policy(path,true).await
+}
+async fn listing_with_policy(path: &DevicePath,fresh:bool) -> Result<Vec<Value>, String> {
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut revision = None;
@@ -99,6 +105,7 @@ pub(crate) async fn listing(path: &DevicePath) -> Result<Vec<Value>, String> {
                 offset: entries.len(),
                 limit: 2000,
                 revision: revision.clone(),
+                fresh:fresh&&entries.is_empty(),
             },
         )
         .await?

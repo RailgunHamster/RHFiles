@@ -2,15 +2,17 @@
 //! Renderer code never receives server credentials or supplies an HTTP endpoint.
 use crate::types::CancelFlag;
 use rhfiles_service::connection::{
-    DevicePath, FileLease, FileRequest, FileResponse, file_revision,
+    file_revision, DevicePath, FileLease, FileRequest, FileResponse,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tauri::Emitter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[path = "device_history.rs"]
+mod history;
 #[path = "device_jobs.rs"]
 mod jobs;
 #[path = "device_work.rs"]
@@ -218,7 +220,7 @@ async fn optional(path: &Location) -> Result<Option<Snapshot>, String> {
 }
 async fn children(path: &Location) -> Result<Vec<Location>, String> {
     match path {
-        Location::Remote(p) => crate::device_fs::listing(p)
+        Location::Remote(p) => crate::device_fs::listing_fresh(p)
             .await?
             .iter()
             .map(|v| Location::parse(field(v, "path")?))
@@ -294,6 +296,9 @@ struct Progress<'a> {
     done: u64,
     started: Instant,
     last: Instant,
+    history: bool,
+    exclusive_target: bool,
+    history_sources: Option<std::collections::HashMap<String, String>>,
 }
 impl Progress<'_> {
     fn check(&self) -> Result<(), String> {
@@ -405,8 +410,9 @@ async fn copy_file(
     stamp: &Snapshot,
     existing: Option<&Snapshot>,
     progress: &mut Progress<'_>,
-) -> Result<(), String> {
+) -> Result<Option<Snapshot>, String> {
     let mut input = Reader::open(source, stamp).await?;
+    let committed;
     match target {
         Location::Local(path) => {
             let parent = path.parent().ok_or("Invalid target parent")?;
@@ -437,7 +443,7 @@ async fn copy_file(
             verify_source(source, stamp).await?;
             progress.check()?;
             output.sync_all().await.map_err(|e| e.to_string())?;
-            drop(output);
+            let output = output.into_std().await;
             crate::file_ops::commit_remote_download(
                 progress.app,
                 &source.text(),
@@ -446,6 +452,11 @@ async fn copy_file(
                 existing.map(|s| s.revision.as_str()),
                 &format!("remote-{}", random()?),
             )?;
+            committed = Some(Snapshot {
+                directory: false,
+                size: count,
+                revision: file_revision(&output)?,
+            });
         }
         Location::Remote(final_path) => {
             if existing.is_some() {
@@ -470,6 +481,12 @@ async fn copy_file(
                 },
             )
             .await?;
+            let mut revision = created
+                .response
+                .headers()
+                .get("Upload-Revision")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
             let location = created
                 .response
                 .headers()
@@ -514,6 +531,14 @@ async fn copy_file(
                         },
                     )
                     .await?;
+                    if next == stamp.size {
+                        revision = response
+                            .response
+                            .headers()
+                            .get("Upload-Revision")
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_owned);
+                    }
                     if response
                         .response
                         .headers()
@@ -534,7 +559,15 @@ async fn copy_file(
                 verify_source(source, stamp).await?;
                 progress.check()?;
                 if let Some(previous) = existing {
-                    let written = snapshot(&Location::Remote(actual.clone())).await?;
+                    let written = if let Some(revision) = &revision {
+                        Snapshot {
+                            directory: false,
+                            size: stamp.size,
+                            revision: revision.clone(),
+                        }
+                    } else {
+                        snapshot(&Location::Remote(actual.clone())).await?
+                    };
                     uploaded_revision = Some(written.revision.clone());
                     checked(
                         &actual,
@@ -574,9 +607,14 @@ async fn copy_file(
             if let Err(cleanup) = cleanup {
                 return Err(format!("目标文件已完成，但上传记录清理失败：{cleanup}"));
             }
+            committed = revision.map(|revision| Snapshot {
+                directory: false,
+                size: stamp.size,
+                revision,
+            });
         }
     }
-    Ok(())
+    Ok(committed)
 }
 async fn remove_source(
     path: &Location,
@@ -650,8 +688,22 @@ async fn transfer(
                     progress.bytes = stamp.size;
                     progress.items = 1;
                     progress.done = 1;
+                    let current = snapshot(&target).await?;
+                    let history = if progress.history
+                        && replacing.is_none()
+                        && same_identity(&current.revision, &stamp.revision)
+                    {
+                        history::record_move(
+                            source.clone(),
+                            target.clone(),
+                            current.revision.clone(),
+                            progress,
+                        )
+                    } else {
+                        None
+                    };
                     return Ok(
-                        json!({"source":source.text(),"target":target.text(),"sourceRemoved":true,"serverSide":true,"undoSupported":false}),
+                        json!({"source":source.text(),"target":target.text(),"sourceRemoved":true,"serverSide":true,"revision":current.revision,"historyId":history,"undoSupported":history.is_some()}),
                     );
                 }
             }
@@ -674,6 +726,14 @@ async fn transfer(
             return Err("[too_large] 传输超过十万项或 256 层，未写入目标".into());
         }
         let stamp = snapshot(&src).await?;
+        if let Some(expected) = &progress.history_sources {
+            let revision = expected
+                .get(&src.text())
+                .ok_or("[conflict] 原源文件夹出现新项目，未重做")?;
+            if revision != &stamp.revision {
+                return Err("[conflict] 原源文件已变化，未重做".into());
+            }
+        }
         if stamp.directory {
             for child in children(&src).await? {
                 if queue.len() + plan.len() >= 100000 {
@@ -697,6 +757,9 @@ async fn transfer(
     let mut targets = Vec::new();
     for (_, target, stamp) in &plan {
         let old = optional(target).await?;
+        if progress.exclusive_target && old.is_some() {
+            return Err("[conflict] 撤销或重做的目标已出现新对象，未合并或覆盖".into());
+        }
         if target.text() == progress.dest
             && expected_target.is_some_and(|v| old.as_ref().map(|s| s.revision.as_str()) != Some(v))
         {
@@ -715,6 +778,7 @@ async fn transfer(
         targets.push(old);
     }
     progress.emit("preparing", &source, true);
+    let mut output_stamps = Vec::new();
     for (index, (src, dest, stamp)) in plan.iter().enumerate() {
         progress.check()?;
         if stamp.directory {
@@ -735,8 +799,14 @@ async fn transfer(
                     }
                 }
             }
+            output_stamps.push(if progress.history && targets[index].is_none() {
+                Some(snapshot(dest).await?)
+            } else {
+                None
+            });
         } else {
-            copy_file(src, dest, stamp, targets[index].as_ref(), progress).await?;
+            output_stamps
+                .push(copy_file(src, dest, stamp, targets[index].as_ref(), progress).await?);
         }
         progress.done += 1;
         progress.emit("running", src, false);
@@ -763,8 +833,44 @@ async fn transfer(
             }
         }
     }
+    let observed = snapshot(&target).await?;
+    let current = match output_stamps.first().and_then(Option::as_ref) {
+        Some(written) if !written.directory => written.clone(),
+        Some(written) if !same_identity(&observed.revision, &written.revision) => written.clone(),
+        _ => observed,
+    };
+    let mut history_id = None;
+    if progress.history && targets.iter().all(Option::is_none) {
+        if moving && output_stamps.first().is_some_and(Option::is_some) {
+            history_id = history::record_move(
+                source.clone(),
+                target.clone(),
+                current.revision.clone(),
+                progress,
+            );
+        } else if output_stamps.iter().all(Option::is_some) {
+            let mut entries = Vec::new();
+            let mut valid = true;
+            for ((src, dest, original), written) in plan.iter().zip(output_stamps) {
+                let written = written.unwrap();
+                let now = snapshot(dest).await?;
+                if if written.directory {
+                    !same_identity(&now.revision, &written.revision)
+                } else {
+                    now.revision != written.revision
+                } {
+                    valid = false;
+                    break;
+                }
+                entries.push((src.clone(), dest.clone(), original.clone(), now));
+            }
+            if valid {
+                history_id = history::record_copy(entries, progress);
+            }
+        }
+    }
     Ok(
-        json!({"source":source.text(),"target":target.text(),"sourceRemoved":moving,"bytes":progress.bytes,"entries":plan.len(),"undoSupported":false}),
+        json!({"source":source.text(),"target":target.text(),"sourceRemoved":moving,"bytes":progress.bytes,"entries":plan.len(),"revision":current.revision,"historyId":history_id,"undoSupported":history_id.is_some()}),
     )
 }
 
@@ -899,6 +1005,7 @@ async fn mutations(
     progress: &mut Progress<'_>,
 ) -> Result<Value, String> {
     match action {
+        "undo_transfer" | "redo_transfer" => history::execute(action, args, progress).await,
         #[cfg(windows)]
         "windows_disconnect" => {
             if args["confirmed"] != true {
@@ -980,7 +1087,9 @@ async fn mutations(
                     )?;
                     let source = Location::Local(temp.path().join(&candidate));
                     let stamp = snapshot(&source).await?;
-                    copy_file(&source, &target, &stamp, None, progress).await
+                    copy_file(&source, &target, &stamp, None, progress)
+                        .await
+                        .map(|_| ())
                 };
                 match result {
                     Ok(()) => return Ok(json!(target.text())),
@@ -1345,6 +1454,9 @@ pub async fn device_transfer(
         done: 0,
         started: Instant::now(),
         last: Instant::now(),
+        history: false,
+        exclusive_target: false,
+        history_sources: None,
     };
     match action.as_str() {
         "copy" | "move" | "copy_exact" | "move_exact" => {
@@ -1360,6 +1472,8 @@ pub async fn device_transfer(
                 destination.child(args["targetName"].as_str().unwrap_or(&source.leaf()?))?
             };
             let moving = action.starts_with("move");
+            progress.history = args["recordHistory"].as_bool().unwrap_or(true)
+                && !args["overwrite"].as_bool().unwrap_or(false);
             progress.dest = target.text();
             progress.operation = if moving { "move" } else { "copy" }.into();
             let result = transfer(
@@ -1413,6 +1527,11 @@ pub async fn device_transfer(
             for path in parsed {
                 let result = async {
                     if let Some(stamp) = optional(&path).await? {
+                        if let Some(identity) = args["identities"][path.text()].as_str() {
+                            if !same_identity(&stamp.revision, identity) {
+                                return Err("[conflict] 原空文件夹已被替换，未清理".into());
+                            }
+                        }
                         if !stamp.directory {
                             return Err("[invalid_path] 仅清理空文件夹".into());
                         }

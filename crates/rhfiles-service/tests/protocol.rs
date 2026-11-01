@@ -14,6 +14,15 @@ struct Fixture {
     password: String,
 }
 #[tokio::test]
+async fn upload_commit_proof_identifies_the_published_file_not_a_later_same_named_file(){
+    let f=Fixture::new(true,true).await;let location=f.upload("/Files/proof.bin",3).await;
+    let response=f.request("PATCH",&location).header("Tus-Resumable","1.0.0").header("Upload-Offset","0").header("Content-Type","application/offset+octet-stream").body("old").send().await.unwrap();assert!(response.status().is_success());let revision=response.headers()["Upload-Revision"].to_str().unwrap().to_string();
+    let stat:Value=f.request("GET","/api/v1/stat?path=/Files/proof.bin").send().await.unwrap().json().await.unwrap();assert_eq!(revision,stat["revision"]);
+    std::fs::rename(f.share.join("proof.bin"),f.share.join("original.bin")).unwrap();std::fs::write(f.share.join("proof.bin"),b"new").unwrap();
+    let current:Value=f.request("GET","/api/v1/stat?path=/Files/proof.bin").send().await.unwrap().json().await.unwrap();assert_ne!(revision,current["revision"]);assert_eq!(std::fs::read(f.share.join("proof.bin")).unwrap(),b"new");
+    let response=f.request("POST","/api/v1/uploads").header("Tus-Resumable","1.0.0").header("Upload-Length","0").header("Upload-Metadata",format!("path {}",base64::engine::general_purpose::STANDARD.encode("/Files/empty-proof"))).send().await.unwrap();assert_eq!(response.status(),201);assert!(!response.headers()["Upload-Revision"].is_empty());
+}
+#[tokio::test]
 async fn webdav_existing_file_edits_require_a_strong_version_and_preserve_newer_data(){
     let f=Fixture::new(true,false).await;std::fs::write(f.share.join("edit.txt"),b"old").unwrap();
     let url="/dav/Files/edit.txt";

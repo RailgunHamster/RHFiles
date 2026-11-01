@@ -64,7 +64,7 @@ async function redo() {
 }
 
 function trackCopy(src, dest) {
-  if(typeof isDevicePath==='function'&&(isDevicePath(src)||isDevicePath(dest)))return;
+  if(typeof isDevicePath==='function'&&(isDevicePath(src)||isDevicePath(dest))){const id=takeDeviceTransferHistory(src,dest);if(id)pushUndo({label:t('undo.copy',{path:src}),undo:()=>call('device_transfer',{action:'undo_transfer',args:{id}}),redo:()=>call('device_transfer',{action:'redo_transfer',args:{id}})});return;}
   pushUndo({
     label: t('undo.copy', {path: src}),
     undo: async () => { await call("delete_file", { path: dest }); },
@@ -73,7 +73,19 @@ function trackCopy(src, dest) {
 }
 
 function trackMergedTransfer(operation, pairs, removedDirectories) {
-  if(typeof isDevicePath==='function'&&(pairs.some(pair=>pair.some(isDevicePath))||removedDirectories.some(isDevicePath)))return;
+  if(typeof isDevicePath==='function'&&(pairs.some(pair=>pair.some(isDevicePath))||removedDirectories.some(isDevicePath))){
+    const ids=pairs.map(([src,dest])=>takeDeviceTransferHistory(src,dest));if(ids.some(id=>!id))return;
+    let undoIndex=ids.length-1,redoIndex=0;const created=new Map();
+    pushUndo({label:t(operation==='move'?'undo.move':'undo.copy',{path:pairs[0]?.[0]||removedDirectories[0]}),
+      undo:async()=>{
+        if(operation==='move')for(const path of [...removedDirectories].reverse())if(!await call('path_exists',{path})){await call('ensure_merge_folder',{path});created.set(path,(await call('device_transfer',{action:'inspect',args:{path}})).revision);}
+        while(undoIndex>=0){await call('device_transfer',{action:'undo_transfer',args:{id:ids[undoIndex]}});undoIndex--;}redoIndex=0;
+      },
+      redo:async()=>{
+        while(redoIndex<ids.length){await call('device_transfer',{action:'redo_transfer',args:{id:ids[redoIndex]}});redoIndex++;}
+        if(operation==='move'&&created.size){const result=await call('device_transfer',{action:'remove_empty',args:{paths:[...created.keys()],identities:Object.fromEntries(created)}});if(result.errors.length)throw Error(result.errors.join('\n'));created.clear();}undoIndex=ids.length-1;
+      }});return;
+  }
   const entries = pairs.map(pair => [...pair]);
   const removed = [...removedDirectories];
   let undoIndex = entries.length - 1, redoIndex = 0;
@@ -107,7 +119,7 @@ function trackMergedTransfer(operation, pairs, removedDirectories) {
 }
 
 function trackMove(src, dest) {
-  if(typeof isDevicePath==='function'&&(isDevicePath(src)||isDevicePath(dest)))return;
+  if(typeof isDevicePath==='function'&&(isDevicePath(src)||isDevicePath(dest))){const id=takeDeviceTransferHistory(src,dest);if(id)pushUndo({label:t('undo.move',{path:src}),undo:()=>call('device_transfer',{action:'undo_transfer',args:{id}}),redo:()=>call('device_transfer',{action:'redo_transfer',args:{id}})});return;}
   pushUndo({
     label: t('undo.move', {path: src}),
     undo: async () => { await call("move_path_exact", { src: dest, dest: src }); },

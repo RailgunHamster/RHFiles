@@ -178,6 +178,7 @@ async fn desktop_reads_real_tls_roots_pages_unicode_stat_and_ranges_without_reau
             offset: 0,
             limit: 200,
             revision: None,
+            fresh:false,
         },
     )
     .await;
@@ -189,6 +190,7 @@ async fn desktop_reads_real_tls_roots_pages_unicode_stat_and_ranges_without_reau
             offset: 0,
             limit: 1,
             revision: None,
+            fresh:false,
         },
     )
     .await;
@@ -200,6 +202,7 @@ async fn desktop_reads_real_tls_roots_pages_unicode_stat_and_ranges_without_reau
             offset: 1,
             limit: 1,
             revision: Some(first["revision"].as_str().unwrap().into()),
+            fresh:false,
         },
     )
     .await;
@@ -377,6 +380,7 @@ async fn invalid_paths_ranges_and_upload_ids_fail_before_any_network_probe() {
             offset: 0,
             limit: 2001,
             revision: None,
+            fresh:false,
         },
     ] {
         assert!(

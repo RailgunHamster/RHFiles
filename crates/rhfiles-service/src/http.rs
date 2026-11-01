@@ -587,7 +587,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","webdav-client-grant"],"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
-            let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|c.0.elapsed()<Duration::from_secs(2)).cloned();
+            let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|header(&r,"Cache-Control")!=Some("no-cache")&&c.0.elapsed()<Duration::from_secs(2)).cloned();
             let (_,revision,entries)=if let Some(c)=cached{c}else{
                 let storage=s.storage.clone();let path=q.path.clone();let entries=tokio::task::spawn_blocking(move||storage.list(&path)).await.map_err(|_|Error::new("internal","读取目录失败"))??;
                 a.check(false,false)?;
@@ -639,7 +639,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             let encoded=metadata.split(',').find_map(|v|v.trim().strip_prefix("path ")).ok_or_else(||bad("缺少 path 上传元数据"))?;
             let target=String::from_utf8(base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_|bad("无效 path 编码"))?).map_err(|_|bad("path 必须是 UTF-8"))?;
             s.unlocked(&target,&a).await?;let u=s.uploads.create(&s.storage,&a,target,length)?;s.invalidate();
-            Ok((StatusCode::CREATED,[("Location",format!("/api/v1/uploads/{}",u.id)),("Upload-Offset","0".into())]).into_response())
+            let mut response=(StatusCode::CREATED,[("Location",format!("/api/v1/uploads/{}",u.id)),("Upload-Offset","0".into())]).into_response();if let Some(revision)=u.revision{response.headers_mut().insert("Upload-Revision",revision.parse().map_err(|_|Error::new("internal","上传身份无效"))?);}Ok(response)
         },
         ("HEAD"|"PATCH"|"DELETE",_)if path.starts_with("/api/v1/uploads/")=>{
             if header(&r,"Tus-Resumable")!=Some("1.0.0"){return Ok(StatusCode::PRECONDITION_FAILED.into_response());}
@@ -651,7 +651,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             if header(&r,"Content-Type")!=Some("application/offset+octet-stream"){return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());}
             let offset=number(&r,"Upload-Offset")?;let actual=s.uploads.offset(&s.storage,&u)?;
             if actual!=offset{return Ok((StatusCode::CONFLICT,[("Upload-Offset",actual.to_string())]).into_response());}
-            let offset=s.uploads.append(&s.storage,&a,&mut u,offset,r.into_body()).await?;s.invalidate();Ok((StatusCode::NO_CONTENT,[("Upload-Offset",offset.to_string())]).into_response())
+            let offset=s.uploads.append(&s.storage,&a,&mut u,offset,r.into_body()).await?;s.invalidate();let mut response=(StatusCode::NO_CONTENT,[("Upload-Offset",offset.to_string())]).into_response();if let Some(revision)=&u.revision{response.headers_mut().insert("Upload-Revision",revision.parse().map_err(|_|Error::new("internal","上传身份无效"))?);}Ok(response)
         },
         _=>Err(Error::new("not_found","接口不存在")),
     }

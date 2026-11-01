@@ -29,6 +29,8 @@ pub struct Upload {
     pub completed: bool,
     #[serde(default)]
     pub digest: Option<String>,
+    #[serde(default)]
+    pub revision: Option<String>,
 }
 pub struct Uploads {
     directory: PathBuf,
@@ -133,10 +135,12 @@ impl Uploads {
             expires_ms: now_ms() + 86400000,
             completed: false,
             digest: None,
+            revision: None,
         };
         if length == 0 {
             staged.commit()?;
             upload.completed = true;
+            upload.revision=Some(crate::connection::file_revision(&staged.file).map_err(|_|Error::new("io_error","无法核对上传文件身份"))?);
         }
         if let Err(e) = self.save(&upload) {
             staged.retain = false;
@@ -255,6 +259,7 @@ impl Uploads {
             a.check(true, false)?;
             staged.commit()?;
             u.completed = true;
+            u.revision=Some(crate::connection::file_revision(&staged.file).map_err(|_|Error::new("io_error","无法核对上传文件身份"))?);
             self.save(u)?;
         }
         Ok(written)

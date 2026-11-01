@@ -122,6 +122,7 @@ pub enum FileRequest {
         offset: usize,
         limit: usize,
         revision: Option<String>,
+        fresh: bool,
     },
     Stat {
         path: String,
@@ -324,6 +325,7 @@ impl FileRequest {
                 offset,
                 limit,
                 revision,
+                fresh,
             } => {
                 validate_path(path)?;
                 if *limit == 0 || *limit > 2000 || *offset > 1_000_000 {
@@ -334,6 +336,7 @@ impl FileRequest {
                     ("offset", offset.to_string()),
                     ("limit", limit.to_string()),
                 ]);
+                if *fresh {request=request.header(reqwest::header::CACHE_CONTROL,"no-cache");}
                 if let Some(revision) = revision {
                     request = request.query(&[("revision", revision)]);
                 }
