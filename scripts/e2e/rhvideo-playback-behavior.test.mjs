@@ -12,12 +12,13 @@ import {createHash} from 'node:crypto';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {nativePlayerView,playerAction,playerEvaluate,playerElementId} from '../testing/native-player-view.mjs';
+import {nativeGridView,gridAction,gridEvaluate} from '../testing/native-grid-view.mjs';
 import {readProcessReceipt} from '../rhfiles-receipts.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 import {listenBrowserLoopback} from '../testing/browser-loopback.mjs';
 const native={skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'};
 const {grid:Grid}=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
-const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify(playerAction(view,name))+','+JSON.stringify(args)+')');
+const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify(view.gridHost?gridAction(view,name):playerAction(view,name))+','+JSON.stringify(args)+')');
 const command=(app,action,args={})=>app.evaluate('call("rhvideo_request",'+JSON.stringify({action,args})+')');
 async function withSuspendedControls(view,work){
   // VirtualTimePolicy.advance fast-forwards delayed work; it does not restore
@@ -38,6 +39,7 @@ async function withSuspendedControls(view,work){
   return result;
 }
 async function target(app,file){
+  if(file==='rhvideo-grid.html')return nativeGridView(app);
   const found=await until(async()=>{const all=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return all.find(t=>new URL(t.url).pathname.endsWith('/'+file));},file+' window');
   const view=await cdpSession(found,30000);
   const action=file==='rhvideo-player.html'?'rhvideo.player.state':file==='rhvideo-grid.html'?'rhvideo.grid.state':'rhvideo.playlist.sequential';
@@ -67,6 +69,18 @@ const runCli=(app,window,action,args,key,options={})=>new Promise((resolve,rejec
   const child=spawn(process.execPath,['scripts/rhfiles-api.mjs',...endpoint,...selector,'--timeout','5000','--wait','--key',key,'run',action,JSON.stringify(args)],{windowsHide:true,env:{...process.env,...(options.trace?{RHFILES_CLI_TRACE:'1'}:{})}});let stdout='',stderr='';
   child.stdout.on('data',part=>stdout+=part);child.stderr.on('data',part=>stderr+=part);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
 });
+
+async function popupGridForReceiptFault(s){
+  // Explicit compatibility surface ONLY for tests whose fault requires actual
+  // producer WebView destruction; never change the normal library host choice.
+  const state=await command(s.app,'grid.open',{host:{kind:'popup'},items:s.fixture.videos.slice(0,2).map(({id,filename})=>({id,title:filename||id}))});assert.equal(state.host.kind,'popup');const view=await nativeGridView(s.app);assert.equal(view.gridHost.kind,'popup');return view;
+}
+async function assertGridRetired(s,grid){
+  if(grid.gridHost.kind==='library'){
+    await until(()=>grid.evaluate('document.getElementById("rhvideo-grid-dialog")===null'),'Close unmounts the logical Grid host',3000);
+    assert.equal(await grid.evaluate('RHFilesAPI.list().some(v=>v.id==="rhvideo.inlineGrid.control")'),false);assert((await(await fetch('http://127.0.0.1:'+s.app.port+'/json/list')).json()).some(v=>new URL(v.url).pathname==='/rhvideo.html'),'The library survives logical Grid close');
+  }else await until(async()=>!(await(await fetch('http://127.0.0.1:'+s.app.port+'/json/list')).json()).some(v=>new URL(v.url).pathname==='/rhvideo-grid.html'),'Close destroys the compatibility Grid WebView',3000);
+}
 test('native startup keeps real WebView keyboard focus without a second controller focus transition',native,async()=>{
   const s=await setup({videoDuration:30,emulateFocus:false});let player;
   const key=async(code,key,windowsVirtualKeyCode)=>{await player.send('Input.dispatchKeyEvent',{type:'rawKeyDown',code,key,windowsVirtualKeyCode,nativeVirtualKeyCode:windowsVirtualKeyCode});await player.send('Input.dispatchKeyEvent',{type:'keyUp',code,key,windowsVirtualKeyCode,nativeVirtualKeyCode:windowsVirtualKeyCode});};
@@ -90,11 +104,11 @@ test('grid startup keeps real WebView keyboard focus and keyboard-only control/c
   try{
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'two actual grid video outputs',25000);
-    const focus=await grid.evaluate('({focused:document.hasFocus(),visible:document.visibilityState,first:[...document.querySelectorAll("button")].find(node=>!node.disabled)?.id})');assert.equal(focus.focused,true,JSON.stringify(focus));assert.equal(focus.visible,'visible');
+    const focus=await gridEvaluate(grid,'({focused:document.hasFocus(),visible:document.visibilityState,first:[...gridRoot.querySelectorAll("button")].find(node=>!node.disabled&&node.getClientRects().length)?.id})');assert.equal(focus.focused,true,JSON.stringify(focus));assert.equal(focus.visible,'visible');
     await grid.send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});await grid.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});assert.equal(await grid.evaluate('document.activeElement.id'),focus.first,'The first enabled grid command is keyboard accessible without a click');
     await grid.send('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await grid.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await until(async()=>{const value=await command(s.app,'grid.state');return value.cells.length===0;},'Escape really releases all grid players');
-    await until(async()=>!(await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json()).some(t=>new URL(t.url).pathname.endsWith('/rhvideo-grid.html')),'Keyboard close destroys the grid WebView',3000);
+    await assertGridRetired(s,grid);
   }finally{grid?.close();await s.close();}
 });
 
@@ -126,16 +140,16 @@ test('grid-owned close returns its completed CLI receipt and releases every nati
   try{
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'both real grid frames before self-close',25000);
-    const output=await runCli(s.app,'window-rhvideo-grid','rhvideo.grid.close',{},'grid-self-close');if(process.env.RHFILES_CLI_TRACE==='1')console.log(JSON.stringify({scenario:'grid self-close CLI',...output}));assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
+    const output=await runCli(s.app,grid.gridHost.label,gridAction(grid,'grid.close'),{},'grid-self-close');if(process.env.RHFILES_CLI_TRACE==='1')console.log(JSON.stringify({scenario:'grid self-close CLI',...output}));assert.equal(output.code,0,JSON.stringify(output));const reply=JSON.parse(output.stdout);assert.equal(reply.result.state,'succeeded');assert.equal(reply.result.result.closed,true);
     assert.equal((await command(s.app,'grid.state')).cells.length,0);
-    await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json();return !pages.some(page=>new URL(page.url).pathname.endsWith('/rhvideo-grid.html'));},'retire the grid WebView instead of keeping it hidden',3000);
+    await assertGridRetired(s,grid);
   }finally{grid?.close();await s.close();}
 });
 
-test('grid close reads its native process receipt while the first view is paused and target rediscovery is unavailable',native,async()=>{
+test('compatibility popup Grid close reads its native process receipt while the first view is paused and target rediscovery is unavailable',native,async()=>{
   const s=await setup();let grid,server;
   try{
-    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    grid=await popupGridForReceiptFault(s);
     await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'two actual grid frames before recovery fault',25000);
     // Drop only the producer's wait reply. The action, native players, process
     // receipt and survivor API all remain real. Without this transport fault a
@@ -192,10 +206,10 @@ test('grid close reads its native process receipt while the first view is paused
   }finally{server?.closeAllConnections();if(server)await new Promise(resolve=>server.close(resolve));grid?.close();await s.close();}
 });
 
-test('native receipt recovery needs no surviving WebView reply and rejects an unauthenticated reader',native,async()=>{
+test('compatibility popup native receipt recovery needs no surviving WebView reply and rejects an unauthenticated reader',native,async()=>{
   const s=await setup();let grid;
   try{
-    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    grid=await popupGridForReceiptFault(s);
     await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'two actual native frames before independent receipt recovery',25000);
     const descriptor=await grid.evaluate('RHFilesAPI.rpc({jsonrpc:"2.0",id:"local-capability",method:"runs.transport",params:{}}).then(reply=>reply.result)');
     assert.equal(descriptor.type,'windows-pipe');
@@ -217,13 +231,13 @@ test('native receipt recovery needs no surviving WebView reply and rejects an un
   }finally{grid?.close();await s.close();}
 });
 
-test('a later real completion is not discarded after an earlier survivor reports running but loses its wait reply',native,async()=>{
+test('compatibility popup later real completion is not discarded after an earlier survivor reports running but loses its wait reply',native,async()=>{
   const s=await setup();let grid,closing;
   const pingWindow=process.env.RHFILES_QA_RECEIPT_WINDOW_PING==='1';
   const observation={clock:'host wall and actual process receipt Unix milliseconds',pingWindow,phases:[],reads:[]};
   const phase=name=>observation.phases.push({name,at:Date.now()});
   try{
-    await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
+    grid=await popupGridForReceiptFault(s);
     await until(async()=>{const state=await invoke(grid,'grid.state');return state.cells.length===2&&state.cells.every(cell=>cell.renderedFrames>0);},'two real outputs before late-receipt fault',25000);
     // Only reply delivery is faulted. The original close and all receipts are
     // real. Main answers its first status normally but drops the subsequent
@@ -835,10 +849,10 @@ test('native-input public APIs bind single and grid intents to exact decoder ins
     assert.equal((await invoke(grid,'grid.seekGroup',{ratio:.5})).offset,4,'the group scrubber rounds collection positions, not video seconds');
     const current=await invoke(grid,'grid.state');assert.equal((await invoke(grid,'grid.input',{target:0,inputId:current.cells[0].inputId,intent:'first'})).offset,0);
     assert.deepEqual((await invoke(grid,'ui.contract')).missing,[]);
-    await grid.send('Emulation.setFocusEmulationEnabled',{enabled:true});await grid.send('Emulation.setDeviceMetricsOverride',{width:700,height:196,deviceScaleFactor:1,mobile:false});
+    await grid.send('Emulation.setFocusEmulationEnabled',{enabled:true});await grid.send('Emulation.setDeviceMetricsOverride',{width:700,height:grid.gridHost.kind==='library'?500:196,deviceScaleFactor:1,mobile:false});
     await grid.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    assert.deepEqual(await grid.evaluate("[...document.querySelectorAll('#controls button,#controls input,#controls select')].filter(n=>n.getClientRects().length).filter(n=>{const r=n.getBoundingClientRect();return r.left<0||r.right>innerWidth+1||r.top<0||r.bottom>innerHeight+1}).map(n=>n.id)"),[],'group-position controls fit inside the native control strip');
-    const point=await grid.evaluate("(()=>{const r=document.getElementById('group-seek').getBoundingClientRect();return {x:r.x+r.width*.8,y:r.y+r.height/2}})()");
+    assert.deepEqual(await gridEvaluate(grid,"[...gridElement('controls').querySelectorAll('button,input,select,[role=button]')].filter(n=>n.getClientRects().length).filter(n=>{const r=n.getBoundingClientRect();return r.left<0||r.right>innerWidth+1||r.top<0||r.bottom>innerHeight+1}).map(n=>n.id)"),[],'group-position controls fit inside the selected host viewport');
+    const point=await gridEvaluate(grid,"(()=>{const r=gridElement('group-seek').getBoundingClientRect();return {x:r.x+r.width*.8,y:r.y+r.height/2}})()");
     await grid.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await grid.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
     await until(async()=>(await invoke(grid,'grid.state')).offset===4,'actual group scrubber UI invokes collection seek');
   }finally{player?.close();grid?.close();await s.close();}
@@ -882,8 +896,7 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
     await invoke(grid,'grid.page',{direction:1});
     // Observe close from the owner: the closed WebView cannot deliver its own
     // final CDP response after destroying its transport.
-    phase='close first grid';await command(s.app,'grid.close');grid.close();grid=null;
-    await until(async()=>!(await(await fetch(`http://127.0.0.1:${s.app.port}/json/list`)).json()).some(t=>new URL(t.url).pathname.endsWith('/rhvideo-grid.html')),'closed grid window retired');
+    phase='close first grid';await command(s.app,'grid.close');await assertGridRetired(s,grid);grid.close();grid=null;
     phase='reopen saved group';await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     const reopened=await invoke(grid,'grid.state');assert.equal(reopened.groupIndex,1);assert.deepEqual(reopened.cells.map(c=>c.id),groups[1].map(v=>v.id));
     phase='return to fresh first group';await invoke(grid,'grid.page',{direction:-1});
@@ -928,7 +941,7 @@ test('grid repeats normal EOF within the same native input but never retries a f
   try{
     await invoke(failed.view,'grid.open');failedGrid=await target(failed.app,'rhvideo-grid.html');
     await until(async()=>(await invoke(failedGrid,'grid.state')).cells.every(c=>[6,7].includes(c.state)),'failed grid input is terminal',20000);
-    assert.match(await failedGrid.evaluate("document.getElementById('summary').textContent"),/加载失败/,'terminal playback failure must be visible, not only a zero frame counter');
+    assert.match(await gridEvaluate(failedGrid,"gridElement('summary').textContent"),/加载失败/,'terminal playback failure must be reported, not only a zero frame counter');
     const requests=failed.fixture.requests.filter(r=>r.path.endsWith('/play')).length;
     assert(requests>=2);await sleep(2500);
     assert.equal(failed.fixture.requests.filter(r=>r.path.endsWith('/play')).length,requests,'EOF looping must not turn failure into an invisible network retry loop');

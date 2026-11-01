@@ -9,7 +9,7 @@
     const $=options.lookup||(id=>root===document?document.getElementById(idPrefix+id):root.querySelector('[id="'+idPrefix+id+'"]'));
     for(const id of ['controls','error','target','previous','next','pause','resume','mute','expand','restore','favorite','mark','seek','volume','rate','group-seek','group-position','summary'])if(!$(id))throw Error('同屏控件尚未载入：'+id);
     const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false}),disposers=[],gestures=new Map(),cleanupErrors=[];
-    let state={cells:[]},closed=false,active=options.active!==false,busy=false,pollTimer=null,activityEpoch=0,standaloneLease=null,mutationBusy=false,inputBusy=false;
+    let state={cells:[]},closed=false,active=options.active!==false,busy=false,pollTimer=null,activityEpoch=0,standaloneLease=null,standaloneHostLease=null,mutationBusy=false,inputBusy=false;
     const actionId=id=>id.startsWith('rhvideo.grid.')?actionPrefix+id.slice('rhvideo.grid.'.length):id==='rhvideo.ui.contract'&&actionPrefix!=='rhvideo.grid.'?actionPrefix+'contract':id;
     const remember=remove=>{if(typeof remove==='function')disposers.push(remove);return remove;},recordCleanupError=e=>{if(cleanupErrors.length<16)cleanupErrors.push(String(e?.message||e).slice(0,512));};
     const allowedInactive=new Set(['rhvideo.grid.state','rhvideo.grid.close','rhvideo.ui.contract']);
@@ -23,9 +23,11 @@
       if(closed)return Promise.reject(Error('同屏控件已关闭，旧操作未执行'));
       if((!active||options.isTop?.()===false)&&!['grid.state','grid.close'].includes(action))return Promise.reject(Error('同屏控件当前未激活，操作未执行'));
       if(standalone&&!standaloneLease&&action!=='grid.state')return Promise.reject(Error('同屏宿主尚未就绪'));
+      if(standalone&&standaloneHostLease)args={...args,_gridHostLease:standaloneHostLease};
       let pending;try{pending=rawNative(action,state.generation?{...args,_sessionGeneration:state.generation}:args);}catch(error){return Promise.reject(error);}
       return Promise.resolve(pending).then(async value=>{
         if(standalone&&Number.isSafeInteger(value?.windowLease)&&value.windowLease>0){if(standaloneLease&&standaloneLease!==value.windowLease)throw Error('同屏宿主已改变，旧窗口未接管播放');standaloneLease=value.windowLease;}
+        if(standalone&&value?.host){if(value.host.kind!=='popup'||!Number.isSafeInteger(value.host.lease)||value.host.lease<=0||standaloneHostLease&&standaloneHostLease!==value.host.lease)throw Error('同屏宿主已改变，旧窗口未接管播放');standaloneHostLease=value.host.lease;}
         if(!closed&&action==='grid.close'&&value?.closed)await options.onClosed?.(value);
         return value;
       });
@@ -50,7 +52,7 @@
     function paused(value){return value.pauseRequested??value.state===4;}
     function toggleCommand(value){return value.cells.every(v=>!paused(v)&&![5,6,7].includes(v.state))?'pause':'resume';}
     function locked(id){const g=gestures.get(id);return !!g&&(g.active||g.keyHeld);}
-    function sourceControls(enabled){for(const node of root.querySelectorAll('button,input,select'))node.disabled=!enabled;}
+    function sourceControls(enabled){for(const node of root.querySelectorAll('button,input,select,[role=button]'))if(node.dataset.gridLifetime!=='true')node.disabled=!enabled;}
     function paint(value){
       if(closed)return;
       const generation=value.generation??state.generation;if(generation&&state.generation&&generation<state.generation)return;
@@ -64,6 +66,7 @@
       if(cells.length===1){if(!locked('volume'))$('volume').value=String(cells[0].volume);if(!locked('rate'))$('rate').value=String(cells[0].rate);if(!locked('seek'))$('seek').value=String(Math.round(cells[0].positionMs/Math.max(1,cells[0].durationMs)*1000));}
       $('previous').disabled=!enabled||!state.hasPrevious;$('next').disabled=!enabled||!state.hasNext;
       $('summary').textContent=(state.total?(state.offset+1)+'–'+Math.min(state.offset+state.cells.length,state.total)+' / '+state.total+'　':'')+state.cells.map((v,i)=>(i+1)+': '+Math.floor(v.positionMs/1000)+'s · '+v.renderedFrames+' 帧 · '+(v.seekError&&![5,6,7].includes(v.state)?'定位失败：'+v.seekError:phase.describe(v).shortLabel)).join('　');
+      const pending=options.onState?.(state,{enabled});pending?.catch?.(error);
     }
     async function readPaint(action,args){const epoch=activityEpoch,value=await native(action,args);if(!closed&&epoch===activityEpoch)paint(value);return value;}
     function bindValue(id,name,makeArgs,group=false){
@@ -102,13 +105,13 @@
           else if(intent==='toggle')value=await native('grid.control',{...bound,expectedInputs:current.cells.map(v=>v.inputId),target:-1,command:toggleCommand(current)});else if(intent==='mark'){await native('grid.mark',{...bound,target});value=await native('grid.state');}else return {ignored:true};paint(value);return value;
         }finally{inputBusy=false;}
       });
-      subscribe(options.nativeInputEvent||'rhvideo-native-input',({payload})=>{
-        if(!active||options.isTop?.()===false||!Number.isSafeInteger(payload?.target)||payload.target<0||payload.target>8||standalone&&payload.hostLease!=null||options.acceptNativeInput?.(payload)===false)return;
+      subscribe(options.nativeInputEvent||'rhvideo-grid-input',({payload})=>{
+        if(!active||options.isTop?.()===false||!Number.isSafeInteger(payload?.target)||payload.target<0||payload.target>8||standalone&&payload.hostLease!=null&&payload.hostLease!==standaloneHostLease||options.acceptNativeInput?.(payload)===false)return;
         return observeAction(api.invoke('rhvideo.grid.input',{inputId:payload.inputId,target:payload.target,intent:payload.intent}));
       });
-      subscribe('rhvideo-grid-session',({payload})=>{if(!Number.isSafeInteger(payload?.generation)||payload.generation<(state.generation||0))return;if(payload.generation>(state.generation||0)){state={generation:payload.generation,cells:[]};sourceControls(false);}void observeAction(api.invoke('rhvideo.grid.state'));});
+      subscribe('rhvideo-grid-session',({payload})=>{if(!Number.isSafeInteger(payload?.generation)||payload.generation<(state.generation||0)||options.acceptSession?.(payload)===false)return;if(payload.generation>(state.generation||0)){state={generation:payload.generation,cells:[]};if(standalone)standaloneHostLease=null;sourceControls(false);}return observeAction(api.invoke('rhvideo.grid.state'));});
       for(const [id,name]of Object.entries({previous:'page',next:'page',target:'target',pause:'control',resume:'control',mute:'control',favorite:'favorite',mark:'mark',expand:'expand',restore:'expand',seek:'seekRatio',volume:'control',rate:'control','group-seek':'seekGroup'}))$(id).dataset.apiAction=actionId('rhvideo.grid.'+name);
-      api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...root.querySelectorAll('button,input,select')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native grid UI/public API coverage'});
+      api.register('rhvideo.ui.contract',()=>{const ids=new Set(api.list().map(v=>v.id)),controls=[...root.querySelectorAll('button,input,select,[role=button]')].map(n=>({label:n.getAttribute('aria-label')||n.id||n.textContent,action:n.dataset.apiAction}));return {controls:controls.length,missing:controls.filter(v=>!ids.has(v.action)),operations:api.list()};},{params:object(),risk:'read',description:'Native grid UI/public API coverage'});
       for(const name of ['favorite','mark'])listen($(name),'click',()=>observeAction(api.invoke('rhvideo.grid.'+name,{target:Number($('target').value)})),undefined,'rhvideo.grid.'+name);
       for(const command of ['pause','resume','mute'])listen($(command),'click',()=>observeAction(api.invoke('rhvideo.grid.control',{target:Number($('target').value),command})),undefined,'rhvideo.grid.'+command);
       for(const [id,direction]of [['previous',-1],['next',1]])listen($(id),'click',()=>observeAction(api.invoke('rhvideo.grid.page',{direction})),undefined,'rhvideo.grid.'+id);
@@ -116,10 +119,11 @@
       for(const command of ['volume','rate'])bindValue(command,'control',(value,started)=>({target:started.target,command,value}));
       bindValue('seek','seekRatio',(value,started)=>({target:started.target,ratio:value/1000}));bindValue('group-seek','seekGroup',value=>({ratio:value/1000}),true);
       listen(document,'keydown',event=>{
-        if(event.target.closest('input,select,textarea')||event.ctrlKey||event.altKey||event.metaKey)return;
+        if(event.key!=='Escape'&&event.target.closest('input,select,textarea,button,[role=button],[contenteditable=true]')||event.ctrlKey||event.altKey||event.metaKey)return;
         const key=event.key&&event.key!=='Unidentified'?(event.key===' '?'Space':event.key):event.code,intent={Escape:'close',Space:'toggle',ArrowLeft:'previous',ArrowRight:'next',Home:'first',End:'last'}[key];
         if(!intent||event.repeat||!state.cells.length)return;event.preventDefault();return call('input',{inputId:state.cells[0].inputId,target:0,intent});
       },undefined,'rhvideo.grid.keyboard');
+      if(options.enableWheel){let wheelBusy=false,lastWheel=-Infinity;listen(document,'wheel',event=>{if(event.ctrlKey||event.altKey||event.metaKey||event.target.closest('.native-grid-cell-controls,.native-grid-cell-actions,.rhvideo-native-controls'))return;const delta=Math.abs(event.deltaX)>Math.abs(event.deltaY)?event.deltaX:event.deltaY;if(!delta)return;event.preventDefault();const at=performance.now();if(wheelBusy||at-lastWheel<180)return;lastWheel=at;wheelBusy=true;return observeAction(api.invoke('rhvideo.grid.page',{direction:delta>0?1:-1}).finally(()=>{wheelBusy=false;}));},{passive:false},'rhvideo.grid.wheel');}
       function call(name,args){return observeAction(api.invoke('rhvideo.grid.'+name,args));}
       listen(document,'contextmenu',event=>event.preventDefault(),undefined,'rhvideo.grid.contextmenu');
       for(const [id,target]of [['expand',()=>Math.max(0,Number($('target').value))],['restore',()=>-1]])listen($(id),'click',()=>call('expand',{target:target()}),undefined,'rhvideo.grid.'+id);

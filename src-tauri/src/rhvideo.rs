@@ -25,6 +25,8 @@ use url::Url;
 pub(crate) mod player_host;
 #[path="rhvideo_grid_input.rs"]
 pub(crate) mod grid_input;
+#[path="rhvideo_grid_layout.rs"]
+pub(crate) mod grid_layout;
 #[path = "rhvideo_contract.rs"]
 mod contract;
 #[path = "rhvideo_config.rs"]
@@ -207,6 +209,36 @@ pub(crate) async fn grid_window_destroyed(app:AppHandle,lease:u64){
     if !matches||!crate::rhvideo_player::retire_grid_window(lease){return;}
     let generation=GRID_QUEUE.lock().ok().and_then(|mut q|q.take().map(|q|q.generation));
     if let Ok(session)=current(){if Some(session.generation)==generation{let _=start_preview_commit(app,session);}}
+}
+#[cfg(windows)]
+pub(crate) async fn grid_host_destroyed(app:AppHandle,lease:u64){
+    let _loading=GRID_LOAD.lock().await;
+    let Some(generation)=crate::rhvideo_player::grid_owned_generation(lease)else{return;};
+    let _=tauri::async_runtime::spawn_blocking(crate::rhvideo_player::stop_grid).await;
+    if let Ok(mut queue)=GRID_QUEUE.lock(){if queue.as_ref().is_some_and(|q|q.generation==generation){queue.take();}}
+    if let Ok(session)=current(){if session.generation==generation{let _=start_preview_commit(app,session);}}
+}
+#[cfg(windows)]
+async fn finish_grid_close(app:AppHandle,session:Arc<Session>)->Result<Value,String>{
+    let host=crate::rhvideo_player::grid_host_value();
+    *GRID_QUEUE.lock().map_err(|_|"网格队列不可用")?=None;
+    tauri::async_runtime::spawn_blocking(crate::rhvideo_player::stop_grid).await.map_err(|_|"停止同屏播放未能确认完成")?;
+    if host["kind"]=="popup"{if let Some(view)=app.get_webview_window("window-rhvideo-grid"){view.close().map_err(|e|format!("同屏已停止，但窗口关闭失败：{e}"))?;}}
+    if host["kind"]=="library"{let _=app.emit_to("window-rhvideo","rhvideo-grid-closed",json!({"host":host}));}
+    start_preview_commit(app,session)?;Ok(json!({"closed":true}))
+}
+#[cfg(windows)]
+async fn close_grid_scope(app:AppHandle,args:Value,session:Arc<Session>)->Result<Value,String>{
+    let guarded=args.get("expectedInput").is_some()||args.get("expectedInputs").is_some();
+    let before=if guarded{Some(GRID_LOAD.lock().await)}else{None};
+    if guarded{crate::rhvideo_player::check_grid_input(&args)?;}
+    // Unconditional panel close retires its reservation before waiting for a
+    // pending native open. A decoder-scoped close validates under GRID_LOAD.
+    let (retired,lease)=crate::rhvideo_player::retire_grid_scope(&args,session.generation)?;
+    if !retired{return Ok(json!({"closed":false,"stale":true}));}
+    let after=if before.is_none(){Some(GRID_LOAD.lock().await)}else{None};
+    if lease.is_some_and(|lease|crate::rhvideo_player::grid_owned_generation(lease)==Some(session.generation)){return finish_grid_close(app,session).await;}
+    drop(after);drop(before);Ok(json!({"closed":true,"pending":true}))
 }
 struct PreparedPlaylist {
     ticket: String,
@@ -1658,6 +1690,10 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
     #[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
     match action.as_str() {
         "player.hostContext"=>{current()?;#[cfg(windows)]{return crate::rhvideo_player::library_host_context();}#[cfg(not(windows))]{return Err("此平台未使用桌面原生宿主".into());}}
+        "grid.hostContext"=>{current()?;#[cfg(windows)]{return crate::rhvideo_player::library_host_context();}#[cfg(not(windows))]{return Err("此平台未使用桌面同屏宿主".into());}}
+        "grid.hostPrepare"=>{let session=current()?;if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变".into());}#[cfg(windows)]{return crate::rhvideo_player::prepare_grid_scope(&args,session.generation);}#[cfg(not(windows))]{return Err("此平台未使用桌面同屏宿主".into());}}
+        "grid.closeHost"=>{let session=current()?;if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变".into());}#[cfg(windows)]{return close_grid_scope(app,args,session).await;}#[cfg(not(windows))]{return Err("此平台未使用桌面同屏宿主".into());}}
+        "grid.bounds"=>{let session=current()?;if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变".into());}#[cfg(windows)]{return crate::rhvideo_player::grid_bounds(app,args).await;}#[cfg(not(windows))]{return Err("此平台未使用桌面同屏宿主".into());}}
         "player.hostPrepare"=>{let session=current()?;#[cfg(windows)]{return crate::rhvideo_player::prepare_library_scope(&args,session.generation);}#[cfg(not(windows))]{let _=session;return Err("此平台未使用桌面原生宿主".into());}}
         "player.closeHost"=>{let reason=args["reason"].as_str().filter(|value|["close","back"].contains(value)).ok_or("关闭面板操作无效")?;#[cfg(windows)]{return close_library_scope(app,args.clone(),reason).await;}#[cfg(not(windows))]{return Err("此平台未使用桌面原生宿主".into());}}
         "player.bounds"=>{current()?;let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;#[cfg(windows)]{return crate::rhvideo_player::single_bounds(app,args).await;}#[cfg(not(windows))]{return Err("此平台未使用桌面原生宿主".into());}}
@@ -1869,7 +1905,8 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 .collect::<Result<Vec<_>, String>>()?};
             #[cfg(windows)]
             {
-                let mut result = crate::rhvideo_player::grid_open(app.clone(), sources).await?;
+                let host=if action=="grid.open"{player_host::Target::parse(args.get("host"))?}else{player_host::Target::Current};
+                let mut result = crate::rhvideo_player::grid_open(app.clone(), sources,host,session.generation).await?;
                 wake_playback_monitor(&app);
                 if current()?.generation != session.generation {
                     crate::rhvideo_player::stop_grid();
@@ -1879,7 +1916,8 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
                 if let Err(error)=queue_state(&session,"grid",Some(json!({"groupIds":queue.ids()}))){result["clientWarning"]=json!(format!("同屏已打开，但无法保存分组位置：{error}"));}
                 let result = queue.view(&session,result)?;
                 *GRID_QUEUE.lock().map_err(|_| "网格队列不可用")? = Some(queue);
-                let _=app.emit_to("window-rhvideo-grid","rhvideo-grid-session",json!({"generation":session.generation}));
+                let label=if result["host"]["kind"]=="library"{"window-rhvideo"}else{"window-rhvideo-grid"};
+                let _=app.emit_to(label,"rhvideo-grid-session",json!({"generation":session.generation,"host":result["host"]}));
                 return Ok(result);
             }
             #[cfg(not(windows))]
@@ -1928,22 +1966,16 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             let _loading=GRID_LOAD.lock().await;
             #[cfg(windows)]crate::rhvideo_player::check_grid_input(&args)?;
             let session=current()?;if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变，同屏操作未执行".into());}
-            *GRID_QUEUE.lock().map_err(|_| "网格队列不可用")? = None;
             #[cfg(windows)]
             {
-                // VLC stop/release can wait for decoder and network threads.
-                // Do not occupy an async runtime worker while survivors are
-                // querying the process-owned completion. Still await the real
-                // release; neither window disappearance nor enqueueing is a
-                // successful close receipt.
-                tauri::async_runtime::spawn_blocking(crate::rhvideo_player::stop_grid)
-                    .await.map_err(|_|"停止同屏播放未能确认完成")?;
-                if let Some(w) = app.get_webview_window("window-rhvideo-grid") {
-                    w.close().map_err(|e|format!("同屏播放已停止，但窗口关闭失败：{e}"))?;
-                }
+                return finish_grid_close(app,session).await;
             }
+            #[cfg(not(windows))]
+            {
+            *GRID_QUEUE.lock().map_err(|_| "网格队列不可用")?=None;
             start_preview_commit(app,session)?;
             return Ok(json!({"closed":true}));
+            }
         }
         "player.fullscreen" => {
             let _play=PLAY_LOCK.lock().await;#[cfg(windows)]crate::rhvideo_player::check_host(&args)?;

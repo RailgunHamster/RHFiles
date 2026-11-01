@@ -25,7 +25,9 @@ Windows `player.state`／同屏各格状态新增实际加载的 `engineVersion`
 
 Windows 原生状态的 `freshSurfaceInput` 仅表示当前输入是这块新画布的首次使用，不代表已经出帧或播放完成。库内面板据此避免额外隐藏全新画布；复用画布、同画布重建旋转解码器及暂停目标恢复仍保留旧画面保护。脚本判断实际画面／音频时不能只看这个字段，也不能把周期解码统计当作精确的呈现时间。
 
-Windows 开发版同屏控件在手势开始时保存解码输入，松手前换组会明确拒绝旧操作，不会修改新分组。脚本可对 `rhvideo.grid.control/expand/page/seekGroup/close/favorite/mark` 带单格 `{expectedInput,inputTarget}` 或整组 `{expectedInputs:[…]}`，输入值取最新 `rhvideo.grid.state.cells[].inputId`；整组必须数量、顺序和值全部相同，不能用视频 ID 替代。参数仍可省略以明确操作当前状态；有守卫时原生拒绝会作为失败返回，不会自动重试。弹窗的六档速度为 0.5、0.75、1、1.25、1.5、2，已检查实际显示和同一控件的 `ui.set`。当前仍是兼容弹窗和全局目标控件，库内逐格同屏尚未完成，不以控件模块拆分冒充整项对齐。
+Windows 开发版同屏默认位于当前媒体库面板，不再另开弹窗；每格直接提供收藏、暂存标记、展开、暂停、进度／时间、静音、音量和六档速度（0.5、0.75、1、1.25、1.5、2）。上一组／下一组、整体播放／暂停和分组进度保留，目标选择器等辅助控件放在“整体控制”内。原生输出不经过 HTML video；展开状态先按 Escape 恢复网格，再按关闭同屏，媒体库继续保留。底层显式 popup 宿主仍是兼容接口，不代表日常操作另开窗口。
+
+当前面板通过 `rhvideo.grid.hostState` 返回身份；`rhvideo.inlineGrid.*` 为其公开控件接口，关闭后移除，重新打开生成新身份。“整体控制”使用 `rhvideo.grid.advanced {expanded:true/false}`；该操作和 `rhvideo.grid.panelClose` 可带 `expectedPanel`，旧面板不能影响新面板。手势开始时保存解码输入，松手前换组会拒绝旧操作。脚本可对 `rhvideo.grid.control/expand/page/seekGroup/close/favorite/mark` 带单格 `{expectedInput,inputTarget}` 或整组 `{expectedInputs:[…]}`，输入值取最新 `rhvideo.grid.state.cells[].inputId`；整组必须数量、顺序和值全部相同，不能用视频 ID 替代。参数仍可省略以明确操作当前状态；有守卫时原生拒绝作为失败返回，不自动重试。原生宿主、预约及画布分别校验，旧几何或关闭请求不能改变新输入；关闭期间迟到的元数据／播放准备不能把同屏重新打开。当前实际验收边界见对齐文档，不能据此宣称全平台持续同屏和完整性能已通过。
 
 普通 Windows 桌面采用原生硬件自动解码/输出，不经过网页像素传输或 1080p 帧缓冲限制。RDP 或显式兼容模式保留有界 GDI 画布。仅在确实收到显示帧之间插值进度；无帧、暂停或缓冲时不凭墙钟伪造进度。4K/HDR、设备间性能比较仍需独立实测，不能仅因启用原生模式就认定性能达标。
 

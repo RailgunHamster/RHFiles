@@ -32,7 +32,7 @@ test('grid physical UI callbacks preserve the actual failure instead of reportin
  const p=await grid(),denial=Error('Generated native grid denial');p.setCommand(()=>Promise.reject(denial));await assert.rejects(p.fire('pause','click'),e=>e===denial);assert.equal(p.node('error').textContent,denial.message);assert.equal(p.calls.filter(v=>v.action==='grid.control').length,1);
 });
 test('the actual native grid payload with its null popup host lease reaches the guarded input operation',async()=>{
- const p=await grid();await p.events.get('rhvideo-native-input')({payload:{inputId:10,target:0,intent:'toggle',hostLease:null}});for(let i=0;i<20;i++)await Promise.resolve();
+ const p=await grid();await p.events.get('rhvideo-grid-input')({payload:{inputId:10,target:0,intent:'toggle',hostLease:null}});for(let i=0;i<20;i++)await Promise.resolve();
  const writes=p.calls.filter(v=>v.action==='grid.control');assert.equal(writes.length,1);assert.equal(writes[0].args.expectedInput,10);assert.deepEqual(Array.from(writes[0].args.expectedInputs),[10,11]);assert.equal(writes[0].args.command,'pause');assert.equal(p.node('error').textContent,'');
 });
 
@@ -57,7 +57,7 @@ test('grid keyboard returns an actual native failure to its caller',async()=>{
 });
 
 test('native PLAYER and foreign host events never invoke Grid controls',async()=>{
- const p=await grid();for(const payload of [{inputId:10,target:null,intent:'toggle',hostLease:7},{inputId:10,target:0,intent:'toggle',hostLease:7},{inputId:10,target:0.5,intent:'toggle',hostLease:null}])await p.events.get('rhvideo-native-input')({payload});
+ const p=await grid();for(const payload of [{inputId:10,target:null,intent:'toggle',hostLease:7},{inputId:10,target:0,intent:'toggle',hostLease:7},{inputId:10,target:0.5,intent:'toggle',hostLease:null}])await p.events.get('rhvideo-grid-input')({payload});
  assert.equal(p.calls.filter(v=>v.action!=='grid.state').length,0);assert.equal(p.node('error').textContent,'');
 });
 
@@ -83,7 +83,7 @@ test('dispose unregisters only its own controls, state, events and timers',async
 
 test('a late event subscription is disposed even after the component has closed',async()=>{
  const gates=[],removed=[],p=await grid({component:{actionPrefix:'rhvideo.inlineGrid.',standalone:false},subscribe:(name)=>new Promise(resolve=>gates.push(()=>resolve(()=>removed.push(name))))});
- p.controller.dispose();for(const release of gates)release();for(let n=0;n<20;n++)await Promise.resolve();assert.deepEqual(removed.sort(),['rhvideo-grid-session','rhvideo-native-input']);
+ p.controller.dispose();for(const release of gates)release();for(let n=0;n<20;n++)await Promise.resolve();assert.deepEqual(removed.sort(),['rhvideo-grid-input','rhvideo-grid-session']);
 });
 
 test('topmost modal ownership disables every Grid source control and blocks mutation',async()=>{

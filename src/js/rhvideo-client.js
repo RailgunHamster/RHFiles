@@ -393,7 +393,7 @@
   });
   action('reader.font',object({size:{type:'integer',minimum:13,maximum:40}},['size']),async({size})=>{if(workbench)await invoke('preferences.set',{key:'readerFont',value:size});else document.documentElement.style.setProperty('--reader-size',size+'px');$('reader-font').value=String(size);return {size};});
   action('back',object(),async(_,run)=>{
-    if(workbench?.back())return {closed:true};
+    if(await workbench?.back())return {closed:true};
     for(const [id,name] of [['connection-dialog','connection.close'],['image-dialog','image.close'],['reader-dialog','reader.close'],['timeline-dialog','timeline.close']])if(modalTop()===id)return invoke(name);
     if(mobile)return native('close',run?{_automationRun:run}:{});return {closed:false};
   });

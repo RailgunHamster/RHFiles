@@ -45,10 +45,10 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
   child.stdout.on('data',data=>{append('stdout',data);nativeChannel?.feed(data);});child.stderr.on('data',data=>append('stderr',data));
   if(nativeChannel)child.stdin.on('error',error=>nativeChannel.close(error));
   let spawnError;child.on('error',e=>spawnError=e);
-  let socket,frameReader,presentationReader,mainCanvasReader,singleCanvasReader,libraryCanvasReader,windowDriver;let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
+  let socket,frameReader,presentationReader,mainCanvasReader,singleCanvasReader,libraryCanvasReader,windowDriver;const expandedGridReaders=new Map();let next=0;const pending=new Map(),events=[];let closing=false,resolveClosed;
   const closed=new Promise(resolve=>resolveClosed=resolve);
   const flush=()=>{fs.writeFileSync(path.join(artifactDir,'app.log'),output);fs.writeFileSync(path.join(artifactDir,'page-events.json'),JSON.stringify(events,null,2));};
-  const stopFrameReader=()=>{windowDriver?.close();for(const reader of [frameReader,presentationReader,mainCanvasReader,singleCanvasReader,libraryCanvasReader]){const errors=reader?.close();if(errors?.length)append('stderr',JSON.stringify({ownedFrameCleanupErrors:errors})+'\n');}};
+  const stopFrameReader=()=>{windowDriver?.close();for(const reader of [frameReader,presentationReader,mainCanvasReader,singleCanvasReader,libraryCanvasReader,...expandedGridReaders.values()]){const errors=reader?.close();if(errors?.length)append('stderr',JSON.stringify({ownedFrameCleanupErrors:errors})+'\n');}};
   // close is emitted only after stdout/stderr have drained. The synchronous
   // taskkill return alone can leave the last hardware-init messages unread.
   child.once('close',()=>{nativeChannel?.close();stopFrameReader();if(closing)flush();resolveClosed();});
@@ -149,6 +149,19 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       if(!frameReader)frameReader=ownedFrameReader({...observerOptions(),getState:()=>evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"player.state",args:{}})')});
       return frameReader.read(args);
     };
+    // No arbitrary HWND or canvas selector. A Grid input can reuse the strict
+    // unique library-surface observer only while actually expanded by the UI.
+    const readExpandedGridFrame=async(args={})=>{
+      if(closing||process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Expanded Grid pixels require a live explicit native QA fixture');
+      if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>!['index','expectedInput'].includes(k))||!Number.isSafeInteger(args.index)||args.index<0||args.index>8||args.expectedInput!==undefined&&(!Number.isSafeInteger(args.expectedInput)||args.expectedInput<=0))throw Error('Only a bounded Grid index and input identity are accepted');
+      const index=args.index;
+      if(!expandedGridReaders.has(index))expandedGridReaders.set(index,ownedFrameReader({...observerOptions(),getState:async()=>{
+        const state=await evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"grid.state",args:{}})');
+        if(state.host?.kind!=='library'||state.expanded!==index||!state.cells?.[index])throw Error('The observed Grid cell is not the expanded library input');
+        return {...state.cells[index],host:state.host,generation:state.generation};
+      }}));
+      return expandedGridReaders.get(index).read(args.expectedInput===undefined?{}:{expectedInput:args.expectedInput});
+    };
     const ownedWindow=()=>{if(closing)throw Error('Owned application is closing');return windowDriver??=ownedWindowDriver(observerOptions());};
     const readPresentationFrame=args=>{
       if(closing)return Promise.reject(Error('Owned application is closing'));
@@ -157,6 +170,6 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
     };
     const nativeWindows={windows:()=>ownedWindow().windows(),pingLibrary:()=>ownedWindow().pingLibrary(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain(),sizeMainClient:args=>{if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned client sizing requires the explicit QA opt-in');return ownedWindow().sizeMainClient(args);},closePlayerWhenCreated:()=>{if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned player close requires the explicit QA opt-in');return ownedWindow().closePlayerWhenCreated();}};
     const readStartupCanvas=scope=>{if(closing||process.env.RHFILES_NATIVE_PLAYER_QA!=='1')return Promise.reject(Error('Owned startup canvas requires the explicit QA opt-in and a live fixture'));if(scope==='main')return(mainCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();if(scope==='library-player')return(libraryCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();return(singleCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();};
-    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readPresentationFrame,readMainFrame:()=>readStartupCanvas('main'),readSingleInputFrame:()=>readStartupCanvas('single-input-player'),readLibraryPlayerFrame:()=>readStartupCanvas('library-player'),nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
+    return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readExpandedGridFrame,readPresentationFrame,readMainFrame:()=>readStartupCanvas('main'),readSingleInputFrame:()=>readStartupCanvas('single-input-player'),readLibraryPlayerFrame:()=>readStartupCanvas('library-player'),nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
   } catch(e){close();throw e;}
 }

@@ -23,6 +23,8 @@ use windows::{
 mod warm_state;
 #[path="rhvideo_surface_lifecycle.rs"]
 mod surface_lifecycle;
+#[path="rhvideo_native_grid_host.rs"]
+mod grid_host;
 
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
@@ -110,6 +112,7 @@ pub fn install_library_host_lifetime(window:&tauri::WebviewWindow){
     if window.label()!=LIBRARY_LABEL{return;}
     let token=LIBRARY_EPOCH.begin();let app=window.app_handle().clone();
     window.on_window_event(move|event|{if matches!(event,WindowEvent::Destroyed)&&LIBRARY_EPOCH.close(token){
+        grid_host::library_destroyed(app.clone(),token);
         if let Some(host)=single_host().filter(|host|matches!(&host.target,crate::rhvideo::player_host::Target::Library{window,..}if *window==token)){
             if WINDOW_EPOCH.close(host.lease){let owner=app.clone();tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(owner,host.lease));}
         }
@@ -173,7 +176,10 @@ fn surface_intent(message:u32,wparam:usize,lparam:isize,modified:bool)->Option<&
 fn surface_binding(child:usize)->Option<(&'static str,u64,Option<usize>,Option<u64>)>{
     let host=single_host().filter(|host|host.ensure_open().is_ok());
     let single=PLAYER.try_lock().ok().and_then(|p|p.as_ref().filter(|p|p.child==child&&p.surface.current()).map(|p|p.input_id));
-    single.and_then(|input|host.map(|host|(host.label(),input,None,Some(host.lease)))).or_else(||GRID.try_lock().ok().and_then(|g|g.players.iter().enumerate().find(|(_,p)|p.child==child&&p.surface.current()).map(|(index,p)|("window-rhvideo-grid",p.input_id,Some(index),None))))
+    single.and_then(|input|host.map(|host|(host.label(),input,None,Some(host.lease)))).or_else(||{
+        let host=grid_host::current().filter(|h|h.ensure_open().is_ok())?;
+        GRID.try_lock().ok().and_then(|g|g.players.iter().enumerate().find(|(_,p)|p.child==child&&p.surface.current()).map(|(index,p)|(host.label(),p.input_id,Some(index),Some(host.lease))))
+    })
 }
 fn emit_surface_input(child:usize,intent:&str)->bool{
     let Some(app)=INPUT_APP.get() else{return false;};
@@ -183,7 +189,8 @@ fn emit_surface_input(child:usize,intent:&str)->bool{
         let now=std::time::Instant::now();if at.get(&child).is_some_and(|last|now.duration_since(*last)<std::time::Duration::from_millis(180)){return true;}
         at.insert(child,now);
     }
-    let _=app.emit_to(label,"rhvideo-native-input",json!({"inputId":input,"intent":intent,"target":target,"hostLease":host_lease}));true
+    let topic=if target.is_some(){"rhvideo-grid-input"}else{"rhvideo-native-input"};
+    let _=app.emit_to(label,topic,json!({"inputId":input,"intent":intent,"target":target,"hostLease":host_lease}));true
 }
 pub fn check_input(args:&Value)->Result<(),String>{
     check_host(args)?;
@@ -192,6 +199,7 @@ pub fn check_input(args:&Value)->Result<(),String>{
     if !PLAYER.lock().map_err(|_|"播放器不可用")?.as_ref().is_some_and(|p|p.input_id==expected){return Err("播放输入已改变，旧操作未执行".into());}Ok(())
 }
 pub fn check_grid_input(args:&Value)->Result<(),String>{
+    grid_host::check(args)?;
     let grid=GRID.lock().map_err(|_|"网格不可用")?;
     crate::rhvideo::grid_input::check(args,&grid.players.iter().map(|p|p.input_id).collect::<Vec<_>>())
 }
@@ -1389,7 +1397,7 @@ pub async fn presentation_bounds(app: AppHandle, args: Value) -> Result<Value, S
     .map_err(|e| e.to_string())?;
     rx.await.map_err(|_| "媒体库窗口已关闭")?
 }
-pub fn stop_grid() {
+fn release_grid_engines() {
     let players = GRID
         .lock()
         .map(|mut g| {
@@ -1400,14 +1408,22 @@ pub fn stop_grid() {
         .unwrap_or_default();
     for engine in players {release_surface(engine);}
 }
+pub fn stop_grid(){release_grid_engines();grid_host::stop();}
+pub fn grid_host_value()->Value{grid_host::value()}
+pub fn grid_owned_generation(lease:u64)->Option<u64>{grid_host::current().filter(|h|h.lease==lease).map(|h|h.generation)}
+pub fn prepare_grid_scope(args:&Value,generation:u64)->Result<Value,String>{grid_host::prepare(args,generation)}
+pub fn retire_grid_scope(args:&Value,generation:u64)->Result<(bool,Option<u64>),String>{grid_host::retire(args,generation)}
+pub async fn grid_bounds(app:AppHandle,args:Value)->Result<Value,String>{grid_host::bounds(app,args).await}
 pub fn retire_grid_window(lease:u64)->bool{
+    if !grid_host::current().is_some_and(|h|!h.library()&&h.popup_window==lease){return false;}
     let players={let Ok(mut grid)=GRID.lock() else{return false;};if grid.lease!=lease{return false;}grid.lease=0;grid.expanded=None;grid.ids.clear();grid.rects.clear();std::mem::take(&mut grid.players)};
-    for engine in players{release_surface(engine);}true
+    for engine in players{release_surface(engine);}grid_host::stop();true
 }
 pub fn grid_snapshot()->std::collections::HashMap<String,Value>{
     let Ok(grid)=GRID.lock() else{return Default::default();};grid.ids.iter().zip(&grid.players).map(|(id,p)|{let s=p.state();(id.clone(),json!({"positionMs":if s["restoringPausedFrame"]==true{s["restoreTargetMs"].clone()}else{s["positionMs"].clone()},"volume":s["volume"],"muted":s["muted"],"lastVolume":s["lastVolume"],"rate":s["rate"],"paused":pause_intent(&s)}))}).collect()
 }
 fn layout_grid(window: &tauri::WebviewWindow) {
+    if grid_host::current().is_some_and(|h|h.library()){return;}
     let Ok(grid) = GRID.try_lock() else { return };
     if grid.players.is_empty() {
         return;
@@ -1454,49 +1470,33 @@ fn layout_grid(window: &tauri::WebviewWindow) {
         }
     }
 }
-pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option<[f64;4]>,Value)>) -> Result<Value, String> {
+pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option<[f64;4]>,Value)>,target:crate::rhvideo::player_host::Target,generation:u64) -> Result<Value, String> {
     let _=INPUT_APP.set(app.clone());
     if sources.is_empty() || sources.len() > 9 {
         return Err("同屏播放需要 1–9 个视频".into());
     }
-    let label = "window-rhvideo-grid";
-    let (window,lease) = if let Some(w) = app.get_webview_window(label) {
-        (w,GRID_WINDOW_EPOCH.load(std::sync::atomic::Ordering::SeqCst))
-    } else {
-        let w = crate::rhvideo::client_window(
-            app.clone(),
-            label,
-            "rhvideo-grid.html",
-            "RHFiles · 多视频",
-            (1200., 820.),
-            (700., 500.),
-        )
-        .await?;
-        let lease=GRID_WINDOW_EPOCH.fetch_add(1,std::sync::atomic::Ordering::SeqCst)+1;
-        let view = w.clone();
-        let owner=app.clone();
-        w.on_window_event(move |e| match e {
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => layout_grid(&view),
-            WindowEvent::Destroyed => {
-                tauri::async_runtime::spawn(crate::rhvideo::grid_window_destroyed(owner.clone(),lease));
-            }
-            _ => {}
-        });
-        (w,lease)
-    };
-    tauri::async_runtime::spawn_blocking(stop_grid)
+    let previous_host=grid_host::value();
+    let (window,host)=grid_host::select(&app,target,generation).await?;
+    tauri::async_runtime::spawn_blocking(release_grid_engines)
         .await
         .map_err(|_| "关闭旧网格失败")?;
+    if host.library(){if let Some(old)=app.get_webview_window("window-rhvideo-grid"){old.close().map_err(|e|e.to_string())?;}}
+    if previous_host["kind"]=="library"&&previous_host!=host.value(){let _=app.emit_to(LIBRARY_LABEL,"rhvideo-grid-closed",json!({"host":previous_host}));}
     let (tx, rx) = tokio::sync::oneshot::channel();
     let view = window.clone();
     let count = sources.len();
+    let gui_host=host.clone();
     app.run_on_main_thread(move || {
         let result = (|| {
+            gui_host.ensure_open()?;
             surface_class()?;
             let parent = view.hwnd().map_err(|e| e.to_string())?;
+            if parent.0 as usize!=gui_host.parent{return Err("同屏窗口已改变".into());}
             let mut children = SurfaceGuard(Vec::new());
             for _ in 0..count {
-                children.0.push(create_surface(HWND(parent.0),10,10,WINDOW_EX_STYLE::default())?);
+                let child=create_surface(HWND(parent.0),10,10,if gui_host.library(){WS_EX_LAYERED}else{WINDOW_EX_STYLE::default()})?;
+                if gui_host.library(){unsafe{let _=ShowWindow(HWND(child.child as Ptr),SW_HIDE);}}
+                children.0.push(child);
             }
             Ok::<_, String>(std::mem::take(&mut children.0))
         })();
@@ -1504,11 +1504,13 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option
     })
     .map_err(|e| e.to_string())?;
     let children = rx.await.map_err(|_| "网格窗口已关闭")??;
+    let decode_host=host.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut guard = SurfaceGuard(children.clone());
         let mut players = Vec::new();
         let mut ids=Vec::new();let mut rects=Vec::new();
         for ((id,url,title,rect,restore),child) in sources.into_iter().zip(children) {
+            decode_host.ensure_open()?;
             let mut engine = Engine::new(child)?;
             engine.requested_volume=restore["volume"].as_i64().unwrap_or(100).clamp(0,100) as i32;
             engine.muted=restore["muted"]==true;engine.last_volume=restore["lastVolume"].as_i64().unwrap_or(100).clamp(0,100) as i32;
@@ -1523,21 +1525,22 @@ pub async fn grid_open(app: AppHandle, sources: Vec<(String,String,String,Option
             ids.push(id);rects.push(rect);
             players.push(engine);
         }
+        decode_host.ensure_open()?;
         *GRID.lock().map_err(|_| "网格状态不可用")? = Grid {
             players,
             expanded: None,
-            ids,rects,lease,
+            ids,rects,lease:decode_host.popup_window,
         };
         guard.0.clear();
         Ok::<_, String>(())
     })
     .await
     .map_err(|_| "网格初始化结束")??;
+    if let Err(error)=host.ensure_open(){if grid_host::current().is_some_and(|h|h.lease==host.lease){stop_grid();}return Err(error);}
     let view = window.clone();
     app.run_on_main_thread(move || layout_grid(&view))
         .map_err(|e| e.to_string())?;
-    window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())?;
+    if !host.library(){window.show().map_err(|e| e.to_string())?;window.set_focus().map_err(|e| e.to_string())?;}
     // The new WebView and its parent focus hook already handle keyboard focus.
     // A duplicate COM MoveFocus can block initialization of the native outputs.
     grid_command("grid.state", &json!({}))
@@ -1568,10 +1571,11 @@ pub fn grid_command(action: &str, args: &Value) -> Result<Value, String> {
         if let Some(index)=grid.expanded{if pause_intent(&grid.players[index].state()){control_engine(&mut grid.players[index],&json!({"command":"resume"}))?;}}
     }
     Ok(
-        json!({"cells":grid.players.iter().enumerate().map(|(i,p)|{let mut s=p.state();s["id"]=json!(grid.ids.get(i));s["rect"]=json!(grid.rects.get(i));s}).collect::<Vec<_>>(),"expanded":grid.expanded,"windowLease":grid.lease}),
+        json!({"cells":grid.players.iter().enumerate().map(|(i,p)|{let mut s=p.state();s["id"]=json!(grid.ids.get(i));s["rect"]=json!(grid.rects.get(i));s}).collect::<Vec<_>>(),"expanded":grid.expanded,"windowLease":grid.lease,"host":grid_host::value()}),
     )
 }
 pub fn grid_relayout(app: &AppHandle) -> Result<(), String> {
+    if grid_host::current().is_some_and(|h|h.library()){return Ok(());}
     let view = app
         .get_webview_window("window-rhvideo-grid")
         .ok_or("网格窗口不存在")?;

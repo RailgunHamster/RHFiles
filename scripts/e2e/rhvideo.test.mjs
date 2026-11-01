@@ -9,9 +9,11 @@ import {fileURLToPath} from 'node:url';
 import {launchApp,until} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {nativePlayerView,playerAction,playerEvaluate} from '../testing/native-player-view.mjs';
+import {nativeGridView,gridAction} from '../testing/native-grid-view.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 import {createHash} from 'node:crypto';
 async function target(app,file){
+  if(file==='rhvideo-grid.html')return nativeGridView(app);
   const found=await until(async()=>{
     const response=await fetch('http://127.0.0.1:'+app.port+'/json/list');
     return (await response.json()).find(t=>new URL(t.url).pathname.endsWith('/'+file));
@@ -25,7 +27,7 @@ async function target(app,file){
   if(file==='rhvideo.html')await session.evaluate('RHFilesAPI.invoke("rhvideo.category",{kind:"video"})');
   return session;
 }
-const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify(playerAction(view,name))+','+JSON.stringify(args)+')');
+const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify(view.gridHost?gridAction(view,name):playerAction(view,name))+','+JSON.stringify(args)+')');
 
 async function captureRhVideoFailure(app,view,fixture,name,extra={}){
   // Run only AFTER the original readiness assertion has failed. Observe owned

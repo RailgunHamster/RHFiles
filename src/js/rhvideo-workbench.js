@@ -19,8 +19,8 @@
         openMedia,
         icon,
       } = ctx;
-      let nativeHost=null;
-      const native=(name,args={})=>nativeHost?nativeHost.request(name,args):rawNative(name,args);
+      let nativeHost=null,nativeGridHost=null;
+      const native=(name,args={})=>nativeGridHost&&name.startsWith('grid.')?nativeGridHost.request(name,args):nativeHost?nativeHost.request(name,args):rawNative(name,args);
       const I = RHVideoIndex,
         listen = (node, type, fn, site) =>
           RHFilesUI.listen(
@@ -58,6 +58,7 @@
         imageSession = null,
         imageToken = 0,
         singlePlayIntent = 0,
+        gridPlayIntent = 0,
         confirmationIntent = 0,
         thumbnailTicket = 0,
         detailJob = null,
@@ -259,6 +260,7 @@
       }
       async function reset(authenticated) {
         nativeHost?.reset();
+        nativeGridHost?.reset();
         ruleApplyIntent++;
         cancelRuleRefresh();
         rulesEditor?.reset();
@@ -2641,17 +2643,23 @@
         "grid.open",
         object(),
         async () => {
-          const version=epoch,c=config();if(!galleryReady())await loadGallery(false,false);
-          const frames=await send("query",{kind:"gallery",search:state.search,rule:c.rule,sort:"source",seed:gallery.seed,allKeys:true,offset:0,limit:1});
+          const version=epoch,intent=++gridPlayIntent,playback=++singlePlayIntent,c=config(),search=state.search,foreground=ctx.modalTop();
+          const current=()=>version===epoch&&intent===gridPlayIntent&&playback===singlePlayIntent;
+          const preparing=()=>current()&&ctx.modalTop()===foreground;
+          if(!galleryReady())await loadGallery(false,false);
+          if(!preparing())return {stale:true};
+          const frames=await send("query",{kind:"gallery",search,rule:c.rule,sort:"source",seed:gallery.seed,allKeys:true,offset:0,limit:1});
+          if(!preparing())return {stale:true};
           const videos=await send("query",{kind:"video",sort:"nameAsc",allKeys:true,offset:0,limit:1});
+          if(!preparing())return {stale:true};
           const entries=RHVideoModel.grid.entries(frames.queue,videos.queue);if(entries.length<2)throw Error("需要至少 2 个图库视频才能同屏播放");
-          if(version!==epoch)throw Error("媒体账户已改变，未开始同屏播放");
           const count=Math.max(0,Math.min(9,c.gridCount)),ticket=await prepareQueue(RHVideoModel.grid.plan(entries,count),{grid:true});
-          const result=await native("grid.open", {
-            playlist: ticket,
-            count:count||4,
-            super:c.super,
-          });
+          if(!preparing()){await discardPrepared(ticket,version);return {stale:true};}
+          let result;try{result=await native("grid.open", {playlist:ticket,count:count||4,super:c.super});}
+          catch(error){await discardPrepared(ticket,version);throw error;}
+          if(result.stale){await discardPrepared(ticket,version);return result;}
+          // A late acknowledgement must not close or repaint its successor.
+          if(!current())return {...result,stale:true};
           if(result.clientWarning)notice(result.clientWarning);
           return result;
         },
@@ -2668,7 +2676,12 @@
       );
       action("grid.state", object(), () => native("grid.state"), "read");
       action("grid.seekGroup",object({...gridInputGuard,ratio:{type:"number",minimum:0,maximum:1}},["ratio"]),args=>native("grid.seekGroup",args));
-      action("grid.close", object(!ctx.mobile?gridInputGuard:{}), args => native("grid.close",args));
+      action("grid.close", object(!ctx.mobile?gridInputGuard:{}), args => {
+        // Unconditional close also retires this UI's pending preparation. An
+        // input-scoped close only addresses that decoder, not a newer draft.
+        if(args.expectedInput===undefined&&args.expectedInputs===undefined)gridPlayIntent++;
+        return native("grid.close",args);
+      });
       for(const name of ['favorite','mark'])action('grid.'+name,object({...gridInputGuard,target:{type:'integer',minimum:0,maximum:8},...(name==='mark'?{enabled:{type:'boolean'}}:{})},['target']),args=>native('grid.'+name,args),'write');
       action("player.close", object(), () => {singlePlayIntent++;return native("player.close");});
       const parentGuard={expectedId:{type:"string",maxLength:128},expectedRevision:{type:"integer",minimum:1},expectedInput:{type:"integer",minimum:1}};
@@ -4628,14 +4641,15 @@
         async refresh(){invalidateCatalog();await load();}
       });
       if(!ctx.mobile)nativeHost=RHVideoPlayerHost.install({api,rawNative,modalTop:ctx.modalTop,openDialog:ctx.openDialog,notice,intent:()=>epoch+':'+singlePlayIntent,canInline:()=>state.nativePlayback});
+      if(!ctx.mobile)nativeGridHost=RHVideoGridHost.install({api,rawNative,modalTop:ctx.modalTop,openDialog:ctx.openDialog,notice,intent:()=>epoch+':'+singlePlayIntent+':'+gridPlayIntent,canInline:()=>state.nativePlayback});
       return {
-        syncNativeHost:()=>nativeHost?.sync(),
-        closeNativeHost:()=>nativeHost?.close(),
+        syncNativeHost:()=>Promise.all([nativeHost?.sync(),nativeGridHost?.sync()]),
+        closeNativeHost:()=>nativeGridHost?.isTop()?nativeGridHost.close():nativeHost?.close(),
         invalidatePendingConfirmation,
         syncContext,
         selectCard,
         ready(){return favoriteExports.ready();},
-        leaveGallery(){gallery.load++;},
+        leaveGallery(){gallery.load++;gridPlayIntent++;},
         refreshGallery(refresh=false,resetPage=false){if(resetPage)gallery.offset=0;return loadGallery(refresh);},
         invalidateSession() {
           sessionSnapshot = null;
@@ -4653,7 +4667,7 @@
         image,
         stepImage,
         refreshImage,
-        cancelPendingPlayback(){singlePlayIntent++;},
+        cancelPendingPlayback(){singlePlayIntent++;gridPlayIntent++;},
         rotationChanged(enabled){prefs.autoRotate=!!enabled;const control=document.querySelector('[data-preference="autoRotate"]');if(control)control.checked=!!enabled;},
         closeImage(){const id=imageSession?.previewId;singlePlayIntent++;imageSession=null;imageToken++;ctx.cancelImageDecode();return id;},
         canPlayImage(){return !imageSession?.loading&&imageSession?.current?.kind==="frame";},
@@ -4663,11 +4677,16 @@
         invalidate(kind) {
           invalidateCatalog(kind);
         },
-        back() {
+        async back() {
           const id = ctx.modalTop();
-          if(id==='rhvideo-player-dialog'&&nativeHost?.opened()){void nativeHost.close().catch(notice);return true;}
+          if(id==='rhvideo-grid-dialog'&&nativeGridHost?.opened()){
+            const state=await nativeGridHost.request('grid.state');
+            if(state.expanded!=null)await nativeGridHost.request('grid.expand',{target:-1,expectedInputs:state.cells.map(v=>v.inputId)});else await nativeGridHost.close();
+            return true;
+          }
+          if(id==='rhvideo-player-dialog'&&nativeHost?.opened()){await nativeHost.close();return true;}
           if (id?.startsWith("wb-") && $(id)?.open) {
-            void invoke("panel.close", { id }).catch(notice);
+            await invoke("panel.close", { id });
             return true;
           }
           return false;

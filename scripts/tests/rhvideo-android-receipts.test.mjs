@@ -35,17 +35,22 @@ test('the actual button still shows its error but leaves it observable to ui.inv
   await assert.rejects(click(),value=>value===error);assert.deepEqual(notices,[error]);
 });
 
-test('the actual mobile Back handler forwards its run identity once, and survives through the real host lookup provider',async()=>{
-  let sent=0,run,receipt;
-  const producer=core.create();producer.register('rhvideo.back',backHandler({native:(action,args)=>{assert.equal(action,'close');sent++;run=args._automationRun;return new Promise(()=>{});}}));
+test('the actual mobile Back handler forwards its run identity once, and survives through the real host lookup provider',{timeout:2000},async()=>{
+  let sent=0,run,receipt,entered;const gate=new Promise(resolve=>entered=resolve);
+  const producer=core.create();producer.register('rhvideo.back',backHandler({native:(action,args)=>{assert.equal(action,'close');sent++;run=args._automationRun;entered();return new Promise(()=>{});}}));
   const started=producer.run('rhvideo.back',{}, {key:'close-once'});
-  assert.equal(started.state,'running');assert.equal(sent,1);assert.equal(run.id,started.id);assert.equal(run.key,'close-once');
+  assert.equal(started.state,'running');await gate;assert.equal(sent,1);assert.equal(run.id,started.id);assert.equal(run.key,'close-once');
   const survivor=hostRegistry(async(command,query)=>{assert.equal(command,'automation.receipt');assert.deepEqual(JSON.parse(JSON.stringify(query)),{key:'close-once'});return receipt??null;});
   assert.equal((await rpc(survivor,'runs.lookup',{key:'close-once'})).error.data.code,'RUN_NOT_FOUND');
   receipt={id:run.id,action:run.action,state:'running',startedAt:run.startedAt,finishedAt:null};
   assert.equal((await rpc(survivor,'runs.lookup',{key:'close-once'})).result.state,'running');
   receipt={...receipt,state:'succeeded',finishedAt:run.startedAt+10,result:true};
   assert.equal((await rpc(survivor,'runs.lookup',{key:'close-once'})).result.result,true);assert.equal(sent,1);
+});
+
+test('Back awaits a native library panel and preserves a close failure without closing the application',async()=>{
+  let complete,finished=false;const held=new Promise(resolve=>complete=resolve),handler=backHandler({workbench:{back:()=>held},native:()=>assert.fail('Do not retire the library')});const pending=handler({},{id:'panel'}).then(value=>{finished=true;return value;});await Promise.resolve();assert.equal(finished,false);complete(true);assert.equal((await pending).closed,true);
+  const denied=Error('Generated panel close denial');await assert.rejects(backHandler({workbench:{back:()=>Promise.reject(denied)},native:()=>assert.fail('Do not retry as application close')})({},{id:'denied'}),e=>e===denied);
 });
 
 test('Back inside a library panel cannot prematurely retire the library or create a native close receipt',async()=>{
