@@ -20,8 +20,10 @@ class SmbHostsTest {
   }
   @Test fun reportsEmptyAndNestedFailures(){
     assertTrue(updateFailure(Exception("")).contains("Exception"))
-    assertTrue(updateFailure(Exception("",java.net.UnknownHostException("SERVER-HOME"))).contains("局域网 IP"))
-    assertTrue(updateFailure(Exception("STATUS_LOGON_FAILURE")).contains("登录"))
+    val dns=updateFailure(Exception("",java.net.UnknownHostException("cnb.cool")))
+    assertTrue(dns.contains("DNS"));assertTrue(dns.contains("cnb.cool"));assertFalse(dns.contains("局域网 IP"))
+    val denied=updateFailure(Exception("HTTP 403"),"cnb")
+    assertTrue(denied.contains("CNB"));assertTrue(denied.contains("HTTP 403"));assertFalse(denied.contains("SMB"))
     assertTrue(updateFailure(java.net.SocketTimeoutException()).contains("超时"))
   }
 }

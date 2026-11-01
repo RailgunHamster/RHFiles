@@ -13,7 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 mod file_client;
-pub use file_client::{DevicePath, FileLease, FileRequest, FileResponse};
+mod join;
+pub use file_client::{DevicePath, FileLease, FileRequest, FileResponse, file_revision};
+pub use join::{INVITATION_PREFIX, join_invitation};
 
 pub const TOTAL: Duration = Duration::from_secs(15);
 pub const MAX_ATTEMPTS: usize = 6;
@@ -431,6 +433,7 @@ impl Connector {
             false
         }
     }
+    pub fn record_external(&self,report:Report){self.record(report);}
     fn record(&self, report: Report) {
         let mut h = self.reports.lock().unwrap();
         if h.len() >= 20 {

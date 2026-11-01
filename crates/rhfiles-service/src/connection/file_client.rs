@@ -116,11 +116,13 @@ fn valid_percent_encoding(value: &str) -> bool {
 #[derive(Clone)]
 pub enum FileRequest {
     Capabilities,
+    WindowsAccessCredential,
     List {
         path: String,
         offset: usize,
         limit: usize,
         revision: Option<String>,
+        fresh: bool,
     },
     Stat {
         path: String,
@@ -146,6 +148,7 @@ pub enum FileRequest {
     Delete {
         path: String,
     },
+    CheckedMutation { path:String, destination:Option<String>, revision:String, target_revision:Option<String> },
     UploadCreate {
         path: String,
         length: u64,
@@ -165,7 +168,13 @@ pub enum FileRequest {
 impl FileRequest {
     fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Capabilities => Ok(()),
+            Self::Capabilities | Self::WindowsAccessCredential => Ok(()),
+            Self::CheckedMutation { path,destination,revision,target_revision } => {
+                validate_path(path)?;
+                if let Some(to)=destination {validate_path(to)?;}
+                if revision.is_empty()||revision.len()>256||target_revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256) {return Err("[invalid_request] 文件版本无效".into());}
+                Ok(())
+            }
             Self::UploadStatus { id }
             | Self::UploadCancel { id }
             | Self::UploadAppend { id, .. } => {
@@ -237,6 +246,7 @@ impl FileRequest {
     fn label(&self) -> &'static str {
         match self {
             Self::Capabilities => "capabilities",
+            Self::WindowsAccessCredential=>"windows.compatibility.grant",
             Self::List { .. } => "list",
             Self::Stat { .. } => "stat",
             Self::Content { .. } => "content",
@@ -245,6 +255,7 @@ impl FileRequest {
             Self::Rename { .. } => "rename",
             Self::Copy { .. } => "copy",
             Self::Delete { .. } => "delete",
+            Self::CheckedMutation {destination,..} => if destination.is_some(){"rename.checked"}else{"delete.checked"},
             Self::UploadCreate { .. } => "upload.create",
             Self::UploadStatus { .. } => "upload.status",
             Self::UploadAppend { .. } => "upload.append",
@@ -265,6 +276,7 @@ impl FileRequest {
     fn build(&self, route: &Route) -> Result<RequestBuilder, String> {
         let (method, endpoint) = match self {
             Self::Capabilities => (Method::GET, "capabilities".into()),
+            Self::WindowsAccessCredential=>(Method::POST,"webdav/client-grant".into()),
             Self::List { .. } => (Method::GET, "list".into()),
             Self::Stat { .. } => (Method::GET, "stat".into()),
             Self::Content { .. } => (Method::GET, "content".into()),
@@ -273,6 +285,7 @@ impl FileRequest {
             Self::Rename { .. } => (Method::POST, "rename".into()),
             Self::Copy { .. } => (Method::POST, "copy".into()),
             Self::Delete { .. } => (Method::POST, "delete".into()),
+            Self::CheckedMutation {destination,..} => (Method::POST,if destination.is_some(){"rename-checked"}else{"delete-checked"}.into()),
             Self::UploadCreate { .. } => (Method::POST, "uploads".into()),
             Self::UploadStatus { id }
             | Self::UploadAppend { id, .. }
@@ -312,6 +325,7 @@ impl FileRequest {
                 offset,
                 limit,
                 revision,
+                fresh,
             } => {
                 validate_path(path)?;
                 if *limit == 0 || *limit > 2000 || *offset > 1_000_000 {
@@ -322,6 +336,7 @@ impl FileRequest {
                     ("offset", offset.to_string()),
                     ("limit", limit.to_string()),
                 ]);
+                if *fresh {request=request.header(reqwest::header::CACHE_CONTROL,"no-cache");}
                 if let Some(revision) = revision {
                     request = request.query(&[("revision", revision)]);
                 }
@@ -377,10 +392,18 @@ impl FileRequest {
                     .header("Content-Type", "application/offset+octet-stream")
                     .body(bytes.clone());
             }
-            Self::Capabilities => {}
+            Self::Capabilities | Self::WindowsAccessCredential => {}
+            Self::CheckedMutation {path,destination,revision,target_revision} => {
+                request=request.json(&json!({"path":path,"destination":destination,"revision":revision,"targetRevision":target_revision}));
+            }
         }
         Ok(request)
     }
+}
+
+/// Strong local identity uses handle metadata, not a path/size-only snapshot.
+pub fn file_revision(file:&std::fs::File)->Result<String,String>{
+    cap_std::fs::Metadata::from_file(file).map(|m|crate::storage::metadata_revision(&m)).map_err(|e|e.to_string())
 }
 fn validate_path(path: &str) -> Result<(), String> {
     crate::storage::components(path)
@@ -654,6 +677,17 @@ impl Connector {
                     429 => "busy",
                     _ => "remote_error",
                 };
+                if matches!(operation,FileRequest::WindowsAccessCredential){
+                    // Preserve only known public reason codes, never arbitrary
+                    // server text which could echo a credential into the UI.
+                    if let Ok(body)=(FileResponse{response,lease:lease.clone()}).json(8192).await {
+                        match body["error"]["code"].as_str(){
+                            Some("compatibility_permission_required")=>return Err("[compatibility_permission_required] 请先由服务器在 WebDAV 兼容设置中为此成员生成一次凭据，授权 Windows 程序接入；无需手工复制密码".into()),
+                            Some("compatibility_disabled")=>return Err("[compatibility_unavailable] 对方已关闭 Windows HTTPS 兼容入口".into()),
+                            _=>{}
+                        }
+                    }
+                }
                 return Err(format!(
                     "[{code}] 设备返回 HTTP {}，未自动重放操作",
                     status.as_u16()

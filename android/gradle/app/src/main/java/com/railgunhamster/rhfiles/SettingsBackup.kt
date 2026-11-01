@@ -77,12 +77,8 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
     if(payload.has("sync"))ConfigSync.validateConfig(payload.getJSONObject("sync"),true)
     val profiles=payload.getJSONArray("profiles");require(profiles.length()<=200){"网络位置过多"};val ids=mutableSetOf<String>()
     for(i in 0 until profiles.length()){val item=profiles.getJSONObject(i);val id=item.getString("id");require(UUID.fromString(id).toString()==id&&ids.add(id)){"网络位置 ID 无效或重复"};remotes.validate(item.getJSONObject("config"))}
-    val updates=payload.getJSONObject("updates");validateUpdates(updates)
-    val connection=updates.optString("connectionId");require(connection.isEmpty()||connection in ids){"更新配置引用了缺失的网络位置"}
-    if(connection.isNotEmpty()&&!updates.getString("family").startsWith("http")){
-      val unc=RemoteStorage.parseUnc(updates.getString("family"));val c=(0 until profiles.length()).map{profiles.getJSONObject(it)}.first{it.getString("id")==connection}.getJSONObject("config")
-      require(c.getString("type")=="smb"&&c.getString("host").equals(unc.host,true)&&c.getString("share").equals(unc.share,true)){"更新登录配置与服务器不一致"}
-    }
+    val updates=AndroidUpdateSettings.normalize(payload.getJSONObject("updates"),true);validateUpdates(updates)
+    payload.put("updates",updates)
   }
   private fun rawPrefs(name:String)=JSONObject(context.getSharedPreferences(name,Context.MODE_PRIVATE).all)
   private fun prefs(name:String,value:JSONObject){val editor=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear();value.keys().forEach{key->when(val v=value.get(key)){is String->editor.putString(key,v);is Boolean->editor.putBoolean(key,v);is Number->editor.putLong(key,v.toLong());else->error("内部配置类型无效")}};require(editor.commit()){"配置写入失败"}}

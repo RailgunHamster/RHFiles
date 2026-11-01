@@ -4,6 +4,7 @@ import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /** A portable, password-free schema and three-way merge; never whole-device settings. */
 internal object SharedConfig {
@@ -13,6 +14,12 @@ internal object SharedConfig {
   // Group membership/session credentials deliberately remain device-local.
   val fields=setOf("name","type","host","port","share","domain","url","username","insecure","fingerprint")
   fun empty()=JSONObject().put("schemaVersion",1).put("profiles",JSONArray()).put("favorites",JSONArray())
+  fun media(out:JSONObject,value:JSONObject?):JSONObject {if(value!=null){out.put("rhvideo",value);out.put("schemaVersion",2)}else{out.remove("rhvideo");out.put("schemaVersion",1)};return out}
+  fun validateMedia(value:JSONObject){
+    require(value.keys().asSequence().toSet()==setOf("server","username")){"RHVideo 同步只允许地址和用户名，不能包含密码或令牌"}
+    require(value.opt("server") is String&&value.getString("server").toByteArray(Charsets.UTF_8).size<=4096&&!value.getString("server").any{it.isISOControl()}&&value.opt("username") is String&&value.getString("username").toByteArray(Charsets.UTF_8).size<=256&&!value.getString("username").any{it.isISOControl()}){"RHVideo 连接信息无效"}
+    val url=value.getString("server").toHttpUrl();require(url.username.isEmpty()&&url.password.isEmpty()&&url.query==null&&url.fragment==null){"RHVideo 地址不能包含账号、密码、查询参数或片段"}
+  }
   /** Remove retired connections before merging a cloud document or old base. */
   fun withoutRhFiles(doc:JSONObject):JSONObject {
     val out=JSONObject(doc.toString());val profiles=out.getJSONArray("profiles")
@@ -40,7 +47,9 @@ internal object SharedConfig {
   }
   fun favorite(f:JSONObject):JSONObject=JSONObject().also{out->for(key in listOf("name","path","isDir","label","parentPath"))if(f.has(key)&&!f.isNull(key))out.put(key,f.get(key))}
   fun validate(doc:JSONObject,validateProfile:(JSONObject)->Unit){
-    require(doc.toString().toByteArray().size<=LIMIT&&doc.opt("schemaVersion") is Int&&doc.getInt("schemaVersion")==1&&doc.keys().asSequence().toSet()==setOf("schemaVersion","profiles","favorites")){"不是支持的 RHFiles 同步配置，当前配置未更改"}
+    val keys=setOf("schemaVersion","profiles","favorites")+if(doc.has("rhvideo"))setOf("rhvideo")else emptySet()
+    require(doc.toString().toByteArray().size<=LIMIT&&doc.opt("schemaVersion") is Int&&doc.getInt("schemaVersion")== (if(doc.has("rhvideo"))2 else 1)&&doc.keys().asSequence().toSet()==keys){"不是支持的 RHFiles 同步配置，当前配置未更改；含 RHVideo 连接信息时需要升级同步客户端"}
+    if(doc.has("rhvideo"))validateMedia(doc.getJSONObject("rhvideo"))
     val profiles=doc.getJSONArray("profiles");require(profiles.length()<=200){"同步网络位置超过上限"};val ids=mutableSetOf<String>()
     for(i in 0 until profiles.length()){
       val p=profiles.getJSONObject(i);require(p.keys().asSequence().toSet()==setOf("id","config")){"同步网络位置字段无效"};val id=p.getString("id")
@@ -99,6 +108,9 @@ internal object SharedConfig {
         if(selected!=null)out.getJSONArray(key).put(selected)
       }
     }
+    val bv=base.optJSONObject("rhvideo");val lv=local.optJSONObject("rhvideo");val rv=remote.optJSONObject("rhvideo")
+    val selected=when{same(lv,rv)->lv;same(lv,bv)->rv;same(rv,bv)->lv;else->{conflicts.put(JSONObject().put("kind","rhvideo").put("id","rhvideo").put("local",lv?:JSONObject.NULL).put("remote",rv?:JSONObject.NULL));if(choice=="remote")rv else lv}}
+    media(out,selected)
     val ids=records(out,"profiles","id").keys.toMutableSet()
     // A concurrently added bookmark must not silently resurrect a removed server.
     val favorites=out.getJSONArray("favorites");val kept=JSONArray()
@@ -131,6 +143,8 @@ internal object SharedConfig {
       }else b.keys.sorted()
       order.forEach{out.getJSONArray(key).put(b.getValue(it))}
     }
+    val before=base.optJSONObject("rhvideo");val current=local.optJSONObject("rhvideo");val after=merged.optJSONObject("rhvideo")
+    media(out,if(!same(current,before)&&same(after,current))current else before)
     return out
   }
 }

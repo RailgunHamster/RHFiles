@@ -17,6 +17,16 @@ import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 class ConfigSync(private val context:Context,private val remotes:RemoteStorage,private val settingsLock:Any=Any()) {
   companion object {
     const val PREFS="settings-sync-v1"
+    internal val rhvideoLock=Any()
+    internal fun rawRhvideo(context:Context):JSONObject? {
+      val values=context.getSharedPreferences("rhvideo-client-v1",Context.MODE_PRIVATE);val server=values.getString("server","").orEmpty();if(server.isBlank())return null
+      return JSONObject().put("server",server).put("username",values.getString("username","").orEmpty()).also(SharedConfig::validateMedia)
+    }
+    internal fun rhvideoPrefill(context:Context):JSONObject? {
+      val raw=rawRhvideo(context);val state=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
+      if(state.contains("rhvideoObserved")&&SharedConfig.canonical(raw)==state.getString("rhvideoObserved",null))return state.getString("base",null)?.let{JSONObject(it).optJSONObject("rhvideo")}
+      return raw
+    }
     fun rawConfig(context:Context,remotes:RemoteStorage):JSONObject=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("config",null)?.let(remotes::unsealLocal)?:JSONObject().put("enabled",false).put("url","").put("username","").put("password","").put("insecure",false)
     internal fun validateConfig(value:JSONObject,allowEmpty:Boolean=false){
       require(value.toString().length<=16384&&value.opt("enabled") is Boolean&&value.opt("insecure") is Boolean){"同步选项无效"}
@@ -89,7 +99,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
     val bytes=body.byteStream().use{it.readBytesBounded(SharedConfig.LIMIT)}
     return try{SharedConfig.parse(String(bytes,Charsets.UTF_8)).also{SharedConfig.validate(SharedConfig.withoutRhFiles(it),remotes::validate)}}catch(e:Exception){throw IllegalArgumentException("WebDAV 同步文件无效，未更改本机配置：${e.message}")}
   }
-  private fun local(web:JSONObject):JSONObject {SettingsBackup.validateWeb(web);val f=JSONArray(web.optString("rhfiles.favorites","[]"));return SharedConfig.snapshot(remotes.backupProfiles(),f).also{SharedConfig.validate(it,remotes::validate)}}
+  private fun local(web:JSONObject):JSONObject {SettingsBackup.validateWeb(web);val f=JSONArray(web.optString("rhfiles.favorites","[]"));return SharedConfig.media(SharedConfig.snapshot(remotes.backupProfiles(),f),rhvideoPrefill(context)).also{SharedConfig.validate(it,remotes::validate)}}
   fun run(web:JSONObject,manual:Boolean,token:String="",choice:String=""):JSONObject {
     val c:JSONObject;val local:JSONObject;val base:JSONObject;val resolution:JSONObject?
     synchronized(settingsLock){
@@ -144,12 +154,13 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
     val beforeRemote=raw("remote-v1");for(groupId in localGroups)encrypted.put(groupId,beforeRemote.getString(groupId))
     val before=JSONObject().put("remote",beforeRemote).put("sync",raw(PREFS)).put("favorites",web.optString("rhfiles.favorites","[]")).put("after",favorites.toString())
     val output=journal.startWrite();try{output.write(before.toString().toByteArray());journal.finishWrite(output)}catch(e:Exception){journal.failWrite(output);throw e}
-    try{replace("remote-v1",encrypted);RemoteStorage.discardReadSessions();busy=true;phase="applying";JSONObject().put("id",id).put("favorites",favorites)}catch(e:Exception){recover();throw e}
+    try{p.put("rhvideoObserved",rawRhvideo(context)?:JSONObject.NULL);replace("remote-v1",encrypted);RemoteStorage.discardReadSessions();busy=true;phase="applying";JSONObject().put("id",id).put("favorites",favorites)}catch(e:Exception){recover();throw e}
     }catch(e:Exception){phase="failed";message=e.message?:"同步配置未应用";throw e}
   }
   fun acknowledge(id:String):JSONObject=synchronized(settingsLock){
     val p=proposal?:error("同步结果已过期");require(p.getString("id")==id&&journal.baseFile.exists()){"同步事务无效"}
-    check(prefs.edit().putString("base",p.getJSONObject("document").toString()).putLong("lastSuccess",System.currentTimeMillis()).commit()){"同步记录保存失败"};journal.delete();require(!journal.baseFile.exists()){"无法确认同步，请重试"};busy=false;proposal=null;phase="success";message="已同步网络位置和网络收藏（不包含密码）";status()
+    synchronized(rhvideoLock){require(SharedConfig.same(p.optJSONObject("rhvideoObserved"),rawRhvideo(context))){"同步期间 RHVideo 连接已改变，未覆盖本机更改"};check(prefs.edit().putString("base",p.getJSONObject("document").toString()).putString("rhvideoObserved",SharedConfig.canonical(p.optJSONObject("rhvideoObserved"))).putLong("lastSuccess",System.currentTimeMillis()).commit()){"同步记录保存失败"}}
+    journal.delete();require(!journal.baseFile.exists()){"无法确认同步，请重试"};busy=false;proposal=null;phase="success";message="已同步网络位置、网络收藏和 RHVideo 地址/用户名（不包含密码、令牌）";status()
   }
   fun recover():JSONObject?=synchronized(settingsLock){
     if(journal.baseFile.exists()||File(journal.baseFile.path+".bak").exists()){

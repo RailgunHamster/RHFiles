@@ -26,6 +26,10 @@ pub struct Entry {
     pub is_dir: bool,
     pub size: u64,
     pub modified_ms: u64,
+    pub created_ms: u64,
+    pub readonly: bool,
+    pub is_hidden: bool,
+    pub is_system: bool,
     pub revision: String,
 }
 
@@ -50,6 +54,8 @@ pub struct Status {
     pub shares: Vec<ShareConfig>,
     pub active_uploads: usize,
     pub discovery_error: Option<String>,
+    pub recovery_warnings: Vec<String>,
+    pub webdav_compatibility: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug)]

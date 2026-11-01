@@ -57,6 +57,19 @@ class ConfigSyncTest {
       val first=server.takeRequest();assertEquals("/dav/RHFiles/rhfiles-settings-v1.json",first.path);assertTrue(first.getHeader("Authorization")!!.startsWith("Basic "))
     }
   }
+  @Test fun rhvideoMetadataSyncsWithoutChangingLocalLoginPreferencesAndKeepsUserEdits(){
+    MockWebServer().use{server->val cloud=Cloud();server.dispatcher=cloud;server.start();val a=device("media-a");val b=device("media-b");val ra=remotes(a,41);val rb=remotes(b,42);val sa=ConfigSync(a,ra);val sb=ConfigSync(b,rb);configure(sa,server);configure(sb,server)
+      val pa=a.getSharedPreferences("rhvideo-client-v1",Context.MODE_PRIVATE);val pb=b.getSharedPreferences("rhvideo-client-v1",Context.MODE_PRIVATE)
+      pa.edit().putString("server","https://media-a.invalid/").putString("username","alice").putString("token","a-local-token").putString("password","a-local-password").commit()
+      val wa=web();val wb=web();finish(sa,wa);assertEquals(2,cloud.doc!!.getInt("schemaVersion"));assertEquals(setOf("server","username"),cloud.doc!!.getJSONObject("rhvideo").keys().asSequence().toSet());assertFalse(cloud.doc.toString().contains("local-token"));assertFalse(cloud.doc.toString().contains("local-password"))
+      finish(sb,wb);assertEquals("https://media-a.invalid/",ConfigSync.rhvideoPrefill(b)!!.getString("server"));assertFalse(pb.contains("server"));assertFalse(pb.contains("password"));assertEquals("a-local-token",pa.getString("token",null))
+      val before=cloud.writes;finish(sb,wb);assertEquals(before,cloud.writes)
+      pb.edit().putString("server","https://media-b.invalid/").putString("username","bob").putString("token","b-local-token").commit();finish(sb,wb);finish(sa,wa)
+      assertEquals("https://media-b.invalid/",ConfigSync.rhvideoPrefill(a)!!.getString("server"));assertEquals("https://media-a.invalid/",pa.getString("server",null));assertEquals("a-local-token",pa.getString("token",null));assertFalse(cloud.doc.toString().contains("b-local-token"))
+      assertEquals(0,SharedConfig.merge(SharedConfig.empty(),SharedConfig.empty(),cloud.doc!!).conflicts.length())
+      val bad=JSONObject(cloud.doc.toString());bad.getJSONObject("rhvideo").put("token","never");try{SharedConfig.validate(bad,ra::validate);fail("Token accepted")}catch(_:IllegalArgumentException){}
+    }
+  }
   @Test fun syncedCredentialsNeedExplicitCompletionButAnonymousAndConfirmedEmptyAccountsWork(){
     val c=device("missing-secret");val r=remotes(c,15)
     val imported=ConfigSync.credentials(profile().apply{remove("password")},null)
@@ -114,7 +127,7 @@ class ConfigSyncTest {
   }
   @Test fun backupIncludesWebdavCredentialsButRestoringKeepsAutoSyncDisabled(){
     val c=device("backup");val r=remotes(c,6);val sync=ConfigSync(c,r);sync.save(JSONObject().put("enabled",true).put("url","https://example.test/dav/").put("username","user").put("password","only-in-encrypted-backup").put("insecure",false))
-    val updates=JSONObject().put("connectionId","");val backup=SettingsBackup(c,r);val snapshot=backup.snapshot(web(),updates);assertEquals("only-in-encrypted-backup",snapshot.getJSONObject("sync").getString("password"))
+    val updates=JSONObject().put("source","cnb").put("cnb",DEFAULT_CNB).put("github",DEFAULT_GITHUB).put("autoCheck",false).put("proxyEnabled",false).put("proxy","");val backup=SettingsBackup(c,r);val snapshot=backup.snapshot(web(),updates);assertEquals("only-in-encrypted-backup",snapshot.getJSONObject("sync").getString("password"))
     val sealed=SettingsBackup.seal(snapshot,"qa-backup-pass".toCharArray());assertFalse(String(sealed).contains("only-in-encrypted-backup"));backup.apply(snapshot,web());assertFalse(ConfigSync.rawConfig(c,r).getBoolean("enabled"));assertEquals("only-in-encrypted-backup",ConfigSync.rawConfig(c,r).getString("password"))
   }
   @Test fun sharedSchemaRejectsSecretsUnsafePathsUnknownSettingsAndExcessiveDepth(){

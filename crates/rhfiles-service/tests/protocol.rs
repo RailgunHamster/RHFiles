@@ -13,6 +13,42 @@ struct Fixture {
     user: String,
     password: String,
 }
+#[tokio::test]
+async fn upload_commit_proof_identifies_the_published_file_not_a_later_same_named_file(){
+    let f=Fixture::new(true,true).await;let location=f.upload("/Files/proof.bin",3).await;
+    let response=f.request("PATCH",&location).header("Tus-Resumable","1.0.0").header("Upload-Offset","0").header("Content-Type","application/offset+octet-stream").body("old").send().await.unwrap();assert!(response.status().is_success());let revision=response.headers()["Upload-Revision"].to_str().unwrap().to_string();
+    let stat:Value=f.request("GET","/api/v1/stat?path=/Files/proof.bin").send().await.unwrap().json().await.unwrap();assert_eq!(revision,stat["revision"]);
+    std::fs::rename(f.share.join("proof.bin"),f.share.join("original.bin")).unwrap();std::fs::write(f.share.join("proof.bin"),b"new").unwrap();
+    let current:Value=f.request("GET","/api/v1/stat?path=/Files/proof.bin").send().await.unwrap().json().await.unwrap();assert_ne!(revision,current["revision"]);assert_eq!(std::fs::read(f.share.join("proof.bin")).unwrap(),b"new");
+    let response=f.request("POST","/api/v1/uploads").header("Tus-Resumable","1.0.0").header("Upload-Length","0").header("Upload-Metadata",format!("path {}",base64::engine::general_purpose::STANDARD.encode("/Files/empty-proof"))).send().await.unwrap();assert_eq!(response.status(),201);assert!(!response.headers()["Upload-Revision"].is_empty());
+}
+#[tokio::test]
+async fn webdav_existing_file_edits_require_a_strong_version_and_preserve_newer_data(){
+    let f=Fixture::new(true,false).await;std::fs::write(f.share.join("edit.txt"),b"old").unwrap();
+    let url="/dav/Files/edit.txt";
+    let response=f.request("GET",url).send().await.unwrap();let etag=response.headers()["etag"].to_str().unwrap().to_string();
+    assert_eq!(f.request("PUT",url).body("unsafe").send().await.unwrap().status(),428);
+    assert_eq!(std::fs::read(f.share.join("edit.txt")).unwrap(),b"old");
+    assert_eq!(f.request("PUT",url).header("If-Match",format!("W/{etag}")).body("weak").send().await.unwrap().status(),412);
+    let response=f.request("PUT",url).header("If-Match",&etag).body("safe edit").send().await.unwrap();assert!(response.status().is_success(),"{}",response.status());
+    assert_eq!(std::fs::read(f.share.join("edit.txt")).unwrap(),b"safe edit");
+    assert_eq!(f.request("PUT",url).header("If-Match",&etag).body("stale").send().await.unwrap().status(),412);
+    assert_eq!(std::fs::read(f.share.join("edit.txt")).unwrap(),b"safe edit");
+}
+#[tokio::test]
+async fn windows_webdav_lock_saves_are_bound_to_the_original_revision_and_owner(){
+    let f=Fixture::new(true,true).await;std::fs::write(f.share.join("locked.txt"),b"old").unwrap();let url="/dav/Files/locked.txt";
+    let lock=||f.request("LOCK",url).header("Depth","0").header("Content-Type","application/xml").body("<D:lockinfo xmlns:D=\"DAV:\"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>");
+    let response=lock().send().await.unwrap();assert!(response.status().is_success());let token=response.headers()["lock-token"].to_str().unwrap().to_string();
+    let response=f.request("PUT",url).header("If",format!("({token})")).body("locked edit").send().await.unwrap();assert!(response.status().is_success(),"{}",response.status());assert_eq!(std::fs::read(f.share.join("locked.txt")).unwrap(),b"locked edit");
+    let response=f.request("PUT",url).header("If",format!("({token})")).body("second locked edit").send().await.unwrap();assert!(response.status().is_success(),"{}",response.status());assert_eq!(std::fs::read(f.share.join("locked.txt")).unwrap(),b"second locked edit");
+    assert!(f.request("UNLOCK",url).header("Lock-Token",&token).send().await.unwrap().status().is_success());
+    let response=lock().send().await.unwrap();let token=response.headers()["lock-token"].to_str().unwrap().to_string();
+    std::fs::rename(f.share.join("locked.txt"),f.share.join("original.txt")).unwrap();std::fs::write(f.share.join("locked.txt"),b"external occupant").unwrap();
+    assert_eq!(f.request("PUT",url).header("If",format!("({token})")).body("must not replace").send().await.unwrap().status(),412);
+    assert_eq!(std::fs::read(f.share.join("locked.txt")).unwrap(),b"external occupant");
+    assert_eq!(f.request("PUT",url).header("If",format!("(Not {token})")).body("negated token").send().await.unwrap().status(),412);
+}
 #[test]
 fn explicit_public_bind_is_rejected_before_creating_any_state() {
     let temp = tempfile::tempdir().unwrap();
@@ -645,7 +681,7 @@ async fn readonly_and_revocation_are_enforced_in_both_protocols() {
             .await
             .unwrap()
             .status(),
-        403
+        401
     );
     assert!(!f.share.join("new").exists());
 }
@@ -698,7 +734,7 @@ async fn tus_partial_resume_and_publish_without_overwrite() {
             .await
             .unwrap()
             .status(),
-        409
+        428
     );
     assert_eq!(
         std::fs::read(f.share.join("resume.bin")).unwrap(),

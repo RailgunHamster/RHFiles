@@ -76,6 +76,8 @@ pub struct State {
     pub invitations: crate::invitations::Invitations,
     pub groups: Arc<crate::groups::Groups>,
     pub host: Mutex<Option<crate::groups::Server>>,
+    pub compatibility:Mutex<Option<serde_json::Value>>,
+    pub failures:Mutex<std::collections::VecDeque<serde_json::Value>>,
     challenges: Mutex<HashMap<String, (Instant, String, String)>>,
     pub auth: Auth,
     pub uploads: Uploads,
@@ -111,6 +113,8 @@ impl State {
             invitations: Default::default(),
             groups,
             host: Mutex::new(None),
+            compatibility:Mutex::new(None),
+            failures:Mutex::new(Default::default()),
             challenges: Mutex::new(HashMap::new()),
             auth: Auth::new(data)?,
             uploads,
@@ -139,9 +143,11 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = match self.code {
             "unauthorized" => 401,
-            "forbidden" | "invalid_path" => 403,
+            "forbidden" | "invalid_path" | "compatibility_permission_required" | "compatibility_disabled" => 403,
             "not_found" => 404,
             "conflict" | "offset_mismatch" => 409,
+            "precondition_failed"=>412,
+            "precondition_required"=>428,
             "locked" => 423,
             "too_large" => 413,
             "expired" => 410,
@@ -197,6 +203,23 @@ async fn json_limit<T: serde::de::DeserializeOwned>(request: Request, limit: usi
 fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
     request.headers().get(name).and_then(|v| v.to_str().ok())
 }
+fn request_authority(request:&Request)->Option<axum::http::uri::Authority>{
+    // HTTP/2 carries :authority in the URI, and need not send a Host header.
+    request.uri().authority().cloned().or_else(||header(request,"Host").and_then(|v|v.parse().ok()))
+}
+fn same_destination(request:&Request,destination:&axum::http::Uri)->bool{
+    destination.scheme_str().is_none_or(|scheme|scheme=="https")&&destination.authority().is_none_or(|to|request_authority(request).is_some_and(|from|from.host().eq_ignore_ascii_case(to.host())&&from.port_u16().unwrap_or(443)==to.port_u16().unwrap_or(443)))
+}
+#[cfg(test)]mod destination_tests{
+    use super::*;
+    #[test]fn http2_authority_and_http1_host_identify_the_same_tls_destination(){
+        for request in [Request::builder().uri("https://host.ts.net:39129/dav/Files/a").body(Body::empty()).unwrap(),Request::builder().uri("/dav/Files/a").header("Host","host.ts.net:39129").body(Body::empty()).unwrap()]{
+            assert!(same_destination(&request,&"https://HOST.ts.net:39129/dav/Files/b".parse().unwrap()));
+            assert!(same_destination(&request,&"/dav/Files/b".parse().unwrap()));
+            for target in ["https://other.ts.net:39129/dav/Files/b","https://host.ts.net:443/dav/Files/b","http://host.ts.net:39129/dav/Files/b"]{assert!(!same_destination(&request,&target.parse().unwrap()),"{target}");}
+        }
+    }
+}
 fn number(request: &Request, name: &str) -> Result<u64> {
     header(request, name)
         .ok_or_else(|| bad("缺少上传长度或偏移"))?
@@ -251,10 +274,19 @@ pub async fn dispatch(AxumState(state): AxumState<Arc<State>>, request: Request)
         Err(_) => return Error::new("busy", "连接过多，请稍后重试").into_response(),
     };
     let upload = request.uri().path().starts_with("/api/v1/uploads");
+    let failure_path=request.uri().path().to_string();let failure_method=request.method().as_str().to_string();
+    let destination=header(&request,"Destination").and_then(|v|v.parse::<axum::http::Uri>().ok());
+    let host=request_authority(&request);
+    // Record only structural header information, never credentials or lock tokens.
+    let conditionals=serde_json::json!({"ifMatch":request.headers().contains_key("If-Match"),"if":request.headers().contains_key("If"),"overwrite":request.headers().contains_key("Overwrite"),"destinationScheme":destination.as_ref().and_then(|v|v.scheme_str()),"destinationPort":destination.as_ref().and_then(|v|v.port_u16()),"hostPort":host.as_ref().and_then(|v|v.port_u16()),"sameHost":destination.as_ref().and_then(|v|v.host()).zip(host.as_ref().map(|v|v.host())).map(|(a,b)|a.eq_ignore_ascii_case(b))});
+    let failure_state=state.clone();let mut failure_code="webdav_response";
     let mut response = match handle(state, request).await {
         Ok(r) => r,
-        Err(e) => e.into_response(),
+        Err(e) => {failure_code=e.code;e.into_response()},
     };
+    if (failure_path=="/dav"||failure_path.starts_with("/dav/"))&&response.status().is_client_error()||failure_path.starts_with("/dav/")&&response.status().is_server_error(){
+        let mut failures=failure_state.failures.lock().unwrap();if failures.len()>=64{failures.pop_front();}failures.push_back(serde_json::json!({"timeMs":now_ms(),"method":failure_method,"path":failure_path.chars().take(512).collect::<String>(),"status":response.status().as_u16(),"code":failure_code,"conditionals":conditionals}));
+    }
     if upload {
         response = tus(response);
     }
@@ -314,6 +346,9 @@ struct Mutation {
     path: String,
     destination: Option<String>,
 }
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct CheckedMutation { path:String, destination:Option<String>, revision:String, target_revision:Option<String> }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GroupChallenge {
@@ -403,9 +438,11 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         )
         .into_response());
     }
-    let a = s
+    let mut a = s
         .auth
-        .authenticate(header(&r, "Authorization"), method.as_str())?;
+        .authenticate_grouped(header(&r, "Authorization"), method.as_str(), Some(&s.groups))?;
+    a.edit_revision=None;a.committed_entry=Arc::new(Mutex::new(None));
+    if a.compatibility_binding.is_some() && path!="/dav" && !path.starts_with("/dav/") { return Err(Error::new("forbidden","兼容凭据仅能用于 WebDAV")); }
     if path == "/api/v1/groups/state" && method == Method::GET {
         let (_, group, _, _, _) = a
             .group
@@ -414,6 +451,14 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         return Ok(Json(s.groups.packet(group)?).into_response());
     }
     a.check(false, false)?;
+    if path=="/api/v1/webdav/client-grant"&&method==Method::POST {
+        // The authenticated group identity may request access only for itself.
+        // It cannot choose another group/member or enable the owner's gateway.
+        let (_,group,peer,_,_)=a.group.as_ref().ok_or_else(||Error::new("forbidden","需要设备组身份"))?;
+        let gateway=s.compatibility.lock().unwrap().clone().ok_or_else(||Error::new("compatibility_disabled","对方尚未启用 Windows HTTPS 兼容入口"))?;
+        let mut credentials=s.auth.compatibility_client_grant(s.groups.clone(),group,peer)?;
+        credentials["gateway"]=gateway;return Ok(Json(credentials).into_response());
+    }
     let writing = !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS)
         && method.as_str() != "PROPFIND";
     let locking = matches!(method.as_str(), "LOCK" | "UNLOCK");
@@ -473,9 +518,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
                 .ok_or_else(|| bad("缺少目标路径"))?
                 .parse::<axum::http::Uri>()
                 .map_err(|_| bad("目标地址无效"))?;
-            if destination.authority().is_some()
-                && destination.authority().map(|a| a.as_str()) != header(&r, "Host")
-            {
+            if !same_destination(&r,&destination) {
                 return Err(Error::new("forbidden", "不允许跨服务器目标地址"));
             }
             let target = destination
@@ -507,7 +550,18 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             r.headers_mut()
                 .insert("Overwrite", HeaderValue::from_static("F"));
         }
+        let mut edit_lock=None;
         if method == Method::PUT {
+            if let Ok(entry)=s.storage.stat(&decoded){
+                if entry.is_dir{return Err(Error::new("conflict","不能用文件覆盖文件夹"));}
+                if let Some(condition)=header(&r,"If"){let target=DavPath::new(&encode_path(&decoded)).map_err(|_|bad("无效路径"))?;edit_lock=s.locks.edit_version(&target,&a.id,condition).await;}
+                let matched=header(&r,"If-Match").filter(|value|value.trim()==format!("\"{}\"",entry.revision));
+                if matched.is_some(){a.edit_revision=Some(entry.revision);}
+                else if header(&r,"If").is_some(){
+                    a.edit_revision=edit_lock.as_ref().map(|(_,revision)|revision.clone());
+                    if a.edit_revision.as_deref()!=Some(&entry.revision){return Err(Error::new("precondition_failed","文件锁创建后原文件已变化，未覆盖"));}
+                }else{return Err(Error::new(if header(&r,"If-Match").is_some(){"precondition_failed"}else{"precondition_required"},"修改已有文件需要匹配的强 ETag 或本成员的独占文件锁，未覆盖"));}
+            }
             if header(&r, "Content-Length")
                 .and_then(|v| v.parse::<u64>().ok())
                 .is_some_and(|n| n > MAX_UPLOAD)
@@ -518,14 +572,22 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             r = Request::from_parts(parts, idle_limited(body));
         }
         let principal = a.id.clone();
+        let lock_revision=if method.as_str()=="LOCK"{s.storage.stat(&decoded).ok().map(|e|e.revision)}else{None};
+        let committed=a.committed_entry.clone();
         let response = s.dav.handle_guarded(r, principal, a).await;
+        if method==Method::PUT&&response.status().is_success(){if let Some((token,previous))=edit_lock{if let Some((target,revision))=committed.lock().unwrap().as_ref(){if target==&decoded{s.locks.advance_version(&token,&previous,revision);}}}}
+        if method.as_str()=="LOCK"&&response.status().is_success(){
+            if let Some(token)=response.headers().get("Lock-Token").and_then(|v|v.to_str().ok()).and_then(|v|v.strip_prefix('<')).and_then(|v|v.strip_suffix('>')){
+                if let Some(revision)=lock_revision.or_else(||committed.lock().unwrap().as_ref().filter(|(path,_)|path==&decoded).map(|(_,revision)|revision.clone())){s.locks.remember_version(token,&revision);}
+            }
+        }
         return Ok(response.map(Body::new));
     }
     match (method.as_str(),path.as_str()) {
-        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","mkdir","rename","delete","tus","webdav","image-thumbnails"],"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
+        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","webdav-client-grant"],"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
-            let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|c.0.elapsed()<Duration::from_secs(2)).cloned();
+            let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|header(&r,"Cache-Control")!=Some("no-cache")&&c.0.elapsed()<Duration::from_secs(2)).cloned();
             let (_,revision,entries)=if let Some(c)=cached{c}else{
                 let storage=s.storage.clone();let path=q.path.clone();let entries=tokio::task::spawn_blocking(move||storage.list(&path)).await.map_err(|_|Error::new("internal","读取目录失败"))??;
                 a.check(false,false)?;
@@ -554,11 +616,20 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             }).await.map_err(|_|Error::new("internal","缩略图生成失败"))??;
             a.check(false,false)?;Ok(([("Content-Type","image/png")],bytes).into_response())
         },
+        ("POST","/api/v1/rename-checked"|"/api/v1/delete-checked")=>{
+            let m:CheckedMutation=json(r).await?;
+            let deleting=path.ends_with("/delete-checked");
+            if m.revision.is_empty() || m.revision.len()>256 || m.target_revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256) || deleting&&m.destination.is_some() || !deleting&&m.destination.is_none() {return Err(bad("条件操作参数无效"));}
+            a.check(!deleting,deleting||m.target_revision.is_some())?;s.unlocked(&m.path,&a).await?;
+            if let Some(to)=&m.destination{s.unlocked(to,&a).await?;}
+            let storage=s.storage.clone();tokio::task::spawn_blocking(move||{a.check(!deleting,deleting||m.target_revision.is_some())?;storage.checked_mutation(&m.path,m.destination.as_deref(),&m.revision,m.target_revision.as_deref())}).await.map_err(|_|Error::new("internal","条件操作失败"))??;
+            s.invalidate();Ok(StatusCode::NO_CONTENT.into_response())
+        },
         ("POST","/api/v1/mkdir"|"/api/v1/rename"|"/api/v1/copy"|"/api/v1/delete")=>{
             let m:Mutation=json(r).await?;let deleting=path.ends_with("/delete");a.check(!deleting,deleting)?;s.unlocked(&m.path,&a).await?;
             if let Some(to)=&m.destination{s.unlocked(to,&a).await?;}
             let storage=s.storage.clone();tokio::task::spawn_blocking(move||->Result<()>{a.check(!deleting,deleting)?;match path.as_str(){"/api/v1/mkdir"=>storage.mkdir(&m.path),"/api/v1/rename"=>storage.rename(&m.path,m.destination.as_deref().ok_or_else(||bad("缺少目标路径"))?),"/api/v1/copy"=>storage.copy_file(&m.path,m.destination.as_deref().ok_or_else(||bad("缺少目标路径"))?,||a.check(true,false)),_=>{let entry=storage.stat(&m.path)?;storage.remove(&m.path,entry.is_dir)}}}).await.map_err(|_|Error::new("internal","文件操作失败"))??;
-            Ok(StatusCode::NO_CONTENT.into_response())
+            s.invalidate();Ok(StatusCode::NO_CONTENT.into_response())
         },
         ("OPTIONS","/api/v1/uploads")=>Ok((StatusCode::NO_CONTENT,[("Tus-Version","1.0.0"),("Tus-Extension","creation,termination"),("Tus-Max-Size","1099511627776")]).into_response()),
         ("POST","/api/v1/uploads")=>{
@@ -567,8 +638,8 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             let metadata=header(&r,"Upload-Metadata").ok_or_else(||bad("缺少 path 上传元数据"))?;
             let encoded=metadata.split(',').find_map(|v|v.trim().strip_prefix("path ")).ok_or_else(||bad("缺少 path 上传元数据"))?;
             let target=String::from_utf8(base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_|bad("无效 path 编码"))?).map_err(|_|bad("path 必须是 UTF-8"))?;
-            s.unlocked(&target,&a).await?;let u=s.uploads.create(&s.storage,&a,target,length)?;
-            Ok((StatusCode::CREATED,[("Location",format!("/api/v1/uploads/{}",u.id)),("Upload-Offset","0".into())]).into_response())
+            s.unlocked(&target,&a).await?;let u=s.uploads.create(&s.storage,&a,target,length)?;s.invalidate();
+            let mut response=(StatusCode::CREATED,[("Location",format!("/api/v1/uploads/{}",u.id)),("Upload-Offset","0".into())]).into_response();if let Some(revision)=u.revision{response.headers_mut().insert("Upload-Revision",revision.parse().map_err(|_|Error::new("internal","上传身份无效"))?);}Ok(response)
         },
         ("HEAD"|"PATCH"|"DELETE",_)if path.starts_with("/api/v1/uploads/")=>{
             if header(&r,"Tus-Resumable")!=Some("1.0.0"){return Ok(StatusCode::PRECONDITION_FAILED.into_response());}
@@ -580,7 +651,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             if header(&r,"Content-Type")!=Some("application/offset+octet-stream"){return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());}
             let offset=number(&r,"Upload-Offset")?;let actual=s.uploads.offset(&s.storage,&u)?;
             if actual!=offset{return Ok((StatusCode::CONFLICT,[("Upload-Offset",actual.to_string())]).into_response());}
-            let offset=s.uploads.append(&s.storage,&a,&mut u,offset,r.into_body()).await?;s.invalidate();Ok((StatusCode::NO_CONTENT,[("Upload-Offset",offset.to_string())]).into_response())
+            let offset=s.uploads.append(&s.storage,&a,&mut u,offset,r.into_body()).await?;s.invalidate();let mut response=(StatusCode::NO_CONTENT,[("Upload-Offset",offset.to_string())]).into_response();if let Some(revision)=&u.revision{response.headers_mut().insert("Upload-Revision",revision.parse().map_err(|_|Error::new("internal","上传身份无效"))?);}Ok(response)
         },
         _=>Err(Error::new("not_found","接口不存在")),
     }
