@@ -62,6 +62,12 @@ test('three-part proxy UI has real defaults, saves via the same automation inter
     assert.deepEqual((await fields()).map(field=>field.value),['https','proxy.example','8443']);
     assert((await fields()).every(field=>field.disabled));
     await app.screenshot('proxy-three-part-settings');
+    await app.send('Emulation.setDeviceMetricsOverride',{width:480,height:850,deviceScaleFactor:1,mobile:false});
+    await app.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    const bounds=await app.evaluate("['protocol','host','port'].map(field=>{const r=document.getElementById('settings-proxy-'+field).getBoundingClientRect();return {left:r.left,right:r.right,top:r.top}})");
+    assert(bounds.every(r=>r.left>=0&&r.right<=480),'three proxy fields fit within a narrow settings window');
+    assert(Math.max(...bounds.map(r=>r.top))-Math.min(...bounds.map(r=>r.top))<2,'protocol, host and port stay in the same row');
+    await app.screenshot('proxy-three-part-narrow');
     assert.equal(await app.evaluate("document.querySelector('#settings-proxy-url')"),null);
     assert.deepEqual(await app.evaluate("RHFilesAPI.invoke('ui.contract').then(result=>result.missing)"),[]);
   } finally {await app.close();}

@@ -1344,7 +1344,7 @@ body.preview-fullscreen-active::before {
 }
 
 .settings-proxy-row > span { flex: 0 0 118px; color: var(--text-2); font-size: 12px; }
-.settings-proxy-fields { display: grid; grid-template-columns: 100px minmax(110px,1fr) 84px; gap: 10px; flex: 1; min-width: 0; }
+.settings-proxy-fields { display: grid; grid-template-columns: 100px minmax(110px,1fr) 84px; gap: 10px; flex: 1; min-width: 0; width: 100%; }
 .settings-card .settings-proxy-fields label { display: flex; flex-direction: column; gap: 6px; color: var(--text-4); font-size: 11px; }
 .settings-card .settings-row .settings-proxy-fields select,
 .settings-card .settings-row .settings-proxy-fields input[type="text"] { width: 100%; min-width: 0; box-sizing: border-box; }
