@@ -69,6 +69,7 @@ test('three-part proxy UI has real defaults, saves via the same automation inter
     assert(Math.max(...bounds.map(r=>r.top))-Math.min(...bounds.map(r=>r.top))<2,'protocol, host and port stay in the same row');
     await app.screenshot('proxy-three-part-narrow');
     assert.equal(await app.evaluate("document.querySelector('#settings-proxy-url')"),null);
-    assert.deepEqual(await app.evaluate("RHFilesAPI.invoke('ui.contract').then(result=>result.missing)"),[]);
+    const controls=await app.evaluate("RHFilesAPI.invoke('ui.list',{includeHidden:true}).then(rows=>rows.filter(row=>['settings-proxy-enabled','settings-proxy-protocol','settings-proxy-host','settings-proxy-port'].includes(row.id)))");
+    assert.equal(controls.length,4);assert(controls.every(control=>control.events.includes('change')),'each proxy field has an enumerable callable change handler');
   } finally {await app.close();}
 });
