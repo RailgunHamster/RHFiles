@@ -88,6 +88,8 @@ Windows 的 `--wait` 客户端会在提交前，显式查询 `runs.transport` �
 
 ## 接口覆盖与测试
 
+Windows 设备地址支持 `rh://设备名/共享名/路径`（重名时 `rh://组名@设备名/共享名/路径`）。`devices.resolve {"address":"rh://WINSERVER/D/文档"}` 只读取本机已接受的组成员信息，返回稳定的身份 `path`、`group` 和 `peer`，不进行网络探测；未知或重名时明确报错，不降级到 SMB。`navigation.open` 也接受此短地址；若指向文件则打开父目录并选中文件。`devices.list` 返回对应可读 `address`，历史和收藏仍保存稳定身份路径。
+
 Windows 回收站提供 `recycle.open`、`recycle.list`（分页）、`recycle.filter`、`recycle.sort`、`recycle.select`、`recycle.restore`、`recycle.deleteSelected`、`recycle.empty`、`recycle.copyPaths` 等语义接口。先打开或刷新，再按不透明 `id` 选择；不要把 `id` 当成文件路径。恢复默认跳过同名项目，`keepBoth:true` 保留两份。永久删除仍须完成两次 UI 确认，清空只影响本次确认快照，不影响新进入回收站的项目。
 
 回收站也是普通标签页中的虚拟位置 `recycle://`：支持地址栏、标签页复制、前进/后退，以及左右窗格。`recycle.open` 的 `pane` 指定窗格，`newTab:true` 新建标签页；筛选、排序和选择分别保存在每个标签页。通用的导航、标签页和选择接口也适用于这个位置。项目的 `path` 为只读标识 `recycle://<id>`，不能用于文件系统读写、预览、终端、粘贴或拖拽操作；需先恢复到真实路径。

@@ -15,11 +15,24 @@ test('desktop group protocol browses real shared files in ordinary tabs with bou
     const devices=await invoke(b,'devices.refresh');assert.equal(devices.devices.length,1);const device=devices.devices[0],base=device.path;
     assert.equal((await invoke(b,'groups.diagnostics')).length,0,'Listing known devices must not probe');
     assert.equal(await b.evaluate("document.querySelectorAll('#device-group-locations [data-path]').length"),1);
+    assert(await b.evaluate("!!(document.getElementById('device-group-section').compareDocumentPosition(document.getElementById('pinned-list').closest('.sidebar-section'))&Node.DOCUMENT_POSITION_FOLLOWING)"),'RHFiles devices appear above Favorites');
     // Both isolated instances run on this same host. A real remote device's
     // loopback/local-adapter hints are intentionally ignored; use the explicit
     // local-forward address supported by the ordinary connection API.
     const port=(await invoke(a,'server.state')).status.port;
     assert.equal((await invoke(b,'groups.connect',{id:group,peer:device.peer,endpoint:'https://127.0.0.1:'+port})).outcome,'connected');
+    const beforeAlias=await invoke(b,'groups.diagnostics');
+    const alias=await invoke(b,'devices.resolve',{address:'rh://Fixture host/Files/中文 %25 %23/A.txt'});
+    assert.equal(alias.path,base+'Files/'+encodeURIComponent('中文 % #')+'/A.txt');
+    assert.deepEqual(await invoke(b,'groups.diagnostics'),beforeAlias,'Name resolution is local, without network discovery');
+    await invoke(b,'navigation.open',{path:'rh://Fixture host/Files/中文 %25 %23/A.txt'});
+    assert.deepEqual((await invoke(b,'navigation.state')).selection,[alias.path],'CLI and UI both resolve aliases and reveal files');
+    await b.evaluate('enterEditMode(false)');
+    assert.equal(await b.evaluate("document.getElementById('path-input').value"),'rh://Fixture host/Files/中文 %25 %23');
+    await b.send('Input.insertText',{text:'rh://Fixture host/Files/'});
+    await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});
+    await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});
+    await until(async()=>(await invoke(b,'navigation.state')).path===base+'Files','actual address-bar Enter opens the device folder');
     await invoke(b,'devices.open',{group,peer:device.peer});assert.equal((await invoke(b,'files.list')).entries[0].name,'Files');
     await invoke(b,'navigation.open',{path:base+'Files/'});assert.equal((await invoke(b,'files.list')).total,3);
     const child=base+'Files/'+encodeURIComponent('中文 % #');await invoke(b,'navigation.open',{path:child});

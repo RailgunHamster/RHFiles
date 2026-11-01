@@ -362,6 +362,7 @@
   "notice.noClosedTab": "没有可恢复的已关闭标签页",
   "address.suggestHistory": "最近",
   "address.suggestFolder": "文件夹",
+  "address.suggestDevice": "RHFiles 设备",
   "notice.integrationExternalOnly": "位置列表会显示在 Windows 打开 / 保存对话框或资源管理器旁边",
   "notice.driveFormatted": "\u9a71\u52a8\u5668\u683c\u5f0f\u5316\u6210\u529f",
   "notice.cloneSuccess": "\u514b\u9686\u6210\u529f\uff01",

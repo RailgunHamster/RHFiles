@@ -36,3 +36,23 @@ test('media URLs are opaque loopback capabilities, bounded in memory and invalid
   const f=fixture();await f.run('devices.resource',{path});await f.run('devices.resource',{path});assert.equal(f.calls.filter(v=>v.cmd==='device_fs').length,1);
   await f.run('devices.refresh');await f.run('devices.resource',{path});assert.equal(f.calls.filter(v=>v.cmd==='device_fs').length,2);
 });
+
+test('resolving a readable device address refreshes local trust but does not send network or filesystem requests',async()=>{
+  const f=fixture();const resolved=await f.run('devices.resolve',{address:'rh://电脑 A/Files/中文%25/A.txt'});
+  assert.equal(resolved.path,path);assert.deepEqual(f.calls.map(v=>v.cmd),['device_groups']);
+  assert.equal((await f.run('devices.list')).devices[0].address,'rh://电脑 A/');
+  f.setState({groups:[{id:group,name:'RH',members:[{id:peer,name:'电脑 A',server:{},blocked:true}]}]});
+  await assert.rejects(f.run('devices.resolve',{address:'rh://电脑 A/'}),/device_not_found/);
+  assert(!f.calls.some(v=>v.cmd==='device_fs'));
+});
+
+test('unknown, malformed and duplicate names report actionable errors without falling back to a host/IP',async()=>{
+  const f=fixture();await assert.rejects(f.run('devices.resolve',{address:'rh://电脑 A/Files/%2e%2e'}),/invalid_device_address/);
+  await assert.rejects(f.run('devices.resolve',{address:'rh://192.168.0.1/'}),/device_not_found/);
+  f.setState({groups:[{id:group,name:'RH',members:[{id:peer,name:'电脑 A',server:{}}]},{id:'c'.repeat(64),name:'Other',members:[{id:'d'.repeat(64),name:'电脑 A',server:{}}]}]});
+  await assert.rejects(f.run('devices.resolve',{address:'rh://电脑 A/'}),/ambiguous_device/);
+  assert.equal((await f.run('devices.resolve',{address:'rh://Other@电脑 A/'})).peer,'d'.repeat(64));
+  const suggestions=vm.runInContext("deviceBrowser.suggest('rh://')",f.ctx);
+  assert.equal(suggestions.length,2);assert.equal(suggestions[0].path,'rh://RH@电脑 A/');
+  assert(f.calls.every(v=>v.cmd==='device_groups'));
+});

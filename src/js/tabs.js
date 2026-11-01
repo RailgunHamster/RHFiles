@@ -1094,7 +1094,7 @@ function renderAddressSuggestions(isRight, items, activeIndex) {
   }
   el.hidden = false;
   el.innerHTML = list.map((item, index) => {
-    const kind = item.kind === 'folder' ? t('address.suggestFolder') : t('address.suggestHistory');
+    const kind = item.kind === 'device' ? t('address.suggestDevice') : item.kind === 'folder' ? t('address.suggestFolder') : t('address.suggestHistory');
     return `<div class="address-suggest-item${index === el._index ? ' active' : ''}" role="option" data-index="${index}" aria-selected="${index === el._index ? 'true' : 'false'}"><span class="address-suggest-kind">${esc(kind)}</span><span class="address-suggest-path">${esc(item.path)}</span></div>`;
   }).join('');
   el.querySelectorAll('.address-suggest-item').forEach(node => {
@@ -1107,6 +1107,11 @@ function renderAddressSuggestions(isRight, items, activeIndex) {
 }
 
 async function refreshAddressSuggestions(query, isRight, token) {
+  if(typeof RHFilesDevicePaths!=='undefined'&&RHFilesDevicePaths.isAddress(query)){
+    const input=document.getElementById(isRight?'right-path-input':'path-input');
+    if(input&&token===input._suggestToken)renderAddressSuggestions(isRight,deviceBrowser.suggest(query),-1);
+    return; // Never enumerate a network folder while typing a device address.
+  }
   const history = addressHistoryCandidates();
   const { parent } = splitAddressQuery(query);
   let childFolders = [];
@@ -1159,7 +1164,8 @@ function enterEditMode(isRight) {
   const bar = document.getElementById(barId);
   const input = document.getElementById(inputId);
   bar.classList.add("editing");
-  input.value = isRight ? G.rp.path : getTab().path;
+  const path=isRight ? G.rp.path : getTab().path;
+  input.value = typeof isDevicePath==='function'&&isDevicePath(path)?deviceBrowser.address(path):path;
   input.style.display = "block";
   input.focus();
   input.select();
@@ -1435,7 +1441,12 @@ function selectNavigatedPath(path, isRight) {
 }
 
 async function navigateAddressInput(value, isRight) {
-  const path = normalizeWindowsPathInput(value);
+  let path;
+  try{
+    path=typeof RHFilesDevicePaths!=='undefined'&&RHFilesDevicePaths.isAddress(value)
+      ? (await window.RHFilesAPI.invoke('devices.resolve',{address:String(value).trim()})).path
+      : normalizeWindowsPathInput(value);
+  }catch(error){showNotice(String(error));return false;}
   if (!path) return false;
   const navigate = isRight ? rpNavigateTo : navigateTo;
   if(typeof isRecyclePath==='function'&&isRecyclePath(path))return navigate(path);

@@ -22,5 +22,54 @@
   }
   const parent=value=>{const p=parse(value);p.parts.pop();return make(p.group,p.peer,'/'+p.parts.join('/'));};
   const join=(value,child)=>{const p=parse(value);return make(p.group,p.peer,(p.path==='/'?'':p.path)+'/'+name(child));};
-  return Object.freeze({prefix,is,make,parse,parent,join,name});
+  // Human-facing addresses are resolved locally, never handed to the shell,
+  // DNS or SMB. Persist the resolved identity URI, not these mutable names.
+  const isAddress=value=>/^rh:/i.test(String(value||'').trim());
+  const invalidAddress=()=>{throw Error('[invalid_device_address] Expected rh://device/share/path or rh://group@device/share/path');};
+  function label(value){
+    if(typeof value!=='string'||!value.trim()||value.length>1024||/[\u0000-\u001f\u007f]/.test(value))invalidAddress();
+    // Also reject unpaired surrogates, which cannot be represented in a URI.
+    try{encodeURIComponent(value);}catch{invalidAddress();}return value;
+  }
+  const escapeLabel=value=>label(value).replace(/[%@/\\?#]/g,encodeURIComponent);
+  const fold=value=>String(value).normalize('NFC').toLowerCase();
+  function address(device,path='/',group){
+    // Reuse exactly the filesystem's segment validation, without URL dot
+    // normalization. Unicode/spaces stay legible; reserved characters escape.
+    const parts=parse(make('0'.repeat(64),'0'.repeat(64),path)).parts;
+    return 'rh://'+(group===undefined?'':escapeLabel(group)+'@')+escapeLabel(device)+'/'+parts.map(escapeLabel).join('/');
+  }
+  function parseAddress(value){
+    const raw=String(value||'').trim();if(raw.length>27000)invalidAddress();
+    const match=/^rh:\/\/([^/\\?#]+)((?:[/\\][^?#]*)?)$/i.exec(raw);if(!match)invalidAddress();
+    const labels=match[1].split('@');if(labels.length>2)invalidAddress();
+    let names,parts;
+    try{
+      names=labels.map(v=>label(decodeURIComponent(v)));
+      const tail=(match[2]||'/').replace(/\\/g,'/');
+      if(tail.includes('//'))invalidAddress();
+      parts=tail.replace(/\/$/,'').slice(1).split('/').filter((v,i,a)=>!(a.length===1&&v==='')).map(v=>name(decodeURIComponent(v)));
+    }catch{invalidAddress();}
+    const path='/'+parts.join('/');if(path.length>8192)invalidAddress();
+    return {device:names.at(-1),group:names.length===2?names[0]:null,path};
+  }
+  function resolveAddress(value,peers){
+    const parsed=parseAddress(value),matches=peers.filter(p=>fold(p.name)===fold(parsed.device)&&(parsed.group===null||fold(p.groupName)===fold(parsed.group)));
+    const unique=[...new Map(matches.map(p=>[p.group+'/'+p.peer,p])).values()];
+    if(unique.length!==1){
+      const error=Error(unique.length?'[ambiguous_device] Device name is not unique':'[device_not_found] No accepted file service with this name');
+      error.code=unique.length?'ambiguous_device':'device_not_found';
+      error.candidates=unique.map(p=>({group:p.group,peer:p.peer,name:p.name,groupName:p.groupName}));throw error;
+    }
+    const peer=unique[0];return {path:make(peer.group,peer.peer,parsed.path),group:peer.group,peer:peer.peer};
+  }
+  function addressFor(value,peers){
+    const parsed=parse(value),peer=peers.find(p=>p.group===parsed.group&&p.peer===parsed.peer);if(!peer)return parsed.uri;
+    for(const group of [undefined,peer.groupName]){
+      const candidate=address(peer.name,parsed.path,group);
+      try{if(resolveAddress(candidate,peers).path===parsed.uri)return candidate;}catch{}
+    }
+    return parsed.uri; // Even duplicate group names must not pick a device.
+  }
+  return Object.freeze({prefix,is,make,parse,parent,join,name,isAddress,address,parseAddress,resolveAddress,addressFor});
 });

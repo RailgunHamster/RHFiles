@@ -7,11 +7,25 @@ const deviceBrowser=(()=>{
   const fs=(action,path,extra={})=>call('device_fs',{action,args:{path,...extra}});
   const name=(group,peer)=>peers.find(p=>p.group===group&&p.peer===peer)?.name||('RHFiles · '+peer.slice(0,8));
   function display(path){const p=P.parse(path);return name(p.group,p.peer)+(p.path==='/'?'':p.path);}
+  const address=path=>P.addressFor(path,peers);
+  const list=()=>peers.map(v=>({...v,address:address(v.path)}));
+  async function resolve(value){
+    await refresh(); // Reload local trust only; no probes, DNS or broadcasts.
+    try{return P.resolveAddress(value,peers);}catch(error){
+      if(error.code==='ambiguous_device')throw Error('[ambiguous_device] '+text('设备名重复，请使用 rh://组名@设备名/，或从左侧选择设备。','Duplicate device name. Use rh://group@device/ or select it in the sidebar.')+'\n'+error.candidates.map(p=>p.groupName+' · '+p.name+' ('+p.peer.slice(0,8)+')').join('\n'));
+      if(error.code==='device_not_found')throw Error('[device_not_found] '+text('找不到此设备的文件服务。请检查设备名、设备组及对方是否已启动共享。','No accepted file service with this name. Check its name, group membership and file sharing.'));
+      throw Error('[invalid_device_address] '+text('设备地址格式应为 rh://设备名/共享名/路径；重名时使用 rh://组名@设备名/。','Use rh://device/share/path, or rh://group@device/ for duplicate names.'));
+    }
+  }
+  function suggest(query){
+    const raw=String(query||'').trim().toLowerCase();
+    return list().filter(p=>p.address.startsWith('rh://')&&p.address.toLowerCase().startsWith(raw)).slice(0,12).map(p=>({path:p.address,kind:'device'}));
+  }
   function paint(){
     const host=document.getElementById('device-group-locations');if(!host)return;
     host.replaceChildren();
     for(const peer of peers){
-      const button=document.createElement('button');button.type='button';button.className='sidebar-item';button.dataset.path=peer.path;button.dataset.apiAction='devices.open';button.title=peer.groupName+' · '+peer.name;
+      const button=document.createElement('button');button.type='button';button.className='sidebar-item';button.dataset.path=peer.path;button.dataset.apiAction='devices.open';button.title=peer.groupName+' · '+peer.name+'\n'+address(peer.path);
       button.style.cssText='width:100%;border:0;background:transparent;font:inherit;text-align:left;color:inherit;cursor:pointer';
       button.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="14" height="11" rx="2"/><path d="M10 14v5M6 19h8"/><rect x="17" y="9" width="5" height="12" rx="1.5"/></svg>';
       const label=document.createElement('span');label.textContent=peer.name;button.append(label);
@@ -36,7 +50,7 @@ const deviceBrowser=(()=>{
         if(active&&typeof renderNavigationError==='function'){renderNavigationError(tab.path,'[authorization_revoked] '+text('设备已移除或未开放文件服务','Device removed or file sharing unavailable'),right);if(typeof updatePreviewForSelection==='function')updatePreviewForSelection(right);}
       }
     }
-    if(typeof renderTabs==='function')renderTabs();return {devices:peers.map(v=>({...v}))};
+    if(typeof renderTabs==='function')renderTabs();return {devices:list()};
   }
   async function source(path){
     path=P.parse(path).uri;const cached=media.get(path);if(cached&&performance.now()-cached.at<300000)return cached.url;
@@ -46,8 +60,9 @@ const deviceBrowser=(()=>{
   }
   function register(api){
     const string={type:'string',minLength:1,maxLength:27000},id={type:'string',pattern:'^[a-fA-F0-9]{64}$'},object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
-    api.register('devices.list',()=>({devices:peers.map(v=>({...v}))}),{params:object(),risk:'read',description:'Locally known group file services; does not probe the network'});
+    api.register('devices.list',()=>({devices:list()}),{params:object(),risk:'read',description:'Locally known group file services and readable rh:// addresses; does not probe the network'});
     api.register('devices.refresh',refresh,{params:object(),risk:'read',description:'Reload locally accepted device-group services, without discovery traffic'});
+    api.register('devices.resolve',p=>resolve(p.address),{params:object({address:string},['address']),risk:'read',description:'Resolve rh://[group@]device/share/path from local trust, rejecting ambiguous names without network probes'});
     api.register('devices.settings',()=>{openSettings();switchSettingsSection('lan');return {opened:true};},{params:object(),risk:'ui'});
     api.register('devices.open',async p=>{
       const path=P.make(p.group,p.peer,p.path||'/');
@@ -59,7 +74,7 @@ const deviceBrowser=(()=>{
     api.register('devices.search',p=>fs('search',P.parse(p.path).uri,{query:p.query}),{params:object({path:string,query:{type:'string',minLength:1,maxLength:512}},['path','query']),risk:'read',description:'Explicit recursive search; 15 seconds, 500 folders and 500 results maximum; no background continuation'});
     api.register('devices.resource',async p=>({url:await source(p.path)}),{params:object({path:string},['path']),risk:'read',description:'Revocable loopback-only media capability; never a remote password or bearer token'});
   }
-  return {register,refresh,paint,display,name,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs};
+  return {register,refresh,paint,display,name,address,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs};
 })();
 deviceBrowser.register(window.RHFilesAPI);
 async function routeDeviceCommand(cmd,args){

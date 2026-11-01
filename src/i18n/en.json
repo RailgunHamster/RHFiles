@@ -362,6 +362,7 @@
   "notice.noClosedTab": "No recently closed tab to restore",
   "address.suggestHistory": "Recent",
   "address.suggestFolder": "Folder",
+  "address.suggestDevice": "RHFiles device",
   "notice.integrationExternalOnly": "The locations list appears beside a Windows Open/Save dialog or File Explorer",
   "notice.driveFormatted": "Drive formatted successfully",
   "notice.cloneSuccess": "Clone successful!",
