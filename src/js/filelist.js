@@ -1000,6 +1000,15 @@ function updateStatus(tabOrPane, countId, selId) {
   }
   document.getElementById(countId).textContent = txt;
   if (selId) document.getElementById(selId).textContent = "";
+  const activePane = (G.dualOn && G.lastActivePane === 'right') ? G.rp : getTab();
+  const activeSelected = activePane ? selectedEntriesForPane(activePane) : selected;
+  const hasSel = activeSelected && activeSelected.length > 0;
+  document.body.dataset.hasSelection = hasSel ? "true" : "false";
+  const selPill = document.getElementById("cmd-selection-pill");
+  if (selPill) {
+    selPill.hidden = !hasSel;
+    selPill.textContent = hasSel ? `已选 ${activeSelected.length} 项` : "";
+  }
 }
 
 function getSelectedPaths(isRight) {

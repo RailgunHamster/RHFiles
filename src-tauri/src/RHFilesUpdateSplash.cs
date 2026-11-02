@@ -225,16 +225,16 @@ internal sealed class RHFilesSplashForm : Form
         else if (t == "sand")
         {
             isDarkTheme = false;
-            bgColor = Color.FromArgb(241, 237, 228);       // --bg: #f1ede4
-            cardColor = Color.FromArgb(255, 250, 240);     // --bg-card: #fffaf0
-            borderColor = Color.FromArgb(221, 211, 196);   // --border: #ddd3c4
-            textColor = Color.FromArgb(48, 43, 37);        // --text: #302b25
-            text2Color = Color.FromArgb(84, 75, 64);       // --text-2: #544b40
-            text3Color = Color.FromArgb(117, 106, 93);     // --text-3: #756a5d
+            bgColor = Color.FromArgb(244, 242, 238);       // --bg: #f4f2ee
+            cardColor = Color.FromArgb(252, 251, 249);     // --bg-card: #fcfbf9
+            borderColor = Color.FromArgb(226, 221, 211);   // --border: #e2ddd3
+            textColor = Color.FromArgb(43, 40, 36);        // --text: #2b2824
+            text2Color = Color.FromArgb(79, 73, 66);       // --text-2: #4f4942
+            text3Color = Color.FromArgb(115, 107, 97);     // --text-3: #736b61
             accentColor = Color.FromArgb(180, 83, 42);     // --accent: #b4532a
             accentEndColor = Color.FromArgb(224, 118, 68);
-            accentLightColor = Color.FromArgb(246, 223, 209); // --accent-light: #f6dfd1
-            trackColor = Color.FromArgb(232, 225, 214);
+            accentLightColor = Color.FromArgb(246, 229, 220); // --accent-light: #f6e5dc
+            trackColor = Color.FromArgb(235, 231, 223);
             stepDoneColor = Color.FromArgb(42, 140, 150);  // teal from RHFiles icon
         }
         else if (t == "mist")

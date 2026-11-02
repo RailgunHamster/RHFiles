@@ -111,6 +111,8 @@ fn main() {
     // The packaged interface is frontendDist=../src. Track it explicitly so
     // changing only JS/CSS/HTML cannot leave an old interface in a new binary.
     println!("cargo:rerun-if-changed=../src");
+    println!("cargo:rerun-if-changed=../src/css");
+    println!("cargo:rerun-if-changed=../src/js");
     build_update_splash();
     enable_common_controls_for_all_windows_targets();
     generate_release_history();

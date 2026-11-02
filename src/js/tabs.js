@@ -1525,6 +1525,11 @@ function updateSearchScopeUI() {
       ? t('search.inFolderPlaceholder', {folder: typeof isDevicePath==='function'&&isDevicePath(folderPath)?pathLeaf(folderPath):(folderPath.split('\\').filter(Boolean).pop() || folderPath)})
       : t('search.globalPlaceholder');
   }
+  const engineChip = document.getElementById('search-engine-chip');
+  if (engineChip) {
+    engineChip.textContent = folderScope ? '⚡ 当前目录' : '⚡ Everything';
+    engineChip.classList.toggle('global-active', !folderScope && globalEnabled);
+  }
 }
 
 function toggleSearchScope() {

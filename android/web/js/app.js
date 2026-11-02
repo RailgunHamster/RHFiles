@@ -151,13 +151,21 @@
   }
   function clearSelection() { state.selected.clear(); paintSelection(); }
 
-  function tile(grid, id, label, icon, color, note, handler) {
-    const node = ui.el('button', 'home-tile');
+  function tile(grid, id, label, icon, color, note, handler, extra = {}) {
+    const node = ui.el('button', 'home-tile' + (extra.variant ? ' ' + extra.variant : ''));
     node.dataset.tile = id;
     const graphic = ui.el('span', 'tile-icon');
     graphic.style.setProperty('--tile-color', color);
     graphic.innerHTML = ui.icon(icon);
     node.append(graphic, ui.el('strong', '', label), ui.el('small', '', note || ''));
+    if (extra.percent != null) {
+      const meter = ui.el('span', 'bento-meter');
+      meter.setAttribute('aria-hidden', 'true');
+      const fill = ui.el('span', 'bento-meter-fill');
+      fill.style.width = `${extra.percent}%`;
+      meter.append(fill);
+      node.append(meter);
+    }
     RHFilesUI.listen(node,'click', () => Promise.resolve().then(handler).catch(error),undefined,"android.web.js.app.tile.0cdafb83897b");
     grid.append(node);
   }
@@ -168,10 +176,19 @@
     const snapshot=JSON.stringify([state.roots.map(({path,label,removable,provider})=>({path,label,removable,provider})),state.root,api.featuresAvailable()]);
     const capacityOf=root=>Number.isFinite(root.totalBytes) && Number.isFinite(root.freeBytes)
       ? fmt.size(root.totalBytes-root.freeBytes)+' / '+fmt.size(root.totalBytes) : root.network ? '网络存储 · '+String(root.protocol||'SMB').toUpperCase() : root.provider ? '已授权存储' : root.removable ? fmt.baseName(root.path) : '本机文件';
+    const percentOf=root=>Number.isFinite(root.totalBytes) && Number.isFinite(root.freeBytes) && root.totalBytes > 0
+      ? Math.min(100, Math.max(4, Math.round(((root.totalBytes - root.freeBytes) / root.totalBytes) * 100))) : null;
     const noteText=state.index?.lastFinishedMs ? '分类基于文件名索引；新文件可通过更新索引加入。' : '图片、音频等分类需要先建立本机文件名索引。';
     const indexText=state.index?.indexing ? '正在建立索引…' : '更新索引';
     if(snapshot===homeSnapshot && $('home').childElementCount){
-      homeRoots.forEach((root,i)=>{$('home').querySelector(`[data-tile="storage-${i}"] small`).textContent=capacityOf(root);});
+      homeRoots.forEach((root,i)=>{
+        const tileNode=$('home').querySelector(`[data-tile="storage-${i}"]`);
+        if(tileNode){
+          tileNode.querySelector('small').textContent=capacityOf(root);
+          const fill=tileNode.querySelector('.bento-meter-fill'),pct=percentOf(root);
+          if(fill&&pct!=null)fill.style.width=`${pct}%`;
+        }
+      });
       $('home').querySelector('[data-tile="favorites"] small').textContent=state.favorites.length+' 个位置';
       const note=$('home').querySelector('.home-note');note.querySelector('.index-description').textContent=noteText;note.querySelector('button').setAttribute('aria-label',indexText);note.querySelector('button').disabled=!!state.index?.indexing;note.querySelector('.index-caption').textContent=state.index?.indexing?'正在更新索引…':fmt.count(state.index?.entryCount || 0)+' 个已索引项目';
       androidUpdates.paintHome();return;
@@ -181,15 +198,16 @@
     home.replaceChildren(grid);
     for (const [i, root] of homeRoots.entries()) {
       const capacity = capacityOf(root);
-      tile(grid, 'storage-' + i, rootLabel(root), ui.storageSymbol(root), '#5572d8', capacity, () => go({ screen: 'folder', path: root.path,label:rootLabel(root) }));
+      const variant = i === 0 ? (homeRoots.length === 1 ? 'bento-hero bento-span-3' : 'bento-hero bento-span-2') : 'bento-subhero';
+      tile(grid, 'storage-' + i, rootLabel(root), ui.storageSymbol(root), '#5572d8', capacity, () => go({ screen: 'folder', path: root.path,label:rootLabel(root) }), { variant, percent: percentOf(root) });
     }
-    tile(grid, 'downloads', '下载', 'download', '#b78a41', 'Download', () => go({ screen: 'folder', path: state.root + '/Download', boundary:state.root+'/Download', boundaryLabel:'下载' }));
-    for (const [id, label, color] of categories) tile(grid, id, label, id, color, id === 'recent' ? '按修改时间' : '按文件类型', () => go({ screen: 'library', category: id }));
-    tile(grid, 'favorites', '收藏夹', 'star', '#ca9940', state.favorites.length + ' 个位置', () => go({ screen: 'favorites' }));
-    tile(grid, 'server', '从电脑访问', 'server', '#54877b', '局域网传输', () => go({ screen: 'tool', tool: 'server' }));
-    tile(grid, 'usage', '空间分析', 'chart', '#8b739a', '查看文件占用', () => go({ screen: 'tool', tool: 'usage' }));
-    tile(grid, 'settings', '设置', 'settings', '#748193', '显示与权限', () => go({ screen: 'tool', tool: 'settings' }));
-    if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>id==='nearby'?androidNearby.open():go({screen:'tool',tool:id}));
+    tile(grid, 'downloads', '下载', 'download', '#b78a41', 'Download', () => go({ screen: 'folder', path: state.root + '/Download', boundary:state.root+'/Download', boundaryLabel:'下载' }), { variant: 'bento-category' });
+    for (const [id, label, color] of categories) tile(grid, id, label, id, color, id === 'recent' ? '按修改时间' : '按文件类型', () => go({ screen: 'library', category: id }), { variant: 'bento-category' });
+    tile(grid, 'favorites', '收藏夹', 'star', '#ca9940', state.favorites.length + ' 个位置', () => go({ screen: 'favorites' }), { variant: 'bento-category' });
+    tile(grid, 'server', '从电脑访问', 'server', '#54877b', '局域网传输', () => go({ screen: 'tool', tool: 'server' }), { variant: 'bento-tool bento-connect' });
+    tile(grid, 'usage', '空间分析', 'chart', '#8b739a', '查看文件占用', () => go({ screen: 'tool', tool: 'usage' }), { variant: 'bento-tool' });
+    tile(grid, 'settings', '设置', 'settings', '#748193', '显示与权限', () => go({ screen: 'tool', tool: 'settings' }), { variant: 'bento-tool' });
+    if (api.featuresAvailable()) for (const [id,label,icon,note] of androidFeatures.destinations) tile(grid,id,label,icon,'#648b9c',note,()=>id==='nearby'?androidNearby.open():go({screen:'tool',tool:id}), { variant: id==='nearby'||id==='remote' ? 'bento-tool bento-connect' : 'bento-tool' });
     const note=ui.el('section','home-note index-card'),symbol=ui.el('div','index-symbol');symbol.innerHTML=ui.icon('search');
     const copy=ui.el('div','index-copy');copy.append(ui.el('strong','index-caption',state.index?.indexing?'正在更新索引…':fmt.count(state.index?.entryCount || 0)+' 个已索引项目'),ui.el('p','index-description',noteText));
     const update=button('更新','refresh',rebuildIndex,'index-update');update.setAttribute('aria-label',indexText);update.disabled=!!state.index?.indexing;note.append(symbol,copy,update);

@@ -1,29 +1,33 @@
 /* Codex-inspired visual system: calm neutral surfaces with vivid, intentional focus. */
 :root,
 [data-theme="light"] {
-  --bg: #f5f5f2;
+  --bg: #f6f7f9;
   --bg-card: #ffffff;
-  --bg-sidebar: #f7f7f4;
+  --bg-sidebar: #f3f5f8;
   --bg-input: #ffffff;
-  --bg-soft: #f0f0ed;
+  --bg-soft: #eef1f5;
   --bg-raised: #ffffff;
-  --hover: #ececea;
-  --active: #e2e2df;
-  --text: #20201d;
-  --text-2: #474743;
-  --text-3: #6c6d67;
-  --text-4: #92938c;
+  --hover: #eaeef4;
+  --active: #dfe5ee;
+  --text: #1a1d24;
+  --text-2: #424854;
+  --text-3: #68707e;
+  --text-4: #8e96a4;
   --accent: #146ef5;
-  --accent-hover: #075ed8;
-  --accent-light: #e5efff;
-  --select-bg: #e7f0ff;
-  --border: #deded9;
-  --divider: #ecece8;
-  --shadow: rgba(23, 25, 28, .12);
-  --shadow-soft: 0 1px 2px rgba(23, 25, 28, .05), 0 5px 18px rgba(23, 25, 28, .06);
-  --shadow-float: 0 16px 44px rgba(23, 25, 28, .16), 0 2px 8px rgba(23, 25, 28, .08);
+  --accent-hover: #0b5ed7;
+  --accent-light: #e6f0ff;
+  --brand-warm: #d4652a;
+  --brand-warm-soft: rgba(212, 101, 42, .12);
+  --brand-teal: #167d86;
+  --brand-teal-soft: rgba(22, 125, 134, .12);
+  --select-bg: #e8f1ff;
+  --border: #e1e5ec;
+  --divider: #eaeef4;
+  --shadow: rgba(20, 26, 38, .11);
+  --shadow-soft: 0 1px 2px rgba(20, 26, 38, .04), 0 5px 18px rgba(20, 26, 38, .05);
+  --shadow-float: 0 16px 44px rgba(20, 26, 38, .15), 0 2px 8px rgba(20, 26, 38, .07);
   --focus-ring: rgba(20, 110, 245, .20);
-  --code-bg: #f8f8f6;
+  --code-bg: #f7f9fb;
   --syntax-keyword: #7c3aed;
   --syntax-string: #087f5b;
   --syntax-number: #b45309;
@@ -37,41 +41,45 @@
   --syntax-error: #c62828;
   --syntax-warning: #ad6800;
   --syntax-info: #0969da;
-  --scrollbar-thumb: rgba(38, 39, 36, .16);
-  --scrollbar-hover: rgba(38, 39, 36, .28);
-  --preview-bg: #fbfbf9;
+  --scrollbar-thumb: rgba(26, 32, 44, .15);
+  --scrollbar-hover: rgba(26, 32, 44, .26);
+  --preview-bg: #fbfcfe;
   --row-height: 30px;
-  --bg-1: #f5f5f2;
-  --bg-2: #efefec;
-  --bg-3: #e3e3df;
-  --text-1: #20201d;
-  --hover-bg: #ececea;
+  --bg-1: #f6f7f9;
+  --bg-2: #edeff3;
+  --bg-3: #dfe3ea;
+  --text-1: #1a1d24;
+  --hover-bg: #eaeef4;
 }
 
 [data-theme="dark"] {
-  --bg: #171716;
-  --bg-card: #20201f;
-  --bg-sidebar: #1b1b1a;
-  --bg-input: #292927;
-  --bg-soft: #282826;
-  --bg-raised: #262625;
-  --hover: #2d2d2b;
-  --active: #383836;
-  --text: #f2f2ee;
-  --text-2: #d0d0ca;
-  --text-3: #a2a39c;
-  --text-4: #777871;
-  --accent: #65a4ff;
-  --accent-hover: #83b6ff;
-  --accent-light: rgba(54, 126, 236, .20);
-  --select-bg: #253b5d;
-  --border: #383834;
-  --divider: #2d2d2a;
-  --shadow: rgba(0, 0, 0, .42);
+  --bg: #17191d;
+  --bg-card: #1f2228;
+  --bg-sidebar: #1a1d22;
+  --bg-input: #272b33;
+  --bg-soft: #242830;
+  --bg-raised: #252932;
+  --hover: #2b3039;
+  --active: #363c47;
+  --text: #eef0f4;
+  --text-2: #c9ced8;
+  --text-3: #99a1b0;
+  --text-4: #6f7787;
+  --accent: #58a6ff;
+  --accent-hover: #79b8ff;
+  --accent-light: rgba(88, 166, 255, .18);
+  --brand-warm: #ee8448;
+  --brand-warm-soft: rgba(238, 132, 72, .16);
+  --brand-teal: #3cc2cc;
+  --brand-teal-soft: rgba(60, 194, 204, .16);
+  --select-bg: #233a59;
+  --border: #323742;
+  --divider: #292e37;
+  --shadow: rgba(0, 0, 0, .44);
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, .22), 0 6px 20px rgba(0, 0, 0, .18);
   --shadow-float: 0 18px 52px rgba(0, 0, 0, .48), 0 2px 8px rgba(0, 0, 0, .26);
-  --focus-ring: rgba(101, 164, 255, .22);
-  --code-bg: #181817;
+  --focus-ring: rgba(88, 166, 255, .22);
+  --code-bg: #181a1f;
   --syntax-keyword: #d2a8ff;
   --syntax-string: #7ee787;
   --syntax-number: #f2cc60;
@@ -87,12 +95,12 @@
   --syntax-info: #79c0ff;
   --scrollbar-thumb: rgba(255, 255, 255, .16);
   --scrollbar-hover: rgba(255, 255, 255, .28);
-  --preview-bg: #1d1d1c;
-  --bg-1: #171716;
-  --bg-2: #282826;
-  --bg-3: #343432;
-  --text-1: #f2f2ee;
-  --hover-bg: #2d2d2b;
+  --preview-bg: #1c1f25;
+  --bg-1: #17191d;
+  --bg-2: #252931;
+  --bg-3: #313640;
+  --text-1: #eef0f4;
+  --hover-bg: #2b3039;
 }
 
 html,
@@ -2701,6 +2709,327 @@ body.preview-fullscreen-active::before {
   .sidebar {
     width: 210px;
   }
+}
+
+/* ==========================================================================
+   GUI Concept V2: Brand-Harmonized Chrome, Context Actions, Dual-Mode Sidebar
+   & Inspector Summary Card
+   ========================================================================== */
+
+/* 1. Pill-shaped floating tabs & unified top chrome */
+.tab-bar {
+  padding: 6px 10px 4px;
+  gap: 5px;
+  background: var(--bg);
+}
+
+.tab {
+  height: 31px;
+  border-radius: 8px;
+  margin-bottom: 0;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--bg-soft) 72%, transparent);
+  box-shadow: none;
+}
+
+.tab.active {
+  background: var(--bg-card);
+  border-color: var(--border);
+  box-shadow: inset 0 2.5px 0 var(--accent), var(--shadow-soft);
+}
+
+.toolbar {
+  height: 42px;
+  border-bottom: 0;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--divider) 55%, transparent);
+}
+
+.command-bar {
+  height: 38px;
+  padding: 3px 10px;
+  background: color-mix(in srgb, var(--bg-card) 92%, var(--bg-soft));
+  border-bottom: 1px solid var(--divider);
+}
+
+/* 2. Everything Fast-Search Engine Chip */
+.search-engine-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-3);
+  background: var(--bg-soft);
+  border: 1px solid var(--divider);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.search-engine-chip.global-active {
+  color: var(--brand-warm, var(--accent));
+  background: var(--brand-warm-soft, var(--accent-light));
+  border-color: color-mix(in srgb, var(--brand-warm, var(--accent)) 28%, transparent);
+}
+
+/* 3. Context-Aware Selection Pill & Action Highlighting */
+.cmd-selection-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  margin-right: 3px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: var(--accent-light);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  white-space: nowrap;
+}
+
+body:not([data-has-selection="true"]) .command-bar > .cmd.cmd-context-action {
+  opacity: .56;
+}
+
+body:not([data-has-selection="true"]) .command-bar > .cmd.cmd-context-action:hover {
+  opacity: .92;
+}
+
+body[data-has-selection="true"] .command-bar > .cmd.cmd-context-action {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-soft));
+  color: var(--text);
+}
+
+body[data-has-selection="true"] .command-bar > .cmd.cmd-context-action:hover {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+body[data-has-selection="true"] .command-bar > .cmd.cmd-danger-hover:hover {
+  background: rgba(220, 38, 38, .12);
+  color: #dc2626;
+}
+
+/* 4. Sidebar Dual-Mode Segmented Switch & 4px Drive Capacity Meters */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-mode-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  margin: 2px 4px 8px;
+  background: var(--bg-soft);
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  flex: none;
+}
+
+.sidebar-mode-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background .12s ease, color .12s ease, box-shadow .12s ease;
+}
+
+.sidebar-mode-btn:hover {
+  color: var(--text);
+}
+
+.sidebar-mode-btn.active {
+  background: var(--bg-card);
+  color: var(--accent);
+  box-shadow: var(--shadow-soft);
+}
+
+#sidebar[data-sidebar-mode="tree"] .sidebar-section:not(#sidebar-tree-section) {
+  display: none !important;
+}
+
+#sidebar[data-sidebar-mode="tree"] #sidebar-tree-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+#sidebar[data-sidebar-mode="tree"] #dir-tree {
+  max-height: none;
+  flex: 1;
+}
+
+.drive-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
+.drive-title-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-pct-pill {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-3);
+}
+
+.drive-pct-pill.warn {
+  background: rgba(217, 119, 6, .14);
+  color: #d97706;
+}
+
+.drive-pct-pill.danger {
+  background: rgba(220, 38, 38, .15);
+  color: #dc2626;
+}
+
+.drive-meter {
+  height: 4px;
+  margin: 5px 2px 4px 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 75%, transparent);
+  overflow: hidden;
+}
+
+.drive-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--brand-teal, var(--accent)));
+  transition: width .22s ease;
+}
+
+.drive-meter-fill.warn {
+  background: linear-gradient(90deg, #d97706, #f59e0b);
+}
+
+.drive-meter-fill.danger {
+  background: linear-gradient(90deg, #dc2626, #ef4444);
+}
+
+/* 5. Inspector Bottom File Summary Card & Quick Action Chips */
+#inspector-preview-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+#inspector-preview-view > .preview-content {
+  flex: 1;
+  min-height: 0;
+}
+
+.preview-meta-card {
+  flex: none;
+  margin: 8px;
+  padding: 10px 11px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--divider);
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-meta-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.preview-meta-key {
+  color: var(--text-4);
+  flex: none;
+}
+
+.preview-meta-val {
+  color: var(--text-2);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-meta-val.mono {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+.preview-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-top: 6px;
+  border-top: 1px solid var(--divider);
+}
+
+.preview-chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.preview-chip:hover {
+  background: var(--hover);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--border), var(--text-4) 30%);
+}
+
+.preview-chip.accent {
+  background: var(--brand-warm-soft, var(--accent-light));
+  color: var(--brand-warm, var(--accent));
+  border-color: color-mix(in srgb, var(--brand-warm, var(--accent)) 30%, transparent);
+}
+
+.preview-chip.accent:hover {
+  background: color-mix(in srgb, var(--brand-warm, var(--accent)) 18%, var(--bg-card));
 }
 
 @media (prefers-reduced-motion: reduce) {

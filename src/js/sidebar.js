@@ -136,6 +136,16 @@ function renderTreeItem(container, entry, depth) {
   container.appendChild(wrapper);
 }
 
+function setSidebarMode(mode) {
+  const next = mode === "tree" ? "tree" : "nav";
+  const sidebar = document.getElementById("sidebar");
+  if (sidebar) sidebar.dataset.sidebarMode = next;
+  const navBtn = document.getElementById("sidebar-mode-nav");
+  const treeBtn = document.getElementById("sidebar-mode-tree");
+  if (navBtn) navBtn.classList.toggle("active", next === "nav");
+  if (treeBtn) treeBtn.classList.toggle("active", next === "tree");
+}
+
 // --- drives ---
 async function loadDrives() {
   try {
@@ -148,10 +158,16 @@ async function loadDrives() {
       div.dataset.path = d.path;
       div.dataset.label = d.label;
       div.dataset.letter = d.letter;
+      const total = Number(d.total_bytes) || 0;
+      const free = Number(d.free_bytes) || 0;
+      const usedPct = total > 0 ? Math.min(100, Math.max(2, Math.round(((total - free) / total) * 100))) : 0;
+      const tone = usedPct >= 90 ? "danger" : (usedPct >= 75 ? "warn" : "normal");
       div.innerHTML = `<div class="drive-name">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="4" width="14" height="8" rx="1.5" stroke="currentColor" stroke-width=".9"/><circle cx="11.5" cy="8" r="1" fill="currentColor" opacity=".4"/></svg>
-          ${esc(d.label)} (${esc(d.letter)})
+          <span class="drive-title-text">${esc(d.label)} (${esc(d.letter)})</span>
+          ${total > 0 ? `<span class="drive-pct-pill ${tone}">${usedPct}%</span>` : ""}
         </div>
+        ${total > 0 ? `<div class="drive-meter" aria-hidden="true"><div class="drive-meter-fill ${tone}" style="width:${usedPct}%"></div></div>` : ""}
         <div class="drive-info">${esc(d.free)}</div>`;
       RHFilesUI.listen(div,"click", () => navigateTo(d.path),undefined,"src.js.sidebar.loadDrives.fada4b9e6db8");
       RHFilesUI.listen(div,"contextmenu", e => showDriveContextMenu(e, d.path, d.label, d.letter),undefined,"src.js.sidebar.loadDrives.e7a07ecd2017");

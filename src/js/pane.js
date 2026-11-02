@@ -311,7 +311,7 @@ function toggleQuickPreview(isRight) {
   else previewSelected(isRight);
 }
 
-function setPreviewHeader(file) {
+function setPreviewHeader(file, extraMeta) {
   _previewedFile = file || null;
   const name = document.getElementById('preview-file-name');
   const open = document.getElementById('preview-open');
@@ -324,6 +324,79 @@ function setPreviewHeader(file) {
     open.title = file ? t('preview.open') : t('ctx.open');
     open.setAttribute('aria-label', open.title);
   }
+  renderPreviewMetaCard(file, extraMeta || {});
+}
+
+function renderPreviewMetaCard(file, extraMeta) {
+  const card = document.getElementById('preview-meta-card');
+  const grid = document.getElementById('preview-meta-grid');
+  const actions = document.getElementById('preview-quick-actions');
+  if (!card || !grid || !actions) return;
+  if (!file) {
+    card.hidden = true;
+    grid.innerHTML = '';
+    actions.innerHTML = '';
+    return;
+  }
+  card.hidden = false;
+  const extUpper = file.is_dir ? 'DIR' : String(file.extension || 'FILE').toUpperCase();
+  const sizeLabel = file.is_dir
+    ? (extraMeta.itemCount != null ? `${extraMeta.itemCount} 项` : '目录')
+    : fmtSize(file.size || 0);
+  const specLabel = extraMeta.lineEndings
+    ? `UTF-8 · ${extraMeta.lineEndings} · ${extraMeta.lineCount || 1}行`
+    : (file.modified || '-');
+  const gitState = G.gitStatus && (G.gitStatus[file.name] || G.gitStatus[file.path]);
+  const gitLabel = gitState === 'M' ? 'M 已修改'
+    : gitState === 'A' ? 'A 新增'
+    : gitState === '?' ? '? 未跟踪'
+    : (G.gitBranch ? `✓ ${G.gitBranch}` : '本地文件');
+  const gitClass = gitState === 'M' ? 'git-modified' : gitState === 'A' ? 'git-added' : '';
+
+  grid.innerHTML =
+    `<div class="preview-meta-row"><span class="preview-meta-key">规格</span><span class="preview-meta-val mono">${esc(extUpper)} · ${esc(sizeLabel)}</span></div>` +
+    `<div class="preview-meta-row"><span class="preview-meta-key">${extraMeta.lineEndings ? '编码' : '修改'}</span><span class="preview-meta-val mono">${esc(specLabel)}</span></div>` +
+    `<div class="preview-meta-row"><span class="preview-meta-key">状态</span><span class="preview-meta-val mono ${gitClass}">${esc(gitLabel)}</span></div>`;
+
+  actions.innerHTML = '';
+  const isRight = G.lastActivePane === 'right';
+  if (!file.is_dir && typeof mediaConversionKind === 'function' && mediaConversionKind(file)) {
+    const convBtn = document.createElement('button');
+    convBtn.type = 'button';
+    convBtn.className = 'preview-chip accent';
+    convBtn.textContent = '⚡ FFmpeg 转换';
+    RHFilesUI.listen(convBtn,'click', () => showMediaConvertDialog(file, isRight),undefined,"src.js.pane.renderPreviewMetaCard.ef721964dcdb");
+    actions.appendChild(convBtn);
+  }
+  const extLow = String(file.extension || '').toLowerCase();
+  if (!file.is_dir && ['zip','7z','rar','tar','gz','bz2','xz'].includes(extLow) && typeof extractArchiveTo === 'function') {
+    const extBtn = document.createElement('button');
+    extBtn.type = 'button';
+    extBtn.className = 'preview-chip accent';
+    extBtn.textContent = '📦 解压到当前';
+    RHFilesUI.listen(extBtn,'click', () => {
+      const parentDir = typeof parentFolderPath === 'function' ? parentFolderPath(file.path) : getTab()?.path;
+      if (parentDir) extractArchiveTo(file, parentDir);
+    },undefined,"src.js.pane.renderPreviewMetaCard.66d4ad1e9f5d");
+    actions.appendChild(extBtn);
+  }
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'preview-chip';
+  copyBtn.textContent = '📋 复制路径';
+  RHFilesUI.listen(copyBtn,'click', () => {
+    if (typeof copyPathFromMenu === 'function') copyPathFromMenu(file.path);
+  },undefined,"src.js.pane.renderPreviewMetaCard.a611321b58a5");
+  actions.appendChild(copyBtn);
+
+  const propBtn = document.createElement('button');
+  propBtn.type = 'button';
+  propBtn.className = 'preview-chip';
+  propBtn.textContent = '🔍 属性';
+  RHFilesUI.listen(propBtn,'click', () => {
+    if (typeof showPropertiesDialog === 'function') showPropertiesDialog(file.path);
+  },undefined,"src.js.pane.renderPreviewMetaCard.beda6809e7a5");
+  actions.appendChild(propBtn);
 }
 
 function openPreviewedFile() {
@@ -365,6 +438,7 @@ async function updatePreviewForSelection() {
     try {
       const dirEntries = await call("list_dir", { path: file.path, filter: "" });
       if (!previewRequestIsCurrent(requestToken, file.path, isRight)) return;
+      renderPreviewMetaCard(file, { itemCount: dirEntries.length });
       const preview = dirEntries.slice(0, 20);
       document.getElementById("preview-content").innerHTML =
         '<div style="text-align:center;padding:12px;">' +
@@ -515,6 +589,9 @@ async function updatePreviewForSelection() {
       content.innerHTML = renderImagePreview(preview.image_data, file.name);
     } else if (preview.preview_type === "text" && preview.text_content != null) {
       const extL = (file.extension || "").toLowerCase();
+      const lineEndings = preview.text_content.includes("\r\n") ? "CRLF" : "LF";
+      const lineCount = preview.text_content.split("\n").length;
+      renderPreviewMetaCard(file, { lineEndings, lineCount });
       content.innerHTML = renderTextPreview(preview.text_content, extL, file.name);
     } else {
       content.innerHTML = `<div class="preview-empty">

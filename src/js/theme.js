@@ -19,12 +19,12 @@ const BUILTIN_THEME_PACKS = Object.freeze([
   {
     id:'sand', nameKey:'settings.themeSand', base:'light', builtin:true,
     variables:{
-      '--bg':'#f1ede4', '--bg-card':'#fffaf0', '--bg-sidebar':'#f6f0e4', '--bg-input':'#fffdf8',
-      '--bg-soft':'#eae3d7', '--bg-raised':'#fffdf8', '--hover':'#e8dfd0', '--active':'#ddd1bf',
-      '--text':'#302b25', '--text-1':'#302b25', '--text-2':'#544b40', '--text-3':'#756a5d', '--text-4':'#9a8f80',
-      '--accent':'#b4532a', '--accent-hover':'#963f1c', '--accent-light':'#f6dfd1', '--select-bg':'#f5e3d5',
-      '--border':'#ddd3c4', '--divider':'#ebe3d7', '--focus-ring':'rgba(180,83,42,.20)', '--preview-bg':'#fffaf2',
-      '--code-bg':'#f8f1e7', '--bg-1':'#f1ede4', '--bg-2':'#e8e1d6', '--bg-3':'#dcd2c3', '--hover-bg':'#e8dfd0',
+      '--bg':'#f4f2ee', '--bg-card':'#fcfbf9', '--bg-sidebar':'#f6f4f0', '--bg-input':'#ffffff',
+      '--bg-soft':'#edeae3', '--bg-raised':'#ffffff', '--hover':'#e9e5dd', '--active':'#dfd9ce',
+      '--text':'#2b2824', '--text-1':'#2b2824', '--text-2':'#4f4942', '--text-3':'#736b61', '--text-4':'#968d82',
+      '--accent':'#b4532a', '--accent-hover':'#963f1c', '--accent-light':'#f6e5dc', '--select-bg':'#f6e7de',
+      '--border':'#e2ddd3', '--divider':'#ece8df', '--focus-ring':'rgba(180,83,42,.20)', '--preview-bg':'#fbfaf7',
+      '--code-bg':'#f7f4ef', '--bg-1':'#f4f2ee', '--bg-2':'#ebe7df', '--bg-3':'#dfd9ce', '--hover-bg':'#e9e5dd',
     }
   },
   {
