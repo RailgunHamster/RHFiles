@@ -39,6 +39,28 @@ test('desktop group protocol browses real shared files in ordinary tabs with bou
     const content=await invoke(b,'files.list');assert(content.entries.some(e=>e.name==='A.txt'));assert.equal((await invoke(b,'navigation.state')).path,child);
     const textPath=child+'/A.txt';await invoke(b,'selection.set',{paths:[textPath]});
     await until(()=>b.evaluate("document.getElementById('preview-content').textContent.includes('中文预览')"),'remote text preview');
+    // Only this private fixture's text clipboard adapter is captured. The
+    // packaged copy handlers, local group state and shortcut routing are real;
+    // this test must never overwrite the user's Windows clipboard.
+    await b.evaluate('window.__copyAddressQA={original:writeTextClipboard,values:[]};writeTextClipboard=async text=>{__copyAddressQA.values.push(text);return true};true');
+    try{
+      assert.deepEqual(await invoke(b,'files.copyPaths',{paths:[textPath,child+'/a-lower.txt']}),{copied:2});
+      const expected='rh://Fixture host/Files/中文 %25 %23/A.txt\r\nrh://Fixture host/Files/中文 %25 %23/a-lower.txt';
+      assert.equal(await b.evaluate('__copyAddressQA.values.at(-1)'),expected);
+      await invoke(b,'selection.set',{paths:[textPath,child+'/a-lower.txt']});
+      await b.evaluate("document.activeElement?.blur();focusFilePane(document.getElementById('file-list'));true");
+      await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:'C',code:'KeyC',modifiers:10,windowsVirtualKeyCode:67,nativeVirtualKeyCode:67});
+      await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:'C',code:'KeyC',modifiers:10,windowsVirtualKeyCode:67,nativeVirtualKeyCode:67});
+      await until(()=>b.evaluate('__copyAddressQA.values.length===2'),'actual Ctrl+Shift+C copies the full remote selection');
+      assert.equal(await b.evaluate('__copyAddressQA.values.at(-1)'),expected);
+      await b.evaluate('showTabPreview(document.querySelector("#tab-bar .tab.active"))');
+      assert.equal(await b.evaluate('document.querySelector(".tab-preview-path").textContent'),'Fixture host/Files/中文 % #');
+      await b.screenshot('device-readable-address-hover');
+      assert.deepEqual(await invoke(b,'devices.address',{path:textPath}),{address:expected.split('\r\n')[0]});
+      assert.deepEqual(await invoke(b,'devices.copyStableAddress',{path:textPath}),{address:textPath});
+      assert.equal(await b.evaluate('__copyAddressQA.values.at(-1)'),textPath);
+      assert.equal((await invoke(b,'navigation.state')).path,child,'Formatting must not replace the stored identity path');
+    }finally{await b.evaluate('writeTextClipboard=__copyAddressQA.original;delete window.__copyAddressQA;hideTabPreview();true');}
     const found=await invoke(b,'devices.search',{path:base+'Files',query:'regex:^A\\.txt$'});assert.equal(found.length,1);assert.equal(found[0].path,textPath);
     const pages=await invoke(b,'devices.entries',{path:base+'Files/pages'});assert.equal(pages.length,2011);assert.equal(new Set(pages.map(v=>v.path)).size,2011);
     await invoke(b,'navigation.open',{path:base+'Files'});const imagePath=base+'Files/image.bmp';await invoke(b,'selection.set',{paths:[imagePath]});
