@@ -52,7 +52,8 @@ test('desktop group protocol browses real shared files in ordinary tabs with bou
       await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:'C',code:'KeyC',modifiers:10,windowsVirtualKeyCode:67,nativeVirtualKeyCode:67});
       await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:'C',code:'KeyC',modifiers:10,windowsVirtualKeyCode:67,nativeVirtualKeyCode:67});
       await until(()=>b.evaluate('__copyAddressQA.values.length===2'),'actual Ctrl+Shift+C copies the full remote selection');
-      assert.equal(await b.evaluate('__copyAddressQA.values.at(-1)'),expected);
+      const visualOrder=(await invoke(b,'files.list')).entries.filter(e=>[textPath,child+'/a-lower.txt'].includes(e.path)).map(e=>'rh://Fixture host/Files/中文 %25 %23/'+e.name).join('\r\n');
+      assert.equal(await b.evaluate('__copyAddressQA.values.at(-1)'),visualOrder,'The shortcut follows the displayed file order, not API selection-request order');
       await b.evaluate('showTabPreview(document.querySelector("#tab-bar .tab.active"))');
       assert.equal(await b.evaluate('document.querySelector(".tab-preview-path").textContent'),'Fixture host/Files/中文 % #');
       await b.screenshot('device-readable-address-hover');
