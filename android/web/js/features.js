@@ -123,7 +123,7 @@ const androidFeatures = (() => {
       for(const c of connections) {
         const row=ui.el('article','network-location');
         const open=button(c.name,()=>c.path?app.go({screen:'folder',path:c.path,label:c.name}):undefined);open.className='network-open';open.setAttribute('aria-label',c.name);
-        const connectionType=c.type==='rhfiles'?'RHFiles · 设备组':c.type.toUpperCase();
+        const connectionType=c.type==='rhfiles'?'RHFiles · 设备组':c.type==='sftp'?'SFTP · 已同步（此端暂不支持）':c.type.toUpperCase();
         const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small',c.needsPassword?'credential-badge':'',c.needsPassword?'待补填密码':connectionType);open.replaceChildren(symbol,name,type);row.append(open);
         const actions=[];
         if(c.path){
@@ -184,6 +184,7 @@ const androidFeatures = (() => {
   }
   function addRemote(existing={},common=false,onSaved=null) {
     if(existing.type==='rhfiles')return app.go({screen:'tool',tool:'settings',section:'storage'});
+    if(existing.type==='sftp'){ui.toast('此端暂不支持 SFTP 连接。同步信息已完整保留，可在 PC 端编辑。');return;}
     const fields=[
       {name:'name',label:'名称',required:true},
       {name:'type',label:'协议',options:[['smb','SMB2 / SMB3'],['ftps','FTPS（显式 TLS）'],['ftp','FTP（明文）'],['webdav','WebDAV / HTTPS']]},
@@ -222,6 +223,7 @@ const androidFeatures = (() => {
     const id=mobileList.remoteId(path);if(!id)throw Error('网络路径无效');
     const value=await api.native('connection.get',{id});
     if(!valid())return false;
+    if(value.type==='sftp'){ui.toast('此 Android 版本暂不支持 SFTP 连接；同步信息已保留，可在 PC 端使用。');return false;}
     if(!value.needsPassword)return true;
     return new Promise((resolve,reject)=>{
       let saved=false;

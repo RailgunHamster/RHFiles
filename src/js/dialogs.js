@@ -468,7 +468,7 @@ function openSettings() {
     settingsPage('files', 'settings.categoryFiles', 'settings.categoryFilesDesc', files) +
     settingsPage('preview', 'settings.categoryPreview', 'settings.categoryPreviewDesc', preview) +
     settingsPage('search', 'settings.categorySearch', 'settings.categorySearchDesc', search) +
-    settingsPage('integration', 'settings.categoryIntegration', 'settings.categoryIntegrationDesc', integration) +
+    settingsPage('integration', 'settings.categoryIntegration', 'settings.categoryIntegrationDesc', '<div id="shell-default-settings"></div>'+integration) +
     settingsPage('updates', 'settings.categoryUpdates', 'settings.categoryUpdatesDesc', updates) +
     settingsPage('lan', 'settings.categoryLan', 'settings.categoryLanDesc',
       '<div class="settings-card"><div class="settings-card-title">'+t('settings.deviceDownloads')+'</div>'+
@@ -478,6 +478,7 @@ function openSettings() {
     settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data) +
     settingsPage('sync', 'settings.categorySync', 'settings.categorySyncDesc', '<div id="desktop-config-sync"></div>');
   desktopConfigSync.mount(document.getElementById('desktop-config-sync'));
+  shellDefaults.mount(document.getElementById('shell-default-settings'));
   dlg.style.display = "flex";
   lanService.mount(document.getElementById('lan-service-settings'));
   if (IS_MAC && typeof configureMacSettings === 'function') configureMacSettings();

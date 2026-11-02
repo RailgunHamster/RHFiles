@@ -205,8 +205,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (navPath) el.dataset.path = navPath;
     RHFilesUI.listen(el,"click", () => navigateTo(navPath || homeDir(el.dataset.nav)),undefined,"src.js.main.top.73d98c22b5d6");
   });
-  const ftpBtn = document.getElementById("ftp-connect-btn");
-  if (ftpBtn) RHFilesUI.listen(ftpBtn,"click", showFtpDialog,undefined,"src.js.main.top.935942adbe7b");
+  networkLocations.init().catch(error=>showNotice(String(error)));
   loadRecentList();
   call('get_instance_profile', {}).then(profile => {
     if (profile?.desktopIdentified === false) showNotice(t('settings.desktopFallback'));
@@ -230,6 +229,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // single instance: listen for navigate-to-path from second instance
   const listen = window.__TAURI_INTERNALS__?.event?.listen || window.__TAURI__?.event?.listen;
   if (listen) {
+    listen('shell-open-request',event=>shellDefaults.openRequest(event.payload).catch(error=>showNotice(String(error)))).catch(()=>{});
     listen('device-groups-changed',()=>deviceBrowser.refresh().catch(error=>showNotice(String(error)))).catch(()=>{});
     listen("navigate-to-path", (event) => {
       if (event.payload) navigateAddressInput(event.payload, false);
@@ -245,6 +245,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       } catch (e) {}
     }).catch(() => {});
   }
+
+  call('shell_defaults_request',{}).then(request=>request&&shellDefaults.openRequest(request)).catch(error=>showNotice(String(error)));
 
   // double-click handling for left pane
   RHFilesUI.listen(document.getElementById("file-list"),"dblclick", async e => {

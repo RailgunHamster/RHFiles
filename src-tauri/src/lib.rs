@@ -12,6 +12,8 @@ mod folder_merge;
 mod media;
 mod documents;
 mod network;
+mod network_locations;
+mod native_drag;
 mod nearby;
 mod lan_service;
 mod device_groups;
@@ -43,6 +45,7 @@ mod rhvideo_trace;
 mod search;
 #[cfg_attr(target_os = "macos", path = "macos/permissions.rs")]
 mod shell;
+pub mod shell_defaults;
 mod system;
 mod themes;
 mod tray;
@@ -99,6 +102,13 @@ pub fn run() {
                 return;
             }
             let _ = tray::show_main_window(app);
+            if let Some(request) = shell_defaults::request(&args) {
+                if shell_defaults::new_window() {
+                    let handle=app.clone();let path=request["path"].as_str().map(str::to_owned);
+                    tauri::async_runtime::spawn(async move {let _=window::open_new_window(handle,path).await;});
+                } else {let _=app.emit_to("main","shell-open-request",request);}
+                return;
+            }
             if args.len() > 1 {
                 let mut path = args[1].clone();
                 if let Some(stripped) = path.strip_prefix("rhfiles://") {
@@ -185,6 +195,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            native_drag::native_drag_start,
+            native_drag::native_drag_cache,
+            native_drag::native_drag_cache_list,
+            #[cfg(all(windows,debug_assertions))]
+            native_drag::qa::native_drag_test_target,
+            #[cfg(all(windows,debug_assertions))]
+            native_drag::qa::native_drag_test_drops,
+            shell_defaults::shell_defaults_state,
+            shell_defaults::shell_defaults_save,
+            shell_defaults::shell_defaults_request,
+            network_locations::network_location,
             automation_receipts::automation_receipt,
             automation_receipts::automation_receipt_transport,
             rhvideo::rhvideo_open,

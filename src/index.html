@@ -181,8 +181,10 @@
       <div class="sidebar-section" id="device-group-section">
         <div class="sidebar-heading"><span id="device-group-heading">RHFiles devices</span><button type="button" id="device-group-refresh" class="icon-btn" onclick="RHFilesAPI.invoke('devices.refresh').catch(e=>showNotice(String(e)))" data-api-action="devices.refresh" aria-label="Refresh RHFiles devices"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M13 7a5 5 0 1 0-1 4M13 2v5H8"/></svg></button></div>
         <div id="device-group-locations"></div>
-        <button type="button" id="device-group-settings" class="sidebar-item" data-api-action="devices.settings">Manage device groups</button>
-        <button type="button" id="device-working-copies" class="sidebar-item" data-api-action="devices.workingCopies.show" onclick="RHFilesAPI.invoke('devices.workingCopies.show').catch(e=>showNotice(String(e)))">Remote working copies</button>
+        <div class="sidebar-device-tools" role="group" aria-labelledby="device-group-heading">
+          <button type="button" id="device-group-settings" class="sidebar-item sidebar-child-action" data-api-action="devices.settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="7" r="3"/><path d="M3 20v-3a6 6 0 0 1 12 0v3M17 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5"/></svg><span>Manage device groups</span><svg class="sidebar-action-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+          <button type="button" id="device-working-copies" class="sidebar-item sidebar-child-action" data-api-action="devices.workingCopies.show" onclick="RHFilesAPI.invoke('devices.workingCopies.show').catch(e=>showNotice(String(e)))"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h9l4 4v13H8zM17 3v5h4M4 7H2v14h3M11 12h7M11 16h5"/></svg><span>Cache &amp; working copies</span><svg class="sidebar-action-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+        </div>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.favorites">Favorites</div>
@@ -242,21 +244,14 @@
         <div class="sidebar-heading" data-i18n="sidebar.libraries">Libraries</div>
         <div id="libraries-list"></div>
       </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading" data-i18n="sidebar.network">Network</div>
-        <div id="network-section"></div>
+      <div class="sidebar-section" id="network-locations-section">
+        <div class="sidebar-heading" id="network-locations-heading">Network locations</div>
+        <div id="network-locations-list"></div>
+        <button type="button" class="sidebar-item sidebar-child-action" id="network-locations-manage" data-api-action="networkLocations.show"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h1M7 17.5h1M16 6.5h2M16 17.5h2"/></svg><span>Manage network locations</span></button>
+        <details class="sidebar-network-discovery"><summary id="network-discovery-heading">Nearby SMB shares</summary><div id="network-section"></div></details>
       </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading" data-i18n="sidebar.ftp">FTP</div>
-        <div id="ftp-section">
-          <div class="sidebar-item" id="ftp-connect-btn" style="cursor:pointer">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 4h12v8H2z" stroke="currentColor" stroke-width=".9"/><path d="M5 7h6M4 9h8" stroke="currentColor" stroke-width=".8"/></svg>
-            <span data-i18n="sidebar.connectFtp">Connect to FTP...</span>
-          </div>
-        </div>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading" data-i18n="sidebar.devices">Devices</div>
+      <div class="sidebar-section" id="usb-devices-section" hidden>
+        <div class="sidebar-heading" id="usb-devices-heading">USB devices · MTP</div>
         <div id="mtp-section"></div>
       </div>
     </div>
@@ -628,6 +623,7 @@
 <script src="js/sidebar.js"></script>
 <script src="js/shared-config.js"></script>
 <script src="js/config-sync.js"></script>
+<script src="js/network-locations.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/filelist.js"></script>
 <script src="js/task-center.js"></script>
@@ -635,6 +631,8 @@
 <script src="js/recycle.js"></script>
 <script src="js/keyboard.js"></script>
 <script src="js/integration.js"></script>
+<script src="js/shell-defaults.js"></script>
+<script src="js/native-drag.js"></script>
 <script src="js/file-choice.js"></script>
 <script src="js/pane.js"></script>
 <script src="js/dialogs.js"></script>

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "profiles": [
+    {"id":"00000000-0000-4000-8000-000000000001","config":{"type":"smb","name":"NAS 文件","host":"nas.example.invalid","port":445,"share":"","username":"viewer"}},
+    {"id":"00000000-0000-4000-8000-000000000002","config":{"type":"webdav","name":"云端: 文档","url":"https://dav.example.invalid/files/","username":"writer","insecure":false}},
+    {"id":"00000000-0000-4000-8000-000000000003","config":{"type":"ftp","name":"FTP 测试","host":"ftp.example.invalid","port":21,"username":"anonymous","insecure":true}},
+    {"id":"00000000-0000-4000-8000-000000000004","config":{"type":"ftps","name":"安全 FTP","host":"ftps.example.invalid","port":21,"username":"reader"}},
+    {"id":"00000000-0000-4000-8000-000000000005","config":{"type":"sftp","name":"SFTP 资料","host":"ssh.example.invalid","port":22,"username":"reader"}}
+  ],
+  "favorites": [
+    {"name":"报告:2026?","path":"remote://00000000-0000-4000-8000-000000000002/%E6%8A%A5%E5%91%8A%3A2026%3F","isDir":true,"label":"云端报告","parentPath":"remote://00000000-0000-4000-8000-000000000002/"},
+    {"name":"照片","path":"remote://00000000-0000-4000-8000-000000000001/Public/%E7%85%A7%E7%89%87","isDir":true,"label":"家庭照片"},
+    {"name":"资料","path":"remote://00000000-0000-4000-8000-000000000005/%E8%B5%84%E6%96%99","isDir":true,"label":"PC SFTP"}
+  ],
+  "rhvideo":{"server":"https://media.example.invalid/library/","username":"viewer"}
+}

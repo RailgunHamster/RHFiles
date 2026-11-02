@@ -72,9 +72,9 @@ const deviceBrowser=(()=>{
     }
     if(!peers.length){const help=document.createElement('p');help.className='settings-card-description';help.style.cssText='padding:0 12px;font-size:11px';help.textContent=text('加入设备组后，已开启共享的设备会显示在这里。','Join a group to see devices offering file sharing.');host.append(help);}
     const heading=document.getElementById('device-group-heading');if(heading)heading.textContent=text('RHFiles 设备','RHFiles devices');
-    const setup=document.getElementById('device-group-settings');if(setup)setup.textContent=text('管理设备组','Manage device groups');
+    const setup=document.querySelector('#device-group-settings > span');if(setup)setup.textContent=text('管理设备组','Manage device groups');
     const refresh=document.getElementById('device-group-refresh');if(refresh)refresh.title=text('刷新设备列表（不发起网络探测）','Refresh devices (no network probing)');
-    const copies=document.getElementById('device-working-copies');if(copies)copies.textContent=text('远端工作副本','Remote working copies');
+    const copies=document.querySelector('#device-working-copies > span');if(copies)copies.textContent=text('缓存与工作副本','Cache & working copies');
   }
   async function refresh(){
     const ticket=++readTicket,state=await call('device_groups',{command:'state',args:{}});if(ticket!==readTicket)return {stale:true};
@@ -115,6 +115,8 @@ const deviceBrowser=(()=>{
     api.register('devices.resource',async p=>({url:await source(p.path)}),{params:object({path:string},['path']),risk:'read',description:'Revocable loopback-only media capability; never a remote password or bearer token'});
     api.register('devices.workingCopies',()=>call('device_transfer',{action:'working_copies',args:{}}),{params:object(),risk:'read',description:'List retained local working copies without probing any remote server'});
     api.register('devices.workingCopies.show',showWorkingCopies,{params:object(),risk:'ui'});
+    api.register('devices.dragCache',()=>call('native_drag_cache_list',{}),{params:object(),risk:'read',description:'List retained local external-drag caches; never deletes files when recipients may still use them.'});
+    api.register('devices.dragCache.reveal',async()=>{const cache=await call('native_drag_cache_list',{});await call('open_in_windows_explorer',{path:cache.directory,isDirectory:true});return {opened:true};},{params:object(),risk:'ui',description:'Reveal the retained cache folder selected natively, never a caller-supplied path.'});
     for(const [name,action]of [['undoTransfer','undo_transfer'],['redoTransfer','redo_transfer']])api.register('devices.'+name,p=>call('device_transfer',{action,args:p}),{params:object({id:string,operationId:string},['id']),risk:'destructive',description:'Undo/redo an unoverwritten transfer using its native session history handle and original object revisions; never restarts an old write by pathname.'});
     api.register('devices.checkout',p=>call('device_transfer',{action:'checkout',args:p}),{params:object({path:string,operationId:string},['path']),risk:'write',description:'Create a persistent working copy without launching a local application; use workingCopies.save to commit against the original revision'});
     api.register('devices.windowsPath',p=>call('device_transfer',{action:'windows_path',args:p}),{params:object({path:string},['path']),risk:'write',description:'Establish an owner-authorized, group-bound trusted HTTPS Windows filesystem connection. Credentials remain native and are never synchronized or returned.'});
@@ -147,7 +149,9 @@ const deviceBrowser=(()=>{
     box.append(heading,detail,list,actions);overlay.append(box);document.body.append(overlay);
     const paint=async()=>{
       const result=await window.RHFilesAPI.invoke('devices.workingCopies');list.replaceChildren();
-      if(!result.items.length){list.textContent=text('暂无工作副本','No working copies');return;}
+      const cache=await window.RHFilesAPI.invoke('devices.dragCache');
+      if(cache.items.length){const note=document.createElement('p');note.className='settings-card-description';note.textContent=text('外拖缓存：为其他应用准备的副本会保留，不随拖拽结束删除。确认接收应用已用完后，可从本地位置手动清理；这些副本不会自动写回服务器。','External-drag cache: copies remain after dropping, for asynchronous recipients. Clean up from the local folder only when the recipient has finished. These copies never upload edits automatically.');const show=document.createElement('button');show.className='dialog-btn';show.textContent=text('打开缓存位置','Open cache location');RHFilesUI.listen(show,'click',()=>window.RHFilesAPI.invoke('devices.dragCache.reveal'),undefined,'devices.dragCache.reveal');list.append(note,show);}
+      if(!result.items.length){const empty=document.createElement('p');empty.textContent=text('暂无可编辑工作副本','No editable working copies');list.append(empty);return;}
       for(const row of result.items){
         const card=document.createElement('section');card.className='settings-card';card.dataset.workingCopyId=row.id;
         const title=document.createElement('strong');title.textContent=row.name+' · '+(row.status==='modified'?text('有本地修改','Local changes'):row.status==='missing'?text('本地文件已移走','Local file missing'):text('未修改','Unchanged'));
@@ -166,7 +170,7 @@ const deviceBrowser=(()=>{
 })();
 deviceBrowser.register(window.RHFilesAPI);
 async function routeDeviceCommand(cmd,args){
-  if(cmd==='device_fs'||cmd==='device_transfer')return null;
+  if(cmd==='device_fs'||cmd==='device_transfer'||cmd.startsWith('native_drag_'))return null;
   // These values are text/state, not filesystem input. In particular, a
   // multi-path text clipboard is not one malformed device URI.
   if(cmd.startsWith('db_')||cmd.startsWith('config_sync_')||['copy_file_path','save_window_state','open_new_window'].includes(cmd))return null;

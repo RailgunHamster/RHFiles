@@ -348,7 +348,8 @@ pub async fn open_new_window(
         ).map_err(|e| e.to_string())?;
     }
     let _window =
-        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+        with_browser_args(tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into())))
+            .disable_drag_drop_handler()
             // Tauri's native file-drop handler owns WebView2's drop target on
             // Windows. RHFiles uses HTML5 drag events for files and tabs, so
             // leaving it enabled makes every real file drag show the forbidden

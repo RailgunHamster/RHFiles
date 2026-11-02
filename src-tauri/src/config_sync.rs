@@ -172,7 +172,7 @@ pub(crate) fn crypt(bytes: &[u8], scope: &[u8], encrypt: bool) -> Result<Vec<u8>
     }
 }
 #[cfg(not(windows))]
-fn crypt(_: &[u8], _: &[u8], _: bool) -> Result<Vec<u8>, String> {
+pub(crate) fn crypt(_: &[u8], _: &[u8], _: bool) -> Result<Vec<u8>, String> {
     Err("此平台尚未接入 WebDAV 同步凭据保护，未保存明文密码".into())
 }
 fn read_config_at(path: &Path) -> Result<Config, String> {
@@ -245,6 +245,9 @@ fn safe_name(value: &str) -> bool {
             .chars()
             .any(|c| c.is_control() || "/\\<>:\"|?*".contains(c))
 }
+fn portable_name(value:&str)->bool {
+    !value.trim().is_empty()&&value!="."&&value!=".."&&value.encode_utf16().count()<=240&&!value.chars().any(|c|c<' '||c=='/'||c=='\\')
+}
 fn segments(url: &Url) -> Result<Vec<String>, String> {
     url.path_segments()
         .into_iter()
@@ -255,7 +258,7 @@ fn segments(url: &Url) -> Result<Vec<String>, String> {
                 .decode_utf8()
                 .map_err(|_| "收藏路径编码无效")?
                 .into_owned();
-            if !safe_name(&value) {
+            if !portable_name(&value) {
                 return Err("收藏路径包含无效组件".into());
             }
             Ok(value)
@@ -277,7 +280,7 @@ fn portable_url(value: &str, ids: &HashSet<String>) -> Result<Url, String> {
         let decoded = percent_encoding::percent_decode_str(part)
             .decode_utf8()
             .map_err(|_| "收藏路径编码无效")?;
-        if !safe_name(&decoded) {
+        if !portable_name(&decoded) {
             return Err("收藏路径包含无效组件".into());
         }
     }
@@ -301,7 +304,7 @@ fn validate(doc: &Value) -> Result<(), String> {
         || !doc.as_object().is_some_and(|v|v.keys().all(|k|["schemaVersion","profiles","favorites","rhvideo"].contains(&k.as_str()))&&v.len()==if doc.get("rhvideo").is_some(){4}else{3})
         || doc["schemaVersion"] != if doc.get("rhvideo").is_some(){2}else{1}
     {
-        return Err("不是支持的 RHFiles 同步配置，未更改本机设置".into());
+        return Err("不是支持的 RHFiles 同步配置：当前支持格式 v1/v2；含 RHVideo 时必须使用 v2。请更新 Windows 和 Android 两端；未更改本机设置或云端文件".into());
     }
     if let Some(value)=doc.get("rhvideo"){validate_rhvideo(value)?;}
     let profiles = doc["profiles"]
@@ -337,11 +340,11 @@ fn validate(doc: &Value) -> Result<(), String> {
         }
         let name = p["config"]["name"]
             .as_str()
-            .filter(|s| safe_name(s) && s.chars().count() <= 1024)
+            .filter(|s| portable_name(s))
             .ok_or("网络位置名称无效")?;
         let _ = name;
         match p["config"]["type"].as_str() {
-            Some("smb" | "ftp" | "ftps") => {
+            Some("smb" | "ftp" | "ftps" | "sftp") => {
                 let host = p["config"]["host"]
                     .as_str()
                     .filter(|h| {
@@ -357,7 +360,7 @@ fn validate(doc: &Value) -> Result<(), String> {
                     return Err("FTP 明文连接未经明确允许".into());
                 }
                 if let Some(share) = p["config"]["share"].as_str() {
-                    if !share.is_empty() && !safe_name(share) {
+                    if !share.is_empty() && !portable_name(share) {
                         return Err("共享名无效".into());
                     }
                 }
@@ -369,7 +372,8 @@ fn validate(doc: &Value) -> Result<(), String> {
                     ..Default::default()
                 })?;
             }
-            _ => return Err("RHFiles 仅支持本机设备组，配置同步不能创建独立配对".into()),
+            Some("rhfiles") => return Err("RHFiles 仅支持本机设备组，配置同步不能创建独立配对".into()),
+            _ => return Err("[sync_unsupported_protocol] 同步配置包含此版本不能识别的协议，请更新两端应用；未更改配置".into()),
         }
     }
     let mut paths = HashSet::new();
@@ -495,6 +499,7 @@ fn as_unc(favorite: &Value, profiles: &[Value]) -> Option<String> {
         out.push_str(share);
     }
     for part in segments(&u).ok()? {
+        if !safe_name(&part){return None;}
         out.push('\\');
         out.push_str(&part);
     }
@@ -505,6 +510,14 @@ fn snapshot(conn: &Connection) -> Result<Value, String> {
     let mut profiles = prior["profiles"].as_array().cloned().unwrap_or_default();
     let mut actual = Vec::new();
     for (path, label) in pinned(conn)? {
+        if let Ok(url)=Url::parse(&path) {if url.scheme()=="remote" {
+            if let Some(profile)=profiles.iter().find(|p|p["id"].as_str()==url.host_str()) {
+                let old=prior["favorites"].as_array().into_iter().flatten().find(|f|f["path"]==path);
+                let parts=segments(&url)?;let name=old.and_then(|f|f["name"].as_str()).unwrap_or_else(||parts.last().map(String::as_str).unwrap_or_else(||profile["config"]["name"].as_str().unwrap_or("Network")));
+                let mut item=json!({"name":name,"path":path,"isDir":old.and_then(|f|f["isDir"].as_bool()).unwrap_or(true),"label":label});
+                if let Some(parent)=old.and_then(|f|f.get("parentPath")){item["parentPath"]=parent.clone();}actual.push(item);
+            }continue;
+        }}
         let Some((host, parts)) = unc(&path) else {
             continue;
         };
@@ -562,10 +575,12 @@ fn snapshot(conn: &Connection) -> Result<Value, String> {
         }
         actual.push(favorite);
     }
+    let actual_paths:HashSet<_>=actual.iter().filter_map(|f|f["path"].as_str().map(str::to_owned)).collect();
+    let materialized=state(conn,"portableFavoritesMaterialized")?==Some(json!(true));
     let mut next = actual.into_iter();
     let mut favorites = Vec::new();
     for old in prior["favorites"].as_array().into_iter().flatten() {
-        if as_unc(old, &profiles).is_none() {
+        if as_unc(old, &profiles).is_none() && !materialized && !actual_paths.contains(old["path"].as_str().unwrap_or("")) {
             favorites.push(old.clone());
         } else if let Some(f) = next.next() {
             favorites.push(f);
@@ -577,6 +592,27 @@ fn snapshot(conn: &Connection) -> Result<Value, String> {
     validate(&doc)?;
     Ok(doc)
 }
+// Metadata only. The network-location vault binds credentials and SFTP pins to
+// the connection identity, so a sync cannot redirect a saved password elsewhere.
+pub(crate) fn network_profiles()->Result<Vec<Value>,String> {
+    let conn=db()?;Ok(snapshot(&conn)?["profiles"].as_array().cloned().unwrap_or_default())
+}
+pub(crate) fn validate_network_config(config:&Value)->Result<(),String>{validate(&json!({"schemaVersion":1,"profiles":[{"id":"00000000-0000-4000-8000-000000000000","config":config}],"favorites":[]}))}
+pub(crate) fn save_network_profile(profile:Value,remove:bool)->Result<(),String> {
+    let mut runtime=runtime().lock().map_err(error)?;
+    if runtime.busy {return Err("[busy] 请等待配置同步完成 / Wait for settings synchronization".into());}
+    let conn=db()?;let mut doc=snapshot(&conn)?;
+    let id=profile["id"].as_str().filter(|id|uuid(id)).ok_or("Invalid network-location ID")?.to_string();
+    let removed_paths=if remove{doc["favorites"].as_array().into_iter().flatten().filter(|f|f["path"].as_str().is_some_and(|p|p.starts_with(&format!("remote://{id}/")))).filter_map(|f|as_local_favorite(f,doc["profiles"].as_array()?)).collect::<Vec<_>>()}else{Vec::new()};
+    let profiles=doc["profiles"].as_array_mut().ok_or("Invalid profiles")?;
+    if remove {profiles.retain(|p|p["id"]!=id);doc["favorites"].as_array_mut().ok_or("Invalid favorites")?.retain(|f|!f["path"].as_str().is_some_and(|p|p.starts_with(&format!("remote://{id}/"))));}
+    else if let Some(prior)=profiles.iter_mut().find(|p|p["id"]==id){*prior=profile;}else{profiles.push(profile);}
+    validate(&doc)?;let tx=conn.unchecked_transaction().map_err(error)?;for path in removed_paths{tx.execute("DELETE FROM pinned WHERE path=?1",[path]).map_err(error)?;}store(&tx,"document",&doc)?;tx.commit().map_err(error)?;
+    runtime.preview=None;Ok(())
+}
+fn as_local_favorite(favorite:&Value,profiles:&[Value])->Option<String>{
+    as_unc(favorite,profiles).or_else(||{let path=favorite["path"].as_str()?;let url=Url::parse(path).ok()?;(url.scheme()=="remote"&&profiles.iter().any(|p|p["id"].as_str()==url.host_str())).then(||path.into())})
+}
 fn apply(conn: &Connection, doc: &Value) -> Result<(), String> {
     store(conn,"rhvideoObserved",&raw_rhvideo()?.unwrap_or(Value::Null))?;
     let profiles = doc["profiles"].as_array().ok_or("网络位置无效")?;
@@ -585,7 +621,7 @@ fn apply(conn: &Connection, doc: &Value) -> Result<(), String> {
         .into_iter()
         .flatten()
         .filter_map(|f| {
-            as_unc(f, profiles).map(|path| {
+            as_local_favorite(f, profiles).map(|path| {
                 (
                     path,
                     f["label"]
@@ -598,7 +634,7 @@ fn apply(conn: &Connection, doc: &Value) -> Result<(), String> {
         });
     let mut output = Vec::new();
     for (path, name) in pinned(conn)? {
-        if unc(&path).is_some() {
+        if unc(&path).is_some() || path.starts_with("remote://") {
             if let Some(f) = shared.next() {
                 output.push(f);
             }
@@ -616,6 +652,7 @@ fn apply(conn: &Connection, doc: &Value) -> Result<(), String> {
         .map_err(error)?;
     }
     store(conn, "document", doc)?;
+    store(conn,"portableFavoritesMaterialized",&json!(true))?;
     store(conn, "base", doc)?;
     store(
         conn,
@@ -946,6 +983,18 @@ pub async fn config_sync_commit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn android_contract_roundtrips_all_network_locations_and_bookmarks_without_windows_filename_rules(){
+        let doc:Value=serde_json::from_str(include_str!("../../scripts/fixtures/shared-config.contract.json")).unwrap();validate(&doc).unwrap();
+        let conn=connection();conn.execute("INSERT INTO pinned(path,name,ord) VALUES('C:\\local','Local',0)",[]).unwrap();apply(&conn,&doc).unwrap();
+        assert_eq!(snapshot(&conn).unwrap(),doc);
+        let pins=pinned(&conn).unwrap();assert_eq!(pins.len(),4);assert_eq!(pins[0].0,r"C:\local");assert_eq!(pins[1].1,"云端报告");assert!(pins[2].0.starts_with(r"\\nas.example.invalid\Public\"));
+        conn.execute("DELETE FROM pinned WHERE path=?1",[&pins[1].0]).unwrap();let next=snapshot(&conn).unwrap();assert_eq!(next["favorites"].as_array().unwrap().len(),2);assert!(!next["favorites"].as_array().unwrap().iter().any(|f|f["label"]=="云端报告"));
+    }
+    #[test]fn old_non_smb_bookmarks_are_not_interpreted_as_local_deletions_before_migration(){
+        let doc:Value=serde_json::from_str(include_str!("../../scripts/fixtures/shared-config.contract.json")).unwrap();let conn=connection();store(&conn,"document",&doc).unwrap();store(&conn,"base",&doc).unwrap();
+        let before=snapshot(&conn).unwrap();assert!(before["favorites"].as_array().unwrap().iter().any(|f|f["label"]=="云端报告"));
+        apply(&conn,&doc).unwrap();assert_eq!(snapshot(&conn).unwrap(),doc);
+    }
     #[test]
     fn media_sync_v2_is_allowlisted_and_never_imports_credentials_or_session_fields(){
         let media=json!({"server":"https://media-qa.invalid/library/","username":"viewer"});let mut doc=empty();doc["schemaVersion"]=json!(2);doc["rhvideo"]=media.clone();validate(&doc).unwrap();

@@ -135,7 +135,9 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   internal fun validate(config:JSONObject) {
     require(config.toString().length<=65536){"网络配置过长"}
     val type = config.getString("type")
-    require(type in listOf("smb","ftp","ftps","webdav","rhfiles")) { "未知网络协议" }
+    // Keep the common wire record even when this client lacks its filesystem
+    // adapter. Never reject the entire shared document or erase another client.
+    require(type in listOf("smb","ftp","ftps","sftp","webdav","rhfiles")) { "未知网络协议" }
     SafeFiles.name(config.getString("name"))
     if(type=="rhfiles"){require(!independent(config)){"独立连接已移除，请通过设备组连接"};RhFilesConnection.valid(config);return}
     if (type == "webdav") {
@@ -145,7 +147,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     } else {
       val host = config.getString("host")
       require(host.isNotBlank() && host.length<=253 && host.none { it in "/\\@?#" || it.isWhitespace() || it.code<32 }) { "请填写主机名或 IP，不要带协议和路径" }
-      require(config.optInt("port",if (type=="smb") 445 else 21) in 1..65535) { "端口无效" }
+      require(config.optInt("port",when(type){"smb"->445;"sftp"->22;else->21}) in 1..65535) { "端口无效" }
       if (type == "ftp") require(config.optBoolean("insecure")) { "FTP 会明文传输密码，请明确允许或选择 FTPS" }
       if (type == "smb" && config.optString("share").isNotBlank()) SafeFiles.name(config.getString("share"))
     }
@@ -173,7 +175,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       value.put("groupId",old.getString("groupId")).put("groupPeerId",old.getString("groupPeerId"))
     }
     if(old!=null&&!value.optBoolean("clearPassword")&&value.optString("password").isEmpty()){
-      fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",if(c.optString("type")=="smb")445 else 21).toString(),c.optString("url"),c.optString("username"),c.optString("domain"),c.optString("fingerprint"))
+      fun identity(c:JSONObject)=listOf(c.optString("type"),c.optString("host").lowercase(),c.optInt("port",when(c.optString("type")){"smb"->445;"sftp"->22;else->21}).toString(),c.optString("url"),c.optString("username"),c.optString("domain"),c.optString("fingerprint"))
       require(old.optString("password").isEmpty()||identity(old)==identity(value)){"更换服务器、协议或账号时请重新填写密码，或勾选清除密码"}
       value.put("password",old.optString("password"))
     }
@@ -223,6 +225,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val id = uri.host ?: error("网络位置无效"); val segments = uri.pathSegments
     segments.forEach { SafeFiles.name(it) }
     val c=config(id)
+    require(c.optString("type")!="sftp"){ "此 Android 版本尚未提供 SFTP 连接；配置已保留并参与跨端同步，请在支持的 PC 端使用。" }
     requireCredentials(c)
     if(c.optString("type")=="smb"&&c.optString("share").isBlank()) {
       if(segments.isEmpty())return Location(id,"",c,true)

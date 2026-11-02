@@ -897,14 +897,14 @@ function renderBreadcrumb(path, bcId, dropdownId, inputId, isRight) {
   if (typeof isFtpPath === 'function' && isFtpPath(path)) {
     const url = new URL(path);
     bc.replaceChildren();
-    let current = 'ftp://' + url.host + '/';
+    let current = url.protocol + '//' + url.host + '/';
     const segments = [url.host, ...url.pathname.split('/').filter(Boolean)];
     segments.forEach((segment, index) => {
       if (index) current = current.replace(/\/$/, '') + '/' + segment;
       const destination = current;
       const item = document.createElement('span');
       item.className = 'bc-item';
-      item.textContent = index ? decodeURIComponent(segment) : 'FTP: ' + segment;
+      item.textContent = index ? decodeURIComponent(segment) : url.protocol==='remote:'?networkLocations.label(segment):'FTP: '+segment;
       RHFilesUI.assign(item,"click",() => isRight ? rpNavigateTo(destination) : navigateTo(destination),"src.js.tabs.renderBreadcrumb.d5c6c81cce64");
       bc.appendChild(item);
     });

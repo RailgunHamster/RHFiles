@@ -830,6 +830,9 @@ async function showFtpEntries(host, path, user, pass, entries) {
 async function renderMtpDevices() {
   const section = document.getElementById('mtp-section');
   if (!section) return;
+  const wrapper = document.getElementById('usb-devices-section');
+  const heading = document.getElementById('usb-devices-heading');
+  if (heading) heading.textContent = String(_lang).startsWith('zh') ? 'USB 设备 · MTP' : 'USB devices · MTP';
   section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('status.scanning') + '...</div>';
   try {
     const devices = await withTimeout(
@@ -838,6 +841,7 @@ async function renderMtpDevices() {
       "Device discovery timed out"
     );
     section.innerHTML = '';
+    if (wrapper) wrapper.hidden = devices.length === 0;
     for (const d of devices) {
       const div = document.createElement('div');
       div.className = 'sidebar-item';
@@ -850,6 +854,7 @@ async function renderMtpDevices() {
       section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noDevices') + '</div>';
     }
   } catch (e) {
-    section.innerHTML = '<div style="font-size:11px;color:var(--text-4);padding:4px 8px;">' + t('sidebar.noDevices') + '</div>';
+    if (wrapper) wrapper.hidden = true;
+    section.replaceChildren();
   }
 }

@@ -585,7 +585,7 @@ function applyFileDragImage(dataTransfer, paths, sourceNode) {
   setTimeout(() => ghost.remove(), 0);
 }
 
-function setRhfilesFileDragData(dataTransfer, paths, isRight, sourceNode) {
+function setRhfilesFileDragData(dataTransfer, paths, isRight, sourceNode, event) {
   if (!dataTransfer) return;
   const dragPayload = {
     kind: 'rhfiles-file-drag',
@@ -594,6 +594,7 @@ function setRhfilesFileDragData(dataTransfer, paths, isRight, sourceNode) {
     paths: [...new Set((paths || []).filter(path => typeof path === 'string' && path))],
   };
   if (!dragPayload.paths.length) return;
+  if(typeof nativeFileDrag!=='undefined'&&nativeFileDrag.start(event,dragPayload))return;
   rememberRhfilesFileDragSource(sourceNode);
   applyFileDragImage(dataTransfer, dragPayload.paths, sourceNode);
   G._activeFileDragPayload = dragPayload;
@@ -657,6 +658,7 @@ function escAttr(s) { return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'")
 // visibly doubled: //server/share instead of the misleading /server/share.
 function displayPath(path) {
   if(typeof isDevicePath==='function'&&isDevicePath(path))return deviceBrowser.display(path);
+  if(typeof networkLocations!=='undefined'&&/^remote:\/\//i.test(String(path)))return networkLocations.display(path);
   if (path === 'home://') return t('nav.home');
   if (IS_MAC) return String(path || '');
   return String(path || '').replace(/\\/g, '/');
@@ -859,7 +861,7 @@ async function call(cmd, args) {
 
 function parentFolderPath(path) {
   if(typeof isDevicePath==='function'&&isDevicePath(path))return RHFilesDevicePaths.parent(path);
-  if (/^ftp:\/\//i.test(path)) {
+  if (/^(?:ftp|remote):\/\//i.test(path)) {
     const url = new URL(path);
     const parts = url.pathname.replace(/\/+$/, '').split('/');
     parts.pop();

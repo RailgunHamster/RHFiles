@@ -1,5 +1,36 @@
 import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import fs from 'node:fs';import path from 'node:path';
-import {launchApp,until}from '../testing/app-session.mjs';import {listenBrowserLoopback}from '../testing/browser-loopback.mjs';
+import {launchApp,until}from '../testing/app-session.mjs';import {listenBrowserLoopback}from '../testing/browser-loopback.mjs';import {root}from '../testing/source.mjs';
+
+test('the shared Windows/Android contract imports every network favorite and round-trips edits/deletions without changing its protocol or leaking passwords',async()=>{
+  let doc=JSON.parse(fs.readFileSync(path.join(root,'scripts/fixtures/shared-config.contract.json'),'utf8')),revision=1,writes=0;
+  const server=http.createServer(async(req,res)=>{
+    assert.equal(req.url,'/shared/rhfiles-settings-v1.json');
+    if(req.method==='GET')return res.writeHead(200,{ETag:`"r${revision}"`}).end(JSON.stringify(doc));
+    assert.equal(req.method,'PUT');assert.equal(req.headers['if-match'],`"r${revision}"`);
+    let body='';for await(const chunk of req)body+=chunk;
+    assert(!/password|token|fingerprint|needsPassword/i.test(body));doc=JSON.parse(body);revision++;writes++;res.writeHead(204).end();
+  });await listenBrowserLoopback(server);let app;
+  try{
+    app=await launchApp({desktopId:'shared-config-contract',emulateFocus:true});
+    const api=(action,args={})=>app.evaluate(`RHFilesAPI.invoke(${JSON.stringify(action)},${JSON.stringify(args)})`);
+    // The folder URL intentionally has no slash: it must resolve to the same
+    // fixed file as Android, not an app-specific PC document or sibling file.
+    await api('configSync.save',{enabled:false,url:`http://127.0.0.1:${server.address().port}/shared`,username:'',password:'',insecure:true});
+    await api('configSync.run');let pins=await api('favorites.list');
+    assert.deepEqual(pins.map(p=>p.name),doc.favorites.map(f=>f.label));
+    assert.equal(pins[0].path,doc.favorites[0].path);assert.equal(pins[1].path,'\\\\nas.example.invalid\\Public\\照片');
+    await until(()=>app.evaluate('document.querySelectorAll("#network-locations-list > button").length===5'),'all imported protocols visible in sidebar');
+    const profiles=(await api('networkLocations.list')).profiles;assert.deepEqual(profiles.map(p=>p.config.type),['smb','webdav','ftp','ftps','sftp']);assert(profiles.every(p=>!p.hasPassword));
+    await api('configSync.run');assert.equal(writes,0,'Importing and materializing a bookmark is not an edit or deletion');
+    const target=pins[0].path;await api('favorites.rename',{path:target,name:'PC 改名: 保持路径'});await api('configSync.run');assert.equal(doc.favorites[0].label,'PC 改名: 保持路径');
+    // Exercise actual sidebar removal through its normal stored-pins boundary;
+    // neither the remaining SFTP record nor its bookmark may be swept away.
+    pins=await api('favorites.list');await app.evaluate(`call('db_save_pinned',{paths:${JSON.stringify(pins.filter(p=>p.path!==target).map(p=>[p.path,p.name]))}}).then(()=>loadPinnedFolders())`);
+    await api('configSync.run');assert(!doc.favorites.some(f=>f.path===target));assert.equal(doc.profiles.length,5);assert.equal(doc.favorites.length,2);
+    doc.favorites.reverse();revision++;await api('configSync.run');assert.deepEqual((await api('favorites.list')).map(p=>p.name),doc.favorites.map(f=>f.label));
+    await app.screenshot('shared-config-cross-platform');
+  }finally{if(app)await app.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
 
 test('ordinary Windows WebDAV sync interoperates with Android schema, preserves names/order/local paths and rejects unsafe races',async()=>{
   const id='11111111-1111-4111-8111-111111111111';let revision=1,writes=0,mode='normal',requests=0;

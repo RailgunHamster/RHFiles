@@ -52,6 +52,16 @@ jobs:
           if ($vlc.VersionInfo.FileVersion -notlike '3.0.23*') { throw 'Unexpected native test engine version' }
           ./scripts/prepare-ffmpeg.ps1
           "FFMPEG=$pwd/src-tauri/thirdparty/ffmpeg.exe" >> $env:GITHUB_ENV
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare disposable loopback protocol fixtures
+        shell: pwsh
+        run: |
+          python -m venv test-artifacts/protocol-test-venv
+          if ($LASTEXITCODE -ne 0) { throw 'Protocol fixture environment failed' }
+          & ./test-artifacts/protocol-test-venv/Scripts/python.exe -m pip install -r scripts/testing/protocol-fixtures-requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Protocol fixture dependencies failed' }
       - name: Real WebView2 file workflows including tab drag and delete confirmations
         env:
           RHFILES_NATIVE_PLAYER_QA: '1'

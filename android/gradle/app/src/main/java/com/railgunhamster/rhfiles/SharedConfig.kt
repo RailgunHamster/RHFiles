@@ -48,7 +48,7 @@ internal object SharedConfig {
   fun favorite(f:JSONObject):JSONObject=JSONObject().also{out->for(key in listOf("name","path","isDir","label","parentPath"))if(f.has(key)&&!f.isNull(key))out.put(key,f.get(key))}
   fun validate(doc:JSONObject,validateProfile:(JSONObject)->Unit){
     val keys=setOf("schemaVersion","profiles","favorites")+if(doc.has("rhvideo"))setOf("rhvideo")else emptySet()
-    require(doc.toString().toByteArray().size<=LIMIT&&doc.opt("schemaVersion") is Int&&doc.getInt("schemaVersion")== (if(doc.has("rhvideo"))2 else 1)&&doc.keys().asSequence().toSet()==keys){"不是支持的 RHFiles 同步配置，当前配置未更改；含 RHVideo 连接信息时需要升级同步客户端"}
+    require(doc.toString().toByteArray().size<=LIMIT&&doc.opt("schemaVersion") is Int&&doc.getInt("schemaVersion")== (if(doc.has("rhvideo"))2 else 1)&&doc.keys().asSequence().toSet()==keys){"不是支持的 RHFiles 同步配置：当前支持格式 v1/v2；含 RHVideo 时必须使用 v2。请更新 Windows 和 Android 两端；未更改本机设置或云端文件"}
     if(doc.has("rhvideo"))validateMedia(doc.getJSONObject("rhvideo"))
     val profiles=doc.getJSONArray("profiles");require(profiles.length()<=200){"同步网络位置超过上限"};val ids=mutableSetOf<String>()
     for(i in 0 until profiles.length()){

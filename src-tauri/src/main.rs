@@ -27,13 +27,14 @@ fn move_working_directory_out_of_version_folder() {
 }
 
 fn main() {
+    if rhfiles_tauri_lib::shell_defaults::run_if_requested() { return; }
     #[cfg(windows)]
     if rhfiles_tauri_lib::network_io::run_if_requested() {
         return;
     }
     // Velopack must handle install/update lifecycle arguments before Tauri starts.
     #[cfg(windows)]
-    velopack::VelopackApp::build().run();
+    velopack::VelopackApp::build().on_before_uninstall_fast_callback(|_|rhfiles_tauri_lib::shell_defaults::uninstall()).run();
     move_working_directory_out_of_version_folder();
     rhfiles_tauri_lib::run()
 }

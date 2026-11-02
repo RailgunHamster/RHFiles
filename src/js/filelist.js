@@ -517,7 +517,7 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
     row.draggable = !file.archive_entry;
     RHFilesUI.listen(row,"dragstart", e => {
       prepareFileDragSelection(row, fileIdx, sel, tabOrPane, listId, isRight);
-      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, row);
+      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, row, e);
     },undefined,"src.js.filelist.createItemNode.2c41ca1e736d");
 
     let tagsHtml = "";
@@ -626,7 +626,7 @@ function renderCardLayout(list, entries, sel, isRight, tabOrPane, listId) {
     RHFilesUI.listen(item,"mouseleave", () => { if (!sel.has(i)) item.style.borderColor = "var(--border)"; },undefined,"src.js.filelist.renderCardLayout.ec4ce7d31d37");
     RHFilesUI.listen(item,"dragstart", e => {
       prepareFileDragSelection(item, i, sel, tabOrPane, listId, isRight);
-      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item);
+      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item, e);
     },undefined,"src.js.filelist.renderCardLayout.c42bbe9889d2");
     item.draggable = !file.archive_entry;
 
@@ -719,11 +719,11 @@ function renderColumnLayout(list, entries, sel, isRight, tabOrPane, listId, curr
         RHFilesUI.listen(item,'dragstart', event => {
           if (rootIndex >= 0) {
             prepareFileDragSelection(item, rootIndex, sel, tabOrPane, listId, isRight);
-            setRhfilesFileDragData(event.dataTransfer, [...sel].map(index => entries[index]?.path).filter(Boolean), isRight, item);
+            setRhfilesFileDragData(event.dataTransfer, [...sel].map(index => entries[index]?.path).filter(Boolean), isRight, item, event);
           } else {
             selectColumnTarget(entry, tabOrPane, listId, isRight, {state:columnState, index:columnIndex, preserve:true, column:col});
             paintColumnSelection(tabOrPane, isRight);
-            setRhfilesFileDragData(event.dataTransfer, selectedEntriesForPane(tabOrPane).map(file => file.path), isRight, item);
+            setRhfilesFileDragData(event.dataTransfer, selectedEntriesForPane(tabOrPane).map(file => file.path), isRight, item, event);
           }
         },undefined,"src.js.filelist.renderColumn.cd42d3f76edb");
         col.appendChild(item);
@@ -792,7 +792,7 @@ function renderThumbnailLayout(list, entries, sel, isRight, tabOrPane, listId) {
     RHFilesUI.listen(item,"contextmenu", e => { e.preventDefault(); e.stopPropagation(); selectContextTarget(i, tabOrPane, listId, isRight); showContextMenu(e.clientX, e.clientY, isRight); },undefined,"src.js.filelist.renderThumbnailLayout.cb705f80e3fd");
     RHFilesUI.listen(item,"dragstart", e => {
       prepareFileDragSelection(item, i, sel, tabOrPane, listId, isRight);
-      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item);
+      setRhfilesFileDragData(e.dataTransfer, [...sel].map(idx => entries[idx]?.path).filter(Boolean), isRight, item, e);
     },undefined,"src.js.filelist.renderThumbnailLayout.c42bbe9889d2");
     item.draggable = !file.archive_entry;
 

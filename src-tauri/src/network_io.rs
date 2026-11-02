@@ -29,6 +29,7 @@ const MAX_WORKERS: usize = 4;
 
 #[derive(Serialize, Deserialize)]
 pub enum Request {
+    Protocol{config:Value,password:String,pin:String,action:String,args:Value},
     WebdavConnect{unc:String,username:String,password:String},
     WebdavDisconnect{unc:String,username:String},
     ListDir(String),
@@ -362,7 +363,7 @@ pub fn execute<T: DeserializeOwned>(
     timeout: Duration,
     progress: Option<&mut dyn FnMut(u64, u64)>,
 ) -> Result<T, String> {
-    if matches!(request,Request::WebdavConnect{..}|Request::WebdavDisconnect{..}){return Err("Credentials require the stdin-only worker channel".into());}
+    if matches!(request,Request::WebdavConnect{..}|Request::WebdavDisconnect{..}|Request::Protocol{..}){return Err("Credentials require the stdin-only worker channel".into());}
     let gate = GATE.get_or_init(Default::default);
     gate.lock()
         .map_err(|e| e.to_string())?
@@ -395,6 +396,21 @@ pub fn execute_private(host:&str,request:Request)->Result<Value,String>{
     result
 }
 
+pub fn execute_protocol(host:&str,request:Request)->Result<Value,String>{
+    let Request::Protocol{ref action,..}=request else{return Err("Invalid protocol request".into());};
+    let timeout=Duration::from_secs(if matches!(action.as_str(),"upload"|"download"){600}else{15});
+    let gate=GATE.get_or_init(Default::default);gate.lock().map_err(|e|e.to_string())?.enter(host,Instant::now())?;let _lease=Lease;
+    let mut command=Command::new(std::env::current_exe().map_err(|e|e.to_string())?);command.arg(PRIVATE_WORKER_FLAG);
+    let bytes=serde_json::to_vec(&request).map_err(|_|"Cannot encode protocol request")?;
+    if bytes.len()>128*1024{return Err("Protocol request too large".into());}
+    let child=spawn_worker_input(&mut command,Some(&bytes))?;
+    let result=run_child(child,timeout,None);
+    if result.as_ref().is_err_and(|e|e.starts_with("[timed_out]")){gate.lock().map_err(|e|e.to_string())?.failed.insert(host.to_string(),Instant::now()+COOLDOWN);}
+    // No automatic retries for writes: timeout may mean the remote commit was
+    // accepted but its reply was lost. The user must inspect the result first.
+    result
+}
+
 fn send(reply: Reply) -> Result<(), String> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -406,6 +422,7 @@ fn send(reply: Reply) -> Result<(), String> {
 
 fn dispatch(request: Request) -> Result<Value, String> {
     match request {
+        Request::Protocol{config,password,pin,action,args}=>return crate::network_locations::dispatch(config,password,pin,&action,args),
         Request::WebdavConnect{unc,username,password}=>return crate::windows_device_access::connect_worker(&unc,&username,&password),
         Request::WebdavDisconnect{unc,username}=>return crate::windows_device_access::disconnect_worker(&unc,&username),
         Request::ListDir(path) => serde_json::to_value(crate::file_ops::list_dir_direct(path)?),
@@ -510,7 +527,7 @@ pub fn run_if_requested() -> bool {
         return true;
     }
     if flag.as_deref()==Some(PRIVATE_WORKER_FLAG){
-        let result=(||{let mut bytes=Vec::new();std::io::stdin().take(4097).read_to_end(&mut bytes).map_err(|_|"Private worker input failed")?;if bytes.len()>4096{return Err("Private worker input too large".into());}let request:Request=serde_json::from_slice(&bytes).map_err(|_|"Invalid private worker request")?;match request{Request::WebdavConnect{..}|Request::WebdavDisconnect{..}=>dispatch(request),_=>Err("Invalid private worker operation".into())}})();
+        let result=(||{let mut bytes=Vec::new();std::io::stdin().take(128*1024+1).read_to_end(&mut bytes).map_err(|_|"Private worker input failed")?;if bytes.len()>128*1024{return Err("Private worker input too large".into());}let request:Request=serde_json::from_slice(&bytes).map_err(|_|"Invalid private worker request")?;match request{Request::WebdavConnect{..}|Request::WebdavDisconnect{..}|Request::Protocol{..}=>dispatch(request),_=>Err("Invalid private worker operation".into())}})();
         let _=send(Reply::Done(result));return true;
     }
     if flag.as_deref() != Some(WORKER_FLAG) {

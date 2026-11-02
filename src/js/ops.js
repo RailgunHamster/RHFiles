@@ -108,7 +108,7 @@ async function deleteSelected(isRight) {
     : t('confirm.deleteItems', {count: sel.length});
   // Network locations have no Recycle Bin, so the listing hint must not
   // promise a recoverable delete there.
-  const onNetwork = sel.some(file => /^\\\\|^ftp:\/\//i.test(String(file.path || '')) || (typeof isDevicePath==='function'&&isDevicePath(file.path)));
+  const onNetwork = sel.some(file => /^\\\\/.test(String(file.path || '')) || isFtpPath(file.path) || (typeof isDevicePath==='function'&&isDevicePath(file.path)));
   const detail = onNetwork ? t('confirm.networkDeleteHint') : t('confirm.recycleBinHint');
   let confirmed = true;
   if (G.settings.confirmRecycleDelete !== false) {
@@ -1724,6 +1724,7 @@ function showContextMenu(x, y, isRight) {
     { label: t('ctx.addTag'), icon:"tag", action: () => openTagDialog(isRight), disabled: !hasSelection },
     { label: "-", action: null },
     { label: sel.length > 1 ? t('ctx.copyPaths', {count: sel.length}) : t('ctx.copyPath'), icon:"path", shortcut:"Ctrl+Shift+C", action: () => copySelectedPaths(isRight), disabled: !hasSelection },
+    ...(!IS_MAC&&sel.some(file=>isDevicePath(file.path)||isFtpPath(file.path))?[{label:String(_lang).startsWith('zh')?'准备拖到其他应用…':'Prepare for dragging into other apps…',icon:'copy',action:()=>RHFilesAPI.invoke('files.prepareExternalDrag',{paths:sel.map(file=>file.path)}).catch(error=>showNotice(String(error)))}]:[]),
     { label: t('search.openLocation'), icon:"location", action: () => {
         if (singleSelection) {
             document.getElementById("filter-input").value = '';
@@ -2318,7 +2319,9 @@ function highlightSidebarDropTarget(element, destination) {
 RHFilesUI.listen(document,'dragover', event => {
   if (!isRhfilesFileDrag(event.dataTransfer)) return;
   event.preventDefault();
-  event.dataTransfer.dropEffect = event.ctrlKey ? 'copy' : 'move';
+  // Native external drags advertise COPY only. The internal drop dialog still
+  // chooses copy/move; advertising MOVE here would reject our own Shell object.
+  event.dataTransfer.dropEffect = G._nativeFileDrag || event.ctrlKey ? 'copy' : 'move';
   const destination = sidebarDropDestination(event.target);
   if (destination) highlightSidebarDropTarget(sidebarDropElement(event.target), destination);
   else clearSidebarDropHover();
