@@ -73,6 +73,34 @@ class GroupConnectionsTest {
     val count=f.server.requestCount;repeat(5){RhFilesConnection(c).stat("Files/file.txt","remote://qa/Files/file.txt")};assertEquals(count+5,f.server.requestCount)
     assertFalse(GroupConnections.diagnostics().toString().contains("fixture-private-secret"))
   }}
+  @Test fun fileTaskReaderUsesPinnedAuthenticatedVersionedRangesAndVerifiesFinalGeneration(){fixture{f->
+    val bytes=ByteArray(2*RhFilesRangeInput.SEGMENT+31){(it%251).toByte()};val version="read1-"+"a".repeat(64);val reads=java.util.concurrent.CopyOnWriteArrayList<String>();val stats=AtomicInteger();val interrupted=java.util.concurrent.atomic.AtomicBoolean()
+    f.onRequest={request->when(request.requestUrl!!.encodedPath){
+      "/api/v1/capabilities"->MockResponse().setBody(obj("features" to JSONArray(listOf("versioned-ranges-sha256"))).toString())
+      "/api/v1/stat"->{stats.incrementAndGet();MockResponse().setBody(obj("name" to "file.bin","isDir" to false,"size" to bytes.size,"modifiedMs" to 1,"revision" to "v2-a-b-c-d-e-0","readRevision" to version).toString())}
+      "/api/v1/content"->{
+        assertEquals("\"$version\"",request.getHeader("If-Match"));assertEquals(version,request.requestUrl!!.queryParameter("revision"));assertEquals("identity",request.getHeader("Accept-Encoding"));assertTrue(request.getHeader("Authorization")!!.startsWith("Basic "))
+        val range=request.getHeader("Range")!!;reads.add(range);val parts=range.removePrefix("bytes=").split('-').map(String::toInt);val data=bytes.copyOfRange(parts[0],parts[1]+1);val hash=MessageDigest.getInstance("SHA-256").digest(data).joinToString(""){"%02x".format(it)}
+        MockResponse().setResponseCode(206).setHeader("ETag","\"$version\"").setHeader("Content-Range","bytes ${parts[0]}-${parts[1]}/${bytes.size}").setHeader("X-RHFiles-Chunk-SHA256",hash).setBody(okio.Buffer().write(data)).apply{if(parts[0]==0&&interrupted.compareAndSet(false,true))setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY)}
+      }
+      else->null
+    }}
+    RhFilesConnection(f.config()).transferInput("Files/file.bin").use{assertArrayEquals(bytes,it.readBytes())}
+    // Closing an HTTP/2 socket can also interrupt its other in-flight stream.
+    // Both incomplete ranges may be repaired, but verified tail data is not.
+    assertTrue(reads.toString(),reads.size in 4..5);assertEquals(3,reads.distinct().size);assertTrue(reads.groupingBy{it}.eachCount().values.all{it<=3});assertEquals(1,reads.count{it.startsWith("bytes=${2L*RhFilesRangeInput.SEGMENT}-")});assertEquals(2,stats.get());assertTrue(GroupConnections.diagnostics().toString().contains("versioned_ranges_sha256"));assertTrue(GroupConnections.diagnostics().toString().contains("response_interrupted"))
+  }}
+  @Test fun fileTaskReaderFallsBackForOldPeersAndNeverSendsRangeForAnEmptyFile(){fixture{f->
+    val ranges=java.util.concurrent.CopyOnWriteArrayList<String?>()
+    f.onRequest={request->when(request.requestUrl!!.encodedPath){
+      "/api/v1/capabilities"->MockResponse().setBody(obj("features" to JSONArray(listOf("range"))).toString())
+      "/api/v1/stat"->MockResponse().setBody(obj("name" to "empty","isDir" to false,"size" to 0,"modifiedMs" to 1,"revision" to "legacy").toString())
+      "/api/v1/content"->{ranges.add(request.getHeader("Range"));MockResponse().setBody("")}
+      else->null
+    }}
+    RhFilesConnection(f.config()).transferInput("Files/empty").use{assertEquals(0,it.readBytes().size)}
+    assertEquals(1,ranges.size);assertNull(ranges[0])
+  }}
   @Test fun remotePermissionDenialIsNotTreatedAsOfflineOrRetried(){fixture{f->
     f.onRequest={if(it.path=="/api/v1/capabilities")MockResponse().setResponseCode(403)else null}
     try{GroupConnections.resolve(f.config(),force=true);fail()}catch(e:RhFilesConnection.HttpFailure){assertEquals(403,e.status)}

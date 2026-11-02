@@ -1154,6 +1154,8 @@ function loadSettings() {
     autoUpdateEnabled: true,
     proxyEnabled: false,
     proxyUrl: '',
+    deviceDownloadParallelism: 2,
+    deviceDownloadRateMiB: 0,
     updateSourceMode: 'cnb',
     updateSourceChoiceVersion: 2,
     cnbUpdateSource: DEFAULT_CNB_UPDATE_SOURCE,

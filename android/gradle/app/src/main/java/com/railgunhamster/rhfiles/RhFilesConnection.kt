@@ -88,6 +88,34 @@ internal class RhFilesConnection(private var config:JSONObject) {
     }while(result.size<page.getInt("total"));return result
   }
   fun stat(relative:String,path:String)=entry(objectReply(request("GET","/api/v1/stat","/$relative")),path)
+  fun transferInput(relative:String,options:JSONObject=JSONObject().put("parallelism",2).put("rateMiB",0)):InputStream {
+    val policy=DeviceTransferSettings.validate(options)
+    val lease=DeviceGroups.fileLease(config)
+    val info=objectReply(request("GET","/api/v1/stat","/$relative"))
+    val size=info.getLong("size")
+    val features=objectReply(request("GET","/api/v1/capabilities")).getJSONArray("features")
+    if(size==0L||!info.has("readRevision")||(0 until features.length()).none{features.optString(it)=="versioned-ranges-sha256"}){
+      val response=content(relative)
+      return object:FilterInputStream(response.body!!.byteStream()){
+        override fun read(buffer:ByteArray,offset:Int,length:Int):Int{lease();val n=super.read(buffer,offset,length);lease();return n}
+        override fun close(){try{super.close()}finally{response.close()}}
+      }
+    }
+    val revision=info.getString("readRevision")
+    val pinned=JSONObject(config.toString())
+    return RhFilesRangeInput(size,revision,policy.getInt("parallelism"),(policy.getDouble("rateMiB")*1048576).toLong(),createCall={start,end->
+      lease()
+      val resolved=GroupConnections.resolve(JSONObject(pinned.toString()))
+      val url=resolved.getString("url").toHttpUrl().newBuilder().encodedPath("/api/v1/content").addQueryParameter("path","/$relative").addQueryParameter("revision",revision).build()
+      client(resolved).newCall(Request.Builder().url(url).header("Authorization",DeviceGroups.authorization(resolved)).header("Accept-Encoding","identity").header("If-Match","\"$revision\"").header("Range","bytes=$start-$end").build())
+    },checkLease=lease,verifyFinal={
+      lease();val current=objectReply(request("GET","/api/v1/stat","/$relative"))
+      require(current.getString("readRevision")==revision&&current.getLong("size")==size){"源文件版本已变化，未接受混合内容"}
+    },diagnostic={code,attempts->
+      if(code=="response_interrupted"||code=="read_timeout")GroupConnections.failed(pinned)
+      GroupConnections.transferDiagnostic(pinned,code,attempts)
+    })
+  }
   fun content(relative:String,position:Long=0):Response {
     require(position>=0){"文件偏移无效"}
     // bytes=0- is unsatisfiable for an empty representation. Whole-file reads
@@ -102,16 +130,19 @@ internal class RhFilesConnection(private var config:JSONObject) {
    * non-idempotent whole-file PUT after a transport failure. */
   fun upload(relative:String,input:InputStream,length:Long,progress:(Int)->Unit) {
     require(length>=0){"来源长度未知，请先另存到本机后上传"}
+    val lease=DeviceGroups.fileLease(config);lease()
     val creation=request("POST","/api/v1/uploads",body=byteArrayOf().toRequestBody(),headers=mapOf("Tus-Resumable" to "1.0.0","Upload-Length" to length.toString(),"Upload-Metadata" to "path "+Base64.encodeToString("/$relative".toByteArray(Charsets.UTF_8),Base64.NO_WRAP)))
     val location=creation.use{it.header("Location")?:error("缺少上传任务地址")};require(location.matches(Regex("/api/v1/uploads/[A-Za-z0-9_-]{43}"))){"上传地址无效"}
     var offset=0L
     try {
-      val buffer=ByteArray(1024*1024)
+      val buffer=ByteArray(minOf(length,8L*1024*1024).toInt().coerceAtLeast(1))
       while(offset<length) {
+        lease()
         val count=minOf(buffer.size.toLong(),length-offset).toInt();var read=0
         while(read<count){val n=input.read(buffer,read,count-read);if(n<0)throw EOFException("来源提前结束，未发布到电脑");check(n>0){"来源读取没有进展"};read+=n}
         val base=offset;var confirmed=offset;var retries=0
         while(confirmed<base+count){
+          lease()
           try {
             val from=(confirmed-base).toInt();val response=request("PATCH",location,body=buffer.copyOfRange(from,count).toRequestBody("application/offset+octet-stream".toMediaType()),headers=mapOf("Tus-Resumable" to "1.0.0","Upload-Offset" to confirmed.toString()))
             confirmed=response.use{it.header("Upload-Offset")?.toLongOrNull()?:error("缺少上传进度")};require(confirmed==base+count){"上传进度异常"}
@@ -120,10 +151,10 @@ internal class RhFilesConnection(private var config:JSONObject) {
             val response=request("HEAD",location,headers=mapOf("Tus-Resumable" to "1.0.0"));confirmed=response.use{it.header("Upload-Offset")?.toLongOrNull()?:throw IOException("无法恢复上传偏移")};require(confirmed in base..base+count){"上传偏移超出本次数据范围"}
           }
         }
-        offset=confirmed;progress(count)
+        lease();offset=confirmed;progress(count)
       }
       require(input.read()==-1){"来源长度发生变化，请检查目标副本"}
-      try{request("DELETE",location,headers=mapOf("Tus-Resumable" to "1.0.0")).close()}catch(_:IOException){}
-    }catch(e:Exception){try{request("DELETE",location,headers=mapOf("Tus-Resumable" to "1.0.0")).close()}catch(_:Exception){};throw e}
+      try{lease();request("DELETE",location,headers=mapOf("Tus-Resumable" to "1.0.0")).close()}catch(_:Exception){}
+    }catch(e:Exception){try{lease();request("DELETE",location,headers=mapOf("Tus-Resumable" to "1.0.0")).close()}catch(_:Exception){};throw e}
   }
 }

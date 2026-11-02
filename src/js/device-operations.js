@@ -1,7 +1,7 @@
 // Archive/conversion providers keep their normal implementation. Only their
 // inputs/outputs are adapted to native, revocable, owned working directories.
 const deviceArchiveJobs=new Map();
-const deviceJob=(action,args)=>call('device_transfer',{action,args});
+const deviceJob=(action,args)=>call('device_transfer',{action,args:{downloadOptions:deviceDownloadOptions(),...args}});
 async function withDeviceArchive(path,operation){
   let cached=deviceArchiveJobs.get(path);
   if(cached){

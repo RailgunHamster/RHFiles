@@ -131,6 +131,11 @@ pub enum FileRequest {
         path: String,
         range: Option<String>,
     },
+    ContentChecked {
+        path: String,
+        range: Option<String>,
+        revision: String,
+    },
     Thumbnail {
         path: String,
     },
@@ -210,8 +215,13 @@ impl FileRequest {
                     Ok(())
                 }
             }
-            Self::Content { path, range } => {
+            Self::Content { path, range } | Self::ContentChecked { path, range, .. } => {
                 validate_path(path)?;
+                if let Self::ContentChecked { revision, .. } = self {
+                    if revision.is_empty() || revision.len() > 256 || !revision.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+                        return Err("[invalid_request] 文件版本无效".into());
+                    }
+                }
                 if let Some(range) = range {
                     let valid = range.len() <= 100
                         && range
@@ -250,6 +260,7 @@ impl FileRequest {
             Self::List { .. } => "list",
             Self::Stat { .. } => "stat",
             Self::Content { .. } => "content",
+            Self::ContentChecked { .. } => "content.range",
             Self::Thumbnail { .. } => "thumbnail",
             Self::Mkdir { .. } => "mkdir",
             Self::Rename { .. } => "rename",
@@ -269,6 +280,7 @@ impl FileRequest {
                 | Self::List { .. }
                 | Self::Stat { .. }
                 | Self::Content { .. }
+                | Self::ContentChecked { .. }
                 | Self::Thumbnail { .. }
                 | Self::UploadStatus { .. }
         )
@@ -279,7 +291,7 @@ impl FileRequest {
             Self::WindowsAccessCredential=>(Method::POST,"webdav/client-grant".into()),
             Self::List { .. } => (Method::GET, "list".into()),
             Self::Stat { .. } => (Method::GET, "stat".into()),
-            Self::Content { .. } => (Method::GET, "content".into()),
+            Self::Content { .. } | Self::ContentChecked { .. } => (Method::GET, "content".into()),
             Self::Thumbnail { .. } => (Method::GET, "thumbnail".into()),
             Self::Mkdir { .. } => (Method::POST, "mkdir".into()),
             Self::Rename { .. } => (Method::POST, "rename".into()),
@@ -313,7 +325,7 @@ impl FileRequest {
             .request(method, format!("{}/api/v1/{endpoint}", route.endpoint))
             .basic_auth(&route.username, Some(&route.password))
             .timeout(Duration::from_secs(
-                if matches!(self, Self::Content { .. }) {
+                if matches!(self, Self::Content { .. } | Self::ContentChecked { .. }) {
                     3600
                 } else {
                     30
@@ -341,12 +353,12 @@ impl FileRequest {
                     request = request.query(&[("revision", revision)]);
                 }
             }
-            Self::Stat { path } | Self::Content { path, .. } | Self::Thumbnail { path } => {
+            Self::Stat { path } | Self::Content { path, .. } | Self::ContentChecked { path, .. } | Self::Thumbnail { path } => {
                 validate_path(path)?;
                 request = request.query(&[("path", path)]);
                 if let Self::Content {
                     range: Some(range), ..
-                } = self
+                } | Self::ContentChecked { range: Some(range), .. } = self
                 {
                     if range.len() > 100
                         || !range.starts_with("bytes=")
@@ -357,6 +369,13 @@ impl FileRequest {
                         return Err("[invalid_request] Range 格式无效".into());
                     }
                     request = request.header("Range", range);
+                }
+                if let Self::ContentChecked { revision, .. } = self {
+                    request = request.query(&[("revision", revision)])
+                        .header("If-Match", format!("\"{revision}\""));
+                }
+                if matches!(self, Self::Content { .. } | Self::ContentChecked { .. }) {
+                    request = request.header("Accept-Encoding", "identity");
                 }
             }
             Self::Mkdir { path } | Self::Delete { path } => {
@@ -519,6 +538,7 @@ impl Connector {
             && matches!(
                 operation,
                 FileRequest::Content { .. }
+                    | FileRequest::ContentChecked { .. }
                     | FileRequest::Thumbnail { .. }
                     | FileRequest::Stat { .. }
             )

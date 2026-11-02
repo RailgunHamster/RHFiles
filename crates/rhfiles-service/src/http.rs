@@ -322,6 +322,8 @@ fn async_stream_body(
 #[serde(deny_unknown_fields)]
 struct PathQuery {
     path: String,
+    #[serde(default)]
+    revision: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -584,7 +586,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         return Ok(response.map(Body::new));
     }
     match (method.as_str(),path.as_str()) {
-        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","webdav-client-grant"],"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
+        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","webdav-client-grant"],"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
             let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|header(&r,"Cache-Control")!=Some("no-cache")&&c.0.elapsed()<Duration::from_secs(2)).cloned();
@@ -598,9 +600,24 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             if q.revision.is_some_and(|v|v!=revision){return Err(Error::new("conflict","目录已变化，请从第一页重新读取"));}
             let total=entries.len();let entries=entries.iter().skip(q.offset).take(q.limit).cloned().collect();a.check(false,false)?;Ok(Json(Listing{path:q.path,offset:q.offset,total,revision,entries}).into_response())
         },
-        ("GET","/api/v1/stat")=>{let q:PathQuery=query(&r)?;Ok(Json(s.storage.stat(&q.path)?).into_response())},
+        ("GET","/api/v1/stat")=>{
+            let q:PathQuery=query(&r)?;let storage=s.storage.clone();let reader=a.clone();
+            let value=tokio::task::spawn_blocking(move||->Result<serde_json::Value>{
+                let entry=storage.stat(&q.path)?;
+                let read=if entry.is_dir{None}else{
+                    let file=storage.node(&q.path)?.open_read()?;
+                    if crate::connection::file_revision(&file).map_err(|_|Error::new("io_error","无法读取文件身份"))?!=entry.revision{return Err(Error::new("conflict","读取文件信息时源文件发生变化"));}
+                    match crate::content::authorized_revision(&reader,&file){Ok(revision)=>Some(revision),Err(error)if error.code=="unsupported"=>None,Err(error)=>return Err(error)}
+                };
+                let mut value=serde_json::to_value(entry).map_err(|_|Error::new("internal","文件信息无效"))?;
+                if let Some(read)=read{value["readRevision"]=read.into();}Ok(value)
+            }).await.map_err(|_|Error::new("internal","无法读取文件信息"))??;
+            a.check(false,false)?;Ok(Json(value).into_response())
+        },
         ("GET"|"HEAD","/api/v1/content")=>{
-            let q:PathQuery=query(&r)?;s.storage.node(&q.path)?.open_read()?;
+            let q:PathQuery=query(&r)?;
+            if let Some(revision)=q.revision{return crate::content::response(s.storage.clone(),a,r,q.path,revision).await;}
+            s.storage.node(&q.path)?.open_read()?;
             *r.uri_mut()=format!("/dav{}",encode_path(&q.path)).parse().map_err(|_|bad("路径无效"))?;
             let principal=a.id.clone();Ok(s.dav.handle_guarded(r,principal,a).await.map(Body::new))
         },

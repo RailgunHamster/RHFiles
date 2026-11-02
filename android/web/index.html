@@ -49,7 +49,10 @@
         <button id="btn-theme" class="setting-row">主题：明亮</button>
         <button id="btn-hidden" class="setting-row">显示隐藏文件：关</button>
         <p class="muted">列表和网格均显示图片、视频缩略图。平板与展开的大屏会显示常驻导航；分屏、旋转或折叠时按可用空间调整。</p></section>
-        <section data-settings-panel="updates" role="tabpanel" hidden><section id="app-updates" hidden></section></section>
+        <section data-settings-panel="updates" role="tabpanel" hidden><section id="app-updates" hidden></section>
+          <section id="device-transfer-settings" class="settings-card" hidden><h2>设备文件传输</h2><label class="setting-row" for="device-download-streams">单文件并行下载数<select id="device-download-streams"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label>
+          <label class="setting-row" for="device-download-rate">下载限速（MiB/s）<input id="device-download-rate" type="number" min="0" max="1000" step="0.5" value="0"></label><p class="muted">0 为不限速。默认 2 路，同时最多 2 个分段下载任务；分段绑定源文件版本并校验 SHA-256。旧版设备使用连续流式下载。对新任务生效。</p></section>
+        </section>
         <section data-settings-panel="sync" role="tabpanel" hidden><section id="config-sync"></section></section>
         <section data-settings-panel="backup" role="tabpanel" hidden><h2>本地配置备份</h2><p class="muted">备份浏览显示、收藏、分屏、设备名称、更新源与代理、网络位置和账号密码、电子书设置/书签/阅读位置。备份使用密码加密，可在另一台 Android 设备导入。</p><div class="button-row"><button id="btn-config-export">导出配置</button><button id="btn-config-import">导入配置</button></div><p class="muted">系统权限与授权目录需要在新设备重新授权；不备份文件内容、索引缓存、任务或待粘贴列表。请妥善保管备份密码，遗失后无法恢复。</p></section>
         <section data-settings-panel="index" role="tabpanel" hidden><h2>搜索索引</h2><p class="muted">分类与全局搜索使用本机文件名索引，不上传文件。首次使用请建立索引。</p>

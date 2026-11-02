@@ -13,6 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 mod file_client;
+mod download;
+pub use download::{Download, DownloadBlock, DownloadOptions, SEGMENT_BYTES};
 mod join;
 pub use file_client::{DevicePath, FileLease, FileRequest, FileResponse, file_revision};
 pub use join::{INVITATION_PREFIX, join_invitation};

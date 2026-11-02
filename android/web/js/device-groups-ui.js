@@ -36,7 +36,14 @@ const deviceGroupView=(()=>{
     methods.warm_retry=['原地址受限重试','Bounded retry of the same address'];methods.history=['本机地址记忆','Local address history'];
     codes.session_expired=['会话失效，重新验证一次，不重放文件操作','Session expired; authenticate once without replaying file operations'];
     codes.remote_self_address_ignored=['对方地址与本机网卡地址相同，已跳过；显式转发请填写手动地址','Peer hint points to this device; skipped. Use a manual address for an intentional tunnel.'];
-    const label=(map,key)=>map[key]?text(...map[key]):String(key||'').startsWith('http_')?text('服务器已响应：HTTP ','Server responded: HTTP ')+String(key).slice(5):({operation_unconfirmed:text('操作结果未确认，未自动重放，请核对目标','Operation outcome unknown; not replayed; check destination'),server_response_error:text('服务器返回错误，不是设备离线','Server returned an error, not offline'),invalid_endpoint:text('地址无效，仅允许不含凭据的 HTTPS 私网地址','Invalid endpoint; HTTPS private address without credentials required')}[key]||String(key||''));
+    Object.assign(codes,{completed:['文件读取完成','File read complete'],repairing_segment:['正在补传缺失分段','Repairing missing segment'],request_failed:['读取已停止','Read stopped'],checksum_mismatch:['分段 SHA-256 校验失败','Segment SHA-256 mismatch'],read_timeout:['分段读取超时','Segment read timeout']});
+    methods.versioned_ranges_sha256=['同版本分段下载与 SHA-256 校验','Version-bound ranges and SHA-256 verification'];
+    methods.range_repair=['补传缺失分段','Repair missing segment'];
+    const label=(map,key)=>{
+      const transfer=map===codes&&/^streams_([1-4])_repairs_([0-8])$/.exec(String(key||''));
+      if(transfer)return text(transfer[1]+' 路下载，补传 '+transfer[2]+' 次',transfer[1]+' streams; '+transfer[2]+' segment repairs');
+      return map[key]?text(...map[key]):String(key||'').startsWith('http_')?text('服务器已响应：HTTP ','Server responded: HTTP ')+String(key).slice(5):({operation_unconfirmed:text('操作结果未确认，未自动重放，请核对目标','Operation outcome unknown; not replayed; check destination'),server_response_error:text('服务器返回错误，不是设备离线','Server returned an error, not offline'),invalid_endpoint:text('地址无效，仅允许不含凭据的 HTTPS 私网地址','Invalid endpoint; HTTPS private address without credentials required')}[key]||String(key||''));
+    };
     async function showDiagnostics(){
       // Reading diagnostics never starts a scan or connection.
       const reports=await call('diagnostics',{});diagnosticBody.replaceChildren();
@@ -46,7 +53,7 @@ const deviceGroupView=(()=>{
         if(report.endpoint)card.append(el('code','dg-endpoint',report.endpoint));
         if(report.routeType)card.append(el('p','',label(codes,report.routeType)));
         if(options.copyStableAddress&&report.group&&report.peer)card.append(button(text('复制设备根目录稳定地址','Copy stable device-root address'),()=>options.copyStableAddress(report.group,report.peer),'diagnostics.stable.'+report.group+'.'+report.peer));
-        if(Number.isInteger(report.attempts))card.append(el('p','',text('尝试 ','Attempts ')+report.attempts+'/6 · '+text('剩余预算 ','Remaining budget ')+Math.max(0,report.remainingMs||0)+' ms'));
+        if(Number.isInteger(report.attempts))card.append(el('p','',String(report.trigger||'').startsWith('file.download')?text('分段补传次数 ','Segment repairs ')+report.attempts+'/8':text('尝试 ','Attempts ')+report.attempts+'/6 · '+text('剩余预算 ','Remaining budget ')+Math.max(0,report.remainingMs||0)+' ms'));
         if(report.retryAfterMs>0)card.append(el('p','',text('自动请求冷却剩余（记录时）：','Automatic-request cooldown remaining at time of report: ')+Math.ceil(report.retryAfterMs/1000)+text(' 秒；可主动点击“连接设备”受限重试。',' seconds; Connect device allows a rate-limited manual retry.')));
         const list=el('ol','dg-steps');for(const step of report.steps||[]){const row=el('li','dg-step');row.dataset.outcome=step.outcome;row.append(el('strong','',label(methods,step.method)),el('span','',label(codes,step.code)+' · '+step.durationMs+' ms'));if(step.endpoint)row.append(el('code','dg-endpoint',step.endpoint));list.append(row);}card.append(list);diagnosticBody.append(card);
       }

@@ -12,6 +12,7 @@ const api = (() => {
   let nativeBack = false;
   let appUpdates = false;
   let nativePlayback = false,automation=false;
+  let deviceTransfers=false;
   let nativeThumbnails=false,adaptiveLayout=false,restoreNavigation=false,nativeEbooks=false,dualPane=false,nearby=false,configBackup=false,configSync=false,storageAnalysis=false,initPromise;
   const host=()=>window.parent!==window?window.parent.RHFilesWorkbench:null;
   function nativeCall(command, args = {}) {
@@ -139,10 +140,11 @@ const api = (() => {
     nativeAvailable: () => !!host()||!!window.RHFilesNative,
     automationAvailable:()=>automation,
     featuresAvailable: () => nativeVersion >= 2,
+    transferSettingsAvailable:()=>deviceTransfers,
     nativeBackAvailable: () => nativeBack,
     updatesAvailable: () => appUpdates,
     playbackAvailable: () => nativePlayback,
-    initNative() { return initPromise||=(async()=>{if(host()||window.RHFilesNative){try{const capabilities=host()?host().capabilities(window):await nativeCall('capabilities');automation=capabilities.automation===true;nativeVersion=capabilities.version||0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true;nativePlayback=capabilities.nativePlayback===true;nativeThumbnails=capabilities.nativeThumbnails===true;adaptiveLayout=capabilities.adaptiveLayout===true;restoreNavigation=capabilities.restoreNavigation===true;nativeEbooks=capabilities.nativeEbooks===true;dualPane=capabilities.dualPane===true;nearby=capabilities.nearby===true;configBackup=capabilities.configBackup===true;configSync=capabilities.configSync===true;storageAnalysis=capabilities.storageAnalysis===true;}catch{}}})();},
+    initNative() { return initPromise||=(async()=>{if(host()||window.RHFilesNative){try{const capabilities=host()?host().capabilities(window):await nativeCall('capabilities');deviceTransfers=capabilities.deviceTransfers===true;automation=capabilities.automation===true;nativeVersion=capabilities.version||0;nativeBack=capabilities.nativeBack===true;appUpdates=capabilities.appUpdates===true;nativePlayback=capabilities.nativePlayback===true;nativeThumbnails=capabilities.nativeThumbnails===true;adaptiveLayout=capabilities.adaptiveLayout===true;restoreNavigation=capabilities.restoreNavigation===true;nativeEbooks=capabilities.nativeEbooks===true;dualPane=capabilities.dualPane===true;nearby=capabilities.nearby===true;configBackup=capabilities.configBackup===true;configSync=capabilities.configSync===true;storageAnalysis=capabilities.storageAnalysis===true;}catch{}}})();},
     analysisAvailable:()=>storageAnalysis,
     syncAvailable:()=>configSync,
     backupAvailable:()=>configBackup,

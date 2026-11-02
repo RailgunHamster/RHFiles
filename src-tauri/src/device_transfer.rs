@@ -2,7 +2,7 @@
 //! Renderer code never receives server credentials or supplies an HTTP endpoint.
 use crate::types::CancelFlag;
 use rhfiles_service::connection::{
-    file_revision, DevicePath, FileLease, FileRequest, FileResponse,
+    file_revision, DevicePath, Download, DownloadBlock, DownloadOptions, FileLease, FileRequest, FileResponse,
 };
 use serde_json::{json, Value};
 use std::{
@@ -19,6 +19,9 @@ mod jobs;
 mod work;
 
 const CHUNK: usize = 1024 * 1024;
+const UPLOAD_CHUNK: usize = 8 * CHUNK;
+static FILE_SLOTS: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)));
 fn field<'a>(v: &'a Value, k: &str) -> Result<&'a str, String> {
     v[k].as_str()
         .filter(|s| !s.is_empty())
@@ -130,6 +133,7 @@ struct Snapshot {
     directory: bool,
     size: u64,
     revision: String,
+    read_revision: Option<String>,
 }
 fn same_identity(a: &str, b: &str) -> bool {
     let a = a.split('-').collect::<Vec<_>>();
@@ -191,6 +195,7 @@ async fn snapshot(path: &Location) -> Result<Snapshot, String> {
                 directory: meta.is_dir(),
                 size: meta.len(),
                 revision: file_revision(&file)?,
+                read_revision: None,
             })
         }
         Location::Remote(p) => {
@@ -207,6 +212,7 @@ async fn snapshot(path: &Location) -> Result<Snapshot, String> {
                 directory: raw["isDir"].as_bool().ok_or("Invalid remote type")?,
                 size: raw["size"].as_u64().ok_or("Invalid remote size")?,
                 revision: field(&raw, "revision")?.into(),
+                read_revision: raw["readRevision"].as_str().map(str::to_owned),
             })
         }
     }
@@ -299,6 +305,9 @@ struct Progress<'a> {
     history: bool,
     exclusive_target: bool,
     history_sources: Option<std::collections::HashMap<String, String>>,
+    download_options: DownloadOptions,
+    shared_bytes: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    silent: bool,
 }
 impl Progress<'_> {
     fn check(&self) -> Result<(), String> {
@@ -312,6 +321,7 @@ impl Progress<'_> {
         }
     }
     fn emit(&mut self, status: &str, current: &Location, force: bool) {
+        if self.silent { return; }
         if !force && self.last.elapsed() < Duration::from_millis(100) {
             return;
         }
@@ -326,6 +336,16 @@ impl Progress<'_> {
         };
         let _=self.app.emit("op-progress",json!({"operationId":self.id,"operation":self.operation,"src":self.src,"dest":self.dest,"currentPath":current.text(),"currentName":current.leaf().unwrap_or_default(),"bytesTransferred":self.bytes,"totalBytes":self.total,"entriesCompleted":self.done,"totalEntries":self.items,"percentage":percentage.round() as u32,"speed":if elapsed>0.0{(self.bytes as f64/elapsed) as u64}else{0},"elapsedSeconds":elapsed,"status":status}));
     }
+    fn advance(&mut self, bytes: u64) {
+        self.bytes += bytes;
+        if let Some(shared) = &self.shared_bytes { shared.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed); }
+    }
+    fn fork(&self, bytes: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
+        Self { app:self.app, cancel:self.cancel, leases:self.leases.clone(), id:self.id.clone(), operation:self.operation.clone(),
+            src:self.src.clone(), dest:self.dest.clone(), total:self.total, bytes:0, items:self.items, done:0,
+            started:self.started, last:self.last, history:self.history, exclusive_target:self.exclusive_target,
+            history_sources:None, download_options:self.download_options, shared_bytes:Some(bytes), silent:true }
+    }
 }
 enum Reader {
     Local(tokio::fs::File),
@@ -334,9 +354,10 @@ enum Reader {
         pending: Vec<u8>,
         offset: usize,
     },
+    Ranges { reader: Download, pending: Option<DownloadBlock>, offset: usize },
 }
 impl Reader {
-    async fn open(path: &Location, stamp: &Snapshot) -> Result<Self, String> {
+    async fn open(path: &Location, stamp: &Snapshot, options: DownloadOptions) -> Result<Self, String> {
         match path {
             Location::Local(p) => {
                 let file = local_handle(p)?;
@@ -345,7 +366,16 @@ impl Reader {
                 }
                 Ok(Self::Local(tokio::fs::File::from_std(file)))
             }
-            Location::Remote(p) => Ok(Self::Remote {
+            Location::Remote(p) => {
+                let connector = crate::device_groups::connector()?;
+                let cap = request(p, FileRequest::Capabilities).await?.json(65536).await?;
+                if stamp.size > 0 && stamp.read_revision.is_some() && cap["features"].as_array().is_some_and(|v| v.iter().any(|f| f == "versioned-ranges-sha256")) {
+                    let revision=stamp.read_revision.clone().expect("checked read revision");
+                    return Ok(Self::Ranges { reader: Download::open(connector, p.clone(), stamp.size, revision, options).await?, pending: None, offset: 0 });
+                }
+                // Older peers retain the continuous stream path; never pretend
+                // they support version-bound parallelism or selective repair.
+                Ok(Self::Remote {
                 response: request(
                     p,
                     FileRequest::Content {
@@ -356,14 +386,36 @@ impl Reader {
                 .await?,
                 pending: Vec::new(),
                 offset: 0,
-            }),
+                })
+            },
         }
     }
     async fn next(&mut self, p: &Progress<'_>) -> Result<Vec<u8>, String> {
+        self.next_sized(p, CHUNK).await
+    }
+    async fn next_sized(&mut self, p: &Progress<'_>, limit: usize) -> Result<Vec<u8>, String> {
         p.check()?;
         match self {
+            Self::Ranges { reader, pending, offset } => {
+                if pending.as_ref().is_none_or(|v| *offset >= v.bytes.len()) {
+                    *pending = None; // Release buffer permits before awaiting more.
+                    loop {
+                        p.check()?;
+                        tokio::select! {
+                            block = reader.next() => { *pending = block?; break; }
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        }
+                    }
+                    *offset = 0;
+                }
+                let Some(block) = pending else { return Ok(Vec::new()); };
+                let end = (*offset + limit).min(block.bytes.len());
+                let bytes = block.bytes.slice(*offset..end).to_vec();
+                *offset = end;
+                Ok(bytes)
+            }
             Self::Local(file) => {
-                let mut data = vec![0; CHUNK];
+                let mut data = vec![0; limit];
                 let n = file.read(&mut data).await.map_err(|e| e.to_string())?;
                 data.truncate(n);
                 Ok(data)
@@ -389,16 +441,40 @@ impl Reader {
                         return Err("[too_large] 远端单块超过安全上限".into());
                     }
                 }
-                let end = (*offset + CHUNK).min(pending.len());
+                let end = (*offset + limit).min(pending.len());
                 let data = pending[*offset..end].to_vec();
                 *offset = end;
                 Ok(data)
             }
         }
     }
+    async fn upload_chunk(&mut self, p: &Progress<'_>, remaining: u64) -> Result<Vec<u8>, String> {
+        // Network frames are not upload records. Coalesce tiny TLS frames into
+        // one durable 8 MiB tus acknowledgement, without changing its contract.
+        let capacity=remaining.min(UPLOAD_CHUNK as u64) as usize;
+        let mut buffer = Vec::with_capacity(capacity);
+        while buffer.len() < capacity {
+            let data = self.next_sized(p, (capacity - buffer.len()).min(CHUNK)).await?;
+            if data.is_empty() { break; }
+            buffer.extend_from_slice(&data);
+        }
+        Ok(buffer)
+    }
+    async fn open_checked(path: &Location, stamp: &Snapshot, p: &Progress<'_>) -> Result<Self, String> {
+        let opening = Self::open(path, stamp, p.download_options);
+        tokio::pin!(opening);
+        loop {
+            p.check()?;
+            tokio::select! {
+                result = &mut opening => return result,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
+        }
+    }
 }
 async fn verify_source(source: &Location, stamp: &Snapshot) -> Result<(), String> {
-    if snapshot(source).await?.revision != stamp.revision {
+    let current = snapshot(source).await?;
+    if current.revision != stamp.revision || stamp.read_revision.is_some() && current.read_revision != stamp.read_revision {
         Err("[conflict] 传输过程中源文件已变化；未删除源文件".into())
     } else {
         Ok(())
@@ -411,7 +487,16 @@ async fn copy_file(
     existing: Option<&Snapshot>,
     progress: &mut Progress<'_>,
 ) -> Result<Option<Snapshot>, String> {
-    let mut input = Reader::open(source, stamp).await?;
+    let waiting = FILE_SLOTS.clone().acquire_owned();
+    tokio::pin!(waiting);
+    let _slot = loop {
+        progress.check()?;
+        tokio::select! {
+            slot = &mut waiting => break slot.map_err(|_| "[busy] 文件传输队列已关闭")?,
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    };
+    let mut input = Reader::open_checked(source, stamp, progress).await?;
     let committed;
     match target {
         Location::Local(path) => {
@@ -434,7 +519,7 @@ async fn copy_file(
                     return Err("[conflict] 源文件长度已变化".into());
                 }
                 output.write_all(&data).await.map_err(|e| e.to_string())?;
-                progress.bytes += data.len() as u64;
+                progress.advance(data.len() as u64);
                 progress.emit("running", source, false);
             }
             if count != stamp.size {
@@ -456,6 +541,7 @@ async fn copy_file(
                 directory: false,
                 size: count,
                 revision: file_revision(&output)?,
+                read_revision: None,
             });
         }
         Location::Remote(final_path) => {
@@ -506,8 +592,9 @@ async fn copy_file(
             let mut uploaded_revision = None;
             let result = async {
                 let mut count = 0u64;
+                let mut prepared = Some(input.upload_chunk(progress, stamp.size).await?);
                 loop {
-                    let data = input.next(progress).await?;
+                    let data = prepared.take().unwrap_or_default();
                     if data.is_empty() {
                         break;
                     }
@@ -522,15 +609,21 @@ async fn copy_file(
                         verify_source(source, stamp).await?;
                     }
                     progress.check()?;
-                    let response = request(
+                    let sending = request(
                         &actual,
                         FileRequest::UploadAppend {
                             id: id.clone(),
                             offset: count,
                             bytes: data,
                         },
-                    )
-                    .await?;
+                    );
+                    // Exactly one lookahead buffer. Reading overlaps sending,
+                    // but tus writes remain sequential and are never replayed.
+                    let (response, lookahead) = tokio::join!(sending, async {
+                        if next < stamp.size { input.upload_chunk(progress, stamp.size-next).await.map(Some) } else { Ok(None) }
+                    });
+                    let response = response?;
+                    prepared = lookahead?;
                     if next == stamp.size {
                         revision = response
                             .response
@@ -549,7 +642,7 @@ async fn copy_file(
                     {
                         return Err("[invalid_response] 上传偏移不一致，未重放".into());
                     }
-                    progress.bytes += next - count;
+                    progress.advance(next - count);
                     count = next;
                     progress.emit("running", source, false);
                 }
@@ -564,6 +657,7 @@ async fn copy_file(
                             directory: false,
                             size: stamp.size,
                             revision: revision.clone(),
+                            read_revision: None,
                         }
                     } else {
                         snapshot(&Location::Remote(actual.clone())).await?
@@ -611,6 +705,7 @@ async fn copy_file(
                 directory: false,
                 size: stamp.size,
                 revision,
+                read_revision: None,
             });
         }
     }
@@ -779,8 +874,35 @@ async fn transfer(
     }
     progress.emit("preparing", &source, true);
     let mut output_stamps = Vec::new();
-    for (index, (src, dest, stamp)) in plan.iter().enumerate() {
+    let mut index = 0;
+    while index < plan.len() {
+        let (src, dest, stamp) = &plan[index];
         progress.check()?;
+        if index + 1 < plan.len() && !stamp.directory && stamp.size <= 4 * CHUNK as u64 && targets[index].is_none()
+            && !plan[index+1].2.directory && plan[index+1].2.size <= 4 * CHUNK as u64 && targets[index+1].is_none() {
+            // Only independent new small files run together. All directory
+            // creation, conflict decisions, cleanup and history stay ordered.
+            let shared = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let base = progress.bytes;
+            let mut first = progress.fork(shared.clone());
+            let mut second = progress.fork(shared.clone());
+            let (src2, dest2, stamp2) = &plan[index+1];
+            let copies = async { tokio::join!(copy_file(src,dest,stamp,None,&mut first),copy_file(src2,dest2,stamp2,None,&mut second)) };
+            tokio::pin!(copies);
+            let results = loop {
+                tokio::select! {
+                    result = &mut copies => break result,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        progress.bytes = base + shared.load(std::sync::atomic::Ordering::Relaxed);
+                        progress.emit("running", src, false);
+                    }
+                }
+            };
+            progress.bytes = base + shared.load(std::sync::atomic::Ordering::Relaxed);
+            output_stamps.push(results.0?); output_stamps.push(results.1?);
+            progress.done += 2; progress.emit("running", src2, false); index += 2;
+            continue;
+        }
         if stamp.directory {
             if targets[index].is_none() {
                 match dest {
@@ -810,6 +932,7 @@ async fn transfer(
         }
         progress.done += 1;
         progress.emit("running", src, false);
+        index += 1;
     }
     if moving {
         // Check all source files before removing the first one. On partial
@@ -1197,7 +1320,7 @@ async fn mutations(
             }
             let mut md5 = md5::Md5::new();
             let mut sha = sha2::Sha256::new();
-            let mut reader = Reader::open(&path, &stamp).await?;
+            let mut reader = Reader::open_checked(&path, &stamp, progress).await?;
             progress.total = stamp.size;
             loop {
                 let data = reader.next(progress).await?;
@@ -1457,6 +1580,11 @@ pub async fn device_transfer(
         history: false,
         exclusive_target: false,
         history_sources: None,
+        download_options: if let Some(options) = args.get("downloadOptions") {
+            serde_json::from_value::<DownloadOptions>(options.clone()).map_err(|_| "[invalid_request] 下载配置格式无效")?.validate()?
+        } else { DownloadOptions::default() },
+        shared_bytes: None,
+        silent: false,
     };
     match action.as_str() {
         "copy" | "move" | "copy_exact" | "move_exact" => {

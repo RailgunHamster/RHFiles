@@ -196,6 +196,8 @@ class MainActivity : TauriActivity() {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
+    "transfer.settings" -> DeviceTransferSettings.read(this)
+    "transfer.configure" -> synchronized(settingsLock){DeviceTransferSettings.save(this,args)}
     "fileServer.state" -> DeviceFileServer.state()
     "fileServer.start" -> DeviceFileServer.start(this,args)
     "fileServer.stop" -> DeviceFileServer.stop(this)
@@ -216,7 +218,7 @@ class MainActivity : TauriActivity() {
       }else stopService(intent)
       true
     }}
-    "capabilities" -> JSONObject().put("version",3).put("automation",true).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true).put("storageAnalysis",true)
+    "capabilities" -> JSONObject().put("version",3).put("automation",true).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true).put("storageAnalysis",true).put("deviceTransfers",true)
     "analysis.start" -> synchronized(settingsLock){require(!sharedConfig.isApplying()){"正在应用同步配置，请稍后再分析"};UsageAnalysis.get(this).start(args.getString("root"),args.optString("owner","first"))}
     "analysis.latest" -> UsageAnalysis.get(this).latest(args.optString("owner","first"),args.getString("root"))
     "analysis.status" -> UsageAnalysis.get(this).status(args.getString("id"))

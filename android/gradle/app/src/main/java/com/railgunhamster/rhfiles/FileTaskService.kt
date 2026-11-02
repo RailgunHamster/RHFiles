@@ -89,6 +89,7 @@ object FileTasks {
   }
   private val jobs=ConcurrentHashMap<String,Job>()
   private val worker=Executors.newSingleThreadExecutor()
+  private val smallFiles=Executors.newFixedThreadPool(2){r->Thread(r,"RHFiles-small-file").apply{isDaemon=true}}
   @Volatile var service: FileTaskService?=null
   private var initialized=false
   private fun directory(context: Context)=File(context.filesDir,"tasks-v1").apply { mkdirs() }
@@ -158,9 +159,11 @@ object FileTasks {
   private fun checkpoint(j:Job,amount:Int=0) {
     while(j.paused && !j.canceled) Thread.sleep(120)
     check(!j.canceled) { "用户取消；已完成的文件保留，未完成来源未删除" }
-    j.bytes+=amount
-    val now=System.currentTimeMillis()
-    if(now-j.notified>750) {j.notified=now;service?.update("${j.current} · ${j.bytes/1024} KB · ${j.done}/${j.files} 项")}
+    synchronized(j){
+      j.bytes+=amount
+      val now=System.currentTimeMillis()
+      if(now-j.notified>750) {j.notified=now;service?.update("${j.current} · ${j.bytes/1024} KB · ${j.done}/${j.files} 项")}
+    }
   }
   internal fun execute(context:Context,j:Job) {
     val storage=NativeStorage(context)
@@ -210,20 +213,32 @@ object FileTasks {
       try {remove(path,0)} catch(_:Exception) {j.message="留下未完成临时文件：$path；可检查后删除"}
     }
     data class Captured(val entry:NativeEntry,val digest:String?)
-    val captured=mutableListOf<Captured>()
-    fun copyTree(source:String,parent:String,name:String,depth:Int=0):String {
+    val captured=java.util.Collections.synchronizedList(mutableListOf<Captured>())
+    fun copyTree(source:String,parent:String,name:String,depth:Int=0,parallel:Boolean=true):String {
       checkpoint(j);require(depth<128);val entry=storage.stat(source)
       val direct=!entry.isDir&&storage.isRemote(parent)&&storage.remote.isRhFiles(parent)
       val output=if(direct)storage.remote.destination(parent,name)else storage.create(parent,name,entry.isDir)
       try {
-        if(entry.isDir) {captured.add(Captured(entry,null));val children=storage.list(source);require(children.size<50000){"单目录超过安全上限"};children.forEach {copyTree(it.path,output,it.name,depth+1)}}
+        if(entry.isDir) {
+          captured.add(Captured(entry,null));val children=storage.list(source);require(children.size<50000){"单目录超过安全上限"}
+          for(pair in children.chunked(2)){
+            if(parallel&&pair.size==2&&pair.all{!it.isDir&&it.size<=4*1024*1024}){
+              // This is our private, newly created tree, not an existing merge
+              // destination. Join BOTH workers before cleanup or source removal.
+              val futures=pair.map{child->smallFiles.submit<String>{copyTree(child.path,output,child.name,depth+1,false)}}
+              var failure:Exception?=null
+              for(future in futures)try{future.get()}catch(e:Exception){if(failure==null)failure=(e as? java.util.concurrent.ExecutionException)?.cause as? Exception?:e}
+              if(failure!=null)throw failure
+            }else for(child in pair)copyTree(child.path,output,child.name,depth+1,parallel)
+          }
+        }
         else {
           val digest=java.security.MessageDigest.getInstance("SHA-256")
           storage.input(source).use {input->java.security.DigestInputStream(input,digest).use{if(direct)storage.remote.uploadNew(output,it,entry.size){amount->checkpoint(j,amount)}else storage.write(output,it){amount->checkpoint(j,amount)}}}
           val after=storage.stat(source);require(after.size==entry.size && after.modified==entry.modified){"复制期间来源发生变化，保留来源并停止"}
           captured.add(Captured(entry,digest.digest().joinToString(""){"%02x".format(it)}))
         }
-        j.done++;return output
+        synchronized(j){j.done++};return output
       } catch(e:Exception) {if(!direct)cleanup(output);throw e}
     }
     val conflict=j.args.optString("conflict","merge")

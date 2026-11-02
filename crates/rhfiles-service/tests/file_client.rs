@@ -98,7 +98,7 @@ struct Fixture {
     files: PathBuf,
     service: Service,
     client: Arc<Groups>,
-    connector: Connector,
+    connector: Arc<Connector>,
     group: String,
     peer: String,
 }
@@ -144,7 +144,7 @@ fn fixture() -> Fixture {
     .unwrap();
     client.merge(&group, &host.packet(&group).unwrap()).unwrap();
     let peer = host.device_id();
-    let connector = Connector::new(client.clone());
+    let connector = Arc::new(Connector::new(client.clone()));
     Fixture {
         _root: root,
         files,
@@ -154,6 +154,118 @@ fn fixture() -> Fixture {
         group,
         peer,
     }
+}
+
+#[tokio::test]
+async fn version_bound_ranges_supply_exact_bytes_and_digest_and_reject_stale_versions() {
+    use sha2::{Digest, Sha256};
+    let f = fixture();
+    std::fs::write(f.files.join("range.bin"), b"0123456789").unwrap();
+    let info = json(&f, FileRequest::Stat { path: "/Files/range.bin".into() }).await;
+    let revision = info["readRevision"].as_str().unwrap();
+    let fetch = |range: &str, rev: &str| FileRequest::ContentChecked { path: "/Files/range.bin".into(), range: Some(range.into()), revision: rev.into() };
+    let mut response = f.connector.file_request(&f.group, &f.peer, fetch("bytes=2-6", revision)).await.unwrap();
+    assert_eq!(response.response.status().as_u16(), 206);
+    assert_eq!(response.response.headers()["Content-Range"], "bytes 2-6/10");
+    assert_eq!(response.response.headers()["ETag"], format!("\"{revision}\""));
+    assert_eq!(response.response.headers()["X-RHFiles-Chunk-SHA256"], format!("{:x}", Sha256::digest(b"23456")));
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.unwrap() { bytes.extend_from_slice(&chunk); }
+    assert_eq!(bytes, b"23456");
+    assert!(f.connector.file_request(&f.group, &f.peer, fetch("bytes=0-10", revision)).await.err().unwrap().starts_with("[range_not_satisfiable]"));
+    let original = std::fs::metadata(f.files.join("range.bin")).unwrap().modified().unwrap();
+    std::fs::rename(f.files.join("range.bin"), f.files.join("original.bin")).unwrap();
+    std::fs::write(f.files.join("range.bin"), b"0123456789").unwrap();
+    std::fs::File::options().write(true).open(f.files.join("range.bin")).unwrap().set_modified(original).unwrap();
+    assert!(f.connector.file_request(&f.group, &f.peer, fetch("bytes=2-6", revision)).await.err().unwrap().starts_with("[conflict]"));
+}
+
+#[tokio::test]
+async fn an_in_place_edit_with_restored_size_and_mtime_cannot_reuse_a_read_generation() {
+    let f=fixture(); let path=f.files.join("in-place.bin");
+    std::fs::write(&path,b"0123456789").unwrap();
+    let stat=||FileRequest::Stat{path:"/Files/in-place.bin".into()};
+    let before=json(&f,stat()).await;
+    let modified=std::fs::metadata(&path).unwrap().modified().unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    std::fs::write(&path,b"ABCDEFGHIJ").unwrap();
+    std::fs::File::options().write(true).open(&path).unwrap().set_modified(modified).unwrap();
+    let after=json(&f,stat()).await;
+    assert_eq!(before["revision"],after["revision"],"mutation identity intentionally tolerates metadata-preserving edits");
+    assert_ne!(before["readRevision"],after["readRevision"]);
+    let old=f.connector.file_request(&f.group,&f.peer,FileRequest::ContentChecked{path:"/Files/in-place.bin".into(),range:Some("bytes=0-9".into()),revision:before["readRevision"].as_str().unwrap().into()}).await.err().unwrap();
+    assert!(old.starts_with("[conflict]"),"{old}");
+}
+
+#[tokio::test]
+async fn renewed_server_authorization_cannot_resume_an_old_read_generation() {
+    let f=fixture();std::fs::write(f.files.join("grant.bin"),b"same bytes").unwrap();
+    let stat=||FileRequest::Stat{path:"/Files/grant.bin".into()};
+    let before=json(&f,stat()).await;
+    f.service.groups().remove(&f.group,&f.client.device_id()).unwrap();
+    f.service.groups().restore(&f.group,&f.client.device_id(),true).unwrap();
+    let after=json(&f,stat()).await;
+    assert_eq!(before["revision"],after["revision"]);
+    assert_ne!(before["readRevision"],after["readRevision"],"same bytes do not authorize resuming a revoked read");
+    let error=f.connector.file_request(&f.group,&f.peer,FileRequest::ContentChecked{path:"/Files/grant.bin".into(),range:Some("bytes=0-9".into()),revision:before["readRevision"].as_str().unwrap().into()}).await.err().unwrap();
+    assert!(error.starts_with("[conflict]"),"{error}");
+}
+
+#[tokio::test]
+async fn download_rate_limit_is_shared_by_all_the_files_range_workers() {
+    use rhfiles_service::connection::{DevicePath,Download,DownloadOptions};
+    let f=fixture();std::fs::write(f.files.join("limited.bin"),vec![9;256*1024]).unwrap();
+    let info=json(&f,FileRequest::Stat{path:"/Files/limited.bin".into()}).await;
+    let start=std::time::Instant::now();
+    let mut reader=Download::open(f.connector.clone(),DevicePath::new(&f.group,&f.peer,"/Files/limited.bin").unwrap(),256*1024,info["readRevision"].as_str().unwrap().into(),DownloadOptions{parallelism:4,bytes_per_second:512*1024}).await.unwrap();
+    let mut received=0;while let Some(block)=reader.next().await.unwrap(){received+=block.bytes.len();}
+    assert_eq!(received,256*1024);
+    assert!(start.elapsed()>=std::time::Duration::from_millis(450),"parallel workers must not multiply the rate allowance");
+}
+
+#[tokio::test]
+async fn bounded_parallel_download_keeps_order_and_checks_every_segment_including_the_tail() {
+    use rhfiles_service::connection::{DevicePath, Download, DownloadOptions};
+    use sha2::{Digest, Sha256};
+    let f = fixture();
+    let bytes = (0..(32 * 1024 * 1024 + 713)).map(|v| ((v * 17 + v / 65536) % 251) as u8).collect::<Vec<_>>();
+    std::fs::write(f.files.join("并行 %.bin"), &bytes).unwrap();
+    let info = json(&f, FileRequest::Stat { path: "/Files/并行 %.bin".into() }).await;
+    for streams in [1, 2, 4] {
+        let mut reader = Download::open(f.connector.clone(), DevicePath::new(&f.group, &f.peer, "/Files/并行 %.bin").unwrap(), bytes.len() as u64, info["readRevision"].as_str().unwrap().into(), DownloadOptions { parallelism: streams, ..Default::default() }).await.unwrap();
+        let mut hash = Sha256::new(); let mut offset = 0;
+        while let Some(block) = reader.next().await.unwrap() {
+            assert!(block.bytes.len() <= 8 * 1024 * 1024);
+            assert_eq!(&block.bytes[..], &bytes[offset..offset + block.bytes.len()]);
+            offset += block.bytes.len(); hash.update(&block.bytes);
+        }
+        assert_eq!(offset, bytes.len());
+        assert_eq!(hash.finalize(), Sha256::digest(&bytes));
+        assert!(reader.next().await.unwrap().is_none(), "EOF must remain stable");
+    }
+    let reports = f.connector.diagnostics();
+    assert!(reports.iter().any(|v| v.trigger == "file.download" && v.outcome == "completed"));
+}
+
+#[tokio::test]
+async fn removal_discards_already_buffered_download_data_and_a_changed_source_cannot_resume() {
+    use rhfiles_service::connection::{DevicePath, Download, DownloadOptions};
+    let f = fixture();
+    std::fs::write(f.files.join("data.bin"), vec![7; 48 * 1024 * 1024]).unwrap();
+    let info = json(&f, FileRequest::Stat { path: "/Files/data.bin".into() }).await;
+    let path = DevicePath::new(&f.group, &f.peer, "/Files/data.bin").unwrap();
+    let mut reader = Download::open(f.connector.clone(), path.clone(), 48 * 1024 * 1024, info["readRevision"].as_str().unwrap().into(), DownloadOptions::default()).await.unwrap();
+    assert!(reader.next().await.unwrap().is_some());
+    f.client.remove(&f.group, &f.peer).unwrap();
+    assert!(reader.next().await.err().unwrap().starts_with("[authorization_revoked]"));
+    f.client.restore(&f.group, &f.peer, true).unwrap();
+    assert!(reader.next().await.is_err(), "restoring membership cannot revive an old transfer");
+    drop(reader);
+    let mut reader = Download::open(f.connector.clone(), path, 48 * 1024 * 1024, info["readRevision"].as_str().unwrap().into(), DownloadOptions::default()).await.unwrap();
+    assert!(reader.next().await.unwrap().is_some());
+    std::fs::rename(f.files.join("data.bin"), f.files.join("old.bin")).unwrap();
+    std::fs::write(f.files.join("data.bin"), vec![8; 48 * 1024 * 1024]).unwrap();
+    loop { match reader.next().await { Ok(Some(_)) => {}, Ok(None) => panic!("changed source accepted"), Err(_) => break } }
 }
 async fn json(f: &Fixture, request: FileRequest) -> Value {
     f.connector

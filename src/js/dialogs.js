@@ -470,7 +470,10 @@ function openSettings() {
     settingsPage('search', 'settings.categorySearch', 'settings.categorySearchDesc', search) +
     settingsPage('integration', 'settings.categoryIntegration', 'settings.categoryIntegrationDesc', integration) +
     settingsPage('updates', 'settings.categoryUpdates', 'settings.categoryUpdatesDesc', updates) +
-    settingsPage('lan', 'settings.categoryLan', 'settings.categoryLanDesc', '<div id="lan-service-settings"></div>') +
+    settingsPage('lan', 'settings.categoryLan', 'settings.categoryLanDesc',
+      '<div class="settings-card"><div class="settings-card-title">'+t('settings.deviceDownloads')+'</div>'+
+      '<div class="settings-row"><label for="settings-download-streams">'+t('settings.downloadStreams')+'</label><select id="settings-download-streams" data-api-action="devices.downloadSettings" onchange="RHFilesAPI.invoke(\'devices.downloadSettings\',{parallelism:Number(this.value),rateMiB:Number(G.settings.deviceDownloadRateMiB)||0})">'+[1,2,3,4].map(n=>'<option value="'+n+'"'+(deviceDownloadOptions().parallelism===n?' selected':'')+'>'+n+'</option>').join('')+'</select></div>'+
+      '<div class="settings-row"><label for="settings-download-rate">'+t('settings.downloadRate')+'</label><input id="settings-download-rate" type="number" min="0" max="1000" step="0.5" value="'+(deviceDownloadOptions().bytesPerSecond/1048576)+'" data-api-action="devices.downloadSettings" onchange="if(this.checkValidity())RHFilesAPI.invoke(\'devices.downloadSettings\',{parallelism:deviceDownloadOptions().parallelism,rateMiB:Number(this.value)})"></div><p class="settings-card-description">'+t('settings.downloadHelp')+'</p></div><div id="lan-service-settings"></div>') +
     settingsPage('shortcuts', 'settings.categoryShortcuts', 'settings.categoryShortcutsDesc', shortcuts) +
     settingsPage('data', 'settings.categoryData', 'settings.categoryDataDesc', data) +
     settingsPage('sync', 'settings.categorySync', 'settings.categorySyncDesc', '<div id="desktop-config-sync"></div>');

@@ -4,7 +4,7 @@ const require=createRequire(import.meta.url),P=require('../../src/js/device-path
 function fixture(){
   const actions=new Map(),calls=[];let state={groups:[{id:group,name:'RH',members:[{id:peer,name:'电脑 A',server:{fingerprint:'public'},blocked:false,self:false}]}]};
   const api={register:(id,fn,schema)=>actions.set(id,{fn,schema}),invoke:async(id,args)=>{calls.push({id,args});if(actions.has(id))return actions.get(id).fn(args);return {path:args.path};}};
-  const ctx=vm.createContext({RHFilesDevicePaths:P,window:{RHFilesAPI:api},_lang:'zh',URL,performance,document:{getElementById:()=>null},closeSettings:()=>{},writeTextClipboard:async value=>calls.push({clipboard:value}),call:async(cmd,args)=>{
+  const ctx=vm.createContext({G:{settings:{}},saveSettings:()=>calls.push({saved:true}),RHFilesDevicePaths:P,window:{RHFilesAPI:api},_lang:'zh',URL,performance,document:{getElementById:()=>null},closeSettings:()=>{},writeTextClipboard:async value=>calls.push({clipboard:value}),call:async(cmd,args)=>{
     calls.push({cmd,args});if(cmd==='device_groups')return state;
     if(cmd==='get_windows_file_clipboard_info')return {sequence:19};
     if(cmd==='device_fs')return args.action==='resource'?{url:'http://127.0.0.1:1234/device/'+'c'.repeat(43)}:[{name:'A.txt',path}];
@@ -26,7 +26,7 @@ test('copy/cut/paste and merge cleanup route both transfer directions to the nat
   const f=fixture();
   for(const [command,action]of [['copy_with_progress','copy'],['move_with_progress','move'],['copy_path_exact','copy_exact'],['move_path_exact','move_exact'],['plan_folder_merge','plan_merge']]){
     for(const args of [{src:'C:\\fixtures\\本机',dest:path,operationId:'fixture-1'},{src:path,dest:'C:\\fixtures\\下载',operationId:'fixture-2'},{src:path,dest:P.make(group,peer,'/Files/other'),operationId:'fixture-3'}]){
-      const result=await f.route(command,args);assert.equal(result.value.action,action);assert.equal(f.calls.at(-1).cmd,'device_transfer');assert.deepEqual(f.calls.at(-1).args.args,args);
+      const result=await f.route(command,args);assert.equal(result.value.action,action);assert.equal(f.calls.at(-1).cmd,'device_transfer');assert.deepEqual(JSON.parse(JSON.stringify(f.calls.at(-1).args.args)),action==='plan_merge'?args:{downloadOptions:{parallelism:2,bytesPerSecond:0},...args});
     }
   }
   assert.equal((await f.route('remove_empty_merge_folders',{paths:[path,'C:\\fixtures\\empty']})).value.action,'remove_empty');
@@ -50,8 +50,19 @@ test('all regular filesystem write/inspection commands route to typed remote ope
     ['inspect_rename_target','inspect_rename',{path,newName:'中文.txt'}],['rename_file','rename',{path,newName:'中文.txt',expectedSourceRevision:'selected-revision'}],
     ['new_folder','new_folder',{parent:P.parent(path)}],['create_new_file','create',{parent:P.parent(path),name:'新建.json',template:'json'}],
     ['batch_rename','batch_rename',{renames:[[path,'renamed.txt']]}],['folder_size','size',{path:P.parent(path)}],['compute_hash','hash',{path,algo:'md5'}],['analyze_disk_usage','usage',{path:P.parent(path),depth:2}],
-  ]){const result=await f.route(cmd,args);assert.equal(result.value.action,action);assert.equal(f.calls.at(-1).cmd,'device_transfer');assert.deepEqual(f.calls.at(-1).args.args,args);}
+  ]){const result=await f.route(cmd,args);assert.equal(result.value.action,action);assert.equal(f.calls.at(-1).cmd,'device_transfer');assert.deepEqual(JSON.parse(JSON.stringify(f.calls.at(-1).args.args)),action==='hash'?{downloadOptions:{parallelism:2,bytesPerSecond:0},...args}:args);}
   for(const name of ['rename','inspectRename','newFolder','create','delete','size','hash','batchRename','checkout','workingCopies','workingCopies.save','workingCopies.remove','workingCopies.show'])assert(f.actions.has('devices.'+name),name+' has a semantic API');
+});
+
+test('download controls and semantic API use the same validated preferences and explicit per-task override',async()=>{
+  const f=fixture();await f.run('devices.downloadSettings',{parallelism:4,rateMiB:2.5});
+  assert.deepEqual(JSON.parse(JSON.stringify(await f.run('devices.downloadSettings.get'))),{parallelism:4,rateMiB:2.5});
+  await f.run('devices.transfer',{operation:'copy',src:path,dest:'C:\\fixture'});
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.at(-1).args.args.downloadOptions)),{parallelism:4,bytesPerSecond:2621440});
+  await f.run('devices.transfer',{operation:'copy',src:path,dest:'C:\\fixture',downloadOptions:{parallelism:1,bytesPerSecond:1048576}});
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.at(-1).args.args.downloadOptions)),{parallelism:1,bytesPerSecond:1048576});
+  for(const value of [{parallelism:0,rateMiB:0},{parallelism:5,rateMiB:0},{parallelism:2,rateMiB:-1}])assert.throws(()=>f.run('devices.downloadSettings',value));
+  assert(f.calls.some(v=>v.saved));assert(f.actions.get('devices.transfer').schema.params.properties.downloadOptions);
 });
 test('remote clipboard retains in-app references but never creates native Windows shell file items',async()=>{
   const f=fixture(),result=await f.route('set_windows_file_clipboard',{paths:[path],cut:true});

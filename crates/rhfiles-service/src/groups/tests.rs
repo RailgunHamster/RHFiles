@@ -49,6 +49,24 @@ fn node() -> (tempfile::TempDir, Groups) {
     let g = Groups::open(d.path()).unwrap();
     (d, g)
 }
+
+#[test]
+fn hot_access_reuses_verified_membership_but_merges_and_refusals_still_take_effect() {
+    let (_dir, host) = node(); let (_peer_dir, peer) = node();
+    let id = host.create("Cache QA", "Host", Permissions { write: true, delete: true }).unwrap();
+    let own = host.device_id();
+    host.access(&id, &own, true).unwrap();
+    let reads = SIGNATURE_READS.with(|v| v.get());
+    for _ in 0..1000 { assert!(host.access(&id, &own, true).unwrap().write); }
+    assert_eq!(SIGNATURE_READS.with(|v| v.get()), reads, "no signatures belong in a per-buffer access check");
+    let packet = host.approve(&id, &peer.request("New peer").unwrap(), false).unwrap();
+    peer.join(packet, Permissions::default()).unwrap();
+    assert!(host.access(&id, &peer.device_id(), true).is_ok(), "new certificates invalidate the old cache");
+    host.remove(&id, &peer.device_id()).unwrap();
+    assert!(host.access(&id, &peer.device_id(), true).is_err());
+    host.configure(&id, true, Permissions::default()).unwrap();
+    assert!(!host.access(&id, &own, true).unwrap().write, "current local permissions are not cached");
+}
 fn add(inviter: &Groups, guest: &Groups, id: &str, invite: bool) {
     let r = guest.request("guest").unwrap();
     let p = inviter.approve(id, &r, invite).unwrap();

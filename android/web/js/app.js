@@ -675,6 +675,9 @@
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if(api.syncAvailable())configSync.refresh().catch(error);
+    const transferSettings=typeof api.transferSettingsAvailable==='function'&&api.transferSettingsAvailable();
+    if($('device-transfer-settings'))$('device-transfer-settings').hidden=!transferSettings;
+    if(transferSettings)api.native('transfer.settings').then(value=>{$('device-download-streams').value=String(value.parallelism);$('device-download-rate').value=String(value.rateMiB);}).catch(error);
     deviceGroupView.mount($('device-groups-settings'),{mobile:true,deviceName:localStorage.getItem('rhfiles.nearby.alias')||'我的手机',copy:ui.copyText,call:(command,args)=>api.native('groups.'+command,args),scan:()=>api.native('groups.scan'),qr:uri=>api.raw('device_group_qr',{uri}),confirm:message=>ui.confirm('设备组',message,'确认'),forgotten:async result=>{for(const id of result?.removedLocations||[])removeFavoritePrefix('remote://'+id+'/');await refreshLocations();}}).catch(error);
     await refreshAutomationSetting();
     if (status.indexing) pollIndex();
@@ -819,6 +822,10 @@
     ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path)||currentEntries().find(entry=>entry.path===path),select:startSelection,toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
     RHFilesUI.listen($('scrim'),'click',closeDrawer,undefined,"android.web.js.app.boot.b5946fbd45ef");
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
+    for(const id of ['device-download-streams','device-download-rate'])RHFilesUI.listen($(id),'change',async()=>{
+      if(!$('device-download-rate').checkValidity())return;
+      try{await api.native('transfer.configure',{parallelism:Number($('device-download-streams').value),rateMiB:Number($('device-download-rate').value)});}catch(e){error(e);}
+    },undefined,'android.download.settings.change');
     on('btn-automation',async()=>{const enabled=$('btn-automation').dataset.enabled!=='true';if(enabled&&!await ui.confirm('开启 ADB 自动化？','已授权的电脑将能读取和操作 RHFiles 中的文件；仅在可信电脑上使用。','开启'))return;await api.native('automation.enable',{enabled});await refreshAutomationSetting();});
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
     on('nav-settings',()=>{closeDrawer();return go({screen:'tool',tool:'settings'});});

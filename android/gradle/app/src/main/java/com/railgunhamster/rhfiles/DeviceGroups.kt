@@ -158,6 +158,12 @@ internal object DeviceGroups {
     try{return call.execute().use{r->if(!r.isSuccessful)throw RhFilesConnection.HttpFailure(r.code,"设备组连接失败 HTTP ${r.code}");JSONObject(String(r.body!!.byteStream().readBytesBounded(280000),Charsets.UTF_8))}.also{GroupConnections.phase(c,path,start)}}catch(e:Exception){GroupConnections.phase(c,path,start,ConnectionBudget.classify(e));throw e}finally{GroupConnections.release(call)}
   }
   private fun checkPeer(group:String,peer:String){try{groups().requirePeer(group,peer)}catch(e:Exception){throw SecurityException("本机设备组授权已失效",e)}}
+  /** Same incarnation even while prefetching: remove/rejoin never revives data. */
+  fun fileLease(c:JSONObject):()->Unit {
+    val group=c.getString("groupId");val peer=c.getString("groupPeerId")
+    val epoch=groups().serviceAccess(group,peer,false).getString("epoch")
+    return {if(groups().serviceAccess(group,peer,false).getString("epoch")!=epoch)throw SecurityException("本机设备组授权已改变，旧下载已停止")}
+  }
   fun validatePeer(c:JSONObject){val s=knownServer(c);if(c.getString("fingerprint")!=s.getString("fingerprint"))throw GroupIdentityFailure("电脑身份发生变化，已拒绝发送凭据")}
   private fun knownServer(c:JSONObject):JSONObject {val group=c.getString("groupId");val peer=c.getString("groupPeerId");checkPeer(group,peer);return servers().firstOrNull{it.first==group&&it.second==peer}?.third?.getJSONObject("server")?:error("设备组没有此电脑的服务证明")}
   fun knownEndpoints(c:JSONObject)=endpoints(knownServer(c))

@@ -43,3 +43,14 @@ for(const zh of [true,false])test(`stable-address copy controls live only in dia
   const root=all(details).find(n=>n.tagName==='button'&&n.textContent===(zh?'复制设备根目录稳定地址':'Copy stable device-root address'));
   assert(root);await root.fire('click');assert.deepEqual(copies,[[],[group,peer]]);assert.deepEqual(calls,['state','diagnostics']);
 });
+
+for(const zh of [true,false])test(`range repair diagnostics use the file budget and translated method names (${zh?'Chinese':'English'})`,async()=>{
+  const host=new Element('div');host.connected=true;
+  const ctx=context({document:{createElement:tag=>new Element(tag)},settingsAutoSave:{flush:async()=>{},bind(){}}});load(ctx,'device-groups-ui.js');
+  const calls=[],call=async command=>{calls.push(command);return command==='state'?{groups:[]}:[{trigger:'file.download',outcome:'completed',startedAt:1,durationMs:5,attempts:8,steps:[{method:'versioned_ranges_sha256',code:'streams_4_repairs_8',durationMs:5},{method:'range_repair',code:'checksum_mismatch',durationMs:1}]}];};
+  await vm.runInContext('deviceGroupView',ctx).mount(host,{call,zh});const details=all(host).find(n=>n.tagName==='details');details.open=true;await details.fire('toggle');await new Promise(r=>setImmediate(r));
+  assert(host.textContent.includes('8/8'));assert(!host.textContent.includes('8/6'));
+  assert(host.textContent.includes(zh?'同版本分段下载':'Version-bound ranges'));
+  assert(host.textContent.includes(zh?'4 路下载，补传 8 次':'4 streams; 8 segment repairs'));
+  assert(!host.textContent.includes('versioned_ranges_sha256'));assert(!host.textContent.includes('checksum_mismatch'));assert.deepEqual(calls,['state','diagnostics']);
+});

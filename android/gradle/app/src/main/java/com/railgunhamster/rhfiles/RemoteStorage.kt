@@ -412,6 +412,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
   fun input(path: String): InputStream {
     val l=location(path)
     require(!l.serverRoot&&l.relative.isNotEmpty()){ "不能把服务器或共享根目录当作文件读取" }
+    if(l.c.optString("type")=="rhfiles")return RhFilesConnection(l.c).transferInput(l.relative,DeviceTransferSettings.read(context))
     return when(l.c.getString("type")) {
       "smb" -> {
         val s=smb(l.c)

@@ -69,12 +69,13 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
   private val pending get()=context.getSharedPreferences("config-restore-v1",Context.MODE_PRIVATE)
   fun snapshot(web:JSONObject,updates:JSONObject):JSONObject {
     validateWeb(web)
-    return JSONObject().put("schemaVersion",1).put("platform","android").put("web",remotes.portableWeb(web)).put("updates",updates).put("profiles",remotes.backupProfiles()).put("reader",ReaderSettings.state(context).getJSONObject("values")).put("sync",ConfigSync.rawConfig(context,remotes))
+    return JSONObject().put("schemaVersion",1).put("platform","android").put("web",remotes.portableWeb(web)).put("updates",updates).put("profiles",remotes.backupProfiles()).put("reader",ReaderSettings.state(context).getJSONObject("values")).put("sync",ConfigSync.rawConfig(context,remotes)).put("transfer",DeviceTransferSettings.read(context))
   }
   fun validate(payload:JSONObject) {
     require(payload.getInt("schemaVersion")==1&&payload.getString("platform")=="android"){"配置版本或平台不兼容"}
     validateWeb(payload.getJSONObject("web"));ReaderSettings.validate(payload.getJSONObject("reader"))
     if(payload.has("sync"))ConfigSync.validateConfig(payload.getJSONObject("sync"),true)
+    if(payload.has("transfer"))DeviceTransferSettings.validate(payload.getJSONObject("transfer"))
     val profiles=payload.getJSONArray("profiles");require(profiles.length()<=200){"网络位置过多"};val ids=mutableSetOf<String>()
     for(i in 0 until profiles.length()){val item=profiles.getJSONObject(i);val id=item.getString("id");require(UUID.fromString(id).toString()==id&&ids.add(id)){"网络位置 ID 无效或重复"};remotes.validate(item.getJSONObject("config"))}
     val updates=AndroidUpdateSettings.normalize(payload.getJSONObject("updates"),true);validateUpdates(updates)
@@ -82,8 +83,8 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
   }
   private fun rawPrefs(name:String)=JSONObject(context.getSharedPreferences(name,Context.MODE_PRIVATE).all)
   private fun prefs(name:String,value:JSONObject){val editor=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear();value.keys().forEach{key->when(val v=value.get(key)){is String->editor.putString(key,v);is Boolean->editor.putBoolean(key,v);is Number->editor.putLong(key,v.toLong());else->error("内部配置类型无效")}};require(editor.commit()){"配置写入失败"}}
-  private fun current()=JSONObject().put("remote",rawPrefs("remote-v1")).put("updates",rawPrefs("updates-v1")).put("pending",rawPrefs("config-restore-v1")).put("reader",ReaderSettings.state(context).getJSONObject("values")).put("sync",rawPrefs(ConfigSync.PREFS))
-  private fun restore(snapshot:JSONObject){prefs("remote-v1",snapshot.getJSONObject("remote"));remotes.purgeIndependentConnections();prefs("updates-v1",snapshot.getJSONObject("updates"));ReaderSettings.replace(context,snapshot.getJSONObject("reader"));prefs("config-restore-v1",snapshot.getJSONObject("pending"));if(snapshot.has("sync"))prefs(ConfigSync.PREFS,snapshot.getJSONObject("sync"))}
+  private fun current()=JSONObject().put("remote",rawPrefs("remote-v1")).put("updates",rawPrefs("updates-v1")).put("pending",rawPrefs("config-restore-v1")).put("reader",ReaderSettings.state(context).getJSONObject("values")).put("sync",rawPrefs(ConfigSync.PREFS)).put("transfer",DeviceTransferSettings.read(context))
+  private fun restore(snapshot:JSONObject){prefs("remote-v1",snapshot.getJSONObject("remote"));remotes.purgeIndependentConnections();prefs("updates-v1",snapshot.getJSONObject("updates"));ReaderSettings.replace(context,snapshot.getJSONObject("reader"));prefs("config-restore-v1",snapshot.getJSONObject("pending"));if(snapshot.has("sync"))prefs(ConfigSync.PREFS,snapshot.getJSONObject("sync"));if(snapshot.has("transfer"))DeviceTransferSettings.save(context,snapshot.getJSONObject("transfer"))}
   private fun hasJournal()=journal.baseFile.exists()||File(journal.baseFile.path+".bak").exists()
   @Synchronized fun recover(){if(hasJournal()){
     val before=JSONObject(journal.openRead().bufferedReader().use{it.readText()});restore(before)
@@ -101,6 +102,7 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
     try{
       prefs("remote-v1",prepared);prefs("updates-v1",JSONObject(payload.getJSONObject("updates").toString()).put("pendingInstall",false));ReaderSettings.replace(context,payload.getJSONObject("reader"))
       prefs(ConfigSync.PREFS,ConfigSync.restoredPrefs(context,remotes,payload.optJSONObject("sync")?:ConfigSync.rawConfig(context,remotes)))
+      if(payload.has("transfer"))DeviceTransferSettings.save(context,payload.getJSONObject("transfer"))
       prefs("config-restore-v1",JSONObject().put("id",UUID.randomUUID().toString()).put("web",payload.getJSONObject("web").toString()))
     }catch(e:Exception){restore(before);journal.delete();throw e}
   }

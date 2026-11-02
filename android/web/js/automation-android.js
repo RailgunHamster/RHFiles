@@ -11,6 +11,8 @@ const androidAutomation=(()=>{
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
     deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
     register('fileServer.state',apiSchema(),()=>api.serverStatus(),'read','Read the explicitly started phone group HTTPS/WebDAV service');
+    register('transfer.settings',apiSchema(),()=>api.native('transfer.settings'),'read','Read local bounded download policy');
+    register('transfer.configure',apiSchema({parallelism:{type:'integer',minimum:1,maximum:4},rateMiB:{type:'number',minimum:0,maximum:1000}},['parallelism','rateMiB']),p=>api.native('transfer.configure',p),'settings','Set parallel streams and per-file MiB/s limit for new transfers');
     register('fileServer.start',apiSchema({roots:{type:'array',minItems:1,maxItems:8,items:apiSchema({name:{type:'string',minLength:1,maxLength:64},path:string},['name','path'])},port:{type:'integer',minimum:1024,maximum:65535}}),p=>app.startServer(p),'external','Confirm selected local roots and start the device-group file service');
     register('fileServer.stop',apiSchema(),()=>app.stopServer(),'external','Stop phone sharing and invalidate all active service sessions');
     register('fileServer.roots',apiSchema(),()=>app.chooseServerRoots(),'ui','Open the same local share-directory form as the service page');

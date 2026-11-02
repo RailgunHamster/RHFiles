@@ -11,10 +11,12 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
 };
 
 const DOMAIN: &[u8] = b"RHFiles-Group-v1\0";
+#[cfg(test)]
+thread_local! { static SIGNATURE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 #[cfg(test)]
 mod tests;
 // Base64 public proofs must also fit the local automation API's 256 KiB
@@ -109,6 +111,8 @@ pub struct Signed {
 }
 impl Signed {
     pub fn read(&self) -> Result<Claims> {
+        #[cfg(test)]
+        SIGNATURE_READS.with(|calls| calls.set(calls.get() + 1));
         if self.payload.len() > 8192 || self.signature.len() > 128 {
             return Err(bad("设备组证明过大"));
         }
@@ -178,6 +182,10 @@ struct Refusal {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Group {
     packet: Packet,
+    // Only immutable, signature-verified membership is cached. Local refusals,
+    // permissions and the session incarnation are still read on EVERY check.
+    #[serde(skip)]
+    verified_members: OnceLock<BTreeMap<String, Claims>>,
     blocked: BTreeMap<String, Refusal>,
     permissions: Permissions,
     enabled: bool,
@@ -194,7 +202,10 @@ struct Group {
     peer_epochs: BTreeMap<String, String>,
 }
 impl Group {
-    fn members(&self) -> Result<BTreeMap<String, Claims>> {
+    fn members(&self) -> Result<&BTreeMap<String, Claims>> {
+        if let Some(members) = self.verified_members.get() {
+            return Ok(members);
+        }
         let mut members = BTreeMap::new();
         let root = self.packet.root.read()?;
         members.insert(key_id(&root.key), root);
@@ -202,14 +213,18 @@ impl Group {
             let claim = member.read()?;
             members.insert(key_id(&claim.key), claim);
         }
-        Ok(members)
+        let _ = self.verified_members.set(members);
+        Ok(self.verified_members.get().expect("verified membership initialized"))
     }
     fn merge(&mut self, incoming: &Packet) -> Result<()> {
         let group_id = self.packet.group_id()?;
         if incoming.group_id()? != group_id {
             return Err(bad("不是同一个设备组"));
         }
-        let mut accepted = self.members()?;
+        let mut accepted = self.members()?.clone();
+        // A cloned document may carry the previous cache. Never reuse it after
+        // accepting new certificates, including another approval of a peer.
+        self.verified_members.take();
         // Existing accepted keys are independent local trust anchors. Removing
         // an introducer stops its NEW introductions, not previously accepted peers.
         let mut pending = Vec::new();
@@ -298,7 +313,7 @@ impl Group {
             ));
         }
         self.members()?
-            .remove(key)
+            .get(key).cloned()
             .ok_or_else(|| Error::new("unauthorized", "设备没有有效的组成员证明"))
     }
 }
@@ -515,6 +530,7 @@ impl Groups {
                 id.clone(),
                 Group {
                     packet,
+                    verified_members: Default::default(),
                     blocked: doc.refusals.clone(),
                     permissions,
                     enabled: true,
@@ -600,6 +616,7 @@ impl Groups {
                 return Err(bad("不是本机当前入组请求的批准，请重新生成请求"));
             }
             let mut group = Group {
+                verified_members: Default::default(),
                 packet: Packet {
                     root: packet.root.clone(),
                     members: vec![],
@@ -651,6 +668,15 @@ impl Groups {
         g.member(peer)?; g.member(&self.device_id())?;
         if !g.enabled || g.auth_epoch.is_empty() { return Err(Error::new("forbidden", "本机未向此设备组开放文件服务")); }
         Ok(format!("{:x}", Sha256::digest(format!("{}:{}:{}",g.auth_epoch,peer,g.peer_epochs.get(peer).map(String::as_str).unwrap_or("")).as_bytes())))
+    }
+    /// Opaque local read-grant generation, never an exported group key.
+    pub(crate) fn transfer_binding(&self, id: &str, peer: &str) -> Result<String> {
+        if let Some(backend) = &self.backend {
+            let (_, epoch) = backend.access(id, peer, true)?;
+            if epoch.is_empty() || epoch.len() > 256 { return Err(bad("外部设备组会话标识无效")); }
+            return Ok(format!("{:x}", Sha256::digest(format!("RHFiles-read-grant:{id}:{peer}:{epoch}").as_bytes())));
+        }
+        self.compatibility_binding(id, peer)
     }
     pub(crate) fn session_access(
         &self,
@@ -855,7 +881,7 @@ impl Groups {
                     .filter_map(|v| v.read().ok())
                     .find(|v| v.key == c.key)
                     .and_then(|v| v.server);
-                members.push(serde_json::json!({"id":key,"name":c.name,"canInvite":c.invite,"blocked":g.blocked.contains_key(&key),"removedAt":g.blocked.get(&key).map(|v|v.removed_at),"server":server,"self":key==self.device_id()}));
+                members.push(serde_json::json!({"id":key,"name":c.name,"canInvite":c.invite,"blocked":g.blocked.contains_key(key),"removedAt":g.blocked.get(key).map(|v|v.removed_at),"server":server,"self":*key==self.device_id()}));
             }
             out.push(serde_json::json!({"id":id,"name":g.packet.root.read()?.label,"permissions":g.permissions,"enabled":g.enabled,"members":members,"left":g.left}));
         }

@@ -29,6 +29,16 @@ class FileTasksTest {
     val job=run("copy",listOf(source),dest)
     assertTrue(job.failures.toString(),job.failures.isEmpty());assertArrayEquals(source.readBytes(),File(dest,"source").readBytes());assertEquals(700000,job.bytes);assertEquals(700000,job.total)
   }
+  @Test fun boundedSmallFilesKeepExactProgressAndMoveCleanupAfterAllCopies()=fixture{d->
+    val source=File(d,"small-tree").apply{mkdir()};val dest=File(d,"dest").apply{mkdir()}
+    val expected=(0 until 64).associate{n->"中文-$n.bin" to ByteArray(n*31){(it%251).toByte()}}
+    expected.forEach{(name,bytes)->File(source,name).writeBytes(bytes)}
+    val job=run("move",listOf(source),dest)
+    assertTrue(job.failures.toString(),job.failures.isEmpty());assertFalse(source.exists())
+    expected.forEach{(name,bytes)->assertArrayEquals(bytes,File(dest,"small-tree/$name").readBytes())}
+    assertEquals(expected.values.sumOf{it.size.toLong()},job.bytes)
+    assertEquals(65L,job.done);assertEquals(job.files,job.done)
+  }
   @Test fun recursiveMovePublishesBeforeDeletingAndKeepsNewName()=fixture{d->
     val source=File(d,"tree").apply{mkdir()};File(source,"empty").mkdir();File(source,"中文.txt").writeText("data")
     val dest=File(d,"dest").apply{mkdir()};val job=run("move",listOf(source),dest)

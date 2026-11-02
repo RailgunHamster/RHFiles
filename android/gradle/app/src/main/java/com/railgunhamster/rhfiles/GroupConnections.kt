@@ -46,6 +46,10 @@ internal object GroupConnections {
     return found
   }
   @Synchronized fun diagnostics():JSONArray=JSONArray(history.reversed().map{JSONObject(it.toString())})
+  fun transferDiagnostic(c:JSONObject,code:String,attempts:Int){
+    val completed=code=="completed"
+    record(JSONObject().put("group",c.getString("groupId")).put("peer",c.getString("groupPeerId")).put("trigger","file.download").put("startedAt",System.currentTimeMillis()).put("durationMs",0).put("outcome",if(completed)"completed"else"repairing_segment").put("certainty","confirmed").put("attempts",attempts).put("steps",JSONArray().put(JSONObject().put("method","versioned_ranges_sha256").put("outcome",if(completed)"succeeded"else"failed").put("code",code).put("durationMs",0))))
+  }
   @Synchronized private fun record(report:JSONObject){if(history.size>=20)history.removeFirst();history.addLast(JSONObject(report.toString()))}
   private fun step(r:Run,method:String,url:String?,outcome:String,code:String,start:Long=android.os.SystemClock.elapsedRealtime()){
     val a=r.report.getJSONArray("steps");if(a.length()<40)a.put(JSONObject().put("method",method).put("endpoint",url?:JSONObject.NULL).put("outcome",outcome).put("code",code).put("durationMs",android.os.SystemClock.elapsedRealtime()-start))

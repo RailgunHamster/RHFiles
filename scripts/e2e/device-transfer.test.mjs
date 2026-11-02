@@ -18,7 +18,7 @@ test('ordinary desktop copy/cut/paste streams local↔group and group↔group, m
     for(const[host,device]of [[a,deviceA],[c,deviceC]]){const port=(await api(host,'server.state')).status.port;assert.equal((await api(b,'groups.connect',{id:group,peer:device.peer,endpoint:'https://127.0.0.1:'+port})).outcome,'connected');}
     const remoteA=deviceA.path+'Files',remoteC=deviceC.path+'Files';
     await b.evaluate("window.__rhfilesSuppressNativeClipboard=true;window.__transferAlerts=[];window.alert=message=>window.__transferAlerts.push(String(message));window.__deviceProgress=[];window.__TAURI__.event.listen('op-progress',event=>{if(window.__deviceProgress.length<10000)window.__deviceProgress.push(event.payload)});true");
-    fs.mkdirSync(path.join(local,'中文 % #'));fs.mkdirSync(path.join(local,'中文 % #','empty'));fs.writeFileSync(path.join(local,'中文 % #','data.bin'),Buffer.alloc(5*1024*1024+37,0x5a));fs.writeFileSync(path.join(local,'中文 % #','.hidden'),'hidden');
+    fs.mkdirSync(path.join(local,'中文 % #'));fs.mkdirSync(path.join(local,'中文 % #','empty'));fs.writeFileSync(path.join(local,'中文 % #','data.bin'),Buffer.alloc(64*1024*1024+37,0x5a));fs.writeFileSync(path.join(local,'中文 % #','.hidden'),'hidden');
     const paste=async(source,destination,cut=false)=>{
       const parent=source.startsWith('rhfiles-device:')?source.slice(0,source.lastIndexOf('/')):path.dirname(source);
       await until(async()=>{await api(b,'navigation.open',{path:parent});return (await api(b,'files.list')).entries.some(e=>e.path===source);},'new fixture appears in its parent listing',10000);
@@ -30,6 +30,12 @@ test('ordinary desktop copy/cut/paste streams local↔group and group↔group, m
     fs.mkdirSync(path.join(local,'downloads'));await paste(remoteA+'/'+encodeURIComponent('中文 % #'),path.join(local,'downloads'));assert.equal(sha(path.join(rootA,'中文 % #','data.bin')),sha(path.join(local,'downloads','中文 % #','data.bin')));
     await paste(remoteA+'/'+encodeURIComponent('中文 % #'),remoteC);assert.equal(sha(path.join(rootA,'中文 % #','data.bin')),sha(path.join(rootC,'中文 % #','data.bin')));
     const progress=await b.evaluate('window.__deviceProgress');assert(progress.some(p=>p.bytesTransferred>0&&p.bytesTransferred<p.totalBytes&&p.percentage<100),'native intermediate byte progress is observable');assert(progress.some(p=>p.status==='complete'&&p.percentage===100));
+    const small=path.join(local,'small-tree');fs.mkdirSync(small);let smallBytes=0;
+    for(let i=0;i<32;i++){const data=Buffer.alloc(i*37,i);fs.writeFileSync(path.join(small,'中文-'+i+'.bin'),data);smallBytes+=data.length;}
+    const copied=await api(b,'devices.transfer',{operation:'copy',src:small,dest:remoteA});assert.equal(copied.bytes,smallBytes);assert.equal(copied.entries,33);
+    fs.mkdirSync(path.join(local,'small-downloads'));
+    const downloaded=await api(b,'devices.transfer',{operation:'copy',src:remoteA+'/small-tree',dest:path.join(local,'small-downloads')});assert.equal(downloaded.bytes,smallBytes);
+    for(let i=0;i<32;i++){const name='中文-'+i+'.bin';assert.equal(sha(path.join(small,name)),sha(path.join(rootA,'small-tree',name)));assert.equal(sha(path.join(small,name)),sha(path.join(local,'small-downloads','small-tree',name)));}
     fs.writeFileSync(path.join(local,'upload-move.txt'),'upload move');await paste(path.join(local,'upload-move.txt'),remoteA,true);assert(!fs.existsSync(path.join(local,'upload-move.txt')));assert.equal(fs.readFileSync(path.join(rootA,'upload-move.txt'),'utf8'),'upload move');
     await b.evaluate('undo()');assert.equal(fs.readFileSync(path.join(local,'upload-move.txt'),'utf8'),'upload move');assert(!fs.existsSync(path.join(rootA,'upload-move.txt')));await b.evaluate('redo()');assert(!fs.existsSync(path.join(local,'upload-move.txt')));assert.deepEqual(await b.evaluate('window.__transferAlerts'),[]);
     fs.writeFileSync(path.join(rootA,'download-move.txt'),'download move');await paste(remoteA+'/download-move.txt',local,true);assert(!fs.existsSync(path.join(rootA,'download-move.txt')));assert.equal(fs.readFileSync(path.join(local,'download-move.txt'),'utf8'),'download move');
@@ -56,12 +62,12 @@ test('ordinary desktop copy/cut/paste streams local↔group and group↔group, m
     await api(a,'groups.configure',{id:group,enabled:true,permissions:{write:true,delete:true}});
     // A new connection is explicitly established after permission rotation.
     await api(b,'groups.connect',{id:group,peer:deviceA.peer,endpoint:'https://127.0.0.1:'+(await api(a,'server.state')).status.port});
-    fs.writeFileSync(path.join(local,'cancel.bin'),Buffer.alloc(32*1024*1024,0x6b));
+    fs.writeFileSync(path.join(local,'cancel.bin'),Buffer.alloc(128*1024*1024,0x6b));
     await b.evaluate("window.__cancelTransfer={state:'running'};RHFilesAPI.invoke('devices.transfer',"+JSON.stringify({operation:'copy',src:path.join(local,'cancel.bin'),dest:remoteA,operationId:'owned-transfer-cancel'})+").then(value=>window.__cancelTransfer={state:'done',value}).catch(error=>window.__cancelTransfer={state:'failed',error:String(error)});true");
     await until(()=>b.evaluate("window.__deviceProgress.some(p=>p.operationId==='owned-transfer-cancel'&&p.bytesTransferred>0&&p.bytesTransferred<p.totalBytes)"),'native in-flight upload',30000);
     await b.evaluate("call('cancel_operation',{operationId:'owned-transfer-cancel'})");await until(()=>b.evaluate("window.__cancelTransfer.state!=='running'"),'cancel settles without replay',30000);assert.equal((await b.evaluate('window.__cancelTransfer')).state,'failed');assert(!fs.existsSync(path.join(rootA,'cancel.bin')));assert(fs.existsSync(path.join(local,'cancel.bin')));
     assert(!fs.readdirSync(rootA).some(v=>/^RHFiles-transfer-.*\.partial$/.test(v)),'normal and conflicted transfers do not leave published temporary files');
-    const self=(await api(b,'groups.state')).deviceId;fs.writeFileSync(path.join(local,'revoke.bin'),Buffer.alloc(64*1024*1024,0x4e));
+    const self=(await api(b,'groups.state')).deviceId;fs.writeFileSync(path.join(local,'revoke.bin'),Buffer.alloc(128*1024*1024,0x4e));
     await b.evaluate("window.__revokeTransfer={state:'running'};RHFilesAPI.invoke('devices.transfer',"+JSON.stringify({operation:'copy',src:path.join(local,'revoke.bin'),dest:remoteA,operationId:'owned-transfer-revoke'})+").then(value=>window.__revokeTransfer={state:'done',value}).catch(error=>window.__revokeTransfer={state:'failed',error:String(error)});true");
     await until(()=>b.evaluate("window.__deviceProgress.some(p=>p.operationId==='owned-transfer-revoke'&&p.bytesTransferred>0&&p.bytesTransferred<p.totalBytes)"),'group-bound in-flight transfer',30000);
     await api(a,'groups.remove',{id:group,peer:self});await until(()=>b.evaluate("window.__revokeTransfer.state!=='running'"),'removal interrupts transfer',30000);assert.equal((await b.evaluate('window.__revokeTransfer')).state,'failed');assert(!fs.existsSync(path.join(rootA,'revoke.bin')));assert(fs.existsSync(path.join(local,'revoke.bin')));

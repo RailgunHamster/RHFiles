@@ -28,6 +28,52 @@ Android preserves a failed-refresh directory without resetting scroll and labels
 
 ## Executable regression map
 
+### Bounded native file transfers
+
+Native peers advertising `versioned-ranges-sha256` serve captured-handle ranges,
+not a pathname stat followed by an unrelated open. Each range is at most 8 MiB,
+requires the exact read revision/If-Match and returns its SHA-256. Read revisions
+include file identity, OS change time and the server's local authorization
+generation: restoring the old mtime or renewing a removed peer cannot revive an
+old transfer. Mutation revisions stay separate because capture-by-rename changes
+OS change time. Clients
+reject a full 200 response, wrong Content-Range, size, ETag, encoding or digest.
+Older peers retain continuous streaming without claiming these guarantees.
+
+Windows and Android default to two ordered range workers per file (configurable
+1–4). Process-wide task/worker/buffer limits and backpressure apply even to
+completed out-of-order pieces. Per-file MiB/s caps are local settings, included
+in full configuration backups, not exported group authorization. Media viewing
+keeps its seekable continuous stream rather than waiting for an 8 MiB piece.
+Independent new small files are copied two at a time. Directory creation,
+existing-target conflict handling and move cleanup stay ordered; Android joins
+all private-tree workers before cleanup or source deletion. Progress aggregation
+is synchronized rather than emitting conflicting per-file task percentages.
+
+Only an active, same-incarnation, same-version read may repair a failed range:
+two repairs per range, eight across the file. Permission/identity/version/range
+protocol errors are terminal. There is no timer, retry button, persisted write
+replay or resurrection of a finished/failed task. Dropping the reader aborts its
+owned work; local destination files remain staged until complete validation.
+This is **in-task range repair**, not automatic resume of a crashed application.
+
+Uploads retain sequential tus offsets. Tiny body frames are coalesced into
+8 MiB records, not treated as separate durable writes. Windows overlaps one
+bounded source lookahead with sending. Acknowledged offsets still require file
+and journal sync; a failed checkpoint cannot advance HEAD. Verified membership
+certificates are cached, but local refusals, current permissions and incarnation
+checks remain live on every buffer. No optimization weakens move/overwrite ABA
+guards or grants a mutation retry.
+
+Regression coverage: Rust real-TLS ranges/order/tails/source replacement/live
+revocation, hot-access signature cache and journal-failure recovery; Android
+MockWebServer interrupted/corrupt/wrong-status/wrong-version segments, repair
+budgets, ordered results, final revision checks and closing blocked I/O. Run
+`scripts/testing/device-throughput.mjs` against an explicitly selected release
+executable with `RHFILES_REMOTE_WINDOWS_QA=1` for generated-file LAN upload,
+download and two-remote-path relay. It verifies all output SHA-256 values, uses
+isolated profiles and never reads installed groups or user media.
+
 | Scenario | Coverage |
 | --- | --- |
 | Cold/idle handshake exceeding the former short timeout | Rust real TLS TCP delay tunnel; Android expired-session delayed HTTPS response |

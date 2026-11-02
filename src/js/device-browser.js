@@ -1,6 +1,18 @@
 // Desktop device-group locations are a filesystem, not mapped drives or URLs
 // containing IP addresses/passwords. UI and scripts use these same handlers.
 function isDevicePath(path){return RHFilesDevicePaths.is(path);}
+function deviceDownloadOptions(){
+  const settings=typeof G==='object'&&G.settings||{},streams=Number(settings.deviceDownloadParallelism),rate=Number(settings.deviceDownloadRateMiB);
+  return {parallelism:Number.isInteger(streams)&&streams>=1&&streams<=4?streams:2,bytesPerSecond:Number.isFinite(rate)&&rate>=0&&rate<=1000?Math.round(rate*1048576):0};
+}
+function setDeviceDownloadSettings(value){
+  const streams=Number(value.parallelism),rate=Number(value.rateMiB);
+  if(!Number.isInteger(streams)||streams<1||streams>4||!Number.isFinite(rate)||rate<0||rate>1000)throw Error('Invalid download settings');
+  G.settings.deviceDownloadParallelism=streams;G.settings.deviceDownloadRateMiB=rate;saveSettings();
+  const streamInput=document.getElementById('settings-download-streams'),rateInput=document.getElementById('settings-download-rate');
+  if(streamInput)streamInput.value=String(streams);if(rateInput)rateInput.value=String(rate);
+  return {parallelism:streams,rateMiB:rate};
+}
 const deviceTransferHistories=new Map();
 function rememberDeviceTransferHistory(src,dest,id){
   if(!id)return;deviceTransferHistories.set(JSON.stringify([src,dest]),id);
@@ -109,7 +121,9 @@ const deviceBrowser=(()=>{
     api.register('devices.windowsDisconnect',p=>call('device_transfer',{action:'windows_disconnect',args:p}),{params:object({path:string,confirmed:{const:true}},['path','confirmed']),risk:'destructive',description:'Disconnect only this profile’s Windows WebDAV connection after verifying its username. Never forces closure of open files or disconnects another account.'});
     api.register('devices.openFile',p=>call('device_transfer',{action:'open',args:p}),{params:object({path:string,command:{type:'string',enum:['open_file','open_with_program','show_open_with_dialog','quicklook']},program:string},['path']),risk:'write',description:'Download a managed working copy and open it locally. Changed copies are retained until an explicit revision-checked save.'});
     for(const [id,action,properties]of [['save','working_save',{id:string,newName:string}],['reveal','working_reveal',{id:string}],['remove','working_remove',{id:string}]])api.register('devices.workingCopies.'+id,p=>call('device_transfer',{action,args:p}),{params:object(properties,['id']),risk:id==='reveal'?'ui':'destructive'});
-    api.register('devices.transfer',p=>call('device_transfer',{action:p.operation,args:p}),{params:object({operation:{type:'string',enum:['copy','move']},src:string,dest:string,targetName:{type:'string',maxLength:240},overwrite:{type:'boolean'},expectedTargetRevision:{type:'string',maxLength:256},operationId:{type:'string',maxLength:128}},['operation','src','dest']),risk:'destructive',description:'Stream files/folders between local and group locations with native progress, scoped cancellation, no write retries and identity-checked move cleanup. Unoverwritten transfers return an identity-bound history handle when the server supplies commit proofs.'});
+    api.register('devices.downloadSettings.get',()=>{const value=deviceDownloadOptions();return {parallelism:value.parallelism,rateMiB:value.bytesPerSecond/1048576};},{params:object({}),risk:'read',description:'Read the current local download concurrency and per-file MiB/s limit.'});
+    api.register('devices.downloadSettings',p=>setDeviceDownloadSettings(p),{params:object({parallelism:{type:'integer',minimum:1,maximum:4},rateMiB:{type:'number',minimum:0,maximum:1000}},['parallelism','rateMiB']),risk:'settings',description:'Configure bounded versioned-range download concurrency and per-file MiB/s limit; zero is unlimited.'});
+    api.register('devices.transfer',p=>call('device_transfer',{action:p.operation,args:{downloadOptions:deviceDownloadOptions(),...p}}),{params:object({operation:{type:'string',enum:['copy','move']},src:string,dest:string,targetName:{type:'string',maxLength:240},overwrite:{type:'boolean'},expectedTargetRevision:{type:'string',maxLength:256},operationId:{type:'string',maxLength:128},downloadOptions:object({parallelism:{type:'integer',minimum:1,maximum:4},bytesPerSecond:{type:'integer',minimum:0,maximum:10000000000}},['parallelism','bytesPerSecond'])},['operation','src','dest']),risk:'destructive',description:'Stream files/folders between local and group locations with native progress, scoped cancellation, bounded version-bound downloads, no write retries and identity-checked move cleanup. Unoverwritten transfers return an identity-bound history handle when the server supplies commit proofs.'});
     for(const [id,action,properties,required,risk] of [
       ['rename','rename',{path:string,newName:string,expectedSourceRevision:string},['path','newName'],'write'],
       ['inspectRename','inspect_rename',{path:string,newName:string},['path','newName'],'read'],
@@ -180,7 +194,7 @@ async function routeDeviceCommand(cmd,args){
       break;
     }
     case 'folder_size':value=await call('device_transfer',{action:'size',args});break;
-    case 'compute_hash':value=await call('device_transfer',{action:'hash',args});break;
+    case 'compute_hash':value=await call('device_transfer',{action:'hash',args:{downloadOptions:deviceDownloadOptions(),...args}});break;
     case 'analyze_disk_usage':value=await call('device_transfer',{action:'usage',args});break;
     case 'show_properties':showCustomProperties(await fs('stat',args.path));value=null;break;
     case 'open_file':case 'open_with_program':case 'show_open_with_dialog':case 'quicklook':case 'set_wallpaper':case 'install_font':case 'install_certificate':case 'run_as_admin':{
@@ -195,9 +209,9 @@ async function routeDeviceCommand(cmd,args){
     }
     case 'rtf_to_html':case 'docx_to_text':case 'read_shortcut':case 'rotate_image':value=await call('device_transfer',{action:'document',args:{...args,command:cmd}});break;
     case 'copy_path':case 'move_path_cmd':case 'copy_with_progress':case 'move_with_progress':
-      value=await call('device_transfer',{action:cmd.startsWith('move')?'move':'copy',args});rememberDeviceTransferHistory(args.src,value?.target,value?.historyId);break;
+      value=await call('device_transfer',{action:cmd.startsWith('move')?'move':'copy',args:{downloadOptions:deviceDownloadOptions(),...args}});rememberDeviceTransferHistory(args.src,value?.target,value?.historyId);break;
     case 'copy_path_exact':case 'move_path_exact':
-      value=await call('device_transfer',{action:cmd.startsWith('move')?'move_exact':'copy_exact',args});rememberDeviceTransferHistory(args.src,value?.target,value?.historyId);break;
+      value=await call('device_transfer',{action:cmd.startsWith('move')?'move_exact':'copy_exact',args:{downloadOptions:deviceDownloadOptions(),...args}});rememberDeviceTransferHistory(args.src,value?.target,value?.historyId);break;
     case 'plan_folder_merge':value=await call('device_transfer',{action:'plan_merge',args});break;
     case 'remove_empty_merge_folders':value=await call('device_transfer',{action:'remove_empty',args});break;
     case 'read_file_preview':value=await fs('preview',args.path);break;

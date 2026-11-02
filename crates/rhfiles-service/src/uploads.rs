@@ -8,6 +8,7 @@ use crate::{
 use axum::body::Body;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom, Write},
@@ -233,6 +234,10 @@ impl Uploads {
             ));
         }
         staged.file.seek(SeekFrom::Start(offset))?;
+        // Keep tiny HTTP/TLS frames out of the blocking filesystem path.
+        // Acknowledgements still mean file + journal are durably synced.
+        let mut output = tokio::io::BufWriter::with_capacity(1024 * 1024,
+            tokio::fs::File::from_std(staged.file.try_clone()?));
         let mut written = offset;
         let mut stream = body.into_data_stream();
         while let Some(chunk) =
@@ -246,15 +251,27 @@ impl Uploads {
             if written.saturating_add(chunk.len() as u64) > u.length {
                 return Err(Error::new("too_large", "上传内容超过声明长度"));
             }
-            staged.file.write_all(&chunk)?;
+            output.write_all(&chunk).await?;
             written += chunk.len() as u64;
         }
-        staged.file.sync_all()?;
-        u.offset = written;
-        self.save(u)?;
+        output.flush().await?;
+        output.get_ref().sync_all().await?;
+        drop(output);
+        a.check(true, false)?;
+        let mut checkpoint = u.clone();
+        checkpoint.offset = written;
+        self.save(&checkpoint)?;
+        // A failed journal write cannot make HEAD claim an offset which would
+        // disappear after restart. Unacknowledged staging tails are discarded.
+        *u = checkpoint;
         if written == u.length {
             a.check(true, false)?;
-            u.digest = Some(digest(&mut staged.file)?);
+            let mut file = staged.file.try_clone()?;
+            let access = a.clone();
+            u.digest = Some(tokio::task::spawn_blocking(move || {
+                access.check(true, false)?;
+                digest(&mut file)
+            }).await.map_err(|_| Error::new("internal", "上传摘要计算失败"))??);
             self.save(u)?;
             a.check(true, false)?;
             staged.commit()?;
@@ -295,4 +312,34 @@ fn digest(file: &mut std::fs::File) -> Result<String> {
         hash.update(&buffer[..n]);
     }
     Ok(format!("{:x}", hash.finalize()))
+}
+
+#[cfg(test)] mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn failed_checkpoint_never_advances_head_past_the_durable_journal() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap(); let files = base.join("files"); let data = base.join("state");
+        std::fs::create_dir(&files).unwrap(); std::fs::create_dir(&data).unwrap();
+        let storage = Storage::protected(&[ShareConfig { name: "Files".into(), path: files.clone() }], &data, &[]).unwrap();
+        let groups = Arc::new(crate::groups::Groups::open(&data).unwrap());
+        let group = groups.create("Checkpoint QA", "Host", Permissions { write: true, delete: true }).unwrap();
+        let auth = crate::auth::Auth::new(&data).unwrap();
+        let credentials = auth.group_session(groups.clone(), &group, &groups.device_id()).unwrap();
+        let access = auth.authenticate(Some(&format!("Bearer {}:{}", credentials["username"].as_str().unwrap(), credentials["password"].as_str().unwrap())), "PATCH").unwrap();
+        let uploads = Uploads::new(&data).unwrap();
+        let mut upload = uploads.create(&storage, &access, "/Files/new.bin".into(), 10).unwrap();
+        let blocked = data.join("uploads").join(format!("{}.tmp", upload.id));
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(uploads.append(&storage, &access, &mut upload, 0, Body::from("first")).await.is_err());
+        assert_eq!(upload.offset, 0);
+        assert_eq!(uploads.offset(&storage, &upload).unwrap(), 0);
+        let restored = Uploads::new(&data).unwrap();
+        assert_eq!(restored.get(&upload.id).unwrap().lock().await.offset, 0);
+        assert!(!files.join("new.bin").exists());
+        std::fs::remove_dir(&blocked).unwrap();
+        assert_eq!(uploads.append(&storage, &access, &mut upload, 0, Body::from("0123456789")).await.unwrap(), 10);
+        assert_eq!(std::fs::read(files.join("new.bin")).unwrap(), b"0123456789");
+        assert!(upload.completed);
+    }
 }
