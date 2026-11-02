@@ -1164,14 +1164,19 @@ function formatPathsForClipboard(paths) {
   return values
     .map(value => typeof value === 'string' ? value : value?.path)
     .filter(value => typeof value === 'string' && value.length > 0)
+    .map(value => typeof isDevicePath==='function'&&isDevicePath(value)?deviceBrowser.copyAddress(value):value)
     .join('\r\n');
 }
 
 async function copyPathsFromMenu(paths) {
-  const text = formatPathsForClipboard(paths);
-  if (!text) return false;
-  const count = text.split('\r\n').length;
   try {
+    // Snapshot the entire selection before awaiting local trust. Resolve every
+    // alias before touching the clipboard: mixed/ambiguous batches are atomic.
+    const values = (Array.isArray(paths) ? paths : [paths]).map(value=>typeof value==='string'?value:value?.path).filter(value=>typeof value==='string'&&value.length>0);
+    if(values.some(value=>typeof isDevicePath==='function'&&isDevicePath(value)))await deviceBrowser.refreshForCopy();
+    const text = formatPathsForClipboard(values);
+    if (!text) return false;
+    const count = values.length;
     // WebView clipboard is immediate and avoids launching PowerShell. Keep the
     // backend command as a compatibility fallback for restricted environments.
     if (!await writeTextClipboard(text)) await call('copy_file_path', { path: text });

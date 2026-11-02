@@ -28,3 +28,18 @@ for(const zh of [true,false])test(`diagnostics explain retry budgets and routes 
   const refresh=all(host).find(n=>n.tagName==='button'&&n.textContent===(zh?'刷新记录（不重试）':'Refresh records (no retry)'));await refresh.fire('click');
   assert.deepEqual(calls,['state','diagnostics','diagnostics']);
 });
+
+for(const zh of [true,false])test(`stable-address copy controls live only in diagnostics and do not start probes (${zh?'Chinese':'English'})`,async()=>{
+  const host=new Element('div');host.connected=true;
+  const ctx=context({document:{createElement:tag=>new Element(tag)},settingsAutoSave:{flush:async()=>{},bind(){}}});load(ctx,'device-groups-ui.js');
+  const calls=[],copies=[],group='a'.repeat(64),peer='b'.repeat(64);
+  const call=async command=>{calls.push(command);if(command==='state')return {groups:[]};if(command==='diagnostics')return [{group,peer,outcome:'connected',startedAt:1,durationMs:1,steps:[]}];throw Error(command);};
+  await vm.runInContext('deviceGroupView',ctx).mount(host,{call,zh,copyStableAddress:async(...args)=>copies.push(args)});
+  const details=all(host).find(n=>n.tagName==='details');
+  const current=all(details).find(n=>n.tagName==='button'&&n.textContent===(zh?'复制当前路径的稳定地址':'Copy stable address of current folder'));
+  assert(current);assert(!details.open,'Advanced path-copy controls must not become primary group UI');
+  await current.fire('click');assert.deepEqual(copies,[[]]);assert.deepEqual(calls,['state']);
+  details.open=true;await details.fire('toggle');await new Promise(r=>setImmediate(r));
+  const root=all(details).find(n=>n.tagName==='button'&&n.textContent===(zh?'复制设备根目录稳定地址':'Copy stable device-root address'));
+  assert(root);await root.fire('click');assert.deepEqual(copies,[[],[group,peer]]);assert.deepEqual(calls,['state','diagnostics']);
+});

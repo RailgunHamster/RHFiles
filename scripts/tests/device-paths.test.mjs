@@ -41,3 +41,13 @@ test('bad short addresses never normalize dot segments, accept query credentials
   }
   assert(!paths.isAddress('\\\\WINSERVER\\Files'));assert(!paths.isAddress('file:///C:/Files'));
 });
+
+test('strict copy formatting never exposes internal IDs when the alias is missing or ambiguous',()=>{
+  const path=paths.make(group,peer,'/Files/中文 % #.txt');
+  assert.equal(paths.addressFor(path,devices,{strict:true}),'rh://WINSERVER/Files/中文 %25 %23.txt');
+  assert.throws(()=>paths.addressFor(path,[],{strict:true}),{code:'device_not_found'});
+  const other={group:'c'.repeat(64),groupName:'Other',peer:'d'.repeat(64),name:'winserver'};
+  assert.equal(paths.addressFor(path,[...devices,other],{strict:true}),'rh://RH@WINSERVER/Files/中文 %25 %23.txt');
+  assert.throws(()=>paths.addressFor(path,[...devices,{...other,groupName:'rh'}],{strict:true}),{code:'ambiguous_device'});
+  assert.equal(paths.addressFor(path,[]),path,'Explicit/internal callers retain the stable identity without guessing');
+});

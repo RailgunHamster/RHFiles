@@ -63,12 +63,17 @@
     }
     const peer=unique[0];return {path:make(peer.group,peer.peer,parsed.path),group:peer.group,peer:peer.peer};
   }
-  function addressFor(value,peers){
-    const parsed=parse(value),peer=peers.find(p=>p.group===parsed.group&&p.peer===parsed.peer);if(!peer)return parsed.uri;
+  function addressFor(value,peers,{strict=false}={}){
+    const parsed=parse(value),peer=peers.find(p=>p.group===parsed.group&&p.peer===parsed.peer);
+    if(!peer){
+      if(strict){const error=Error('[device_not_found] No accepted file service for this identity');error.code='device_not_found';throw error;}
+      return parsed.uri;
+    }
     for(const group of [undefined,peer.groupName]){
       const candidate=address(peer.name,parsed.path,group);
       try{if(resolveAddress(candidate,peers).path===parsed.uri)return candidate;}catch{}
     }
+    if(strict){const error=Error('[ambiguous_device] Group and device names are not unique');error.code='ambiguous_device';throw error;}
     return parsed.uri; // Even duplicate group names must not pick a device.
   }
   return Object.freeze({prefix,is,make,parse,parent,join,name,isAddress,address,parseAddress,resolveAddress,addressFor});

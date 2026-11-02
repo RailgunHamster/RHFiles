@@ -45,6 +45,7 @@ const deviceGroupView=(()=>{
         card.append(el('strong','',label(codes,report.outcome)),el('p','dg-identity',new Date(report.startedAt).toLocaleString(options.zh===false?'en':'zh-CN')+' · '+report.durationMs+' ms · '+report.peer));
         if(report.endpoint)card.append(el('code','dg-endpoint',report.endpoint));
         if(report.routeType)card.append(el('p','',label(codes,report.routeType)));
+        if(options.copyStableAddress&&report.group&&report.peer)card.append(button(text('复制设备根目录稳定地址','Copy stable device-root address'),()=>options.copyStableAddress(report.group,report.peer),'diagnostics.stable.'+report.group+'.'+report.peer));
         if(Number.isInteger(report.attempts))card.append(el('p','',text('尝试 ','Attempts ')+report.attempts+'/6 · '+text('剩余预算 ','Remaining budget ')+Math.max(0,report.remainingMs||0)+' ms'));
         if(report.retryAfterMs>0)card.append(el('p','',text('自动请求冷却剩余（记录时）：','Automatic-request cooldown remaining at time of report: ')+Math.ceil(report.retryAfterMs/1000)+text(' 秒；可主动点击“连接设备”受限重试。',' seconds; Connect device allows a rate-limited manual retry.')));
         const list=el('ol','dg-steps');for(const step of report.steps||[]){const row=el('li','dg-step');row.dataset.outcome=step.outcome;row.append(el('strong','',label(methods,step.method)),el('span','',label(codes,step.code)+' · '+step.durationMs+' ms'));if(step.endpoint)row.append(el('code','dg-endpoint',step.endpoint));list.append(row);}card.append(list);diagnosticBody.append(card);
@@ -63,6 +64,7 @@ const deviceGroupView=(()=>{
       if(!root.isConnected)return;diagnostics.open=true;await showDiagnostics();alert.textContent=label(codes,result?.outcome||'unreachable');
     }
     diagnostics.append(button(text('刷新记录（不重试）','Refresh records (no retry)'),showDiagnostics,'diagnostics.refresh'),button(text('复制诊断','Copy diagnostics'),async()=>{const report=JSON.stringify(await call('diagnostics',{}),null,2);if(options.copy)await options.copy(report);else await navigator.clipboard.writeText(report);alert.textContent=text('已复制不含凭据的诊断记录','Copied diagnostics without credentials');},'diagnostics.copy'));
+    if(options.copyStableAddress)diagnostics.append(button(text('复制当前路径的稳定地址','Copy stable address of current folder'),()=>options.copyStableAddress(),'diagnostics.stableCurrent'));
     RHFilesUI.listen(diagnostics,'toggle',()=>{if(diagnostics.open)showDiagnostics().catch(e=>{alert.textContent=String(e);});},undefined,'groups.diagnostics.open');
     async function show(value,kind){
       const labels={request:['入组请求文本','Join request text','复制入组请求','Copy join request'],approval:['批准信息文本','Approval text','复制批准信息','Copy approval'],public:['组公开信息文本','Public group data text','复制组公开信息','Copy public group data'],invitation:['邀请信息文本','Invitation text','复制邀请信息','Copy invitation']},labelsForKind=labels[kind]||labels.public;

@@ -14,6 +14,25 @@ const deviceBrowser=(()=>{
   const name=(group,peer)=>peers.find(p=>p.group===group&&p.peer===peer)?.name||('RHFiles · '+peer.slice(0,8));
   function display(path){const p=P.parse(path);return name(p.group,p.peer)+(p.path==='/'?'':p.path);}
   const address=path=>P.addressFor(path,peers);
+  function copyAddress(path){
+    try{return P.addressFor(path,peers,{strict:true});}catch(error){
+      if(error.code==='ambiguous_device')throw Error('[ambiguous_device] '+text('设备名和组名均重复，无法生成唯一短地址，未复制。请修改重名，或在“连接诊断”中复制稳定地址。','Both device and group names are duplicated; no unique short address was copied. Rename them or copy a stable address from Connection diagnostics.'));
+      if(error.code==='device_not_found')throw Error('[device_not_found] '+text('此设备已移除或没有可用的文件服务记录，未复制。可在“连接诊断”中复制稳定地址。','This device was removed or has no accepted file-service record; nothing was copied. A stable address is available in Connection diagnostics.'));
+      throw error;
+    }
+  }
+  async function refreshForCopy(){
+    const state=await refresh();
+    if(state.stale)throw Error('[device_state_changed] '+text('设备记录正在变化，未复制。请重新执行复制路径。','Device records changed; nothing was copied. Copy the paths again.'));
+    return state;
+  }
+  async function copyStableAddress(path){
+    if(!P.is(path))throw Error(text('请先打开一个 RHFiles 设备文件夹，再复制当前路径的稳定地址。','Open an RHFiles device folder before copying its stable address.'));
+    const address=P.parse(path).uri;
+    if(!await writeTextClipboard(address))await call('copy_file_path',{path:address});
+    if(typeof showNotice==='function')showNotice(text('已复制稳定地址','Stable address copied'));
+    return {address};
+  }
   const list=()=>peers.map(v=>({...v,address:address(v.path)}));
   async function resolve(value){
     await refresh(); // Reload local trust only; no probes, DNS or broadcasts.
@@ -70,6 +89,8 @@ const deviceBrowser=(()=>{
     api.register('devices.list',()=>({devices:list()}),{params:object(),risk:'read',description:'Locally known group file services and readable rh:// addresses; does not probe the network'});
     api.register('devices.refresh',refresh,{params:object(),risk:'read',description:'Reload locally accepted device-group services, without discovery traffic'});
     api.register('devices.resolve',p=>resolve(p.address),{params:object({address:string},['address']),risk:'read',description:'Resolve rh://[group@]device/share/path from local trust, rejecting ambiguous names without network probes'});
+    api.register('devices.address',async p=>{if(p.format==='stable')return {address:P.parse(p.path).uri};await refreshForCopy();return {address:copyAddress(p.path)};},{params:object({path:string,format:{type:'string',enum:['readable','stable']}},['path']),risk:'read',description:'Format a device identity path as a unique rh:// address (default) or an explicit stable diagnostic URI. Reads local trust only; never probes the network.'});
+    api.register('devices.copyStableAddress',p=>copyStableAddress(p.path),{params:object({path:string},['path']),risk:'write',description:'Explicitly copy an identity URI for diagnostics, without resolving a name or granting access.'});
     api.register('devices.settings',()=>{openSettings();switchSettingsSection('lan');return {opened:true};},{params:object(),risk:'ui'});
     api.register('devices.open',async p=>{
       const path=P.make(p.group,p.peer,p.path||'/');
@@ -127,7 +148,7 @@ const deviceBrowser=(()=>{
       }
     };try{await paint();}catch(e){list.textContent=String(e);}return {opened:true};
   }
-  return {register,refresh,paint,display,name,address,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs};
+  return {register,refresh,refreshForCopy,paint,display,name,address,copyAddress,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs};
 })();
 deviceBrowser.register(window.RHFilesAPI);
 async function routeDeviceCommand(cmd,args){
