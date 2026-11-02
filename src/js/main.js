@@ -633,7 +633,7 @@ async function checkForUpdates(manual) {
     if ([..._operationTasks.values()].some(task => task.id !== updateTaskId && task.status === 'running')) {
       throw new Error(t('update.busy'));
     }
-    await call('apply_update', {source, proxy});
+    await call('apply_update', {source, proxy, appearance:updateTransitionAppearance()});
   } catch (error) {
     if (String(error).includes('[update_other_instances]')) error = t('update.otherInstances');
     else if (String(error).includes('[update_busy]')) error = t('update.busy');

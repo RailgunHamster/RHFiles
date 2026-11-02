@@ -877,6 +877,7 @@ pub async fn download_update(
 pub fn apply_update(
     source: Option<String>,
     proxy: Option<String>,
+    appearance: Option<crate::update_splash::Appearance>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, crate::types::CancelFlag>,
 ) -> Result<(), String> {
@@ -887,12 +888,18 @@ pub fn apply_update(
         .get_update_pending_restart()
         .ok_or_else(|| "No downloaded update is waiting to be applied".to_string())?;
     cancel.begin_update()?;
+    let transition = crate::update_splash::launch(
+        &manager.get_current_version_as_string(), &pending.Version,
+        appearance.unwrap_or_default(), manager.get_is_portable(),
+    ).map_err(|error| eprintln!("RHFiles update transition: {error}")).ok();
+    // Only silence the native updater once our independent window is ready.
     if let Err(error) =
-        manager.wait_exit_then_apply_updates(pending, false, true, Vec::<String>::new())
+        manager.wait_exit_then_apply_updates(pending, transition.is_some(), true, Vec::<String>::new())
     {
         cancel.abort_update();
         return Err(error.to_string());
     }
+    if let Some(transition) = transition { transition.handoff(); }
     // Unlike Velopack's convenience method, AppHandle::exit lets Tauri destroy
     // its windows and WebView2 children before Update.exe replaces `current`.
     app.exit(0);

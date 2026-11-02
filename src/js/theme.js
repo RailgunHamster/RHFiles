@@ -68,6 +68,26 @@ let _themeDirectory = '';
 let _themeLoadErrors = [];
 let _themePacksLoaded = false;
 
+// Resolve custom CSS colors in the browser; the external native helper accepts
+// only opaque #RRGGBB values and never interprets CSS or command-line fragments.
+function updateTransitionAppearance() {
+  const style = getComputedStyle(document.documentElement);
+  const color = name => {
+    const probe = document.createElement('span');
+    probe.style.color = style.getPropertyValue(name).trim();
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    const parts = value.match(/^rgba?\(\s*(\d+)[, ]+\s*(\d+)[, ]+\s*(\d+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/);
+    if (!parts || (parts[4] && Number(parts[4]) !== 1)) return '';
+    return '#' + parts.slice(1,4).map(v=>Number(v).toString(16).padStart(2,'0')).join('');
+  };
+  return {theme:G.theme?.startsWith('user:') ? G.themeBase : G.theme,
+    language:typeof _lang === 'string' ? _lang : 'en',
+    bg:color('--bg'),card:color('--bg-card'),text:color('--text'),
+    accent:color('--accent'),border:color('--border')};
+}
+
 function localizedThemeName(theme) {
   if (theme.nameKey) return t(theme.nameKey);
   const name = theme.name;

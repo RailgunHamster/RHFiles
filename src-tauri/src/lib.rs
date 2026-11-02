@@ -52,6 +52,8 @@ mod tray;
 mod types;
 #[cfg_attr(target_os = "macos", path = "macos/updates.rs")]
 mod updates;
+#[cfg(windows)]
+mod update_splash;
 #[cfg(target_os = "macos")]
 mod macos;
 mod vcs;

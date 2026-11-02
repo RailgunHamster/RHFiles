@@ -111,9 +111,30 @@ fn main() {
     // The packaged interface is frontendDist=../src. Track it explicitly so
     // changing only JS/CSS/HTML cannot leave an old interface in a new binary.
     println!("cargo:rerun-if-changed=../src");
+    build_update_splash();
     enable_common_controls_for_all_windows_targets();
     generate_release_history();
     let attributes = tauri_build::Attributes::new()
         .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
     tauri_build::try_build(attributes).expect("failed to run Tauri build script");
+}
+
+fn build_update_splash() {
+    println!("cargo:rerun-if-changed=src/RHFilesUpdateSplash.cs");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") { return; }
+    // Build from reviewed source, never compile on the user's machine or trust
+    // a pre-existing executable in a predictable writable temporary directory.
+    let system = PathBuf::from(env::var_os("SystemRoot").expect("Windows system directory"));
+    let compiler = ["Framework64", "Framework"].into_iter()
+        .map(|arch| system.join("Microsoft.NET").join(arch).join("v4.0.30319/csc.exe"))
+        .find(|path| path.is_file()).expect(".NET Framework C# compiler for update splash");
+    let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("RHFiles.UpdateSplash.exe");
+    let result = std::process::Command::new(compiler)
+        .args(["/nologo", "/optimize+", "/target:winexe", "/platform:anycpu", "/utf8output",
+            "/r:System.dll", "/r:System.Core.dll", "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll"])
+        .arg(format!("/out:{}", output.display()))
+        .arg(PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("src").join("RHFilesUpdateSplash.cs"))
+        .output().expect("compile update splash");
+    assert!(result.status.success(), "update splash compiler: {} {}",
+        String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
 }

@@ -1,0 +1,15 @@
+# Windows update transition
+
+The lightweight WinForms/GDI+ view is adapted from the supplied `temp/velopack-update-ui` kit. Velopack still verifies, extracts, replaces and restarts the application. This helper does not install files, modify permissions, retry installation or terminate RHFiles.
+
+- `src-tauri/build.rs` compiles the reviewed C# source using the Windows .NET Framework compiler. The executable and application logo are embedded in RHFiles; no downloaded helper or runtime compilation is trusted.
+- Immediately before applying an update, RHFiles writes fresh files into a randomly named session under `%LOCALAPPDATA%\RHFiles\update-splash`, outside `current`. The helper opens no installation-directory handles and receives no account/group credentials.
+- The parent waits up to four seconds for the helper's window-ready acknowledgement. Only then does it silence Velopack's native progress window. Otherwise the native window remains enabled. If launching the installer fails, the helper is stopped, its session is cleaned and the existing UI receives the error.
+- Current theme colors and language are passed as structured arguments. Color arguments accept only opaque six-digit hex values. Existing scripts can omit appearance.
+- The strip is a phase indication, not byte-accurate installation progress. Directory observations are best-effort. Success handoff requires a newly started visible RHFiles window from the exact same installation; an existing instance or another installation cannot complete it. The helper retains original process handles to avoid PID reuse.
+- A nonzero observed installer exit or a timeout stays visible as an explicit failure/unknown-state message until dismissed. Existing Velopack logs and RHFiles update diagnostics remain authoritative. Dismissing this informational window does not cancel an installer already running.
+- A successful session leaves only its small helper, logo and readiness marker. Sessions older than seven days are cleaned at a later update attempt using only those fixed filenames, without recursive deletion. An active helper's locked executable is not removed.
+
+Run `pwsh scripts/testing/update-splash-check.ps1` for isolated native readiness, process matching, failure, timeout and twelve theme/locale rendering checks. Generated screenshots use synthetic versions and contain no user data. This check is also part of Windows CI. An end-to-end update must additionally exercise Velopack in a disposable installation, not the user's live directory.
+
+This view is Windows-only. Android continues using its download notification and Android's package installer; macOS never consumes the Windows update feed.

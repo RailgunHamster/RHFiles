@@ -37,6 +37,9 @@ jobs:
         run: cargo test --workspace --locked
       - name: Build isolated test application
         run: cargo build -p rhfiles-tauri --locked
+      - name: External updater transition readiness, lifecycle, themes and failures
+        shell: pwsh
+        run: ./scripts/testing/update-splash-check.ps1
       - name: Build owned-window pixel and keyboard test observer
         shell: pwsh
         run: ./scripts/testing/build-owned-native-frame.ps1
