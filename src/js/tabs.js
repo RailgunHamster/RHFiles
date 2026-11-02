@@ -854,7 +854,7 @@ async function showTabPreview(tabEl) {
   const shown = entries.slice(0, maxShow);
 
   _previewEl.innerHTML =
-    `<div class="tab-preview-path">${esc(tab.path)}</div>` +
+    `<div class="tab-preview-path">${esc(tabTooltip(tab.path))}</div>` +
     `<div class="tab-preview-meta">${t('nav.foldersFiles', {folders: dirCount, files: fileCount})}</div>` +
     `<div class="tab-preview-list">${shown.map(e =>
       `<div class="tab-preview-item${e.is_dir ? ' dir' : ''}">${e.is_dir ? '📁 ' : ''}${esc(e.name)}</div>`

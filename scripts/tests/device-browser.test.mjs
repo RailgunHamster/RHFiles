@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import {createRequire} from 'node:module';
+import {load} from '../testing/source.mjs';
 const require=createRequire(import.meta.url),P=require('../../src/js/device-paths.js'),group='a'.repeat(64),peer='b'.repeat(64),path=P.make(group,peer,'/Files/中文%/A.txt');
 function fixture(){
   const actions=new Map(),calls=[];let state={groups:[{id:group,name:'RH',members:[{id:peer,name:'电脑 A',server:{fingerprint:'public'},blocked:false,self:false}]}]};
@@ -93,4 +94,44 @@ test('unknown, malformed and duplicate names report actionable errors without fa
   const suggestions=vm.runInContext("deviceBrowser.suggest('rh://')",f.ctx);
   assert.equal(suggestions.length,2);assert.equal(suggestions[0].path,'rh://RH@电脑 A/');
   assert(f.calls.every(v=>v.cmd==='device_groups'));
+});
+
+for(const right of [false,true])test(`tab hover uses a readable device path without changing its identity URI (${right?'right':'left'} pane)`,async()=>{
+  const f=fixture();
+  f.setState({groups:[{id:group,name:'RH',members:[{id:peer,name:'WINSERVER',server:{}}]}]});
+  await f.run('devices.refresh');
+  const preview={style:{},classList:{add(){}}};
+  Object.assign(f.ctx,{
+    RHFilesUI:{listen(){}},IS_MAC:false,
+    t:(key,args)=>key==='nav.foldersFiles'?`${args.folders} folders, ${args.files} files`:key,
+    entryVisible:()=>true,
+    window:{innerWidth:1000},
+    document:{createElement:()=>preview,body:{appendChild(){}}},
+  });
+  load(f.ctx,'common.js',['displayPath','esc']);
+  load(f.ctx,'tabs.js',['tabTooltip','_previewTimer','_previewEl','_previewFetchToken','showTabPreview','hideTabPreview']);
+  for(const [location,expected]of [
+    [P.make(group,peer,'/C/Users/Administrator/Downloads'),'WINSERVER/C/Users/Administrator/Downloads'],
+    [P.make(group,peer),'WINSERVER'],
+    [P.make(group,peer,'/Files/中文 % #/A.txt'),'WINSERVER/Files/中文 % #/A.txt'],
+    ['C:\\Users\\Downloads','C:/Users/Downloads'],
+    ['\\\\server\\share\\folder','//server/share/folder'],
+    ['home://','nav.home'],
+    ['recycle://','recycle.title · recycle://'],
+  ]){
+    f.ctx.isRecyclePath=value=>value==='recycle://';
+    const tab={id:1,path:location,entries:[{name:'test.txt',is_dir:false}]};
+    f.ctx.G={tabs:right?[]:[tab],rpTabs:right?[tab]:[]};
+    await f.ctx.showTabPreview({dataset:{tabId:'1',pane:right?'right':'left'},isConnected:true,getBoundingClientRect:()=>({bottom:20,left:10})});
+    assert(preview.innerHTML.includes(`<div class="tab-preview-path">${expected}</div>`),preview.innerHTML);
+    assert(!preview.innerHTML.includes('rhfiles-device://'));
+    assert(!preview.innerHTML.includes(group));assert(!preview.innerHTML.includes(peer));
+    assert.equal(tab.path,location,'Display formatting must not change the stored/copyable address');
+  }
+  const escapedPath=P.make(group,peer,'/Files/中文 & 文件');
+  f.ctx.G={tabs:[{id:2,path:escapedPath,entries:[{name:'<test>.txt',is_dir:false}]}]};
+  await f.ctx.showTabPreview({dataset:{tabId:'2',pane:'left'},isConnected:true,getBoundingClientRect:()=>({bottom:20,left:10})});
+  assert(preview.innerHTML.includes('WINSERVER/Files/中文 &amp; 文件'));
+  assert(preview.innerHTML.includes('&lt;test&gt;.txt'));
+  assert(f.calls.every(v=>v.cmd==='device_groups'),'Rendering a loaded tab must not probe the network');
 });
