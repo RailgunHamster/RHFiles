@@ -1,6 +1,7 @@
 """Loopback-only disposable FTP/SFTP/WebDAV servers, never real user data."""
 import base64
 import json
+import logging
 import os
 import pathlib
 import socket
@@ -16,6 +17,7 @@ from pyftpdlib.handlers import FTPHandler
 from pyftpdlib.servers import FTPServer
 
 ROOT = pathlib.Path(sys.argv[1]).resolve()
+logging.basicConfig(stream=sys.stderr,level=logging.DEBUG if os.environ.get("RHFILES_PROTOCOL_FIXTURE_TRACE")=="1" else logging.INFO)
 ROOT.mkdir(parents=True, exist_ok=True)
 USER, PASSWORD = "rhfiles-qa", "owned-fixture-only"
 
@@ -147,11 +149,15 @@ def handle_ssh(connection):
     # Paramiko 5.1 otherwise advertises its pre-filter list but chooses from the
     # post-filter list, producing different client/server negotiated algorithms.
     options = transport.get_security_options()
-    options.kex = tuple(k for k in options.kex if not k.startswith("diffie-hellman-group-exchange-"))
+    # Keep this filesystem fixture deterministic across libssh2 builds; SSH
+    # algorithm negotiation/performance is not what this loopback test measures.
+    options.kex = ("diffie-hellman-group14-sha256",)
     transport.add_server_key(key)
     transport.set_subsystem_handler("sftp", paramiko.SFTPServer, Sftp)
     try: transport.start_server(server=Auth())
-    except Exception: transport.close()
+    except Exception as error:
+        print("Owned SSH fixture handshake failed:",repr(error),file=sys.stderr,flush=True)
+        transport.close()
 def accept_ssh():
     while True:
         connection, _ = ssh.accept()

@@ -10,6 +10,7 @@ const androidAutomation=(()=>{
     provideReceipts(actions);
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
     deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
+    register('devices.discover',apiSchema(),()=>app.refreshGroupDevices(),'external','Explicitly refresh trusted group service records and visible storage locations; bounded to 30 seconds / 32 members, never changes permissions');
     register('fileServer.state',apiSchema(),()=>api.serverStatus(),'read','Read the explicitly started phone group HTTPS/WebDAV service');
     register('transfer.settings',apiSchema(),()=>api.native('transfer.settings'),'read','Read local bounded download policy');
     register('transfer.configure',apiSchema({parallelism:{type:'integer',minimum:1,maximum:4},rateMiB:{type:'number',minimum:0,maximum:1000}},['parallelism','rateMiB']),p=>api.native('transfer.configure',p),'settings','Set parallel streams and per-file MiB/s limit for new transfers');

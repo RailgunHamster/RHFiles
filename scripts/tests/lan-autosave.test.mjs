@@ -242,3 +242,14 @@ test('connection semantic APIs expose separate read-only diagnostics and bounded
   const {ctx}=sandbox(),operations=new Map();load(ctx,'device-groups-ui.js');vm.runInContext('deviceGroupView',ctx).register({register:(id,fn,schema)=>operations.set(id,{fn,schema})},()=>{},false);
   assert.equal(operations.get('groups.diagnostics').schema.risk,'read');assert.deepEqual(plain(operations.get('groups.connect').schema.params.required),['id','peer']);assert.ok(operations.has('groups.cancel'));assert.equal(operations.get('groups.connect').schema.params.properties.endpoint.maxLength,256);
 });
+for(const mobile of [false,true])test((mobile?'Android':'Windows')+' explicit refresh is visible, bounded and reports partial failures without changing grants',async()=>{
+  const {host,ctx}=sandbox(),calls=[],state={deviceId:'self',groups:[{id:'g',name:'Home',enabled:false,permissions:{write:false,delete:false},members:[]}]};
+  load(ctx,'device-groups-ui.js');const view=vm.runInContext('deviceGroupView',ctx);let received;
+  await view.mount(host,{mobile,call:async(command,args)=>{calls.push(command);if(command==='state')return plain(state);if(command==='refresh')return {connected:1,locations:2,discovered:1,budgetExhausted:true,errors:[{device:'CLAW',code:'authorization_rejected'}]};throw Error(command);},forgotten:result=>{received=result;}});
+  assert.deepEqual(calls,['state'],'Mounting must not start any discovery');
+  const refresh=all(host).find(n=>n.tagName==='button'&&n.textContent==='刷新组设备');assert.ok(refresh);await refresh.fire('click');
+  assert.deepEqual(calls,['state','refresh','state']);assert.equal(received.discovered,1);assert.equal(refresh.disabled,false);
+  assert.match(host.textContent,/已连接 1 台.*已知设备 2 台.*新发现 1 台/);assert.match(host.textContent,/刷新上限/);assert.match(host.textContent,/CLAW：文件服务未授权或已停用/);assert.match(host.textContent,/连接诊断/);
+  assert.equal(state.groups[0].enabled,false);assert.equal(state.groups[0].permissions.write,false);
+  const operations=new Map();view.register({register:(id,fn,schema)=>operations.set(id,{fn,schema})},()=>{},mobile);assert.equal(operations.get('groups.refresh').schema.risk,'external');
+});

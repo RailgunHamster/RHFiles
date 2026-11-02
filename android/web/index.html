@@ -110,7 +110,8 @@
   <div class="drawer-brand"><span data-icon="folder"></span><strong>RHFiles</strong><button id="drawer-more" class="icon-btn" aria-label="导航更多选项" data-icon="more"></button><button id="drawer-close" class="icon-btn" aria-label="关闭导航" data-icon="close"></button></div>
   <button id="nav-home" class="nav-item"><span data-icon="home"></span>首页</button>
   <button id="nav-rhvideo" class="nav-item"><span data-icon="video"></span>RHVideo</button>
-  <h2>存储位置</h2><div id="roots"></div>
+  <div class="drawer-section-heading"><h2>存储位置</h2><button id="drawer-refresh-devices" class="text-btn" data-api-action="devices.discover" aria-label="刷新设备与存储位置"><span data-icon="refresh"></span>刷新</button></div>
+  <p id="drawer-device-refresh-status" class="muted device-refresh-status" role="status" aria-live="polite" hidden></p><div id="roots"></div>
   <h2>快捷访问</h2><div id="nav-favorites"></div>
   <button id="nav-settings" class="nav-item"><span data-icon="settings"></span>设置</button>
   <button id="nav-scan" class="nav-item"><span data-icon="scan"></span>扫码</button>

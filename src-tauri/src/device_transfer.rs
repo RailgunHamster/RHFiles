@@ -1722,12 +1722,15 @@ mod tests {
     #[tokio::test]
     async fn replacing_a_local_file_with_identical_bytes_and_timestamp_changes_its_revision() {
         let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
+        // macOS /var is a system symlink. The production no-symlink guard is
+        // intentional; normalize this private fixture, not the file guard.
+        let root = temp.path().canonicalize().unwrap();
+        let source = root.join("source");
         std::fs::write(&source, b"same").unwrap();
         let file = std::fs::File::open(&source).unwrap();
         let first = file_revision(&file).unwrap();
         let modified = file.metadata().unwrap().modified().unwrap();
-        std::fs::rename(&source, temp.path().join("original")).unwrap();
+        std::fs::rename(&source, root.join("original")).unwrap();
         std::fs::write(&source, b"same").unwrap();
         std::fs::File::options()
             .write(true)

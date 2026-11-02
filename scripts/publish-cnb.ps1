@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -lt 7){throw 'Use PowerShell 7 (pwsh)'}
 . (Join-Path $PSScriptRoot 'cnb-release.ps1')
+. (Join-Path $PSScriptRoot 'release-policy.ps1')
 Assert-RHFilesCnbRepository $Repository
 $scratch=Join-Path ([IO.Path]::GetTempPath()) ('rhfiles-cnb-publish-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $scratch
@@ -72,6 +73,7 @@ try {
             $feed.releases+=@($priorOwn.releases|Where-Object {[long]$_.versionCode -lt [long]$channelVersion})
         }
     }
+    if($Platform -eq 'Android'){$feed.releases=@(Select-RHFilesAndroidReleases $feed.releases)}
     [IO.File]::WriteAllText((Join-Path $scratch $metadata),($feed|ConvertTo-Json -Depth 30 -Compress),[Text.UTF8Encoding]::new($false))
     $files+=Get-Item -LiteralPath (Join-Path $scratch $metadata)
     $files+=$companion

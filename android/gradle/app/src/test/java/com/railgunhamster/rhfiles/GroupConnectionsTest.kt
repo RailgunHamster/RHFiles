@@ -66,6 +66,43 @@ class GroupConnectionsTest {
     try{block(f)}finally{DeviceGroups::class.java.getDeclaredField("model").apply{isAccessible=true;set(null,null)}}
   }}
   private fun latest(f:Fixture):JSONObject {val all=GroupConnections.diagnostics();return (0 until all.length()).map{all.getJSONObject(it)}.first{it.optString("group")==f.id}}
+  @Test fun serviceRecordPublicationIsOneBoundedExchangeNotAPollingLoop(){fixture{f->
+    val finished=CountDownLatch(1)
+    f.onRequest={if(it.requestUrl!!.encodedPath=="/api/v1/capabilities")finished.countDown();null}
+    DeviceGroups.publishServiceRecords()
+    assertTrue(finished.await(5,TimeUnit.SECONDS))
+    val active=DeviceGroups::class.java.getDeclaredField("publicationActive").apply{isAccessible=true}.get(DeviceGroups) as java.util.concurrent.atomic.AtomicBoolean
+    val until=System.nanoTime()+TimeUnit.SECONDS.toNanos(3)
+    while(active.get()&&System.nanoTime()<until)Thread.sleep(10)
+    assertFalse(active.get());assertEquals(3,f.server.requestCount)
+    assertEquals("refresh",latest(f).getString("trigger"));assertEquals("connected",latest(f).getString("outcome"))
+    Thread.sleep(150);assertEquals(3,f.server.requestCount);assertEquals(0,f.mutations.get())
+  }}
+  @Test fun explicitRefreshLearnsNewServicesEvenWithAWarmSessionAndNeverRestoresRemovedMembers(){fixture{f->
+    val context=org.robolectric.RuntimeEnvironment.getApplication()
+    context.getSharedPreferences("remote-v1",0).edit().clear().commit()
+    val remote=RemoteStorage(context,{javax.crypto.spec.SecretKeySpec(ByteArray(32){9},"AES")})
+    GroupConnections.resolve(f.config(),"file_request")
+    val requests=f.server.requestCount
+    val permissions=f.phone.state().getJSONArray("groups").getJSONObject(0).getJSONObject("permissions").toString()
+    val third=DeviceGroupModel(Key(),null){}
+    val request=third.run("request",obj("deviceName" to "CLAW")) as JSONObject
+    val approved=f.host.run("approve",obj("id" to f.id,"uri" to request.getString("uri"))) as JSONObject
+    third.run("join",obj("uri" to approved.getString("uri"),"confirmed" to true))
+    third.serviceAdvertise(obj("fingerprint" to "ba".repeat(32),"endpoints" to JSONArray().put("https://192.168.1.23:39128")))
+    f.host.importPacket(f.id,third.packet(f.id))
+    assertEquals(2,f.phone.state().getJSONArray("groups").getJSONObject(0).getJSONArray("members").length())
+    val result=DeviceGroups.run("refresh",JSONObject(),remote) as JSONObject
+    assertEquals(1,result.getInt("connected"));assertEquals(2,result.getInt("locations"));assertEquals(1,result.getInt("discovered"))
+    assertEquals(requests+3,f.server.requestCount) // challenge, fresh session + proofs, capabilities
+    assertEquals(0,result.getJSONArray("errors").length());assertFalse(result.getBoolean("budgetExhausted"))
+    assertEquals(permissions,f.phone.state().getJSONArray("groups").getJSONObject(0).getJSONObject("permissions").toString())
+    assertEquals(0,f.mutations.get());assertEquals("refresh",latest(f).getString("trigger"))
+    DeviceGroups.run("remove",obj("id" to f.id,"peer" to third.deviceId),remote)
+    val again=DeviceGroups.run("refresh",JSONObject(),remote) as JSONObject
+    assertEquals(1,again.getInt("locations"));assertEquals(0,again.getInt("discovered"))
+    assertTrue(f.phone.state().getJSONArray("groups").getJSONObject(0).getJSONArray("members").let{all->(0 until all.length()).map{all.getJSONObject(it)}.first{it.getString("id")==third.deviceId}.getBoolean("blocked")})
+  }}
   @Test fun ordinaryFileReadRecoversFromOldIpAndReusesTheConnection(){fixture{f->
     val c=f.config("https://127.0.0.1:1")
     assertEquals("file.txt",RhFilesConnection(c).stat("Files/file.txt","remote://qa/Files/file.txt").name)

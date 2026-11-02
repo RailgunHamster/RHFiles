@@ -21,6 +21,16 @@ test('device UI APIs list locally accepted peers without probing or exposing ses
   assert.deepEqual(f.calls.filter(v=>v.id).map(v=>v.id),['tabs.new','navigation.open']);assert.equal(f.calls.at(-1).args.path,P.make(group,peer,'/Files/中文%'));
   f.setState({groups:[{id:group,name:'RH',members:[{id:peer,server:{},blocked:true}]}]});await f.run('devices.refresh');assert.equal((await f.run('devices.list')).devices.length,0);
 });
+test('explicit device discovery exchanges records once, updates local sidebar state and shares concurrent clicks',async()=>{
+  const f=fixture();let release;const pending=new Promise(resolve=>{release=resolve;});const status={hidden:true,textContent:''},button={disabled:false,setAttribute(){}};
+  f.ctx.document.getElementById=id=>id==='device-group-refresh-status'?status:id==='device-group-refresh'?button:null;
+  vm.runInContext(fs.readFileSync(new URL('../../src/js/device-groups-ui.js',import.meta.url),'utf8'),f.ctx);
+  f.ctx.call=async(command,args)=>{f.calls.push({cmd:command,args});if(args.command==='refresh')return pending;return {groups:[]};};
+  const one=f.run('devices.discover'),two=f.run('devices.discover');assert.equal(one,two);assert.equal(button.disabled,true);assert.equal(status.hidden,false);assert.match(status.textContent,/30 秒/);
+  assert.equal(f.calls.length,1);assert.equal(f.calls[0].args.command,'refresh');release({connected:1,locations:2,discovered:1});await one;
+  assert.equal(button.disabled,false);assert.match(status.textContent,/新发现 1 台/);assert.deepEqual(f.calls.map(c=>c.args.command),['refresh','state']);
+  assert.equal(f.actions.get('devices.discover').schema.risk,'external');
+});
 
 test('copy/cut/paste and merge cleanup route both transfer directions to the native device engine, never to local shell APIs',async()=>{
   const f=fixture();

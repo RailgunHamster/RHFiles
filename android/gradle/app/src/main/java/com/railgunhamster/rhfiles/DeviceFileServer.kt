@@ -22,7 +22,7 @@ internal object DeviceFileServer {
     return value.getJSONObject("result")
   }
   @Synchronized fun state()=decoded(GroupServiceNative.state()).put("announcementError",announcementError?:JSONObject.NULL)
-  @Synchronized fun membershipChanged(){try{decoded(GroupServiceNative.advertise());announcementError=null}catch(error:Exception){announcementError=error.message?:"文件服务地址尚未发布，请停止后重新启动服务"}}
+  @Synchronized fun membershipChanged(){try{decoded(GroupServiceNative.advertise());announcementError=null;if(state().optBoolean("running"))DeviceGroups.publishServiceRecords()}catch(error:Exception){announcementError=error.message?:"文件服务地址尚未发布，请停止后重新启动服务"}}
   @Synchronized fun start(context:Context,args:JSONObject):JSONObject {
     require(!state().optBoolean("running")){"文件服务已经启动"}
     val storage=NativeStorage(context.applicationContext)
@@ -43,6 +43,7 @@ internal object DeviceFileServer {
     announcementError=null
     try{ContextCompat.startForegroundService(context,Intent(context,DeviceFileService::class.java))}
     catch(error:Exception){GroupServiceNative.stop();throw error}
+    DeviceGroups.publishServiceRecords()
     return result
   }
   @Synchronized fun stop(context:Context):JSONObject {

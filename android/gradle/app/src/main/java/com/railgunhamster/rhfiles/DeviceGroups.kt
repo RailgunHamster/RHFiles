@@ -38,6 +38,8 @@ internal object DeviceGroups {
   private data class Session(val authorization:String,val expires:Long)
   private val sessions=linkedMapOf<String,Session>()
   private val refreshDeadline=ThreadLocal<Long>()
+  private val refreshActive=java.util.concurrent.atomic.AtomicBoolean(false)
+  private val publicationActive=java.util.concurrent.atomic.AtomicBoolean(false)
   fun refreshRemaining()=refreshDeadline.get()?.let{(it-android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0)}?:15000L
   @Synchronized fun install(context:Context){if(owner==null){owner=context.applicationContext;GroupConnections.install(context)}}
   @Synchronized fun invalidate(c:JSONObject){val prefix="${c.getString("groupId")}:${c.getString("groupPeerId")}:";sessions.keys.filter{it.startsWith(prefix)}.toList().forEach{sessions.remove(it)}}
@@ -128,6 +130,19 @@ internal object DeviceGroups {
       for(j in 0 until members.length()){val p=members.getJSONObject(j);if(!p.optBoolean("self")&&!p.optBoolean("blocked")&&!p.isNull("server")){result.add(Triple(g.getString("id"),p.getString("id"),p))}}}
     return result
   }
+  /** A service start publishes its newly signed endpoint to existing online
+   * members once. No timer, central directory, recursive search or write retry. */
+  fun publishServiceRecords(){
+    if(!publicationActive.compareAndSet(false,true))return
+    Thread({
+      if(!refreshActive.compareAndSet(false,true)){publicationActive.set(false);return@Thread}
+      refreshDeadline.set(android.os.SystemClock.elapsedRealtime()+30000)
+      try{for((group,peer,member) in servers().take(32)){
+        if(refreshRemaining()==0L)break
+        try{GroupConnections.resolve(profile(group,peer,member,endpoints(member.getJSONObject("server")).first()),"refresh",true)}catch(_:Exception){/* Bounded attempt is retained in connection diagnostics. */}
+      }}finally{refreshDeadline.remove();refreshActive.set(false);publicationActive.set(false)}
+    },"RHFiles-service-records").apply{isDaemon=true;start()}
+  }
   private fun profile(group:String,peer:String,member:JSONObject,url:String)=JSONObject().put("type","rhfiles").put("name",member.getString("name")).put("url",url).put("fingerprint",member.getJSONObject("server").getString("fingerprint")).put("groupId",group).put("groupPeerId",peer)
   private fun profiles(remote:RemoteStorage):List<JSONObject>{val a=remote.backupProfiles(true);return (0 until a.length()).map{val item=a.getJSONObject(it);JSONObject(item.getJSONObject("config").toString()).put("id",item.getString("id"))}}
   @Synchronized private fun importLocations(remote:RemoteStorage):Int {
@@ -194,17 +209,22 @@ internal object DeviceGroups {
     synchronized(this){if(sessions.size>=128)sessions.remove(sessions.keys.first());sessions[cache]=Session(auth,now+25*60*1000)};return auth
   }
   private fun refresh(remote:RemoteStorage):JSONObject {
+    check(refreshActive.compareAndSet(false,true)){"已有设备刷新正在进行，请等待其完成"}
+    try {
     val cleanup=removeOrphanLocations(remote)
     val failures=JSONArray();var connected=0
+    val before=servers();var budgetExhausted=before.size>32
     val deadline=android.os.SystemClock.elapsedRealtime()+30000;refreshDeadline.set(deadline)
     try {
-    for((group,peer,member) in servers().take(32)){
-      if(android.os.SystemClock.elapsedRealtime()>=deadline){failures.put(JSONObject().put("device",member.getString("name")).put("message","刷新达到 30 秒上限；已保留现有连接，可稍后重试"));break}
+    for((group,peer,member) in before.take(32)){
+      if(android.os.SystemClock.elapsedRealtime()>=deadline){budgetExhausted=true;break}
       var failure:Exception?=null
       try{val c=profile(group,peer,member,endpoints(member.getJSONObject("server")).first());val resolved=GroupConnections.resolve(c,"refresh",true);synchronized(this){groups().requirePeer(group,peer);for(old in profiles(remote)){if(old.optString("groupId")==group&&old.optString("groupPeerId")==peer)remote.save(old.put("url",resolved.getString("url")))}};connected++}catch(e:Exception){failure=e}
       failure?.let{failures.put(JSONObject().put("device",member.getString("name")).put("message",it.message))}
     }
     } finally {refreshDeadline.remove()}
-    return JSONObject().put("connected",connected).put("locations",importLocations(remote)).put("errors",failures).also{result->cleanup.keys().forEach{result.put(it,cleanup.get(it))}}
+    val after=servers();val known=before.map{it.first to it.second}.toSet()
+    return JSONObject().put("connected",connected).put("locations",importLocations(remote)).put("discovered",after.count{(it.first to it.second) !in known}).put("errors",failures).put("budgetExhausted",budgetExhausted).put("budgetMs",30000).put("maxPeers",32).also{result->cleanup.keys().forEach{result.put(it,cleanup.get(it))}}
+    } finally {refreshActive.set(false)}
   }
 }

@@ -63,7 +63,7 @@ A 先授权 B 可以邀请，B 后来接纳 C 时 A 离线。C 保存根证明�
 
 ## 自动化
 
-本机 JSON 命令：`groups.state/create/request/approve/join/export/remove/restore/forget/configure`；手机还提供 `groups.refresh`。使用现有 `scripts/rhfiles-api.mjs` 命令行入口枚举动作及参数。`join`、`restore`、`forget` 必须明确传 `confirmed: true`；`forget` 参数为 `{ "id": "组 ID", "confirmed": true }`，属于破坏性的本机配置操作，不删除文件。没有网络端的删除组/恢复/权限管理 API。二维码渲染属于公开数据处理，手机 Rust 命令为 `device_group_qr`。
+本机 JSON 命令：`groups.state/create/request/approve/join/export/remove/restore/forget/configure`；两端都提供 `groups.refresh`（交换签名服务记录）与 `devices.discover`（同一次交换并更新侧栏）。刷新最多 30 秒、32 个已知成员，不开启文件服务、不修改权限、不复活本机移除。服务启动或开放设置变化时，也会向已知在线成员做一次有界交换，不持续轮询；无在线成员时可稍后主动刷新。使用现有 `scripts/rhfiles-api.mjs` 命令行入口枚举动作及参数。`join`、`restore`、`forget` 必须明确传 `confirmed: true`；`forget` 参数为 `{ "id": "组 ID", "confirmed": true }`，属于破坏性的本机配置操作，不删除文件。没有网络端的删除组/恢复/权限管理 API。二维码渲染属于公开数据处理，手机 Rust 命令为 `device_group_qr`。
 
 ## 按需恢复与诊断（Windows 0.1.80 / Android 0.1.28）
 

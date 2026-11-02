@@ -90,6 +90,11 @@ svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.7;
 .scrim { position:fixed; inset:0; background:#10182070; z-index:20; }
 .drawer { position:fixed; inset:0 auto 0 0; width:min(84vw,320px); overflow:auto; z-index:21; background:var(--bg); padding:env(safe-area-inset-top) 8px 20px; box-shadow:var(--shadow); touch-action:pan-y; }
 .drawer-brand { display:flex; align-items:center; gap:14px; padding:18px 12px; } .drawer-brand strong { flex:1; font-size:20px; } .drawer-brand>span { color:#d29b3a; }
+.drawer-section-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-right:8px; }
+.drawer-section-heading button { display:flex; align-items:center; gap:5px; font-size:12px; }
+.drawer-section-heading svg { width:16px; height:16px; }
+.device-refresh-status { margin:0 12px 8px; font-size:11px; white-space:pre-line; overflow-wrap:anywhere; }
+[aria-busy="true"]>span[data-icon="refresh"] { animation:spin 1s linear infinite; }
 .drawer { transform:translateX(-100%); transition:transform 180ms cubic-bezier(.2,.7,.3,1); will-change:transform; }
 .scrim { transition:opacity 180ms ease; }
 .drawer.dragging,.scrim.dragging { transition:none; }

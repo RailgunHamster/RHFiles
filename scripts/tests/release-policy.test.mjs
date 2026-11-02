@@ -7,6 +7,11 @@ import {spawnSync} from 'node:child_process';
 import {root} from '../testing/source.mjs';
 
 const windows={skip:process.platform!=='win32'?'Windows-only PowerShell packaging policy':false};
+test('Android update history retains only the newest three code-ordered releases without dropping their asset metadata',windows,()=>{
+  const history=[1038,1042,1020,1041].map(code=>({versionCode:code,assets:[{fileName:code+'.apk',sha256:'verified-'+code}]}));
+  const result=run('Select-RHFilesAndroidReleases $case.history|ConvertTo-Json -Compress -Depth 8',{history});assert.equal(result.status,0,result.stderr);
+  const retained=JSON.parse(result.stdout);assert.deepEqual(retained.map(r=>r.versionCode),[1042,1041,1038]);assert.equal(retained[0].assets[0].sha256,'verified-1042');
+});
 function run(code,input={}) {
   const result=spawnSync('pwsh',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop';. $env:RHFILES_POLICY;$case=$env:RHFILES_CASE|ConvertFrom-Json;"+code],{
     encoding:'utf8',timeout:20000,env:{...process.env,RHFILES_POLICY:path.join(root,'scripts/release-policy.ps1'),RHFILES_CASE:JSON.stringify(input)},

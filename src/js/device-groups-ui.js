@@ -3,12 +3,23 @@
  * Local removals have no network/API counterpart that can restore them. */
 const deviceGroupView=(()=>{
   const el=(tag,cls='',text)=>{const n=document.createElement(tag);n.className=cls;if(text!==undefined)n.textContent=text;return n;};
+  function refreshSummary(result,zh=true){
+    const text=(a,b)=>zh? a:b;
+    const codes={unreachable:text('当前不可达（不代表离线）','Currently unreachable (not proof of offline status)'),cooldown:text('刚刚已尝试，请稍后刷新','Recently attempted; refresh later'),authorization_rejected:text('文件服务未授权或已停用','File service not authorized or disabled'),authorization_revoked:text('本机授权已移除','Local authorization removed'),budget_exhausted:text('已达到刷新时间上限','Refresh time limit reached'),network_changed:text('本机网络已变化','Local network changed')};
+    let message=text('已连接 ','Connected ')+(result.connected||0)+text(' 台 · 已知设备 ',' · known devices ')+(result.locations||0)+text(' 台','');
+    if(result.discovered)message+=text(' · 新发现 ',' · newly found ')+result.discovered+text(' 台','');
+    if(!result.locations)message+='\n'+text('尚无文件服务记录。请确认对方在同一个组、已开放文件服务并启动共享。','No file-service records yet. Check the same group, file-service access and running shares on the other device.');
+    if(result.budgetExhausted)message+='\n'+text('已达本次刷新上限，未继续扫描；现有设备记录保留。','Refresh limit reached; scanning stopped and existing records retained.');
+    const failures=(result.errors||[]).map(v=>v.device+'：'+(v.message||codes[v.code]||v.code||text('连接失败','Connection failed'))).concat(result.cleanupErrors||[]);
+    if(failures.length)message+='\n'+failures.join('\n')+'\n'+text('详细尝试见管理设备组 → 连接诊断。','See Manage device groups → Connection diagnostics for attempted routes.');
+    return message;
+  }
   function register(api,call,mobile=false){
     const string={type:'string',minLength:1,maxLength:360000},bool={type:'boolean'};
     const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
     const permissions=object({write:bool,delete:bool});
     const operations={state:object(),diagnostics:object(),connect:object({id:string,peer:string,endpoint:{type:'string',maxLength:256}},['id','peer']),create:object({name:string,deviceName:string,permissions},['name','deviceName']),request:object({deviceName:string},['deviceName']),approve:object({id:string,uri:string,canInvite:bool},['id','uri']),join:object({uri:string,confirmed:bool,permissions},['uri','confirmed']),export:object({id:string},['id']),remove:object({id:string,peer:string},['id','peer']),restore:object({id:string,peer:string,confirmed:bool},['id','peer','confirmed']),forget:object({id:string,confirmed:bool},['id','confirmed']),configure:object({id:string,enabled:bool,permissions},['id','enabled','permissions'])};
-    if(mobile)operations.refresh=object();
+    operations.refresh=object();
     if(!mobile)operations.invite=object({id:string,canInvite:bool},['id']);
     operations.cancel=object({id:string,peer:string},['id','peer']);
     for(const [operation,params]of Object.entries(operations))api.register('groups.'+operation,p=>call(operation,p),{params,risk:['state','diagnostics'].includes(operation)?'read':operation==='forget'?'destructive':'external',description:'Local device-group '+operation+'; local refusals are never cleared by incoming proofs'});
@@ -87,8 +98,8 @@ const deviceGroupView=(()=>{
     controls.append(name.row,groupName.row,button(text('创建新设备组','Create group'),async()=>{await call('create',{name:groupName.field.value.trim(),deviceName:name.field.value.trim()});await paint();},'create'),button(text('生成本机入组请求','Request to join'),async()=>{await show(await call('request',{deviceName:name.field.value.trim()}),'request');alert.textContent=text('把请求交给有邀请权限的成员。对方批准后，把批准信息贴回下方并加入。新的请求会使上次未使用的批准失效。','Send the request to a member with invitation rights. Paste their approval below. A new request invalidates an unused old approval.');},'request'));
     const incoming=input(text('粘贴邀请、入组请求或批准信息','Paste an invitation, request or approval'),'','textarea'),trust=input(text('已核对信息来自我信任的设备','I verified this data came from a trusted device'),false,'checkbox');controls.append(incoming.row,trust.row);
     if(options.scan)controls.append(button(text('扫码','Scan QR'),async()=>{await options.scan();await paint();await options.forgotten?.({});},'scan'));
-    controls.append(button(text('使用邀请或批准信息加入','Join with invitation or approval'),async()=>{if(!trust.field.checked)throw Error(text('请先核对来源并勾选确认','Verify the source and check the confirmation first'));const uri=incoming.field.value.trim();if(uri.startsWith('rhfiles-group-request:v1:'))throw Error(text('这是入组请求，请交给已有成员批准，再将批准信息带回本机加入','This is a join request. Have an existing member approve it, then bring the approval back to this device'));await call('join',{uri,confirmed:true});await paint();alert.textContent=text('已加入。电脑需在文件服务中设置共享目录并启动服务。手机点“刷新组设备”发现其他成员电脑。','Joined. Computers must configure roots and start file service. Refresh group devices on your phone to learn other member computers.');},'join'));
-    if(options.mobile)controls.append(button(text('刷新组设备','Refresh group devices'),async()=>{alert.textContent=text('正在连接已知成员并交换公开证明…','Connecting to known members…');const r=await call('refresh',{});await paint();await options.forgotten?.(r);alert.textContent=text('已连接 ','Connected ')+r.connected+text(' 台；可用网络位置 ','; locations ')+r.locations+(r.errors?.length?'\n'+r.errors.map(v=>v.device+'：'+v.message).join('\n'):'')+(r.cleanupErrors?.length?'\n'+r.cleanupErrors.join('\n'):'');},'refresh'));
+    controls.append(button(text('使用邀请或批准信息加入','Join with invitation or approval'),async()=>{if(!trust.field.checked)throw Error(text('请先核对来源并勾选确认','Verify the source and check the confirmation first'));const uri=incoming.field.value.trim();if(uri.startsWith('rhfiles-group-request:v1:'))throw Error(text('这是入组请求，请交给已有成员批准，再将批准信息带回本机加入','This is a join request. Have an existing member approve it, then bring the approval back to this device'));await call('join',{uri,confirmed:true});await paint();alert.textContent=text('已加入。对方设置共享目录并启动文件服务后，可点击“刷新组设备”更新设备列表。','Joined. Once the other device configures shares and starts file service, use Refresh group devices to update the list.');},'join'));
+    controls.append(button(text('刷新组设备','Refresh group devices'),async()=>{alert.textContent=text('正在连接已知成员并交换签名服务记录，最多 30 秒…','Exchanging signed service records with known members; up to 30 seconds…');const r=await call('refresh',{});await paint();await options.forgotten?.(r);alert.textContent=refreshSummary(r,options.zh!==false);},'refresh'));
     async function paint(state){
       await settingsAutoSave.flush(root);
       state=state||await call('state',{});if(!root.isConnected)return;body.replaceChildren(el('p','dg-identity',text('本机身份：','Device identity: ')+state.deviceId));
@@ -123,5 +134,5 @@ const deviceGroupView=(()=>{
     }
     await paint(initialState);
   }
-  return {mount,register};
+  return {mount,register,refreshSummary};
 })();

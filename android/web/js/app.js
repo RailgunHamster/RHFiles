@@ -212,6 +212,18 @@
   function openDrawer() { renderDrawer(); ui.setDrawerOpen(true); }
   function closeDrawer() { ui.setDrawerOpen(false); }
   async function refreshLocations(){state.roots=await api.storageRoots();await clearRetiredFavorites();thumbnails.clear();renderDrawer();if(state.route.screen==='home')renderHome();}
+  let deviceRefreshPromise=null;
+  function refreshGroupDevices(){
+    if(deviceRefreshPromise)return deviceRefreshPromise;
+    const button=$('drawer-refresh-devices'),status=$('drawer-device-refresh-status');
+    button.disabled=true;button.setAttribute('aria-busy','true');status.hidden=false;status.textContent='正在交换设备服务记录，最多 30 秒…';
+    deviceRefreshPromise=(async()=>{
+      try{const result=await api.native('groups.refresh');for(const id of result.removedLocations||[])removeFavoritePrefix('remote://'+id+'/');await refreshLocations();status.textContent=deviceGroupView.refreshSummary(result);return result;}
+      catch(err){await refreshLocations().catch(()=>{});status.textContent='刷新失败：'+(err.message||String(err));throw err;}
+      finally{button.disabled=false;button.setAttribute('aria-busy','false');deviceRefreshPromise=null;}
+    })();
+    return deviceRefreshPromise;
+  }
   async function clearRetiredFavorites(){if(!api.featuresAvailable())return;const ids=new Set(await api.native('connection.retired')),next=state.favorites.filter(e=>!ids.has(mobileList.remoteId(e.path)));if(next.length!==state.favorites.length){state.favorites=next;cache('rhfiles.favorites',JSON.stringify(next));}}
   function removeFavoritePrefix(prefix){state.favorites=state.favorites.filter(e=>!e.path.startsWith(prefix));cache('rhfiles.favorites',JSON.stringify(state.favorites));renderDrawer();}
 
@@ -790,7 +802,7 @@
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -822,6 +834,7 @@
     ui.bindFileGestures($('filelist'),{find:path=>state.entries.find(entry=>entry.path===path)||currentEntries().find(entry=>entry.path===path),select:startSelection,toggle:toggleSelection,activate:entry=>activate(entry).catch(error),hasSelection:()=>state.selected.size>0});
     RHFilesUI.listen($('scrim'),'click',closeDrawer,undefined,"android.web.js.app.boot.b5946fbd45ef");
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
+    on('drawer-refresh-devices',()=>RHFilesAPI.invoke('devices.discover'));
     for(const id of ['device-download-streams','device-download-rate'])RHFilesUI.listen($(id),'change',async()=>{
       if(!$('device-download-rate').checkValidity())return;
       try{await api.native('transfer.configure',{parallelism:Number($('device-download-streams').value),rateMiB:Number($('device-download-rate').value)});}catch(e){error(e);}

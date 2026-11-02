@@ -7,6 +7,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'platform-version.ps1')
+. (Join-Path $PSScriptRoot 'release-policy.ps1')
 $platformVersion=Get-RHFilesPlatformVersion -Platform Android
 $sdk = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $env:ANDROID_HOME }
 $buildTools = Get-ChildItem (Join-Path $sdk 'build-tools') -Directory | Sort-Object Name -Descending | Select-Object -First 1
@@ -49,7 +50,7 @@ if ($same) {
 $otherAssets = if ($same) { @($same.assets | Where-Object abi -ne $abi) } else { @() }
 $release = [ordered]@{ version=$version; versionCode=$code; minSdk=$minSdk; giteeTag="android-v$version"; prerelease=$false; notes=$notes; assets=@($otherAssets)+@($asset) }
 $releases = @($history | Where-Object versionCode -ne $code)+@($release)
-$feed = [ordered]@{ schemaVersion=1; packageId='com.railgunhamster.rhfiles'; releases=@($releases | Sort-Object { [long]$_.versionCode } -Descending) }
+$feed = [ordered]@{ schemaVersion=1; packageId='com.railgunhamster.rhfiles'; releases=@(Select-RHFilesAndroidReleases $releases) }
 $target = Join-Path $OutputDirectory $name
 if (Test-Path -LiteralPath $target) {
     if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash) { throw 'Published APK already exists with different bytes' }

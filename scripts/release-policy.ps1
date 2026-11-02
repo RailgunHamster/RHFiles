@@ -1,4 +1,8 @@
 # Shared pure policy used by packaging, release preflight and regression tests.
+function Select-RHFilesAndroidReleases($History,[int]$Keep=3) {
+    if($Keep -lt 1 -or $Keep -gt 100){throw 'Invalid Android history retention count'}
+    @($History | Sort-Object {[long]$_.versionCode} -Descending | Select-Object -First $Keep)
+}
 function Compare-RHFilesVersion([string]$Left, [string]$Right) {
     $pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
     $a=[regex]::Match($Left,$pattern);$b=[regex]::Match($Right,$pattern)

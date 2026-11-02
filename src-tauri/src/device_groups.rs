@@ -90,6 +90,11 @@ pub async fn device_groups(
     if command == "diagnostics" {
         return serde_json::to_value(connector()?.diagnostics()).map_err(|e| e.to_string());
     }
+    if command == "refresh" {
+        let result = refresh_services().await?;
+        let _ = app.emit("device-groups-changed", ());
+        return Ok(result);
+    }
     if command == "cancel" {
         return Ok(json!(
             connector()?.cancel(field(&args, "id")?, field(&args, "peer")?)
@@ -118,6 +123,65 @@ pub(crate) fn connector() -> Result<std::sync::Arc<rhfiles_service::connection::
         crate::lan_service::groups()?,
     ));
     Ok(INSTANCE.get_or_init(|| v).clone())
+}
+
+fn service_peers(state: &Value) -> Vec<(String, String, String)> {
+    state["groups"].as_array().into_iter().flatten().flat_map(|group| {
+        group["members"].as_array().into_iter().flatten().filter_map(|peer| {
+            if peer["self"] == true || peer["blocked"] == true || !peer["server"].is_object() {
+                return None;
+            }
+            Some((group["id"].as_str()?.to_owned(), peer["id"].as_str()?.to_owned(),
+                peer["name"].as_str().unwrap_or("RHFiles").to_owned()))
+        })
+    }).collect()
+}
+
+/// One bounded publication after an explicit service start / sharing change.
+/// An already running refresh coalesces this work; there is no timer or retry.
+pub(crate) fn publish_service_records() {
+    tauri::async_runtime::spawn(async {
+        if let Err(error) = refresh_services().await {
+            eprintln!("Service record exchange not completed: {error}");
+        }
+    });
+}
+
+/// Explicit signed membership exchange, not a recurring LAN scan. A snapshot
+/// bounds work even when peers introduce further peers. Never invalidate file
+/// leases, clear local refusals, enable sharing or change any permissions.
+async fn refresh_services() -> Result<Value, String> {
+    static REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = REFRESH.try_lock().map_err(|_| "[refresh_busy] 已有设备刷新正在进行，请等待其完成")?;
+    let groups = crate::lan_service::groups()?;
+    // Re-advertise the local running service before exchanging public proofs.
+    // This is not permission to start a stopped service or add shared roots.
+    crate::lan_service::advertise_groups()?;
+    let before = service_peers(&groups.state().map_err(|e| e.to_string())?);
+    let connector = connector()?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut connected = 0;
+    let mut errors = Vec::new();
+    let mut budget_exhausted = before.len() > 32;
+    for (id, peer, name) in before.iter().take(32) {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() { budget_exhausted = true; break; }
+        // The normal manual connector already enforces signed identities,
+        // private addresses, six attempts and a per-peer retry interval.
+        match tokio::time::timeout(remaining, connector.connect(id, peer, None, "manual")).await {
+            Ok(report) if report.outcome == "connected" => connected += 1,
+            Ok(report) => errors.push(json!({"device":name,"group":id,"peer":peer,"code":report.outcome})),
+            Err(_) => {
+                errors.push(json!({"device":name,"group":id,"peer":peer,"code":"budget_exhausted"}));
+                budget_exhausted = true;
+                break;
+            }
+        }
+    }
+    let after = service_peers(&groups.state().map_err(|e| e.to_string())?);
+    let discovered = after.iter().filter(|(id, peer, _)| !before.iter().any(|(g, p, _)| g == id && p == peer)).count();
+    Ok(json!({"connected":connected,"locations":after.len(),"discovered":discovered,
+        "errors":errors,"budgetExhausted":budget_exhausted,"budgetMs":30000,"maxPeers":32}))
 }
 fn run(command: &str, args: &Value) -> Result<Value, String> {
     let groups = crate::lan_service::groups()?;
@@ -237,6 +301,16 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
     if matches!(command, "create" | "join") {
         crate::lan_service::advertise_groups()?;
     }
+    if command == "configure" {
+        // Settings have already been committed. A transient announcement error
+        // must not pretend that grants were rolled back.
+        if let Err(error) = crate::lan_service::advertise_groups() {
+            eprintln!("Group settings saved; local service advertisement unavailable: {error}");
+        }
+        if crate::lan_service::is_running() {
+            publish_service_records();
+        }
+    }
     Ok(result)
 }
 fn err(message: impl Into<String>) -> rhfiles_service::Error {
@@ -247,6 +321,18 @@ fn err(message: impl Into<String>) -> rhfiles_service::Error {
 mod name_tests {
     use super::*;
     use rhfiles_service::device_name::clean_device_name;
+    #[test]
+    fn refresh_candidates_exclude_self_removed_and_unadvertised_members_without_changing_grants() {
+        let state = json!({"groups":[{"id":"group","enabled":false,"permissions":{"write":false,"delete":false},"members":[
+            {"id":"self","name":"Local","self":true,"server":{}},
+            {"id":"blocked","name":"Removed","blocked":true,"server":{}},
+            {"id":"waiting","name":"No service","server":null},
+            {"id":"peer","name":"CLAW","self":false,"blocked":false,"server":{}}
+        ]}]});
+        let original = state.clone();
+        assert_eq!(service_peers(&state), vec![("group".into(),"peer".into(),"CLAW".into())]);
+        assert_eq!(state, original);
+    }
     #[test]
     fn system_names_are_safe_and_within_the_signed_name_limit() {
         assert_eq!(

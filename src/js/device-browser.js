@@ -20,7 +20,7 @@ function rememberDeviceTransferHistory(src,dest,id){
 }
 function takeDeviceTransferHistory(src,dest){const key=JSON.stringify([src,dest]),id=deviceTransferHistories.get(key);deviceTransferHistories.delete(key);return id;}
 const deviceBrowser=(()=>{
-  const P=RHFilesDevicePaths,media=new Map();let peers=[],revision=0,readTicket=0;
+  const P=RHFilesDevicePaths,media=new Map();let peers=[],revision=0,readTicket=0,discoverPromise=null;
   const text=(zh,en)=>String(_lang||'').startsWith('zh')?zh:en;
   const fs=(action,path,extra={})=>call('device_fs',{action,args:{path,...extra}});
   const name=(group,peer)=>peers.find(p=>p.group===group&&p.peer===peer)?.name||('RHFiles · '+peer.slice(0,8));
@@ -73,7 +73,7 @@ const deviceBrowser=(()=>{
     if(!peers.length){const help=document.createElement('p');help.className='settings-card-description';help.style.cssText='padding:0 12px;font-size:11px';help.textContent=text('加入设备组后，已开启共享的设备会显示在这里。','Join a group to see devices offering file sharing.');host.append(help);}
     const heading=document.getElementById('device-group-heading');if(heading)heading.textContent=text('RHFiles 设备','RHFiles devices');
     const setup=document.querySelector('#device-group-settings > span');if(setup)setup.textContent=text('管理设备组','Manage device groups');
-    const refresh=document.getElementById('device-group-refresh');if(refresh)refresh.title=text('刷新设备列表（不发起网络探测）','Refresh devices (no network probing)');
+    const refresh=document.getElementById('device-group-refresh');if(refresh){refresh.title=text('连接已知组成员并刷新设备（最多 30 秒）','Connect to known group members and refresh devices (up to 30 seconds)');refresh.setAttribute('aria-label',text('刷新 RHFiles 设备','Refresh RHFiles devices'));}
     const copies=document.querySelector('#device-working-copies > span');if(copies)copies.textContent=text('缓存与工作副本','Cache & working copies');
   }
   async function refresh(){
@@ -90,6 +90,19 @@ const deviceBrowser=(()=>{
     }
     if(typeof renderTabs==='function')renderTabs();return {devices:list()};
   }
+  function discover(){
+    if(discoverPromise)return discoverPromise;
+    const button=document.getElementById('device-group-refresh'),status=document.getElementById('device-group-refresh-status');
+    const say=message=>{if(status){status.hidden=false;status.textContent=message;}};
+    if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
+    say(text('正在交换设备服务记录，最多 30 秒…','Exchanging device service records; up to 30 seconds…'));
+    discoverPromise=(async()=>{
+      try{const result=await call('device_groups',{command:'refresh',args:{}});await refresh();say(deviceGroupView.refreshSummary(result,String(_lang||'').startsWith('zh')));return result;}
+      catch(error){await refresh().catch(()=>{});say(text('刷新失败：','Refresh failed: ')+String(error.message||error));throw error;}
+      finally{if(button){button.disabled=false;button.setAttribute('aria-busy','false');}discoverPromise=null;}
+    })();
+    return discoverPromise;
+  }
   async function source(path){
     path=P.parse(path).uri;const cached=media.get(path);if(cached&&performance.now()-cached.at<300000)return cached.url;
     const token=revision,result=await fs('resource',path);if(token!==revision)throw Error(text('设备组已改变，请重新选择文件','Device group changed; select the file again'));
@@ -100,6 +113,7 @@ const deviceBrowser=(()=>{
     const string={type:'string',minLength:1,maxLength:27000},id={type:'string',pattern:'^[a-fA-F0-9]{64}$'},object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
     api.register('devices.list',()=>({devices:list()}),{params:object(),risk:'read',description:'Locally known group file services and readable rh:// addresses; does not probe the network'});
     api.register('devices.refresh',refresh,{params:object(),risk:'read',description:'Reload locally accepted device-group services, without discovery traffic'});
+    api.register('devices.discover',discover,{params:object(),risk:'external',description:'Explicit signed service-record exchange with known trusted group members; at most 30 seconds / 32 members, no polling or permission changes'});
     api.register('devices.resolve',p=>resolve(p.address),{params:object({address:string},['address']),risk:'read',description:'Resolve rh://[group@]device/share/path from local trust, rejecting ambiguous names without network probes'});
     api.register('devices.address',async p=>{if(p.format==='stable')return {address:P.parse(p.path).uri};await refreshForCopy();return {address:copyAddress(p.path)};},{params:object({path:string,format:{type:'string',enum:['readable','stable']}},['path']),risk:'read',description:'Format a device identity path as a unique rh:// address (default) or an explicit stable diagnostic URI. Reads local trust only; never probes the network.'});
     api.register('devices.copyStableAddress',p=>copyStableAddress(p.path),{params:object({path:string},['path']),risk:'write',description:'Explicitly copy an identity URI for diagnostics, without resolving a name or granting access.'});

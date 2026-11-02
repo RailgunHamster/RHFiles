@@ -56,7 +56,9 @@ internal object GroupConnections {
   }
   fun resolve(c:JSONObject,trigger:String="file_request",force:Boolean=false,manual:String?=null):JSONObject {
     val key=key(c);val budget=ConnectionBudget({android.os.SystemClock.elapsedRealtime()},total=minOf(15_000L,DeviceGroups.refreshRemaining()))
-    val manualRequest=trigger=="manual"
+    // Explicit refresh must exchange fresh signed service records even while
+    // the old 25-minute authentication session is still valid.
+    val manualRequest=trigger=="manual"||trigger=="refresh"
     val(gate,cancellationVersion)=synchronized(locks){require(locks.size<128||locks.containsKey(key)){"并发连接数达到上限"};val value=locks.getOrPut(key){Gate()};val version=value.manualCancellation.get();value.users++;if(manualRequest)value.manualUsers++;value to version}
     val lock=gate.lock
     fun releaseGate(){synchronized(locks){gate.users--;if(manualRequest)gate.manualUsers--;if(gate.users==0)locks.remove(key)}}
@@ -71,7 +73,7 @@ internal object GroupConnections {
       if(manualRequest&&gate.manualCancellation.get()!=cancellationVersion){report.put("outcome","cancelled").put("certainty","confirmed");step(run,"coalesce",null,"cancelled","cancelled");throw java.io.InterruptedIOException("连接已取消")}
       try{DeviceGroups.validatePeer(c)}catch(e:Exception){val code=ConnectionBudget.classify(e);report.put("outcome",if(code=="authorization_revoked")code else "authorization_rejected").put("certainty","confirmed");step(run,"authorization",null,"failed",code);throw e}
       val cached=routes[key]
-      if((!force||waited)&&cached!=null&&cached.healthy&&cached.epoch==epoch&&now-cached.at<60_000&&DeviceGroups.hasSession(JSONObject(c.toString()).put("url",cached.url))){
+      if(trigger!="refresh"&&(!force||waited)&&cached!=null&&cached.healthy&&cached.epoch==epoch&&now-cached.at<60_000&&DeviceGroups.hasSession(JSONObject(c.toString()).put("url",cached.url))){
         val result=JSONObject(c.toString()).put("url",cached.url)
         DeviceGroups.authorization(result)
         reused=true

@@ -26,6 +26,10 @@
 .dg-connect { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:12px; padding-top:12px; border-top:1px solid color-mix(in srgb,currentColor 12%,transparent); }
 @media(max-width:500px) { .dg-field:not(:has([type=checkbox])) { align-items:stretch; flex-direction:column; gap:5px; }.dg-field input:not([type=checkbox]),.dg-field textarea { max-width:100%; }.dg-card { padding:12px; }.dg-member { align-items:flex-start; } }
 #device-group-section .sidebar-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}
+#device-group-section .device-refresh-status{margin:6px 12px 10px;font-size:11px;white-space:pre-line;overflow-wrap:anywhere}
+#device-group-refresh[aria-busy="true"] svg{animation:device-refresh-spin 1s linear infinite}
+@keyframes device-refresh-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){#device-group-refresh[aria-busy="true"] svg{animation:none}}
 #device-group-refresh{border:0;background:transparent;color:var(--text-3);padding:3px;display:inline-flex;align-items:center;border-radius:5px;cursor:pointer}
 #device-group-refresh:hover{background:var(--bg-3);color:var(--text-1)}
 #device-group-section .sidebar-device-tools{margin:7px 8px 0 18px;padding:4px 0 0 8px;border-left:1px solid var(--border)}

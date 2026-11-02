@@ -67,6 +67,9 @@ pub(crate) fn advertise_groups() -> Result<(), String> {
     }
     Ok(())
 }
+pub(crate) fn is_running() -> bool {
+    slot().lock().ok().is_some_and(|service| service.as_ref().is_some_and(|s| s.status().running))
+}
 pub(crate) fn group_invitation(id: &str, can_invite: bool) -> Result<serde_json::Value, String> {
     slot()
         .lock()
@@ -148,6 +151,8 @@ fn start(mut config: Config) -> Result<rhfiles_service::Status, String> {
     if let Err(error)=crate::webdav_compat::restore(&running){*STARTUP_ERROR.lock().map_err(|_|"服务状态不可用")?=Some(format!("WebDAV 兼容入口恢复失败；设备组服务不受影响：{error}"));}
     let status = running.status();
     *service = Some(running);
+    drop(service);
+    crate::device_groups::publish_service_records();
     Ok(status)
 }
 

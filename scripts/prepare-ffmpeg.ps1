@@ -4,19 +4,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'ffmpeg-source.ps1')
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $thirdPartyDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot "src-tauri\thirdparty"))
 $workDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot "temp\ffmpeg-9.0.1"))
 $archivePath = Join-Path $workDirectory "ffmpeg-9.0.1-essentials_build.7z"
-$fallbackArchivePath = Join-Path $workDirectory "RHFiles-0.1.26-full.nupkg"
+$fallbackArchivePath = Join-Path $workDirectory "latest-verified-recovery.nupkg"
 $extractDirectory = Join-Path $workDirectory "extracted"
 $destinationExe = Join-Path $thirdPartyDirectory "ffmpeg.exe"
 $destinationLicense = Join-Path $thirdPartyDirectory "ffmpeg-LICENSE.txt"
 $destinationReadme = Join-Path $thirdPartyDirectory "ffmpeg-README.txt"
 $downloadUrl = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.1-essentials_build.7z"
 $expectedArchiveSha256 = "49A73BDF0850092A252AC4641D922F3048D63ED113E196CC65CE1E4F7FB33E85"
-$fallbackDownloadUrl = "https://github.com/RailgunHamster/RHFiles/releases/download/v0.1.26/RHFiles-0.1.26-full.nupkg"
-$fallbackArchiveSha256 = "4E16A1F474347DBC2293BA09CE96A906A40F680A95D71E89C022C10FF5CA4556"
 $expectedBinarySha256 = "72A489ECCD008C2EC2C0A5856C5C75BC3D8BBFA90166C4566865C246445E6AA3"
 
 function Assert-WorkspaceChild([string]$Path, [string]$Description) {
@@ -85,6 +84,7 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
         break
     } catch {
         $lastDownloadError = $_
+        if([int]$_.Exception.Response.StatusCode -in 400,401,403,404,410){break}
         if ($attempt -lt 5) {
             Write-Warning "FFmpeg download attempt $attempt failed; retrying. $($_.Exception.Message)"
             Start-Sleep -Seconds ([Math]::Min(16, [Math]::Pow(2, $attempt)))
@@ -92,20 +92,27 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
     }
 }
 if (-not $downloaded) {
-    Write-Warning "The primary FFmpeg archive is unavailable; recovering the same verified binary from the RHFiles 0.1.26 package. $($lastDownloadError.Exception.Message)"
+    Write-Warning "The primary FFmpeg archive is unavailable; recovering the same pinned binary from the current verified Windows package. $($lastDownloadError.Exception.Message)"
+    $feedArguments=@{Uri='https://github.com/RailgunHamster/RHFiles/releases/latest/download/releases.win.json';TimeoutSec=30}
+    if($Proxy){$feedArguments.Proxy=$Proxy}
+    $feedResponse=Invoke-WebRequest @feedArguments
+    if($feedResponse.RawContentLength -gt 524288){throw 'FFmpeg recovery metadata exceeds its limit'}
+    $recovery=Get-RHFilesFfmpegRecovery (ConvertFrom-RHFilesFfmpegFeed $feedResponse.Content)
     $archivePath = $fallbackArchivePath
-    $downloadArguments.Uri = $fallbackDownloadUrl
+    $downloadArguments.Uri = $recovery.Uri
     $downloadArguments.OutFile = $fallbackArchivePath
-    $downloadSource = "RHFiles 0.1.26 release package"
-    $expectedDownloadedSha256 = $fallbackArchiveSha256
+    $downloadSource = $recovery.Name
+    $expectedDownloadedSha256 = $recovery.Sha256
     $lastDownloadError = $null
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         try {
             Invoke-WebRequest @downloadArguments
+            if((Get-Item -LiteralPath $archivePath).Length -ne $recovery.Size){throw 'FFmpeg recovery package size mismatch'}
             $downloaded = $true
             break
         } catch {
             $lastDownloadError = $_
+            if([int]$_.Exception.Response.StatusCode -in 400,401,403,404,410){break}
             if ($attempt -lt 3) {
                 Write-Warning "FFmpeg fallback download attempt $attempt failed; retrying. $($_.Exception.Message)"
                 Start-Sleep -Seconds ([Math]::Pow(2, $attempt))
@@ -155,6 +162,9 @@ if (-not $sourceReadme) {
 }
 if (-not $sourceExe -or -not $sourceLicense -or -not $sourceReadme) {
     throw "The verified FFmpeg archive did not contain ffmpeg.exe, LICENSE, and README.txt"
+}
+if (-not (Test-PinnedFfmpeg $sourceExe.FullName)) {
+    throw 'The recovery package does not contain the pinned FFmpeg 9.0.1 binary; existing files were not replaced'
 }
 
 Copy-Item -LiteralPath $sourceExe.FullName -Destination $destinationExe -Force

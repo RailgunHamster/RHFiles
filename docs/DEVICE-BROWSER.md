@@ -5,6 +5,7 @@
 ## 当前已验收的范围
 
 - `devices.list`、`devices.refresh`：本地成员清单，不扫描网络。
+- `devices.discover`：对应侧栏刷新，连接已知可信组成员并交换签名服务记录；Windows 和 Android 都有此接口。每次最多 30 秒、32 个已知成员，重复点击合并，不持续扫描、不改变权限。结果含 `connected`、`locations`、`discovered`、`errors` 和 `budgetExhausted`。手机入口在抽屉“存储位置”旁。
 - `devices.settings`、`devices.open`：与侧栏/组管理中的浏览按钮使用同一处理程序，支持普通新标签页及左右窗格。
 - `devices.entries`、`devices.stat`、`devices.capabilities`：结构化目录、文件及权限信息。
 - `devices.search`：显式递归搜索，最多 15 秒、500 个目录和 500 个结果；不会退回本机 Everything 或在后台无限遍历。
