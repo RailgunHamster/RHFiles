@@ -37,6 +37,9 @@ fn fixture() -> (tempfile::TempDir, Arc<Groups>, String, Service) {
     let files = dir.path().join("files");
     std::fs::create_dir(&files).unwrap();
     std::fs::write(files.join("fixture.txt"), b"generated fixture").unwrap();
+    // macOS's system temp path traverses /var -> /private/var. Match the other
+    // service fixtures without weakening the production no-symlink root guard.
+    let files = files.canonicalize().unwrap();
     let service = Service::start_grouped(
         &dir.path().join("service"),
         vec![ShareConfig {
