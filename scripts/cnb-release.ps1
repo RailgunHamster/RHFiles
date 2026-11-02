@@ -103,7 +103,7 @@ function Receive-RHFilesCnbPublicFile($Client,[string]$Url,[string]$Output,[long
     } finally {$timeout.Dispose()}
 }
 
-function Invoke-RHFilesCnbApi($Client,[string]$Token,[string]$Path,[ValidateSet('GET','POST','PATCH')][string]$Method='GET',$Body=$null,[switch]$AllowMissing) {
+function Invoke-RHFilesCnbApi($Client,[string]$Token,[string]$Path,[ValidateSet('GET','POST','PATCH','DELETE')][string]$Method='GET',$Body=$null,[switch]$AllowMissing) {
     $url=[uri]::new([uri]'https://api.cnb.cool/',$Path)
     Assert-RHFilesCnbHttps $url
     if($url.Host -cne 'api.cnb.cool'){throw 'Publishing credential may only be sent to api.cnb.cool'}
