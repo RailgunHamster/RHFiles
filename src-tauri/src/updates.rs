@@ -924,7 +924,7 @@ pub fn apply_update(
     if let Err(error) = cancel.begin_update() { phase(&app,"failed",&pending.Version,&error); return Err(error); }
     phase(&app,"applying",&pending.Version,"");
     let existing = UPDATE_WINDOW.lock().ok().and_then(|mut value|value.take()).and_then(|mut window| {
-        let usable = window.alive() && window.send(&UpdateProgress {
+        let usable = window.alive() && window.prepare_apply(&UpdateProgress {
         percentage:100,phase:"applying",version:pending.Version.clone(),downloaded_bytes:0,total_bytes:0,speed:0,message:String::new(),
         }); usable.then_some(window)
     });

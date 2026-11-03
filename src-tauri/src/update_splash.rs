@@ -26,13 +26,23 @@ fn root(exe: &Path) -> Option<&Path> {
 
 /// An unsuccessful launch/apply drops this guard: terminate the helper and clean
 /// only our randomly-created directory. No orphaned 'updating' window on errors.
-pub struct Session { child: Option<Child>, directory: Option<tempfile::TempDir>, writer: SyncSender<Vec<u8>> }
+type Frame = (Vec<u8>, Option<mpsc::Sender<()>>);
+pub struct Session { child: Option<Child>, directory: Option<tempfile::TempDir>, writer: SyncSender<Frame> }
 impl Session {
     pub fn alive(&mut self) -> bool { self.child.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None))) }
     pub fn send(&self, value: &impl serde::Serialize) -> bool {
+        self.message(value, None)
+    }
+    pub fn prepare_apply(&self, value: &impl serde::Serialize) -> bool {
+        let (sent, received) = mpsc::channel();
+        // Flush the handoff frame BEFORE exiting the parent. A queued-only
+        // write can otherwise be lost when the process ends and closes stdin.
+        self.message(value, Some(sent)) && received.recv_timeout(Duration::from_secs(1)).is_ok()
+    }
+    fn message(&self, value: &impl serde::Serialize, ack: Option<mpsc::Sender<()>>) -> bool {
         let Ok(mut line) = serde_json::to_vec(value) else { return false; };
         if line.len() > 8192 { return false; } line.push(b'\n');
-        self.writer.try_send(line).is_ok()
+        self.writer.try_send((line, ack)).is_ok()
     }
     pub fn handoff(mut self) {
         self.child.take(); // Child drop does not terminate the independent helper.
@@ -95,9 +105,12 @@ pub fn launch_phase(from: &str, to: &str, appearance: Appearance, portable: bool
     }
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let mut input = child.stdin.take().ok_or("No update progress channel")?;
-    let (writer, receiver) = mpsc::sync_channel::<Vec<u8>>(16);
+    let (writer, receiver) = mpsc::sync_channel::<Frame>(16);
     // Bounded IPC: a stalled helper cannot block downloading or applying.
-    std::thread::spawn(move || { while let Ok(line) = receiver.recv() { if input.write_all(&line).and_then(|_| input.flush()).is_err() { break; } } });
+    std::thread::spawn(move || { while let Ok((line, ack)) = receiver.recv() {
+        if input.write_all(&line).and_then(|_| input.flush()).is_err() { break; }
+        if let Some(ack) = ack { let _ = ack.send(()); }
+    } });
     let mut session = Session { child: Some(child), directory: Some(dir), writer };
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
