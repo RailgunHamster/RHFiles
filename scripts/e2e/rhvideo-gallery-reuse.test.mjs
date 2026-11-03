@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
-import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
+import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 test('same-page gallery repaint keeps decoded images, while explicit refresh and login replace them',{timeout:60000},async()=>{
  const app=await launchApp({emulateFocus:true}),receipt={passed:false};let page,fixture;
  const api=(name,args={})=>page.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');

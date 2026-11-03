@@ -1,7 +1,7 @@
 // Real window-manager close during preparation, followed by a new explicit
 // playback. No handler replacement, artificial decoder delay or retry.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {execFileSync} from 'node:child_process';
-import {launchApp,until,sleep} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {markerPixels} from '../testing/native-startup-pixels.mjs';
+import {launchApp,until,sleep} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {markerPixels} from '../testing/native-startup-pixels.mjs';
 const expectedRenderer=process.env.RHFILES_EXPECT_RENDERER||(process.env.RHFILES_VLC_COMPATIBILITY==='1'?'gdi-compatibility':'native-hardware-auto');
 test('explicit popup compatibility: native title-bar close retires pending playback without poisoning an explicitly reopened player',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1',timeout:120000},async()=>{
  const app=await launchApp({emulateFocus:true}),receipt={passed:false,mediaRequests:[]};let fixture,view,started;

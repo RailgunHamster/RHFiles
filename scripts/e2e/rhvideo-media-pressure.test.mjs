@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {nativePlayerView,playerAction,playerEvaluate} from '../testing/native-player-view.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 

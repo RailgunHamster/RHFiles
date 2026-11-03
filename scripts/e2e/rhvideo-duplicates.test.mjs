@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {launchApp,until} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 
 const id=n=>'00000000-0000-0000-0000-'+String(n).padStart(12,'0');

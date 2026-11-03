@@ -1,7 +1,7 @@
 // Generated pictures and a private profile only. In particular, remove test
 // marks before closing a preview: this test must never stage any source file.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
-import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
+import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 
 test('the actual top preview owns current-file marking, not an underlying slideshow',{timeout:60000},async()=>{
  const app=await launchApp({emulateFocus:true}),receipt={passed:false};let page,fixture;

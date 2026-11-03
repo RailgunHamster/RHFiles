@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify('rhvideo.'+name)+','+JSON.stringify(args)+')');

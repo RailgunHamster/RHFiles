@@ -1,7 +1,7 @@
 // The ordinary shipped media.open flow, not a QA-only host selector. Generated
 // source media / private profiles only; no focus emulation or real database.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
-import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {generateClockMedia,decodeFrameIdentity} from '../testing/native-media-clock.mjs';
+import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {generateClockMedia,decodeFrameIdentity} from '../testing/native-media-clock.mjs';
 
 test('ordinary video playback stays in the library with real pixels, scoped controls and modal restoration',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1',timeout:180000},async()=>{
  const app=await launchApp(),receipt={passed:false,scope:'library PLAYER functional acceptance, not full performance or Android acceptance'};let fixture,page;

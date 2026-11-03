@@ -5,7 +5,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {launchApp,until} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {nativePlayerView,playerEvaluate} from '../testing/native-player-view.mjs';
 import {realRhVideoService} from '../testing/rhvideo-real-service.mjs';
 import {rhvideoReferenceSource,rhvideoReferenceSkip} from '../testing/rhvideo-reference.mjs';

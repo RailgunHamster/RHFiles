@@ -1,6 +1,6 @@
 // Generated native sources and real held browser pointer gestures. No DOM click replacement.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
-import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {generateClockMedia} from '../testing/native-media-clock.mjs';
+import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {generateClockMedia} from '../testing/native-media-clock.mjs';
 import {nativeGridView,gridAction,gridElementId} from '../testing/native-grid-view.mjs';
 test('an actual held grid volume release cannot apply the old gesture to a replacement group',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1',timeout:180000},async()=>{
  const app=await launchApp({emulateFocus:false}),receipt={passed:false,scope:'One actual held grid volume/group transition, not playback performance acceptance'};let fixture,library,grid,held=false,point;

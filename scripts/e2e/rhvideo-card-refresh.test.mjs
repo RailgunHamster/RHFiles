@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {launchApp,until} from '../testing/app-session.mjs';
 import {sourceRoot} from '../testing/source.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 
 test('cached catalog repaint leaves the active picture alone while real favorite changes still synchronize',{timeout:120000},async t=>{
   const fixture=await rhvideoFixture({videoCount:3}),app=await launchApp({emulateFocus:true});let view;

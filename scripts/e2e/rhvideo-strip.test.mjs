@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from'node:path';import{createHash}from'node:crypto';import{execFileSync}from'node:child_process';
-import{launchApp,until,sleep}from'../testing/app-session.mjs';import{cdpSession}from'../rhfiles-api.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
+import{launchApp,until,sleep}from'../testing/app-session.mjs';import{cdpSession}from'../testing/library-session.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
 async function openStrip({resolutions,profileDirectory,existingFixture,onView,...options}={}){
  const app=await launchApp({emulateFocus:true,profileDirectory});let fixture,view;
  try{

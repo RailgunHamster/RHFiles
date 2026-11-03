@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {launchApp,until} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 
 test('the admitted bundle actually decodes video and AAC with its matching prebuilt plugin index', {skip:!process.env.RHFILES_EXPECT_BUNDLED_VLC?'Opt in with the exact bundled runtime version':false},async()=>{

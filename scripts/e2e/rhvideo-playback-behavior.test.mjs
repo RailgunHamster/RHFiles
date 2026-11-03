@@ -10,7 +10,7 @@ import {execFileSync,spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {launchApp,until,sleep} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {nativePlayerView,playerAction,playerEvaluate,playerElementId} from '../testing/native-player-view.mjs';
 import {nativeGridView,gridAction,gridEvaluate} from '../testing/native-grid-view.mjs';
 import {readProcessReceipt} from '../rhfiles-receipts.mjs';

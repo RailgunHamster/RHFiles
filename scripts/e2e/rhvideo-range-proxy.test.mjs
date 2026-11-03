@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {launchApp,until} from '../testing/app-session.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 
 async function setup(beforeMedia){
   const app=await launchApp({emulateFocus:true});let fixture,view;

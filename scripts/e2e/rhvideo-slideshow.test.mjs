@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import{createHash}from'node:crypto';
-import{launchApp,until,sleep}from'../testing/app-session.mjs';import{cdpSession}from'../rhfiles-api.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
+import{launchApp,until,sleep}from'../testing/app-session.mjs';import{cdpSession}from'../testing/library-session.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
 import{execFileSync}from'node:child_process';
 
 test('paused mixed slideshow makes the real native video opaque and displays decoded color markers',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'},async()=>{

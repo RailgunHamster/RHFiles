@@ -1,7 +1,7 @@
 // Generated A/V; observe actual control-window state, never substitute native
 // replies, move decoder clocks or claim functional sampling is first-pixel timing.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import os from 'node:os';
-import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {generateStartupMedia} from '../testing/rhvideo-startup-media.mjs';import {markerPixels} from '../testing/native-startup-pixels.mjs';
+import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {generateStartupMedia} from '../testing/rhvideo-startup-media.mjs';import {markerPixels} from '../testing/native-startup-pixels.mjs';
 import {nativePlayerView,playerAction,playerEvaluate} from '../testing/native-player-view.mjs';
 import {nativeGridView,gridAction,gridEvaluate} from '../testing/native-grid-view.mjs';
 const invoke=(page,name,args={})=>page.evaluate('RHFilesAPI.invoke('+JSON.stringify(page.gridHost?gridAction(page,name):playerAction(page,name))+','+JSON.stringify(args)+')');

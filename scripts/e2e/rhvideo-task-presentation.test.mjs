@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {launchApp,until} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 
 test('actual task flow presents units, preserves reading state and reports unknown/offline progress honestly',{timeout:180000},async t=>{

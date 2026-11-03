@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {launchApp,until} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 
 test('task center keeps an inline selected workflow, stable live reading, IME search and scoped responses',{timeout:180000},async t=>{

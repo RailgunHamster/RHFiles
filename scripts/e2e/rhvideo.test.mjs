@@ -7,7 +7,7 @@ import net from 'node:net';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {launchApp,until} from '../testing/app-session.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 import {nativePlayerView,playerAction,playerEvaluate} from '../testing/native-player-view.mjs';
 import {nativeGridView,gridAction} from '../testing/native-grid-view.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';

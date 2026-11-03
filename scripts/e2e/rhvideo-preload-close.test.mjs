@@ -1,7 +1,7 @@
 // Generated A/V and a real held HTTP response. No decoder hook, fake result,
 // timer adjustment, replay or production account/media is used.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
-import {launchApp,until,sleep} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';
+import {launchApp,until,sleep} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {makePresentationMarkers} from '../testing/rhvideo-presentation-input.mjs';import {markerPixels} from '../testing/native-startup-pixels.mjs';
 
 for(const operation of ['close','back'])test('native '+operation+' releases a held next-video preload without reviving it or controlling a new input',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1',timeout:120000},async()=>{

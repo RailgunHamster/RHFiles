@@ -7,7 +7,7 @@ import {launchApp,until} from '../testing/app-session.mjs';
 import {sourceRoot} from '../testing/source.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 import {installSearchTiming} from '../testing/rhvideo-search-timing.mjs';
-import {cdpSession} from '../rhfiles-api.mjs';
+import {cdpSession} from '../testing/library-session.mjs';
 
 test('actual list-page cache avoids repeated worker trips and real stage/restore/refresh cannot return stale results',{timeout:120000},async t=>{
   const fixture=await rhvideoFixture({videoCount:52});let app,view;
