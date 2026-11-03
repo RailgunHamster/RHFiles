@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import{launchApp,until}from'../testing/app-session.mjs';import{cdpSession}from'../rhfiles-api.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import{launchApp,until}from'../testing/app-session.mjs';import{cdpSession}from'../testing/library-session.mjs';import{rhvideoFixture}from'../testing/rhvideo-fixture.mjs';
 import{execFileSync}from'node:child_process';import path from'node:path';import fs from'node:fs';import{createHash}from'node:crypto';
 import {nativePlayerView,playerEvaluate} from '../testing/native-player-view.mjs';
 async function assertCurrentAssets(view,files=['rhvideo-workbench.js','rhvideo-client.js','rhvideo-index.js']){

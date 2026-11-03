@@ -2,7 +2,7 @@
 // The native picture belongs to the actual library PLAYER host. Test panels
 // live inside its modal rather than becoming inert behind it.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
-import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {makePresentationMarkers} from '../testing/rhvideo-presentation-input.mjs';
+import {launchApp,until} from '../testing/app-session.mjs';import {cdpSession} from '../testing/library-session.mjs';import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';import {makePresentationMarkers} from '../testing/rhvideo-presentation-input.mjs';
 
 test('two scoped native control panels coexist in the real library and can remount without losing close completion',{skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1',timeout:180000},async()=>{
  const app=await launchApp({emulateFocus:true}),receipt={passed:false,scope:'real shared controls on the library PLAYER host, not a performance claim'};let fixture,page;
