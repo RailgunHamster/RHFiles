@@ -3,7 +3,6 @@
 const _operationTasks = new Map();
 let _operationTaskSequence = 0;
 let _legacyProgressTaskId = null;
-let _updateProgressTaskId = null;
 let _operationCenterCollapsed = localStorage.getItem('rhfiles-operation-center-collapsed') === '1';
 
 function createOperationTaskId() {
@@ -211,12 +210,7 @@ function setupProgressListener() {
   }).catch(() => {});
   listen('update-progress', function(event) {
     if (!event.payload) return;
-    updateProgress({
-      percentage: Math.max(0, Math.min(100, Number(event.payload.percentage) || 0)),
-      speed: 0,
-      totalBytes: 0,
-      bytesTransferred: 0,
-    }, _updateProgressTaskId);
+    if (typeof updateDownloadProgress === 'function') updateDownloadProgress(event.payload);
   }).catch(() => {});
 }
 

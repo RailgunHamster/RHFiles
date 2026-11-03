@@ -511,7 +511,14 @@ function updateSettingsStatusText(status, error, state) {
   renderUpdateFailure(G._updateTransientFailure || G._lastUpdateFailure);
   if (!element) return;
   element.title = error ? String(error) : '';
-  if (state === 'disabled') {
+  const progress = G._updateProgress;
+  if (!error && progress && ['downloading','verifying','applying'].includes(progress.phase)) {
+    if (progress.phase === 'downloading') {
+      element.textContent = t('update.statusDownloading', {version:progress.version || '',percentage:progress.percentage || 0,
+        downloaded:fmtSize(progress.downloadedBytes || 0), total:fmtSize(progress.totalBytes || 0),speed:fmtSize(progress.speed || 0)});
+    } else element.textContent = t(progress.phase === 'verifying' ? 'update.verifying' : 'update.restarting');
+    renderUpdateFailure(null);
+  } else if (state === 'disabled') {
     element.textContent = t('update.statusDisabled');
   } else if (state === 'proxy-required') {
     element.textContent = t('update.statusProxyRequired');
@@ -530,8 +537,20 @@ function updateSettingsStatusText(status, error, state) {
   }
 }
 
+function updateDownloadProgress(payload) {
+  if (!payload || !['downloading','verifying','ready','applying','failed'].includes(payload.phase)) return;
+  G._updateProgress = {...payload};
+  if (payload.phase === 'ready') {
+    G._updateStatus = {...G._updateStatus,managed:true,pendingRestart:true,availableVersion:payload.version};
+    updateSettingsStatusText(G._updateStatus);
+  } else updateSettingsStatusText(G._updateStatus,payload.phase === 'failed' ? payload.message : null);
+}
+
 async function refreshUpdateSettingsStatus() {
   const button = document.getElementById('settings-check-update');
+  if (G._updateProgress && ['downloading','verifying','applying'].includes(G._updateProgress.phase)) {
+    updateSettingsStatusText(G._updateStatus); if (button) button.disabled = true; return;
+  }
   await refreshLastUpdateFailure();
   if (!isAutomaticUpdateCheckEnabled()) {
     updateSettingsStatusText(null, null, 'disabled');
@@ -577,7 +596,6 @@ async function checkForUpdates(manual) {
   if (G._updateCheckRunning) return;
   G._updateCheckRunning = true;
   const button = document.getElementById('settings-check-update');
-  let updateTaskId = null;
   if (button) button.disabled = true;
   try {
     const source = getUpdateSource();
@@ -619,27 +637,19 @@ async function checkForUpdates(manual) {
     }
 
     if (!status.pendingRestart) {
-      updateTaskId = showProgress(t('update.downloading', {version}), {cancellable:false});
-      _updateProgressTaskId = updateTaskId;
-      await call('download_update', {source, proxy});
-    } else {
-      updateTaskId = showProgress(t('update.preparing', {version}), {indeterminate:true, cancellable:false});
-      _updateProgressTaskId = updateTaskId;
+      updateDownloadProgress({phase:'downloading',version,percentage:0});
+      await call('download_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version});
     }
-    const updateTask = _operationTasks.get(updateTaskId);
-    if (updateTask) updateTask.title = t('update.restarting');
-    updateProgress({percentage:100, speed:0, totalBytes:0, bytesTransferred:0}, updateTaskId);
+    updateDownloadProgress({phase:'applying',version,percentage:100});
     try { saveTabState(); } catch (error) {}
-    if ([..._operationTasks.values()].some(task => task.id !== updateTaskId && task.status === 'running')) {
+    if ([..._operationTasks.values()].some(task => task.status === 'running')) {
       throw new Error(t('update.busy'));
     }
-    await call('apply_update', {source, proxy, appearance:updateTransitionAppearance()});
+    await call('apply_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version});
   } catch (error) {
     if (String(error).includes('[update_other_instances]')) error = t('update.otherInstances');
     else if (String(error).includes('[update_busy]')) error = t('update.busy');
-    if (updateTaskId) failOperationTask(updateTaskId, error);
-    _updateProgressTaskId = null;
-    updateSettingsStatusText(null, error);
+    updateDownloadProgress({phase:'failed',message:String(error)});
     if (manual) showNotice(t('update.failed', {error: String(error)}));
   } finally {
     G._updateCheckRunning = false;

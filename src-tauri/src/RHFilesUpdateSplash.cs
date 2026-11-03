@@ -7,6 +7,8 @@ using System.Drawing.Text;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Collections.Generic;
+using System.Web.Script.Serialization;
 
 internal static class Program
 {
@@ -45,6 +47,8 @@ internal sealed class SplashConfig
     public string ReadyFile = "";
     public string Language = "zh";
     public string Mode = "installed";
+    public string Phase = "applying";
+    public bool Controlled;
     public int TimeoutMs = 180000;
     public int DemoMs;
     public int DemoStage = 1;
@@ -75,6 +79,8 @@ internal sealed class SplashConfig
                 case "--ready-file": c.ReadyFile = v; i++; break;
                 case "--language": c.Language = v; i++; break;
                 case "--mode": c.Mode = v; i++; break;
+                case "--phase": c.Phase = v; i++; break;
+                case "--controlled": c.Controlled = v == "true"; i++; break;
                 case "--timeout-ms": int.TryParse(v, out c.TimeoutMs); i++; break;
                 case "--demo-ms": int.TryParse(v, out c.DemoMs); i++; break;
                 case "--demo-stage": int.TryParse(v, out c.DemoStage); i++; break;
@@ -122,6 +128,10 @@ internal sealed class RHFilesSplashForm : Form
     private Process previousProcess;
     private Process updater;
     private string failure;
+    private string transferPhase;
+    private int downloadPercent;
+    private long downloadedBytes, totalBytes, downloadSpeed;
+    private readonly Stopwatch phaseElapsed = Stopwatch.StartNew();
     private bool Zh { get { return config.Language.StartsWith("zh", StringComparison.OrdinalIgnoreCase); } }
     private string L(string zh, string en) { return Zh ? zh : en; }
 
@@ -141,6 +151,8 @@ internal sealed class RHFilesSplashForm : Form
     public RHFilesSplashForm(SplashConfig config)
     {
         this.config = config;
+        transferPhase = config.Phase;
+        if (transferPhase == "downloading") { displayProgress = 0; targetProgress = 0; }
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
@@ -196,6 +208,11 @@ internal sealed class RHFilesSplashForm : Form
         animTimer.Start();
         probeTimer.Start();
         Refresh();
+        if (config.Controlled)
+        {
+            var reader = new System.Threading.Thread(ReadProgress) { IsBackground = true };
+            reader.Start();
+        }
         // The parent silences Velopack only after this painted window is ready.
         if (!string.IsNullOrEmpty(config.ReadyFile))
         {
@@ -203,6 +220,60 @@ internal sealed class RHFilesSplashForm : Form
             catch { Close(); }
         }
     }
+
+    private void ReadProgress()
+    {
+        try
+        {
+            string line;
+            while ((line = Console.In.ReadLine()) != null)
+            {
+                if (line.Length > 8192) continue;
+                var json = new JavaScriptSerializer { MaxJsonLength = 8192, RecursionLimit = 4 };
+                var value = json.Deserialize<Dictionary<string,object>>(line);
+                if (IsDisposed) return;
+                BeginInvoke(new Action(() => ApplyProgress(value)));
+            }
+            if (!IsDisposed) BeginInvoke(new Action(() => {
+                if (transferPhase != "applying") Fail(L("更新连接已中断，请重新打开 RHFiles。", "Update connection closed. Reopen RHFiles."));
+            }));
+        }
+        catch { /* Parent/process checks provide the bounded fallback. */ }
+    }
+
+    private void ApplyProgress(Dictionary<string,object> value)
+    {
+        object raw;
+        if (!value.TryGetValue("phase", out raw)) return;
+        string next = Convert.ToString(raw);
+        if (next != "downloading" && next != "verifying" && next != "ready" && next != "applying" && next != "failed") return;
+        if (next == "failed")
+        {
+            string reason = value.TryGetValue("message", out raw) ? Convert.ToString(raw) : "";
+            if (reason.Length > 600) reason = reason.Substring(0,600);
+            Fail(L("更新失败：", "Update failed: ") + reason); return;
+        }
+        if (transferPhase != next) phaseElapsed.Restart();
+        transferPhase = next;
+        if (failure != null) { failure = null; animTimer.Start(); probeTimer.Start(); }
+        if (next == "downloading")
+        {
+            downloadPercent = (int)Math.Max(0,Math.Min(99,Number(value,"percentage")));
+            downloadedBytes = Number(value,"downloadedBytes"); totalBytes = Number(value,"totalBytes"); downloadSpeed = Number(value,"speed");
+            targetProgress = downloadPercent / 100f;
+        }
+        else if (next == "ready") targetProgress = 1f;
+        else if (next == "applying") {stage=0;displayProgress=0.10f;targetProgress=0.14f;}
+        Text = config.Title + (next == "downloading" ? L(" · 正在下载 "," · Downloading ") + downloadPercent + "%" : L(" · 正在更新"," · Updating"));
+        Invalidate();
+    }
+
+    private static long Number(Dictionary<string,object> value, string key)
+    {
+        object raw;long number;
+        return value.TryGetValue(key,out raw) && long.TryParse(Convert.ToString(raw),out number) ? Math.Max(0,number) : 0;
+    }
+    private static string Bytes(long number) { return (number / 1048576d).ToString("0.0",System.Globalization.CultureInfo.InvariantCulture) + " MB"; }
 
     private void ApplyTheme()
     {
@@ -387,6 +458,9 @@ internal sealed class RHFilesSplashForm : Form
     private string StageLabel()
     {
         if (failure != null) return failure;
+        if (transferPhase == "downloading") return L("正在下载新版本… ","Downloading update… ") + downloadPercent + "%";
+        if (transferPhase == "verifying") return L("正在校验 SHA-256、版本与安装包内容…", "Verifying SHA-256, version and package contents…");
+        if (transferPhase == "ready") return L("校验完成，已准备安装。", "Verified and ready to install.");
         switch (stage)
         {
             case 0: return L("正在关闭当前窗口并释放文件…", "Closing the current window and releasing files…");
@@ -436,7 +510,13 @@ internal sealed class RHFilesSplashForm : Form
     {
         if (config.DemoMs > 0 || !string.IsNullOrEmpty(config.ScreenshotPath)) return;
         if (failure != null) return;
-        if (elapsed.ElapsedMilliseconds > config.TimeoutMs)
+        if (transferPhase != "applying")
+        {
+            if (!PreviousProcessAlive() && config.WaitPid > 0)
+                Fail(L("下载已中断，请重新打开 RHFiles。", "Download interrupted. Reopen RHFiles."));
+            return;
+        }
+        if (phaseElapsed.ElapsedMilliseconds > config.TimeoutMs)
         {
             Fail(L("尚未检测到新窗口，请重新打开 RHFiles 查看更新诊断。", "No new window detected. Reopen RHFiles to view update diagnostics.")); return;
         }
@@ -652,7 +732,7 @@ internal sealed class RHFilesSplashForm : Form
             }
 
             // Right-aligned theme/mode tag
-            string modeLabel = config.Mode == "portable" ? L("Portable 原地更新", "Portable update") : L("正在安装更新", "Installing update");
+            string modeLabel = transferPhase == "downloading" ? L("下载更新", "Download update") : (config.Mode == "portable" ? L("Portable 原地更新", "Portable update") : L("正在安装更新", "Installing update"));
             SizeF modeSize = g.MeasureString(modeLabel, tagFont);
             g.DrawString(modeLabel, tagFont, text3Brush, new PointF(bounds.Width - S(28) - modeSize.Width, S(30)));
 
@@ -663,6 +743,11 @@ internal sealed class RHFilesSplashForm : Form
             // 3-step visual node strip
             int currentStep = stage <= 1 ? 1 : (stage == 2 ? 2 : 3);
             string[] stepNames = new[] { L("1. 解压程序与工具", "1. Unpack files"), L("2. 应用新版本", "2. Apply update"), L("3. 重启恢复窗口", "3. Restore window") };
+            if (transferPhase != "applying")
+            {
+                stepNames = new[] { L("1. 下载更新", "1. Download"), L("2. 校验安装包", "2. Verify package"), L("3. 安装并重启", "3. Install and restart") };
+                currentStep = transferPhase == "downloading" ? 1 : (transferPhase == "verifying" ? 2 : 3);
+            }
             float stripY = S(84);
             float stripX = S(28);
             for (int i = 0; i < 3; i++)
@@ -700,7 +785,8 @@ internal sealed class RHFilesSplashForm : Form
             }
 
             // Active progress bar + shimmer
-            float fillW = Math.Max(barH * 2f, barW * Math.Max(0.08f, Math.Min(1f, displayProgress)));
+            float fillW = transferPhase == "downloading" ? Math.Max(1f, barW * Math.Max(0f, Math.Min(1f, displayProgress)))
+                : Math.Max(barH * 2f, barW * Math.Max(0.08f, Math.Min(1f, displayProgress)));
             var fillRect = new RectangleF(barX, barY, fillW, barH);
             using (var fillPath = RoundedRect(fillRect, barH / 2f))
             using (var fillBrush = new LinearGradientBrush(new PointF(barX, barY), new PointF(barX + fillW, barY), accentColor, accentEndColor))
@@ -726,7 +812,9 @@ internal sealed class RHFilesSplashForm : Form
 
             // Footer row
             float footerY = S(132);
-            g.DrawString(L("保留标签页、收藏夹与设备组", "Tabs, bookmarks and device groups are preserved"), footerFont, text3Brush, new PointF(S(28), footerY));
+            string footer = transferPhase == "downloading" ? Bytes(downloadedBytes) + " / " + Bytes(totalBytes) + " · " + Bytes(downloadSpeed) + "/s"
+                : L("保留标签页、收藏夹与设备组", "Tabs, bookmarks and device groups are preserved");
+            g.DrawString(footer, footerFont, text3Brush, new PointF(S(28), footerY));
 
             int secs = (int)elapsed.Elapsed.TotalSeconds;
             if (!string.IsNullOrEmpty(config.ScreenshotPath)) secs = stage <= 1 ? 1 : (stage == 2 ? 3 : 5);

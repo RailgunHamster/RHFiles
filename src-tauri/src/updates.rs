@@ -5,8 +5,8 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::mpsc,
-    time::Duration,
+    sync::{Arc, LazyLock, Mutex, mpsc},
+    time::{Duration, Instant},
 };
 use tauri::Emitter;
 use url::Url;
@@ -65,6 +65,27 @@ pub struct ReleaseHistoryResponse {
 #[serde(rename_all = "camelCase")]
 struct UpdateProgress {
     percentage: i16,
+    phase: &'static str,
+    version: String,
+    downloaded_bytes: u64,
+    total_bytes: u64,
+    speed: u64,
+    message: String,
+}
+
+static UPDATE_OPERATION: Mutex<()> = Mutex::new(());
+static UPDATE_WINDOW: LazyLock<Mutex<Option<crate::update_splash::Session>>> = LazyLock::new(|| Mutex::new(None));
+static APPLY_FILE: Mutex<Option<File>> = Mutex::new(None);
+fn emit_update(app: &tauri::AppHandle, progress: UpdateProgress) {
+    let _ = app.emit("update-progress", &progress);
+    if let Ok(window) = UPDATE_WINDOW.lock() { if let Some(window) = window.as_ref() { window.send(&progress); } }
+}
+fn phase(app: &tauri::AppHandle, name: &'static str, version: &str, message: &str) {
+    emit_update(app, UpdateProgress { percentage: if name == "ready" {100} else {0}, phase:name,
+        version:version.into(), downloaded_bytes:0,total_bytes:0,speed:0,message:message.chars().take(1000).collect() });
+}
+fn locator() -> Result<velopack::locator::VelopackLocator, String> {
+    velopack::locator::auto_locate_app_manifest(velopack::locator::LocationContext::FromCurrentExe).map_err(|e|e.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -95,9 +116,10 @@ struct ConfiguredWebSource {
     kind: WebSourceKind,
     feed_agent: ureq::Agent,
     download_agent: ureq::Agent,
+    reporter: Option<Arc<dyn Fn(u64, u64, u64) + Send + Sync>>,
 }
 
-fn validate_asset_name(name: &str) -> Result<(), VelopackError> {
+pub(super) fn validate_asset_name(name: &str) -> Result<(), VelopackError> {
     if name.is_empty()
         || matches!(name, "." | "..")
         || name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '\0'))
@@ -220,6 +242,7 @@ impl ConfiguredWebSource {
             kind,
             feed_agent,
             download_agent,
+            reporter: None,
         })
     }
 
@@ -258,6 +281,7 @@ impl ConfiguredWebSource {
         url: &str,
         local_file: &Path,
         progress_sender: Option<mpsc::Sender<i16>>,
+        expected_size: u64,
     ) -> Result<(), VelopackError> {
         let response = self
             .download_agent
@@ -271,11 +295,16 @@ impl ConfiguredWebSource {
             .get("Content-Length")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<u64>().ok());
+        if total_size.is_some_and(|size| size != expected_size) {
+            return Err(VelopackError::Other("[update_package] Download response size does not match the update feed".into()));
+        }
         let mut reader = body.into_reader();
         let mut output = File::create(local_file)?;
         let mut buffer = vec![0_u8; 2 * 1024 * 1024];
         let mut downloaded = 0_u64;
         let mut last_progress = -1_i16;
+        let started = Instant::now();
+        let mut last_report = Instant::now() - Duration::from_secs(1);
 
         loop {
             let count = reader.read(&mut buffer)?;
@@ -284,6 +313,11 @@ impl ConfiguredWebSource {
             }
             output.write_all(&buffer[..count])?;
             downloaded += count as u64;
+            if downloaded > expected_size { return Err(VelopackError::Other("[update_package] Download exceeds declared package size".into())); }
+            if last_report.elapsed() >= Duration::from_millis(100) {
+                if let Some(report) = &self.reporter { report(downloaded,total_size.unwrap_or(0),(downloaded as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64); }
+                last_report = Instant::now();
+            }
             if let Some(total) = total_size.filter(|total| *total > 0) {
                 let percentage = ((downloaded.saturating_mul(100) / total).min(100)) as i16;
                 if percentage > last_progress {
@@ -294,6 +328,9 @@ impl ConfiguredWebSource {
                 }
             }
         }
+
+        output.sync_all()?;
+        if let Some(report) = &self.reporter { report(downloaded,total_size.unwrap_or(0),(downloaded as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64); }
 
         if let Some(sender) = &progress_sender {
             let _ = sender.send(100);
@@ -402,7 +439,7 @@ impl UpdateSource for ConfiguredWebSource {
                 cnb_asset_url(repository_base, asset)?.to_string()
             }
         };
-        self.download_to_file(&url, local_file, progress_sender)
+        self.download_to_file(&url, local_file, progress_sender, asset.Size)
     }
 }
 
@@ -749,7 +786,8 @@ pub async fn check_updates(
 
         let current_version = manager.get_current_version_as_string();
         let is_portable = manager.get_is_portable();
-        if let Some(pending) = manager.get_update_pending_restart() {
+        if let Ok(Some(verified)) = crate::update_package::ready(&locator()?) {
+            let pending = verified.asset;
             return Ok(UpdateStatus {
                 managed: true,
                 is_portable,
@@ -827,47 +865,40 @@ pub async fn download_update(
     app: tauri::AppHandle,
     source: Option<String>,
     proxy: Option<String>,
+    appearance: Option<crate::update_splash::Appearance>,
+    target_version: Option<String>,
 ) -> Result<String, String> {
     let source = effective_source(source);
     tauri::async_runtime::spawn_blocking(move || {
+        let _operation = UPDATE_OPERATION.try_lock().map_err(|_| "[update_busy] An update operation is already running")?;
         let manager = open_manager(&source, proxy.as_deref())?
             .ok_or_else(|| "This build is not managed by Velopack".to_string())?;
-
-        if let Some(pending) = manager.get_update_pending_restart() {
-            let _ = app.emit("update-progress", UpdateProgress { percentage: 100 });
-            return Ok(pending.Version);
-        }
-
-        let update = match manager
-            .check_for_updates()
-            .map_err(|error| error.to_string())?
-        {
-            UpdateCheck::UpdateAvailable(update) => update,
-            UpdateCheck::RemoteIsEmpty | UpdateCheck::NoUpdateAvailable => {
-                return Err("No update is available".to_string());
+        let location = locator()?;
+        let asset = if let Ok(Some(verified)) = crate::update_package::ready(&location) { verified.asset } else {
+            match manager.check_for_updates().map_err(|e|e.to_string())? {
+                UpdateCheck::UpdateAvailable(update) => update.TargetFullRelease.clone(),
+                _ => return Err("No update is available".into()),
             }
         };
-        let version = update.TargetFullRelease.Version.clone();
-        let (sender, receiver) = mpsc::channel::<i16>();
-        let progress_app = app.clone();
-        let progress_thread = std::thread::spawn(move || {
-            while let Ok(percentage) = receiver.recv() {
-                let _ = progress_app.emit(
-                    "update-progress",
-                    UpdateProgress {
-                        percentage: percentage.clamp(0, 100),
-                    },
-                );
-            }
+        let version = asset.Version.clone();
+        if target_version.as_ref().is_some_and(|expected|expected != &version) { return Err("[update_package] 更新版本已变化，请重新检查 / Update target changed; check again".into()); }
+        let window = crate::update_splash::launch_phase(&manager.get_current_version_as_string(), &version,
+            appearance.unwrap_or_default(), manager.get_is_portable(), "verifying");
+        if let Ok(mut active) = UPDATE_WINDOW.lock() { *active = window.map_err(|e|eprintln!("RHFiles update window: {e}")).ok(); }
+        phase(&app,"verifying",&version,"");
+        let mut web = ConfiguredWebSource::new(&source,proxy.as_deref()).map_err(|e|e.to_string())?;
+        let progress_app = app.clone(); let progress_version = version.clone(); let size = asset.Size;
+        web.reporter = Some(Arc::new(move |bytes,_,speed| emit_update(&progress_app,UpdateProgress {
+            percentage:((bytes.saturating_mul(100)/size.max(1)).min(99)) as i16,
+            phase:"downloading",version:progress_version.clone(),downloaded_bytes:bytes,total_bytes:size,speed,message:String::new(),
+        })));
+        let result = crate::update_package::stage(&location,&asset,|path| {
+            phase(&app,"downloading",&version,"");
+            web.download_release_entry(&asset,path,None).map_err(|e|e.to_string())?;
+            phase(&app,"verifying",&version,""); Ok(())
         });
-
-        let result = manager
-            .download_updates(&update, Some(sender))
-            .map_err(|error| error.to_string());
-        let _ = progress_thread.join();
-        result?;
-        let _ = app.emit("update-progress", UpdateProgress { percentage: 100 });
-        Ok(version)
+        if let Err(error) = result { phase(&app,"failed",&version,&error); return Err(error); }
+        phase(&app,"ready",&version,""); Ok(version)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -878,27 +909,39 @@ pub fn apply_update(
     source: Option<String>,
     proxy: Option<String>,
     appearance: Option<crate::update_splash::Appearance>,
+    target_version: Option<String>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, crate::types::CancelFlag>,
 ) -> Result<(), String> {
     let source = effective_source(source);
+    let _operation = UPDATE_OPERATION.try_lock().map_err(|_| "[update_busy] An update operation is already running")?;
     let manager = open_manager(&source, proxy.as_deref())?
         .ok_or_else(|| "This build is not managed by Velopack".to_string())?;
-    let pending = manager
-        .get_update_pending_restart()
-        .ok_or_else(|| "No downloaded update is waiting to be applied".to_string())?;
-    cancel.begin_update()?;
-    let transition = crate::update_splash::launch(
+    let verified = crate::update_package::ready(&locator()?)?
+        .ok_or("[update_package] 没有已校验的更新包，请先下载 / Download and verify the update before installing")?;
+    let pending = verified.asset;
+    if target_version.as_ref().is_some_and(|expected|expected != &pending.Version) { return Err("[update_package] 待安装版本与本次确认不符，请重新检查 / Pending version differs from the confirmed target".into()); }
+    if let Err(error) = cancel.begin_update() { phase(&app,"failed",&pending.Version,&error); return Err(error); }
+    phase(&app,"applying",&pending.Version,"");
+    let existing = UPDATE_WINDOW.lock().ok().and_then(|mut value|value.take()).and_then(|mut window| {
+        let usable = window.alive() && window.send(&UpdateProgress {
+        percentage:100,phase:"applying",version:pending.Version.clone(),downloaded_bytes:0,total_bytes:0,speed:0,message:String::new(),
+        }); usable.then_some(window)
+    });
+    let transition = existing.or_else(|| crate::update_splash::launch(
         &manager.get_current_version_as_string(), &pending.Version,
         appearance.unwrap_or_default(), manager.get_is_portable(),
-    ).map_err(|error| eprintln!("RHFiles update transition: {error}")).ok();
+    ).map_err(|error| eprintln!("RHFiles update transition: {error}")).ok());
     // Only silence the native updater once our independent window is ready.
     if let Err(error) =
         manager.wait_exit_then_apply_updates(pending, transition.is_some(), true, Vec::<String>::new())
     {
         cancel.abort_update();
+        if let Ok(mut window) = UPDATE_WINDOW.lock() { *window = transition; }
+        phase(&app,"failed","",&error.to_string());
         return Err(error.to_string());
     }
+    if let Ok(mut guard) = APPLY_FILE.lock() { *guard = Some(verified.file); }
     if let Some(transition) = transition { transition.handoff(); }
     // Unlike Velopack's convenience method, AppHandle::exit lets Tauri destroy
     // its windows and WebView2 children before Update.exe replaces `current`.

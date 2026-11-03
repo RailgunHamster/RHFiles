@@ -133,7 +133,7 @@ fn build_update_splash() {
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("RHFiles.UpdateSplash.exe");
     let result = std::process::Command::new(compiler)
         .args(["/nologo", "/optimize+", "/target:winexe", "/platform:anycpu", "/utf8output",
-            "/r:System.dll", "/r:System.Core.dll", "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll"])
+            "/r:System.dll", "/r:System.Core.dll", "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll", "/r:System.Web.Extensions.dll"])
         .arg(format!("/out:{}", output.display()))
         .arg(PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("src").join("RHFilesUpdateSplash.cs"))
         .output().expect("compile update splash");

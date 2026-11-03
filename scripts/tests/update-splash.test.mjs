@@ -20,3 +20,21 @@ test('installer is silent only when the external window is confirmed ready and f
   assert.match(rust,/include_bytes!.*OUT_DIR/);assert.match(rust,/create_new\(true\)/);assert.match(rust,/ready\.is_file/);
   assert.doesNotMatch(rust,/csc\.exe|\.status\(\)/);
 });
+test('download state appears inside settings instead of becoming a hidden file-operation task',()=>{
+  const status={textContent:'',title:''},button={disabled:false},errors=[];
+  const c=context({G:{settings:{autoUpdateEnabled:false}},document:{getElementById:id=>id==='settings-update-status'?status:id==='settings-check-update'?button:null},
+    normalizedUpdateFailure:v=>v,renderUpdateFailure:v=>errors.push(v),fmtSize:n=>String(n),t:(key,args)=>key+' '+JSON.stringify(args||{})});
+  load(c,'main.js',['updateSettingsStatusText','updateDownloadProgress','refreshUpdateSettingsStatus']);
+  c.updateDownloadProgress({phase:'downloading',version:'0.1.100',percentage:43,downloadedBytes:43,totalBytes:100,speed:20});
+  assert.match(status.textContent,/statusDownloading.*43/);assert.match(status.textContent,/0.1.100/);
+  c.updateDownloadProgress({phase:'verifying',version:'0.1.100'});assert.match(status.textContent,/verifying/);
+  c.updateDownloadProgress({phase:'ready',version:'0.1.100'});assert.equal(c.G._updateStatus.pendingRestart,true);assert.match(status.textContent,/statusReady/);
+  c.updateDownloadProgress({phase:'failed',message:'checksum mismatch'});assert.equal(c.G._updateTransientFailure,'checksum mismatch');
+  const source=fs.readFileSync(path.join(root,'src/js/main.js'),'utf8');
+  const flow=source.slice(source.indexOf('async function checkForUpdates('));
+  assert(!flow.includes('showProgress('));assert(!flow.includes('failOperationTask('));
+});
+test('reopening settings during a download retains progress even when automatic checks are disabled',async()=>{
+  const c=context({G:{_updateProgress:{phase:'downloading'}},document:{getElementById:()=>({disabled:false})},updateSettingsStatusText:()=>{},refreshLastUpdateFailure:()=>{throw Error('Do not replace live progress with a check');}});
+  load(c,'main.js',['refreshUpdateSettingsStatus']);await c.refreshUpdateSettingsStatus();
+});

@@ -2,7 +2,7 @@
 //! installer and source of failure diagnostics. No timers advance fake percentages.
 use serde::Deserialize;
 use std::{fs, io::Write, os::windows::{fs::MetadataExt, process::CommandExt}, path::{Path, PathBuf},
-    process::{Child, Command}, time::{Duration, Instant}};
+    process::{Child, Command, Stdio}, sync::mpsc::{self, SyncSender}, time::{Duration, Instant}};
 
 const HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/RHFiles.UpdateSplash.exe"));
 const LOGO: &[u8] = include_bytes!("../icons/rhfiles-icon-v4-256.png");
@@ -26,8 +26,14 @@ fn root(exe: &Path) -> Option<&Path> {
 
 /// An unsuccessful launch/apply drops this guard: terminate the helper and clean
 /// only our randomly-created directory. No orphaned 'updating' window on errors.
-pub struct Session { child: Option<Child>, directory: Option<tempfile::TempDir> }
+pub struct Session { child: Option<Child>, directory: Option<tempfile::TempDir>, writer: SyncSender<Vec<u8>> }
 impl Session {
+    pub fn alive(&mut self) -> bool { self.child.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None))) }
+    pub fn send(&self, value: &impl serde::Serialize) -> bool {
+        let Ok(mut line) = serde_json::to_vec(value) else { return false; };
+        if line.len() > 8192 { return false; } line.push(b'\n');
+        self.writer.try_send(line).is_ok()
+    }
     pub fn handoff(mut self) {
         self.child.take(); // Child drop does not terminate the independent helper.
         if let Some(dir) = self.directory.take() { let _ = dir.keep(); }
@@ -56,6 +62,10 @@ fn cleanup_stale(parent: &Path) {
 }
 
 pub fn launch(from: &str, to: &str, appearance: Appearance, portable: bool) -> Result<Session, String> {
+    launch_phase(from, to, appearance, portable, "applying")
+}
+
+pub fn launch_phase(from: &str, to: &str, appearance: Appearance, portable: bool, phase: &str) -> Result<Session, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let installation = root(&exe).ok_or("Update splash requires a managed installation")?;
     let local = std::env::var_os("LOCALAPPDATA").ok_or("No local application data directory")?;
@@ -71,8 +81,9 @@ pub fn launch(from: &str, to: &str, appearance: Appearance, portable: bool) -> R
     let ready = dir.path().join("ready");
     let theme = match appearance.theme.as_str() { "dark"|"sand"|"mist"|"forest"|"slate" => &appearance.theme, _ => "light" };
     let mut cmd = Command::new(dir.path().join("RHFiles.UpdateSplash.exe"));
-    cmd.current_dir(dir.path()).creation_flags(0x08000000)
+    cmd.current_dir(dir.path()).creation_flags(0x08000000).stdin(Stdio::piped())
         .args(["--from-version", from, "--to-version", to, "--theme", theme,
+            "--phase", phase, "--controlled", "true",
             "--language", if appearance.language.starts_with("zh") {"zh"} else {"en"},
             "--mode", if portable {"portable"} else {"installed"},
             "--wait-pid", &std::process::id().to_string()])
@@ -82,8 +93,12 @@ pub fn launch(from: &str, to: &str, appearance: Appearance, portable: bool) -> R
         ("--text", &appearance.text), ("--accent", &appearance.accent), ("--border", &appearance.border)] {
         if let Some(value) = color(value) { cmd.args([flag, value]); }
     }
-    let child = cmd.spawn().map_err(|e| e.to_string())?;
-    let mut session = Session { child: Some(child), directory: Some(dir) };
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let mut input = child.stdin.take().ok_or("No update progress channel")?;
+    let (writer, receiver) = mpsc::sync_channel::<Vec<u8>>(16);
+    // Bounded IPC: a stalled helper cannot block downloading or applying.
+    std::thread::spawn(move || { while let Ok(line) = receiver.recv() { if input.write_all(&line).and_then(|_| input.flush()).is_err() { break; } } });
+    let mut session = Session { child: Some(child), directory: Some(dir), writer };
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
         if ready.is_file() { return Ok(session); }

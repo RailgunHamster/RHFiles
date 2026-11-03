@@ -46,6 +46,23 @@ internal static class SplashTests
                     form.Close();
                 }
                 Stop(rightProcess);rightProcess=null;
+                using(var form=new RHFilesSplashForm(new SplashConfig {RootDir=root,WaitPid=Process.GetCurrentProcess().Id,Phase="downloading",Language="en",LogoPath=args.Length>0?args[0]:"",FromVersion="0.1.99",ToVersion="0.1.100"}))
+                {
+                    form.Show();Application.DoEvents();
+                    Invoke(form,"ApplyProgress",new System.Collections.Generic.Dictionary<string,object> {
+                        {"phase","downloading"},{"percentage",43},{"downloadedBytes",45088768},{"totalBytes",104857600},{"speed",20971520}
+                    });
+                    Check(form.Text.Contains("43%"),"Taskbar title includes real download percentage");
+                    Check(((string)Invoke(form,"StageLabel")).Contains("Downloading"),"Download is not mislabeled as closing the app");
+                    for(int i=0;i<80;i++)Invoke(form,"OnAnimateTick",new object[]{null,EventArgs.Empty});
+                    Invoke(form,"SaveSnapshot",Path.Combine(root,"download-en.png"));
+                    Invoke(form,"ApplyProgress",new System.Collections.Generic.Dictionary<string,object>{{"phase","verifying"}});
+                    Check(((string)Invoke(form,"StageLabel")).Contains("Verifying"),"Hash verification is explicit");
+                    Invoke(form,"ApplyProgress",new System.Collections.Generic.Dictionary<string,object>{{"phase","ready"}});
+                    Check(((string)Invoke(form,"StageLabel")).Contains("ready"),"Ready follows verification");
+                    Invoke(form,"ApplyProgress",new System.Collections.Generic.Dictionary<string,object>{{"phase","applying"}});
+                    Check(form.GetType().GetField("transferPhase",Private).GetValue(form).Equals("applying"),"Reuse this same window for installation");form.Close();
+                }
                 string update=Path.Combine(root,"Update.exe");File.Copy(me,update,true);
                 using(var form=new RHFilesSplashForm(new SplashConfig {RootDir=root,MainExe=Path.GetFileName(me),Language="en"}))
                 {

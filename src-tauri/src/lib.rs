@@ -54,6 +54,8 @@ mod types;
 mod updates;
 #[cfg(windows)]
 mod update_splash;
+#[cfg(windows)]
+mod update_package;
 #[cfg(target_os = "macos")]
 mod macos;
 mod vcs;
