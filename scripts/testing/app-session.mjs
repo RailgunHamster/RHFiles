@@ -10,6 +10,7 @@ import {nativeQaChannel} from './native-qa-channel.mjs';
 import {ownedFrameReader,ownedWindowDriver,ownedCanvasReader} from './owned-native-frame.mjs';
 import {root} from './source.mjs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
+import {isLoadedMainTarget} from './app-startup-target.mjs';
 
 export const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 export async function until(check,label,timeout=15000) {
@@ -65,8 +66,9 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
     const target=await until(async()=>{
       if(spawnError)throw spawnError;if(child.exitCode!==null)throw Error('Test app exited before startup');
       const response=await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(1000)});
-      return (await response.json()).find(t=>t.type==='page' && /\/(index\.html)?$/.test(new URL(t.url).pathname));
-    },'isolated app startup',60000);
+      return (await response.json()).find(isLoadedMainTarget);
+    },'isolated main document loads (not the initial blank inspector target)',60000);
+    fs.writeFileSync(path.join(artifactDir,'startup-target.json'),JSON.stringify({type:target.type,title:target.title,url:target.url},null,2));
     socket=new WebSocket(target.webSocketDebuggerUrl);
     await Promise.race([once(socket,'open'),sleep(5000).then(()=>{throw Error('CDP connection timeout');})]);
     socket.addEventListener('message',event=>{
@@ -83,13 +85,18 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       if(response.exceptionDetails)throw Error(response.exceptionDetails.exception?.description||response.exceptionDetails.exception?.value||response.exceptionDetails.text);
       return response.result?.value;
     };
+    await send('Page.enable');
     await send('Runtime.enable');
     // Test only this private WebView. Other native windows/CI desktop helpers
     // must not steal its page focus and dismiss an in-progress context menu.
     // Native drag interception needs real OS focus; do not emulate it for drag
     // suites. Menu/PDF suites explicitly opt in to isolated page-focus testing.
     if(emulateFocus)await send('Emulation.setFocusEmulationEnabled',{enabled:true});
-    await until(()=>evaluate('typeof getTab === "function" && typeof call === "function" && typeof G !== "undefined" && G.startupReady===true'),'frontend ready',30000);
+    try{await until(()=>evaluate('typeof getTab === "function" && typeof call === "function" && typeof G !== "undefined" && G.startupReady===true'),'frontend ready',30000);}
+    catch(error){
+      const startup=await evaluate('({url:location.href,documentState:document.readyState,title:document.title,hasBridge:!!window.__TAURI__,hasApp:typeof G!=="undefined",ready:typeof G!=="undefined"&&G.startupReady===true})').catch(e=>({probeError:String(e)}));
+      fs.writeFileSync(path.join(artifactDir,'startup-failure.json'),JSON.stringify(startup,null,2));throw error;
+    }
     const profile=await evaluate("call('get_instance_profile')");
     // Abort before any test mutations if a release binary ignored test isolation.
     for(const directory of [profile.dataDirectory,profile.webviewDirectory]){
