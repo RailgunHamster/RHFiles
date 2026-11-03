@@ -21,6 +21,17 @@ internal static class SplashTests
         if(args.Length>0 && args[0]=="--window")
         { Application.Run(new Form {Text="RHFiles synthetic splash test",Width=300,Height=100});return 0; }
         if(args.Length>0 && args[0]=="--exit") {Thread.Sleep(1500);return 7;}
+        if(args.Length>0 && args[0]=="--pipe-test")
+        {
+            bool passed=false;var timer=new System.Windows.Forms.Timer{Interval=100};var watch=Stopwatch.StartNew();
+            using(var form=new RHFilesSplashForm(new SplashConfig {Controlled=true,Phase="downloading",Language="zh"}))
+            {
+                timer.Tick+=(sender,e)=>{var message=form.GetType().GetField("failure",Private).GetValue(form) as string;
+                    if(message!=null||watch.ElapsedMilliseconds>5000){passed=message!=null&&message.Contains("中文错误");form.Close();}};
+                timer.Start();Application.Run(form);timer.Dispose();
+            }
+            return passed?0:1;
+        }
         try
         {
             Application.EnableVisualStyles();
@@ -46,6 +57,13 @@ internal static class SplashTests
                     form.Close();
                 }
                 Stop(rightProcess);rightProcess=null;
+                using(var pipe=Process.Start(new ProcessStartInfo(me,"--pipe-test"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true}))
+                {
+                    byte[] message=System.Text.Encoding.UTF8.GetBytes("{\"phase\":\"failed\",\"message\":\"中文错误\"}\n");
+                    pipe.StandardInput.BaseStream.Write(message,0,message.Length);pipe.StandardInput.BaseStream.Flush();
+                    if(!pipe.WaitForExit(10000)){pipe.Kill();throw new Exception("Progress pipe timed out");}
+                    Check(pipe.ExitCode==0,"Real redirected progress pipe preserves UTF-8 Chinese errors");
+                }
                 using(var form=new RHFilesSplashForm(new SplashConfig {RootDir=root,WaitPid=Process.GetCurrentProcess().Id,Phase="downloading",Language="en",LogoPath=args.Length>0?args[0]:"",FromVersion="0.1.99",ToVersion="0.1.100"}))
                 {
                     form.Show();Application.DoEvents();

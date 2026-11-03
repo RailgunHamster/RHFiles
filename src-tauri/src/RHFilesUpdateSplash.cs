@@ -226,7 +226,8 @@ internal sealed class RHFilesSplashForm : Form
         try
         {
             string line;
-            while ((line = Console.In.ReadLine()) != null)
+            using (var input = new StreamReader(Console.OpenStandardInput(), new System.Text.UTF8Encoding(false, true)))
+            while ((line = input.ReadLine()) != null)
             {
                 if (line.Length > 8192) continue;
                 var json = new JavaScriptSerializer { MaxJsonLength = 8192, RecursionLimit = 4 };
