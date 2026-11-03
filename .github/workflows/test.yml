@@ -68,6 +68,7 @@ jobs:
       - name: Real WebView2 file workflows including tab drag and delete confirmations
         env:
           RHFILES_NATIVE_PLAYER_QA: '1'
+          RHFILES_REQUIRE_NATIVE_DRAG_QA: '1'
           # CI has no physical GPU/display: actual decode and bounded GDI frames,
           # not a hardware-renderer performance claim. Local acceptance also
           # exercises the ordinary native-hardware-auto output path.

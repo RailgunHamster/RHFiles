@@ -7,12 +7,13 @@ import {createHash} from 'node:crypto';
 import {launchApp,until} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {realRhVideoService} from '../testing/rhvideo-real-service.mjs';
+import {rhvideoReferenceSource,rhvideoReferenceSkip} from '../testing/rhvideo-reference.mjs';
 
-test('actual queue promotions persist, cross pages/batches and preserve active and paused attempts',{timeout:180000},async t=>{
+test('actual queue promotions persist, cross pages/batches and preserve active and paused attempts',{skip:rhvideoReferenceSkip(),timeout:180000},async t=>{
   const app=await launchApp({emulateFocus:true});t.after(()=>app.close());t.diagnostic('Actual task queue evidence: '+app.artifactDir);
   const video=path.join(app.directory,'task-source.mp4');
   execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=12','-t','1','-c:v','libx264','-threads','1','-preset','ultrafast','-pix_fmt','yuv420p',video],{windowsHide:true,timeout:30000});
-  const fixture=await realRhVideoService({directory:path.join(app.directory,'actual-queue'),video,source:process.env.RHVIDEO_SOURCE||'D:/git/RHVideo',taskQueue:true});
+  const fixture=await realRhVideoService({directory:path.join(app.directory,'actual-queue'),video,source:rhvideoReferenceSource,taskQueue:true});
   t.after(async()=>{await fixture.close();fs.writeFileSync(path.join(app.artifactDir,'actual-requests.json'),JSON.stringify(fixture.requests,null,2));fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(app.artifactDir,'actual-service.log'));});
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
   const target=await until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(page=>new URL(page.url).pathname==='/rhvideo.html');},'owned queue window');

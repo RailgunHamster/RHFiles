@@ -20,9 +20,13 @@ const native={skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'};
 const {grid:Grid}=createRequire(import.meta.url)('../../src/js/rhvideo-model.js');
 const invoke=(view,name,args={})=>view.evaluate('RHFilesAPI.invoke('+JSON.stringify(view.gridHost?gridAction(view,name):playerAction(view,name))+','+JSON.stringify(args)+')');
 const command=(app,action,args={})=>app.evaluate('call("rhvideo_request",'+JSON.stringify({action,args})+')');
-async function withSuspendedControls(view,work){
+async function withSuspendedControls(view,work,focusOwner=view){
   // VirtualTimePolicy.advance fast-forwards delayed work; it does not restore
   // the real clock. Use reversible page suspension for native-background tests.
+  // Focus emulation deliberately keeps a WebView visible and can prevent its
+  // lifecycle freeze. Disable it only for this native-background experiment.
+  await view.send('Emulation.setFocusEmulationEnabled',{enabled:false});
+  if(focusOwner!==view)await focusOwner.send('Emulation.setFocusEmulationEnabled',{enabled:false});
   await view.evaluate('window.__rhFreezeProbe={ticks:0};window.__rhFreezeProbe.timer=setInterval(()=>window.__rhFreezeProbe.ticks++,50);true');
   await until(()=>view.evaluate('window.__rhFreezeProbe.ticks>0'),'controls probe is actually ticking');
   const before=await view.evaluate('window.__rhFreezeProbe.ticks');
@@ -36,6 +40,12 @@ async function withSuspendedControls(view,work){
   assert(resumed-after<=wallMs/50+6,'resume must not put controls into an accelerated synthetic clock');
   console.log(JSON.stringify({controlsClock:{before,after,resumed,wallMs}}));
   await view.evaluate('clearInterval(window.__rhFreezeProbe.timer);delete window.__rhFreezeProbe;true');
+  if(view.gridHost?.kind==='library'){
+    // This fixture opted into focus emulation before freezing. Chromium leaves
+    // the document hidden on thaw; restore that same test visibility context.
+    await focusOwner.send('Emulation.setFocusEmulationEnabled',{enabled:true});
+    await until(()=>view.evaluate('!document.hidden&&!document.getElementById("library-grid-pause").disabled'),'restored library Grid controls are active',5000);
+  }
   return result;
 }
 async function target(app,file){
@@ -60,6 +70,7 @@ async function setup(options={}){
     const orientation=portraitIndices.length?{videoFiles:Object.fromEntries(portraitIndices.map(i=>['video-'+i,portrait])),videoResolutions:Array.from({length:options.videoCount??6},(_,i)=>portraitIndices.includes(i)?'360x640':'640x360')}:{};
     fixture=await rhvideoFixture({videoFile:picturesOnly?null:file,videoCount:6,...fixtureOptions,...orientation,videoDuration:videoMetadataDuration??duration});
     await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");view=await target(app,'rhvideo.html');
+    if(options.emulateFocus!==false)await view.send('Emulation.setFocusEmulationEnabled',{enabled:true});
     if(!primaryGallery)await invoke(view,'category',{kind:'video'});await invoke(view,'connection.connect',{server:fixture.url,username:'preview',password:'fixture-only'});
     return {app,fixture,view,close:async()=>{view.close();app.close();await fixture.close();}};
   }catch(error){view?.close();app.close();await fixture?.close();throw error;}
@@ -100,7 +111,7 @@ test('native startup keeps real WebView keyboard focus without a second controll
 });
 
 test('grid startup keeps real WebView keyboard focus and keyboard-only control/close access',native,async()=>{
-  const s=await setup({videoDuration:30});let grid;
+  const s=await setup({videoDuration:30,emulateFocus:false});let grid;
   try{
     await invoke(s.view,'preferences.set',{key:'gridCount',value:2});await invoke(s.view,'grid.open');grid=await target(s.app,'rhvideo-grid.html');
     await until(async()=>{const value=await invoke(grid,'grid.state');return value.cells.length===2&&value.cells.every(cell=>cell.renderedFrames>0);},'two actual grid video outputs',25000);
@@ -851,7 +862,7 @@ test('native-input public APIs bind single and grid intents to exact decoder ins
     assert.deepEqual((await invoke(grid,'ui.contract')).missing,[]);
     await grid.send('Emulation.setFocusEmulationEnabled',{enabled:true});await grid.send('Emulation.setDeviceMetricsOverride',{width:700,height:grid.gridHost.kind==='library'?500:196,deviceScaleFactor:1,mobile:false});
     await grid.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    assert.deepEqual(await gridEvaluate(grid,"[...gridElement('controls').querySelectorAll('button,input,select,[role=button]')].filter(n=>n.getClientRects().length).filter(n=>{const r=n.getBoundingClientRect();return r.left<0||r.right>innerWidth+1||r.top<0||r.bottom>innerHeight+1}).map(n=>n.id)"),[],'group-position controls fit inside the selected host viewport');
+    assert.deepEqual(await gridEvaluate(grid,"[...gridElement('controls').querySelectorAll('button,input,select,[role=button]')].filter(n=>n.checkVisibility({checkVisibilityCSS:true})).filter(n=>{const r=n.getBoundingClientRect();return r.left<0||r.right>innerWidth+1||r.top<0||r.bottom>innerHeight+1}).map(n=>n.id)"),[],'visible group-position controls fit inside the selected host viewport');
     const point=await gridEvaluate(grid,"(()=>{const r=gridElement('group-seek').getBoundingClientRect();return {x:r.x+r.width*.8,y:r.y+r.height/2}})()");
     await grid.send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point});await grid.send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});
     await until(async()=>(await invoke(grid,'grid.state')).offset===4,'actual group scrubber UI invokes collection seek');
@@ -889,7 +900,7 @@ test('default grid uses the gallery pool and reference layouts, retains per-cell
       await command(s.app,'grid.page',{direction:-1});
       await sleep(first.cells.some(c=>c.renderer==='native-hardware-auto')?12000:2500);
       const backgroundState=await command(s.app,'grid.state'),background=backgroundState.cells;console.log(JSON.stringify({backgroundMonitorTicks:backgroundState.monitorTicks,cells:background.map(v=>({phase:v.restorePhase,frames:v.renderedFrames,state:v.state,position:v.positionMs}))}));assert(background.every(v=>!v.restoringPausedFrame&&v.renderedFrames>0&&v.state===4),'every paused cell must restore without any controls WebView timers or state polling');
-    });
+    },s.view);
     phase='read restored paused cell';const restored=await until(async()=>{const v=(await invoke(grid,'grid.state')).cells[0];return v.state===4&&!v.restoringPausedFrame&&v.pendingSeekMs===null&&v.renderedFrames>0&&Math.abs(v.positionMs-saved.positionMs)<500?v:null;},'paused cell displays an actual restored frame after paging',25000);
     assert.equal(restored.volume,37);assert.equal(restored.muted,true);assert.equal(restored.rate,1.5);assert.equal(restored.seekError,null);assert.notEqual(restored.inputId,saved.inputId);
     phase='page after paused restore';const boundary=await invoke(grid,'grid.page',{direction:-1});assert.equal(boundary.cells[0].inputId,restored.inputId,'clamped navigation cannot restart the current group');

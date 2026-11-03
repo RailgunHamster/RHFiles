@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
 import {launchApp,until} from '../testing/app-session.mjs';
+import {execFileSync} from 'node:child_process';
 const invoke=(app,id,args={})=>app.evaluate('RHFilesAPI.invoke('+JSON.stringify(id)+','+JSON.stringify(args)+')');
 function bitmap(){const b=Buffer.alloc(70);b.write('BM');b.writeUInt32LE(70,2);b.writeUInt32LE(54,10);b.writeUInt32LE(40,14);b.writeInt32LE(2,18);b.writeInt32LE(2,22);b.writeUInt16LE(1,26);b.writeUInt16LE(24,28);b.writeUInt32LE(16,34);for(let i=54;i<70;i++)b[i]=i%3?255:0;return b;}
 test('desktop group protocol browses real shared files in ordinary tabs with bounded previews and live revocation',async()=>{
@@ -7,6 +8,7 @@ test('desktop group protocol browses real shared files in ordinary tabs with bou
   const root=path.join(a.directory,'only-fixture-files');fs.mkdirSync(root);fs.mkdirSync(path.join(root,'中文 % #'));
   fs.writeFileSync(path.join(root,'中文 % #','A.txt'),'fixture · 中文预览 0123456789');fs.writeFileSync(path.join(root,'中文 % #','a-lower.txt'),'lower');fs.writeFileSync(path.join(root,'image.bmp'),bitmap());
   fs.mkdirSync(path.join(root,'pages'));for(let i=0;i<2011;i++)fs.writeFileSync(path.join(root,'pages','item-'+i+'.txt'),'fixture');
+  execFileSync('attrib.exe',['+H','+S',root],{windowsHide:true}); // Same backing attributes as C:\ and D:\, only on this owned fixture.
   try{
     const group=await invoke(a,'groups.create',{name:'RH browser QA',deviceName:'Fixture host',permissions:{write:true,delete:true}});
     const req=await invoke(b,'groups.request',{deviceName:'Fixture computer'}),approval=await invoke(a,'groups.approve',{id:group,uri:req.uri,canInvite:false});await invoke(b,'groups.join',{uri:approval.uri,confirmed:true});

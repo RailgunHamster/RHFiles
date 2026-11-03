@@ -15,8 +15,8 @@ test('real file-manager business workflows in an isolated RHFiles instance',{tim
   fs.writeFileSync(path.join(source,'file2.json'),'{}');fs.writeFileSync(path.join(source,'file10.json'),'{}');
   async function step(name,fn){
     let error;
-    await t.test(name,async()=>{try{await fn();results.push({name,status:'PASS'});}catch(e){error=e;results.push({name,status:'FAIL',error:String(e)});throw e;}});
-    const report={passed:results.filter(r=>r.status==='PASS').length,failed:results.filter(r=>r.status==='FAIL').length,skipped:0,total:results.length,results};
+    await t.test(name,async child=>{try{const result=await fn(child);results.push({name,status:result?.skipped?'SKIP':'PASS',...(result?.skipped?{reason:result.skipped}:{})});}catch(e){error=e;results.push({name,status:'FAIL',error:String(e)});throw e;}});
+    const report={passed:results.filter(r=>r.status==='PASS').length,failed:results.filter(r=>r.status==='FAIL').length,skipped:results.filter(r=>r.status==='SKIP').length,total:results.length,results};
     fs.writeFileSync(path.join(app.artifactDir,'business-results.json'),JSON.stringify(report,null,2));
     if(error){await app.screenshot('failure').catch(()=>{});throw error;}
   }
@@ -51,14 +51,22 @@ test('real file-manager business workflows in an isolated RHFiles instance',{tim
     const a=path.join(dest,'a.txt'),b=path.join(dest,'b.txt');fs.writeFileSync(a,'A');fs.writeFileSync(b,'B');
     await assert.rejects(()=>invoke('rename_file',{path:a,newName:'b.txt'}));assert.equal(fs.readFileSync(a,'utf8'),'A');assert.equal(fs.readFileSync(b,'utf8'),'B');
   });
-  await step('file drag hovers another tab, switches to it, asks copy/move and copies exact bytes',async()=>{
+  await step('file drag hovers another tab, switches to it, asks copy/move and copies exact bytes',async t=>{
+    const input=await app.nativeWindows.inputReady();
+    if(!input.available){assert.notEqual(process.env.RHFILES_REQUIRE_NATIVE_DRAG_QA,'1',input.reason);t.skip('Native OLE input requires an unlocked interactive desktop: '+input.reason);return {skipped:input.reason};}
     await app.evaluate(`addTab(${JSON.stringify(dest)},false)`);
     await until(()=>app.evaluate(`getTab().path===${JSON.stringify(dest)} && getTab()._loaded`),'destination tab');
     const destinationTab=await app.evaluate('G.activeTab');
     await app.evaluate(`addTab(${JSON.stringify(source)},false)`);
     await until(()=>app.evaluate(`getTab().path===${JSON.stringify(source)} && getTab()._loaded`),'source tab');
     const sourceSelector=await app.evaluate(`(()=>{const index=getTab().entries.findIndex(e=>e.path===${JSON.stringify(file)});if(index<0)throw Error('Missing source');return '#file-list .file-row[data-index="'+index+'"] .row-fname';})()`);
-    await app.drag(sourceSelector,`.tab[data-tab-id="${destinationTab}"]`,'#file-list');
+    try{await app.drag(sourceSelector,`.tab[data-tab-id="${destinationTab}"]`,'#file-list');}
+    catch(error){
+      // A locked/covered local console is not native drag acceptance. CI opts
+      // into mandatory input, so this environmental limitation still fails CI.
+      if(process.env.RHFILES_REQUIRE_NATIVE_DRAG_QA==='1'||!String(error).includes('Pointer target is covered by another window'))throw error;
+      t.skip('Owned fixture is covered on this console; no foreign window was clicked');return {skipped:'owned-pointer-target-covered'};
+    }
     await until(()=>app.evaluate("!!document.querySelector('.app-file-drop-overlay')"),'copy/move dialog');
     assert.equal(await app.evaluate('G.activeTab'),destinationTab);
     await app.click('.app-file-drop-overlay .dialog-actions button:nth-child(2)');
@@ -142,6 +150,6 @@ test('real file-manager business workflows in an isolated RHFiles instance',{tim
     await app.click('.app-confirm-overlay .dialog-actions button:last-child');await app.evaluate('window.__deleteTest');
     assert.equal(fs.existsSync(a),false);assert.equal(fs.existsSync(b),false);assert.ok(fs.existsSync(file));
   });
-  validateReport({passed:results.length,failed:0,skipped:0,total:results.length,results},{minimum:11});
+  validateReport({passed:results.filter(r=>r.status==='PASS').length,failed:0,skipped:results.filter(r=>r.status==='SKIP').length,total:results.length,results},{minimum:11,allowSkipped:process.env.RHFILES_REQUIRE_NATIVE_DRAG_QA!=='1'});
   t.diagnostic('Isolated fixtures and evidence: '+app.directory+'; '+app.artifactDir);
 });

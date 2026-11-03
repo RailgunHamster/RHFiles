@@ -52,6 +52,10 @@ fn info(path: &DevicePath, raw: &Value) -> Result<Value, String> {
     let size = raw["size"]
         .as_u64()
         .ok_or("[invalid_response] 远端文件大小无效")?;
+    // Older servers inherited Windows volume-root hidden/system attributes.
+    // A signed, explicitly shared mount must remain navigable in the device
+    // root even before that server is upgraded. Never unhide its descendants.
+    let share_mount=is_dir&&!remote.path.trim_start_matches('/').contains('/');
     let ms = raw["modifiedMs"].as_i64().unwrap_or(0);
     let extension = if is_dir {
         String::new()
@@ -64,9 +68,23 @@ fn info(path: &DevicePath, raw: &Value) -> Result<Value, String> {
     };
     Ok(
         json!({"name":name,"path":remote.uri(),"is_dir":is_dir,"extension":extension,"size":size,"size_display":crate::types::format_size(size),
-        "modified_ts":ms,"created_ts":raw["createdMs"].as_u64().unwrap_or(0),"modified":"","created":"","folder_size":null,"is_hidden":raw["isHidden"].as_bool().unwrap_or_else(||name.starts_with('.')),"is_system":raw["isSystem"]==true,"is_dot":name.starts_with('.'),
+        "modified_ts":ms,"created_ts":raw["createdMs"].as_u64().unwrap_or(0),"modified":"","created":"","folder_size":null,"is_hidden":!share_mount&&raw["isHidden"].as_bool().unwrap_or_else(||name.starts_with('.')),"is_system":!share_mount&&raw["isSystem"]==true,"is_dot":!share_mount&&name.starts_with('.'),
         "remote":true,"remote_revision":raw["revision"],"attributes":"RHFiles","readonly":raw["readonly"]==true}),
     )
+}
+#[cfg(test)]
+mod entry_tests {
+    use super::*;
+    #[test]
+    fn legacy_hidden_system_share_mounts_stay_visible_but_descendants_do_not(){
+        let group="1".repeat(64);let peer="2".repeat(64);
+        let root=DevicePath::new(&group,&peer,"/").unwrap();
+        let raw=json!({"name":"D","path":"/D","isDir":true,"size":0,"isHidden":true,"isSystem":true,"readonly":true,"revision":"test"});
+        let mount=info(&root,&raw).unwrap();assert_eq!(mount["is_hidden"],false);assert_eq!(mount["is_system"],false);assert_eq!(mount["is_dot"],false);assert_eq!(mount["readonly"],true);
+        let share=DevicePath::new(&group,&peer,"/D").unwrap();let direct=info(&share,&raw).unwrap();assert_eq!(direct["is_system"],false);
+        let child=info(&share,&json!({"name":".hidden","path":"/D/.hidden","isDir":true,"size":0,"isHidden":true,"isSystem":true})).unwrap();
+        assert_eq!(child["is_hidden"],true);assert_eq!(child["is_system"],true);assert_eq!(child["is_dot"],true);
+    }
 }
 async fn stat(path: &DevicePath) -> Result<Value, String> {
     if path.path == "/" {

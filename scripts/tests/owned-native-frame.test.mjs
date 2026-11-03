@@ -6,6 +6,26 @@ import os from 'node:os';
 import {createHash} from 'node:crypto';
 import {admitOwnedFrameTool,validateFrameInput,validateOwnedBitmap,ownedFrameReader,ownedWindowDriver} from '../testing/owned-native-frame.mjs';
 import {ownedObserverAdmission} from '../testing/rhvideo-windows.mjs';
+test('input desktop and owned-window exposure retain explicit negative outcomes without arbitrary targets',async()=>{
+ const f=fixture();let driver;try{
+  let command='input-ready',value={available:false,reason:'input-desktop-locked-or-unavailable'};
+  driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:async(_,args)=>{assert.deepEqual(args,['42','own/rhfiles.exe',command]);return JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,...value});}});
+  assert.deepEqual(await driver.inputReady(),value);value={available:true,reason:'input-desktop-ready'};assert.deepEqual(await driver.inputReady(),value);
+  value={available:true,reason:'input-desktop-locked-or-unavailable'};await assert.rejects(driver.inputReady(),/acknowledgement/);
+  for(const method of ['inputReady','exposeMain','releaseMain'])await assert.rejects(driver[method]({hwnd:1}),/no arguments/);
+  command='main-front';value={target:'main-client',transport:'win32-z-order',raised:true};await driver.exposeMain();value.raised=false;await assert.rejects(driver.exposeMain(),/acknowledgement/);
+  command='main-back';await driver.releaseMain();
+ }finally{driver?.close();f.close();}
+});
+test('owned main pointer rejects arbitrary windows, coordinates and false input acknowledgements',async()=>{
+ const f=fixture();let driver;try{
+  let reply={target:'main-client',transport:'windows-send-input',phase:'down',sent:2};
+  driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:async(_,args)=>{assert.deepEqual(args,['42','own/rhfiles.exe','main-pointer','down','25','40']);return JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,...reply});}});
+  for(const args of [null,[],{phase:'click',x:1,y:1},{phase:'down',x:-1,y:1},{phase:'down',x:4096,y:1},{phase:'down',x:1.5,y:1},{phase:'down',x:1,y:1,hwnd:123}])await assert.rejects(driver.mainPointer(args),/bounded/);
+  const point={phase:'down',x:25,y:40};assert.equal((await driver.mainPointer(point)).sent,2);
+  for(const bad of [{target:'library'},{transport:'DOM-click'},{phase:'up'},{sent:1}]){reply={target:'main-client',transport:'windows-send-input',phase:'down',sent:2,...bad};await assert.rejects(driver.mainPointer(point),/acknowledgement/);}
+ }finally{driver?.close();f.close();}
+});
 function fixture(){
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-owned-frame-'))),source=path.join(root,'scripts/testing/owned-native-frame.cpp'),tool=path.join(root,'test-artifacts/owned-native-frame/owned-native-frame.exe'),directory=path.join(root,'fixture');
  fs.mkdirSync(path.dirname(source),{recursive:true});fs.mkdirSync(path.dirname(tool),{recursive:true});fs.mkdirSync(directory);fs.writeFileSync(source,'synthetic source, not a pixel test');fs.writeFileSync(tool,'synthetic tool, never executed');

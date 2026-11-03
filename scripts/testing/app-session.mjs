@@ -66,7 +66,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       if(spawnError)throw spawnError;if(child.exitCode!==null)throw Error('Test app exited before startup');
       const response=await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(1000)});
       return (await response.json()).find(t=>t.type==='page' && /\/(index\.html)?$/.test(new URL(t.url).pathname));
-    },'isolated app startup',30000);
+    },'isolated app startup',60000);
     socket=new WebSocket(target.webSocketDebuggerUrl);
     await Promise.race([once(socket,'open'),sleep(5000).then(()=>{throw Error('CDP connection timeout');})]);
     socket.addEventListener('message',event=>{
@@ -101,7 +101,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       const result=await send('Page.captureScreenshot',{format:'png'});
       fs.writeFileSync(path.join(artifactDir,name+'.png'),Buffer.from(result.data,'base64'));
     };
-    const point=selector=>evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Element missing');const r=el.getBoundingClientRect();if(!r.width||!r.height)throw Error('Element hidden');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    const point=selector=>evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Element missing');el.scrollIntoView({block:'nearest',inline:'nearest'});const r=el.getBoundingClientRect();if(!r.width||!r.height)throw Error('Element hidden');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     const hover=async selector=>{
       // Menus clamp to the viewport on the next frame and animate into place.
       // A single move can consequently land on a DIFFERENT row after layout.
@@ -122,6 +122,25 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       await send('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1});
     };
     const drag=async(source,target,drop)=>{
+      // Local file drags are real OLE Shell drags now. CDP's HTML interception
+      // cannot see them and its synthetic button doesn't set GetAsyncKeyState.
+      // Keep the actual native implementation enabled and drive only our own
+      // foreground sibling window through bounded Windows input instead.
+      if(await evaluate("typeof nativeFileDrag!=='undefined'&&!IS_MAC")){
+        if(!windowDriver)windowDriver=ownedWindowDriver(observerOptions());
+        await windowDriver.exposeMain();await send('Page.bringToFront');
+        const from=await point(source),to=await point(target),dpr=await evaluate('devicePixelRatio');
+        const pointer=(phase,p)=>windowDriver.mainPointer({phase,x:Math.round(p.x*dpr),y:Math.round(p.y*dpr)});let held=false;
+        try{
+          await pointer('move',from);await pointer('down',from);held=true;
+          await until(async()=>(await windowDriver.windows()).some(w=>w.label==='main'&&w.foreground),'owned source click acquires native drag focus',5000);
+          for(let i=1;i<=12;i++){await pointer('move',{x:from.x+(to.x-from.x)*i/12,y:from.y+(to.y-from.y)*i/12});await sleep(40);}
+          await until(()=>evaluate('!!G._nativeFileDrag'),'actual native Shell drag',5000);
+          const destinationTab=await evaluate(`document.querySelector(${JSON.stringify(target)})?.dataset.tabId`);
+          await until(()=>evaluate('G.activeTab==='+JSON.stringify(destinationTab)),'native drag spring-loads destination tab',5000);
+          const end=await point(drop);await pointer('move',end);await sleep(100);await pointer('up',end);held=false;return;
+        }finally{try{if(held)await pointer('up',to);}finally{await windowDriver.releaseMain();}}
+      }
       const from=await point(source),to=await point(target);events.length=0;
       await send('Input.setInterceptDrags',{enabled:true});
       await send('Input.dispatchMouseEvent',{type:'mouseMoved',...from});
@@ -168,7 +187,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
       if(!presentationReader)presentationReader=ownedFrameReader({...observerOptions(),scope:'presentation',getState:()=>evaluate('window.__TAURI__.core.invoke("rhvideo_request",{action:"presentation.state",args:{}})')});
       return presentationReader.read(args);
     };
-    const nativeWindows={windows:()=>ownedWindow().windows(),pingLibrary:()=>ownedWindow().pingLibrary(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain(),sizeMainClient:args=>{if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned client sizing requires the explicit QA opt-in');return ownedWindow().sizeMainClient(args);},closePlayerWhenCreated:()=>{if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned player close requires the explicit QA opt-in');return ownedWindow().closePlayerWhenCreated();}};
+    const nativeWindows={windows:()=>ownedWindow().windows(),inputReady:()=>ownedWindow().inputReady(),pingLibrary:()=>ownedWindow().pingLibrary(),libraryKey:args=>ownedWindow().libraryKey(args),activateMain:()=>ownedWindow().activateMain(),sizeMainClient:args=>{if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned client sizing requires the explicit QA opt-in');return ownedWindow().sizeMainClient(args);},closePlayerWhenCreated:()=>{if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned player close requires the explicit QA opt-in');return ownedWindow().closePlayerWhenCreated();}};
     const readStartupCanvas=scope=>{if(closing||process.env.RHFILES_NATIVE_PLAYER_QA!=='1')return Promise.reject(Error('Owned startup canvas requires the explicit QA opt-in and a live fixture'));if(scope==='main')return(mainCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();if(scope==='library-player')return(libraryCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();return(singleCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();};
     return {directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readExpandedGridFrame,readPresentationFrame,readMainFrame:()=>readStartupCanvas('main'),readSingleInputFrame:()=>readStartupCanvas('single-input-player'),readLibraryPlayerFrame:()=>readStartupCanvas('library-player'),nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};
   } catch(e){close();throw e;}

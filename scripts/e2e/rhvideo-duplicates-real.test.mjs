@@ -8,13 +8,14 @@ import {launchApp,until} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {nativePlayerView,playerEvaluate} from '../testing/native-player-view.mjs';
 import {realRhVideoService} from '../testing/rhvideo-real-service.mjs';
+import {rhvideoReferenceSource,rhvideoReferenceSkip} from '../testing/rhvideo-reference.mjs';
 
-test('actual RHVideo duplicate scan/review, native playback and recoverable source bytes',{timeout:180000},async t=>{
+test('actual RHVideo duplicate scan/review, native playback and recoverable source bytes',{skip:rhvideoReferenceSkip(),timeout:180000},async t=>{
   const app=await launchApp({emulateFocus:true});t.after(()=>app.close());
   t.diagnostic('Actual duplicate backend evidence: '+app.artifactDir);
   const video=path.join(app.directory,'generated.mp4');
   execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-filter_threads','1','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000','-t','14','-c:v','libx264','-threads','2','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart',video],{windowsHide:true,timeout:30000});
-  const fixture=await realRhVideoService({directory:path.join(app.directory,'actual-service'),source:process.env.RHVIDEO_SOURCE||'D:/git/RHVideo',video,duplicateCopies:27});
+  const fixture=await realRhVideoService({directory:path.join(app.directory,'actual-service'),source:rhvideoReferenceSource,video,duplicateCopies:27});
   t.after(async()=>{await fixture.close();fs.writeFileSync(path.join(app.artifactDir,'actual-requests.json'),JSON.stringify(fixture.requests,null,2));fs.copyFileSync(path.join(fixture.directory,'service.log'),path.join(app.artifactDir,'actual-service.log'));});
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");
   const target=async name=>until(async()=>{const pages=await(await fetch(`http://127.0.0.1:${app.port}/json/list`)).json();return pages.find(page=>new URL(page.url).pathname==='/'+name);},'owned '+name);

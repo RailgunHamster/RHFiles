@@ -529,8 +529,12 @@ impl Node {
             modified_ms: modified.as_millis() as u64,
             created_ms:meta.created().ok().and_then(|v|v.into_std().duration_since(UNIX_EPOCH).ok()).map(|v|v.as_millis() as u64).unwrap_or(0),
             readonly:meta.permissions().readonly(),
-            is_hidden:attributes&2!=0||self.virtual_path.rsplit('/').next().unwrap_or("").starts_with('.'),
-            is_system:attributes&4!=0,
+            // An explicitly configured share is a virtual mount, not the
+            // backing directory. Windows volume roots normally carry hidden
+            // and system bits; inheriting them hides every advertised drive.
+            // Descendant files retain their actual visibility attributes.
+            is_hidden:!self.relative.as_os_str().is_empty()&&(attributes&2!=0||self.virtual_path.rsplit('/').next().unwrap_or("").starts_with('.')),
+            is_system:!self.relative.as_os_str().is_empty()&&attributes&4!=0,
             revision: metadata_revision(&meta),
         })
     }
@@ -591,6 +595,25 @@ mod checked_tests{
     fn make()->(tempfile::TempDir,PathBuf,PathBuf,Vec<ShareConfig>,Storage){
         let temp=tempfile::tempdir().unwrap();let base=temp.path().canonicalize().unwrap();let files=base.join("files");let data=base.join("data");std::fs::create_dir(&files).unwrap();std::fs::create_dir(&data).unwrap();
         let shares=vec![ShareConfig{name:"Files".into(),path:files.clone()}];let storage=Storage::protected(&shares,&data,&[]).unwrap();(temp,files,data,shares,storage)
+    }
+    #[test]
+    fn explicit_share_mounts_are_visible_but_hidden_children_keep_their_attributes(){
+        let(_temp,files,data,_,_storage)=make();
+        std::fs::write(files.join(".child"),b"owned fixture").unwrap();
+        #[cfg(windows)] {
+            use std::os::windows::ffi::OsStrExt;
+            for path in [&files,&files.join(".child")] {
+                let wide:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
+                assert_ne!(unsafe{windows_sys::Win32::Storage::FileSystem::SetFileAttributesW(wide.as_ptr(),2|4)},0);
+            }
+        }
+        let storage=Storage::protected(&[ShareConfig{name:".ExplicitShare".into(),path:files}],&data,&[]).unwrap();
+        let mounts=storage.list("/").unwrap();assert_eq!(mounts.len(),1);
+        assert_eq!(mounts[0].name,".ExplicitShare");assert!(mounts[0].is_dir);
+        assert!(!mounts[0].is_hidden&&!mounts[0].is_system);
+        let mount=storage.stat("/.ExplicitShare").unwrap();assert!(!mount.is_hidden&&!mount.is_system);
+        let child=storage.list("/.ExplicitShare").unwrap().remove(0);assert!(child.is_hidden);
+        #[cfg(windows)] assert!(child.is_system);
     }
     #[test]
     fn conditional_edit_is_staged_and_cannot_overwrite_a_newer_occupant(){

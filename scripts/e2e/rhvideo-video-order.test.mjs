@@ -5,8 +5,9 @@ import {launchApp,until} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 import {rhvideoFixture} from '../testing/rhvideo-fixture.mjs';
 import {configureVideoOrderFixture,checkPackagedVideoOrder} from '../testing/rhvideo-video-order.mjs';
+import {rhvideoReferenceSkip} from '../testing/rhvideo-reference.mjs';
 
-test('packaged video pages and selected replacement keep reference order, filtering-independent IDs and one-shot confirmation',{timeout:120000},async t=>{
+test('packaged video pages and selected replacement keep reference order, filtering-independent IDs and one-shot confirmation',{skip:rhvideoReferenceSkip(['static/index.html']),timeout:120000},async t=>{
   const fixture=await rhvideoFixture({videoCount:52}),app=await launchApp({emulateFocus:true});let view;
   t.after(async()=>{view?.close();await app.close();await fixture.close();});configureVideoOrderFixture(fixture);
   await app.evaluate("RHFilesAPI.invoke('rhvideo.open')");

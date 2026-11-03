@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {launchApp} from '../testing/app-session.mjs';
 
-test('missing Windows desktop identity still starts an isolated usable instance with Gitee updates',{timeout:90000},async()=>{
+test('missing Windows desktop identity still starts an isolated usable instance with CNB updates',{timeout:90000},async()=>{
   const app=await launchApp({desktopId:'unavailable',emulateFocus:true});
   try{
     assert.equal(app.profile.desktopIdentified,false);
@@ -15,15 +15,15 @@ test('missing Windows desktop identity still starts an isolated usable instance 
     assert.equal(await app.evaluate(`navigateTo(${JSON.stringify(directory)})`),true);
     assert.equal(await app.evaluate('G.startupReady'),true);
     assert.equal(await app.evaluate('getTab().entries.length'),0);
-    assert.equal(await app.evaluate('G.settings.updateSourceMode'),'gitee');
-    assert.equal(await app.evaluate('getUpdateSource()'),'https://gitee.com/railgunhamster/RHFiles');
+    assert.equal(await app.evaluate('G.settings.updateSourceMode'),'cnb');
+    assert.equal(await app.evaluate('getUpdateSource()'),'https://cnb.cool/railgunhamster/RHFiles');
     await app.evaluate("openSettings();switchSettingsSection('updates');true");
-    assert.equal(await app.evaluate("document.getElementById('settings-update-source').value"),'gitee');
-    assert.equal(await app.evaluate("document.getElementById('settings-update-gitee').value"),'https://gitee.com/railgunhamster/RHFiles');
+    assert.equal(await app.evaluate("document.getElementById('settings-update-source').value"),'cnb');
+    assert.equal(await app.evaluate("document.getElementById('settings-update-cnb').value"),'https://cnb.cool/railgunhamster/RHFiles');
     await app.evaluate("setUpdateSourceMode('github');true");
     assert.equal(await app.evaluate('getUpdateSource()'),'https://github.com/RailgunHamster/RHFiles');
-    await app.evaluate("setUpdateSourceMode('gitee');true");
-    await app.screenshot('gitee-settings-fallback-startup');
+    await app.evaluate("setUpdateSourceMode('cnb');true");
+    await app.screenshot('cnb-settings-fallback-startup');
     assert.ok(await app.evaluate("document.getElementById('settings-instance-profile').textContent.includes('unidentified-session-')"));
   }finally{app.close();}
 });
