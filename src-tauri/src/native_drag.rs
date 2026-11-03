@@ -5,6 +5,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 static DRAGGING: AtomicBool = AtomicBool::new(false);
 
+// GetAsyncKeyState reports physical buttons, unlike browser `button/buttons`.
+// Honor the Windows primary-button mapping and ignore its unreliable low bit.
+#[cfg(any(windows, test))]
+fn primary_button_held(swapped: bool, left: i16, right: i16) -> bool {
+    if swapped { right < 0 } else { left < 0 }
+}
+
 #[cfg(windows)]
 mod file_only {
     // The Shell also synthesizes text filenames. Filter those formats instead
@@ -187,9 +194,17 @@ unsafe fn shell_drag(
 ) -> Result<Value, String> {
     use windows::Win32::{
         System::Ole::{DROPEFFECT_COPY, IDropSource},
-        UI::{Input::KeyboardAndMouse::*, Shell::*},
+        UI::{
+            Input::KeyboardAndMouse::*,
+            Shell::*,
+            WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON},
+        },
     };
-    if unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } >= 0 {
+    if !primary_button_held(
+        unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0,
+        unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) },
+        unsafe { GetAsyncKeyState(VK_RBUTTON.0 as i32) },
+    ) {
         return Ok(json!({"status":"released","effect":"none"}));
     }
     let object = unsafe { shell_object(paths) }?;
@@ -414,6 +429,19 @@ pub mod qa {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn drag_start_honors_both_primary_button_mappings_and_only_the_current_state() {
+        for (left, right, normal, swapped) in [
+            (0, 0, false, false),
+            (i16::MIN, 0, true, false),
+            (0, i16::MIN, false, true),
+            (i16::MIN, i16::MIN, true, true),
+            (1, 1, false, false),
+        ] {
+            assert_eq!(super::primary_button_held(false, left, right), normal);
+            assert_eq!(super::primary_button_held(true, left, right), swapped);
+        }
+    }
     use super::*;
     #[test]
     fn rejects_uris_empty_and_relative_selections() {

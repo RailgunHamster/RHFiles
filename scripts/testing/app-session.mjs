@@ -130,16 +130,18 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
         if(!windowDriver)windowDriver=ownedWindowDriver(observerOptions());
         await windowDriver.exposeMain();await send('Page.bringToFront');
         const from=await point(source),to=await point(target),dpr=await evaluate('devicePixelRatio');
+        await evaluate('window.__nativeDragProbe=[];for(const type of ["pointerdown","mousedown","dragstart","pointercancel","mouseup"])document.addEventListener(type,event=>{if(window.__nativeDragProbe.length<20)window.__nativeDragProbe.push({type,trusted:event.isTrusted,target:event.target.className,x:event.clientX,y:event.clientY,buttons:event.buttons});},{capture:true,passive:true});true');
         const pointer=(phase,p)=>windowDriver.mainPointer({phase,x:Math.round(p.x*dpr),y:Math.round(p.y*dpr)});let held=false;
         try{
           await pointer('move',from);await pointer('down',from);held=true;
-          await until(async()=>(await windowDriver.windows()).some(w=>w.label==='main'&&w.foreground),'owned source click acquires native drag focus',5000);
           for(let i=1;i<=12;i++){await pointer('move',{x:from.x+(to.x-from.x)*i/12,y:from.y+(to.y-from.y)*i/12});await sleep(40);}
           await until(()=>evaluate('!!G._nativeFileDrag'),'actual native Shell drag',5000);
-          const destinationTab=await evaluate(`document.querySelector(${JSON.stringify(target)})?.dataset.tabId`);
+          const destinationTab=await evaluate(`Number(document.querySelector(${JSON.stringify(target)})?.dataset.tabId)`);
+          if(!Number.isSafeInteger(destinationTab))throw Error('Native drag target must be an existing numbered tab');
           await until(()=>evaluate('G.activeTab==='+JSON.stringify(destinationTab)),'native drag spring-loads destination tab',5000);
           const end=await point(drop);await pointer('move',end);await sleep(100);await pointer('up',end);held=false;return;
-        }finally{try{if(held)await pointer('up',to);}finally{await windowDriver.releaseMain();}}
+        }catch(error){console.log(JSON.stringify({nativeDragFailure:await evaluate('({nativeActive:!!G._nativeFileDrag,path:getTab().path,selection:[...getTab().sel],dpr:devicePixelRatio,events:window.__nativeDragProbe})').catch(()=>null)}));throw error;
+        }finally{if(held)await pointer('up',to);}
       }
       const from=await point(source),to=await point(target);events.length=0;
       await send('Input.setInterceptDrags',{enabled:true});

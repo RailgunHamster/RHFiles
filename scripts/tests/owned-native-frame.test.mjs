@@ -12,9 +12,8 @@ test('input desktop and owned-window exposure retain explicit negative outcomes 
   driver=ownedWindowDriver({workspace:f.root,tool:f.tool,pid:42,executable:'own/rhfiles.exe',directory:f.directory,execute:async(_,args)=>{assert.deepEqual(args,['42','own/rhfiles.exe',command]);return JSON.stringify({protocol:1,scope:'owned-sibling-windows',pid:42,...value});}});
   assert.deepEqual(await driver.inputReady(),value);value={available:true,reason:'input-desktop-ready'};assert.deepEqual(await driver.inputReady(),value);
   value={available:true,reason:'input-desktop-locked-or-unavailable'};await assert.rejects(driver.inputReady(),/acknowledgement/);
-  for(const method of ['inputReady','exposeMain','releaseMain'])await assert.rejects(driver[method]({hwnd:1}),/no arguments/);
+  for(const method of ['inputReady','exposeMain'])await assert.rejects(driver[method]({hwnd:1}),/no arguments/);
   command='main-front';value={target:'main-client',transport:'win32-z-order',raised:true};await driver.exposeMain();value.raised=false;await assert.rejects(driver.exposeMain(),/acknowledgement/);
-  command='main-back';await driver.releaseMain();
  }finally{driver?.close();f.close();}
 });
 test('owned main pointer rejects arbitrary windows, coordinates and false input acknowledgements',async()=>{

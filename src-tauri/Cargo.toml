@@ -1,6 +1,6 @@
 [package]
 name = "rhfiles-tauri"
-version = "0.1.100"
+version = "0.1.101"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -51,6 +51,9 @@ pulldown-cmark = "0.13"
 quick-xml = "=0.39.2"
 tempfile = "3"
 [target.'cfg(windows)'.dependencies]
+# Avoid libssh2 WinCNG's intermittent DH/KEX failure (upstream #804).
+# Static OpenSSL keeps modern SSH negotiation independent of installed DLLs.
+ssh2 = { version = "0.9", features = ["openssl-on-win32", "vendored-openssl"] }
 webview2-com = "=0.38.2"
 windows61 = { package = "windows", version = "0.61", features = ["Win32_Foundation"] }
 velopack = { version = "=1.2.110-ge826545", features = ["public-utils"] }

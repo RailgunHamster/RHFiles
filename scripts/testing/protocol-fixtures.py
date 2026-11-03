@@ -149,9 +149,7 @@ def handle_ssh(connection):
     # Paramiko 5.1 otherwise advertises its pre-filter list but chooses from the
     # post-filter list, producing different client/server negotiated algorithms.
     options = transport.get_security_options()
-    # Keep this filesystem fixture deterministic across libssh2 builds; SSH
-    # algorithm negotiation/performance is not what this loopback test measures.
-    options.kex = ("diffie-hellman-group14-sha256",)
+    options.kex = tuple(kex for kex in options.kex if "group-exchange" not in kex)
     transport.add_server_key(key)
     transport.set_subsystem_handler("sftp", paramiko.SFTPServer, Sftp)
     try: transport.start_server(server=Auth())

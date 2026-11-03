@@ -18,7 +18,7 @@ concurrency:
 jobs:
   windows-business:
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Record workflow trigger (no credentials)
@@ -28,6 +28,17 @@ jobs:
           node-version: '22'
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify native Perl for static OpenSSL
+        shell: pwsh
+        run: |
+          $perl = 'C:\Strawberry\perl\bin\perl.exe'
+          & $perl -MFindBin -MIPC::Cmd -e 'print "Native build Perl ready\n"'
+          if ($LASTEXITCODE -ne 0) { throw 'Native Perl required to build bundled OpenSSL' }
+          "PERL=$perl" >> $env:GITHUB_ENV
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-business
+          cache-on-failure: true
       - run: npm ci --ignore-scripts
       - name: Frontend business scenarios and property tests
         run: npm test

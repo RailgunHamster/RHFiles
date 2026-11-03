@@ -8,6 +8,11 @@ Mirror: https://gitee.com/railgunhamster/RHFiles
 RHFiles original code is licensed under the Apache License, Version 2.0.
 Third-party components retain their own copyright and license notices.
 
+Windows and macOS SFTP cryptography:
+OpenSSL 3.6.3 — Copyright 1998-2026 The OpenSSL Project Authors — Apache-2.0.
+https://www.openssl.org/ — https://github.com/openssl/openssl/tree/openssl-3.6.3
+Statically linked through ssh2/libssh2; see OpenSSL-LICENSE.txt in Windows packages.
+
 LAN file service components:
 axum — Copyright (c) 2019 axum Contributors — MIT
 https://github.com/tokio-rs/axum

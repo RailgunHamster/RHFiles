@@ -21,6 +21,11 @@ test('real saved FTP/SFTP/WebDAV locations list, create, copy, rename, reject ov
     for(const type of ['ftp','sftp','webdav']){
       const config={type,name:'Owned QA '+type,username:'rhfiles-qa',...(type==='webdav'?{url:`http://127.0.0.1:${ports.webdav}/dav/`,insecure:true}:{host:'127.0.0.1',port:ports[type],...(type==='ftp'?{insecure:true}:{})})};
       const fingerprint=type==='sftp'?(await invoke('networkLocations.probe',{config})).fingerprint:undefined;
+      if(type==='sftp'){
+        // Repeated fresh, read-only handshakes catch the intermittent WinCNG DH
+        // regression. No reconnect retries and no writes until all probes pass.
+        for(let handshake=0;handshake<64;handshake++)assert.equal((await invoke('networkLocations.probe',{config})).fingerprint,fingerprint);
+      }
       const {id}=await invoke('networkLocations.save',{config,password:'owned-fixture-only',...(fingerprint?{fingerprint}:{})});
       const profile=(await invoke('networkLocations.list')).profiles.find(p=>p.id===id);assert.equal(profile.hasPassword,true);assert(!JSON.stringify(profile).includes('owned-fixture-only'));
       const call=(operation,p='/',extra={})=>native('fs',{id,operation,path:p,...extra});

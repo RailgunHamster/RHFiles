@@ -65,6 +65,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Verify native Perl for static OpenSSL
+        shell: pwsh
+        run: |
+          $perl = 'C:\Strawberry\perl\bin\perl.exe'
+          & $perl -MFindBin -MIPC::Cmd -e 'print "Native build Perl ready\n"'
+          if ($LASTEXITCODE -ne 0) { throw 'Native Perl required to build bundled OpenSSL' }
+          "PERL=$perl" >> $env:GITHUB_ENV
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

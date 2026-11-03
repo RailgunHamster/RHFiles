@@ -120,7 +120,7 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
     const bool destroyed=!IsWindow(target);const auto end=unix_millis();
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"single-player\",\"transport\":\"win32-wm-close\",\"submitted\":true,\"observedAtMs\":%llu,\"destroyed\":%s,\"checkedAtMs\":%llu}\n",static_cast<unsigned long>(pid),static_cast<unsigned long long>(at),destroyed?"true":"false",static_cast<unsigned long long>(end));return;
   }
-  require(((command==L"windows"||command==L"library-ping"||command==L"activate-main"||command==L"main-front"||command==L"main-back"||command==L"input-ready")&&argc==4)||((command==L"library-key"||command==L"main-client-size")&&argc==6)||(command==L"main-pointer"&&argc==7),"Unsupported owned window command");
+  require(((command==L"windows"||command==L"library-ping"||command==L"activate-main"||command==L"main-front"||command==L"input-ready")&&argc==4)||((command==L"library-key"||command==L"main-client-size")&&argc==6)||(command==L"main-pointer"&&argc==7),"Unsupported owned window command");
   WORD key=0;bool scan_mode=false;
   if(command==L"library-key"){
     const std::wstring name(argv[4]),encoding(argv[5]);
@@ -136,13 +136,12 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
     }
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"available\":%s,\"reason\":\"%s\"}\n",static_cast<unsigned long>(pid),available?"true":"false",available?"input-desktop-ready":"input-desktop-locked-or-unavailable");return;
   }
-  if(command==L"main-front"||command==L"main-back"){
+  if(command==L"main-front"){
     require(owned.main,"Owned main window is not open");owned_main(owned.main,pid);
     // Raise only this disposable sibling for its physical input experiment.
     // Never change another window, topmost policy or foreground rights.
-    const bool raised=command==L"main-front";
     require(SetWindowPos(owned.main,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE),"Cannot expose owned main window");
-    std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"main-client\",\"transport\":\"win32-z-order\",\"raised\":%s}\n",static_cast<unsigned long>(pid),raised?"true":"false");return;
+    std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"main-client\",\"transport\":\"win32-z-order\",\"raised\":true}\n",static_cast<unsigned long>(pid));return;
   }
   if(command==L"main-pointer"){
     require(owned.main,"Owned main window is not open");owned_main(owned.main,pid);
@@ -153,17 +152,22 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
     require(ClientToScreen(owned.main,&point),"Cannot resolve owned client point");
     // A real down on this exact owned client may naturally activate it. Never
     // force foreground rights or click a covering/foreign window instead.
-    const HWND hit=WindowFromPoint(point);DWORD hit_pid=0;GetWindowThreadProcessId(hit,&hit_pid);
-    if(GetAncestor(hit,GA_ROOT)!=owned.main&&GetAncestor(hit,GA_ROOTOWNER)!=owned.main&&!IsChild(owned.main,hit)){
+    const HWND hit=WindowFromPoint(point);DWORD hit_pid=0;GetWindowThreadProcessId(hit,&hit_pid);wchar_t hit_class[128]{};GetClassNameW(hit,hit_class,128);
+    const bool swapped=GetSystemMetrics(SM_SWAPBUTTON)!=0;
+    const bool drag_image=kind!=L"down"&&(GetAsyncKeyState(swapped?VK_RBUTTON:VK_LBUTTON)&0x8000)&&std::wcscmp(hit_class,L"SysDragImage")==0;
+    if(!drag_image&&GetAncestor(hit,GA_ROOT)!=owned.main&&GetAncestor(hit,GA_ROOTOWNER)!=owned.main&&!IsChild(owned.main,hit)){
       RECT own{};GetWindowRect(owned.main,&own);
       std::fprintf(stderr,"Owned pointer miss: client=%ld,%ld,%ld,%ld point=%ld,%ld sameProcess=%d webviewChildProcess=%d foreground=%d\n",own.left,own.top,own.right,own.bottom,point.x,point.y,hit_pid==pid,hit_pid!=0&&parent_of(hit_pid)==pid,GetForegroundWindow()==owned.main);
+      std::fwprintf(stderr,L"Hit-test window class (no caption): %ls\n",hit_class);
       require(false,"Pointer target is covered by another window");
     }
     const int left=GetSystemMetrics(SM_XVIRTUALSCREEN),top=GetSystemMetrics(SM_YVIRTUALSCREEN),width=GetSystemMetrics(SM_CXVIRTUALSCREEN),height=GetSystemMetrics(SM_CYVIRTUALSCREEN);
     require(width>1&&height>1,"Invalid desktop geometry");
     INPUT events[2]{};events[0].type=INPUT_MOUSE;events[0].mi.dx=LONG((static_cast<long long>(point.x-left)*65535)/(width-1));events[0].mi.dy=LONG((static_cast<long long>(point.y-top)*65535)/(height-1));events[0].mi.dwFlags=MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK;
-    const UINT count=kind==L"move"?1:2;events[1].type=INPUT_MOUSE;events[1].mi.dwFlags=kind==L"down"?MOUSEEVENTF_LEFTDOWN:MOUSEEVENTF_LEFTUP;
+    const UINT count=kind==L"move"?1:2;events[1].type=INPUT_MOUSE;events[1].mi.dwFlags=kind==L"down"?(swapped?MOUSEEVENTF_RIGHTDOWN:MOUSEEVENTF_LEFTDOWN):(swapped?MOUSEEVENTF_RIGHTUP:MOUSEEVENTF_LEFTUP);
     require(SendInput(count,events,sizeof(INPUT))==count,"Pointer input was not fully accepted; not repeated");
+    POINT actual{};const auto delivered=GetTickCount64();do{GetCursorPos(&actual);if(std::abs(actual.x-point.x)<=2&&std::abs(actual.y-point.y)<=2)break;Sleep(5);}while(GetTickCount64()-delivered<100);
+    require(std::abs(actual.x-point.x)<=2&&std::abs(actual.y-point.y)<=2,"Windows pointer did not reach the owned point; not repeated");
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"main-client\",\"transport\":\"windows-send-input\",\"phase\":\"%s\",\"sent\":%u}\n",static_cast<unsigned long>(pid),kind==L"move"?"move":kind==L"down"?"down":"up",count);return;
   }
   if(command==L"main-client-size"){
@@ -222,7 +226,7 @@ int wmain(int argc,wchar_t** argv){
     const std::wstring digits(argv[1]);require(!digits.empty()&&digits.size()<=10&&std::all_of(digits.begin(),digits.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}),"Invalid owned PID");
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
     const auto process_created=verify_process(pid,argv[2]);
-    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"main-front"||std::wstring(argv[3])==L"main-back"||std::wstring(argv[3])==L"input-ready"||std::wstring(argv[3])==L"library-key"||std::wstring(argv[3])==L"player-close"||std::wstring(argv[3])==L"main-client-size"||std::wstring(argv[3])==L"main-pointer"){window_command(argc,argv,pid,process_created);return 0;}
+    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"main-front"||std::wstring(argv[3])==L"input-ready"||std::wstring(argv[3])==L"library-key"||std::wstring(argv[3])==L"player-close"||std::wstring(argv[3])==L"main-client-size"||std::wstring(argv[3])==L"main-pointer"){window_command(argc,argv,pid,process_created);return 0;}
     require(argc==5||(argc==6&&(std::wstring(argv[5])==L"library-presentation"||std::wstring(argv[5])==L"library-player"||std::wstring(argv[5])==L"main-client")),"Use PID, exact executable, owned basename, renderer and a fixed canvas scope");
     const bool presentation=argc==6&&std::wstring(argv[5])==L"library-presentation",library_player=argc==6&&std::wstring(argv[5])==L"library-player",main_client=argc==6&&std::wstring(argv[5])==L"main-client";
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";
