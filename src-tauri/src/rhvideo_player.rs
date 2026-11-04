@@ -25,6 +25,8 @@ mod warm_state;
 mod surface_lifecycle;
 #[path="rhvideo_native_grid_host.rs"]
 mod grid_host;
+#[path="rhvideo_shared_media.rs"]
+pub(crate) mod shared_media;
 
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
@@ -112,6 +114,8 @@ pub fn install_library_host_lifetime(window:&tauri::WebviewWindow){
     if window.label()!=LIBRARY_LABEL{return;}
     let token=LIBRARY_EPOCH.begin();let app=window.app_handle().clone();
     window.on_window_event(move|event|{if matches!(event,WindowEvent::Destroyed)&&LIBRARY_EPOCH.close(token){
+        let retired=shared_media::retire_all();
+        tauri::async_runtime::spawn_blocking(move||{for engine in retired{release_surface(engine);}});
         grid_host::library_destroyed(app.clone(),token);
         if let Some(host)=single_host().filter(|host|matches!(&host.target,crate::rhvideo::player_host::Target::Library{window,..}if *window==token)){
             if WINDOW_EPOCH.close(host.lease){let owner=app.clone();tauri::async_runtime::spawn(crate::rhvideo::player_window_destroyed(owner,host.lease));}
@@ -338,6 +342,7 @@ unsafe extern "system" fn surface_proc(
         // Child canvases have no user close button. Parent destruction still
         // destroys them normally; asynchronous cleanup must carry its lease.
         if message==WM_CLOSE{return LRESULT(0);}
+        if message==WM_NCHITTEST&&shared_media::owns_surface(hwnd.0 as usize){return LRESULT(HTTRANSPARENT as isize);}
         if message==WM_NCDESTROY{SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
         if message==WM_LBUTTONDOWN&&surface_binding(hwnd.0 as usize).is_some_and(|binding|binding.0!=LIBRARY_LABEL){let _=SetFocus(Some(hwnd));}
         let modified=matches!(message,WM_KEYDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL)&&[VK_CONTROL,VK_SHIFT,VK_MENU].iter().any(|key|GetKeyState(key.0 as i32)<0);
@@ -372,6 +377,7 @@ unsafe extern "system" fn surface_proc(
                     player.frame.render();
                 }
             }
+            shared_media::paint(hwnd);
             return LRESULT(0);
         }
         DefWindowProcW(hwnd, message, wparam, lparam)
@@ -604,6 +610,7 @@ impl Api {
     }
 }
 struct Engine {
+    shared_gain: bool,
     api: Api,
     instance: usize,
     player: usize,
@@ -635,7 +642,7 @@ struct Engine {
     startup_trace:Option<crate::rhvideo_trace::Binding>,
 }
 impl Engine {
-    fn output_gain(&self)->i32{effective_volume(if self.muted||self.hold_audio.load(std::sync::atomic::Ordering::Relaxed){0}else{self.requested_volume})}
+    fn output_gain(&self)->i32{let local=if self.muted||self.hold_audio.load(std::sync::atomic::Ordering::Relaxed){0}else{self.requested_volume};if self.shared_gain{local.clamp(0,100)}else{effective_volume(local)}}
     fn begin_pause_restore(&self,target:i64)->Result<(),String>{
         self.hold_audio.store(true,std::sync::atomic::Ordering::Relaxed);
         *self.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?=Some(PauseFrame{target,rate:unsafe{(self.api.rate)(self.player as Ptr)},deadline:std::time::Instant::now()+std::time::Duration::from_secs(15),phase:PauseFramePhase::Priming});
@@ -732,6 +739,7 @@ impl Engine {
             }
         }
         Ok(Self {
+            shared_gain: false,
             api,
             instance: instance as usize,
             player: player as usize,
@@ -1042,6 +1050,7 @@ impl Drop for Engine {
     }
 }
 pub fn stop()->Result<(),String> {
+    shared_media::stop();
     crate::rhvideo::flush_playback();
     stop_grid();
     stop_presentation();

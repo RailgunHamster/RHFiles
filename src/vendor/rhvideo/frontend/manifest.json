@@ -1,0 +1,161 @@
+{
+  "format": "rhvideo-frontend",
+  "version": 1,
+  "hostProtocol": 1,
+  "id": "49a7816c4996f8f2a519e99eae0ab786eab324ec91656af0ec3c81f6665fb10f",
+  "entry": "static/index.html",
+  "files": {
+    "static/index.html": {
+      "sha256": "7d5fdc6a5c0601ae7fc3bc61e279f0da05dd5c6bb06d7f0087afb87bacea0b8c",
+      "bytes": 83018
+    },
+    "static/app.css": {
+      "sha256": "dde746098d3cc1c83c38a1774a2b3b27bdc4144a502dfad09d35751431cf1f47",
+      "bytes": 61826
+    },
+    "static/app.js": {
+      "sha256": "61fec8add749d0db79c5e604264262ced2a02db137944bbdca373780a02deb2e",
+      "bytes": 446677
+    },
+    "static/app-entry.js": {
+      "sha256": "cb8c05326c9df2a3cf4390b8443a2224519abd0c919f9b29b6c7b5c42a6cca75",
+      "bytes": 1273
+    },
+    "static/platform.js": {
+      "sha256": "40e4643775e12f5e8e387a60d82ec228b1e0ca3759b619c4f52c0e88038b683d",
+      "bytes": 2208
+    },
+    "static/host-media.js": {
+      "sha256": "591f89c6c17ed935682270f55fa737228f0f7987713e3bc9f6aff72ab691387f",
+      "bytes": 13837
+    },
+    "static/host-media.css": {
+      "sha256": "ae2bb3861ee034b9d80742e71d2d33bf1611e1717e87ca5fa3ec9b3cf84f8899",
+      "bytes": 438
+    },
+    "static/automation-api.js": {
+      "sha256": "fffd42fd5ccebc4ef54e8c8a156d3b041e3fec624f21837dfe236131a042250a",
+      "bytes": 24005
+    },
+    "static/operation-contract.json": {
+      "sha256": "38f6a192d645a974befc50757497b4bc6a414a05d195a22f81031896847bc36b",
+      "bytes": 79736
+    },
+    "static/search-client.js": {
+      "sha256": "ff3fdd0cc04857aa4d891d893e847d2e0d542456ab06fdda2fdca3291230b024",
+      "bytes": 4225
+    },
+    "static/search-core.js": {
+      "sha256": "74fc781c94054e5d6a2a3287a0e8dfb07a6e8f3c6861f70b39ca285f98a5f7e0",
+      "bytes": 5879
+    },
+    "static/search-worker.js": {
+      "sha256": "2b30be628808f91f0ecbb4b73a3840083e519ffe67e2c563e2ba869d3ec32491",
+      "bytes": 6103
+    },
+    "static/tag-filter.js": {
+      "sha256": "9394151bc4c2743d960f055286e90ca078d453a0220af42c920befc71047f685",
+      "bytes": 5246
+    },
+    "static/image-preview.js": {
+      "sha256": "30ef7cc29e52e5a34715ec06e9e6575261bb69a0c9457d6d04f4a6613518bfb2",
+      "bytes": 5631
+    },
+    "static/image-preview.css": {
+      "sha256": "c70519fd62b9bb9a36d30809a7279e664ddc7addff8d83cffb82ee1109bcdf4f",
+      "bytes": 2476
+    },
+    "static/theme.css": {
+      "sha256": "929d08fd0569c66ee62962cffeca93aaef1c0a574038d1044bf12e41e4f22484",
+      "bytes": 41733
+    },
+    "static/task-center.js": {
+      "sha256": "4887dd86650224626c01b193221e99b626fef41ead55d1b5093fef8ba2d7f4cb",
+      "bytes": 27702
+    },
+    "static/task-center.css": {
+      "sha256": "62f7aed7f0f4cd0069238bfb3dbfa5dba2c8ec6becba46b470721e435f71d715",
+      "bytes": 15608
+    },
+    "static/storage-savings.js": {
+      "sha256": "a29109ca345dbc83e337ae715795467fa18032600f9876e30874b033c819b3a9",
+      "bytes": 4402
+    },
+    "static/settings.js": {
+      "sha256": "25ee521818488fba5362685fa9c54ff035aa655d2b9f77b9f2b917caad69babb",
+      "bytes": 7555
+    },
+    "static/settings.css": {
+      "sha256": "3fdea13aaf7ea9c2940856060f1d0204aa823fe76c19499c755abf0ba6135f2c",
+      "bytes": 6199
+    },
+    "static/favorite-exports.js": {
+      "sha256": "fce7343b2cb9aae309b15306e17cd69e899836d639ca8ded080c23e8dcf9e4e1",
+      "bytes": 10258
+    },
+    "static/favorite-exports.css": {
+      "sha256": "f52663b5179dc17364373873ceba96bd2fed757c6898b52b8dfa7308cd7947cb",
+      "bytes": 3925
+    },
+    "static/config-backups.js": {
+      "sha256": "b735cc033d19dc4b6d1c9892936bb52924e941c2093fd4aa3708476d4d5f1d1e",
+      "bytes": 6701
+    },
+    "static/duplicates.js": {
+      "sha256": "cd68503487f98aac915240d3276bfc53392d4678c9f0775dc2aa01ef218301a8",
+      "bytes": 35139
+    },
+    "static/duplicates.css": {
+      "sha256": "43631461c2f91cf1bd6eccde3a538bd5babd660e9d700f3803df86091f477f0c",
+      "bytes": 19562
+    },
+    "static/duplicate-rules.js": {
+      "sha256": "957654ab9ddd09a14b48e236a72bd00c0eb94272fb791d5990a583db34664606",
+      "bytes": 18023
+    },
+    "static/vendor/pinyin-pro/pinyin-pro-3.29.5.js": {
+      "sha256": "a488173470768ace074c3c4fffbb880e83523b3aa9598a8147c930e7f2d5c7dc",
+      "bytes": 325698
+    },
+    "static/vendor/pinyin-pro/LICENSE": {
+      "sha256": "824f6069c5a59b0c1650d0fb9f8d091866c6019eb761c8e658dfc03f001eabd2",
+      "bytes": 1070
+    },
+    "static/bindings.js": {
+      "sha256": "1a2689a96a5af39741772457322e78c31f729a192ecff1c0d7449db6dbff62d8",
+      "bytes": 21192
+    }
+  },
+  "inputs": {
+    "static/index.html": "82775ec51d939e7dd7b403ad6ddf3c7c05ab135074b006797d4f1e05cb582186",
+    "static/app.css": "dde746098d3cc1c83c38a1774a2b3b27bdc4144a502dfad09d35751431cf1f47",
+    "static/app.js": "ee2c6339fce60ee109351286aff2042dd95565f26476176a6dd6fc03130b4bb7",
+    "static/app-entry.js": "cb8c05326c9df2a3cf4390b8443a2224519abd0c919f9b29b6c7b5c42a6cca75",
+    "static/platform.js": "40e4643775e12f5e8e387a60d82ec228b1e0ca3759b619c4f52c0e88038b683d",
+    "static/host-media.js": "591f89c6c17ed935682270f55fa737228f0f7987713e3bc9f6aff72ab691387f",
+    "static/host-media.css": "ae2bb3861ee034b9d80742e71d2d33bf1611e1717e87ca5fa3ec9b3cf84f8899",
+    "static/automation-api.js": "fffd42fd5ccebc4ef54e8c8a156d3b041e3fec624f21837dfe236131a042250a",
+    "static/operation-contract.json": "38f6a192d645a974befc50757497b4bc6a414a05d195a22f81031896847bc36b",
+    "static/search-client.js": "ff3fdd0cc04857aa4d891d893e847d2e0d542456ab06fdda2fdca3291230b024",
+    "static/search-core.js": "74fc781c94054e5d6a2a3287a0e8dfb07a6e8f3c6861f70b39ca285f98a5f7e0",
+    "static/search-worker.js": "2b30be628808f91f0ecbb4b73a3840083e519ffe67e2c563e2ba869d3ec32491",
+    "static/tag-filter.js": "9394151bc4c2743d960f055286e90ca078d453a0220af42c920befc71047f685",
+    "static/image-preview.js": "30ef7cc29e52e5a34715ec06e9e6575261bb69a0c9457d6d04f4a6613518bfb2",
+    "static/image-preview.css": "c70519fd62b9bb9a36d30809a7279e664ddc7addff8d83cffb82ee1109bcdf4f",
+    "static/theme.css": "929d08fd0569c66ee62962cffeca93aaef1c0a574038d1044bf12e41e4f22484",
+    "static/task-center.js": "afd25697961efcc9f984af64cff0fcc4bba666418eefec156f04cc57d3405f64",
+    "static/task-center.css": "62f7aed7f0f4cd0069238bfb3dbfa5dba2c8ec6becba46b470721e435f71d715",
+    "static/storage-savings.js": "a29109ca345dbc83e337ae715795467fa18032600f9876e30874b033c819b3a9",
+    "static/settings.js": "25ee521818488fba5362685fa9c54ff035aa655d2b9f77b9f2b917caad69babb",
+    "static/settings.css": "3fdea13aaf7ea9c2940856060f1d0204aa823fe76c19499c755abf0ba6135f2c",
+    "static/favorite-exports.js": "fce7343b2cb9aae309b15306e17cd69e899836d639ca8ded080c23e8dcf9e4e1",
+    "static/favorite-exports.css": "f52663b5179dc17364373873ceba96bd2fed757c6898b52b8dfa7308cd7947cb",
+    "static/config-backups.js": "b735cc033d19dc4b6d1c9892936bb52924e941c2093fd4aa3708476d4d5f1d1e",
+    "static/duplicates.js": "cd68503487f98aac915240d3276bfc53392d4678c9f0775dc2aa01ef218301a8",
+    "static/duplicates.css": "43631461c2f91cf1bd6eccde3a538bd5babd660e9d700f3803df86091f477f0c",
+    "static/duplicate-rules.js": "957654ab9ddd09a14b48e236a72bd00c0eb94272fb791d5990a583db34664606",
+    "static/vendor/pinyin-pro/pinyin-pro-3.29.5.js": "a488173470768ace074c3c4fffbb880e83523b3aa9598a8147c930e7f2d5c7dc",
+    "static/vendor/pinyin-pro/LICENSE": "824f6069c5a59b0c1650d0fb9f8d091866c6019eb761c8e658dfc03f001eabd2"
+  },
+  "bindings": 309
+}

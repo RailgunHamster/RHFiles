@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +9,7 @@ import {parse} from 'acorn';
 const require=createRequire(import.meta.url),I=require('../../src/js/rhvideo-index.js');
 const source=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html');
 let reference;
-if(fs.existsSync(source))for(const script of fs.readFileSync(source,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){
+if(fs.existsSync(source))for(const script of rhvideoReferenceDocument(source).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){
   const node=parse(script[1],{ecmaVersion:'latest'}).body.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='applyVideoSort');
   if(node)reference=vm.runInNewContext('('+script[1].slice(node.start,node.end)+')');
 }

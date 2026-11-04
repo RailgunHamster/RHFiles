@@ -1,0 +1,3 @@
+.rh-native-media-controls {position:fixed;z-index:2147483000;display:flex;align-items:center;gap:12px;height:38px;padding:5px 10px;background:rgba(20,23,32,.9);color:#fff;box-sizing:border-box;border-radius:0 0 6px 6px;}
+.rh-native-media-controls button {border:0;background:transparent;color:inherit;cursor:pointer;min-width:30px;height:28px;font-size:18px;}
+.rh-native-media-controls input {flex:1;min-width:40px;accent-color:#8a9bff;}

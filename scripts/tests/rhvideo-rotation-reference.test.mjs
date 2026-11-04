@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -51,7 +52,7 @@ test('account-isolation fixture only accepts explicitly configured users and sti
 
 test('single-player rotation is a persistent fit-aware switch, not an angle cycle',async()=>{
   const source=fs.readFileSync(new URL('../../src/js/rhvideo-player-controls.js',import.meta.url),'utf8'),start=source.indexOf("register('rotate',"),end=source.indexOf("register('loop',",start);let handler;const calls=[];
-  const context=vm.createContext({register:(_name,_schema,callback)=>handler=callback,object:()=>({}),currentTarget:async()=>({autoRotate:false,rotation:0,inputId:8}),control:async value=>calls.push(value)});
+  const context=rhvideoReferenceContext({register:(_name,_schema,callback)=>handler=callback,object:()=>({}),currentTarget:async()=>({autoRotate:false,rotation:0,inputId:8}),control:async value=>calls.push(value)});
   vm.runInContext(source.slice(start,end),context);await handler({});
   assert.equal(calls[0].command,'autoRotate');assert.equal(calls[0].enabled,true);assert.equal(calls[0].expectedInput,8,'the toggle must retain the input whose switch was read, not rebind after an await');
 });
@@ -63,9 +64,9 @@ test('smart rotation has no automatic 180/270-degree state and does not rotate s
 
 test('differential: compare the actual reference shouldRotate across source/viewport ratios',{skip:!fs.existsSync(reference)},()=>{
   assert.equal(typeof model.rotation,'function');
-  const html=fs.readFileSync(reference,'utf8');let fn;
+  const html=rhvideoReferenceDocument(reference);let fn;
   for(const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(match[1],{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&node.id.name==='shouldRotate')fn=match[1].slice(node.start,node.end);
-  assert(fn,'The actual reference oracle must remain available');const viewport={clientWidth:1,clientHeight:1},context=vm.createContext({document:{getElementById:()=>viewport},Math});vm.runInContext(fn,context);
+  assert(fn,'The actual reference oracle must remain available');const viewport={clientWidth:1,clientHeight:1},context=rhvideoReferenceContext({document:{getElementById:()=>viewport},Math});vm.runInContext(fn,context);
   for(const [w,h]of [[360,640],[640,360],[100,100],[100,101],[100,106],[1080,1920],[1920,1080],[0,0]])for(const [cw,ch]of [[1600,900],[900,1600],[1000,1000],[100,101],[100,106],[320,900],[1600,400]]){
     Object.assign(viewport,{clientWidth:cw,clientHeight:ch});context.video={videoWidth:w,videoHeight:h};const expected=vm.runInContext('shouldRotate(video)',context);
     assert.equal(model.rotation(w,h,cw,ch,true).angle,expected?90:0,`${w}x${h} in ${cw}x${ch}`);
@@ -73,11 +74,11 @@ test('differential: compare the actual reference shouldRotate across source/view
 });
 
 test('reference viewport resize refits the selected rotation rather than silently choosing a new angle',{skip:!fs.existsSync(reference)},()=>{
-  const html=fs.readFileSync(reference,'utf8'),functions=[];
+  const html=rhvideoReferenceDocument(reference),functions=[];
   for(const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(match[1],{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&['shouldRotate','applyVideoRotate'].includes(node.id.name))functions.push(match[1].slice(node.start,node.end));
   assert.equal(functions.length,2);const viewport={clientWidth:1600,clientHeight:900},classes=new Set(),listeners=new Map();
   const video={videoWidth:360,videoHeight:640,parentNode:{},style:{},classList:{add:name=>classes.add(name),remove:name=>classes.delete(name)}};
-  const context=vm.createContext({video,Math,_rotResizeBound:null,document:{getElementById:id=>{assert.equal(id,'media-content');return viewport;}},window:{addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:(type,fn)=>{if(listeners.get(type)===fn)listeners.delete(type);}}});
+  const context=rhvideoReferenceContext({video,Math,_rotResizeBound:null,document:{getElementById:id=>{assert.equal(id,'media-content');return viewport;}},window:{addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:(type,fn)=>{if(listeners.get(type)===fn)listeners.delete(type);}}});
   vm.runInContext(functions.join('\n'),context);assert.equal(vm.runInContext('shouldRotate(video)',context),true);vm.runInContext('applyVideoRotate(video,true)',context);
   Object.assign(viewport,{clientWidth:900,clientHeight:1600});assert.equal(vm.runInContext('shouldRotate(video)',context),false,'The new viewport would choose another angle for a newly opened video');
   listeners.get('resize')();assert(classes.has('rotated'),'Resizing an existing viewer must not make that new-source choice');assert.equal(video.style.width,'1600px');assert.equal(video.style.height,'900px');

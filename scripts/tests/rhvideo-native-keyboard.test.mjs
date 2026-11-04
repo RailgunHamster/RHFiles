@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ const handlers={player:keyboard('rhvideo-player-controls.js','rhvideo.player.key
 const playerSource=fs.readFileSync(new URL('../../src/js/rhvideo-player-controls.js',import.meta.url),'utf8');
 const observeSource=playerSource.slice(playerSource.indexOf('function observeAction('),playerSource.indexOf('let audibleVolume='));
 function fixture(kind,{origin='frame',reference=true,editing=false,cells=true}={}){
-  const calls=[],context=vm.createContext({state:{queue:{options:{reference,origin}},cells:cells?[{inputId:19}]:[]},api:{invoke:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args??{}))});return Promise.resolve();}},call:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args))});return Promise.resolve();},toggleCommand:()=> 'pause',error(){}});vm.runInContext(observeSource,context);const run=vm.runInContext('('+handlers[kind]+')',context);
+  const calls=[],context=rhvideoReferenceContext({state:{queue:{options:{reference,origin}},cells:cells?[{inputId:19}]:[]},api:{invoke:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args??{}))});return Promise.resolve();}},call:(name,args)=>{calls.push({name,args:JSON.parse(JSON.stringify(args))});return Promise.resolve();},toggleCommand:()=> 'pause',error(){}});vm.runInContext(observeSource,context);const run=vm.runInContext('('+handlers[kind]+')',context);
   return {calls,dispatch(values={}){const event={key:'End',code:'End',ctrlKey:false,altKey:false,shiftKey:false,metaKey:false,repeat:false,target:{matches:()=>editing,closest:()=>editing,isContentEditable:editing},preventDefault(){this.defaultPrevented=true;},...values};run(event);return event;}};
 }
 for(const kind of ['player','grid'])for(const [key,code]of [['Home',''],['End',''],['Home','Numpad7'],['End','Numpad1']])test(`${kind} uses semantic ${key} with code ${JSON.stringify(code)}`,()=>{
@@ -43,9 +44,9 @@ test('native grid preserves editor, modifier, repeat and uninitialized-input bou
 });
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html');
 test('differential: native player and grid named navigation match the actual reference key handlers',{skip:!fs.existsSync(reference)},()=>{
-  const originals={};for(const script of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(script[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration'&&['playlistKeyHandler','gridKeyHandler'].includes(node.id?.name))originals[node.id.name]=script[1].slice(node.start,node.end);
+  const originals={};for(const script of rhvideoReferenceDocument(reference).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(script[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration'&&['playlistKeyHandler','gridKeyHandler'].includes(node.id?.name))originals[node.id.name]=script[1].slice(node.start,node.end);
   for(const kind of ['player','grid'])for(const [key,code]of [['Home',''],['End','Numpad1'],['ArrowLeft',''],['ArrowRight',''],['1','Numpad1']]){
-    const name=kind==='player'?'playlistKeyHandler':'gridKeyHandler';assert(originals[name]);const expected=[],context=vm.createContext({document:{getElementById:()=>({classList:{contains:()=>false}})},playlistNav:delta=>expected.push(delta<0?'previous':'next'),gridPlayNav:delta=>expected.push(delta<0?'previous':'next'),playlistProgressCommit:args=>expected.push(Number(args.value)===0?'first':'last'),gridProgressCommit:args=>expected.push(Number(args.value)===0?'first':'last')});
+    const name=kind==='player'?'playlistKeyHandler':'gridKeyHandler';assert(originals[name]);const expected=[],context=rhvideoReferenceContext({document:{getElementById:()=>({classList:{contains:()=>false}})},playlistNav:delta=>expected.push(delta<0?'previous':'next'),gridPlayNav:delta=>expected.push(delta<0?'previous':'next'),playlistProgressCommit:args=>expected.push(Number(args.value)===0?'first':'last'),gridProgressCommit:args=>expected.push(Number(args.value)===0?'first':'last')});
     vm.runInContext('('+originals[name]+')',context)({key,code,target:{closest:()=>null},preventDefault(){}});const qa=fixture(kind);qa.dispatch({key,code});assert.deepEqual(qa.calls.map(call=>kind==='grid'?call.args.intent:call.name.endsWith('seekQueue')?(call.args.ratio===0?'first':'last'):call.name.split('.').at(-1)),expected);
   }
 });

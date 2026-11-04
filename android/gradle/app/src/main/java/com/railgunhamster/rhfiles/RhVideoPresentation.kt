@@ -32,7 +32,8 @@ internal class RhVideoPresentation(private val activity:AppCompatActivity,privat
   private val input=RhVideoPresentationInput()
   private fun stale()=JSONObject().put("opened",false).put("stale",true)
   fun open(args:JSONObject):JSONObject{
-    val playback=RhVideoClient.get(activity).playback(args,track=false)
+    val client=RhVideoClient.get(activity)
+    val playback=if(args.has("sharedPath"))client.sharedPlayback(args)else client.playback(args,track=false)
     close()
     title=args.optString("title","视频")
     val storage=NativeStorage(activity.applicationContext)
@@ -47,7 +48,8 @@ internal class RhVideoPresentation(private val activity:AppCompatActivity,privat
       override fun onVideoSizeChanged(size:VideoSize){if(!input.owns(identity))return;videoWidth=(size.width*size.pixelWidthHeightRatio).coerceAtLeast(1f);videoHeight=size.height.coerceAtLeast(1).toFloat();resize()}
       override fun onPlayerError(error:PlaybackException){if(input.owns(identity))failure=error.errorCodeName+": "+(error.cause?.message?:error.message?:"")}
     })
-    RhVideoVolume.track(player,0f);player.setMediaItem(MediaItem.fromUri(playback.path),playback.position);player.prepare();player.play()
+    if(args.has("sharedPath"))player.volume=0f else RhVideoVolume.track(player,0f)
+    player.setMediaItem(MediaItem.fromUri(playback.path),playback.position);player.prepare();player.play()
     return state()
   }
   private fun resize(){val t=texture?:return;if(t.width<1||t.height<1)return;val scale=minOf(t.width/videoWidth,t.height/videoHeight);t.setTransform(android.graphics.Matrix().apply{setScale(scale*videoWidth/t.width,scale*videoHeight/t.height,t.width/2f,t.height/2f)})}
@@ -60,12 +62,13 @@ internal class RhVideoPresentation(private val activity:AppCompatActivity,privat
     val x=(values[0]*scale).toInt().coerceIn(0,web.width);val y=(values[1]*scale).toInt().coerceIn(0,web.height)
     surface.layoutParams=FrameLayout.LayoutParams((values[2]*scale).toInt().coerceIn(1,(web.width-x).coerceAtLeast(1)),(values[3]*scale).toInt().coerceIn(1,(web.height-y).coerceAtLeast(1))).apply{leftMargin=x;topMargin=y}
     surface.alpha=args.optDouble("opacity",1.0).coerceIn(0.0,1.0).toFloat();surface.visibility=if(args.optBoolean("visible",true))View.VISIBLE else View.INVISIBLE
+    if(args.has("rotation")){val angle=args.getInt("rotation");require(angle in listOf(0,90,180,270));texture?.rotation=angle.toFloat()}
     return JSONObject().put("visible",surface.visibility==View.VISIBLE)
   }
   fun state(args:JSONObject=JSONObject()):JSONObject{
     if(!input.matches(args))return stale()
     val player=engine?:return JSONObject().put("opened",false)
-    return JSONObject().put("opened",true).put("inputId",input.current).put("title",title).put("nativeSurface",true).put("renderedFrames",if(rendered)1 else 0)
+    return JSONObject().put("opened",true).put("inputId",input.current).put("title",title).put("nativeSurface",true).put("renderedFrames",if(rendered)1 else 0).put("videoWidth",player.videoSize.width).put("videoHeight",player.videoSize.height)
       .put("positionMs",player.currentPosition).put("durationMs",if(player.duration==C.TIME_UNSET)0 else player.duration)
       .put("playing",player.isPlaying).put("state",if(failure!=null)"error" else if(player.playbackState==Player.STATE_ENDED)"ended" else if(player.isPlaying)"playing"else"paused")
       .put("error",failure?:JSONObject.NULL)

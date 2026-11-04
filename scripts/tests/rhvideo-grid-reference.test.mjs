@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 // A behavioral oracle, not a list of API names: execute the upstream functions
 // unmodified and compare their output with our native-player planning model.
 import test from 'node:test';
@@ -11,12 +12,12 @@ const source=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'s
 const plain=v=>JSON.parse(JSON.stringify(v));
 function oracle(){
   const wanted=new Set(['getVideoAspectRatio','calcGridLayout','scoreGroup','buildGroups','startGridPlay','resolveVideoUrl','restoreGridPlayGroup','gridVideoCell','gridVideoState','gridCaptureVideoState','gridBindVideoControls']),functions=[];
-  for(const match of fs.readFileSync(source,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){
+  for(const match of rhvideoReferenceDocument(source).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){
     const body=match[1];if(!body.trim())continue;
     for(const node of parse(body,{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&wanted.has(node.id.name))functions.push(body.slice(node.start,node.end));
   }
   assert.equal(functions.length,wanted.size,'upstream grid changes require reviewing the behavioral oracle');
-  const context=vm.createContext({API_BASE:'/api/v1',gridPlayGroups:[],gridPlayControlStates:{},gridPlayStateKeyCounter:0,localStorage:{getItem:()=>null},token:'fixture'});
+  const context=rhvideoReferenceContext({API_BASE:'/api/v1',gridPlayGroups:[],gridPlayControlStates:{},gridPlayStateKeyCounter:0,localStorage:{getItem:()=>null},token:'fixture'});
   vm.runInContext(functions.join('\n'),context);return context;
 }
 

@@ -151,6 +151,21 @@ Write-Host 'Android project sync complete.'
 # RHVideo uses the same packaged library UI, with a phone-specific bridge and
 # layout. Copy only these allowlisted assets, never the desktop file browser.
 $rhvideoAssets=Join-Path $appDir 'src/main/assets/rhvideo'
+# The canonical RHVideo frontend is a verified artifact, not another Android UI.
+& node (Join-Path $repoRoot 'scripts/rhvideo-frontend.mjs') | Out-Null
+if($LASTEXITCODE -ne 0){throw 'RHVideo shared frontend verification failed'}
+$sharedRoot=Join-Path $repoRoot 'src/vendor/rhvideo/frontend'
+$sharedManifest=Get-Content -LiteralPath (Join-Path $sharedRoot 'manifest.json') -Raw|ConvertFrom-Json
+foreach($relative in @('manifest.json')+@($sharedManifest.files.PSObject.Properties.Name)){
+    $target=Join-Path $rhvideoAssets ('vendor/rhvideo/frontend/'+$relative)
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target)|Out-Null
+    Sync-File -Source (Join-Path $sharedRoot $relative) -Target $target
+}
+foreach($relative in @('rhvideo-shared.html','js/rhvideo-shared-host.js')){
+    $target=Join-Path $rhvideoAssets $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target)|Out-Null
+    Sync-File -Source (Join-Path $repoRoot ('src/'+$relative)) -Target $target
+}
 foreach($relative in @('rhvideo.html','rhvideo-operations.json','css/rhvideo.css','css/rhvideo-workbench.css','css/rhvideo-native-player.css','js/automation-core.js','js/rhvideo-model.js','js/rhvideo-playback-phase.js','js/rhvideo-player-controls.js','js/rhvideo-player-host.js','js/rhvideo-grid-controls.js','js/rhvideo-grid-host.js','js/rhvideo-client.js','js/rhvideo-configuration.js','js/rhvideo-exports.js','js/rhvideo-duplicates.js','js/rhvideo-task-priority.js','js/rhvideo-task-presentation.js','js/rhvideo-task-center.js','js/rhvideo-rules-model.js','js/rhvideo-rules.js','js/rhvideo-workbench.js','js/rhvideo-index.js','js/rhvideo-refresh.js','js/rhvideo-worker.js','js/rhvideo-search.js','js/rhvideo-tags.js','vendor/pinyin-pro/pinyin-pro.js','vendor/pinyin-pro/LICENSE','vendor/pinyin-pro/PROVENANCE.txt','vendor/rhvideo/LICENSE')){
     $destination=Join-Path $rhvideoAssets $relative
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null

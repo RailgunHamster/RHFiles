@@ -58,6 +58,7 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
   private val prefs=context.getSharedPreferences("rhvideo-client-v1",Context.MODE_PRIVATE)
   private val syncContext=context
   private val contract by lazy{RhVideoContract(operationManifest?:JSONObject(context.assets.open("rhvideo/rhvideo-operations.json").bufferedReader().use{it.readText()}))}
+  private val sharedContract by lazy{RhVideoSharedContract(JSONObject(appContext.assets.open("rhvideo/vendor/rhvideo/frontend/static/operation-contract.json").bufferedReader().use{it.readText()}))}
   private val refreshLock=Any()
   private val restoreLock=Any()
   private var restoreAttempted=false
@@ -469,6 +470,26 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
     val s=current()
     check(expected==null||expected==s.generation){"媒体账户已改变，操作未执行，请刷新后重新操作"}
     return when(action){
+      "shared.state"->state().put("hostProtocol",1).put("mediaBase","https://appassets.androidplatform.net/rhvideo-shared-media/").put("preferences",request("preferences",JSONObject().put("_sessionGeneration",s.generation)))
+      "shared.request"->{
+        val method=args.getString("method");val path=sharedContract.path(method,args.getString("path"))
+        val body=args.opt("body").takeUnless{it==null||it===JSONObject.NULL}
+        require(body==null||body is JSONObject||body is JSONArray){"接口内容必须是 JSON"}
+        require(body==null||body.toString().toByteArray(Charsets.UTF_8).size<=20*1024*1024){"接口内容过大"}
+        val builder=Request.Builder().url(s.base.resolve(path)!!).header("Authorization","Bearer ${token(s)}").header("Accept","application/json")
+        if(method!="GET")builder.method(method,if(body==null&&method=="DELETE")null else (body?.toString()?:"{}").toRequestBody("application/json".toMediaType()))
+        (if(method=="GET")http else writeHttp).newCall(builder.build()).execute().use{response->
+          expire(s,response.code);val result=if(response.code in listOf(204,205))JSONObject.NULL else readJson(response)
+          check(response.code==401||live(s)){"媒体账户已改变，旧响应未交付"}
+          if(method!="GET")synchronized(lock){videoCache=null}
+          JSONObject().put("status",response.code).put("body",result)
+        }
+      }
+      "shared.preferences"->{
+        val entries=args.getJSONObject("value");require(entries.keys().asSequence().all{(it.startsWith("rhvideo_")||it.startsWith("rhvideo."))&&!it.contains("token",true)&&entries.get(it)is String}){"界面偏好包含受保护字段"}
+        val value=request("preferences",JSONObject().put("_sessionGeneration",s.generation))as JSONObject
+        value.put("sharedUI",entries);request("preferences",JSONObject().put("_sessionGeneration",s.generation).put("value",value))
+      }
       "exports.downloads"->RhVideoDownloads.get(appContext).list(downloadOwner(s))
       "exports.download.cancel"->{require(args.keys().asSequence().all{it=="taskId"});val task=args.getString("taskId");require(RhVideoExports.uuid(task));RhVideoDownloads.get(appContext).cancel(downloadOwner(s),task)}
       "exports.prepare"->synchronized(lock){check(live(s)){"媒体账户已改变"};exports.prepare(s.generation,args)}
@@ -592,6 +613,13 @@ internal class RhVideoClient(context:Context,operationManifest:JSONObject?=null,
     val window=playbackWindow(ticket,index)
     return Playlist(window.items,window.items[window.index].path,(seconds*1000).toLong(),ticket,index,window.lease)
   }
+  fun sharedPlayback(args:JSONObject):Playlist{
+    val s=current();check(args.getLong("_sessionGeneration")==s.generation){"媒体账户已改变"}
+    val(path,image)=RhVideoSharedContract.media(args.getString("sharedPath"));require(!image){"播放器只接受视频接口"}
+    val seconds=args.optDouble("seconds",0.0);require(seconds.isFinite()&&seconds in 0.0..604800.0)
+    val uri=asset(s,path,false);return Playlist(listOf(PlaybackQueue.Item(uri,"RHVideo")),uri,(seconds*1000).toLong())
+  }
+  fun sharedImage(raw:String):Media{val s=current();val(path,image)=RhVideoSharedContract.media(raw);require(image);return media(asset(s,path,true).substringAfterLast('/'),image=true)}
   class Media(val stream:InputStream,val length:Long,val type:String,private val response:Response):java.io.Closeable {override fun close(){response.close()}}
   private fun executeNativeMedia(call:okhttp3.Call):Response {
     // Media3 cancels loaders by interrupting their thread. A synchronous

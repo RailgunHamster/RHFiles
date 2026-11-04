@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,9 +14,9 @@ const videos=[
 ];
 const pictures=[{id:'p-z',original_filename:'Z.webp',folder_label:'保留',webp_path:'z.webp'},{id:'p-a',original_filename:'A.webp',folder_label:'排除',webp_path:'a.webp'}];
 const functions=new Map();
-if(fs.existsSync(reference))for(const m of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const n of parse(m[1],{ecmaVersion:'latest'}).body)if(n.type==='FunctionDeclaration')functions.set(n.id.name,m[1].slice(n.start,n.end));
+if(fs.existsSync(reference))for(const m of rhvideoReferenceDocument(reference).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const n of parse(m[1],{ecmaVersion:'latest'}).body)if(n.type==='FunctionDeclaration')functions.set(n.id.name,m[1].slice(n.start,n.end));
 function oracle({mix=false,seed=null,rule={},auto=false}={}){
-  const stored=new Map(),nodes=new Map(),context=vm.createContext({token:'fixture',API_BASE:'/api/v1',mediaTagGridTimer:0,gridFilterResetPending:false,gridLoadRequest:0,gridLoadController:null,
+  const stored=new Map(),nodes=new Map(),context=rhvideoReferenceContext({token:'fixture',API_BASE:'/api/v1',mediaTagGridTimer:0,gridFilterResetPending:false,gridLoadRequest:0,gridLoadController:null,
     gridLoadedData:null,gridLoadedPictures:null,gridLoadedScope:'',gridMedia:[],gridItems:[],gridBaseMedia:[],gridBaseItems:[],gridBaseOrderHash:'',gridOrderHashCache:new WeakMap(),currentGridShuffleSeed:null,
     gridPage:1,noAutoShuffle:!auto,mediaTagFilter:tags.normalize(rule),allPictures:pictures,picturesLoaded:true,picturesLoadPromise:Promise.resolve(),gridRefreshPending:false,
     window:{crypto:{getRandomValues:values=>{values[0]=0x1234abcd;return values;}}},clearLegacyGridOrderStorage(){},
@@ -62,6 +63,6 @@ test('differential: named-order scope has the reference Boolean tag semantics an
   const workbench=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');let helper;
   function walk(n){if(!n||typeof n!=='object')return;if(n.type==='FunctionDeclaration'&&n.id.name==='galleryOrderScope')helper=workbench.slice(n.start,n.end);for(const v of Object.values(n))if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}walk(parse(workbench,{ecmaVersion:'latest'}));assert(helper);
   for(const mix of [false,true])for(const rule of [{},{include:['保留']},{mode:'or',include:['甲','乙'],exclude:['丙']},{groups:[{include:['甲']},{include:['乙']}],exclude:['丙']}]){
-    const original=oracle({mix,rule}),port=vm.createContext({RHTagFilter:tags,config:()=>({rule,mixPictures:mix,perVideo:30})});vm.runInContext(helper,port);assert.equal(port.galleryOrderScope(),original.context.gridOrderScopeKey());
+    const original=oracle({mix,rule}),port=rhvideoReferenceContext({RHTagFilter:tags,config:()=>({rule,mixPictures:mix,perVideo:30})});vm.runInContext(helper,port);assert.equal(port.galleryOrderScope(),original.context.gridOrderScopeKey());
   }
 });

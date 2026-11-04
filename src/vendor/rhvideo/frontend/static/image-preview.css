@@ -1,0 +1,21 @@
+html.image-preview-open { overflow: hidden; scrollbar-gutter: auto; }
+body.image-preview-open { overflow: hidden; }
+img[src], [data-image-preview].is-loaded { cursor: zoom-in; }
+[data-image-preview="off"] img { cursor: inherit; }
+#videos-grid .video-card.is-selecting img { cursor: pointer; }
+#image-preview { position: fixed; inset: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; overflow: hidden; background: #111725; color: #fff; cursor: zoom-out; overscroll-behavior: contain; touch-action: none; }
+#image-preview::backdrop { background: #111725; }
+#image-preview > img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; cursor: zoom-out; }
+#image-preview.is-error > img, #image-preview.is-loading > img { opacity: 0; }
+.image-preview-close { position: absolute; top: max(18px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right)); display: grid; place-items: center; width: 42px; height: 42px; padding: 0; border: 1px solid #ffffff40; border-radius: 13px; background: #1b243a80; backdrop-filter: blur(12px); color: #fff; font-size: 27px; font-weight: 300; line-height: 1; cursor: pointer; }
+.image-preview-close:hover { background: #35415bb3; border-color: #ffffff70; }
+.image-preview-caption { position: absolute; inset: auto 0 0; display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 48px max(26px, env(safe-area-inset-right)) max(22px, env(safe-area-inset-bottom)) max(26px, env(safe-area-inset-left)); background: linear-gradient(transparent, #1018289e); pointer-events: none; font-size: 11px; color: #e1e8f6; }
+.image-preview-caption > span:last-child { flex-shrink: 0; opacity: .8; font-size: 10px; }
+.image-preview-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-preview-caption kbd { padding: 2px 5px; border: 1px solid #ffffff40; border-radius: 4px; font: inherit; }
+.image-preview-status { position: absolute; inset: 0; display: none; place-items: center; color: #c1cce0; font-size: 13px; pointer-events: none; }
+#image-preview.is-loading .image-preview-status, #image-preview.is-error .image-preview-status { display: grid; }
+@media (max-width: 700px) {
+    .image-preview-caption { align-items: start; flex-direction: column; gap: 7px; padding-left: 18px; padding-right: 18px; }
+    .image-preview-title { max-width: 100%; }
+}

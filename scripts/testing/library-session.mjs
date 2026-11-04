@@ -16,7 +16,7 @@ export async function waitForLibraryReady(session,timeout=30000){
 export async function cdpSession(target,timeout,options){
   const session=await rawSession(target,timeout,options);
   try{
-    if(new URL(target.url).pathname==='/rhvideo.html')await waitForLibraryReady(session,timeout);
+    if(['/rhvideo.html','/rhvideo-shared.html'].includes(new URL(target.url).pathname))await waitForLibraryReady(session,timeout);
     return session;
   }catch(error){session.close();throw error;}
 }

@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -86,7 +87,7 @@ test('actual workbench provider freezes filters before I/O and reloads favorites
   const text=fs.readFileSync(new URL('../../src/js/rhvideo-workbench.js',import.meta.url),'utf8');let declaration;
   function walk(node){if(!node||typeof node!=='object')return;if(node.type==='FunctionDeclaration'&&node.id.name==='favoriteExportSelection')declaration=text.slice(node.start,node.end);for(const v of Object.values(node))if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}walk(parse(text,{ecmaVersion:'latest'}));assert(declaration);
   const gate=deferred(),filter={rule:{include:['旧筛选']},search:'before'},calls=[];
-  const context=vm.createContext({structuredClone,criteria:extra=>({...filter,...extra}),ensure:()=>gate.promise,rawCatalog:async(kind,refresh)=>calls.push({kind,refresh}),query:async(args,version)=>({args,version})});
+  const context=rhvideoReferenceContext({structuredClone,criteria:extra=>({...filter,...extra}),ensure:()=>gate.promise,rawCatalog:async(kind,refresh)=>calls.push({kind,refresh}),query:async(args,version)=>({args,version})});
   vm.runInContext(declaration,context);const pending=context.favoriteExportSelection();filter.rule.include.push('迟到的新标签');filter.search='after';gate.resolve(9);const result=JSON.parse(JSON.stringify(await pending));
   assert.deepEqual(calls,[{kind:'favorite',refresh:true}]);assert.equal(result.version,9);assert.equal(result.args.search,'before');assert.deepEqual(result.args.rule.include,['旧筛选']);assert.equal(result.args.allKeys,true);assert.equal(result.args.offset,0);
 });
@@ -95,10 +96,10 @@ const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo')
 test('differential: original export selection includes the complete current filtered favorites, including novels',{skip:!fs.existsSync(reference)},async()=>{
   let oracle;
   function walk(node,text){if(!node||typeof node!=='object')return;if(node.type==='CallExpression'&&node.callee?.object?.name==='RHFavoriteExports'&&node.callee.property?.name==='init'){const method=node.arguments[0].properties.find(v=>v.key.name==='getSelection').value;oracle=text.slice(method.start,method.end);}for(const v of Object.values(node))if(Array.isArray(v))v.forEach(n=>walk(n,text));else if(v&&typeof v==='object')walk(v,text);}
-  for(const match of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))walk(parse(match[1],{ecmaVersion:'latest'}),match[1]);assert(oracle,'Read actual original getSelection callback');
+  for(const match of rhvideoReferenceDocument(reference).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))walk(parse(match[1],{ecmaVersion:'latest'}),match[1]);assert(oracle,'Read actual original getSelection callback');
   const catalog=new I.Catalog({search,dictionary,tags}),source=rows(71).map(v=>({id:v.id,type:v.kind,title:'收藏 '+v.id,original_filename:'收藏 '+v.id,folder_label:Number(v.id)%2?'保留':'其他'}));catalog.set('favorite',source);
   const result=await catalog.query({kind:'favorite',search:'收藏',folder:'保留',allKeys:true,offset:0,limit:1});assert.equal(result.items.length,1);assert(result.total>20);
-  let loaded=0,rendered=0;const context=vm.createContext({loadFavorites:async()=>{loaded++;return true;},renderFavorites:async()=>{rendered++;},favNormItems:result.queue.map(v=>({mediaType:v.kind,id:v.id}))});
+  let loaded=0,rendered=0;const context=rhvideoReferenceContext({loadFavorites:async()=>{loaded++;return true;},renderFavorites:async()=>{rendered++;},favNormItems:result.queue.map(v=>({mediaType:v.kind,id:v.id}))});
   const expected=JSON.parse(JSON.stringify(await vm.runInContext('('+oracle+')()',context)));
   assert.deepEqual(E.selection(result),expected);assert.equal(loaded,1);assert.equal(rendered,1);
 });

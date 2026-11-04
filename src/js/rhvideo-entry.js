@@ -1,7 +1,7 @@
 // Opens a packaged RHFiles view, not a URL or an embedded RHVideo website.
 (() => {
   const api=window.RHFilesAPI;
-  api.register('rhvideo.open',()=>call('rhvideo_open',{}),{description:'Open the built-in RHVideo client',params:{type:'object',properties:{},additionalProperties:false}});
+  api.register('rhvideo.open',({shared}={})=>call('rhvideo_open',shared===undefined?{}:{shared}),{description:'Open the built-in RHVideo client (optional shared frontend preview)',params:{type:'object',properties:{shared:{type:'boolean'}},additionalProperties:false}});
   const sidebar=document.getElementById('sidebar');
   if(!sidebar)return;
   const section=document.createElement('div');section.className='sidebar-section';

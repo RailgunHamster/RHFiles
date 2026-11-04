@@ -1,0 +1,73 @@
+body.settings-open { overflow: hidden; }
+.header-actions .settings-trigger { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: #8090ad; cursor: pointer; }
+.settings-trigger svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.header-actions .settings-trigger:hover { color: var(--blue); border-color: #cbd8fa; background: var(--blue-soft); }
+.modal.app-settings { width: min(760px,96vw); max-width: 760px; max-height: 90dvh; display: flex; flex-direction: column; padding: 0; overflow: hidden; border-radius: 16px; }
+.settings-header { display: flex; align-items: center; gap: 16px; padding: 25px 28px 18px; }
+.settings-header > div { flex: 1; }
+.settings-header,.settings-footer { flex-shrink:0; }
+.settings-body { min-height:0; }
+.settings-eyebrow { color: var(--blue); font-size: 10px; font-weight: 650; letter-spacing: 1px; }
+.settings-header h2 { font-size: 22px; margin: 4px 0 0; }
+.settings-close { width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 9px; color: #91a0b7; background: #f8faff; font-size: 23px; cursor: pointer; }
+#settings-connection { color: var(--green); font-size: 10px; }
+#settings-connection.is-error { color: #b18b66; }
+.settings-body { padding: 0 28px 24px; overflow-y: auto; }
+.settings-section-title { padding-top: 16px; border-top: 1px solid var(--line); margin-bottom: 15px; }
+.settings-section-title h3 { font-size: 13px; margin: 0 0 4px; }
+.settings-section-title p { color: var(--muted); font-size: 11px; }
+.settings-restart-status { display: flex; align-items: center; gap: 11px; min-height: 75px; margin-bottom: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #f8faff; }
+.settings-restart-status > div { flex: 1; min-width: 0; }
+.settings-restart-status strong { color: #5e7092; font-size: 12px; font-weight: 600; }
+.settings-restart-status p { margin-top: 4px; color: #8b98ae; font-size: 10px; line-height: 1.7; }
+.settings-restart-status .btn { font-size: 10px; padding: 6px 9px; }
+.settings-state-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border-radius: 9px; background: var(--blue-soft); color: var(--blue); font-size: 17px; }
+.settings-state-icon.is-done { color: var(--green); background: #edf7f2; }
+.settings-idle-dot { width: 7px; height: 7px; margin: 11px; border-radius: 50%; background: #68ad94; }
+.settings-queue-counts { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 6px; color: #8d9bb1; font-size: 10px; }
+.settings-queue-counts b { margin-left: 4px; color: #7588bd; font-variant-numeric: tabular-nums; }
+.settings-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.settings-action { display: flex; flex-direction: column; align-items: start; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.settings-action-icon { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 15px; border-radius: 10px; background: var(--blue-soft); color: var(--blue); }
+.settings-action-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.settings-action.is-wait .settings-action-icon { background: var(--purple-soft); color: var(--purple); }
+.settings-action h4 { color: #536582; font-size: 13px; margin-bottom: 8px; }
+.settings-action p { flex: 1; margin-bottom: 20px; color: #8996ac; font-size: 11px; line-height: 1.9; }
+.settings-action .btn { font-size: 11px; padding: 8px 13px; }
+.settings-action.is-wait .btn { background: var(--purple-soft); border-color: #e3d9f5; color: #8b6fc6; }
+.settings-error { margin-top: 12px; color: #b18b66; font-size: 11px; line-height: 1.8; }
+.settings-error:empty { display: none; }
+.bkp-section { margin-top:24px; }
+.bkp-description { color:#8996ac; font-size:11px; line-height:1.9; margin:0 0 14px; }
+.bkp-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.bkp-actions .btn { font-size:11px; padding:8px 12px; }
+.bkp-file { display:flex; align-items:center; gap:9px; font-size:11px; color:#7e8da7; }
+.bkp-file input { max-width:230px; font-size:10px; color:#98a4b7; }
+.bkp-file input::file-selector-button { border:1px solid #e0e6f2; padding:8px 12px; border-radius:7px; background:#f8faff; color:#7e8da7; cursor:pointer; }
+.bkp-summary { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:15px; }
+.bkp-summary>div { padding:13px; border:1px solid var(--line); border-radius:10px; background:#fafbfe; }
+.bkp-summary span { font-size:10px; color:#8b99af; }
+.bkp-summary strong { display:block; color:#7f94c4; font-size:22px; font-weight:500; margin:5px 0; }
+.bkp-summary small,.bkp-note { font-size:10px; color:#99a4b7; line-height:1.8; }
+.bkp-issues { margin-top:12px; font-size:11px; color:#aa8b74; }
+.bkp-issues summary { cursor:pointer; }
+.bkp-issues ul { max-height:180px; overflow:auto; list-style:none; padding:0; margin-top:8px; }
+.bkp-issues li { display:flex; flex-direction:column; gap:3px; padding:7px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.bkp-issues small { color:#a1aabd; }
+.bkp-note { margin-top:9px; }
+#config-backup-message { color:#7e9c95; font-size:11px; line-height:1.9; margin-top:12px; }
+#config-backup-message:empty { display:none; }
+#config-backup-message.is-error { color:#b17e67; }
+.settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 28px; border-top: 1px solid var(--line); }
+.settings-footer > span { color: #99a5b9; font-size: 10px; }
+.settings-footer .btn { font-size: 11px; padding: 7px 15px; }
+@media (max-width:600px) {
+    .header-actions .settings-trigger { width: 30px; height: 30px; flex-basis: 30px; padding: 6px; }
+    .settings-header { padding: 20px; }
+    .settings-body { padding: 0 20px 20px; }
+    .settings-actions { grid-template-columns: 1fr; gap: 11px; }
+    .settings-action { padding: 17px; }
+    .settings-action-icon { margin-bottom: 10px; }
+    .settings-action p { margin-bottom: 12px; }
+    .settings-footer { padding: 12px 20px; }
+}

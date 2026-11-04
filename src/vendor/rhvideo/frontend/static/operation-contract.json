@@ -1,0 +1,3378 @@
+{
+  "version": 1,
+  "business_operations": [
+    {
+      "id": "GET /",
+      "operation_id": "root__get",
+      "parameters": [],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/auth/login",
+      "operation_id": "login_api_v1_auth_login_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/UserLogin"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/auth/me",
+      "operation_id": "get_current_user_info_api_v1_auth_me_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/auth/refresh",
+      "operation_id": "refresh_token_api_v1_auth_refresh_post",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/auth/register",
+      "operation_id": "register_api_v1_auth_register_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/UserCreate"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/config-backups/export",
+      "operation_id": "export_configuration_api_v1_config_backups_export_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Preferences"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/config-backups/preview",
+      "operation_id": "preview_configuration_api_v1_config_backups_preview_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ConfigBackup"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/config-backups/restore",
+      "operation_id": "restore_configuration_api_v1_config_backups_restore_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ConfigBackup"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates",
+      "operation_id": "duplicate_status_api_v1_duplicates_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/choices",
+      "operation_id": "saved_choices_api_v1_duplicates_choices_get",
+      "parameters": [
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 50,
+            "minimum": 1,
+            "default": 25,
+            "title": "Limit"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/duplicates/choices/{group_id}",
+      "operation_id": "clear_choice_api_v1_duplicates_choices__group_id__delete",
+      "parameters": [
+        {
+          "name": "group_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Group Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PUT /api/v1/duplicates/choices/{group_id}",
+      "operation_id": "store_choice_api_v1_duplicates_choices__group_id__put",
+      "parameters": [
+        {
+          "name": "group_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Group Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ChoiceRequest"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/groups",
+      "operation_id": "duplicate_groups_api_v1_duplicates_groups_get",
+      "parameters": [
+        {
+          "name": "kind",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "all",
+              "video",
+              "picture"
+            ],
+            "type": "string",
+            "default": "all",
+            "title": "Kind"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 12,
+            "minimum": 1,
+            "default": 6,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 768
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          }
+        },
+        {
+          "name": "sort",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "similarity",
+              "time_asc",
+              "time_desc",
+              "size_asc",
+              "size_desc"
+            ],
+            "type": "string",
+            "default": "similarity",
+            "title": "Sort"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/duplicates/groups/{group_id}/ignore",
+      "operation_id": "ignore_duplicates_api_v1_duplicates_groups__group_id__ignore_post",
+      "parameters": [
+        {
+          "name": "group_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Group Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/IgnoreRequest"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/groups/{group_id}/members",
+      "operation_id": "duplicate_group_members_api_v1_duplicates_groups__group_id__members_get",
+      "parameters": [
+        {
+          "name": "group_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Group Id"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 24,
+            "minimum": 1,
+            "default": 12,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "sort",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "similarity",
+              "time_asc",
+              "time_desc",
+              "size_asc",
+              "size_desc"
+            ],
+            "type": "string",
+            "default": "similarity",
+            "title": "Sort"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/ignores",
+      "operation_id": "ignored_groups_api_v1_duplicates_ignores_get",
+      "parameters": [
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/duplicates/ignores/{signature}",
+      "operation_id": "unignore_duplicates_api_v1_duplicates_ignores__signature__delete",
+      "parameters": [
+        {
+          "name": "signature",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Signature"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/duplicates/plans",
+      "operation_id": "submit_plan_api_v1_duplicates_plans_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlanRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/duplicates/plans/{plan_id}",
+      "operation_id": "cancel_plan_api_v1_duplicates_plans__plan_id__delete",
+      "parameters": [
+        {
+          "name": "plan_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Plan Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/plans/{plan_id}",
+      "operation_id": "get_plan_api_v1_duplicates_plans__plan_id__get",
+      "parameters": [
+        {
+          "name": "plan_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Plan Id"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        },
+        {
+          "name": "status",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "all",
+              "ready",
+              "skipped"
+            ],
+            "type": "string",
+            "default": "all",
+            "title": "Status"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/duplicates/plans/{plan_id}/confirm",
+      "operation_id": "confirm_plan_api_v1_duplicates_plans__plan_id__confirm_post",
+      "parameters": [
+        {
+          "name": "plan_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Plan Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RequestId"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/plans/{plan_id}/items/{group_id}",
+      "operation_id": "get_plan_item_api_v1_duplicates_plans__plan_id__items__group_id__get",
+      "parameters": [
+        {
+          "name": "plan_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Plan Id"
+          }
+        },
+        {
+          "name": "group_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Group Id"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 10000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PUT /api/v1/duplicates/plans/{plan_id}/items/{group_id}",
+      "operation_id": "edit_plan_item_api_v1_duplicates_plans__plan_id__items__group_id__put",
+      "parameters": [
+        {
+          "name": "plan_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Plan Id"
+          }
+        },
+        {
+          "name": "group_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Group Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EditItem"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/preview/{kind}/{media_id}",
+      "operation_id": "duplicate_preview_api_v1_duplicates_preview__kind___media_id__get",
+      "parameters": [
+        {
+          "name": "kind",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "enum": [
+              "video",
+              "picture"
+            ],
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        {
+          "name": "media_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Media Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/restores/{restore_id}",
+      "operation_id": "duplicate_restore_status_api_v1_duplicates_restores__restore_id__get",
+      "parameters": [
+        {
+          "name": "restore_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Restore Id"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/duplicates/review-batches",
+      "operation_id": "submit_review_batch_api_v1_duplicates_review_batches_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/BatchRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/review-batches/{batch_id}",
+      "operation_id": "review_batch_detail_api_v1_duplicates_review_batches__batch_id__get",
+      "parameters": [
+        {
+          "name": "batch_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Batch Id"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/duplicates/review-batches/{batch_id}/restore",
+      "operation_id": "restore_duplicate_batch_api_v1_duplicates_review_batches__batch_id__restore_post",
+      "parameters": [
+        {
+          "name": "batch_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Batch Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RequestId"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/duplicates/reviews",
+      "operation_id": "submit_duplicate_review_api_v1_duplicates_reviews_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ReviewRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/reviews/{review_id}",
+      "operation_id": "duplicate_review_detail_api_v1_duplicates_reviews__review_id__get",
+      "parameters": [
+        {
+          "name": "review_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Review Id"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/duplicates/rules",
+      "operation_id": "get_rules_api_v1_duplicates_rules_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PUT /api/v1/duplicates/rules",
+      "operation_id": "set_rules_api_v1_duplicates_rules_put",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Rules"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/duplicates/scans",
+      "operation_id": "submit_duplicate_scan_api_v1_duplicates_scans_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ScanRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/duplicates/scans/{scan_id}",
+      "operation_id": "cancel_duplicate_scan_api_v1_duplicates_scans__scan_id__delete",
+      "parameters": [
+        {
+          "name": "scan_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Scan Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/favorite-exports",
+      "operation_id": "list_favorite_exports_api_v1_favorite_exports_get",
+      "parameters": [
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100,
+            "minimum": 1,
+            "default": 20,
+            "title": "Limit"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/favorite-exports",
+      "operation_id": "create_favorite_export_api_v1_favorite_exports_post",
+      "parameters": [],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ExportRequest"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/favorite-exports/{export_id}",
+      "operation_id": "cancel_favorite_export_api_v1_favorite_exports__export_id__delete",
+      "parameters": [
+        {
+          "name": "export_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Export Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/favorite-exports/{export_id}",
+      "operation_id": "get_favorite_export_api_v1_favorite_exports__export_id__get",
+      "parameters": [
+        {
+          "name": "export_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Export Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/favorite-exports/{export_id}/download",
+      "operation_id": "download_favorite_export_api_v1_favorite_exports__export_id__download_get",
+      "parameters": [
+        {
+          "name": "export_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Export Id"
+          }
+        },
+        {
+          "name": "rhvideo_export",
+          "in": "cookie",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rhvideo Export"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/favorite-exports/{export_id}/download-ticket",
+      "operation_id": "prepare_favorite_download_api_v1_favorite_exports__export_id__download_ticket_post",
+      "parameters": [
+        {
+          "name": "export_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Export Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/favorites",
+      "operation_id": "list_favorites_api_v1_favorites_get",
+      "parameters": [
+        {
+          "name": "media_type",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "default": "all",
+            "title": "Media Type"
+          }
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 0,
+            "title": "Skip"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 50,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "search",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/favorites/ids",
+      "operation_id": "list_favorite_ids_api_v1_favorites_ids_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/favorites/novel/{novel_id}",
+      "operation_id": "unfavorite_novel_api_v1_favorites_novel__novel_id__delete",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PUT /api/v1/favorites/novel/{novel_id}",
+      "operation_id": "favorite_novel_api_v1_favorites_novel__novel_id__put",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/favorites/picture/{picture_id}",
+      "operation_id": "unfavorite_picture_api_v1_favorites_picture__picture_id__delete",
+      "parameters": [
+        {
+          "name": "picture_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Picture Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PUT /api/v1/favorites/picture/{picture_id}",
+      "operation_id": "favorite_picture_api_v1_favorites_picture__picture_id__put",
+      "parameters": [
+        {
+          "name": "picture_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Picture Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/favorites/video/{video_id}",
+      "operation_id": "unfavorite_video_api_v1_favorites_video__video_id__delete",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PUT /api/v1/favorites/video/{video_id}",
+      "operation_id": "favorite_video_api_v1_favorites_video__video_id__put",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/novels",
+      "operation_id": "list_novels_api_v1_novels_get",
+      "parameters": [
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 0,
+            "title": "Skip"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 200,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "search",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search"
+          }
+        },
+        {
+          "name": "folder",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          }
+        },
+        {
+          "name": "summary",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false,
+            "title": "Summary"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/novels/folders",
+      "operation_id": "list_novel_folders_api_v1_novels_folders_get",
+      "parameters": [],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "DELETE /api/v1/novels/{novel_id}",
+      "operation_id": "delete_novel_api_v1_novels__novel_id__delete",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/novels/{novel_id}",
+      "operation_id": "get_novel_api_v1_novels__novel_id__get",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/novels/{novel_id}/chapters/{chapter_index}",
+      "operation_id": "get_chapter_api_v1_novels__novel_id__chapters__chapter_index__get",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        },
+        {
+          "name": "chapter_index",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "title": "Chapter Index"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/novels/{novel_id}/previews",
+      "operation_id": "list_chapter_previews_api_v1_novels__novel_id__previews_get",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 0,
+            "title": "Skip"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 300,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "preview_chars",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 260,
+            "title": "Preview Chars"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PUT /api/v1/novels/{novel_id}/progress",
+      "operation_id": "update_progress_api_v1_novels__novel_id__progress_put",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ProgressUpdate"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/pictures",
+      "operation_id": "list_pictures_api_v1_pictures_get",
+      "parameters": [
+        {
+          "name": "skip",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 0,
+            "title": "Skip"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 50,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "search",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search"
+          }
+        },
+        {
+          "name": "folder",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          }
+        },
+        {
+          "name": "resolution",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/pictures/catalog",
+      "operation_id": "picture_catalog_api_v1_pictures_catalog_get",
+      "parameters": [
+        {
+          "name": "folder",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/pictures/folders",
+      "operation_id": "list_picture_folders_api_v1_pictures_folders_get",
+      "parameters": [],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/pictures/grid",
+      "operation_id": "picture_grid_api_v1_pictures_grid_get",
+      "parameters": [
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 6,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "offset",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 0,
+            "title": "Offset"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/pictures/{picture_id}",
+      "operation_id": "delete_picture_api_v1_pictures__picture_id__delete",
+      "parameters": [
+        {
+          "name": "picture_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Picture Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/processing-progress",
+      "operation_id": "processing_progress_api_v1_processing_progress_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/processing-tasks",
+      "operation_id": "list_tasks_api_v1_processing_tasks_get",
+      "parameters": [
+        {
+          "name": "kind",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "default",
+              "replacement"
+            ],
+            "type": "string",
+            "default": "default",
+            "title": "Kind"
+          }
+        },
+        {
+          "name": "view",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "running",
+              "queued",
+              "failed",
+              "history"
+            ],
+            "type": "string",
+            "default": "running",
+            "title": "View"
+          }
+        },
+        {
+          "name": "page",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100000,
+            "minimum": 1,
+            "default": 1,
+            "title": "Page"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 50,
+            "minimum": 1,
+            "default": 25,
+            "title": "Limit"
+          }
+        },
+        {
+          "name": "days",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 90,
+            "minimum": 0,
+            "default": 7,
+            "title": "Days"
+          }
+        },
+        {
+          "name": "status",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "all",
+              "succeeded",
+              "issues",
+              "skipped",
+              "cancelled"
+            ],
+            "type": "string",
+            "default": "all",
+            "title": "Status"
+          }
+        },
+        {
+          "name": "q",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 200,
+            "default": "",
+            "title": "Q"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/processing-tasks/default/{entry_id}/retry",
+      "operation_id": "retry_failed_task_api_v1_processing_tasks_default__entry_id__retry_post",
+      "parameters": [
+        {
+          "name": "entry_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Entry Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/processing-tasks/replacement/{entry_id}/retry",
+      "operation_id": "retry_replacement_task_api_v1_processing_tasks_replacement__entry_id__retry_post",
+      "parameters": [
+        {
+          "name": "entry_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Entry Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/processing-tasks/{kind}/{entry_id}",
+      "operation_id": "task_detail_api_v1_processing_tasks__kind___entry_id__get",
+      "parameters": [
+        {
+          "name": "kind",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "enum": [
+              "default",
+              "replacement"
+            ],
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        {
+          "name": "entry_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Entry Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/processing-tasks/{kind}/{entry_id}/prioritize",
+      "operation_id": "prioritize_task_api_v1_processing_tasks__kind___entry_id__prioritize_post",
+      "parameters": [
+        {
+          "name": "kind",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "enum": [
+              "default",
+              "replacement"
+            ],
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        {
+          "name": "entry_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Entry Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/replace-batches",
+      "operation_id": "list_batches_api_v1_replace_batches_get",
+      "parameters": [
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 50,
+            "minimum": 1,
+            "default": 10,
+            "title": "Limit"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/replace-batches",
+      "operation_id": "submit_batch_api_v1_replace_batches_post",
+      "parameters": [],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ReplaceBatchCreate"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/replace-batches/{batch_id}",
+      "operation_id": "get_batch_api_v1_replace_batches__batch_id__get",
+      "parameters": [
+        {
+          "name": "batch_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Batch Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/replace-batches/{batch_id}/cancel",
+      "operation_id": "cancel_batch_api_v1_replace_batches__batch_id__cancel_post",
+      "parameters": [
+        {
+          "name": "batch_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Batch Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/screenshots/cleanup",
+      "operation_id": "cleanup_excess_keyframes_api_v1_screenshots_cleanup_post",
+      "parameters": [],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/screenshots/grid",
+      "operation_id": "get_screenshots_grid_api_v1_screenshots_grid_get",
+      "parameters": [
+        {
+          "name": "per_video",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100,
+            "minimum": 1,
+            "default": 8,
+            "title": "Per Video"
+          }
+        },
+        {
+          "name": "folder",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          }
+        },
+        {
+          "name": "compact",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false,
+            "title": "Compact"
+          }
+        },
+        {
+          "name": "tags",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32768
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        {
+          "name": "rules",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32768
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/screenshots/video/{video_id}",
+      "operation_id": "get_video_screenshots_api_v1_screenshots_video__video_id__get",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        },
+        {
+          "name": "per_video",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "maximum": 100,
+            "minimum": 1,
+            "default": 20,
+            "title": "Per Video"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/system/cleanup-missing",
+      "operation_id": "cleanup_missing_api_v1_system_cleanup_missing_post",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/system/cleanup-missing/preview",
+      "operation_id": "cleanup_missing_preview_api_v1_system_cleanup_missing_preview_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/system/config",
+      "operation_id": "get_config_api_v1_system_config_get",
+      "parameters": [],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/system/health",
+      "operation_id": "health_check_api_v1_system_health_get",
+      "parameters": [],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/system/replacement-savings",
+      "operation_id": "source_replacement_savings_api_v1_system_replacement_savings_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/system/restart",
+      "operation_id": "restart_status_api_v1_system_restart_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/system/restart",
+      "operation_id": "request_restart_api_v1_system_restart_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RestartRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/system/restart/{restart_id}",
+      "operation_id": "cancel_restart_api_v1_system_restart__restart_id__delete",
+      "parameters": [
+        {
+          "name": "restart_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Restart Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/system/storage-usage",
+      "operation_id": "storage_usage_api_v1_system_storage_usage_get",
+      "parameters": [
+        {
+          "name": "force",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false,
+            "title": "Force"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/system/watch-folder-usage",
+      "operation_id": "watch_folder_usage_api_v1_system_watch_folder_usage_get",
+      "parameters": [
+        {
+          "name": "force",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false,
+            "title": "Force"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/trash",
+      "operation_id": "get_trash_api_v1_trash_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/trash/novel/{novel_id}",
+      "operation_id": "stage_novel_delete_api_v1_trash_novel__novel_id__post",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/trash/novel/{novel_id}/restore",
+      "operation_id": "restore_novel_from_trash_api_v1_trash_novel__novel_id__restore_post",
+      "parameters": [
+        {
+          "name": "novel_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Novel Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/trash/picture/{picture_id}",
+      "operation_id": "stage_picture_delete_api_v1_trash_picture__picture_id__post",
+      "parameters": [
+        {
+          "name": "picture_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Picture Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/trash/picture/{picture_id}/restore",
+      "operation_id": "restore_picture_from_trash_api_v1_trash_picture__picture_id__restore_post",
+      "parameters": [
+        {
+          "name": "picture_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Picture Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/trash/purge-expired",
+      "operation_id": "purge_expired_trash_endpoint_api_v1_trash_purge_expired_post",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/trash/video/{video_id}",
+      "operation_id": "stage_video_delete_api_v1_trash_video__video_id__post",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/trash/video/{video_id}/restore",
+      "operation_id": "restore_video_from_trash_api_v1_trash_video__video_id__restore_post",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/videos",
+      "operation_id": "list_videos_api_v1_videos_get",
+      "parameters": [
+        {
+          "name": "summary",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false,
+            "title": "Summary"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/videos/folders",
+      "operation_id": "list_video_folders_api_v1_videos_folders_get",
+      "parameters": [],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/videos/reprocess-failed",
+      "operation_id": "reprocess_failed_videos_api_v1_videos_reprocess_failed_post",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/videos/stream-playlist",
+      "operation_id": "stream_playlist_api_v1_videos_stream_playlist_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlaylistRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": []
+    },
+    {
+      "id": "DELETE /api/v1/videos/{video_id}",
+      "operation_id": "delete_video_api_v1_videos__video_id__delete",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/videos/{video_id}",
+      "operation_id": "get_video_api_v1_videos__video_id__get",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/videos/{video_id}/open",
+      "operation_id": "open_video_locally_api_v1_videos__video_id__open_post",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/videos/{video_id}/open-folder",
+      "operation_id": "open_video_folder_api_v1_videos__video_id__open_folder_post",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/videos/{video_id}/play",
+      "operation_id": "play_video_api_v1_videos__video_id__play_get",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        },
+        {
+          "name": "super",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false,
+            "title": "Super"
+          }
+        },
+        {
+          "name": "quality",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "default",
+              "lowest"
+            ],
+            "type": "string",
+            "default": "default",
+            "title": "Quality"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/videos/{video_id}/replace-source",
+      "operation_id": "replace_source_start_api_v1_videos__video_id__replace_source_post",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": true,
+              "title": "Body"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/videos/{video_id}/replace-source/estimate",
+      "operation_id": "replace_source_estimate_api_v1_videos__video_id__replace_source_estimate_post",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": true,
+              "title": "Body"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/videos/{video_id}/replace-source/status",
+      "operation_id": "replace_source_status_api_v1_videos__video_id__replace_source_status_get",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "POST /api/v1/videos/{video_id}/reprocess",
+      "operation_id": "reprocess_video_api_v1_videos__video_id__reprocess_post",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /api/v1/videos/{video_id}/status",
+      "operation_id": "get_video_status_api_v1_videos__video_id__status_get",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/videos/{video_id}/thumbnail",
+      "operation_id": "video_list_thumbnail_api_v1_videos__video_id__thumbnail_get",
+      "parameters": [
+        {
+          "name": "video_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Video Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": []
+    },
+    {
+      "id": "GET /api/v1/watch-folders",
+      "operation_id": "list_watch_folders_api_v1_watch_folders_get",
+      "parameters": [],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/watch-folders",
+      "operation_id": "add_watch_folder_api_v1_watch_folders_post",
+      "parameters": [],
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/WatchFolderCreate"
+            }
+          }
+        },
+        "required": true
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "DELETE /api/v1/watch-folders/{watch_folder_id}",
+      "operation_id": "remove_watch_folder_api_v1_watch_folders__watch_folder_id__delete",
+      "parameters": [
+        {
+          "name": "watch_folder_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Watch Folder Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "PATCH /api/v1/watch-folders/{watch_folder_id}",
+      "operation_id": "update_watch_folder_api_v1_watch_folders__watch_folder_id__patch",
+      "parameters": [
+        {
+          "name": "watch_folder_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Watch Folder Id"
+          }
+        }
+      ],
+      "body": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/WatchFolderUpdate"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "POST /api/v1/watch-folders/{watch_folder_id}/scan",
+      "operation_id": "scan_watch_folder_now_api_v1_watch_folders__watch_folder_id__scan_post",
+      "parameters": [
+        {
+          "name": "watch_folder_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "title": "Watch Folder Id"
+          }
+        }
+      ],
+      "body": null,
+      "security": [
+        {
+          "HTTPBearer": []
+        }
+      ]
+    },
+    {
+      "id": "GET /health",
+      "operation_id": "health_check_health_get",
+      "parameters": [],
+      "body": null,
+      "security": []
+    }
+  ],
+  "app_functions": [
+    "addMediaTagGroup",
+    "addWatchFolder",
+    "adjSegDur",
+    "applyGridOrder",
+    "applyKenburnsFrame",
+    "applyPageVolumeToVideos",
+    "applySeedGridOrder",
+    "applySeedGridOrderLegacy",
+    "applyVideoRotate",
+    "applyVideoSort",
+    "backupPreferenceKeys",
+    "beginStageDelete",
+    "buildGroups",
+    "buildPicStripOrder",
+    "buildPlaylistEntries",
+    "calcGridLayout",
+    "cancelPreviewDeleteExecution",
+    "changeFavPage",
+    "changeGridPage",
+    "changeNovelPage",
+    "changePage",
+    "clampPageVolume",
+    "cleanupConfirmStep",
+    "cleanupEsc",
+    "cleanupFrames",
+    "cleanupSampleList",
+    "clearHighlight",
+    "clearLegacyGridOrderStorage",
+    "clearMediaTagFilter",
+    "clearVideoSelection",
+    "closeAppContextMenu",
+    "closeCleanupModal",
+    "closeFavshow",
+    "closeGridOrderSaveModal",
+    "closeGridTagDrawer",
+    "closeGridViewer",
+    "closeInfoModal",
+    "closeKenburns",
+    "closeMediaViewer",
+    "closeNovelPreview",
+    "closeNovelReader",
+    "closeNovelTagDrawer",
+    "closePicStrip",
+    "closePlaylistViewer",
+    "closeReplaceModal",
+    "closeStageDeleteModal",
+    "closeTimeline",
+    "closeTrashModal",
+    "closeTrashPreview",
+    "closeWatchModal",
+    "collectListOrderVideoIds",
+    "collectPlaylistVideoIds",
+    "commitSegDur",
+    "confirmGridOrderSave",
+    "confirmStageDeleteStep",
+    "contextMenuItems",
+    "copyContextText",
+    "currentGridGroupIds",
+    "cycleMediaSpeed",
+    "cyclePlaylistSpeed",
+    "deleteSavedGridOrder",
+    "doReplaceConfirm",
+    "doReplaceEstimate",
+    "doShuffle",
+    "editSegDur",
+    "ensureSavedGridOrdersLoaded",
+    "executePreviewDeleteQueue",
+    "exportVideos",
+    "favClampNum",
+    "favEsc",
+    "favSearchInput",
+    "favSetFor",
+    "favShowKey",
+    "favshowCfgChanged",
+    "favshowFadeMs",
+    "favshowGetElapsed",
+    "favshowImgSecs",
+    "favshowKeyHandler",
+    "favshowNext",
+    "favshowPlay",
+    "favshowProgressCommit",
+    "favshowProgressInput",
+    "favshowProgressRafStart",
+    "favshowProgressRafStop",
+    "favshowTotalDur",
+    "favshowUpdateProgress",
+    "favshowVidSecs",
+    "fetchAllPictureRecords",
+    "fetchLibraryIndex",
+    "filterFolder",
+    "filterPictures",
+    "filterPortraitVideoIds",
+    "filterVideos",
+    "findBrowseIndex",
+    "flushFavoritesRefresh",
+    "fmtClock",
+    "formatProcessingProgress",
+    "formatStorageBytes",
+    "formatTime",
+    "generateGridShuffleSeed",
+    "getPlaylistSegDur",
+    "getVideoAspectRatio",
+    "gridApplyVideoVolume",
+    "gridBindVideoControls",
+    "gridCaptureVideoState",
+    "gridCaptureVisibleVideoStates",
+    "gridCellDblClick",
+    "gridCellTouchTap",
+    "gridChangeVideoSpeed",
+    "gridFinishVideoSeek",
+    "gridKeyHandler",
+    "gridMediaOrderKey",
+    "gridOrderPartitionKey",
+    "gridPlayNav",
+    "gridProgressCommit",
+    "gridProgressInput",
+    "gridRequestVideoPlay",
+    "gridRestoreExpandedCell",
+    "gridSavedOrderStorageKey",
+    "gridSeedOrdersStorageKey",
+    "gridSeekVideo",
+    "gridSetCellExpandUi",
+    "gridSetVideoVolume",
+    "gridShrinkExpandedCell",
+    "gridTagAllCountText",
+    "gridTagCountText",
+    "gridTagCounts",
+    "gridTagJsArg",
+    "gridTagPrefsKey",
+    "gridTagRows",
+    "gridToggleCellExpand",
+    "gridToggleCellExpandCell",
+    "gridToggleVideo",
+    "gridToggleVideoMute",
+    "gridTouchEnd",
+    "gridTouchStart",
+    "gridUpdatePlayAllButton",
+    "gridUpdateVideoControls",
+    "gridVideoCell",
+    "gridVideoFromControl",
+    "gridVideoState",
+    "gridWheelHandler",
+    "handleMediaRuleAction",
+    "handleMediaTagChip",
+    "handleWatchUsageClick",
+    "hideGlobalQueue",
+    "highlightTimelineFrame",
+    "isPortraitResolution",
+    "isPreviewDeleteMarked",
+    "jumpGridPage",
+    "jumpPage",
+    "jumpPicPage",
+    "jumpToVideo",
+    "kenClampNum",
+    "kenFadeSpan",
+    "kenLayerOpacity",
+    "kenPhase",
+    "kenSmooth",
+    "kenburnsDurKey",
+    "kenburnsFmaxKey",
+    "kenburnsFminKey",
+    "kenburnsFratioKey",
+    "kenburnsIdxKey",
+    "kenburnsKeyHandler",
+    "kenburnsNext",
+    "kenburnsNudgeDuration",
+    "kenburnsNudgeStart",
+    "kenburnsNudgeStop",
+    "kenburnsOvKey",
+    "kenburnsProgressCommit",
+    "kenburnsProgressInput",
+    "kenburnsRandomize",
+    "kenburnsSeekTo",
+    "kenburnsTick",
+    "kenburnsUpdateProgress",
+    "loadFavoriteIds",
+    "loadFavorites",
+    "loadFolders",
+    "loadGrid",
+    "loadGridTagPrefs",
+    "loadMediaTagFilter",
+    "loadNovelIndex",
+    "loadNovelPreviewPage",
+    "loadNovels",
+    "loadPageVolumePreference",
+    "loadPictureIndex",
+    "loadPictures",
+    "loadReplacementJobs",
+    "loadRotationPref",
+    "loadSavedGridOrdersForPartition",
+    "loadStorageUsage",
+    "loadTrash",
+    "loadVideoIndex",
+    "loadVideos",
+    "loadWatchFolderUsage",
+    "loadWatchFolders",
+    "login",
+    "logout",
+    "mediaDeleteBtn",
+    "mediaDeleteTarget",
+    "mediaKeyHandler",
+    "mediaProgressCommit",
+    "mediaProgressInput",
+    "mediaStarBtn",
+    "mediaTagCatalogRecord",
+    "mediaTagCatalogs",
+    "mediaTagChips",
+    "mediaTagNode",
+    "mediaTagPath",
+    "mediaTagStorageKey",
+    "mediaTouchEnd",
+    "mediaTouchStart",
+    "mediaWheelHandler",
+    "navMedia",
+    "nextSearchRender",
+    "normalizeFavItem",
+    "normalizeGridOrderSnapshots",
+    "notify",
+    "novelAdjustFont",
+    "novelAdjustLineHeight",
+    "novelApplySettings",
+    "novelCoverHue",
+    "novelJumpChapter",
+    "novelJumpTo",
+    "novelLoadChapter",
+    "novelLoadSettings",
+    "novelOnScroll",
+    "novelPreviewBookList",
+    "novelPreviewNavigate",
+    "novelPreviewNavigateBook",
+    "novelPreviewOpenChapter",
+    "novelPreviewOpenCurrent",
+    "novelPreviewRefreshBookNav",
+    "novelPreviewStatus",
+    "novelRelativeTime",
+    "novelSaveProgress",
+    "novelSaveSettings",
+    "novelScrollRatio",
+    "novelSetTheme",
+    "novelSettingsKey",
+    "novelTocJump",
+    "novelToggleSettings",
+    "novelToggleStar",
+    "novelToggleToc",
+    "novelUpdateTocCurrent",
+    "novelWan",
+    "onPicStripResize",
+    "onPicStripScroll",
+    "onPicStripVScroll",
+    "onPicStripVWheel",
+    "onPicStripWheel",
+    "onPlaylistFullSeg",
+    "onPlaylistPortrait",
+    "onReplaceParamsChanged",
+    "openFavBrowse",
+    "openFavSlideshow",
+    "openFolder",
+    "openGridOrderDatabase",
+    "openGridOrderSaveModal",
+    "openGridTagDrawer",
+    "openKenburns",
+    "openMediaViewer",
+    "openNovelPreview",
+    "openNovelReaderById",
+    "openNovelTagDrawer",
+    "openPicStrip",
+    "openTimeline",
+    "openTrashPreview",
+    "openVideo",
+    "pageVolumeApply",
+    "pageVolumeBind",
+    "pageVolumeKey",
+    "persistSavedGridOrders",
+    "persistSeedGridOrders",
+    "picChangePage",
+    "picStripAutoTick",
+    "picStripHashIds",
+    "picStripKeyHandler",
+    "picStripLayoutKey",
+    "picStripRowA",
+    "picStripRowB",
+    "picStripRows",
+    "picStripScrollKey",
+    "picStripScrollSig",
+    "picStripShuffleKey",
+    "picStripSpeedKey",
+    "picStripVContent",
+    "pictureStarBtnHtml",
+    "planKenburnsFade",
+    "playDuplicateVideo",
+    "playSuper",
+    "playSuperLocal",
+    "playVideo",
+    "playVideoLocal",
+    "playbackViewerIsOpen",
+    "playlistKeyHandler",
+    "playlistNav",
+    "playlistProgressCommit",
+    "playlistProgressInput",
+    "playlistStateKey",
+    "playlistTotalDur",
+    "playlistTouchEnd",
+    "playlistTouchStart",
+    "playlistWheelHandler",
+    "popMediaViewer",
+    "previewDeleteButton",
+    "previewDeleteKey",
+    "previewDeleteLookup",
+    "previewDeleteShortcutButton",
+    "previewPicStripPicture",
+    "processingStageLabel",
+    "psBuildCells",
+    "psBuildRowLayout",
+    "psBuildVerticalLayout",
+    "psCellNode",
+    "psDrawMinimap",
+    "psEsc",
+    "psFolderColor",
+    "psItemLabel",
+    "psLowerBound",
+    "psParseSize",
+    "psSwapWindow",
+    "psTailCellCount",
+    "psUpdateRowWindow",
+    "psUpdateVWindow",
+    "psUpdateWindows",
+    "psVCellNode",
+    "psWindowRange",
+    "pushMediaViewer",
+    "readGridOrdersFromDatabase",
+    "readLegacyGridOrdersFromLocalStorage",
+    "readSavedGridOrder",
+    "readSavedGridOrders",
+    "readSeedGridOrders",
+    "refreshAllStarButtons",
+    "refreshStorageUsage",
+    "register",
+    "reindexGridItems",
+    "removeMediaTagGroup",
+    "removePictureFromLocalState",
+    "removePictureFromStripState",
+    "removeWatchFolder",
+    "renderCleanupStep1",
+    "renderFavorites",
+    "renderFolderTabs",
+    "renderGridCard",
+    "renderGridPage",
+    "renderGridPlayGroup",
+    "renderGridTagDrawer",
+    "renderGridTagTabs",
+    "renderLiveProcessingProgress",
+    "renderMediaItem",
+    "renderMediaRuleTree",
+    "renderNovelPreviewFlow",
+    "renderNovelPreviewList",
+    "renderNovelTagDrawer",
+    "renderNovelTagTabs",
+    "renderNovelToc",
+    "renderNovels",
+    "renderPaginator",
+    "renderPicStrip",
+    "renderPicStripMinimap",
+    "renderPictures",
+    "renderPreviewDeleteExecution",
+    "renderQueueContext",
+    "renderQueueStatus",
+    "renderReplacementProgress",
+    "renderTaskProgress",
+    "renderVideoProcessingProgress",
+    "renderVideos",
+    "renderWatchFolderUsage",
+    "renderWatchFolders",
+    "renderWatchUsageDetail",
+    "renderWatchUsageDetails",
+    "renderWatchUsageDistribution",
+    "renderWatchUsageRows",
+    "reorderPicStripDom",
+    "replaceParams",
+    "replacementActive",
+    "replacementSummary",
+    "reprocessFailedVideos",
+    "reprocessVideo",
+    "requestFavoritesRefresh",
+    "requestPicStripDelete",
+    "requestStageDeleteNovel",
+    "requestStageDeletePicture",
+    "requestStageDeleteVideo",
+    "resolveVideoUrl",
+    "restackKenburns",
+    "restoreGridOrder",
+    "restoreGridPlayGroup",
+    "restoreMediaState",
+    "restorePicStripActive",
+    "restorePicStripOrder",
+    "restorePicStripScroll",
+    "restoreSavedGridOrder",
+    "restoreSelectedGridOrder",
+    "restoreShuffleOrder",
+    "restoreTrash",
+    "resumeBrowse",
+    "rhDebug",
+    "saveBrowsePosition",
+    "saveGridOrder",
+    "saveGridPlayState",
+    "saveGridTagPrefs",
+    "saveMediaState",
+    "saveMixPics",
+    "saveNamedGridOrder",
+    "savePageVolumePreference",
+    "savePicStripScroll",
+    "savePlaylistState",
+    "saveRotationPref",
+    "scanWatchFolder",
+    "scheduleSearch",
+    "scheduleStoragePoll",
+    "scoreGroup",
+    "screenshotClicked",
+    "searchCatalog",
+    "seededGridRandom",
+    "selectAllPageVideos",
+    "selectGridOrder",
+    "selectGridTag",
+    "selectMediaTagGroup",
+    "selectNovelTag",
+    "selectedSavedGridOrder",
+    "setFavFilter",
+    "setFavoriteButtons",
+    "setGlobalQueueExpanded",
+    "setMediaTagGroupMode",
+    "setMediaTagMode",
+    "setNovelPreviewMode",
+    "setPageVolume",
+    "setPicStripScroll",
+    "shouldRotate",
+    "showApp",
+    "showBatchReplaceModal",
+    "showCleanupModal",
+    "showDefaultTasks",
+    "showGlobalQueue",
+    "showKenburnsImage",
+    "showLogin",
+    "showMessage",
+    "showPicStripFavorite",
+    "showReplaceModal",
+    "showReplacementTasks",
+    "showVideoInfo",
+    "showWatchModal",
+    "shuffleGrid",
+    "shufflePicStrip",
+    "sortVideos",
+    "starBtnHtml",
+    "starBtnRaw",
+    "startGridPlay",
+    "startKenburns",
+    "startListSequentialPlay",
+    "startListSequentialSuperPlay",
+    "startPlaylist",
+    "startPreviewDeleteExecution",
+    "startProgressPolling",
+    "startQueuePolling",
+    "startSequentialPlay",
+    "stopReplacementBatch",
+    "switchTab",
+    "syncGlobalQueueVisibility",
+    "syncVideoSelection",
+    "timelineKeyHandler",
+    "timelineSeek",
+    "timelineStep",
+    "toggleFavorite",
+    "toggleFavshow",
+    "toggleGlobalQueue",
+    "toggleGridPlayAll",
+    "toggleGridTagGroup",
+    "toggleKenburns",
+    "toggleMediaLoop",
+    "toggleMediaRotate",
+    "toggleMediaTag",
+    "togglePicStripAuto",
+    "togglePicStripLayout",
+    "togglePicStripVMode",
+    "togglePlaylistLoop",
+    "togglePreviewDelete",
+    "togglePreviewDeleteFromButton",
+    "toggleVideoMultiSelect",
+    "toggleVideoSelect",
+    "toggleWatchFolder",
+    "updateFailedRetryButton",
+    "updateGridOrderControls",
+    "updateGridOrderControlsV2",
+    "updateGridProgress",
+    "updateKenburnsDuration",
+    "updateKenburnsFadeCfg",
+    "updateKenburnsOverlap",
+    "updateMediaProgress",
+    "updateMediaProgressVisibility",
+    "updateMediaRotBtn",
+    "updateMediaTagFilter",
+    "updatePageVolumeControl",
+    "updatePerVideoLabel",
+    "updatePicStripDeleteButton",
+    "updatePicStripSpeedUI",
+    "updatePlaylistProgress",
+    "updatePreviewDeleteUi",
+    "updateStageDeleteModal",
+    "updateTimelineLabel",
+    "updateVideoBatchBar",
+    "watchUsageDate",
+    "watchUsagePercent",
+    "watchUsageTone",
+    "writeGridOrdersToDatabase"
+  ],
+  "script_order": [
+    "static/automation-api.js",
+    "static/platform.js",
+    "static/search-client.js",
+    "static/tag-filter.js",
+    "static/image-preview.js",
+    "static/task-center.js",
+    "static/storage-savings.js",
+    "static/settings.js",
+    "static/favorite-exports.js",
+    "static/config-backups.js",
+    "static/duplicates.js",
+    "static/duplicate-rules.js",
+    "static/app-entry.js"
+  ],
+  "sources": {
+    "static/app-entry.js": "cb8c05326c9df2a3cf4390b8443a2224519abd0c919f9b29b6c7b5c42a6cca75",
+    "static/app.css": "dde746098d3cc1c83c38a1774a2b3b27bdc4144a502dfad09d35751431cf1f47",
+    "static/app.js": "ee2c6339fce60ee109351286aff2042dd95565f26476176a6dd6fc03130b4bb7",
+    "static/automation-api.js": "fffd42fd5ccebc4ef54e8c8a156d3b041e3fec624f21837dfe236131a042250a",
+    "static/config-backups.js": "b735cc033d19dc4b6d1c9892936bb52924e941c2093fd4aa3708476d4d5f1d1e",
+    "static/duplicate-rules.js": "957654ab9ddd09a14b48e236a72bd00c0eb94272fb791d5990a583db34664606",
+    "static/duplicates.js": "cd68503487f98aac915240d3276bfc53392d4678c9f0775dc2aa01ef218301a8",
+    "static/favorite-exports.js": "fce7343b2cb9aae309b15306e17cd69e899836d639ca8ded080c23e8dcf9e4e1",
+    "static/host-media.css": "ae2bb3861ee034b9d80742e71d2d33bf1611e1717e87ca5fa3ec9b3cf84f8899",
+    "static/host-media.js": "591f89c6c17ed935682270f55fa737228f0f7987713e3bc9f6aff72ab691387f",
+    "static/image-preview.js": "30ef7cc29e52e5a34715ec06e9e6575261bb69a0c9457d6d04f4a6613518bfb2",
+    "static/index.html": "82775ec51d939e7dd7b403ad6ddf3c7c05ab135074b006797d4f1e05cb582186",
+    "static/platform.js": "40e4643775e12f5e8e387a60d82ec228b1e0ca3759b619c4f52c0e88038b683d",
+    "static/search-client.js": "ff3fdd0cc04857aa4d891d893e847d2e0d542456ab06fdda2fdca3291230b024",
+    "static/search-core.js": "74fc781c94054e5d6a2a3287a0e8dfb07a6e8f3c6861f70b39ca285f98a5f7e0",
+    "static/search-worker.js": "2b30be628808f91f0ecbb4b73a3840083e519ffe67e2c563e2ba869d3ec32491",
+    "static/settings.js": "25ee521818488fba5362685fa9c54ff035aa655d2b9f77b9f2b917caad69babb",
+    "static/storage-savings.js": "a29109ca345dbc83e337ae715795467fa18032600f9876e30874b033c819b3a9",
+    "static/tag-filter.js": "9394151bc4c2743d960f055286e90ca078d453a0220af42c920befc71047f685",
+    "static/task-center.js": "afd25697961efcc9f984af64cff0fcc4bba666418eefec156f04cc57d3405f64"
+  },
+  "ui_adapters": [
+    "click",
+    "dblclick",
+    "set",
+    "check",
+    "files",
+    "focus",
+    "key",
+    "dispatch",
+    "scroll",
+    "media",
+    "fullscreen"
+  ],
+  "schemas_sha256": "007f2125fafb5d89719ebc3ce647eddfcb09bde9e4b7b7609b01d86b663f35de"
+}

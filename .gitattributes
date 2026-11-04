@@ -1,0 +1,3 @@
+# The RHVideo frontend is a hash-pinned build artifact. Preserve bytes on every OS.
+/src/vendor/rhvideo/frontend/** -text
+/src/rhvideo-shared.html -text

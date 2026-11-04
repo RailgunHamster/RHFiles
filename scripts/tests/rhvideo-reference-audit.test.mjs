@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import fs from 'node:fs';import path from 'node:path';
+import {verify as verifySharedFrontend} from '../rhvideo-frontend.mjs';
 import {mapping,registrations,referenceControls,audit,sourceHash,referenceScriptModules,unmappedReferenceModules} from '../testing/rhvideo-reference-audit.mjs';
 test('every mapped RHVideo control points to implemented enumerable APIs, not documentation-only names',()=>{
   const apis=registrations(),seen=new Set();
@@ -22,8 +23,10 @@ const reference=path.resolve(process.env.RHVIDEO_SOURCE||'../RHVideo');
 test('reference source hashes ignore Windows checkout line endings, not source edits',()=>{
  assert.equal(sourceHash(Buffer.from('const value = "中文";\r\nnext();\r\n')),sourceHash(Buffer.from('const value = "中文";\nnext();\n')));assert.notEqual(sourceHash('next();\n'),sourceHash('changed();\n'));assert.equal(mapping.sourceHash,'sha256-utf8-lf');
 });
-test('the current source inventory matches the pinned actual reference rather than passing against an outdated control list',{skip:!fs.existsSync(path.join(reference,'static/index.html'))},()=>{
- const result=audit(reference);assert.equal(result.actualCommit,result.referenceCommit,'Re-audit changed reference sources before accepting an old inventory');assert.equal(result.referenceControls,185);assert.deepEqual(result.missingControls,[]);assert.deepEqual(result.staleMappings,[]);assert.deepEqual(result.missingAPIs,[]);assert.deepEqual(result.unmappedModules,[],'Every external module must have an explicit inventory, not only inline index.html controls');assert.deepEqual(result.modules.filter(m=>!m.matched),[],'A module edit must not silently reuse an old source inventory');
+test('the canonical shared frontend replaces a separately pinned and manually mapped private UI inventory',()=>{
+ const manifest=verifySharedFrontend();assert(Object.keys(manifest.files).length>=30);
+ for(const module of ['static/app.js','static/platform.js','static/host-media.js','static/bindings.js'])assert(manifest.files[module],module);
+ assert.equal(manifest.hostProtocol,1);assert.equal(manifest.format,'rhvideo-frontend');
 });
 test('reference inventory includes template-generated controls and keyboard handlers, without treating event propagation as a business API',()=>{
   assert.deepEqual(referenceControls('<button onclick="openThing(\'${id}\');event.stopPropagation()"></button><input onkeydown="if(event.key===\'Enter\')jumpPage()">'),['if','jumpPage','openThing']);

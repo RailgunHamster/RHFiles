@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ if(fs.existsSync(source)){
     }
     for(const value of Object.values(node))if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);
   };
-  for(const script of fs.readFileSync(source,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))walk(parse(script[1],{ecmaVersion:'latest'}));
+  for(const script of rhvideoReferenceDocument(source).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))walk(parse(script[1],{ecmaVersion:'latest'}));
 }
 const reference=shapes.size?require(path.join(path.dirname(source),'search-core.js')):null;
 const documents={

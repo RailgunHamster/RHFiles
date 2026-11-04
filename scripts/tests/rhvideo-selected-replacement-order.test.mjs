@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ const keys=['video:a','video:lost','picture:p','video:m','video:ghost','video:z'
 const make=(options={})=>{
   const catalog=new I.Catalog();catalog.set('video',rows);const calls=[],queries=[],selected=new Set(options.keys||keys),nodes=new Map();
   const node=id=>{if(!nodes.has(id)){const content={dataset:{}},heading={textContent:'',focus(){}};nodes.set(id,{open:options.open!==false,close(){this.open=false;},showModal(){this.open=true;},removeAttribute(){},replaceChildren(){},querySelector:selector=>selector==='.wb-content'?content:heading});}return nodes.get(id);};
-  const scope=vm.createContext({epoch:7,confirmationIntent:0,selected,pendingConfirmation:null,detailJob:null,viewer:null,liveRefresh:{enabled:false,configure(){}},reader:{token:0,saveTimer:0,loaded:true,book:{}},images:[],timelineLoadId:0,clearTimeout(){},saveRead:async()=>({saved:false}),native:async()=>({}),$:node,ctx:{openDialog:id=>{node(id).open=true;}},config:()=>({sort:options.sort||'dateDesc',seed:options.seed||0}),ensure:async()=>{await options.ensure?.(scope);return scope.epoch;},
+  const scope=rhvideoReferenceContext({epoch:7,confirmationIntent:0,selected,pendingConfirmation:null,detailJob:null,viewer:null,liveRefresh:{enabled:false,configure(){}},reader:{token:0,saveTimer:0,loaded:true,book:{}},images:[],timelineLoadId:0,clearTimeout(){},saveRead:async()=>({saved:false}),native:async()=>({}),$:node,ctx:{openDialog:id=>{node(id).open=true;}},config:()=>({sort:options.sort||'dateDesc',seed:options.seed||0}),ensure:async()=>{await options.ensure?.(scope);return scope.epoch;},
     query:async args=>{queries.push(args);await options.query?.(scope);return catalog.query(args);},
     invoke:async(name,args)=>{calls.push({name,args});return {name,args};}});
   const run=vm.runInContext('('+source.slice(handler.start,handler.end)+')',scope);
@@ -79,9 +80,9 @@ test('base client dialogs can open before workbench installation',()=>{
   const f=make({open:false});f.scope.workbench=null;f.open('connection-dialog');assert.equal(f.node('connection-dialog').open,true);
 });
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html'),functions=new Map();
-if(fs.existsSync(reference))for(const script of fs.readFileSync(reference,'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(script[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration'&&['applyVideoSort','showBatchReplaceModal'].includes(node.id.name))functions.set(node.id.name,script[1].slice(node.start,node.end));
+if(fs.existsSync(reference))for(const script of rhvideoReferenceDocument(reference).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(script[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration'&&['applyVideoSort','showBatchReplaceModal'].includes(node.id.name))functions.set(node.id.name,script[1].slice(node.start,node.end));
 test('differential: actual reference replacement freezes full-list ordering and keeps missing IDs',{skip:!functions.size},async()=>{
-  const nodes=new Map(),scope=vm.createContext({allVideos:rows,videoBatchIds:new Set(keys.filter(key=>key.startsWith('video:')).map(key=>key.slice(6))),replaceEstimateRequest:0,replaceSubmissionKey:null,replaceReceiptMismatch:false,replaceBatchIds:null,replaceModalVideoId:null,
+  const nodes=new Map(),scope=rhvideoReferenceContext({allVideos:rows,videoBatchIds:new Set(keys.filter(key=>key.startsWith('video:')).map(key=>key.slice(6))),replaceEstimateRequest:0,replaceSubmissionKey:null,replaceReceiptMismatch:false,replaceBatchIds:null,replaceModalVideoId:null,
     doReplaceConfirm(){},document:{getElementById:id=>{if(!nodes.has(id))nodes.set(id,{classList:{add(){},remove(){}},style:{setProperty(){}}});return nodes.get(id);}}});
   assert.equal(functions.size,2);vm.runInContext([...functions.values()].join('\n'),scope);
   for(const [sort,by]of [['dateDesc','date-desc'],['dateAsc','date-asc'],['nameAsc','name'],['sizeDesc','size-desc'],['sizeAsc','size-asc']]){

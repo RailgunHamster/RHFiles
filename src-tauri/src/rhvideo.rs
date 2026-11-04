@@ -1,5 +1,7 @@
 //! RHVideo client, not a bundled server or a direct database connection.
 //! Passwords are used once; bearer tokens never enter the renderer or backups.
+#[path="rhvideo_shared.rs"]
+mod shared_frontend;
 use axum::{
     body::Body,
     extract::Path,
@@ -1018,7 +1020,7 @@ async fn broker() -> Result<u16, String> {
             tauri::async_runtime::spawn(async move {
                 let _ = axum::serve(
                     listener,
-                    Router::new().route("/{cap}/{id}", get(stream_asset)),
+                    Router::new().route("/{cap}/{id}", get(stream_asset)).route("/{cap}/shared/{*path}",get(shared_frontend::stream)),
                 )
                 .await;
             });
@@ -1284,6 +1286,7 @@ fn state() -> Value {
         "restoring":status.as_ref().is_some_and(|v|v.restoring),"loginWarning":status.as_ref().map(|v|v.warning.as_str()).unwrap_or(""),
         "generation":session.as_ref().map(|s|s.generation),"assetRevision":session.as_ref().map(|s|s.asset_revision.load(Ordering::Relaxed))})
 }
+pub(crate) fn shared_session_is_current(generation:u64)->bool{current().is_ok_and(|session|session.generation==generation)}
 fn native_available() -> bool {
     #[cfg(windows)]
     {
@@ -1548,15 +1551,20 @@ async fn native_play(
     }
 }
 #[tauri::command]
-pub async fn rhvideo_open(app: AppHandle) -> Result<Value, String> {
+pub async fn rhvideo_open(app: AppHandle, shared:Option<bool>) -> Result<Value, String> {
+    let use_shared=shared.unwrap_or_else(||std::env::var("RHFILES_RHVIDEO_SHARED_FRONTEND").as_deref()==Ok("1"));
     if let Some(window) = app.get_webview_window("window-rhvideo") {
+        if let Some(requested)=shared {
+            let current=window.url().map_err(|error|error.to_string())?.path().ends_with("/rhvideo-shared.html");
+            if current!=requested{return Err("请先关闭当前 RHVideo 窗口，再切换前端".into());}
+        }
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     } else {
         client_window(
             app.clone(),
             "window-rhvideo",
-            "rhvideo.html",
+            if use_shared{"rhvideo-shared.html"}else{"rhvideo.html"},
             "RHFiles · RHVideo",
             (1200., 820.),
             (800., 550.),
@@ -1690,6 +1698,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
     }
     #[cfg(windows)]crate::rhvideo_player::check_host(&args)?;
     match action.as_str() {
+        "shared.close"=>{if let Some(window)=app.get_webview_window("window-rhvideo"){window.close().map_err(|e|e.to_string())?;}return Ok(json!({"closed":true}));}
         "player.hostContext"=>{current()?;#[cfg(windows)]{return crate::rhvideo_player::library_host_context();}#[cfg(not(windows))]{return Err("此平台未使用桌面原生宿主".into());}}
         "grid.hostContext"=>{current()?;#[cfg(windows)]{return crate::rhvideo_player::library_host_context();}#[cfg(not(windows))]{return Err("此平台未使用桌面同屏宿主".into());}}
         "grid.hostPrepare"=>{let session=current()?;if expected.is_some_and(|g|g!=session.generation){return Err("媒体账户已改变".into());}#[cfg(windows)]{return crate::rhvideo_player::prepare_grid_scope(&args,session.generation);}#[cfg(not(windows))]{return Err("此平台未使用桌面同屏宿主".into());}}
@@ -2112,6 +2121,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
         return Err("媒体账户已改变，操作未执行，请刷新后重新操作".into());
     }
     let preparation=session.play_preparation.capture();
+    if action.starts_with("shared."){return shared_frontend::request(app,&action,args).await;}
     match action.as_str() {
         "catalog.resource" => {
             let kind = kind(&args)?;

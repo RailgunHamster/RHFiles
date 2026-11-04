@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -29,14 +30,14 @@ test('playback pools, source-sized segments and navigation have distinct referen
   assert.throws(()=>P.imageSeek(0,.5));assert.throws(()=>P.imageSeek(2,NaN));
 });
 test('differential: execute RHVideo actual playback functions against the same input',{skip:!fs.existsSync(source)},async()=>{
-  const html=fs.readFileSync(source,'utf8'),wanted=new Set(['collectListOrderVideoIds','collectPlaylistVideoIds','buildPlaylistEntries','isPortraitResolution','playlistNav','playlistProgressCommit','playlistTotalDur','navMedia','popMediaViewer','filterPortraitVideoIds','mediaProgressCommit','startPlaylist']),functions=[];
+  const html=rhvideoReferenceDocument(source),wanted=new Set(['collectListOrderVideoIds','collectPlaylistVideoIds','buildPlaylistEntries','isPortraitResolution','playlistNav','playlistProgressCommit','playlistTotalDur','navMedia','popMediaViewer','filterPortraitVideoIds','mediaProgressCommit','startPlaylist']),functions=[];
   for(const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){
     const body=match[1];if(!body.trim())continue;
     const ast=parse(body,{ecmaVersion:'latest',sourceType:'script'});
     for(const node of ast.body)if(node.type==='FunctionDeclaration'&&wanted.has(node.id.name))functions.push(body.slice(node.start,node.end));
   }
   assert.equal(functions.length,wanted.size,'reference changes require reviewing the behavioral oracle');
-  const context=vm.createContext({allVideos:videos,filteredVideos:videos,gridMedia:frames,token:'fixture',playlistSuper:false,localStorage:{getItem:()=>null},findBrowseIndex:()=>0,API_BASE:'/api/v1',Math:Object.assign(Object.create(Math),{random:()=>.5}),document:{getElementById:()=>({pause(){},removeEventListener(){}})},clearTimeout,playlistCheckEnd:null,playlistSeekTimer:null,playlistEntries:[{start:18.5,duration:3},{start:2,duration:3}],playlistCurrentIdx:0,playlistDoPlayEntry:index=>context.index=index,playlistDesiredOffset:null});
+  const context=rhvideoReferenceContext({allVideos:videos,filteredVideos:videos,gridMedia:frames,token:'fixture',playlistSuper:false,localStorage:{getItem:()=>null},findBrowseIndex:()=>0,API_BASE:'/api/v1',Math:Object.assign(Object.create(Math),{random:()=>.5}),document:{getElementById:()=>({pause(){},removeEventListener(){}})},clearTimeout,playlistCheckEnd:null,playlistSeekTimer:null,playlistEntries:[{start:18.5,duration:3},{start:2,duration:3}],playlistCurrentIdx:0,playlistDoPlayEntry:index=>context.index=index,playlistDesiredOffset:null});
   vm.runInContext(functions.join('\n'),context);
   const plain=v=>JSON.parse(JSON.stringify(v));
   assert.deepEqual(plain(await vm.runInContext("filterPortraitVideoIds(['a','b','c'])",context)),P.entries(['a','b','c'],videos).filter(e=>e.portrait).map(e=>e.id));
@@ -64,11 +65,11 @@ test('differential: execute RHVideo actual playback functions against the same i
 });
 
 test('differential: actual media controls apply to successive sources and one-item parents still pop',{skip:!fs.existsSync(source)},()=>{
-  const html=fs.readFileSync(source,'utf8'),wanted=new Set(['toggleMediaLoop','cycleMediaSpeed','renderMediaItem','navMedia','popMediaViewer']),functions=[];
+  const html=rhvideoReferenceDocument(source),wanted=new Set(['toggleMediaLoop','cycleMediaSpeed','renderMediaItem','navMedia','popMediaViewer']),functions=[];
   for(const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)){const body=match[1];if(!body.trim())continue;for(const node of parse(body,{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&wanted.has(node.id.name))functions.push(body.slice(node.start,node.end));}
   assert.equal(functions.length,wanted.size);
   let video={videoWidth:640,paused:false,addEventListener(){},play:()=>Promise.resolve()},nodes=new Map();
-  const context=vm.createContext({mediaLoopOn:false,mediaSpeed:1,mediaRotated:false,mediaItems:[{type:'video',url:'a',videoId:'a'}],mediaIndex:0,mediaStack:[],gridMedia:[],document:{getElementById:id=>{if(!nodes.has(id))nodes.set(id,{style:{},classList:{remove(){}},querySelector:()=>video});return nodes.get(id);},querySelector:()=>video},mediaStarBtn:()=>'',mediaDeleteBtn:()=>'',updateMediaProgressVisibility(){},updateMediaProgress(){},pageVolumeBind(){},updateMediaRotBtn(){},shouldRotate:()=>false,setTimeout:fn=>fn(),saveMediaState(){},saveBrowsePosition(){}});
+  const context=rhvideoReferenceContext({mediaLoopOn:false,mediaSpeed:1,mediaRotated:false,mediaItems:[{type:'video',url:'a',videoId:'a'}],mediaIndex:0,mediaStack:[],gridMedia:[],document:{getElementById:id=>{if(!nodes.has(id))nodes.set(id,{style:{},classList:{remove(){}},querySelector:()=>video});return nodes.get(id);},querySelector:()=>video},mediaStarBtn:()=>'',mediaDeleteBtn:()=>'',updateMediaProgressVisibility(){},updateMediaProgress(){},pageVolumeBind(){},updateMediaRotBtn(){},shouldRotate:()=>false,setTimeout:fn=>fn(),saveMediaState(){},saveBrowsePosition(){}});
   vm.runInContext(functions.join('\n'),context);vm.runInContext('toggleMediaLoop();cycleMediaSpeed();renderMediaItem()',context);assert.equal(video.loop,true);assert.equal(video.playbackRate,1.5);
   video={videoWidth:640,paused:false,addEventListener(){},play:()=>Promise.resolve()};context.mediaItems=[{type:'video',url:'b',videoId:'b'}];vm.runInContext('renderMediaItem()',context);assert.equal(video.loop,true);assert.equal(video.playbackRate,1.5);
   // The arrow is a stack pop even when modulo navigation stays at index zero.

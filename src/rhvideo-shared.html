@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:*; media-src 'none'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:*; worker-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'">
+<script src="js/automation-core.js"></script>
+<script src="js/rhvideo-shared-host.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>RHVideo - 视频、图片与小说库</title>
+    <link rel="stylesheet" href="vendor/rhvideo/frontend/static/app.css">
+    <link rel="stylesheet" href="vendor/rhvideo/frontend/static/theme.css?v=20261025-replacement-savings-1">
+    <link rel="stylesheet" href="vendor/rhvideo/frontend/static/task-center.css?v=20261029-prioritize-1">
+    <link rel="stylesheet" href="vendor/rhvideo/frontend/static/image-preview.css?v=20261025-favorites-browse-1">
+    <link rel="stylesheet" href="vendor/rhvideo/frontend/static/settings.css?v=20261028-config-backup-1">
+    <link rel="stylesheet" href="vendor/rhvideo/frontend/static/favorite-exports.css?v=20261028-1">
+    <link rel="stylesheet" href="vendor/rhvideo/frontend/static/duplicates.css?v=20261102-multiple-keepers-1">
+</head>
+<body>
+    <div id="toast-container"></div>
+    <div id="global-queue-status" class="global-queue-status hidden" aria-live="polite">
+        <div class="global-queue-row">
+            <span class="dot" id="global-queue-dot"></span>
+            <div class="queue-label" id="global-queue-text">默认压缩：空闲</div>
+            <button type="button" data-rh-click="h0" data-rh-a-h0="[]">详情</button>
+        </div>
+        <div class="global-queue-row">
+            <span class="dot" id="replacement-queue-dot"></span>
+            <div class="queue-label" id="replacement-queue-text">原片替换：空闲</div>
+            <button type="button" data-rh-click="h1" data-rh-a-h1="[]">详情</button>
+            <button type="button" id="replacement-stop-btn" class="hidden" data-rh-click="h2" data-rh-a-h2="[]">停止剩余</button>
+        </div>
+    </div>
+    <button type="button" id="global-queue-reopen" class="global-queue-reopen hidden" data-rh-click="h3" data-rh-a-h3="[]" aria-controls="global-queue-status" aria-expanded="false" title="展开队列"><span>队列</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 10 4-4 4 4"></path></svg></button>
+    <div class="container">
+        <div class="header">
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="4" stroke="currentColor" stroke-width="1.5"/><path d="m10 8 6 4-6 4V8Z" fill="currentColor"/></svg></div>
+                <div><h1>RHVideo</h1><p>视频 · 图片 · 小说</p></div>
+            </div>
+            <div class="header-actions">
+                 <label class="page-volume-control" title="所有视频的统一音量系数">
+                     <span>页面音量</span>
+                     <input type="range" id="page-volume-slider" min="0" max="1" step="0.01" value="0.2" data-rh-input="h4" data-rh-a-h4="[]" aria-label="页面统一音量">
+                     <span class="value" id="page-volume-value">20%</span>
+                 </label>
+                 <button type="button" class="settings-trigger" data-rh-click="h5" data-rh-a-h5="[]" aria-label="设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.6 2.4-2.1 1.2-2.4-.7L2 10l1.8 1.7v2.5L2 16l2.4 4.1 2.4-.7 2.1 1.2.6 2.4h5l.6-2.4 2.1-1.2 2.4.7L22 16l-1.8-1.8v-2.5L22 10l-2.4-4.1-2.4.7-2.1-1.2L14.5 3Z" transform="translate(0 -1) scale(1 .96)"></path><circle cx="12" cy="12" r="3.2"></circle></svg></button>
+                 <button class="btn btn-secondary" data-rh-click="h6" data-rh-a-h6="[]" style="background:rgba(255,255,255,0.2)">退出</button>
+             </div>
+        </div>
+
+        <!-- Login -->
+        <div id="login-section" class="card">
+            <h2>登录</h2>
+            <div id="login-msg" class="alert hidden"></div>
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="username" placeholder="至少3字符">
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="password" placeholder="至少6字符" data-rh-keydown="h7" data-rh-a-h7="[]">
+            </div>
+            <div class="flex">
+                <button class="btn" data-rh-click="h8" data-rh-a-h8="[]">登录</button>
+                <button class="btn btn-secondary" data-rh-click="h9" data-rh-a-h9="[]">注册</button>
+            </div>
+        </div>
+
+        <!-- Main App -->
+        <div id="app" class="hidden">
+
+             <!-- Tabs -->
+            <div class="tabs" aria-label="媒体导航">
+                <button class="tab-btn active" data-rh-click="h10" data-rh-a-h10="[]" id="tab-btn-grid"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>截图浏览</span></button>
+                <button class="tab-btn" data-rh-click="h11" data-rh-a-h11="[]" id="tab-btn-list"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4V8Z"/></svg><span>视频列表</span></button>
+                <button class="tab-btn" data-rh-click="h12" data-rh-a-h12="[]" id="tab-btn-pictures"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg><span>图片</span></button>
+                <button class="tab-btn" data-rh-click="h13" data-rh-a-h13="[]" id="tab-btn-novels"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v16M3 4h5a4 4 0 0 1 4 3 4 4 0 0 1 4-3h5v15h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3V4Z"/></svg><span>小说</span></button>
+                <button class="tab-btn" data-rh-click="h14" data-rh-a-h14="[]" id="tab-btn-favorites"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.8a5.2 5.2 0 0 0-7.4 0L12 6.2l-1.4-1.4a5.2 5.2 0 0 0-7.4 7.4L12 21l8.8-8.8a5.2 5.2 0 0 0 0-7.4Z"/></svg><span>喜爱</span></button>
+                <button class="tab-btn" data-rh-click="h15" data-rh-a-h15="[]" id="tab-btn-duplicates"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="13" height="13" rx="3"/><path d="M9 19v2h12V9h-2M7 9l2 2 4-4"/></svg><span>疑似重复</span></button>
+                <button class="tab-btn" data-rh-click="h16" data-rh-a-h16="[]" id="tab-btn-storage"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>存储</span></button>
+            </div>
+
+            <!-- Tab: Grid -->
+            <div id="tab-grid" data-image-preview="off">
+                <div class="card">
+                    <div class="workspace-section-head"><h2>截图浏览</h2><p>从画面发现你的收藏</p></div>
+                    <div class="grid-controls">
+                        <label>
+                            每视频截图:
+                            <input type="range" id="per-video-slider" min="2" max="30" value="8" data-rh-input="h17" data-rh-a-h17="[]">
+                            <span class="interval-val" id="per-video-value">8</span>张
+                        </label>
+                        <button class="btn" data-rh-click="h18" data-rh-a-h18="[]" style="padding:8px 16px;font-size:0.85em">刷新</button>
+                        <button class="btn btn-secondary" id="cleanup-btn" data-rh-click="h19" data-rh-a-h19="[]" style="padding:8px 16px;font-size:0.85em">清理多余帧</button>
+                        <button class="btn btn-secondary" data-rh-click="h20" data-rh-a-h20="[]" style="padding:8px 16px;font-size:0.85em">随机打乱</button>
+                         <button class="btn btn-secondary" id="grid-save-order-btn" data-rh-click="h21" data-rh-a-h21="[]" style="padding:8px 16px;font-size:0.85em" title="保存当前截图顺序">保存当前顺序</button>
+                         <select id="grid-saved-order-select" class="grid-order-select" data-rh-change="h22" data-rh-a-h22="[]" title="选择要恢复的截图顺序" aria-label="已保存的截图顺序">
+                             <option value="">选择已保存顺序</option>
+                         </select>
+                         <button class="btn btn-secondary" id="grid-restore-saved-order-btn" data-rh-click="h23" data-rh-a-h23="[]" style="padding:8px 16px;font-size:0.85em" title="恢复最近保存的截图顺序" disabled>恢复选中顺序</button>
+                         <button class="btn btn-secondary" id="grid-delete-saved-order-btn" data-rh-click="h24" data-rh-a-h24="[]" style="padding:8px 12px;font-size:0.85em" title="删除选中的保存顺序" disabled>删除选中</button>
+                        <button class="btn btn-secondary" data-rh-click="h25" data-rh-a-h25="[]" style="padding:8px 16px;font-size:0.85em">恢复默认顺序</button>
+                         <span id="grid-order-status" class="grid-order-status" aria-live="polite"></span>
+                        <button class="btn btn-play" id="playlist-btn" data-rh-click="h26" data-rh-a-h26="[]" style="padding:8px 16px;font-size:0.85em;background:#8b5be2;border-color:#8b5be2">▶ 连播</button>
+                        <button class="btn btn-play" id="gridplay-btn" data-rh-click="h27" data-rh-a-h27="[]" style="padding:8px 16px;font-size:0.85em;background:#8b5be2;border-color:#8b5be2">⊞ 网格播放</button>
+                        <button class="btn btn-play" data-rh-click="h28" data-rh-a-h28="[]" style="padding:8px 16px;font-size:0.85em;background:#8b5be2;border-color:#8b5be2">▣ 自动放映</button>
+                        <button class="btn btn-secondary" id="resume-btn" data-rh-click="h29" data-rh-a-h29="[]" style="padding:8px 16px;font-size:0.85em;display:none">继续浏览</button>
+                        <label style="font-size:0.85em;display:flex;align-items:center;gap:4px;cursor:pointer;margin:0">
+                            <input type="checkbox" id="mix-pictures" data-rh-change="h30" data-rh-a-h30="[]" style="margin:0">含图片
+                        </label>
+                        <span class="grid-stats" id="grid-stats"></span>
+                    </div>
+                    <div class="grid-tag-bar" aria-label="截图标签筛选">
+                        <span class="grid-tag-label">标签</span>
+                        <button class="grid-tag-current" id="grid-tag-current" data-rh-click="h31" data-rh-a-h31="[]" title="打开标签管理">全部截图</button>
+                        <button class="btn btn-secondary grid-tag-manage-btn" data-rh-click="h32" data-rh-a-h32="[]">组合筛选</button>
+                        <button class="media-tag-clear hidden" id="grid-tags-clear" data-rh-click="h33" data-rh-a-h33="[]">清除</button>
+                        <div class="media-tag-chips" id="grid-tag-chips" data-rh-click="h34" data-rh-a-h34="[]"></div>
+                    </div>
+                    <div id="folder-tabs" class="folder-tabs hidden"></div>
+                    <div id="screenshot-grid" class="screenshot-grid"></div>
+                    <div class="flex-between" style="margin-top:10px;font-size:0.85em;color:#888">
+                        <button class="btn btn-secondary" id="grid-prev" data-rh-click="h35" data-rh-a-h35="[]" style="padding:4px 12px">上一页</button>
+                        <span id="grid-page-info"></span>
+                        <span>跳至 <input type="number" id="grid-page-jump" data-rh-keydown="h36" data-rh-a-h36="[]" style="width:50px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;font-size:0.85em;text-align:center" min="1"> 页</span>
+                        <button class="btn btn-secondary" id="grid-next" data-rh-click="h37" data-rh-a-h37="[]" style="padding:4px 12px">下一页</button>
+                    </div>
+                    <div id="grid-loading" class="grid-loading hidden">
+                        <span class="spinner"></span> 加载截图中...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: List -->
+            <div id="tab-list" class="hidden">
+                <div class="card">
+                    <div class="upload-row mb-10" style="padding-bottom:12px;border-bottom:1px solid #eee">
+                        <div class="import-area" data-rh-click="h38" data-rh-a-h38="[]">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 9h18M9 15h6m-3-3v6"/></svg>
+                            <p>自动监控设置（添加 / 管理监控文件夹）</p>
+                        </div>
+                    </div>
+                    <div class="queue-bar mb-10 hidden" id="queue-bar">
+                        <div class="list-queue-row">
+                        <span class="dot" id="queue-dot"></span>
+                        <div class="queue-label" id="queue-text">默认压缩：空闲</div>
+                        <div class="queue-actions">
+                        <button type="button" id="list-queue-toggle" class="btn btn-secondary" data-rh-click="h39" data-rh-a-h39="[]" aria-controls="global-queue-status" aria-expanded="false" style="padding:2px 10px;font-size:0.75em">队列浮层</button>
+                         <button id="retry-failed-btn" class="btn btn-secondary" data-rh-click="h40" data-rh-a-h40="[]" style="padding:2px 10px;font-size:0.75em" disabled title="查看失败任务，逐项重试">失败重试</button>
+                          <button class="btn btn-secondary" data-rh-click="h41" data-rh-a-h41="[]" style="padding:2px 10px;font-size:0.75em">任务详情</button>
+                        </div>
+                        <div class="queue-context" id="queue-context"><div class="queue-context-filename">暂无正在处理的视频</div><div class="queue-context-summary"></div></div>
+                        </div>
+                        <div class="list-queue-row">
+                            <span class="dot" id="list-replacement-queue-dot"></span>
+                            <div class="queue-label" id="list-replacement-queue-text">原片替换：空闲</div>
+                            <div class="queue-actions">
+                            <button class="btn btn-secondary" data-rh-click="h42" data-rh-a-h42="[]" style="padding:2px 10px;font-size:0.75em">任务详情</button>
+                            <button id="list-replacement-stop-btn" class="btn btn-secondary hidden" data-rh-click="h43" data-rh-a-h43="[]" style="padding:2px 10px;font-size:0.75em">停止剩余</button>
+                            </div>
+                            <div class="queue-context" id="replacement-queue-context"><div class="queue-context-filename">暂无正在处理的视频</div><div class="queue-context-summary"></div></div>
+                        </div>
+                    </div>
+                    <div class="flex-between mb-10 library-toolbar">
+                        <h2 style="margin:0">视频 <span id="video-count" class="text-sm">(0)</span></h2>
+                        <div class="library-search-group" style="flex:1;display:flex;gap:8px">
+                            <input type="text" id="search-input" placeholder="搜索 · 汉字 / 拼音 / 首字母" data-rh-input="h44" data-rh-a-h44="[]" style="flex:1;padding:4px 10px;border:1px solid #ddd;border-radius:4px;font-size:0.85em;outline:none">
+                            <select id="sort-select" data-rh-change="h45" data-rh-a-h45="[]" style="padding:4px 8px;border:1px solid #ddd;border-radius:4px;font-size:0.8em;background:#fff">
+                                <option value="date-desc">时间↓</option>
+                                <option value="date-asc">时间↑</option>
+                                <option value="size-desc">大小：大→小</option>
+                                <option value="size-asc">大小：小→大</option>
+                                <option value="name">名称</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button class="btn btn-play" id="seqplay-btn" data-rh-click="h46" data-rh-a-h46="[]" style="padding:6px 10px;font-size:0.75em;background:#5274e8;border-color:#5274e8" title="按当前列表顺序（含搜索与排序结果，跨页）从头整段连播，可边看边标记删除，关闭后统一执行">↧ 顺序连播</button>
+                            <button class="btn btn-play" id="seqplay-super-btn" data-rh-click="h47" data-rh-a-h47="[]" style="padding:6px 10px;font-size:0.75em;background:#8b5be2;border-color:#8b5be2" title="同上，但播放超压压缩版本（带宽占用更低）">↧ 顺序连播·超压</button>
+                            <button class="btn btn-secondary" id="multiselect-btn" data-rh-click="h48" data-rh-a-h48="[]" style="padding:6px 10px;font-size:0.75em" title="进入多选后，点击整行选中视频并批量操作">☐ 多选</button>
+                            <button class="btn btn-secondary" data-rh-click="h49" data-rh-a-h49="[]" style="padding:6px 10px;font-size:0.75em">替换任务</button>
+                                                                                    <button class="btn btn-secondary" data-rh-click="h50" data-rh-a-h50="[]" style="padding:6px 10px;font-size:0.75em">暂存区</button>
+                             <button class="btn btn-secondary" data-rh-click="h51" data-rh-a-h51="[]" style="padding:6px 10px;font-size:0.75em" title="删除本地源文件已不存在的图片、视频和小说记录">清理本地已删除文件</button>
+                            <button class="btn btn-secondary" data-rh-click="h52" data-rh-a-h52="[]" style="padding:6px 10px;font-size:0.75em">导出</button>
+                            <button class="btn btn-secondary" data-rh-click="h53" data-rh-a-h53="[]" style="padding:6px 14px;font-size:0.85em">刷新</button>
+                        </div>
+                    </div>
+                    <div class="grid-tag-bar media-tag-bar" aria-label="视频标签筛选">
+                        <span class="grid-tag-label">标签</span>
+                        <button class="grid-tag-current" id="video-tag-current" data-rh-click="h54" data-rh-a-h54="[]">全部视频</button>
+                        <button class="btn btn-secondary grid-tag-manage-btn" data-rh-click="h55" data-rh-a-h55="[]">组合筛选</button>
+                        <button class="media-tag-clear hidden" id="video-tags-clear" data-rh-click="h56" data-rh-a-h56="[]">清除</button>
+                        <div class="media-tag-chips" id="video-tag-chips" data-rh-click="h57" data-rh-a-h57="[]"></div>
+                    </div>
+                    <div class="queue-bar mb-10 hidden" id="video-batch-bar" style="background:#e0f7fa;border-color:#b2ebf2">
+                        <span id="video-batch-count">已选 0 个</span>
+                        <span class="text-sm">点击行内任意位置选中 / 取消选中</span>
+                        <button class="btn btn-secondary" data-rh-click="h58" data-rh-a-h58="[]" style="padding:2px 10px;font-size:0.75em">全选本页</button>
+                        <button class="btn btn-secondary" data-rh-click="h59" data-rh-a-h59="[]" style="padding:2px 10px;font-size:0.75em">清空选择</button>
+                        <button class="btn" id="batch-replace-btn" data-rh-click="h60" data-rh-a-h60="[]" style="padding:2px 10px;font-size:0.75em" disabled>⇄ 批量替换原片</button>
+                        <button class="btn btn-secondary" data-rh-click="h61" data-rh-a-h61="[]" style="padding:2px 10px;font-size:0.75em;margin-left:auto">退出多选</button>
+                    </div>
+                    <div id="videos-loading" class="hidden"><span class="spinner"></span>加载中...</div>
+                    <div id="videos-grid" class="video-grid"></div>
+                    <div id="paginator" class="flex-between" style="margin-top:10px;font-size:0.85em;color:#888;gap:8px">
+                        <button class="btn btn-secondary" data-rh-click="h62" data-rh-a-h62="[]" style="padding:4px 12px">上一页</button>
+                        <span id="page-info"></span>
+                        <span>跳至 <input type="number" id="page-jump" data-rh-keydown="h63" data-rh-a-h63="[]" style="width:50px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;font-size:0.85em;text-align:center" min="1"> 页</span>
+                        <button class="btn btn-secondary" data-rh-click="h64" data-rh-a-h64="[]" style="padding:4px 12px">下一页</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+            <!-- Tab: Pictures -->
+            <div id="tab-pictures" class="hidden" data-image-preview="off">
+                <div class="card">
+                    <div class="upload-row mb-10" style="padding-bottom:12px;border-bottom:1px solid #eee">
+                        <div class="import-area" data-rh-click="h65" data-rh-a-h65="[]">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 9h18M9 15h6m-3-3v6"/></svg>
+                            <p>自动监控设置（添加 / 管理监控文件夹）</p>
+                        </div>
+                    </div>
+                    <div class="flex-between mb-10 library-toolbar">
+                        <h2 style="margin:0">图片 <span id="pic-count" class="text-sm"></span></h2>
+                        <div class="library-search-group" style="flex:1">
+                            <input type="text" id="pic-search" placeholder="搜索 · 汉字 / 拼音 / 首字母" data-rh-input="h66" data-rh-a-h66="[]" style="padding:4px 10px;border:1px solid #ddd;border-radius:4px;font-size:0.85em;outline:none;width:200px">
+                        </div>
+                        <div style="display:flex;gap:8px">
+                            <button class="btn" data-rh-click="h67" data-rh-a-h67="[]" style="padding:6px 14px;font-size:0.85em">连续浏览</button>
+                            <button class="btn btn-play" data-rh-click="h68" data-rh-a-h68="[]" style="padding:6px 14px;font-size:0.85em;background:#8b5be2">自动放映</button>
+                            <button class="btn btn-secondary" data-rh-click="h69" data-rh-a-h69="[]" style="padding:6px 10px;font-size:0.75em">暂存区</button>
+                             <button class="btn btn-secondary" data-rh-click="h70" data-rh-a-h70="[]" style="padding:6px 10px;font-size:0.75em" title="删除本地源文件已不存在的图片、视频和小说记录">清理本地已删除文件</button>
+                            <button class="btn btn-secondary" data-rh-click="h71" data-rh-a-h71="[]" style="padding:6px 14px;font-size:0.85em">刷新</button>
+                        </div>
+                    </div>
+                    <div class="grid-tag-bar media-tag-bar" aria-label="图片标签筛选">
+                        <span class="grid-tag-label">标签</span><button class="grid-tag-current" id="picture-tag-current" data-rh-click="h72" data-rh-a-h72="[]">全部图片</button>
+                        <button class="btn btn-secondary grid-tag-manage-btn" data-rh-click="h73" data-rh-a-h73="[]">组合筛选</button><button class="media-tag-clear hidden" id="picture-tags-clear" data-rh-click="h74" data-rh-a-h74="[]">清除</button>
+                        <div class="media-tag-chips" id="picture-tag-chips" data-rh-click="h75" data-rh-a-h75="[]"></div>
+                    </div>
+                    <div id="pic-loader" class="hidden"><span class="spinner"></span>加载中...</div>
+                    <div id="pic-grid" class="screenshot-grid"></div>
+                    <div class="flex-between" style="margin-top:10px;font-size:0.85em;color:#888">
+                        <button class="btn btn-secondary" id="pic-prev" data-rh-click="h76" data-rh-a-h76="[]" style="padding:4px 12px">上一页</button>
+                        <span id="pic-page-info"></span>
+                        <span>跳至 <input type="number" id="pic-page-jump" data-rh-keydown="h77" data-rh-a-h77="[]" style="width:50px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;font-size:0.85em;text-align:center" min="1"> 页</span>
+                        <button class="btn btn-secondary" id="pic-next" data-rh-click="h78" data-rh-a-h78="[]" style="padding:4px 12px">下一页</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Novels (小说) -->
+            <div id="tab-novels" class="hidden">
+                <div class="card">
+                    <div class="flex-between mb-10 library-toolbar" style="flex-wrap:wrap;gap:10px">
+                        <h2 style="margin:0">小说 <span id="novel-count" class="text-sm"></span></h2>
+                        <input type="text" id="novel-search" placeholder="搜索 · 汉字 / 拼音 / 首字母" data-rh-input="h79" data-rh-a-h79="[]" style="padding:4px 10px;border:1px solid #ddd;border-radius:4px;font-size:0.85em;outline:none;width:180px">
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button class="btn btn-secondary" data-rh-click="h80" data-rh-a-h80="[]" style="padding:6px 10px;font-size:0.75em">暂存区</button>
+                            <button class="btn btn-secondary" data-rh-click="h81" data-rh-a-h81="[]" style="padding:6px 14px;font-size:0.85em">刷新</button>
+                        </div>
+                    </div>
+                    <div class="grid-tag-bar media-tag-bar" aria-label="小说标签筛选">
+                        <span class="grid-tag-label">标签</span><button class="grid-tag-current" id="novel-tag-current" data-rh-click="h82" data-rh-a-h82="[]">全部小说</button>
+                        <button class="btn btn-secondary grid-tag-manage-btn" data-rh-click="h83" data-rh-a-h83="[]">组合筛选</button><button class="media-tag-clear hidden" id="novel-tags-clear" data-rh-click="h84" data-rh-a-h84="[]">清除</button>
+                        <div class="media-tag-chips" id="novel-tag-chips" data-rh-click="h85" data-rh-a-h85="[]"></div>
+                    </div>
+                    <div id="novel-loader" class="hidden"><span class="spinner"></span>加载中...</div>
+                    <div id="novel-grid" class="novel-grid"></div>
+                    <div class="flex-between" style="margin-top:14px;font-size:.85em;color:#888">
+                        <button class="btn btn-secondary" id="novel-prev" data-rh-click="h86" data-rh-a-h86="[]">上一页</button>
+                        <span id="novel-page-info"></span>
+                        <button class="btn btn-secondary" id="novel-next" data-rh-click="h87" data-rh-a-h87="[]">下一页</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Favorites (喜爱) -->
+            <div id="tab-favorites" class="hidden" data-image-preview="off">
+                <div class="card">
+                    <div class="flex-between mb-10 library-toolbar" style="flex-wrap:wrap;gap:10px">
+                        <h2 style="margin:0">喜爱 <span id="fav-count" class="text-sm"></span></h2>
+                        <div class="folder-tabs" style="margin:0">
+                            <span class="folder-tab active" id="fav-filter-all" data-rh-click="h88" data-rh-a-h88="[]">全部</span>
+                            <span class="folder-tab" id="fav-filter-video" data-rh-click="h89" data-rh-a-h89="[]">视频</span>
+                            <span class="folder-tab" id="fav-filter-picture" data-rh-click="h90" data-rh-a-h90="[]">图片</span>
+                            <span class="folder-tab" id="fav-filter-novel" data-rh-click="h91" data-rh-a-h91="[]">小说</span>
+                        </div>
+                        <input type="text" id="fav-search" placeholder="搜索 · 汉字 / 拼音 / 首字母" data-rh-input="h92" data-rh-a-h92="[]" style="padding:4px 10px;border:1px solid #ddd;border-radius:4px;font-size:0.85em;outline:none;width:200px">
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <button class="btn" data-rh-click="h93" data-rh-a-h93="[]" style="padding:6px 14px;font-size:0.85em">连续浏览</button>
+                            <button class="btn btn-play" data-rh-click="h94" data-rh-a-h94="[]" style="padding:6px 14px;font-size:0.85em;background:#8b5be2;border-color:#8b5be2">▶ 自动放映</button>
+                            <button class="btn btn-secondary" id="favorite-export-open" data-rh-click="h95" data-rh-a-h95="[]" style="padding:6px 14px;font-size:0.85em">↓ 打包导出</button>
+                            <button class="btn btn-secondary" data-rh-click="h96" data-rh-a-h96="[]" style="padding:6px 14px;font-size:0.85em">刷新</button>
+                        </div>
+                    </div>
+                    <div class="grid-tag-bar media-tag-bar" aria-label="喜爱标签筛选">
+                        <span class="grid-tag-label">标签</span><button class="grid-tag-current" id="favorite-tag-current" data-rh-click="h97" data-rh-a-h97="[]">全部喜爱</button>
+                        <button class="btn btn-secondary grid-tag-manage-btn" data-rh-click="h98" data-rh-a-h98="[]">组合筛选</button><button class="media-tag-clear hidden" id="favorite-tags-clear" data-rh-click="h99" data-rh-a-h99="[]">清除</button>
+                        <div class="media-tag-chips" id="favorite-tag-chips" data-rh-click="h100" data-rh-a-h100="[]"></div>
+                    </div>
+                    <div id="fav-loader" class="hidden"><span class="spinner"></span>加载中...</div>
+                    <div id="fav-grid" class="screenshot-grid"></div>
+                    <div id="fav-paginator" class="flex-between library-paginator hidden">
+                        <button class="btn btn-secondary" id="fav-prev" data-rh-click="h101" data-rh-a-h101="[]">上一页</button>
+                        <span id="fav-page-info" aria-live="polite"></span>
+                        <button class="btn btn-secondary" id="fav-next" data-rh-click="h102" data-rh-a-h102="[]">下一页</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-duplicates" class="hidden"><div class="card">
+                <div class="dup-hero"><div><span class="dup-eyebrow">VISUAL SIMILARITY</span><h2>疑似重复</h2><p>图片按画面对比，视频结合首帧与时长。每组可保留多项，确认后将未选项放入暂存区。</p></div><div class="dup-hero-actions"><button type="button" class="btn btn-secondary hidden" id="dup-cancel-scan">取消检测</button><button type="button" class="btn" id="dup-scan">开始检测</button></div></div>
+                <div id="dup-scan-state" class="dup-scan-state" aria-live="polite"></div><p id="dup-error" role="status"></p>
+                <div class="dup-toolbar"><div class="dup-kind-tabs" aria-label="重复项类型"><button type="button" data-dup-kind="all" aria-pressed="true">全部</button><button type="button" data-dup-kind="picture" aria-pressed="false">图片</button><button type="button" data-dup-kind="video" aria-pressed="false">视频首帧</button></div><label class="dup-sort-label">排序 <select id="dup-sort" aria-label="重复项排序" title="时间按文件修改时间，缺失时用入库时间；大小按组内文件总大小。"><option value="similarity">相似度优先</option><option value="time_desc">文件时间 · 最新在前</option><option value="time_asc">文件时间 · 最早在前</option><option value="size_desc">文件大小 · 从大到小</option><option value="size_asc">文件大小 · 从小到大</option></select></label><span id="dup-total"></span></div>
+                <div class="dup-rules-entry"><div><strong>按目录规则，批量准备保留方案</strong><p id="dup-rules-summary">收藏与保护目录优先保留，先预览，再确认。</p></div><button type="button" class="btn btn-secondary" id="dup-rules-open">规则批量整理</button></div>
+                <div class="dup-view-toolbar"><div class="dup-kind-tabs" aria-label="重复项加载方式"><button type="button" data-dup-mode="scroll" aria-pressed="true">滚动加载</button><button type="button" data-dup-mode="pages" aria-pressed="false">分页浏览</button></div><button type="button" class="dup-reload" id="dup-reload">重新载入列表</button></div>
+                <aside id="dup-choice-bar" class="dup-choice-bar hidden" aria-label="已保存的保留选择"><div><strong id="dup-choice-count"></strong><p id="dup-choice-description"></p></div><span id="dup-choice-saving" role="status"></span><button type="button" class="btn btn-secondary" id="dup-manage-choices">管理选择</button><button type="button" class="btn" id="dup-confirm-all">统一确认</button></aside>
+                <div id="dup-groups" class="dup-groups"></div><div id="dup-scroll-loader" class="dup-scroll-loader"><span id="dup-scroll-status"></span><button type="button" class="btn btn-secondary" id="dup-load-more">加载更多</button></div><div id="dup-pagination" class="dup-paginator hidden"><button type="button" class="btn btn-secondary" id="dup-prev">上一页</button><span id="dup-page">1 / 1</span><button type="button" class="btn btn-secondary" id="dup-next">下一页</button></div>
+                <section id="dup-review-history" class="dup-review-history hidden"><h3>最近的复核任务</h3><div id="dup-review-jobs"></div></section>
+            </div></div>
+            <!-- Tab: Storage -->
+            <div id="tab-storage" class="hidden">
+                <div class="card">
+                    <div class="flex-between mb-10 library-toolbar" style="flex-wrap:wrap;gap:10px">
+                        <h2 style="margin:0">存储</h2>
+                        <span id="storage-root" class="text-sm" style="color:#64748b;flex:1;margin-left:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                        <button class="btn btn-secondary" data-rh-click="h103" data-rh-a-h103="[]" style="padding:6px 14px;font-size:0.85em">刷新</button>
+                    </div>
+                    <div id="storage-summary" class="storage-summary"></div>
+                    <section class="storage-savings" aria-labelledby="replacement-savings-title">
+                        <div class="storage-savings-head"><div><h3 id="replacement-savings-title">原片替换节省空间</h3><p>全库成功记录累计，包含历史替换，自动更新。</p></div><span id="replacement-savings-state" role="status"></span></div>
+                        <div id="replacement-savings-content" class="storage-savings-content"></div>
+                        <p id="replacement-savings-coverage" class="storage-savings-coverage"></p>
+                        <p class="storage-savings-note">统计原片替换前后的体积差；旧原片备份保留 30 天，实际磁盘占用还包括备份、压缩版和超压版。</p>
+                    </section>
+                    <div id="storage-categories" class="storage-categories"></div>
+                    <section class="storage-detail-section storage-watch-section" aria-labelledby="watch-usage-title">
+                        <div class="watch-usage-head">
+                            <div><h3 id="watch-usage-title">监控文件夹占用</h3><p>包含子文件夹，可展开查看类型分布、子目录占用和大文件；与程序存储分开统计。</p></div>
+                            <div class="watch-usage-actions"><button class="btn btn-secondary" data-rh-click="h104" data-rh-a-h104="[]">管理监控</button><button class="btn btn-secondary" id="watch-usage-refresh" data-rh-click="h105" data-rh-a-h105="[]">重新统计</button></div>
+                        </div>
+                        <div id="watch-usage-summary" class="watch-usage-summary"></div>
+                        <div id="watch-usage-distribution" class="watch-usage-distribution"></div>
+                        <p id="watch-usage-status" class="watch-usage-status" role="status" aria-live="polite"></p>
+                        <div id="watch-usage-list" class="watch-usage-list" data-rh-click="h106" data-rh-a-h106="[]"></div>
+                    </section>
+                    <div class="storage-detail-section">
+                        <h3>最大文件</h3>
+                        <div id="storage-largest-files"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="settings-modal">
+        <section class="modal app-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <header class="settings-header"><div><span class="settings-eyebrow">RHVIDEO</span><h2 id="settings-title">设置</h2></div><span id="settings-connection" role="status">正在连接</span><button type="button" class="settings-close" data-settings-close aria-label="关闭设置">×</button></header>
+            <div class="settings-body"><div class="settings-section-title"><h3>服务管理</h3><p>选择重启时机，未开始的处理队列会保留。</p></div>
+                <div id="settings-restart-status" class="settings-restart-status"></div>
+                <div class="settings-actions"><article class="settings-action"><span class="settings-action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5"></path></svg></span><h4>直接重启</h4><p>立即重启服务。当前正在处理的项目会被中断，尚未开始的任务仍保留在队列中。</p><button type="button" class="btn btn-secondary" data-restart-mode="immediate" disabled>立即重启</button></article>
+                <article class="settings-action is-wait"><span class="settings-action-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg></span><h4>等待全部任务完成后重启</h4><p>默认压缩、原片替换、喜爱导出与重复检测/复核的全部任务（含排队）结束后重启。期间正常处理队列，新加入的任务也会继续等待。</p><button type="button" class="btn btn-secondary" data-restart-mode="all" disabled>安排重启</button></article></div>
+                <p id="settings-error" class="settings-error" role="alert"></p>
+                <div class="settings-section-title bkp-section"><h3>配置备份与恢复</h3><p>保存记录与偏好，换环境后仍可找回喜爱。</p></div>
+                <p class="bkp-description">备份喜爱记录（含文件名、路径等匹配信息）、监控目录、阅读进度和页面偏好为 JSON。恢复前可预览匹配结果，采用合并方式；不包含源文件、密码或登录令牌。</p>
+                <div class="bkp-actions"><button type="button" class="btn btn-secondary" id="config-backup-export">下载配置备份</button><label class="bkp-file"><input type="file" id="config-backup-file" accept=".json,application/json" aria-label="选择配置备份，预览恢复"></label><button type="button" class="btn btn-secondary" id="config-backup-restore" disabled>确认合并恢复</button></div>
+                <div id="config-backup-preview" class="hidden"></div><p id="config-backup-message" role="status"></p>
+            </div><footer class="settings-footer"><span>重启安排由后台独立执行，关闭页面仍然有效。</span><button type="button" class="btn btn-secondary" data-settings-close>完成</button></footer>
+        </section>
+    </div>
+
+    <!-- Novel Reader (小说阅读器) -->
+    <div id="novel-reader" class="hidden">
+        <div class="nv-topbar">
+            <button class="nv-btn" data-rh-click="h107" data-rh-a-h107="[]" title="返回书架 (Esc)">‹ 书架</button>
+            <span class="nv-book-title" id="nv-book-title"></span>
+            <span class="nv-ch-title" id="nv-ch-title"></span>
+            <button class="nv-btn" data-rh-click="h108" data-rh-a-h108="[]" title="喜爱本书"><span id="nv-star"></span></button>
+            <button class="nv-btn" data-rh-click="h109" data-rh-a-h109="[]" title="目录">目录</button>
+            <button class="nv-btn" data-rh-click="h110" data-rh-a-h110="[]" title="阅读设置">Aa</button>
+        </div>
+        <div class="nv-scroll" id="nv-scroll" data-rh-scroll="h111" data-rh-a-h111="[]">
+            <div class="nv-content" id="nv-content">
+                <div class="nv-loading"><span class="spinner"></span> 正在加载...</div>
+            </div>
+        </div>
+        <div class="nv-bottombar">
+            <button class="nv-btn" id="nv-prev-btn" data-rh-click="h112" data-rh-a-h112="[]">上一章</button>
+            <span id="nv-progress-label" style="opacity:0.7"></span>
+            <button class="nv-btn" id="nv-next-btn" data-rh-click="h113" data-rh-a-h113="[]">下一章</button>
+        </div>
+        <div id="novel-toc">
+            <div class="toc-head">
+                <b>目录</b>
+                <input type="text" id="nv-toc-search" placeholder="搜索章节" data-rh-input="h114" data-rh-a-h114="[]">
+                <button class="nv-btn" data-rh-click="h115" data-rh-a-h115="[]">✕</button>
+            </div>
+            <div class="toc-list" id="nv-toc-list"></div>
+        </div>
+        <div id="novel-settings" class="hidden">
+            <div class="set-row">
+                <label>字号</label>
+                <button class="nv-btn" data-rh-click="h116" data-rh-a-h116="[]">A−</button>
+                <span id="nv-fs-label" style="min-width:38px;text-align:center"></span>
+                <button class="nv-btn" data-rh-click="h117" data-rh-a-h117="[]">A+</button>
+            </div>
+            <div class="set-row">
+                <label>行距</label>
+                <button class="nv-btn" data-rh-click="h118" data-rh-a-h118="[]">−</button>
+                <span id="nv-lh-label" style="min-width:38px;text-align:center"></span>
+                <button class="nv-btn" data-rh-click="h119" data-rh-a-h119="[]">+</button>
+            </div>
+            <div class="set-row">
+                <label>主题</label>
+                <span class="nv-swatch" id="nv-theme-day" style="background:#fff;border-color:#ccc" data-rh-click="h120" data-rh-a-h120="[]" title="日间"></span>
+                <span class="nv-swatch" id="nv-theme-sepia" style="background:#f7f0dd" data-rh-click="h121" data-rh-a-h121="[]" title="护眼"></span>
+                <span class="nv-swatch" id="nv-theme-night" style="background:#17181c" data-rh-click="h122" data-rh-a-h122="[]" title="夜间"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Novel Quick Preview (小说速览) -->
+    <div id="novel-preview" class="hidden">
+        <div class="nvp-topbar">
+            <button class="nv-btn" data-rh-click="h123" data-rh-a-h123="[]" title="返回书架 (Esc)">‹ 书架</button>
+            <div class="nvp-heading">
+                <b id="nvp-book-title"></b>
+                <span id="nvp-book-meta"></span>
+            </div>
+            <div class="nvp-book-nav" aria-label="切换小说">
+                <button class="nv-btn nvp-nav-btn" id="nvp-book-prev" data-rh-click="h124" data-rh-a-h124="[]" title="上一本">‹</button>
+                <span class="nvp-book-position" id="nvp-book-position"></span>
+                <button class="nv-btn nvp-nav-btn" id="nvp-book-next" data-rh-click="h125" data-rh-a-h125="[]" title="下一本">›</button>
+            </div>
+            <div class="nvp-mode-group" role="tablist" aria-label="速览模式">
+                <button class="nvp-mode-btn active" id="nvp-mode-list" data-rh-click="h126" data-rh-a-h126="[]">章节列表</button>
+                <button class="nvp-mode-btn" id="nvp-mode-flow" data-rh-click="h127" data-rh-a-h127="[]">连续试读</button>
+            </div>
+            <input class="nvp-search" id="nvp-search" type="search" placeholder="搜索章节或摘录" data-rh-input="h128" data-rh-a-h128="[]" aria-label="搜索章节或摘录">
+        </div>
+        <div class="nvp-body">
+            <section class="nvp-view" id="nvp-list-view">
+                <div class="nvp-list-wrap">
+                    <div class="nvp-list-intro" id="nvp-list-intro"></div>
+                    <div class="nvp-list" id="nvp-list"></div>
+                    <div class="nvp-list-footer" id="nvp-list-footer"></div>
+                </div>
+            </section>
+            <section class="nvp-view hidden" id="nvp-flow-view">
+                <div class="nvp-flow-wrap">
+                    <div class="nvp-flow-shell">
+                        <div class="nvp-flow-kicker" id="nvp-flow-kicker"></div>
+                        <h2 class="nvp-flow-title" id="nvp-flow-title"></h2>
+                        <div class="nvp-flow-excerpt" id="nvp-flow-excerpt"></div>
+                        <div class="nvp-flow-note" id="nvp-flow-note"></div>
+                        <div class="nvp-flow-actions">
+                            <button id="nvp-flow-prev" data-rh-click="h129" data-rh-a-h129="[]">‹ 上一章</button>
+                            <button class="primary" data-rh-click="h130" data-rh-a-h130="[]">打开本章</button>
+                            <button id="nvp-flow-next" data-rh-click="h131" data-rh-a-h131="[]">下一章 ›</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Watch Folders Modal -->
+    <div class="modal-overlay" id="watch-modal" data-rh-click="h132" data-rh-a-h132="[]">
+        <div class="modal">
+            <h3>自动监控文件夹</h3>
+            <p class="text-sm">程序每 60 秒扫描一次所选文件夹（含子文件夹），同时处理三类媒体：视频自动压缩+截图，图片自动 MD5 去重+转 WebP，小说（.txt）自动识别编码+切分章节。源文件只读，不会被修改、移动或复制。</p>
+            <div class="form-group">
+                <label>添加监控目录</label>
+                <input type="text" id="watch-path" placeholder="输入路径: D:\Media" data-rh-keydown="h133" data-rh-a-h133="[]">
+            </div>
+            <div class="modal-actions" style="margin-bottom:12px">
+                <button class="btn btn-secondary" data-rh-click="h134" data-rh-a-h134="[]">关闭</button>
+                <button class="btn" data-rh-click="h135" data-rh-a-h135="[]" id="watch-add-btn">添加并立即扫描</button>
+            </div>
+            <div id="watch-list" class="watch-list"></div>
+        </div>
+    </div>
+
+    <!-- Info Modal -->
+    <div class="modal-overlay" id="info-modal" data-rh-click="h136" data-rh-a-h136="[]">
+        <div class="modal">
+            <h3>视频信息</h3>
+            <div id="info-content" style="font-size:0.85em;line-height:1.8;color:#555"></div>
+            <div class="modal-actions" style="margin-top:16px">
+                <button class="btn btn-secondary" data-rh-click="h137" data-rh-a-h137="[]">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stage source deletion modal (two confirmations) -->
+    <div class="modal-overlay" id="stage-delete-modal">
+        <div class="modal">
+            <h3 id="stage-delete-title">删除源文件并暂存</h3>
+            <p id="stage-delete-msg"></p>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" data-rh-click="h138" data-rh-a-h138="[]">取消</button>
+                <button class="btn btn-danger" id="stage-delete-confirm-btn" data-rh-click="h139" data-rh-a-h139="[]">继续</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trash / recovery modal -->
+    <div class="modal-overlay" id="trash-modal" data-rh-click="h140" data-rh-a-h140="[]">
+        <div class="modal" style="max-width:680px">
+            <h3>暂存区</h3>
+            <p class="text-sm">删除源文件后会在这里保留 30 天，期间可以恢复；暂存项不能提前永久删除。</p>
+            <div id="trash-list" style="max-height:55vh;overflow-y:auto"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" data-rh-click="h141" data-rh-a-h141="[]">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trash preview modal -->
+    <div class="modal-overlay" id="trash-preview-modal" data-rh-click="h142" data-rh-a-h142="[]">
+        <div class="modal" style="max-width:900px;width:min(900px,calc(100vw - 32px))">
+            <h3 id="trash-preview-title">预览</h3>
+            <div id="trash-preview-content" class="trash-preview-modal-content"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" data-rh-click="h143" data-rh-a-h143="[]">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cleanup Missing Modal（两步确认） -->
+    <div class="modal-overlay" id="cleanup-modal">
+        <div class="modal">
+                         <h3>清理本地已删除文件</h3>
+            <div id="cleanup-body" style="font-size:0.85em;line-height:1.7;color:#555;max-height:50vh;overflow-y:auto"></div>
+            <div class="modal-actions" style="margin-top:16px">
+                <button class="btn btn-secondary" id="cleanup-cancel-btn" data-rh-click="h144" data-rh-a-h144="[]">取消</button>
+                <button class="btn btn-danger" id="cleanup-confirm-btn" data-rh-click="h145" data-rh-a-h145="[]" disabled>继续</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Grid tag manager -->
+    <div id="grid-tag-drawer" class="grid-tag-drawer" aria-hidden="true">
+        <div class="grid-tag-drawer-backdrop" data-rh-click="h146" data-rh-a-h146="[]"></div>
+        <aside class="grid-tag-panel" role="dialog" aria-modal="true" aria-labelledby="grid-tag-panel-title">
+            <div class="grid-tag-panel-head">
+                <h3 id="grid-tag-panel-title">标签组合筛选</h3>
+                <span id="grid-tag-panel-count" class="text-sm"></span>
+                <button class="grid-tag-close" data-rh-click="h147" data-rh-a-h147="[]" title="关闭标签管理" aria-label="关闭标签管理">&times;</button>
+            </div>
+            <div class="grid-tag-panel-tools">
+                <div class="media-tag-mode" role="group" aria-label="包含标签的组合方式">
+                    <button type="button" data-tag-mode="and" aria-pressed="true" data-rh-click="h148" data-rh-a-h148="[]">全部满足 <span>AND</span></button>
+                    <button type="button" data-tag-mode="or" aria-pressed="false" data-rh-click="h149" data-rh-a-h149="[]">任一满足 <span>OR</span></button>
+                </div>
+                <p id="media-tag-help" class="media-tag-help"></p>
+                <div class="media-rule-root"><button type="button" id="media-rule-root-select" data-rh-click="h150" data-rh-a-h150="[]">向主条件添加标签</button><button type="button" data-rh-click="h151" data-rh-a-h151="[]">＋ 添加分组</button></div>
+                <div id="media-tag-selected" class="media-tag-chips" data-rh-click="h152" data-rh-a-h152="[]"></div>
+                <div id="media-tag-rule-tree" class="media-rule-tree" data-rh-click="h153" data-rh-a-h153="[]" data-rh-change="h154" data-rh-a-h154="[]"></div>
+                <div id="media-tag-expression" class="media-rule-expression" aria-label="完整标签表达式"></div>
+                <p id="media-tag-target" class="media-tag-target"></p>
+                <p id="media-tag-result" class="media-tag-result" role="status" aria-live="polite"></p>
+                <input id="grid-tag-search" class="grid-tag-search" type="search" placeholder="搜索 · 汉字 / 拼音 / 首字母" data-rh-input="h155" data-rh-a-h155="[]">
+                <div class="grid-tag-sort-row">
+                    <span>排序</span>
+                    <select id="grid-tag-sort" class="grid-tag-sort" data-rh-change="h156" data-rh-a-h156="[]">
+                        <option value="count-desc">使用最多</option>
+                        <option value="name-asc">名称 A-Z</option>
+                        <option value="name-desc">名称 Z-A</option>
+                        <option value="recent">最近使用</option>
+                    </select>
+                </div>
+            </div>
+            <div id="grid-tag-list" class="grid-tag-list"></div>
+            <div class="media-tag-footer"><button class="btn btn-secondary" data-rh-click="h157" data-rh-a-h157="[]">清除筛选</button><button class="btn" data-rh-click="h158" data-rh-a-h158="[]">完成</button></div>
+        </aside>
+    </div>
+
+    <!-- Saved grid order dialog -->
+    <div class="modal-overlay" id="grid-order-save-modal" data-rh-click="h159" data-rh-a-h159="[]">
+        <div class="modal" style="max-width:520px">
+            <h3>保存截图顺序</h3>
+            <p class="text-sm">为当前顺序设置一个名称，之后可从下拉框中选择恢复。</p>
+            <div class="form-group">
+                <label for="grid-order-name">顺序名称</label>
+                <input type="text" id="grid-order-name" maxlength="80" placeholder="例如：周末随机" data-rh-keydown="h160" data-rh-a-h160="[]">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" data-rh-click="h161" data-rh-a-h161="[]">取消</button>
+                <button class="btn" id="grid-order-save-confirm-btn" data-rh-click="h162" data-rh-a-h162="[]">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview delete queue (marks are executed after the viewer closes) -->
+    <div class="modal-overlay" id="preview-delete-modal">
+        <div class="modal">
+            <h3 id="preview-delete-title">执行标记删除</h3>
+            <div id="preview-delete-body" style="font-size:0.85em;line-height:1.7;color:#555;max-height:50vh;overflow-y:auto"></div>
+            <div class="modal-actions" style="margin-top:16px">
+                <button class="btn btn-secondary" id="preview-delete-cancel-btn" data-rh-click="h163" data-rh-a-h163="[]">取消剩余删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Replace source modal (把原片替换成更小的压缩版本) -->
+    <div class="modal-overlay" id="replace-modal">
+        <div class="modal">
+            <h3 id="replace-title">替换原片</h3>
+            <div id="replace-body" style="font-size:0.85em;line-height:1.7;color:#555"></div>
+            <div id="replace-receipt-warning" class="alert alert-error hidden" role="alert">
+                <p id="replace-receipt-message"></p>
+                <button class="btn btn-secondary" data-rh-click="h164" data-rh-a-h164="[]">查看任务详情</button>
+            </div>
+            <div class="modal-actions" style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <button class="btn btn-secondary" data-rh-click="h165" data-rh-a-h165="[]">取消</button>
+                <button class="btn" id="replace-estimate-btn" data-rh-click="h166" data-rh-a-h166="[]">预估大小</button>
+                <button class="btn btn-danger" id="replace-confirm-btn" data-rh-click="h167" data-rh-a-h167="[]" disabled>确认替换</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="replacement-tasks-modal">
+        <div class="modal task-center" role="dialog" aria-modal="true" aria-labelledby="task-center-title">
+            <header class="tc-header">
+                <div><span class="tc-eyebrow">处理中心</span><h3 id="task-center-title">任务详情</h3><p>查看正在执行的步骤、后续流程与处理结果</p></div>
+                <span id="tc-connection" class="tc-connection" role="status">自动更新</span>
+                <button type="button" class="tc-close" data-tc-close aria-label="关闭任务详情">×</button>
+            </header>
+            <div class="tc-kind" role="group" aria-label="任务类型">
+                <button type="button" data-tc-kind="default" aria-pressed="true">默认压缩</button>
+                <button type="button" data-tc-kind="replacement" aria-pressed="false">原片替换</button>
+            </div>
+            <nav class="tc-views" aria-label="任务状态">
+                <button type="button" data-tc-view="running" aria-pressed="true"><span class="tc-view-dot"></span>正在处理<strong>0</strong></button>
+                <button type="button" data-tc-view="queued" aria-pressed="false">等待队列<strong>0</strong></button>
+                <button type="button" data-tc-view="failed" aria-pressed="false">失败<strong>0</strong></button>
+                <button type="button" data-tc-view="history" aria-pressed="false">历史结果<strong>0</strong></button>
+            </nav>
+            <div class="tc-filters">
+                <input id="tc-search" type="search" placeholder="搜索文件名" aria-label="搜索任务文件名" maxlength="200">
+                <div id="tc-history-filters" class="hidden">
+                    <select id="tc-days" aria-label="历史时间范围"><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option><option value="0">全部时间</option></select>
+                    <select id="tc-status" aria-label="处理结果"><option value="all">全部结果</option><option value="succeeded">处理成功</option><option value="issues">失败 / 中断</option><option value="skipped">已跳过</option><option value="cancelled">已取消</option></select>
+                </div>
+            </div>
+            <div id="tc-error" class="tc-error hidden" role="alert"></div>
+            <div id="tc-action-notice" class="tc-action-notice hidden" role="status" aria-live="polite"></div>
+            <div class="tc-workspace">
+                <section class="tc-catalog" aria-label="任务列表">
+                    <div id="tc-list" class="tc-list" aria-busy="false"></div>
+                    <div class="tc-pager"><span id="tc-total"></span><button type="button" id="tc-prev" aria-label="上一页任务">‹</button><span id="tc-page">1 / 1</span><button type="button" id="tc-next" aria-label="下一页任务">›</button></div>
+                </section>
+                <section id="tc-detail" class="tc-detail" aria-label="任务处理流程"></section>
+            </div>
+            <footer class="tc-footer"><span>详细步骤保留 90 天，更早记录归档为摘要；历史结果按页查询</span><button type="button" class="btn btn-secondary" data-tc-close>关闭</button></footer>
+        </div>
+    </div>
+
+    <!-- Playlist Viewer -->
+    <div id="playlist-viewer" class="media-viewer hidden" data-rh-click="h168" data-rh-a-h168="[]">
+        <button class="media-close" data-rh-click="h169" data-rh-a-h169="[]">&times;</button>
+        <button class="media-nav media-nav-prev" data-rh-click="h170" data-rh-a-h170="[]">&#8249;</button>
+        <div id="playlist-content" style="flex:1;display:flex;align-items:center;justify-content:center;min-height:0">
+            <div id="playlist-loading" style="color:#fff;text-align:center">
+                <div class="spinner" style="width:48px;height:48px;border-width:4px;margin:0 auto 16px"></div>
+                <p id="playlist-loading-text">正在生成连播...</p>
+                <p style="font-size:0.8em;color:#999;margin-top:8px" id="playlist-progress"></p>
+            </div>
+            <video id="playlist-video" style="display:none;max-width:100%;max-height:100%;object-fit:contain;border-radius:4px" controls autoplay playsinline muted></video>
+        </div>
+        <button class="media-nav media-nav-next" data-rh-click="h171" data-rh-a-h171="[]">&#8250;</button>
+        <div class="media-bottom" id="playlist-bottom" style="display:none;flex-wrap:wrap;gap:6px">
+            <div class="seq-progress-row seq-progress-anchor" style="order:0">
+                <input type="range" id="playlist-progress-bar" class="seq-progress-bar" min="0" max="1000" value="0" step="1" data-rh-input="h172" data-rh-a-h172="[]" data-rh-change="h173" data-rh-a-h173="[]" aria-label="连播进度" title="拖动快速跳转">
+                <span class="seq-progress-label" id="playlist-progress-label"></span>
+            </div>
+            <span class="counter" id="playlist-counter">连播中</span>
+            <span class="title" id="playlist-title"></span>
+            <div class="actions" style="flex-basis:100%;align-items:center;gap:4px;flex-wrap:wrap">
+                <span id="playlist-favorite-action"></span>
+                <span id="playlist-delete-action"></span>
+                <button id="pl-loop-btn" class="btn-sm" data-rh-click="h174" data-rh-a-h174="[]" title="循环当前段">🔁</button>
+                <button id="pl-speed-btn" class="btn-sm" data-rh-click="h175" data-rh-a-h175="[]" title="播放速度">1x</button>
+                <button class="btn-sm" data-rh-click="h176" data-rh-a-h176="[]" title="减5秒" style="padding:4px 6px;font-size:0.7em;min-width:22px">−</button>
+                <input type="range" id="playlist-seg-dur" min="1" max="300" value="3" step="1" style="width:90px;height:4px;accent-color:#fff" title="每段秒数" data-rh-input="h177" data-rh-a-h177="[]">
+                <button class="btn-sm" data-rh-click="h178" data-rh-a-h178="[]" title="加5秒" style="padding:4px 6px;font-size:0.7em;min-width:22px">+</button>
+                <span style="color:#fff;font-size:0.75em;min-width:46px;text-align:center;cursor:pointer" id="playlist-seg-label" data-rh-click="h179" data-rh-a-h179="[]" title="点击输入秒数">3s</span>
+                <label style="color:rgba(255,255,255,0.7);font-size:0.7em;display:flex;align-items:center;gap:2px;cursor:pointer;margin-left:2px;white-space:nowrap">
+                    <input type="checkbox" id="pl-fullseg" data-rh-change="h180" data-rh-a-h180="[]" style="width:auto;margin:0">全长
+                </label>
+                <label style="color:rgba(255,255,255,0.7);font-size:0.7em;display:flex;align-items:center;gap:2px;cursor:pointer;margin-left:2px;white-space:nowrap" title="只播放竖屏视频（高度大于宽度），勾选后自动切换为全长播放，取消恢复每段秒数">
+                    <input type="checkbox" id="pl-portrait" data-rh-change="h181" data-rh-a-h181="[]" style="width:auto;margin:0">仅竖屏
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Media Viewer -->
+    <div id="media-viewer" class="media-viewer hidden" data-rh-click="h182" data-rh-a-h182="[]">
+        <button class="media-close" data-rh-click="h183" data-rh-a-h183="[]">&times;</button>
+        <button class="media-nav media-nav-prev" data-rh-click="h184" data-rh-a-h184="[]">&#8249;</button>
+        <div id="media-content"></div>
+        <button class="media-nav media-nav-next" data-rh-click="h185" data-rh-a-h185="[]">&#8250;</button>
+        <div class="media-bottom">
+            <div class="seq-progress-row seq-progress-anchor" style="order:0">
+                <input type="range" id="media-progress" class="seq-progress-bar" min="0" max="1000" value="0" step="1" data-rh-input="h186" data-rh-a-h186="[]" data-rh-change="h187" data-rh-a-h187="[]" aria-label="浏览进度" title="拖动快速跳转">
+                <span class="seq-progress-label" id="media-progress-label"></span>
+            </div>
+            <span class="counter" id="media-counter"></span>
+            <span class="title" id="media-title"></span>
+            <div class="actions" id="media-actions"></div>
+            <div class="actions" id="media-controls" style="display:none">
+                <button id="mv-loop-btn" class="btn-sm" data-rh-click="h188" data-rh-a-h188="[]" title="循环播放">🔁</button>
+                <button id="mv-speed-btn" class="btn-sm" data-rh-click="h189" data-rh-a-h189="[]" title="播放速度">1x</button>
+                <button id="mv-rot-btn" class="btn-sm" data-rh-click="h190" data-rh-a-h190="[]" title="旋转视频" style="display:none">↻</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Grid Viewer -->
+    <div id="grid-viewer" class="grid-viewer hidden">
+        <button class="media-close" data-rh-click="h191" data-rh-a-h191="[]">&times;</button>
+        <button class="media-nav media-nav-prev" id="grid-nav-prev" data-rh-click="h192" data-rh-a-h192="[]">&#8249;</button>
+        <div id="grid-content"></div>
+        <button class="media-nav media-nav-next" id="grid-nav-next" data-rh-click="h193" data-rh-a-h193="[]">&#8250;</button>
+        <div class="grid-bottom">
+            <div class="seq-progress-row seq-progress-anchor" style="order:0">
+                <input type="range" id="grid-progress" class="seq-progress-bar" min="0" max="1000" value="0" step="1" data-rh-input="h194" data-rh-a-h194="[]" data-rh-change="h195" data-rh-a-h195="[]" aria-label="网格播放进度" title="拖动快速跳转">
+                <span class="seq-progress-label" id="grid-progress-label"></span>
+            </div>
+            <span class="counter" id="grid-counter"></span>
+            <span class="title" id="grid-title"></span>
+            <span id="grid-favorite-actions" class="actions"></span>
+            <button id="gv-play-all-btn" class="btn-sm" data-rh-click="h196" data-rh-a-h196="[]">⏯ 全部播放</button>
+        </div>
+    </div>
+
+    <!-- Picture Continuous Strip Viewer -->
+    <div id="pic-strip-viewer" class="pic-strip-viewer hidden" data-image-preview="off">
+        <div class="pic-strip-topbar">
+            <span class="title" id="pic-strip-title">连续浏览</span>
+            <span id="pic-strip-count"></span>
+             <span id="pic-strip-selected" class="pic-strip-selected">未选择图片</span>
+            <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:0.8em">
+                速度
+                <input type="range" id="pic-strip-speed" min="0.5" max="10" step="0.1" value="2" data-rh-input="h197" data-rh-a-h197="[]" style="width:110px;accent-color:#5274e8">
+                <span id="pic-strip-speed-label">x2.0</span>
+            </label>
+            <button class="btn-sm" id="pic-strip-auto-btn" data-rh-click="h198" data-rh-a-h198="[]">▶ 自动滚动</button>
+            <button class="btn-sm" id="pic-strip-layout-btn" data-rh-click="h199" data-rh-a-h199="[]">两列</button>
+            <button class="btn-sm" id="pic-strip-vmode-btn" data-rh-click="h200" data-rh-a-h200="[]">竖卷</button>
+            <button class="btn-sm" data-rh-click="h201" data-rh-a-h201="[]">🎲 随机打乱</button>
+            <button class="btn-sm" data-rh-click="h202" data-rh-a-h202="[]">↩ 恢复顺序</button>
+            <button class="btn-sm" id="pic-strip-delete-btn" data-rh-click="h203" data-rh-a-h203="[]" title="先点击要标记删除的图片（Delete）" aria-keyshortcuts="Delete" disabled>标记删除</button>
+            <button class="btn-sm" data-rh-click="h204" data-rh-a-h204="[]">✕ 退出</button>
+        </div>
+        <div id="pic-strip-content" class="pic-strip-content">
+            <div id="pic-strip-row-a" class="pic-strip-row"></div>
+            <div id="pic-strip-row-b" class="pic-strip-row hidden"></div>
+            <div id="pic-strip-vcontent" class="pic-strip-vcontent hidden"></div>
+        </div>
+        <div id="pic-strip-minimap" class="pic-strip-minimap"></div>
+    </div>
+
+    <!-- Video Keyframe Timeline Viewer -->
+    <div id="timeline-viewer" class="timeline-viewer hidden">
+        <div class="pic-strip-topbar">
+            <span class="title" id="timeline-title">时间轴</span>
+            <span id="timeline-time-label"></span>
+            <span id="timeline-favorite-action"></span>
+            <button class="btn-sm" data-rh-click="h205" data-rh-a-h205="[]">✕ 退出</button>
+        </div>
+        <div class="timeline-video-wrap">
+            <video id="timeline-video" controls playsinline></video>
+        </div>
+        <div id="timeline-strip" class="timeline-strip"></div>
+    </div>
+
+    <!-- Favorites Mixed Slideshow (喜爱自动放映) -->
+    <div id="favshow-viewer" class="kenburns-viewer hidden" data-image-preview="off">
+        <div class="pic-strip-topbar">
+            <span class="title" id="favshow-title">喜爱自动放映</span>
+            <span id="favshow-favorite-action"></span>
+            <span id="favshow-counter"></span>
+            <label style="display:flex;align-items:center;gap:4px;margin:0;font-size:0.8em">图片秒
+                <input type="number" id="favshow-img-secs" min="1" max="60" step="1" value="5" data-rh-change="h206" data-rh-a-h206="[]" style="width:48px;padding:1px 4px;border:1px solid #ddd;border-radius:4px;text-align:center">
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;margin:0;font-size:0.8em">视频秒
+                <input type="number" id="favshow-vid-secs" min="1" max="300" step="1" value="15" data-rh-change="h207" data-rh-a-h207="[]" style="width:52px;padding:1px 4px;border:1px solid #ddd;border-radius:4px;text-align:center">
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;margin:0;font-size:0.8em" title="过渡时上一张淡出、下一张同时淡入（重叠交叉过渡）">过渡
+                <input type="number" id="favshow-fade-ms" min="100" max="5000" step="100" value="800" data-rh-change="h208" data-rh-a-h208="[]" style="width:60px;padding:1px 4px;border:1px solid #ddd;border-radius:4px;text-align:center">ms
+            </label>
+            <button class="btn-sm" id="favshow-toggle-btn" data-rh-click="h209" data-rh-a-h209="[]">⏸ 暂停</button>
+            <button class="btn-sm" data-rh-click="h210" data-rh-a-h210="[]">下一个</button>
+            <button class="btn-sm" data-rh-click="h211" data-rh-a-h211="[]">✕ 退出</button>
+        </div>
+        <div id="favshow-stage">
+            <div class="favshow-layer" id="favshow-layer-a"></div>
+            <div class="favshow-layer" id="favshow-layer-b"></div>
+        </div>
+        <div class="seq-progress-row">
+            <input type="range" id="favshow-progress" class="seq-progress-bar" min="0" max="1000" value="0" step="1" data-rh-input="h212" data-rh-a-h212="[]" data-rh-change="h213" data-rh-a-h213="[]" aria-label="放映进度" title="拖动快速跳转">
+            <span class="seq-progress-label" id="favshow-progress-label"></span>
+        </div>
+    </div>
+
+    <!-- Ken Burns Slideshow -->
+    <div id="kenburns-viewer" class="kenburns-viewer hidden" data-image-preview="off">
+        <div class="pic-strip-topbar">
+            <span class="title" id="kenburns-title">自动放映</span>
+            <span id="kenburns-favorite-action"></span>
+            <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:0.8em">
+                停留
+                <button type="button" class="kenburns-nudge" title="-0.1s" data-rh-pointerdown="h214" data-rh-a-h214="[]" data-rh-pointerup="h215" data-rh-a-h215="[]" data-rh-pointerleave="h216" data-rh-a-h216="[]" data-rh-pointercancel="h217" data-rh-a-h217="[]" data-rh-contextmenu="h218" data-rh-a-h218="[]">−</button>
+                <input type="range" id="kenburns-duration" min="0.1" max="30" step="0.1" value="6" data-rh-input="h219" data-rh-a-h219="[]">
+                <button type="button" class="kenburns-nudge" title="+0.1s" data-rh-pointerdown="h220" data-rh-a-h220="[]" data-rh-pointerup="h221" data-rh-a-h221="[]" data-rh-pointerleave="h222" data-rh-a-h222="[]" data-rh-pointercancel="h223" data-rh-a-h223="[]" data-rh-contextmenu="h224" data-rh-a-h224="[]">＋</button>
+                <span id="kenburns-duration-label">6s</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;margin:0;font-size:0.8em;cursor:pointer" title="过渡时上一张淡出、下一张同时淡入，两张图短暂重叠（交叉过渡）">
+                <input type="checkbox" id="kenburns-overlap" checked data-rh-change="h225" data-rh-a-h225="[]" style="margin:0">重叠显示
+            </label>
+            <label id="kenburns-fade-cfg" style="display:flex;align-items:center;gap:4px;margin:0;font-size:0.8em" title="重叠过渡时长 = 停留 × 比例，再限制在 [下限, 上限] 内，且不超过停留时长。停留低于下限时整段停留都是重叠过渡。">
+                <span>重叠</span>
+                <input type="number" id="kenburns-fade-min" min="0.1" max="30" step="0.1" value="1" style="width:50px;padding:1px 4px;border:1px solid #ddd;border-radius:4px;text-align:center" data-rh-change="h226" data-rh-a-h226="[]">–
+                <input type="number" id="kenburns-fade-max" min="0.1" max="60" step="0.1" value="2.5" style="width:50px;padding:1px 4px;border:1px solid #ddd;border-radius:4px;text-align:center" data-rh-change="h227" data-rh-a-h227="[]">s
+                <input type="number" id="kenburns-fade-ratio" min="5" max="90" step="5" value="30" style="width:44px;padding:1px 4px;border:1px solid #ddd;border-radius:4px;text-align:center" data-rh-change="h228" data-rh-a-h228="[]">%
+            </label>
+            <button class="btn-sm" id="kenburns-toggle-btn" data-rh-click="h229" data-rh-a-h229="[]">⏸ 暂停</button>
+            <button class="btn-sm" data-rh-click="h230" data-rh-a-h230="[]">下一张</button>
+            <button class="btn-sm" data-rh-click="h231" data-rh-a-h231="[]">🎲 随机</button>
+            <button class="btn-sm" data-rh-click="h232" data-rh-a-h232="[]">✕ 退出</button>
+        </div>
+        <div id="kenburns-stage">
+            <img id="kenburns-img-a" class="kenburns-layer" alt="">
+            <img id="kenburns-img-b" class="kenburns-layer" alt="">
+            <img id="kenburns-img-c" class="kenburns-layer" alt="">
+        </div>
+        <div class="seq-progress-row">
+            <input type="range" id="kenburns-progress" class="seq-progress-bar" min="0" max="1000" value="0" step="1" data-rh-input="h233" data-rh-a-h233="[]" data-rh-change="h234" data-rh-a-h234="[]" aria-label="放映进度" title="拖动快速跳转">
+            <span class="seq-progress-label" id="kenburns-progress-label"></span>
+        </div>
+    </div>
+
+    <dialog id="app-context-menu" class="app-context-menu hidden" role="menu" aria-label="右键菜单"></dialog>
+
+    <dialog id="dup-review-dialog" aria-labelledby="dup-review-title"><header><h3 id="dup-review-title">复核结果</h3><button type="button" data-dup-review-close aria-label="关闭复核结果">×</button></header><button type="button" id="dup-restore-batch" class="btn btn-secondary hidden">恢复本批暂存文件</button><div id="dup-review-items"></div><div class="dup-paginator"><button type="button" class="btn btn-secondary" id="dup-review-prev">上一页</button><span id="dup-review-page"></span><button type="button" class="btn btn-secondary" id="dup-review-next">下一页</button></div></dialog>
+    <dialog id="dup-rules-dialog" aria-labelledby="dup-rules-title">
+        <header><div><span class="dup-eyebrow">KEEP WITH CONFIDENCE</span><h3 id="dup-rules-title">批量整理疑似重复</h3></div><button type="button" id="dup-rules-close" aria-label="关闭批量整理">×</button></header>
+        <nav class="dup-rule-tabs" aria-label="批量整理功能"><button type="button" data-rule-tab="rules" aria-pressed="true">保留规则</button><button type="button" data-rule-tab="plan">方案预览</button><button type="button" data-rule-tab="ignored">已忽略</button><button type="button" data-rule-tab="restores">批次恢复</button></nav>
+        <p id="dup-rules-error" role="status"></p>
+        <section id="dup-rule-pane-rules"><p class="dup-rule-note">方案覆盖所选类型的全部分组，包含未加载的页面。生成方案不会移动文件；视频会在后台核对 25%、50%、75% 三处画面；时长差异超过 1%、画面不同或无法读取的组会跳过。时间排序按文件修改时间，缺失时使用入库时间；分组大小按组内总大小。</p>
+            <div class="dup-rule-fields"><label class="dup-rule-wide">优先保留目录 <small>一行一个绝对路径，越靠上越优先；包含子目录。同一最高优先目录的多项全部保留。</small><textarea id="dup-rule-priority" rows="4" placeholder="D:\整理完成&#10;D:\待整理"></textarea></label><label>保护目录 <small>命中后始终保留，包含子目录。</small><textarea id="dup-rule-protected" rows="3" placeholder="D:\珍藏"></textarea></label><label>允许清理的目录 <small>可选；填写后，范围外的文件全部保留。</small><textarea id="dup-rule-removal" rows="3" placeholder="D:\下载临时"></textarea></label></div>
+            <div class="dup-rule-protections"><span>✓ 收藏始终保护</span><span>✓ 保留手动选择</span><span>✓ 不确定的组跳过</span><span>✓ 30 天暂存恢复</span></div>
+            <footer class="dup-rule-footer"><label>处理范围 <select id="dup-rule-kind"><option value="all">全部疑似重复</option><option value="picture">仅图片</option><option value="video">仅视频</option></select></label><button type="button" class="btn btn-secondary" id="dup-rule-save">保存规则</button><button type="button" class="btn" id="dup-rule-generate">生成保留方案</button></footer>
+        </section>
+        <section id="dup-rule-pane-plan" class="hidden"><div class="dup-plan-tools"><select id="dup-plan-history" aria-label="选择历史方案"></select><select id="dup-plan-filter" aria-label="方案条目筛选"><option value="all">全部条目</option><option value="ready">推荐处理</option><option value="skipped">已跳过</option></select></div><div id="dup-plan-summary" class="dup-plan-summary"></div><div id="dup-plan-items"></div><div class="dup-paginator"><button type="button" class="btn btn-secondary" id="dup-plan-prev">上一页</button><span id="dup-plan-page"></span><button type="button" class="btn btn-secondary" id="dup-plan-next">下一页</button></div><footer class="dup-rule-footer"><button type="button" class="btn btn-secondary" id="dup-plan-cancel">取消方案</button><button type="button" class="btn" id="dup-plan-confirm">确认整理</button></footer></section>
+        <section id="dup-rule-pane-ignored" class="hidden"><p class="dup-rule-note">已确认不同的组在文件与检测内容未变化时不再出现。可以随时取消忽略。</p><div id="dup-ignore-items"></div><div class="dup-paginator"><button type="button" class="btn btn-secondary" id="dup-ignore-prev">上一页</button><span id="dup-ignore-page"></span><button type="button" class="btn btn-secondary" id="dup-ignore-next">下一页</button></div></section>
+        <section id="dup-rule-pane-restores" class="hidden"><p class="dup-rule-note">在最近复核任务的批量结果中点击“恢复本批暂存文件”。仅恢复该次处理移入暂存区的文件，不覆盖原路径已有文件。</p><div id="dup-restore-history"></div><div id="dup-restore-result"></div><div class="dup-paginator"><button type="button" class="btn btn-secondary" id="dup-restore-prev">上一页</button><span id="dup-restore-page"></span><button type="button" class="btn btn-secondary" id="dup-restore-next">下一页</button></div></section>
+    </dialog>
+    <dialog id="dup-choices-dialog" aria-labelledby="dup-choices-title"><header><div><span class="dup-eyebrow">SAVED CHOICES</span><h3 id="dup-choices-title">已保存的选择</h3><p>跨页、筛选和刷新后保留；统一确认后由后台继续处理。</p></div><button type="button" id="dup-choices-close" aria-label="关闭已保存的选择">×</button></header><div id="dup-choices-items"></div><div class="dup-paginator"><button type="button" class="btn btn-secondary" id="dup-choices-prev">上一页</button><span id="dup-choices-page"></span><button type="button" class="btn btn-secondary" id="dup-choices-next">下一页</button></div></dialog>
+    <dialog id="favorite-export-dialog" aria-labelledby="favorite-export-title">
+        <div class="fe-header"><div><span class="fe-eyebrow">FAVORITE EXPORT</span><h2 id="favorite-export-title">打包喜爱</h2></div><button type="button" data-export-close aria-label="关闭导出">×</button></div>
+        <div class="fe-body">
+            <p class="fe-intro">视频、图片和小说一起打包为 ZIP。优先使用原文件；原文件缺失时回退到现有版本，缺失项和使用版本会写入包内清单。</p>
+            <div class="fe-options">
+                <label><input type="radio" id="favorite-export-filtered" name="favorite-export-scope" value="filtered"><div><strong>当前筛选结果</strong><span id="favorite-export-count">正在读取…</span></div></label>
+                <label><input type="radio" id="favorite-export-all" name="favorite-export-scope" value="all"><div><strong>全部喜爱</strong><span>忽略类型、搜索和标签筛选</span></div></label>
+            </div>
+            <div class="fe-submit-row"><span>后台独立打包 · 临时压缩包保留 24 小时</span><button type="button" class="btn" id="favorite-export-submit" data-export-submit>开始打包 ZIP</button></div>
+            <h3 class="fe-section">最近的导出</h3><div id="favorite-export-jobs"></div><p id="favorite-export-error" role="status"></p>
+        </div>
+    </dialog>
+    <script src="vendor/rhvideo/frontend/static/automation-api.js?v=20261025-operation-api-1"></script>
+    <script src="vendor/rhvideo/frontend/static/bindings.js"></script>
+    <script src="vendor/rhvideo/frontend/static/platform.js"></script>
+    <script src="vendor/rhvideo/frontend/static/search-client.js?v=20261017"></script>
+    <script src="vendor/rhvideo/frontend/static/tag-filter.js?v=20261019-nested-tags-1"></script>
+    <script src="vendor/rhvideo/frontend/static/image-preview.js?v=20261025-strip-zoom-2"></script>
+    <script src="vendor/rhvideo/frontend/static/task-center.js?v=20261029-prioritize-1"></script>
+    <script src="vendor/rhvideo/frontend/static/storage-savings.js?v=20261025-savings-copy-2"></script>
+    <script src="vendor/rhvideo/frontend/static/settings.js?v=20261102-multiple-keepers-1"></script>
+    <script src="vendor/rhvideo/frontend/static/favorite-exports.js?v=20261028-1"></script>
+    <script src="vendor/rhvideo/frontend/static/config-backups.js?v=20261028-1"></script>
+    <script src="vendor/rhvideo/frontend/static/duplicates.js?v=20261103-rules-1"></script>
+    <script src="vendor/rhvideo/frontend/static/duplicate-rules.js?v=20261103-rules-1"></script>
+    <script src="vendor/rhvideo/frontend/static/app-entry.js"></script>
+</body>
+</html>

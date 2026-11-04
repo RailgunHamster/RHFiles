@@ -33,6 +33,8 @@ class RhVideoActivity:AppCompatActivity() {
   private data class ExportBuffer(val ticket:String,val generation:Long,val text:StringBuilder=StringBuilder(),var index:Int=0,var bytes:Int=0,var touched:Long=android.os.SystemClock.elapsedRealtime())
   private var exportBuffer:ExportBuffer?=null
   private var presentation:RhVideoPresentation?=null
+  private var sharedMedia:RhVideoSharedMedia?=null
+  private val sharedAssets by lazy{JSONObject(assets.open("rhvideo/vendor/rhvideo/frontend/manifest.json").bufferedReader().use{it.readText()}).getJSONObject("files").keys().asSequence().map{"/rhvideo/vendor/rhvideo/frontend/$it"}.toSet()+"/rhvideo/vendor/rhvideo/frontend/manifest.json"}
   private var mediaEvents:java.io.Closeable?=null
   private var closeReceipt:RhVideoCloseReceiptStore.Ticket?=null
   private val closeTraceEnabled by lazy{NativeAutomation.enabled(this)}
@@ -84,6 +86,7 @@ class RhVideoActivity:AppCompatActivity() {
     web=WebView(this);root.addView(web,android.widget.FrameLayout.LayoutParams(-1,-1));setContentView(root)
     mediaEvents=client.listen{name,payload->runOnUiThread{if(!isDestroyed)web.evaluateJavascript("window.RHVideoNative?.dispatch(${JSONObject.quote(name)},$payload)",null)}}
     presentation=RhVideoPresentation(this,root,web)
+    sharedMedia=RhVideoSharedMedia(this,root,web)
     // WebView padding does not reliably inset its HTML viewport. Pad its native
     // container so status/navigation bars, cutouts and IME cannot cover content.
     ViewCompat.setOnApplyWindowInsetsListener(root){v,insets->val bars=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime() or WindowInsetsCompat.Type.displayCutout());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);insets}
@@ -92,10 +95,19 @@ class RhVideoActivity:AppCompatActivity() {
       override fun shouldOverrideUrlLoading(view:WebView,request:WebResourceRequest)=true
       override fun shouldInterceptRequest(view:WebView,request:WebResourceRequest):WebResourceResponse {
         val uri=request.url
-        if(request.method!="GET"||uri.scheme!="https"||uri.host!="appassets.androidplatform.net"||uri.port!=-1||uri.query!=null)return denied()
+        if(request.method!="GET"||uri.scheme!="https"||uri.host!="appassets.androidplatform.net"||uri.port!=-1)return denied()
         val path=uri.path?:return denied()
+        if(uri.query!=null&&!(path in sharedAssets&&uri.query!!.matches(Regex("v=[A-Za-z0-9._-]{1,80}"))))return denied()
         return try{
-          if(path.startsWith("/rhvideo-catalog/")&&!request.isForMainFrame){
+          if(path.startsWith("/rhvideo-shared-media/")&&!request.isForMainFrame){
+            val media=client.sharedImage(path.removePrefix("/rhvideo-shared-media/"))
+            WebResourceResponse(media.type.substringBefore(';'),null,200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff"),media.stream)
+          }else if(path in sharedAssets||path in setOf("/rhvideo/rhvideo-shared.html","/rhvideo/js/rhvideo-shared-host.js")){
+            val content=assets.open(path.removePrefix("/"))
+            val mime=when{path.endsWith(".html")->"text/html";path.endsWith(".css")->"text/css";path.endsWith(".json")->"application/json";else->"application/javascript"}
+            val bytes=if(path.endsWith("rhvideo-shared.html"))ByteArrayInputStream(content.bufferedReader().use{it.readText()}.replace("http://127.0.0.1:*","https://appassets.androidplatform.net").toByteArray(Charsets.UTF_8))else content
+            WebResourceResponse(mime,"UTF-8",200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff"),bytes)
+          }else if(path.startsWith("/rhvideo-catalog/")&&!request.isForMainFrame){
             WebResourceResponse("application/json","UTF-8",200,"OK",mapOf("Cache-Control" to "no-store","X-Content-Type-Options" to "nosniff"),client.catalogResource(path.removePrefix("/rhvideo-catalog/")))
           }else if(path.startsWith("/rhvideo-media/")&&!request.isForMainFrame){
             val key=path.removePrefix("/rhvideo-media/");require(key.matches(Regex("[a-f0-9-]{36}")))
@@ -123,7 +135,7 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
     }
     WebViewCompat.addWebMessageListener(web,"RHVideoBridge",setOf("https://appassets.androidplatform.net")){source,message,origin,main,reply->
       if(main&&source===web&&origin.host=="appassets.androidplatform.net"&&!io.isShutdown){
-        val request=try{val raw=message.data?:"";require(raw.length<=256*1024);JSONObject(raw)}catch(_:Exception){null}
+        val request=try{val raw=message.data?:"";require(raw.length<=21*1024*1024);JSONObject(raw)}catch(_:Exception){null}
         if(request?.optString("action")=="close")closeStage("bridge-received")
         if(request!=null)io.execute{
           val response=JSONObject().put("id",request.optInt("id"))
@@ -140,7 +152,12 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
             val contextArgs=JSONObject(args.toString())
             val outgoingGridGeneration=if(action in listOf("connect","logout"))runCatching{client.sessionGeneration()}.getOrNull()else null
             if(action in listOf("connect","logout")){synchronized(this){exportBuffer=null};runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}}
-            val value=when(action){
+            val value=when{
+              action.startsWith("shared.media.")->{
+                val result=java.util.concurrent.CompletableFuture<Any>();runOnUiThread{try{client.validateContext(contextArgs);result.complete((sharedMedia?:error("媒体窗口已关闭")).request(action,args,client.sessionGeneration()))}catch(e:Exception){result.completeExceptionally(e)}};result.get(20,java.util.concurrent.TimeUnit.SECONDS)
+              }
+              action=="shared.save"->{val document=args.getJSONObject("document");RhVideoBackups.document(document);check(exportText==null);exportText=document.toString(2);runOnUiThread{exportDocument.launch("RHVideo-configuration.json")};JSONObject().put("requested",true)}
+              else->when(action){
               "exports.uiReady"->{val open=intent.getBooleanExtra("rhvideoExportPanel",false);intent.removeExtra("rhvideoExportPanel");JSONObject().put("open",open).put("pending",synchronized(this){zipPick?.takeIf{it.optString("process")==client.processIdentity()}?.let{JSONObject(it.toString())}?:JSONObject.NULL})}
               "exports.download"->{
                 if(args.has("path"))client.startZip(args,RhVideoZipDestination.local(applicationContext,args.getString("path")))
@@ -217,24 +234,26 @@ require(path in setOf("/rhvideo/rhvideo.html","/rhvideo/rhvideo-operations.json"
               "export"->{val text=args.getString("text");require(text.length<=256*1024){"请分批导出所选媒体"};check(exportText==null){"已有导出操作"};exportText=text;runOnUiThread{exportDocument.launch("RHVideo-selection.json")};JSONObject().put("requested",true)}
               else->client.request(action,args)
             }
+            }
             response.put("result",value)
-            if(action=="logout")runOnUiThread{if(client.contextMatches(contextArgs,true)){presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}
+            if(action=="logout")runOnUiThread{if(client.contextMatches(contextArgs,true)){sharedMedia?.close();presentation?.close();PlaybackActivity.closeRhVideo()};outgoingGridGeneration?.let{RhVideoGridActivity.dismiss(it)}}
           }catch(e:Exception){response.put("error",e.message?:"RHVideo 操作失败")}
           runOnUiThread{if(!isDestroyed)try{reply.postMessage(response.toString())}catch(_:Exception){}}
         }
       }
     }
     onBackPressedDispatcher.addCallback(this){web.evaluateJavascript("window.RHVideoBack ? (window.RHVideoBack(),true) : false"){result->if(result!="true")finish()}}
-    web.loadUrl("https://appassets.androidplatform.net/rhvideo/rhvideo.html")
+    val entry=if(intent.getBooleanExtra("rhvideoSharedFrontend",false))"rhvideo-shared.html" else "rhvideo.html"
+    web.loadUrl("https://appassets.androidplatform.net/rhvideo/$entry")
   }
   private fun denied()=WebResourceResponse("text/plain","UTF-8",403,"Forbidden",mapOf("Cache-Control" to "no-store"),ByteArrayInputStream(ByteArray(0)))
   override fun onSaveInstanceState(outState:Bundle){synchronized(this){zipPick?.let{outState.putString("rhvideo-zip-pick",it.toString())}};super.onSaveInstanceState(outState)}
   override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra("rhvideoExportPanel",false)&&::web.isInitialized)web.evaluateJavascript("window.RHVideoNative?.dispatch('rhvideo-export-open',{})",null)}
-  override fun onStop(){presentation?.pause();super.onStop()}
+  override fun onStop(){sharedMedia?.pause();presentation?.pause();super.onStop()}
   override fun onDestroy(){
     val receipt=closeReceipt;closeReceipt=null;var cleaned=false;var destroyed=false
     if(receipt!=null)closeStage("destroy-started")
-    try{mediaEvents?.close();mediaEvents=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();if(receipt!=null)closeStage("web-destroy-started");web.destroy();if(receipt!=null)closeStage("web-destroyed")};cleaned=true}
+    try{mediaEvents?.close();mediaEvents=null;sharedMedia?.close();sharedMedia=null;presentation?.close();presentation=null;io.shutdownNow();if(::web.isInitialized){web.stopLoading();if(receipt!=null)closeStage("web-destroy-started");web.destroy();if(receipt!=null)closeStage("web-destroyed")};cleaned=true}
     finally{try{super.onDestroy();destroyed=true;if(receipt!=null)closeStage("super-destroyed")}finally{receipt?.finish(cleaned&&destroyed&&isFinishing&&!isChangingConfigurations);if(receipt!=null)closeStage("receipt-published")}}
   }
 }

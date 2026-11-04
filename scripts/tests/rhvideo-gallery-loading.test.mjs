@@ -1,3 +1,4 @@
+import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve
 async function reached(check){for(let i=0;i<50;i++){if(check())return;await new Promise(setImmediate);}throw Error('Expected operation did not start');}
 function harness(overrides={}){
   const reads=[],sets=[],pending=[],notices=[],dialogs=[];
-  const scope=vm.createContext({epoch:1,galleryImageOwners:new WeakMap(),state:{connected:true,search:''},gallery:{loaded:false,load:0,revision:0,pending:null,scope:'',error:'',count:0,items:[],total:0,offset:0,limit:36,seed:0},preferences:{perVideo:8,mixPictures:false,rule:{}},
+  const scope=rhvideoReferenceContext({epoch:1,galleryImageOwners:new WeakMap(),state:{connected:true,search:''},gallery:{loaded:false,load:0,revision:0,pending:null,scope:'',error:'',count:0,items:[],total:0,offset:0,limit:36,seed:0},preferences:{perVideo:8,mixPictures:false,rule:{}},
     config:()=>scope.preferences,ensure:async()=>scope.epoch,I:{canonical:JSON.stringify},queueMicrotask,$:()=>null,prefs:{},save(){},crypto:{getRandomValues:values=>{values[0]=0x1234abcd;return values;}},
     remote:async(name,args)=>{const p=deferred();reads.push({name,args});pending.push(p);return p.promise;},
     send:async(action,args)=>{if(action==='gallery'){const c=new Index.Catalog(),result=c.setGallery(args.videos,args.pictures);sets.push({kind:'gallery',items:c.collections.get('gallery')});return result;}return {items:[],queue:[],total:0};},
@@ -73,9 +74,9 @@ test('the actual loader chooses a reference-style seed for a first mixed snapsho
 });
 const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html');
 test('reference showApp starts its gallery read without awaiting it or blocking the video list',{skip:!fs.existsSync(reference)},()=>{
-  const html=fs.readFileSync(reference,'utf8');let original;
+  const html=rhvideoReferenceDocument(reference);let original;
   for(const m of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const n of parse(m[1],{ecmaVersion:'latest'}).body)if(n.type==='FunctionDeclaration'&&n.id.name==='showApp')original=m[1].slice(n.start,n.end);
-  assert(original);const calls=[],scope=vm.createContext({token:'fixture',localStorage:{getItem:()=>null},document:{getElementById:()=>({classList:{add(){},remove(){}},checked:false})},
+  assert(original);const calls=[],scope=rhvideoReferenceContext({token:'fixture',localStorage:{getItem:()=>null},document:{getElementById:()=>({classList:{add(){},remove(){}},checked:false})},
     loadGrid:reset=>{calls.push(['gallery',reset]);return new Promise(()=>{});},loadVideos:()=>calls.push(['videos'])});
   for(const name of ['loadPageVolumePreference','loadRotationPref','loadMediaTagFilter','loadGridTagPrefs','renderGridTagTabs','renderNovelTagTabs','loadFolders','loadFavoriteIds','syncGlobalQueueVisibility','startQueuePolling','startProgressPolling','loadReplacementJobs'])scope[name]=()=>{};
   vm.runInContext(original,scope);assert.equal(scope.showApp(),undefined);assert.deepEqual(calls,[['gallery',false],['videos']]);

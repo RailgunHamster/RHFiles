@@ -202,7 +202,7 @@ class MainActivity : TauriActivity() {
     "fileServer.start" -> DeviceFileServer.start(this,args)
     "fileServer.stop" -> DeviceFileServer.stop(this)
     "fileServer.requested" -> onUi{val requested=intent?.action=="com.railgunhamster.rhfiles.FILE_SERVER";if(requested)intent.action=Intent.ACTION_MAIN;requested}
-    "rhvideo.open" -> onUi{startActivity(Intent(this,RhVideoActivity::class.java));JSONObject().put("opened",true)}
+    "rhvideo.open" -> onUi{startActivity(Intent(this,RhVideoActivity::class.java).putExtra("rhvideoSharedFrontend",args.optBoolean("shared",false)));JSONObject().put("opened",true)}
     "groups.connect","groups.diagnostics","groups.cancel","groups.refresh" -> DeviceGroups.run(command.removePrefix("groups."),args,storage.remote)
     "groups.state","groups.create","groups.request","groups.approve","groups.join","groups.export","groups.remove","groups.restore","groups.forget","groups.configure" -> synchronized(settingsLock){require(!sharedConfig.busy){"请等待配置同步完成"};DeviceGroups.run(command.removePrefix("groups."),args,storage.remote).also{if(command in listOf("groups.create","groups.join","groups.restore","groups.configure"))DeviceFileServer.membershipChanged();locationsChanged()}}
     "automation.status" -> onUi{NativeAutomation.status(this)}
