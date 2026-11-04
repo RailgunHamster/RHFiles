@@ -1638,7 +1638,7 @@ function buildProgramOpenMenu(targetPath, options) {
     { label: "Git Bash", icon: "git-bash", action: () => openWithProgramFromMenu(targetPath, "git_bash", "Git Bash") },
     { label: "Verso", icon: "git-bash", action: () => openWithProgramFromMenu(targetPath, "verso", "Verso") },
     { label: "Verso Diff", icon: "code", action: () => openWithProgramFromMenu(targetPath, "verso_changes", "Verso") },
-    { label: "Verso History", icon: "document", action: () => openWithProgramFromMenu(targetPath, "verso_history", "Verso") },
+    { label: "Verso History", icon: "calendar", action: () => openWithProgramFromMenu(targetPath, "verso_history", "Verso") },
   ];
   if (opts.isMedia) {
     items.push({ label: "VLC", icon: "vlc", action: () => openWithProgramFromMenu(targetPath, "vlc", "VLC") });
@@ -1671,7 +1671,8 @@ function showContextMenu(x, y, isRight) {
   const isImage = ["jpg","jpeg","png","gif","bmp","webp","svg","ico","tiff"].includes(ext);
   const isMedia = ["mp4","mkv","avi","mov","wmv","flv","webm","mp3","flac","wav","aac","ogg","m4a","wma","ape","alac"].includes(ext);
   const conversionKind = singleFile && typeof mediaConversionKind === 'function' ? mediaConversionKind(singleFile) : null;
-  const isExe = ext === "exe" || ext === "msi";
+  const isPs1 = ext === "ps1";
+  const isExe = ext === "exe" || ext === "msi" || ext === "bat" || ext === "cmd" || isPs1;
   const isFont = ["ttf","otf","fon"].includes(ext);
   const isCert = ["cer","crt","p7b","pfx","p12"].includes(ext);
   const currentPath = isRight ? G.rp.path : getTab().path;
@@ -1716,7 +1717,7 @@ function showContextMenu(x, y, isRight) {
     { label: isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer'), icon:"explorer", action: () => runContextCommand('open_in_windows_explorer', {path: sel[0].path, isDirectory: isDir}, isDir ? t('ctx.openFolderInExplorer') : t('ctx.openContainingFolderInExplorer')), disabled: !singleSelection },
     { label: String(_lang).startsWith('zh') ? '在 Verso 中定位' : 'Open in Verso', icon:"git-bash", action: () => openInVerso(singleSelection ? sel[0].path : currentPath, 'files'), hidden: IS_MAC || !G.vcsWorkspaceInfo?.kind },
     { label: String(_lang).startsWith('zh') ? '在 Verso 中审阅差异' : 'Review Diff in Verso', icon:"code", action: () => openInVerso(singleSelection ? sel[0].path : currentPath, 'changes'), hidden: IS_MAC || !G.vcsWorkspaceInfo?.kind },
-    { label: String(_lang).startsWith('zh') ? '在 Verso 中查看历史' : 'View History in Verso', icon:"document", action: () => openInVerso(singleSelection ? sel[0].path : currentPath, 'history'), hidden: IS_MAC || !G.vcsWorkspaceInfo?.kind },
+    { label: String(_lang).startsWith('zh') ? '在 Verso 中查看历史' : 'View History in Verso', icon:"calendar", action: () => openInVerso(singleSelection ? sel[0].path : currentPath, 'history'), hidden: IS_MAC || !G.vcsWorkspaceInfo?.kind },
     { label: isFavoriteFolder(singleDir?.path) ? t('favorites.remove') : t('favorites.add'), icon:"star", action: () => toggleFavoriteFolder(singleDir.path, singleDir.name), hidden: !singleDir },
     { label: "-", action: null },
     { label: t('ctx.cut'), icon:"cut", shortcut:"Ctrl+X", action: () => cutSelected(isRight), disabled: !hasSelection },
@@ -1766,6 +1767,8 @@ function showContextMenu(x, y, isRight) {
     { label: "-", action: null, hidden: !extractItems.length },
     ...extractItems,
     { label: "-", action: null, hidden: !extractItems.length },
+    { label: String(_lang).startsWith('zh') ? '使用 PowerShell 运行' : 'Run with PowerShell', icon:"powershell", action: () => openWithProgramFromMenu(sel[0].path, "powershell_script", "PowerShell"), disabled: !singleFile || !isPs1, hidden: IS_MAC || !singleFile || !isPs1 },
+    { label: String(_lang).startsWith('zh') ? '在 PowerShell 中运行（保留窗口）' : 'Run in PowerShell (Keep Open)', icon:"terminal", action: () => openWithProgramFromMenu(sel[0].path, "powershell_keep_open", "PowerShell"), disabled: !singleFile || !isPs1, hidden: IS_MAC || !singleFile || !isPs1 },
     { label: t('ctx.runAsAdmin'), icon:"shield", action: () => runContextCommand("run_as_admin", { path: sel[0].path }, t('ctx.runAsAdmin')), disabled: !singleFile || !isExe, hidden: !singleFile || !isExe },
     { label: t('ctx.installCert'), icon:"certificate", action: () => runContextCommand("install_certificate", { path: sel[0].path }, t('ctx.installCert'), { successMessage: t('notice.certInstalled') }), disabled: !singleFile || !isCert, hidden: !singleFile || !isCert },
     { label: t('ctx.installFont'), icon:"font", action: () => runContextCommand("install_font", { path: sel[0].path }, t('ctx.installFont'), { successMessage: t('notice.fontInstalled') }), disabled: !singleFile || !isFont, hidden: !singleFile || !isFont },

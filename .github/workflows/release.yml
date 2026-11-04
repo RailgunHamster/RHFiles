@@ -103,6 +103,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          ./scripts/check-github-release.ps1 -Version '${{ needs.plan.outputs.version }}'
+          if ((Get-Content $env:GITHUB_OUTPUT -ErrorAction SilentlyContinue) -contains 'published=true') {
+            Write-Host "Release ${{ needs.plan.outputs.version }} is already published and verified; skipping duplicate upload."
+            exit 0
+          }
           .\scripts\publish-windows-github.ps1 `
             -Directory .\dist\velopack-releases `
             -Commit '${{ github.sha }}'

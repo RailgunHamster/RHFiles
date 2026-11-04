@@ -90,7 +90,7 @@
     return pending.promise.finally(()=>{if(connectionPreparation===pending)connectionPreparation=null;});
   }
   async function connectionReady(){const version=connectionEpoch,pending=connectionPreparation;if(pending?.version===version)await pending.promise;if(version!==connectionEpoch)throw Error('媒体账户已改变，旧读取未继续');}
-  function beginConnection(){readEpoch++;clearMediaViews();return ++connectionEpoch;}
+  function beginConnection(){readEpoch++;workbench?.cancelPendingSave?.();clearMediaViews();return ++connectionEpoch;}
   let searchTimer=0,folderLoadId=0,timelineLoadId=0,images=[],imageIndex=0,imageZoom=1;
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const string={type:'string',maxLength:4096},integer={type:'integer',minimum:0,maximum:100000};

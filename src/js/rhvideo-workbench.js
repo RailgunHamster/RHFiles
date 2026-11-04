@@ -3273,7 +3273,12 @@
         gallery.offset=Number.isSafeInteger(saved?.offset)&&saved.offset>=0?Math.floor(saved.offset/gallery.limit)*gallery.limit:0;
         gallery.autoShufflePending=!saved||!Object.hasOwn(saved,"seed");
       }
-      function rememberGalleryBrowser(){prefs.galleryBrowser={version:2,seed:gallery.seed,offset:gallery.offset};}
+      function rememberGalleryBrowser(){
+        const prev=prefs.galleryBrowser;
+        const changed=!prev||prev.version!==2||prev.seed!==gallery.seed||prev.offset!==gallery.offset;
+        prefs.galleryBrowser={version:2,seed:gallery.seed,offset:gallery.offset};
+        return changed&&(gallery.seed!==0||gallery.offset!==0||!!prev);
+      }
       async function resumeGallery(saved){
         const version=await ensure(),intent=++singlePlayIntent,revision=gallery.revision,view=state.view;
         let expectedView=gallery.load;
@@ -3449,8 +3454,7 @@
         const submit=el("button","跳转","button secondary");submit.type="submit";submit.dataset.apiAction="rhvideo.gallery.jump";
         page.disabled=!gallery.total;submit.disabled=page.disabled;
         jump.append(field("跳到页",page),submit);listen(jump,"submit",event=>{event.preventDefault();const pending=invoke("gallery.jump",{page:Number(page.value)});void pending.catch(notice);return pending;},"gallery.jump");navigation.append(jump);root.append(grid,navigation);
-        rememberGalleryBrowser();
-        save();
+        if(rememberGalleryBrowser())save();
         return { total: gallery.total, offset: gallery.offset };
         }catch(error){
           if(display&&!ownsView())return {stale:true};
@@ -4656,7 +4660,13 @@
           sessionCheckedAt = 0;
           resolutions.clear();
         },
+        cancelPendingSave() {
+          clearTimeout(saveTimer);
+          saveTimer = 0;
+        },
         acceptSession(value) {
+          clearTimeout(saveTimer);
+          saveTimer = 0;
           sessionSnapshot = value;
           sessionCheckedAt = performance.now();
         },

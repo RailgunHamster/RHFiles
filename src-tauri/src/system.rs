@@ -1090,6 +1090,12 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
+        "powershell_script" => {
+            rhfiles_core::enumerator::run_powershell_script(std::path::Path::new(&path), false)?;
+        }
+        "powershell_keep_open" => {
+            rhfiles_core::enumerator::run_powershell_script(std::path::Path::new(&path), true)?;
+        }
         "git_bash" => {
             let exe = find_git_bash_executable().ok_or_else(|| {
                 "Git Bash was not found. Install Git for Windows or configure its path in PATH."

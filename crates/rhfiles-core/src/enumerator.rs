@@ -165,11 +165,34 @@ fn shell_execute_working_directory(path: &Path) -> Option<Vec<u16>> {
         })
 }
 
+pub fn run_powershell_script(path: &Path, keep_open: bool) -> Result<(), String> {
+    let exe = if cfg!(target_os = "windows") {
+        "powershell.exe"
+    } else {
+        "pwsh"
+    };
+    let mut cmd = std::process::Command::new(exe);
+    if keep_open {
+        cmd.arg("-NoExit");
+    }
+    cmd.args(["-ExecutionPolicy", "Bypass", "-File"]).arg(path);
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        cmd.current_dir(parent);
+    }
+    cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
 pub fn open_file(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     { return crate::macos::open(path); }
     #[cfg(target_os = "windows")]
     {
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"))
+        {
+            return run_powershell_script(path, false);
+        }
         use std::os::windows::ffi::OsStrExt;
         let wide: Vec<u16> = path
             .as_os_str()
@@ -1058,6 +1081,49 @@ mod tests {
             "relative-path-ok"
         );
     }
+    #[test]
+    fn opening_a_ps1_script_executes_with_bypass_in_its_directory() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after Unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "rhfiles-ps1-working-directory-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("create ps1 test directory");
+        let script = directory.join("probe.ps1");
+        let result = directory.join("ps1-result.txt");
+        std::fs::write(
+            &script,
+            "[IO.File]::WriteAllText((Join-Path $PWD 'ps1-result.txt'), 'ps1-bypass-ok')\r\n",
+        )
+        .expect("write ps1 probe");
+        let observed = (|| -> Result<String, String> {
+            open_file(&script)?;
+            for _ in 0..200 {
+                if result.is_file() {
+                    let content =
+                        std::fs::read_to_string(&result).map_err(|error| error.to_string())?;
+                    if !content.trim().is_empty() {
+                        return Ok(content);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err("ps1 probe did not produce ps1-result.txt within 10 seconds".to_string())
+        })();
+        for _ in 0..20 {
+            if !directory.exists() || std::fs::remove_dir_all(&directory).is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(
+            observed.expect("open and run ps1 probe").trim(),
+            "ps1-bypass-ok"
+        );
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -1175,11 +1241,29 @@ pub fn run_as_admin(path: &Path) -> Result<(), String> {
         use std::os::windows::ffi::OsStrExt;
         use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
-        let wide: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+        let is_ps1 = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"));
+        let wide: Vec<u16> = if is_ps1 {
+            "powershell.exe\0".encode_utf16().collect()
+        } else {
+            path.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        };
+        let params_wide: Option<Vec<u16>> = if is_ps1 {
+            Some(
+                format!(
+                    "-ExecutionPolicy Bypass -File \"{}\"\0",
+                    path.to_string_lossy()
+                )
+                .encode_utf16()
+                .collect(),
+            )
+        } else {
+            None
+        };
         let directory_wide = shell_execute_working_directory(path);
         let verb: Vec<u16> = "runas\0".encode_utf16().collect();
         unsafe {
@@ -1187,6 +1271,9 @@ pub fn run_as_admin(path: &Path) -> Result<(), String> {
             info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
             info.lpVerb = windows::core::PCWSTR(verb.as_ptr());
             info.lpFile = windows::core::PCWSTR(wide.as_ptr());
+            if let Some(params) = params_wide.as_ref() {
+                info.lpParameters = windows::core::PCWSTR(params.as_ptr());
+            }
             if let Some(directory) = directory_wide.as_ref() {
                 info.lpDirectory = windows::core::PCWSTR(directory.as_ptr());
             }
