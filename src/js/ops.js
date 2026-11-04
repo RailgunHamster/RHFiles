@@ -1636,6 +1636,9 @@ function buildProgramOpenMenu(targetPath, options) {
     { label: "CMD", icon: "cmd", action: () => openWithProgramFromMenu(targetPath, "cmd", "CMD") },
     { label: "PowerShell", icon: "powershell", action: () => openWithProgramFromMenu(targetPath, "powershell", "PowerShell") },
     { label: "Git Bash", icon: "git-bash", action: () => openWithProgramFromMenu(targetPath, "git_bash", "Git Bash") },
+    { label: "Verso", icon: "git-bash", action: () => openWithProgramFromMenu(targetPath, "verso", "Verso") },
+    { label: "Verso Diff", icon: "code", action: () => openWithProgramFromMenu(targetPath, "verso_changes", "Verso") },
+    { label: "Verso History", icon: "document", action: () => openWithProgramFromMenu(targetPath, "verso_history", "Verso") },
   ];
   if (opts.isMedia) {
     items.push({ label: "VLC", icon: "vlc", action: () => openWithProgramFromMenu(targetPath, "vlc", "VLC") });

@@ -69,6 +69,12 @@
   register('configSync.run',object(),()=>desktopConfigSync.run(true),'external');
   register('configSync.resolve',object({choice:{type:'string',enum:['local','remote']}},['choice']),p=>desktopConfigSync.resolve(p.choice),'write');
   register('updates.check',object(),()=>checkForUpdates(true),'external');
+  register('vcs.info',object({pane}),p=>{const {state}=target(p.pane);return call('vcs_workspace_info',{path:state.path});},'read');
+  register('vcs.openInVerso',object({path:string,page:{type:'string',enum:['files','changes','history','reservations','updates']},pane}),async p=>{const {state}=target(p.pane);await call('open_in_verso',{path:p.path||state.path,page:p.page||'files'});return {opened:true};},'external');
+  register('vcs.gitPull',object({pane}),async p=>{const {state}=target(p.pane);const output=await call('git_pull',{path:state.path});await refresh();return {output};},'external');
+  register('vcs.gitPush',object({pane}),async p=>{const {state}=target(p.pane);const output=await call('git_push',{path:state.path});return {output};},'external');
+  register('vcs.gitCommit',object({message:string,targets:paths,pane},['message']),async p=>{const {state}=target(p.pane);const output=await call('git_commit',{path:state.path,message:p.message,targets:p.targets||[]});await refresh();return {output};},'write');
+  register('vcs.gitLog',object({limit:{type:'integer',minimum:1,maximum:200},pane}),p=>{const {state}=target(p.pane);return call('git_log',{path:state.path,limit:p.limit??25});},'read');
   register('tasks.list',object(),()=>[..._operationTasks.values()].map(t=>({id:t.id,title:t.title??'',status:t.status,percentage:t.percentage??null,error:t.error??''})),'read');
   const recycleIds={type:'array',items:{type:'string',pattern:'^[0-9a-f]{16}$'},maxItems:50000};
   register('recycle.open',object({pane,newTab:boolean}),p=>{const t=focus(p.pane);return openRecycleBin(t.right,!!p.newTab);});

@@ -259,26 +259,28 @@ fn find_repo_root(path: &Path, marker: &str) -> Option<std::path::PathBuf> {
     }
 }
 
-pub fn get_git_status(path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
-    if find_repo_root(path, ".git").is_none() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let output = hidden_command("git")
-        .args(["status", "--porcelain", "--no-renames"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+pub fn parse_git_porcelain_for_dir(
+    stdout: &str,
+    rel_prefix: &str,
+) -> std::collections::HashMap<String, String> {
     let mut status_map = std::collections::HashMap::new();
     for line in stdout.lines() {
         if line.len() < 4 {
             continue;
         }
         let status = line.get(0..2).unwrap_or("  ").trim();
-        let filepath = &line[3..];
+        let raw_path = line[3..].trim_matches('"').replace('\\', "/");
+        let rel = if rel_prefix.is_empty() {
+            raw_path.as_str()
+        } else if let Some(stripped) = raw_path.strip_prefix(rel_prefix) {
+            stripped
+        } else {
+            continue;
+        };
+        let rel = rel.trim_matches('/');
+        if rel.is_empty() {
+            continue;
+        }
         let status_str = match status {
             "M" | "MM" | "AM" => "modified",
             "A" => "added",
@@ -286,12 +288,126 @@ pub fn get_git_status(path: &Path) -> Result<std::collections::HashMap<String, S
             "??" => "untracked",
             _ => "modified",
         };
-        status_map.insert(filepath.to_string(), status_str.to_string());
+        if let Some((first_dir, _)) = rel.split_once('/') {
+            status_map
+                .entry(first_dir.to_string())
+                .and_modify(|existing| {
+                    if *existing != "modified" && status_str != "untracked" {
+                        *existing = "modified".to_string();
+                    }
+                })
+                .or_insert_with(|| {
+                    if status_str == "untracked" {
+                        "untracked".to_string()
+                    } else {
+                        "modified".to_string()
+                    }
+                });
+        } else {
+            status_map.insert(rel.to_string(), status_str.to_string());
+        }
+    }
+    status_map
+}
+fn compute_repo_rel_prefix(path: &Path, repo_root: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .ok()
+        .map(|p| {
+            let s = p.to_string_lossy().replace('\\', "/");
+            let trimmed = s.trim_matches('/');
+            if trimmed.is_empty() {
+                String::new()
+            } else {
+                format!("{trimmed}/")
+            }
+        })
+        .unwrap_or_default()
+}
+pub fn get_git_status(path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
+    if let Some(repo_root) = find_repo_root(path, ".git") {
+        let output = hidden_command("git")
+            .args(["-c", "core.quotepath=false", "status", "--porcelain", "--no-renames", "-uall", "--", "."])
+            .current_dir(path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let rel_prefix = compute_repo_rel_prefix(path, &repo_root);
+        return Ok(parse_git_porcelain_for_dir(&stdout, &rel_prefix));
+    }
+    if let Some(verso_root) = find_repo_root(path, ".verso") {
+        return get_verso_status_for_dir(path, &verso_root);
+    }
+    Ok(std::collections::HashMap::new())
+}
+fn get_verso_status_for_dir(
+    path: &Path,
+    verso_root: &Path,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let Some(install) = find_verso_installation() else {
+        return Ok(std::collections::HashMap::new());
+    };
+    if !Path::new(&install.host).exists() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let req = serde_json::json!({
+        "protocol": 1,
+        "command": "status",
+        "workspace": verso_root.to_string_lossy(),
+        "refreshTeam": false
+    });
+    let mut child = hidden_command(&install.host)
+        .arg("--line")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = writeln!(stdin, "{}", req);
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let reply: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    let Some(files) = reply.get("data").and_then(|d| d.get("files")).and_then(|f| f.as_array()) else {
+        return Ok(std::collections::HashMap::new());
+    };
+    let rel_prefix = compute_repo_rel_prefix(path, verso_root);
+    let mut status_map = std::collections::HashMap::new();
+    for item in files {
+        let Some(fp) = item.get("path").and_then(|p| p.as_str()) else { continue };
+        let Some(st) = item.get("status").and_then(|s| s.as_str()) else { continue };
+        let mapped = match st {
+            "已修改" | "团队有更新" => "modified",
+            "新增" => "added",
+            "已删除" => "deleted",
+            _ => continue,
+        };
+        let rel = if rel_prefix.is_empty() {
+            fp
+        } else if let Some(stripped) = fp.strip_prefix(&rel_prefix) {
+            stripped
+        } else {
+            continue;
+        };
+        let rel = rel.trim_matches('/');
+        if rel.is_empty() {
+            continue;
+        }
+        if let Some((first_dir, _)) = rel.split_once('/') {
+            status_map.entry(first_dir.to_string()).or_insert_with(|| "modified".to_string());
+        } else {
+            status_map.insert(rel.to_string(), mapped.to_string());
+        }
     }
     Ok(status_map)
-}
-
-pub fn get_drives() -> Result<Vec<DriveInfo>, String> {
+}pub fn get_drives() -> Result<Vec<DriveInfo>, String> {
     #[cfg(target_os = "macos")]
     { return serde_json::from_value(crate::macos::request(serde_json::json!({"action":"drives"}))?).map_err(|e| e.to_string()); }
     let mut drives = Vec::new();
@@ -1220,8 +1336,270 @@ pub fn git_init(path: &Path) -> Result<(), String> {
         Ok(())
     }
 }
-
-// === SVN ===
+pub fn git_pull(path: &Path) -> Result<String, String> {
+    let output = hidden_command("git")
+        .args(["pull", "--no-rebase"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    } else {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+}
+pub fn git_push(path: &Path) -> Result<String, String> {
+    let output = hidden_command("git")
+        .args(["push"])
+        .current_dir(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    } else {
+        let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(if out.is_empty() { err } else { out })
+    }
+}
+pub fn git_commit(path: &Path, message: &str, targets: Vec<String>) -> Result<String, String> {
+    if targets.is_empty() {
+        let add_out = hidden_command("git")
+            .args(["add", "-A"])
+            .current_dir(path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !add_out.status.success() {
+            return Err(String::from_utf8_lossy(&add_out.stderr).trim().to_string());
+        }
+        let commit_out = hidden_command("git")
+            .args(["commit", "-m", message])
+            .current_dir(path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !commit_out.status.success() {
+            return Err(String::from_utf8_lossy(&commit_out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&commit_out.stdout).trim().to_string())
+    } else {
+        let mut add_args = vec!["add".to_string(), "--".to_string()];
+        add_args.extend(targets.iter().cloned());
+        let add_out = hidden_command("git")
+            .args(&add_args)
+            .current_dir(path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !add_out.status.success() {
+            return Err(String::from_utf8_lossy(&add_out.stderr).trim().to_string());
+        }
+        let mut commit_args = vec![
+            "commit".to_string(),
+            "-m".to_string(),
+            message.to_string(),
+            "--".to_string(),
+        ];
+        commit_args.extend(targets);
+        let commit_out = hidden_command("git")
+            .args(&commit_args)
+            .current_dir(path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !commit_out.status.success() {
+            return Err(String::from_utf8_lossy(&commit_out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&commit_out.stdout).trim().to_string())
+    }
+}
+pub fn git_revert(path: &Path, targets: Vec<String>) -> Result<(), String> {
+    let mut checkout_args = vec!["checkout".to_string(), "HEAD".to_string(), "--".to_string()];
+    if targets.is_empty() {
+        checkout_args.push(".".to_string());
+    } else {
+        checkout_args.extend(targets.iter().cloned());
+    }
+    let _ = hidden_command("git")
+        .args(&checkout_args)
+        .current_dir(path)
+        .output();
+    if !targets.is_empty() {
+        let mut clean_args = vec!["clean".to_string(), "-fd".to_string(), "--".to_string()];
+        clean_args.extend(targets);
+        let _ = hidden_command("git")
+            .args(&clean_args)
+            .current_dir(path)
+            .output();
+    }
+    Ok(())
+}
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct GitLogEntry {
+    pub revision: String,
+    pub author: String,
+    pub date: String,
+    pub message: String,
+}
+pub fn get_git_log(path: &Path, limit: u32) -> Result<Vec<GitLogEntry>, String> {
+    let output = hidden_command("git")
+        .args([
+            "log",
+            &format!("-n{}", limit.max(1)),
+            "--date=format:%Y-%m-%d %H:%M",
+            "--format=%h%x00%an%x00%ad%x00%s",
+        ])
+        .current_dir(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(4, '\0').collect();
+            if parts.len() == 4 {
+                Some(GitLogEntry {
+                    revision: parts[0].to_string(),
+                    author: parts[1].to_string(),
+                    date: parts[2].to_string(),
+                    message: parts[3].to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct VersoInstallation {
+    pub protocol: i32,
+    pub version: String,
+    pub desktop: String,
+    pub host: String,
+}
+pub fn find_verso_installation() -> Option<VersoInstallation> {
+    if let Ok(custom) = std::env::var("VERSO_INSTALLATION_FILE") {
+        if let Ok(bytes) = std::fs::read(&custom) {
+            if let Ok(inst) = serde_json::from_slice::<VersoInstallation>(&bytes) {
+                if Path::new(&inst.desktop).exists() {
+                    return Some(inst);
+                }
+            }
+        }
+    }
+    let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+    let reg_path = Path::new(&local_app_data)
+        .join("Verso")
+        .join("Desktop")
+        .join("installation.json");
+    if let Ok(bytes) = std::fs::read(&reg_path) {
+        if let Ok(inst) = serde_json::from_slice::<VersoInstallation>(&bytes) {
+            if Path::new(&inst.desktop).exists() {
+                return Some(inst);
+            }
+        }
+    }
+    None
+}
+#[derive(serde::Serialize, Clone, Debug, Default)]
+pub struct VcsWorkspaceInfo {
+    pub kind: Option<String>,
+    pub repo_root: Option<String>,
+    pub branch: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub verso_available: bool,
+}
+pub fn get_vcs_workspace_info(path: &Path) -> Result<VcsWorkspaceInfo, String> {
+    let verso_available = find_verso_installation().is_some();
+    if let Some(verso_root) = find_repo_root(path, ".verso") {
+        let branch = std::fs::read(verso_root.join(".verso").join("workspace.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v.get("branch")?.as_str().map(|s| s.to_string()));
+        return Ok(VcsWorkspaceInfo {
+            kind: Some("verso".to_string()),
+            repo_root: Some(verso_root.to_string_lossy().to_string()),
+            branch,
+            ahead: 0,
+            behind: 0,
+            verso_available,
+        });
+    }
+    if let Some(git_root) = find_repo_root(path, ".git") {
+        let branch = hidden_command("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&git_root)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        let (mut ahead, mut behind) = (0u32, 0u32);
+        if let Ok(ab_out) = hidden_command("git")
+            .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+            .current_dir(&git_root)
+            .output()
+        {
+            if ab_out.status.success() {
+                let s = String::from_utf8_lossy(&ab_out.stdout);
+                let mut parts = s.split_whitespace();
+                if let (Some(a), Some(b)) = (parts.next(), parts.next()) {
+                    ahead = a.parse().unwrap_or(0);
+                    behind = b.parse().unwrap_or(0);
+                }
+            }
+        }
+        return Ok(VcsWorkspaceInfo {
+            kind: Some("git".to_string()),
+            repo_root: Some(git_root.to_string_lossy().to_string()),
+            branch,
+            ahead,
+            behind,
+            verso_available,
+        });
+    }
+    Ok(VcsWorkspaceInfo {
+        kind: None,
+        repo_root: None,
+        branch: None,
+        ahead: 0,
+        behind: 0,
+        verso_available,
+    })
+}
+pub fn build_verso_launch_args(path: &Path, page: Option<&str>) -> Vec<String> {
+    let repo_root = find_repo_root(path, ".verso").or_else(|| find_repo_root(path, ".git"));
+    let mut args = Vec::new();
+    if let Some(root) = repo_root {
+        args.push(root.to_string_lossy().to_string());
+        if let Ok(rel) = path.strip_prefix(&root) {
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let trimmed = rel_str.trim_matches('/');
+            if !trimmed.is_empty() {
+                args.push("--select".to_string());
+                args.push(trimmed.to_string());
+            }
+        }
+    } else {
+        args.push(path.to_string_lossy().to_string());
+    }
+    if let Some(p) = page.map(str::trim).filter(|s| !s.is_empty()) {
+        args.push("--page".to_string());
+        args.push(p.to_string());
+    }
+    args
+}
+pub fn open_in_verso(path: &Path, page: Option<&str>) -> Result<(), String> {
+    let install = find_verso_installation()
+        .ok_or_else(|| "Verso 客户端尚未安装或未注册（请先运行一次 Verso.exe）".to_string())?;
+    let args = build_verso_launch_args(path, page);
+    std::process::Command::new(&install.desktop)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("无法启动 Verso: {e}"))?;
+    Ok(())
+}// === SVN ===
 
 pub fn get_svn_status(path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
     if !path.join(".svn").exists() {
@@ -1597,4 +1975,22 @@ pub fn set_file_readonly(path: &Path, readonly: bool) -> Result<(), String> {
     #[cfg(not(unix))]
     perms.set_readonly(readonly);
     std::fs::set_permissions(path, perms).map_err(|e| e.to_string())
+}
+#[cfg(test)]
+mod vcs_verso_tests {
+    use super::*;
+    #[test]
+    fn parse_git_porcelain_maps_subdirectory_files_and_folders() {
+        let porcelain = " M src-tauri/src/lib.rs\nA  src-tauri/src/vcs.rs\n?? src-tauri/nested/new.txt\n M README.md\n";
+        let root_map = parse_git_porcelain_for_dir(porcelain, "");
+        assert_eq!(root_map.get("README.md").map(String::as_str), Some("modified"));
+        assert_eq!(root_map.get("src-tauri").map(String::as_str), Some("modified"));
+        let sub_map = parse_git_porcelain_for_dir(porcelain, "src-tauri/");
+        assert_eq!(sub_map.get("src").map(String::as_str), Some("modified"));
+        assert_eq!(sub_map.get("nested").map(String::as_str), Some("untracked"));
+        assert!(!sub_map.contains_key("README.md"));
+        let src_map = parse_git_porcelain_for_dir(porcelain, "src-tauri/src/");
+        assert_eq!(src_map.get("lib.rs").map(String::as_str), Some("modified"));
+        assert_eq!(src_map.get("vcs.rs").map(String::as_str), Some("added"));
+    }
 }

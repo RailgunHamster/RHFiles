@@ -281,6 +281,8 @@ pub fn run() {
 
             vcs::git_status, vcs::git_branches, vcs::git_checkout,
             vcs::git_create_branch, vcs::git_init, vcs::git_clone,
+            vcs::git_pull, vcs::git_push, vcs::git_commit, vcs::git_revert, vcs::git_log,
+            vcs::vcs_workspace_info, vcs::open_in_verso,
             vcs::svn_status, vcs::svn_info, vcs::svn_update, vcs::svn_commit,
             vcs::svn_revert, vcs::svn_add, vcs::svn_log, vcs::svn_checkout,
             vcs::svn_cleanup, vcs::svn_resolve,

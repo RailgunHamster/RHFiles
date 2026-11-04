@@ -994,6 +994,13 @@ function fallbackCall(cmd, args) {
     case "git_checkout": return null;
     case "git_create_branch": return null;
     case "git_init": return null;
+    case "git_pull": return "Already up to date.";
+    case "git_push": return "Everything up-to-date";
+    case "git_commit": return "[main 1234567] committed";
+    case "git_revert": return null;
+    case "git_log": return [];
+    case "vcs_workspace_info": return { kind:null, repo_root:null, branch:null, ahead:0, behind:0, verso_available:false };
+    case "open_in_verso": return null;
     case "create_archive": return null;
     case "create_shortcut": return null;
     case "open_new_window": window.open(location.href, '_blank'); return null;

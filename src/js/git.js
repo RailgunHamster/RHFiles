@@ -1,32 +1,104 @@
 // git.js — git integration + archive browsing
 
+G.vcsWorkspaceInfo = null;
 async function loadGitStatus(path) {
   try {
-    const cache = await call("git_status", { path });
+    const [cache, wsInfo] = await Promise.all([
+      call("git_status", { path }),
+      call("vcs_workspace_info", { path }).catch(() => null),
+    ]);
     if (!getTab() || getTab().path !== path) return;
-    G.gitCache = cache;
+    G.gitCache = cache || {};
+    G.vcsWorkspaceInfo = wsInfo;
     const statusEl = document.getElementById("status-git");
     if (statusEl) {
-      if (Object.keys(G.gitCache).length > 0) {
-        const counts = { modified: 0, added: 0, deleted: 0, untracked: 0 };
-        for (const s of Object.values(G.gitCache)) { if (counts[s] !== undefined) counts[s]++; }
-        const parts = [];
-        if (counts.modified) parts.push("M:" + counts.modified);
-        if (counts.added) parts.push("A:" + counts.added);
-        if (counts.deleted) parts.push("D:" + counts.deleted);
-        if (counts.untracked) parts.push("?:" + counts.untracked);
-        if (parts.length) statusEl.textContent = "Git: " + parts.join(" ");
-        else statusEl.textContent = "";
-      } else {
-        statusEl.textContent = "";
-      }
+      const counts = { modified: 0, added: 0, deleted: 0, untracked: 0 };
+      for (const s of Object.values(G.gitCache)) { if (counts[s] !== undefined) counts[s]++; }
+      const parts = [];
+      if (wsInfo?.branch) parts.push(wsInfo.branch);
+      if (wsInfo?.ahead) parts.push("\u2191" + wsInfo.ahead);
+      if (wsInfo?.behind) parts.push("\u2193" + wsInfo.behind);
+      if (counts.modified) parts.push("M:" + counts.modified);
+      if (counts.added) parts.push("A:" + counts.added);
+      if (counts.deleted) parts.push("D:" + counts.deleted);
+      if (counts.untracked) parts.push("?:" + counts.untracked);
+      const prefix = wsInfo?.kind === 'verso' ? 'Verso: ' : 'Git: ';
+      if (parts.length) statusEl.textContent = prefix + parts.join(" ");
+      else statusEl.textContent = "";
     }
   } catch (e) {
     if (!getTab() || getTab().path !== path) return;
     G.gitCache = {};
+    G.vcsWorkspaceInfo = null;
     const statusEl = document.getElementById("status-git");
     if (statusEl) statusEl.textContent = "";
   }
+}
+async function openInVerso(targetPath, page = "files") {
+  const path = targetPath || (G.lastActivePane === 'right' ? G.rp?.path : getTab()?.path);
+  if (!path || path === 'home://') return;
+  try {
+    await call("open_in_verso", { path, page });
+  } catch (e) {
+    alert(String(e));
+  }
+}
+async function gitPull(targetPath) {
+  const path = targetPath || getTab()?.path;
+  if (!path) return;
+  try {
+    showNotice("Git pull in progress...");
+    const out = await call("git_pull", { path });
+    showNotice(out || "Git pull complete");
+    await refresh();
+    await loadGitStatus(path);
+  } catch (e) { alert("Git pull failed: " + e); }
+}
+async function gitPush(targetPath) {
+  const path = targetPath || getTab()?.path;
+  if (!path) return;
+  try {
+    showNotice("Git push in progress...");
+    const out = await call("git_push", { path });
+    showNotice(out || "Git push complete");
+    await loadGitStatus(path);
+  } catch (e) { alert("Git push failed: " + e); }
+}
+async function gitCommit(message, targets) {
+  const isRight = G.lastActivePane === 'right';
+  const pane = isRight ? G.rp : getTab();
+  if (!pane?.path) return;
+  const msg = message !== undefined ? message : prompt("Git commit message:");
+  if (!msg) return;
+  const selectedNames = Array.isArray(targets)
+    ? targets
+    : [...(pane.sel || new Set())].map(i => pane.entries?.[i]?.name).filter(Boolean);
+  try {
+    const out = await call("git_commit", { path: pane.path, message: msg, targets: selectedNames });
+    showNotice(out || "Git commit complete");
+    await refresh();
+    await loadGitStatus(pane.path);
+  } catch (e) { alert("Git commit failed: " + e); }
+}
+async function gitRevert(targets) {
+  const isRight = G.lastActivePane === 'right';
+  const pane = isRight ? G.rp : getTab();
+  if (!pane?.path) return;
+  const selectedNames = Array.isArray(targets)
+    ? targets
+    : [...(pane.sel || new Set())].map(i => pane.entries?.[i]?.name).filter(Boolean);
+  if (!selectedNames.length) return;
+  try {
+    await call("git_revert", { path: pane.path, targets: selectedNames });
+    showNotice("Git revert complete");
+    await refresh();
+    await loadGitStatus(pane.path);
+  } catch (e) { alert("Git revert failed: " + e); }
+}
+async function gitLog(limit = 25) {
+  const path = getTab()?.path;
+  if (!path) return [];
+  return await call("git_log", { path, limit });
 }
 
 // --- archive browsing: state belongs to the originating tab/pane ---

@@ -1100,6 +1100,15 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
+        "verso" | "verso_files" => {
+            rhfiles_core::enumerator::open_in_verso(std::path::Path::new(&path), Some("files"))?;
+        }
+        "verso_changes" => {
+            rhfiles_core::enumerator::open_in_verso(std::path::Path::new(&path), Some("changes"))?;
+        }
+        "verso_history" => {
+            rhfiles_core::enumerator::open_in_verso(std::path::Path::new(&path), Some("history"))?;
+        }
         "vlc" => {
             let fallback = std::path::PathBuf::from("C:\\Program Files\\VideoLAN\\VLC\\vlc.exe");
             let exe = if fallback.exists() {
