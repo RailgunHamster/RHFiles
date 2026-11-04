@@ -75,6 +75,7 @@ const deviceBrowser=(()=>{
     const setup=document.querySelector('#device-group-settings > span');if(setup)setup.textContent=text('管理设备组','Manage device groups');
     const refresh=document.getElementById('device-group-refresh');if(refresh){refresh.title=text('连接已知组成员并刷新设备（最多 30 秒）','Connect to known group members and refresh devices (up to 30 seconds)');refresh.setAttribute('aria-label',text('刷新 RHFiles 设备','Refresh RHFiles devices'));}
     const copies=document.querySelector('#device-working-copies > span');if(copies)copies.textContent=text('缓存与工作副本','Cache & working copies');
+    if(document.getElementById('home-page')?.style.display!=='none'&&typeof renderHomeDevices==='function')renderHomeDevices();
   }
   async function refresh(){
     const ticket=++readTicket,state=await call('device_groups',{command:'state',args:{}});if(ticket!==readTicket)return {stale:true};

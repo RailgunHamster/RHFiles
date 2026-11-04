@@ -2793,7 +2793,8 @@ body.preview-fullscreen-active::before {
 }
 .cmd-selection-pill[hidden],
 .cmd-verso-chip[hidden],
-.status-verso-btn[hidden] {
+.status-verso-btn[hidden],
+.home-section[hidden] {
   display: none !important;
 }
 .cmd-verso-chip {

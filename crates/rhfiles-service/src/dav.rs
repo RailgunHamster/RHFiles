@@ -193,6 +193,8 @@ impl GuardedFileSystem<Access> for DavFs {
                     modified_ms: now_ms(),
                     created_ms:now_ms(),readonly:false,is_hidden:false,is_system:false,
                     revision: random().map_err(fs_error)?,
+                    total_bytes: None,
+                    free_bytes: None,
                 };
                 Ok(Box::new(File {
                     file,

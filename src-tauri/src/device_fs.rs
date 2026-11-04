@@ -69,7 +69,8 @@ fn info(path: &DevicePath, raw: &Value) -> Result<Value, String> {
     Ok(
         json!({"name":name,"path":remote.uri(),"is_dir":is_dir,"extension":extension,"size":size,"size_display":crate::types::format_size(size),
         "modified_ts":ms,"created_ts":raw["createdMs"].as_u64().unwrap_or(0),"modified":"","created":"","folder_size":null,"is_hidden":!share_mount&&raw["isHidden"].as_bool().unwrap_or_else(||name.starts_with('.')),"is_system":!share_mount&&raw["isSystem"]==true,"is_dot":!share_mount&&name.starts_with('.'),
-        "remote":true,"remote_revision":raw["revision"],"attributes":"RHFiles","readonly":raw["readonly"]==true}),
+        "remote":true,"remote_revision":raw["revision"],"attributes":"RHFiles","readonly":raw["readonly"]==true,
+        "total_bytes":raw["totalBytes"].as_u64(),"free_bytes":raw["freeBytes"].as_u64()}),
     )
 }
 #[cfg(test)]

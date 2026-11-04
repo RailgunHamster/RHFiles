@@ -66,4 +66,38 @@ test('loadGitStatus displays branch, ahead/behind, Verso toolbar button and upda
 test('cmd-selection-pill[hidden] rule prevents empty oval pill when nothing is selected', () => {
   const css = fs.readFileSync(path.join(root, 'src/css/codex-polish.css'), 'utf8');
   assert.match(css, /\.cmd-selection-pill\[hidden\][\s\S]*?display:\s*none\s*!important/);
+});test('Home page renders RHFiles shared drives with capacity bars and Network locations like drives', () => {
+  const ctx = context({
+    _lang: 'zh-CN',
+    esc: s => String(s ?? ''),
+    RHFilesUI: { listen: () => {} },
+    window: { RHFilesAPI: { invoke: async () => ({}) } },
+    document: {
+      createElement: tag => ({
+        tagName: tag.toUpperCase(),
+        className: '',
+        dataset: {},
+        style: {},
+        innerHTML: '',
+        children: [],
+        appendChild(child) { this.children.push(child); return child; },
+        replaceChildren(...nodes) { this.children = nodes; },
+      }),
+    },
+  });
+  load(ctx, 'tabs.js', ['_createHomePeerCard', '_createHomeShareCard']);
+  const peer = { group: '1'.repeat(64), groupName: 'Office', peer: '2'.repeat(64), name: 'WINSERVER', path: 'rhfiles-device://' + '1'.repeat(64) + '/' + '2'.repeat(64) + '/' };
+  const shareDrive = {
+    name: 'D',
+    path: peer.path + 'D',
+    is_dir: true,
+    total_bytes: 1000 * 1024 * 1024 * 1024,
+    free_bytes: 400 * 1024 * 1024 * 1024,
+  };
+  const card = ctx._createHomeShareCard(peer, shareDrive);
+  assert.equal(card.className, 'home-drive-card');
+  assert.match(card.innerHTML, /<div class="home-drive-letter">D:<\/div>/);
+  assert.match(card.innerHTML, /WINSERVER \(Office\)/);
+  assert.match(card.innerHTML, /home-drive-bar-fill" style="width:60%/);
+  assert.match(card.innerHTML, /400\.0 GB free \/ 1000\.0 GB/);
 });

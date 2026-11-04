@@ -1109,6 +1109,8 @@ function fallbackCall(cmd, args) {
       error: "FFmpeg is not available in the browser test harness",
     };
     case "convert_media": return args.options?.outputPath || null;
+    case "device_groups": return { groups: [] };
+    case "network_location": return { profiles: [] };
     default: return null;
   }
 }

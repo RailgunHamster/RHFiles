@@ -1813,6 +1813,8 @@ function showHomePage() {
     quickAccess.appendChild(card);
   }
   renderHomeDrives();
+  renderHomeDevices();
+  renderHomeNetworkLocations();
 
   _homeRecentMode = "recent";
   renderHomeRecent("recent");
@@ -1879,6 +1881,120 @@ async function renderHomeDrives() {
   } catch (e) {}
 }
 
+let _homeDevicesToken = 0;
+function _createHomePeerCard(peer, subtitle) {
+  const card = document.createElement("div");
+  card.className = "home-drive-card";
+  card.dataset.path = peer.path;
+  const sub = subtitle || `${peer.groupName} · ${peer.address || ""}`;
+  card.innerHTML = `<div class="home-drive-letter">${esc(peer.name)}</div><div class="home-drive-label">${esc(sub)}</div><div style="font-size:11px;color:var(--text-4);margin-top:6px">${String(_lang || "").startsWith("zh") ? "点击浏览设备共享" : "Click to browse shared folders"}</div>`;
+  RHFilesUI.listen(card, "click", event => {
+    window.RHFilesAPI.invoke("devices.open", { group: peer.group, peer: peer.peer, newTab: event.ctrlKey || event.metaKey }).catch(e => showNotice(String(e)));
+  }, undefined, "src.js.tabs.renderHomeDevices.peerCard");
+  return card;
+}
+function _createHomeShareCard(peer, entry) {
+  const card = document.createElement("div");
+  card.className = "home-drive-card";
+  card.dataset.path = entry.path;
+  const isDriveLetter = /^[A-Za-z]:?$/.test(entry.name);
+  const letterText = isDriveLetter ? (entry.name.endsWith(":") ? entry.name.toUpperCase() : entry.name.toUpperCase() + ":") : entry.name;
+  const labelText = `${peer.name} (${peer.groupName})`;
+  const total = Number(entry.total_bytes) || 0;
+  const free = Number(entry.free_bytes) || 0;
+  let barHtml = "";
+  let freeText = "";
+  if (total > 0) {
+    const pct = (free / total) * 100;
+    const usedPct = Math.max(0, Math.min(100, 100 - pct));
+    const color = usedPct > 90 ? "#d32f2f" : usedPct > 70 ? "#ff9800" : "#0078d4";
+    const freeGb = (free / (1024 * 1024 * 1024)).toFixed(1);
+    const totalGb = (total / (1024 * 1024 * 1024)).toFixed(1);
+    barHtml = `<div class="home-drive-bar"><div class="home-drive-bar-fill" style="width:${usedPct}%;background:${color}"></div></div>`;
+    freeText = `${freeGb} GB free / ${totalGb} GB`;
+  } else {
+    freeText = isDriveLetter
+      ? (String(_lang || "").startsWith("zh") ? "远端共享磁盘" : "Shared drive")
+      : (String(_lang || "").startsWith("zh") ? "远端共享文件夹" : "Shared folder");
+  }
+  card.innerHTML = `<div class="home-drive-letter">${esc(letterText)}</div><div class="home-drive-label">${esc(labelText)}</div>${barHtml}<div style="font-size:11px;color:var(--text-4);margin-top:4px">${esc(freeText)}</div>`;
+  RHFilesUI.listen(card, "click", event => {
+    window.RHFilesAPI.invoke("devices.open", { group: peer.group, peer: peer.peer, path: "/" + entry.name, newTab: event.ctrlKey || event.metaKey }).catch(e => showNotice(String(e)));
+  }, undefined, "src.js.tabs.renderHomeDevices.shareCard");
+  return card;
+}
+async function renderHomeDevices() {
+  const section = document.getElementById("home-devices-section");
+  const heading = document.getElementById("home-devices-heading");
+  const container = document.getElementById("home-devices");
+  if (!section || !container || typeof window.RHFilesAPI?.invoke !== "function") return;
+  const zh = String(_lang || "").startsWith("zh");
+  if (heading) heading.textContent = zh ? "RHFiles 设备" : "RHFiles Devices";
+  const token = ++_homeDevicesToken;
+  try {
+    const res = await window.RHFilesAPI.invoke("devices.list");
+    if (token !== _homeDevicesToken) return;
+    const devices = res?.devices || [];
+    if (!devices.length) {
+      section.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    section.hidden = false;
+    container.replaceChildren();
+    for (const peer of devices) {
+      const slot = document.createElement("div");
+      slot.style.display = "contents";
+      slot.appendChild(_createHomePeerCard(peer));
+      container.appendChild(slot);
+      window.RHFilesAPI.invoke("devices.entries", { path: peer.path }).then(entries => {
+        if (token !== _homeDevicesToken || !slot.isConnected) return;
+        const shares = (entries || []).filter(e => e && e.is_dir);
+        if (!shares.length) return;
+        slot.replaceChildren();
+        for (const share of shares) {
+          slot.appendChild(_createHomeShareCard(peer, share));
+        }
+      }).catch(() => {});
+    }
+  } catch (e) {
+    section.hidden = true;
+  }
+}
+async function renderHomeNetworkLocations() {
+  const section = document.getElementById("home-network-section");
+  const heading = document.getElementById("home-network-heading");
+  const container = document.getElementById("home-network-locations");
+  if (!section || !container || typeof window.RHFilesAPI?.invoke !== "function") return;
+  const zh = String(_lang || "").startsWith("zh");
+  if (heading) heading.textContent = zh ? "网络位置" : "Network Locations";
+  try {
+    const res = await window.RHFilesAPI.invoke("networkLocations.list");
+    const profiles = res?.profiles || [];
+    if (!profiles.length) {
+      section.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    section.hidden = false;
+    container.replaceChildren();
+    for (const p of profiles) {
+      const c = p.config || {};
+      const proto = String(c.type || "").toUpperCase();
+      const target = c.url || (c.host ? (c.share ? `${c.host}/${c.share}` : `${c.host}${c.port ? ":" + c.port : ""}`) : "");
+      const card = document.createElement("div");
+      card.className = "home-drive-card";
+      card.dataset.path = "remote://" + p.id + "/";
+      card.innerHTML = `<div class="home-drive-letter" style="display:flex;align-items:center;gap:6px;font-size:15px"><span class="network-protocol-badge">${esc(proto)}</span><span>${esc(c.name || proto)}</span></div><div class="home-drive-label" style="margin-top:4px">${esc(target)}</div><div style="font-size:11px;color:var(--text-4);margin-top:6px">${esc(c.username ? (zh ? "账号：" + c.username : "User: " + c.username) : (zh ? "点击连接并浏览" : "Click to open"))}</div>`;
+      RHFilesUI.listen(card, "click", event => {
+        window.RHFilesAPI.invoke("networkLocations.open", { id: p.id, newTab: event.ctrlKey || event.metaKey }).catch(e => showNotice(String(e)));
+      }, undefined, "src.js.tabs.renderHomeNetworkLocations.card");
+      container.appendChild(card);
+    }
+  } catch (e) {
+    section.hidden = true;
+  }
+}
 function hideHomePage() {
   document.getElementById("home-page").style.display = "none";
 }

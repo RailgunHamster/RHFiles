@@ -61,6 +61,7 @@ pub fn components(path: &str) -> Result<Vec<&str>> {
 #[derive(Debug)]
 pub struct Root {
     pub dir: Dir,
+    pub host_path: PathBuf,
     excluded: Vec<PathBuf>,
 }
 #[derive(Debug)]
@@ -185,8 +186,8 @@ impl Storage {
                     );
                 }
             }
-            let dir = Dir::open_ambient_dir(path, cap_std::ambient_authority())?;
-            roots.insert(share.name.clone(), Arc::new(Root { dir, excluded }));
+            let dir = Dir::open_ambient_dir(&path, cap_std::ambient_authority())?;
+            roots.insert(share.name.clone(), Arc::new(Root { dir, host_path: path, excluded }));
         }
         let storage=Self {
             roots,
@@ -250,6 +251,8 @@ impl Storage {
                 modified_ms: 0,
                 created_ms:0,readonly:false,is_hidden:false,is_system:false,
                 revision: "root".into(),
+                total_bytes: None,
+                free_bytes: None,
             });
         }
         self.node(path)?.stat()
@@ -536,6 +539,8 @@ impl Node {
             is_hidden:!self.relative.as_os_str().is_empty()&&(attributes&2!=0||self.virtual_path.rsplit('/').next().unwrap_or("").starts_with('.')),
             is_system:!self.relative.as_os_str().is_empty()&&attributes&4!=0,
             revision: metadata_revision(&meta),
+            total_bytes: if self.relative.as_os_str().is_empty() { volume_space(&self.root.host_path).map(|v| v.0) } else { None },
+            free_bytes: if self.relative.as_os_str().is_empty() { volume_space(&self.root.host_path).map(|v| v.1) } else { None },
         })
     }
     pub fn open_read(&self) -> Result<std::fs::File> {
@@ -612,7 +617,9 @@ mod checked_tests{
         assert_eq!(mounts[0].name,".ExplicitShare");assert!(mounts[0].is_dir);
         assert!(!mounts[0].is_hidden&&!mounts[0].is_system);
         let mount=storage.stat("/.ExplicitShare").unwrap();assert!(!mount.is_hidden&&!mount.is_system);
+        #[cfg(windows)] assert!(mount.total_bytes.unwrap_or(0) > 0 && mount.free_bytes.is_some());
         let child=storage.list("/.ExplicitShare").unwrap().remove(0);assert!(child.is_hidden);
+        assert!(child.total_bytes.is_none() && child.free_bytes.is_none());
         #[cfg(windows)] assert!(child.is_system);
     }
     #[test]
@@ -856,5 +863,32 @@ fn rename_noreplace(
         }
         from.hard_link(source, to, destination)?;
         from.remove_file(source)
+    }
+}
+fn volume_space(path: &Path) -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut free_available = 0u64;
+        let mut total = 0u64;
+        let mut total_free = 0u64;
+        let ok = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_available,
+                &mut total,
+                &mut total_free,
+            )
+        };
+        if ok != 0 && total > 0 {
+            return Some((total, free_available));
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
     }
 }

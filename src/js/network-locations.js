@@ -28,6 +28,7 @@ const networkLocations=(()=>{
     const h=document.getElementById('network-locations-heading');if(h)h.textContent=text('网络位置','Network locations');
     const m=document.querySelector('#network-locations-manage > span');if(m)m.textContent=text('管理网络位置…','Manage network locations…');
     const discovery=document.getElementById('network-discovery-heading');if(discovery)discovery.textContent=text('局域网 SMB 共享','Nearby SMB shares');
+    if(document.getElementById('home-page')?.style.display!=='none'&&typeof renderHomeNetworkLocations==='function')renderHomeNetworkLocations();
   }
   function edit(profile){
     editor.replaceChildren();const c=profile?.config||{type:'smb',name:'',host:'',username:'',share:'',port:445,insecure:false},form=document.createElement('form');form.className='network-location-form';
