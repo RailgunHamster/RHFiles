@@ -135,6 +135,10 @@
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z" stroke="currentColor" stroke-width=".9" rx="1"/></svg>
       <span data-i18n="cmd.group">Group</span>
     </button>
+    <button class="cmd-verso-chip" id="btn-open-verso" hidden onclick="openActiveSelectionInVerso('files')" title="在 Verso 中打开当前仓库或选中项">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 14.2 8 8 14.2 1.8 8Z" stroke="currentColor" stroke-width="1.2"/><circle cx="5.8" cy="5.8" r=".9" fill="currentColor"/><circle cx="10.2" cy="5.8" r=".9" fill="currentColor"/><circle cx="10.2" cy="10.2" r=".9" fill="currentColor"/><path d="M6.6 5.8h2.8M6.4 6.4l3.2 3.2" stroke="currentColor" stroke-width="1.1"/></svg>
+      <span id="btn-open-verso-label">Verso</span>
+    </button>
     <span class="cmd-stretch"></span>
 
     <div class="layout-switcher">
@@ -283,6 +287,7 @@
             <div class="status-bar" id="status-bar">
               <span id="status-count">0 items</span>
               <span id="status-git"></span>
+              <button type="button" class="status-verso-btn" id="status-verso-btn" hidden onclick="openActiveSelectionInVerso('changes')" title="在 Verso 中审阅修改与差异">Verso 审阅</button>
               <span id="status-svn"></span>
               <select id="git-branch-select" style="display:none;font-size:11px;margin-left:8px;background:var(--bg-2);color:var(--text-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;" onchange="gitCheckout(this.value)"></select>
               <span id="status-selection"></span>

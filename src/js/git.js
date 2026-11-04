@@ -1,6 +1,36 @@
 // git.js — git integration + archive browsing
 
 G.vcsWorkspaceInfo = null;
+function applyGitBadgesToVisibleRows() {
+  const icons = { modified: '\u25cf', added: '+', deleted: '\u2715', untracked: '?' };
+  const listEl = document.getElementById("file-list");
+  if (!listEl) return;
+  listEl.querySelectorAll(".file-row[data-index]").forEach(row => {
+    const idx = Number(row.dataset.index);
+    const entry = getTab()?.entries?.[idx];
+    const cell = row.querySelector(".row-git");
+    if (!entry || !cell) return;
+    const st = G.gitCache?.[entry.name];
+    cell.className = "row-git" + (st ? " git-" + st : "");
+    cell.title = st ? st : "";
+    cell.textContent = st ? (icons[st] || "") : "";
+  });
+}
+function updateVersoToolbarAndStatusUI(wsInfo) {
+  const topBtn = document.getElementById("btn-open-verso");
+  const topLabel = document.getElementById("btn-open-verso-label");
+  const statusBtn = document.getElementById("status-verso-btn");
+  const inRepo = Boolean(wsInfo && wsInfo.kind);
+  if (topBtn) {
+    topBtn.hidden = !inRepo;
+    if (topLabel) {
+      topLabel.textContent = wsInfo?.branch ? `Verso · ${wsInfo.branch}` : "Verso";
+    }
+  }
+  if (statusBtn) {
+    statusBtn.hidden = !inRepo;
+  }
+}
 async function loadGitStatus(path) {
   try {
     const [cache, wsInfo] = await Promise.all([
@@ -10,6 +40,8 @@ async function loadGitStatus(path) {
     if (!getTab() || getTab().path !== path) return;
     G.gitCache = cache || {};
     G.vcsWorkspaceInfo = wsInfo;
+    updateVersoToolbarAndStatusUI(wsInfo);
+    applyGitBadgesToVisibleRows();
     const statusEl = document.getElementById("status-git");
     if (statusEl) {
       const counts = { modified: 0, added: 0, deleted: 0, untracked: 0 };
@@ -30,6 +62,8 @@ async function loadGitStatus(path) {
     if (!getTab() || getTab().path !== path) return;
     G.gitCache = {};
     G.vcsWorkspaceInfo = null;
+    updateVersoToolbarAndStatusUI(null);
+    applyGitBadgesToVisibleRows();
     const statusEl = document.getElementById("status-git");
     if (statusEl) statusEl.textContent = "";
   }
@@ -42,6 +76,14 @@ async function openInVerso(targetPath, page = "files") {
   } catch (e) {
     alert(String(e));
   }
+}
+async function openActiveSelectionInVerso(defaultPage = "files") {
+  const isRight = G.dualOn && G.lastActivePane === 'right';
+  const pane = isRight ? G.rp : getTab();
+  if (!pane?.path || pane.path === 'home://') return;
+  const sel = typeof getSelectedPaths === 'function' ? getSelectedPaths(isRight) : [];
+  const target = sel.length === 1 ? sel[0].path : pane.path;
+  await openInVerso(target, defaultPage);
 }
 async function gitPull(targetPath) {
   const path = targetPath || getTab()?.path;

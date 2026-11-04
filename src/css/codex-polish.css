@@ -2791,6 +2791,47 @@ body.preview-fullscreen-active::before {
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   white-space: nowrap;
 }
+.cmd-selection-pill[hidden],
+.cmd-verso-chip[hidden],
+.status-verso-btn[hidden] {
+  display: none !important;
+}
+.cmd-verso-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-soft));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cmd-verso-chip:hover {
+  background: var(--accent-light);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.status-verso-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  cursor: pointer;
+}
+.status-verso-btn:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
 
 body:not([data-has-selection="true"]) .command-bar > .cmd.cmd-context-action {
   opacity: .56;
